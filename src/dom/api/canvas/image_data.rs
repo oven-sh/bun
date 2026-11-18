@@ -9,7 +9,7 @@ use bun_jsc::bindgen::{
 use bun_jsc::{JSType, JSValue};
 
 use super::Failure;
-use super::bitmap::area_of;
+use super::bitmap::{area_of, size_from};
 use crate::generated_bindgen::canvas::{
     ImageDataArray, ImageDataPixelFormat as Format, ImageDataSettings, PredefinedColorSpace,
     js_ImageData,
@@ -245,17 +245,23 @@ impl ImageData {
         parts: JsLocal<'a>,
     ) -> bindgen::Result<'a, JSValue> {
         let mut part = |at| parts.to_js().get_index(cx.global(), at);
-        let (data, size) = (part(0)?, [part(1)?.to_u32(), part(2)?.to_u32()]);
+        let (data, size) = (part(0)?, size_from([part(1)?, part(2)?]));
         let color_space = if part(3)?.to_boolean() {
             PredefinedColorSpace::Srgb
         } else {
             PredefinedColorSpace::DisplayP3
         };
-        let format = if data.js_type() == JSType::Float16Array {
-            Format::RgbaFloat16
-        } else {
-            Format::RgbaUnorm8
+        let (format, bytes_per_pixel) = match data.js_type() {
+            JSType::Uint8ClampedArray => (Format::RgbaUnorm8, 4),
+            JSType::Float16Array => (Format::RgbaFloat16, 8),
+            _ => return Ok(JSValue::NULL),
         };
+        if data
+            .as_array_buffer(cx.global())
+            .is_none_or(|it| it.byte_len as u64 != area_of(size).saturating_mul(bytes_per_pixel))
+        {
+            return Ok(JSValue::NULL);
+        }
         Ok(js_ImageData::create(
             &cx.heap,
             ImageData {

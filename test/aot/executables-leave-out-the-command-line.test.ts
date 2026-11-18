@@ -13,10 +13,6 @@ import { readRemovedFeatures } from "./trimmed-against-whole/removed-features";
 
 const programs = {
   "hello.ts": `console.log("hello world");`,
-  "imports-desktop.ts": `
-    import { jsx } from "bun:desktop/jsx-runtime";
-    console.log(jsx("view", {}).type);
-  `,
   "evaluates-text.ts": `
     const text = process.argv[2]!;
     console.log((0, eval)(text), new Function("return " + text)(), new RegExp(process.argv[3]!).test("aaa"));
@@ -127,12 +123,17 @@ const lacks = (option: string, part: string, name: string) =>
 const noCommandLine =
   "can't be used with this executable because it doesn't include the Bun command line. Run bun instead";
 
+// It has a test of its own.
+const desktop = model.features.find(each => each.name === "Desktop")!;
+
 function removedFeaturesOf(executable: Build): string[] {
   const removed = readRemovedFeatures(executable.file);
   if (removed === undefined) throw new Error(`${executable.name} has no list of removed features`);
   // What compiled code alone calls stays or leaves by the list of the image: ../bundler/compile-trim-operations.test.ts.
   return model.features
-    .filter(feature => removed.includes(feature.index) && feature.enteredFrom !== "compiled-code")
+    .filter(
+      feature => removed.includes(feature.index) && feature.enteredFrom !== "compiled-code" && feature !== desktop,
+    )
     .map(feature => feature.name)
     .sort();
 }
@@ -148,15 +149,9 @@ function removedFeaturesOf(executable: Build): string[] {
 
   test("leaves out the command line and the JIT, and nothing a program can use", async () => {
     const hello = await built("hello");
-    expect(removedFeaturesOf(hello)).toEqual([...commandLineJitAndTestRunner, "Desktop"].sort());
+    expect(removedFeaturesOf(hello)).toEqual(commandLineJitAndTestRunner);
     expect(await run([hello.executable], folder)).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
     expect(sizeOf(await shared.build("hello.ts")) - sizeOf(hello)).toBeGreaterThan(30_000_000);
-  }, 600_000);
-
-  test("keeps bun:desktop where the program imports it", async () => {
-    const executable = await built("imports-desktop");
-    expect(removedFeaturesOf(executable)).toEqual(commandLineJitAndTestRunner);
-    expect(await run([executable.executable], folder)).toEqual({ stdout: "view\n", stderr: "", exitCode: 0 });
   }, 600_000);
 
   test("install.auto in a bunfig.toml beside the program doesn't stop it", async () => {
@@ -233,6 +228,19 @@ function removedFeaturesOf(executable: Build): string[] {
         stderr: `error: ${label} ${noCommandLine}\n`,
         exitCode: 1,
       });
+    },
+    600_000,
+  );
+
+  test.each([
+    ["hello", true],
+    ["evaluates-text", true],
+    ["keeps-the-global-object-in-a-private-field", true],
+    ["builds", false],
+  ])(
+    "%s: bun:desktop stays only for the executables that the program builds",
+    async (program, isRemoved) => {
+      expect(readRemovedFeatures((await built(program)).file)?.includes(desktop.index)).toBe(isRemoved);
     },
     600_000,
   );

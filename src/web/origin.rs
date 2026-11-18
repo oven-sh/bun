@@ -1,6 +1,6 @@
 //! Origins, sites and secure contexts.
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::AtomicU32;
 
 use bun_core::strings;
 
@@ -8,16 +8,18 @@ use crate::Bytes;
 use crate::scheme::{Privileges, is_standard, privileges_of};
 use crate::url::{Url, is_address};
 
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub enum Origin {
-    Opaque(u32),
-    Tuple(Bytes),
+crate::wire! {
+    #[derive(Clone, PartialEq, Eq, Hash)]
+    pub enum Origin {
+        Opaque(u32),
+        Tuple(Bytes),
+    }
 }
 
 impl Origin {
     pub fn new_opaque() -> Origin {
         static NEXT: AtomicU32 = AtomicU32::new(0);
-        Origin::Opaque(NEXT.fetch_add(1, Ordering::Relaxed))
+        Origin::Opaque(crate::remote::own_number(&NEXT))
     }
 
     pub fn of(url: &Url) -> Origin {
@@ -76,9 +78,11 @@ impl Origin {
     }
 }
 
-/// https://html.spec.whatwg.org/multipage/browsers.html#site
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct Site(Bytes);
+crate::wire! {
+    /// https://html.spec.whatwg.org/multipage/browsers.html#site
+    #[derive(Clone, PartialEq, Eq, Hash)]
+    pub struct Site(Bytes);
+}
 
 impl Site {
     pub fn of(url: &Url) -> Site {

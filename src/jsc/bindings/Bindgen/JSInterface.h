@@ -2,6 +2,7 @@
 #include "root.h"
 #include "Bindgen/IDLConvert.h"
 #include "Bindgen/JSWrapper.h"
+#include <JavaScriptCore/EmbedderListItems.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSSet.h>
 #include <wtf/InlineASM.h>
@@ -50,6 +51,22 @@ protected:
 private:
     JSC::WriteBarrier<JSC::Unknown> m_inlineStorage[inlineCapacity];
     const JSC::ClassInfo* m_classInfo;
+};
+
+class JSInterfaceList : public JSInterfaceObject<0> {
+public:
+    using Base = JSInterfaceObject<0>;
+    static constexpr JSC::JSType cellType = JSC::EmbedderListType;
+    DECLARE_VISIT_CHILDREN;
+
+protected:
+    JSInterfaceList(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+private:
+    JSC::EmbedderListItems m_items;
 };
 
 struct alignas(256) InterfaceInfo {
@@ -132,13 +149,24 @@ ALWAYS_INLINE JSC::JSCell* allocateInterfaceCell(JSC::VM& vm, [[maybe_unused]] c
     return cell;
 }
 
+JSC::JSObject* createInterfaceObjectOutOfLine(Zig::GlobalObject*, unsigned number, JSC::Structure*, size_t cellSize, bool needsDestruction);
+
+// Null unless a cell is at hand.
 template<typename T>
-ALWAYS_INLINE T* createInterfaceObject(Zig::GlobalObject* globalObject, unsigned number, JSC::Structure* structure, size_t cellSize, bool needsDestruction)
+ALWAYS_INLINE T* tryCreateInterfaceObject(Zig::GlobalObject* globalObject, JSC::Structure* structure, size_t cellSize, bool needsDestruction)
 {
     auto& vm = JSC::getVM(globalObject);
-    if (!structure)
-        structure = lazyInterface(globalObject, number).get(globalObject);
-    auto* object = new (NotNull, allocateInterfaceCell(vm, T::info(), cellSize, needsDestruction, T::inlineCapacity)) T(vm, structure);
+    auto* space = static_cast<WebCore::JSVMClientData*>(vm.clientData)->clientSubspaces().m_clientSubspaceForInterface[interfaceSubspaceIndex(cellSize, needsDestruction, T::inlineCapacity)];
+    if (JSC::validateDFGDoesGC || !space) [[unlikely]]
+        return nullptr;
+    auto* allocator = std::bit_cast<char*>(space->allocatorFor(0, JSC::AllocatorForMode::AllocatorIfExists).localAllocator());
+    auto* cell = std::bit_cast<JSC::FreeList*>(allocator + JSC::LocalAllocator::offsetOfFreeList())->allocateWithCellSize([] { return static_cast<JSC::HeapCell*>(nullptr); }, roundUpToMultipleOf<JSC::MarkedBlock::atomSize>(cellSize));
+    if (!cell) [[unlikely]]
+        return nullptr;
+#if ENABLE(GC_VALIDATION)
+    vm.setInitializingObjectClass(T::info());
+#endif
+    auto* object = new (NotNull, cell) T(vm, structure);
     object->finishCreation(vm);
     return object;
 }
@@ -239,6 +267,7 @@ struct InterfaceDescription {
     // Whose unforgeable members are in the inline storage, in order.
     std::array<int16_t, 2> inlineUnforgeables;
     PrototypeBase prototypeBase;
+    JSC::JSType cellType;
     uint8_t inlineCapacity;
     uint8_t length;
     uint8_t numberOfConditions;

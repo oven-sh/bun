@@ -291,8 +291,22 @@ static void throwModuleTextRemovedError(JSC::JSGlobalObject* globalObject, uint3
     JSC::throwException(globalObject, scope, JSC::JSValue::decode(Bun__createModuleNotCompiledInError(globalObject, Bun::ErrorCode::ERR_MODULE_NOT_FOUND, &specifierString)));
 }
 
+extern "C" bool Bun__isExecutableWithoutDesktop();
+
+static bool throwIfDesktopModuleIsRefused(JSC::JSGlobalObject* globalObject, uint32_t id, Bun::ErrorCode code)
+{
+    if (InternalModuleRegistryConstants::moduleFeatures[id] != Bun::Feature::Desktop || !Bun__isExecutableWithoutDesktop()) [[likely]]
+        return false;
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    auto message = WTF::makeString("Cannot load '"_s, WTF::String::fromUTF8(publicModuleName(id)), "': it is only in an executable that is built with --desktop"_s);
+    JSC::throwException(globalObject, scope, Bun::createError(globalObject, code, message));
+    return true;
+}
+
 JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, uint32_t id)
 {
+    if (throwIfDesktopModuleIsRefused(globalObject, id, Bun::ErrorCode::ERR_MODULE_NOT_FOUND))
+        return {};
 #if ENABLE(AOT)
     // The JavaScript of a module stays when its feature is removed. Its native functions throw.
     if (vm.hasCompiledCode() && JSC::AOT::hasBuiltinModule(globalObject, id)) {
@@ -445,6 +459,8 @@ JSValue DeclaredModuleLoad::requireNamedAtRunTime(Zig::GlobalObject* globalObjec
 {
     uint32_t id = field;
     if (id < InternalModuleRegistryConstants::moduleCount && !(globalObject->vm().hasCompiledCode() && JSC::AOT::hasBuiltinModule(globalObject, id))) {
+        if (throwIfDesktopModuleIsRefused(globalObject, id, ifNotInExecutable))
+            return {};
         if (auto feature = InternalModuleRegistryConstants::moduleFeatures[id]; feature && JSC::isFeatureRemoved(*feature)) [[unlikely]] {
             throwRemovedModuleError(globalObject, *feature, id, ifNotInExecutable);
             return {};

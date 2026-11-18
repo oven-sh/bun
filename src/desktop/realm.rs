@@ -2,6 +2,8 @@
 
 use bun_jsc::{JSGlobalObject, JSPromise, from_js_host_call, from_js_host_call_generic};
 
+use bun_web::channel::Serialized;
+
 use crate::prelude::*;
 
 pub(crate) use bun_web::realm::native;
@@ -24,6 +26,7 @@ pub(crate) enum Module {
 unsafe extern "C" {
     safe fn Bun__Desktop__realmOf(object: JSValue) -> &'static Realm;
     safe fn Bun__Desktop__clone(from: &Realm, to: &Realm, value: JSValue) -> JSValue;
+    safe fn Bun__Desktop__isDOMException(value: JSValue) -> bool;
     safe fn Bun__Desktop__copyPlainData(to: &Realm, value: JSValue) -> JSValue;
     safe fn Bun__Desktop__require(realm: &Realm, module: Module) -> JSValue;
     safe fn Bun__Desktop__provideModule(realm: &Realm, name: &bun_core::String, load: JSValue);
@@ -44,6 +47,20 @@ pub(crate) fn clone(from: &Realm, to: &Realm, value: JSValue) -> JsResult<JSValu
     } else {
         refuse_symbol(from, value)
     }
+}
+
+/// The same, for another process.
+pub(crate) fn pack(from: &Realm, value: JSValue) -> JsResult<Serialized> {
+    let packed = catch(Serialized::of_data(from, refuse_symbol(from, value)?))?;
+    packed.map_err(|thrown| match Bun__Desktop__isDOMException(thrown) {
+        true => from.throw(format_args!("An object could not be cloned.")),
+        false => from.throw_value(thrown),
+    })
+}
+
+pub(crate) fn unpack(to: &Realm, value: &Serialized) -> JsResult<JSValue> {
+    catch(value.deserialize(to, &[]))?
+        .map_err(|_| to.throw(format_args!("An object could not be cloned.")))
 }
 
 fn refuse_symbol(from: &Realm, value: JSValue) -> JsResult<JSValue> {

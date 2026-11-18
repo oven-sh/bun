@@ -1,5 +1,6 @@
 //! A document, as the realm of the app sees it.
 
+use core::cell::OnceCell;
 use std::rc::Rc;
 
 use bun_jsc::from_js_host_call_generic;
@@ -13,19 +14,21 @@ use bun_web::host::{Reply, Wish};
 use bun_web::hosts::{self, host_of};
 use bun_web::net::embedder::ClientId;
 use bun_web::net::fetch::Controller;
-use bun_web::origin::Origin;
 use bun_web::page::{self, Controls, Purpose as OfSnapshot, Snapshot};
 use bun_web::permissions_policy::Feature;
+use bun_web::renderer::Renderer;
 use bun_web::request::Destination;
 use bun_web::time::monotonic_now;
 use bun_web::url::Url;
 
 use super::load::Loaded;
 use super::parts::WebFrameMain;
+use super::process::Process;
 use super::sandbox::Sandbox;
 use super::{Contents, lazily, logs_to_stderr, object_in};
 use crate::generated_bindgen::contents::js_ElectronPage as fields;
 use crate::prelude::*;
+use crate::renderer::Document;
 use crate::text::{before, origin_of};
 use crate::webview::wire;
 use crate::{app, task};
@@ -80,7 +83,12 @@ pub(crate) struct State {
     base_url: RefCell<Option<String>>,
     /// If it is not the URL.
     base_url_now: RefCell<Option<String>>,
-    controls: Controls,
+    controls: OnceCell<Controls>,
+    /// Unless the document can be called.
+    pub(super) renderer: OnceCell<Renderer>,
+    process: RefCell<Option<Rc<Process>>>,
+    is_started: Cell<bool>,
+    pub(super) has_preload: Cell<bool>,
     /// It shares objects with the documents of its origin.
     pub(super) has_relatives: Cell<bool>,
     activated_at: Cell<f64>,
@@ -97,6 +105,7 @@ pub(crate) struct State {
     pub(super) is_forgotten: Cell<bool>,
     pub(super) is_loaded: Cell<bool>,
     pub(super) restores_scroll: Cell<bool>,
+    pub(super) is_from_history: Cell<bool>,
     /// What the previous document has captured, or 0.
     pub(super) inbound_transition: Cell<u32>,
     pub(super) frames_created: Cell<u32>,
@@ -182,7 +191,11 @@ impl Page {
             sandbox: Default::default(),
             base_url: None.into(),
             base_url_now: None.into(),
-            controls: Controls::new(Rc::clone(&contents.link), id),
+            controls: Default::default(),
+            renderer: Default::default(),
+            process: None.into(),
+            is_started: false.into(),
+            has_preload: false.into(),
             has_relatives: false.into(),
             activated_at: f64::NEG_INFINITY.into(),
             has_been_active: false.into(),
@@ -194,6 +207,7 @@ impl Page {
             is_forgotten: false.into(),
             is_loaded: false.into(),
             restores_scroll: false.into(),
+            is_from_history: false.into(),
             inbound_transition: 0.into(),
             frame_count: 0.into(),
             frames_created: 0.into(),
@@ -290,7 +304,8 @@ impl Page {
         let is_heir = self.is_initial()
             && self.has_relatives.get()
             && self.is_started()
-            && next.origin_key() == self.origin_key();
+            && next.origin_key() == self.origin_key()
+            && (self.client.runs_program() || !next.client.runs_program());
         if is_heir {
             self.url.replace(next.url());
             self.configure(next.about.take())?;
@@ -325,7 +340,7 @@ impl Page {
         }
     }
 
-    fn itself(&self) -> &'static Page {
+    pub(super) fn itself(&self) -> &'static Page {
         // SAFETY: a reference to one leads into a cell.
         unsafe { Page::from_js_unchecked(self.to_js()) }
     }
@@ -434,10 +449,7 @@ impl Page {
 
     /// The same for the same origin, even an opaque one.
     pub(super) fn origin_key(&self) -> String {
-        match self.client.origin() {
-            Origin::Opaque(id) => format!("null {id}"),
-            Origin::Tuple(origin) => string(&origin),
-        }
+        string(&self.client.origin().key())
     }
 
     pub(super) fn referrer(&self) -> String {
@@ -522,7 +534,53 @@ impl Page {
     }
 
     pub(super) fn is_started(&self) -> bool {
-        object_in(fields::controller(self)).is_some()
+        self.is_started.get()
+    }
+
+    /// If it is on this thread.
+    pub(super) fn document(&self) -> Option<&'static Document> {
+        fields::document(self.itself())
+    }
+
+    pub(super) fn started(&self, document: Option<&Document>, renderer: Option<Renderer>) {
+        fields::set_document(self, document);
+        _ = renderer.map(|it| self.renderer.set(it));
+        _ = self.controls.set(Controls::new(page::here(), self.id));
+        self.is_started.set(true);
+    }
+
+    pub(super) fn started_in(&self, process: Rc<Process>) {
+        _ = (self.renderer).set(Renderer::new(Rc::<Process>::clone(&process), self.id));
+        _ = (self.controls).set(Controls::new(Rc::<Process>::clone(&process), self.id));
+        self.process.replace(Some(process));
+        self.is_started.set(true);
+    }
+
+    pub(super) fn process(&self) -> Option<Rc<Process>> {
+        self.process.borrow().clone()
+    }
+
+    pub(super) fn is_in(&self, process: &Process) -> bool {
+        self.process
+            .borrow()
+            .as_ref()
+            .is_some_and(|it| same(&**it, process))
+    }
+
+    pub(crate) fn is_far(&self) -> bool {
+        self.process.borrow().is_some()
+    }
+
+    /// In the same process, or not in any yet.
+    pub(super) fn is_beside(&self, other: &Page) -> bool {
+        self.process().is_none_or(|it| other.is_in(&it))
+    }
+
+    pub(super) fn process_id(&self) -> u32 {
+        if let Some(it) = self.process().or_else(|| self.contents().process()) {
+            return it.pid;
+        }
+        crate::process::id()
     }
 
     pub(super) fn opened(&self) -> JsResult<()> {
@@ -535,9 +593,9 @@ impl Page {
     }
 
     pub(crate) fn tell(&self, order: impl FnOnce(&Controls)) -> JsResult<()> {
-        match self.is_started() {
-            true => from_js_host_call_generic(global(), || order(&self.controls)),
-            false => Ok(()),
+        match self.controls.get().filter(|_| self.is_started()) {
+            Some(controls) => from_js_host_call_generic(global(), || order(controls)),
+            None => Ok(()),
         }
     }
 
@@ -549,7 +607,20 @@ impl Page {
         let outcome = Rc::new(Cell::new(None));
         let slot = Rc::clone(&outcome);
         self.tell(|it| query(it, Box::new(move |_, it| slot.set(Some(it)))))?;
+        if let Some(process) = self.process().filter(|_| Rc::strong_count(&outcome) > 1) {
+            process.wait();
+        }
         Ok(outcome.take().unwrap_or_default())
+    }
+
+    /// The same, for who can wait.
+    pub(crate) async fn ask_later<T: Default + 'static>(
+        &self,
+        query: impl FnOnce(&Controls, Reply<T>),
+    ) -> JsResult<T> {
+        let (send, outcome) = task::oneshot();
+        self.tell(|it| query(it, Box::new(move |_, it| send.send(it))))?;
+        Ok(outcome.await.unwrap_or_default())
     }
 
     /// Unless it is gone by then.
@@ -787,9 +858,6 @@ impl Page {
             this.get().is_forgotten.set(true);
             Ok(())
         });
-        fields::preload(self)
-            .into_iter()
-            .for_each(|it| it.dispose());
         self.client.dispose();
         self.count_frames(i32::MIN);
         if let Some(cleanups) = object_in(fields::cleanups(self)) {
@@ -798,13 +866,13 @@ impl Page {
             })?;
             invoke(cleanups, "clear", &[])?;
         }
-        self.dispose_worlds()?;
+        self.document().map_or(Ok(()), Document::dispose)?;
+        self.tell_renderer(Renderer::dispose)?;
+        (self.process().iter()).for_each(|it| it.dismiss(self.id));
         self.about.take();
-        fields::set_preload(self, None);
         self.traversal.take();
-        for clear in [fields::set_controller, fields::set_inspected] {
-            clear(self, JSValue::UNDEFINED);
-        }
+        fields::set_document(self, None);
+        self.is_started.set(false);
         Ok(())
     }
 }

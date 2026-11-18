@@ -6,8 +6,8 @@ use bun_alloc::Arena;
 ///
 /// When serialized, only a single component will be written if both are equal.
 pub struct Size2D<T> {
-    pub a: T,
-    pub b: T,
+    pub(crate) a: T,
+    pub(crate) b: T,
 }
 
 // Per-type dispatch is expressed via trait bounds — `f32` and
@@ -17,14 +17,14 @@ impl<T> Size2D<T>
 where
     T: Clone + PartialEq,
 {
-    pub fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Size2D<T>>
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Size2D<T>>
     where
         T: Parse<'bump>,
     {
         Self::parse_with(input, T::parse)
     }
 
-    pub fn parse_with<'bump>(
+    pub(crate) fn parse_with<'bump>(
         input: &mut Parser<'_, 'bump>,
         parse_fn: fn(&mut Parser<'_, 'bump>) -> Result<'bump, T>,
     ) -> Result<'bump, Size2D<T>> {
@@ -36,7 +36,7 @@ where
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>
     where
         T: ToCss,
     {
@@ -56,7 +56,7 @@ where
         val.to_css(dest)
     }
 
-    pub fn deep_clone(&self, _bump: &Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &Arena) -> Self {
         // `T: Clone` covers this (Box payloads deep-clone via their Clone impls).
         Size2D {
             a: self.a.clone(),
@@ -71,7 +71,7 @@ where
     }
 
     #[inline]
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
+    pub(crate) fn eql(lhs: &Self, rhs: &Self) -> bool {
         lhs.a == rhs.a && lhs.b == rhs.b
     }
 }

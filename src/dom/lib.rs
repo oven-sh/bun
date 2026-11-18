@@ -23,6 +23,7 @@ mod computed;
 mod condition;
 mod contentful;
 mod contour;
+mod controls;
 mod counter_style;
 mod counters;
 mod cssom;

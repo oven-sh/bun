@@ -108,6 +108,7 @@ pub(crate) fn click<'a>(cx: &mut Cx<'a>, element: &'a Element, trusted: Trusted,
     {
         return;
     }
+    let has_position = click.pointer.is_some();
     let pointer = click.pointer.unwrap_or(PointerData {
         id: -1,
         ..Default::default()
@@ -126,6 +127,9 @@ pub(crate) fn click<'a>(cx: &mut Cx<'a>, element: &'a Element, trusted: Trusted,
         click.mouse,
         pointer,
     );
+    if !has_position {
+        event.set(crate::api::events::EventFlags::HAS_NO_POSITION);
+    }
     dispatch(cx, element, event);
     in_progress.set(false);
 }

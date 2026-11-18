@@ -1,6 +1,7 @@
 #include "root.h"
 #include "Bindgen/DOMJIT.h"
 #include "RemovableFeatures.h"
+#include <JavaScriptCore/EmbedderListItems.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/SnippetParams.h>
 
@@ -27,6 +28,16 @@ static Snippet createSnippet(Effect effect, auto&& generate)
         return CCallHelpers::JumpList();
     });
     return snippet;
+}
+
+static void callGetter(CCallHelpers::JumpList from, CCallHelpers& jit, SnippetParams& params, GetValueFunc::Ptr getter, GPRReg result, GPRReg thisObject)
+{
+    auto isDone = jit.jump();
+    from.link(&jit);
+    jit.move(CCallHelpers::TrustedImmPtr(std::bit_cast<void*>(getter)), result);
+    auto call = jit.jump();
+    isDone.link(&jit);
+    params.addSlowPathCall(call, jit, operationCallGetterOfEmptyField, result, result, thisObject);
 }
 
 NEVER_INLINE Snippet loadFieldOrNull(unsigned offset, Effect effect)
@@ -60,12 +71,7 @@ NEVER_INLINE Snippet tryOrCall(Shortcut* shortcut, GetValueFunc::Ptr getter, Eff
         auto hasFailed = shortcut(jit, result, thisObject, params.gpScratch(0));
         if (hasFailed.empty())
             return;
-        auto isDone = jit.jump();
-        hasFailed.link(&jit);
-        jit.move(CCallHelpers::TrustedImmPtr(std::bit_cast<void*>(getter)), result);
-        auto call = jit.jump();
-        isDone.link(&jit);
-        params.addSlowPathCall(call, jit, operationCallGetterOfEmptyField, result, result, thisObject);
+        callGetter(hasFailed, jit, params, getter, result, thisObject);
     });
     snippet->numGPScratchRegisters = 1;
     return snippet;
@@ -95,11 +101,29 @@ NEVER_INLINE Snippet loadMember(unsigned offset, Member member, Effect effect)
     });
 }
 
-NEVER_INLINE Snippet call(J_JITOperation_GP operation, Effect effect)
+NEVER_INLINE Snippet call(Effect effect)
 {
     BUN_REMOVABLE_DEFINITION(JIT, call);
+    Snippet snippet = JSC::DOMJIT::CallDOMGetterSnippet::create();
+    snippet->requireGlobalObject = false;
+    snippet->effect = effect;
+    return snippet;
+}
+
+NEVER_INLINE Snippet countItemsOrCall(GetValueFunc::Ptr getter, Effect effect)
+{
+    BUN_REMOVABLE_DEFINITION(JIT, countItemsOrCall);
     return createSnippet(effect, [=](CCallHelpers& jit, SnippetParams& params, GPRReg result, GPRReg thisObject) {
-        params.addSlowPathCall(jit.jump(), jit, operation, result, thisObject, thisObject);
+        CCallHelpers::JumpList hasNone;
+        jit.loadPtr(CCallHelpers::Address(thisObject, EmbedderListItems::offsetOfClock()), result);
+        jit.load64(CCallHelpers::Address(result), result);
+        hasNone.append(jit.branch64(CCallHelpers::NotEqual, CCallHelpers::Address(thisObject, EmbedderListItems::offsetOfTime()), result));
+        jit.loadPtr(CCallHelpers::Address(thisObject, EmbedderListItems::offsetOfItems()), result);
+        hasNone.append(jit.branchTestPtr(CCallHelpers::Zero, result));
+        static_assert(IndexingHeader::maximumLength <= std::numeric_limits<int32_t>::max());
+        jit.load32(CCallHelpers::Address(result, JSCellButterfly::offsetOfPublicLength()), result);
+        jit.boxInt32(result, result);
+        callGetter(hasNone, jit, params, getter, result, thisObject);
     });
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { bunEnv, bunExe, isASAN, isLinux, isMacOS, libcPathForDlopen, tempDir } from "harness";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { hasLibrary } from "./library";
@@ -10,7 +10,15 @@ import { openOn, readScreen, screens } from "./screen";
 const render = renderTo.bind(null, "memory");
 
 /** `main` runs in the app, before `script`. On a screen, what is drawn step by step has to end up like a picture that is painted at once. */
-async function renderTo(where: string, html: string, script: string, points: number[][] = [], zoom = 1, main = "") {
+async function renderTo(
+  where: string,
+  html: string,
+  script: string,
+  points: number[][] = [],
+  zoom = 1,
+  main = "",
+  env = {},
+) {
   await using screen = await openOn(where);
   using dir = tempDir("paint", {
     "package.json": JSON.stringify({ name: "fixture", main: "main.js" }),
@@ -18,7 +26,7 @@ async function renderTo(where: string, html: string, script: string, points: num
     "main.js": `
       const { app, BrowserWindow } = require("electron");
       app.setPath("userData", __dirname + "/data");
-      app.trustOrigins(["file:"], { injectedScripts: true, inFrames: true });
+      app.trustOrigins(["file:", "about:"], { injectedScripts: true, inFrames: true });
       ${readScreen}
       const until = async condition => {
         for (const end = Date.now() + 10_000; !(await condition()); await Bun.sleep(1)) if (Date.now() > end) throw new Error("gave up on " + condition);
@@ -47,7 +55,7 @@ async function renderTo(where: string, html: string, script: string, points: num
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--preload=bun:desktop/electron", "."],
-    env: { ...bunEnv, BUN_DESKTOP_HEADLESS: "1", ...screen?.env },
+    env: { ...bunEnv, BUN_DESKTOP_HEADLESS: "1", ...screen?.env, ...env },
     cwd: String(dir),
     stderr: "pipe",
   });
@@ -88,6 +96,237 @@ describe.skipIf(!hasLibrary).concurrent.each(["memory", ...screens])("paint to %
     ]);
     expect(colors.slice(0, 9)).toEqual([...Array(8).fill("0000ff"), "666666"]);
     expect([colors.slice(9).includes("0000ff"), colors.slice(9).includes("ff0000")]).toEqual([true, false]);
+  });
+
+  test("colors change in tables", async () => {
+    const html = `<style>table { float: left; border-spacing: 0; font: 900 40px/40px monospace } td, caption { padding: 0 }</style>
+      <div id=all style="color: #f00; transform: translate(0px, 0px)">
+        <table><tr><td>H</td></tr></table>
+        <table><caption>H</caption></table>
+        <div style="display: table; float: left; font: 900 40px/40px monospace">H</div>
+        <table style="border-collapse: collapse"><tr style="border-top: 40px solid"><td style="width: 20px"></td></tr></table>
+        <table style="background: currentcolor"><tr><td style="width: 20px; height: 40px"></td></tr></table>
+        <table><tr style="background: currentcolor"><td style="width: 20px; height: 40px"></td></tr></table>
+      </div>`;
+    const script = `
+      const frame = () => new Promise(requestAnimationFrame);
+      for (const [color, y] of [["rgb(255, 0, 255)", 10], ["#0f0", 20], ["hsl(240, 100%, 50%)", 30]]) {
+        await frame(); await frame();
+        all.style.color = color;
+        all.style.transform = "translate(0px, " + y + "px)";
+      }
+      await frame(); await frame();
+      return [...all.children].map(it => Math.round(it.getBoundingClientRect().left));`;
+    const [lefts, ...row] = await render(
+      html,
+      script,
+      Array.from({ length: 70 }, (_, i) => [i * 2, 48]),
+    );
+    const colored = lefts.map((left: number) =>
+      [...new Set(row.slice(left / 2 + 1, left / 2 + 10))].filter(
+        it => /^(00|ff){3}$/.test(it as string) && it !== "ffffff",
+      ),
+    );
+    expect(colored).toEqual(Array(6).fill(["0000ff"]));
+  });
+
+  test.each([
+    ["by itself", `<rect id=a width=10 height=10 fill=url(#g) />`, "0000ff", "ffffff"],
+    [
+      "with what is in it",
+      `<g id=a><g transform="scale(2)"><rect width=5 height=5 fill=#00f /></g></g>`,
+      "0000ff",
+      "ffffff",
+    ],
+    ["with a clip", `<rect id=a width=99 height=99 fill=#00f clip-path=url(#c) />`, "0000ff", "ffffff"],
+    ["with its copies", `<rect id=a width=10 height=10 fill=#00f /><use href=#a y=20 />`, "0000ff", "0000ff"],
+    [
+      "in what has copies",
+      `<g id=b><rect id=a width=10 height=10 fill=#00f /></g><use href=#b y=20 />`,
+      "0000ff",
+      "0000ff",
+    ],
+    [
+      "in a clip",
+      `<clipPath id=d><rect id=a width=10 height=10 /></clipPath><rect width=99 height=99 fill=#00f clip-path=url(#d) />`,
+      "0000ff",
+      "ffffff",
+    ],
+    ["in a group with a filter", `<g filter=url(#f)><rect id=a width=10 height=10 /></g>`, "0000ff", "ffffff"],
+    [
+      "twice if that is inherited",
+      `<g id=a><rect y=-40 x=-60 width=10 height=10 fill=#00f style="transform: inherit" /></g>`,
+      "0000ff",
+      "ffffff",
+    ],
+    [
+      "around its own box",
+      `<rect id=a width=10 height=10 fill=#00f style="transform-box: fill-box; transform-origin: center" />`,
+      "0000ff",
+      "ffffff",
+    ],
+    [
+      "unless a rule says otherwise",
+      `<rect id=a width=10 height=10 fill=#00f style="transform: translate(60px, 60px)" />`,
+      "ffffff",
+      "0000ff",
+    ],
+    [
+      "and fades",
+      `<g id=a opacity=.2><rect width=10 height=10 fill=#00f /><rect width=10 height=10 fill=#00f /></g>`,
+      "ccccff",
+      "ffffff",
+    ],
+    [
+      "and keeps the width of its stroke",
+      `<path id=a d="M0 5H10" stroke=#00f stroke-width=10 vector-effect=non-scaling-stroke />`,
+      "0000ff",
+      "ffffff",
+    ],
+  ])("an SVG element moves %s", async (_, markup, ...expected) => {
+    const html = `<svg style="display: block" width=200 height=100>
+      <linearGradient id=g><stop stop-color=#00f /><stop offset=1 stop-color=#00f /></linearGradient><clipPath id=c><rect width=10 height=10 /></clipPath>
+      <filter id=f x=0 y=0 width=1 height=1><feFlood flood-color=#00f /></filter>
+      ${"<rect x=190 width=1 height=1 />".repeat(40)}${markup}</svg>`;
+    const script = `
+      for (const value of ["translate(1 1)", "translate(2 2)", "", "translate(3 3) scale(0)", "translate(9 9) scale(3)", "translate(20 20)", "nonsense", "translate(30 30)", "translate(60 40)"]) {
+        a.setAttribute("transform", value);
+        await new Promise(requestAnimationFrame);
+      }
+      a.setAttribute("class", "other");
+      await new Promise(requestAnimationFrame);
+      return a.transform.baseVal[0].matrix.e;`;
+    expect(
+      await render(html, script, [
+        [35, 35],
+        [65, 45],
+        [65, 65],
+      ]),
+    ).toEqual([60, "ffffff", ...expected]);
+  });
+
+  test.each([
+    ["a background", "background: #00f"],
+    ["a gradient", "background: linear-gradient(#00f, #00f)"],
+    ["a border", "border: 60px solid #00f"],
+    ["a border of two colors", "border: 60px solid #00f; border-right-color: #00e"],
+    ["a shadow", "top: -400px; box-shadow: 0 400px #00f"],
+    ["an inner shadow", "box-shadow: inset 0 0 0 60px #00f"],
+    ["an outline", "outline: 60px solid #00f; outline-offset: -60px"],
+    ["a clip", "overflow: hidden; --inside: #00f"],
+    ["a backdrop", "backdrop-filter: invert(1) drop-shadow(0 0) url(#blue)"],
+    ["what is turned", "background: #00f; rotate: 180deg"],
+    ["what is translucent", "background: #00f; opacity: .99"],
+  ])("-electron-corner-smoothing shapes %s", async (_, declarations) => {
+    const html = `<svg width=0 height=0 style="position: absolute"><filter id=blue><feFlood flood-color=#00f /></filter></svg>
+      <style>p { position: absolute; top: 0; margin: 0; box-sizing: border-box; width: 400px; height: 300px; border-radius: 50px; ${declarations} } i { display: block; height: 100%; background: var(--inside) }</style>
+      <p id=a><i></i></p>`;
+    const script = `
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+      a.style.setProperty("-electron-corner-smoothing", "100%");`;
+    const isBlue = (it: string) => parseInt(it.slice(0, 2), 16) < 0x20;
+    const [, ...colors] = await render(html, script, [
+      [47, 0],
+      [0, 47],
+      [12, 12],
+      [120, 0],
+      [47, 3],
+      [3, 47],
+      [18, 18],
+    ]);
+    expect(colors.map(isBlue)).toEqual([false, false, false, true, true, true, true]);
+  });
+
+  test("an empty box shows, hides and can be hit among many others", async () => {
+    const html = `<style>i { position: absolute; top: 0; width: 20px; height: 20px; background: #00f; visibility: hidden }</style>
+      <div>${"<i></i>".repeat(40)}<i id=a style="left: 20px"></i><i id=b style="left: 40px; visibility: visible"></i><i id=c style="left: 60px; rotate: 45deg"></i></div>`;
+    const script = `
+      const frame = () => new Promise(requestAnimationFrame);
+      await frame(); await frame();
+      c.style.background = "#0f0";
+      await frame(); await frame();
+      a.style.visibility = c.style.visibility = "visible";
+      b.style.visibility = "hidden";
+      await frame(); await frame();
+      a.after(Object.assign(document.createElement("p"), { style: "margin: 40px 0 0; height: 20px; background: #000" }));
+      await frame(); await frame();
+      return [10, 30, 50, 70].map(x => document.elementFromPoint(x, 10).id);`;
+    expect(
+      await render(html, script, [
+        [10, 10],
+        [30, 10],
+        [50, 10],
+        [70, 10],
+        [10, 50],
+      ]),
+    ).toEqual([["", "a", "", "c"], "ffffff", "0000ff", "ffffff", "00ff00", "000000"]);
+  });
+
+  test("hundreds of small things turn, each in its place", async () => {
+    const html = `<style>html { overflow: hidden } i, img { position: absolute; width: 8px; height: 8px } i { border-top-left-radius: 50% }</style><div id=all></div>`;
+    const script = `
+      const canvas = Object.assign(document.createElement("canvas"), { width: 32, height: 32 });
+      canvas.getContext("2d").fillRect(0, 0, 32, 32);
+      for (let i = 0; i < 200; i++) {
+        const it = all.appendChild(i % 5 ? document.createElement("i") : Object.assign(new Image(), { src: canvas.toDataURL() }));
+        it.style.cssText = "left: " + (i % 20 * 10 + 1) + "px; top: " + ((i / 20 | 0) * 10 + 1) + "px; opacity: .3";
+      }
+      await Promise.all([...document.images].map(it => it.decode()));
+      for (let step = 1; step <= 4; step++) {
+        [...all.children].forEach((it, i) => {
+          it.style.transform = "translate(0px, 0px)rotateZ(" + (step + i / 7) + "rad)";
+          it.style.backgroundColor = it.src ? "" : "hsla(" + (step * 60) + ",100%,50%,1)";
+          it.style.opacity = step / 5;
+        });
+        await new Promise(requestAnimationFrame);
+      }`;
+    expect(
+      await render(html, script, [
+        [5, 5],
+        [15, 5],
+        [195, 95],
+        [155, 55],
+      ]),
+    ).toEqual([null, "333333", "3333ff", "3333ff", "333333"]);
+  });
+
+  test.each([
+    ["by itself", "", ["0000ff", "ffffff", "ff0000", "00ff00"]],
+    ["with round corners", "border-radius: 30px", ["ffffff", "ffffff", "ff0000", "00ff00"]],
+    ["that is translucent", "opacity: .2", ["ccccff", "ffffff", "ffcccc", "ccffcc"]],
+    ["that is turned", "rotate: 180deg", ["ff0000", "ffffff", "0000ff", "00ff00"]],
+    ["that is filtered", "filter: invert(1)", ["ffff00", "ffffff", "00ffff", "ff00ff"]],
+  ])("a frame %s shows what changes in it", async (_, declarations, expected) => {
+    const html = `<iframe id=outer style="display: block; border: 0; margin: 10px; width: 80px; height: 80px; ${declarations}"
+      srcdoc="<body style='margin: 0; background: #000'><iframe style='position: absolute; inset: 30px; width: 20px; height: 20px; border: 0' srcdoc='<body>'></iframe>"></iframe>`;
+    const script = `
+      const frame = () => new Promise(requestAnimationFrame);
+      await frame(); await frame();
+      outer.contentDocument.documentElement.style.cssText = "height: 100%; background: linear-gradient(#00f 50%, #f00 50%)";
+      outer.contentDocument.body.style.background = "none";
+      await frame(); await frame();
+      outer.contentWindow[0].document.body.style.background = "#0f0";
+      await frame(); await frame();`;
+    expect(
+      await render(html, script, [
+        [12, 12],
+        [95, 50],
+        [30, 70],
+        [50, 50],
+      ]),
+    ).toEqual([null, ...expected]);
+  });
+
+  test("what is in a frame does not blend with what is behind the frame", async () => {
+    const html = `<body style="background: #f00"><iframe style="display: block; border: 0; width: 80px; height: 80px"
+      srcdoc="<body style='margin: 0'><p style='margin: 0; height: 40px; background: #0f0; mix-blend-mode: multiply'></p><p style='margin: 0; height: 40px; backdrop-filter: invert(1)'>"></iframe>`;
+    expect(
+      await render(html, "", [
+        [20, 20],
+        [20, 60],
+      ]),
+    ).toEqual([null, "00ff00", "ff0000"]);
   });
 
   test.each([
@@ -363,16 +602,9 @@ describe.skipIf(!hasLibrary).concurrent.each(["memory", ...screens])("paint to %
       sizes.push(size(b));
       b.style.height = "20px";
       b.style.border = "5px solid";
-      return [...sizes, size(b), [b.width, b.height]];`;
+      return [...sizes, size(b), [b.width, b.height], getComputedStyle(a).aspectRatio];`;
     expect(await render(html, script)).toEqual([
-      [
-        [52, 100],
-        [28, 20],
-        [16, 16],
-        [16, 16],
-        [72, 30],
-        [60, 20],
-      ],
+      [[52, 100], [28, 20], [16, 16], [16, 16], [72, 30], [60, 20], "1 / 2"],
     ]);
   });
 
@@ -913,6 +1145,60 @@ describe.skipIf(!hasLibrary).concurrent.each(["memory", ...screens])("paint to %
     },
   );
 
+  test.each([true, false])("a canvas that was read keeps up with what changes it (alpha: %p)", async alpha => {
+    const script = `
+      const context = a.getContext("2d", { alpha: ${alpha} }), other = new OffscreenCanvas(20, 20).getContext("2d");
+      const filled = (side, ...color) => new ImageData(Uint8ClampedArray.from({ length: side * side * 4 }, (_, index) => color[index % 4]), side);
+      const read = context => [1, 15].map(at => context.getImageData(at, at, 1, 1).data.join("")).join();
+      const seen = [
+        () => {},
+        () => context.putImageData(filled(20, 9, 8, 7, 0), 0, 0),
+        () => context.putImageData(filled(20, 201, 100, 3, 128), 0, 0),
+        () => (other.drawImage(a, 0, 0), context.putImageData(filled(10, 1, 2, 3, 255), 0, 0)),
+        () => context.putImageData(filled(20, 4, 5, 6, 255), 0, 0, 10, 10, 10, 10),
+        () => context.putImageData(filled(20, 7, 8, 9, 255), 10, 10),
+        () => context.clearRect(0, 0, 10, 10),
+        () => (context.putImageData(filled(20, 1, 1, 1, 255), 0, 0), (a.width = 10)),
+        () => (context.putImageData(filled(20, 2, 2, 2, 255), 0, 0), (a.width = 20), context.putImageData(filled(20, 3, 3, 3, 255), 0, 0)),
+        () => context.reset(),
+        () => (context.putImageData(filled(20, 0, 0, 255, 255), 0, 0), (context.fillStyle = "#0f0"), context.fillRect(10, 10, 10, 10)),
+      ].map(change => (change(), read(context)));
+      await new Promise(requestAnimationFrame);
+      const image = context.getImageData(0, 0, 20, 20);
+      image.data.fill(255, 0, 20 * 4 * 5);
+      context.putImageData(image, 0, 0);
+      return [seen, read(other)];`;
+    const [none, clear, half] = alpha ? ["0000", "0000", "2011004128"] : ["000255", "987255", "2011003255"];
+    const twice = (it: string) => `${it},${it}`;
+    expect(
+      await render("<canvas id=a width=20 height=20></canvas>", script, [
+        [5, 2],
+        [5, 7],
+        [15, 15],
+      ]),
+    ).toEqual([
+      [
+        [
+          twice(none),
+          twice(clear),
+          twice(half),
+          `123255,${half}`,
+          "123255,456255",
+          "123255,789255",
+          `${none},789255`,
+          `${none},0000`,
+          twice("333255"),
+          twice(none),
+          "00255255,02550255",
+        ],
+        twice(half),
+      ],
+      "ffffff",
+      "0000ff",
+      "00ff00",
+    ]);
+  });
+
   test.each(["copy", "source-in", "destination-atop"])("%s clears a canvas that the shape misses", async mode => {
     const script = `
       const context = new OffscreenCanvas(10, 10).getContext("2d");
@@ -1350,6 +1636,108 @@ test.skipIf(!hasLibrary)("a large inline image is complete at once, and is avera
   expect([left.slice(0, 2), left.slice(4, 6), right.slice(0, 2), right.slice(4, 6)]).toEqual(["ff", "00", "00", "ff"]);
 });
 
+describe.skipIf(!hasLibrary).concurrent("an image is not decoded before it is drawn if", () => {
+  const number = (it: number) => Buffer.from(Uint32Array.of(it).buffer).reverse();
+  const chunk = (kind: string, ...data: Buffer[]) => {
+    const body = Buffer.concat([Buffer.from(kind), ...data]);
+    return Buffer.concat([number(body.length - 4), body, number(Bun.hash.crc32(body))]);
+  };
+  const png = (side: number, ...chunks: Buffer[]) =>
+    Buffer.concat([
+      Buffer.from("89504e470d0a1a0a", "hex"),
+      chunk("IHDR", number(side), number(side - 1), Buffer.from([1, 0, 0, 0, 0])),
+      ...chunks,
+      chunk("IDAT", deflateSync(Buffer.alloc(501 * 3999))),
+      chunk("IEND"),
+    ]);
+  const animated = [
+    chunk("acTL", number(1), number(0)),
+    chunk("fcTL", number(0), number(4000), number(3999), Buffer.alloc(14)),
+  ];
+  const runs = Buffer.concat([bmp(0, 0, []), Buffer.from([0, 1])]);
+  [4000, 4000, 1 | (8 << 16), 1, 0, 0, 0, 0].forEach((it, i) => runs.writeUInt32LE(it, 18 + i * 4));
+  test.each([
+    ["it is a large GIF", gif(4000, 1)],
+    ["it is a long GIF", gif(1000, 16)],
+    ["it is a large BMP", runs],
+    [
+      "it is a large icon",
+      Buffer.concat([Buffer.from("0000010001000000000001002000ffff000016000000", "hex"), png(4000)]),
+    ],
+    ["it is a large APNG", png(4000, ...animated)],
+    ["its frames are larger than it is", png(2, ...animated)],
+    [
+      "its orientation is ignored",
+      png(4000, chunk("eXIf", Buffer.from("49492a00080000000100120103000100000006000000", "hex"))),
+    ],
+  ])("%s", async (_, file) => {
+    const load = `(async () => {
+      const blob = new Blob([Uint8Array.fromBase64("${file.toBase64()}")]);
+      const images = Array.from({ length: 8 }, () => Object.assign(new Image(), { src: URL.createObjectURL(blob), style: "visibility: hidden; image-orientation: none" }));
+      document.body.append(...images);
+      await Promise.all(images.map(it => new Promise(resolve => (it.onload = it.onerror = resolve))));
+      while (images.some(it => it.offsetWidth < it.offsetHeight)) await new Promise(requestAnimationFrame);
+      return images.map(it => it.naturalWidth > 0);
+    })()`;
+    const main = `
+      const before = process.resourceUsage().maxRSS;
+      const loaded = await page.executeJavaScript(${JSON.stringify(load)});
+      await page.executeJavaScript("found = " + JSON.stringify([loaded, (process.resourceUsage().maxRSS - before) >> 10]));`;
+    const [[loaded, megabytes]] = await renderTo("memory", "<body>", "return found", [], 1, main);
+    expect(loaded).toEqual(Array(8).fill(true));
+    expect(megabytes).toBeLessThan(isASAN ? 100 : 50);
+  });
+});
+
+test.skipIf(!hasLibrary)("what a damaged database has is not taken for what it claims to be", async () => {
+  const open = `
+    const done = it => new Promise((resolve, reject) => { it.onsuccess = () => resolve(it.result); it.onerror = () => reject(it.error); });
+    const request = indexedDB.open("a");
+    request.onupgradeneeded = () => request.result.createObjectStore("s");
+    const database = await done(request);`;
+  const write = `(async () => {
+    ${open}
+    const values = [new ImageData(1, 1), new ImageData(1, 2), await createImageBitmap(new ImageData(1, 1)), new File(["a"], "a", { lastModified: 1 })];
+    const transaction = database.transaction("s", "readwrite");
+    values.forEach((it, index) => transaction.objectStore("s").put(it, index + 1));
+    await new Promise(resolve => (transaction.oncomplete = resolve));
+  })()`;
+  const read = `(async () => {
+    ${open}
+    const store = database.transaction("s").objectStore("s");
+    const [keys, values] = await Promise.all([done(store.getAllKeys()), done(store.getAll())]);
+    return [keys.map(String), values.map(it => String(it?.lastModified ?? it))];
+  })()`;
+  const view = (kind: string, length: number) =>
+    `16${kind}${"00".repeat(8)}0${length}${"00".repeat(7)}150${length}${"00".repeat(7 + length)}`;
+  const size = (width: string, height: string) => `01000000${width}02000000${height}`;
+  const [one, two, huge] = ["07", "0502000000", "0A000000000000E041"];
+  const damage = [
+    ["value", view("03", 4), "0541414141"],
+    ["value", view("03", 8) + size(one, two), view("03", 0) + size(huge, huge)],
+    ["value", view("02", 4) + size(one, one), view("02", 0) + size(huge, huge)],
+    ["value", "000000000000F03F", "2A0000000000FCFF"],
+    ["key", "10C010000000000000", "100003FFFFFFFFFFD5"],
+  ];
+  const main = `
+    await page.executeJavaScript(${JSON.stringify(write)});
+    const { Database } = require("bun:sqlite");
+    require("fs").mkdirSync(__dirname + "/copy");
+    new Database(__dirname + "/data/Web Storage.sqlite").run("VACUUM INTO ?", [__dirname + "/copy/Web Storage.sqlite"]);
+    const copy = new Database(__dirname + "/copy/Web Storage.sqlite");
+    for (const [column, from, to] of ${JSON.stringify(damage)}) copy.run("UPDATE records SET " + column + " = unhex(replace(hex(" + column + "), ?, ?))", [from, to]);
+    copy.close();
+    const other = new BrowserWindow({ webPreferences: { session: require("electron").session.fromPath(__dirname + "/copy") } });
+    await other.loadFile("index.html");
+    await page.executeJavaScript("found = " + JSON.stringify(await other.webContents.executeJavaScript(${JSON.stringify(read)})));`;
+  expect(await renderTo("memory", "", "return found", [], 1, main)).toEqual([
+    [
+      ["NaN", "1", "2", "3"],
+      ["NaN", "null", "null", "null"],
+    ],
+  ]);
+});
+
 describe.concurrent.each(screens)("the compositor on %s", where => {
   const show = (html: string, main: string, script = "", points: number[][] = []) =>
     renderTo(where, html, script, points, 1, main);
@@ -1358,6 +1746,42 @@ describe.concurrent.each(screens)("the compositor on %s", where => {
     window.sendInputEvent({ type: "mouseWheel", x: ${x}, y: ${y}, deltaX: 0, deltaY: ${deltaY} });`;
   const rows = ["f00", "0f0", "00f", "ff0", "0ff", "f0f"].map(it => `<p style="background: #${it}"></p>`).join("");
   const style = "<style>p { margin: 0; height: 100px } * { scrollbar-width: none }</style>";
+
+  test("what takes minutes to paint is given up", async () => {
+    const html = `<svg width=100 height=100><filter id=f>${"<feTurbulence baseFrequency=.1 numOctaves=24 />".repeat(10_000)}</filter><rect width=100 height=100 filter=url(#f) /></svg>
+      <i style="position: fixed; inset: 0 0 0 100px; background: #f00; clip-path: polygon(0 0, 100% 50%, 0 100%)"></i>`;
+    const main = `await until(() => shown(150, 50) === "ff0000");`;
+    expect(await show(html, main, `document.querySelector("svg").remove()`, [[50, 50]])).toEqual([null, "ffffff"]);
+  });
+
+  test.each([
+    ["nothing", ""],
+    ["filters", `<i style="backdrop-filter: blur(2px)"></i>`.repeat(100)],
+  ])("very many layers with %s in front of them are shown", async (_, more) => {
+    const layers = Array.from(
+      { length: 30_000 },
+      (_, i) => `<i style="border-radius: ${60 + (i % 670) / 10}px"></i>`,
+    ).join("");
+    const html = `<style>i { position: fixed; inset: 0 -200px -200px 0; background: #00f1 }</style><div>${layers}${more}</div>
+      <b style="position: fixed; inset: 40px; background: #f00"></b>`;
+    const main = `await until(() => shown(100, 50) === "ff0000");`;
+    expect(await show(html, main, `document.querySelector("div").remove()`, [[10, 10]])).toEqual([null, "ffffff"]);
+  });
+
+  test("large animations play, but for those that there is no memory for", async () => {
+    const image = (i: number) =>
+      `<img width=20 style="float: left" src="data:image/gif;base64,${gif(2000, 4, i).toBase64()}">`;
+    const html = `${[0, 1, 2, 3].map(image).join("")}<template>${image(4)}</template>`;
+    const main = `
+      const last = new Set();
+      for (const x of [10, 30, 50, 70]) await until(() => shown(x, 10) === "0000ff");
+      await page.executeJavaScript("document.body.append(document.querySelector('template').content)");
+      await until(() => shown(90, 10) === "ff0000");
+      for (const color of ["0000ff", "ff0000", "0000ff"]) await until(() => last.add(shown(90, 10)) && shown(10, 10) === color);
+      await page.executeJavaScript("last = " + JSON.stringify([...last]) + "; document.body.replaceChildren(document.images[4])");
+      await until(() => shown(10, 10) === "0000ff");`;
+    expect(await show(html, main, "document.images[0].remove(); return last")).toEqual([["ff0000"]]);
+  });
 
   test("the wheel moves the page, but not what is fixed or sticks", async () => {
     const html = `${style}<i style="position: fixed; top: 0; width: 20px; height: 20px; background: #000"></i>
@@ -1407,6 +1831,23 @@ describe.concurrent.each(screens)("the compositor on %s", where => {
         [100, 99],
       ]),
     ).toEqual([500, "ff00ff"]);
+  });
+
+  test("the caret blinks in a frame", async () => {
+    const html = `<iframe style="border: 0" srcdoc="<body style='margin: 0'><input style='all: unset; font-size: 40px; caret-color: #f00'>"></iframe>`;
+    const main = `window.focus();
+      await page.executeJavaScript("frames[0].document.querySelector('input').focus()");
+      await until(() => shown(0, 20) === "ff0000");
+      await until(() => shown(0, 20) === "ffffff");`;
+    expect(await show(html, main, "frames[0].document.activeElement.blur()", [[0, 20]])).toEqual([null, "ffffff"]);
+  });
+
+  test("an animated image plays in a frame", async () => {
+    const gif =
+      "R0lGODlhAQABAIAAAP8AAAAA/yH/C05FVFNDQVBFMi4wAwEAAAAh+QQABQAAACwAAAAAAQABAAACAkQBACH5BAAFAAAALAAAAAABAAEAAAICTAEAOw==";
+    const html = `<iframe style="border: 0" srcdoc="<body style='margin: 0'><img width=40 height=40 src='data:image/gif;base64,${gif}'>"></iframe>`;
+    const main = `for (const color of ["ff0000", "0000ff", "ff0000"]) await until(() => shown(20, 20) === color);`;
+    expect(await show(html, main, "frames[0].document.images[0].remove()", [[20, 20]])).toEqual([null, "ffffff"]);
   });
 
   test("transforms and opacity are animated without scripts", async () => {
@@ -1605,6 +2046,238 @@ describe.skipIf(!hasLibrary).concurrent("canvas", () => {
   });
 });
 
+const hasGPU = isMacOS
+  ? process.arch === "arm64"
+  : isLinux &&
+    ["/usr/lib64", "/usr/lib", "/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu"].some(it =>
+      existsSync(it + "/libEGL_mesa.so.0"),
+    );
+
+describe.skipIf(!hasLibrary || !hasGPU).concurrent("a canvas that the GPU draws", () => {
+  const onGPU = (where: string, html: string, script: string, points: number[][] = []) =>
+    renderTo(where, html, script, points, 1, "", { BUN_DESKTOP_RENDERER: "gpu" });
+  const prelude = `
+    const both = (draw, alpha) => [false, true].map(willReadFrequently => {
+      const context = new OffscreenCanvas(120, 80).getContext("2d", { willReadFrequently, alpha });
+      draw(context, context.canvas);
+      return context.getImageData(0, 0, 120, 80).data;
+    });
+    const gradient = it => (it.addColorStop(0, "#f00"), it.addColorStop(0.4, "#0f08"), it.addColorStop(1, "#00f"), it);
+    const picture = (width, height, willReadFrequently) => {
+      const it = new OffscreenCanvas(width, height).getContext("2d", { willReadFrequently });
+      for (let i = 0; i < 16; i++) (it.fillStyle = ["#f00", "#0f0", "#00f8", "#ff0"][(i + (i >> 2)) % 4]), it.fillRect(((i % 4) * width) / 4, ((i >> 2) * height) / 4, width / 4, height / 4);
+      return it.canvas;
+    };
+    const star = new Path2D("M40 5L62 72L5 30L75 30L18 72z");`;
+
+  test("takes samples of edges, unless it is read often", async () => {
+    const script = `${prelude}
+      return both(it => (it.arc(60, 40, 33, 0, 4), it.fill())).map(data => new Set(data.filter((_, at) => at % 4 === 3)).size);`;
+    const [[sampled, exact]] = await onGPU("memory", "", script);
+    expect([sampled, exact > 20]).toEqual([5, true]);
+  });
+
+  test.skipIf(!isLinux)("is left to the CPU in a process that cannot make memory executable", async () => {
+    const main = `
+      const libc = require("bun:ffi").dlopen(${JSON.stringify(libcPathForDlopen())}, { prctl: { args: ["i32", "u64", "u64", "u64", "u64"], returns: "i32" } });
+      const PR_SET_MDWE = 65;
+      await page.executeJavaScript("isRefused = " + (libc.symbols.prctl(PR_SET_MDWE, 1, 0, 0, 0) === 0));`;
+    const script = `${prelude}
+      const [first, second] = both(it => (it.arc(60, 40, 33, 0, 4), it.fill()));
+      return first.every((value, at) => value === second[at]) === isRefused;`;
+    expect(await renderTo("memory", "", script, [], 1, main, { BUN_DESKTOP_RENDERER: "gpu" })).toEqual([true]);
+  });
+
+  test.each([
+    ["fills", `it.fillStyle = "#08f8"; it.fill(star); it.translate(40, 0); it.fill(star, "evenodd")`],
+    [
+      "strokes that cross themselves",
+      `it.strokeStyle = "#f008"; it.lineWidth = 9; for (it.lineJoin of ["miter", "round", "bevel"]) it.stroke(star), it.translate(20, 0)`,
+    ],
+    [
+      "caps",
+      `it.lineWidth = 12; for (it.lineCap of ["butt", "round", "square"]) it.stroke(new Path2D("M20 15C40 0 60 40 100 15")), it.stroke(new Path2D("M20 25L100 28")), it.translate(0, 22)`,
+    ],
+    [
+      "dashes",
+      `it.lineWidth = 4; it.setLineDash([9, 5]); it.lineDashOffset = 3; it.arc(60, 40, 30, 0, 7); it.stroke(); it.strokeRect(5, 5, 110, 70)`,
+    ],
+    [
+      "thin lines",
+      `it.lineWidth = 0.5; it.stroke(new Path2D("M5 9H70V60")); it.lineWidth = 1; for (let x = 80.5; x < 120; x += 5) it.beginPath(), it.moveTo(x, 0), it.lineTo(x, 80), it.stroke()`,
+    ],
+    ["a pen that is wider than the curve", `it.lineWidth = 60; it.arc(60, 40, 5, 0, -Math.PI / 2, true); it.stroke()`],
+    [
+      "a pen that is distorted",
+      `it.setTransform(2, 0.3, -0.4, 0.7, 20, 0); it.lineWidth = 8; it.arc(25, 40, 15, 0, 5); it.stroke()`,
+    ],
+    [
+      "gradients",
+      `it.fillStyle = gradient(it.createLinearGradient(5, 5, 35, 70)); it.fillRect(0, 0, 40, 80); it.fillStyle = gradient(it.createRadialGradient(55, 30, 3, 60, 40, 30)); it.fillRect(40, 0, 40, 80);
+      it.strokeStyle = gradient(it.createConicGradient(1, 100, 40)); it.lineWidth = 15; it.arc(100, 40, 10, 0, 7); it.stroke()`,
+    ],
+    [
+      "rectangles",
+      `it.fillStyle = "#080"; it.fillRect(0, 0, 120, 80); it.clearRect(10, 10, 30, 30); it.clearRect(50.5, 10.5, 9, 9); it.fillStyle = "#fff8"; it.fillRect(20.25, 20.5, 50, 30.5); it.rotate(0.3); it.fillRect(60, 10, 40, 20)`,
+    ],
+    [
+      "clips",
+      `it.save(); it.rect(10, 10, 50, 40); it.clip(); it.fill(star); it.restore(); it.translate(40, 0); it.clip(star); it.fillStyle = "#00f"; it.fillRect(0, 20, 99, 30)`,
+    ],
+    [
+      "what covers what",
+      `for (let i = 0; i < 300; i++) it.fillStyle = ["#f00", "#0f08", "#00f"][i % 3], it.beginPath(), it.arc(i * 37 % 120, i * 53 % 80, 5 + i % 20, 0, 7), it.fill()`,
+    ],
+    [
+      "more than fits in a pass",
+      `it.lineWidth = 2; const steps = new Path2D("M0 0H9V9H19V19H29V29H39"); for (let i = 0; i < 20000; i++) it.strokeStyle = i % 2 ? "#f00" : "#00f1", it.setTransform(1, 0, 0, 1, i * 7 % 80, i * 3 % 50), it.stroke(steps)`,
+    ],
+    [
+      "operators",
+      `for (it.globalCompositeOperation of ["source-over", "lighter", "destination-out", "multiply", "xor", "destination-over", "source-atop"]) it.fillStyle = "#3c98", it.fill(star), it.translate(6, 0)`,
+    ],
+    [
+      "operators that clear",
+      `it.fillRect(0, 0, 120, 60); it.globalCompositeOperation = "destination-in"; it.fill(star); it.globalCompositeOperation = "source-over"; it.stroke(star)`,
+    ],
+    [
+      "shadows and filters",
+      `it.fill(star); it.shadowColor = "#f00"; it.shadowBlur = 6; it.shadowOffsetX = 4; it.fillRect(70, 10, 20, 20); it.shadowColor = "#0000"; it.filter = "blur(2px)"; it.fillRect(70, 50, 20, 20)`,
+    ],
+    [
+      "text",
+      `it.fill(star); it.font = "20px sans-serif"; it.fillStyle = "#f00"; it.fillText("Hello", 50, 30); it.strokeText("Hi", 70, 70); it.rotate(0.2); it.fillText("you", 60, 40)`,
+    ],
+    [
+      "itself",
+      `it.fillStyle = "#f00"; it.fill(star); it.drawImage(canvas, 40, 0); it.fillStyle = "#00f"; it.fill(star); it.drawImage(canvas, 0, 0, 120, 80, 60, 40, 60, 40)`,
+    ],
+    [
+      "images that are turned or reduced",
+      `it.rotate(0.3); it.drawImage(picture(20, 20, true), 30, 0); it.drawImage(picture(400, 400, true), 60, 0, 40, 40); it.drawImage(picture(40, 40, false), 30, 30, 36, 36)`,
+    ],
+    [
+      "pixels that are read and written",
+      `it.fill(star); it.putImageData(it.getImageData(20, 20, 40, 40), 75, 5); it.strokeStyle = "#0f0"; it.lineWidth = 5; it.stroke(star)`,
+    ],
+    [
+      "another size",
+      `it.fill(star); canvas.width = 60; it.fill(star); canvas.width = 120; it.stroke(star); it.reset(); it.fillStyle = "#f0f"; it.fill(star)`,
+    ],
+  ])("has the pixels that the CPU makes: %s", async (_, draw) => {
+    const script = `${prelude}
+      const [gpu, cpu] = both((it, canvas) => { ${draw} });
+      let [painted, edges, far] = [0, 0, 0];
+      for (let at = 0; at < cpu.length; at += 4) {
+        const off = Math.max(...[0, 1, 2, 3].map(it => Math.abs((gpu[at + it] * (it < 3 ? gpu[at + 3] : 255) - cpu[at + it] * (it < 3 ? cpu[at + 3] : 255)) / 255)));
+        painted += cpu[at + 3] > 0, edges += off > 4, far += off > 100;
+      }
+      return [painted > 200, edges < painted / 2, far];`;
+    expect(await onGPU("memory", "", script)).toEqual([[true, true, 0]]);
+  });
+
+  const operators =
+    "source-over source-in source-out source-atop destination-over destination-in destination-out destination-atop lighter copy xor multiply screen overlay darken lighten color-dodge color-burn hard-light soft-light difference exclusion hue saturation color luminosity clear";
+  test.each([
+    [
+      "operators",
+      `for (const [i, operator] of "${operators}".split(" ").entries()) {
+      it.setTransform(1, 0, 0, 1, i % 9 * 13, (i / 9 | 0) * 26); it.drawImage(picture(12, 16, true), 0, 0);
+      for (const [clip, draw] of [["M0 0H4V25H0z", () => it.fillRect(1, 5, 2, 15)], ["M4 0H8V25H4z", () => it.drawImage(picture(4, 8, true), 5, 12)], ["M8 0L12 2V25L8 20z", () => it.fill(new Path2D("M8 4H12V22H8zM9 9H11V14H9z"), "evenodd")]])
+        it.save(), it.clip(new Path2D(clip)), (it.globalCompositeOperation = operator), (it.fillStyle = "#3c98"), draw(), it.restore();
+    }`,
+    ],
+    [
+      "parts of images",
+      `it.drawImage(picture(40, 40, true), 3, 4); it.drawImage(picture(200, 200, true), 20, 20, 40, 40, 50, -10, 40, 40); it.globalAlpha = 0.5; it.drawImage(picture(200, 200, false), 120, 20, 40, 40, 95, 50, 40, 40)`,
+    ],
+    [
+      "images that are enlarged or mirrored",
+      `it.drawImage(picture(8, 8, true), 3.5, 4.5, 30, 60); it.imageSmoothingEnabled = false; it.drawImage(picture(8, 8, true), 40, 4, 32, 64); it.scale(-1, -1); it.drawImage(picture(200, 200, true), 40, 40, 30, 30, -115, -70, 30, 30)`,
+    ],
+    [
+      "an image that changes",
+      `const from = picture(200, 200, true); for (let i = 0; i < 6; i++) from.getContext("2d").clearRect(i * 3, 0, 2, 9), it.drawImage(from, 0, 0, 20, 70, i * 20, 5, 20, 70); it.drawImage(from, 90, 90, 20, 20, 0, 0, 20, 20)`,
+    ],
+    [
+      "a small canvas that stays as it is",
+      `const from = picture(20, 20, true); it.drawImage(from, 5, 5); it.getImageData(0, 0, 1, 1); it.drawImage(picture(40, 8, true), 60, 5); it.drawImage(from, 5, 40)`,
+    ],
+    [
+      "a canvas of the GPU that changes",
+      `const from = picture(20, 70, false); for (let i = 0; i < 6; i++) from.getContext("2d").clearRect(i * 3, 0, 2, 9), it.drawImage(from, i * 20, 5)`,
+    ],
+    [
+      "patterns",
+      `for (const [side, repetition] of [[12, "repeat"], [12, "repeat-x"], [12, "repeat-y"], [132, "no-repeat"]]) it.fillStyle = it.createPattern(picture(side, side, true), repetition), it.fillRect(-10, -10, 29, 80), it.translate(30, 5)`,
+    ],
+    [
+      "glyphs",
+      `it.font = "20px sans-serif"; it.fillStyle = "#f008"; it.fillText("Hello", 5.3, 20); it.fillStyle = gradient(it.createLinearGradient(0, 0, 120, 0)); it.fillText("gradient", 5, 45); it.rect(10, 55, 60, 12); it.clip(); it.fillText("clipped", 5, 70)`,
+    ],
+    [
+      "more glyphs than fit in a pass",
+      `it.font = "250px sans-serif"; it.letterSpacing = "-139.7px"; it.fillStyle = "#00f1"; for (let i = 0; i < 9; i++) it.fillText(String.fromCharCode(...Array.from({ length: 250 }, (_, at) => 192 + at)), i / 4 - 20, 150 + i)`,
+    ],
+    [
+      "pixels that stick out",
+      `it.drawImage(picture(120, 80, true), 0, 0); const pixels = it.getImageData(10, 10, 70, 50); it.putImageData(pixels, -30, -20); it.putImageData(pixels, 90, 60); it.putImageData(pixels, 200, 0); it.fillRect(50, 30, 9, 9); it.putImageData(it.getImageData(0, 0, 120, 80), 0, 0)`,
+    ],
+    [
+      "parts that are read in turn",
+      `it.clearRect(0, 0, 120, 80); it.drawImage(picture(120, 80, true), 0, 0); const parts = [0, 40, 80].map(x => it.getImageData(x, 20, 30, 50)); it.clearRect(0, 0, 120, 80); parts.forEach((part, at) => it.putImageData(part, 85 - at * 40, 5))`,
+    ],
+    [
+      "what a mask clips",
+      `it.clip(star); it.drawImage(picture(60, 60, true), 3, 4); it.font = "20px sans-serif"; it.fillText("Hello", 15, 45); it.clearRect(30, 20, 10, 40)`,
+    ],
+    [
+      "many clips",
+      `for (let i = 0; i < 200; i++) it.save(), it.beginPath(), it.rect(i % 20 * 6, (i / 20 | 0) * 8, 5, 7), it.clip(), (it.fillStyle = i % 3 ? "#f008" : "#00f"), it.fill(new Path2D("M9 9H99V70H9z")), it.restore(), i % 7 || it.fillRect(i % 100, 40, 9, 9)`,
+    ],
+    [
+      "shadows",
+      `it.shadowColor = "#f00"; it.shadowBlur = 6; it.shadowOffsetX = 4; it.fill(star); it.drawImage(picture(20, 20, true), 80, 4); it.fillText("shadow", 70, 60)`,
+    ],
+  ])("has the very pixels that the CPU makes: %s", async (_, draw) => {
+    const script = `${prelude}
+      return [true, false].map(alpha => {
+        const [gpu, cpu] = both(it => { ${draw} }, alpha);
+        const on = (data, at) => (at % 4 < 3 ? (data[at] * data[at | 3]) / 255 : data[at]);
+        return [new Set(new Uint32Array(cpu.buffer)).size > 2, cpu.filter((_, at) => Math.abs(on(gpu, at) - on(cpu, at)) > 3).length];
+      });`;
+    expect(await onGPU("memory", "", script)).toEqual([
+      [
+        [true, 0],
+        [true, 0],
+      ],
+    ]);
+  });
+
+  test.each(["memory", ...screens])("is shown in %s, in a frame and under other things", async where => {
+    const html = `<canvas id=a width=40 height=40 style="position: absolute"></canvas><canvas id=b width=40 height=40 style="position: absolute; left: 50px; background: #ff0"></canvas>
+      <div style="position: absolute; left: 50px; width: 9px; height: 9px; background: #0ff"></div><iframe id=f style="position: absolute; left: 100px; border: 0" width=40 height=40></iframe>`;
+    const script = `
+      f.contentDocument.body.innerHTML = "<canvas width=40 height=40 style='position: absolute; inset: 0'></canvas>";
+      for (const color of ["#f00", "#0f0", "#00f"]) {
+        for (const it of [a, b, f.contentDocument.body.firstChild].map(it => it.getContext("2d"))) {
+          it.clearRect(0, 0, 40, 40), (it.fillStyle = color), it.beginPath(), it.arc(15, 15, 15, 0, 7), it.fill();
+        }
+        await new Promise(requestAnimationFrame);
+      }`;
+    expect(
+      await onGPU(where, html, script, [
+        [15, 15],
+        [65, 15],
+        [115, 15],
+        [57, 7],
+        [85, 35],
+        [35, 35],
+      ]),
+    ).toEqual([null, "0000ff", "0000ff", "0000ff", "00ffff", "ffff00", "ffffff"]);
+  });
+});
+
 describe.skipIf(!hasLibrary).concurrent("web fonts", () => {
   const font = (type: string) =>
     readFileSync(
@@ -1633,10 +2306,24 @@ describe.skipIf(!hasLibrary).concurrent("web fonts", () => {
       const narrow = fonts[0].slice(), view = new DataView(narrow.buffer), tables = {};
       for (let at = 12; at < 12 + view.getUint16(4) * 16; at += 16) tables[String.fromCharCode(...narrow.subarray(at, at + 4))] = view.getUint32(at + 8);
       for (let i = 0; i < view.getUint16(tables.hhea + 34); i++) view.setUint16(tables.hmtx + i * 4, 100);
-      await draw("a", fonts[0]), await draw("b", narrow);
-      const width = style => Object.assign(document.body.appendChild(document.createElement("span")), { style, textContent: "210" }).offsetWidth;
-      return [width("font: 10px b; font-feature-settings: 'aaaa' 1049163, 'bbbb' 1048439, 'cccc' 1029294, 'dddd' 1034851"), width("font: 10px a")];`;
-    expect(await render("", script)).toEqual([[12, 18]]);
+      for (const face of [new FontFace("a", fonts[0]), new FontFace("b", narrow)]) document.fonts.add(await face.load());
+      const width = (style, textContent) => Object.assign(document.body.appendChild(document.createElement("p")), { style: "float: left;" + style, textContent }).offsetWidth;
+      const crafted = "font: 10px b; font-feature-settings: 'aaaa' 1049163, 'bbbb' 1048439, 'cccc' 1029294, 'dddd' 1034851";
+      return [width("font: 10px a", "A"), width("font: 10px b", "A"), width(crafted, "000"), width("font: 10px a", "000")];`;
+    expect(await render("", script)).toEqual([[6, 1, 3, 18]]);
+  });
+
+  test.skipIf(!isMacOS)("the fonts that macOS adds are those of Chromium", async () => {
+    const script = `
+      const size = ([font, textContent, lang = ""]) => {
+        const { width, height } = Object.assign(document.body.appendChild(document.createElement("div")), { style: "position: absolute; white-space: pre; font:" + font, textContent, lang }).getBoundingClientRect();
+        return Math.round(width) + "x" + height;
+      };
+      const all = [["14px serif", "🙂"], ["20px serif", "🙂"], ["32px serif", "🙂"], ["14px serif", "한글"], ["14px sans-serif", "한글"], ["16px Menlo", "עברית"], ["16px missing", "Hamburgefonstiv 0123", "ja"], ["16px missing", "Hamburgefonstiv 0123"]];
+      return all.map(size);`;
+    expect(await render("<meta charset=utf-8>", script)).toEqual([
+      ["18x23", "22x29", "32x42", "28x17", "24x17", "48x20", "185x24", "148x18"],
+    ]);
   });
 
   test("faces are chosen by their slope", async () => {
@@ -1757,6 +2444,36 @@ describe.skipIf(!hasLibrary).concurrent("text that is edited is laid out like a 
   });
 });
 
+test.skipIf(!hasLibrary).concurrent.each(["horizontal-tb", "vertical-rl"])(
+  "::first-line may part a mark from its letter in %s",
+  async mode => {
+    const html = `<style>p::first-line { font-size: 20px }</style>
+    <p style="writing-mode: ${mode}; inline-size: max-content; font: 10px serif">a<i style="font: 10px serif">&#x301;</i>b c<br><b style="padding-top: 50px">d</b></p>`;
+    expect(
+      await render(html, `const b = document.querySelector("b"); return [b.offsetWidth > 50, b.offsetHeight > 50]`),
+    ).toEqual([[false, true]]);
+  },
+);
+
+test.skipIf(!hasLibrary).concurrent.each([
+  [
+    "pre-wrap",
+    "<q>aa <q>bbb&#10;</q></q><q></q><q>&#9;c&#10;&#10;</q>d",
+    ["0,0,3,2", "0,1,3,1", "0,2,0,1", "0,2,8,2"],
+    [5, 6],
+  ],
+  ["pre-wrap", "aaaaa <q> </q><q></q>a", ["6,0,1,1", "7,0,0,1"], [5, 2]],
+  ["pre", "<q>aaa <q>bbb</q>&#10;c</q><q>&#10;</q>", ["0,0,7,2", "4,0,3,1", "1,1,0,1"], [7, 2]],
+  ["normal", "<q class=pre>aaa-</q><q class=pre>bb</q>", ["0,0,4,1", "0,1,2,1"], [5, 2]],
+])("elements among kept white space in %s: %s", async (space, html, rects, size) => {
+  const style = `<style>body, p { margin: 0 } p { font: 20px/20px monospace; width: 5ch; white-space: ${space} } q { quotes: none } q::before, q::after { content: none } .pre { white-space: pre }</style>`;
+  const script = `
+    const p = document.querySelector("p"), ch = p.getBoundingClientRect().width / 5;
+    const cells = it => [it.x / ch, Math.floor(it.y / 20 + 0.5), it.width / ch, it.height / 20].map(Math.round).join();
+    return [[...p.querySelectorAll("q")].map(it => cells(it.getBoundingClientRect())), [Math.round(p.scrollWidth / ch), p.offsetHeight / 20]];`;
+  expect(await render(`${style}<p>${html}</p>`, script)).toEqual([[rects, size]]);
+});
+
 test.skipIf(!hasLibrary).concurrent("control characters are visible, whatever is around them", async () => {
   const script = `
     const text = document.querySelector("p").appendChild(new Text()), range = document.createRange();
@@ -1764,6 +2481,40 @@ test.skipIf(!hasLibrary).concurrent("control characters are visible, whatever is
     const expected = width("a\\x01b");
     return [expected > 0, ["\\x1f", "\\x7f", "\\x80", "\\x9f"].flatMap(it => ["a" + it + "b", "é" + it + "é", "\\u2b24" + it]).filter(it => Math.abs(width(it) - expected) > 0.05)];`;
   expect(await render(`<p style="font: 20px serif"></p>`, script)).toEqual([[true, []]]);
+});
+
+test.skipIf(!hasLibrary).concurrent("a resizer leaves the size alone that it does not change", async () => {
+  const main = `for (const [type, x] of [["mouseMove", 98], ["mouseDown", 98], ["mouseMove", 78], ["mouseUp", 78]]) page.sendInputEvent({ type, x, y: 48, button: "left", modifiers: ["leftbuttondown"] });`;
+  const html = `<div style="height: 100px"><p style="margin: 0; width: 100px; height: 50%; overflow: hidden; resize: both"></p></div>`;
+  const script = `const { style } = document.querySelector("p"); return [style.width, style.height];`;
+  expect(await render(html, script, [], 1, main)).toEqual([["80px", "50%"]]);
+});
+
+test
+  .skipIf(!hasLibrary)
+  .concurrent("content-visibility: auto shows what its clip margin brings into sight", async () => {
+    const html = `<body style="height: 9000px"><div style="content-visibility: auto; height: 10px; overflow-clip-margin: 9000px"><p style="margin: 0; height: 9000px; background: #00f">`;
+    const script = `scrollTo(0, 2000); for (let i = 0; i < 3; i++) await new Promise(requestAnimationFrame);`;
+    expect(await render(html, script, [[10, 10]])).toEqual([null, "0000ff"]);
+  });
+
+test.skipIf(!hasLibrary).concurrent("the rule of nested columns reaches the end of its row", async () => {
+  const html = `<div style="columns: 2; gap: 0; height: 40px; column-fill: auto"><div style="columns: 2; gap: 10px; column-rule: 10px solid #00f; height: 80px">${"<p style='margin: 0; height: 20px'></p>".repeat(3)}</div></div>`;
+  expect(
+    await render(html, "", [
+      [50, 10],
+      [50, 35],
+      [150, 10],
+    ]),
+  ).toEqual([null, "0000ff", "0000ff", "ffffff"]);
+});
+
+test.skipIf(!hasLibrary).concurrent("quotes follow the language", async () => {
+  const script = `
+    const [changed, expected] = document.querySelectorAll("q");
+    changed.offsetWidth, (changed.parentNode.lang = "fr");
+    return changed.getBoundingClientRect().width - expected.getBoundingClientRect().width;`;
+  expect(await render(`<p lang=en><q lang=de>a</q></p><p lang=fr><q lang=de>a</q></p>`, script)).toEqual([0]);
 });
 
 describe.skipIf(!hasLibrary).concurrent("untrusted markup", () => {
@@ -1871,6 +2622,27 @@ describe.skipIf(!hasLibrary).concurrent("untrusted markup", () => {
     expect(await render("", script)).toEqual([[false, true, false, true]]);
   });
 });
+
+/** Red and blue by turns. */
+function gif(side: number, frames: number, spare = 0) {
+  const short = (it: number) => [it & 255, it >> 8];
+  const frame = (index: number) => {
+    // Each code stands for a run that is longer by one.
+    const codes = [4, index % 2, ...Array.from({ length: Math.ceil(Math.sqrt(2) * side) }, (_, i) => i + 6)];
+    const bits = codes
+      .map(it => it.toString(2).padStart(3, "0"))
+      .reverse()
+      .join("");
+    const data = bits
+      .match(/.{1,8}(?=(.{8})*$)/g)!
+      .map(it => parseInt(it, 2))
+      .reverse();
+    const blocks = data.flatMap((it, i) => (i % 255 ? [it] : [Math.min(255, data.length - i), it]));
+    return [0x21, 0xf9, 4, 0, 5, 0, 0, 0, 0x2c, 0, 0, 0, 0, ...short(side), ...short(side), 0, 2, ...blocks, 0];
+  };
+  const header = [...Buffer.from("GIF89a"), ...short(side), ...short(side), 0x80, 0, spare, 255, 0, 0, 0, 0, 255];
+  return Buffer.from([...header, ...Array.from({ length: frames }, (_, i) => frame(i)).flat(), 0x3b]);
+}
 
 function bmp(width: number, height: number, pixels: number[][]) {
   const bytes = Buffer.alloc(54 + width * height * 3);

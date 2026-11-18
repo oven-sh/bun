@@ -7846,6 +7846,48 @@ pub mod net {
             (rc == 0).then_some(kind)
         }
 
+        /// Whether the parent of this process made the other end of a local socket.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        pub fn is_from_parent(fd: Fd) -> bool {
+            let mut peer = libc::ucred {
+                pid: 0,
+                uid: 0,
+                gid: 0,
+            };
+            let mut len = size_of::<libc::ucred>() as socklen_t;
+            let (level, name) = (libc::SOL_SOCKET, libc::SO_PEERCRED);
+            // SAFETY: SO_PEERCRED writes at most `len` bytes into `peer`.
+            unsafe {
+                libc::getsockopt(
+                    fd.native(),
+                    level,
+                    name,
+                    (&raw mut peer).cast(),
+                    &raw mut len,
+                ) == 0
+                    && peer.pid == libc::getppid()
+                    && peer.uid == libc::geteuid()
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        pub fn is_from_parent(fd: Fd) -> bool {
+            let mut peer: libc::pid_t = 0;
+            let mut len = size_of::<libc::pid_t>() as socklen_t;
+            let (level, name) = (libc::SOL_LOCAL, libc::LOCAL_PEERPID);
+            // SAFETY: LOCAL_PEERPID writes at most `len` bytes into `peer`.
+            unsafe {
+                libc::getsockopt(
+                    fd.native(),
+                    level,
+                    name,
+                    (&raw mut peer).cast(),
+                    &raw mut len,
+                ) == 0
+                    && peer == libc::getppid()
+            }
+        }
+
         pub fn is_connected(fd: Fd) -> bool {
             let mut peer: sockaddr_storage = bun_core::ffi::zeroed();
             let mut len = size_of::<sockaddr_storage>() as socklen_t;

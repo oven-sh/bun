@@ -236,9 +236,14 @@ impl<'a> Select<'a> {
             it.is_html(atom!("selectedcontent"))
                 && option::select_shown_by(it).is_some_and(|it| it.element == element)
         };
-        Refs::collect(&cx.heap, element.elements_with_objects().filter(shows_it))
-            .iter()
-            .for_each(|it| show_in(cx, chosen, it));
+        Refs::collect(
+            &cx.heap,
+            element
+                .objects_with_tag(atom!("selectedcontent"))
+                .filter(shows_it),
+        )
+        .iter()
+        .for_each(|it| show_in(cx, chosen, it));
     }
 
     pub(super) fn selected_content_inserted(self, cx: &mut Cx<'a>, content: &'a Element) {

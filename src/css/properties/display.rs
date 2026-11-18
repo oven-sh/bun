@@ -14,14 +14,14 @@ pub enum Display {
 // Tries each payload's `parse` in declaration order; `to_css` dispatches to
 // the active payload.
 impl Display {
-    pub fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         if let Ok(kw) = input.try_parse(DisplayKeyword::parse) {
             return Ok(Display::Keyword(kw));
         }
         DisplayPair::parse(input).map(Display::Pair)
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             Display::Keyword(kw) => kw.to_css(dest),
             Display::Pair(p) => p.to_css(dest),
@@ -67,11 +67,11 @@ pub enum DisplayKeyword {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DisplayPair {
     /// The outside display value.
-    pub outside: DisplayOutside,
+    pub(crate) outside: DisplayOutside,
     /// The inside display value.
-    pub inside: DisplayInside,
+    pub(crate) inside: DisplayInside,
     /// Whether this is a list item.
-    pub is_list_item: bool,
+    pub(crate) is_list_item: bool,
 }
 
 impl DisplayPair {

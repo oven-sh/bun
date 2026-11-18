@@ -5,7 +5,7 @@ use crate::boxes::{BoxId, Kind, VIEWPORT};
 use crate::document::Document;
 use crate::lines::FragmentKind;
 use crate::paint::alpha;
-use crate::properties::{Id, Style};
+use crate::properties::{Id, Paints, Style};
 use crate::selector::Pseudo;
 use crate::tree::{DOCUMENT, NodeId};
 use crate::types::*;
@@ -174,6 +174,16 @@ impl Document {
                 }))
                 .rev()
             {
+                let own = &self.boxes[child];
+                if own.kind == Kind::Block
+                    && own.children.is_empty()
+                    && !own
+                        .style
+                        .paints()
+                        .intersects(Paints::LAYERS | Paints::PICTURES)
+                {
+                    continue;
+                }
                 let matrix = if self.boxes[child].container == id {
                     multiply(&matrix, &self.to_container(child))
                 } else {

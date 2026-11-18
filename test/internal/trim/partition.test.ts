@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { BuildError } from "../../../scripts/build/error.ts";
 import type { Feature, FeatureModel } from "../../../scripts/build/trim/features.ts";
+import { madeByLinker } from "../../../scripts/build/trim/graph.ts";
 import { EdgeKind, type PartitionFailure } from "../../../scripts/build/trim/partition.ts";
 import {
   describeFailures,
@@ -296,6 +297,23 @@ describe("the partition", () => {
     expect(result.features("entryA")).toEqual([A, B]);
     expect(result.features("entryC")).toEqual([C]);
     expect(result.groupOfSet.has(result.setOf[result.node("entryC")]!)).toBe(false);
+  });
+
+  test("what the linker made joins no superset", () => {
+    const result = partitioned(
+      {
+        main: { root: true, to: ["guardA", "guardB"] },
+        guardA: { to: ["entryA"] },
+        guardB: { to: ["entryB"] },
+        entryA: { size: 16, to: ["sharedAB", "thunk"] },
+        entryB: { to: ["sharedAB"] },
+        sharedAB: { size: 0x4000 },
+        thunk: { size: 4, object: madeByLinker },
+      },
+      twoFeaturesGuards,
+    );
+    expect(result.failures).toEqual([]);
+    expect([result.features("entryA"), result.features("thunk")]).toEqual([[A, B], [A]]);
   });
 
   test("groups of features that only the command line enters come first, and features with dependents come last", () => {

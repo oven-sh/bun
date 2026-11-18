@@ -3225,7 +3225,8 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         }
 
         blob.is_jsdom_file.set(reader.read_int_le::<u8>()? != 0);
-        blob.last_modified.set(read_float(reader)?);
+        blob.last_modified
+            .set(JSValue::purify_nan(read_float(reader)?));
 
         if version == 2 {
             break 'versions;

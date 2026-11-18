@@ -199,6 +199,7 @@ pub(super) fn navigate_local(frame: &Frame, navigation: &Navigation) {
             url: text(&navigation.url),
             srcdoc: navigation.srcdoc.as_ref().map(text),
             referrer_policy: text(&navigation.referrer_policy),
+            blob: None,
         },
     );
 }

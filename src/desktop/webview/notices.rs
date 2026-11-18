@@ -71,8 +71,15 @@ pub(super) fn find(handle: &[Value]) -> JsResult<JSValue> {
         ("data", [bytes], _) => {
             wire::decode_whole(bytes).map_or(Ok(JSValue::UNDEFINED), |it| js(&it))
         }
-        ("image", [Value::Bytes(_, png)], _) => {
-            Ok(NativeImage::from_bytes(png.to_vec()).to_js(global()))
+        ("image", [Value::Bytes(_, png), area @ ..], _) => {
+            let image = NativeImage::from_bytes(png.to_vec());
+            let image = match area {
+                [x, y, width, height] => {
+                    image.cropped(global(), [x, y, width, height].map(Value::number))?
+                }
+                _ => image,
+            };
+            Ok(image.to_js(global()))
         }
         ("view", [id], Some(engine)) => Ok(engine
             .view(id.int())
@@ -388,8 +395,9 @@ pub(super) fn answer_later(
     let outcome = task::outcome(start());
     Box::pin(async {
         let value = outcome.await.map_err(|it| describe(it.get()))?;
-        catch(engine::from_js(value.get()))
-            .unwrap_or(Ok(Value::Undefined))
-            .map_err(describe)
+        match catch(engine::from_js(value.get())) {
+            Ok(converted) => converted.map_err(describe),
+            Err(_) => Err("The script was terminated".to_owned()),
+        }
     })
 }

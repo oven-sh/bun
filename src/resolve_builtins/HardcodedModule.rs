@@ -984,6 +984,11 @@ impl Alias {
         None
     }
 
+    /// An executable has it only when it is built with `--desktop`.
+    pub fn is_desktop_module(name: &[u8]) -> bool {
+        name.starts_with(b"bun:desktop") && HardcodedModule::MAP.get(name).is_some()
+    }
+
     /// The module of Bun's that a name of Electron's stands for, or else `name`.
     pub fn as_builtin(name: &[u8], cfg: Cfg) -> &[u8] {
         match name {

@@ -4,7 +4,7 @@ use bun_web::client::{ScriptType, preload_destination};
 
 use super::sheets::Owner;
 use super::*;
-use crate::api::core::metadata::icons_changed;
+use crate::api::core::metadata::{note_new_icon, tell_icons};
 use crate::api::cssom;
 use crate::api::history::indicated_element;
 
@@ -162,8 +162,9 @@ pub(super) fn update<'a>(cx: Cx<'_, 'a>, link: &'a Node) {
     cssom::remove_sheet(cx, link);
     if has_type(link, "icon")
         && client.csp_allows_request(&url, Destination::Image, &Default::default(), None)
+        && note_new_icon(doc)
     {
-        icons_changed(cx, doc);
+        queue_task(doc, [], |cx, doc, []| tell_icons(cx, doc));
     }
     let matches_media = || doc.matches_media(attribute(link, atom!("media")));
     let is_new = |hint: &[&[u8]]| {

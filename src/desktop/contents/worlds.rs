@@ -1,229 +1,314 @@
-//! The realms of a document.
+//! What the app has to do with the realms of a document.
 
-use bun_jsc::{JSMap, from_js_host_call, from_js_host_call_generic};
-use bun_web::channel::Endpoint;
-use bun_web::convert::path_of_file;
-use bun_web::dom::Opening;
-use bun_web::exec::{block_pages, settled, with_realm};
-use bun_web::host::Host;
-use bun_web::page::Controls;
-use bun_web::realm::Realm as OfTheWeb;
-use bun_web::{compiled, dom, trust};
+use std::rc::Rc;
+
+use bun_jsc::bindgen::Result as CallbackResult;
+use bun_jsc::from_js_host_call_generic;
+use bun_web::channel::{Endpoint, Message, Transferred};
+use bun_web::exec::block_pages;
+use bun_web::host::{Host, Relation, Relative, Reply, Thrown};
+use bun_web::renderer::{
+    self, Command, Done, Executed, NewDocument, PreloadScript, Preloads, Renderer, Source, Task,
+};
+use bun_web::{compiled, trust, wire};
 
 use super::page::Page;
-use super::{
-    Contents, Methods, Numbers as _, bind, field, lazily, link, nothing, object_in, text_at,
-    text_if_any,
-};
-use crate::generated_bindgen::contents::js_ElectronPage as fields;
-use crate::preload::{self, Preload};
+use super::{Contents, Numbers as _, link};
+use crate::ipc::Sender;
 use crate::prelude::*;
 use crate::realm::{self, Realm};
-use crate::webview::wire;
-use crate::{app, files, process, task};
+use crate::renderer::preload::Preload;
+use crate::renderer::{Document, Links, Nearby, describe, disposed, failed_to_execute, ports_in};
+use crate::{app, files, ports, process, task};
 
-const OF_PRELOAD: u32 = 999;
-const PARAMETERS: &str =
-    "require,process,Buffer,global,setImmediate,clearImmediate,exports,module,__filename,__dirname";
+const PATIENCE: f64 = 5000.;
 
-/// `WebGlobalObject::NodeGlobals`
-#[derive(Clone, Copy)]
-#[repr(u8)]
-enum NodeGlobals {
-    None,
-    OfPreload,
-    OfNodeIntegration,
+struct Rehearsed;
+
+impl renderer::Link for Rehearsed {
+    fn tell(&self, page: u32, command: Command) {
+        (wire::rehearse(command).into_iter())
+            .for_each(|it| task::report(crate::renderer::obey(page, it)));
+    }
+
+    fn request(&self, page: u32, task: Task, reply: Reply<Option<Done>>) {
+        let Some(task) = wire::rehearse(task) else {
+            return reply(global(), None);
+        };
+        let reply = |global: &Realm, it: Option<_>| reply(global, it.and_then(wire::rehearse));
+        crate::renderer::perform(page, task, Box::new(reply));
+    }
 }
 
-unsafe extern "C" {
-    safe fn Bun__DesktopRealm__createWindow(
-        global: &Realm,
-        client: u32,
-        is_secure: bool,
-        is_isolated: bool,
-        node: NodeGlobals,
-        window: JSValue,
-        page: Option<&Realm>,
-    ) -> Option<&'static Realm>;
-    safe fn Bun__DesktopRealm__setUpMembers(realm: &Realm);
-    safe fn Bun__DesktopRealm__run(realm: &Realm);
-    safe fn Bun__DesktopRealm__members(realm: &Realm) -> JSValue;
-    safe fn Bun__DesktopRealm__inject(
-        realm: &Realm,
-        source: JSValue,
-        window: JSValue,
-        awaits: bool,
-    ) -> JSValue;
-    safe fn Bun__DesktopRealm__documentChanged(realm: &Realm);
-    safe fn Bun__DesktopRealm__dispose(realm: &Realm, is_reachable: bool);
-    safe fn Bun__WebRealm__runCompiled(
-        realm: &Realm,
-        path: &bun_core::String,
-        is_synchronous: bool,
-    ) -> JSValue;
-    safe fn Bun__DOM__reportException(realm: &Realm, value: JSValue, exception: JSValue);
-    safe fn Bun__IsolatedWorld__carry(from: &Realm, to: &Realm, value: JSValue) -> JSValue;
-    safe fn Bun__RealmBridge__keep(object: JSValue) -> JSValue;
-    safe fn Bun__RealmBridge__clone(
-        global: &Realm,
-        value: JSValue,
-        transfer: JSValue,
-        to: &Realm,
-    ) -> JSValue;
+fn page_in(value: JSValue) -> &'static Page {
+    cast(value).expect("it was captured")
 }
 
-fn clone(value: JSValue, transfer: JSValue, to: &Realm) -> JsResult<JSValue> {
-    from_js_host_call(global(), || {
-        Bun__RealmBridge__clone(global(), value, transfer, to)
+static NEARBY: Nearby = Nearby {
+    send: |_, _, task| {
+        let ports = Some(task[3]).filter(|it| it.is_object());
+        page_in(task[0]).deliver(task[1], task[2], ports)
+    },
+    invoke: |_, _, task| page_in(task[0]).invoke(task[1], task[2], task[3], task[4]),
+    send_and_wait: |page, channel, values| {
+        let (sender, event) = (page_in(page).sender(), page_in(page).sender().event(true));
+        sender.dispatch(Some("ipc-message-sync"), event, channel, values)?;
+        if event.answer().is_none() && sender.is_listened_to(channel)? {
+            let done = Rc::new(Deferred::new());
+            let (answered, given_up) = (Rc::clone(&done), Rc::clone(&done));
+            event.on_answer(procedure(move |_| answered.resolve(JSValue::UNDEFINED))?);
+            // All pages wait, so an answer that depends on one of them never comes.
+            let _timer = later::after(PATIENCE, move |_| given_up.resolve(JSValue::UNDEFINED));
+            block_pages(global(), task::settled(done.promise()));
+        }
+        event.answer().map_or_else(|| Err(unanswered(channel)?), Ok)
+    },
+    wrap_ports: ports::wrap_all,
+};
+
+fn unanswered(channel: JSValue) -> JsResult<bun_jsc::JsError> {
+    let channel = text_of(channel)?;
+    Ok(error(format_args!(
+        "event.returnValue of '{channel}' was not set"
+    )))
+}
+
+/// Returns what the page is told.
+fn complain(channel: JSValue, thrown: JSValue) -> JsResult<String> {
+    let channel = text_of(channel)?;
+    let message = js(format!("Error occurred in handler for '{channel}':"))?;
+    invoke(
+        get(global().to_js_value(), "console")?,
+        "error",
+        &[message, thrown],
+    )?;
+    let reason = catch(text_of(thrown))?.unwrap_or_default();
+    Ok(format!(
+        "Error invoking remote method '{channel}': {reason}"
+    ))
+}
+
+/// To a preload with a promise, or to a page with a ticket.
+fn reply(
+    to: JSValue,
+    pending: JSValue,
+    channel: JSValue,
+    result: Result<JSValue, JSValue>,
+) -> JsResult<()> {
+    if let Some(preload) = cast::<Preload>(to) {
+        let result = match result {
+            Ok(_) if preload.is_disposed() => return Ok(()),
+            Ok(value) => catch(preload.copy(value))?,
+            failure => failure,
+        };
+        match result {
+            Ok(value) => preload.reply(pending, Ok(value)),
+            Err(thrown) => preload.reply(pending, Err(js(complain(channel, thrown)?)?)),
+        }
+        return Ok(());
+    }
+    let result = match result {
+        Ok(_) if page_in(to).is_disposed() => return Ok(()),
+        Ok(value) => catch(realm::pack(global(), value))?.map(Message::from),
+        Err(thrown) => Err(thrown),
+    };
+    let result = match result {
+        Ok(message) => Ok(message),
+        Err(thrown) => Err(complain(channel, thrown)?),
+    };
+    page_in(to).tell_renderer(|it| it.reply(pending.as_u32(), result))
+}
+
+/// An array, whatever the page has sent.
+fn values_in(message: &Message) -> JsResult<JSValue> {
+    let values = catch(realm::unpack(global(), &message.value))?;
+    (values.ok().filter(|it| it.is_array())).map_or_else(|| array(&[]), Ok)
+}
+
+fn source_of(file: &str) -> JsResult<Source> {
+    if !files::is_absolute(file) {
+        return Err(error(format_args!(
+            "Preload script must have absolute path: {file}"
+        )));
+    }
+    Ok(match compiled::path_of(files::to_url(file).as_bytes()) {
+        Some(path) => Source::Compiled(path),
+        None => Source::Text(string(&files::read_with_node(file)?)),
     })
 }
 
-/// The namespace of the module.
-pub(crate) fn run_compiled(realm: &Realm, path: &[u8]) -> JsResult<JSValue> {
-    let path = bun_core::String::clone_utf8(path);
-    from_js_host_call(realm, || Bun__WebRealm__runCompiled(realm, &path, true))
-}
-
-/// What the app gets for a value of a page.
-pub(super) fn handle_of(value: JSValue) -> JSValue {
-    match value.is_object() {
-        true => Bun__RealmBridge__keep(value),
-        false => value,
-    }
-}
-
-/// The values that it takes and gives are those of `realm`. The page keeps it alive.
-#[derive(Clone, Copy)]
-pub(crate) struct World {
-    pub(crate) realm: &'static Realm,
-    pub(crate) window: JSValue,
-    /// The realm is that of the opener.
-    is_borrowed: bool,
-}
-
-impl World {
-    fn of(realm: &'static Realm) -> World {
-        World {
-            realm,
-            window: OfTheWeb::of(realm).map_or(JSValue::UNDEFINED, OfTheWeb::global_this),
-            is_borrowed: false,
-        }
-    }
-
-    fn inject(self, source: JSValue, awaits: bool) -> JsResult<JSValue> {
-        let window = field(self.is_borrowed.then_some(self.window));
-        from_js_host_call(self.realm, || {
-            Bun__DesktopRealm__inject(self.realm, source, window, awaits)
-        })
-    }
-
-    pub(crate) fn evaluate(self, source: JSValue) -> JsResult<JSValue> {
-        self.inject(source, false)
-    }
-
-    pub(crate) fn carry(self, value: JSValue, to: World) -> JsResult<JSValue> {
-        match value.is_object() {
-            true => from_js_host_call(self.realm, || {
-                Bun__IsolatedWorld__carry(self.realm, to.realm, value)
-            }),
-            false => Ok(value),
-        }
-    }
-}
-
-const FOR_PRELOAD: Methods<Page> = &[
-    ("window", |it, given| {
-        Ok(it.world_with_id(argument(given, 0).as_u32())?.window)
-    }),
-    ("adoptPort", |it, given| {
-        let main = it.world_with_id(0)?;
-        let port = Endpoint::unpark(argument(given, 0).as_number());
-        main.carry(dom::adopt_port(main.realm, port), it.world_of_preload()?)
-    }),
-    ("releasePort", |it, given| {
-        let main = it.world_with_id(0)?;
-        let port = (it.world_of_preload()?).carry(argument(given, 0), main)?;
-        super::or_undefined(dom::release_port(main.realm, port).map(Endpoint::park))
-    }),
-    ("pathForFile", |it, given| {
-        let file = (it.world_of_preload()?).carry(argument(given, 0), it.world_with_id(0)?)?;
-        js(text_if_any(if file.is_object() {
-            path_of_file(global(), file)
-        } else {
-            JSValue::UNDEFINED
-        })?
-        .unwrap_or_default())
-    }),
-    ("block", |_, given| {
-        Ok(block_pages(global(), task::settled(argument(given, 0)))
-            .and_then(Result::ok)
-            .map_or(JSValue::UNDEFINED, |it| it.get()))
-    }),
-    ("executeJavaScript", |it, given| {
-        let is_by_user = argument(given, 2).to_boolean();
-        Ok(it.execute(argument(given, 0).as_u32(), argument(given, 1), is_by_user))
-    }),
-    ("insertCSS", |it, given| {
-        it.insert_css(text_at(given, 0)?, argument(given, 1).to_boolean())
-    }),
-    ("removeInsertedCSS", |it, given| {
-        nothing(it.remove_inserted_css(argument(given, 0)))
-    }),
-    ("insertText", |it, given| {
-        let text = text_at(given, 0)?;
-        nothing(it.tell(|it| it.insert_text(text)))
-    }),
-    ("frameToken", |it, _| js(it.token())),
-    ("routingId", |it, _| js(it.id)),
-    ("relative", relative),
-    ("isolatedWorlds", |it, _| {
-        let ids = elements(wire::items_of(it.worlds()?)?)?
-            .into_iter()
-            .step_by(2);
-        js((ids.map(JSValue::as_u32))
-            .filter(|it| *it > OF_PRELOAD)
-            .collect::<Vec<_>>())
-    }),
-];
-
-/// One that would be in the same process.
-fn relative(page: &'static Page, given: &[JSValue]) -> JsResult<JSValue> {
-    if page.is_disposed() {
-        return Err(disposed());
-    }
-    let (contents, more) = (page.contents(), argument(given, 1));
-    let in_frame = |it: Option<&JSValue>| it.and_then(|it| cast(*it)).map(Contents::page);
-    let find = |is_it: &dyn Fn(&Page) -> bool| {
-        let all = page.owner().page().with_descendants()?;
-        JsResult::Ok(all.iter().map(Root::get).find(|it| is_it(it)))
-    };
-    let found = match &*text_of(argument(given, 0))? {
-        "top" => Some(page.owner().page()),
-        "parent" => page.parent(),
-        "opener" => (contents.opened_by().map(Contents::page)).or_else(|| page.opener()),
-        "firstChild" => with_elements(page.frames_if_any()?, |all| Ok(in_frame(all.first())))?,
-        "nextSibling" => match page.parent() {
-            Some(parent) => with_elements(parent.frames_if_any()?, |all| {
-                let mut from_own = all.iter().skip_while(|it| **it != contents.to_js());
-                Ok(in_frame(from_own.nth(1)))
-            })?,
-            None => None,
-        },
-        "name" => contents.choose(&text_of(more)?)?.map(Contents::page),
-        "selector" => contents.related_page(page.inspect("selectFrame", &[more])?.as_u32()),
-        "token" => {
-            let token = text_of(more)?;
-            find(&|it| it.token() == token.as_bytes())?
-        }
-        _ => find(&|it| more.get_number() == Some(it.id.into()))?,
-    };
-    match found.filter(|it| it.origin_key() == page.origin_key()) {
-        Some(found) => bind(object!({}), found, FOR_PRELOAD),
-        None => Ok(JSValue::NULL),
-    }
-}
-
 impl Page {
+    fn sender(&self) -> Sender {
+        let owner = self.owner();
+        Sender::with_ids(owner.to_js(), self.handle(), self.id, owner.id)
+    }
+
+    fn deliver(&self, channel: JSValue, values: JSValue, ports: Option<JSValue>) -> JsResult<()> {
+        let sender = self.sender();
+        if invoke(sender.contents, "isDestroyed", &[])?.to_boolean() {
+            return Ok(());
+        }
+        sender.send(channel, values, ports)
+    }
+
+    fn invoke(
+        &self,
+        channel: JSValue,
+        values: JSValue,
+        to: JSValue,
+        pending: JSValue,
+    ) -> JsResult<()> {
+        fn settled<'a>(
+            _: Cx<'a, '_>,
+            [to, more]: [JsLocal<'a>; 2],
+            is_rejected: u64,
+            arguments: &'a [JsLocal<'a>],
+        ) -> CallbackResult<'a, JSValue> {
+            let [pending, channel] = [0, 1].map(|it| more.to_js().get_index(global(), it));
+            let value = argument(JsLocal::to_js_slice(arguments), 0);
+            let result = if is_rejected == 0 {
+                Ok(value)
+            } else {
+                Err(value)
+            };
+            reply(to.to_js(), pending?, channel?, result)?;
+            Ok(JSValue::UNDEFINED)
+        }
+        match catch(self.sender().invoke(channel, values))? {
+            Ok(result) if result.is_object() => {
+                let more = array(&[pending, channel])?;
+                let reaction = |is_rejected| {
+                    heap()
+                        .create_callback(settled, [to, more], is_rejected)
+                        .to_js()
+                };
+                react(global(), result, reaction(0), reaction(1))
+            }
+            result => reply(to, pending, channel, result),
+        }
+    }
+
+    pub(super) fn got_message(&self, channel: &str, it: Message, has_ports: bool) -> JsResult<()> {
+        let values = values_in(&it)?;
+        let ports = has_ports.then(|| ports::wrap_all(ports_in(it.transferred)));
+        self.deliver(js(channel)?, values, ports.transpose()?)
+    }
+
+    pub(super) fn got_invocation(&self, channel: &str, it: &Message, ticket: u32) -> JsResult<()> {
+        self.invoke(js(channel)?, values_in(it)?, self.to_js(), js(ticket)?)
+    }
+
+    pub(super) fn got_message_to_answer(
+        &self,
+        channel: &str,
+        it: &Message,
+        reply: impl FnOnce(Result<Message, String>) + 'static,
+    ) -> JsResult<()> {
+        let (sender, event, channel) = (self.sender(), self.sender().event(true), js(channel)?);
+        let give = move |answer: JsResult<JSValue>| {
+            let packed = answer.and_then(|it| realm::pack(global(), it));
+            match catch(packed)? {
+                Ok(value) => reply(Ok(value.into())),
+                Err(thrown) => reply(Err(message_of(thrown)?)),
+            }
+            Ok(())
+        };
+        let kind = Some("ipc-message-sync");
+        if let Err(thrown) = sender.dispatch(kind, event, channel, values_in(it)?) {
+            return give(Err(thrown));
+        }
+        if let Some(answer) = event.answer() {
+            return give(Ok(answer));
+        }
+        if !sender.is_listened_to(channel)? {
+            return give(Err(unanswered(channel)?));
+        }
+        let (give, channel) = (Rc::new(Cell::new(Some(give))), keep(channel));
+        let give_up = Rc::clone(&give);
+        let timer = Cell::new(Some(later::after(PATIENCE, move |_| {
+            (give_up.take()).map_or(Ok(()), |it| it(Err(unanswered(channel.get())?)))
+        })));
+        event.on_answer(procedure(move |given| {
+            timer.take();
+            give.take().map_or(Ok(()), |it| it(Ok(argument(given, 0))))
+        })?);
+        Ok(())
+    }
+
+    pub(super) fn send(
+        &self,
+        channel: JSValue,
+        values: JSValue,
+        ports: Vec<Endpoint>,
+    ) -> JsResult<()> {
+        if let Some(document) = self.document() {
+            return document.send(channel, values, ports);
+        }
+        if !self.has_preload.get() || !self.is_started() {
+            return Ok(());
+        }
+        let message = Message {
+            transferred: ports.into_iter().map(Transferred::Port).collect(),
+            ..realm::pack(global(), values)?.into()
+        };
+        let channel = text_of(channel)?;
+        self.tell_renderer(|it| it.send(channel, message))
+    }
+
+    pub(super) fn preload_failed(&self, file: String, it: Thrown) -> JsResult<()> {
+        crate::dialog::print_error(&format!(
+            "Unable to load preload script: {file} {}",
+            it.description
+        ));
+        let failure = global().create_error_instance(format_args!("{}", it.message));
+        if let Some(stack) = it.stack {
+            assign(failure, "stack", js(stack)?)?;
+        }
+        announce(self.owner().to_js(), "preload-error", &[js(file)?, failure])
+    }
+
+    /// `None` if the page is gone.
+    pub(super) fn relative(&self, of: u32, it: Relation) -> JsResult<Option<Option<Relative>>> {
+        let is_familiar = |it: &&Page| {
+            !it.is_disposed() && it.is_beside(self) && it.origin_key() == self.origin_key()
+        };
+        let mut pages = core::iter::once(self.itself()).chain(super::alive().map(Contents::page));
+        let Some(page) = pages.find(|it| it.id == of).filter(is_familiar) else {
+            return Ok(None);
+        };
+        let contents = page.contents();
+        let in_frame = |it: Option<&JSValue>| it.and_then(|it| cast(*it)).map(Contents::page);
+        let find = |is_it: &dyn Fn(&Page) -> bool| {
+            let all = page.owner().page().with_descendants()?;
+            JsResult::Ok(all.iter().map(Root::get).find(|it| is_it(it)))
+        };
+        let found = match it {
+            Relation::Top => Some(page.owner().page()),
+            Relation::Parent => page.parent(),
+            Relation::Opener => {
+                (contents.opened_by().map(Contents::page)).or_else(|| page.opener())
+            }
+            Relation::FirstChild => {
+                with_elements(page.frames_if_any()?, |all| Ok(in_frame(all.first())))?
+            }
+            Relation::NextSibling => match page.parent() {
+                Some(parent) => with_elements(parent.frames_if_any()?, |all| {
+                    let mut from_own = all.iter().skip_while(|it| **it != contents.to_js());
+                    Ok(in_frame(from_own.nth(1)))
+                })?,
+                None => None,
+            },
+            Relation::Name(name) => contents.choose(&name)?.map(Contents::page),
+            Relation::Selected(id) => contents.related_page(id),
+            Relation::Token(token) => find(&|it| it.token() == token.as_bytes())?,
+            Relation::Page(id) => find(&|it| it.id == id)?,
+        };
+        Ok(Some(found.filter(is_familiar).map(|it| Relative {
+            page: it.id,
+            token: string(it.token()),
+        })))
+    }
+
     pub(super) fn insert_css(&self, css: String, is_of_user: bool) -> JsResult<JSValue> {
         js((self.ask(|it, reply| it.insert_sheet(css, is_of_user, reply))?).to_string())
     }
@@ -233,129 +318,30 @@ impl Page {
         self.tell(|it| it.remove_sheet(key))
     }
 
-    /// `undefined` if there is no document.
-    pub(crate) fn inspect(&self, method: &str, arguments: &[JSValue]) -> JsResult<JSValue> {
-        let Some(controller) = object_in(fields::controller(self)) else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        if object_in(fields::inspected(self)).is_none() {
-            let methods = realm::methods_of(Bun__RealmBridge__keep(controller))?;
-            fields::set_inspected(self, methods);
-        }
-        invoke(field(fields::inspected(self)), method, arguments)
-    }
-
-    fn worlds(&self) -> JsResult<JSValue> {
-        lazily(
-            fields::worlds(self),
-            || Ok(JSMap::create(global())),
-            |it| fields::set_worlds(self, it),
-        )
-    }
-
-    pub(super) fn known_realm(&self, id: u32) -> JsResult<Option<&'static Realm>> {
-        let Some(worlds) = object_in(fields::worlds(self)) else {
-            return Ok(None);
-        };
-        Ok(object_in(Some(map_in(worlds).get(global(), js(id)?)?)).map(realm::of))
-    }
-
-    fn for_each_realm(&self, mut step: impl FnMut(&Realm)) -> JsResult<()> {
-        let Some(worlds) = object_in(fields::worlds(self)) else {
-            return Ok(());
-        };
-        with_elements(wire::items_of(worlds)?, |all| {
-            (all.iter().skip(1).step_by(2)).for_each(|it| step(realm::of(*it)));
-            Ok(())
-        })
-    }
-
-    /// By the ids of `executeJavaScriptInIsolatedWorld()`. 0 is the one of the page.
-    pub(crate) fn world_with_id(&self, id: u32) -> JsResult<World> {
-        self.find_or_create_world(id, NodeGlobals::None)
-    }
-
-    fn world_of_preload(&self) -> JsResult<World> {
-        self.world_with_id(if self.contents().preferences.isolates_context {
-            OF_PRELOAD
-        } else {
-            0
-        })
-    }
-
-    /// `window` is the object to take over.
-    fn create_realm(
-        &self,
-        id: u32,
-        node: NodeGlobals,
-        window: JSValue,
-        page: Option<&Realm>,
-    ) -> JsResult<&'static Realm> {
-        let is_isolated = page.is_none() && self.client.is_cross_origin_isolated();
-        let (client, is_secure) = (self.client.id.0, self.client.is_secure());
-        let realm = from_js_host_call_generic(global(), || {
-            Bun__DesktopRealm__createWindow(
-                global(),
-                client,
-                is_secure,
-                is_isolated,
-                node,
-                window,
-                page,
-            )
-        })?
-        .expect("an exception or a realm");
-        map_in(self.worlds()?).set(global(), js(id)?, realm.to_js_value())?;
-        Ok(realm)
-    }
-
-    fn find_or_create_world(&self, id: u32, node: NodeGlobals) -> JsResult<World> {
-        if let Some(known) = self.known_realm(id)? {
-            return Ok(World::of(known));
-        }
-        match (self.opener(), self.known_realm(0)?) {
-            (Some(opener), _) if !self.is_disposed() => Ok(World {
-                realm: opener.world_with_id(0)?.realm,
-                window: dom::window_of(field(fields::controller(self))),
-                is_borrowed: true,
-            }),
-            (None, Some(main)) => self
-                .create_realm(id, node, JSValue::UNDEFINED, Some(main))
-                .map(World::of),
-            _ => Err(disposed()),
-        }
-    }
-
     /// A promise.
     pub(super) fn execute(&self, world: u32, code: JSValue, is_by_user: bool) -> JSValue {
-        let start = || {
-            if self.is_disposed() || !self.is_started() {
-                return Err(disposed());
-            }
-            if is_by_user {
-                (self.owner().context.last_input).set(bun_web::time::monotonic_now());
-                self.tell(Controls::activate)?;
-            }
-            let world = self.world_with_id(world)?;
-            match catch(world.inject(code, true))? {
-                Ok(promise) => Ok(with_realm(world.realm, |cx| {
-                    settled(cx, JsLocal::new(&cx.heap, promise))
-                })),
-                Err(thrown) => {
-                    Bun__DOM__reportException(world.realm, thrown, JSValue::ZERO);
-                    Err(error(format_args!(
-                        "Script failed to execute, this normally means an error was thrown. Check the renderer console for the error."
-                    )))
-                }
-            }
+        if is_by_user {
+            (self.owner().context.last_input).set(bun_web::time::monotonic_now());
+        }
+        if self.document().is_some() || !self.is_started() {
+            return Document::execute(self.id, world, code, is_by_user);
+        }
+        let (send, executed) = task::oneshot();
+        let begin = || {
+            let code = code.to_bun_string(global())?;
+            let code = match code.is_utf16() {
+                true => code.utf16().to_vec(),
+                false => string(&code.to_utf8()).encode_utf16().collect(),
+            };
+            self.tell_renderer(|it| it.execute(world, code, is_by_user, |_, it| send.send(it)))
         };
-        let started = catch(start()).map(|it| it.map_err(keep));
-        task::promise(async move {
-            match started?.map_err(|it| task::throw(&it))?.await {
-                Ok(value) => clone(value.get(), JSValue::UNDEFINED, global()),
-                Err(thrown) => {
-                    Err(global().throw_value(clone(thrown.get(), JSValue::UNDEFINED, global())?))
-                }
+        let begun = catch(begin()).map(|it| it.map_err(keep));
+        task::busy_promise(async move {
+            begun?.map_err(|it| task::throw(&it))?;
+            match executed.await.flatten().ok_or_else(disposed)? {
+                Executed::Fulfilled(it) => Ok(it.open(global())?.0),
+                Executed::Rejected(it) => Err(global().throw_value(it.open(global())?.0)),
+                Executed::Threw => Err(failed_to_execute()),
             }
         })
     }
@@ -366,162 +352,120 @@ impl Page {
     }
 
     pub(super) fn document_changed(&self) -> JsResult<()> {
-        self.for_each_realm(Bun__DesktopRealm__documentChanged)?;
+        self.client.renew_twin();
+        self.document().map_or(Ok(()), Document::changed)?;
+        self.tell_renderer(Renderer::document_changed)?;
         self.tell(|it| it.renew(self.describe()))
     }
 
-    fn opening(&self) -> Opening {
-        let (contents, host) = (self.contents(), link::of_window(self));
-        Opening {
-            page: self.id,
-            context: contents.id,
-            surface: match contents.guest() {
-                Some(_) => 0,
-                None => contents.surface,
-            },
-            has_relatives: self.has_relatives.get(),
-            about: self.describe(),
-            // SAFETY: the window holds it.
-            ..Opening::new(unsafe { Host::of(host) }, host)
-        }
-    }
-
-    /// Makes the realm and the empty document, and runs the preload scripts.
-    pub(super) fn start(&self) -> JsResult<()> {
+    fn preloads(&self) -> JsResult<Option<Box<Preloads>>> {
         let (contents, preferences) = (self.contents(), &*self.contents().preferences);
-        if let Some(opener) = self.opener() {
-            let opened = from_js_host_call_generic(global(), || {
-                dom::open_page_beside(opener.id, self.opening(), self.client.id)
-            })?;
-            fields::set_controller(self, opened.ok_or_else(disposed)?);
-            return Ok(());
-        }
-        self.has_relatives.set(trust::trusts_any_frame());
-        let mut preloads = Vec::new();
+        let mut files = Vec::new();
         if self.parent().is_none() || preferences.integrates_node_in_frames {
-            preloads = contents.session.preloads_of_frames();
-            preloads.extend(preferences.preload.clone());
+            files = contents.session.preloads_of_frames();
+            files.extend(preferences.preload.clone());
         }
-        let has_preload =
-            !preloads.is_empty() || (preferences.integrates_node && self.parent().is_none());
-        let of_preload = match (preferences.integrates_node, preferences.isolates_context) {
-            (true, _) => NodeGlobals::OfNodeIntegration,
-            (_, true) => NodeGlobals::OfPreload,
-            _ => NodeGlobals::None,
-        };
-
-        let node = if has_preload && !preferences.isolates_context {
-            of_preload
-        } else {
-            NodeGlobals::None
-        };
-        let window = dom::window_to_take_over(contents.id);
-        let realm = self.create_realm(0, node, window, None)?;
-        let (main, mut opening) = (World::of(realm), self.opening());
-        let links = core::mem::take(&mut opening.about.links);
-        let controller = from_js_host_call(global(), || {
-            Bun__DesktopRealm__setUpMembers(realm);
-            dom::open_page(realm, opening, Some(main.window))
-        })?;
-        Bun__DesktopRealm__run(realm);
-        fields::set_controller(self, controller);
-        dom::follow_response(self.id, &links);
-        if !has_preload {
-            return Ok(());
+        if files.is_empty() && !(preferences.integrates_node && self.parent().is_none()) {
+            return Ok(None);
         }
-        let world = if preferences.isolates_context {
-            self.find_or_create_world(OF_PRELOAD, of_preload)?
-        } else {
-            main
+        let read = |file: String| {
+            let source = match catch(source_of(&file))? {
+                Ok(source) => source,
+                Err(thrown) => Source::Unreadable(describe(thrown)?),
+            };
+            Ok(PreloadScript { file, source })
         };
-        let preload = self.create_preload(world)?;
-        fields::set_preload(self, Some(preload));
-        for file in preloads {
-            if let Err(thrown) = catch(run_preload(preload, world, &file))? {
-                crate::dialog::print_error(&format!(
-                    "Unable to load preload script: {file} {}",
-                    process::inspect(thrown)?
-                ));
-                let failure =
-                    global().create_error_instance(format_args!("{}", message_of(thrown)?));
-                if thrown.is_object() {
-                    assign(failure, "stack", get(thrown, "stack")?)?;
-                }
-                announce(self.owner().to_js(), "preload-error", &[js(file)?, failure])?;
-            }
-        }
-        preload.loaded()
-    }
-
-    fn create_preload(&self, world: World) -> JsResult<&'static Preload> {
-        let (preferences, url) = (&self.contents().preferences, self.url());
-        Preload::create(&preload::Init {
-            global: world.window,
-            members: Bun__DesktopRealm__members(world.realm),
-            host: bind(object!({}), self, FOR_PRELOAD)?,
-            page: self.to_js(),
-            contents: self.owner().to_js(),
-            is_isolated: preferences.isolates_context,
+        let url = self.url();
+        Ok(Some(Box::new(Preloads {
+            scripts: files.into_iter().map(read).collect::<JsResult<_>>()?,
+            process: self.owner().id,
+            is_main_frame: self.parent().is_none(),
             is_sandboxed: preferences.is_sandboxed,
             integrates_node: preferences.integrates_node,
             document_path: match url.starts_with("file:") {
                 true => files::from_url(&url),
                 false => files::join(&[app::path()?, "index.html"]),
             },
-            additional_arguments: texts_of(get(
-                self.contents().preferences(),
-                "additionalArguments",
-            )?)?,
+            additional_arguments: texts_of(get(contents.preferences(), "additionalArguments")?)?,
+            environment: None,
+        })))
+    }
+
+    /// Makes the realm and the empty document, and runs the preload scripts.
+    pub(super) fn start(&self) -> JsResult<()> {
+        let (contents, opener) = (self.contents(), self.opener());
+        let mut preloads = None;
+        if opener.is_none() {
+            self.has_relatives.set(trust::trusts_any_frame());
+            preloads = self.preloads()?;
+        }
+        self.has_preload.set(preloads.is_some());
+        let document = NewDocument {
+            context: contents.id,
+            surface: match contents.guest() {
+                Some(_) => 0,
+                None => contents.surface,
+            },
+            has_relatives: self.has_relatives.get(),
+            isolates_context: contents.preferences.isolates_context,
+            about: self.describe(),
+            opener: opener.map(|it| it.id),
+        };
+        if let Some(process) = contents.process_for(self)? {
+            if let Some(it) = preloads.as_mut().filter(|it| it.is_sandboxed) {
+                it.environment = Some(process::variables()?);
+            }
+            return self.start_in(process, document, preloads);
+        }
+        let hosts = [link::of_window(self), link::of_preload(self)];
+        // SAFETY: the window and the document hold them.
+        let [of_window, of_preload] = hosts.map(|it| unsafe { Host::of(it) });
+        let links = Links {
+            client: Rc::clone(&self.client),
+            of_window,
+            of_preload,
+            needed: hosts,
+            nearby: (!wire::is_rehearsed()).then_some(&NEARBY),
+            owner: self.to_js(),
+        };
+        let document = Document::open(self.id, document, preloads.as_deref(), links)?;
+        match wire::is_rehearsed() {
+            true => self.started(None, Some(Renderer::new(Rc::new(Rehearsed), self.id))),
+            false => self.started(Some(document), None),
+        }
+        preloads.map_or(Ok(()), |it| document.preload(*it))
+    }
+
+    fn start_in(
+        &self,
+        process: Rc<super::process::Process>,
+        document: NewDocument,
+        preloads: Option<Box<Preloads>>,
+    ) -> JsResult<()> {
+        use bun_ui::protocol::PageCommand;
+        let surface = document.surface;
+        let metrics = (ui()?.surface_metrics)(surface).get().ok();
+        if surface != 0 {
+            bun_ui::queue::forget_frame(surface);
+            process.command(PageCommand::Grant(surface));
+        }
+        process.admit(self, preloads.is_some());
+        self.started_in(process);
+        let how = renderer::Start {
+            client: self.client.seed(),
+            document,
+            extent: metrics.map(|it| bun_web::input::Extent {
+                size: [it.bounds.width, it.bounds.height].map(f64::from),
+                scale: it.scale.into(),
+            }),
+            preloads,
+        };
+        self.tell_renderer(|it| it.start(how.into()))
+    }
+
+    pub(super) fn tell_renderer(&self, command: impl FnOnce(&Renderer)) -> JsResult<()> {
+        (self.renderer.get()).map_or(Ok(()), |it| {
+            from_js_host_call_generic(global(), || command(it))
         })
     }
-
-    pub(super) fn send(&self, channel: JSValue, values: JSValue, ports: JSValue) -> JsResult<()> {
-        fields::preload(self).map_or(Ok(()), |it| it.send(channel, values, ports))
-    }
-
-    pub(super) fn dispose_worlds(&self) -> JsResult<()> {
-        let left = dom::leave_relatives(field(fields::controller(self)));
-        let needed = self.known_realm(0)?.filter(|_| left.is_needed);
-        self.for_each_realm(|it| match needed {
-            Some(needed) if core::ptr::eq(needed, it) => {
-                OfTheWeb::of(it).map_or((), OfTheWeb::stop)
-            }
-            _ => Bun__DesktopRealm__dispose(it, left.is_reachable),
-        })?;
-        fields::set_worlds(self, JSValue::UNDEFINED);
-        (left.released.into_iter()).for_each(|it| Bun__DesktopRealm__dispose(realm::of(it), false));
-        Ok(())
-    }
-}
-
-pub(super) fn disposed() -> bun_jsc::JsError {
-    error(format_args!(
-        "Render frame was disposed before WebFrameMain could be accessed"
-    ))
-}
-
-fn run_preload(preload: &Preload, world: World, file: &str) -> JsResult<()> {
-    if !files::is_absolute(file) {
-        return Err(error(format_args!(
-            "Preload script must have absolute path: {file}"
-        )));
-    }
-    let url = files::to_url(file);
-    let realm = world.realm;
-    let function = match compiled::path_of(url.as_bytes()) {
-        Some(path) => field(run_compiled(realm, &path)?.get(realm, "default")?),
-        None => {
-            let text = string(&files::read_with_node(file)?);
-            let source = js(format!(
-                "(function({PARAMETERS}){{{text}
-}})"
-            ))?;
-            (OfTheWeb::of(realm).ok_or_else(disposed)?).evaluate(
-                source,
-                url.as_bytes(),
-                url.as_bytes(),
-            )?
-        }
-    };
-    preload.run(function, file)
 }

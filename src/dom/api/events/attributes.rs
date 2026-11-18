@@ -16,7 +16,7 @@ unsafe extern "C" {
     /// `texts`: the name, the parameters, the body, the URL and the base URL. `scopes`: from the outside in.
     safe fn Bun__DesktopRealm__compileHandler(
         realm: &JSGlobalObject,
-        texts: &[JSValue; 5],
+        texts: &[&WTFStringImplStruct; 5],
         scopes: &[JSValue; 3],
     ) -> JSValue;
 }
@@ -132,26 +132,23 @@ pub(super) fn compile<'a>(
     let element = Element::from_js(&cx.heap, element)?;
     let (doc, is_for_window) = (element.doc(), target.as_window().is_some());
     let window = doc.window()?;
-    if allowed_by != window.to_js() {
-        let text =
-            DomString::from_js_string(&cx.heap, JsLocal::new(&cx.heap, body).as_string()?).ok()?;
-        if !allows_handler_attribute(cx, element, &text) {
-            return Some(JSValue::NULL);
-        }
+    let body =
+        DomString::from_js_string(&cx.heap, JsLocal::new(&cx.heap, body).as_string()?).ok()?;
+    if allowed_by != window.to_js() && !allows_handler_attribute(cx, element, &body) {
+        return Some(JSValue::NULL);
     }
     if !doc.runs_scripts() {
         return Some(JSValue::NULL);
     }
-    let is_on_error = is_for_window
-        && Atom::from_js_string(&cx.heap, JsLocal::new(&cx.heap, attribute).as_string()?)
-            .ok()?
-            .as_utf8()
-            == "onerror";
-    let parameters = DomString::from(match element.kind().is_svg() {
-        true => "evt",
-        false if is_on_error => "event, source, lineno, colno, error",
-        false => "event",
-    });
+    let attribute =
+        DomString::from_js_string(&cx.heap, JsLocal::new(&cx.heap, attribute).as_string()?).ok()?;
+    let parameters = match element.kind().is_svg() {
+        true => DomString::from("evt"),
+        false if is_for_window && attribute.eq_str("onerror") => {
+            DomString::from("event, source, lineno, colno, error")
+        }
+        false => Atom::from(atom!("event")).to_dom_string(),
+    };
     let scopes = match is_for_window && element.kind().is_html() {
         true => [JSValue::UNDEFINED; 3],
         false => [
@@ -162,11 +159,12 @@ pub(super) fn compile<'a>(
             element.to_js(),
         ],
     };
-    let [url, base, parameters] =
-        [doc.url(), doc.base_url(), parameters].map(|it| it.to_js(&cx.heap).to_js());
-    let realm = global_of(window.realm(&cx.heap));
+    let (texts, realm) = (
+        [attribute, parameters, body, doc.url(), doc.base_url()],
+        global_of(window.realm(&cx.heap)),
+    );
     let compiled = bun_jsc::call_zero_is_throw(realm, || {
-        Bun__DesktopRealm__compileHandler(realm, &[attribute, parameters, body, url, base], &scopes)
+        Bun__DesktopRealm__compileHandler(realm, &texts.each_ref().map(DomString::as_impl), &scopes)
     });
     Some(compiled.unwrap_or_else(|error| {
         script::report(cx, Some(window), error);

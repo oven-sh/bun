@@ -53,6 +53,8 @@ bitflags::bitflags! {
         const DISPATCHING = 1 << 8;
         const UNINITIALIZED = 1 << 9;
         const IS_MOUSE_EVENT = 1 << 10;
+        /// A click that no pointer has caused.
+        const HAS_NO_POSITION = 1 << 11;
         /// <https://w3c.github.io/IndexedDB/#fire-success-event>
         const LISTENER_THREW = 1 << 12;
     }

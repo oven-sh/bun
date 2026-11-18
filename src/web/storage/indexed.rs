@@ -1,6 +1,7 @@
 //! What <https://w3c.github.io/IndexedDB/> stores. The keys of what is in use are in memory, for all threads.
 
 use core::ops::Bound::{Excluded, Included, Unbounded};
+use core::sync::atomic::Ordering;
 use core::time::Duration;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
@@ -11,6 +12,7 @@ use bun_threading::{Guarded, Mutex};
 
 use super::Storage;
 use super::key::{self, Key, KeyRange};
+use super::large::LARGE;
 use super::sql::{self, Connection as Sql, SqlError, Value::*};
 use crate::Bytes;
 use crate::exec::{Receiver, Sender, oneshot, sleep, spawn_background};
@@ -186,6 +188,35 @@ impl Rows {
             .range::<[u8], _>((Unbounded, Excluded(key)))
             .next_back()
     }
+
+    fn after(
+        &self,
+        range: &KeyRange,
+        direction: Direction,
+        position: Option<&[u8]>,
+        target: Option<&[u8]>,
+    ) -> Option<&Key> {
+        let passed = position.map(|it| {
+            if direction.skips_duplicates {
+                key::split(it).0
+            } else {
+                it
+            }
+        });
+        let next = match (direction.is_forward, target, passed) {
+            (true, Some(target), _) => self.first_from(target),
+            (true, None, Some(passed)) => self.first_from(&key::past(passed)),
+            (true, None, None) => self.first_from(&range.from),
+            (false, Some(target), _) => self.last_before(&key::past(target)),
+            (false, None, passed) => self.last_before(passed.unwrap_or(&range.to)),
+        };
+        let next = next.filter(|it| range.includes(it))?;
+        if direction.skips_duplicates && !direction.is_forward {
+            self.first_from(key::split(next).0)
+        } else {
+            Some(next)
+        }
+    }
 }
 
 pub enum Notice {
@@ -281,6 +312,13 @@ impl Turn {
         }
         let database = Arc::clone(&self.0);
         let stored = self.0.storage.write(move |sql| {
+            if !database
+                .storage
+                .has_looked_for_unused_values
+                .swap(true, Ordering::Relaxed)
+            {
+                database.storage.remove_unused_large_values(sql);
+            }
             let read = |it: &sql::Row<'_>| {
                 Some(Schema {
                     version: it.integer(0) as u64,
@@ -388,8 +426,11 @@ impl Database {
     fn erase(self: &Arc<Self>) -> impl Future<Output = sql::Result> + use<> {
         self.forget();
         let database = Arc::clone(self);
-        self.storage
-            .write(move |sql| sql.atomically(|sql| erase(sql, &database.bucket, &database.name)))
+        self.storage.write(move |sql| {
+            sql.atomically(|sql| erase(sql, &database.bucket, &database.name))?;
+            database.storage.remove_unused_large_values(sql);
+            Ok(())
+        })
     }
 
     fn start_transactions(self: &Arc<Self>, state: &mut State) {
@@ -593,12 +634,41 @@ pub struct Direction {
 pub struct Values {
     bytes: Vec<u8>,
     ends: Vec<usize>,
+    /// If only the first one is needed now: how many have been left out at the end.
+    skipped: Option<usize>,
 }
 
 impl Values {
+    const AHEAD: usize = 256 << 10;
+
+    fn skips(&mut self, is_large: bool) -> bool {
+        let is_enough = !self.ends.is_empty() && (is_large || self.bytes.len() > Self::AHEAD);
+        self.skipped
+            .as_mut()
+            .filter(|it| is_enough || **it > 0)
+            .map(|it| *it += 1)
+            .is_some()
+    }
+
     fn push(&mut self, value: &[u8]) {
+        if self.skips(value.len() >= LARGE) {
+            return;
+        }
         self.bytes.extend_from_slice(value);
         self.ends.push(self.bytes.len());
+    }
+
+    fn push_stored(&mut self, row: &sql::Row<'_>, storage: &Storage) -> sql::Result {
+        if !row.is_text(0) {
+            self.push(row.bytes(0));
+            return Ok(());
+        }
+        if self.skips(true) {
+            return Ok(());
+        }
+        storage.read_large_value(row.bytes(0), &mut self.bytes)?;
+        self.ends.push(self.bytes.len());
+        Ok(())
     }
 
     pub fn iter(&self) -> impl ExactSizeIterator<Item = &[u8]> {
@@ -607,6 +677,28 @@ impl Values {
             .iter()
             .map(move |end| &self.bytes[core::mem::replace(&mut start, *end)..*end])
     }
+}
+
+/// The values of the entries that a cursor comes to next.
+#[derive(Default)]
+pub struct Ahead {
+    entries: Vec<Key>,
+    values: Values,
+    next: usize,
+}
+
+impl Ahead {
+    pub fn value(&self) -> &[u8] {
+        let Values { bytes, ends, .. } = &self.values;
+        &bytes[self.next.checked_sub(2).map_or(0, |it| ends[it])..ends[self.next - 1]]
+    }
+}
+
+pub struct Walk<'w> {
+    pub store: Table,
+    pub index: Option<Table>,
+    pub range: &'w KeyRange,
+    pub direction: Direction,
 }
 
 /// Aborted when it is dropped.
@@ -890,26 +982,7 @@ impl Transaction {
         self.with_rows(table, |rows| {
             let (mut position, mut found) = (position, None);
             for _ in 0..count {
-                let passed = position.map(|it| {
-                    if direction.skips_duplicates {
-                        key::split(it).0
-                    } else {
-                        it
-                    }
-                });
-                let next = match (direction.is_forward, target, passed) {
-                    (true, Some(target), _) => rows.first_from(target),
-                    (true, None, Some(passed)) => rows.first_from(&key::past(passed)),
-                    (true, None, None) => rows.first_from(&range.from),
-                    (false, Some(target), _) => rows.last_before(&key::past(target)),
-                    (false, None, passed) => rows.last_before(passed.unwrap_or(&range.to)),
-                };
-                let next = next.filter(|it| range.includes(it))?;
-                let next = if direction.skips_duplicates && !direction.is_forward {
-                    rows.first_from(key::split(next).0)?
-                } else {
-                    next
-                };
+                let next = rows.after(range, direction, position, target)?;
                 (position, found) = (Some(&**next), Some(next));
             }
             found.cloned()
@@ -922,11 +995,19 @@ impl Transaction {
         store: Table,
         keys: impl IntoIterator<Item = &'k [u8]>,
     ) -> Result<Values> {
-        let (written, mut values) = (
-            self.written.iter().find(|it| it.0 == store),
-            Values::default(),
-        );
-        self.database().storage.read(|sql| {
+        self.read_to(Values::default(), store, keys)
+    }
+
+    fn read_to<'k>(
+        &self,
+        mut values: Values,
+        store: Table,
+        keys: impl IntoIterator<Item = &'k [u8]>,
+    ) -> Result<Values> {
+        let written = self.written.iter().find(|it| it.0 == store);
+        let (storage, keys) = (&self.database().storage, keys.into_iter());
+        let is_one = keys.size_hint().1 == Some(1);
+        let read = |sql: &mut Sql| {
             for key in keys {
                 match written.and_then(|it| it.1.get(key)?.as_deref()) {
                     Some(value) => values.push(value),
@@ -934,35 +1015,101 @@ impl Transaction {
                         .one(
                             "SELECT value FROM records WHERE tab = ? AND key = ?",
                             &[Integer(store.0), Blob(key)],
-                            |it| values.push(it.bytes(0)),
+                            |it| values.push_stored(it, storage),
                         )?
-                        .ok_or(Failure::Erased)?,
+                        .ok_or(Failure::Erased)??,
                 }
             }
             Result::Ok(())
-        })?;
+        };
+        storage.read(|sql| if is_one { read(sql) } else { sql.at_once(read) })?;
         Ok(values)
+    }
+
+    /// Of an entry that [`iterate`](Self::iterate) has found. It is [`Ahead::value`], unless this transaction has written it.
+    pub fn read_at(
+        &self,
+        walk: &Walk<'_>,
+        entry: &Key,
+        ahead: &mut Ahead,
+    ) -> Result<Option<Bytes>> {
+        let record_of: fn(&[u8]) -> &[u8] = if walk.index.is_some() {
+            |it| key::split(it).1
+        } else {
+            |it| it
+        };
+        if let Some(value) = self
+            .written
+            .iter()
+            .find(|it| it.0 == walk.store)
+            .and_then(|it| it.1.get(record_of(entry))?.as_deref())
+        {
+            return Ok(Some(value.into()));
+        }
+        if let Some(skipped) = ahead.entries[ahead.next..]
+            .iter()
+            .position(|it| it == entry)
+        {
+            ahead.next += skipped + 1;
+            return Ok(None);
+        }
+        let (used, fitting) = (
+            ahead.next,
+            Values::AHEAD * ahead.entries.len() / ahead.values.bytes.len().max(1),
+        );
+        let mut entries = self.with_rows(walk.index.unwrap_or(walk.store), |rows| {
+            let following = core::iter::successors(Some(entry), |it| {
+                rows.after(walk.range, walk.direction, Some(it), None)
+            });
+            following
+                .take((used * 4).min(fitting).clamp(1, 256))
+                .cloned()
+                .collect::<Vec<_>>()
+        })?;
+        let values = Values {
+            skipped: Some(0),
+            ..Values::default()
+        };
+        let values = if walk.index.is_some() {
+            self.read_to(values, walk.store, entries.iter().map(|it| record_of(it)))
+        } else {
+            self.read_adjacent_to(values, walk.store, &entries)
+        }?;
+        entries.truncate(values.ends.len());
+        *ahead = Ahead {
+            entries,
+            values,
+            next: 1,
+        };
+        Ok(None)
     }
 
     /// Of all the records from the first up to and with the last of `keys`.
     pub fn read_adjacent(&self, store: Table, keys: &[Key]) -> Result<Values> {
+        self.read_adjacent_to(Values::default(), store, keys)
+    }
+
+    fn read_adjacent_to(&self, mut values: Values, store: Table, keys: &[Key]) -> Result<Values> {
         let ([first, .., last], false) = (keys, self.written.iter().any(|it| it.0 == store)) else {
-            return self.read(store, keys.iter().map(|it| &**it));
+            return self.read_to(values, store, keys.iter().map(|it| &**it));
         };
-        let (mut values, storage) = (Values::default(), &self.database().storage);
+        let (storage, mut result) = (&self.database().storage, Ok(()));
+        let push =
+            |it: &sql::Row<'_>| result = result.and_then(|()| values.push_stored(it, storage));
         storage.read(|sql| match first < last {
             true => sql.each(
                 "SELECT value FROM records WHERE tab = ? AND key BETWEEN ? AND ? ORDER BY key",
                 &[Integer(store.0), Blob(first), Blob(last)],
-                |it| values.push(it.bytes(0)),
+                push,
             ),
             false => sql.each(
                 "SELECT value FROM records WHERE tab = ? AND key BETWEEN ? AND ? ORDER BY key DESC",
                 &[Integer(store.0), Blob(last), Blob(first)],
-                |it| values.push(it.bytes(0)),
+                push,
             ),
         })?;
-        if values.ends.len() == keys.len() {
+        result?;
+        if values.ends.len() + values.skipped.unwrap_or(0) == keys.len() {
             Ok(values)
         } else {
             Err(Failure::Erased)
@@ -973,7 +1120,12 @@ impl Transaction {
         !self.undo.is_empty()
     }
 
-    fn store(&self, sql: &mut Sql, schema: Option<&Schema>) -> Result {
+    fn store(
+        &self,
+        sql: &mut Sql,
+        schema: Option<&Schema>,
+        (old, new): &mut (Vec<Bytes>, Vec<Bytes>),
+    ) -> Result {
         let database = self.database();
         let (bucket, name) = (Text(&database.bucket), Blob(&database.name));
         let (next_keys, old_schema) = {
@@ -999,14 +1151,37 @@ impl Transaction {
             )
         };
         for table in &self.cleared {
+            sql.each(
+                "SELECT value FROM records WHERE tab = ? AND typeof(value) = 'text'",
+                &[Integer(table.0)],
+                |it| old.push(it.bytes(0).into()),
+            )?;
             sql.run("DELETE FROM records WHERE tab = ?", &[Integer(table.0)])?;
         }
         for (table, written) in &self.written {
+            let has_large = sql
+                .one(
+                    "SELECT 1 FROM records WHERE tab = ? AND typeof(value) = 'text' LIMIT 1",
+                    &[Integer(table.0)],
+                    |_| (),
+                )?
+                .is_some();
             for (key, value) in written {
+                if has_large {
+                    sql.each("SELECT value FROM records WHERE tab = ? AND key = ? AND typeof(value) = 'text'", &[Integer(table.0), Blob(key)], |it| old.push(it.bytes(0).into()))?;
+                }
+                let file = value
+                    .as_ref()
+                    .filter(|it| it.len() >= LARGE)
+                    .map_or(Ok(None), |it| database.storage.write_large_value(it))?;
+                let value = match file {
+                    Some(file) => Some(Text(new.push_mut(file))),
+                    None => value.as_deref().map(Blob),
+                };
                 match value {
                     Some(value) => sql.run(
                         "INSERT OR REPLACE INTO records VALUES (?, ?, ?)",
-                        &[Integer(table.0), Blob(key), Blob(value)],
+                        &[Integer(table.0), Blob(key), value],
                     )?,
                     None => sql.run(
                         "DELETE FROM records WHERE tab = ? AND key = ?",
@@ -1055,12 +1230,22 @@ impl Transaction {
     ) -> (Result, Option<Place>) {
         let storage = Arc::clone(&self.database().storage);
         let finished = storage.write(move |sql| {
-            let result = super::durably(sql, is_strict, |sql| {
-                sql.atomically(|sql| self.store(sql, schema.as_ref()))
-            });
+            let (storage, mut files) = (Arc::clone(&self.database().storage), Default::default());
+            let store = |sql: &mut Sql| {
+                self.store(sql, schema.as_ref(), &mut files)?;
+                if is_strict && !files.1.is_empty() {
+                    storage.sync_large_values(&files.1)?;
+                }
+                Ok(())
+            };
+            let result = super::durably(sql, is_strict, |sql| sql.atomically(store));
             if result.is_err() {
+                if !files.1.is_empty() || matches!(result, Err(Failure::Sql(SqlError::FULL))) {
+                    storage.remove_unused_large_values(sql);
+                }
                 return Ok((result, self.abort()));
             }
+            storage.replace_large_values(files.0, files.1);
             if let (Some(schema), Ok(mut state)) = (
                 schema,
                 self.database().lock_unless_erased(self.times_erased),

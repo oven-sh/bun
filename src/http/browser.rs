@@ -26,6 +26,8 @@ pub trait Browser {
     fn negotiate(&self, received: Option<&[u8]>) -> Negotiation;
     /// What wakes the request up may be something else.
     fn take_approval_of_certificate(&self) -> bool;
+    /// What it leaves in `decoded` stays there, in front of what follows. `expected` is a guess at the final length.
+    fn take_body(&self, decoded: &mut Vec<u8>, expected: Option<usize>);
     /// Of a response that is not the final one.
     fn informed(&self, response: &Response);
 }

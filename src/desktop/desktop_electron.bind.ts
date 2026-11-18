@@ -78,7 +78,16 @@ export const ElectronSafeStorage = b.interface("ElectronSafeStorage", {
 });
 
 export const CrashReporterOptions = b.dictionary(
-  { extra: b.recordOf(b.DOMString, b.DOMString).optional, uploadToServer: flagIfAny },
+  {
+    submitURL: textIfAny,
+    productName: textIfAny,
+    companyName: textIfAny,
+    uploadToServer: flagIfAny,
+    rateLimit: flag,
+    compress: flagIfAny,
+    extra: b.recordOf(b.DOMString, b.DOMString).optional,
+    globalExtra: b.recordOf(b.DOMString, b.DOMString).optional,
+  },
   { webidl: true },
 );
 
@@ -91,7 +100,7 @@ export const ElectronCrashReporter = b.interface("ElectronCrashReporter", {
     addExtraParameter: { args: { key: text, value: text } },
     removeExtraParameter: { args: { key: text } },
     getParameters: returnsObject,
-    getLastCrashReport: { returns: b.any, capability: "heap" },
+    getLastCrashReport: { returns: b.any, ...js },
     getUploadedReports: returnsObject,
     getUploadToServer: { returns: b.bool },
     setUploadToServer: { args: { uploadToServer: flag } },

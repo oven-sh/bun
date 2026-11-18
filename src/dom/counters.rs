@@ -2,12 +2,13 @@
 
 use std::rc::Rc;
 
+use bun_collections::hashbrown::HashMap;
 use bun_core::strings;
 
 use crate::boxes::Child;
 use crate::counter_style::CounterStyle;
 use crate::document::Document;
-use crate::name::name;
+use crate::name::{SecretHasher, name};
 use crate::order::Order as _;
 use crate::properties::Style;
 use crate::tree::{DOCUMENT, Data, Element, Flags, MARKER, Namespace, NodeId, Replaced};
@@ -66,12 +67,24 @@ fn quotes_for(locale: &str) -> &'static str {
     .map_or("“”‘’", |it| it.0)
 }
 
+struct InScope {
+    value: i32,
+    /// Of the element that made it.
+    parent: NodeId,
+    containments: u32,
+}
+
 #[derive(Default)]
 struct Counters {
-    /// The name, the value, and the parent of the element that made it.
-    in_scope: Vec<(Str, i32, NodeId)>,
-    /// Those before this are outside of the nearest style containment.
-    contained_from: usize,
+    /// The names that are shown, and where they are in `in_scope`.
+    shown: HashMap<Str, usize, SecretHasher>,
+    in_scope: Vec<Vec<InScope>>,
+    /// What ends with the parent of the element that made it.
+    of_siblings: Vec<usize>,
+    /// What ends with the element that made it, because it hides a counter of an ancestor.
+    nested: Vec<usize>,
+    /// How many elements with style containment are around.
+    containments: u32,
     quote_depth: usize,
     /// Only what has `Flags::VISITED` matters.
     are_unseen: bool,
@@ -80,22 +93,33 @@ struct Counters {
 
 impl Counters {
     fn reset(&mut self, name: &Str, value: i32, parent: NodeId) {
-        match self.in_scope[self.contained_from..]
-            .iter_mut()
-            .rfind(|it| it.0 == *name)
-            .filter(|it| it.2 == parent)
+        let (Some(&at), containments) = (self.shown.get(name), self.containments) else {
+            return;
+        };
+        match self.in_scope[at]
+            .last_mut()
+            .filter(|it| it.containments == containments)
         {
-            Some(sibling) => sibling.1 = value,
-            None => self.in_scope.push((Rc::clone(name), value, parent)),
+            Some(sibling) if sibling.parent == parent => return sibling.value = value,
+            Some(_) => self.nested.push(at),
+            None => self.of_siblings.push(at),
         }
+        self.in_scope[at].push(InScope {
+            value,
+            parent,
+            containments,
+        });
     }
 
     fn change(&mut self, name: &Str, parent: NodeId, change: impl FnOnce(i32) -> i32) {
-        match self.in_scope[self.contained_from..]
-            .iter_mut()
-            .rfind(|it| it.0 == *name)
+        let Some(&at) = self.shown.get(name) else {
+            return;
+        };
+        match self.in_scope[at]
+            .last_mut()
+            .filter(|it| it.containments == self.containments)
         {
-            Some(counter) => counter.1 = change(counter.1),
+            Some(counter) => counter.value = change(counter.value),
             None => self.reset(name, change(0), parent),
         }
     }
@@ -111,16 +135,18 @@ impl Counters {
             ContentItem::String(string) => string.to_string(),
             ContentItem::Image(_) => String::new(),
             ContentItem::Counter(name, separator, kind) => {
-                let values: Vec<_> = self
-                    .in_scope
-                    .iter()
-                    .filter(|it| it.0 == *name)
-                    .map(|it| represent(it.1, kind))
-                    .collect();
+                let values = self
+                    .shown
+                    .get(name)
+                    .map_or(&[][..], |it| &self.in_scope[*it]);
                 match (separator, values.last()) {
                     (_, None) => represent(0, kind),
-                    (None, Some(last)) => last.clone(),
-                    (Some(separator), _) => values.join(separator),
+                    (None, Some(last)) => represent(last.value, kind),
+                    (Some(separator), _) => values
+                        .iter()
+                        .map(|it| represent(it.value, kind))
+                        .collect::<Vec<_>>()
+                        .join(separator),
                 }
             }
             ContentItem::Quote { open, visible } => {
@@ -498,22 +524,23 @@ impl Document {
                     None
                 }
             });
-            let mut shown = shown
-                .flatten()
-                .filter_map(|it| {
-                    if let ContentItem::Counter(name, ..) = it {
-                        Some(name)
-                    } else {
-                        None
-                    }
-                })
-                .peekable();
-            let are_unseen = shown.peek().is_none() && self.carousels.is_empty();
-            let mut counters = Counters {
-                are_unseen,
-                shows_items: shown.any(|it| &**it == "list-item"),
-                ..Counters::default()
-            };
+            let mut counters = Counters::default();
+            for name in shown.flatten().filter_map(|it| {
+                if let ContentItem::Counter(name, ..) = it {
+                    Some(name)
+                } else {
+                    None
+                }
+            }) {
+                let next = counters.shown.len();
+                counters.shown.entry(Rc::clone(name)).or_insert(next);
+            }
+            counters
+                .in_scope
+                .resize_with(counters.shown.len(), Vec::new);
+            let are_unseen = counters.shown.is_empty() && self.carousels.is_empty();
+            (counters.are_unseen, counters.shows_items) =
+                (are_unseen, counters.shown.contains_key("list-item"));
             let (mut texts, mut paths) = (Vec::new(), Vec::new());
             for user in self.counter_users.keys().copied().filter(|_| are_unseen) {
                 let path = core::iter::once(user)
@@ -627,9 +654,12 @@ impl Document {
     }
 
     fn count(&self, parent: NodeId, counters: &mut Counters, texts: &mut Vec<(NodeId, String)>) {
-        let outer = counters.in_scope.len();
-        self.count_children(parent, parent, outer, counters, texts);
-        counters.in_scope.truncate(outer);
+        let outer = counters.of_siblings.len();
+        self.count_children(parent, parent, counters, texts);
+        counters
+            .of_siblings
+            .drain(outer..)
+            .for_each(|it| _ = counters.in_scope[it].pop());
     }
 
     /// `parent` is what has the boxes of the children of `of`.
@@ -637,7 +667,6 @@ impl Document {
         &self,
         of: NodeId,
         parent: NodeId,
-        outer: usize,
         counters: &mut Counters,
         texts: &mut Vec<(NodeId, String)>,
     ) {
@@ -657,9 +686,10 @@ impl Document {
             else {
                 continue;
             };
-            let (rare, contained) = (&style.rare, (counters.contained_from, counters.quote_depth));
+            let (rare, quote_depth, outer) =
+                (&style.rare, counters.quote_depth, counters.nested.len());
             if style.display() == Display::Contents && !self.counter_users.contains_key(&id) {
-                self.count_children(id, parent, outer, counters, texts);
+                self.count_children(id, parent, counters, texts);
                 continue;
             }
             if style.display() != Display::Contents && !counters.are_unseen {
@@ -667,9 +697,7 @@ impl Document {
             }
             let is_contained =
                 style.contain().contains(Contain::STYLE) && style.display() != Display::Contents;
-            if is_contained {
-                counters.contained_from = counters.in_scope.len();
-            }
+            counters.containments += u32::from(is_contained);
             match &rare.content {
                 Content::Items(items, alt) if self.counter_users.contains_key(&id) => {
                     let represent =
@@ -695,25 +723,13 @@ impl Document {
                 _ => self.count(id, counters, texts),
             }
             if is_contained {
-                (counters.contained_from, counters.quote_depth) = contained;
+                (counters.containments, counters.quote_depth) =
+                    (counters.containments - 1, quote_depth);
             }
-            let (above, own) = counters.in_scope.split_at(outer);
-            let from = counters.contained_from.min(outer);
-            if own
-                .iter()
-                .any(|it| above[from..].iter().any(|above| above.0 == it.0))
-            {
-                let own = counters.in_scope.split_off(outer);
-                let kept: Vec<_> = own
-                    .into_iter()
-                    .filter(|it| {
-                        !counters.in_scope[from..]
-                            .iter()
-                            .any(|above| above.0 == it.0)
-                    })
-                    .collect();
-                counters.in_scope.extend(kept);
-            }
+            counters
+                .nested
+                .drain(outer..)
+                .for_each(|it| _ = counters.in_scope[it].pop());
         }
     }
 }

@@ -4,7 +4,7 @@ import { hasScreen, openScreen } from "./screen";
 import { $ } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir, tls } from "harness";
-import { chmodSync, copyFileSync, existsSync, linkSync, readdirSync, readFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, linkSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
 const hasNss = isLinux && !!Bun.which("openssl") && !new Bun.Glob("lib*/**/libnss3.so").scanSync("/usr").next().done;
@@ -60,6 +60,248 @@ async function runWithErrors(main: string, files: Record<string, string>, args: 
   return [lines.map(line => JSON.parse(line)), stderr] as const;
 }
 
+const digestOfLongBody = "af0e56a152fa1270e12debd01f1f20688f82fdc5";
+
+/** What a debugger needs to find in it. */
+function readMinidump(dump: Buffer) {
+  const [word, address] = [(at: number) => dump.readUInt32LE(at), (at: number) => dump.readBigUInt64LE(at)];
+  const rows = (at: number, size: number) => Array.from({ length: word(at) }, (_, index) => at + 4 + size * index);
+  const streams = new Map(
+    Array.from({ length: word(8) }, (_, index) => word(12) + 12 * index).map(at => [word(at), word(at + 8)]),
+  );
+  const text = (at: number, encoding: BufferEncoding = "utf8") => dump.toString(encoding, at + 4, at + 4 + word(at));
+  const table = (at: number, size: number) =>
+    Object.fromEntries(rows(at, size).map(it => [text(word(it)), text(word(it + size - 4))]));
+  const [[thread], crashpad, exception] = [rows(streams.get(3)!, 48), streams.get(0x43500001)!, streams.get(6)!];
+  const [sp, pc] = (process.arch === "x64" ? [152, 248] : [256, 264]).map(at => address(word(thread + 44) + at));
+  const isIn = (it: bigint, at: number) => address(at) <= it && it < address(at) + BigInt(word(at + 8));
+  const modules = rows(streams.get(4)!, 108);
+  return {
+    magic: dump.toString("latin1", 0, 4),
+    exception: [word(exception + 8), address(exception + 24)],
+    pc,
+    hasStack: isIn(sp, thread + 24) && word(thread + 36) + word(thread + 32) === dump.length,
+    crashedIn: modules.filter(it => isIn(pc, it)).map(it => [text(word(it + 20), "utf16le"), word(it + 76) > 4]),
+    modules: modules.length,
+    ofApp: table(word(crashpad + 40), 8),
+    ofProcess: table(word(word(word(crashpad + 48) + 12) + 24), 12),
+  };
+}
+
+describe.skipIf(!hasLibrary || !(isLinux || isMacOS)).concurrent("crashReporter", () => {
+  const files = (start: string, main: string) => ({
+    "package.json": JSON.stringify({ name: "fixture", productName: "Fixture", version: "1.2.3", main: "main.js" }),
+    "main.js": `${prelude}
+      const { crashReporter } = electron;
+      const { crash_handler } = require("bun:internal-for-testing");
+      const step = process.env.STEP;
+      ${start};
+      app.whenReady().then(async () => {${main}\n}).then(() => app.quit());`,
+    "utility.js": `process.crash();`,
+  });
+  async function launch(dir: { toString(): string }, env: object) {
+    await using proc = Bun.spawn({
+      cmd: [
+        "/bin/sh",
+        "-c",
+        'ulimit -c 0 && exec "$@"',
+        "--",
+        bunExe(),
+        "--preload=bun:desktop/electron",
+        ".",
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env: { ...bunEnv, BUN_DESKTOP_HEADLESS: "1", BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0", ...env },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const dumps = [...new Bun.Glob("*/*.dmp").scanSync(join(String(dir), "data/Crashpad"))];
+    return { printed: stdout && JSON.parse(stdout), signal: proc.signalCode, dumps };
+  }
+  const read = (dir: { toString(): string }, dump: string) => readFileSync(join(String(dir), "data/Crashpad", dump));
+
+  test.each([
+    ["crash_handler.segfault()", "SIGSEGV", isMacOS ? 1 : 11, "Segmentation fault at address 0xDEADBEEF"],
+    ["crash_handler.panic()", "SIGABRT", isMacOS ? 10 : 6, "invoked crashByPanic() handler"],
+  ])("writes a minidump after %s", async (crash, signal, code, message) => {
+    using dir = tempDir(
+      "crash",
+      files(
+        `crashReporter.start({ uploadToServer: false, companyName: "Acme", extra: { a: "1", gone: "x" }, globalExtra: { all: "2" } })`,
+        `crashReporter.addExtraParameter("b", "é");
+         crashReporter.addExtraParameter(Buffer.alloc(40, "k").toString(), "too long a key");
+         crashReporter.addExtraParameter("long", Buffer.alloc(30000, "v").toString());
+         crashReporter.removeExtraParameter("gone");
+         if (step === "crash") ${crash};
+         print([crashReporter.getUploadToServer(), crashReporter.getLastCrashReport(), crashReporter.getUploadedReports().length, Object.keys(crashReporter.getParameters())]);`,
+      ),
+    );
+    const secret = crypto.randomUUID();
+    const { dumps, ...crashed } = await launch(dir, { STEP: "crash", SECRET: secret });
+    expect(crashed).toEqual({ printed: "", signal });
+    expect(dumps).toEqual([expect.stringMatching(/^completed\/[\da-f]{8}(-[\da-f]{4}){3}-[\da-f]{12}\.dmp$/)]);
+    const { pc, modules, ...found } = readMinidump(read(dir, dumps[0]));
+    expect(found).toMatchObject({
+      magic: "MDMP",
+      exception: [code, signal === "SIGSEGV" ? 0xdeadbeefn : pc],
+      hasStack: true,
+      crashedIn: [[realpathSync(bunExe()), true]],
+      ofApp: { _companyName: "Acme", _productName: "Fixture", _version: "1.2.3", all: "2", prod: "Electron" },
+    });
+    expect({ ...found.ofProcess, pid: 0, osarch: 0, long: found.ofProcess.long.length }).toEqual({
+      LOG_FATAL: message,
+      platform: process.platform,
+      process_type: "browser",
+      ptype: "browser",
+      pid: 0,
+      osarch: 0,
+      a: "1",
+      b: "é",
+      long: 20320,
+    });
+    expect(modules).toBeGreaterThan(1);
+    expect(read(dir, dumps[0]).includes(secret)).toBe(false);
+    expect(await launch(dir, { STEP: "look" })).toEqual({
+      printed: [false, { date: "1970-01-01T00:00:00.000Z", id: "" }, 1, ["a", "b", "long"]],
+      signal: null,
+      dumps,
+    });
+  });
+
+  test("writes nothing unless it has been started", async () => {
+    using dir = tempDir(
+      "crash",
+      files(
+        `require("fs").mkdirSync(app.getPath("crashDumps"), { recursive: true });
+         try { crashReporter.start({}); } catch (error) { require("fs").writeSync(1, JSON.stringify(error.message)); }`,
+        `crash_handler.panic();`,
+      ),
+    );
+    expect(await launch(dir, {})).toEqual({
+      printed: "submitURL must be specified when uploadToServer is true",
+      signal: "SIGABRT",
+      dumps: [],
+    });
+  });
+
+  test.skipIf(isASAN)("covers utility processes", async () => {
+    using dir = tempDir(
+      "crash",
+      files(
+        `crashReporter.start({ uploadToServer: false, extra: { a: "1" }, globalExtra: { all: "2" } })`,
+        `await once(electron.utilityProcess.fork(path.join(__dirname, "utility.js"), [], { stdio: "ignore" }), "exit");`,
+      ),
+    );
+    const { dumps } = await launch(dir, {});
+    const { ofApp, ofProcess, hasStack } = readMinidump(read(dir, dumps[0]));
+    expect([dumps.length, ofApp.all, ofProcess.a, ofProcess.process_type, hasStack]).toEqual([
+      1,
+      "2",
+      undefined,
+      "utility",
+      true,
+    ]);
+  });
+
+  test.skipIf(isASAN)("a utility process hears that uploads have been turned off", async () => {
+    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() });
+    using dir = tempDir("crash", {
+      ...files(
+        `crashReporter.start({ submitURL: process.env.URL })`,
+        `const child = electron.utilityProcess.fork(path.join(__dirname, "utility.js"), [], { stdio: "ignore" });
+         await once(child, "message");
+         crashReporter.setUploadToServer(false);
+         child.postMessage(0);
+         await once(child, "exit");`,
+      ),
+      "utility.js": `process.parentPort.on("message", () => process.crash()); process.parentPort.postMessage(0);`,
+    });
+    expect((await launch(dir, { URL: server.url.href })).dumps).toEqual([expect.stringMatching(/^completed\//)]);
+  });
+
+  test("uploads nothing that another program has left in the directory", async () => {
+    const names: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: async request => (
+        names.push(((await request.formData()).get("upload_file_minidump") as File).name),
+        new Response()
+      ),
+    });
+    using dir = tempDir(
+      "crash",
+      files(
+        `crashReporter.start({ submitURL: process.env.URL, compress: false })`,
+        `if (step === "crash") crash_handler.panic();
+         const fs = require("fs"), queued = path.join(app.getPath("crashDumps"), "queued");
+         while (fs.readdirSync(queued).length) await Bun.sleep(1);
+         fs.renameSync("last.dmp", path.join(queued, "last.dmp"));
+         while (fs.readdirSync(queued).length) crashReporter.setUploadToServer(true), await Bun.sleep(1);`,
+      ),
+    );
+    const [dump] = (await launch(dir, { STEP: "crash", URL: server.url.href })).dumps;
+    for (const copy of ["data/Crashpad/pending/other.dmp", "last.dmp"])
+      await Bun.write(join(String(dir), copy), read(dir, dump));
+    expect((await launch(dir, { URL: server.url.href })).dumps).toContain("pending/other.dmp");
+    expect(names).toEqual([dump.slice("queued/".length), "last.dmp"]);
+  });
+
+  test.each([true, false])("uploads at the next launch, if the app wants that (compress: %p)", async compress => {
+    const posts: unknown[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(request) {
+        const body = await request.bytes();
+        const form = await new Response(compress ? Bun.gunzipSync(body) : body, {
+          headers: request.headers,
+        }).formData();
+        const { upload_file_minidump: file, ...fields } = Object.fromEntries(form) as Record<string, any>;
+        const query = Object.fromEntries(new URL(request.url).searchParams);
+        posts.push([
+          request.method,
+          request.headers.get("content-encoding"),
+          file.name,
+          file.size,
+          fields._version,
+          fields["a%22b"],
+          fields.process_type,
+          query.product,
+          query.key,
+          query.guid === fields.guid,
+        ]);
+        return new Response("report 1".padEnd(5000));
+      },
+    });
+    using dir = tempDir(
+      "crash",
+      files(
+        `crashReporter.start({ submitURL: process.env.URL, uploadToServer: step !== "look", compress: ${compress}, extra: { 'a"b': "1" } })`,
+        `if (step === "crash") crash_handler.panic();
+         while (step === "upload" && require("fs").readdirSync(path.join(app.getPath("crashDumps"), "queued")).length) await Bun.sleep(1);
+         const { id, date } = crashReporter.getLastCrashReport();
+         print([id.trim(), id.length, date.getTime() > 0]);`,
+      ),
+    );
+    const URL_ = server.url.href + "?key=1";
+    const { dumps } = await launch(dir, { STEP: "crash", URL: URL_ });
+    expect(dumps).toEqual([expect.stringMatching(/^queued\//)]);
+    const [name, size] = [dumps[0].slice("queued/".length), read(dir, dumps[0]).length];
+    expect(await launch(dir, { STEP: "look", URL: URL_ })).toEqual({ printed: ["", 0, false], signal: null, dumps });
+    expect(posts).toEqual([]);
+    expect(await launch(dir, { STEP: "upload", URL: URL_ })).toEqual({
+      printed: ["report 1", 1024, true],
+      signal: null,
+      dumps: ["completed/" + name],
+    });
+    expect(posts).toEqual([
+      ["POST", compress ? "gzip" : null, name, size, "1.2.3", "1", "browser", "Electron", "1", true],
+    ]);
+  });
+});
+
 describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
   test("inline caches can rely on the prototypes of every page", async () => {
     expect(
@@ -70,6 +312,39 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
         { "preload.js": `window.isLeaf = it => require("bun:jsc").jscDescribe(it).includes("Leaf");` },
       ),
     ).toEqual([true, true, true, true]);
+  });
+
+  test("the accessors of a window are the same after optimized code has used them", async () => {
+    expect(
+      await run(
+        `serve({ "/": "<p>" });
+         print(await (await open()).executeJavaScript(\`{
+           const names = ["name", "length", "event", "status", "innerWidth"];
+           const describe = () => names.map(it => { const { get, set, ...rest } = Object.getOwnPropertyDescriptor(window, it); return [get.name, set.name, rest]; });
+           const order = () => Object.keys(window).filter(it => names.includes(it)).join();
+           const before = [describe(), order()];
+           let wrong = 0;
+           for (let i = 0; i < 3000; i++) {
+             if (i === 1000) document.body.append(document.createElement("iframe"));
+             if (i === 1500) window.innerWidth = 7;
+             if (i === 2000) Object.defineProperty(window, "status", { get: () => "other", set() {} });
+             if (i === 2500) delete window.event;
+             window.name = status = "n" + i;
+             wrong += name !== "n" + i || window.status !== (i < 2000 ? name : "other") || window.length !== +(i >= 1000) || length !== window.length;
+             wrong += (window.innerWidth === 7) !== i >= 1500 || window.event !== undefined || "event" in window !== i < 2500;
+             if (i === 900) wrong += JSON.stringify([describe(), order()]) !== JSON.stringify(before);
+           }
+           wrong;
+         }\`));`,
+        {},
+        [],
+        {
+          BUN_JSC_useConcurrentJIT: "0",
+          BUN_JSC_thresholdForJITAfterWarmUp: "10",
+          BUN_JSC_thresholdForOptimizeAfterWarmUp: "50",
+        },
+      ),
+    ).toEqual([0]);
   });
 
   test.each([
@@ -96,14 +371,27 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
         `const { cookies } = session.defaultSession;
         print((await cookies.get({})).length);
         if (process.argv.includes("again")) return;
-        app.relaunch({ args: ["again"] });
+        app.relaunch({ args: ["again", "--use-mock-keychain"] });
         await cookies.set({ url: "https://a.test/", name: "a", value: "1", expirationDate: Date.now() / 1000 + 60 });
         ${end}();`,
         {},
-        [],
+        ["--use-mock-keychain"],
         { BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
       ),
     ).toEqual([0, 1]);
+  });
+
+  test("whether the app opens at login is a boolean under both names", async () => {
+    using home = tempDir("login", {});
+    expect(
+      await run(
+        `const { openAtLogin, executableWillLaunchAtLogin } = app.getLoginItemSettings();
+        print([openAtLogin, executableWillLaunchAtLogin]);`,
+        {},
+        [],
+        { XDG_CONFIG_HOME: String(home) },
+      ),
+    ).toEqual([[false, false]]);
   });
 
   test.skipIf(isWindows)("a relaunched app has the variables whose names are numbers or not ASCII", async () => {
@@ -690,6 +978,31 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
     ]);
   });
 
+  test("empty ArrayBuffers from the network are collected", async () => {
+    expect(
+      await run(`
+        using server = Bun.serve({
+          port: 0,
+          fetch: (request, server) => server.upgrade(request) || new Response("", { headers: { "content-type": "text/html" } }),
+          websocket: { open: socket => socket.send(new Uint8Array()), message() {} },
+        });
+        app.trustOrigins([server.url.origin]);
+        const page = await open(server.url.href);
+        print(await page.executeJavaScript(\`Promise.all([
+          ...["", null, new Blob([]), new Uint8Array()].map(it => new Response(it).arrayBuffer()),
+          fetch("/").then(it => it.arrayBuffer()),
+          new Promise(resolve => {
+            const request = Object.assign(new XMLHttpRequest(), { responseType: "arraybuffer", onload: () => resolve(request.response) });
+            request.open("GET", "/");
+            request.send();
+          }),
+          new Promise(resolve => Object.assign(new WebSocket(location.href), { binaryType: "arraybuffer", onmessage: event => resolve(event.data) })),
+        ]).then(all => all.map(it => it.byteLength + +it.detached))\`));
+        await page.loadURL("about:blank");
+        Bun.gc(true);`),
+    ).toEqual([[0, 0, 0, 0, 0, 0, 0]]);
+  });
+
   test("netLog", async () => {
     expect(
       await run(`
@@ -794,6 +1107,32 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
         { BUN_DESKTOP_HEADLESS: undefined },
       ),
     ).toEqual(["done"]);
+  });
+
+  test.skipIf(!isMacOS)("a window that can be seen through is opaque while a color fills it", async () => {
+    expect(
+      await run(
+        `
+        const { dlopen } = require("bun:ffi");
+        const { sel_registerName, objc_msgSend } = dlopen("/usr/lib/libobjc.A.dylib", {
+          sel_registerName: { args: ["cstring"], returns: "u64" },
+          objc_msgSend: { args: ["u64", "u64"], returns: "u64" },
+        }).symbols;
+        const ask = (object, name) => objc_msgSend(object, sel_registerName(Buffer.from(name + "\\0")));
+        const window = new BrowserWindow({ show: false, vibrancy: "sidebar", backgroundColor: "#ffffff" });
+        const native = ask(window.getNativeWindowHandle().readBigUInt64LE(), "window");
+        const after = async change => (change(), await window.capturePage(), Number(ask(native, "isOpaque") & 1n));
+        print([
+          await after(() => {}),
+          await after(() => window.setVibrancy(null)),
+          await after(() => window.setBackgroundColor("#00000000")),
+          await after(() => window.setBackgroundColor("#ffffff")),
+        ]);`,
+        {},
+        ["--use-mock-keychain"],
+        { BUN_DESKTOP_HEADLESS: undefined },
+      ),
+    ).toEqual([[0, 1, 0, 1]]);
   });
 
   test.skipIf(!isLinux)("app.getApplicationInfoForProtocol()", async () => {
@@ -2841,6 +3180,68 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
     ).toEqual([true]);
   });
 
+  describe.skipIf(isWindows)("pages in processes of their own", () => {
+    const apart = { BUN_DESKTOP_PAGE_PROCESSES: "1", BUN_DESKTOP_THREADS: "2" };
+
+    test("scripts, messages, requests and pixels", async () => {
+      expect(
+        await run(
+          `serve({ "/": "<body style='background:#00f'><script src=/a.js></script>", "/a.js": "document.title = 'a'", "/b": "b" });
+          ipcMain.handle("twice", (event, value) => [event.senderFrame.url, value * 2]);
+          const page = await open("app://trusted/", preload);
+          print([page.getOSProcessId() !== process.pid, page.getTitle()]);
+          print(await page.executeJavaScript("Promise.all([twice(2), fetch('/b').then(it => it.text())])"));
+          print(await page.executeJavaScript("'" + Buffer.alloc(2 << 20, "a") + "'.length"));
+          print([...(await page.capturePage()).toBitmap().subarray(0, 4)]);`,
+          {
+            "preload.js": `const { contextBridge, ipcRenderer } = require("electron");
+              contextBridge.exposeInMainWorld("twice", it => ipcRenderer.invoke("twice", it));`,
+          },
+          [],
+          apart,
+        ),
+      ).toEqual([[true, "a"], [["app://trusted/", 4], "b"], 2 << 20, [255, 0, 0, 255]]);
+    });
+
+    test("the app outlives the process", async () => {
+      expect(
+        await run(
+          `serve({ "/": "<title>a</title>" });
+          const page = await open(), other = await open(), first = page.getOSProcessId();
+          process.kill(first, "SIGKILL");
+          print([(await once(page, "render-process-gone"))[1].reason, page.isCrashed(), other.isCrashed()]);
+          page.reload();
+          await once(page, "did-finish-load");
+          print([await page.executeJavaScript("document.title"), page.getOSProcessId() !== first]);`,
+          {},
+          [],
+          apart,
+        ),
+      ).toEqual([
+        ["killed", true, false],
+        ["a", true],
+      ]);
+    });
+
+    test.skipIf(!isLinux)("the process does not get the environment", async () => {
+      expect(
+        await run(
+          `serve({ "/": "" });
+          const page = await open();
+          print(require("fs").readFileSync("/proc/" + page.getOSProcessId() + "/environ", "latin1").includes("SECRET"));`,
+          {},
+          [],
+          { ...apart, SECRET: "1" },
+        ),
+      ).toEqual([false]);
+    });
+
+    test("only the parent can make one", async () => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), "--bun-desktop-child=page", "a"], env: bunEnv, stderr: "pipe" });
+      expect(await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited])).toEqual(["", "", 1]);
+    });
+  });
+
   describe("realms and documents are collected", () => {
     const leave = {
       navigating: `for (let i = 0; i < count; i++) await page.loadURL("app://trusted/page?" + i); await page.loadURL("app://trusted/");`,
@@ -3242,6 +3643,187 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
     ).toEqual([
       [["net::ERR_FAILED"], 0],
       [["2.0"], [0], 16, 1],
+    ]);
+  });
+
+  test("a connection with HTTP/2 whose certificate only the app accepts is used again", async () => {
+    expect(
+      await run(
+        `let connections = 0;
+         const server = require("http2").createSecureServer(${JSON.stringify(tls)}, (request, response) => response.end(request.httpVersion));
+         server.on("secureConnection", socket => (connections++, socket.unref())).unref();
+         await once(server.listen(0), "listening");
+         const get = ses => ses.fetch("https://localhost:" + server.address().port).then(it => it.text(), error => error.message);
+         const ses = session.defaultSession;
+         ses.setCertificateVerifyProc((_, callback) => callback(0));
+         print([await get(ses), await get(ses), await get(ses), connections]);
+         print(await get(session.fromPartition("other")));
+         ses.setCertificateVerifyProc(null);
+         print(await get(ses));`,
+      ),
+    ).toEqual([["2.0", "2.0", "2.0", 1], "net::ERR_CERT_AUTHORITY_INVALID", "net::ERR_CERT_AUTHORITY_INVALID"]);
+  });
+
+  test("a stream of HTTP/2 whose body has come is not reset", async () => {
+    expect(
+      await run(
+        `const codes = [];
+         const server = require("http2").createSecureServer(${JSON.stringify(tls)});
+         server.on("stream", (stream, { ":path": path }) => {
+           if (path === "/end") return codes.shift()(), stream.respond({}, { endStream: true });
+           stream.respond({ "content-length": path.length - 1 });
+           stream.write(path.slice(1));
+           codes.push(() => stream.end());
+           stream.on("close", () => print(stream.rstCode));
+         });
+         server.on("secureConnection", socket => socket.unref()).unref();
+         await once(server.listen(0), "listening");
+         session.defaultSession.setCertificateVerifyProc((_, callback) => callback(0));
+         for (const path of ["/", "/text"]) {
+           const response = await net.fetch("https://localhost:" + server.address().port + path);
+           await net.fetch("https://localhost:" + server.address().port + "/end");
+           await response.text();
+         }`,
+      ),
+    ).toEqual([0, 0]);
+  });
+
+  test("a stream of HTTP/2 that the server resets without an error has ended", async () => {
+    expect(
+      await run(
+        `let reset;
+         const server = require("http2").createSecureServer(${JSON.stringify(tls)});
+         server.on("stream", (stream, { ":path": path }) => {
+           if (path === "/reset") return reset(), stream.respond({}, { endStream: true });
+           if (path === "/none") return stream.close();
+           stream.respond({ "content-length": path.slice(1) }, { waitForTrailers: true });
+           stream.on("wantTrailers", () => {}).end("text");
+           reset = () => stream.close();
+         });
+         server.on("secureConnection", socket => socket.unref()).unref();
+         await once(server.listen(0), "listening");
+         session.defaultSession.setCertificateVerifyProc((_, callback) => callback(0));
+         const get = path => net.fetch("https://localhost:" + server.address().port + path);
+         for (const path of ["/4", "/5"]) {
+           const response = await get(path);
+           await get("/reset");
+           print(await response.text().catch(it => it.message));
+         }
+         print(await get("/none").catch(it => it.message));`,
+      ),
+    ).toEqual(["text", "net::ERR_CONTENT_LENGTH_MISMATCH", "net::ERR_HTTP2_PROTOCOL_ERROR"]);
+  });
+
+  test.each(["http", "http2"])("a long body is the same however it is sent and read, with %s", async module => {
+    expect(
+      await run(
+        `const zlib = require("zlib");
+         const body = Buffer.from(Uint32Array.from({ length: 1_500_001 }, (_, i) => i * 2654435761 & 0x0f0f0f0f).buffer);
+         const packed = { identity: body, gzip: zlib.gzipSync(body), br: zlib.brotliCompressSync(body, { params: { 1: 1 } }), zstd: zlib.zstdCompressSync(body) };
+         let resume;
+         const handle = async (request, response) => {
+           const [, encoding, framing] = request.url.split("/");
+           if (encoding === "resume") return resume(), response.end();
+           const bytes = packed[encoding];
+           if (!bytes) return response.writeHead(200, { "content-type": "text/html" }), response.end();
+           response.setHeader("content-encoding", encoding);
+           response.setHeader("cache-control", "max-age=60");
+           if (framing !== "chunked") response.setHeader("content-length", bytes.length);
+           response.write(bytes.subarray(0, 70_000));
+           await new Promise(resolve => (resume = resolve));
+           response.write(bytes.subarray(70_000, -100));
+           if (framing === "short") response.write("", () => response.destroy());
+           else response.end(bytes.subarray(-100));
+         };
+         const server = ${module === "http" ? `require("http").createServer(handle)` : `require("http2").createSecureServer(${JSON.stringify(tls)}, handle)`};
+         server.on("connection", socket => socket.unref()).unref();
+         await once(server.listen(0), "listening");
+         const origin = "${module === "http" ? "http" : "https"}://localhost:" + server.address().port;
+         session.defaultSession.setCertificateVerifyProc((_, callback) => callback(0));
+         app.trustOrigins([origin]);
+         print(await (await open(origin)).executeJavaScript(\`(async () => {
+           const resume = () => fetch("/resume");
+           const request = (url, responseType) => new Promise((resolve, reject) => {
+             const it = Object.assign(new XMLHttpRequest(), { responseType, onload: () => resolve(it.response), onerror: reject });
+             it.addEventListener("progress", resume, { once: true });
+             it.open("GET", url);
+             it.send();
+           });
+           const readers = {
+             early: url => fetch(url).then(it => Promise.all([it.arrayBuffer(), resume()])).then(it => it[0]),
+             late: url => fetch(url).then(it => resume().then(() => it.arrayBuffer())),
+             parts: url => fetch(url).then(it => resume().then(() => Array.fromAsync(it.body))).then(it => new Blob(it).arrayBuffer()),
+             buffer: url => request(url, "arraybuffer"),
+             blob: url => request(url, "blob").then(it => it.arrayBuffer()),
+           };
+           const digest = it => crypto.subtle.digest("SHA-1", it).then(it => new Uint8Array(it).toHex());
+           const found = {};
+           const note = (framing, result) => (found[framing] ??= new Set()).add(result);
+           for (const encoding of ["identity", "gzip", "br", "zstd"]) for (const framing of ["length", "chunked", "short"]) for (const name in readers) {
+             const url = "/" + [encoding, framing, name].join("/");
+             note(framing, await readers[name](url).then(digest, () => "failed"));
+             note(framing, await fetch(url, { cache: "only-if-cached", mode: "same-origin" }).then(it => it.arrayBuffer()).then(digest, () => "failed"));
+           }
+           return Object.values(found).map(it => [...it]);
+         })()\`));
+         print(new Bun.CryptoHasher("sha1").update(body).digest("hex"));`,
+      ),
+    ).toEqual([[[digestOfLongBody], [digestOfLongBody], ["failed"]], digestOfLongBody]);
+  });
+
+  test("a request for a buffer tells of its progress while the body is under way", async () => {
+    expect(
+      await run(
+        `let write;
+         const { url } = Bun.serve({ port: 0, fetch: ({ url }) =>
+           url.endsWith("/more") ? (write(), new Response()) :
+           url.endsWith("/body") ? new Response(new ReadableStream({ start(it) { let left = 4; (write = () => (left-- ? it.enqueue(new Uint8Array(1000)) : it.close()))(); } })) :
+           new Response("", { headers: { "content-type": "text/html" } }) });
+         app.trustOrigins([url.origin]);
+         print(await (await open(url.href)).executeJavaScript(\`new Promise(resolve => {
+           const loaded = [];
+           const request = Object.assign(new XMLHttpRequest(), { responseType: "arraybuffer" });
+           request.onprogress = event => (loaded.push(event.loaded), fetch("/more"));
+           request.onload = () => resolve([loaded, request.response.byteLength, request.response === request.response]);
+           request.open("GET", "/body");
+           request.send();
+         })\`));`,
+      ),
+    ).toEqual([[[1000, 2000, 3000, 4000], 4000, true]]);
+  });
+
+  test.each([false, true])("messages to a WebSocket arrive in order (compression: %p)", async perMessageDeflate => {
+    expect(
+      await run(
+        `const got = [];
+         const closed = Promise.withResolvers();
+         const { url } = Bun.serve({
+           port: 0,
+           fetch: (request, server) => (server.upgrade(request) ? undefined : new Response("", { headers: { "content-type": "text/html" } })),
+           websocket: { perMessageDeflate: ${perMessageDeflate}, message: (_, it) => got.push(typeof it === "string" ? it.slice(0, 5) : [it.length, it[0], it.at(-1)]), close: (_, code) => closed.resolve(code) },
+         });
+         app.trustOrigins([url.origin]);
+         print(await (await open(url.href)).executeJavaScript(\`new Promise(resolve => {
+           const socket = new WebSocket(location.href);
+           socket.onopen = () => {
+             const bytes = new Uint8Array(300_000);
+             for (let i = 0; i < 3000; i++) socket.send(String(i).padEnd(100));
+             for (const it of ["", new Blob([bytes.fill(1)]), "é"]) socket.send(it);
+             socket.send(bytes.fill(2));
+             socket.send(bytes.fill(3).subarray(0, 126));
+             socket.send("long".padEnd(70_000));
+             socket.send(bytes.fill(4).buffer);
+             bytes.fill(0);
+             const buffered = socket.bufferedAmount;
+             socket.onclose = () => resolve([buffered, socket.bufferedAmount]);
+             socket.close(1000);
+           };
+         })\`));
+         print([await closed.promise, got.slice(0, 3000).every((it, i) => Number(it) === i), got.slice(3000)]);`,
+      ),
+    ).toEqual([
+      [1_270_128, 0],
+      [1000, true, ["", [300_000, 1, 1], "é", [300_000, 2, 2], [126, 3, 3], "long ", [300_000, 4, 4]]],
     ]);
   });
 
@@ -3730,6 +4312,104 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
     ).toEqual([["BackCompat", "rgb(0, 0, 0)", "rgb(0, 0, 255)"]]);
   });
 
+  test("a style sheet in a data: URL that may import another one is waited for", async () => {
+    expect(
+      await run(`
+        serve({ "/": "<!doctype html><p>", "/a.css": "p { color: blue }" });
+        const page = await open();
+        print(await page.executeJavaScript(\`(\${async () => {
+          const all = [];
+          for (const rule of ["import", "IMPORT", "%5C69mport", "media"]) {
+            const href = "data:text/css,@" + rule + " url(app://trusted/a.css); @media all { b { color: red } }";
+            const link = Object.assign(document.createElement("link"), { rel: "stylesheet", href });
+            document.head.append(link);
+            const atOnce = !!link.sheet;
+            await new Promise(resolve => (link.onload = link.onerror = resolve));
+            all.push([atOnce, getComputedStyle(document.querySelector("p")).color]);
+            link.remove();
+          }
+          return all;
+        }})()\`));`),
+    ).toEqual([
+      [
+        [false, "rgb(0, 0, 255)"],
+        [false, "rgb(0, 0, 255)"],
+        [false, "rgb(0, 0, 255)"],
+        [true, "rgb(0, 0, 0)"],
+      ],
+    ]);
+  });
+
+  test("a large style sheet follows its media and its place while it is compiled", async () => {
+    expect(
+      await run(`
+        serve({
+          "/": "<!doctype html><link rel=stylesheet href=/a.css media=print><div><p></div><section><p></section>",
+          "/a.css": ".a { color: red }".repeat(1e4) + "@scope { p { color: blue } }",
+        });
+        const page = await open();
+        print(await page.executeJavaScript(\`(\${async () => {
+          const colors = () => [...document.querySelectorAll("p")].map(it => getComputedStyle(it).color);
+          const link = Object.assign(document.createElement("link"), { rel: "stylesheet", href: "/a.css", media: "print" });
+          document.querySelector("div").append(link);
+          await new Promise(resolve => (link.onload = resolve));
+          link.media = "screen";
+          const first = colors();
+          document.querySelector("section").moveBefore(link, null);
+          const second = colors();
+          link.media = "print";
+          return [first, second, colors()];
+        }})()\`));`),
+    ).toEqual([
+      [
+        ["rgb(0, 0, 255)", "rgb(0, 0, 0)"],
+        ["rgb(0, 0, 0)", "rgb(0, 0, 255)"],
+        ["rgb(0, 0, 0)", "rgb(0, 0, 0)"],
+      ],
+    ]);
+  });
+
+  test("the late answer to a key is shown before the tasks that follow it", async () => {
+    expect(
+      await run(`
+        serve({ "/": "<!doctype html><p style='width: 1px'>" });
+        const page = await open();
+        page.focus();
+        for (let answer; !answer; ) {
+          const answering = page.executeJavaScript(\`(\${() =>
+            new Promise(resolve => {
+              const p = document.querySelector("p"), order = [];
+              const task = steps => {
+                const { port1, port2 } = new MessageChannel();
+                port1.onmessage = steps;
+                port2.postMessage(0);
+              };
+              const observer = new ResizeObserver(() => order.length && order.push("frame"));
+              observer.observe(p);
+              onkeydown = () => {
+                const start = performance.now();
+                task(() => {
+                  while (performance.now() - start < 40);
+                  p.style.width = p.offsetWidth + 1 + "px";
+                  order.push("answer");
+                  task(() => {
+                    order.push("task");
+                    const isInTime = performance.now() - start < 150;
+                    requestAnimationFrame(() => setTimeout(() => (observer.disconnect(), resolve(isInTime && order))));
+                  });
+                });
+              };
+              requestAnimationFrame(() => setTimeout(() => console.log("ready")));
+            })})()\`);
+          await once(page, "console-message");
+          page.sendInputEvent({ type: "keyDown", keyCode: "F2" });
+          page.sendInputEvent({ type: "keyUp", keyCode: "F2" });
+          answer = await answering;
+          if (answer) print(answer);
+        }`),
+    ).toEqual([["answer", "frame", "task"]]);
+  });
+
   test.skipIf(!isLinux || !Bun.which("openssl"))("a host that wants nothing but HTTPS is remembered", async () => {
     using made = tempDir("hsts", {});
     await $`openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj /CN=a.test -addext ${"subjectAltName=DNS:a.test,DNS:*.a.test"} -keyout key -out cert`
@@ -4007,7 +4687,9 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
          await cookies.set({ url: "https://a.test/", name: "kept", value: "1", httpOnly: true, expirationDate: Date.now() / 1000 + 60 });
          await cookies.set({ url: "https://a.test/", name: "lost", value: "2" });
          await cookies.flushStore();
-         Bun.spawnSync([process.execPath, "--preload=bun:desktop/electron", ".", "again"], { stdout: "inherit", stderr: "inherit" });`,
+         Bun.spawnSync([process.execPath, "--preload=bun:desktop/electron", ".", "again", "--use-mock-keychain"], { stdout: "inherit", stderr: "inherit" });`,
+        {},
+        ["--use-mock-keychain"],
       ),
     ).toEqual([[["kept", "1", "a.test", true]]]);
   });
@@ -4023,9 +4705,31 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
          await cookies.flushStore();
          rmdirSync(storagePath + "/Cookie Jar~");
          await cookies.flushStore();
-         Bun.spawnSync([process.execPath, "--preload=bun:desktop/electron", ".", "again"], { stdout: "inherit", stderr: "inherit" });`,
+         Bun.spawnSync([process.execPath, "--preload=bun:desktop/electron", ".", "again", "--use-mock-keychain"], { stdout: "inherit", stderr: "inherit" });`,
+        {},
+        ["--use-mock-keychain"],
       ),
     ).toEqual([["kept"]]);
+  });
+
+  test("overlay scrollbars that appear in a frame do not need another one", async () => {
+    expect(
+      await run(
+        `serve({ "/": "<div id=a style='height:50px;overflow:auto'><p style='height:500px'></div>" });
+         const page = await open();
+         print(await page.executeJavaScript(\`new Promise(done => {
+           const order = [];
+           a.onscrollend = () => order.push("scrolled");
+           requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => {
+             a.scrollTop = 10;
+             setTimeout(() => setTimeout(() => done(order)));
+           })));
+         })\`));`,
+        {},
+        [],
+        { BUN_DESKTOP_OVERLAY_SCROLLBARS: "1" },
+      ),
+    ).toEqual([["scrolled"]]);
   });
 
   test("a page that has little stack left", async () => {
@@ -4449,6 +5153,53 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
       ...twice(x, y, 200, 100),
       [x, y, width, height],
     ]);
+  });
+
+  test("a fetch is aborted, and a worker is terminated while it derives a key", async () => {
+    expect(
+      await run(`
+        serve({ "/": "", "/worker.js": \`
+          crypto.subtle.importKey("raw", new Uint8Array(8), "PBKDF2", false, ["deriveBits"]).then(key => {
+            crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: new Uint8Array(8), iterations: 1e5 }, key, 256);
+            postMessage(0);
+          });\` });
+        const page = await open();
+        print(await page.executeJavaScript(\`(async () => {
+          const controller = new AbortController(), fetched = fetch("/", controller);
+          controller.abort();
+          const { name } = await fetched.catch(error => error);
+          const worker = new Worker("/worker.js");
+          await new Promise(done => (worker.onmessage = done));
+          worker.terminate();
+          await fetch("/");
+          return name;
+        })()\`));`),
+    ).toEqual(["AbortError"]);
+  });
+
+  test("theme colors that come together are reported together", async () => {
+    expect(
+      await run(`
+        serve({ "/": "" });
+        const page = await open();
+        page.on("did-change-theme-color", (_, color) => print(color));
+        await page.executeJavaScript(\`
+          for (const content of ["red", "lime"]) document.head.prepend(Object.assign(document.createElement("meta"), { name: "theme-color", content }));
+          new Promise(done => setTimeout(done))\`);`),
+    ).toEqual(["#00FF00"]);
+  });
+
+  test("icons that come together are reported together", async () => {
+    expect(
+      await run(`
+        serve({ "/": "" });
+        const page = await open();
+        page.on("page-favicon-updated", (_, urls) => print(urls.length));
+        await page.executeJavaScript(\`
+          document.head.innerHTML = "<link rel=icon href=/a.png>".repeat(3);
+          new Promise(done => setTimeout(done))\`);
+        await page.executeJavaScript("document.head.lastChild.href = '/b.png', new Promise(done => setTimeout(done))");`),
+    ).toEqual([3, 3]);
   });
 
   test("a frame that is removed at the end of the stack is gone", async () => {
@@ -5162,6 +5913,38 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
     request.onsuccess = () => resolve(request.result);
   })`;
 
+  test("a key that cannot be extracted is stored, and stays so", async () => {
+    const use = `(async () => {
+      const algorithm = { name: "ECDSA", namedCurve: "P-256", hash: "SHA-256" }, data = new Uint8Array(1);
+      const made = await crypto.subtle.generateKey(algorithm, false, ["sign", "verify"]);
+      const store = (await ${openDatabase}).transaction("s", "readwrite").objectStore("s");
+      store.add(made);
+      const all = await new Promise(resolve => store.getAll().onsuccess = event => resolve(event.target.result));
+      await new Promise(resolve => store.transaction.oncomplete = resolve);
+      const { privateKey, publicKey } = all[0];
+      const signature = await crypto.subtle.sign(algorithm, privateKey, data);
+      return [all.length, privateKey.extractable, await crypto.subtle.verify(algorithm, publicKey, signature, data), await crypto.subtle.exportKey("jwk", privateKey).catch(error => error.name)];
+    })()`;
+    expect(
+      await run(`
+        serve({ "/": "", "/worker.js": ${JSON.stringify(use + ".then(postMessage)")} });
+        const page = await open(undefined, { webPreferences: { nodeIntegration: true, contextIsolation: false } });
+        print(await page.executeJavaScript(${JSON.stringify(use)}));
+        if (process.argv.includes("again")) return;
+        print(await page.executeJavaScript("new Promise(resolve => new Worker('/worker.js').onmessage = event => resolve(event.data))"));
+        print(await page.executeJavaScript(\`crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, false, ["sign"]).then(key => {
+          history.replaceState(key, "");
+          try { require("v8").serialize(key); } catch (error) { return [history.state.extractable, error.name]; }
+        })\`));
+        ${again}`),
+    ).toEqual([
+      [1, false, true, "InvalidAccessError"],
+      [2, false, true, "InvalidAccessError"],
+      [false, "DataCloneError"],
+      [3, false, true, "InvalidAccessError"],
+    ]);
+  });
+
   test("storage outlives the process", async () => {
     expect(
       await run(`
@@ -5188,6 +5971,109 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
     ).toEqual([
       [null, null, ["name"], null, "", "cached"],
       ["1", null, ["name", "name"], null, "written", "cached"],
+    ]);
+  });
+
+  test("large records are files, for as long as they are stored", async () => {
+    expect(
+      await run(`
+        serve({ "/": "" });
+        const page = await open();
+        const files = async count => {
+          while (require("fs").readdirSync(path.join(app.getPath("userData"), "Web Storage.values")).length !== count) await new Promise(setImmediate);
+        };
+        const write = steps => page.executeJavaScript(\`new Promise(async resolve => {
+          const store = (globalThis.db ??= await ${openDatabase}).transaction("s", "readwrite").objectStore("s");
+          const large = fill => new Uint8Array(1 << 20).fill(fill);
+          \${steps};
+          const seen = [];
+          store.transaction.oncomplete = store.transaction.onabort = () => {
+            const read = db.transaction("s").objectStore("s");
+            const note = it => seen.push(it[0] + it.at(-1) + it.length);
+            read.getAll().onsuccess = event => event.target.result.forEach(note);
+            read.openCursor().onsuccess = ({ target: { result } }) => (result ? (note(result.value), result.continue()) : resolve(seen));
+          };
+        })\`);
+        if (process.argv.includes("again")) {
+          print(await write(""));
+          await files(1);
+          await page.executeJavaScript("db.close(), new Promise(resolve => (indexedDB.deleteDatabase('db').onsuccess = () => resolve()))");
+          return files(0);
+        }
+        print(await write("store.put(large(1), 1), store.put([5], 2), store.put(large(2), 3), store.put(large(3), 4)"));
+        await files(3);
+        print(await page.executeJavaScript("navigator.storage.estimate().then(it => it.usage >> 20)"));
+        print(await write("store.put(large(4), 1), store.put([6], 3), store.delete(4)"));
+        await files(1);
+        print(await write("store.put(large(7), 1), store.put(large(7), 5).onsuccess = () => store.transaction.abort()"));
+        print(await write("store.clear(), store.put(large(8), 1)"));
+        await files(1);
+        require("fs").writeFileSync(path.join(app.getPath("userData"), "Web Storage.values", "1-0"), "x");
+        session.defaultSession.flushStorageData();
+        ${again}`),
+    ).toEqual([
+      [1048578, 11, 1048580, 1048582, 1048578, 11, 1048580, 1048582],
+      3,
+      [1048584, 11, 13, 1048584, 11, 13],
+      [1048584, 11, 13, 1048584, 11, 13],
+      [1048592, 1048592],
+      [1048592, 1048592],
+    ]);
+  });
+
+  test("a cursor does not read large records before it comes to them", async () => {
+    expect(
+      await run(`
+        serve({ "/": "" });
+        const page = await open();
+        await page.executeJavaScript(\`new Promise(async resolve => {
+          const store = (globalThis.db = await ${openDatabase}).transaction("s", "readwrite").objectStore("s");
+          for (let i = 0; i < 9; i++) store.put(i < 8 ? i : new Uint8Array(1 << 20), i);
+          store.transaction.oncomplete = () => resolve();
+        })\`);
+        const directory = path.join(app.getPath("userData"), "Web Storage.values");
+        for (const name of require("fs").readdirSync(directory)) require("fs").truncateSync(path.join(directory, name));
+        print(await page.executeJavaScript(\`new Promise(resolve => {
+          let last;
+          const request = db.transaction("s").objectStore("s").openCursor();
+          request.onsuccess = () => ((last = request.result.value), request.result.continue());
+          request.onerror = () => resolve([last, request.error.name]);
+        })\`));`),
+    ).toEqual([[7, "UnknownError"]]);
+  });
+
+  test("a cursor sees what is written on its way", async () => {
+    expect(
+      await run(`
+        serve({ "/": "" });
+        print(await (await open()).executeJavaScript(\`(async () => {
+          const db = await ${openDatabase};
+          const filling = db.transaction("s", "readwrite");
+          for (let i = 0; i < 100; i++) filling.objectStore("s").put(i, i);
+          const store = db.transaction("s", "readwrite").objectStore("s");
+          const seen = [];
+          await new Promise(resolve => (store.openCursor().onsuccess = ({ target: { result } }) => {
+            if (!result) return resolve();
+            if (result.key !== result.value || result.key % 30 < 2) seen.push([result.key, result.value]);
+            if (result.key === 30) store.delete(31), store.put("changed", 32), store.put("added", 32.5);
+            if (result.key === 40) result.continue(60);
+            else if (result.key === 70) result.advance(20);
+            else result.continue();
+          }));
+          return seen;
+        })()\`));`),
+    ).toEqual([
+      [
+        [0, 0],
+        [1, 1],
+        [30, 30],
+        [32, "changed"],
+        [32.5, "added"],
+        [60, 60],
+        [61, 61],
+        [90, 90],
+        [91, 91],
+      ],
     ]);
   });
 
@@ -5559,6 +6445,25 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
     ]);
   });
 
+  test("what has happened to a window does not wait for the timers of its page", async () => {
+    expect(
+      await run(`
+        serve({ "/": "" });
+        const page = await open(), window = BrowserWindow.fromWebContents(page), order = [], due = new Int32Array(new SharedArrayBuffer(4));
+        window.on("resize", () => order.push("resize"));
+        page.on("console-message", ({ message }) => {
+          order.push(message);
+          if (message !== "task") return;
+          window.setSize(310, 300);
+          window.isMinimized();
+          Atomics.wait(due, 0, 0, 2);
+        });
+        await page.executeJavaScript("new Promise(resolve => { setTimeout(() => resolve(console.log('timer')), 1); console.log('task'); })");
+        while (order.length < 3) await new Promise(setImmediate);
+        print(order);`),
+    ).toEqual([["task", "resize", "timer"]]);
+  });
+
   test("scrollToBottom(), adjustSelection(), clone() and getLastWebPreferences()", async () => {
     expect(
       await run(`
@@ -5896,6 +6801,42 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
           history.back();
         })\`));`),
     ).toEqual(["beforeunload", "/next4"]);
+  });
+
+  test("a window that a script closes is there for the tasks that were queued before", async () => {
+    expect(
+      await run(
+        `app.trustOrigins(["app://trusted"], { inFrames: true, injectedScripts: true });
+         serve({ "/": "<a href=/popup target=popup>", "/popup": "<script>new BroadcastChannel('a').postMessage(0); close();</script>" });
+         const page = await open();
+         print(await page.executeJavaScript(\`new Promise(done => {
+           const popup = open("", "popup");
+           new BroadcastChannel("a").onmessage = () => done([popup.closed, popup.opener === window]);
+           document.links[0].click();
+         })\`));`,
+      ),
+    ).toEqual([[true, true]]);
+  });
+
+  test("frames only go back to what they showed when the history is traversed", async () => {
+    expect(
+      await run(
+        `app.trustOrigins(["app://trusted"], { inFrames: true, injectedScripts: true });
+         let count = 0;
+         serve({ "/": () => new Response("<iframe src=/" + ++count + "></iframe>", { headers: { "content-type": "text/html" } }), "/1": "1", "/2": "2", "/3": "3", "/4": "4", "/other": "" });
+         const page = await open();
+         const shown = async () => print(new URL(page.mainFrame.frames[0].url).pathname);
+         const loaded = act => new Promise(done => (page.once("did-finish-load", done), act()));
+         await shown();
+         await page.loadURL(page.getURL());
+         await shown();
+         await loaded(() => page.reload());
+         await shown();
+         await page.loadURL(page.getURL() + "other");
+         await loaded(() => page.navigationHistory.goBack());
+         await shown();`,
+      ),
+    ).toEqual(["/1", "/2", "/3", "/3"]);
   });
 
   test("window.open", async () => {

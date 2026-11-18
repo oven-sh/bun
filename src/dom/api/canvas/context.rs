@@ -313,7 +313,7 @@ impl Context {
         Context {
             base: Path::default(),
             fields: Default::default(),
-            bitmap: Bitmap::new(size, !settings.alpha),
+            bitmap: Bitmap::new(size, !settings.alpha, settings.will_read_frequently),
             settings,
             states: JsCell::new(vec![State::new()]),
             saved_with_paint: Cell::new(0),

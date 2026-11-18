@@ -342,17 +342,22 @@ impl HTMLFormElement {
     }
 }
 
-fn moved<'a>(cx: &mut Cx<'a>, form: &'a Element, scope: &'a Node) {
+fn id_for_controls(form: &Element) -> Option<DomString> {
     form.attr(atom!("id"))
         .filter(|_| may_have_remote_owners(form))
-        .inspect(|it| id_changed(cx, scope, it));
 }
 
 pub(crate) static STEPS: Steps = Steps {
     post_connection: Some(|cx, form, is_move| {
         inserted(cx, form, is_move);
-        moved(cx, form, form.root());
+        let is_first =
+            |id: &DomString| form.root().element_by_id(&Atom::from_string(id)) == Some(form);
+        id_for_controls(form)
+            .filter(is_first)
+            .inspect(|it| id_changed(cx, form.root(), it));
     }),
-    removed: Some(|cx, form, scope, _| moved(cx, form, scope)),
+    removed: Some(|cx, form, scope, _| {
+        _ = id_for_controls(form).inspect(|it| id_changed(cx, scope, it))
+    }),
     ..Steps::NONE
 };

@@ -3966,9 +3966,14 @@ impl<'a> HTTPClient<'a> {
     /// Reports what has arrived so far, as a result that is not the last one.
     fn send_partial_result(&mut self) {
         let mut result = self.to_result();
+        result.has_more = true;
+        if let Some(browser) = self.browser {
+            let expected = self.state.expected_length_of_decoded_body();
+            browser.take_body(&mut self.state.decoded_body.list, expected);
+            return self.result_callback.run(None, result);
+        }
         let mut decoded_body = core::mem::take(&mut self.state.decoded_body);
         result.body = decoded_body.list.as_slice();
-        result.has_more = true;
         self.result_callback.run(None, result);
         if decoded_body.list.capacity() <= DECODED_BODY_RETAIN_CAP {
             decoded_body.list.clear();

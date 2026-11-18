@@ -10,11 +10,13 @@ use crate::reporting::Endpoints;
 use crate::structured::{Bare, Value, parse_dictionary, parse_item};
 use crate::url::Url;
 
-#[derive(Clone, Default)]
-pub struct IsolationPolicy {
-    pub values: Isolation,
-    pub endpoint: Option<Bytes>,
-    pub report_only_endpoint: Option<Bytes>,
+crate::wire! {
+    #[derive(Clone, Default)]
+    pub struct IsolationPolicy {
+        pub values: Isolation,
+        pub endpoint: Option<Bytes>,
+        pub report_only_endpoint: Option<Bytes>,
+    }
 }
 
 impl IsolationPolicy {
@@ -44,11 +46,13 @@ impl IsolationPolicy {
     }
 }
 
-/// https://w3c.github.io/webappsec-subresource-integrity/#integrity-policy-section
-#[derive(Clone, Default)]
-pub struct IntegrityPolicy {
-    pub blocks_scripts: bool,
-    pub endpoints: Vec<Bytes>,
+crate::wire! {
+    /// https://w3c.github.io/webappsec-subresource-integrity/#integrity-policy-section
+    #[derive(Clone, Default)]
+    pub struct IntegrityPolicy {
+        pub blocks_scripts: bool,
+        pub endpoints: Vec<Bytes>,
+    }
 }
 
 impl IntegrityPolicy {
@@ -75,15 +79,17 @@ impl IntegrityPolicy {
     }
 }
 
-#[derive(Clone)]
-pub struct PolicyContainer {
-    pub csp: CspList,
-    pub referrer_policy: ReferrerPolicy,
-    pub embedder_policy: IsolationPolicy,
-    pub document_isolation_policy: IsolationPolicy,
-    pub integrity_policy: IntegrityPolicy,
-    pub report_only_integrity_policy: IntegrityPolicy,
-    pub endpoints: Endpoints,
+crate::wire! {
+    #[derive(Clone)]
+    pub struct PolicyContainer {
+        pub csp: CspList,
+        pub referrer_policy: ReferrerPolicy,
+        pub embedder_policy: IsolationPolicy,
+        pub document_isolation_policy: IsolationPolicy,
+        pub integrity_policy: IntegrityPolicy,
+        pub report_only_integrity_policy: IntegrityPolicy,
+        pub endpoints: Endpoints,
+    }
 }
 
 impl PolicyContainer {

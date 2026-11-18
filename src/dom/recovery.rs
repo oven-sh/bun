@@ -101,6 +101,7 @@ impl Document {
         self.svg_size_in_layout.set(None);
         self.svg_ids = Default::default();
         self.referenced_svgs.undo_leak();
+        self.referenced_elements.undo_leak();
         self.paths = Default::default();
         self.requests.undo_leak();
         self.images.undo_leak();

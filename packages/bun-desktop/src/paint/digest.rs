@@ -87,6 +87,7 @@ impl Digest {
             .radii
             .into_iter()
             .for_each(|radius| self.lengths(radius));
+        self.value(shape.smoothing.to_bits());
     }
 
     fn bits(&mut self, numbers: &[f32]) {
@@ -284,13 +285,21 @@ impl Digest {
             Item::Shadow {
                 shape,
                 shadow,
+                radii,
                 blur,
                 color,
                 inset,
                 covered,
             } => {
                 self.shape(matrix, &shape);
-                self.shape(matrix, &shadow);
+                self.shape(
+                    matrix,
+                    &RoundedRect {
+                        rect: shadow,
+                        radii,
+                        ..shape
+                    },
+                );
                 self.value((blur.to_bits(), color, inset, covered));
             }
             Item::Gradient {

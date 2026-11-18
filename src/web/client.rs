@@ -2,8 +2,9 @@
 
 use core::cell::{Cell, Ref, RefCell};
 use core::mem::ManuallyDrop;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::AtomicU32;
 use core::task::Poll;
+use std::collections::VecDeque;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
@@ -20,7 +21,7 @@ use crate::headers::{HeaderList, collect_quoted, is_forbidden_request_header, sp
 use crate::integrity::{Hash, parse_metadata};
 use crate::locks::LockManager;
 use crate::mime::Mime;
-use crate::net::body::{Chunk, Data, FOR_DATA, FOR_SUBRESOURCES, SharedBytes};
+use crate::net::body::{Body, Chunk, Data, FOR_DATA, FOR_SUBRESOURCES, SharedBytes, pipe};
 use crate::net::checks::{EmbedderPolicy, has_bad_port, is_insecure, upgrade_insecure};
 use crate::net::cookies::{self, Cookie};
 use crate::net::embedder::ClientId;
@@ -28,9 +29,10 @@ use crate::net::fetch::{self, Controller, EndOfBody, Initiator, IsolationKind, O
 use crate::net::response::{Head, Response, ResponseType, is_ok_status};
 use crate::net::schemes::process_data_url;
 use crate::net::session::Session;
-use crate::net::web_socket::{Connection, Handshake};
+use crate::net::web_socket::{Accepted, Connection, Handshake};
 use crate::net::{NetError, Result};
 use crate::origin::{Origin, Site, is_potentially_trustworthy};
+use crate::outside::Outside;
 use crate::permissions_policy::{Declared, Feature, PermissionsPolicy};
 use crate::policy_container::PolicyContainer;
 use crate::referrer::ReferrerPolicy;
@@ -43,7 +45,7 @@ use crate::structured::{Bare, parse_item};
 use crate::time::monotonic_now;
 use crate::timing::{NavigationType, ResourceTiming};
 use crate::url::Url;
-use crate::{Bytes, compiled, mime, trust};
+use crate::{Bytes, compiled, mime, remote, trust};
 
 const MAX_UNREAD_TIMINGS: usize = 250;
 const MAX_SENT_REPORTS: usize = 1000;
@@ -88,6 +90,45 @@ pub trait Scripts {
     fn is_inspected(&self) -> bool;
 }
 
+/// The same client in a page process, which is the one that scripts use.
+pub trait Twin {
+    fn update(&self, update: Update);
+}
+
+crate::wire! {
+    pub enum Update {
+        Committed(Box<Seed>),
+        Url(Url),
+        Agent(Agent),
+        NavigationTiming { record: Box<ResourceTiming>, kind: NavigationType },
+        Timing(Box<ResourceTiming>),
+        Report { kind: ReportType, body: Members },
+        Cookie(cookies::Change),
+    }
+
+    /// What a page process makes the client of a document from.
+    pub struct Seed {
+        id: ClientId,
+        token: Bytes,
+        session: u32,
+        handles_data: bool,
+        role: Role,
+        parent: Option<ClientId>,
+        agent: Agent,
+        document: Document,
+        navigation_timing: Option<(ResourceTiming, NavigationType)>,
+        navigation_start: f64,
+        previous: Option<ClientId>,
+    }
+}
+
+/// In a page process.
+#[derive(Clone, Copy)]
+struct Far {
+    outside: Outside,
+    handles_data: bool,
+}
+
 /// What comes with a document.
 pub struct Commit<'a> {
     pub url: Url,
@@ -117,27 +158,32 @@ pub struct Container<'a> {
     pub src: Option<Url>,
 }
 
-#[derive(Clone)]
-struct Document {
-    url: Url,
-    origin: Origin,
-    /// Also if the origin is opaque, and derives from such a one.
-    is_from_https: bool,
-    status: u16,
-    referrer: Bytes,
-    policies: PolicyContainer,
-    permissions: PermissionsPolicy,
-    reported_permissions: PermissionsPolicy,
-    is_isolated: bool,
-    required_csp: Option<RequiredCsp>,
-    refuses_required_csp: bool,
+crate::wire! {
+    #[derive(Clone)]
+    struct Document {
+        url: Url,
+        origin: Origin,
+        /// Also if the origin is opaque, and derives from such a one.
+        is_from_https: bool,
+        status: u16,
+        referrer: Bytes,
+        policies: PolicyContainer,
+        permissions: PermissionsPolicy,
+        reported_permissions: PermissionsPolicy,
+        is_isolated: bool,
+        required_csp: Option<RequiredCsp>,
+        refuses_required_csp: bool,
+        runs_program: bool,
+    }
 }
 
-#[derive(Clone)]
-struct Agent {
-    user_agent: Bytes,
-    accept_language: Bytes,
-    app_path: Bytes,
+crate::wire! {
+    #[derive(Clone)]
+    pub struct Agent {
+        user_agent: Bytes,
+        accept_language: Bytes,
+        app_path: Bytes,
+    }
 }
 
 enum Ancestry {
@@ -169,6 +215,7 @@ pub struct WorkerSeed {
     is_secure: bool,
     creator: Creator,
     unread_timings: UnreadTimings,
+    is_far: bool,
 }
 
 /// A worker shares them with the client that fetches its first scripts.
@@ -217,15 +264,21 @@ pub struct Client {
     /// The document that the app is told about for its requests.
     responsible: Cell<ClientId>,
     is_disposed: Cell<bool>,
+    far: Cell<Option<Far>>,
+    twin: RefCell<Option<Rc<dyn Twin>>>,
+    previous: Cell<Option<ClientId>>,
+    cookie_watcher: Cell<Option<fn(&Client, &cookies::Change)>>,
 }
 
 thread_local! {
     static CLIENTS: RefCell<Box<HashMap<u32, Weak<Client>>>> = RefCell::default();
+    /// In a page process, for the documents that follow.
+    static UNLOADED: RefCell<VecDeque<(ClientId, [f64; 2])>> = RefCell::default();
 }
 
 fn next_id() -> u32 {
     static NEXT: AtomicU32 = AtomicU32::new(1);
-    NEXT.fetch_add(1, Ordering::Relaxed)
+    remote::own_number(&NEXT)
 }
 
 impl ClientId {
@@ -237,6 +290,7 @@ impl ClientId {
 impl Drop for Client {
     fn drop(&mut self) {
         let _ = CLIENTS.try_with(|it| it.borrow_mut().remove(&self.id.0));
+        self.outside().into_iter().for_each(Outside::leave);
     }
 }
 
@@ -453,6 +507,32 @@ impl Observer for Fetching<'_> {
     }
 }
 
+/// The twin has reported what the request violates as it was made.
+struct FetchingForTwin<'a>(Fetching<'a>);
+
+impl Observer for FetchingForTwin<'_> {
+    fn will_check(&self, request: &Request, first: Option<&Url>) {
+        if first.is_some() {
+            self.0.will_check(request, first);
+        }
+    }
+
+    fn allows(&self, request: &Request, first: Option<&Url>) -> bool {
+        match first {
+            Some(_) => self.0.allows(request, first),
+            None => self.0.client.trusts_source_of(request),
+        }
+    }
+
+    fn blocked_as_mixed_content(&self, request: &Request, first: Option<&Url>) {
+        self.0.blocked_as_mixed_content(request, first);
+    }
+
+    fn violated(&self, kind: IsolationKind, request: &Request, first: &Url, is_enforced: bool) {
+        self.0.violated(kind, request, first, is_enforced);
+    }
+}
+
 impl Client {
     fn make(
         id: ClientId,
@@ -489,6 +569,10 @@ impl Client {
             creator: RefCell::default(),
             responsible: Cell::new(id),
             is_disposed: Cell::new(false),
+            far: Cell::default(),
+            twin: RefCell::default(),
+            previous: Cell::default(),
+            cookie_watcher: Cell::default(),
         });
         CLIENTS.with_borrow_mut(|it| it.insert(id.0, Rc::downgrade(&client)));
         client
@@ -537,6 +621,7 @@ impl Client {
             is_isolated: false,
             required_csp: None,
             refuses_required_csp: false,
+            runs_program: matches!(role, Role::App { .. }),
         };
         let agent = Agent {
             user_agent: Bytes::default(),
@@ -598,6 +683,84 @@ impl Client {
             accept_language: accept_language.into(),
             app_path: app_path.into(),
         });
+        self.update_twin(|| Update::Agent(self.agent.borrow().clone()));
+    }
+
+    pub fn set_twin(&self, twin: Rc<dyn Twin>) {
+        self.twin.replace(Some(twin));
+    }
+
+    pub(crate) fn update_twin(&self, update: impl FnOnce() -> Update) -> bool {
+        let twin = self.twin.borrow().clone();
+        twin.map(|it| it.update(update())).is_some()
+    }
+
+    pub fn seed(&self) -> Box<Seed> {
+        Box::new(Seed {
+            id: self.id,
+            token: self.token.clone(),
+            session: self.session.id(),
+            handles_data: self.session.handles(b"data"),
+            role: self.role,
+            parent: self.parent().map(|it| it.id),
+            agent: self.agent.borrow().clone(),
+            document: self.document.borrow().clone(),
+            navigation_timing: self.navigation_timing.borrow().clone(),
+            navigation_start: self.navigation_start.get(),
+            previous: self.previous.get(),
+        })
+    }
+
+    /// The twin has committed.
+    pub fn renew_twin(&self) {
+        self.update_twin(|| Update::Committed(self.seed()));
+    }
+
+    pub fn from_seed(seed: Seed) -> Rc<Client> {
+        let client = Client::make(
+            seed.id,
+            seed.token.clone(),
+            Session::stand_in_for(seed.session),
+            seed.role,
+            (seed.parent.and_then(Client::find)).map_or(Ancestry::Top, Ancestry::Frame),
+            seed.agent.clone(),
+            seed.document.clone(),
+            UnreadTimings::default(),
+        );
+        client.far.set(Some(Far {
+            outside: Outside::enter(seed.id),
+            handles_data: seed.handles_data,
+        }));
+        let of_previous = |all: &VecDeque<_>| {
+            all.iter()
+                .find(|it: &&(_, _)| Some(it.0) == seed.previous)
+                .map(|it| it.1)
+        };
+        (client.unload_of_previous).set(UNLOADED.with_borrow(of_previous).unwrap_or_default());
+        client.apply(Update::Committed(seed.into()));
+        client
+    }
+
+    pub fn apply(&self, update: Update) {
+        match update {
+            Update::Committed(seed) => {
+                self.document.replace(seed.document);
+                self.navigation_timing.replace(seed.navigation_timing);
+                self.navigation_start.set(seed.navigation_start);
+            }
+            Update::Url(url) => self.set_url(url),
+            Update::Agent(agent) => drop(self.agent.replace(agent)),
+            Update::NavigationTiming { record, kind } => self.set_navigation_timing(*record, kind),
+            Update::Timing(record) => self.record_timing(*record),
+            Update::Report { kind, body } => {
+                crate::realm::tell_scripts(self.id, kind, body, JSValue::UNDEFINED);
+            }
+            Update::Cookie(change) => self.cookie_watcher.get().map_or((), |it| it(self, &change)),
+        }
+    }
+
+    fn outside(&self) -> Option<Outside> {
+        self.far.get().map(|it| it.outside)
     }
 
     pub fn commit(&self, commit: Commit<'_>) {
@@ -650,6 +813,9 @@ impl Client {
             Sandboxing::Ignored => self.origin(),
             _ => Origin::new_opaque(),
         };
+        let inherits_program = |it: &Client| it.runs_program() && it.origin() == origin;
+        let runs_program = compiled::is_for_documents_at(&self.url())
+            || commit.origin_of.is_some_and(inherits_program);
         let around = self.parent().map(|parent| {
             let (parent, mut declared) = (parent.document.borrow().clone(), Declared::default());
             if let Some(Container {
@@ -696,6 +862,7 @@ impl Client {
         );
         document.reported_permissions = PermissionsPolicy::new(origin.clone(), None, reported);
         document.origin = origin;
+        document.runs_program |= runs_program;
         let has_own_group = || {
             matches!(
                 parse_item(&headers.get_or_empty(b"cross-origin-opener-policy")),
@@ -749,6 +916,7 @@ impl Client {
         document.is_from_https = self.prohibits_mixed_content();
         if url.scheme() == b"data" {
             (document.origin, document.is_isolated) = (Origin::new_opaque(), false);
+            document.runs_program = compiled::is_for_documents_at(&url);
         }
         let inherited = document.policies.inherited();
         document.policies = if url.is_http() {
@@ -763,9 +931,14 @@ impl Client {
         if is_shared {
             document.policies.document_isolation_policy = Default::default();
         }
+        let id = ClientId(next_id());
+        if let Some(outside) = self.outside() {
+            outside.start_worker(id, url.clone(), headers.clone(), is_shared);
+        }
         (document.url, document.status, document.referrer) = (url, 200, Bytes::default());
         WorkerSeed {
-            id: ClientId(next_id()),
+            id,
+            is_far: self.outside().is_some(),
             responsible: self.responsible.get(),
             token: Client::new_token(),
             session: Arc::clone(&self.session),
@@ -799,6 +972,7 @@ impl Client {
             is_secure,
             creator,
             unread_timings,
+            is_far,
         } = seed;
         let client = Client::make(
             id,
@@ -815,6 +989,10 @@ impl Client {
         );
         client.creator.replace(Some(creator));
         client.responsible.set(responsible);
+        client.far.set(is_far.then(|| Far {
+            outside: Outside::enter(id),
+            handles_data: false,
+        }));
         client
     }
 
@@ -831,6 +1009,7 @@ impl Client {
     }
 
     pub fn set_url(&self, url: Url) {
+        self.update_twin(|| Update::Url(url.clone()));
         self.document.borrow_mut().url = url;
     }
 
@@ -861,6 +1040,11 @@ impl Client {
 
     pub fn is_cross_origin_isolated(&self) -> bool {
         self.document.borrow().is_isolated
+    }
+
+    /// Whether it gets compiled scripts. They need a realm whose built-in objects are read-only.
+    pub fn runs_program(&self) -> bool {
+        self.document.borrow().runs_program
     }
 
     /// The origins of the documents that it is in, the outermost last.
@@ -989,7 +1173,10 @@ impl Client {
         if let Some(endpoint) = endpoint {
             self.send_to_endpoint(kind, &body, endpoint);
         }
-        crate::realm::tell_scripts(self.id, kind, body, element);
+        match self.twin.borrow().clone() {
+            Some(twin) => twin.update(Update::Report { kind, body }),
+            None => crate::realm::tell_scripts(self.id, kind, body, element),
+        }
     }
 
     fn send_to_endpoint(&self, kind: ReportType, body: &Members, endpoint: &[u8]) {
@@ -1282,9 +1469,13 @@ impl Client {
         destination: Destination,
         metadata: &Metadata,
     ) -> Option<Vec<u8>> {
-        let path = compiled::path_of(url.href())?;
+        let path = self.compiled_path_by_any_policy(url.href())?;
         let verdict = (self.policies().csp).check_request(url, destination, metadata, None);
         (verdict.is_allowed() && self.enforce(verdict, JSValue::UNDEFINED)).then_some(path)
+    }
+
+    pub fn compiled_path_by_any_policy(&self, url: &[u8]) -> Option<Vec<u8>> {
+        self.runs_program().then(|| compiled::path_of(url))?
     }
 
     /// Only those that it was loaded with.
@@ -1352,18 +1543,22 @@ impl Client {
 
     /// Whatever the policy of the page allows, no script of another party runs in this process. After [`Client::report_request`].
     pub fn allows_request(&self, request: &Request, first: Option<&Url>) -> bool {
-        let (url, destination) = (&request.url, request.destination);
         let verdict = self.check_request(request, first).of_enforced(true);
-        self.enforce(verdict, JSValue::UNDEFINED)
-            && match url.scheme() {
-                _ if !destination.is_script_like() || matches!(self.role, Role::App { .. }) => true,
-                _ if compiled::is_exclusive() => compiled::path_of(url.href()).is_some(),
-                b"blob" => true,
-                b"data" => {
-                    self.policies().csp.restricts_scripts() || trust::trusts_injected_scripts()
-                }
-                _ => trust::is_trusted(url, &self.agent.borrow().app_path),
+        self.enforce(verdict, JSValue::UNDEFINED) && self.trusts_source_of(request)
+    }
+
+    fn trusts_source_of(&self, request: &Request) -> bool {
+        let (url, destination) = (&request.url, request.destination);
+        match url.scheme() {
+            _ if !destination.is_script_like() || matches!(self.role, Role::App { .. }) => true,
+            // The web engine runs audio worklets.
+            _ if compiled::is_exclusive() && destination != Destination::AudioWorklet => {
+                compiled::path_of(url.href()).is_some()
             }
+            b"blob" => true,
+            b"data" => self.policies().csp.restricts_scripts() || trust::trusts_injected_scripts(),
+            _ => trust::is_trusted(url, &self.agent.borrow().app_path),
+        }
     }
 
     /// Whether a frame or a worker of it may have the policy `theirs`.
@@ -1508,15 +1703,7 @@ impl Client {
         Box::pin(self.run_fetch(request, controller))
     }
 
-    async fn run_fetch(&self, mut request: Request, controller: &Controller) -> Result<Response> {
-        if !self.preloaded.borrow().is_empty()
-            && let Some(loaded) = self.take_preloaded(&request).await
-        {
-            return loaded.map(|it| Response {
-                head: it.head,
-                body: Some(Chunk::Shared(it.bytes).into()),
-            });
-        }
+    fn prepare(&self, request: &mut Request, controller: &Controller) {
         if !request.keepalive {
             let mut fetches = self.fetches.borrow_mut();
             if fetches.len() == fetches.capacity() {
@@ -1531,6 +1718,44 @@ impl Client {
         request
             .headers
             .retain(|name, value| !is_forbidden_request_header(name, value));
+    }
+
+    pub(crate) async fn fetch_for_twin(
+        &self,
+        mut request: Request,
+        controller: &Controller,
+    ) -> Result<Response> {
+        struct Outliving<'a>(&'a Client, u32);
+        impl Drop for Outliving<'_> {
+            fn drop(&mut self) {
+                let mut outliving = self.0.outliving.borrow_mut();
+                outliving.0 -= self.1;
+                outliving.1.wake();
+            }
+        }
+        self.prepare(&mut request, controller);
+        let observer = FetchingForTwin(Fetching {
+            client: self,
+            timed: None,
+            blocks_rendering: false,
+        });
+        let outliving = Outliving(self, request.keepalive.into());
+        self.outliving.borrow_mut().0 += outliving.1;
+        let initiator = self.initiator();
+        (fetch::fetch(&self.session, &initiator, request, &observer, controller).await)
+            .map_err(|it| it.error)
+    }
+
+    async fn run_fetch(&self, mut request: Request, controller: &Controller) -> Result<Response> {
+        if !self.preloaded.borrow().is_empty()
+            && let Some(loaded) = self.take_preloaded(&request).await
+        {
+            return loaded.map(|it| Response {
+                head: it.head,
+                body: Some(Chunk::Shared(it.bytes).into()),
+            });
+        }
+        self.prepare(&mut request, controller);
         let (start, name) = (monotonic_now(), Bytes::from(request.url.href()));
         let timed = request
             .initiator_type
@@ -1549,14 +1774,31 @@ impl Client {
         self.kept_alive.update(|it| it + kept_alive);
         self.outliving.borrow_mut().0 += outlives;
         let initiator = self.initiator();
-        let fetching = fetch::fetch(&self.session, &initiator, request, &observer, controller);
-        let fetched = exec::never_at_once(fetching).await;
+        let is_for_host = |it: &Far| match request.url.scheme() {
+            b"blob" => false,
+            b"data" => it.handles_data,
+            _ => true,
+        };
+        let (session, far) = (&self.session, self.far.get().filter(is_for_host));
+        let fetched = exec::never_at_once(async {
+            match far {
+                Some(Far { outside, .. }) => {
+                    fetch::fetch_by_host(
+                        outside, session, &initiator, request, &observer, controller,
+                    )
+                    .await
+                }
+                None => (fetch::fetch(session, &initiator, request, &observer, controller).await)
+                    .map_err(|it| it.error),
+            }
+        })
+        .await;
         self.kept_alive.update(|it| it - kept_alive);
         self.outliving.borrow_mut().0 -= outlives;
         self.outliving.borrow_mut().1.wake();
         let error = match fetched {
             Ok(response) => return Ok(response),
-            Err(failure) => failure.error,
+            Err(error) => error,
         };
         if error != NetError::Aborted {
             self.log_error(format_args!(
@@ -1657,7 +1899,8 @@ impl Client {
     pub fn sheet_in_url(&self, request: &Request) -> Option<Resource> {
         (request.url.scheme() == b"data"
             && request.metadata.integrity.is_empty()
-            && !self.session.handles(b"data")
+            && !(self.far.get())
+                .map_or_else(|| self.session.handles(b"data"), |it| it.handles_data)
             && self.may_reuse_for(request))
         .then_some(())?;
         let (mime, bytes) = process_data_url(&request.url)?;
@@ -1767,7 +2010,9 @@ impl Client {
             let (Some(destination), Some(url)) = (destination, self.url().join(target)) else {
                 continue;
             };
-            if destination == Destination::Script && compiled::path_of(url.href()).is_some() {
+            if destination == Destination::Script
+                && self.compiled_path_by_any_policy(url.href()).is_some()
+            {
                 continue;
             }
             let mut request = potential_cors_request(url, destination, cors);
@@ -1792,10 +2037,17 @@ impl Client {
         Box::pin(self.run_fetch_script(request, kind))
     }
 
+    async fn source_of(&self, url: &Url) -> Result<Option<Vec<u8>>> {
+        match self.outside() {
+            Some(it) => (it.source_of(url.clone()).await).unwrap_or(Err(NetError::Aborted)),
+            None => self.session.source_of(url).await,
+        }
+    }
+
     async fn run_fetch_script(&self, request: Request, kind: ScriptType) -> Result<Script> {
         if kind == ScriptType::JavaScriptModule
             && compiled::has_sources()
-            && let Some(source) = self.session.source_of(&request.url).await?
+            && let Some(source) = self.source_of(&request.url).await?
         {
             return Ok(Script::FromApp(source));
         }
@@ -1929,6 +2181,9 @@ impl Client {
     }
 
     pub fn record_timing(&self, record: ResourceTiming) {
+        if let Some(twin) = self.twin.borrow().clone() {
+            return twin.update(Update::Timing(record.into()));
+        }
         let watcher = self.timing_watcher.borrow().clone();
         match watcher {
             Some(watcher) => watcher(record),
@@ -1948,6 +2203,10 @@ impl Client {
     }
 
     pub fn set_navigation_timing(&self, record: ResourceTiming, kind: NavigationType) {
+        self.update_twin(|| Update::NavigationTiming {
+            record: record.clone().into(),
+            kind,
+        });
         self.navigation_timing.replace(Some((record, kind)));
     }
 
@@ -1967,12 +2226,20 @@ impl Client {
     }
 
     pub fn has_unloaded(&self, start: f64) {
+        const REMEMBERED: usize = 64;
         self.unload.set([start, monotonic_now()]);
+        if self.far.get().is_some() {
+            UNLOADED.with_borrow_mut(|it| {
+                it.truncate(REMEMBERED);
+                it.push_front((self.id, self.unload.get()));
+            });
+        }
     }
 
     /// `previous` has unloaded.
     pub fn follow(&self, previous: &Client) {
         self.unload_of_previous.set(previous.unload.get());
+        self.previous.set(Some(previous.id));
     }
 
     pub fn unload_of_previous(&self) -> [f64; 2] {
@@ -1993,16 +2260,25 @@ impl Client {
 
     /// Another one when [`cookie_string`](Self::cookie_string) may have changed.
     pub fn cookie_version(&self) -> u32 {
-        self.session.with_cookies(|it| it.version())
+        match self.outside() {
+            Some(_) => next_id(),
+            None => self.session.with_cookies(|it| it.version()),
+        }
     }
 
     pub fn cookie_string(&self) -> Vec<u8> {
+        if let Some(outside) = self.outside() {
+            return outside.cookie_string().wait().unwrap_or_default();
+        }
         let url = self.url();
         self.session
             .with_cookies(|it| it.header(&url, &self.cookie_context(&url, true)))
     }
 
     pub fn cookies(&self) -> Vec<Cookie> {
+        if let Some(outside) = self.outside() {
+            return outside.cookies().wait().unwrap_or_default();
+        }
         let url = self.url();
         self.session.with_cookies(|it| {
             it.matching(&url, &self.cookie_context(&url, true))
@@ -2013,6 +2289,9 @@ impl Client {
     }
 
     pub fn set_cookie(&self, text: &[u8]) -> bool {
+        if let Some(outside) = self.outside() {
+            return outside.set_cookie(text.to_vec()).wait() == Some(true);
+        }
         let url = self.url();
         !self.origin().is_opaque()
             && self
@@ -2022,6 +2301,10 @@ impl Client {
 
     /// `watcher` runs on this thread.
     pub fn watch_cookies(&self, watcher: fn(&Client, &cookies::Change)) {
+        if let Some(outside) = self.outside() {
+            self.cookie_watcher.set(Some(watcher));
+            return outside.watch_cookies();
+        }
         let (id, thread) = (self.id, Thread::current());
         let tell = move |change: &cookies::Change| {
             if change.cause != cookies::Cause::Overwrite && !change.cookie.is_http_only {
@@ -2065,13 +2348,32 @@ impl Client {
     }
 
     async fn run_connect_web_socket(&self, url: &Url, protocols: &[Bytes]) -> Result<Connection> {
-        struct Checked;
-        impl Observer for Checked {}
-        let (handshake, request) = Handshake::start(url, protocols);
+        let (uplink, frames) = pipe(0);
+        let accepted = match self.outside() {
+            Some(it) => (it.connect(url.clone(), protocols.to_vec(), frames).await)
+                .unwrap_or(Err(NetError::Aborted)),
+            None => self.shake_hands(url, protocols, frames).await,
+        };
+        accepted?.connect(uplink)
+    }
+
+    async fn shake_hands(&self, url: &Url, protocols: &[Bytes], frames: Body) -> Result<Accepted> {
+        let (handshake, request) = Handshake::start(url, protocols, frames);
         let (initiator, controller) = (self.initiator(), Controller::default());
-        let response =
-            fetch::fetch(&self.session, &initiator, request, &Checked, &controller).await;
+        let response = fetch::fetch(&self.session, &initiator, request, &(), &controller).await;
         handshake.finish(response.map_err(|it| it.error)?, protocols)
+    }
+
+    pub(crate) async fn connect_for_twin(
+        &self,
+        url: Url,
+        protocols: &[Bytes],
+        frames: Body,
+    ) -> Result<Accepted> {
+        let url = self
+            .check_web_socket(url)
+            .map_err(|_| NetError::AccessDenied)?;
+        self.shake_hands(&url, protocols, frames).await
     }
 
     /// https://html.spec.whatwg.org/multipage/document-lifecycle.html#abort-a-document
@@ -2089,7 +2391,11 @@ impl Client {
         }
         self.session.watch_cookies(self.id.0, None);
         self.unread_timings.lock().clear();
-        drop((self.scripts.take(), self.timing_watcher.take()));
+        drop((
+            self.scripts.take(),
+            self.timing_watcher.take(),
+            self.twin.take(),
+        ));
     }
 }
 

@@ -48,9 +48,11 @@ keywords! {
     }
 }
 
-/// Names a document or a worker.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ClientId(pub u32);
+crate::wire! {
+    /// Names a document or a worker.
+    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct ClientId(pub u32);
+}
 
 #[derive(Clone)]
 pub struct About {

@@ -10,6 +10,7 @@ use super::*;
 fn controls(doc: &Doc) -> impl Iterator<Item = (&Element, String)> {
     let is_off = |it: &Element| it.attr_is(atom!("autocomplete"), "off");
     let mut seen = bun_collections::HashMap::<String, u32>::default();
+    dormant::make_objects(doc).for_each(drop);
     let candidates = doc.elements_with_objects().filter(|it| {
         matches!(
             it.html_tag(),
@@ -69,6 +70,12 @@ fn state_of(element: &Element) -> Option<String> {
 }
 
 pub(crate) fn save(doc: &Doc) -> Vec<StateOfControl> {
+    if !doc
+        .elements_with_objects()
+        .any(|it| !it.has(NodeFlags::DORMANT) && state_of(it).is_some())
+    {
+        return Vec::new();
+    }
     controls(doc)
         .filter_map(|(it, control)| {
             Some(StateOfControl {

@@ -268,6 +268,9 @@ fn __bun_dom_answer(page: u32, query: Query) -> Option<Outcome> {
                 insert_sheet(cx, window, css.as_bytes(), is_of_user)
             })))
         }
+        Query::Render {} => window.enter_as_task(|cx, window, ui| {
+            surface::handle_input(cx, window, ui, Input::Frame { is_urgent: true })
+        }),
         Query::SelectionText {} => {
             outcome =
                 Some(Outcome::SelectionText(window.enter(|cx, window| {

@@ -123,8 +123,10 @@ pub(super) fn key_of<'a>(cx: Cx<'_, 'a>, value: JsLocal<'a>) -> Result<'a, Vec<u
 fn read_value<'a>(heap: &JsHeap<'a>, rest: &mut &[u8]) -> Result<'a, Option<JSValue>> {
     Ok(Some(match key::read_token(rest) {
         None | Some(Token::EndArray) => return Ok(None),
-        Some(Token::Number(number)) => JSValue::js_number(number),
-        Some(Token::Date(time)) => JSValue::from_date_number(global_of(heap), time),
+        Some(Token::Number(number)) => JSValue::js_number(JSValue::purify_nan(number)),
+        Some(Token::Date(time)) => {
+            JSValue::from_date_number(global_of(heap), JSValue::purify_nan(time))
+        }
         Some(Token::String(units)) => DomString::from_chars(Chars::Utf16(&units))
             .to_js(heap)
             .to_js(),

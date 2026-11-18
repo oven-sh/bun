@@ -3399,6 +3399,15 @@ describe("'error' event for an error with a cause that cannot be cloned", () => 
     expect([error.message, "cause" in error]).toEqual(["x", false]);
   });
 
+  test.concurrent("what follows has the names, texts and objects that were in it", async () => {
+    const thrown = await thrownBy(
+      `const rows = Array.from({ length: 300 }, (_, i) => ({ name: "n" + i, ["k" + i]: [i] }));
+       throw { before: rows[0], error: new Error("x", { cause: [rows, () => {}] }), rows }`,
+    );
+    expect(thrown.rows).toEqual(Array.from({ length: 300 }, (_, i) => ({ name: "n" + i, ["k" + i]: [i] })));
+    expect(thrown.rows[0]).toBe(thrown.before);
+  });
+
   test.concurrent("a chain that is longer than the stack allows", async () => {
     const error = await thrownBy(
       `Error.stackTraceLimit = 0; let e; for (let i = 0; i < 20000; i++) e = new Error("" + i, { cause: e }); throw e`,

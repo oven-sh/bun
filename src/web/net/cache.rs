@@ -597,7 +597,12 @@ impl Source for Copying {
         Poll::Ready(read)
     }
 
-    fn expect_read_to_end(&mut self, budget: &'static super::body::Budget) {
-        self.source.expect_read_to_end(budget);
+    fn expect_read_to_end(&mut self, budget: &'static super::body::Budget, read: &mut Vec<u8>) {
+        (self.copy).truncate(self.copy.len().saturating_sub(read.len()));
+        self.source.expect_read_to_end(budget, read);
+    }
+
+    fn gathered(&self) -> u64 {
+        self.source.gathered()
     }
 }

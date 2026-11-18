@@ -70,7 +70,7 @@ static ALWAYS_INLINE JSCell* asInstance(JSValue value, Brand brand)
         return nullptr;
     JSCell* cell = value.asCell();
     const ClassInfo* info;
-    if (cell->type() == JSInterfaceObject<0>::cellType)
+    if (cell->type() == JSInterfaceObject<0>::cellType || cell->type() == JSInterfaceList::cellType)
         info = static_cast<JSInterfaceObject<0>*>(cell)->interfaceInfo();
     else if (cell->type() == JSInterfaceObject<2>::cellType)
         info = static_cast<JSInterfaceObject<2>*>(cell)->interfaceInfo();

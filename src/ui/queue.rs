@@ -32,7 +32,17 @@ struct Queue {
     held: Cell<Option<(u32, Mouse)>>,
     last_move: Cell<Option<Instant>>,
     hold_timer: Cell<Option<Timer>>,
+    on_message: Cell<Option<OnMessage>>,
+    out_of_turn: Cell<Option<fn(&[u8]) -> bool>>,
 }
+
+/// From another process.
+pub enum Heard {
+    Message(Vec<u8>),
+    End { has_misbehaved: bool },
+}
+
+type OnMessage = fn(u32, Heard) -> JsResult<()>;
 
 impl Default for Queue {
     fn default() -> Self {
@@ -47,6 +57,8 @@ impl Default for Queue {
             held: Cell::default(),
             last_move: Cell::default(),
             hold_timer: Cell::default(),
+            on_message: Cell::default(),
+            out_of_turn: Cell::default(),
         }
     }
 }
@@ -112,6 +124,15 @@ impl Queue {
                 let (_, settle) = self.replies.borrow_mut().swap_remove(index);
                 crate::release();
                 settle(global, reply)
+            }
+            Event::Message { from, message } => (self.on_message.get()).map_or(Ok(()), |it| {
+                it(from, Heard::Message(message.bytes.into_vec()))
+            }),
+            Event::Disconnected {
+                from,
+                has_misbehaved,
+            } => {
+                (self.on_message.get()).map_or(Ok(()), |it| it(from, Heard::End { has_misbehaved }))
             }
             Event::Warning(message) => crate::warn(global, &message),
             Event::Fatal(message) => {
@@ -210,7 +231,7 @@ impl Queue {
     fn handle(&'static self, global: &JSGlobalObject, inside_script: bool) -> JsResult<()> {
         self.receive();
         if self.is_busy() {
-            return Ok(());
+            return (self.out_of_turn.get()).map_or(Ok(()), |it| self.deliver_accepted(global, it));
         }
         self.is_dispatching.set(true);
         let result = self.dispatch_all(global, inside_script);
@@ -219,6 +240,24 @@ impl Queue {
             (ui.present)();
         }
         result
+    }
+
+    fn deliver_accepted(
+        &self,
+        global: &JSGlobalObject,
+        accepts: fn(&[u8]) -> bool,
+    ) -> JsResult<()> {
+        let is_accepted = |it: &mut Event| matches!(it, Event::Message { message, .. } if accepts(&message.bytes));
+        for at in 0.. {
+            let next = self
+                .events
+                .borrow_mut()
+                .get_mut(at)
+                .map(|it| it.take_if(is_accepted));
+            let Some(event) = next else { break };
+            crate::report(global, event.map_or(Ok(()), |it| self.deliver(global, it)))?;
+        }
+        Ok(())
     }
 
     fn wait(
@@ -298,6 +337,62 @@ pub fn wait_until(
     result
 }
 
+pub fn listen_to_processes(listener: OnMessage) {
+    queue().on_message.set(Some(listener));
+}
+
+/// Blocks the thread, and handles what `process` says, as far as it `accepts` it. False if the time is up first.
+pub fn wait_for_process(
+    global: &JSGlobalObject,
+    process: u32,
+    deadline: Option<Instant>,
+    is_done: &dyn Fn() -> bool,
+    accepts: &dyn Fn(&[u8]) -> bool,
+) -> bool {
+    let (Some(ui), queue) = (crate::loaded(), queue()) else {
+        return false;
+    };
+    let is_accepted = |it: &mut Event| match it {
+        Event::Message { from, message } => *from == process && accepts(&message.bytes),
+        _ => false,
+    };
+    let is_end = |it: &Event| matches!(it, Event::Disconnected { from, .. } if *from == process);
+    queue.waits.update(|it| it + 1);
+    let mut at = 0;
+    let result = loop {
+        if is_done() {
+            break true;
+        }
+        let next = (queue.events.borrow_mut().get_mut(at))
+            .map(|it| (it.as_ref().is_some_and(is_end), it.take_if(is_accepted)));
+        match next {
+            Some((true, _)) => break false,
+            Some((false, event)) => {
+                at += 1;
+                let delivered = event.map_or(Ok(()), |it| queue.deliver(global, it));
+                if crate::report(global, delivered).is_err() {
+                    break false;
+                }
+            }
+            None => {
+                let left = deadline.map(|it| it.saturating_duration_since(Instant::now()));
+                if left.is_some_and(|it| it.is_zero()) {
+                    break false;
+                }
+                let left = left.map_or(FOREVER, |it| it.as_nanos() as i64);
+                if (ui.pump)(NO_SOURCE, left, false) {
+                    queue.receive();
+                }
+            }
+        }
+    };
+    queue.waits.update(|it| it - 1);
+    if !queue.events.borrow().is_empty() && !queue.is_dispatching.get() {
+        later::handle_events_soon();
+    }
+    result
+}
+
 pub fn is_input_pending(includes_continuous: bool) -> bool {
     if !crate::is_started() {
         return false;
@@ -337,6 +432,14 @@ pub fn frame_interval() -> f64 {
     queue().frame_interval.get()
 }
 
+/// For a frame that is not the answer to an event.
+pub fn send_together(render: impl FnOnce()) {
+    let ui = crate::loaded().filter(|_| !queue().is_busy());
+    ui.inspect(|it| (it.hold)());
+    render();
+    ui.inspect(|it| (it.present)());
+}
+
 /// One [`Input::Frame`] before the surface is next drawn.
 pub fn request_frame(id: u32) {
     let (Some(ui), queue) = (crate::loaded(), queue()) else {
@@ -350,6 +453,26 @@ pub fn request_frame(id: u32) {
         queue.frames.borrow_mut().push(id);
         crate::hold();
     }
+}
+
+/// For a surface that another process may have got the frame of.
+pub fn forget_frame(id: u32) {
+    queue().forget_frame(id);
+}
+
+/// What happens meanwhile is handled afterwards, except for the messages that it `accepts`.
+pub fn without_events<T>(accepts: fn(&[u8]) -> bool, steps: impl FnOnce() -> T) -> T {
+    let queue = queue();
+    queue.waits.update(|it| it + 1);
+    let before = queue.out_of_turn.replace(Some(accepts));
+    later::handle_events_soon();
+    let result = steps();
+    queue.out_of_turn.set(before);
+    queue.waits.update(|it| it - 1);
+    if !queue.events.borrow().is_empty() && !queue.is_dispatching.get() {
+        later::handle_events_soon();
+    }
+    result
 }
 
 pub fn destroy_surface(global: &JSGlobalObject, id: u32) -> JsResult<()> {

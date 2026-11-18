@@ -98,6 +98,18 @@ impl ObjectURLRegistry {
         Some(blob)
     }
 
+    pub(crate) fn inspect<R>(
+        &self,
+        owner: &Owner,
+        uuid: UUID,
+        inspect: impl FnOnce(&Blob) -> R,
+    ) -> Option<R> {
+        let map = self.map.lock();
+        Some(inspect(
+            &map.get(&uuid.bytes).filter(|it| it.owner == *owner)?.blob,
+        ))
+    }
+
     pub(crate) fn resolve_and_dupe_to_js(
         &self,
         pathname: &[u8],

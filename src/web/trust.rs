@@ -8,15 +8,18 @@ use crate::origin::Origin;
 use crate::pattern::glob_matches;
 use crate::url::{Url, percent_decode};
 
-/// The lists hold globs.
-pub struct Trust {
-    pub origins: Vec<Bytes>,
-    pub except: Vec<Bytes>,
-    /// These are in `except` too.
-    pub except_when_loaded: Vec<Bytes>,
-    pub in_frames: Vec<Bytes>,
-    pub in_all_frames: bool,
-    pub injected_scripts: bool,
+crate::wire! {
+    /// The lists hold globs.
+    #[derive(Clone)]
+    pub struct Trust {
+        pub origins: Vec<Bytes>,
+        pub except: Vec<Bytes>,
+        /// These are in `except` too.
+        pub except_when_loaded: Vec<Bytes>,
+        pub in_frames: Vec<Bytes>,
+        pub in_all_frames: bool,
+        pub injected_scripts: bool,
+    }
 }
 
 static TRUST: RwLock<Trust> = RwLock::new(Trust {
@@ -37,6 +40,14 @@ pub fn extend(more: Trust) {
     trust.in_frames.extend(more.in_frames);
     trust.in_all_frames |= more.in_all_frames;
     trust.injected_scripts |= more.injected_scripts;
+}
+
+pub(crate) fn current() -> Trust {
+    TRUST.read().clone()
+}
+
+pub(crate) fn replace(trust: Trust) {
+    *TRUST.write() = trust;
 }
 
 fn any_matches(globs: &[Bytes], text: &[u8]) -> bool {

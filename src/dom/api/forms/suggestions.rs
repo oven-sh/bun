@@ -7,7 +7,6 @@ use crate::api::uievents::MouseEvent;
 const LIST: &str = "-internal-suggestions";
 const ROW: &str = "-internal-suggestion";
 const ACTIVE_ROW: &str = "-internal-suggestion-active";
-pub(super) const INDICATOR: &str = "-webkit-calendar-picker-indicator";
 
 pub(super) fn options(input: Input<'_>) -> impl Iterator<Item = &Element> {
     let all = input

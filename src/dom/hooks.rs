@@ -71,6 +71,16 @@ pub(crate) const LEAVES: &[(&str, Leaf)] = &[
     }),
     ("size-sum", |m, p| sum(m, p, &Options::CALC_SIZE)),
     ("sum", |m, p| sum(m, p, &Options::LENGTH_PERCENTAGE)),
+    ("anchored-sum", |m, p| {
+        sum(
+            m,
+            p,
+            &Options {
+                anchor_size: true,
+                ..Options::LENGTH_PERCENTAGE
+            },
+        )
+    }),
     ("display", |m, p| {
         let state = p.state();
         if ident(p).is_some_and(|it| it.starts_with(b"-")) {

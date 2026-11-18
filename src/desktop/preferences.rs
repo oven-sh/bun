@@ -7,7 +7,7 @@ use bun_ui::protocol::{
 };
 use bun_ui::queue;
 
-use crate::generated_bindgen::system::DesktopSystemPreferences;
+use crate::generated_bindgen::system::{DesktopNativeTheme, DesktopSystemPreferences};
 use crate::prelude::*;
 use crate::text::{contains, split};
 use crate::{power, theme};
@@ -227,9 +227,9 @@ impl DesktopSystemPreferences {
     }
 
     pub(crate) fn get_accessibility_display_should_reduce_transparency(
-        _: Cx<'_, '_>,
+        cx: Cx<'_, '_>,
     ) -> JsResult<bool> {
-        Ok(theme::settings()?.reduced_transparency)
+        DesktopNativeTheme::get_prefers_reduced_transparency(cx)
     }
 
     pub(crate) fn is_swipe_tracking_from_scroll_events_enabled(_: Cx<'_, '_>) -> JsResult<bool> {

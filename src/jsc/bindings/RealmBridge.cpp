@@ -255,6 +255,8 @@ extern "C" void* Blob__dupeForRealm(EncodedJSValue, JSGlobalObject*);
 template<bool isRejection>
 static EncodedJSValue JSC_HOST_CALL_ATTRIBUTES settle(JSGlobalObject*, CallFrame*);
 
+extern "C" void Bun__prefault(void*, size_t);
+
 class Crossing {
 public:
     // The methods of a native object of a page read dictionaries, to which scripts must not add members.
@@ -537,6 +539,7 @@ private:
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         auto* copy = JSUint8Array::createUninitialized(m_to, m_to->typedArrayStructure(TypeUint8, false), bytes->length());
         RETURN_IF_EXCEPTION(scope, {});
+        Bun__prefault(copy->vector(), copy->length());
         memcpySpan(copy->typedSpan(), bytes->typedSpan());
         return copy;
     }

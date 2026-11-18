@@ -1,4 +1,4 @@
-//! The pixels of a page that a browser engine renders in another process.
+//! The pixels of a page that a browser engine renders in another process, or of a surface that is shown in another one.
 
 use std::cell::{Cell, RefCell};
 use std::fs::File;
@@ -27,6 +27,16 @@ pub struct View {
     tiles: Vec<u32>,
     /// Where the other process leaves what has changed, if there is no channel.
     file: Option<File>,
+    mirror: Option<Mirror>,
+}
+
+/// The pixels are only painted for those who cannot do with the scene.
+#[derive(Clone, Copy)]
+struct Mirror {
+    surface: u32,
+    all: IntRect,
+    outdated: IntRect,
+    was_read: bool,
 }
 
 thread_local! {
@@ -181,8 +191,59 @@ impl View {
     }
 }
 
+fn paint(id: u32, mirror: Mirror, scale: f32) -> Option<()> {
+    let layer = surface::get(mirror.surface)?
+        .try_borrow()
+        .ok()?
+        .render_area(mirror.outdated, scale)
+        .ok()?;
+    VIEWS.with_borrow_mut(|views| {
+        let view = views.get_mut(&id)?;
+        match mirror.outdated == mirror.all {
+            true => view.show(layer.pixmap),
+            false => view.update(mirror.outdated, layer.pixmap.data()),
+        }
+        Some(())
+    })
+}
+
 pub fn with<R>(id: u32, f: impl FnOnce(&View, u32) -> R) -> Option<R> {
+    let take = |view: &mut View| {
+        let mirror = view.mirror.as_mut()?;
+        Some((
+            std::mem::replace(
+                mirror,
+                Mirror {
+                    outdated: IntRect::default(),
+                    was_read: true,
+                    ..*mirror
+                },
+            ),
+            view.scale,
+        ))
+    };
+    let mirror = VIEWS.with(|views| views.try_borrow_mut().ok()?.get_mut(&id).and_then(take));
+    mirror
+        .filter(|it| !it.0.outdated.is_empty())
+        .and_then(|(mirror, scale)| paint(id, mirror, scale));
     VIEWS.with_borrow(|views| views.get(&id).map(|view| f(view, view.version)))
+}
+
+pub fn size_and_version(id: u32) -> Option<((u32, u32), u32)> {
+    VIEWS.with_borrow(|views| {
+        let view = views.get(&id)?;
+        let all = view.mirror.map_or(view.all(), |it| it.all);
+        Some(((all.width() as u32, all.height() as u32), view.version))
+    })
+}
+
+/// The surface that it shows, and `View::scale`.
+pub fn mirrored(id: u32) -> Option<(u32, f32)> {
+    VIEWS.with_borrow(|views| {
+        views
+            .get(&id)
+            .and_then(|view| Some((view.mirror?.surface, view.scale)))
+    })
 }
 
 pub extern "C" fn helper_sources() -> HelperSources {
@@ -205,6 +266,7 @@ pub fn open(file: Option<&str>) -> Result<u32> {
                 version: 0,
                 tiles: vec![0],
                 file,
+                mirror: None,
             },
         )
     });
@@ -223,33 +285,46 @@ pub fn command(id: u32, command: WebViewCommand) -> Result<()> {
             scale,
             area,
         } => {
-            let surface = surface::get(surface).context("there is no such surface")?;
-            let shown = with(id, |view, _| (view.scale == scale).then(|| view.all())).flatten();
-            let part = area.get().zip(shown).map(|(rect, shown)| {
+            let scaled = |it: Rect| {
                 IntRect::nearest(Rect {
-                    x: rect.x * scale,
-                    y: rect.y * scale,
-                    width: rect.width * scale,
-                    height: rect.height * scale,
+                    x: it.x * scale,
+                    y: it.y * scale,
+                    width: it.width * scale,
+                    height: it.height * scale,
                 })
-                .intersect(shown)
-            });
-            if part.is_some_and(|part| part.is_empty()) {
-                return Ok(());
-            }
-            let layer = match part {
-                Some(part) => surface.borrow().render_area(part, scale)?,
-                None => surface.borrow().render(None, scale)?,
             };
+            let all = scaled(Rect {
+                x: 0.,
+                y: 0.,
+                ..surface::get(surface)
+                    .context("there is no such surface")?
+                    .borrow()
+                    .rect
+            });
+            ensure!(!all.is_empty(), "the area is empty");
             VIEWS.with_borrow_mut(|views| {
                 let Some(view) = views.get_mut(&id) else {
                     return;
                 };
-                (view.version, view.scale) = (view.version.wrapping_add(1), scale);
-                match part {
-                    Some(part) => view.update(part, layer.pixmap.data()),
-                    None => view.show(layer.pixmap),
+                if !view.mirror.is_some_and(|it| it.was_read) {
+                    view.set_pixmap(Pixmap::new(1, 1).expect("it is a size"));
                 }
+                let known = view
+                    .mirror
+                    .filter(|_| view.scale == scale && view.all() == all);
+                let outdated = area.get().zip(known).map_or(all, |(area, known)| {
+                    known.outdated.union(scaled(area).intersect(all))
+                });
+                (view.version, view.scale, view.mirror) = (
+                    view.version.wrapping_add(1),
+                    scale,
+                    Some(Mirror {
+                        surface,
+                        all,
+                        outdated,
+                        was_read: false,
+                    }),
+                );
             });
         }
         WebViewCommand::Frame { scale, pixels } => VIEWS.with_borrow_mut(|views| {
@@ -275,7 +350,7 @@ pub fn command(id: u32, command: WebViewCommand) -> Result<()> {
             let Some(view) = views.get_mut(&id) else {
                 return Ok(());
             };
-            (view.version, view.scale) = (view.version.wrapping_add(1), scale);
+            (view.version, view.scale, view.mirror) = (view.version.wrapping_add(1), scale, None);
             match pixels {
                 FramePixels::Encoded(bytes) => images::decode_pixmap(&bytes)
                     .context("bad frame")

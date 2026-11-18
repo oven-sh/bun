@@ -13,7 +13,7 @@ use super::remote::Emitted;
 use crate::files;
 use crate::prelude::*;
 use crate::session::download;
-use crate::task::{self, Later, Sequence};
+use crate::task::{self, Later, Sequence, Timer, within};
 use crate::text::{before, from_base64, origin_of, split_once};
 use crate::value::{Value, quote};
 
@@ -79,8 +79,16 @@ pub(super) struct Page {
     /// The ids of the entries, and the index.
     committed: RefCell<(Vec<i32>, usize)>,
     last_frame: Cell<i32>,
+    is_painting: Cell<bool>,
+    /// When the frame that is shown was painted.
+    painted_at: Cell<f64>,
+    /// When the last two frames came.
+    arrivals: Cell<[f64; 2]>,
+    repaint: Cell<Option<Timer>>,
+    has_fitting_frame: RefCell<Later<()>>,
     user_agent: RefCell<Option<String>>,
-    size: Cell<[f64; 2]>,
+    /// The width, the height and the device pixel ratio that the page was told.
+    metrics: Cell<[f64; 3]>,
     scale: f64,
     runs_scripts: bool,
 }
@@ -103,6 +111,11 @@ fn title_of(url: &str) -> &str {
 
 fn is_same(a: &str, b: &str) -> bool {
     Url::parse(a.as_bytes()).is_some_and(|it| Url::parse(b.as_bytes()) == Some(it))
+}
+
+fn size_of_png(png: &[u8]) -> [f64; 2] {
+    let read = |at: usize| Some(u32::from_be_bytes(*png.get(at..)?.first_chunk()?));
+    [16, 20].map(|at| read(at).unwrap_or(0).into())
 }
 
 fn take<T>(list: &RefCell<Vec<T>>, is_it: impl Fn(&T) -> bool) -> Option<T> {
@@ -141,8 +154,13 @@ impl Page {
             news: Default::default(),
             committed: Default::default(),
             last_frame: Default::default(),
+            is_painting: Default::default(),
+            painted_at: Default::default(),
+            arrivals: Default::default(),
+            repaint: Default::default(),
+            has_fitting_frame: Default::default(),
             user_agent: Default::default(),
-            size: [options["width"].number(), options["height"].number()].into(),
+            metrics: Default::default(),
             scale: options["scale"].number(),
             runs_scripts: !matches!(options["preferences"]["javascript"], Value::Bool(false)),
         })
@@ -445,14 +463,96 @@ impl Page {
         for reply in commands.map(|(method, params)| engine.inspect(method, params, &session)) {
             let _ = reply.await;
         }
+        if session == self.session {
+            self.resize().await;
+        }
         engine.command("Runtime.runIfWaitingForDebugger", record! {}, &session);
     }
 
-    pub(super) fn resize(&self) -> Awaited {
+    /// To the size that the view has by now.
+    async fn resize(self: &Rc<Self>) {
+        let Some(view) = self.browser.0.view(self.id).map(|it| &it.view) else {
+            return;
+        };
         let zoom = 1.2f64.powf(self.state.borrow()["zoomLevel"].number());
-        let [width, height] = self.size.get().map(|it| (it / zoom).round());
-        let metrics = record! { "width": width, "height": height, "deviceScaleFactor": self.scale * zoom, "mobile": false };
-        self.inspect("Emulation.setDeviceMetricsOverride", metrics)
+        let [width, height] = view.size().map(|it| (it / zoom - 0.001).ceil());
+        let (ratio, magnified) = (self.scale * zoom, self.scale * zoom / self.browser.scale);
+        if self.metrics.replace([width, height, ratio]) != [width, height, ratio] {
+            view.magnified.set(magnified);
+            let visible = record! { "width": (width * magnified).floor(), "height": (height * magnified).floor() };
+            self.tell("Emulation.setVisibleSize", visible);
+            let metrics = record! { "width": width, "height": height, "deviceScaleFactor": ratio, "scale": magnified, "dontSetVisibleSize": true, "mobile": false };
+            let reply = self.inspect("Emulation.setDeviceMetricsOverride", metrics);
+            // A page that shows a dialog does not answer.
+            within(250, reply).await;
+            self.paint_in_new_size().await;
+        }
+    }
+
+    /// A screencast drops its first frame in another size. It asks for one more, in vain once a capture has failed.
+    async fn paint_in_new_size(self: &Rc<Self>) {
+        if self.is_painting.get() {
+            let has_fitting_frame = Later::default();
+            self.has_fitting_frame.replace(has_fitting_frame.clone());
+            self.paint(true);
+            if within(100, has_fitting_frame).await.is_none() {
+                self.paint(self.is_painting.get());
+            }
+        }
+    }
+
+    /// A new screencast begins with what there is to see.
+    pub(super) fn paint(self: &Rc<Self>, is_on: bool) {
+        self.is_painting.set(is_on);
+        drop((
+            self.repaint.take(),
+            self.arrivals.take(),
+            self.painted_at.take(),
+        ));
+        self.tell("Page.stopScreencast", record! {});
+        let page = Rc::clone(self);
+        if is_on {
+            task::spawn(async move {
+                let format = record! { "format": "png" };
+                let _ = page.insist("Page.startScreencast", format).await;
+                if !page.is_painting.get() {
+                    page.tell("Page.stopScreencast", record! {});
+                }
+            });
+        }
+    }
+
+    /// The engine drops what is painted while three frames are under way, and they may overtake each other.
+    fn is_newest_frame(self: &Rc<Self>, png: &[u8], painted_at: f64) -> bool {
+        let [earlier, last] = self.arrivals.get();
+        (self.arrivals).set([last, bun_core::time::milli_timestamp() as f64]);
+        let page = Rc::clone(self);
+        let repaint = move || page.paint(page.is_painting.get());
+        (self.repaint).set((painted_at < earlier + 200.).then(|| Timer::new(100, repaint)));
+        let ([width, height, ratio], size) = (self.metrics.get(), size_of_png(png));
+        let fits =
+            |pixels: f64, length: f64| (pixels - length * ratio).abs() <= self.browser.scale.ceil();
+        if fits(size[0], width) && fits(size[1], height) {
+            self.has_fitting_frame.borrow().set(());
+        }
+        let is_newest = painted_at >= self.painted_at.get();
+        self.painted_at.update(|it| it.max(painted_at));
+        is_newest
+    }
+
+    /// With a `clip`, the engine would give the view the size of it for a while.
+    async fn capture(self: &Rc<Self>, area: &Value) -> Reply {
+        let shot = self.insist("Page.captureScreenshot", record! {}).await;
+        if self.metrics.get()[2] != self.browser.scale {
+            self.paint_in_new_size().await;
+        }
+        let area = ["x", "y", "width", "height"].map(|it| (area[it].number() * self.scale).round());
+        let png = from_base64(shot?["data"].text());
+        let mut image = vec!["image".into(), Value::buffer(&png)];
+        if area[2] > 0. && area[3] > 0. {
+            image.extend(area.map(Value::from));
+        }
+        Ok(Value::Handle(image))
     }
 
     pub(super) fn set_background(&self, [a, r, g, b]: [u8; 4]) {
@@ -499,8 +599,7 @@ impl Page {
             return Ok(());
         };
         let session = crate::session::Session::of(contents)?;
-        session.download(&from_engine(url), Default::default(), contents, wish);
-        Ok(())
+        session.download(&from_engine(url), Default::default(), contents, wish)
     }
 
     async fn update_history(&self) {
@@ -946,11 +1045,11 @@ impl Page {
             "Page.windowOpen" => drop(self.opening.replace(params.clone())),
             "Page.screencastFrame" => {
                 self.last_frame.set(params["sessionId"].int());
-                return notices::paint(
-                    engine,
-                    self.id,
-                    FramePixels::Encoded(from_base64(params["data"].text()).into()),
-                );
+                let png = from_base64(params["data"].text());
+                if self.is_newest_frame(&png, params["metadata"]["timestamp"].number() * 1000.) {
+                    return notices::paint(engine, self.id, FramePixels::Encoded(png.into()));
+                }
+                self.acknowledge_frame();
             }
             "Page.javascriptDialogOpening" => return self.show_dialog(params, session),
             "Runtime.executionContextCreated" => {
@@ -1190,16 +1289,7 @@ impl Page {
                 );
                 return self.evaluate_at_top(&remove, Some("css"), false).await;
             }
-            "capturePage" => {
-                let clip = first.is_truthy().then(|| first.clone().with("scale", 1));
-                let shot = self
-                    .insist("Page.captureScreenshot", record! { "clip": clip })
-                    .await?;
-                return Ok(Value::Handle(vec![
-                    "image".into(),
-                    Value::buffer(&from_base64(shot["data"].text())),
-                ]));
-            }
+            "capturePage" => return self.capture(first).await,
             "printToPDF" => {
                 let options = super::print::for_protocol(first).map_err(Failure::new)?;
                 return Ok(Value::buffer(&from_base64(
@@ -1217,9 +1307,12 @@ impl Page {
                 match method {
                     "setZoomLevel" => self.set("zoomLevel", first),
                     "setZoomFactor" => self.set("zoomLevel", first.number().log(1.2)),
-                    _ => self.size.set([first.number(), second.number()]),
+                    _ => {}
                 }
-                return self.resize().await;
+                return Ok((self.resize().await, Value::Undefined).1);
+            }
+            "startPainting" | "stopPainting" => {
+                return Ok((self.paint(method == "startPainting"), Value::Undefined).1);
             }
             "setBackgroundColor" => {
                 let argb =
@@ -1251,8 +1344,6 @@ impl Page {
             "close" => ("Page.close", record! {}),
             "forcefullyCrashRenderer" => ("Page.crash", record! {}),
             "insertText" => ("Input.insertText", record! { "text": first }),
-            "startPainting" => ("Page.startScreencast", record! { "format": "png" }),
-            "stopPainting" => ("Page.stopScreencast", record! {}),
             "undo" | "redo" | "cut" | "copy" | "paste" | "pasteAndMatchStyle" | "delete"
             | "selectAll" | "unselect" => (
                 "Input.dispatchKeyEvent",

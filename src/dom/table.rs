@@ -157,21 +157,21 @@ fn edges(style: &Style) -> Collapsed {
     })
 }
 
-/// Of two that are equal, the first.
-fn precedence(style: BorderStyle) -> Option<usize> {
-    const ORDER: [BorderStyle; 8] = [
-        BorderStyle::Inset,
-        BorderStyle::Groove,
-        BorderStyle::Outset,
-        BorderStyle::Ridge,
-        BorderStyle::Dotted,
-        BorderStyle::Dashed,
-        BorderStyle::Solid,
-        BorderStyle::Double,
-    ];
-    ORDER.iter().position(|it| *it == style)
+fn precedence(style: BorderStyle) -> u8 {
+    match style {
+        BorderStyle::None | BorderStyle::Hidden => 0,
+        BorderStyle::Inset => 1,
+        BorderStyle::Groove => 2,
+        BorderStyle::Outset => 3,
+        BorderStyle::Ridge => 4,
+        BorderStyle::Dotted => 5,
+        BorderStyle::Dashed => 6,
+        BorderStyle::Solid => 7,
+        BorderStyle::Double => 8,
+    }
 }
 
+#[inline]
 fn beats(a: Edge, b: Edge) -> bool {
     let rank = |it: Edge| {
         (
@@ -183,6 +183,7 @@ fn beats(a: Edge, b: Edge) -> bool {
     rank(a) > rank(b)
 }
 
+/// Of two that are equal, the first.
 fn winner(a: Edge, b: Edge) -> Edge {
     if beats(b, a) { b } else { a }
 }
@@ -228,6 +229,12 @@ struct Grid {
     columns: Vec<Column>,
     /// The column boxes and their groups, with the columns that they span.
     column_boxes: Vec<(BoxId, usize, usize)>,
+}
+
+impl Grid {
+    fn is_empty(&self) -> bool {
+        self.columns.iter().all(|it| it.is_merged)
+    }
 }
 
 impl Column {
@@ -363,10 +370,7 @@ impl Document {
     fn table_grid(&self, id: BoxId) -> Grid {
         let mut grid = Grid::default();
         let display = |id: &BoxId| self.boxes[*id].style.display();
-        let in_flow = |id: BoxId| {
-            (self.boxes[id].children.iter().copied())
-                .filter(|it| !self.boxes[*it].style.is_out_of_flow())
-        };
+        let in_flow = |id: BoxId| self.boxes[id].children.iter().copied();
         for child in in_flow(id) {
             match self.boxes[child].kind {
                 Kind::RowGroup => grid.groups.push(child),
@@ -436,7 +440,7 @@ impl Document {
         }
         let mut occupied_until: Vec<usize> = Vec::new();
         for group in &grid.groups {
-            let end = grid.rows.len() + in_flow(*group).count();
+            let end = grid.rows.len() + in_flow(*group).len();
             for row in in_flow(*group) {
                 let (index, mut column) = (grid.rows.len(), 0);
                 grid.rows.push((row, *group));
@@ -499,10 +503,10 @@ impl Document {
         grid
     }
 
-    fn set_collapsed(&mut self, id: BoxId, collapsed: Option<Collapsed>) {
+    fn set_collapsed(&mut self, id: BoxId, collapsed: Option<&Rc<Collapsed>>) {
         let it = &mut self.boxes[id];
-        if it.collapsed.as_deref() != collapsed.as_ref() {
-            it.collapsed = collapsed.map(Box::new);
+        if it.collapsed.as_ref() != collapsed {
+            it.collapsed = collapsed.cloned();
             it.cache.clear();
         }
     }
@@ -534,7 +538,9 @@ impl Document {
                         *known
                     }
                 };
-                for at in (row..row_end).filter(|_| order as usize <= grid.cells.len()) {
+                for at in (row..row_end).filter(|_| {
+                    order as usize <= grid.cells.len() && row_end - row + column_end - column > 2
+                }) {
                     let down =
                         &mut vertical[at * (columns + 1) + column + 1..][..column_end - column - 1];
                     let across = &mut horizontal[at * columns + column..]
@@ -544,20 +550,31 @@ impl Document {
                         .filter(|it| it.1 == 0)
                         .for_each(|it| it.1 = COVERED);
                 }
-                for at in column..column_end {
-                    for (line, side) in [(row, 0), (row_end, 2)] {
-                        merge(&mut horizontal[line * columns + at], edges[side]);
-                    }
+                for (line, side) in [(row, 0), (row_end, 2)]
+                    .into_iter()
+                    .filter(|it| edges[it.1].style != BorderStyle::None)
+                {
+                    horizontal[line * columns..][column..column_end]
+                        .iter_mut()
+                        .for_each(|it| merge(it, edges[side]));
                 }
-                for at in row..row_end {
-                    for (line, side) in [(column, start), (column_end, end)] {
-                        merge(&mut vertical[at * (columns + 1) + line], edges[side]);
-                    }
+                for (line, side) in [(column, start), (column_end, end)]
+                    .into_iter()
+                    .filter(|it| edges[it.1].style != BorderStyle::None)
+                {
+                    (row..row_end).for_each(|at| {
+                        merge(&mut vertical[at * (columns + 1) + line], edges[side])
+                    });
                 }
             };
+        let mut last = (&self.boxes[id].style, table);
         for cell in &grid.cells {
+            let style = &self.boxes[cell.id].style;
+            if !Rc::ptr_eq(style, last.0) {
+                last = (style, edges(style));
+            }
             add(
-                of(cell.id),
+                last.1,
                 cell.row,
                 cell.row + cell.rows,
                 cell.column,
@@ -579,14 +596,17 @@ impl Document {
         let visible = |edge: Edge| if edge.style.is_none() { none } else { edge };
         let around = |row: usize, row_end: usize, column: usize, column_end: usize| {
             let across = |line: usize| {
-                (column..column_end)
-                    .map(|at| visible(horizontal[line * columns + at].0))
-                    .fold(none, winner)
+                horizontal[line * columns..][column..column_end]
+                    .iter()
+                    .map(|it| visible(it.0))
+                    .reduce(winner)
+                    .unwrap_or(none)
             };
             let down = |line: usize| {
                 (row..row_end)
                     .map(|at| visible(vertical[at * (columns + 1) + line].0))
-                    .fold(none, winner)
+                    .reduce(winner)
+                    .unwrap_or(none)
             };
             let mut edges = [across(row), none, across(row_end), none];
             (edges[start], edges[end]) = (down(column), down(column_end));
@@ -597,6 +617,7 @@ impl Document {
             (cell.row..cell.row + cell.rows)
                 .for_each(|row| is_taken[row * columns + cell.column..][..cell.columns].fill(true));
         }
+        let mut recent = [(); 2].map(|()| Rc::new([none; 4]));
         for cell in &grid.cells {
             let mut edges = around(
                 cell.row,
@@ -613,10 +634,16 @@ impl Document {
             for (side, _) in [(0, above), (start, before)].into_iter().filter(|it| it.1) {
                 edges[side].color *= u32::from(edges[side].color & 0xff == 0xff);
             }
-            self.set_collapsed(cell.id, Some(edges));
+            if *recent[0] != edges {
+                recent.swap(0, 1);
+                if *recent[0] != edges {
+                    recent[0] = Rc::new(edges);
+                }
+            }
+            self.set_collapsed(cell.id, Some(&recent[0]));
         }
-        self.boxes[id].collapsed = Some(Box::new(if grid.cells.is_empty() {
-            table.map(visible)
+        self.boxes[id].collapsed = Some(Rc::new(if rows == 0 || columns == 0 {
+            [none; 4]
         } else {
             around(0, rows, 0, columns)
         }));
@@ -832,6 +859,23 @@ impl Document {
         }
         let it = &self.boxes[id];
         let edges = it.border_and_padding(room.basis[0].unwrap_or(0.0)).sums();
+        let [min, max] =
+            [min, max].map(|size| size + edges[0] - it.border_and_padding(0.0).sums()[0]);
+        if max == edges[0] + 2.0 * it.style.text.spacing_x.0.floor()
+            && (&it.style.layout.width, &it.style.layout.min_width) == (&Size::Auto, &Size::Auto)
+            && auto != AutoSize::Stretch
+            && it.ratio.is_none()
+        {
+            let grid = self.prepare_table(id).0;
+            if grid.is_empty() {
+                return grid
+                    .captions
+                    .iter()
+                    .map(|it| self.contribution(*it, None, None).sizes[0])
+                    .fold(edges[0], f32::max);
+            }
+        }
+        let it = &self.boxes[id];
         let height = room
             .height
             .or_else(|| it.styled_height(room, edges, None, None));
@@ -872,7 +916,8 @@ impl Document {
     pub(crate) fn table_widths(&mut self, id: BoxId, is_for_layout: bool) -> Widths {
         let (grid, spacing, is_fixed) = self.prepare_table(id);
         let columns = || grid.columns.iter().filter(|it| !it.is_merged);
-        let outside = self.boxes[id].inset(0.0).sums()[0] + around(columns().count(), spacing[0]);
+        let outside =
+            self.boxes[id].inset(0.0).sums()[0] + around(columns().count().max(1), spacing[0]);
         let mut min = outside
             + columns()
                 .map(|it| {
@@ -926,7 +971,8 @@ impl Document {
         input: &Input,
         breaks: Option<&mut Breaks>,
     ) -> Output {
-        let (grid, spacing, is_fixed) = self.prepare_table(id);
+        let (grid, specified, is_fixed) = self.prepare_table(id);
+        let spacing = if grid.is_empty() { [0.0; 2] } else { specified };
         let it = &mut self.boxes[id];
         (it.layout.border, it.layout.padding) =
             (Edges::new(it.border()), it.padding(input.basis.0));
@@ -1028,16 +1074,13 @@ impl Document {
         let [above, below] = caption_heights;
 
         let mut rows: Vec<Row> = (grid.rows.iter())
-            .map(|(row, group)| {
+            .map(|(row, _)| {
                 let (height, fraction) = specified_height(&self.boxes[*row]);
-                let is_collapsed = [row, group]
-                    .iter()
-                    .any(|it| self.boxes[**it].style.ink.visibility.0 == Visibility::Collapse);
                 Row {
                     height: height.unwrap_or(0.0),
                     fraction,
                     is_fixed: height.is_some(),
-                    is_collapsed,
+                    is_collapsed: self.is_collapsed_row(*row),
                     ..Row::default()
                 }
             })
@@ -1142,17 +1185,10 @@ impl Document {
                     + spacing[1] * rows.len().saturating_sub(1) as f32,
             );
         }
-        let spacing = if grid.columns.is_empty() {
-            [spacing[0], 0.0]
-        } else {
-            spacing
-        };
-        let outside = inset.sums()[1]
-            + around(
-                sections.iter().filter(|it| !it.rows.is_empty()).count(),
-                spacing[1],
-            );
-        let mut natural = outside + sections.iter().map(|it| it.height).sum::<f32>();
+        let with_rows = sections.iter().filter(|it| !it.rows.is_empty()).count();
+        let mut natural = inset.sums()[1]
+            + around(with_rows, spacing[1])
+            + sections.iter().map(|it| it.height).sum::<f32>();
         let without_captions = |it: f32| it - above - below;
         let for_grid = Input {
             height: input.height.map(without_captions),
@@ -1166,14 +1202,26 @@ impl Document {
             .filter(|_| !is_ignored)
             .unwrap_or(natural)
             .max(natural);
-        grow_sections(&mut sections, &mut rows, height - outside, spacing[1]);
+        grow_sections(
+            &mut sections,
+            &mut rows,
+            height - inset.sums()[1] - around(with_rows, specified[1]),
+            specified[1],
+        );
         for section in &mut sections {
             let rows = &rows[section.rows.clone()];
-            let collapsed: f32 = rows
+            let spacings = rows.len().saturating_sub(1)
+                - rows
+                    .iter()
+                    .filter(|it| !it.is_collapsed)
+                    .count()
+                    .saturating_sub(1);
+            let collapsed = rows
                 .iter()
                 .filter(|it| it.is_collapsed)
-                .map(|it| it.height + spacing[1])
-                .sum();
+                .map(|it| it.height)
+                .sum::<f32>()
+                + spacing[1] * spacings as f32;
             (height, natural) = (
                 height - collapsed,
                 (natural - collapsed).max(inset.sums()[1]),
@@ -1184,10 +1232,7 @@ impl Document {
                 extent(rows)
             };
         }
-        let (has_rows, height) = (
-            rows.iter().any(|it| !it.is_collapsed),
-            height.max(inset.sums()[1]),
-        );
+        let (has_rows, height) = (!rows.is_empty(), height.max(inset.sums()[1]));
         (output.height, output.intrinsic, output.uses_height) =
             (above + height + below, above + natural + below, true);
 
@@ -1231,13 +1276,17 @@ impl Document {
         let (mut y, mut index, mut cells) = (top, 0, grid.cells.iter().zip(&measured).peekable());
         let is_fragmented = breaks.is_some();
         for (group, section) in grid.groups.iter().zip(&sections) {
-            let (mut group_output, mut row_y, first) = (Output::default(), 0.0, index);
+            let (mut group_output, mut row_y, first, mut shows_row) =
+                (Output::default(), 0.0, index, false);
             while let Some((row, _)) = grid.rows.get(index).filter(|it| it.1 == *group) {
                 let shown = if rows[index].is_collapsed {
                     0.0
                 } else {
                     rows[index].height
                 };
+                if !rows[index].is_collapsed && core::mem::replace(&mut shows_row, true) {
+                    row_y += spacing[1];
+                }
                 let mut row_output = Output {
                     height: shown,
                     ..Output::default()
@@ -1324,12 +1373,7 @@ impl Document {
                         None,
                     );
                 }
-                row_y += shown
-                    + if rows[index].is_collapsed {
-                        0.0
-                    } else {
-                        spacing[1]
-                    };
+                row_y += shown;
                 index += 1;
             }
             group_output.height = section.height;
@@ -1344,7 +1388,7 @@ impl Document {
             y += if first == index {
                 section.height
             } else {
-                row_y
+                row_y + spacing[1]
             };
         }
         let mut flow = breaks.map(|it| self.flow(id, input, inset, it));
@@ -1484,7 +1528,6 @@ impl Document {
                 (location.x, location.y) = (location.x - origin.x, location.y - origin.y);
             }
         }
-        self.add_out_of_flow_children(id, [inset.left, above + inset.top], &mut output);
         if let Some(flow) = flow {
             let y = bands.last().map_or(unbroken, |it| it.bottom);
             let bottom = if below > 0.0 || grid.rows.is_empty() {
@@ -1529,7 +1572,6 @@ impl Document {
             self.boxes.pieces.remove(&id);
             self.boxes.copies.remove(&id);
         }
-        self.add_out_of_flow_children(id, [0.0; 2], own);
         self.settle_children(id);
         self.lay_out_positioned(id, own, flow.as_mut().map(|it| &mut *it.breaks));
         self.place_child(
@@ -1546,15 +1588,11 @@ impl Document {
         parent.escapes |= own.escapes;
     }
 
-    fn add_out_of_flow_children(&mut self, id: BoxId, at: [f32; 2], output: &mut Output) {
-        for index in 0..self.boxes[id].children.len() {
-            let child = self.boxes[id].children[index];
-            let it = &mut self.boxes[child];
-            if it.style.is_out_of_flow() {
-                output.escapes |= it.out_of_flow();
-                it.static_position = at.map(|it| (it, Default::default()));
-            }
-        }
+    pub(crate) fn is_collapsed_row(&self, id: BoxId) -> bool {
+        self.boxes[id].kind == Kind::Row
+            && [id, self.boxes[id].parent]
+                .iter()
+                .any(|it| self.boxes[*it].style.ink.visibility.0 == Visibility::Collapse)
     }
 }
 

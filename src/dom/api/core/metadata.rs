@@ -15,8 +15,10 @@ type Cx<'c, 'a> = &'c mut JsScope<'a>;
 struct Told {
     title: RefCell<DomString>,
     is_setting_title: Cell<bool>,
+    has_new_icons: Cell<bool>,
     has_color_scheme: Cell<bool>,
     has_theme_color: Cell<bool>,
+    has_new_theme_color: Cell<bool>,
     sizes_container: Cell<bool>,
 }
 
@@ -34,26 +36,34 @@ pub(super) fn set_title<'a>(
     element: &'a Element,
     title: DomString,
 ) {
-    doc.extra::<Told>().is_setting_title.set(true);
+    let is_setting_title = &doc.extra::<Told>().is_setting_title;
+    is_setting_title.set(true);
     string_replace_all(cx, title, element);
-    doc.extra::<Told>().is_setting_title.set(false);
+    is_setting_title.set(false);
     title_changed(doc);
 }
 
 pub(super) fn title_changed(doc: &Doc) {
-    let Some(window) = doc
-        .window()
-        .filter(|_| !doc.extra::<Told>().is_setting_title.get())
+    let told = doc.extra::<Told>();
+    let Some(window) = (!told.is_setting_title.get())
+        .then(|| doc.window())
+        .flatten()
     else {
         return;
     };
     let title = doc.title();
-    if doc.extra::<Told>().title.replace(title.clone()) != title {
+    if told.title.replace(title.clone()) != title {
         window.host().set_title(title.to_utf8().into_owned());
     }
 }
 
-pub(crate) fn icons_changed<'a>(cx: Cx<'_, 'a>, doc: &'a Doc) {
+/// Whether it is the first since `tell_icons`.
+pub(crate) fn note_new_icon(doc: &Doc) -> bool {
+    !doc.extra::<Told>().has_new_icons.replace(true)
+}
+
+pub(crate) fn tell_icons<'a>(cx: Cx<'_, 'a>, doc: &'a Doc) {
+    doc.extra::<Told>().has_new_icons.set(false);
     let Some(window) = doc.window() else { return };
     let is_icon = |it: &&Element| {
         it.is_html(atom!("link"))
@@ -62,7 +72,7 @@ pub(crate) fn icons_changed<'a>(cx: Cx<'_, 'a>, doc: &'a Doc) {
                 .is_some_and(|it| it.has_token(&"icon".into(), true))
     };
     let links: Vec<_> = doc
-        .elements_with_objects()
+        .objects_with_tag(atom!("link"))
         .filter(is_icon)
         .map(|it| it.attr(atom!("href")).unwrap_or_default())
         .collect();
@@ -74,9 +84,10 @@ pub(crate) fn icons_changed<'a>(cx: Cx<'_, 'a>, doc: &'a Doc) {
     );
 }
 
-fn update_color_scheme<'a>(cx: Cx<'_, 'a>, doc: &'a Doc) {
+#[cold]
+pub(super) fn update_color_scheme(doc: &Doc) {
     let set = |scheme: &str| doc.engine(|engine, _| engine.set_color_scheme(scheme.as_bytes()));
-    let mut candidates = doc.elements_with_objects().filter(|it| {
+    let mut candidates = doc.objects_with_tag(atom!("meta")).filter(|it| {
         it.is_html(atom!("meta")) && lowercase(it, atom!("name")).eq_str("color-scheme")
     });
     let has = candidates.any(|it| set(&it.attr(atom!("content")).unwrap_or_default().to_utf8()));
@@ -84,7 +95,6 @@ fn update_color_scheme<'a>(cx: Cx<'_, 'a>, doc: &'a Doc) {
         set("normal");
     }
     doc.extra::<Told>().has_color_scheme.set(has);
-    doc.invalidate(cx);
 }
 
 pub(crate) fn tell_theme_color(doc: &Doc) {
@@ -99,7 +109,7 @@ pub(crate) fn tell_theme_color(doc: &Doc) {
         it.is_html(atom!("meta")) && lowercase(it, atom!("name")).eq_str("theme-color")
     };
     let found = doc.extra::<Told>().has_theme_color.get().then(|| {
-        doc.elements_with_objects()
+        doc.objects_with_tag(atom!("meta"))
             .filter(is_candidate)
             .find_map(color)
     });
@@ -140,11 +150,18 @@ pub(super) fn meta_changed<'a>(cx: Cx<'_, 'a>, meta: &'a Element) {
     let Some(window) = doc.window() else { return };
     let name = lowercase(meta, atom!("name"));
     if name.eq_str("color-scheme") || doc.extra::<Told>().has_color_scheme.get() {
-        update_color_scheme(cx, doc);
+        doc.arena().has_new_color_scheme.set(true);
+        doc.set_needs_sync();
+        doc.invalidate(cx);
     }
     if name.eq_str("theme-color") || doc.extra::<Told>().has_theme_color.get() {
         doc.extra::<Told>().has_theme_color.set(true);
-        tell_theme_color(doc);
+        if !doc.extra::<Told>().has_new_theme_color.replace(true) {
+            crate::api::loading::queue_task(doc, [], |_, doc, []| {
+                doc.extra::<Told>().has_new_theme_color.set(false);
+                tell_theme_color(doc);
+            });
+        }
     }
     let Some(content) = meta.attr(atom!("content")).filter(|_| meta.is_connected()) else {
         return;

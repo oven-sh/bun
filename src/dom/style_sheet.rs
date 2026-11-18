@@ -37,7 +37,7 @@ pub(crate) struct StyleSheet {
     chunks: RefCell<Vec<Chunk>>,
     /// Since the last chunk.
     appended: RefCell<Out>,
-    compiled_for: Cell<(Within, NodeId)>,
+    compiled_for: Cell<Option<(Within, NodeId)>>,
     rules: RefCell<Option<Vec<Rc<Rule>>>>,
     /// The rules are not what the chunks say.
     is_stale: Cell<bool>,
@@ -109,10 +109,7 @@ impl StyleSheet {
     }
 
     fn forget_compiled(&self) {
-        self.chunks
-            .borrow_mut()
-            .iter_mut()
-            .for_each(|it| it.compiled = None);
+        self.compiled_for.set(None);
     }
 
     pub(crate) fn replace(&self, source: Source) {
@@ -229,17 +226,17 @@ impl StyleSheet {
     /// `owner` is the root of an `@scope` rule that names none. A large sheet goes to another thread.
     pub(crate) fn start_compiling(&self, document: &mut Document, owner: NodeId) {
         self.update_chunks();
-        if self.compiled_for.replace((document.within(), owner)) != (document.within(), owner) {
-            self.forget_compiled();
-        }
+        let is_outdated =
+            self.compiled_for.replace(Some((document.within(), owner))) != self.compiled_for.get();
         let wrapping = self.wrapping.borrow();
         let closing = vec![b'}'; bun_core::strings::count_char(&wrapping, b'{')];
         for chunk in self
             .chunks
             .borrow_mut()
             .iter_mut()
-            .filter(|it| it.compiled.is_none())
+            .filter(|it| is_outdated || it.compiled.is_none())
         {
+            let _shared = chunk.compiled.take().and_then(|it| document.take_back(it));
             let source = if wrapping.is_empty() {
                 chunk.source.clone()
             } else {

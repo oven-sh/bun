@@ -202,6 +202,21 @@ impl Controls {
     }
 }
 
+impl Query {
+    /// It runs no script of the page.
+    pub fn is_harmless(&self) -> bool {
+        matches!(
+            self,
+            Query::Find { .. }
+                | Query::FocusedFrame {}
+                | Query::HitInfo { .. }
+                | Query::InsertSheet { .. }
+                | Query::SelectionText {}
+                | Query::Snapshot { .. }
+        )
+    }
+}
+
 messages! {
     impl Controls;
     tell Order {
@@ -258,6 +273,8 @@ messages! {
         HitInfo = hit_info(x: f64, y: f64) -> Option<Box<ContextMenu>>;
         #[size = large]
         InsertSheet = insert_sheet(css: String, is_of_user: bool) -> u32;
+        /// What it looks like now can be captured afterwards.
+        Render = render() -> ();
         #[size = large]
         SelectionText = selection_text() -> String;
         /// With its frames.

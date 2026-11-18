@@ -4,7 +4,7 @@ use bun_jsc::JSValue;
 use bun_jsc::bindgen::{JsHeap, JsInterface, JsScope};
 
 use crate::api::animation::{no_scroll, scroll_result};
-use crate::api::core::{Doc, Element, Node, NodeFlags, atom};
+use crate::api::core::{Doc, Element, Node, atom};
 use crate::api::cssom::{self, MediaQueryList};
 use crate::api::geometry::{DOMRect, DOMRectList};
 use crate::computed::Visibility;
@@ -12,7 +12,6 @@ use crate::document::Document;
 use crate::generated_bindgen::cssom::CSSStyleProperties;
 use crate::generated_bindgen::view::*;
 use crate::scroll::Alignment;
-use crate::selector::Pseudo;
 use crate::tree::{DOCUMENT, NodeId};
 
 fn laid_out<'a, R: Default>(
@@ -52,14 +51,10 @@ fn scroller<'a>(cx: &mut JsScope<'a>, element: &'a Element) -> NodeId {
         (true, true) => 0,
         (false, true) => DOCUMENT,
         (true, false) if is_body(element) && !is_potentially_scrollable(cx, element) => DOCUMENT,
-        _ if element.has(NodeFlags::HOST) && element.is_html(atom!("input")) => {
-            let editor = Pseudo::from_name(b"-internal-editor");
-            element
-                .shadow_root()
-                .and_then(|it| it.descendant_elements().find(|it| it.pseudo() == editor))
-                .unwrap_or(element)
-                .id()
-        }
+        _ if element.is_html(atom!("input")) => crate::api::forms::text_control(element)
+            .and_then(|it| it.editor())
+            .unwrap_or(element)
+            .id(),
         _ => element.id(),
     }
 }

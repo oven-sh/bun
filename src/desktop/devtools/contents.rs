@@ -3,10 +3,10 @@
 use bun_ui::dom;
 
 use super::target_id_of;
-use crate::contents::worlds::World;
 use crate::contents::{self, inspection};
 use crate::prelude::*;
 use crate::realm;
+use crate::renderer::{self, Document, World};
 use crate::value::Value;
 
 pub(super) struct Contents(Root<contents::Contents>);
@@ -75,8 +75,12 @@ impl Contents {
         string(self.page().token())
     }
 
+    fn renderer(&self) -> JsResult<&'static Document> {
+        Document::of(self.live_page()?.id()).ok_or_else(renderer::disposed)
+    }
+
     pub(super) fn control(&self, method: &str, arguments: &[JSValue]) -> JsResult<JSValue> {
-        self.live_page()?.inspect(method, arguments)
+        self.renderer()?.inspect(method, arguments)
     }
 
     pub(super) fn document(&self) -> JsResult<dom::Document> {
@@ -85,7 +89,7 @@ impl Contents {
     }
 
     pub(super) fn world(&self, id: u32) -> JsResult<World> {
-        self.live_page()?.world_with_id(id)
+        self.renderer()?.world_with_id(id)
     }
 
     pub(super) fn simulate(&self, input: bun_web::input::Input) -> JsResult<()> {

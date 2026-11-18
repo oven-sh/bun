@@ -49,6 +49,9 @@ class ScriptExecutionContext;
 using KeyData = std::variant<Vector<uint8_t>, JsonWebKey>;
 using KeyOrKeyPair = std::variant<RefPtr<CryptoKey>, CryptoKeyPair>;
 
+// Up to here it takes less time than the way to another thread and back.
+constexpr size_t maximumSizeToDigestInline = 4096;
+
 class CryptoAlgorithm : public ThreadSafeRefCounted<CryptoAlgorithm> {
 public:
     virtual ~CryptoAlgorithm() = default;

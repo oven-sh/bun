@@ -6,7 +6,7 @@ use super::history::{Document, Entry};
 use super::page::Page;
 use super::{
     Contents, Kind, Methods, NOTHING, Numbers as _, Values, bind, field, focused, nothing, of_app,
-    or_undefined, with_id, worlds,
+    or_undefined, with_id,
 };
 use crate::generated_bindgen::contents::{
     ElectronWebContentsModule, ElectronWebFrameMainModule, js_ElectronWebFrameMain as frames,
@@ -15,7 +15,7 @@ use crate::ipc::IpcMain;
 use crate::prelude::*;
 use crate::webview::remote::Remote;
 use crate::webview::{print, wire};
-use crate::{devtools, ports, process};
+use crate::{devtools, ports};
 
 pub(crate) struct WebFrameMain {
     name: RefCell<String>,
@@ -83,7 +83,7 @@ impl WebFrameMain {
 
     fn live(&self) -> JsResult<&Page> {
         match self.is_destroyed() {
-            true => Err(worlds::disposed()),
+            true => Err(crate::renderer::disposed()),
             false => Ok(self.page()),
         }
     }
@@ -171,7 +171,7 @@ impl WebFrameMain {
     pub(crate) fn get_os_process_id(&self, _: Cx<'_, '_>) -> JsResult<u32> {
         Ok(match self.live()?.contents().has_crashed() {
             true => 0,
-            false => process::id(),
+            false => self.page().process_id(),
         })
     }
 
@@ -223,7 +223,7 @@ impl WebFrameMain {
         self.page().send(
             channel.to_js(),
             array(JsLocal::to_js_slice(values))?,
-            array(&[])?,
+            Vec::new(),
         )
     }
 
@@ -237,7 +237,7 @@ impl WebFrameMain {
         self.live()?.send(
             channel.to_js(),
             array(&[message.to_js()])?,
-            ports::move_all(transfer.to_js())?,
+            ports::detach_all(transfer.to_js(), None)?,
         )
     }
 

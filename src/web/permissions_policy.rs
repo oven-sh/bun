@@ -75,14 +75,16 @@ impl Feature {
     }
 }
 
-#[derive(Clone, Default)]
-struct Allowlist {
-    has_all: bool,
-    /// For a frame whose `src` is sandboxed.
-    has_opaque: bool,
-    origins: Vec<Origin>,
-    expressions: Vec<Bytes>,
-    report_to: Option<Bytes>,
+crate::wire! {
+    #[derive(Clone, Default)]
+    struct Allowlist {
+        has_all: bool,
+        /// For a frame whose `src` is sandboxed.
+        has_opaque: bool,
+        origins: Vec<Origin>,
+        expressions: Vec<Bytes>,
+        report_to: Option<Bytes>,
+    }
 }
 
 impl Allowlist {
@@ -97,9 +99,11 @@ impl Allowlist {
     }
 }
 
-/// What a header or the attributes of a frame say.
-#[derive(Clone, Default)]
-pub struct Declared(Vec<(Feature, Allowlist)>);
+crate::wire! {
+    /// What a header or the attributes of a frame say.
+    #[derive(Clone, Default)]
+    pub struct Declared(Vec<(Feature, Allowlist)>);
+}
 
 impl Declared {
     fn get(&self, feature: Feature) -> Option<&Allowlist> {
@@ -167,12 +171,14 @@ impl Declared {
     }
 }
 
-#[derive(Clone)]
-pub struct PermissionsPolicy {
-    origin: Origin,
-    /// A bit for each feature.
-    not_inherited: u64,
-    declared: Declared,
+crate::wire! {
+    #[derive(Clone)]
+    pub struct PermissionsPolicy {
+        origin: Origin,
+        /// A bit for each feature.
+        not_inherited: u64,
+        declared: Declared,
+    }
 }
 
 impl PermissionsPolicy {
@@ -231,19 +237,5 @@ impl PermissionsPolicy {
 
     pub fn endpoint(&self, feature: Feature) -> Option<&[u8]> {
         self.declared.get(feature)?.report_to.as_deref()
-    }
-
-    pub fn allowlist(&self, feature: Feature) -> Vec<&[u8]> {
-        match self.declared.get(feature) {
-            _ if !self.allows(feature) => Vec::new(),
-            Some(list) if !list.has_all => list
-                .origins
-                .iter()
-                .map(Origin::as_bytes)
-                .chain(list.expressions.iter().map(|it| &**it))
-                .collect(),
-            None if !feature.is_for_all_by_default() => vec![self.origin.as_bytes()],
-            _ => vec![b"*"],
-        }
     }
 }

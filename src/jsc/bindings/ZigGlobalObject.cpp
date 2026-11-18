@@ -32,6 +32,8 @@
 #include "JavaScriptCore/GetterSetter.h"
 #include "JavaScriptCore/GlobalObjectMethodTable.h"
 #include "JavaScriptCore/Heap.h"
+#include "JavaScriptCore/HeapIterationScope.h"
+#include "JavaScriptCore/SubspaceInlines.h"
 #include "JavaScriptCore/MarkedBlockCage.h"
 #include "JavaScriptCore/DeferGCInlines.h"
 #include "JavaScriptCore/Identifier.h"
@@ -5335,6 +5337,12 @@ extern "C" void Bun__GlobalObject__clearExceptionsForExit(Zig::GlobalObject* glo
 static void destroyVM(JSC::VM& vm)
 {
     auto identifier = vm.identifier();
+    if (auto* windows = WebCore::clientData(vm)->heapData().subspaces().m_subspaceForWebGlobalObject) {
+        JSC::HeapIterationScope iterationScope(vm.heap);
+        windows->forEachLiveCell([](JSC::HeapCell* cell, JSC::HeapCell::Kind) {
+            static_cast<GlobalObject*>(static_cast<JSC::JSCell*>(cell))->clearDOMGuardedObjects();
+        });
+    }
     vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     // Every JSLockHolder still on the native stack (process.exit() from inside a JS callback,
     // the worker thread's manual API lock) holds a RefPtr<VM> that will never destruct because

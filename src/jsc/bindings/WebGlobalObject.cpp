@@ -655,6 +655,16 @@ void WebGlobalObject::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObjec
     Base::getOwnSpecialPropertyNames(object, globalObject, names, mode);
 }
 
+// It has too many properties not to be a dictionary, and inline caches pass over the accessors that a dictionary only has in a table.
+static bool reifyAccessor(VM& vm, JSObject* realm, PropertyName name)
+{
+    auto entry = realm->structure()->hasNonReifiedStaticProperties() ? realm->structure()->findPropertyHashEntry(name) : std::nullopt;
+    if (!entry || !(entry->value->attributes() & PropertyAttribute::CustomAccessor))
+        return false;
+    reifyStaticProperty(vm, entry->table->classForThis, name, *entry->value, *realm);
+    return true;
+}
+
 bool WebGlobalObject::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot)
 {
     if (auto index = parseIndex(name)) [[unlikely]]
@@ -665,7 +675,10 @@ bool WebGlobalObject::getOwnPropertySlot(JSObject* object, JSGlobalObject* globa
             return true;
         }
     }
-    return Base::getOwnPropertySlot(object, globalObject, name, slot);
+    if (!Base::getOwnPropertySlot(object, globalObject, name, slot))
+        return false;
+    bool isOnlyInTable = slot.internalMethodType() == PropertySlot::InternalMethodType::Get && slot.isCacheableCustom() && !isValidOffset(slot.cachedOffset());
+    return !isOnlyInTable || !reifyAccessor(globalObject->vm(), object, name) || Base::getOwnPropertySlot(object, globalObject, name, slot);
 }
 
 bool WebGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
@@ -676,6 +689,8 @@ bool WebGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNa
     auto* row = realm->rowOfRememberedObject(globalObject->vm(), name);
     if (row && row->propertyPutter())
         realm->forget(globalObject->vm(), name, *row);
+    if (!isValidOffset(realm->getDirectOffset(globalObject->vm(), name)))
+        reifyAccessor(globalObject->vm(), realm, name);
     return Base::put(cell, globalObject, name, value, slot);
 }
 

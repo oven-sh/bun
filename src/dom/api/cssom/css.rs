@@ -43,7 +43,7 @@ impl CSSNamespace {
     }
 
     pub(crate) fn supports_declaration(property: &[u8], value: &[u8]) -> bool {
-        crate::sheet::supports_declaration(property, value)
+        crate::sheet::supports_declaration(property, value, crate::sheet::Within::Style)
     }
 
     pub(crate) fn supports_condition(condition: &[u8]) -> bool {

@@ -132,7 +132,9 @@ enum class SerializationErrorMode { NonThrowing,
     Throwing };
 enum class SerializationContext { Default,
     WorkerPostMessage,
-    WindowPostMessage };
+    WindowPostMessage,
+    // No script gets to see the bytes.
+    BrowserStorage };
 enum class SerializationForStorage : bool { No,
     Yes };
 enum class SerializationForCrossProcessTransfer : bool { No,
@@ -196,6 +198,13 @@ public:
         return adoptRef(*new SerializedScriptValue(WTF::move(data)));
     }
     const Vector<uint8_t>& wireBytes() const { return m_data; }
+
+    // For another process, from any thread. False if it shares something with this one.
+    enum class FlatPart : uint8_t { WireBytes,
+        Buffer,
+        Blob };
+    using AppendFlatPart = void (*)(void*, FlatPart, const uint8_t*, size_t, uint64_t maxByteLength);
+    bool flatten(void*, AppendFlatPart) const;
 
     size_t memoryCost() const { return m_memoryCost; }
 

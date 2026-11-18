@@ -60,7 +60,10 @@ pub(crate) fn wrap_all(endpoints: Vec<Endpoint>) -> JsResult<JSValue> {
 }
 
 /// All or none.
-fn detach_all(ports: JSValue, source: Option<&MessagePortMain>) -> JsResult<Vec<Endpoint>> {
+pub(crate) fn detach_all(
+    ports: JSValue,
+    source: Option<&MessagePortMain>,
+) -> JsResult<Vec<Endpoint>> {
     if ports.is_undefined() {
         return Ok(Vec::new());
     }
@@ -109,10 +112,6 @@ pub(crate) fn park(port: JSValue) -> f64 {
     (cast(port).and_then(MessagePortMain::detach))
         .unwrap_or_else(|| Endpoint::pair().0)
         .park()
-}
-
-pub(crate) fn unpark(id: f64) -> JSValue {
-    wrap(Endpoint::unpark(id)).to_js()
 }
 
 impl MessagePortMain {

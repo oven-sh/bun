@@ -48,7 +48,7 @@ impl KeyframesName<'_> {
 }
 
 impl KeyframesName<'_> {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         match self {
             Self::Ident(i) => Self::Ident(i.deep_clone(bump)),
             Self::Custom(s) => Self::Custom(s),
@@ -181,9 +181,9 @@ impl KeyframeSelector {
 /// See [KeyframesRule](KeyframesRule).
 pub struct Keyframe<'bump> {
     /// A list of keyframe selectors to associate with the declarations in this keyframe.
-    pub selectors: ArrayList<KeyframeSelector>,
+    pub(crate) selectors: ArrayList<KeyframeSelector>,
     /// The declarations for this keyframe.
-    pub declarations: DeclarationBlock<'bump>,
+    pub(crate) declarations: DeclarationBlock<'bump>,
 }
 
 impl Keyframe<'_> {
@@ -211,15 +211,15 @@ pub struct KeyframesRule<'bump> {
     /// <keyframes-name> = <custom-ident> | <string>
     pub name: KeyframesName<'bump>,
     /// A list of keyframes in the animation.
-    pub keyframes: ArrayList<Keyframe<'bump>>,
+    pub(crate) keyframes: ArrayList<Keyframe<'bump>>,
     /// A vendor prefix for the rule, e.g. `@-webkit-keyframes`.
-    pub vendor_prefix: VendorPrefix,
+    pub(crate) vendor_prefix: VendorPrefix,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl KeyframesRule<'_> {
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
@@ -278,7 +278,7 @@ impl KeyframesRule<'_> {
 }
 
 impl<'bump> KeyframesRule<'bump> {
-    pub fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         Self {
             name: self.name.deep_clone(bump),
             keyframes: self.keyframes.iter().map(|k| k.deep_clone(bump)).collect(),
@@ -292,7 +292,7 @@ impl<'bump> KeyframesRule<'bump> {
 // KeyframesListParser
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct KeyframesListParser;
+pub(crate) struct KeyframesListParser;
 
 const _: () = {
     use css::css_parser::{

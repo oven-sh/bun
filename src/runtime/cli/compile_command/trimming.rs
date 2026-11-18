@@ -127,7 +127,7 @@ fn find_settings_and_template(
         executable.embeds_source_maps,
     );
     add_build_option_requirements(request.options, &mut settings.exec_argv);
-    if executable.desktop.is_some() {
+    if executable.flags.contains(Flags::LOADS_GRAPHICS_DRIVERS) {
         settings.exec_argv.push(OptionRequirement {
             requirement: RuntimeRequirement::Feature(Feature::Desktop),
             label: Box::from(&b"--desktop"[..]),

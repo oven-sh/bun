@@ -60,7 +60,7 @@ pub trait ImageFallback<'bump>: Sized {
 /// crate now that `SmallList` is foreign. The lone caller threads `self`
 /// explicitly.
 #[inline]
-pub fn get_fallbacks<'bump, T: ImageFallback<'bump>>(
+pub(crate) fn get_fallbacks<'bump, T: ImageFallback<'bump>>(
     this: &mut SmallList<T, 1>,
     arena: &bun_alloc::Arena,
     targets: &crate::targets::Targets,
@@ -68,14 +68,14 @@ pub fn get_fallbacks<'bump, T: ImageFallback<'bump>>(
     fallbacks_gated::get_fallbacks_image(this, arena, targets)
 }
 
-pub use fallbacks_gated::get_fallbacks_text_shadow;
+pub(crate) use fallbacks_gated::get_fallbacks_text_shadow;
 
-pub mod fallbacks_gated {
+pub(crate) mod fallbacks_gated {
     use super::*;
     use crate::css_parser as css;
     use crate::properties::text::TextShadow;
 
-    pub fn get_fallbacks_image<'bump, T>(
+    pub(crate) fn get_fallbacks_image<'bump, T>(
         this: &mut SmallList<T, 1>,
         arena: &bun_alloc::Arena,
         targets: &css::targets::Targets,
@@ -186,7 +186,7 @@ pub mod fallbacks_gated {
         res
     }
 
-    pub fn get_fallbacks_text_shadow(
+    pub(crate) fn get_fallbacks_text_shadow(
         this: &mut SmallList<TextShadow, 1>,
         arena: &bun_alloc::Arena,
         targets: &css::targets::Targets,

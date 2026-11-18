@@ -76,6 +76,7 @@ use bun_sema_driver::{
 };
 use bun_sys::{Fd, File};
 use core::fmt;
+use core::sync::atomic::Ordering;
 use core::time::Duration;
 use std::num::NonZeroUsize;
 use std::time::Instant;
@@ -518,8 +519,16 @@ impl<'a> Build<'a> {
     fn run_front_end(&mut self) -> Result<FrontEndOutput, Stage> {
         let mut steps_behind_link = None;
         let output = self.load_in_new_sessions(AssetReads::FinishedLater, &mut |build, loaded| {
+            let imports_desktop = build.options.aot.imports_desktop.as_deref();
+            let starts_again = || imports_desktop.is_some_and(|it| it.load(Ordering::Relaxed));
+            if starts_again() {
+                return Err(Stage::Load);
+            }
             build.keeps_library_code_without_names = loaded.keeps_library_code_without_names;
             let bound = build.bind_modules(&loaded)?;
+            if starts_again() {
+                return Err(Stage::BindModules);
+            }
             build.stop_if_errors(Stage::BindModules)?;
             let units = build.check_and_lower(&loaded, &bound);
             (loaded.finish_asset_reads)();

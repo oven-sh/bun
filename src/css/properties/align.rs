@@ -37,9 +37,9 @@ pub enum AlignContent {
 #[css(generate_to_css)]
 pub struct AlignContentContentPosition {
     /// An overflow alignment mode.
-    pub overflow: Option<OverflowPosition>,
+    pub(crate) overflow: Option<OverflowPosition>,
     /// A content position keyword.
-    pub value: ContentPosition,
+    pub(crate) value: ContentPosition,
 }
 
 impl AlignContentContentPosition {
@@ -125,9 +125,9 @@ pub enum JustifyContent {
 #[derive(Clone, PartialEq, Eq)]
 pub struct JustifyContentContentPosition {
     /// A content position keyword.
-    pub value: ContentPosition,
+    pub(crate) value: ContentPosition,
     /// An overflow alignment mode.
-    pub overflow: Option<OverflowPosition>,
+    pub(crate) overflow: Option<OverflowPosition>,
 }
 
 impl JustifyContentContentPosition {
@@ -140,7 +140,7 @@ impl JustifyContentContentPosition {
 }
 
 impl JustifyContent {
-    pub fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"normal"))
             .is_ok()
@@ -172,7 +172,7 @@ impl JustifyContent {
         }}
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             JustifyContent::Normal => dest.write_str("normal"),
             JustifyContent::ContentDistribution(value) => value.to_css(dest),
@@ -225,9 +225,9 @@ pub enum AlignSelf {
 #[css(generate_to_css)]
 pub struct AlignSelfSelfPosition {
     /// An overflow alignment mode.
-    pub overflow: Option<OverflowPosition>,
+    pub(crate) overflow: Option<OverflowPosition>,
     /// A self position keyword.
-    pub value: SelfPosition,
+    pub(crate) value: SelfPosition,
 }
 
 impl AlignSelfSelfPosition {
@@ -280,9 +280,9 @@ pub enum JustifySelf {
 #[derive(Clone, PartialEq, Eq)]
 pub struct JustifySelfSelfPosition {
     /// A self position keyword.
-    pub value: SelfPosition,
+    pub(crate) value: SelfPosition,
     /// An overflow alignment mode.
-    pub overflow: Option<OverflowPosition>,
+    pub(crate) overflow: Option<OverflowPosition>,
 }
 
 impl JustifySelfSelfPosition {
@@ -295,7 +295,7 @@ impl JustifySelfSelfPosition {
 }
 
 impl JustifySelf {
-    pub fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"auto"))
             .is_ok()
@@ -338,7 +338,7 @@ impl JustifySelf {
         }}
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             JustifySelf::Auto => dest.write_str("auto"),
             JustifySelf::Normal => dest.write_str("normal"),
@@ -391,9 +391,9 @@ pub enum AlignItems {
 #[css(generate_to_css)]
 pub struct AlignItemsSelfPosition {
     /// An overflow alignment mode.
-    pub overflow: Option<OverflowPosition>,
+    pub(crate) overflow: Option<OverflowPosition>,
     /// A self position keyword.
-    pub value: SelfPosition,
+    pub(crate) value: SelfPosition,
 }
 
 impl AlignItemsSelfPosition {
@@ -446,9 +446,9 @@ pub enum JustifyItems {
 #[derive(Clone, PartialEq, Eq)]
 pub struct JustifyItemsSelfPosition {
     /// A self position keyword.
-    pub value: SelfPosition,
+    pub(crate) value: SelfPosition,
     /// An overflow alignment mode.
-    pub overflow: Option<OverflowPosition>,
+    pub(crate) overflow: Option<OverflowPosition>,
 }
 
 impl JustifyItemsSelfPosition {
@@ -461,7 +461,7 @@ impl JustifyItemsSelfPosition {
 }
 
 impl JustifyItems {
-    pub fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"normal"))
             .is_ok()
@@ -502,7 +502,7 @@ impl JustifyItems {
         }}
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             JustifyItems::Normal => dest.write_str("normal"),
             JustifyItems::Stretch => dest.write_str("stretch"),
@@ -608,13 +608,13 @@ pub enum GapValue {
 #[derive(Clone, PartialEq)]
 pub struct Gap {
     /// The row gap.
-    pub row: GapValue,
+    pub(crate) row: GapValue,
     /// The column gap.
-    pub column: GapValue,
+    pub(crate) column: GapValue,
 }
 
 impl Gap {
-    pub fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let row = GapValue::parse(input)?;
         let column = input
             .try_parse(GapValue::parse)
@@ -622,7 +622,7 @@ impl Gap {
         Ok(Self { row, column })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.row.to_css(dest)?;
         if self.column != self.row {
             dest.write_str(" ")?;
@@ -640,13 +640,13 @@ impl Gap {
 #[derive(Clone, PartialEq, Eq)]
 pub struct PlaceItems {
     /// The item alignment.
-    pub align: AlignItems,
+    pub(crate) align: AlignItems,
     /// The item justification.
-    pub justify: JustifyItems,
+    pub(crate) justify: JustifyItems,
 }
 
 impl PlaceItems {
-    pub fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let align = AlignItems::parse(input)?;
         let justify = match input.try_parse(JustifyItems::parse) {
             Ok(v) => v,
@@ -666,7 +666,7 @@ impl PlaceItems {
         Ok(Self { align, justify })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.align.to_css(dest)?;
         let is_equal = match &self.justify {
             JustifyItems::Normal => self.align == AlignItems::Normal,
@@ -702,13 +702,13 @@ impl PlaceItems {
 #[derive(Clone, PartialEq, Eq)]
 pub struct PlaceSelf {
     /// The item alignment.
-    pub align: AlignSelf,
+    pub(crate) align: AlignSelf,
     /// The item justification.
-    pub justify: JustifySelf,
+    pub(crate) justify: JustifySelf,
 }
 
 impl PlaceSelf {
-    pub fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let align = AlignSelf::parse(input)?;
         let justify = match input.try_parse(JustifySelf::parse) {
             Ok(v) => v,
@@ -727,7 +727,7 @@ impl PlaceSelf {
         Ok(Self { align, justify })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.align.to_css(dest)?;
         let is_equal = match &self.justify {
             JustifySelf::Auto => true,
@@ -792,13 +792,13 @@ pub enum SelfPosition {
 #[derive(Clone, PartialEq, Eq)]
 pub struct PlaceContent {
     /// The content alignment.
-    pub align: AlignContent,
+    pub(crate) align: AlignContent,
     /// The content justification.
-    pub justify: JustifyContent,
+    pub(crate) justify: JustifyContent,
 }
 
 impl PlaceContent {
-    pub fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let align = AlignContent::parse(input)?;
         let justify = match JustifyContent::parse(input) {
             Ok(v) => v,
@@ -825,7 +825,7 @@ impl PlaceContent {
         Ok(Self { align, justify })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.align.to_css(dest)?;
         let is_equal = match &self.justify {
             JustifyContent::Normal => 'brk: {
@@ -916,7 +916,7 @@ pub enum ContentPosition {
 // ──────────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct SelfPositionInner {
+pub(crate) struct SelfPositionInner {
     /// An overflow alignment mode.
     pub overflow: Option<OverflowPosition>,
     /// A self position keyword.
@@ -924,7 +924,7 @@ pub struct SelfPositionInner {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct ContentPositionInner {
+pub(crate) struct ContentPositionInner {
     /// An overflow alignment mode.
     pub overflow: Option<OverflowPosition>,
     /// A content position keyword.
@@ -937,21 +937,21 @@ pub struct ContentPositionInner {
 
 #[derive(Default)]
 pub struct AlignHandler {
-    pub align_content: Option<(AlignContent, VendorPrefix)>,
-    pub flex_line_pack: Option<(FlexLinePack, VendorPrefix)>,
-    pub justify_content: Option<(JustifyContent, VendorPrefix)>,
-    pub box_pack: Option<(BoxPack, VendorPrefix)>,
-    pub flex_pack: Option<(FlexPack, VendorPrefix)>,
-    pub align_self: Option<(AlignSelf, VendorPrefix)>,
-    pub flex_item_align: Option<(FlexItemAlign, VendorPrefix)>,
-    pub justify_self: Option<JustifySelf>,
-    pub align_items: Option<(AlignItems, VendorPrefix)>,
-    pub box_align: Option<(BoxAlign, VendorPrefix)>,
-    pub flex_align: Option<(FlexAlign, VendorPrefix)>,
-    pub justify_items: Option<JustifyItems>,
-    pub row_gap: Option<GapValue>,
-    pub column_gap: Option<GapValue>,
-    pub has_any: bool,
+    pub(crate) align_content: Option<(AlignContent, VendorPrefix)>,
+    pub(crate) flex_line_pack: Option<(FlexLinePack, VendorPrefix)>,
+    pub(crate) justify_content: Option<(JustifyContent, VendorPrefix)>,
+    pub(crate) box_pack: Option<(BoxPack, VendorPrefix)>,
+    pub(crate) flex_pack: Option<(FlexPack, VendorPrefix)>,
+    pub(crate) align_self: Option<(AlignSelf, VendorPrefix)>,
+    pub(crate) flex_item_align: Option<(FlexItemAlign, VendorPrefix)>,
+    pub(crate) justify_self: Option<JustifySelf>,
+    pub(crate) align_items: Option<(AlignItems, VendorPrefix)>,
+    pub(crate) box_align: Option<(BoxAlign, VendorPrefix)>,
+    pub(crate) flex_align: Option<(FlexAlign, VendorPrefix)>,
+    pub(crate) justify_items: Option<JustifyItems>,
+    pub(crate) row_gap: Option<GapValue>,
+    pub(crate) column_gap: Option<GapValue>,
+    pub(crate) has_any: bool,
 }
 
 // ─── helper macros ───
@@ -1168,7 +1168,7 @@ impl PlaceItems {
 }
 
 impl AlignHandler {
-    pub fn handle_property<'bump>(
+    pub(crate) fn handle_property<'bump>(
         &mut self,
         property: &Property<'bump>,
         dest: &mut DeclarationList<'bump>,
@@ -1326,7 +1326,11 @@ impl AlignHandler {
         true
     }
 
-    pub fn finalize(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+    pub(crate) fn finalize(
+        &mut self,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
         self.flush(dest, context);
     }
 

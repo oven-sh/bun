@@ -75,27 +75,31 @@ impl Directive {
     }
 }
 
-#[derive(Clone, Copy)]
-enum Port {
-    Default,
-    Any,
-    Number(u64),
+crate::wire! {
+    #[derive(Clone, Copy)]
+    enum Port {
+        Default,
+        Any,
+        Number(u64),
+    }
 }
 
-#[derive(Clone)]
-enum Expression {
-    Star,
-    SelfOrigin,
-    Nonce(Bytes),
-    Hash(Hash),
-    Scheme(Bytes),
-    Host {
-        scheme: Option<Bytes>,
-        host: Bytes,
-        port: Port,
-        path: Bytes,
-    },
-    Other,
+crate::wire! {
+    #[derive(Clone)]
+    enum Expression {
+        Star,
+        SelfOrigin,
+        Nonce(Bytes),
+        Hash(Hash),
+        Scheme(Bytes),
+        Host {
+            scheme: Option<Bytes>,
+            host: Bytes,
+            port: Port,
+            path: Bytes,
+        },
+        Other,
+    }
 }
 
 fn is_scheme(text: &[u8]) -> bool {
@@ -220,8 +224,10 @@ impl Expression {
     }
 }
 
-#[derive(Clone)]
-struct Sources(Vec<(Bytes, Expression)>);
+crate::wire! {
+    #[derive(Clone)]
+    struct Sources(Vec<(Bytes, Expression)>);
+}
 
 impl Sources {
     fn parse<'a>(values: impl Iterator<Item = &'a [u8]>) -> Sources {
@@ -278,23 +284,27 @@ impl Sources {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Delivery {
-    Header,
-    ReportOnlyHeader,
-    Meta,
-    /// By an element that the document did not come with.
-    InjectedMeta,
-    /// By the `csp` attribute of the frame.
-    Embedder,
+crate::wire! {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum Delivery {
+        Header,
+        ReportOnlyHeader,
+        Meta,
+        /// By an element that the document did not come with.
+        InjectedMeta,
+        /// By the `csp` attribute of the frame.
+        Embedder,
+    }
 }
 
-#[derive(Clone)]
-struct Policy {
-    /// With their names in lower case.
-    directives: Vec<(Bytes, Sources)>,
-    text: Bytes,
-    delivery: Delivery,
+crate::wire! {
+    #[derive(Clone)]
+    struct Policy {
+        /// With their names in lower case.
+        directives: Vec<(Bytes, Sources)>,
+        text: Bytes,
+        delivery: Delivery,
+    }
 }
 
 impl Policy {
@@ -368,13 +378,15 @@ impl Verdict {
     }
 }
 
-/// What the initiator of a request says about it.
-#[derive(Clone, Default)]
-pub struct Metadata {
-    pub nonce: Bytes,
-    pub integrity: Bytes,
-    pub is_parser_inserted: bool,
-    pub is_prefetch: bool,
+crate::wire! {
+    /// What the initiator of a request says about it.
+    #[derive(Clone, Default)]
+    pub struct Metadata {
+        pub nonce: Bytes,
+        pub integrity: Bytes,
+        pub is_parser_inserted: bool,
+        pub is_prefetch: bool,
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -425,11 +437,13 @@ pub(crate) fn source_matches_origin(source: &[u8], origin: &Origin) -> bool {
         .is_some_and(|it| Expression::parse(source).matches(&it, &it, true))
 }
 
-#[derive(Clone)]
-pub struct CspList {
-    own: Url,
-    policies: Vec<Policy>,
-    is_from_header: bool,
+crate::wire! {
+    #[derive(Clone)]
+    pub struct CspList {
+        own: Url,
+        policies: Vec<Policy>,
+        is_from_header: bool,
+    }
 }
 
 impl CspList {

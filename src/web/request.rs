@@ -10,6 +10,7 @@ use crate::headers::HeaderList;
 use crate::net::body::{Blob, Body, Data};
 use crate::referrer::ReferrerPolicy;
 use crate::url::Url;
+use crate::wire::{self, Wire};
 
 keywords! {
     pub enum Destination {
@@ -129,6 +130,24 @@ pub enum RequestBody {
     Upgrade(Arc<Guarded<Option<Body>>>),
 }
 
+/// Only the host switches protocols.
+impl Wire for RequestBody {
+    fn write(self, to: &mut wire::Writer) {
+        match self {
+            RequestBody::Data(data) => Ok(data),
+            streamed => Err(streamed.open()),
+        }
+        .write(to);
+    }
+
+    fn read(from: &mut wire::Reader<'_>) -> wire::Result<RequestBody> {
+        Ok(match Wire::read(from)? {
+            Ok(data) => RequestBody::Data(data),
+            Err(body) => RequestBody::Stream(Some(body)),
+        })
+    }
+}
+
 impl RequestBody {
     /// For one attempt to send it.
     pub(crate) fn take(&mut self) -> RequestBody {
@@ -148,33 +167,35 @@ impl RequestBody {
     }
 }
 
-/// What a page may decide about a request. Who it is made for is not part of that.
-pub struct Request {
-    pub url: Url,
-    pub method: Bytes,
-    pub headers: HeaderList,
-    /// Those of the user agent, which need no preflight.
-    pub cors_exempt_headers: HeaderList,
-    pub body: Option<RequestBody>,
-    pub destination: Destination,
-    pub mode: Mode,
-    pub credentials: Credentials,
-    pub cache: CacheMode,
-    pub redirect: Redirect,
-    pub referrer: Option<Url>,
-    pub referrer_policy: ReferrerPolicy,
-    pub metadata: Metadata,
-    /// Without it, there is no resource timing entry.
-    pub initiator_type: Option<InitiatorType>,
-    /// What a `blob:` URL stood for when it was parsed.
-    pub blob: Option<Blob>,
-    /// Unlike other credentials.
-    pub omits_cookies: bool,
-    pub uses_preflight: bool,
-    pub is_image_set: bool,
-    pub has_user_activation: bool,
-    pub blocks_rendering: bool,
-    pub keepalive: bool,
+crate::wire! {
+    /// What a page may decide about a request. Who it is made for is not part of that.
+    pub struct Request {
+        pub url: Url,
+        pub method: Bytes,
+        pub headers: HeaderList,
+        /// Those of the user agent, which need no preflight.
+        pub cors_exempt_headers: HeaderList,
+        pub body: Option<RequestBody>,
+        pub destination: Destination,
+        pub mode: Mode,
+        pub credentials: Credentials,
+        pub cache: CacheMode,
+        pub redirect: Redirect,
+        pub referrer: Option<Url>,
+        pub referrer_policy: ReferrerPolicy,
+        pub metadata: Metadata,
+        /// Without it, there is no resource timing entry.
+        pub initiator_type: Option<InitiatorType>,
+        /// What a `blob:` URL stood for when it was parsed.
+        pub blob: Option<Blob>,
+        /// Unlike other credentials.
+        pub omits_cookies: bool,
+        pub uses_preflight: bool,
+        pub is_image_set: bool,
+        pub has_user_activation: bool,
+        pub blocks_rendering: bool,
+        pub keepalive: bool,
+    }
 }
 
 impl Request {

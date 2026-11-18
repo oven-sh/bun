@@ -178,9 +178,9 @@ fn bounds_of(it: Geometry) -> Rect {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
 enum Cover {
-    Wanted,
+    /// With the variables of the environment that it depends on.
+    Wanted(Vec<String>),
     Refused,
     Indifferent,
 }
@@ -201,7 +201,6 @@ pub(crate) struct Plan<'a> {
     opacity: Option<f64>,
     icon: Option<Vec<u8>>,
     cover: Cover,
-    cover_variables: Vec<String>,
 }
 
 impl<'a> Plan<'a> {
@@ -231,7 +230,6 @@ impl<'a> Plan<'a> {
             opacity: None,
             icon: None,
             cover: Cover::Indifferent,
-            cover_variables: Vec::new(),
         }
     }
 
@@ -329,10 +327,9 @@ impl<'a> Plan<'a> {
             icon: icon.transpose()?.filter(|it| !it.is_empty()),
             cover: match cover {
                 JSValue::FALSE => Cover::Refused,
-                _ if cover.to_boolean() => Cover::Wanted,
+                _ if cover.to_boolean() => Cover::Wanted(cover_variables),
                 _ => Cover::Indifferent,
             },
-            cover_variables,
         })
     }
 }
@@ -431,17 +428,23 @@ impl Window {
     where
         T: JsInterface<Root = Window>,
     {
+        let (mut create, mut created) = (Some(create), None);
+        Window::open_with(plan, &mut |window| {
+            let create = create.take().expect("it is called once");
+            root_of(*created.insert(create(window)))
+        })?;
+        Ok(created.expect("it was called"))
+    }
+
+    fn open_with<'a>(plan: Plan<'_>, create: &mut dyn FnMut(Window) -> &'a Window) -> JsResult<()> {
         let Plan {
             mut options,
             parent,
             style,
             ..
         } = plan;
-        let reserved = if plan.cover == Cover::Wanted {
-            cover::take_id()
-        } else {
-            None
-        };
+        let wants_cover = matches!(plan.cover, Cover::Wanted(_));
+        let reserved = if wants_cover { cover::take_id() } else { None };
         options.id = reserved.unwrap_or_else(next_id);
         ui()?;
         if !app::has_display()? {
@@ -500,7 +503,7 @@ impl Window {
             ..Default::default()
         };
 
-        if plan.cover == Cover::Refused {
+        if matches!(plan.cover, Cover::Refused) {
             cover::discard()?;
         }
         let missed = if reserved.is_some() {
@@ -511,7 +514,7 @@ impl Window {
         let waits_for_opacity =
             missed.is_none() && options.show && plan.opacity.is_some_and(|it| it < 1.);
         if missed.is_none() {
-            if plan.cover == Cover::Wanted && windows().all.borrow().is_empty() {
+            if wants_cover && windows().all.borrow().is_empty() {
                 cover::hold_keys()?;
             }
             let options = WindowOptions {
@@ -521,15 +524,14 @@ impl Window {
             let icon = plan.icon.map(Into::into).into();
             bun_ui::perform(global(), Command::CreateWindow { options, icon })?;
         }
-        let created = create(Window(Box::new(state), HasFields::default()));
-        let window = root_of(created);
+        let window = create(Window(Box::new(state), HasFields::default()));
         fields::set_parent(window, parent);
         windows().all.borrow_mut().push(Rc::new(Root::new(window)));
         bun_ui::hold();
         window.geometry.set(window.ask_geometry()?);
         window.normal_bounds.set(bounds_of(window.geometry.get()));
-        if plan.cover == Cover::Wanted {
-            window.cover_variables.replace(Some(plan.cover_variables));
+        if let Cover::Wanted(variables) = plan.cover {
+            window.cover_variables.replace(Some(variables));
         }
         if let Some(missed) = missed {
             window.adopted(&options, missed)?;
@@ -555,8 +557,7 @@ impl Window {
             _ => {}
         }
         window.update_modal_parent()?;
-        window.update_menus()?;
-        Ok(created)
+        window.update_menus()
     }
 
     pub(crate) fn open_as_asked<'a, T>(

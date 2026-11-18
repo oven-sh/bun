@@ -384,15 +384,15 @@ pub fn action_names(forest: &Forest, id: Id) -> Vec<&'static str> {
         || node.role == Role::Separator && node.has(abi::FOCUSABLE);
     let actions = [
         (node.has(abi::CLICKABLE | abi::TEXT_FIELD), "AXPress"),
-        (is_adjustable, "AXIncrement"),
-        (is_adjustable, "AXDecrement"),
+        (true, "AXShowMenu"),
+        (true, "AXScrollToVisible"),
         (
             is_menu_item(node)
                 || matches!(node.role, Role::Menu | Role::Menubar | Role::MenuListPopup),
             "AXCancel",
         ),
-        (true, "AXShowMenu"),
-        (true, "AXScrollToVisible"),
+        (is_adjustable, "AXIncrement"),
+        (is_adjustable, "AXDecrement"),
     ];
     let is_possible =
         |it: &(bool, &str)| it.0 && (!node.has(abi::DISABLED) || it.1.starts_with("AXS"));
@@ -404,19 +404,12 @@ pub fn action_names(forest: &Forest, id: Id) -> Vec<&'static str> {
 }
 
 pub fn act(id: Id, name: &str) {
-    let has_popup = || {
-        read(|it| {
-            it.get(id)
-                .is_some_and(|it| it.text(Text::HasPopup).is_some() && !it.has(abi::TEXT_FIELD))
-        })
-    };
     let action = match name {
         _ if !read(|it| action_names(it, id).contains(&name)) => return,
         "AXPress" => Action::Click,
         "AXIncrement" => Action::Increment,
         "AXDecrement" => Action::Decrement,
         "AXCancel" => Action::Cancel,
-        "AXShowMenu" if has_popup() => Action::Click,
         "AXShowMenu" => Action::ShowContextMenu,
         _ => Action::ScrollIntoView,
     };

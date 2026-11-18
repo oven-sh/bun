@@ -16,6 +16,7 @@ use super::raster::{
     fill_rows_through, map_point, over, premultiply, scale, set_rows, swap_red_and_blue,
 };
 use super::warp::{Samples, draw_samples};
+use crate::abi::{Rect, smoothing_of_corners};
 use crate::gfx::Transform;
 #[cfg(any(test, not(target_os = "macos")))]
 use crate::platform::{Painted, Pixels};
@@ -53,6 +54,7 @@ pub(super) struct Textures {
     arena: Arena,
     free: Vec<u32>,
     last_id: u32,
+    bytes: usize,
 }
 
 #[derive(Default)]
@@ -60,18 +62,57 @@ pub struct Atlas(pub(super) RefCell<Textures>);
 
 impl Atlas {
     pub fn insert(&self, is_color: bool, width: usize, height: usize, data: &[u8]) -> Sprite {
+        self.insert_with(is_color, [width, height], data.len(), |to| {
+            to.copy_from_slice(data)
+        })
+    }
+
+    /// `row` has RGBA. The pixels at the edge are repeated `edge` times.
+    pub fn insert_rows<'a>(
+        &self,
+        [width, height]: [usize; 2],
+        edge: usize,
+        row: impl Fn(usize) -> &'a [Pixel],
+    ) -> Sprite {
+        let size = [width + edge * 2, height + edge * 2];
+        self.insert_with(true, size, size[0] * size[1] * 4, |to| {
+            for (y, to) in to.as_chunks_mut().0.chunks_exact_mut(size[0]).enumerate() {
+                to[edge..]
+                    .iter_mut()
+                    .zip(row(y.saturating_sub(edge).min(height - 1)))
+                    .for_each(|(to, from)| *to = swap_red_and_blue(*from));
+                let ends = [to[edge], to[edge + width - 1]];
+                to[..edge].fill(ends[0]);
+                to[edge + width..].fill(ends[1]);
+            }
+        })
+    }
+
+    fn insert_with(
+        &self,
+        is_color: bool,
+        [width, height]: [usize; 2],
+        len: usize,
+        write: impl FnOnce(&mut [u8]),
+    ) -> Sprite {
         let textures = &mut *self.0.borrow_mut();
-        let is_opaque = is_color && data.as_chunks::<4>().0.iter().all(|it| it[3] == 255);
+        let block = textures.arena.store(len, write);
+        let is_opaque =
+            is_color
+                && block.bytes().as_chunks::<4>().0.chunks(64).all(|it| {
+                    it.iter().fold(!0, |all, it| all & u32::from_le_bytes(*it)) >> 24 == 255
+                });
         let texture = textures.free.pop().unwrap_or_else(|| {
             textures.slots.push(Texture::default());
             textures.slots.len() as u32 - 1
         });
         textures.slots[texture as usize] = Texture {
             width,
-            block: Some(textures.arena.store(data)),
+            block: Some(block),
             is_opaque,
         };
         textures.last_id += 1;
+        textures.bytes += len;
         Sprite {
             texture,
             is_color,
@@ -82,8 +123,14 @@ impl Atlas {
 
     pub fn remove(&self, sprite: Sprite) {
         let textures = &mut *self.0.borrow_mut();
-        textures.slots[sprite.texture as usize] = Texture::default();
+        textures.bytes -= std::mem::take(&mut textures.slots[sprite.texture as usize])
+            .data()
+            .len();
         textures.free.push(sprite.texture);
+    }
+
+    pub fn is_full(&self) -> bool {
+        self.0.borrow().bytes > if cfg!(test) { 64 << 20 } else { 2 << 30 }
     }
 
     pub fn release_memory(&self) {
@@ -96,17 +143,25 @@ impl Atlas {
         primitives: &[Primitive],
         area: IntRect,
         reduction: usize,
+        gives_up: impl Fn() -> bool,
     ) -> Option<Layer> {
         let (width, height) = (area.width(), area.height());
         let (columns, rows) = (width.div_ceil(reduction), height.div_ceil(reduction));
         let mut layer = Layer::new(IntRect::new(0, 0, columns as i32, rows as i32))?;
         let mut pixels = vec![[0; 4]; width * height];
         let textures = self.0.borrow();
-        let mut band = Band::new(&mut pixels, width, area.left, area.top, &textures.slots);
+        let (mut band, mut unchecked) = (
+            Band::new(&mut pixels, width, area.left, area.top, &textures.slots),
+            0,
+        );
         for primitive in &primitives[last_to_hide(primitives, area)..] {
             let visible = covered(primitive).intersect(area);
             if visible.is_empty() {
                 continue;
+            }
+            unchecked += visible.area() + 1024;
+            if unchecked > 1 << 20 && std::mem::take(&mut unchecked) > 0 && gives_up() {
+                return None;
             }
             band.paint(primitive, visible);
         }
@@ -216,9 +271,79 @@ pub(super) fn is_shaped(primitive: &Primitive) -> bool {
     primitive.radii != [0.; 4] || border_of(primitive) != [0.; 4]
 }
 
+/// From the curve of `RoundedRect::smooth_corners`, for a point that is close to it.
+fn smooth_distance([x, y]: [f32; 2], radius: f32, smoothing: [f32; 2]) -> f32 {
+    let (along, depth, smoothing) = if x <= y {
+        (-x, -y, smoothing[0])
+    } else {
+        (-y, -x, smoothing[1])
+    };
+    let left = radius * (1. + smoothing) - along;
+    if left <= 0. || depth >= radius || radius <= 0. {
+        return -depth;
+    }
+    let ((sin, cos), [u, v]) = (
+        (smoothing * std::f32::consts::FRAC_PI_4).sin_cos(),
+        [radius - along, radius - depth],
+    );
+    if u * cos >= v * sin {
+        return (u * u + v * v).sqrt() - radius;
+    }
+    let (near, rest, rise) = (
+        radius * (smoothing + sin / (1. + cos)),
+        radius * sin * cos / (1. + cos),
+        radius * (1. - cos),
+    );
+    let (at, speed) = (
+        |t: f32| near * t * (2. - t) + rest * t * t * t,
+        |t: f32| 2. * near * (1. - t) + 3. * rest * t * t,
+    );
+    let first = 1. - (1. - left / (near + rest)).max(0.).sqrt();
+    let t = (0..2).fold(first, |t, _| (t + (left - at(t)) / speed(t)).clamp(0., 1.));
+    let slope = 3. * rise * t * t / speed(t);
+    (rise * t * t * t + (left - at(t)) * slope - depth) / (1. + slope * slope).sqrt()
+}
+
+/// For each corner, of the outer and of the inner edge.
+fn smoothing_of(primitive: &Primitive) -> [[[f32; 2]; 2]; 4] {
+    if primitive.smoothing == 0. {
+        return Default::default();
+    }
+    let (Rect { width, height, .. }, [a, b, c, d], [top, right, bottom, left]) =
+        (primitive.bounds, primitive.radii, border_of(primitive));
+    let inner = [
+        a - top.max(left),
+        b - top.max(right),
+        c - bottom.max(right),
+        d - bottom.max(left),
+    ]
+    .map(|it| it.max(0.));
+    let outer = smoothing_of_corners([width, height], primitive.radii, primitive.smoothing);
+    let inner = smoothing_of_corners(
+        [width - left - right, height - top - bottom],
+        inner,
+        primitive.smoothing,
+    );
+    [0, 1, 2, 3].map(|it| [outer[it], inner[it]])
+}
+
 /// How much of a pixel is inside of the outer edge, and outside of the inner one.
-fn coverage(from_corner: [f32; 2], radius: f32, border: [f32; 2]) -> [u8; 2] {
+fn coverage(
+    from_corner: [f32; 2],
+    radius: f32,
+    border: [f32; 2],
+    smoothing: [[f32; 2]; 2],
+) -> [u8; 2] {
     let border = border.map(|width| if width == 0. { -0.5 } else { width });
+    if smoothing != [[0.; 2]; 2] {
+        let inner = smooth_distance(
+            [from_corner[0] + border[0], from_corner[1] + border[1]],
+            radius - border[0].max(border[1]),
+            smoothing[1],
+        );
+        return [smooth_distance(from_corner, radius, smoothing[0]), -inner]
+            .map(|it| alpha((0.5 - it).clamp(0., 1.)));
+    }
     let [u, v] = from_corner.map(|distance| distance + radius);
     let from_inner_corner = [from_corner[0] + border[0], from_corner[1] + border[1]];
     let length = |a: f32, b: f32| (a * a + b * b).sqrt();
@@ -255,20 +380,30 @@ impl Corner {
     }
 }
 
-fn corner(radius: f32, border: [f32; 2]) -> Rc<Corner> {
+fn corner(radius: f32, border: [f32; 2], smoothing: [[f32; 2]; 2]) -> Rc<Corner> {
     thread_local! {
-        static KNOWN: RefCell<FastMap<[u32; 3], Rc<Corner>>> = RefCell::default();
+        static KNOWN: RefCell<FastMap<[u32; 7], Rc<Corner>>> = RefCell::default();
     }
     KNOWN.with_borrow_mut(|known| {
         if known.len() > 64 {
             known.clear();
         }
+        let [[a, b], [c, d]] = smoothing;
         let corner = known
-            .entry([radius, border[0], border[1]].map(f32::to_bits))
+            .entry([radius, border[0], border[1], a, b, c, d].map(f32::to_bits))
             .or_insert_with(|| {
-                let side = radius.max(border[0]).max(border[1]).ceil() as usize + 2;
+                let side = (radius * (1. + a.max(b).max(c).max(d)))
+                    .max(border[0])
+                    .max(border[1])
+                    .ceil() as usize
+                    + 2;
                 let at = |column: usize, row: usize| {
-                    coverage([column, row].map(|it| -0.5 - it as f32), radius, border)
+                    coverage(
+                        [column, row].map(|it| -0.5 - it as f32),
+                        radius,
+                        border,
+                        smoothing,
+                    )
                 };
                 let pixels: Vec<_> = (0..side)
                     .flat_map(|row| {
@@ -295,6 +430,7 @@ fn corner(radius: f32, border: [f32; 2]) -> Rc<Corner> {
 
 struct Outline<'a> {
     primitive: &'a Primitive,
+    smoothing: [[[f32; 2]; 2]; 4],
     /// Clockwise from the top left, if the edges are between pixels.
     corners: Option<[Rc<Corner>; 4]>,
 }
@@ -311,19 +447,28 @@ impl Outline<'_> {
             .iter()
             .chain(&[top, right, bottom, left])
             .all(|it| *it <= MAX_SIDE);
-        let borders = [[left, top], [right, top], [right, bottom], [left, bottom]];
+        let (borders, smoothing) = (
+            [[left, top], [right, top], [right, bottom], [left, bottom]],
+            smoothing_of(primitive),
+        );
         let corners = (is_aligned && is_small).then(|| {
-            let first = corner(radii[0], borders[0]);
+            let (first, look) = (corner(radii[0], borders[0], smoothing[0]), |it: usize| {
+                (radii[it], borders[it], smoothing[it])
+            });
             let other = |it: usize| {
-                if (radii[it], borders[it]) == (radii[0], borders[0]) {
+                if look(it) == look(0) {
                     first.clone()
                 } else {
-                    corner(radii[it], borders[it])
+                    corner(radii[it], borders[it], smoothing[it])
                 }
             };
             [0, 1, 2, 3].map(other)
         });
-        Outline { primitive, corners }
+        Outline {
+            primitive,
+            smoothing,
+            corners,
+        }
     }
 
     /// The columns of a row in which `coverage` is the same.
@@ -375,6 +520,7 @@ impl Outline<'_> {
                     [from_center.abs() - half[0], from_edge],
                     self.primitive.radii[corner],
                     [border, across],
+                    self.smoothing[corner],
                 ),
             );
         }
@@ -400,7 +546,7 @@ fn rows_of_corners(known: &[Rc<Corner>; 4], all: IntRect, y: i32) -> [(&[[u8; 2]
 /// The columns of a row that are between the corners.
 fn middle_of_row(primitive: &Primitive, y: i32) -> Range<i32> {
     let (bounds, [tl, tr, br, bl], [_, right, _, left]) =
-        (primitive.bounds, primitive.radii, border_of(primitive));
+        (primitive.bounds, primitive.reach(), border_of(primitive));
     let (below_top, above_bottom) = (
         y as f32 - bounds.y,
         bounds.y + bounds.height - (y + 1) as f32,
@@ -416,7 +562,7 @@ fn middle_of_row(primitive: &Primitive, y: i32) -> Range<i32> {
 
 /// Where a quad has the same color everywhere.
 pub fn uniform_part(primitive: &Primitive) -> IntRect {
-    let ([tl, tr, br, bl], [top, right, bottom, left]) = (primitive.radii, border_of(primitive));
+    let ([tl, tr, br, bl], [top, right, bottom, left]) = (primitive.reach(), border_of(primitive));
     let all = IntRect::nearest(primitive.bounds);
     if !is_shaped(primitive) {
         return all.intersect(primitive.clip);
@@ -825,6 +971,7 @@ impl<'a> Band<'a> {
                 alpha(primitive.opacity),
                 area,
             ),
+            Kind::Pending(_) => {}
         }
     }
 }
@@ -843,7 +990,7 @@ const EVERYWHERE: [i32; 2] = [i32::MIN, i32::MAX];
 
 fn between_edges(primitive: &Primitive) -> [[i32; 2]; 2] {
     let (bounds, [tl, tr, br, bl], [top, right, bottom, left]) =
-        (primitive.bounds, primitive.radii, border_of(primitive));
+        (primitive.bounds, primitive.reach(), border_of(primitive));
     let between = |start: f32, length: f32, first: f32, second: f32| match (first.max(second) + 2.)
         * 2.
         < length
@@ -912,6 +1059,7 @@ impl Summary {
         let (bounds, mut free, mut uniform, mut color) =
             (primitive.bounds, [NOWHERE; 2], IntRect::default(), [0; 4]);
         let kind = match primitive.kind {
+            Kind::Pending(_) => [0; 3],
             Kind::Mask(tile, color) => of_tile(tile, color),
             Kind::Image(tile) => {
                 let is_shaped = is_shaped(primitive);
@@ -949,10 +1097,10 @@ impl Summary {
                 [pair(fill, border_color), a, !b]
             }
         };
-        let look = kind
-            .into_iter()
-            .chain(floats(primitive.radii))
-            .fold(primitive.opacity.to_bits().into(), combine);
+        let look = kind.into_iter().chain(floats(primitive.radii)).fold(
+            pair(primitive.smoothing.to_bits(), primitive.opacity.to_bits()),
+            combine,
+        );
         let shape = combine(
             look ^ u64::from(bounds.height.to_bits()),
             pair(bounds.x.to_bits(), bounds.width.to_bits()),
@@ -1489,8 +1637,7 @@ impl Compositor {
 
     #[cfg(any(test, not(target_os = "macos")))]
     pub fn paint(&mut self, pixels: Pixels) -> Painted {
-        const TILES_PER_THREAD: usize = 2400;
-        const MAX_THREADS: usize = 4;
+        const WORK_PER_THREAD: i64 = 2400 << 10;
         const WORTH_MOVING: usize = 32;
         const UNKNOWN: u64 = 0;
         let (width, height) = (pixels.width, pixels.data.len() / pixels.width);
@@ -1646,16 +1793,26 @@ impl Compositor {
                 plan.paint(&mut Band::new(pixels, width, 0, top, textures), rows);
             }
         };
-        let threads = count(&actions).div_ceil(TILES_PER_THREAD).min(MAX_THREADS);
-        if threads == 1 {
+        let work_for = |(primitive, summary): (&Primitive, &Summary)| match primitive.kind {
+            Kind::Quad { .. } | Kind::Pending(_) => 0,
+            Kind::Mask(..) | Kind::Image(_) => summary.area.intersect(changed).area() * 2,
+            Kind::Turned { .. } => summary.area.intersect(changed).area() * 8,
+        };
+        let painted = count(&actions) as i64 * i64::from(TILE_WIDTH * TILE_HEIGHT);
+        let work = painted
+            + primitives.iter().zip(&summaries).map(work_for).sum::<i64>() * painted
+                / changed.area().max(1);
+        if work <= WORK_PER_THREAD {
             paint_band(0, pixels.data);
-        } else if threads > 1 {
-            let rows = grid.rows_of(window).len().div_ceil(threads) * TILE_HEIGHT as usize;
-            let bands = pixels.data[..window.bottom as usize * width]
+        } else {
+            let bands =
+                (work / WORK_PER_THREAD + 1).min(crate::parallel::threads() as i64 * 3) as usize;
+            let rows = grid.rows_of(changed).len().div_ceil(bands) * TILE_HEIGHT as usize;
+            let bands = pixels.data[changed.top as usize * width..changed.bottom as usize * width]
                 .chunks_mut(rows * width)
                 .enumerate();
             crate::parallel::for_each(bands, |(index, pixels)| {
-                paint_band((index * rows) as i32, pixels)
+                paint_band(changed.top + (index * rows) as i32, pixels)
             });
         }
 
@@ -1705,7 +1862,12 @@ mod tests {
             to_texels: Transform::from_row(0., -1., 1., 0., 0., 6.),
         };
         let shown = atlas
-            .snapshot(&[Primitive::new(area.to_rect(), area, kind)], area, 1)
+            .snapshot(
+                &[Primitive::new(area.to_rect(), area, kind)],
+                area,
+                1,
+                || false,
+            )
             .unwrap();
         assert_eq!(
             shown.pixels(),

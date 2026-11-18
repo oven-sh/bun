@@ -127,9 +127,12 @@ impl Selection {
 
     fn replace_range(&self, range: Option<&Range>, is_backward: bool) {
         self.drop_composed();
-        self.range()
-            .into_iter()
-            .for_each(|it| it.set_selection(None));
+        if let Some(old) = self.range() {
+            old.set_selection(None);
+            if !self.is(State::EXPOSED) {
+                old.stop_following();
+            }
+        }
         self.toggle(State::EXPOSED | State::FROM_SCRIPT, false);
         self.toggle(
             State::IN_SHADOW,

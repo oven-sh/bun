@@ -1,7 +1,7 @@
 use super::border::{GenericBorder, LineStyle};
 
 /// A value for the [outline](https://drafts.csswg.org/css-ui/#outline) shorthand property.
-pub type Outline = GenericBorder<OutlineStyle, 11>;
+pub(crate) type Outline = GenericBorder<OutlineStyle, 11>;
 
 /// A value for the [outline-style](https://drafts.csswg.org/css-ui/#outline-style) property.
 #[derive(Clone, PartialEq, Eq, crate::Parse, crate::ToCss)]

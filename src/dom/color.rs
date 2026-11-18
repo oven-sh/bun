@@ -1288,6 +1288,39 @@ impl Color {
         }
     }
 
+    /// What follows `#`.
+    pub(crate) fn from_digits(digits: &[u8]) -> Option<Color> {
+        parse_hash_color(digits)
+            .map(|it| Color::Rgba(u32::from_be_bytes([it.red, it.green, it.blue, it.alpha])))
+    }
+
+    /// The numbers in `rgb()` or in `hsl()`.
+    pub(crate) fn from_channels(is_rgb: bool, [a, b, c]: [f64; 3], alpha: f64) -> Color {
+        let (space, [a, b, c]) = match is_rgb {
+            true => (
+                Space::Srgb,
+                [a, b, c].map(|it| (it / 255.0).clamp(0.0, 1.0)),
+            ),
+            false => (
+                Space::Hsl,
+                [
+                    a.rem_euclid(360.0),
+                    (b / 100.0 * 100.0).clamp(0.0, 1e9),
+                    (c / 100.0 * 100.0).clamp(0.0, 1e9),
+                ],
+            ),
+        };
+        Color::Rgba(
+            Exact {
+                space,
+                is_legacy: true,
+                missing: 0,
+                components: [a as f32, b as f32, c as f32, alpha.clamp(0.0, 1.0) as f32],
+            }
+            .rgba(),
+        )
+    }
+
     pub(crate) fn resolve(self, current: u32) -> u32 {
         match self {
             Color::Current => current,

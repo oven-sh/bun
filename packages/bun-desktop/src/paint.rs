@@ -1,6 +1,7 @@
 //! Flattens a display list into a few kinds of primitives (`flatten`), which leaves what they cannot draw to `cpu`.
 
 mod arena;
+pub mod batch;
 pub mod blend;
 pub mod blur;
 mod border;
@@ -15,9 +16,11 @@ mod graph;
 pub mod layers;
 mod memo;
 pub mod raster;
+pub mod scan;
 pub mod scene;
 pub mod software;
 mod stretch;
+pub mod vector;
 pub mod warp;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 mod wide;

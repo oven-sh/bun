@@ -8,7 +8,7 @@ use crate::boxes::{BoxId, Cover, Kind, LayoutBox, VIEWPORT};
 use crate::document::Document;
 use crate::engine_event::{EngineEvent, ForNode};
 use crate::inline::{Item, ItemKind};
-use crate::layout::{at_least, at_most};
+use crate::layout::{Strut, at_least, at_most};
 use crate::lines::FragmentKind;
 use crate::name::{Map, Name, Set, name};
 use crate::order::Order as _;
@@ -141,6 +141,14 @@ impl Scrolling {
                 .iter()
                 .chain(&self.settling)
                 .any(|it| it.1.is_nan())
+    }
+
+    /// For those that have appeared since the last time.
+    pub(crate) fn time_scrollbars(&mut self, now: f64) {
+        self.shown
+            .iter_mut()
+            .filter(|it| it.1.is_nan())
+            .for_each(|it| it.1 = now + SHOWN_FOR);
     }
 
     pub(crate) fn is_in_progress(&self, node: NodeId) -> bool {
@@ -283,6 +291,9 @@ impl Document {
             return known.moved([it.layout.location.x, it.layout.location.y]);
         }
         let mut rect = self.extent(id);
+        if self.is_collapsed_row(id) {
+            return rect.moved([it.layout.location.x, it.layout.location.y]);
+        }
         if it.overflow == [Overflow::Visible; 2] && it.style.stacking() == [false; 2] {
             let inside = self.scrollable_overflow(id);
             rect = if rect.is_empty() {
@@ -541,8 +552,34 @@ impl Document {
                         a.bottom().max(b.bottom()),
                     )
                 };
+                let mut end = (y, Strut::default());
+                let space = |child: &BoxId| {
+                    let (mut rect, own) = (
+                        self.space_in_flow(*child, [width, height]),
+                        &self.boxes[*child],
+                    );
+                    if it.kind == Kind::Block
+                        && it.mode == WritingMode::HorizontalTb
+                        && !own.style.is_floating()
+                    {
+                        let margin = own.layout.margin;
+                        let below = own.cache.collapsed_bottom_margin().with(margin.bottom);
+                        end = match own.joins_formatting_context && own.cache.collapses_through() {
+                            true => (
+                                end.0,
+                                end.1
+                                    .with(margin.top)
+                                    .and(own.cache.collapsed_top_margin())
+                                    .and(below),
+                            ),
+                            false => (rect.bottom() - below.sum(), below),
+                        };
+                        rect.height = end.0 + end.1.sum() - rect.y;
+                    }
+                    rect
+                };
                 in_flow
-                    .map(|child| self.space_in_flow(*child, [width, height]))
+                    .map(space)
                     .reduce(unite)
                     .unwrap_or_else(|| Rect::new([x, y, 0.0, 0.0]))
             }
@@ -638,7 +675,7 @@ impl Document {
         if !self.scrolling.moved.contains(&node) {
             self.scrolling.moved.push(node);
         }
-        if self.environment.overlay_scrollbars {
+        if self.has_overlay_scrollbars(id) {
             match self.scrolling.shown.iter_mut().find(|it| it.0 == node) {
                 Some(shown) => {
                     if core::mem::replace(&mut shown.1, f64::NAN) - self.animations.now <= FADES_FOR
@@ -932,11 +969,7 @@ impl Document {
             self.end_gesture(node);
         }
         if !self.scrolling.shown.is_empty() {
-            self.scrolling
-                .shown
-                .iter_mut()
-                .filter(|it| it.1.is_nan())
-                .for_each(|it| it.1 = now + SHOWN_FOR);
+            self.scrolling.time_scrollbars(now);
             let held = self
                 .scrolling
                 .hovered
@@ -1274,6 +1307,11 @@ impl Document {
             })
             .collect();
         for id in scrollers {
+            if !self.boxes[id].overflow.contains(&Overflow::Auto)
+                && self.scroll_offset(self.boxes[id].node) == [0.0; 2]
+            {
+                continue;
+            }
             let (it, range) = (&self.boxes[id], self.scroll_range(id));
             let needed = self.needed_scrollbars(id, &range);
             let need_each_other = it.scrollbars == [true; 2]
@@ -1391,6 +1429,7 @@ impl Document {
             });
             around
                 .map(|it| &inline.items[it as usize].style)
+                .chain((item.element != 0).then_some(&item.style))
                 .any(|it| it.scroll.anchor == AutoOrNone::None)
         };
         let mut next = 0;
@@ -1651,6 +1690,19 @@ impl Document {
             size,
             size,
         ]))
+    }
+
+    fn has_overlay_scrollbars(&self, id: BoxId) -> bool {
+        let it = &self.boxes[id];
+        let is_wanted = || {
+            self.tree
+                .style(self.scrollbar_owner(id))
+                .is_some_and(|it| it.layout.scrollbar_width != ScrollbarWidth::None)
+        };
+        self.environment.overlay_scrollbars
+            && it.scrollbar_size == 0.0
+            && it.scrollbars != [false; 2]
+            && is_wanted()
     }
 
     /// Relative to the border box.

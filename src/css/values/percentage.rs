@@ -13,7 +13,7 @@ pub struct Percentage {
 }
 
 impl Percentage {
-    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Percentage> {
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Percentage> {
         if let Ok(calc_value) = input.try_parse(Calc::<Percentage>::parse) {
             if let Calc::Value(v) = calc_value {
                 return Ok(*v);
@@ -27,7 +27,7 @@ impl Percentage {
         Ok(Percentage { v: percent })
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         let x = self.v * 100.0;
         let int_value: Option<i32> = if (x - x.trunc()) == 0.0 {
             Some(self.v as i32)
@@ -54,11 +54,11 @@ impl Percentage {
     }
 
     #[inline]
-    pub fn eql(self, other: Percentage) -> bool {
+    pub(crate) fn eql(self, other: Percentage) -> bool {
         self.v == other.v
     }
 
-    pub fn add_internal(self, other: Percentage) -> Percentage {
+    pub(crate) fn add_internal(self, other: Percentage) -> Percentage {
         self.add(other)
     }
 
@@ -66,15 +66,15 @@ impl Percentage {
         Percentage { v: self.v + rhs.v }
     }
 
-    pub fn mul_f32(self, other: f32) -> Percentage {
+    pub(crate) fn mul_f32(self, other: f32) -> Percentage {
         Percentage { v: self.v * other }
     }
 
-    pub fn is_zero(self) -> bool {
+    pub(crate) fn is_zero(self) -> bool {
         self.v == 0.0
     }
 
-    pub fn sign(self) -> f32 {
+    pub(crate) fn sign(self) -> f32 {
         css::signfns::sign_f32(self.v)
     }
 
@@ -82,22 +82,27 @@ impl Percentage {
         Some(self.sign())
     }
 
-    pub fn partial_cmp(self, other: Percentage) -> Option<Ordering> {
+    pub(crate) fn partial_cmp(self, other: Percentage) -> Option<Ordering> {
         crate::generic::partial_cmp_f32(self.v, other.v)
     }
 
-    pub fn try_map(self, _map_fn: impl Fn(f32) -> f32) -> Option<Percentage> {
+    pub(crate) fn try_map(self, _map_fn: impl Fn(f32) -> f32) -> Option<Percentage> {
         // Percentages cannot be mapped because we don't know what they will resolve to.
         // For example, they might be positive or negative depending on what they are a
         // percentage of, which we don't know.
         None
     }
 
-    pub fn op_to<R, C>(self, other: Percentage, ctx: C, op_fn: impl Fn(C, f32, f32) -> R) -> R {
+    pub(crate) fn op_to<R, C>(
+        self,
+        other: Percentage,
+        ctx: C,
+        op_fn: impl Fn(C, f32, f32) -> R,
+    ) -> R {
         op_fn(ctx, self.v, other.v)
     }
 
-    pub fn try_op<C>(
+    pub(crate) fn try_op<C>(
         self,
         other: Percentage,
         ctx: C,
@@ -143,7 +148,7 @@ impl<D: PartialEq + Clone> PartialEq for DimensionPercentage<D> {
 // `where` clauses, so plain `DimensionPercentage<D>` (no behavior) needs no
 // bounds at all.
 impl<D> DimensionPercentage<D> {
-    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self>
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self>
     where
         Self: crate::values::calc::CalcValue,
         D: protocol::Parse<'bump>,
@@ -169,7 +174,7 @@ impl<D> DimensionPercentage<D> {
         Err(input.new_error_for_next_token())
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr>
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr>
     where
         Self: crate::values::calc::CalcValue,
         D: protocol::ToCss,
@@ -181,7 +186,7 @@ impl<D> DimensionPercentage<D> {
         }
     }
 
-    pub fn is_compatible(&self, browsers: &Browsers) -> bool
+    pub(crate) fn is_compatible(&self, browsers: &Browsers) -> bool
     where
         Self: crate::values::calc::CalcValue,
         D: protocol::IsCompatible,
@@ -193,7 +198,7 @@ impl<D> DimensionPercentage<D> {
         }
     }
 
-    pub fn deep_clone(&self) -> Self
+    pub(crate) fn deep_clone(&self) -> Self
     where
         D: Clone,
     {
@@ -208,14 +213,14 @@ impl<D> DimensionPercentage<D> {
     // No explicit `impl Drop` needed — Box<Calc<...>> frees via Drop; D's Drop
     // (if any) runs automatically.
 
-    pub fn zero() -> Self
+    pub(crate) fn zero() -> Self
     where
         D: protocol::Zero,
     {
         Self::Dimension(D::zero())
     }
 
-    pub fn is_zero(&self) -> bool
+    pub(crate) fn is_zero(&self) -> bool
     where
         D: protocol::Zero,
     {
@@ -233,7 +238,7 @@ impl<D> DimensionPercentage<D> {
         lhs.mul_f32(rhs)
     }
 
-    pub fn mul_f32(self, other: f32) -> Self
+    pub(crate) fn mul_f32(self, other: f32) -> Self
     where
         Self: crate::values::calc::CalcValue,
         D: protocol::MulF32,
@@ -245,7 +250,7 @@ impl<D> DimensionPercentage<D> {
         }
     }
 
-    pub fn add_internal(self, other: Self) -> Self
+    pub(crate) fn add_internal(self, other: Self) -> Self
     where
         Self: crate::values::calc::CalcValue,
         D: protocol::TryAdd + protocol::Zero + protocol::TrySign,
@@ -376,7 +381,7 @@ impl<D> DimensionPercentage<D> {
         sign.is_sign_negative()
     }
 
-    pub fn partial_cmp(&self, other: &Self) -> Option<Ordering>
+    pub(crate) fn partial_cmp(&self, other: &Self) -> Option<Ordering>
     where
         D: protocol::PartialCmp,
     {
@@ -387,7 +392,7 @@ impl<D> DimensionPercentage<D> {
         }
     }
 
-    pub fn try_sign(&self) -> Option<f32>
+    pub(crate) fn try_sign(&self) -> Option<f32>
     where
         Self: crate::values::calc::CalcValue,
         D: protocol::TrySign,
@@ -399,14 +404,14 @@ impl<D> DimensionPercentage<D> {
         }
     }
 
-    pub fn try_from_angle(angle: Angle) -> Option<Self>
+    pub(crate) fn try_from_angle(angle: Angle) -> Option<Self>
     where
         D: protocol::TryFromAngle,
     {
         Some(Self::Dimension(D::try_from_angle(angle)?))
     }
 
-    pub fn try_map(&self, map_fn: impl Fn(f32) -> f32) -> Option<Self>
+    pub(crate) fn try_map(&self, map_fn: impl Fn(f32) -> f32) -> Option<Self>
     where
         D: protocol::TryMap,
     {
@@ -416,7 +421,7 @@ impl<D> DimensionPercentage<D> {
         }
     }
 
-    pub fn into_calc(self) -> Calc<DimensionPercentage<D>> {
+    pub(crate) fn into_calc(self) -> Calc<DimensionPercentage<D>> {
         match self {
             Self::Calc(calc) => *calc,
             other => Calc::Value(Box::new(other)),
@@ -436,7 +441,7 @@ pub enum NumberOrPercentage {
 impl NumberOrPercentage {
     // Hand-rolled as the trivial two-variant try-parse cascade so
     // `AlphaValue::parse` doesn't panic at runtime.
-    pub fn parse<'bump>(
+    pub(crate) fn parse<'bump>(
         input: &mut css::Parser<'_, 'bump>,
     ) -> CssResult<'bump, NumberOrPercentage> {
         if let Ok(n) = input.try_parse(crate::values::number::CSSNumberFns::parse) {
@@ -445,14 +450,14 @@ impl NumberOrPercentage {
         Percentage::parse(input).map(NumberOrPercentage::Percentage)
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             NumberOrPercentage::Number(n) => crate::values::number::CSSNumberFns::to_css(*n, dest),
             NumberOrPercentage::Percentage(p) => p.to_css(dest),
         }
     }
 
-    pub fn into_f32(&self) -> f32 {
+    pub(crate) fn into_f32(&self) -> f32 {
         match self {
             Self::Number(n) => *n,
             Self::Percentage(p) => p.v,

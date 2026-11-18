@@ -133,7 +133,11 @@ fn header(protocol: &str) -> String {
         ("Text", (false, "bytes: List<u8>")),
         ("Rect", (false, "x: f32, y: f32, width: f32, height: f32")),
     ]);
-    for (keyword, is_enum) in [("\npub struct ", false), ("\npub enum ", true)] {
+    for (keyword, is_enum) in [
+        ("\npub struct ", false),
+        ("\npub(crate) struct ", false),
+        ("\npub enum ", true),
+    ] {
         for (name, rest) in code
             .split(keyword)
             .skip(1)
@@ -178,7 +182,7 @@ fn main() {
     };
     let compile = |name: &str| {
         let object = format!("{out}/{name}.o");
-        println!("cargo::rustc-link-arg-cdylib={object}");
+        println!("cargo::rustc-link-arg={object}");
         Command::new(&compiler)
             .arg(format!("--target={architecture}-apple-macos13"))
             .args([
@@ -210,6 +214,7 @@ fn main() {
         "system",
         "text",
         "touchbar",
+        "vector",
         "window",
     ]
     .map(compile)

@@ -321,7 +321,7 @@ impl Document {
                 let mut scrollers = first
                     .into_iter()
                     .chain(self.boxes.containers(own))
-                    .filter(|it| self.boxes[*it].scrolls())
+                    .filter(|it| self.boxes[*it].scrolls() && !self.boxes[*it].is_replaced())
                     .peekable();
                 let axis = axis(scrollers.peek().copied());
                 let found = scrollers.find(|it| self.boxes[*it].overflow[axis] != Overflow::Clip);

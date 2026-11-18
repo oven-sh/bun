@@ -94,7 +94,7 @@ const families = ["system-ui", "-apple-system", "ui-monospace, Menlo", "SF Mono,
 document.body.innerHTML = `
 <style>
   body { margin: 0; font: 14px/20px system-ui; color: CanvasText; background: Canvas; color-scheme: light dark }
-  header { height: 44px; -webkit-app-region: drag; background: #d97757; color: white; padding-left: 90px; line-height: 44px }
+  header { height: 44px; -webkit-app-region: drag; background: #3366cc; color: white; padding-left: 90px; line-height: 44px }
   main { display: grid; grid-template-columns: 1fr 300px; height: calc(100vh - 44px) }
   .boxes > * { display: inline-block; width: 70px; height: 50px; margin: 10px; vertical-align: top }
   #list { overflow: auto; border-left: 1px solid #8884 } #list p { margin: 8px 12px }

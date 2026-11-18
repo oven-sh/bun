@@ -436,7 +436,10 @@ impl Rest {
                 Ok(Some(more)) => {
                     self.size += more.len() as u64;
                     let text = self.decode(page.get(), &more, false)?;
-                    if !page.get().ask(|it, reply| it.append_html(text, reply))? {
+                    let wants_more = page
+                        .get()
+                        .ask_later(|it, reply| it.append_html(text, reply));
+                    if !wants_more.await? {
                         return Ok(());
                     }
                 }
@@ -721,9 +724,12 @@ impl Contents {
             is_form: it.source == bun_web::host::Source::Form,
             is_by_user: it.is_by_user || it.has_activation,
             has_text_activation: it.has_text_activation,
-            blob: Url::parse(url.as_bytes())
-                .filter(|it| it.scheme() == b"blob")
-                .and_then(|it| resolve_blob_url(&it)),
+            blob: (Url::parse(url.as_bytes()).filter(|it| it.scheme() == b"blob")).and_then(
+                |url| {
+                    let is_own = Origin::of(&url).as_bytes() == origin.as_bytes();
+                    resolve_blob_url(&url).or_else(|| it.blob.filter(|_| is_own))
+                },
+            ),
             state: it.navigation_state,
             markup,
             initiator: Some(initiator),
@@ -831,8 +837,13 @@ impl Contents {
         if navigation.markup.is_some() {
             return self.load(url, navigation, None);
         }
-        let is_restored =
-            |it: &Item| page.is_initial() && self.is_frame() && !it.borrow().is_of(page);
+        let restores = |it: &Page| it.is_from_history.get() && !it.is_loaded.get();
+        let is_restored = |it: &Item| {
+            page.is_initial()
+                && self.is_frame()
+                && !it.borrow().is_of(page)
+                && restores(self.embedder())
+        };
         if let Some(restored) = self.item().filter(is_restored) {
             let (url, request) = (
                 restored.borrow().url.clone(),
@@ -1621,6 +1632,18 @@ impl Contents {
 
     fn commit(
         &self,
+        loaded: Loaded,
+        navigation: Navigation,
+        source: Option<Source>,
+    ) -> JsResult<()> {
+        if let Some(process) = self.process() {
+            return process.hold(|| self.swap_documents(loaded, navigation, source));
+        }
+        self.swap_documents(loaded, navigation, source)
+    }
+
+    fn swap_documents(
+        &self,
         mut loaded: Loaded,
         mut navigation: Navigation,
         source: Option<Source>,
@@ -1689,6 +1712,7 @@ impl Contents {
         if self.is_destroyed.get() {
             return Ok(());
         }
+        self.leave_process_unless_it_suits(page);
         self.guest().map_or(Ok(()), Remote::end)?;
         self.has_shown_trusted
             .update(|it| it || loaded.unreachable.is_none());

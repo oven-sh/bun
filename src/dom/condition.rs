@@ -7,7 +7,7 @@ use crate::calc::{Kind, Node, Options};
 use crate::grammar::{Mode, definition, is_reserved};
 use crate::name::{Name, name};
 use crate::selector_parser;
-use crate::sheet::{Declared, supports_declaration};
+use crate::sheet::{Declared, Within, supports_declaration};
 use crate::values::*;
 
 keywords! {
@@ -368,16 +368,23 @@ fn supports_function(name: &[u8], p: &mut P, namespaces: selector_parser::Parser
         () if eq(name, "at-rule") => {
             matches!(*p.next().ok()?, Token::AtKeyword(name) if is_in(AT_RULES, name))
         }
+        () if eq(name, "named-feature") => is_in("anchor-position-follows-transforms", ident(p)?),
         () => return None,
     })
 }
 
-fn declaration(p: &mut P) -> Option<Condition> {
+fn declaration(p: &mut P, is_quirky: bool) -> Option<Condition> {
     let name = ident(p)?;
     p.expect_colon().ok()?;
+    let value = crate::scan::without_priority(rest(p)?).0;
     Some(Condition::Constant(Some(supports_declaration(
         name,
-        crate::scan::without_priority(rest(p)?).0,
+        value,
+        if is_quirky {
+            Within::Quirks
+        } else {
+            Within::Style
+        },
     ))))
 }
 
@@ -433,7 +440,7 @@ impl Reader<'_> {
             match of {
                 Of::Style => style(p, &mut self.out),
                 Of::Anchored => fallback(p, &mut self.out),
-                Of::Supports => declaration(p),
+                Of::Supports => declaration(p, self.selectors.is_quirky),
                 Of::If => None,
                 _ => feature(p, of, &mut self.out),
             }

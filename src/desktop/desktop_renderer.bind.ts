@@ -26,9 +26,24 @@ export const BridgedFunction = b.interface("BridgedFunction", {
 
 export const RendererPreload = b.interface("RendererPreload", {
   ofModule: true,
-  rustPath: "crate::preload::Preload",
+  rustPath: "crate::renderer::preload::Preload",
   noInterfaceObject: true,
-  internalFields: ["global", "host", "page", "contents", "process", "frame"],
+  internalFields: { global: b.any, document: b.ref("RendererDocument"), process: b.any, frame: b.any, pending: b.any },
+  proto: {},
+});
+
+export const RendererDocument = b.interface("RendererDocument", {
+  ofModule: true,
+  rustPath: "crate::renderer::Document",
+  noInterfaceObject: true,
+  internalFields: {
+    preload: RendererPreload,
+    controller: b.any,
+    inspected: b.any,
+    worlds: b.any,
+    needed: b.any,
+    owner: b.any,
+  },
   proto: {},
 });
 
@@ -62,10 +77,9 @@ export const WebSource = b.dictionary({ code: b.string.loose.utf8.owned });
 export const RendererWebFrame = b.interface("RendererWebFrame", {
   ofModule: true,
   name: "WebFrame",
-  rustPath: "crate::preload::WebFrame",
+  rustPath: "crate::renderer::preload::WebFrame",
   noInterfaceObject: true,
   prototypeBase: "EventEmitter",
-  internalFields: ["host"],
   proto: {
     ...Object.fromEntries(
       "routingId frameToken top parent opener firstChild nextSibling"

@@ -51,11 +51,13 @@ pub(crate) struct Arena {
     pub(super) has_slots: Cell<bool>,
     /// A control can belong to a form that it is not in.
     pub(crate) has_remote_owners: Cell<bool>,
+    pub(crate) has_dormant_controls: Cell<bool>,
     /// How many bare nodes the collector was not told of.
     pub(super) unreported: Cell<u32>,
     /// A frame is coming, or there is no window.
     pub(crate) is_scheduled: Cell<bool>,
     pub(super) needs_sync: Cell<bool>,
+    pub(super) has_new_color_scheme: Cell<bool>,
     pub(crate) recent_markup: Cell<Option<Box<crate::api::markup::Recent>>>,
 }
 
@@ -88,9 +90,11 @@ impl Arena {
             names: super::string::cells_of_names(global),
             has_slots: Cell::new(false),
             has_remote_owners: Cell::new(false),
+            has_dormant_controls: Cell::new(false),
             unreported: Cell::new(0),
             is_scheduled: Cell::new(true),
             needs_sync: Cell::new(false),
+            has_new_color_scheme: Cell::new(false),
             recent_markup: Cell::new(None),
         });
         assert!(Rc::as_ptr(&arena).addr() >> 48 == 0);
@@ -173,6 +177,7 @@ impl Arena {
         self.engine.get()
     }
 
+    #[inline(always)]
     pub(super) fn collected(&self, id: NodeId, has_bare_children: bool) {
         if has_bare_children {
             self.dead_owners.borrow_mut().push(id);

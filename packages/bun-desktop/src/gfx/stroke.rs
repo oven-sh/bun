@@ -133,10 +133,24 @@ struct Contour {
     is_closed: bool,
 }
 
-fn contours(path: &[Command], mut take: impl FnMut(&Contour)) {
+/// What does not have to be allocated for every stroke.
+#[derive(Default)]
+pub struct Room {
+    segments: Vec<Segment>,
+    sides: [Path; 2],
+}
+
+impl Room {
+    pub fn bytes(&self) -> usize {
+        self.segments.capacity() * size_of::<Segment>()
+            + (self.sides[0].capacity() + self.sides[1].capacity()) * size_of::<Command>()
+    }
+}
+
+fn contours(path: &[Command], segments: &mut Vec<Segment>, mut take: impl FnMut(&Contour)) {
     let mut contour = Contour {
         start: Point::ZERO,
-        segments: Vec::new(),
+        segments: std::mem::take(segments),
         is_closed: false,
     };
     let mut has_moved = false;
@@ -164,6 +178,7 @@ fn contours(path: &[Command], mut take: impl FnMut(&Contour)) {
             }
         }
     }
+    *segments = contour.segments;
 }
 
 /// What a path has to touch for its stroke to show, after `matrix`.
@@ -319,7 +334,7 @@ fn measure(contour: &Contour, tolerance: f32) -> Vec<Mark> {
 
 pub fn length(path: &[Command]) -> f32 {
     let mut total = 0.;
-    contours(path, |contour| {
+    contours(path, &mut Vec::new(), |contour| {
         total += measure(contour, 0.01).last().map_or(0., |it| it.distance)
     });
     total
@@ -381,7 +396,7 @@ fn dashed(
         0.,
         dashes.iter().copied().map(f64::from).sum::<f64>(),
     );
-    contours(path, |contour| {
+    contours(path, &mut Vec::new(), |contour| {
         let marks = measure(contour, 0.5 / resolution);
         let Some(length) = marks.last().map(|it| it.distance) else {
             return;
@@ -472,16 +487,14 @@ fn conic_to(path: &mut Path, control: Point, to: Point, weight: f32) {
 }
 
 fn unit(vector: Point) -> Option<Point> {
-    let length = f64::from(vector.x).hypot(vector.y.into());
-    let unit = Point::new(
-        (f64::from(vector.x) / length) as f32,
-        (f64::from(vector.y) / length) as f32,
-    );
+    let (x, y) = (f64::from(vector.x), f64::from(vector.y));
+    let length = (x * x + y * y).sqrt();
+    let unit = Point::new((x / length) as f32, (y / length) as f32);
     (unit.x.is_finite() && unit.y.is_finite() && unit != Point::ZERO).then_some(unit)
 }
 
 /// Where between 0 and 1 `a t² + b t + c` is zero, ascending.
-fn roots(a: f32, b: f32, c: f32) -> impl Iterator<Item = f32> {
+pub fn roots(a: f32, b: f32, c: f32) -> impl Iterator<Item = f32> {
     let q = -0.5
         * (b + ((f64::from(b).powi(2) - 4. * f64::from(a) * f64::from(c)).sqrt() as f32)
             .copysign(b));
@@ -511,6 +524,20 @@ struct End {
     at: Point,
     normal: Point,
     is_line: bool,
+}
+
+/// Where a curve is, and where it is going.
+struct Ray {
+    t: f32,
+    on: Point,
+    /// As long as the radius.
+    along: Point,
+}
+
+impl Ray {
+    fn beside(&self, side: usize) -> Point {
+        self.on + Point::new(self.along.y, -self.along.x) * if side == 0 { 1. } else { -1. }
+    }
 }
 
 impl Stroker {
@@ -613,24 +640,30 @@ impl Stroker {
         }
     }
 
-    /// The point on the curve, the one beside it, and the direction.
-    fn ray(&self, curve: &Segment, t: f32, side: usize) -> [Point; 3] {
-        let (on, along) = (
-            curve.around(t)[1],
-            unit(curve.direction(t)).unwrap_or(Point::new(1., 0.)) * self.radius,
-        );
-        [
+    fn ray(&self, curve: &Segment, t: f32) -> Ray {
+        let [before, on, after] = curve.around(t);
+        let direction = if before != after {
+            after - before
+        } else {
+            curve.direction(t)
+        };
+        Ray {
+            t,
             on,
-            on + Point::new(along.y, -along.x) * if side == 0 { 1. } else { -1. },
-            along,
-        ]
+            along: unit(direction).unwrap_or(Point::new(1., 0.)) * self.radius,
+        }
     }
 
-    /// The command that follows the curve at a distance, if one is enough.
-    fn beside(&self, curve: &Segment, [from, to]: [f32; 2], side: usize) -> Option<Command> {
-        let ([_, start, leaving], [_, end, arriving]) =
-            (self.ray(curve, from, side), self.ray(curve, to, side));
-        let [on, middle, _] = self.ray(curve, (from + to) / 2., side);
+    /// The command that follows a curve at a distance, if one is enough.
+    fn beside(&self, [from, halfway, to]: [&Ray; 3], side: usize) -> Option<Command> {
+        let (start, leaving, end, arriving, on, middle) = (
+            from.beside(side),
+            from.along,
+            to.beside(side),
+            to.along,
+            halfway.on,
+            halfway.beside(side),
+        );
         let from_line = |point: Point, start: Point, along: Point| {
             let t = along.dot(point - start) / along.dot(along);
             distance(
@@ -668,17 +701,23 @@ impl Stroker {
             .then_some(Command::QuadTo(control, end))
     }
 
-    fn follow(&mut self, curve: &Segment, [from, to]: [f32; 2], side: usize, depth: u32) {
-        self.pieces_left = self.pieces_left.saturating_sub(1);
-        match self.beside(curve, [from, to], side) {
-            Some(command) => self.sides[side].push(command),
-            None if depth == 0 || self.pieces_left == 0 => {
-                _ = self.sides[side].line_to(self.ray(curve, to, side)[1])
+    fn follow(&mut self, curve: &Segment, from: &Ray, to: &Ray, mut wanted: [bool; 2], depth: u32) {
+        let halfway = self.ray(curve, (from.t + to.t) / 2.);
+        for side in 0..2 {
+            if !wanted[side] {
+                continue;
             }
-            None => {
-                self.follow(curve, [from, (from + to) / 2.], side, depth - 1);
-                self.follow(curve, [(from + to) / 2., to], side, depth - 1);
-            }
+            self.pieces_left = self.pieces_left.saturating_sub(1);
+            let command =
+                self.beside([from, &halfway, to], side)
+                    .or((depth == 0 || self.pieces_left == 0)
+                        .then(|| Command::LineTo(to.beside(side))));
+            self.sides[side].extend(command);
+            wanted[side] = command.is_none();
+        }
+        if wanted != [false; 2] {
+            self.follow(curve, from, &halfway, wanted, depth - 1);
+            self.follow(curve, &halfway, to, wanted, depth - 1);
         }
     }
 
@@ -724,9 +763,10 @@ impl Stroker {
                     }
                     _ => None,
                 };
-                let mut from = 0.;
+                let mut from = stroker.ray(&segment, 0.);
                 for to in inflections.into_iter().flatten().chain([1.]) {
-                    (0..2).for_each(|side| stroker.follow(&segment, [from, to], side, 12));
+                    let to = stroker.ray(&segment, to);
+                    stroker.follow(&segment, &from, &to, [true; 2], 12);
                     from = to;
                 }
             };
@@ -844,41 +884,92 @@ impl Stroke<'_> {
         }
     }
 
-    /// In parts, as precise as it has to be for `matrix`, which it is filled with, and then only right between the corners.
-    pub fn outline(
-        &self,
-        path: &[Command],
-        matrix: &Transform,
-        [low, high]: [Point; 2],
-        take: &mut dyn FnMut(&[Command]),
-    ) {
-        if !(self.width > 0. && self.width.is_finite()) {
-            return;
-        }
+    fn resolution(matrix: &Transform) -> f32 {
         let (x, y) = matrix.get_scale();
-        let resolution = Some(x.max(y))
+        Some(x.max(y))
             .filter(|it| it.is_finite() && *it > 0.)
-            .unwrap_or(1.);
-        let period: f32 = self.dashes.iter().sum();
-        let is_dashed = self.dashes.len().is_multiple_of(2)
-            && self.dashes.iter().all(|it| *it >= 0.)
-            && period > 0.;
+            .unwrap_or(1.)
+    }
+
+    fn window<'a>(&self, matrix: &'a Transform, [low, high]: [Point; 2]) -> Window<'a> {
+        let (x, y) = matrix.get_scale();
         let reach = self.width / 2.
             * if self.join == Join::Miter {
                 self.miter_limit.max(SQRT_2)
             } else {
                 SQRT_2
             }
-            * x.hypot(y)
+            * (x * x + y * y).sqrt()
             + 1.;
-        let window = Window {
+        Window {
             matrix,
             low: low - Point::new(reach, reach),
             high: high + Point::new(reach, reach),
-        };
-        let dashed = (is_dashed && (period + self.dash_offset).is_finite()).then(|| {
-            dashed(path, self.dashes, self.dash_offset, resolution, &window).unwrap_or_default()
-        });
+        }
+    }
+
+    /// Those that matter between the corners, if it has any.
+    pub fn dashes_of(
+        &self,
+        path: &[Command],
+        matrix: &Transform,
+        corners: [Point; 2],
+    ) -> Option<Path> {
+        let period: f32 = self.dashes.iter().sum();
+        let is_dashed = self.dashes.len().is_multiple_of(2)
+            && self.dashes.iter().all(|it| *it >= 0.)
+            && period > 0.
+            && (period + self.dash_offset).is_finite();
+        is_dashed.then(|| {
+            dashed(
+                path,
+                self.dashes,
+                self.dash_offset,
+                Self::resolution(matrix),
+                &self.window(matrix, corners),
+            )
+            .unwrap_or_default()
+        })
+    }
+
+    /// In parts, as precise as it has to be for `matrix`, which it is filled with, and then only right between the corners.
+    pub fn outline(
+        &self,
+        path: &[Command],
+        matrix: &Transform,
+        corners: [Point; 2],
+        room: &mut Room,
+        take: &mut dyn FnMut(&[Command]),
+    ) {
+        if !(self.width > 0. && self.width.is_finite()) {
+            return;
+        }
+        let (resolution, dashed) = (
+            Self::resolution(matrix),
+            self.dashes_of(path, matrix, corners),
+        );
+        if let ([Command::MoveTo(from), Command::LineTo(to)], false) =
+            (path, dashed.is_some() || self.cap == Cap::Round)
+            && distance(*from, *to) > NEARLY_ZERO * 0.25 / resolution
+            && let Some(along) = unit(*to - *from)
+        {
+            let radius = self.width / 2.;
+            let (normal, start) = (Point::new(along.y, -along.x) * radius, *from);
+            let beyond = if self.cap == Cap::Square {
+                Point::new(-normal.y, normal.x)
+            } else {
+                Point::ZERO
+            };
+            let (from, to) = (start - beyond, *to + beyond);
+            return take(&[
+                Command::MoveTo(start + normal),
+                Command::LineTo(to + normal),
+                Command::LineTo(to - normal),
+                Command::LineTo(from - normal),
+                Command::LineTo(from + normal),
+            ]);
+        }
+        let window = self.window(matrix, corners);
         let mut stroker = Stroker {
             radius: self.width / 2.,
             cap: self.cap,
@@ -889,11 +980,14 @@ impl Stroke<'_> {
             },
             least_sine: 1. / self.miter_limit,
             tolerance: 0.25 / resolution,
-            sides: Default::default(),
+            sides: std::mem::take(&mut room.sides),
             pieces_left: MAX_PIECES * 2,
         };
-        contours(dashed.as_deref().unwrap_or(path), |contour| {
-            window.parts(contour, |part| stroker.contour(part, take))
-        });
+        contours(
+            dashed.as_deref().unwrap_or(path),
+            &mut room.segments,
+            |contour| window.parts(contour, |part| stroker.contour(part, take)),
+        );
+        room.sides = stroker.sides;
     }
 }

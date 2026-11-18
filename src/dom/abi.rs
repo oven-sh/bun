@@ -4,7 +4,7 @@
 #![allow(dead_code, unreachable_pub)] // Each side uses its half.
 
 /// Bumped with every change to this file, to the library's exports, or to its JSON messages.
-pub const ABI_VERSION: u32 = 28;
+pub const ABI_VERSION: u32 = 32;
 
 #[path = "abi_accessibility.rs"]
 pub mod accessibility;
@@ -307,6 +307,98 @@ pub type Radii = [[f32; 2]; 4];
 pub struct RoundedRect {
     pub rect: Rect,
     pub radii: Radii,
+    /// `-electron-corner-smoothing`, from 0 to 1.
+    pub smoothing: f32,
+}
+
+/// For each corner, how much of `smoothing` there is room for along the horizontal and along the vertical edge.
+pub fn smoothing_of_corners(
+    [width, height]: [f32; 2],
+    [a, b, c, d]: [f32; 4],
+    smoothing: f32,
+) -> [[f32; 2]; 4] {
+    let along = |side: f32, radii: f32| (side / radii.max(1e-6) - 1.0).min(smoothing).max(0.0);
+    let [top, right, bottom, left] = [
+        along(width, a + b),
+        along(height, b + c),
+        along(width, c + d),
+        along(height, d + a),
+    ];
+    [[top, left], [top, right], [bottom, right], [bottom, left]]
+}
+
+impl RoundedRect {
+    /// A smooth corner has one radius.
+    pub fn smaller_radii(&self) -> [f32; 4] {
+        self.radii.map(|[x, y]| x.min(y).max(0.0))
+    }
+
+    /// How far the curves go along the edges.
+    pub fn reach(&self) -> Radii {
+        if self.smoothing == 0.0 {
+            return self.radii;
+        }
+        let radii = self.smaller_radii();
+        let smoothing =
+            smoothing_of_corners([self.rect.width, self.rect.height], radii, self.smoothing);
+        [0, 1, 2, 3].map(|it| smoothing[it].map(|by| radii[it] * (1.0 + by)))
+    }
+
+    /// Clockwise from the top left: where each starts, and three cubic curves.
+    /// The construction is that of Electron's `electron_smooth_round_rect.cc` (MIT).
+    pub fn smooth_corners(&self) -> [[[f32; 2]; 10]; 4] {
+        let (
+            Rect {
+                x,
+                y,
+                width,
+                height,
+            },
+            radii,
+        ) = (self.rect, self.smaller_radii());
+        let smoothing = smoothing_of_corners([width, height], radii, self.smoothing);
+        let (corners, edges) = (
+            [
+                [x, y],
+                [x + width, y],
+                [x + width, y + height],
+                [x, y + height],
+            ],
+            [[0.0, -1.0], [1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]],
+        );
+        [0, 1, 2, 3].map(|it| {
+            let (radius, [before, after]) = (radii[it], [edges[it], edges[(it + 1) % 4]]);
+            let at = |back: f32, on: f32| {
+                [0, 1].map(|axis| corners[it][axis] - before[axis] * back + after[axis] * on)
+            };
+            let angles = [smoothing[it][1 - it % 2], smoothing[it][it % 2]]
+                .map(|it| it * core::f32::consts::FRAC_PI_4);
+            let handle =
+                4.0 / 3.0 * ((core::f32::consts::FRAC_PI_2 - angles[0] - angles[1]) / 4.0).tan();
+            let [first, second] = angles.map(|angle| {
+                let ((sin, cos), start, near) = (
+                    angle.sin_cos(),
+                    1.0 + angle / core::f32::consts::FRAC_PI_4,
+                    1.0 - (angle / 2.0).tan(),
+                );
+                [
+                    [start, 0.0],
+                    [(start + near * 2.0) / 3.0, 0.0],
+                    [near, 0.0],
+                    [1.0 - sin, 1.0 - cos],
+                    [1.0 - sin - handle * cos, 1.0 - cos + handle * sin],
+                ]
+                .map(|it| it.map(|it| it * radius))
+            });
+            core::array::from_fn(|point| {
+                if point < 5 {
+                    at(first[point][0], first[point][1])
+                } else {
+                    at(second[9 - point][1], second[9 - point][0])
+                }
+            })
+        })
+    }
 }
 
 /// `[a, b, c, d, e, f]` of CSS's `matrix()`.
@@ -573,7 +665,8 @@ pub enum Item {
     Shadow {
         shape: RoundedRect,
         /// `shape` after the offset and the spread.
-        shadow: RoundedRect,
+        shadow: Rect,
+        radii: Radii,
         /// The CSS blur radius, twice the standard deviation.
         blur: f32,
         color: u32,

@@ -2,6 +2,7 @@
 
 use std::cell::RefCell;
 use std::mem::MaybeUninit;
+use std::os::fd::{FromRawFd as _, OwnedFd};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::thread::LocalKey;
 use std::time::{Duration, Instant};
@@ -11,6 +12,7 @@ use crate::codec::Rgba;
 use crate::error::{Context as _, Result};
 use crate::host::{self, platform, thread};
 use crate::protocol::*;
+use crate::remote::{guest, pages};
 use crate::{app, bridge, cover, guard, images, surface, text, webview};
 
 fn here<T>(work: impl FnOnce() -> Result<T>) -> Outcome<T> {
@@ -95,6 +97,9 @@ fn will_execute(command: &Command) -> u32 {
 }
 
 extern "C" fn tell(command: Command) {
+    if guest::is_on() {
+        return guard("error", (), move || guest::tell(command));
+    }
     let edits = will_execute(&command);
     thread::post(move || {
         guard("error", (), move || {
@@ -104,6 +109,9 @@ extern "C" fn tell(command: Command) {
 }
 
 extern "C" fn perform(command: Command) -> Maybe<Text> {
+    if guest::is_on() {
+        return (tell(command), Maybe::No).1;
+    }
     let edits = will_execute(&command);
     failure(ask(move || app::execute(command, edits)))
 }
@@ -128,10 +136,30 @@ extern "C" fn answer(question: Question) -> Outcome<Maybe<u32>> {
 
 unsafe extern "C" fn drain(events: *mut Event, capacity: usize) -> usize {
     thread::run_calls();
+    if guest::is_on() {
+        guest::take_events();
+    }
     // SAFETY: the caller's contract.
     bridge::drain(unsafe {
         std::slice::from_raw_parts_mut(events.cast::<MaybeUninit<Event>>(), capacity)
     })
+}
+
+unsafe extern "C" fn send(to: u32, lane: Lane, bytes: *const u8, length: usize, descriptor: i32) {
+    // SAFETY: the caller's contract.
+    let (bytes, descriptor) = unsafe {
+        (
+            crate::borrow(bytes, length),
+            (descriptor >= 0).then(|| OwnedFd::from_raw_fd(descriptor)),
+        )
+    };
+    guard("error", (), || {
+        if guest::is_on() {
+            guest::send(bytes, lane == Lane::Scripts)
+        } else {
+            pages::send(to, lane, bytes, descriptor)
+        }
+    });
 }
 
 unsafe extern "C" fn decode_bitmap(bytes: *const u8, length: usize) -> Outcome<Bitmap> {
@@ -187,6 +215,15 @@ static UI: Ui = Ui {
     }),
     has_input: function!(|| -> bool { host::has_input() }),
     present: function!(|| -> () { guard("fatal", (), host::events_were_handled) }),
+    hold: function!(|| -> () { thread::hold_jobs() }),
+
+    become_page_process: function!(|| -> () { guest::connect() }),
+    open_page_process: function!(here || -> PageProcess { pages::open()? }),
+    tell_page_process: function!(|id: u32, command: PageCommand| -> () {
+        guard("error", (), || pages::command(id, command))
+    }),
+    send,
+    receive: function!(|| -> Message { guest::receive_elsewhere() }),
 
     window_geometry: function!(|window: u32| -> Outcome<Geometry> {
         ask_once(&GEOMETRIES, window, true, move || {

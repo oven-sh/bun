@@ -2,11 +2,13 @@
 
 use bun_core::{EncodedSlice, strings};
 use bun_jsc::webcore_types::Blob as JsBlob;
-use bun_jsc::{DOMFormData, EncodedSliceJsc, JSType, Strong, URLSearchParams, bun_string_jsc, cpp};
+use bun_jsc::{
+    ArrayBuffer, DOMFormData, EncodedSliceJsc, JSType, Strong, URLSearchParams, bun_string_jsc, cpp,
+};
 use bun_web::convert::blob_from_js;
 use bun_web::exec;
 use bun_web::mime::Mime;
-use bun_web::net::body::{Chunk, Data};
+use bun_web::net::body::{Chunk, Data, concat};
 use bun_web::request::RequestBody;
 use bun_web::runtime::create_blob;
 use bun_web::streams::{self, Incoming, body_of_reader, chunk_to_js};
@@ -53,16 +55,23 @@ pub(super) const TEXT: &[u8] = b"text/plain;charset=UTF-8";
 pub(super) const URL_ENCODED: &[u8] = b"application/x-www-form-urlencoded;charset=UTF-8";
 
 /// `None` if it is no `BufferSource`.
-pub(super) fn copy_of_buffer<'a>(
+pub(super) fn unshared_buffer<'a>(
     cx: Cx<'_, 'a>,
     value: JsLocal<'a>,
-) -> Result<'a, Option<Vec<u8>>> {
+) -> Result<'a, Option<ArrayBuffer>> {
     match value.to_js().as_array_buffer(cx.global()) {
         Some(buffer) if buffer.shared => {
             Err(type_error(&cx.heap, "The buffer must not be shared."))
         }
-        buffer => Ok(buffer.map(|it| it.byte_slice().to_vec())),
+        buffer => Ok(buffer),
     }
+}
+
+pub(super) fn copy_of_buffer<'a>(
+    cx: Cx<'_, 'a>,
+    value: JsLocal<'a>,
+) -> Result<'a, Option<Vec<u8>>> {
+    Ok(unshared_buffer(cx, value)?.map(|it| concat(&[it.byte_slice()])))
 }
 
 pub(super) fn well_formed_utf8<'a>(cx: Cx<'_, 'a>, value: JsLocal<'a>) -> Result<'a, Vec<u8>> {

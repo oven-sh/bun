@@ -390,6 +390,22 @@ pub fn notifications(forest: &Forest, events: &[Event]) -> Vec<Notification> {
         .into_iter()
         .chain(rest)
         .for_each(|it| _ = poster.take(it));
+    // What is around the focus bears on what is said about it.
+    if let Some(&Notification {
+        name: FOCUS,
+        target: Value::Element(focus),
+        ..
+    }) = poster
+        .all
+        .iter()
+        .find(|it| it.name == FOCUS)
+        .filter(|_| poster.focus_has_moved)
+    {
+        let is_around = |it: &Notification| matches!(it.target, Value::Element(it) if it != focus && forest.contains(it, focus));
+        poster
+            .all
+            .sort_by_key(|it| !(it.name == "AXSelectedTextChanged" || is_around(it)));
+    }
     if events.iter().any(|it| matches!(it, Event::Destroyed(..))) {
         Extra::remove_orphans(forest)
             .into_iter()

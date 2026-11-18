@@ -15,6 +15,7 @@ use smallvec::SmallVec;
 use super::parser::{DocumentParser, forbid_markup_insertion};
 use crate::api::core::steps::Has;
 use crate::api::core::{NodeFlags as F, *};
+use crate::api::forms::dormant;
 use crate::api::loading::{self, ScriptFate};
 use crate::document::Above;
 use crate::selector::{filter, filter_of, key};
@@ -265,6 +266,8 @@ pub(super) struct Sink<'c, 'a> {
     owner: Option<&'a Node>,
     /// `Node::above_bare`
     above: [Above; 2],
+    /// `dormant::can_be_in`, once that was asked.
+    takes_dormant: Option<bool>,
     added: u32,
 }
 
@@ -337,6 +340,16 @@ fn chooses_definition(attribute: &Attribute<Cells>) -> bool {
     )
 }
 
+fn state_if_dormant(doc: &Doc, tag: Tag, attributes: &[Attribute<Cells>]) -> Option<State> {
+    let tag = match tag {
+        Tag::Input => atom!("input"),
+        Tag::Button => atom!("button"),
+        _ => return None,
+    };
+    dormant::state_of(tag, attributes.iter().map(|it| (&it.name, &it.value)))
+        .inspect(|_| doc.prepare_for_dormant_controls())
+}
+
 /// Undefined for the one of the document.
 pub(super) fn registry_for_child(parent: Option<&Node>, asks_for_null: bool) -> JSValue {
     if asks_for_null {
@@ -379,6 +392,7 @@ impl<'c, 'a> Sink<'c, 'a> {
             growing_bare: None,
             owner: None,
             above: [Above::Detached; 2],
+            takes_dormant: None,
             added: 0,
         }
     }
@@ -399,7 +413,7 @@ impl<'c, 'a> Sink<'c, 'a> {
     fn change_owner(&mut self, owner: &'a Node) -> Option<()> {
         (owner.takes_bare() && owner.is_in_arena_of(self.doc)).then_some(())?;
         html::Sink::publish(self);
-        (self.owner, self.above) = (Some(owner), owner.above_bare());
+        (self.owner, self.above, self.takes_dormant) = (Some(owner), owner.above_bare(), None);
         Some(())
     }
 
@@ -418,6 +432,7 @@ impl<'c, 'a> Sink<'c, 'a> {
         owner: &Node,
         parent: NodeId,
         above: Above,
+        state: State,
     ) -> Option<(Result<NodeId, NodeId>, bool)> {
         let (doc, mut has_id) = (owner.doc(), false);
         for it in attributes.iter() {
@@ -436,12 +451,13 @@ impl<'c, 'a> Sink<'c, 'a> {
             Namespace::MathMl => tree::Namespace::MathMl,
         };
         let appended = owner.arena().write(|engine| {
-            let element = engine.element_with(
+            let mut element = engine.element_with(
                 local,
                 namespace,
                 attributes.drain(..).map(|it| (it.name, it.value.into())),
                 doc.quirks(),
             );
+            element.state = state;
             let (keys, own) = (
                 filter_of(&element),
                 if above == Above::New {
@@ -565,6 +581,23 @@ impl<'c, 'a> Sink<'c, 'a> {
                 engine.set_text(node, DomString::from_chars(text.chars()).into())
             });
         }
+    }
+
+    /// A stencil has it by itself.
+    #[inline(never)]
+    fn state_if_dormant_there(
+        &mut self,
+        tag: Tag,
+        element: &NewElement<'_, Cells>,
+    ) -> Option<State> {
+        let state = match element.stencil {
+            Some(stencil) => stencil.mould.is_dormant().then_some(State::empty()),
+            None => state_if_dormant(self.doc, tag, element.attributes),
+        }?;
+        let (owner, ..) = self.bare_parent(element.intended_parent)?;
+        self.takes_dormant
+            .get_or_insert_with(|| dormant::can_be_in(owner))
+            .then_some(state)
     }
 
     #[cold]
@@ -747,11 +780,30 @@ impl<'c, 'a> Sink<'c, 'a> {
                 && matches!(element.name, ElementName::Known(tag) if tag == stencil.tag)
                 && stencil.mould.fits(doc)
             {
+                if stencil.mould.is_dormant() {
+                    doc.prepare_for_dormant_controls();
+                }
                 return stencil.mould.create(&self.cx.heap, doc);
             }
             element
                 .attributes
                 .extend(<Cells as html::Dom>::attributes_of(stencil));
+        }
+        if let (Namespace::Html, &ElementName::Known(tag @ (Tag::Input | Tag::Button))) =
+            (element.namespace, &element.name)
+            && !(chooses_registry
+                || doc.is(DocFlags::CHECKS_STYLE_ATTRIBUTES)
+                || element.attributes.iter().any(chooses_definition))
+            && let Some(state) = state_if_dormant(doc, tag, element.attributes)
+        {
+            let local = self.recent().tags[tag as usize].known();
+            return Mould::new(
+                doc,
+                local,
+                element.attributes.drain(..).map(|it| (it.name, it.value)),
+                Some(state),
+            )
+            .create(&self.cx.heap, doc);
         }
         let ns = match element.namespace {
             Namespace::Html => Ns::Html,
@@ -819,9 +871,11 @@ impl html::Sink for Sink<'_, '_> {
             *slot = (source.hash as u32, None);
             return None;
         }
+        let dormant = state_if_dormant(doc, tag, attributes);
         if tag == Tag::Script
             || attributes.iter().any(chooses_definition)
-            || !Mould::can_hold(doc, local, attributes.iter().map(|it| &it.name))
+            || dormant.is_none()
+                && !Mould::can_hold(doc, local, attributes.iter().map(|it| &it.name))
         {
             return None;
         }
@@ -834,6 +888,7 @@ impl html::Sink for Sink<'_, '_> {
             doc,
             local,
             attributes.drain(..).map(|it| (it.name, it.value)),
+            dormant,
         );
         Some(Rc::clone(slot.1.insert(Rc::new(Stencil {
             tag,
@@ -881,19 +936,19 @@ impl html::Sink for Sink<'_, '_> {
 
     #[inline(always)]
     fn append_element_quietly(&mut self, element: NewElement<'_, Cells>) -> Option<JSValue> {
-        let mut own = None;
-        let local = match (element.namespace, element.name) {
-            (Namespace::Html, ElementName::Known(tag)) => {
+        let (mut own, mut state) = (None, State::empty());
+        let local = match (element.namespace, &element.name) {
+            (Namespace::Html, &ElementName::Known(tag)) => {
                 let recent = self.recent();
-                recent.are_plain[tag as usize]
-                    .unwrap_or_else(|| self.find_out_if_plain(tag))
-                    .then_some(())?;
+                if !recent.are_plain[tag as usize].unwrap_or_else(|| self.find_out_if_plain(tag)) {
+                    state = self.state_if_dormant_there(tag, &element)?;
+                }
                 own = self.recent().own_states[tag as usize];
                 self.recent().tags[tag as usize].clone()
             }
             (Namespace::Html, _) => return None,
             (namespace, name) => {
-                let local = match name {
+                let local = match *name {
                     ElementName::Known(tag) => self.recent().tags[tag as usize].clone(),
                     ElementName::Other(name) => name.clone(),
                 };
@@ -943,6 +998,7 @@ impl html::Sink for Sink<'_, '_> {
                 owner,
                 parent,
                 above,
+                state,
             )?,
         };
         let id = self.appended(owner, parent, appended);

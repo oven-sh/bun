@@ -78,9 +78,11 @@ pub(super) fn obey(parent: &Page, number: u32, message: ToFrame) -> JsResult<()>
             url,
             srcdoc,
             referrer_policy,
+            blob,
         } => it.navigate_for_element(Wish {
             url,
             srcdoc,
+            blob,
             referrer_policy: Some(referrer_policy),
             ..Default::default()
         }),

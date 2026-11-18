@@ -264,17 +264,6 @@ impl Realm {
         runtime::revoke_blob_url(url);
     }
 
-    /// <https://html.spec.whatwg.org/#queue-a-global-task>. `values` stay alive until `steps` get them.
-    pub fn queue_task(
-        &self,
-        priority: Priority,
-        values: &[JSValue],
-        steps: impl FnOnce(&JSGlobalObject, &[JSValue]) -> JsResult<()> + 'static,
-    ) -> Option<TaskId> {
-        let work = || Work::Once(Box::new(steps));
-        (!self.is_stopped()).then(|| tasks::post(self.global(), priority, work(), values))
-    }
-
     /// <https://html.spec.whatwg.org/#run-steps-after-a-timeout>
     pub fn queue_task_after(
         &self,

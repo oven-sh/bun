@@ -1,6 +1,6 @@
 use std::cell::Cell;
 use std::ops::Range;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::memo::Memo;
 use super::raster::{Path, has_radii, map_rect};
@@ -81,18 +81,26 @@ pub struct Frame {
     pub next_change: Cell<Option<Instant>>,
     /// Until when it waits for images to be decoded, if it can do without them.
     pub deadline: Option<Instant>,
+    /// What has not been painted by then is left out.
+    pub gives_up_at: Instant,
 }
 
 impl Frame {
     pub fn new(scale: f32, shows_caret: bool) -> Frame {
+        let now = Instant::now();
         Frame {
             scale,
-            now: Instant::now(),
+            now,
             shows_caret,
             snaps: true,
             next_change: Cell::new(None),
             deadline: None,
+            gives_up_at: now + Duration::from_secs(30),
         }
+    }
+
+    pub fn is_overdue(&self) -> bool {
+        Instant::now() >= self.gives_up_at
     }
 
     pub fn rescaled(&self, factor: f32) -> Frame {
@@ -142,6 +150,11 @@ impl Frame {
             radii: shape
                 .radii
                 .map(|radius| radius.map(|length| length * factor)),
+            smoothing: if (0. ..=1.).contains(&shape.smoothing) {
+                shape.smoothing
+            } else {
+                0.
+            },
         }
     }
 
@@ -288,7 +301,7 @@ fn leaf_bounds(item: &Item) -> Rect {
         Item::Shadow {
             shape, inset: true, ..
         } => snapped(shape.rect),
-        Item::Shadow { shadow, blur, .. } => snapped(outset(shadow.rect, blur * 1.5)),
+        Item::Shadow { shadow, blur, .. } => snapped(outset(*shadow, blur * 1.5)),
         Item::Gradient { clip, tile, .. } | Item::Image { clip, tile, .. } => {
             snapped(tile_bounds(clip, tile))
         }
@@ -496,6 +509,34 @@ impl Scene {
             copy(list.bytes, &mut self.bytes);
             copy(list.regions, &mut self.regions);
         }
+    }
+
+    /// The same, for what does not have such a list.
+    pub fn submitted_mut(&mut self) -> &mut Vec<Item> {
+        &mut self.submitted
+    }
+
+    pub fn list(&self) -> abi::DisplayList {
+        abi::DisplayList {
+            zoom: self.zoom,
+            items: abi::Slice::new(&self.submitted),
+            glyphs: abi::Slice::new(&self.glyphs),
+            stops: abi::Slice::new(&self.stops),
+            filters: abi::Slice::new(&self.filters),
+            verbs: abi::Slice::new(&self.verbs),
+            bytes: abi::Slice::new(&self.bytes),
+            regions: abi::Slice::new(&self.regions),
+        }
+    }
+
+    pub fn bytes_of_list(&self) -> usize {
+        size_of_val(&*self.submitted) * 2
+            + size_of_val(&*self.glyphs)
+            + size_of_val(&*self.stops)
+            + size_of_val(&*self.filters)
+            + size_of_val(&*self.verbs)
+            + size_of_val(&*self.bytes)
+            + size_of_val(&*self.regions)
     }
 
     #[cfg(test)]

@@ -436,7 +436,7 @@ impl MenuItem {
     }
 
     fn shared(&self) -> JsResult<Option<protocol::Shared>> {
-        if self.role.is_none_or(|it| it.name != "sharemenu") {
+        if !self.role.is_some_and(Role::shares) {
             return Ok(None);
         }
         let shared = wire::data_from_js(get(self.to_js(), "sharingItem")?)?;

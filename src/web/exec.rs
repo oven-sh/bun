@@ -311,7 +311,11 @@ pub fn block_pages<T: 'static>(
     tasks::set_suspended(global, true);
     crate::realm::set_paused(true);
     if let Some(promise) = promise.as_any_promise() {
-        let _ = global.bun_vm().wait_for_promise(promise);
+        let wait = || _ = global.bun_vm().wait_for_promise(promise);
+        match crate::remote::is_page_process() {
+            true => bun_ui::queue::without_events(crate::remote::runs_no_script, wait),
+            false => wait(),
+        }
     }
     crate::realm::set_paused(was_suspended);
     tasks::set_suspended(global, was_suspended);

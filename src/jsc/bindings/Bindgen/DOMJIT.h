@@ -32,7 +32,8 @@ Snippet tryOrCall(Shortcut*, JSC::GetValueFunc::Ptr, Effect);
 Snippet loadFieldOrNull(unsigned offset, Effect);
 Snippet loadFieldOrCall(unsigned offset, JSC::GetValueFunc::Ptr, Effect);
 Snippet loadMember(unsigned offset, Member, Effect);
-Snippet call(JSC::J_JITOperation_GP, Effect);
+Snippet call(Effect);
+Snippet countItemsOrCall(JSC::GetValueFunc::Ptr, Effect);
 
 }
 

@@ -1584,7 +1584,7 @@ impl Document {
         });
         let stretches = it.has_auto_size(1)
             && (auto_height == AutoSize::Stretch
-                || auto_height == AutoSize::Fill && it.ratio.is_none());
+                || auto_height == AutoSize::Fill && (it.ratio.is_none() || it.is_orthogonal()));
         if is_subgrid[1] {
             room.height = available[1];
         } else if stretches {
@@ -1621,7 +1621,8 @@ impl Document {
                 let stretches = own.has_auto_size(1)
                     && auto_margins(&own.style, 1) == [false; 2]
                     && (it.align[1].0 == AlignName::Stretch
-                        || it.align[1].0 == AlignName::Normal && own.ratio.is_none());
+                        || it.align[1].0 == AlignName::Normal
+                            && (own.ratio.is_none() || own.is_orthogonal()));
                 let stretched = it.other.filter(|_| stretches).and_then(|height| {
                     let room = Room {
                         basis: [None, Some(height)],
@@ -1644,9 +1645,18 @@ impl Document {
                 widths.sizes
             }
             _ if self.boxes[it.id].is_orthogonal() => {
-                let margins = margin(&self.boxes[it.id].style, it.other.unwrap_or(0.0)).sums()[1];
-                self.orthogonal_heights(it.id, it.other, None)
-                    .map(|it| it + margins)
+                let own = &self.boxes[it.id];
+                let margins = margin(&own.style, it.other.unwrap_or(0.0)).sums();
+                let fills = own.ratio.is_some()
+                    && own.has_auto_size(0)
+                    && auto_margins(&own.style, 0) == [false; 2]
+                    && matches!(it.align[0].0, AlignName::Normal | AlignName::Stretch);
+                self.orthogonal_heights(
+                    it.id,
+                    it.other,
+                    it.other.filter(|_| fills).map(|it| it - margins[0]),
+                )
+                .map(|it| it + margins[1])
             }
             _ => {
                 let (margin, output) = self.measure_contributor(it);

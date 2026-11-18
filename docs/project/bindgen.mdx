@@ -1133,7 +1133,12 @@ memory bug:
 - It throws only for lack of memory.
 - It uses the global object for its VM only.
 
+`withoutFrame: true` on a method that requires up to two arguments promises nothing. The compilers call it directly where a script of its realm passes just those.
+
 `shortcut: "name"` on a getter names a `Bun::Bindgen::DOMJIT::Shortcut`, written by hand, that emits code for the usual case. The getter is called for the others.
+
+`publishesItems: true` on an interface that extends none is for lists. An instance can hand the engine a copy of what its indexed getter answers
+(`bindgen::PublishesItems`), which compiled code reads until Rust advances a clock. `countsItems: true` says that a getter returns their number.
 
 ### Global objects
 

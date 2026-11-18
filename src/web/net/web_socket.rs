@@ -14,7 +14,7 @@ use bun_http_jsc::websocket_client::websocket_deflate::{Params, PerMessageDeflat
 use bun_sha_hmac::sha::evp::SHA1;
 use bun_threading::Guarded;
 
-use super::body::{Body, Chunk, Data, Writer, pipe};
+use super::body::{Body, Chunk, Data, Writer, prefault};
 use super::error::{NetError, Result};
 use super::response::Response;
 use crate::Bytes;
@@ -24,6 +24,7 @@ use crate::request::{CacheMode, Credentials, Destination, Mode, Redirect, Reques
 use crate::url::Url;
 
 const MAX_MESSAGE: usize = 1 << 30;
+const WORTH_COMPRESSING: usize = 860;
 const GOING_AWAY: u16 = 1001;
 const PROTOCOL_ERROR: u16 = 1002;
 const NO_STATUS: u16 = 1005;
@@ -36,6 +37,15 @@ pub enum Kind {
     Binary,
 }
 
+impl Kind {
+    fn opcode(self) -> Opcode {
+        match self {
+            Kind::Text => Opcode::Text,
+            Kind::Binary => Opcode::Binary,
+        }
+    }
+}
+
 pub struct Closed {
     pub code: u16,
     pub reason: Vec<u8>,
@@ -43,22 +53,54 @@ pub struct Closed {
 
 enum Queued {
     Message(Kind, Data),
+    /// And the length of their payloads.
+    Frames(Vec<u8>, u64),
     Close(Vec<u8>),
+}
+
+#[derive(Default)]
+struct Pending {
+    queue: VecDeque<Queued>,
+    is_compressed: bool,
+    sender: Waiter,
 }
 
 /// What is to be sent, in order.
 #[derive(Clone, Default)]
-pub struct Outbox(Rc<RefCell<(VecDeque<Queued>, Waiter)>>);
+pub struct Outbox(Rc<RefCell<Pending>>);
 
 impl Outbox {
     fn push(&self, queued: Queued) {
         let mut outbox = self.0.borrow_mut();
-        outbox.0.push_back(queued);
-        outbox.1.wake();
+        outbox.queue.push_back(queued);
+        outbox.sender.wake();
     }
 
     pub fn send(&self, kind: Kind, data: Data) {
         self.push(Queued::Message(kind, data));
+    }
+
+    pub fn send_bytes(&self, kind: Kind, payload: &[u8]) {
+        const AT_ONCE: usize = 256 << 10;
+        let mut outbox = self.0.borrow_mut();
+        let compresses = outbox.is_compressed && payload.len() >= WORTH_COMPRESSING;
+        match outbox.queue.back_mut() {
+            Some(Queued::Frames(frames, length))
+                if !compresses && frames.len() + payload.len() <= AT_ONCE =>
+            {
+                append_frame(frames, kind.opcode(), false, payload);
+                *length += payload.len() as u64;
+            }
+            _ => {
+                drop(outbox);
+                self.push(match compresses {
+                    true => Queued::Message(kind, Data::Bytes(payload.to_vec().into())),
+                    false => {
+                        Queued::Frames(frame(kind.opcode(), false, payload), payload.len() as u64)
+                    }
+                });
+            }
+        }
     }
 
     pub fn close(&self, code: Option<u16>, reason: &[u8]) {
@@ -72,9 +114,9 @@ impl Outbox {
         poll_fn(|cx| {
             let mut outbox = self.0.borrow_mut();
             outbox
-                .0
+                .queue
                 .pop_front()
-                .map_or_else(|| outbox.1.pending(cx), Poll::Ready)
+                .map_or_else(|| outbox.sender.pending(cx), Poll::Ready)
         })
         .await
     }
@@ -87,12 +129,19 @@ impl Outbox {
 
 pub struct Handshake {
     key: Vec<u8>,
-    uplink: Writer,
+}
+
+crate::wire! {
+    pub struct Accepted {
+        protocol: Bytes,
+        extensions: Option<Bytes>,
+        downlink: Body,
+    }
 }
 
 impl Handshake {
     /// https://websockets.spec.whatwg.org/#concept-websocket-establish
-    pub fn start(url: &Url, protocols: &[Bytes]) -> (Handshake, Request) {
+    pub fn start(url: &Url, protocols: &[Bytes], frames: Body) -> (Handshake, Request) {
         let url = url.with_scheme(if url.scheme() == b"ws" {
             b"http"
         } else {
@@ -104,7 +153,7 @@ impl Handshake {
             Mode::WebSocket,
             Credentials::Include,
         );
-        let ((uplink, frames), headers) = (pipe(0), &mut request.headers);
+        let headers = &mut request.headers;
         let mut nonce = [0; 16];
         bun_boringssl_sys::rand_bytes(&mut nonce);
         let key = bun_base64::encode_alloc(&nonce);
@@ -125,14 +174,14 @@ impl Handshake {
         headers.set_if_absent(b"Sec-WebSocket-Protocol", &protocols.join(&b", "[..]));
         (request.cache, request.redirect) = (CacheMode::NoStore, Redirect::Error);
         request.body = Some(RequestBody::Upgrade(Arc::new(Guarded::new(Some(frames)))));
-        (Handshake { key, uplink }, request)
+        (Handshake { key }, request)
     }
 
     pub fn finish(
         self,
         Response { head, body }: Response,
         protocols: &[Bytes],
-    ) -> Result<Connection> {
+    ) -> Result<Accepted> {
         let (headers, mut hash) = (&head.headers, [0; 20]);
         SHA1::hash(
             &[&self.key, &b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"[..]].concat(),
@@ -152,16 +201,26 @@ impl Handshake {
             && protocol.as_ref().map_or(protocols.is_empty(), |chosen| {
                 protocols.iter().any(|it| **it == **chosen)
             });
-        let deflate = extensions
-            .as_deref()
+        Ok(Accepted {
+            protocol: protocol.unwrap_or_default().into(),
+            extensions: extensions.map(Into::into),
+            downlink: body.filter(|_| is_accepted).ok_or(NetError::Failed)?,
+        })
+    }
+}
+
+impl Accepted {
+    /// `uplink` writes the frames that the handshake was started with.
+    pub fn connect(self, uplink: Writer) -> Result<Connection> {
+        let deflate = (self.extensions.as_deref())
             .map(|it| parse_deflate(it).ok_or(NetError::Failed))
             .transpose()?;
         Ok(Connection {
-            protocol: protocol.unwrap_or_default().into(),
-            extensions: extensions.unwrap_or_default().into(),
+            protocol: self.protocol,
+            extensions: self.extensions.unwrap_or_default(),
             deflate: deflate.map(|it| PerMessageDeflate::init(it, false).into()),
-            downlink: body.filter(|_| is_accepted).ok_or(NetError::Failed)?.into(),
-            uplink: Some(self.uplink),
+            downlink: self.downlink.into(),
+            uplink: Some(uplink),
         })
     }
 }
@@ -204,10 +263,21 @@ pub struct Connection {
     downlink: RefCell<Body>,
 }
 
-fn write_frame(uplink: &Writer, opcode: Opcode, is_compressed: bool, payload: &[u8]) {
-    let mut mask = [0; 4];
-    bun_boringssl_sys::rand_bytes(&mut mask);
-    let mut out = Vec::with_capacity(payload.len() + 14);
+fn next_mask() -> [u8; 4] {
+    thread_local! {
+        static MASKS: RefCell<Vec<[u8; 4]>> = const { RefCell::new(Vec::new()) };
+    }
+    MASKS.with_borrow_mut(|masks| {
+        if masks.is_empty() {
+            masks.resize(64, [0; 4]);
+            bun_boringssl_sys::rand_bytes(masks.as_flattened_mut());
+        }
+        masks.pop().unwrap_or_default()
+    })
+}
+
+fn append_frame(out: &mut Vec<u8>, opcode: Opcode, is_compressed: bool, payload: &[u8]) {
+    let mask = next_mask();
     out.push(0x80 | u8::from(is_compressed) << 6 | opcode as u8);
     match payload.len() {
         length @ ..=125 => out.push(0x80 | length as u8),
@@ -215,10 +285,24 @@ fn write_frame(uplink: &Writer, opcode: Opcode, is_compressed: bool, payload: &[
         length => out.extend([0xff].into_iter().chain((length as u64).to_be_bytes())),
     }
     out.extend(mask);
-    let start = out.len();
-    out.extend_from_slice(payload);
-    bun_highway::fill_with_skip_mask_inplace(mask, &mut out[start..], false);
-    uplink.write(Chunk::Owned(out));
+    // SAFETY: that many bytes are written, and none is read.
+    unsafe {
+        bun_core::vec::fill_spare(out, payload.len(), |room| {
+            bun_highway::fill_with_skip_mask(mask, room, payload, false);
+            (payload.len(), ())
+        });
+    }
+}
+
+fn frame(opcode: Opcode, is_compressed: bool, payload: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(payload.len() + 14);
+    prefault(out.spare_capacity_mut());
+    append_frame(&mut out, opcode, is_compressed, payload);
+    out
+}
+
+fn write_frame(uplink: &Writer, opcode: Opcode, is_compressed: bool, payload: &[u8]) {
+    uplink.write(Chunk::Owned(frame(opcode, is_compressed, payload)));
 }
 
 struct Frame<'a> {
@@ -371,28 +455,27 @@ impl Connection {
 
     /// Until the frame that closes is sent.
     async fn send(&self, uplink: &Writer, outbox: &Outbox, sent: impl Fn(u64)) -> Result<()> {
-        const WORTH_COMPRESSING: usize = 860;
+        outbox.0.borrow_mut().is_compressed = self.deflate.is_some();
         loop {
-            let (kind, data) = match outbox.next().await {
-                Queued::Message(kind, data) => (kind, data),
-                Queued::Close(payload) => {
-                    write_frame(uplink, Opcode::Close, false, &payload);
-                    return Ok(());
-                }
-            };
-            let (opcode, bytes) = (
-                if kind == Kind::Text {
-                    Opcode::Text
-                } else {
-                    Opcode::Binary
-                },
-                data.open().read_to_end().await?,
-            );
+            // What is queued meanwhile goes out together.
             uplink
                 .ready()
                 .await
                 .then_some(())
                 .ok_or(NetError::ConnectionClosed)?;
+            let (kind, data) = match outbox.next().await {
+                Queued::Message(kind, data) => (kind, data),
+                Queued::Frames(frames, length) => {
+                    uplink.write(Chunk::Owned(frames));
+                    sent(length);
+                    continue;
+                }
+                Queued::Close(payload) => {
+                    write_frame(uplink, Opcode::Close, false, &payload);
+                    return Ok(());
+                }
+            };
+            let (opcode, bytes) = (kind.opcode(), data.open().read_to_end().await?);
             if let Some(deflate) = self
                 .deflate
                 .as_ref()

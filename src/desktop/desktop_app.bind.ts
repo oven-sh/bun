@@ -70,6 +70,7 @@ export const DesktopLoginItemSettings = b.interface("DesktopLoginItemSettings", 
   noInterfaceObject: true,
   proto: {
     openAtLogin: { getter: b.bool, unforgeable: true, ...js },
+    executableWillLaunchAtLogin: { getter: b.bool, unforgeable: true, rustName: "open_at_login", ...js },
     status: { getter: b.string.utf8, unforgeable: true, ...js },
   },
 });

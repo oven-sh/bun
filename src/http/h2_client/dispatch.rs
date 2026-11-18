@@ -484,7 +484,10 @@ fn dispatch_frame(
                 // First RST_STREAM wins; a later STREAM_CLOSED for in-flight DATA is ignored.
                 return;
             }
-            let had_response = stream.remote_closed();
+            // Browsers take it for the end of a response that has begun.
+            let had_response = stream.remote_closed()
+                || (stream.status_code != 0
+                    && (stream.client.as_ref()).is_some_and(|it| it.browser.is_some()));
             stream.rst_done = true;
             stream.state = StreamState::Closed;
             let code: u32 = wire::u32_from_bytes(&payload[0..4]);

@@ -1,4 +1,5 @@
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use bun_aot::engine::has_compiler;
 use bun_core::Global;
@@ -133,6 +134,28 @@ pub(crate) fn compile_from_context(
     {
         (preload.on_loaded)();
     }
+    let imports_desktop = Arc::new(AtomicBool::new(false));
+    if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+        aot.imports_desktop = Some(Arc::clone(&imports_desktop));
+    }
+    let defines = ctx.args.define.clone();
+    let outcome = compile_once(ctx, product)?;
+    if !imports_desktop.swap(false, Ordering::Relaxed) {
+        return Ok(outcome);
+    }
+    // SAFETY: nothing else borrows the log between two builds.
+    unsafe { ctx.log_mut() }.reset();
+    ctx.args.define = defines;
+    if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+        aot.has_realms_of_the_web = true;
+    }
+    compile_once(ctx, product)
+}
+
+fn compile_once(
+    ctx: Context<'_>,
+    product: CompileProduct<'_>,
+) -> Result<Result<CompileOutcome, CompileFailure>, crate::Error> {
     let configuration = configuration::configure(&mut *ctx)?;
     let event_loop = AnyEventLoop::init();
     let mut request = request_from_context(

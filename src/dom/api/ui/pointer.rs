@@ -517,6 +517,15 @@ pub(super) fn hover<'a>(cx: &mut Cx<'a>, ui: &'a Ui, target: Option<&'a Element>
     schedule_tooltip(cx, ui);
 }
 
+/// But for what it hovers and presses.
+pub(super) fn holds_nothing(ui: &Ui) -> bool {
+    let pointer = ui.pointer();
+    !pointer.is_hover_cut.get()
+        && ui.fingers().is_empty()
+        && pointer.lock().is_none()
+        && pointer.pending_capture().is_none()
+}
+
 /// Before `removed` leaves the document.
 pub(super) fn forget<'a>(cx: &mut Cx<'a>, ui: &'a Ui, removed: &'a Element) {
     let (pointer, state) = (ui.pointer(), removed.state());

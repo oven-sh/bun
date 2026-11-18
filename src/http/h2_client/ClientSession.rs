@@ -311,7 +311,8 @@ impl ClientSession {
             hostname: Box::<[u8]>::from(client.connected_url.hostname),
             port: client.connected_url.get_port_auto(),
             ssl_config: client.tls_props.clone(),
-            did_have_handshaking_error: client.flags.did_have_handshaking_error,
+            did_have_handshaking_error: client.flags.did_have_handshaking_error
+                && !client.flags.reject_unauthorized,
             verification: client.socket_verification(),
             pool: client.pool,
             write_buffer: bun_io::StreamBuffer::default(),
@@ -1134,19 +1135,18 @@ impl ClientSession {
                 return client.do_redirect_multiplexed();
             }
             client.store_metadata(response);
+            // .finished = HEAD/204/304: no body is expected regardless of
+            // any Content-Length header, so clear it. Otherwise leave the
+            // parsed value so finishStream() enforces §8.1.1 against the
+            // (zero) bytes actually received.
+            if result == HeaderResult::Finished {
+                client.state.content_length = Some(0);
+            }
             // `is_done()`: Content-Length: 0 can arrive as `HasBody` (e.g. an SSE content-type).
-            if result == HeaderResult::Finished
-                || (stream.remote_closed() && stream.body_buffer.is_empty())
-                || client.state.is_done()
+            if (stream.remote_closed() && stream.body_buffer.is_empty())
+                || (client.state.is_done() && client.browser.is_none())
             {
                 client.state.flags.received_last_chunk = true;
-                // .finished = HEAD/204/304: no body is expected regardless of
-                // any Content-Length header, so clear it. Otherwise leave the
-                // parsed value so finishStream() enforces §8.1.1 against the
-                // (zero) bytes actually received.
-                if result == HeaderResult::Finished {
-                    client.state.content_length = Some(0);
-                }
                 return Self::finish_stream(stream, client);
             }
             // Mirror the h1 path: deliver headers
@@ -1185,7 +1185,8 @@ impl ClientSession {
                 // handleResponseBody may report completion before END_STREAM
                 // (Content-Length satisfied); the trailing END_STREAM/trailers
                 // land on a stream we no longer track and are discarded.
-                if client.state.is_done() {
+                // Not for a browser: servers close a connection on which many streams are reset.
+                if client.state.is_done() && client.browser.is_none() {
                     return client.finish();
                 }
                 client.send_partial_result();

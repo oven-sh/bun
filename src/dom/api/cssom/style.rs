@@ -11,8 +11,8 @@ use super::CSSRule;
 use crate::api::core::custom;
 use crate::api::core::steps::AttrChange;
 use crate::api::core::{
-    DocFlags, DomError, DomString, Edge, Element, NodeFlags, QualName, Recent, Record, atom,
-    dom_error, impl_of, queue_mutation_record,
+    DocFlags, DomError, DomString, Edge, Element, Familiar, NodeFlags, QualName, Recent, Record,
+    atom, dom_error, impl_of, queue_mutation_record,
 };
 use crate::api::events::WindowTarget;
 use crate::declarations::{Accepts, DeclarationList, InlineBlocks, Key, Specified};
@@ -23,7 +23,7 @@ use crate::properties::{Id, Prop, PropsByName, logical_props};
 use crate::selector::Pseudo;
 use crate::sheet::{Block, Within};
 use crate::tree::NodeId;
-use crate::values::{Out, eq, text};
+use crate::values::{Out, eq};
 
 #[derive(Clone, Copy)]
 enum Source {
@@ -266,10 +266,12 @@ impl CSSStyleDeclaration {
                     .to_js(&cx.heap)
             }
             (_, None) => DomString::default().to_js(&cx.heap),
-            (_, key) => key
-                .and_then(|key| self.read(|it| DomString::from_utf8(text(&it.get(key)))))
-                .unwrap_or_default()
-                .to_js(&cx.heap),
+            (_, Some(key)) => self
+                .read(|it| Familiar::from_utf8(&it.get(key)))
+                .map_or_else(
+                    || DomString::default().to_js(&cx.heap),
+                    |it| it.to_js(&cx.heap),
+                ),
         }
     }
 
@@ -532,8 +534,9 @@ pub(crate) fn camel_case(name: &[u8]) -> Out {
 
 fn spellings(name: &[u8]) -> impl Iterator<Item = Out> {
     let dashed = bun_core::strings::contains_char(name, b'-').then(|| name.to_vec());
-    core::iter::once(camel_case(name))
-        .chain(name.strip_prefix(b"-").map(camel_case))
+    let camel = core::iter::once(camel_case(name)).chain(name.strip_prefix(b"-").map(camel_case));
+    camel
+        .filter(|_| !name.starts_with(b"-electron-"))
         .chain(dashed)
 }
 

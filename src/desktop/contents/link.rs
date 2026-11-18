@@ -1,5 +1,6 @@
 //! The answers to the messages of `bun_web::host`.
 
+use bun_web::csp::Delivery;
 use bun_web::host::{
     Answer, Browser, Connection, ConsoleAudience, DialogAnswer, DialogKind, Display, Environment,
     FileChoice, Inspected, Keystroke, Notice, Permission, Question, Rect as Area, Reply, Verdict,
@@ -11,13 +12,12 @@ use bun_web::url::Url;
 
 use super::inspection::News;
 use super::page::Page;
-use super::{
-    Contents, Kind, fields, frame, hooks, load, logs_to_stderr, object_in, or_undefined, worlds,
-};
+use super::{Contents, Kind, fields, frame, hooks, load, logs_to_stderr, object_in, or_undefined};
 
 use crate::generated_bindgen::electron::DesktopProcess;
 use crate::generated_bindgen::system::js_DesktopNotification;
 use crate::prelude::*;
+use crate::renderer::handle_of;
 use crate::webview::print;
 use crate::{app, dialog, modules, realm, screen, session, task, theme};
 
@@ -349,6 +349,13 @@ fn obey(page: &'static Page, question: Question) -> JsResult<Option<Answer>> {
         Question::PaintedInFrame { scale } => it.painted(scale, JSValue::UNDEFINED)?,
         Question::SetFullscreen { is_on } => set_fullscreen(page, is_on)?,
         Question::UnhandledKey { key } => handle_shortcut(page, &key)?,
+        Question::SecurityPolicyAdded { policy, is_own } if page.is_far() => {
+            let delivery = match is_own {
+                true => Delivery::Meta,
+                false => Delivery::InjectedMeta,
+            };
+            page.client.add_csp(policy.as_bytes(), delivery);
+        }
         Question::SetName { name } => page.rename(name),
         Question::SetReferrerPolicy { policy } => page
             .client
@@ -442,7 +449,7 @@ impl Native for OfWindow {
                 return if page.is_disposed() {
                     Ok(())
                 } else {
-                    page.contents().crash("crashed")
+                    page.contents().crash("crashed", 2)
                 };
             }
             Notice::FocusWindow {} if page.is_at_top() => return page.contents().focus_window(),
@@ -591,8 +598,7 @@ impl Native for OfWindow {
         match it {
             Inspected::Console { method, values } => {
                 let handles = array(&[])?;
-                (values.iter())
-                    .try_for_each(|it| handles.push(global(), worlds::handle_of(*it)))?;
+                (values.iter()).try_for_each(|it| handles.push(global(), handle_of(*it)))?;
                 with_elements(handles, |all| contents.notify(News::Console(method, all)))
             }
             Inspected::Exception {
@@ -606,7 +612,7 @@ impl Native for OfWindow {
                 url,
                 line,
                 column,
-                error: worlds::handle_of(error),
+                error: handle_of(error),
             }),
         }
     }
@@ -665,6 +671,64 @@ impl Native for OfWindow {
         };
         task::report(ask());
     }
+}
+
+struct OfPreload;
+
+impl Native for OfPreload {
+    fn hear(&self, owner: JSValue, notice: Notice) -> JsResult<()> {
+        match notice {
+            Notice::IpcSend {
+                channel,
+                message,
+                has_ports,
+            } => page_in(owner).got_message(&channel, message, has_ports),
+            Notice::IpcInvoke {
+                channel,
+                message,
+                ticket,
+            } => page_in(owner).got_invocation(&channel, &message, ticket),
+            _ => Ok(()),
+        }
+    }
+
+    fn answer(&self, owner: JSValue, question: Question) -> JsResult<Option<Answer>> {
+        let page = page_in(owner);
+        let number = |method| JsResult::Ok(invoke(page.owner().to_js(), method, &[])?.as_number());
+        Ok(Some(match question {
+            Question::ActivatedByPreload {} => {
+                (page.owner().context.last_input).set(bun_web::time::monotonic_now());
+                return Ok(None);
+            }
+            Question::PreloadFailed { file, error } => {
+                return page.preload_failed(file, error).map(|()| None);
+            }
+            Question::Relative { of, relation } => Answer::Relative(page.relative(of, relation)?),
+            Question::Zoom {} => Answer::Zoom([number("getZoomFactor")?, number("getZoomLevel")?]),
+            Question::SetZoom { value, is_level } => {
+                let method = if is_level {
+                    "setZoomLevel"
+                } else {
+                    "setZoomFactor"
+                };
+                let result = catch(invoke(page.owner().to_js(), method, &[js(value)?]))?;
+                Answer::SetZoom(result.err().map(message_of).transpose()?)
+            }
+            _ => return Ok(None),
+        }))
+    }
+
+    fn request(&self, owner: JSValue, question: Question, reply: Reply<Option<Answer>>) {
+        let Question::IpcSendSync { channel, message } = question else {
+            return reply(global(), None);
+        };
+        let reply = |it| reply(global(), Some(Answer::IpcSendSync(Some(it))));
+        task::report(page_in(owner).got_message_to_answer(&channel, &message, reply));
+    }
+}
+
+pub(super) fn of_preload(page: &Page) -> JSValue {
+    NativeHost::create(heap(), &OfPreload, page.to_js())
 }
 
 pub(super) fn of_window(page: &Page) -> JSValue {

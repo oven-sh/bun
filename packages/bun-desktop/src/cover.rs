@@ -429,7 +429,7 @@ impl Shown {
             let rect = rect_from([x, y, width, height].map(|it| it / self.scale));
             let shape = RoundedRect {
                 rect,
-                radii: Default::default(),
+                ..Default::default()
             };
             match *piece {
                 Piece::Color(color) => Item::Fill {
@@ -491,7 +491,7 @@ impl Echo {
             scene.items.push(Item::Fill {
                 shape: RoundedRect {
                     rect,
-                    radii: Default::default(),
+                    ..Default::default()
                 },
                 color: field.background,
             });
@@ -774,7 +774,7 @@ fn keep(rects: Vec<Rect>) -> Option<u32> {
         for &rect in &rects {
             scene.items.push(Item::PushClip(RoundedRect {
                 rect,
-                radii: Default::default(),
+                ..Default::default()
             }));
             scene
                 .items

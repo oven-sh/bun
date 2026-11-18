@@ -112,7 +112,14 @@ impl Document {
     }
 
     pub(crate) fn client_rects_of_range(&mut self, ends: [u32; 4]) -> Vec<[f64; 4]> {
-        let range = self.laid_out_range(ends);
+        let mut range = self.laid_out_range(ends);
+        let splits_pair = ends[..2] != ends[2..]
+            && self.tree[range[1].node].text().is_some_and(|it| {
+                it.get(range[1].offset as usize)
+                    .is_some_and(|it| *it >= 0xf0)
+            })
+            && self.for_script(range[1])[1] < ends[3];
+        range[1].offset += if splits_pair { 4 } else { 0 };
         self.range_rects(&range)
             .iter()
             .map(|it| it.to_array().map(f64::from))
@@ -433,6 +440,9 @@ impl Selection<'_> {
         let mut goes_on = |id: NodeId| {
             let cell = tree.cell(id);
             left = left.saturating_sub(1);
+            if self.limit == 1 {
+                tree.last_found_in.set(tree[id].parent);
+            }
             (cell.is_null() || found(cell)) && left > 0
         };
         if self.limit == 0 {
@@ -481,16 +491,36 @@ impl Selection<'_> {
     }
 
     pub(crate) fn first_below(&self, root: NodeId, within: Within) -> Cell {
-        let mut first = core::ptr::null();
-        self.each_below::<64>(root, within, |it| {
-            first = it;
-            false
-        });
+        let mut first = self.only_near_last(root);
+        if first.is_null() {
+            self.each_below::<64>(root, within, |it| {
+                first = it;
+                false
+            });
+        }
         self.matcher
             .tree
             .found()
             .note_first(self.sought, root, first);
         first
+    }
+
+    /// If no more than one element can match, where it is found makes no difference.
+    fn only_near_last(&self, root: NodeId) -> Cell {
+        let (tree, parent) = (self.matcher.tree, self.matcher.tree.last_found_in.get());
+        let is_below = || {
+            core::iter::successors(Some(parent), |it| Some(tree[*it].parent))
+                .take_while(|it| *it != 0)
+                .any(|it| it == root)
+        };
+        let found = (self.limit == 1 && is_below()).then(|| {
+            tree.element_children(parent).find(|it| {
+                tree[*it].keys & self.sought.required == self.sought.required && self.has(*it)
+            })
+        });
+        found
+            .flatten()
+            .map_or(core::ptr::null(), |it| tree.cell(it))
     }
 
     pub(crate) fn all_below(&self, root: NodeId, within: Within) -> Cells {

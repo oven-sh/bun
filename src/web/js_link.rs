@@ -99,7 +99,7 @@ unsafe extern "C" {
 }
 
 /// A page that fills the stack must not make the app fail.
-pub(crate) fn can_call_host(global: &JSGlobalObject) -> bool {
+pub fn can_call_host(global: &JSGlobalObject) -> bool {
     VirtualMachine::get().script_allowed() && Bun__DesktopRealm__hasStackLeft(global)
 }
 

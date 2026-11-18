@@ -257,13 +257,15 @@ impl NativeImage {
 
     pub(crate) fn crop(&self, cx: &mut JsScope<'_>, area: &CropArea) -> JsResult<JSValue> {
         let global = cx.global();
+        let area = [area.x, area.y, area.width, area.height];
+        Ok(self.cropped(global, area)?.to_js(global))
+    }
+
+    pub fn cropped(&self, global: &JSGlobalObject, area: [f64; 4]) -> JsResult<NativeImage> {
+        let [x, y, width, height] = area.map(|it| it as u32);
         let from = self.pixels(global)?.unwrap_or_default();
-        let (left, top) = (
-            (area.x as u32).min(from.width),
-            (area.y as u32).min(from.height),
-        );
-        let width = (area.width as u32).min(from.width - left);
-        let height = (area.height as u32).min(from.height - top);
+        let (left, top) = (x.min(from.width), y.min(from.height));
+        let (width, height) = (width.min(from.width - left), height.min(from.height - top));
         let mut pixels = Vec::with_capacity(width as usize * height as usize * 4);
         for y in top..top + height {
             let start = (y as usize * from.width as usize + left as usize) * 4;
@@ -274,7 +276,7 @@ impl NativeImage {
             height,
             pixels: pixels.into(),
         });
-        Ok(Self::new(Contents::Pixels(cropped), self.is_template.get()).to_js(global))
+        Ok(Self::new(Contents::Pixels(cropped), self.is_template.get()))
     }
 
     pub(crate) fn add_representation(&self) {}

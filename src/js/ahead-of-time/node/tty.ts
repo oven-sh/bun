@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/tty.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 c39eeb5fbc19d61ddda0f9817ea1324540b61c3b38ca0742e4fb2cea473a0576.
+// Written against that file with the SHA-256 0b318bbf3578d2443133f4b532918b30412244afd50d551d1ed49876f673a5f3.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 // Hardcoded module "node:tty"
 
@@ -44,7 +44,7 @@ declare global {
       [kRawModeState]?: Uint8Array;
       [kBlocks]?: boolean;
       [kUnrefed]?: boolean;
-      [kReader]?: any;
+      [kReader]?: import("node:stream/web").ReadableStreamDefaultReader<Uint8Array>;
       ref(): this;
       unref(): this;
       setRawMode(flag: boolean): this;
@@ -123,21 +123,23 @@ const prototypeOfReadStream = {
     // Add ref/unref methods to make tty.ReadStream behave like Node.js
     // where TTY streams have socket-like behavior
     Prototype.ref = function (this: $Node.TTYReadStream) {
-      this[kUnrefed] = false;
       // Get the underlying native stream source if available
       const source = this.$bunNativePtr;
       if (source?.updateRef) {
         source.updateRef(true);
+      } else if (this.isTTY) {
+        this[kUnrefed] = false;
       }
       return this;
     };
 
     Prototype.unref = function (this: $Node.TTYReadStream) {
-      this[kUnrefed] = true;
       // Get the underlying native stream source if available
       const source = this.$bunNativePtr;
       if (source?.updateRef) {
         source.updateRef(false);
+      } else if (this.isTTY) {
+        this[kUnrefed] = true;
       }
       return this;
     };

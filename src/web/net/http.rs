@@ -3,6 +3,7 @@
 use core::future::poll_fn;
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::task::{Context, Poll};
+use std::collections::VecDeque;
 use std::io::Write as _;
 use std::sync::Arc;
 
@@ -20,7 +21,7 @@ use bun_http::{
 use bun_ptr::RefPtr;
 use bun_threading::Guarded;
 
-use super::body::{Body, Budget, Chunk, Data, Read, Share, SharedBytes, Source};
+use super::body::{Body, Budget, Chunk, Data, Read, Share, SharedBytes, Source, prefault};
 use super::chain;
 use super::error::{NetError, Result};
 use super::response::{Answer, Protocol};
@@ -33,13 +34,14 @@ use crate::request::RequestBody;
 use crate::url::Url;
 
 const UPLOADED_PART: u64 = 64 << 10;
+const MAX_UNREAD: usize = 2 << 20;
 
 /// How much of a body has been sent.
 #[derive(Clone, Default)]
 pub struct Progress(Arc<Guarded<(Option<u64>, Waiter)>>);
 
 impl Progress {
-    fn report(&self, sent: u64) {
+    pub(crate) fn report(&self, sent: u64) {
         let mut progress = self.0.lock();
         progress.0 = Some(sent);
         progress.1.wake();
@@ -87,17 +89,51 @@ impl Connection<'_> {
 }
 
 #[derive(Default)]
+struct Unread {
+    parts: VecDeque<Vec<u8>>,
+    length: usize,
+}
+
+impl Unread {
+    /// Leaves it empty.
+    fn push(&mut self, part: &mut Vec<u8>) {
+        const SMALL: usize = 64 << 10;
+        self.length += part.len();
+        match self.parts.back_mut() {
+            _ if part.is_empty() => {}
+            Some(last) if last.len() + part.len() <= SMALL => last.append(part),
+            _ if part.len() < part.capacity() / 2 => {
+                self.parts.push_back(part.clone());
+                part.clear();
+            }
+            _ => self.parts.push_back(core::mem::take(part)),
+        }
+    }
+
+    fn pop(&mut self) -> Option<Vec<u8>> {
+        (self.parts.pop_front()).inspect(|it| self.length -= it.len())
+    }
+}
+
+#[derive(Default)]
 struct State {
     id: u32,
     head: Option<Answer>,
     certificate: Option<CertificateInfo>,
-    received: Vec<u8>,
+    received: Unread,
+    /// If the body is gathered as a whole.
     share: Option<Share>,
+    /// In the buffer of the HTTP thread.
+    gathered: usize,
+    prefaulted: usize,
     end: Option<Result<()>>,
     is_http2: bool,
     can_upload: bool,
     receiver: Waiter,
+    /// For room.
     uploader: Waiter,
+    /// For the end.
+    idle_uploader: Waiter,
 }
 
 /// Has nothing of a VM, so it may outlive the thread that made it.
@@ -174,10 +210,63 @@ impl Browser for Exchange {
         self.has_approved_certificate.swap(false, Ordering::Acquire)
     }
 
+    fn take_body(&self, decoded: &mut Vec<u8>, expected: Option<usize>) {
+        const AHEAD: usize = 8 << 20;
+        const HUGE_PAGE: usize = 2 << 20;
+        let mut state = self.state.lock();
+        if state.end.is_some() {
+            return *decoded = Vec::new();
+        }
+        if state.share.is_none() {
+            return state.received.push(decoded);
+        }
+        let earlier = core::mem::take(&mut state.received);
+        let length = earlier.length + decoded.len();
+        if !self.has_room(&mut state, length) {
+            return *decoded = Vec::new();
+        }
+        // In proportion to what has come, whatever the server has promised.
+        let expected = expected.map_or(length * 2, |it| {
+            (it.saturating_add(earlier.length)).min(length.saturating_mul(512))
+        });
+        let ahead = AHEAD.min(length).min(expected - length);
+        let (mut all, mut last) = (core::mem::take(decoded), Vec::new());
+        if earlier.length > 0 || all.capacity() < length + ahead {
+            (last, state.prefaulted) = (core::mem::take(&mut all), 0);
+            let grown = last.capacity() + last.capacity() / 2;
+            let mut sizes = [expected.max(grown), length + ahead].into_iter();
+            if !sizes.any(|it| all.try_reserve_exact(it).is_ok()) {
+                return self.end(&mut state, NetError::InsufficientResources);
+            }
+        }
+        let (start, mut end) = (state.prefaulted.max(all.len()), length + ahead);
+        if end < expected {
+            end = end.saturating_sub((all.as_ptr().addr() + end) % HUGE_PAGE);
+        }
+        if start < end && state.prefaulted < length + ahead / 2 {
+            state.prefaulted = end;
+            drop(state);
+            let written = all.len();
+            prefault(&mut all.spare_capacity_mut()[start - written..end - written]);
+        }
+        (earlier.parts.iter()).for_each(|it| all.extend_from_slice(it));
+        all.extend_from_slice(&last);
+        *decoded = all;
+    }
+
     fn informed(&self, _: &bun_http::Response) {}
 }
 
 impl Exchange {
+    /// For a body that is gathered, and has become that long.
+    fn has_room(&self, state: &mut State, length: usize) -> bool {
+        let more = length.saturating_sub(core::mem::replace(&mut state.gathered, length));
+        if let Some(Err(error)) = state.share.as_mut().map(|it| it.grow(more)) {
+            self.end(state, error);
+        }
+        state.end.is_none()
+    }
+
     fn on_result(
         this: *mut Exchange,
         finished: Option<FinishedRequest>,
@@ -205,28 +294,33 @@ impl Exchange {
             .take()
             .or_else(|| state.certificate.take());
         state.is_http2 |= result.is_http2;
-        state.can_upload |= result.can_stream;
-        if state.end.is_none() {
-            match result.fail {
-                Some(error) => state.end = Some(Err(error_of(error, result.connect_errno))),
-                None => {
-                    let before = state.received.len();
-                    result.body_into(&mut state.received);
-                    let more = state.received.len() - before;
-                    if let Some(Err(error)) = state.share.as_mut().map(|it| it.grow(more)) {
-                        state.received = Vec::new();
-                        exchange.end(&mut state, error);
-                    }
-                }
-            }
+        if result.can_stream && !core::mem::replace(&mut state.can_upload, true) {
+            state.uploader.wake();
+        }
+        if let Some(error) = result.fail.filter(|_| state.end.is_none()) {
+            state.end = Some(Err(error_of(error, result.connect_errno)));
         }
         if !result.has_more {
+            if state.end.is_none() {
+                let mut last = Vec::new();
+                result.body_into(&mut last);
+                state.received.push(&mut last);
+                let length = state.received.length;
+                if state.share.is_some() && !exchange.has_room(&mut state, length) {
+                    state.received = Unread::default();
+                }
+            }
             state.end.get_or_insert(Ok(()));
-        } else if state.received.len() >= signals::BODY_HIGH_WATER_MARK {
+        } else if state.received.length >= MAX_UNREAD {
             exchange.signals.pause_receive();
         }
-        state.receiver.wake();
-        state.uploader.wake();
+        if state.end.is_some() {
+            state.uploader.wake();
+            state.idle_uploader.wake();
+        }
+        if state.end.is_some() || state.share.is_none() {
+            state.receiver.wake();
+        }
         drop(state);
         if !result.has_more {
             // SAFETY: there is no result after this one.
@@ -266,6 +360,7 @@ impl Exchange {
         HTTPThread::schedule_shutdown(state.id);
         state.receiver.wake();
         state.uploader.wake();
+        state.idle_uploader.wake();
     }
 }
 
@@ -274,11 +369,14 @@ struct Download(Arc<Exchange>);
 impl Source for Download {
     fn poll_read(&mut self, cx: &mut Context<'_>) -> Poll<Read> {
         let mut state = self.0.state.lock();
-        if !state.received.is_empty() {
-            if self.0.signals.unpause_receive() {
+        if state.share.is_none() || state.end.is_some() {
+            let part = state.received.pop();
+            if state.received.length <= MAX_UNREAD / 2 && self.0.signals.unpause_receive() {
                 HTTPThread::schedule_receive_resume(state.id);
             }
-            return Poll::Ready(Ok(Some(Chunk::Owned(core::mem::take(&mut state.received)))));
+            if part.is_some() {
+                return Poll::Ready(Ok(part.map(Chunk::Owned)));
+            }
         }
         match state.end {
             Some(end) => Poll::Ready(end.map(|()| None)),
@@ -286,11 +384,23 @@ impl Source for Download {
         }
     }
 
-    fn expect_read_to_end(&mut self, budget: &'static Budget) {
-        self.0.state.lock().share = Some(Share::of(budget));
-        if self.0.signals.receive_all() {
-            HTTPThread::schedule_receive_resume(self.0.state.lock().id);
+    fn expect_read_to_end(&mut self, budget: &'static Budget, read: &mut Vec<u8>) {
+        let mut state = self.0.state.lock();
+        if state.share.is_some() {
+            return;
         }
+        state.share = Some(Share::of(budget));
+        if !read.is_empty() {
+            state.received.length += read.len();
+            state.received.parts.push_front(core::mem::take(read));
+        }
+        if self.0.signals.receive_all() {
+            HTTPThread::schedule_receive_resume(state.id);
+        }
+    }
+
+    fn gathered(&self) -> u64 {
+        self.0.state.lock().gathered as u64
     }
 }
 
@@ -331,35 +441,29 @@ impl Upload {
             if state.end.is_some() {
                 Poll::Ready(())
             } else {
-                state.uploader.pending(cx)
+                state.idle_uploader.pending(cx)
             }
         })
         .await;
     }
 
     async fn run(self, mut body: Body, observer: Option<Progress>) -> Option<()> {
-        // A server need not wait for the body, and must not hide that there is none.
-        let exec::Either::First(start) = exec::race(body.peek(1), self.ended()).await else {
-            return None;
-        };
-        start
-            .inspect_err(|error| self.exchange.abort(*error))
-            .ok()?;
         let mut sent = 0;
         loop {
+            // A server need not wait for the body, and must not hide that there is none.
+            let exec::Either::First(read) = exec::race(body.read(), self.ended()).await else {
+                return None;
+            };
+            let chunk = read.inspect_err(|error| self.exchange.abort(*error)).ok()?;
             self.drained().await?;
             if let Some(observer) = &observer {
                 observer.report(sent);
             }
-            let exec::Either::First(read) = exec::race(body.read(), self.ended()).await else {
-                return None;
-            };
             let (id, is_http2) = {
                 let state = self.exchange.state.lock();
                 (state.id, state.is_http2)
             };
             let is_chunked = !is_http2 && !self.is_upgraded && self.length.is_none();
-            let chunk = read.inspect_err(|error| self.exchange.abort(*error)).ok()?;
             sent += chunk.as_ref().map_or(0, |it| it.len() as u64);
             if self.length.is_some_and(|it| {
                 if chunk.is_some() {
@@ -371,16 +475,24 @@ impl Upload {
                 self.exchange.abort(NetError::UploadFileChanged);
                 return None;
             }
-            let bytes = chunk.as_deref().unwrap_or_default();
-            let buffered = &mut self.buffer.lock().buffer.list;
-            if is_chunked {
-                let _ = write!(buffered, "{:x}\r\n", bytes.len());
+            let is_last = chunk.is_none();
+            let buffer = &mut self.buffer.lock().buffer;
+            match chunk {
+                Some(Chunk::Owned(bytes)) if !is_chunked => {
+                    (buffer.list, buffer.cursor) = (bytes, 0)
+                }
+                chunk => {
+                    let bytes = chunk.as_deref().unwrap_or_default();
+                    if is_chunked {
+                        let _ = write!(buffer.list, "{:x}\r\n", bytes.len());
+                    }
+                    buffer.list.extend_from_slice(bytes);
+                    if is_chunked {
+                        buffer.list.extend_from_slice(b"\r\n");
+                    }
+                }
             }
-            buffered.extend_from_slice(bytes);
-            if is_chunked {
-                buffered.extend_from_slice(b"\r\n");
-            }
-            if chunk.is_none() {
+            if is_last {
                 HTTPThread::schedule_request_write(id, WriteMessageType::End);
                 return Some(());
             }

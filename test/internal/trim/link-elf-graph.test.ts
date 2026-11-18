@@ -6,6 +6,7 @@ import { ArchiveCache } from "../../../scripts/build/trim/archive.ts";
 import { openElf } from "../../../scripts/build/trim/elf-file.ts";
 import { readElfGraph } from "../../../scripts/build/trim/elf-graph.ts";
 import { readElfObject } from "../../../scripts/build/trim/elf-objects.ts";
+import { findEdge, madeByLinker } from "../../../scripts/build/trim/graph.ts";
 import {
   canLink,
   compileFeatureCodeOnce,
@@ -50,6 +51,41 @@ test.skipIf(!canLink)("the symbols with which AArch64 marks code and data name n
   if (typeof read === "string") throw new Error(`marked.o was not read: ${read}`);
   expect(read.named).toContainEqual(["marked", ".text.marked"]);
   expect(read.named.filter(([name]) => name.startsWith("$"))).toEqual([]);
+});
+
+test.skipIf(!canLink).each([
+  ["short", "0x8180000"],
+  ["long", "0x20000000"],
+])("a %s thunk of AArch64 is reached from the code that branches to it", async (_, farAddress) => {
+  const functionIn = (section: string, name: string, body: string) =>
+    `${section}\n.globl ${name}\n.type ${name},@function\n${name}:\n${body}\n`;
+  const near = (name: string, body: string) => functionIn(`.section .text.${name},"ax",@progbits`, name, body);
+  using dir = tempDir("trim-elf-thunks", {
+    "thunks.s": [
+      near("_start", "bl calls\nbl jumps\nbl room\nbl of_two\nret"),
+      near("calls", "bl of_one\nbl of_two\nret"),
+      near("jumps", "b of_a_jump"),
+      near("room", "ret\n.zero 0x100000"),
+      ...["of_one", "of_two", "of_a_jump"].map(name => functionIn(`.section .far,"awx",@progbits`, name, "ret")),
+    ].join(""),
+  });
+  const folder = String(dir);
+  const target = "--target=aarch64-unknown-linux-gnu";
+  if ((await run([tools.clang!, target, "-c", "thunks.s", "-o", "thunks.o"], folder)).exitCode !== 0)
+    return skipNotice(testFile, "clang has no AArch64 target: the cases with thunks do not run");
+  const places = ["--section-start=.text=0x100000", `--section-start=.far=${farAddress}`, "--image-base=0"];
+  const [object, executable, map] = ["thunks.o", "thunks", "thunks.map"].map(name => join(folder, name));
+  const linked = await run([tools["ld.lld"]!, object, ...places, `-Map=${map}`, "-o", executable], folder);
+  expect(linked).toMatchObject({ exitCode: 0 });
+
+  const { graph, failures } = readElfGraph(executable, map, "");
+  expect(failures).toEqual([]);
+  const nodes = Array.from({ length: graph.count }, (_, node) => node);
+  const thunks = nodes.filter(node => graph.object[node] === madeByLinker && graph.output[node] === ".text");
+  const callersOf = (thunk: number) =>
+    nodes.filter(node => findEdge(graph, node, thunk) >= 0).map(node => graph.section[node]);
+  expect(thunks.map(callersOf).sort()).toEqual([[".text._start", ".text.calls"], [".text.calls"], [".text.jumps"]]);
+  expect(thunks.map(thunk => graph.isRoot[thunk])).toEqual([0, 0, 0]);
 });
 
 const symbolBytes = 24;

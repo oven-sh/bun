@@ -136,9 +136,9 @@ impl IpcMain {
 #[derive(Clone, Copy)]
 pub(crate) struct Sender {
     pub(crate) contents: JSValue,
-    pub(crate) frame: JSValue,
-    pub(crate) frame_id: u32,
-    pub(crate) process_id: u32,
+    frame: JSValue,
+    frame_id: u32,
+    process_id: u32,
 }
 
 #[repr(C)]
@@ -231,12 +231,21 @@ impl Sender {
             get(frame, "routingId")?.as_number() as u32,
             get(frame, "processId")?.as_number() as u32,
         );
-        Ok(Sender {
+        Ok(Sender::with_ids(contents, frame, frame_id, process_id))
+    }
+
+    pub(crate) fn with_ids(
+        contents: JSValue,
+        frame: JSValue,
+        frame_id: u32,
+        process_id: u32,
+    ) -> Sender {
+        Sender {
             contents,
             frame,
             frame_id,
             process_id,
-        })
+        }
     }
 
     pub(crate) fn event(self, can_reply: bool) -> &'static IpcEvent {

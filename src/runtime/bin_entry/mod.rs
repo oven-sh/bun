@@ -171,7 +171,7 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
         Desktop,
         ReturnDefault,
         {},
-        crate::desktop::main_thread::install_update_if_asked,
+        crate::desktop::main_thread::recognize_internal_modes,
         // SAFETY: fn contract.
         unsafe { core::slice::from_raw_parts(argv, argc as usize) }
     );
@@ -192,6 +192,9 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
 
     // 1. Crash handler first so anything below gets a usable trace.
     bun_crash_handler::init();
+    if bun_standalone_graph::Graph::is_desktop_program() {
+        bun_crash_handler::never_report();
+    }
 
     use_mimalloc_in_dependencies();
 

@@ -9,7 +9,7 @@ use bun_jsc::{JSFunction, JSPromise, JSValue, Weak};
 
 use super::{Animation, AnimationTimeline, percent};
 use crate::animation::Control;
-use crate::api::core::{Atom, Doc, DocFlags, Edge, Element, List, Node, global_of};
+use crate::api::core::{Atom, Doc, DocFlags, Edge, Element, List, Node, Rooted, global_of};
 use crate::api::events::{Event, EventInit, EventType, dispatch};
 use crate::api::style_events::*;
 use crate::engine_event::{CssEvent, EngineEvent, ForNode, TimeEvent};
@@ -321,16 +321,42 @@ pub(crate) fn take_events_after_removing<'a>(
     doc: &'a Doc,
     removed: Option<&'a Node>,
 ) {
+    take_events_of(cx, doc, &|id| removed?.node_within(id));
+}
+
+pub(crate) fn take_events_after_removing_all<'a>(
+    cx: &mut JsScope<'a>,
+    doc: &'a Doc,
+    removed: &Rooted<'a>,
+) {
+    let by_id: crate::name::Map<_, _> = removed.iter().map(|it| (it.id(), it)).collect();
+    let root_of = |id| {
+        doc.read(|tree, _| {
+            core::iter::successors(Some(id), |it| {
+                Some(if tree[*it].parent != 0 {
+                    tree[*it].parent
+                } else {
+                    tree.host_of(*it)
+                })
+                .filter(|it| *it != 0)
+            })
+            .last()
+        })
+    };
+    take_events_of(cx, doc, &|id| by_id.get(&root_of(id)?)?.node_within(id));
+}
+
+fn take_events_of<'a>(
+    cx: &mut JsScope<'a>,
+    doc: &'a Doc,
+    removed: &dyn Fn(crate::tree::NodeId) -> Option<&'a Node>,
+) {
     let mut taken = doc.engine(|engine, _| engine.take_events());
     if taken.is_empty() {
         return;
     }
     let all = DocumentAnimations::of(&cx.heap, doc);
-    let node = |id| {
-        removed
-            .and_then(|it| it.node_within(id))
-            .or_else(|| doc.rendered_node(id))
-    };
+    let node = |id| removed(id).or_else(|| doc.rendered_node(id));
     bun_collections::index_sort::stable_partition(&mut taken, |it| {
         matches!(it, EngineEvent::Node(..))
     });

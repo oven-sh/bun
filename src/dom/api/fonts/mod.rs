@@ -163,38 +163,43 @@ impl FontFace {
             .map(|it| unsafe { FontFaceSet::from_js_unchecked(it) })
     }
 
-    /// Tells the renderer which of the pages have it. False if it is not a font.
-    fn publish<'a>(&'a self, cx: &mut JsScope<'a>) -> bool {
+    /// Tells the renderer which of the pages have it. Fails if it is not a font.
+    fn publish<'a>(
+        &'a self,
+        cx: &mut JsScope<'a>,
+    ) -> core::result::Result<(), bun_ui::protocol::Text> {
         const NOWHERE: u32 = u32::MAX;
         let (Some(data), face) = (self.data.borrow().clone(), Rc::clone(&self.face.borrow()))
         else {
-            return false;
+            return Ok(());
         };
         if self.sets().is_empty() {
-            return face
-                .register(&data, NOWHERE, 0)
-                .map(font_face::unregister)
-                .is_ok();
+            return face.register(&data, NOWHERE, 0).map(font_face::unregister);
         }
         self.each_set()
             .enumerate()
             .filter(|it| it.1.is_in_use())
-            .all(|(index, set)| {
-                let Ok(id) = face.register(&data, set.scope(), self.order.get()) else {
-                    return false;
-                };
+            .try_for_each(|(index, set)| {
+                let id = face.register(&data, set.scope(), self.order.get())?;
                 self.registered.borrow_mut()[index]
                     .replace(id)
                     .into_iter()
                     .for_each(font_face::unregister);
                 set.fonts_changed(cx);
-                true
+                Ok(())
             })
+    }
+
+    /// An installed font may be gone by now. The pages that have the face keep it as it was.
+    fn publish_again<'a>(&'a self, cx: &mut JsScope<'a>) {
+        if self.publish(cx).is_err() {
+            self.data.take();
+        }
     }
 
     fn accept<'a>(&'a self, cx: &mut JsScope<'a>, data: Data) -> bool {
         self.data.replace(Some(data));
-        let is_font = self.publish(cx);
+        let is_font = self.publish(cx).is_ok();
         if !is_font || self.is_css_connected {
             self.data.take();
         }
@@ -297,7 +302,7 @@ impl FontDescriptor {
         Rc::make_mut(&mut self.face.borrow_mut()).set(descriptor, &parsed);
         FontFace::from_js(&cx.heap, self.to_js())
             .into_iter()
-            .for_each(|it| _ = it.publish(cx));
+            .for_each(|it| it.publish_again(cx));
         Ok(())
     }
 }

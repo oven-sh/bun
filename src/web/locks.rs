@@ -14,24 +14,30 @@ keywords! {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Answer {
-    Granted,
-    Unavailable,
+crate::wire! {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum Answer {
+        Granted,
+        Unavailable,
+    }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Priority {
-    Waits,
-    IfAvailable,
-    Steals,
+crate::wire! {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum Priority {
+        Waits,
+        IfAvailable,
+        Steals,
+    }
 }
 
-#[derive(Clone)]
-pub struct LockInfo {
-    pub client: Bytes,
-    pub name: Box<[u16]>,
-    pub mode: LockMode,
+crate::wire! {
+    #[derive(Clone)]
+    pub struct LockInfo {
+        pub client: Bytes,
+        pub name: Box<[u16]>,
+        pub mode: LockMode,
+    }
 }
 
 struct Lock {

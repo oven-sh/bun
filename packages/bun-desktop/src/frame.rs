@@ -315,6 +315,7 @@ pub fn build(state: &WindowState, geometry: &Geometry) -> (Scene, Buttons) {
             shape: RoundedRect {
                 rect,
                 radii: [[radius; 2]; 4],
+                smoothing: 0.,
             },
             color,
         });

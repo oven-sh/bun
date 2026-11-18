@@ -4,7 +4,7 @@ use core::ops::Range;
 
 use smallvec::SmallVec;
 
-use crate::abi::{Face, Glyph, Item, LineStyle, NO_GLYPH, Rect, RoundedRect, Span};
+use crate::abi::{Face, Glyph, Item, LineStyle, NO_GLYPH, Rect, Span};
 use crate::background::Frame;
 use crate::boxes::{BoxId, Kind};
 use crate::editing::Mark;
@@ -1510,10 +1510,7 @@ impl<'a> Painter<'a> {
                             .take_while(|x| *x < right - 0.5);
                         for x in dots.take_while(|x| x + 3.0 <= it.rect.x + it.rect.width) {
                             painter.fill(
-                                RoundedRect {
-                                    rect: Rect::new([x, y, 3.0, 3.0]),
-                                    radii: [[1.5; 2]; 4],
-                                },
+                                crate::paint::fit(Rect::new([x, y, 3.0, 3.0]), [[1.5; 2]; 4]),
                                 0xfb2d_1ddb,
                                 space,
                             );

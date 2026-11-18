@@ -6,6 +6,7 @@ pub(crate) mod collections;
 pub(crate) mod color_picker;
 pub(crate) mod date_fields;
 mod date_picker;
+pub(crate) mod dormant;
 pub(crate) mod entry;
 pub(crate) mod form;
 pub(crate) mod form_data;
@@ -49,12 +50,14 @@ pub(crate) struct Control {
     /// For `:user-valid`.
     was_edited: Cell<bool>,
     /// It is in `Ui::dirty_controls`.
-    is_stale: Cell<bool>,
+    /// The address of the `Ui` that has it among its dirty controls, or 0.
+    stale_in: Cell<usize>,
 }
 
 fn control(element: &Element) -> &Control {
+    element.unset(NodeFlags::DORMANT);
     match element.kind().only_tag() {
-        atom!("input") => &element.extra::<input::InputState>().text.control,
+        atom!("input") => &Input::new(element).state.text.control,
         atom!("textarea") => &element.extra::<text::TextState>().control,
         _ => element.extra(),
     }
@@ -110,6 +113,15 @@ fn set_part_style<'a>(cx: &mut Cx<'a>, part: &'a Element, style: &str) {
     }
 }
 
+pub(crate) fn before_attribute_changes(input: &Element) {
+    Input::new(input);
+}
+
+fn parts_of(host: &Element) -> Option<&ShadowRoot> {
+    TextControl::of(host).map(TextControl::editor);
+    host.shadow_root()
+}
+
 fn pop_up<'a>(host: &'a Element, pseudo: &str) -> Option<&'a Element> {
     host.shadow_root()?
         .last_child()?
@@ -120,7 +132,7 @@ fn pop_up<'a>(host: &'a Element, pseudo: &str) -> Option<&'a Element> {
 fn open_pop_up<'a>(cx: &mut Cx<'a>, host: &'a Element, pseudo: &str) -> Option<&'a Element> {
     let (ui, root) = (
         Ui::of(host.doc()).filter(|_| host.is_connected())?,
-        host.shadow_root()?,
+        parts_of(host)?,
     );
     close_picker(cx, ui);
     let made = div(cx, host, root, pseudo);
@@ -146,10 +158,12 @@ fn remove_children<'a>(cx: &mut Cx<'a>, parent: &'a Node) {
 
 /// Its looks and its validity are brought up to date before the engine is next asked something.
 fn dirty<'a>(cx: &mut Cx<'a>, element: &'a Element) {
+    element.unset(NodeFlags::DORMANT);
     let Some(ui) = Ui::of(element.doc()).filter(|_| element.is_connected()) else {
         return;
     };
-    if !control(element).is_stale.replace(true) {
+    let address = core::ptr::from_ref(ui).addr();
+    if control(element).stale_in.replace(address) != address {
         let mut list = ui.dirty_controls();
         list.push(&cx.heap, element);
         ui.set_dirty_controls(list);
@@ -185,7 +199,7 @@ pub(crate) fn normalize_newlines(text: &DomString) -> DomString {
     out.finish()
 }
 
-fn without_newlines(text: &DomString) -> DomString {
+pub(crate) fn without_newlines(text: &DomString) -> DomString {
     if !text.has_newline() {
         return text.clone();
     }
@@ -224,9 +238,12 @@ pub(crate) fn associate_by_parser(
     let follows_attribute = control.has_attr(atom!("form")) && !control.is_html(atom!("img"));
     let is_associated = control.kind() != Kind::HtmlElement && !control.has(NodeFlags::CUSTOM);
     if is_associated && !follows_attribute && parent.closest_html(atom!("form")) != Some(form) {
+        control.unset(NodeFlags::DORMANT);
         control.arena().has_remote_owners.set(true);
         control.ties_changed();
         control.set_edge(heap, Edge::ParserForm, form.to_js());
+        form.edge_list(heap, Edge::ParserControls)
+            .push(heap, control.to_js());
     }
 }
 
@@ -343,17 +360,53 @@ fn controls_of(form: &Element) -> impl Iterator<Item = &Element> {
     form.unseen_collection(15, &CONTROLS).elements()
 }
 
-fn find_controls_of(form: &Element) -> impl Iterator<Item = &Element> {
-    let (anywhere, inside) = if may_have_remote_owners(form) {
-        (Some(form.referrers()), None)
-    } else {
-        (None, Some(form.elements_with_objects()))
-    };
-    anywhere
+fn find_controls_of(form: &Element) -> Vec<&Element> {
+    let (root, belongs) = (form.root(), |it: &&Element| {
+        is_listed(it) && form_owner(it) == Some(form)
+    });
+    if root
+        .as_shadow_root()
+        .is_some_and(|it| it.reference_target().is_some())
+    {
+        return form.referrers().filter(belongs).collect();
+    }
+    let id = form
+        .attr(atom!("id"))
+        .map(|it| Atom::from_string(&it))
+        .filter(|it| form.is_connected() && root.element_by_id(it) == Some(form));
+    let mut outside = id
+        .map(|it| with_form_attribute(root, &it).into_vec())
+        .unwrap_or_default();
+    let in_order = outside.len();
+    let by_parser = form
+        .try_edge_list(Edge::ParserControls)
         .into_iter()
-        .flatten()
-        .chain(inside.into_iter().flatten())
-        .filter(move |it| is_listed(it) && form_owner(it) == Some(form))
+        .flat_map(List::nodes)
+        .filter_map(Node::as_element);
+    outside.extend(
+        by_parser.filter(|it| it.edge_node(Edge::ParserForm) == Some(form) && it.root() == root),
+    );
+    let needs_order = outside.len() > in_order;
+    outside.retain(|it| belongs(it) && !form.contains(it));
+    if needs_order {
+        outside.order_by(|a, b| a.compare_order(b));
+        outside.dedup();
+    }
+    let at = outside.partition_point(|it| it.compare_order(form).is_lt());
+    outside.splice(at..at, form.elements_with_objects().filter(belongs));
+    outside
+}
+
+fn with_form_attribute<'a>(scope: &'a Node, id: &Atom) -> SmallVec<[&'a Element; 2]> {
+    static REMOTE: Test = Test {
+        bare: Bare::None,
+        reads: Reads::Ties,
+        matches: |it| is_listed(it) && it.has_attr(atom!("form")),
+        ..Test::ALL
+    };
+    scope
+        .unseen_collection(17, &REMOTE)
+        .all_named(id, |it| [it.attr(atom!("form")), None])
 }
 
 /// https://html.spec.whatwg.org/#labeled-control
@@ -368,7 +421,10 @@ pub(crate) fn labeled_control(label: &Element) -> Option<&Element> {
             .root()
             .element_by_id(&Atom::from_string(&id))
             .filter(|it| control(it)),
-        None => label.elements_with_objects().find(|it| control(it)),
+        None => {
+            dormant::make_objects(label).take(1).for_each(drop);
+            label.elements_with_objects().find(|it| control(it))
+        }
     };
     found?.reference_target()
 }
@@ -489,13 +545,20 @@ fn may_have_remote_owners(node: &Node) -> bool {
 }
 
 pub(crate) fn flush<'a>(cx: &mut Cx<'a>, doc: &'a Doc) {
-    let Some(ui) = Ui::of(doc).filter(|it| !it.dirty_controls().is_empty()) else {
+    let Some(ui) = Ui::of(doc) else { return };
+    ui.radios.dirty_changed_groups(cx, doc);
+    if ui.dirty_controls().is_empty() {
         return;
-    };
+    }
     let dirty = ui.dirty_controls();
     ui.set_dirty_controls(Refs::default());
     ui.scope_of_dirty_groups.set(0);
-    dirty.iter().for_each(|it| control(it).is_stale.set(false));
+    let address = core::ptr::from_ref(ui).addr();
+    dirty.iter().for_each(|it| {
+        control(it)
+            .stale_in
+            .update(|it| if it == address { 0 } else { it })
+    });
     let still_here = Refs::collect(
         &cx.heap,
         dirty
@@ -527,33 +590,40 @@ fn inserted<'a>(cx: &mut Cx<'a>, element: &'a Element, _: bool) {
 fn attribute_changed<'a>(cx: &mut Cx<'a>, element: &'a Element, change: &AttrChange<'_>) {
     if change.is(atom!("form")) {
         element.clear_edge(&cx.heap, Edge::ParserForm);
-        dirty_forms(cx, element.root());
+        owner_changed(cx, element, element.root());
     }
     dirty(cx, element);
 }
 
-fn dirty_forms<'a>(cx: &mut Cx<'a>, scope: &'a Node) {
-    scope
-        .objects_with_tag(atom!("form"))
-        .filter(|it| it.is_html(atom!("form")))
-        .for_each(|it| dirty(cx, it));
+fn owner_changed<'a>(cx: &mut Cx<'a>, control: &'a Element, scope: &'a Node) {
+    if control.has_state(State::INVALID) {
+        dirty_invalid_groups(cx, scope);
+        form_owner(control).into_iter().for_each(|it| dirty(cx, it));
+    }
+    Input::of(control)
+        .into_iter()
+        .for_each(|it| it.group_changed(cx, scope));
+}
+
+fn dirty_invalid_groups<'a>(cx: &mut Cx<'a>, scope: &'a Node) {
+    let address = core::ptr::from_ref(scope).addr();
+    if Ui::of(scope.doc()).is_some_and(|it| it.scope_of_dirty_groups.replace(address) != address) {
+        let groups = [atom!("form"), atom!("fieldset")]
+            .into_iter()
+            .flat_map(|it| scope.objects_with_tag(it));
+        groups
+            .filter(|it| is_group(it) && it.has_state(State::INVALID))
+            .for_each(|it| dirty(cx, it));
+    }
 }
 
 /// Another element goes by it.
 pub(crate) fn id_changed<'a>(cx: &mut Cx<'a>, scope: &'a Node, id: &DomString) {
-    static REMOTE: Test = Test {
-        bare: Bare::None,
-        reads: Reads::Ties,
-        matches: |it| is_listed(it) && it.has_attr(atom!("form")),
-        ..Test::ALL
-    };
-    let found = scope
-        .unseen_collection(17, &REMOTE)
-        .all_named(&Atom::from_string(id), |it| [it.attr(atom!("form")), None]);
-    let controls = Refs::collect(&cx.heap, found);
-    if !controls.is_empty() {
-        controls.iter().for_each(|it| dirty(cx, it));
-        dirty_forms(cx, scope);
+    for control in
+        Refs::collect(&cx.heap, with_form_attribute(scope, &Atom::from_string(id))).iter()
+    {
+        dirty(cx, control);
+        owner_changed(cx, control, scope);
     }
 }
 
@@ -565,17 +635,8 @@ fn removed<'a>(cx: &mut Cx<'a>, element: &'a Element, scope: &'a Node, _: bool) 
         element.clear_edge(&cx.heap, Edge::ParserForm);
         element.ties_changed();
     }
-    let address = core::ptr::from_ref(scope).addr();
-    if element.has_state(State::INVALID)
-        && Ui::of(scope.doc())
-            .is_some_and(|it| it.scope_of_dirty_groups.replace(address) != address)
-    {
-        let groups = [atom!("form"), atom!("fieldset")]
-            .into_iter()
-            .flat_map(|it| scope.objects_with_tag(it));
-        groups
-            .filter(|it| is_group(it) && it.has_state(State::INVALID))
-            .for_each(|it| dirty(cx, it));
+    if element.has_state(State::INVALID) {
+        dirty_invalid_groups(cx, scope);
     }
 }
 

@@ -15,17 +15,17 @@ use bun_alloc::ArenaVecExt as _; // bumpalo::Bump re-export (CSS is an AST crate
 /// A value for the [box-shadow](https://drafts.csswg.org/css-backgrounds/#box-shadow) property.
 pub struct BoxShadow {
     /// The color of the box shadow.
-    pub color: CssColor,
+    pub(crate) color: CssColor,
     /// The x offset of the shadow.
-    pub x_offset: Length,
+    pub(crate) x_offset: Length,
     /// The y offset of the shadow.
-    pub y_offset: Length,
+    pub(crate) y_offset: Length,
     /// The blur radius of the shadow.
-    pub blur: Length,
+    pub(crate) blur: Length,
     /// The spread distance of the shadow.
-    pub spread: Length,
+    pub(crate) spread: Length,
     /// Whether the shadow is inset within the box.
-    pub inset: bool,
+    pub(crate) inset: bool,
 }
 
 // `SmallList::{deep_clone,eql,is_compatible}` are bounded on the
@@ -52,7 +52,7 @@ impl css::generic::IsCompatible for BoxShadow {
 }
 
 impl BoxShadow {
-    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, Self> {
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         let mut color: Option<CssColor> = None;
         struct Lengths {
             x: Length,
@@ -118,7 +118,7 @@ impl BoxShadow {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if self.inset {
             dest.write_str("inset ")?;
         }
@@ -178,12 +178,12 @@ impl BoxShadow {
 
 #[derive(Default)]
 pub struct BoxShadowHandler {
-    pub box_shadows: Option<(SmallList<BoxShadow, 1>, VendorPrefix)>,
-    pub flushed: bool,
+    pub(crate) box_shadows: Option<(SmallList<BoxShadow, 1>, VendorPrefix)>,
+    pub(crate) flushed: bool,
 }
 
 impl BoxShadowHandler {
-    pub fn handle_property<'bump>(
+    pub(crate) fn handle_property<'bump>(
         &mut self,
         property: &Property<'bump>,
         dest: &mut css::DeclarationList<'bump>,
@@ -239,7 +239,7 @@ impl BoxShadowHandler {
         true
     }
 
-    pub fn finalize(
+    pub(crate) fn finalize(
         &mut self,
         dest: &mut css::DeclarationList,
         context: &mut css::PropertyHandlerContext,

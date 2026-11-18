@@ -5,18 +5,22 @@ use bun_sha_hmac::sha::evp;
 
 use crate::Bytes;
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Algorithm {
-    Sha256,
-    Sha384,
-    Sha512,
+crate::wire! {
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    pub enum Algorithm {
+        Sha256,
+        Sha384,
+        Sha512,
+    }
 }
 
-#[derive(Clone, PartialEq, Eq)]
-pub struct Hash {
-    algorithm: Algorithm,
-    /// In base64url, without padding.
-    value: Bytes,
+crate::wire! {
+    #[derive(Clone, PartialEq, Eq)]
+    pub struct Hash {
+        algorithm: Algorithm,
+        /// In base64url, without padding.
+        value: Bytes,
+    }
 }
 
 pub(crate) fn is_base64_value(text: &[u8]) -> bool {

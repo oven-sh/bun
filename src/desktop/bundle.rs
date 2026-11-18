@@ -184,13 +184,12 @@ pub(crate) fn requirement(bundle: &str) -> Option<String> {
     (!contains(requirement, "cdhash H\"")).then(|| requirement.to_owned())
 }
 
-fn value(bundle: &Dir, key: &str) -> String {
+fn value(bundle: &Dir, key: &str) -> Option<String> {
     let how = O::RDONLY | O::NONBLOCK | O::CLOEXEC;
-    let Ok(list) = File::openat(bundle.fd(), b"Contents/Info.plist", how, 0) else {
-        return String::new();
-    };
+    let list = File::openat(bundle.fd(), b"Contents/Info.plist", how, 0).ok()?;
     let command = ["plutil", "-extract", key, "raw", "-o", "-", "-"];
-    run_with(PosixStdio::Pipe(list.fd()), &command, Ok(())).unwrap_or_default()
+    let said = run_with(PosixStdio::Pipe(list.fd()), &command, Ok(()));
+    said.ok().filter(|it| !it.is_empty())
 }
 
 /// As `NSNumericSearch` has it.
@@ -225,11 +224,15 @@ fn check(new: &Dir, at: &str, bundle: &Dir, requirement: &str) -> Result<(), Ref
         return Err(Refusal::Missing);
     }
     let [new_id, id] = [new, bundle].map(|it| value(it, "CFBundleIdentifier"));
-    if id.is_empty() || new_id != id {
+    if id.is_none() || new_id != id {
         return Err(Refusal::Missing);
     }
-    if value(bundle, "ElectronSquirrelPreventDowngrades") == "true" {
-        let [new, old] = [new, bundle].map(|it| value(it, "CFBundleShortVersionString"));
+    if value(bundle, "ElectronSquirrelPreventDowngrades").as_deref() == Some("true") {
+        let [Some(new), Some(old)] =
+            [new, bundle].map(|it| value(it, "CFBundleShortVersionString"))
+        else {
+            return Err(Refusal::Older);
+        };
         let is_number = |it: &str| !it.is_empty() && it.bytes().all(|it| it.is_ascii_digit());
         let is_plain = |it| split(it, ".").count() == 3 && split(it, ".").all(is_number);
         if !is_plain(&new) || !is_plain(&old) || is_newer(&old, &new) {

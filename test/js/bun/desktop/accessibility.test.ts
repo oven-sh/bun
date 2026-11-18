@@ -35,6 +35,29 @@ async function run(main: string, env = {}) {
 const tree = (html: string) => run(`await open(${JSON.stringify(html)}); print(ask("tree root"));`);
 
 describe.skipIf(!hasLibrary).concurrent("what a screen reader is told", () => {
+  test("a text that is laid out in parts is read as a whole", async () => {
+    expect(
+      await run(`
+        await open("<style>.a::first-letter { text-transform: uppercase }</style><p class=a>just now<pre><bdi>one\\ntwo\\nthree</bdi> four</pre><div id=e contenteditable class=a>éa <b>b</b></div>");
+        print(ask("tree root"));
+        const left = range => +ask("get #e AXBoundsForRange " + range).split(" ")[0];
+        print(left("0..1") < left("1..2"), left("1..2") < left("2..3"), left("2..3") < left("3..4"));`),
+    ).toMatchInlineSnapshot(`
+      "AXWebArea AXTitle="Title" AXFocused=true
+        AXGroup
+          AXStaticText AXValue="Just now"
+        AXGroup
+          AXStaticText AXValue="one\\ntwo\\nthree"
+          AXStaticText AXValue=" four"
+        AXTextArea AXValue="Éa b"
+          AXStaticText AXValue="Éa "
+          AXStaticText AXValue="b"
+      true
+      true
+      true"
+    `);
+  });
+
   test("text, lists and landmarks", async () => {
     expect(
       await tree(`
@@ -472,7 +495,7 @@ describe.skipIf(!hasLibrary).concurrent("what a screen reader is told", () => {
         await after("do #c AXPress", "AXValueChanged #c");
         await after("do #r AXIncrement", "AXValueChanged #r");
         print(ask("set #r AXValue 70"));
-        await after("set #s AXExpanded 1", "AXExpandedChanged #s");
+        await after("do #s AXPress", "AXExpandedChanged #s");
         await after("do #sel AXPress", "AXMenuOpened");
         print(ask("tree #sel"));
         await after("do #y AXPress", "AXMenuClosed");
@@ -487,7 +510,7 @@ describe.skipIf(!hasLibrary).concurrent("what a screen reader is told", () => {
       do #r AXIncrement
       AXValueChanged #r
       false
-      set #s AXExpanded 1
+      do #s AXPress
       AXExpandedChanged #s
       do #sel AXPress
       AXMenuOpened AXMenu
@@ -535,6 +558,74 @@ describe.skipIf(!hasLibrary).concurrent("what a screen reader is told", () => {
       "pointerdown,true,mouse,0,1,0,20,false mousedown,true,,,1,0,20,false " +
         "pointerup,true,mouse,0,0,0,20,true mouseup,true,,,0,0,20,true click,true,mouse,0,1,1,20,false",
     );
+  });
+
+  test("a combo box is only opened by a press", async () => {
+    expect(
+      await run(`
+        const page = await open(\`<button id=c role=combobox aria-haspopup=listbox aria-expanded=false>c</button><script>
+          const seen = [];
+          for (const type of ["mousedown", "click", "contextmenu"]) c.addEventListener(type, () => seen.push(type));
+        </script>\`);
+        print(ask("set #c AXExpanded 1"), ask("set #c AXValue 1"));
+        ask("do #c AXPress");
+        ask("do #c AXShowMenu");
+        print(await until(() => page.executeJavaScript("seen.length >= 3 && seen.slice(0, 3).join()")));`),
+    ).toBe("false\ntrue\nmousedown,click,contextmenu");
+  });
+
+  test("a field keeps its caret while something else is read", async () => {
+    expect(
+      await run(`
+        const page = await open("<div id=e contenteditable>field</div><input type=range id=r><p>text</p>");
+        await page.executeJavaScript("e.focus(); getSelection().collapse(e.firstChild, 2)");
+        await until(() => ask("get root AXSelectedTextMarkerRange").includes("@2"));
+        const nothing = "AXEndTextMarker | AXRightWordTextMarkerRangeForTextMarker";
+        print(ask("get root " + nothing));
+        ask("set root AXSelectedTextMarkerRange = " + nothing);
+        ask("do #r AXIncrement");
+        await hear("AXValueChanged #r");
+        print(await page.executeJavaScript("getSelection().anchorNode.data + getSelection().anchorOffset"));`),
+    ).toBe('"text"@4.."text"@4\nfield2');
+  });
+
+  test("what changes around the focus is told first", async () => {
+    expect(
+      await run(`
+        const page = await open(\`<input role=combobox id=c aria-expanded=true aria-controls=l><div role=listbox id=l><div role=option id=a>a</div></div>\`);
+        await page.executeJavaScript("c.focus()");
+        print(...await hear("AXFocusedUIElementChanged #c", /^AX(Focused|SelectedText)\\w+ #c/).then(all => all.map(it => it.split(" ")[0])));
+        await page.executeJavaScript("c.setAttribute('aria-activedescendant', 'a')");
+        print(...await hear("AXFocusedUIElementChanged #a"));`),
+    ).toMatchInlineSnapshot(`
+      "AXSelectedTextChanged
+      AXFocusedUIElementChanged
+      AXSelectedChildrenChanged #l
+      AXFocusedUIElementChanged #a
+      AXSelectedChildrenChanged #c"
+    `);
+  });
+
+  test("a title describes what has no name", async () => {
+    expect(
+      await tree(
+        `<p><time title=Noon>12</time> <span title=Same>Same</span> <span title=Named tabindex=0>x</span> <abbr title=Long>l</abbr>`,
+      ),
+    ).toMatchInlineSnapshot(`
+        "AXWebArea AXTitle="Title" AXFocused=true
+          AXGroup
+            AXGroup AXTimeGroup AXHelp="Noon"
+              AXStaticText AXValue="12"
+            AXStaticText AXValue=" "
+            AXGroup
+              AXStaticText AXValue="Same"
+            AXStaticText AXValue=" "
+            AXGroup AXTitle="Named" AXDescription="Named"
+              AXStaticText AXValue="x"
+            AXStaticText AXValue=" "
+            AXGroup AXTitle="Long" AXDescription="Long"
+              AXStaticText AXValue="l""
+      `);
   });
 
   test("the active descendant", async () => {
@@ -848,7 +939,11 @@ describe.skipIf(!hasLibrary).concurrent("what a screen reader is told", () => {
         await until(() => ask("get focus AXTitle") === '"Year"');
         ask("do #d>1 AXPress");
         await until(() => ask("tree #d").includes("Today"));
-        print(ask("tree #d").split("\\n").filter(it => /AXToggle|Dialog|April 2020|Today|March 4/.test(it)).join("\\n"));`),
+        print(ask("tree #d").split("\\n").filter(it => /AXTable|Dialog|April 2020|Today|Cell.*(March [34],|Su")/.test(it)).join("\\n"));
+        const table = ask("get focus AXParent | AXParent");
+        press("Right");
+        await until(() => ask("get focus AXTitle").includes("March 4"));
+        print(ask("get focus AXSelected"), ask("get focus AXParent | AXParent") === table);`),
     ).toMatchInlineSnapshot(`
       "AXWebArea AXTitle="Title" AXFocused=true
         AXTimeField AXTitle="Start" AXDescription="Start" AXValue="09:30"
@@ -879,9 +974,14 @@ describe.skipIf(!hasLibrary).concurrent("what a screen reader is told", () => {
       AXValueChanged #t
         AXGroup AXApplicationDialog
           AXButton AXTitle="April 2020" AXDescription="April 2020"
-          AXCheckBox AXToggleButton AXTitle="Tuesday, March 3, 2020" AXDescription="Tuesday, March 3, 2020" AXValue=1 AXFocused=true
-          AXButton AXTitle="Wednesday, March 4, 2020" AXDescription="Wednesday, March 4, 2020"
-          AXButton AXTitle="Today""
+          AXTable
+              AXCell AXTitle="Tuesday, March 3, 2020" AXDescription="Tuesday, March 3, 2020" AXFocused=true AXSelected=true
+              AXCell AXTitle="Wednesday, March 4, 2020" AXDescription="Wednesday, March 4, 2020"
+              AXCell AXTitle="Tuesday, March 3, 2020" AXDescription="Tuesday, March 3, 2020" AXFocused=true AXSelected=true
+              AXCell AXTitle="Wednesday, March 4, 2020" AXDescription="Wednesday, March 4, 2020"
+          AXButton AXTitle="Today"
+      true
+      true"
     `);
   });
 

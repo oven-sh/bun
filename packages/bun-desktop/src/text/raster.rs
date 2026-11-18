@@ -10,7 +10,6 @@ use super::sfnt::work;
 use crate::abi::{GradientStop, Rect, RoundedRect};
 use crate::gfx::{self, Fill, Pixmap, Stroke, Transform};
 use crate::images;
-use crate::paint::edges;
 use crate::paint::gradient::{Geometry, Gradient, Spread};
 use crate::paint::raster::{
     Clip, Coverage, IntRect, Layer, Paint, Path, average_scale, map_rect, premultiply,
@@ -91,7 +90,11 @@ fn path_bounds(path: &Path, outset: f32) -> Rect {
 
 fn rasterize_bitmap(bitmap: Bitmap, size: f32, matrix: &Transform) -> Option<GlyphImage> {
     let pixmap = match bitmap.pixels {
-        Pixels::Png(png) => images::decode_pixmap(png)?,
+        Pixels::Png(png) => {
+            crate::codec::size(png, true)
+                .filter(|it| i64::from(it.0) * i64::from(it.1) < MAX_GLYPH_PIXELS)?;
+            images::decode_pixmap(png)?
+        }
         Pixels::Bgra(bgra) => {
             let rgba = bgra
                 .as_chunks()
@@ -449,7 +452,7 @@ fn fill_grown(
         rect.bottom * ROWS as i32,
     );
     let (tall, width) = (
-        edges::fill(&copies, false, &Transform::identity(), tall),
+        Coverage::of_path(&copies, Fill::NonZero, &Transform::identity(), tall),
         rect.width(),
     );
     let average = |rows: &[u8], x: usize| {
@@ -508,7 +511,7 @@ pub fn rasterize(
     };
     let rect = device_bounds(path_bounds(&path, stroke), &matrix)?.outset(growth.is_some().into());
     let mut coverage = growth.map_or_else(
-        || edges::fill(&path, false, &matrix, rect),
+        || Coverage::of_path(&path, Fill::NonZero, &matrix, rect),
         |it| fill_grown(&path, &matrix, it, rect),
     );
     if face.embolden {

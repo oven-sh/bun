@@ -303,6 +303,11 @@ pub(crate) fn create_event<'a>(
     let event: &Event = match wanted {
         b"beforeunloadevent" => BeforeUnloadEvent::new(&cx.heap, Atom::EMPTY),
         b"textevent" => crate::api::ui::entry::new_text_event(&cx.heap, doc),
+        b"event" => js_Event::create(
+            &cx.heap,
+            Event::base(Atom::EMPTY, EventInit::default(), Trusted::No),
+        ),
+        b"mouseevent" => crate::api::uievents::MouseEvent::blank(&cx.heap),
         _ => {
             let unknown = || {
                 dom_error(

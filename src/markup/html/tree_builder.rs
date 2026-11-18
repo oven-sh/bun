@@ -469,10 +469,13 @@ impl<D: Dom> State<D> {
     pub(super) fn takes_stencil(&self, tag: Tag) -> bool {
         !matches!(
             tag,
-            Tag::Other | Tag::Html | Tag::Body | Tag::Input | Tag::Template | Tag::Svg | Tag::Math
-        ) && self
-            .adjusted_current()
-            .is_some_and(|it| it.namespace == Namespace::Html)
+            Tag::Other | Tag::Html | Tag::Body | Tag::Template | Tag::Svg | Tag::Math
+        ) && (tag != Tag::Input
+            || !self.is_frameset_ok
+                && matches!(self.mode, Mode::InBody | Mode::InCell | Mode::InCaption))
+            && self
+                .adjusted_current()
+                .is_some_and(|it| it.namespace == Namespace::Html)
     }
 
     fn attribute(&self, name: &str) -> Option<Chars<'_>> {
@@ -492,6 +495,7 @@ enum Starts {
     Formatting,
     Phrase,
     Item,
+    Control,
     Otherwise,
 }
 
@@ -526,6 +530,7 @@ static STARTS: [Starts; Tag::ALL.len()] = {
         ],
     );
     let all = for_each_tag(all, Starts::Item, [Dd, Dt, Li]);
+    let all = for_each_tag(all, Starts::Control, [Button, Input]);
     for_each_tag(
         all,
         Starts::Phrase,
@@ -841,6 +846,7 @@ impl<S: Sink> Builder<'_, S> {
         let place = self.place_within_depth();
         let kind = tag.tag.kind() - Kind::MATH_TEXT;
         if tag.name.is_none()
+            && !(kind.contains(Kind::FORM_ASSOCIATED) && self.state.form.is_some())
             && let Some(node) =
                 self.append_quietly(ElementName::Known(tag.tag), Namespace::Html, place)
         {
@@ -1462,6 +1468,14 @@ impl<S: Sink> Builder<'_, S> {
                     )
             }
             Starts::Phrase => state.is_formatting_open(),
+            Starts::Control => {
+                !(state.is_frameset_ok
+                    || state.form.is_some()
+                    || state.has_open(tag)
+                    || state.has_open(Tag::Select)
+                    || state.context_is(Tag::Select))
+                    && state.is_formatting_open()
+            }
             Starts::Formatting => {
                 state.is_formatting_open()
                     && state.active.len() < 3
@@ -1495,6 +1509,9 @@ impl<S: Sink> Builder<'_, S> {
             return false;
         };
         state.skips_newline = false;
+        if tag == Tag::Input {
+            return true;
+        }
         let serial = state.push(
             node,
             StartTag::known(tag),

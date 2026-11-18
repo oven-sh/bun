@@ -1,6 +1,6 @@
 //! Style sheets, flattened into what the cascade reads.
 
-use core::cell::{OnceCell, RefCell};
+use core::cell::{Cell, OnceCell, RefCell};
 use core::ops::Range;
 use std::borrow::Cow;
 use std::rc::{Rc, Weak};
@@ -268,8 +268,9 @@ fn without_quirks(name: &str, source: &[u8]) -> Option<Out> {
     Some(out)
 }
 
-pub(crate) fn supports_declaration(name: &[u8], value: &[u8]) -> bool {
-    Prop::from_name(name).is_some_and(|prop| Declared::parse(prop, scan::trim(value)).is_some())
+pub(crate) fn supports_declaration(name: &[u8], value: &[u8], within: Within) -> bool {
+    Prop::from_name(name)
+        .is_some_and(|prop| Declared::parse_within(prop, scan::trim(value), within).is_some())
 }
 
 #[derive(Clone)]
@@ -281,6 +282,83 @@ pub(crate) struct Declarations {
     pub(crate) references: Box<[Name]>,
     /// There is no telling which are read.
     pub(crate) reads_any: bool,
+    cover: OnceCell<Box<Cover>>,
+}
+
+/// What it takes to tell that a block has no effect. The properties are numbered from 1 to below `Cover::COUNT`.
+#[derive(Clone)]
+pub(crate) struct Cover {
+    /// All that it declares, if later normal declarations of them leave nothing of it. Filled up with the first.
+    pub(crate) sets: Option<[u16; 4]>,
+    /// Those of which earlier normal declarations in the same layer do not count.
+    pub(crate) overrides: Box<[u16]>,
+}
+
+impl Cover {
+    pub(crate) const COUNT: usize = 1 + 2 * Id::ALL.len() + 256;
+
+    fn number(prop: Prop) -> Option<u16> {
+        match prop {
+            Prop::Long(id) => Some(1 + id as u16),
+            Prop::Logical(id) => Some(1 + Id::ALL.len() as u16 + id as u16),
+            Prop::Short(index) => Some(1 + 2 * Id::ALL.len() as u16 + u16::from(index)),
+            Prop::All | Prop::Custom(_) => None,
+        }
+    }
+
+    fn new(list: &[Rc<Declaration>]) -> Cover {
+        let prop = |it: &Declaration| it.only.unwrap_or(it.prop);
+        let parts = |prop: Prop| {
+            if let Prop::Short(index) = prop {
+                crate::shorthand::get(index).longhands()
+            } else {
+                &[]
+            }
+        };
+        let numbers: Option<smallvec::SmallVec<[u16; 4]>> = list
+            .iter()
+            .map(|it| Cover::number(prop(it)).filter(|_| !it.important))
+            .take(5)
+            .collect();
+        let sets = numbers
+            .filter(|it| matches!(it.len(), 1..=4))
+            .map(|it| core::array::from_fn(|index| *it.get(index).unwrap_or(&it[0])));
+        let may_step_back = |it: &Declaration| {
+            matches!(
+                it.value,
+                Declared::Template(_) | Declared::Wide(Wide::RevertRule)
+            ) && !matches!(it.prop, Prop::Custom(_))
+        };
+        let follows_flow = |prop: Prop| {
+            matches!(prop, Prop::Logical(_) | Prop::All)
+                || parts(prop).iter().any(|it| matches!(it, Prop::Logical(_)))
+        };
+        let unsure = || {
+            list.iter()
+                .filter(|it| may_step_back(it))
+                .map(|it| prop(it))
+        };
+        let is_apart = |sure: Prop, unsure: Prop| {
+            !follows_flow(sure)
+                && !follows_flow(unsure)
+                && !sure
+                    .longhands(Flow::DEFAULT)
+                    .iter()
+                    .any(|it| unsure.longhands(Flow::DEFAULT).contains(it))
+        };
+        let sure = list
+            .iter()
+            .filter(|it| !may_step_back(it))
+            .map(|it| prop(it))
+            .filter(|it| unsure().all(|other| is_apart(*it, other)));
+        Cover {
+            sets,
+            overrides: sure
+                .flat_map(|it| core::iter::once(it).chain(parts(it).iter().copied()))
+                .filter_map(Cover::number)
+                .collect(),
+        }
+    }
 }
 
 /// What a block is in, if that rules out some declarations.
@@ -411,7 +489,12 @@ impl Declarations {
             references: references.into(),
             reads_any,
             list: list.into(),
+            cover: OnceCell::new(),
         }
+    }
+
+    pub(crate) fn cover(&self) -> &Cover {
+        self.cover.get_or_init(|| Box::new(Cover::new(&self.list)))
     }
 }
 
@@ -724,6 +807,8 @@ pub(crate) struct Rule {
     pub(crate) context: Rc<Context>,
     /// In the sheet.
     pub(crate) order: u32,
+    /// `selector::filter` of the features after a change of which only this rule is matched again.
+    pub(crate) mentions: Cell<u64>,
 }
 
 /// The rules that a rule is in.
@@ -1174,6 +1259,7 @@ impl Sheet {
             block,
             context,
             order: raw.order,
+            mentions: Cell::new(0),
         }))
     }
 
@@ -1802,6 +1888,7 @@ impl Builder {
                 block,
                 context,
                 order: self.order,
+                mentions: Cell::new(0),
             })
         }));
     }

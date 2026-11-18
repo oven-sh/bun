@@ -19,7 +19,24 @@ pub struct TakenResponse {
     pub body: ResponseBody,
 }
 
+crate::wire! {
+    /// A `Blob` or a `File` that is in no realm.
+    #[derive(Clone)]
+    pub struct LooseBlob {
+        pub data: Data,
+        pub mime: Bytes,
+        pub name_of_file: Option<Bytes>,
+        pub modified: f64,
+        pub was_chosen_by_user: bool,
+    }
+}
+
 unsafe extern "Rust" {
+    /// From any thread. The id is what a serialized value has.
+    #[link_name = "__bun_web_loosen_blob"]
+    pub(crate) safe fn loosen_blob(id: &[u8; 16]) -> Option<LooseBlob>;
+    #[link_name = "__bun_web_retain_blob"]
+    pub(crate) safe fn retain_blob(global: &JSGlobalObject, blob: LooseBlob) -> [u8; 16];
     #[link_name = "__bun_web_size_of_blob"]
     pub safe fn size_of_blob(blob: &Blob) -> u64;
     #[link_name = "__bun_web_create_blob"]

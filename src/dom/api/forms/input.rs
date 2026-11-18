@@ -9,6 +9,7 @@ use super::*;
 use crate::api::transfer::FileList;
 use crate::api::uievents::MouseEvent;
 use crate::generated_bindgen::forms::HTMLInputElement;
+use crate::tree::NodeId;
 use InputType::*;
 
 #[derive(Default)]
@@ -76,12 +77,34 @@ fn compile(pattern: &DomString) -> Option<bun_yarr::Compiled> {
 
 impl<'a> Input<'a> {
     pub(super) fn new(element: &'a Element) -> Input<'a> {
-        let state = element.extra::<InputState>();
-        Input {
+        let mut is_new = false;
+        let state = element.extra_with(|| {
+            is_new = true;
+            InputState::default()
+        });
+        let input = Input {
             element,
             state,
             text: TextControl::of_input(element, &state.text),
+        };
+        if is_new {
+            input.follow_attributes();
         }
+        input
+    }
+
+    /// It has them from the start.
+    #[cold]
+    fn follow_attributes(self) {
+        self.element.unset(NodeFlags::DORMANT);
+        self.state.kind.set(
+            self.element
+                .keyword(atom!("type"))
+                .map(InputType::from_keyword)
+                .unwrap_or_default(),
+        );
+        self.state.is_checked.set(self.has(atom!("checked")));
+        self.sanitize_again();
     }
 
     pub(crate) fn of(element: &'a Element) -> Option<Input<'a>> {
@@ -277,45 +300,30 @@ impl<'a> Input<'a> {
         known.1.get(&key).copied().unwrap_or_default()
     }
 
-    /// If it is near. There is no more than one.
-    fn other_checked_in_group(self) -> Option<Input<'a>> {
-        let (name, form, root) = (
-            self.element
-                .attr(atom!("name"))
-                .filter(|it| !it.is_empty())?,
-            form_owner(self.element),
-            self.element.root(),
-        );
-        let before = core::iter::successors(self.element.preceding(Some(root)), |it| {
-            it.preceding(Some(root))
-        });
-        let after = core::iter::successors(self.element.following(Some(root)), |it| {
-            it.following(Some(root))
-        });
-        let mut inputs = before
-            .take(16)
-            .chain(after.take(16))
-            .filter_map(Node::as_element)
-            .filter_map(Input::of);
-        inputs.find(|it| {
-            it.is_checked()
-                && it.kind() == Radio
-                && it.element.attr(atom!("name")).as_ref() == Some(&name)
-                && form_owner(it.element) == form
-        })
-    }
-
     pub(super) fn set_checked(self, cx: &mut Cx<'a>, is_checked: bool) {
         let was_checked = self.state.is_checked.replace(is_checked);
-        if let Some(other) =
-            (is_checked && self.kind() == Radio && !may_have_remote_owners(self.element))
-                .then(|| self.other_checked_in_group())
-                .flatten()
+        if self.kind() != Radio {
+            if was_checked != is_checked {
+                dirty(cx, self.element);
+            }
+        } else if let Some((ui, scope)) = Ui::of(self.element.doc())
+            .filter(|_| self.element.is_rendered())
+            .zip(self.element.scope())
         {
-            other.state.is_checked.set(false);
-            dirty(cx, other.element);
             dirty(cx, self.element);
-        } else if self.kind() == Radio {
+            match is_checked
+                .then(|| ui.radios.replace_checked(self, scope))
+                .flatten()
+            {
+                Some(other) => {
+                    other.state.is_checked.set(false);
+                    dirty(cx, other.element);
+                }
+                None => ui
+                    .radios
+                    .changed(cx, scope, self.element.attr(atom!("name"))),
+            }
+        } else {
             for other in self.group() {
                 other
                     .state
@@ -323,8 +331,23 @@ impl<'a> Input<'a> {
                     .update(|it| it && (!is_checked || other.element == self.element));
                 dirty(cx, other.element);
             }
-        } else if was_checked != is_checked {
-            dirty(cx, self.element);
+        }
+    }
+
+    /// The one that it has left, if any, is in `scope`.
+    pub(super) fn group_changed(self, cx: &mut Cx<'a>, scope: &'a Node) {
+        if self.kind() == Radio {
+            self.tell_group(cx, scope, self.element.attr(atom!("name")));
+            self.uncheck_others(cx);
+        }
+    }
+
+    /// That it comes or goes.
+    fn tell_group(self, cx: &mut Cx<'a>, scope: &'a Node, name: Option<DomString>) {
+        if let Some(ui) = Ui::of(scope.doc())
+            .filter(|_| scope.is_rendered() && (self.is_checked() || self.has(atom!("required"))))
+        {
+            ui.radios.changed(cx, scope, name);
         }
     }
 
@@ -465,7 +488,37 @@ impl<'a> Input<'a> {
 
     /// The text of a button or of a file picker, the swatch of a color, or what is before the thumb of a range.
     pub(super) fn look(self) -> Option<&'a Node> {
+        if !self.element.has(NodeFlags::HOST) {
+            self.element.adopt_parts();
+        }
         self.element.edge_node(Edge::Look)
+    }
+
+    /// Whether the engine makes them, if it needs any.
+    fn has_simple_parts(self) -> bool {
+        self.kind().has_editor()
+            || matches!(
+                self.kind(),
+                Checkbox | Radio | Hidden | Submit | Reset | Button
+            )
+    }
+
+    fn build_unless_that_can_wait(self, cx: &mut Cx<'a>) {
+        let element = self.element;
+        element.doc().prepare_for_parts();
+        if !(self.has_simple_parts() && !element.has_children() && !self.has(atom!("dir"))) {
+            self.build_now(cx);
+        }
+    }
+
+    fn build_now(self, cx: &mut Cx<'a>) {
+        if !self.element.has(NodeFlags::HOST)
+            && self.element.is_rendered()
+            && !self.element.adopt_parts()
+        {
+            let root = self.element.attach_ua_shadow(cx);
+            self.build(cx, root);
+        }
     }
 
     fn build(self, cx: &mut Cx<'a>, root: &'a Node) {
@@ -473,20 +526,6 @@ impl<'a> Input<'a> {
         let look: Option<&Node> = match self.kind() {
             kind if kind.has_date_fields() => {
                 date_fields::build(cx, self, root);
-                None
-            }
-            kind if kind.has_editor() => {
-                let container = div(cx, element, root, "-webkit-textfield-decoration-container");
-                let inner = div(cx, element, container, "-internal-editor-container");
-                self.text.build_editor(cx, inner);
-                match kind {
-                    Search => _ = div(cx, element, container, "-webkit-search-cancel-button"),
-                    Number => _ = div(cx, element, container, "-webkit-inner-spin-button"),
-                    _ => {}
-                }
-                if self.has(atom!("list")) && kind != Password {
-                    div(cx, element, container, suggestions::INDICATOR);
-                }
                 None
             }
             Range => {
@@ -509,12 +548,21 @@ impl<'a> Input<'a> {
                 let name = part(cx, element, root, "-internal-file-name", atom!("span"));
                 Some(text_in(cx, name, ""))
             }
-            Checkbox | Radio => None,
             Image => {
                 let parent = crate::api::images::add_alt_text(cx, element, root);
                 Some(text_in(cx, parent, ""))
             }
-            _ => Some(text_in(cx, root, "")),
+            Checkbox | Radio | Hidden => None,
+            _ => {
+                root.doc().prepare_for_parts();
+                root.restructure(|engine, root| {
+                    engine.make_parts(element.id(), root);
+                    engine.parts_made(root);
+                });
+                root.got_bare();
+                root.read(|tree, _| dormant::note_parts(&cx.heap, element, root, tree));
+                None
+            }
         };
         if let Some(look) = look {
             element.set_edge(&cx.heap, Edge::Look, look.value());
@@ -526,8 +574,9 @@ impl<'a> Input<'a> {
     }
 
     fn rebuild(self, cx: &mut Cx<'a>) {
+        self.element.adopt_parts();
         let Some(root) = self.element.shadow_root() else {
-            return;
+            return self.build_now(cx);
         };
         self.close_picker(cx);
         self.element.clear_edge(&cx.heap, Edge::Editor);
@@ -635,6 +684,12 @@ impl<'a> Input<'a> {
         let was_value_mode = self.is_value_mode();
         text.disconnect_value_ranges(cx);
         self.state.kind.set(new);
+        if old == Radio || new == Radio {
+            self.element
+                .scope()
+                .into_iter()
+                .for_each(|it| self.tell_group(cx, it, self.element.attr(atom!("name"))));
+        }
         match (was_value_mode, new.value_mode()) {
             (true, ValueMode::Default | ValueMode::DefaultOn)
                 if text.state.is_dirty.get() && !old_value.is_empty() =>
@@ -986,6 +1041,78 @@ type Groups = (
 static GROUPS: core::mem::ManuallyDrop<core::cell::RefCell<Option<Box<Groups>>>> =
     core::mem::ManuallyDrop::new(core::cell::RefCell::new(None));
 
+/// Of a document that is shown.
+#[derive(Default)]
+pub(crate) struct Radios {
+    /// By the form or else the scope, and the name. All that are checked are in it, but not only those.
+    checked: RefCell<crate::name::Map<(NodeId, Atom), NodeId>>,
+    kept: Cell<usize>,
+    /// The scopes and the names of groups whose buttons are out of date.
+    changed: RefCell<crate::name::Set<(NodeId, Atom)>>,
+}
+
+impl Radios {
+    /// The one that has been checked so far, if that is another.
+    fn replace_checked<'a>(&self, input: Input<'a>, scope: &'a Node) -> Option<Input<'a>> {
+        let key_of = |it: Input<'a>| {
+            let name = it.element.attr(atom!("name")).filter(|it| !it.is_empty())?;
+            Some((
+                form_owner(it.element).map_or_else(|| it.element.root().id(), |it| it.id()),
+                Atom::from_string(&name),
+            ))
+        };
+        let current = |key: &(NodeId, Atom), id| {
+            let input = scope
+                .rendered_node(id)?
+                .as_element()
+                .filter(|it| it.is_connected())
+                .and_then(Input::of)?;
+            (input.kind() == Radio && input.is_checked() && key_of(input).as_ref() == Some(key))
+                .then_some(input)
+        };
+        let key = key_of(input)?;
+        let mut checked = self.checked.take();
+        let other = checked
+            .insert(key.clone(), input.element.id())
+            .filter(|it| *it != input.element.id())
+            .and_then(|it| current(&key, it));
+        if checked.len() > 2 * self.kept.get() + 64 {
+            checked.retain(|key, id| current(key, *id).is_some());
+            self.kept.set(checked.len());
+        }
+        self.checked.replace(checked);
+        other
+    }
+
+    fn changed<'a>(&self, cx: &mut Cx<'a>, scope: &'a Node, name: Option<DomString>) {
+        if let Some(name) = name.filter(|it| !it.is_empty())
+            && self
+                .changed
+                .borrow_mut()
+                .insert((scope.id(), Atom::from_string(&name)))
+        {
+            scope.doc().set_needs_sync();
+            scope.doc().invalidate(cx);
+        }
+    }
+
+    pub(super) fn dirty_changed_groups<'a>(&self, cx: &mut Cx<'a>, doc: &'a Doc) {
+        if self.changed.borrow().is_empty() {
+            return;
+        }
+        for (scope, name) in self.changed.take() {
+            let named = doc
+                .rendered_node(scope)
+                .map(|it| it.descendants_named(&name))
+                .unwrap_or_default();
+            Refs::collect(&cx.heap, named)
+                .iter()
+                .filter(|it| input_type(it) == Some(Radio))
+                .for_each(|it| dirty(cx, it));
+        }
+    }
+}
+
 /// `steps` change no radio button.
 pub(super) fn remembering_groups(steps: impl FnOnce()) {
     let outer = GROUPS.replace(Some(Box::new((JSValue::ZERO, Default::default()))));
@@ -1018,11 +1145,27 @@ fn input_attribute_changed<'a>(cx: &mut Cx<'a>, element: &'a Element, change: &A
             input.rebuild(cx);
             input.text.show_selection(cx);
         }
+        (atom!("dir"), _) => input.build_now(cx),
         (atom!("disabled") | atom!("readonly"), _) => input.close_picker(cx),
         (atom!("checked"), _) if !input.state.is_checked_dirty.get() => {
             input.set_checked(cx, change.new.is_some())
         }
-        (atom!("name"), Radio) => input.uncheck_others(cx),
+        (atom!("name"), Radio) => {
+            for (scope, name) in element
+                .scope()
+                .into_iter()
+                .flat_map(|it| [(it, change.old), (it, change.new)])
+            {
+                input.tell_group(cx, scope, name.cloned());
+            }
+            input.uncheck_others(cx);
+        }
+        (atom!("required"), Radio) => {
+            Ui::of(element.doc())
+                .zip(element.scope())
+                .into_iter()
+                .for_each(|(ui, scope)| ui.radios.changed(cx, scope, element.attr(atom!("name"))));
+        }
         (atom!("src"), Image) => input.update_image(cx),
         (atom!("alt") | atom!("title") | atom!("value"), Image) => {
             input.rebuild(cx);
@@ -1112,16 +1255,24 @@ fn activate<'a>(
 }
 
 pub(crate) static STEPS: Steps = Steps {
-    ua_shadow: Some(|cx, element| {
-        let root = element.attach_ua_shadow(cx);
-        Input::new(element).build(cx, root);
-    }),
+    ua_shadow: Some(|cx, element| Input::new(element).build_unless_that_can_wait(cx)),
+    children_changed: Some(|cx, element, _| Input::new(element).build_now(cx)),
     post_connection: Some(|cx, element, is_move| {
-        Input::new(element).uncheck_others(cx);
+        element
+            .scope()
+            .into_iter()
+            .for_each(|it| Input::new(element).group_changed(cx, it));
         inserted(cx, element, is_move);
     }),
-    removed: Some(text::removed),
+    removed: Some(|cx, element, scope, is_move| {
+        let input = Input::new(element);
+        if input.kind() == Radio {
+            input.tell_group(cx, scope, element.attr(atom!("name")));
+        }
+        text::removed(cx, element, scope, is_move);
+    }),
     rendered: Some(|cx, element| {
+        Input::new(element).uncheck_others(cx);
         if Input::new(element).state.was_image.get() {
             crate::api::images::show_button_image(cx, element);
         }

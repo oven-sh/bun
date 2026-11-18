@@ -8,9 +8,11 @@ use core::fmt::Write as _;
 use bun_core::fmt::format_json_string_utf8;
 
 use crate::Bytes;
+use crate::Guarded;
 use crate::origin::is_potentially_trustworthy;
 use crate::structured::{Bare, Value, parse_dictionary};
 use crate::url::Url;
+use crate::wire::{self, Wire};
 
 keywords! {
     pub enum ReportType {
@@ -22,12 +24,14 @@ keywords! {
     }
 }
 
-#[derive(Clone)]
-pub enum Member {
-    Null,
-    Boolean(bool),
-    Number(u32),
-    Text(Bytes),
+crate::wire! {
+    #[derive(Clone)]
+    pub enum Member {
+        Null,
+        Boolean(bool),
+        Number(u32),
+        Text(Bytes),
+    }
 }
 
 impl From<&[u8]> for Member {
@@ -37,6 +41,27 @@ impl From<&[u8]> for Member {
 }
 
 pub type Members = Vec<(&'static str, Member)>;
+
+/// There are only so many names of members, and it is the host that sends them.
+impl Wire for &'static str {
+    fn write(self, to: &mut wire::Writer) {
+        to.put_bytes(self.as_bytes());
+    }
+
+    fn read(from: &mut wire::Reader<'_>) -> wire::Result<Self> {
+        static KNOWN: Guarded<Vec<&'static str>> = Guarded::new(Vec::new());
+        (from.peer() == Some(crate::remote::HOST))
+            .then_some(())
+            .ok_or(wire::Malformed)?;
+        let (name, mut known) = (String::read(from)?, KNOWN.lock());
+        if let Some(found) = known.iter().find(|it| ***it == *name) {
+            return Ok(found);
+        }
+        let name = name.leak();
+        known.push(name);
+        Ok(name)
+    }
+}
 
 pub fn to_json(members: &[(&'static str, Member)]) -> String {
     let mut json = String::from("{");
@@ -56,9 +81,11 @@ pub fn to_json(members: &[(&'static str, Member)]) -> String {
     json + "}"
 }
 
-/// What `Reporting-Endpoints` names.
-#[derive(Clone, Default)]
-pub struct Endpoints(Vec<(Bytes, Url)>);
+crate::wire! {
+    /// What `Reporting-Endpoints` names.
+    #[derive(Clone, Default)]
+    pub struct Endpoints(Vec<(Bytes, Url)>);
+}
 
 impl Endpoints {
     pub fn parse(value: &[u8], base: &Url) -> Endpoints {

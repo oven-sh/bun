@@ -191,8 +191,8 @@ fn serialize<'a>(cx: Cx<'_, 'a>, value: JSValue) -> Result<'a, Box<[u8]>> {
                 for_cross_process_transfer: false,
                 for_storage: true,
             },
-        )?
-        .data()
+        )
+        .map(|it| bun_web::net::body::concat(&[it.data()]))?
         .into())
 }
 

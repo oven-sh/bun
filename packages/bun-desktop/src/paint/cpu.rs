@@ -68,6 +68,10 @@ pub struct GlyphPlacer {
 const LARGEST_HINTED: f32 = 48.;
 
 impl GlyphPlacer {
+    pub fn takes(matrix: &Transform) -> bool {
+        matrix.kx == 0. && matrix.ky == 0. && matrix.sx > 0. && (matrix.sx - matrix.sy).abs() < 1e-4
+    }
+
     pub fn new(
         frame: &Frame,
         matrix: &Transform,
@@ -76,11 +80,7 @@ impl GlyphPlacer {
         size: f32,
         color: u32,
     ) -> Option<GlyphPlacer> {
-        let is_uniform = matrix.kx == 0.
-            && matrix.ky == 0.
-            && matrix.sx > 0.
-            && (matrix.sx - matrix.sy).abs() < 1e-4;
-        if !is_uniform {
+        if !Self::takes(matrix) {
             return None;
         }
         let is_at_rest = !frame.snaps || frame.is_translation(matrix);
@@ -382,6 +382,11 @@ impl Painter<'_> {
             if (!area.is_empty() || erases(&self.scene.items[index]))
                 && !self.left_out.contains(&index)
             {
+                if (index % 8 == 0 || area.area() > 1 << 12 || self.scene.end(index) > index + 1)
+                    && self.frame.is_overdue()
+                {
+                    return;
+                }
                 self.paint_item(index, layer, matrix, clip, area);
             }
         }
@@ -503,11 +508,7 @@ impl Painter<'_> {
                     premultiply(*color),
                     (opacity.clamp(0., 1.) * 255.).round() as u8,
                 );
-                layer.fill_coverage(
-                    &self.cover(outline, matrix, area),
-                    clip,
-                    &Paint::Solid(color),
-                );
+                self.fill_outline(layer, outline, matrix, clip, area, color);
             }
             Item::PushLayer { opacity, blend, .. } => {
                 let group = self.render_layer(index, matrix, area).map(|mut group| {
@@ -563,13 +564,7 @@ impl Painter<'_> {
             .for_each(|time| self.frame.changes_at(time));
     }
 
-    fn cover_stroke(
-        &self,
-        path: &Path,
-        stroke: &abi::Stroke,
-        matrix: &Transform,
-        area: IntRect,
-    ) -> Coverage {
+    fn with_stroke<R>(&self, stroke: &abi::Stroke, f: impl FnOnce(gfx::Stroke) -> R) -> R {
         let dashes = self.scene.floats(stroke.dashes);
         let cap = match stroke.cap {
             abi::CAP_ROUND => Cap::Round,
@@ -587,19 +582,47 @@ impl Painter<'_> {
             dash_offset,
             ..
         } = *stroke;
-        Coverage::of_path(
-            path,
-            gfx::Stroke {
-                width,
-                cap,
-                join,
-                miter_limit,
-                dashes: &dashes,
-                dash_offset,
-            },
-            matrix,
-            area,
-        )
+        f(gfx::Stroke {
+            width,
+            cap,
+            join,
+            miter_limit,
+            dashes: &dashes,
+            dash_offset,
+        })
+    }
+
+    fn cover_stroke(
+        &self,
+        path: &Path,
+        stroke: &abi::Stroke,
+        matrix: &Transform,
+        area: IntRect,
+    ) -> Coverage {
+        self.with_stroke(stroke, |it| Coverage::of_path(path, it, matrix, area))
+    }
+
+    fn fill_outline(
+        &self,
+        layer: &mut Layer,
+        outline: &abi::Outline,
+        matrix: &Transform,
+        clip: &Clip,
+        area: IntRect,
+        color: Pixel,
+    ) {
+        let paint = Paint::Solid(color);
+        if outline.how != 0 || outline.crisp {
+            return layer.fill_coverage(&self.cover(outline, matrix, area), clip, &paint);
+        }
+        let (path, clip) = (self.scene.path(outline.verbs), clip.within_rect(area));
+        match (outline.stroke.width > 0., outline.even_odd) {
+            (true, _) => self.with_stroke(&outline.stroke, |it| {
+                layer.fill_path(&path, it, matrix, &clip, &paint)
+            }),
+            (_, true) => layer.fill_path(&path, Fill::EvenOdd, matrix, &clip, &paint),
+            (_, false) => layer.fill_path(&path, Fill::NonZero, matrix, &clip, &paint),
+        }
     }
 
     fn cover(&self, outline: &abi::Outline, matrix: &Transform, area: IntRect) -> Coverage {
@@ -658,11 +681,7 @@ impl Painter<'_> {
             | Item::PushProjection(_) => {}
             Item::Mask { .. } | Item::Input | Item::Pop => {}
             Item::Path { outline, color } => {
-                layer.fill_coverage(
-                    &self.cover(outline, matrix, area),
-                    clip,
-                    &Paint::Solid(premultiply(*color)),
-                );
+                self.fill_outline(layer, outline, matrix, clip, area, premultiply(*color));
             }
             Item::Shade {
                 from,
@@ -713,8 +732,10 @@ impl Painter<'_> {
                         .into_iter()
                         .map(move |command| command.transform(&place))
                 });
-                let coverage = self.cover_stroke(&paths.collect(), stroke, matrix, area);
-                layer.fill_coverage(&coverage, clip, &Paint::Solid(premultiply(*color)));
+                let (path, clip): (Path, _) = (paths.collect(), clip.within_rect(area));
+                self.with_stroke(stroke, |it| {
+                    layer.fill_path(&path, it, matrix, &clip, &Paint::Solid(premultiply(*color)))
+                });
             }
             Item::ImagePart {
                 clip: bounds,
@@ -729,7 +750,7 @@ impl Painter<'_> {
                     ..RoundedRect::default()
                 };
                 let clip = self.clip_to(&bounds, matrix, &clip.within_rect(area));
-                images::with(*image, frame, |content, _| match content {
+                images::with(*image, frame, |content| match content {
                     Content::Pixels(pixmap) => warp::repeat_part(
                         layer, &clip, tile, matrix, pixmap, *whole, *part, !pixelated,
                     ),
@@ -750,6 +771,7 @@ impl Painter<'_> {
                                     height: whole[1],
                                 },
                                 &matrix,
+                                frame,
                             );
                         })
                     }
@@ -798,12 +820,18 @@ impl Painter<'_> {
             Item::Shadow {
                 shape,
                 shadow,
+                radii,
                 blur,
                 color,
                 inset,
                 covered,
             } => {
-                let (shape, shadow) = snap_shadow(frame, shape, shadow);
+                let (shape, rect) = snap_shadow(frame, shape, shadow);
+                let shadow = RoundedRect {
+                    rect,
+                    radii: *radii,
+                    ..shape
+                };
                 let sigma = (blur / 2. * average_scale(matrix)).min(blur::MAX_SIGMA_OF_SHADOWS);
                 let casts = IntRect::around(map_rect(matrix, shadow.rect))
                     .outset(1)
@@ -889,18 +917,26 @@ impl Painter<'_> {
                 image,
                 pixelated,
             } => {
-                let shape = frame.snap_shape(shape);
-                let clip = self.clip_to(&shape, matrix, &clip.within_rect(area));
+                let (shape, tile, clip) = (
+                    frame.snap_shape(shape),
+                    snap_tile(frame, tile),
+                    clip.within_rect(area),
+                );
+                let cuts = tile.step != [0.; 2] || shape.rect != tile.rect || has_radii(&shape);
+                let clip = if cuts {
+                    self.clip_to(&shape, matrix, &clip)
+                } else {
+                    clip
+                };
                 let Some(mut drawn) = Layer::new(clip.rect) else {
                     return;
                 };
-                let tile = snap_tile(frame, tile);
                 let (scale_x, scale_y) = matrix.get_scale();
-                let mut draw = |content: Content| {
+                let draw = |content: Content| {
                     self.draw_tiles(&mut drawn, content, &tile, &shape, matrix, !pixelated)
                 };
                 match pixelated {
-                    true => images::with(*image, frame, |content, _| draw(content)),
+                    true => images::with(*image, frame, draw),
                     false => {
                         let reduced = |whole| {
                             images::reduced_size(
@@ -1091,12 +1127,18 @@ impl Painter<'_> {
         wanted: IntRect,
     ) {
         if !has_graph(filters) {
-            return filter::apply(layer, filters, matrix, wanted);
+            return filter::apply(layer, filters, matrix, wanted, self.frame);
         }
         while let Some((first, rest)) = filters.split_first() {
             filters = rest;
             let Filter::Graph(region) = first else {
-                filter::apply(layer, std::slice::from_ref(first), matrix, layer.rect);
+                filter::apply(
+                    layer,
+                    std::slice::from_ref(first),
+                    matrix,
+                    layer.rect,
+                    self.frame,
+                );
                 continue;
             };
             let count = rest
@@ -1107,7 +1149,7 @@ impl Painter<'_> {
                 layer,
                 *region,
                 &rest[..count],
-                self.scene,
+                self,
                 matrix,
                 &|position, target| {
                     let range = Some(index)
@@ -1135,7 +1177,7 @@ impl Painter<'_> {
         let Tile { mut rect, mut step } = *tile;
         let draw = |target: &mut Layer, rect: Rect, matrix: &Transform| match content {
             Content::Pixels(pixmap) => draw_pixmap(target, pixmap, rect, matrix, smooth),
-            Content::Svg(image) => image.draw(target, rect, matrix),
+            Content::Svg(image) => image.draw(target, rect, matrix, self.frame),
         };
         if step == [0., 0.] {
             if let Content::Svg(_) = content {
@@ -1342,42 +1384,16 @@ pub fn mirror_edges(source: &Layer, by: i32) -> Option<Layer> {
     Some(extended)
 }
 
-pub fn extend_edges(rect: IntRect, source: &Pixmap, by: i32) -> Option<Layer> {
-    let mut extended = Layer::new(rect.outset(by))?;
-    let pixels: &[Pixel] = source.data().as_chunks().0;
-    for y in extended.rect.top..extended.rect.bottom {
-        let start = (y.clamp(rect.top, rect.bottom - 1) - rect.top) as usize * rect.width();
-        let from = &pixels[start..start + rect.width()];
-        let row = extended.row_mut(y, rect.left - by, rect.right + by);
-        let (before, rest) = row.split_at_mut(by as usize);
-        let (inside, after) = rest.split_at_mut(from.len());
-        before.fill(*from.first()?);
-        inside.copy_from_slice(from);
-        after.fill(*from.last()?);
-    }
-    Some(extended)
-}
-
 /// The shadow keeps its distance from the edges of the box.
-pub fn snap_shadow(
-    frame: &Frame,
-    shape: &RoundedRect,
-    shadow: &RoundedRect,
-) -> (RoundedRect, RoundedRect) {
+pub fn snap_shadow(frame: &Frame, shape: &RoundedRect, shadow: &Rect) -> (RoundedRect, Rect) {
     let snapped = frame.snap_shape(shape);
     let rect = Rect {
-        x: shadow.rect.x + snapped.rect.x - shape.rect.x,
-        y: shadow.rect.y + snapped.rect.y - shape.rect.y,
-        width: (shadow.rect.width + snapped.rect.width - shape.rect.width).max(0.),
-        height: (shadow.rect.height + snapped.rect.height - shape.rect.height).max(0.),
+        x: shadow.x + snapped.rect.x - shape.rect.x,
+        y: shadow.y + snapped.rect.y - shape.rect.y,
+        width: (shadow.width + snapped.rect.width - shape.rect.width).max(0.),
+        height: (shadow.height + snapped.rect.height - shape.rect.height).max(0.),
     };
-    (
-        snapped,
-        RoundedRect {
-            rect,
-            radii: shadow.radii,
-        },
-    )
+    (snapped, rect)
 }
 
 pub fn snap_tile(frame: &Frame, tile: &Tile) -> Tile {

@@ -1,14 +1,17 @@
 //! Pixels: coverage masks, premultiplied RGBA layers, and what blends them.
 
+use std::cell::Cell;
 use std::iter::once;
 use std::ops::Range;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use super::blur::blur;
+use super::edges::{Edges, Rule, Shape};
+use super::scan::Scanner;
 use super::{blend, edges};
 use crate::abi::{Matrix, Rect, RoundedRect};
 pub use crate::gfx::Path;
-use crate::gfx::{Command, Fill, PathBuilder as _, Pixmap, Point, Style, Transform};
+use crate::gfx::{Command, Fill, PathBuilder as _, Pixmap, Point, StrokeRoom, Style, Transform};
 use crate::parallel;
 use crate::small_vec::SmallVec;
 
@@ -17,6 +20,7 @@ pub type Pixel = [u8; 4];
 
 const MAX_PIXELS: i64 = 1 << 27;
 
+#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct IntRect {
     pub left: i32,
@@ -212,6 +216,20 @@ pub fn has_radii(shape: &RoundedRect) -> bool {
 
 pub fn add_rounded_rect(path: &mut Path, shape: &RoundedRect) {
     const K: f32 = 1. - 0.552_284_8;
+    if shape.smoothing > 0. {
+        let corners = shape.smooth_corners();
+        path.move_to(corners[0][0]);
+        for [start, curves @ ..] in corners {
+            path.line_to(start);
+            curves
+                .as_chunks()
+                .0
+                .iter()
+                .for_each(|[a, b, to]| _ = path.curve_to(*a, *b, *to));
+        }
+        path.close();
+        return;
+    }
     let Rect {
         x,
         y,
@@ -259,7 +277,7 @@ pub fn inner_band(shape: &RoundedRect, matrix: &Transform) -> IntRect {
     if matrix.has_skew() || matrix.sy < 0. {
         return IntRect::default();
     }
-    let [tl, tr, br, bl] = shape.radii.map(|[_, y]| y.max(0.));
+    let [tl, tr, br, bl] = shape.reach().map(|[_, y]| y.max(0.));
     let (top, bottom) = (tl.max(tr), br.max(bl));
     let height = (shape.rect.height - top - bottom).max(0.);
     let band = map_rect(
@@ -300,7 +318,16 @@ pub fn premultiply(color: u32) -> Pixel {
 }
 
 #[inline]
-pub fn demultiply([r, g, b, a]: Pixel) -> [u8; 4] {
+pub fn demultiply(pixel: Pixel) -> [u8; 4] {
+    if pixel[3] == 255 {
+        pixel
+    } else {
+        divide_by_alpha(pixel)
+    }
+}
+
+#[inline(always)]
+pub(super) fn divide_by_alpha(pixel: Pixel) -> [u8; 4] {
     const RECIPROCALS: [u32; 256] = {
         let (mut table, mut alpha) = ([0; 256], 1);
         while alpha < 256 {
@@ -309,13 +336,12 @@ pub fn demultiply([r, g, b, a]: Pixel) -> [u8; 4] {
         }
         table
     };
-    if a == 255 {
-        return [r, g, b, a];
-    }
-    let divide = |channel: u8| {
-        ((u32::from(channel) * RECIPROCALS[usize::from(a)] + (1 << 15)) >> 16).min(255) as u8
-    };
-    [divide(r), divide(g), divide(b), a]
+    let (bits, by) = (
+        u32::from_le_bytes(pixel),
+        RECIPROCALS[usize::from(pixel[3])],
+    );
+    let divide = |shift: u32| (((bits >> shift & 255) * by + (1 << 15)) >> 16).min(255) << shift;
+    (divide(0) | divide(8) | divide(16) | bits & 255 << 24).to_le_bytes()
 }
 
 /// `multiply` for the four channels.
@@ -539,6 +565,18 @@ pub fn blend_row(row: &mut [Pixel], colors: &[Pixel], by: u8) {
         .for_each(|(pixel, color)| *pixel = over(*pixel, scale(*color, by)));
 }
 
+pub fn premultiply_row(row: &mut [[u8; 4]]) {
+    prefer_wide!(premultiply(row));
+    row.iter_mut()
+        .filter(|it| it[3] != 255)
+        .for_each(|it| *it = premultiply(u32::from_be_bytes(*it)));
+}
+
+pub fn demultiply_row(row: &mut [Pixel]) {
+    prefer_wide!(demultiply(row));
+    row.iter_mut().for_each(|it| *it = demultiply(*it));
+}
+
 pub fn stamp<'a>(runs: impl Iterator<Item = &'a mut [Pixel; 8]>, colors: [Pixel; 8]) {
     prefer_wide!(stamp(runs, colors));
     runs.for_each(|run| blend_row(run, &colors, 255));
@@ -549,6 +587,58 @@ pub fn stamp<'a>(runs: impl Iterator<Item = &'a mut [Pixel; 8]>, colors: [Pixel;
 pub fn swap_red_and_blue(pixel: Pixel) -> Pixel {
     let bits = u32::from_le_bytes(pixel);
     (bits & 0xFF00_FF00 | (bits & 0x00FF_00FF).rotate_left(16)).to_le_bytes()
+}
+
+/// The part of the path that is in `area`.
+pub fn trace(
+    edges: &mut Edges,
+    room: &mut StrokeRoom,
+    path: &[Command],
+    style: Style,
+    matrix: &Transform,
+    area: IntRect,
+) -> Shape {
+    let (mut outline, mut rule) = (edges.outline(matrix, area), Rule::NonZero);
+    match style {
+        _ if area.is_empty() || !matrix.is_finite() => {}
+        Style::Fill(fill) => {
+            outline.add(path);
+            rule = if fill == Fill::EvenOdd {
+                Rule::EvenOdd
+            } else {
+                rule
+            };
+        }
+        Style::Stroke(stroke) => {
+            let corners = [(area.left, area.top), (area.right, area.bottom)]
+                .map(|(x, y)| Point::new(x as f32, y as f32));
+            stroke.outline(path, matrix, corners, room, &mut |part| outline.add(part));
+        }
+    }
+    outline.finish(rule)
+}
+
+#[derive(Default)]
+struct Scratch {
+    edges: Edges,
+    room: StrokeRoom,
+    scanner: Scanner,
+}
+
+fn with_scratch(f: impl FnOnce(&mut Scratch)) {
+    const MAX_KEPT: usize = 1 << 16;
+    thread_local! {
+        static SCRATCH: Cell<Option<Box<Scratch>>> = const { Cell::new(None) };
+    }
+    SCRATCH.with(|kept| {
+        let mut scratch = kept.take().unwrap_or_default();
+        scratch.edges.clear();
+        f(&mut scratch);
+        kept.set(
+            Some(scratch)
+                .filter(|it| it.edges.bytes() + it.room.bytes() + it.scanner.bytes() <= MAX_KEPT),
+        );
+    });
 }
 
 /// Zero outside of `rect`.
@@ -576,32 +666,39 @@ impl Coverage {
         matrix: &Transform,
         area: IntRect,
     ) -> Coverage {
-        match style.into() {
-            _ if area.is_empty() || !matrix.is_finite() => Coverage::filled(area, 0),
-            Style::Fill(rule) => edges::fill(path, rule == Fill::EvenOdd, matrix, area),
-            Style::Stroke(stroke) => {
-                let (mut edges, corners) = (
-                    edges::Edges::new(matrix, area),
-                    [(area.left, area.top), (area.right, area.bottom)],
-                );
-                stroke.outline(
-                    path,
-                    matrix,
-                    corners.map(|(x, y)| Point::new(x as f32, y as f32)),
-                    &mut |part| edges.add(part),
-                );
-                edges.fill(|winding| winding != 0)
-            }
-        }
+        Coverage::of_edges(area, |edges, room, area| {
+            trace(edges, room, path, style.into(), matrix, area)
+        })
     }
 
     pub fn of_positive_path(path: &[Command], matrix: &Transform, area: IntRect) -> Coverage {
-        let sign = if matrix.sx * matrix.sy < matrix.kx * matrix.ky {
-            -1
-        } else {
-            1
-        };
-        edges::fill_where(path, |winding| winding * sign < 0, matrix, area)
+        Coverage::of_edges(area, |edges, _, area| {
+            let mut outline = edges.outline(matrix, area);
+            outline.add(path);
+            outline.finish(if matrix.sx * matrix.sy < matrix.kx * matrix.ky {
+                Rule::Positive
+            } else {
+                Rule::Negative
+            })
+        })
+    }
+
+    fn of_edges(
+        area: IntRect,
+        trace: impl FnOnce(&mut Edges, &mut StrokeRoom, IntRect) -> Shape,
+    ) -> Coverage {
+        let mut coverage = Coverage::filled(area, 0);
+        with_scratch(
+            |Scratch {
+                 edges,
+                 room,
+                 scanner,
+             }| {
+                let shape = trace(edges, room, coverage.rect);
+                scanner.cover(edges, &shape, &mut coverage);
+            },
+        );
+        coverage
     }
 
     pub fn of_shape(shape: &RoundedRect, matrix: &Transform, area: IntRect) -> Coverage {
@@ -729,7 +826,7 @@ impl Coverage {
 pub struct Clip {
     pub rect: IntRect,
     /// Covers `rect`.
-    pub mask: Option<Rc<Coverage>>,
+    pub mask: Option<Arc<Coverage>>,
     /// Where the mask is known to let everything through.
     pub open: IntRect,
 }
@@ -756,7 +853,7 @@ impl Clip {
         }
         Clip {
             rect: self.rect.intersect(coverage.rect),
-            mask: Some(Rc::new(coverage)),
+            mask: Some(Arc::new(coverage)),
             open: IntRect::default(),
         }
     }
@@ -788,53 +885,73 @@ impl<'a> Iterator for RowsMut<'a> {
     }
 }
 
-pub struct Layer {
+/// Some of the rows of a layer.
+pub struct View<'a> {
     pub rect: IntRect,
-    pub pixmap: Pixmap,
+    pixels: &'a mut [Pixel],
 }
 
-impl Layer {
-    pub fn new(rect: IntRect) -> Option<Layer> {
-        if rect.area() > MAX_PIXELS {
-            return None;
-        }
-        let pixmap = Pixmap::new(rect.width() as u32, rect.height() as u32)?;
-        Some(Layer { rect, pixmap })
+impl<'a> View<'a> {
+    /// From the top.
+    pub fn split(self, height: usize) -> impl Iterator<Item = View<'a>> {
+        let (rect, width) = (self.rect, self.rect.width());
+        let part = move |(top, pixels): (i32, &'a mut [Pixel])| View {
+            rect: IntRect {
+                top,
+                bottom: top + (pixels.len() / width) as i32,
+                ..rect
+            },
+            pixels,
+        };
+        (rect.top..)
+            .step_by(height)
+            .zip(self.pixels.chunks_mut(height * width))
+            .map(part)
     }
 
-    pub fn pixels(&self) -> &[Pixel] {
-        self.pixmap.data().as_chunks().0
-    }
-
-    pub fn pixels_mut(&mut self) -> &mut [Pixel] {
-        self.pixmap.data_mut().as_chunks_mut().0
-    }
-
-    pub fn row(&self, y: i32, left: i32, right: i32) -> &[Pixel] {
+    fn row_mut(&mut self, y: i32, left: i32, right: i32) -> &mut [Pixel] {
         let start =
             (y - self.rect.top) as usize * self.rect.width() + (left - self.rect.left) as usize;
-        &self.pixels()[start..start + (right - left) as usize]
+        &mut self.pixels[start..start + (right - left) as usize]
     }
 
-    pub fn row_mut(&mut self, y: i32, left: i32, right: i32) -> &mut [Pixel] {
-        let start =
-            (y - self.rect.top) as usize * self.rect.width() + (left - self.rect.left) as usize;
-        &mut self.pixels_mut()[start..start + (right - left) as usize]
+    pub fn set(&mut self, rect: IntRect, color: Pixel) {
+        self.in_bands(rect.intersect(self.rect), |_, rows| set_rows(rows, color));
     }
 
-    pub fn copy(&self, rect: IntRect) -> Option<Layer> {
-        let mut copy = Layer::new(rect)?;
-        let shared = rect.intersect(self.rect);
-        if !shared.is_empty() {
-            for y in shared.top..shared.bottom {
-                (copy.row_mut(y, shared.left, shared.right)).copy_from_slice(self.row(
-                    y,
-                    shared.left,
-                    shared.right,
-                ));
+    /// Source-over. It was traced in an area that is in the clip's rectangle and between the sides of the layer.
+    pub fn fill_shape(
+        &mut self,
+        edges: &Edges,
+        shape: &Shape,
+        scanner: &mut Scanner,
+        clip: &Clip,
+        paint: &Paint,
+    ) {
+        match *paint {
+            Paint::Solid([0, 0, 0, 0]) => {}
+            Paint::Solid(color) if clip.mask.is_none() || clip.open.contains(shape.area) => {
+                scanner.fill(edges, shape, self.rect, self.pixels, color);
+            }
+            _ => {
+                let mut room = Default::default();
+                scanner.hand_over(
+                    edges,
+                    shape,
+                    self.rect.top..self.rect.bottom,
+                    |x, y, alphas| {
+                        self.fill_part_of_row(
+                            [x, y],
+                            alphas.len(),
+                            Some(alphas),
+                            clip,
+                            paint,
+                            &mut room,
+                        )
+                    },
+                );
             }
         }
-        Some(copy)
     }
 
     /// Source-over. `shape` is the coverage of `rect`, row by row.
@@ -843,52 +960,68 @@ impl Layer {
         if area.is_empty() || matches!(paint, Paint::Solid([0, 0, 0, 0])) {
             return;
         }
-        let (mut colors, mut combined) = (Vec::new(), Vec::new());
+        let mut room = Default::default();
         for y in area.top..area.bottom {
             let start = (y - rect.top) as usize * rect.width() + (area.left - rect.left) as usize;
-            let shape = shape.map(|shape| &shape[start..start + area.width()]);
-            let is_open = clip.open.contains(IntRect {
-                top: y,
-                bottom: y + 1,
-                ..area
-            });
-            let mask = clip
-                .mask
-                .as_ref()
-                .filter(|_| !is_open)
-                .map(|mask| mask.row(y, area.left, area.right));
-            let coverage = match (shape, mask) {
-                (Some(shape), Some(mask)) => {
-                    combined.clear();
-                    combined.extend(shape.iter().zip(mask).map(|(a, b)| multiply(*a, *b)));
-                    Some(&combined[..])
+            self.fill_part_of_row(
+                [area.left, y],
+                area.width(),
+                shape.map(|shape| &shape[start..start + area.width()]),
+                clip,
+                paint,
+                &mut room,
+            );
+        }
+    }
+
+    /// It is inside of the clip's rectangle.
+    fn fill_part_of_row(
+        &mut self,
+        [left, y]: [i32; 2],
+        width: usize,
+        shape: Option<&[u8]>,
+        clip: &Clip,
+        paint: &Paint,
+        room: &mut (Vec<Pixel>, Vec<u8>),
+    ) {
+        let (right, (colors, combined)) = (left + width as i32, room);
+        let is_open = clip.open.contains(IntRect::new(left, y, right, y + 1));
+        let mask = clip
+            .mask
+            .as_ref()
+            .filter(|_| !is_open)
+            .map(|mask| mask.row(y, left, right));
+        let coverage = match (shape, mask) {
+            (Some(shape), Some(mask)) => {
+                combined.clear();
+                combined.extend(shape.iter().zip(mask).map(|(a, b)| multiply(*a, *b)));
+                Some(&combined[..])
+            }
+            (shape, mask) => shape.or(mask),
+        };
+        let row = self.row_mut(y, left, right);
+        match (paint, coverage) {
+            (Paint::Solid(color), None) => fill_row(row, *color),
+            (Paint::Solid(color), Some(coverage)) => fill_through(row, *color, coverage),
+            (Paint::Shader(shade), coverage) => {
+                let end = coverage.map_or(row.len(), |it| {
+                    it.iter().rposition(|it| *it != 0).map_or(0, |it| it + 1)
+                });
+                let start = coverage
+                    .and_then(|it| it.iter().position(|it| *it != 0))
+                    .unwrap_or(0);
+                if start == end {
+                    return;
                 }
-                (shape, mask) => shape.or(mask),
-            };
-            let row = self.row_mut(y, area.left, area.right);
-            match (paint, coverage) {
-                (Paint::Solid(color), None) => fill_row(row, *color),
-                (Paint::Solid(color), Some(coverage)) => fill_through(row, *color, coverage),
-                (Paint::Shader(shade), coverage) => {
-                    let end = coverage.map_or(row.len(), |it| {
-                        it.iter().rposition(|it| *it != 0).map_or(0, |it| it + 1)
-                    });
-                    let start = coverage
-                        .and_then(|it| it.iter().position(|it| *it != 0))
-                        .unwrap_or(0);
-                    if start == end {
-                        continue;
-                    }
-                    colors.resize(end - start, [0; 4]);
-                    shade(area.left + start as i32, y, &mut colors);
-                    if let Some(coverage) = coverage {
-                        colors
-                            .iter_mut()
-                            .zip(&coverage[start..])
-                            .for_each(|(color, by)| *color = scale(*color, *by));
-                    }
-                    blend_row(&mut row[start..end], &colors, 255);
+                colors.resize(end - start, [0; 4]);
+                shade(left + start as i32, y, colors);
+                if let Some(coverage) = coverage {
+                    colors
+                        .iter_mut()
+                        .zip(&coverage[start..])
+                        .for_each(|(color, by)| *color = scale(*color, *by));
                 }
+                blend_row(&mut row[start..end], colors, 255);
             }
         }
     }
@@ -899,7 +1032,7 @@ impl Layer {
             (area.left - self.rect.left) as usize,
             (area.top - self.rect.top) as usize,
         );
-        self.pixels_mut()
+        self.pixels
             .chunks_exact_mut(width)
             .skip(above)
             .take(area.height())
@@ -917,7 +1050,7 @@ impl Layer {
             (area.top - self.rect.top) as usize,
         );
         parallel::in_bands(
-            &mut self.pixels_mut()[above * width..][..area.height() * width],
+            &mut self.pixels[above * width..][..area.height() * width],
             width,
             area.area(),
             |first, band| {
@@ -991,13 +1124,6 @@ impl Layer {
                 scale(color, ((256 * down - 1) >> 8) as u8),
             );
             let [before, after] = [start, end].map(|it| usize::from(it != middle));
-            if band == self.rect
-                && before + after == 0
-                && middle[3] == 255
-                && self.pixmap.fill_instead_of_copying(middle)
-            {
-                return;
-            }
             self.in_bands(band, |_, rows| {
                 let inside = rows.map(|row| {
                     let (last, length) = (row.len() - 1, row.len());
@@ -1012,6 +1138,108 @@ impl Layer {
                 fill_rows(inside, middle);
             });
         }
+    }
+}
+
+pub struct Layer {
+    pub rect: IntRect,
+    pub pixmap: Pixmap,
+}
+
+impl Layer {
+    pub fn new(rect: IntRect) -> Option<Layer> {
+        if rect.area() > MAX_PIXELS {
+            return None;
+        }
+        let pixmap = Pixmap::new(rect.width() as u32, rect.height() as u32)?;
+        Some(Layer { rect, pixmap })
+    }
+
+    pub fn pixels(&self) -> &[Pixel] {
+        self.pixmap.data().as_chunks().0
+    }
+
+    pub fn pixels_mut(&mut self) -> &mut [Pixel] {
+        self.pixmap.data_mut().as_chunks_mut().0
+    }
+
+    pub fn row(&self, y: i32, left: i32, right: i32) -> &[Pixel] {
+        let start =
+            (y - self.rect.top) as usize * self.rect.width() + (left - self.rect.left) as usize;
+        &self.pixels()[start..start + (right - left) as usize]
+    }
+
+    pub fn row_mut(&mut self, y: i32, left: i32, right: i32) -> &mut [Pixel] {
+        let start =
+            (y - self.rect.top) as usize * self.rect.width() + (left - self.rect.left) as usize;
+        &mut self.pixels_mut()[start..start + (right - left) as usize]
+    }
+
+    pub fn copy(&self, rect: IntRect) -> Option<Layer> {
+        let mut copy = Layer::new(rect)?;
+        let shared = rect.intersect(self.rect);
+        if !shared.is_empty() {
+            for y in shared.top..shared.bottom {
+                (copy.row_mut(y, shared.left, shared.right)).copy_from_slice(self.row(
+                    y,
+                    shared.left,
+                    shared.right,
+                ));
+            }
+        }
+        Some(copy)
+    }
+
+    pub fn view(&mut self) -> View<'_> {
+        View {
+            rect: self.rect,
+            pixels: self.pixels_mut(),
+        }
+    }
+
+    pub fn fill(&mut self, rect: IntRect, shape: Option<&[u8]>, clip: &Clip, paint: &Paint) {
+        self.view().fill(rect, shape, clip, paint);
+    }
+
+    pub fn fill_rect(&mut self, rect: Rect, color: Pixel, clip: IntRect) {
+        let all = self.rect.to_rect();
+        let hides_all = color[3] == 255
+            && clip.contains(self.rect)
+            && super::scene::intersect(rect, all) == all;
+        if !(hides_all && self.pixmap.fill_instead_of_copying(color)) {
+            self.view().fill_rect(rect, color, clip);
+        }
+    }
+
+    /// Source-over.
+    pub fn fill_path<'a>(
+        &mut self,
+        path: &[Command],
+        style: impl Into<Style<'a>>,
+        matrix: &Transform,
+        clip: &Clip,
+        paint: &Paint,
+    ) {
+        with_scratch(
+            |Scratch {
+                 edges,
+                 room,
+                 scanner,
+             }| {
+                let mut shape = trace(
+                    edges,
+                    room,
+                    path,
+                    style.into(),
+                    matrix,
+                    clip.rect.intersect(self.rect),
+                );
+                if clip.mask.is_some() || matches!(paint, Paint::Shader(_)) {
+                    edges.index(&mut shape);
+                }
+                self.view().fill_shape(edges, &shape, scanner, clip, paint);
+            },
+        );
     }
 
     pub fn fill_coverage(&mut self, coverage: &Coverage, clip: &Clip, paint: &Paint) {
@@ -1171,7 +1399,7 @@ impl Layer {
                 _ => {}
             }
         }
-        self.in_bands(area, |top, rows| {
+        self.view().in_bands(area, |top, rows| {
             let (mut colors, mut blended) = (Vec::new(), Vec::new());
             if let Rows::Same(color) = *source {
                 if mode == blend::Mode::Source && mask.is_none() {

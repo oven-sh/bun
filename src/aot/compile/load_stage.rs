@@ -583,7 +583,7 @@ struct RuntimeLoadInputs<'c, 's> {
 fn create_runtime_modules(archive: &'static Archive, options: &Options<'_>) -> RuntimeModules {
     let runtime_modules = RuntimeModules::new(archive, options.load.omits_builtin_modules)
         .with_test_aliases(options.load.runs_tests)
-        .with_modules_of_electron(options.aot.has_realms_of_the_web)
+        .with_desktop_modules(options.aot)
         .with_first_texts(options.aot.takes_first_texts);
     #[cfg(test)]
     let runtime_modules = runtime_modules.with_replaced_sources(&options.load.in_memory_files);

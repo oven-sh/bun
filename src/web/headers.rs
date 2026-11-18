@@ -6,6 +6,7 @@ use bun_core::strings;
 
 use crate::Bytes;
 use crate::mime::Mime;
+use crate::wire::{self, Wire};
 
 pub fn is_token_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric()
@@ -201,6 +202,19 @@ pub fn is_forbidden_request_header(name: &[u8], value: &[u8]) -> bool {
 /// The names are as they were first given.
 #[derive(Clone, Default)]
 pub struct HeaderList(Vec<(Bytes, Bytes)>);
+
+impl Wire for HeaderList {
+    fn write(self, to: &mut wire::Writer) {
+        self.0.write(to);
+    }
+
+    fn read(from: &mut wire::Reader<'_>) -> wire::Result<HeaderList> {
+        let all = HeaderList(Wire::read(from)?);
+        let is_valid = from.peer() == Some(crate::remote::HOST)
+            || all.iter().all(|it| is_token(it.0) && is_valid_value(it.1));
+        is_valid.then_some(all).ok_or(wire::Malformed)
+    }
+}
 
 impl HeaderList {
     pub const fn new() -> HeaderList {

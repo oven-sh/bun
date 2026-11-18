@@ -1,5 +1,7 @@
 use std::cell::OnceCell;
 use std::ffi::c_void;
+use std::ops::Range;
+use std::rc::Rc;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
@@ -8,7 +10,7 @@ use crate::hash::FastMap;
 use super::metal::{self, Buffers};
 use super::{Instance, Locked, Pass, Position, Target};
 use crate::paint::flatten::{Curve, Lifted};
-use crate::paint::raster::IntRect;
+use crate::paint::raster::{IntRect, Pixel};
 use crate::platform::macos::Object;
 
 unsafe extern "C" {
@@ -33,7 +35,7 @@ unsafe extern "C" {
     );
     safe fn bd_layer_show(layer: &c_void, surface: &c_void);
     safe fn bd_layer_blink(layer: &c_void, color: u32, seconds_ago: f64, blinks: bool);
-    safe fn bd_layer_clip(layer: &c_void, radius: f64, opacity: f32, order: f64);
+    safe fn bd_layer_clip(layer: &c_void, radius: f64, is_smooth: bool, opacity: f32, order: f64);
     safe fn bd_layer_center(layer: &c_void, x: f64, y: f64, width: f64, height: f64, scale: f64);
     fn bd_layer_animate(
         layer: &c_void,
@@ -62,6 +64,7 @@ pub fn uses_gpu() -> bool {
 }
 
 pub struct Surface {
+    size: [usize; 2],
     pub(super) texture: OnceCell<Option<Object>>,
     pub(super) surface: Object,
 }
@@ -84,11 +87,43 @@ impl Surface {
         Some(surface)
     }
 
-    pub(super) fn new(width: i32, height: i32) -> Option<Surface> {
+    pub fn new(width: i32, height: i32) -> Option<Surface> {
         Some(Surface {
+            size: [width as usize, height as usize],
             surface: bd_surface_create(width, height)?,
             texture: OnceCell::new(),
         })
+    }
+
+    pub fn object(&self) -> &c_void {
+        &self.surface
+    }
+
+    pub fn is_in_use(&self) -> bool {
+        bd_surface_is_in_use(&self.surface)
+    }
+
+    /// The GPU is not drawing on it.
+    pub fn rows(&self, range: Range<usize>, mut read: impl FnMut(usize, &[Pixel])) {
+        let (Locked { start, stride }, [width, height]) = (Tree::lock(self, false), self.size);
+        // SAFETY: the surface is locked, and has that size.
+        (range.start..range.end.min(height)).for_each(|y| {
+            read(y, unsafe {
+                std::slice::from_raw_parts(start.add(y * stride).cast(), width)
+            })
+        });
+        Tree::unlock(self, false);
+    }
+
+    pub fn rows_mut(&mut self, mut write: impl FnMut(usize, &mut [Pixel])) {
+        let (Locked { start, stride }, [width, height]) = (Tree::lock(self, true), self.size);
+        // SAFETY: likewise.
+        (0..height).for_each(|y| {
+            write(y, unsafe {
+                std::slice::from_raw_parts_mut(start.add(y * stride).cast(), width)
+            })
+        });
+        Tree::unlock(self, true);
     }
 }
 
@@ -106,6 +141,13 @@ struct Overlay {
     shown: Option<Lifted>,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum Group {
+    OverBlur,
+    Beside,
+    Above,
+}
+
 pub struct Tree {
     overlays: Vec<Overlay>,
     /// By their contents, with how long they are kept.
@@ -113,7 +155,10 @@ pub struct Tree {
     caret: Option<(Object, Caret)>,
     /// At the top left corner.
     corner: Object,
-    cells: FastMap<Position, (Object, IntRect)>,
+    /// The window server takes all layers in one for changed when one comes or goes, and blurs again what is below them.
+    groups: [Object; 3],
+    over_blur: Range<i32>,
+    cells: FastMap<Position, (Object, IntRect, Group)>,
     scale: f64,
     is_opaque: bool,
     is_flipped: bool,
@@ -124,18 +169,35 @@ impl Tree {
     pub fn new(root: *mut c_void) -> Tree {
         // SAFETY: the layer of a view.
         let corner = unsafe { bd_layer_create(root) };
-        let buffers = uses_gpu().then(Buffers::default);
+        // SAFETY: a layer.
+        let groups = std::array::from_fn(|_| unsafe { bd_layer_create(&*corner) });
+        let (buffers, pictures, cells) = (
+            uses_gpu().then(Buffers::default),
+            FastMap::default(),
+            FastMap::default(),
+        );
         Tree {
             overlays: Vec::new(),
-            pictures: FastMap::default(),
+            pictures,
             caret: None,
             corner,
-            cells: FastMap::default(),
+            groups,
+            over_blur: 0..0,
+            cells,
             scale: 0.,
             is_opaque: false,
             is_flipped: false,
             buffers,
         }
+    }
+
+    fn layer_in(&self, group: Group) -> Object {
+        // SAFETY: a layer.
+        unsafe { bd_layer_create(&*self.groups[group as usize]) }
+    }
+
+    pub fn keep_apart(&mut self, over_blur: Range<i32>) {
+        self.over_blur = over_blur;
     }
 
     fn place(&self, layer: &Object, rect: IntRect) {
@@ -169,7 +231,7 @@ impl Tree {
             (self.scale, self.is_opaque, self.is_flipped) = (scale, is_opaque, is_flipped);
             self.cells
                 .values()
-                .for_each(|(layer, rect)| self.place(layer, *rect));
+                .for_each(|(layer, rect, _)| self.place(layer, *rect));
             self.show_caret(None);
             self.overlays
                 .drain(..)
@@ -228,6 +290,7 @@ impl Tree {
                 rect,
                 contents: Some(contents),
                 radius,
+                is_smooth,
                 opacity,
                 ..
             } = lifted
@@ -243,33 +306,42 @@ impl Tree {
                     .extend(Surface::with_pixels(rect, &pixels).map(|it| (contents, (it, now))));
             }
             let mut overlay = same.or_else(|| unused.pop()).unwrap_or_else(|| {
-                // SAFETY: layers.
-                let clip = unsafe { bd_layer_create(&*self.corner) };
-                // SAFETY: as above.
+                let clip = self.layer_in(Group::Above);
+                // SAFETY: a layer.
                 Overlay {
                     picture: unsafe { bd_layer_create(&*clip) },
                     clip,
                     shown: None,
                 }
             });
-            let Some((surface, kept_until)) = pictures.get_mut(&contents) else {
+            let kept = pictures.get_mut(&contents).map(|(surface, kept_until)| {
+                *kept_until = if lifted.fades.is_some() {
+                    now
+                } else {
+                    now + MAY_COME_BACK
+                };
+                &*surface
+            });
+            let Some(surface) = lifted.drawn.as_deref().or(kept) else {
                 unused.push(overlay);
                 continue;
             };
-            *kept_until = if lifted.fades.is_some() {
-                now
-            } else {
-                now + MAY_COME_BACK
-            };
             let before = overlay.shown.as_ref();
             if before.is_none_or(|it| {
-                (it.item, it.clip, it.rect, it.radius, it.opacity)
-                    != (item, clip, rect, radius, opacity)
+                (
+                    it.item,
+                    it.clip,
+                    it.rect,
+                    it.radius,
+                    it.is_smooth,
+                    it.opacity,
+                ) != (item, clip, rect, radius, is_smooth, opacity)
             }) {
                 self.place(&overlay.clip, clip);
                 bd_layer_clip(
                     &overlay.clip,
                     f64::from(radius) / scale,
+                    is_smooth,
                     opacity,
                     1. + item as f64,
                 );
@@ -289,7 +361,10 @@ impl Tree {
                     scale,
                 );
             }
-            if before.is_none_or(|it| it.contents != lifted.contents) {
+            if before.is_none_or(|it| {
+                it.contents != lifted.contents
+                    || it.drawn.as_ref().map(Rc::as_ptr) != lifted.drawn.as_ref().map(Rc::as_ptr)
+            }) {
                 bd_layer_show(&overlay.picture, &surface.surface);
             }
             if before.and_then(|it| it.fades.as_ref()) != lifted.fades.as_ref() {
@@ -312,8 +387,7 @@ impl Tree {
         let Some(caret) = caret else {
             return layer.iter().for_each(|layer| bd_layer_remove(layer));
         };
-        // SAFETY: a layer.
-        let layer = layer.unwrap_or_else(|| unsafe { bd_layer_create(&*self.corner) });
+        let layer = layer.unwrap_or_else(|| self.layer_in(Group::Above));
         if shown.is_none_or(|it| it.rect != caret.rect) {
             self.place(&layer, caret.rect);
         }
@@ -370,8 +444,9 @@ impl Target for Tree {
         bd_surface_unlock(&surface.surface, wrote);
     }
 
-    fn can_draw(&mut self, painting_took: Duration) -> bool {
-        self.buffers.is_some() && metal::is_ready(painting_took * 4 > crate::host::interval())
+    fn can_draw(&mut self, painting_took: Duration, is_resized: bool) -> bool {
+        self.buffers.is_some()
+            && metal::is_ready(!is_resized || painting_took * 4 > crate::host::interval())
     }
 
     fn draw(&mut self, instances: &[Instance], passes: &[Pass<Surface>]) -> bool {
@@ -381,24 +456,72 @@ impl Target for Tree {
     }
 
     fn show(&mut self, position: Position, rect: IntRect, surface: &Surface, is_opaque: bool) {
+        let group = if rect.left < self.over_blur.end && self.over_blur.start < rect.right {
+            Group::OverBlur
+        } else {
+            Group::Beside
+        };
+        if self.cells.get(&position).is_some_and(|it| it.2 != group) {
+            self.remove(position);
+        }
         let known = self.cells.remove(&position);
-        let has_moved = known.as_ref().is_none_or(|(_, placed)| *placed != rect);
-        // SAFETY: a layer.
-        let layer = known.map_or_else(
-            || unsafe { bd_layer_create(&*self.corner) },
-            |(layer, _)| layer,
-        );
+        let has_moved = known.as_ref().is_none_or(|(_, placed, _)| *placed != rect);
+        let layer = known.map_or_else(|| self.layer_in(group), |it| it.0);
         if has_moved {
             self.place(&layer, rect);
         }
         bd_layer_show(&layer, &surface.surface);
         bd_layer_set_opaque(&layer, is_opaque || self.is_opaque);
-        self.cells.insert(position, (layer, rect));
+        self.cells.insert(position, (layer, rect, group));
     }
 
     fn remove(&mut self, position: Position) {
-        if let Some((layer, _)) = self.cells.remove(&position) {
+        if let Some((layer, ..)) = self.cells.remove(&position) {
             bd_layer_remove(&layer);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::c_char;
+
+    use super::*;
+
+    fn parent(layer: &c_void) -> *const c_void {
+        unsafe extern "C" {
+            fn sel_registerName(name: *const c_char) -> *const c_void;
+            fn objc_msgSend(to: &c_void, selector: *const c_void) -> *const c_void;
+        }
+        // SAFETY: a layer has that method.
+        unsafe { objc_msgSend(layer, sel_registerName(c"superlayer".as_ptr())) }
+    }
+
+    #[test]
+    fn what_comes_and_goes_is_no_sibling_of_what_is_over_a_blur() {
+        // SAFETY: it needs no parent.
+        let root = unsafe { bd_layer_create(std::ptr::null()) };
+        let (mut tree, surface) = (
+            Tree::new(std::ptr::from_ref(&*root).cast_mut()),
+            Surface::new(64, 16).unwrap(),
+        );
+        tree.begin(1., false);
+        tree.show((0, 0), IntRect::new(0, 0, 128, 16), &surface, false);
+        tree.keep_apart(0..64);
+        tree.show((0, 0), IntRect::new(0, 0, 64, 16), &surface, false);
+        tree.show((64, 0), IntRect::new(64, 0, 128, 16), &surface, false);
+        tree.show_caret(Some(Caret {
+            rect: IntRect::new(70, 0, 71, 16),
+            color: 255,
+            since: Instant::now(),
+            blinks: true,
+        }));
+        let [over, beside, above] = [
+            &tree.cells[&(0, 0)].0,
+            &tree.cells[&(64, 0)].0,
+            &tree.caret.as_ref().unwrap().0,
+        ]
+        .map(|it| parent(it));
+        assert!(over != beside && over != above && beside != above);
     }
 }

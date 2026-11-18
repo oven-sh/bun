@@ -284,6 +284,11 @@ extern "C" EncodedJSValue Bun__Desktop__itemsOf(JSGlobalObject* globalObject, En
     RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), items)));
 }
 
+extern "C" bool Bun__Desktop__isDOMException(EncodedJSValue value)
+{
+    return dynamicDowncast<WebCore::JSDOMException>(JSValue::decode(value));
+}
+
 extern "C" EncodedJSValue Bun__Desktop__copyPlainData(JSGlobalObject* to, EncodedJSValue value)
 {
     return JSValue::encode(WebCore::SerializedScriptValue::tryCopyPlainData(*to, JSValue::decode(value)));

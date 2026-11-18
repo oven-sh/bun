@@ -223,6 +223,8 @@ pub(crate) struct Document {
     /// The `svg` elements that have what others refer to, and how often those have changed.
     /// With what refers to each.
     pub(crate) referenced_svgs: RefCell<Map<NodeId, Set<NodeId>>>,
+    /// And some that used to be.
+    pub(crate) referenced_elements: RefCell<Set<NodeId>>,
     pub(crate) svg_generation: u32,
     pub(crate) environment_changes: u32,
     /// By their data.
@@ -276,6 +278,7 @@ pub(crate) struct Document {
     pub(crate) needs_layout: bool,
     pub(crate) needs_frame: bool,
     pub(crate) layout_version: u32,
+    pub(crate) matrices: crate::geometry::Matrices,
     /// Unlike `layout_version`, it stays when something scrolls.
     pub(crate) sizes_version: u32,
 
@@ -441,6 +444,7 @@ impl ClassLists {
         source: impl Fn() -> StoredText,
         ignores_case: bool,
     ) -> Rc<Classes> {
+        let ignores_case = ignores_case && text.bytes().any(|it| it.is_ascii_uppercase());
         let new = || Rc::new(Classes::new(&source(), ignores_case));
         let known = self
             .all
@@ -491,6 +495,9 @@ impl ClassLists {
         self.all.clear();
     }
 }
+
+/// For `room_for_ids`
+const KEPT_ROOM: usize = 256;
 
 impl Document {
     pub(crate) fn new(font_scope: u32, base_url: &[u8]) -> Document {
@@ -581,6 +588,7 @@ impl Document {
             anchors: Default::default(),
             implicit_anchors: Default::default(),
             referenced_svgs: Default::default(),
+            referenced_elements: Default::default(),
             svg_generation: 0,
             environment_changes: 0,
             paths: Default::default(),
@@ -622,6 +630,7 @@ impl Document {
             needs_layout: true,
             needs_frame: false,
             layout_version: 0,
+            matrices: Default::default(),
             sizes_version: 0,
             doomed: Vec::new(),
             is_burying: false,
@@ -697,16 +706,19 @@ impl Document {
         root
     }
 
-    fn children_changed(&mut self, child: NodeId) {
+    fn children_changed(&mut self, child: NodeId, is_new: bool) {
         let parent = self.tree[child].parent;
         if !self.tree.is_rendered(parent) {
             return;
         }
         self.text_changed_in(parent);
+        if !is_new {
+            self.forget_has_results(child);
+        }
         self.styles
             .dependencies
             .get_mut()
-            .children_changed(&self.tree, child);
+            .children_changed(&self.tree, child, is_new);
         if self.tree[parent].has(Flags::COUNTED_CHILDREN) {
             for it in self.tree.element_children(parent) {
                 self.tree
@@ -716,14 +728,25 @@ impl Document {
                     .into_iter()
                     .filter(|it| *it != 0)
                     .for_each(|it| self.tree.mark_style(it, Flags::RECASCADE));
-                self.container_changed(it, false);
             }
         }
         (self.counters_are_stale, self.marks.are_stale) = (true, true);
         self.svg_changed(parent);
     }
 
-    fn children_replaced(&mut self, parent: NodeId) {
+    /// Of what leaves its place.
+    fn forget_has_results(&mut self, root: NodeId) {
+        let results = self.styles.has_results.get_mut();
+        if !results.is_empty() {
+            self.tree.visit_subtree(root, |id| {
+                _ = self.tree[id]
+                    .has(Flags::HAS_ANCHOR)
+                    .then(|| results.remove(&id))
+            });
+        }
+    }
+
+    pub(crate) fn children_replaced(&mut self, parent: NodeId) {
         self.text_changed_in(parent);
         self.styles
             .dependencies
@@ -733,7 +756,7 @@ impl Document {
         self.svg_changed(parent);
     }
 
-    fn start_rendering(&mut self, id: NodeId) {
+    pub(crate) fn start_rendering(&mut self, id: NodeId) {
         match self.tree[id].data {
             Data::Text(_)
                 if self
@@ -835,6 +858,11 @@ impl Document {
             for child in Vec::from_iter(self.tree.flat_children(id)) {
                 self.forget_style(child);
             }
+            match (self.take_parts(id), &mut self.left_behind) {
+                (Some(parts), Some(left_behind)) => left_behind.push(parts),
+                (Some(parts), None) => self.free_subtree(parts),
+                _ => {}
+            }
             return;
         }
         let mut child = self.tree[id].first_child;
@@ -862,7 +890,7 @@ impl Document {
 
     fn unlink_unstyled(&mut self, id: NodeId) {
         if self.tree[id].parent != 0 {
-            self.children_changed(id);
+            self.children_changed(id, false);
         }
         self.unassign(id);
         self.tree.unlink_unknown(id);
@@ -966,7 +994,7 @@ impl Document {
                 }
             }
         }
-        self.children_changed(child);
+        self.children_changed(child, true);
         self.start_rendering(child);
     }
 
@@ -1010,7 +1038,7 @@ impl Document {
         let mut child = first;
         while child != 0 {
             if !are_alone {
-                self.children_changed(child);
+                self.children_changed(child, true);
             }
             self.start_rendering(child);
             child = self.tree[child].next;
@@ -1084,6 +1112,17 @@ impl Document {
     /// `prepare` and `derive_state`, if nothing but its parent has a say in them.
     #[inline]
     fn prepare_quickly(&mut self, id: NodeId) -> bool {
+        if self
+            .tree
+            .element(id)
+            .is_some_and(|it| it.is_unprepared && it.lacks_hints())
+        {
+            self.tree
+                .element_mut(id)
+                .into_iter()
+                .for_each(|it| it.is_unprepared = false);
+            self.update_inline_style(id);
+        }
         let node = &self.tree[id];
         let Some(element) = node.element() else {
             return true;
@@ -1091,11 +1130,31 @@ impl Document {
         let Some(parent) = self.tree.element(node.parent) else {
             return false;
         };
-        if !element.state.is_empty()
-            || node.has(Flags::AUTO_DIRECTION | Flags::REDIRECTS_CHILDREN)
+        if node.has(Flags::AUTO_DIRECTION | Flags::REDIRECTS_CHILDREN)
             || self.accessibility.is_some()
         {
             return false;
+        }
+        if !element.state.is_empty() {
+            let Some(own) = element
+                .state_if_dormant()
+                .filter(|_| !element.is_unprepared && self.tree.is_bare(id))
+            else {
+                return false;
+            };
+            let state = own
+                | parent.state
+                    & if element.tag == name!("input") {
+                        State::RTL
+                    } else {
+                        State::READ_WRITE | State::RTL
+                    };
+            self.attribute_keys.add_all(element);
+            self.tree
+                .element_mut(id)
+                .into_iter()
+                .for_each(|it| it.state = state);
+            return true;
         }
         let Some(own) = element.own_state() else {
             return false;
@@ -1430,7 +1489,7 @@ impl Document {
             self.tree[id].unset(Flags::REBUILD | Flags::REBUILD_BELOW);
             self.forget_lock(id);
         }
-        self.children_changed(child);
+        self.children_changed(child, false);
         self.tree.unlink(child);
         self.insert(parent, child, before);
         self.tree
@@ -1462,20 +1521,39 @@ impl Document {
             self.stop_rendering(root);
         }
         self.unlink_unstyled(root);
-        self.forget_subtree(root, |tree, id| {
-            tree.visit(id).set(0);
-            let node = &mut tree[id];
-            node.flags.set(node.flags.get() & Flags::REDIRECTS_CHILDREN);
-            if !matches!(node.data, Data::ShadowRoot { .. }) && node.scope == DOCUMENT {
-                node.scope = 0;
-            }
-        });
+        self.forget_subtree(root, Tree::reset);
         self.tree.set_scope(root, 0);
+    }
+
+    /// `detach`, for all that it has. It is rendered, and no host.
+    pub(crate) fn detach_children(&mut self, parent: NodeId, children: &[NodeId]) {
+        self.left_behind = Some(Vec::new());
+        if let [first, _, ..] = *children
+            && self.tree[first].layout_box != 0
+        {
+            self.mark_parent_rebuild(first);
+        }
+        for child in children.iter().copied() {
+            self.restore_animated_attributes(child);
+            if self.has_been_rendered(child) {
+                self.stop_rendering(child);
+            }
+        }
+        self.children_replaced(parent);
+        let mut ids = core::mem::take(&mut self.room_for_ids);
+        for child in children.iter().copied() {
+            self.tree.visit_subtree(child, |id| ids.push(id));
+            self.tree.unlink_unknown(child);
+        }
+        self.forget_nodes(&mut ids, false);
+        ids.drain(..).for_each(|id| self.tree.reset(id));
+        ids.shrink_to(KEPT_ROOM);
+        self.room_for_ids = ids;
+        children.iter().for_each(|it| self.tree.set_scope(*it, 0));
     }
 
     /// All that refers to the nodes, which have no styles, from outside of the tree. `finish` resets their flags.
     fn forget_subtree(&mut self, root: NodeId, finish: impl Fn(&mut Tree, NodeId)) {
-        const KEPT_ROOM: usize = 256;
         let mut ids = core::mem::take(&mut self.room_for_ids);
         self.tree.visit_subtree(root, |id| ids.push(id));
         self.forget_nodes(&mut ids, false);
@@ -1595,7 +1673,7 @@ impl Document {
         }
         let parent = self.tree[id].parent;
         if changes_emptiness && self.tree[parent].has(Flags::EMPTINESS) {
-            self.feature_changed(parent, key::STRUCTURE);
+            self.feature_changed(parent, key::EMPTY);
         }
         self.marks.are_stale = true;
         self.start_rendering(id);
@@ -2049,6 +2127,13 @@ impl Document {
             return;
         };
         let (tag, is_math) = (element.html_tag(), element.namespace == Namespace::MathMl);
+        if can_be_hint
+            && name == name!("transform")
+            && element.namespace == Namespace::Svg
+            && self.move_svg_element(id)
+        {
+            return self.svg_element_moved(id);
+        }
         if can_be_hint {
             self.update_hints(id);
         }
@@ -2348,6 +2433,17 @@ impl Document {
             Compiling::Scanning(known.unwrap_or_else(|| Prepared::new(source)), with, hash)
         } else {
             Compiling::Done(Sheet::with_blocks(source, &with, edited).share(hash, owner))
+        }
+    }
+
+    /// `compile_sheet` goes on with a scan, and shares a sheet for as long as it is held.
+    pub(crate) fn take_back(&mut self, outdated: Compiling) -> Option<Rc<Sheet>> {
+        match outdated {
+            Compiling::Done(sheet) => Some(sheet),
+            Compiling::Scanning(prepared, ..) => {
+                self.prepared.push(prepared);
+                None
+            }
         }
     }
 
@@ -2799,15 +2895,18 @@ impl Document {
         self.styles
             .user_agent
             .get_mut()
-            .evaluate_media(new, &mut affected);
-        for rules in self
+            .evaluate_media(new, false, &mut affected);
+        for (rules, is_of_document) in self
             .styles
             .scopes
             .get(&DOCUMENT)
             .into_iter()
-            .chain(self.shared_rules.values())
+            .map(|it| (it, true))
+            .chain(self.shared_rules.values().map(|it| (it, false)))
         {
-            rules.borrow_mut().evaluate_media(new, &mut affected);
+            rules
+                .borrow_mut()
+                .evaluate_media(new, is_of_document, &mut affected);
         }
         if (
             old.quirks,
@@ -2832,6 +2931,9 @@ impl Document {
             self.tree.mark_style(root, Flags::REMATCH_SUBTREE);
         } else if root != 0 {
             affected.mark(&self.tree, root);
+            if let Some(rules) = self.styles.scopes.get(&DOCUMENT) {
+                affected.check(&self.tree, &rules.borrow(), &self.styles.has_results);
+            }
         }
         self.definitions_changed(DOCUMENT, &|kind| affected.definitions.contains(&kind));
         let new = &self.environment;
@@ -3349,14 +3451,29 @@ impl Document {
         if namespace != Namespace::Html {
             self.expect_foreign(tag, namespace);
         }
-        let id = self.tree.create_element(tag, namespace, |element| {
-            element.local = local;
-            space
-                .into_iter()
-                .for_each(|it| element.rare_mut().space = Some(it));
-        });
-        self.tree[id].keys = filter(core::iter::once(key::tag(tag)));
-        id
+        self.tree.create_element(
+            tag,
+            namespace,
+            filter(core::iter::once(key::tag(tag))),
+            |element| {
+                element.local = local;
+                space
+                    .into_iter()
+                    .for_each(|it| element.rare_mut().space = Some(it));
+            },
+        )
+    }
+
+    fn element_without_attributes(
+        &mut self,
+        tag: Name,
+        local: Atom,
+        namespace: Namespace,
+    ) -> Box<Element> {
+        if namespace != Namespace::Html {
+            self.expect_foreign(tag, namespace);
+        }
+        self.tree.new_element(tag, namespace, |it| it.local = local)
     }
 
     /// The names of the attributes differ, and are in no namespace.
@@ -3369,10 +3486,7 @@ impl Document {
         ignores_case: bool,
     ) -> Box<Element> {
         let tag = local.name();
-        if namespace != Namespace::Html {
-            self.expect_foreign(tag, namespace);
-        }
-        let mut element = self.tree.new_element(tag, namespace, |it| it.local = local);
+        let mut element = self.element_without_attributes(tag, local, namespace);
         let mut all = Vec::with_capacity(attributes.len());
         for (local, mut value) in attributes {
             let name = local.name();
@@ -3391,8 +3505,10 @@ impl Document {
             } else if name == name!("id") && !value.is_empty() {
                 element.id = Name::new(value.as_bytes());
             }
-            let is_only_for_selectors =
-                namespace == Namespace::Html && (name == name!("class") || key != Name::NONE);
+            let is_only_for_selectors = namespace == Namespace::Html
+                && (name == name!("class")
+                    || key != Name::NONE
+                    || name == name!("type") && is_name!(tag, "input" | "button"));
             element.is_unprepared |= name == name!("style")
                 || !is_only_for_selectors && crate::hints::can_be_hint(&element, name);
             all.push(Attribute {
@@ -3428,7 +3544,7 @@ impl Document {
             keys,
         }: Likeness,
     ) -> NodeId {
-        let id = self.tree.create_element(tag, namespace, |element| {
+        self.tree.create_element(tag, namespace, keys, |element| {
             (
                 element.local,
                 element.is_unprepared,
@@ -3439,9 +3555,7 @@ impl Document {
             space
                 .into_iter()
                 .for_each(|it| element.rare_mut().space = Some(it));
-        });
-        self.tree[id].keys = keys;
-        id
+        })
     }
 
     #[inline(always)]
@@ -3464,6 +3578,29 @@ impl Document {
                 .iter()
                 .for_each(|it| element.rare_mut().space = Some(Rc::clone(it)));
         })
+    }
+
+    /// For a document with other quirks.
+    pub(crate) fn reclassify(&mut self, root: NodeId, is_quirky: bool) {
+        let mut affected = Vec::new();
+        self.tree.visit_subtree(root, |id| {
+            affected.extend(
+                self.tree
+                    .element(id)
+                    .and_then(|it| it.classes.as_ref())
+                    .filter(|it| it.has_capitals)
+                    .map(|it| (id, it.source.clone())),
+            )
+        });
+        for (id, source) in affected {
+            if let Some(index) = self.tree.element(id).and_then(|it| {
+                it.attributes
+                    .iter()
+                    .position(|it| it.name == name!("class"))
+            }) {
+                self.change_attribute(id, Ok(index), Some(source), is_quirky);
+            }
+        }
     }
 
     /// With its attributes.

@@ -9,7 +9,7 @@ use crate::abi::{self, Item, Rect, RoundedRect};
 use crate::diagnostics::{self, Incident, trace};
 use crate::error::{Context as _, Result};
 use crate::gfx::Transform;
-use crate::hash::FastMap;
+use crate::hash::{FastMap, FastSet};
 use crate::host::{self, thread};
 use crate::input::{self, Ime};
 use crate::motion::{Motion, Next, Tables};
@@ -18,6 +18,7 @@ use crate::paint::raster::{Clip, IntRect, Layer};
 use crate::paint::scene::{Frame, Scene, copy};
 use crate::platform::Cursor;
 use crate::protocol::{Bitmap, Input, InputField, Maybe, Size, SurfaceCommand, SurfaceMetrics};
+use crate::remote::guest;
 use crate::sync::Mutex;
 use crate::window::{self, WindowState};
 use crate::{accessibility, bridge, images};
@@ -114,6 +115,7 @@ impl Surface {
         let shape = RoundedRect {
             rect,
             radii: [[radius; 2]; 4],
+            smoothing: 0.,
         };
         [
             Item::PushClip(shape),
@@ -279,6 +281,16 @@ impl Surface {
     }
 
     #[cfg(target_os = "macos")]
+    pub fn port_at(&self, x: f32, y: f32) -> Option<Rect> {
+        self.motion
+            .port_at(
+                &self.scene,
+                [x - self.rect.x, y - self.rect.y].map(|it| it / self.scene.zoom),
+            )
+            .map(|it| self.in_window(it))
+    }
+
+    #[cfg(target_os = "macos")]
     fn in_window(
         &self,
         Rect {
@@ -316,14 +328,16 @@ impl Surface {
     fn begin_frame(&mut self, now: Instant) {
         if self.frame_deadline.take().is_some() {
             (self.last_frame, self.inputs) = (now, bridge::inputs());
-            let interval = host::interval().as_secs_f64() * 1000.;
-            bridge::emit_input(
-                self.id,
-                Input::Frame {
-                    time: milliseconds(now),
-                    interval,
-                },
-            );
+            let (id, interval) = (self.id, host::interval().as_secs_f64() * 1000.);
+            host::alarm::set(now, move || {
+                bridge::emit_input(
+                    id,
+                    Input::Frame {
+                        time: milliseconds(now),
+                        interval,
+                    },
+                )
+            });
         }
     }
 
@@ -469,7 +483,11 @@ static SPARE: Mutex<Option<Submission>> = Mutex::new(None);
 /// The slices of `list` and `compositing` are valid.
 pub unsafe fn submit(id: u32, list: &abi::DisplayList, compositing: Option<&abi::Compositing>) {
     trace!("JavaScript has painted {id}");
-    let mut submission = SPARE.lock().take().unwrap_or_default();
+    if guest::is_on() {
+        // SAFETY: the caller's contract.
+        return unsafe { guest::submit(id, list, compositing) };
+    }
+    let mut submission = spare_submission();
     let (scene, tables) = &mut *submission;
     // SAFETY: the caller's contract.
     unsafe {
@@ -484,41 +502,53 @@ pub unsafe fn submit(id: u32, list: &abi::DisplayList, compositing: Option<&abi:
             None => *tables = Tables::default(),
         }
     }
-    thread::post(move || {
-        trace!("the scene of {id} has arrived");
-        let window = get(id).and_then(|surface| surface.borrow_mut().adopt(&mut submission));
-        *SPARE.lock() = Some(submission);
-        window.into_iter().for_each(window::draw_now);
-    });
+    thread::post(move || adopt(id, submission));
+}
+
+pub fn spare_submission() -> Submission {
+    SPARE.lock().take().unwrap_or_default()
+}
+
+pub fn adopt(id: u32, mut submission: Submission) {
+    trace!("the scene of {id} has arrived");
+    let window = get(id).and_then(|surface| surface.borrow_mut().adopt(&mut submission));
+    *SPARE.lock() = Some(submission);
+    window.into_iter().for_each(window::draw_after_jobs);
 }
 
 pub fn submit_scrollers(id: u32, scrollers: Vec<abi::Scroller>) {
-    thread::post(move || {
-        let Some(surface) =
-            get(id).filter(|it| it.borrow().motion.tables.scrollers.len() == scrollers.len())
-        else {
-            return;
-        };
-        let window = {
-            let surface = &mut *surface.borrow_mut();
-            surface.motion.tables.scrollers = scrollers;
-            surface
-                .motion
-                .advance(id, &mut surface.scene, milliseconds(surface.last_tick));
-            surface.refresh();
-            surface
-                .window
-                .filter(|_| surface.is_visible && !surface.motion.is_scrolling())
-        };
-        window.into_iter().for_each(window::draw_now);
-    });
+    if guest::is_on() {
+        guest::submit_scrollers(id, scrollers)
+    } else {
+        thread::post(move || adopt_scrollers(id, scrollers))
+    }
+}
+
+pub fn adopt_scrollers(id: u32, scrollers: Vec<abi::Scroller>) {
+    let Some(surface) =
+        get(id).filter(|it| it.borrow().motion.tables.scrollers.len() == scrollers.len())
+    else {
+        return;
+    };
+    let window = {
+        let surface = &mut *surface.borrow_mut();
+        surface.motion.tables.scrollers = scrollers;
+        surface
+            .motion
+            .advance(id, &mut surface.scene, milliseconds(surface.last_tick));
+        surface.refresh();
+        surface
+            .window
+            .filter(|_| surface.is_visible && !surface.motion.is_scrolling())
+    };
+    window.into_iter().for_each(window::draw_now);
 }
 
 pub fn release_memory() {
     SPARE.lock().take();
 }
 
-static EPOCH: LazyLock<Instant> = LazyLock::new(Instant::now);
+static EPOCH: LazyLock<Instant> = LazyLock::new(|| guest::epoch().unwrap_or_else(Instant::now));
 
 pub fn milliseconds(time: Instant) -> f64 {
     time.saturating_duration_since(*EPOCH).as_secs_f64() * 1000.
@@ -584,11 +614,26 @@ fn set_regions_of_image(id: u32, image: u32, regions: Vec<abi::Region>) {
 }
 
 pub fn image_changed(id: u32) {
-    let shows_it = |item: &Item| matches!(item, Item::Image { image, .. } if *image == id);
+    if guest::is_on() {
+        return guest::image_changed(id);
+    }
+    refresh_where_shown(|it| it == id);
+}
+
+pub fn images_changed(ids: &FastSet<u32>) {
+    match guest::is_on() {
+        true => ids.iter().copied().for_each(guest::image_changed),
+        false if ids.is_empty() => {}
+        false => refresh_where_shown(|it| ids.contains(&it)),
+    }
+}
+
+fn refresh_where_shown(has_changed: impl Fn(u32) -> bool) {
+    let shows_it = |item: &Item| matches!(item, Item::Image { image, .. } if has_changed(*image));
     SURFACES.with_borrow(|surfaces| {
         let surfaces = surfaces.values().map(|surface| surface.borrow());
         surfaces
-            .filter(|surface| surface.scene.items.iter().any(shows_it))
+            .filter(|surface| surface.window.is_some() && surface.scene.items.iter().any(shows_it))
             .for_each(|surface| surface.refresh());
     });
 }
@@ -609,6 +654,23 @@ pub fn begin_frame(state: &WindowState) {
         }
     }
     diagnostics::frame_began(now, host::interval(), is_scrolling, is_followed);
+}
+
+/// So that JavaScript does not wait for this thread, which is busy until `end`.
+pub fn begin_frames_until(state: &WindowState, end: Instant) {
+    for surface in in_window(state) {
+        let surface = &mut *surface.borrow_mut();
+        let due = (surface.last_frame + host::interval()).max(Instant::now());
+        if surface.is_visible
+            && !surface.is_scrolling()
+            && surface.frame_deadline.is_some()
+            && due < end
+        {
+            surface.last_early_frame = due;
+            surface.begin_frame(due);
+            host::wait_for_frame(state.id, due);
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]

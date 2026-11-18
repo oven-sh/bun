@@ -5,7 +5,8 @@ use bun_jsc::{DOMExceptionCode, JSGlobalObject};
 use bun_web::convert::blob_from_js;
 use bun_web::exec::{Either, race};
 use bun_web::headers::{is_token, is_valid_value};
-use bun_web::net::body::Data;
+use bun_web::net::NetError;
+use bun_web::net::body::{Data, Writer, pipe};
 use bun_web::net::fetch::Controller;
 use bun_web::net::web_socket::{Closed, Connection, Handshake, Kind, Outbox};
 use bun_web::origin::Origin;
@@ -98,30 +99,48 @@ fn protocols_in(given: &Value) -> JsResult<Vec<Bytes>> {
     Ok(protocols)
 }
 
+enum Failure {
+    Connection(NetError),
+    Handshake { status: u16, error: NetError },
+    Lost,
+}
+
+impl Failure {
+    fn reason(&self) -> String {
+        match *self {
+            Failure::Connection(error) => {
+                format!("Error in connection establishment: {}", error.message())
+            }
+            Failure::Handshake { status, error } => {
+                let problem = match status {
+                    101 => "Invalid response".to_owned(),
+                    _ => format!("Unexpected response code: {status}"),
+                };
+                let message = error.message();
+                format!("Error during WebSocket handshake: {problem} ({message})")
+            }
+            Failure::Lost => String::new(),
+        }
+    }
+}
+
 async fn connect(
     session: &Session,
-    (handshake, request): (Handshake, Request),
+    (handshake, request, uplink): (Handshake, Request, Writer),
     origin: Origin,
     protocols: &[Bytes],
-) -> Result<Connection, String> {
+) -> Result<Connection, Failure> {
     let sender = Sender {
         origin: Some(origin),
         ..Default::default()
     };
     let response = (session.load(request, sender, &(), &Controller::default()))
         .await
-        .map_err(|it| format!("Error in connection establishment: {}", it.message()))?;
+        .map_err(Failure::Connection)?;
     let status = response.head.status;
-    handshake.finish(response, protocols).map_err(|it| {
-        let problem = match status {
-            101 => "Invalid response".to_owned(),
-            _ => format!("Unexpected response code: {status}"),
-        };
-        format!(
-            "Error during WebSocket handshake: {problem} ({})",
-            it.message()
-        )
-    })
+    let accepted = handshake.finish(response, protocols);
+    (accepted.and_then(|it| it.connect(uplink)))
+        .map_err(|error| Failure::Handshake { status, error })
 }
 
 macro_rules! handlers {
@@ -164,7 +183,8 @@ impl WebSocket {
             Some(session) => session,
             None => super::from_partition(data("partition")?.text())?,
         };
-        let (handshake, mut request) = Handshake::start(&url, &protocols);
+        let (uplink, frames) = pipe(0);
+        let (handshake, mut request) = Handshake::start(&url, &protocols, frames);
         (headers.iter())
             .filter(|it| !it.0.eq_ignore_ascii_case(b"origin"))
             .for_each(|it| request.headers.set_if_absent(it.0, it.1));
@@ -189,7 +209,7 @@ impl WebSocket {
         fields::set_target(socket, target);
         let socket = Root::new(socket);
         bun_web::exec::spawn(async move {
-            let connected = connect(session, (handshake, request), origin, &protocols);
+            let connected = connect(session, (handshake, request, uplink), origin, &protocols);
             let closed = socket.get().run(connected);
             let closed = bun_web::exec::never_at_once(closed).await;
             task::report(socket.get().end(closed));
@@ -211,8 +231,8 @@ impl WebSocket {
     /// Why it has failed, unless it was given up.
     async fn run(
         &self,
-        connected: impl Future<Output = Result<Connection, String>>,
-    ) -> Result<Closed, Option<String>> {
+        connected: impl Future<Output = Result<Connection, Failure>>,
+    ) -> Result<Closed, Option<Failure>> {
         let Either::First(connection) = race(connected, self.outbox.closed()).await else {
             return Err(None);
         };
@@ -223,7 +243,7 @@ impl WebSocket {
         let received = |kind, data| task::report(self.receive(kind, data));
         let sent = |length| self.buffered.update(|it| it - length);
         let closing = || self.state.set(CLOSING);
-        (connection.run(&self.outbox, received, sent, closing).await).ok_or(Some(String::new()))
+        (connection.run(&self.outbox, received, sent, closing).await).ok_or(Some(Failure::Lost))
     }
 
     fn receive(&self, kind: Kind, data: Vec<u8>) -> JsResult<()> {
@@ -242,14 +262,14 @@ impl WebSocket {
         self.fire("MessageEvent", "message", init)
     }
 
-    fn end(&self, closed: Result<Closed, Option<String>>) -> JsResult<()> {
+    fn end(&self, closed: Result<Closed, Option<Failure>>) -> JsResult<()> {
         self.state.set(CLOSED);
         if let Err(Some(_)) = closed {
             self.fire("Event", "error", JSValue::UNDEFINED)?;
         }
         let was_clean = closed.is_ok();
         let (code, reason) = closed.map_or_else(
-            |it| (1006, it.unwrap_or_default()),
+            |it| (1006, it.map_or_else(String::new, |it| it.reason())),
             |it| (it.code, string(&it.reason)),
         );
         let init = object!({ "code": u32::from(code), "reason": reason, "wasClean": was_clean });

@@ -90,7 +90,7 @@ impl CounterStyle {
             Vec::new(),
             &Ctx::dummy(),
         );
-        let weighted = |p: &mut P| Some((integer(p, cx)?, symbol(p)?));
+        let weighted = |p: &mut P| Some((integer(p, cx)?.max(0), symbol(p)?));
         let bound = |p: &mut P, infinite| {
             if keyword(p, "infinite") {
                 Some(infinite)

@@ -375,6 +375,10 @@ impl Transform {
                 [1.0, 0.0, 0.0, 1.0, x.resolve(width), y.resolve(height)]
             }
             Transform::Scale(_, [x, y, _]) => [*x, 0.0, 0.0, *y, 0.0, 0.0],
+            Transform::Rotate(_, Z_AXIS, degrees) if degrees.abs() < MAX_DEGREES => {
+                let (sin, cos) = sin_cos((*degrees).into());
+                [cos, sin, -sin, cos, 0.0, 0.0].map(|it| it as f32)
+            }
             _ => flattened(&self.matrix_3d(width, height)),
         }
     }
@@ -401,11 +405,22 @@ impl Transform {
 
     /// Whether it is more than an affine transform that can be undone.
     pub(crate) fn projects(&self) -> bool {
-        let matrix = (!matches!(self, Transform::Translate(..)) && self.is_3d())
-            .then(|| self.matrix_3d(1.0, 1.0));
+        let matrix = (!matches!(
+            self,
+            Transform::Translate(..) | Transform::Rotate(_, Z_AXIS, _)
+        ) && self.is_3d())
+        .then(|| self.matrix_3d(1.0, 1.0));
         matrix.is_some_and(|it| {
             [3, 7, 11, 15].iter().any(|at| it[*at] != IDENTITY_3D[*at]) || invert_3d(&it).is_none()
         })
+    }
+
+    /// Whether x and y do not depend on z.
+    pub(crate) fn is_flat(&self) -> bool {
+        matches!(
+            self,
+            Transform::Translate(..) | Transform::Scale(..) | Transform::Rotate(_, Z_AXIS, _)
+        ) || !self.is_3d()
     }
 
     pub(crate) fn is_3d(&self) -> bool {
@@ -605,6 +620,9 @@ impl Css for Transform {
 pub(crate) struct Transforms(pub(crate) NoneOrSpaces<Transform>);
 
 impl Transforms {
+    /// Stands for what the attribute says.
+    pub(crate) const ATTRIBUTE: &str = "\u{1}";
+
     /// What `of_hint` reads, and no author can declare.
     pub(crate) fn hint(matrix: &abi::Matrix) -> [u8; 49] {
         core::array::from_fn(|at| {
@@ -620,16 +638,22 @@ impl Transforms {
         let (&[a, b, c, d, e, f], []) = source.strip_prefix(&[1])?.as_chunks::<8>() else {
             return None;
         };
-        let [a, b, c, d, e, f] = [a, b, c, d, e, f].map(|it| {
-            f32::from_bits(it.iter().rev().fold(0, |all, it| {
-                all << 4 | u32::from(it.wrapping_sub(b'a') & 15)
-            }))
-        });
+        Some(Transforms::of_matrix(
+            [a, b, c, d, e, f].map(|it| {
+                f32::from_bits(it.iter().rev().fold(0, |all, it| {
+                    all << 4 | u32::from(it.wrapping_sub(b'a') & 15)
+                }))
+            }),
+            zoom,
+        ))
+    }
+
+    pub(crate) fn of_matrix([a, b, c, d, e, f]: abi::Matrix, zoom: f32) -> Transforms {
         let moved = Transform::Translate(Name::Translate, Lp::Px(e * zoom), Lp::Px(f * zoom), 0.0);
-        Some(Transforms(NoneOrSpaces(Rc::new([
+        Transforms(NoneOrSpaces(Rc::new([
             moved,
             Transform::Matrix(Rc::new(extended([a, b, c, d, 0.0, 0.0]))),
-        ]))))
+        ])))
     }
 
     pub(crate) fn matrix_3d(&self, width: f32, height: f32) -> Matrix3d {
@@ -641,7 +665,7 @@ impl Transforms {
     pub(crate) fn matrix(&self, width: f32, height: f32) -> abi::Matrix {
         match &self.0[..] {
             [only] => only.matrix(width, height),
-            all if all.iter().any(Transform::is_3d) => flattened(&self.matrix_3d(width, height)),
+            all if !all.iter().all(Transform::is_flat) => flattened(&self.matrix_3d(width, height)),
             all => all.iter().fold(crate::types::IDENTITY, |all, one| {
                 multiply(&all, &one.matrix(width, height))
             }),

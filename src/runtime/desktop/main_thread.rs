@@ -109,12 +109,13 @@ fn shows_nothing() -> bool {
     env_var::feature_flag::BUN_BE_BUN::get().unwrap_or(false)
         || env_var::BUN_DESKTOP_UTILITY_PROCESS::get().is_some()
         || env_var::ELECTRON_RUN_AS_NODE::get().is_some()
+        || super::is_page_process()
 }
 
-/// As root, so before anything looks at the environment. Does not return if it is.
+/// Before anything looks at the environment: an update is installed as root, and then this does not return.
 #[cfg(unix)]
 #[inline(never)]
-pub(crate) fn install_update_if_asked(arguments: &[*const core::ffi::c_char]) {
+pub(crate) fn recognize_internal_modes(arguments: &[*const core::ffi::c_char]) {
     unsafe extern "C" {
         fn Bun__Desktop__installUpdate(
             directory: *const core::ffi::c_char,
@@ -129,6 +130,8 @@ pub(crate) fn install_update_if_asked(arguments: &[*const core::ffi::c_char]) {
         {
             libc::_exit(i32::from(!Bun__Desktop__installUpdate(directory, app)));
         }
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+        super::child::recognize(arguments);
     }
 }
 

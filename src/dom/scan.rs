@@ -32,18 +32,38 @@ fn after_comment(source: &[u8], at: usize) -> usize {
     bun_core::strings::index_of(&source[at + 2..], b"*/").map_or(source.len(), |it| at + it + 4)
 }
 
-fn after_string(source: &[u8], mut at: usize) -> usize {
+/// `Err` with where it breaks off.
+fn end_of_string(source: &[u8], mut at: usize) -> Result<usize, usize> {
     let quote = source[at];
     at += 1;
     while let Some(&byte) = source.get(at) {
         match byte {
             b'\\' => at += 2,
-            b'\n' | b'\r' | 0x0c => return at,
-            _ if byte == quote => return at + 1,
+            b'\n' | b'\r' | 0x0c => return Err(at),
+            _ if byte == quote => return Ok(at + 1),
             _ => at += 1,
         }
     }
-    source.len()
+    Err(source.len())
+}
+
+fn after_string(source: &[u8], at: usize) -> usize {
+    end_of_string(source, at).unwrap_or_else(|it| it)
+}
+
+fn ends_in_string(source: &[u8]) -> bool {
+    let mut at = bun_core::strings::index_of_any(source, b"\"'").map_or(source.len(), |_| 0);
+    while at < source.len() {
+        at = match source[at..] {
+            [b'/', b'*', ..] => after_comment(source, at),
+            [b'"' | b'\'', ..] if end_of_string(source, at) == Err(source.len()) => return true,
+            [b'"' | b'\'', ..] => after_string(source, at),
+            [b'\\', ..] => at + 2,
+            [b'(', ..] => after_url(source, at).unwrap_or(at + 1),
+            _ => at + 1,
+        };
+    }
+    false
 }
 
 /// `at` is the parenthesis. `None` if it does not start a URL without quotes.
@@ -210,6 +230,9 @@ fn trim_start(mut source: &[u8]) -> &[u8] {
 fn trim_end(mut source: &[u8]) -> &[u8] {
     loop {
         let trimmed = source.trim_ascii_end();
+        if trimmed.len() < source.len() && ends_in_string(trimmed) {
+            return source;
+        }
         source = &source[..trimmed.len()
             + usize::from(trimmed.ends_with(b"\\") && trimmed.len() < source.len())];
         let Some(before) = source.strip_suffix(b"*/") else {

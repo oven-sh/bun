@@ -42,28 +42,32 @@ impl Cause {
     }
 }
 
-#[derive(Clone)]
-pub struct Cookie {
-    pub name: Bytes,
-    pub value: Bytes,
-    /// Without a dot before it.
-    pub domain: Bytes,
-    pub is_host_only: bool,
-    pub path: Bytes,
-    pub is_secure: bool,
-    pub is_http_only: bool,
-    /// In seconds since the epoch. Without it, it is for this session.
-    pub expires: Option<f64>,
-    pub same_site: SameSite,
-    /// The site of the top-level document that it is for.
-    pub partition: Option<Site>,
-    pub created: f64,
+crate::wire! {
+    #[derive(Clone)]
+    pub struct Cookie {
+        pub name: Bytes,
+        pub value: Bytes,
+        /// Without a dot before it.
+        pub domain: Bytes,
+        pub is_host_only: bool,
+        pub path: Bytes,
+        pub is_secure: bool,
+        pub is_http_only: bool,
+        /// In seconds since the epoch. Without it, it is for this session.
+        pub expires: Option<f64>,
+        pub same_site: SameSite,
+        /// The site of the top-level document that it is for.
+        pub partition: Option<Site>,
+        pub created: f64,
+    }
 }
 
-#[derive(Clone)]
-pub struct Change {
-    pub cookie: Cookie,
-    pub cause: Cause,
+crate::wire! {
+    #[derive(Clone)]
+    pub struct Change {
+        pub cookie: Cookie,
+        pub cause: Cause,
+    }
 }
 
 /// In which cookies are asked for or set.
@@ -74,18 +78,6 @@ pub struct Context {
     pub has_safe_method: bool,
     pub is_for_script: bool,
     pub top_level_site: Site,
-}
-
-impl Context {
-    pub fn first_party(url: &Url) -> Context {
-        Context {
-            is_same_site: true,
-            is_top_level_navigation: false,
-            has_safe_method: true,
-            is_for_script: false,
-            top_level_site: Site::of(url),
-        }
-    }
 }
 
 pub fn domain_matches(host: &[u8], cookie_domain: &[u8]) -> bool {

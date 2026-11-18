@@ -9,7 +9,7 @@ use crate::prelude::*;
 use crate::realm::{self, Module};
 use crate::value::Value;
 use crate::webview::wire;
-use crate::{app, command_line, files, process};
+use crate::{app, command_line, crash_reporter, files, process};
 
 const MARKER: &str = "BUN_DESKTOP_UTILITY_PROCESS";
 
@@ -91,6 +91,7 @@ impl UtilityProcess {
             "userAgent": app::user_agent()?,
             "inExecutable": in_executable.as_deref(),
             "locale": app::locale()?,
+            "crashReporter": &crash_reporter::for_utility_process(),
             "switches": &(command_line::all().into_iter()).map(|it| list![it.0, it.1]).collect::<Value>(),
         });
         let given = options
@@ -356,11 +357,12 @@ pub(crate) fn enter() -> JsResult<bool> {
     process.put(global(), b"type", js("utility")?);
     process.put(global(), b"parentPort", parent_port());
     process.put(global(), b"resourcesPath", get(about, "resourcesPath")?);
+    crate::modules::add_methods_to_process()?;
     let in_executable = get(about, "inExecutable")?;
     if in_executable.is_string() {
         invoke(get(process, "argv")?, "splice", &[1.into(), 1.into()])?;
         let run = function(in_executable, |path, _| {
-            crate::contents::worlds::run_compiled(global(), text_of(path)?.as_bytes())
+            crate::renderer::run_compiled(global(), text_of(path)?.as_bytes())
         })?;
         global().queue_microtask(run, &[]);
     }
@@ -369,6 +371,7 @@ pub(crate) fn enter() -> JsResult<bool> {
         command_line::set(it[0].text(), it[1].text());
     }
     command_line::set("lang", about["locale"].text());
+    crash_reporter::begin_in_utility_process(&about["crashReporter"]);
     app::set_user_agent(about["userAgent"].display());
     Ok(true)
 }

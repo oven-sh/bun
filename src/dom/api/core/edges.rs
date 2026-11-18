@@ -86,6 +86,7 @@ pub(crate) enum Edge {
     OptionOwner,
     Options,
     ParserForm,
+    ParserControls,
     ParserDocument,
     PastNames,
     Popover,

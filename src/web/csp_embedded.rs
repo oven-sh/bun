@@ -260,9 +260,11 @@ fn is_serialized_policy(text: &[u8]) -> bool {
         })
 }
 
-/// What an embedder asks of the document in its frame.
-#[derive(Clone)]
-pub struct RequiredCsp(Bytes);
+crate::wire! {
+    /// What an embedder asks of the document in its frame.
+    #[derive(Clone)]
+    pub struct RequiredCsp(Bytes);
+}
 
 impl RequiredCsp {
     fn parse(&self, own: &Url) -> CspList {

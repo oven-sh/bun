@@ -16,6 +16,8 @@ use smallvec::SmallVec;
 unsafe extern "Rust" {
     /// [`__bun_web_pump`] is to be called like the callback of `setImmediate()`.
     safe fn __bun_web_queue_pump(vm: &VirtualMachine);
+    /// What has come since the event loop last asked.
+    safe fn __bun_web_handle_input(vm: &VirtualMachine);
 }
 
 unsafe extern "C" {
@@ -119,6 +121,8 @@ struct State {
     hurried_frames_left: u8,
     scrolls_until: f64,
     stale_since: f64,
+    /// The frame waits for what its first callbacks have left to a task.
+    was_put_off: bool,
     has_to_ask_display: bool,
     last_frame: f64,
     hurry_until: f64,
@@ -287,10 +291,18 @@ impl State {
         }
         let since_last = now - self.last_frame;
         if self.has(Priority::Blocking) || self.has(Priority::Visible) || Bun__hasLocalMessages() {
-            let has_waited = now - self.stale_since >= frame_interval();
-            return match has_waited && since_last >= frame_interval() {
-                true => FrameIsDue::Yes,
-                false => FrameIsDue::No,
+            let since_input = now - (self.hurry_until - HURRY_DURATION);
+            return if since_last < frame_interval() {
+                FrameIsDue::No
+            } else if now - self.stale_since >= frame_interval() {
+                FrameIsDue::Yes
+            } else if (frame_interval()..HURRY_DURATION).contains(&since_input)
+                && self.hurried_frames_left > 0
+                && !self.was_put_off
+            {
+                FrameIsDue::IfAwaited
+            } else {
+                FrameIsDue::No
             };
         }
         if since_last > frame_interval() + 1.0 {
@@ -351,6 +363,7 @@ impl Default for Tasks {
             hurried_frames_left: 0,
             scrolls_until: 0.0,
             stale_since: 0.0,
+            was_put_off: false,
             has_to_ask_display: false,
             last_frame: 0.0,
             hurry_until: 0.0,
@@ -730,6 +743,9 @@ impl Tasks {
             if !vm.script_allowed() {
                 return;
             }
+            if !self.0.borrow().is_suspended {
+                __bun_web_handle_input(vm);
+            }
             let frame = self.0.borrow().is_frame_due(time);
             let renders = match frame {
                 FrameIsDue::No => false,
@@ -753,6 +769,7 @@ impl Tasks {
             finish_checkpoint(global);
             let before = core::mem::replace(&mut time, now(vm));
             let state = &mut *self.0.borrow_mut();
+            state.was_put_off = renders;
             if time - before > BUSY_INTERVAL && !state.has_had_input && time < LAUNCH_DURATION {
                 state.busy_since = None;
             }

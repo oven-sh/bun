@@ -9,11 +9,11 @@ use bun_alloc::Arena;
 /// Layer slot of `ImportConditions.layer`.
 pub struct Layer<'bump> {
     /// PERF: null pointer optimizaiton, nullable
-    pub v: Option<LayerName<'bump>>,
+    pub(crate) v: Option<LayerName<'bump>>,
 }
 
 impl Layer<'_> {
-    pub fn deep_clone(&self, bump: &Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
         Self {
             v: self.v.as_ref().map(|n| n.deep_clone(bump)),
         }
@@ -45,7 +45,7 @@ impl<'bump> ImportConditions<'bump> {
         matches!(&self.layer, Some(l) if l.v.is_none())
     }
 
-    pub fn deep_clone(&self, bump: &'bump Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &'bump Arena) -> Self {
         Self {
             layer: self.layer.as_ref().map(|l| l.deep_clone(bump)),
             supports: self.supports.as_ref().map(|s| s.deep_clone(bump)),
@@ -134,7 +134,7 @@ impl<'bump> ImportConditions<'bump> {
 /// A [@import](https://drafts.csswg.org/css-cascade/#at-import) rule.
 pub struct ImportRule<'bump> {
     /// The url to import.
-    pub url: &'bump [u8],
+    pub(crate) url: &'bump [u8],
 
     /// The layer, `supports()` condition and media query.
     pub conditions: ImportConditions<'bump>,
@@ -145,7 +145,7 @@ pub struct ImportRule<'bump> {
     pub import_record_idx: u32,
 
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl<'bump> ImportRule<'bump> {
@@ -155,7 +155,7 @@ impl<'bump> ImportRule<'bump> {
             || !self.conditions.media.media_queries.is_empty()
     }
 
-    pub fn deep_clone(&self, bump: &'bump Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &'bump Arena) -> Self {
         Self {
             url: self.url,
             conditions: self.conditions.deep_clone(bump),

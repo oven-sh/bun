@@ -120,21 +120,23 @@ const prototypeOfReadStream = {
     // Add ref/unref methods to make tty.ReadStream behave like Node.js
     // where TTY streams have socket-like behavior
     Prototype.ref = function (this: $Node.TTYReadStream) {
-      this[kUnrefed] = false;
       // Get the underlying native stream source if available
       const source = this.$bunNativePtr;
       if (source?.updateRef) {
         source.updateRef(true);
+      } else if (this.isTTY) {
+        this[kUnrefed] = false;
       }
       return this;
     };
 
     Prototype.unref = function (this: $Node.TTYReadStream) {
-      this[kUnrefed] = true;
       // Get the underlying native stream source if available
       const source = this.$bunNativePtr;
       if (source?.updateRef) {
         source.updateRef(false);
+      } else if (this.isTTY) {
+        this[kUnrefed] = true;
       }
       return this;
     };

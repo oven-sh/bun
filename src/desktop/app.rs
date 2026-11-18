@@ -89,6 +89,10 @@ pub(crate) fn is_ready() -> bool {
     state().is_ready.get()
 }
 
+pub(crate) fn ready() -> JSValue {
+    state().ready.promise()
+}
+
 pub(crate) fn has_display() -> JsResult<bool> {
     Ok(state().has_display.get() || is_headless()?)
 }
@@ -359,6 +363,7 @@ pub(crate) fn handle(event: SystemEvent) -> JsResult<()> {
         } => {
             let had_screen_reader = surfaces::has_screen_reader();
             surfaces::accessibility_changed(is_active, has_screen_reader)?;
+            crate::contents::process::statics_changed()?;
             if had_screen_reader == has_screen_reader {
                 return Ok(());
             }
@@ -725,7 +730,7 @@ impl DesktopApp {
         if !is_electron() {
             start_soon()?;
         }
-        Ok(state().ready.promise())
+        Ok(ready())
     }
 
     pub(crate) fn is_ready() -> bool {
@@ -1050,7 +1055,12 @@ impl DesktopApp {
         if IS_MAC {
             return Ok(js_DesktopLoginItemSettings::create(heap(), Default::default()).to_js());
         }
-        Ok(object!({ "openAtLogin": files::exists(&xdg::autostart_entry()?) }))
+        let opens = files::exists(&xdg::autostart_entry()?);
+        Ok(object!({
+            "executableWillLaunchAtLogin": opens,
+            "openAtLogin": opens,
+            "wasOpenedAtLogin": false,
+        }))
     }
 
     pub(crate) fn set_login_item_settings(
@@ -1060,11 +1070,12 @@ impl DesktopApp {
         if IS_MAC {
             return perform(SystemCommand::OpenAtLogin(settings.open_at_login));
         }
+        let (path, arguments) = (settings.path.as_deref(), strings(settings.args.as_ref()));
         if !settings.open_at_login {
             files::remove(&xdg::autostart_entry()?);
             return Ok(());
         }
-        let command = command(settings.path.as_deref(), strings(settings.args.as_ref()))?;
+        let command = command(path, arguments)?;
         xdg::write_entry(&xdg::autostart_entry()?, &xdg::exec(&command), "")
     }
 
@@ -1099,6 +1110,14 @@ impl DesktopApp {
             "memory": process::memory()?,
         });
         let all = array(&[own])?;
+        for (id, creation_time) in crate::contents::process::ids() {
+            let tab = utility::metrics(js(id)?, "", creation_time)?;
+            tab.put(global(), b"type", js("Tab")?);
+            for name in ["name", "serviceName"] {
+                tab.delete_property(global(), name)?;
+            }
+            all.push(global(), tab)?;
+        }
         utility::add_metrics_to(all)?;
         if let Some(engine) = engine::running() {
             all.push(
@@ -1208,7 +1227,7 @@ impl DesktopApp {
         if let Some(source) = options.source {
             state().source_of.set(keep(source.to_js()));
         }
-        Ok(())
+        crate::contents::process::statics_changed()
     }
 
     pub(crate) fn import_certificate<'a>(
@@ -1242,6 +1261,7 @@ impl DesktopApp {
             in_all_frames: matches!(options.in_frames, Some(FramesToTrust::All(true))),
             injected_scripts: options.injected_scripts,
         });
+        crate::task::report(crate::contents::process::statics_changed());
     }
 }
 

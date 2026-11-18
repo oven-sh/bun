@@ -3507,8 +3507,19 @@ export interface WebMemberOptions {
   secure?: boolean;
   /** Somebody has read the Rust function down to the last function it calls: it changes nothing that a script can observe, runs no JavaScript, makes no prototype or structure, throws only for lack of memory, uses the global object for its VM alone, and answers the same until something else is called. The JIT compilers move, merge and drop the call. */
   onlyReads?: true;
+  /** Of a method: the JIT compilers pass the arguments that it requires in registers. */
+  withoutFrame?: true;
 }
-const webMemberKeys = ["isCold", "ceReactions", "unforgeable", "unscopable", "exposed", "secure", "onlyReads"] as const;
+const webMemberKeys = [
+  "isCold",
+  "ceReactions",
+  "unforgeable",
+  "unscopable",
+  "exposed",
+  "secure",
+  "onlyReads",
+  "withoutFrame",
+] as const;
 export type Exposure = readonly ("Window" | "Worker" | "DedicatedWorker" | "SharedWorker")[];
 
 export class Signature {
@@ -3965,6 +3976,8 @@ export interface GetterField extends SignatureColumns, EntryColumns, WebMemberOp
   member?: string;
   /** Of an interface: a `Bun::Bindgen::DOMJIT::Shortcut`, which the JIT compilers try before they call the getter. */
   shortcut?: string;
+  /** Of an interface that `publishesItems`: it returns their number. */
+  countsItems?: true;
   /** Key the accessor by this private builtin name instead of a string. */
   privateSymbol?: string;
   /** `[PutForwards]`. */
@@ -4234,6 +4247,13 @@ export class Method extends Signature {
       !options.onlyReads || (this.args.length <= 2 && this.args.every(arg => speculatedArgument(arg.type))),
       `${name}: what only reads has at most two arguments, each a string, an integer or a boolean`,
     );
+    assert(
+      !options.withoutFrame ||
+        (!isStatic &&
+          !this.rejects &&
+          this.args.every(arg => !(arg.type instanceof RestType || arg.type instanceof VariadicType))),
+      `${name}: what is called without a frame is not static, rejects nothing and has no rest of arguments`,
+    );
   }
 }
 
@@ -4310,6 +4330,7 @@ export class Getter {
       "computedIfEmpty",
       "member",
       "shortcut",
+      "countsItems",
       "privateSymbol",
       "putForwards",
       "replaceable",
@@ -4975,6 +4996,8 @@ export interface InterfaceOptions extends Omit<
   size?: number;
   /** An instance holds its first two own properties in its cell. Only for an interface that extends none. */
   inlineCapacity?: 2;
+  /** An instance can hand the engine what its indexed getter answers: `bindgen::PublishesItems`. Only for an interface that extends none. */
+  publishesItems?: true;
   includes?: readonly ClassType[];
   /** On the prototype and on the constructor. */
   constants?: Record<string, number>;
@@ -5039,6 +5062,7 @@ const interfaceKeys = [
   "name",
   "size",
   "inlineCapacity",
+  "publishesItems",
   "includes",
   "constants",
   "isCold",
@@ -5139,6 +5163,10 @@ export function defineInterface(name: string, options: InterfaceOptions): ClassT
   const base = options.extends;
   assert(!base || base.web?.declaredName, `${name}: extends an interface, imported from the file that declares it`);
   assert(!base || !options.inlineCapacity, `${name}: inlineCapacity is for an interface that extends none`);
+  assert(
+    !options.publishesItems || (!base && !options.inlineCapacity),
+    `${name}: publishesItems is for an interface that extends none and has no inlineCapacity`,
+  );
   assert(!base || base.web!.options.abstract || !options.prototypeBase, `${name}: extends or prototypeBase`);
   assert(
     options.prototypeBase !== "DOMException" ||

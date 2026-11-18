@@ -10,6 +10,9 @@ use crate::{app, paths};
 #[derive(Clone, Copy)]
 enum Action {
     Nothing,
+    Share,
+    /// A page is not asked about the ways out of it.
+    Leave(&'static Action),
     /// A method of `webContents`.
     Page(&'static str),
     /// In, out, or neither.
@@ -23,7 +26,7 @@ enum Action {
 }
 
 pub(crate) struct Role {
-    pub(crate) name: &'static str,
+    name: &'static str,
     /// `%` is the name of the app.
     label: &'static str,
     pub(crate) accelerator: Option<&'static str>,
@@ -68,21 +71,24 @@ roles! {
     "resetzoom", "Actual Size", Some("CommandOrControl+0"), None, Zoom(0);
     "zoomin", "Zoom In", Some("CommandOrControl+="), None, Zoom(1);
     "zoomout", "Zoom Out", Some("CommandOrControl+-"), None, Zoom(-1);
-    "close", by_platform("Close Window", "Close"), Some("CommandOrControl+W"), Close, Window(|it| it.request_close());
-    "minimize", "Minimize", Some("CommandOrControl+M"), Minimize, Window(|it| it.tell(WindowCommand::Minimize));
+    "close", by_platform("Close Window", "Close"), Some("CommandOrControl+W"), Close,
+        Leave(&Window(|it| it.request_close()));
+    "minimize", "Minimize", Some("CommandOrControl+M"), Minimize,
+        Leave(&Window(|it| it.tell(WindowCommand::Minimize)));
     "zoom", "Zoom", None, None, Window(|it| it.zoom_frame(!it.fills_work_area()?));
     "togglefullscreen", "Toggle Full Screen", Some(by_platform("Control+Command+F", "F11")), None,
         Window(|it| it.tell(WindowCommand::Fullscreen(!it.fills_screen()?)));
-    "quit", by_platform("Quit %", "Quit"), Some("CommandOrControl+Q"), None, App(app::quit);
+    "quit", by_platform("Quit %", "Quit"), Some("CommandOrControl+Q"), None, Leave(&App(app::quit));
     "about", "About %", None, None, App(|| app::show_about_panel().map(drop));
-    "hide", "Hide %", Some("Command+H"), None, App(app::hide);
-    "hideothers", "Hide Others", Some("Command+Alt+H"), None, App(|| tell_system(SystemCommand::HideOthers));
+    "hide", "Hide %", Some("Command+H"), None, Leave(&App(app::hide));
+    "hideothers", "Hide Others", Some("Command+Alt+H"), None,
+        Leave(&App(|| tell_system(SystemCommand::HideOthers)));
     "unhide", "Show All", None, None, App(|| tell_system(SystemCommand::Unhide));
     "front", "Bring All to Front", None, None, App(|| app::activate(true));
     "clearrecentdocuments", "Clear Menu", None, None, App(app::clear_recent_documents);
     "recentdocuments", "Open Recent", None, None, Nothing;
     "services", "Services", None, Services, Nothing;
-    "sharemenu", "Share", None, None, Nothing;
+    "sharemenu", "Share", None, None, Share;
     "window", "Window", None, Window, Nothing;
     "help", "Help", None, Help, Nothing;
     "startspeaking", "Start Speaking", None, None, Selector("startSpeaking:");
@@ -167,16 +173,20 @@ impl Role {
         IS_MAC || !matches!(self.action, Action::Selector(_))
     }
 
-    /// A page is not asked about the ways out of it.
     pub(crate) fn is_reserved(&self) -> bool {
-        matches!(
-            self.name,
-            "quit" | "close" | "hide" | "hideothers" | "minimize"
-        )
+        matches!(self.action, Action::Leave(_))
+    }
+
+    pub(crate) fn shares(&self) -> bool {
+        matches!(self.action, Action::Share)
     }
 
     pub(crate) fn perform(&self, window: Option<&Window>) -> JsResult<()> {
-        match (self.action, window) {
+        let action = match self.action {
+            Action::Leave(action) => *action,
+            action => action,
+        };
+        match (action, window) {
             (Action::App(action), _) => action(),
             (Action::Selector(it), _) => tell_system(SystemCommand::SendAction(it.into())),
             (Action::Page(method), Some(window)) => tell_page(window, method),

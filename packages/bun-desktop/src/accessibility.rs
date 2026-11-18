@@ -17,11 +17,12 @@ use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-pub use forest::{Event, Forest, Id};
+pub use forest::{Event, Forest, Id, Update};
 
 use crate::abi::accessibility::{self as abi, Action, TREE_OF_IMAGE};
 use crate::host::{self, thread};
 use crate::protocol::{Input, SystemEvent};
+use crate::remote::guest;
 use crate::window::{self, WindowState};
 use crate::{bridge, surface};
 
@@ -148,15 +149,21 @@ fn post(events: Vec<Event>) {
 /// # Safety
 /// The contract of `abi::Renderer`.
 pub unsafe fn submit(tree: u32, update: &abi::Update) {
-    // SAFETY: the caller's contract.
-    let update = unsafe { forest::Update::copy(update) };
-    thread::post(move || {
-        forget_idle_clients();
-        if is_active() {
-            windows_changed();
-            post(FOREST.with_borrow_mut(|forest| forest.apply(tree, update)));
-        }
-    });
+    if guest::is_on() {
+        // SAFETY: the caller's contract.
+        return unsafe { guest::update_accessibility(tree, update) };
+    }
+    // SAFETY: as above.
+    let update = unsafe { Update::copy(update) };
+    thread::post(move || apply(tree, update));
+}
+
+pub fn apply(tree: u32, update: Update) {
+    forget_idle_clients();
+    if is_active() {
+        windows_changed();
+        post(FOREST.with_borrow_mut(|forest| forest.apply(tree, update)));
+    }
 }
 
 /// Which surfaces it has, where they are, or which one has the focus.

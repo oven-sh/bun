@@ -4,7 +4,7 @@ use bun_jsc::JSString;
 
 use super::layout::{By as Reach, Direction, Unit};
 use super::prelude::*;
-use super::{details, focus, popover};
+use super::{details, focus, pointer, popover};
 use crate::api::editing::{self, selection};
 use crate::api::forms::{self, text_control};
 
@@ -16,6 +16,18 @@ pub(crate) fn before_remove<'a>(cx: &mut Cx<'a>, node: &'a Node, is_move: bool) 
     if let Some(it) = Ui::of(node.doc()) {
         it.before_remove(cx, node, is_move);
     }
+}
+
+/// Whether `before_remove` has nothing to do for its children, unless it is hovered, pressed or focused.
+pub(crate) fn is_left_alone(parent: &Node) -> bool {
+    Ui::of(parent.doc()).is_none_or(|ui| {
+        !ui.tab_start()
+            .is_some_and(|it| parent.contains_composed(it))
+            && ui.open_picker().is_none()
+            && ui.top_layer().is_empty()
+            && ui.interested().is_empty()
+            && pointer::holds_nothing(ui)
+    })
 }
 
 pub(crate) fn removed<'a>(cx: &mut Cx<'a>, node: &'a Node, is_move: bool) {

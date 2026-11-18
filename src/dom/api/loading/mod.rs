@@ -227,7 +227,7 @@ impl Doc {
 
 /// `steps` do not run if the document has gone.
 #[optimize(size)]
-fn queue_task<const N: usize>(
+pub(crate) fn queue_task<const N: usize>(
     doc: &Doc,
     values: [JSValue; N],
     steps: impl for<'a> FnOnce(Cx<'_, 'a>, &'a Doc, [JSValue; N]) + 'static,

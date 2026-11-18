@@ -1374,8 +1374,11 @@ pub mod ssl_wrapper {
             } else {
                 debug_assert!(
                     self.flags.closed_notified()
-                        || self.ssl.get().is_none()
-                        || self.flags.handshake_state() == HandshakeState::HandshakePending,
+                        || self.ssl.get().is_none_or(|ssl| {
+                            // SAFETY: ssl is still valid.
+                            let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), -1) };
+                            err == boring_sys::SSL_ERROR_WANT_PRIVATE_KEY_OPERATION
+                        }),
                     "update_handshake_state stopped the pass and left the wrapper open"
                 );
             }

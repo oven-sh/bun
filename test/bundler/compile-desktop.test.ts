@@ -1,5 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isMacOS, isMusl, isWindows, libcPathForDlopen, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isMusl,
+  isWindows,
+  libcPathForDlopen,
+  tempDir,
+} from "harness";
 import { chmodSync, existsSync, readdirSync, readFileSync, readlinkSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { crc32, deflateSync } from "node:zlib";
@@ -477,6 +488,93 @@ import(self.origin + "/rare.js").then(rare => console.log([sizeOf(new Box(1)), s
       expect(stderr).toContain("separate-realms, locked-builtins, complete-order");
     });
 
+    test.skipIf(!hasLibrary)("a page without compiled scripts can change its built-in objects", async () => {
+      using dir = project(
+        { name: "notes", desktop: { name: "Memo", resources: [{ from: "app", to: "app" }] } },
+        {
+          "app.js": `const { app, BrowserWindow, protocol } = require("electron");
+protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true, corsEnabled: true } }]);
+app.trustOrigins(["app://bundle", "app://bundle.other", "about:"], { inFrames: true, injectedScripts: true });
+app.setCompiledScripts({ "app://bundle/web/": "/$bunfs/root/web/" });
+if (process.env.PRELOADS) app.setCompiledScripts({ "file:///preloads/": "/$bunfs/root/preloads/" });
+const tries = require("fs").readFileSync(app.getAppPath() + "/tries.js", "utf8");
+const inFrame = more => "<iframe " + more + " srcdoc='<script src=app://bundle/tries.js></script><script>parent.postMessage(result, \\"*\\")</script>'></iframe>";
+const pages = {
+  "/page": "<script src=/tries.js></script><script src=app://bundle/web/kind.js></script><script>console.log(result, kind)</script>",
+  "/worker": "<script>new Worker('/worker.js').onmessage = event => console.log(event.data)</script>",
+  "/frame": "<script>onmessage = event => console.log(event.data)</script>" + inFrame(""),
+  "/sandboxed": "<script>onmessage = event => console.log(event.data)</script>" + inFrame("sandbox=allow-scripts"),
+  "/bridge": "<script src=/tries.js></script><script>bridge.later(new Map([[1, [2]]]), it => it + 1).then(it => console.log(result, bridge.twice([1, 2]).join(), it))</script>",
+  "/tries.js": tries,
+  "/worker.js": tries + ";postMessage(result)",
+  "/web/kind.js": "self.kind = 'text'",
+};
+app.whenReady().then(async () => {
+  protocol.handle("app", ({ url }) => new Response(pages[new URL(url).pathname], { headers: { "content-type": url.endsWith(".js") ? "text/javascript" : "text/html" } }));
+  for (const [url, webPreferences] of JSON.parse(process.env.LOADS)) {
+    const { webContents } = new BrowserWindow({ webPreferences });
+    const logged = new Promise(done => webContents.once("console-message", event => done(event.message)));
+    url.includes(":") ? webContents.loadURL(url) : webContents.loadFile(url);
+    console.log(url, await logged);
+  }
+  console.log([3].map(it => it + 1).join(), String(function named() {}).includes("named"));
+  process.exit(0);
+});`,
+          "app/tries.js": `var result = [[Function.prototype, "toString"], [Array.prototype, "map"], [Date, "now"], [self, "Promise"], [Date.prototype, "constructor"]]
+  .reduce((all, [holder, name]) => {
+    const original = holder[name], replacement = function (...given) { return Reflect.apply(original, this, given); };
+    try { holder[name] = replacement; } catch {}
+    const isReplaced = holder[name] === replacement;
+    if (name === "Promise") holder[name] = original;
+    return all + +isReplaced;
+  }, "");`,
+          "app/index.html": `<script src=tries.js></script><script>const escape = 1; console.log(result, escape)</script>`,
+          "web/kind.js": `self.kind = "compiled";`,
+          "preloads/bridge.js": `export default function (require) {
+  require("electron").contextBridge.exposeInMainWorld("bridge", {
+    twice: list => list.map(it => it * 2),
+    later: async (map, more) => more(map.get(1)[0]),
+  });
+}`,
+        },
+      );
+      const files = ["app.js", "web/kind.js", "preloads/bridge.js"];
+      const built = await run([bunExe(), "compile", "--desktop", ...files, "--outfile=out"], String(dir));
+      expect(built).toMatchObject({ exitCode: 0 });
+      const show = async (loads: unknown[][], PRELOADS = "") => {
+        const env = { BUN_DESKTOP_HEADLESS: "1", LOADS: JSON.stringify(loads), PRELOADS };
+        return (await run([join(String(dir), "out" + extension, executable)], String(dir), env)).stdout.split("\n");
+      };
+      const paths = ["page", "worker", "frame", "sandboxed"];
+      const urls = ["bundle", "bundle.other"].flatMap(host => paths.map(path => [`app://${host}/${path}`]));
+      expect(await show([...urls, ["index.html"]])).toEqual([
+        "app://bundle/page 00000 compiled",
+        "app://bundle/worker 00000",
+        "app://bundle/frame 00000",
+        "app://bundle/sandboxed 11111",
+        "app://bundle.other/page 11111 text",
+        "app://bundle.other/worker 11111",
+        "app://bundle.other/frame 11111",
+        "app://bundle.other/sandboxed 11111",
+        "index.html 11111 1",
+        "4 true",
+        "",
+      ]);
+      const preload = "/preloads/bridge.js";
+      const withPreload = [
+        ["app://bundle.other/bridge", { preload }],
+        ["app://bundle.other/page", { nodeIntegration: true, contextIsolation: false }],
+      ];
+      if (!isWindows) {
+        expect(await show(withPreload, "1")).toEqual([
+          "app://bundle.other/bridge 11111 2,4 3",
+          "app://bundle.other/page 00000 text",
+          "4 true",
+          "",
+        ]);
+      }
+    });
+
     test.skipIf(!hasLibrary)("what a page has read from window or a collection follows the document", async () => {
       using dir = project(
         { name: "notes", desktop: { name: "Memo" } },
@@ -728,6 +826,122 @@ app.whenReady().then(async () => {
       });
     });
 
+    describe.each([
+      ["bun build --compile", false, ["build", "--compile"]],
+      ["bun compile", true, ["compile"]],
+    ])("%s without --desktop has no bun:desktop", (_, isAot, command) => {
+      test.skipIf(isAot && (!!aotIsUnsupported || isDebug))("an import stops the build", async () => {
+        using dir = project(undefined, { "app.js": `import { app } from "bun:desktop";\nconsole.log(typeof app);` });
+        const { stderr, exitCode } = await bun(dir, ...command, "app.js", "--outfile=out");
+        expect(stderr).toContain(`"bun:desktop" is only in an executable that is built with --desktop`);
+        expect(exitCode).toBe(1);
+      });
+
+      test.skipIf(isAot && (!!aotIsUnsupported || isDebug))("a load under a name from outside throws", async () => {
+        using dir = project(undefined, {
+          "app.js": `const name = process.argv[2];
+for (const load of [() => require(name), () => import(name), () => process.getBuiltinModule(name)]) {
+  try {
+    console.log(typeof (await load()));
+  } catch (error) {
+    console.log(error.message);
+  }
+}`,
+        });
+        expect(await bun(dir, ...command, "app.js", "--outfile=out")).toMatchObject({ exitCode: 0 });
+        const out = join(String(dir), isWindows ? "out.exe" : "out");
+        expect(await run([out, "bun:desktop/dom"], "/")).toMatchObject({
+          stdout: "Cannot load 'bun:desktop/dom': it is only in an executable that is built with --desktop\n".repeat(3),
+          exitCode: 0,
+        });
+        expect(await run([out, "node:path"], "/")).toMatchObject({ stdout: "object\n".repeat(3), exitCode: 0 });
+      });
+    });
+
+    describe.skipIf(!!aotIsUnsupported || isDebug)("an import turns bun:desktop on for --aot in", () => {
+      const imports = {
+        "static.js": `import { document } from "bun:desktop/dom";\nconsole.log(document.createElement("p").tagName);`,
+        "dynamic.js": `const { document } = await import("bun:desktop/dom");\nconsole.log(document.createElement("p").tagName);`,
+        "guarded.cjs": `try {\n  console.log(require("bun:desktop/dom").document.createElement("p").tagName);\n} catch {}`,
+        "further.js": `import "./static.js";`,
+      };
+
+      test.each(Object.keys(imports))("bun run %s", async file => {
+        using dir = project(undefined, imports);
+        expect(await bun(dir, "--aot", file)).toEqual({ stdout: "P\n", stderr: "", exitCode: 0 });
+      });
+
+      test.each([
+        ["run", ["--aot"]],
+        ["test", ["test", "--aot"]],
+      ])("bun %s of a file whose package has the import statement", async (_, command) => {
+        using dir = project(undefined, {
+          "app.test.js": `import "pages";`,
+          "node_modules/pages/index.js": imports["static.js"],
+        });
+        const { stdout, exitCode } = await bun(dir, ...command, "./app.test.js");
+        expect(stdout).toEndWith("P\n");
+        expect(exitCode).toBe(0);
+      });
+
+      test.each([
+        ["a key", `Object.keys({ "bun:desktop": 1 });`],
+        ["a text beside a loader", `const load = name => require(name);\nload("node:path"), String("bun:desktop");`],
+        ["require.resolve()", `if (process.env.NEVER) require.resolve("bun:desktop");`],
+        ["require() in a package", `require("tries");`],
+        ["import() in a package", `require("tries/later");`],
+        ["a list in a package", `require("tries/listed");`],
+        ["a file of a package that is loaded later", `require("tries/lazily");`],
+      ])("but not %s", async (_, code) => {
+        using dir = project(undefined, {
+          "app.test.cjs": `${code}
+console.log(require("electron"));
+if (${isLinux && !isMusl && !isHardened}) {
+  const { prctl } = require("bun:ffi").dlopen(${JSON.stringify(isLinux ? libcPathForDlopen() : "")}, {
+    prctl: { args: ["i32", "u64", "u64", "u64", "u64"], returns: "i32" },
+  }).symbols;
+  const PR_SET_MDWE = 65, PR_GET_MDWE = 66;
+  const before = prctl(PR_GET_MDWE, 0, 0, 0, 0);
+  prctl(PR_SET_MDWE, 3, 0, 0, 0);
+  if (prctl(PR_GET_MDWE, 0, 0, 0, 0) !== before) console.log("Writable memory could be executed");
+}`,
+          "node_modules/electron/index.js": `module.exports = "the path of Electron";`,
+          "node_modules/tries/index.js": `try {\n  require("bun:desktop");\n} catch {}`,
+          "node_modules/tries/later.js": `import("bun:desktop").catch(() => {});`,
+          "node_modules/tries/listed.js": `require(["bun:desktop", "node:path"][+!process.env.NEVER]);`,
+          "node_modules/tries/lazily.js": `if (process.env.NEVER) import("./window.mjs");`,
+          "node_modules/tries/window.mjs": `import "bun:desktop";`,
+        });
+        const { stdout, exitCode } = await bun(dir, "test", "--aot", "./app.test.cjs");
+        expect(stdout).toEndWith("\nthe path of Electron\n");
+        expect(exitCode).toBe(0);
+      });
+
+      test("bun test", async () => {
+        using dir = project(undefined, {
+          "page.test.js": `import { expect, test } from "bun:test";
+import { document } from "bun:desktop/dom";
+test("page", () => {
+  document.body.append(document.createElement("p"));
+  expect([...document.body.children].map(child => child.tagName)).toEqual(["P"]);
+});`,
+        });
+        const { stderr, exitCode } = await bun(dir, "test", "--aot", "./page.test.js");
+        expect(stderr).toContain(" 1 pass");
+        expect(exitCode).toBe(0);
+      });
+
+      test.each([
+        ["static.js", "kept"],
+        ["app.ts", "removed"],
+      ])("bun check %s", async (file, fate) => {
+        using dir = project(undefined, imports);
+        const { stdout, stderr, exitCode } = await bun(dir, "check", "--aot", "--no-pretty", "--explain=trim", file);
+        expect(stdout + stderr).toContain(`aot: trim: ${fate} bun:desktop (desktop)`);
+        expect(exitCode).toBe(0);
+      });
+    });
+
     test.skipIf(!hasLibrary || !!aotIsUnsupported || isDebug)("not for pages", async () => {
       using dir = project(
         { name: "notes" },
@@ -869,6 +1083,34 @@ app.whenReady().then(() => {
       exitCode: 0,
     });
   });
+
+  test.skipIf(isWindows)("a compiled program does not take the argument that makes a process for pages", async () => {
+    using dir = project(undefined, { "app.ts": `console.log(process.argv.slice(2).join());` });
+    expect(await bun(dir, "build", "--compile", "app.ts", "--outfile=plain")).toMatchObject({ exitCode: 0 });
+    expect(await run([join(String(dir), "plain"), "--bun-desktop-child=page", "a"], String(dir))).toMatchObject({
+      stdout: "--bun-desktop-child=page,a\n",
+      exitCode: 0,
+    });
+  });
+
+  test.skipIf(!isLinux || isMusl || isASAN || isHardened || !Bun.which("curl"))(
+    "an app does not report its crashes to Bun",
+    async () => {
+      using dir = project({ name: "notes" }, { "app.ts": `import { read } from "bun:ffi"; read.u8(8);` });
+      let reports = 0;
+      using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => (reports++, new Response()) });
+      // What sends the report has the pipe for errors too.
+      const crash = async (executable: string) => {
+        const cmd = ["/bin/sh", "-c", 'ulimit -c 0 && exec "$0"', join(String(dir), executable)];
+        const { stderr } = await run(cmd, String(dir), { BUN_CRASH_REPORT_URL: server.url.origin });
+        return [stderr.includes("Segmentation fault"), reports];
+      };
+      expect(await bun(dir, "build", "--compile", "--desktop", "app.ts")).toMatchObject({ exitCode: 0 });
+      expect(await crash("notes.AppDir/usr/bin/notes")).toEqual([true, 0]);
+      expect(await bun(dir, "build", "--compile", "app.ts", "--outfile=plain")).toMatchObject({ exitCode: 0 });
+      expect(await crash("plain")).toEqual([true, 1]);
+    },
+  );
 
   test("a smaller icon does not take on the color of transparent pixels", async () => {
     using dir = project({ name: "notes", desktop: { icon: "icon.png" } }, { "icon.png": png(17) });

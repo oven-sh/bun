@@ -23,6 +23,7 @@ unsafe extern "C" {
         scope: Scope,
         is_secure: bool,
         is_isolated: bool,
+        runs_program: bool,
     ) -> &JSGlobalObject;
     safe fn Bun__DesktopRealm__setUpWorker(realm: &JSGlobalObject);
     safe fn Bun__DesktopRealm__dispose(realm: &JSGlobalObject, is_reachable: bool);
@@ -294,6 +295,7 @@ pub(super) extern "C" fn enter(of_thread: &JSGlobalObject, id: u32) {
         kind,
         client.is_secure(),
         client.is_cross_origin_isolated(),
+        client.runs_program(),
     );
     let realm = Realm::of(global).expect("a realm");
     realm.set_client(Rc::clone(&client));

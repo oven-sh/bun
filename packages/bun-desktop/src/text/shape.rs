@@ -1074,7 +1074,7 @@ impl Shaped {
             });
             let bitmap = |it: &Placed| {
                 (has_color && it.advance != 0)
-                    .then(|| face.bitmap_advance(it.id.into(), size))
+                    .then(|| face.bitmap_advance(it.id.into(), size, resolved.device_scale))
                     .flatten()
             };
             spell_placed(text, &range, placed, &mut spelling, |it| {
@@ -1217,7 +1217,7 @@ impl Shaped {
                 });
                 let is_bitmap = face.file.has_color && advance != 0;
                 x += is_bitmap
-                    .then(|| face.bitmap_advance(id, size))
+                    .then(|| face.bitmap_advance(id, size, resolved.device_scale))
                     .flatten()
                     .unwrap_or(advance as f32 * scale);
             }

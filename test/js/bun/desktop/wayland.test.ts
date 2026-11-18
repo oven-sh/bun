@@ -369,6 +369,7 @@ describe.skipIf(!wl.hasWayland).concurrent("Wayland", () => {
     it.modifiers(CONTROL, 1);
     it.type(A);
     await it.sees("[i.selectionStart, i.selectionEnd]", [0, 3]);
+    await it.seen(2);
     it.modifiers(0);
 
     it.emit("wl_keyboard", "repeat_info", 100, 10);

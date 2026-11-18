@@ -660,6 +660,39 @@ impl Css for InitialLetter {
 }
 
 #[derive(Clone, Copy, PartialEq)]
+pub(crate) enum CornerSmoothing {
+    None,
+    SystemUi,
+    Fraction(f32),
+}
+
+impl CornerSmoothing {
+    pub(crate) fn amount(self) -> f32 {
+        match self {
+            CornerSmoothing::SystemUi if cfg!(target_os = "macos") => 0.6,
+            CornerSmoothing::None | CornerSmoothing::SystemUi => 0.0,
+            CornerSmoothing::Fraction(it) => it.min(1.0),
+        }
+    }
+}
+
+impl Css for CornerSmoothing {
+    fn parse(p: &mut P, cx: &Ctx) -> Option<Self> {
+        match keyword(p, "system-ui") {
+            true => Some(CornerSmoothing::SystemUi),
+            false => quantity(p, cx, Kind::Percentage, 0.0).map(CornerSmoothing::Fraction),
+        }
+    }
+    fn write(&self, out: &mut Out) {
+        match self {
+            CornerSmoothing::None => out.extend(b"none"),
+            CornerSmoothing::SystemUi => out.extend(b"system-ui"),
+            CornerSmoothing::Fraction(it) => Lp::Fraction(*it).write(out),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
 pub(crate) struct AspectRatio {
     pub(crate) auto: bool,
     pub(crate) ratio: Option<[f32; 2]>,

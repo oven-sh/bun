@@ -137,11 +137,11 @@ impl Default for MediaList<'_> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MediaQuery<'bump> {
     /// The qualifier (`not` / `only`).
-    pub qualifier: Option<Qualifier>,
+    pub(crate) qualifier: Option<Qualifier>,
     /// The media type (`screen`, `print`, `all`, ...).
-    pub media_type: MediaType<'bump>,
+    pub(crate) media_type: MediaType<'bump>,
     /// The media condition.
-    pub condition: Option<MediaCondition<'bump>>,
+    pub(crate) condition: Option<MediaCondition<'bump>>,
 }
 
 /// `not` / `and` / `or` boolean combiner.
@@ -214,7 +214,7 @@ pub enum MediaCondition<'bump> {
 
 /// `MediaFeature` is the media-query specialization of the generic
 /// `QueryFeature` (also used by `@container`).
-pub type MediaFeature<'bump> = QueryFeature<'bump, MediaFeatureId>;
+pub(crate) type MediaFeature<'bump> = QueryFeature<'bump, MediaFeatureId>;
 
 /// A media feature name (either a known `MediaFeatureId` or a custom/unknown ident).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -361,7 +361,7 @@ pub enum MediaFeatureType {
 }
 
 impl MediaFeatureType {
-    pub fn allows_ranges(self) -> bool {
+    pub(crate) fn allows_ranges(self) -> bool {
         use MediaFeatureType as T;
         matches!(
             self,
@@ -634,13 +634,13 @@ impl FeatureIdTrait for MediaFeatureId {
 
 impl MediaList<'_> {
     /// Returns whether the media query list always matches.
-    pub fn always_matches(&self) -> bool {
+    pub(crate) fn always_matches(&self) -> bool {
         // If the media list is empty, it always matches.
         self.media_queries.is_empty() || self.media_queries.iter().all(MediaQuery::always_matches)
     }
 
     /// Returns whether the media query list never matches.
-    pub fn never_matches(&self) -> bool {
+    pub(crate) fn never_matches(&self) -> bool {
         !self.media_queries.is_empty() && self.media_queries.iter().all(MediaQuery::never_matches)
     }
 
@@ -654,14 +654,14 @@ impl MediaList<'_> {
 
 impl MediaQuery<'_> {
     /// Returns whether the media query is guaranteed to always match.
-    pub fn always_matches(&self) -> bool {
+    pub(crate) fn always_matches(&self) -> bool {
         self.qualifier.is_none()
             && matches!(self.media_type, MediaType::All)
             && self.condition.is_none()
     }
 
     /// Returns whether the media query is guaranteed to never match.
-    pub fn never_matches(&self) -> bool {
+    pub(crate) fn never_matches(&self) -> bool {
         matches!(self.qualifier, Some(Qualifier::Not))
             && matches!(self.media_type, MediaType::All)
             && self.condition.is_none()
@@ -840,7 +840,7 @@ impl<'bump> QueryCondition<'bump> for MediaCondition<'bump> {
 }
 
 impl<FeatureId: FeatureIdTrait> QueryFeature<'_, FeatureId> {
-    pub fn needs_parens(
+    pub(crate) fn needs_parens(
         &self,
         parent_operator: Option<Operator>,
         targets: &css::targets::Targets,
@@ -850,7 +850,7 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<'_, FeatureId> {
             && targets.should_compile_same(css::compat::Feature::MediaIntervalSyntax)
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         dest.write_char(b'(')?;
 
         match self {
@@ -1235,7 +1235,7 @@ fn write_min_max<FeatureId: FeatureIdTrait>(
 
 impl<'bump> MediaList<'bump> {
     /// Element-wise clone of `media_queries`.
-    pub fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         let mut media_queries =
             Vec::with_capacity_in(self.media_queries.len(), ArenaPtr::new(bump));
         media_queries.extend(self.media_queries.iter().map(|q| q.deep_clone(bump)));
@@ -1251,7 +1251,7 @@ impl<'bump> MediaList<'bump> {
 
 impl<'bump> MediaQuery<'bump> {
     /// Field-wise.
-    pub fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         Self {
             qualifier: self.qualifier,
             media_type: self.media_type.deep_clone(bump),
@@ -1305,7 +1305,7 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<'_, FeatureId> {
 impl<'bump, FeatureId: FeatureIdTrait> QueryFeature<'bump, FeatureId> {
     /// Variant-wise; `name`/`operator` are
     /// value-copied, `MediaFeatureValue` recurses.
-    pub fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         match self {
             QueryFeature::Plain { name, value } => QueryFeature::Plain {
                 name: name.deep_clone(bump),
@@ -1478,7 +1478,7 @@ impl<'bump> MediaCondition<'bump> {
 /// Forwarder kept for callers that don't yet thread `ParserOptions`
 /// (e.g. `rules::container`); routes through `ParserOptions::default(None)`.
 #[inline]
-pub fn parse_query_condition<'bump, C: QueryCondition<'bump>>(
+pub(crate) fn parse_query_condition<'bump, C: QueryCondition<'bump>>(
     input: &mut Parser<'_, 'bump>,
     flags: QueryConditionFlags,
 ) -> Result<'bump, C> {
@@ -1487,7 +1487,7 @@ pub fn parse_query_condition<'bump, C: QueryCondition<'bump>>(
 
 /// Parse a single query condition with `ParserOptions` threaded so the
 /// `env()` arm of `MediaFeatureValue::parse_unknown` is reachable.
-pub fn parse_query_condition_with_options<'bump, C: QueryCondition<'bump>>(
+pub(crate) fn parse_query_condition_with_options<'bump, C: QueryCondition<'bump>>(
     input: &mut Parser<'_, 'bump>,
     flags: QueryConditionFlags,
     options: &css::ParserOptions,
@@ -1600,7 +1600,7 @@ impl<'bump, FeatureId: FeatureIdTrait> QueryFeature<'bump, FeatureId> {
     /// Forwarder kept for callers that don't yet thread `ParserOptions`
     /// (e.g. `rules::container::ContainerCondition::parse_feature`).
     #[inline]
-    pub fn parse(input: &mut Parser<'_, 'bump>) -> Result<'bump, Self> {
+    pub(crate) fn parse(input: &mut Parser<'_, 'bump>) -> Result<'bump, Self> {
         Self::parse_with_options(input, &css::ParserOptions::default(None))
     }
 

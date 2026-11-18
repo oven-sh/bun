@@ -4,6 +4,9 @@ import { bunEnv, bunExe, isMacOS } from "harness";
 
 let nextFontScope = 5000;
 
+/** They take up room on every platform. */
+const scrollbars = "<style>::-webkit-scrollbar { width: 15px; height: 15px }</style>";
+
 function open(html = "", doctype = "<!doctype html>") {
   const page = desktopInternals.createPage({ native: null, surface: 0, fontScope: nextFontScope++ });
   page.parseHTML(doctype + html);
@@ -28,6 +31,10 @@ test.each([
   ["background-image", 'url("data:,a" cross-origin(anonymous))', null, null],
   ["width", "random(fixed 0.5, 10px, 20px)", null, "15px"],
   ["timeline-trigger", "--a view() contain", null, null],
+  ["-electron-corner-smoothing", "system-ui", null, null],
+  ["-electron-corner-smoothing", "150%", null, null],
+  ["-electron-corner-smoothing", "calc(10% + 20%)", "calc(30%)", "30%"],
+  ["-electron-corner-smoothing", "initial", null, "none"],
 ])("%s: %s", (property, value, specified, computed) => {
   using page = open("<p style='display: none'></p>");
   const { style } = page.$("p");
@@ -42,9 +49,24 @@ test.each([
   ["grid-template-areas", '"a b" "b a"'],
   ["column-count", "0"],
   ["background-image", 'url("a" nonsense(1))'],
+  ["-electron-corner-smoothing", "none"],
+  ["-electron-corner-smoothing", "-1%"],
+  ["-electron-corner-smoothing", "0.5"],
 ])("%s: %s is invalid", (property, value) => {
   using page = open();
   expect(page.window.CSS.supports(property, value)).toBe(false);
+});
+
+test("-electron-corner-smoothing is not inherited, and only has its dashed name", () => {
+  using page = open(
+    "<div style='-electron-corner-smoothing: 60%'><p></p><i style='-electron-corner-smoothing: inherit'></i></div>",
+  );
+  expect(["div", "p", "i"].map(it => page.computed(it, "-electron-corner-smoothing"))).toEqual(["60%", "none", "60%"]);
+  expect(
+    ["-electron-corner-smoothing", "electronCornerSmoothing", "ElectronCornerSmoothing"].map(
+      it => it in page.$("p").style,
+    ),
+  ).toEqual([true, false, false]);
 });
 
 test("nested calc-size() takes time that is linear in its length", () => {
@@ -242,14 +264,15 @@ describe("at-rules", () => {
 describe("containers", () => {
   test("their own automatic scrollbars do not count", () => {
     using page = open(
-      "<div style='container-type: inline-size; width: 400px; height: 9px; overflow-y: auto'><p style='width: 100cqi; height: 99px'>",
+      scrollbars +
+        "<div style='container-type: inline-size; width: 400px; height: 9px; overflow-y: auto'><p style='width: 100cqi; height: 99px'>",
     );
     expect(page.computed("p", "width")).toBe("400px");
   });
 
   test("a scrollbar that makes itself unnecessary stays, and starts no transition", () => {
     using page =
-      open(`<style>p { height: 200px; margin: 0; order: 1 } @container (max-width: 99px) { p { height: 9px; order: 5; transition: order 9s } }</style>
+      open(`${scrollbars}<style>p { height: 200px; margin: 0; order: 1 } @container (max-width: 99px) { p { height: 9px; order: 5; transition: order 9s } }</style>
       <div style="overflow: auto; width: 100px; height: 100px"><div style="container-type: inline-size"><p>`);
     expect([page.$("p").offsetWidth < 100, page.computed("p", "order"), page.$("p").getAnimations()]).toEqual([
       true,
@@ -552,6 +575,15 @@ test.each([
   expect(page.$("#a").getBoundingClientRect().width).toBe(page.$("#b").getBoundingClientRect().width);
 });
 
+test("very many counters are kept apart", () => {
+  const names = Array.from({ length: 40_000 }, (_, i) => `c${i} ${i}`).join(" ");
+  using page =
+    open(`<style>* { counter-reset: ${names} } span { font: 10px monospace } #a::before { counter-reset: none; content: counter(c39999) }</style>
+    ${"<i></i>".repeat(20)}<span id=a></span><br><span id=b>39999</span>`);
+  const width = (id: string) => page.document.getElementById(id).getBoundingClientRect().width;
+  expect(width("a")).toBe(width("b"));
+});
+
 test("an element is replaced by the image in content", () => {
   using page = open(`<p style="content: linear-gradient(red, blue); height: auto">text</p>`);
   expect(page.$("p").offsetHeight).toBe(0);
@@ -793,7 +825,7 @@ test("items are stretched to the height that a flex container has by its ratio",
 });
 
 test("the scrollbars of the page take nothing from the lines of an orthogonal box", () => {
-  using page = open(`<div style="width: 9000px; padding-top: 1px"></div>`);
+  using page = open(`${scrollbars}<div style="width: 9000px; padding-top: 1px"></div>`);
   page.$("div").offsetHeight;
   page.$("div").innerHTML = `<p style="writing-mode: vertical-rl; margin: 0; min-height: 100%"></p>`;
   expect(page.$("p").offsetHeight).toBe(page.window.innerHeight);
@@ -861,9 +893,605 @@ test.each([
   expect([page.$("#a").offsetLeft, page.$("#a").offsetTop]).toEqual(expected);
 });
 
+test.each<[string, string, (a: any) => unknown, unknown]>([
+  [
+    "a percentage in the width of a control counts for nothing in its least width",
+    "<div id=a style='width: min-content'><input style='width: calc(10% + 40px); padding: 0; border: 0; display: block'></div>",
+    a => a.offsetWidth,
+    40,
+  ],
+  [
+    "offsets are around the pieces of a box",
+    "<div style='columns: 2; gap: 0; width: 100px; height: 30px; column-fill: auto'><div id=a style='height: 50px'></div></div>",
+    a => [a.offsetWidth, a.offsetHeight],
+    [100, 30],
+  ],
+  [
+    "margins that collapse through the last box count once for scrolling",
+    "<div id=a style='overflow: hidden; height: 10px'><div style='height: 50px; margin-bottom: 20px'></div><div style='margin: 10px 0 5px'></div></div>",
+    a => a.scrollHeight,
+    70,
+  ],
+  [
+    "an absolute box in a spanner",
+    "<div style='position: relative; columns: 2; gap: 0; width: 100px'><div style='height: 20px'></div><div><div style='column-span: all; height: 10px'><div id=a style='position: absolute; width: 50%; height: 5px'></div></div></div></div>",
+    a => [a.offsetLeft, a.offsetTop, a.offsetWidth],
+    [0, 10, 50],
+  ],
+  [
+    "a legend in display: contents",
+    "<fieldset style='margin: 0; padding: 0; border: 10px solid'><div style='display: contents'><legend id=a style='height: 20px'></legend></div></fieldset>",
+    a => [a.offsetTop, a.parentNode.parentNode.offsetHeight],
+    [0, 30],
+  ],
+  [
+    "the baseline of a clamped inline box is that of the last line that is shown",
+    "<div style='font: 10px/10px a'><i id=a style='display: inline-block; width: 5px; height: 5px'></i><div style='display: -webkit-inline-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2'>a<br>b<br>c</div></div>",
+    a => a.offsetTop,
+    13,
+  ],
+  [
+    "an orthogonal grid item with a ratio makes room in its row",
+    "<div id=a style='display: grid; grid-template-columns: 40px'><div style='aspect-ratio: 2; writing-mode: vertical-lr'></div></div>",
+    a => [a.offsetHeight, a.firstChild.offsetWidth, a.firstChild.offsetHeight],
+    [20, 40, 20],
+  ],
+  [
+    "nested columns that start at the end of a column",
+    "<div style='columns: 2; gap: 0; width: 120px; font: 10px/18px a'><div>a</div><div id=a style='columns: 3; gap: 0; break-inside: avoid'><div>a</div><div><div style='float: right'>bb</div></div><div style='padding: 1px'><div style='border: 1px solid'>c</div></div></div></div>",
+    a => [...a.getClientRects()].map(it => [it.x, it.y, it.height].join()),
+    ["60,0,20"],
+  ],
+  [
+    "the rectangles of an inline element around a block are in order",
+    "<span id=a style='font: 10px/10px a'>a<div style='height: 5px'></div>b</span>",
+    a => [...a.getClientRects()].map(it => it.height),
+    [10, 5, 10],
+  ],
+  [
+    "percentages in the padding of a table add to its width",
+    "<div style='width: 200px'><div id=a style='display: table; padding: 5%'><div style='width: 10px'></div></div></div>",
+    a => a.offsetWidth,
+    30,
+  ],
+  [
+    "a replaced element is no table cell",
+    "<canvas id=a width=20 height=10 style='display: table-cell'></canvas>",
+    a => [a.offsetWidth, a.offsetHeight],
+    [20, 10],
+  ],
+  [
+    "a replaced element is no table row",
+    "<div style='display: table'><canvas id=a width=20 height=10 style='display: table-row'></canvas></div>",
+    a => [a.offsetWidth, a.offsetHeight],
+    [20, 10],
+  ],
+  [
+    "a fieldset is no table cell",
+    "<div style='width: 50px'><fieldset id=a style='display: table-cell; margin: 0'></fieldset></div>",
+    a => a.offsetWidth,
+    50,
+  ],
+  [
+    "a row group has the writing mode of its table",
+    "<div id=a style='display: table-row-group; writing-mode: vertical-rl'></div>",
+    a => a.ownerDocument.defaultView.getComputedStyle(a).writingMode,
+    "horizontal-tb",
+  ],
+  [
+    "the last baseline of clamped vertical lines",
+    "<div style='writing-mode: vertical-lr; font: 10px/10px a; height: 90px'><i id=a style='display: inline-block; width: 10px; height: 5px'></i><div style='baseline-source: last; overflow: hidden; display: -webkit-inline-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3'>a<br>b<br>c<br>d</div></div>",
+    a => a.offsetLeft,
+    20,
+  ],
+  [
+    "blocks next to each other in an inline element have one rectangle",
+    "<span id=a><div style='height: 5px'></div><div style='height: 5px; margin-top: 1px'></div></span>",
+    a => [...a.getClientRects()].map(it => it.height),
+    [0, 11, 0],
+  ],
+  [
+    "an absolute block after text from the right",
+    "<div dir=rtl style='font: 10px/10px a'>a<div id=a style='position: absolute'></div></div>",
+    a => a.offsetTop,
+    10,
+  ],
+  [
+    "a float in the middle of a word leaves the line where it is",
+    "<div id=a style='font: 10px/10px a; width: 50px'>aa<div style='float: right; width: 30px; height: 10px'></div>aa</div>",
+    a => a.offsetHeight,
+    10,
+  ],
+  [
+    "a float goes down with its line",
+    "<div style='font: 10px/10px a; width: 50px'><div style='float: left; width: 50px; height: 10px'></div>a<div id=a style='float: left'></div></div>",
+    a => a.offsetTop,
+    10,
+  ],
+  [
+    "a float without a width excludes nothing",
+    "<div style='margin-left: 50px'><div style='float: left; height: 50px'></div></div><div id=a style='display: flow-root; height: 5px'></div>",
+    a => a.offsetLeft,
+    0,
+  ],
+  [
+    "negative margins do not count beside a float",
+    "<div style='width: 100px'><div style='float: left; width: 10px; height: 10px'></div><div id=a style='display: flow-root; margin: 0 -3px; height: 5px'></div></div>",
+    a => [a.offsetLeft, a.offsetTop, a.offsetWidth],
+    [10, 0, 90],
+  ],
+  [
+    "the last margin is no part of the least height of a box with a ratio",
+    "<div id=a style='width: 10px; aspect-ratio: 2'><div style='height: 10px; margin-bottom: 5px'></div></div>",
+    a => a.offsetHeight,
+    10,
+  ],
+  [
+    "an empty list item is as tall as a line",
+    "<div id=a style='display: list-item; font: 20px/5px a'></div>",
+    a => a.offsetHeight,
+    5,
+  ],
+  [
+    "a button without a baseline stands on its content edge",
+    "<div style='font: 10px/10px a'><button id=a style='contain: layout; padding: 0 0 5px; border: 0'></button></div>",
+    a => [a.offsetTop, a.parentNode.offsetHeight],
+    [8, 13],
+  ],
+  [
+    "an empty button is aligned by its border in a flex container",
+    "<div style='display: flex; align-items: baseline'><button id=a style='padding: 0 0 5px; border: 0'></button><i style='height: 9px'></i></div>",
+    a => a.offsetTop,
+    4,
+  ],
+  [
+    "an absolute cell leaves a cell behind",
+    "<table><td style='padding: 5px'><td id=a style='position: absolute'><td></table>",
+    a => [a.offsetLeft, a.closest("table").offsetWidth],
+    [14, 20],
+  ],
+  [
+    "a table without columns has spacing in its least width only",
+    "<div id=a style='width: max-content'><table><tr></table></div>",
+    a => [a.offsetWidth, a.firstChild.offsetWidth, a.querySelector("tr").offsetLeft],
+    [4, 0, 0],
+  ],
+  [
+    "a table without cells has no collapsed borders",
+    "<table id=a style='border: 4px solid; border-collapse: collapse'></table>",
+    a => a.offsetWidth,
+    0,
+  ],
+  [
+    "a group of collapsed rows keeps its spacing",
+    "<table id=a><tbody style='visibility: collapse'><tr><td><tbody><tr><td></table>",
+    a => a.offsetHeight,
+    8,
+  ],
+  [
+    "a collapsed row does not overflow",
+    "<div id=a style='overflow: hidden'><table><tr><td><tr style='visibility: collapse'><td style='font: 50px/50px a'>a</table></div>",
+    a => a.scrollHeight,
+    6,
+  ],
+  [
+    "emphasis marks are above a replaced element",
+    "<div style='font: 10px/10px a; text-emphasis: circle'><canvas id=a width=9 height=9></canvas></div>",
+    a => a.offsetTop,
+    5,
+  ],
+  [
+    "an empty annotation takes no room",
+    "<div id=a style='font: 10px/10px a'><ruby>a<rt></rt></ruby></div>",
+    a => a.offsetHeight,
+    10,
+  ],
+  [
+    "a plain inline element makes its line higher",
+    "<div id=a style='font: 10px/10px a'>a <span style='line-height: 30px'>b</span> <span style='font-size: 20px'>c</span></div>",
+    a => a.offsetHeight,
+    30,
+  ],
+  [
+    "a plain inline element is hit",
+    "<div style='font: 10px/10px a'>a <span id=a>b</span> c</div>",
+    a => [15, 25, 35].map(x => a.ownerDocument.elementFromPoint(x, 5).localName),
+    ["div", "span", "div"],
+  ],
+  [
+    "a plain inline element in kept white space",
+    "<div style='font: 10px/10px a; white-space: pre'>a<span id=a>b&#10;&#10;c&#9;d&#10;</span>e</div>",
+    a => [...a.getClientRects()].map(it => [it.x, it.y, it.width, it.height].join()),
+    ["10,0,10,10", "20,0,0,10", "0,10,0,10", "0,20,10,10", "10,20,70,10", "80,20,10,10", "90,20,0,10"],
+  ],
+  [
+    "kept spaces hang at the end of a line",
+    "<div id=a style='font: 10px/10px a; width: 40px; white-space: pre-wrap; text-align: right; overflow: hidden'>aa    bb      &#10;c  &#10;&#10;d&#9;e</div>",
+    a =>
+      (it => (
+        it.selectNodeContents(a),
+        [a.offsetHeight, a.scrollWidth, ...[...it.getClientRects()].map(it => [it.x, it.y, it.width].join())]
+      ))(a.ownerDocument.createRange()),
+    [
+      60,
+      40,
+      "20,0,20",
+      "40,0,40",
+      "0,10,20",
+      "20,10,60",
+      "80,10,0",
+      "10,20,30",
+      "40,20,0",
+      "40,30,0",
+      "30,40,10",
+      "40,40,70",
+      "30,50,10",
+    ],
+  ],
+  [
+    "kept text breaks inside a word that is too long",
+    "<div id=a style='font: 10px/10px a; width: 30px; white-space: pre-wrap; overflow-wrap: break-word'>aaaaaaa b&#10;cccc</div>",
+    a =>
+      (it => (it.selectNodeContents(a), [...it.getClientRects()].map(it => [it.x, it.y, it.width].join())))(
+        a.ownerDocument.createRange(),
+      ),
+    ["0,0,30", "0,10,30", "0,20,30", "30,20,0", "0,30,30", "0,40,10"],
+  ],
+  [
+    "a table has no scrollbars",
+    scrollbars + "<div id=a style='display: table; overflow: scroll'></div>",
+    a => a.offsetWidth,
+    0,
+  ],
+  [
+    "an empty table keeps its ratio",
+    "<div id=a style='display: table; height: 32px; aspect-ratio: 1 / 2'></div>",
+    a => a.offsetWidth,
+    16,
+  ],
+  [
+    "clamped vertical lines in nested blocks",
+    "<div id=a style='writing-mode: vertical-rl; font: 10px/10px a; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden'>a<div><div style='padding: 1px'>a<br>a<br>a<br>a</div></div></div>",
+    a => [a.offsetWidth, ...[...a.querySelectorAll("div, br")].map(it => it.getBoundingClientRect().x)],
+    [32, 0, 0, 11, 1, -9],
+  ],
+  ["a line break has no offsets", "<div>a<br id=a>b</div>", a => [a.offsetLeft, a.offsetHeight], [0, 0]],
+  [
+    "an outside marker is beside a float",
+    "<div style='float: left; width: 100px; height: 50px'></div><ul id=a style='font: 20px/20px a; margin: 0; padding: 0 0 0 40px; list-style-type: \"aa\"'><li>a</ul>",
+    a => [10, 70].map(x => a.ownerDocument.elementFromPoint(x, 10).localName),
+    ["div", "li"],
+  ],
+  [
+    "a list item without lines is as high as its marker",
+    "<ul id=a style='font: 20px/20px a; margin: 0; padding: 0 0 0 40px; list-style-type: \"aa\"'><li style='padding: 5px'><div style='height: 3px'></div><li style='height: 4px'><div style='height: 3px'></div></ul>",
+    a => [...a.children].map(it => it.offsetHeight),
+    [20, 20],
+  ],
+  [
+    "an outside marker pushes the first line down and no more",
+    "<ul style='font: 20px/20px a; margin: 0; padding: 0 0 0 40px; list-style-type: \"aa\"'><li id=a><div style='margin-top: 20px; font-size: 10px; line-height: 10px'>a</div></ul>",
+    a => [a.offsetHeight, a.firstChild.offsetTop],
+    [18, 28],
+  ],
+  [
+    "margins do not collapse through a marker",
+    "<div id=a style='overflow: hidden'><div style='margin-bottom: 9px'></div><div style='display: list-item; height: 0'></div><div style='margin-top: 9px'></div></div>",
+    a => a.clientHeight,
+    18,
+  ],
+  [
+    "an inside bullet has its line height",
+    "<div id=a style='display: list-item; list-style-position: inside; font: 0/1 a'><style>#a::marker { font-size: 10px; line-height: 30px }</style></div>",
+    a => a.offsetHeight,
+    30,
+  ],
+  [
+    "an inside marker wraps",
+    "<div id=a style='display: list-item; list-style: inside \"aa\"; font: 10px/10px a; width: 0; word-break: break-all'></div>",
+    a => a.offsetHeight,
+    20,
+  ],
+  [
+    "-webkit-box-pack, -webkit-box-direction and -webkit-box-ordinal-group",
+    "<div id=a style='display: -webkit-box; width: 100px; -webkit-box-pack: end; -webkit-box-direction: reverse'><div style='width: 10px; -webkit-box-ordinal-group: 2'></div><div style='width: 20px; order: 5'></div></div>",
+    a => [...a.children].map(it => it.offsetLeft),
+    [0, 10],
+  ],
+  [
+    "-webkit-box makes no flex container of a fieldset",
+    "<fieldset style='display: -webkit-box; width: 50px'><div id=a></div></fieldset>",
+    a => a.offsetWidth,
+    50,
+  ],
+  [
+    "margin-trim trims spanners",
+    "<div id=a style='columns: 2; margin-trim: block'><div style='column-span: all; margin: 20px 0; height: 10px'></div></div>",
+    a => [a.offsetHeight, a.firstChild.offsetTop],
+    [10, 0],
+  ],
+  [
+    "margin-trim reaches empty boxes in the last box",
+    "<div style='margin-trim: block'><div><div style='height: 10px'></div><div id=a style='margin: 50px 0'></div></div></div>",
+    a => a.offsetTop,
+    10,
+  ],
+  [
+    "a range that ends in a surrogate pair has all of it",
+    "<div id=a style='font: 10px/10px a'>a&#x1d7d8;</div>",
+    a =>
+      (it => (it.setStart(a.firstChild, 0), it.setEnd(a.firstChild, 2), it.getBoundingClientRect().width > 10))(
+        a.ownerDocument.createRange(),
+      ),
+    true,
+  ],
+  [
+    "a space that collapses at the end of a line has no rectangle",
+    "<div style='font: 10px/10px a; width: 30px'>aa<b id=a> </b>bb<wbr></div>",
+    a =>
+      (it => (it.selectNodeContents(a), [it.getClientRects().length, a.parentNode.lastChild.getClientRects().length]))(
+        a.ownerDocument.createRange(),
+      ),
+    [0, 0],
+  ],
+  [
+    "a space after an inside marker collapses",
+    "<div style='display: list-item; list-style: inside decimal; font: 10px/10px a'> <b id=a>a</b></div>",
+    a => a.offsetLeft,
+    30,
+  ],
+  [
+    "spaces of several elements hang",
+    "<div id=a style='font: 10px/10px a; width: 20px; white-space: pre-wrap; overflow: hidden'>aa <i style='font: inherit'> </i><i style='font: inherit'></i>a</div>",
+    a => a.scrollWidth,
+    20,
+  ],
+  [
+    "spaces of several elements hang beside a padded one",
+    "<div id=a style='font: 10px/10px a; width: 20px; white-space: pre-wrap; overflow: hidden'>aa <i style='font: inherit'> </i><i style='font: inherit'></i><i style='padding-top: 1px'>a</i></div>",
+    a => a.scrollWidth,
+    20,
+  ],
+  [
+    "spaces of several elements hang to the left",
+    "<div id=a dir=rtl style='font: 10px/10px a; width: 20px; white-space: pre-wrap; overflow: hidden'>aa <i style='font: inherit'> </i><i style='font: inherit'></i>a</div>",
+    a => a.scrollWidth,
+    20,
+  ],
+  [
+    "elements in kept white space",
+    "<div id=a style='font: 10px/10px a; width: 50px; white-space: pre-wrap'><i style='font: inherit'>aa <i style='font: inherit'>bbb&#10;</i></i><i style='font: inherit'></i><i style='font: inherit'>&#9;c&#10;&#10;</i>d</div>",
+    a =>
+      [...a.querySelectorAll("i")].map((it, index) =>
+        [...(index ? it.getClientRects() : [it.getBoundingClientRect()])]
+          .map(it => [it.x, it.y, it.width, it.height].join())
+          .join(" "),
+      ),
+    ["0,0,30,20", "0,10,30,10 30,10,0,10", "0,20,0,10", "0,20,80,10 0,30,10,10 10,30,0,10 0,40,0,10"],
+  ],
+  [
+    "spaces collapse in an inside marker",
+    "<div style='display: list-item; list-style: inside \"  a   b  \"; font: 10px/10px a'><b id=a>a</b></div>",
+    a => [a.offsetLeft, a.offsetTop],
+    [40, 0],
+  ],
+  [
+    "an inside marker keeps white space if its list item does",
+    "<div style='display: list-item; list-style: inside \"a  \"; font: 10px/10px a; white-space: pre; width: 0'> <b id=a>a</b></div>",
+    a => [a.offsetLeft, a.offsetTop],
+    [40, 0],
+  ],
+  [
+    "a line may break between elements that do not wrap",
+    "<div id=a style='font: 10px/10px a; width: 10px'><span style='white-space: pre'>a-</span><span style='white-space: pre'>a</span></div>",
+    a => a.offsetHeight,
+    20,
+  ],
+])("%s", (_, html, measure, expected) => {
+  using page = open(`<body style="margin: 0">${html}`);
+  expect(measure(page.$("#a"))).toEqual(expected);
+});
+
 test("place-content spells out what a baseline leaves open, and flex-basis has no anchor", () => {
   using page = open("<p style='place-content: baseline; flex-basis: anchor-size(--a width)'>");
   expect([page.$("p").style.placeContent, page.$("p").style.flexBasis]).toEqual(["baseline start", ""]);
+});
+
+describe.each([0, 40])("among %d other rules for the element", count => {
+  const others = Array.from({ length: count }, (_, i) => `u${i % 2 ? "" : ":not(a)"} { outline-offset: ${i}px }`).join(
+    "",
+  );
+  const set = (selector: string, name: string, value: string) => (page: any) =>
+    page.$(selector).setAttribute(name, value);
+  const remove = (selector: string) => (page: any) => page.$(selector).remove();
+  const prepend = (selector: string, html: string) => (page: any) =>
+    page.$(selector).insertAdjacentHTML("afterbegin", html);
+  test.each([
+    ["an ancestor gets a class", ".a u", "<p><b><u></u></b></p>", set("p", "class", "a"), "01"],
+    ["an ancestor loses a class", ".a u", "<p class=a><b><u></u></b></p>", set("p", "class", ""), "10"],
+    [
+      "a class moves from the parent up",
+      ".a > u",
+      "<p><b class=a><u></u></b></p>",
+      (page: any) => (set("p", "class", "a")(page), set("b", "class", "")(page)),
+      "10",
+    ],
+    ["a class in :not()", "b:not(.a) u", "<b class=a><u></u></b>", set("b", "class", ""), "01"],
+    [
+      "a class left of a combinator in :is()",
+      "nav b:is(.a i > *) u",
+      "<nav><p><i><b><u></u></b></i></p></nav>",
+      set("p", "class", "a"),
+      "01",
+    ],
+    ["a class of a sibling in :not()", "nav u:not(.a ~ *)", "<nav><b></b><u></u></nav>", set("b", "class", "a"), "10"],
+    ["the value of an attribute", "[title=a] u", "<p title=b><u></u></p>", set("p", "title", "a"), "01"],
+    ["an earlier sibling comes", ".a ~ u", "<p><b></b><u></u></p>", prepend("p", "<i class=a></i>"), "01"],
+    ["an earlier sibling goes", ".a ~ u", "<p><i class=a></i><b></b><u></u></p>", remove("i"), "10"],
+    [
+      "an earlier sibling loses a class and goes",
+      ".a ~ u",
+      "<p><i class=a></i><b></b><u></u></p>",
+      (page: any) => (set("i", "class", "")(page), remove("i")(page)),
+      "10",
+    ],
+    [
+      "an earlier sibling of an ancestor comes",
+      ".a ~ b u",
+      "<p><b><u></u></b></p>",
+      prepend("p", "<i class=a></i>"),
+      "01",
+    ],
+    ["an earlier sibling of an ancestor goes", ".a ~ b u", "<p><i class=a></i><b><u></u></b></p>", remove("i"), "10"],
+    ["what is in between goes", ".a + u", "<p><i class=a></i><b></b><u></u></p>", remove("b"), "01"],
+    [
+      "something comes in between",
+      ".a + b + u",
+      "<p><i class=a></i><b></b><u></u></p>",
+      (page: any) => page.$("i").after(page.document.createElement("s")),
+      "10",
+    ],
+    ["the index changes", "u:nth-child(2)", "<p><u></u></p>", prepend("p", "<i></i>"), "01"],
+    [
+      "the index of an ancestor changes",
+      "b:nth-of-type(odd) u",
+      "<p><b><u></u></b></p>",
+      prepend("p", "<b></b>"),
+      "10",
+    ],
+    ["the index from the end changes", "u:nth-last-child(2)", "<p><u></u><i></i></p>", remove("i"), "10"],
+    ["it becomes the first", "u:first-child", "<p><i></i><u></u></p>", remove("i"), "01"],
+    ["it becomes the last", "u:last-child", "<p><u></u><i></i></p>", remove("i"), "01"],
+    ["it is left alone by an earlier one", "u:only-child", "<p><i></i><u></u></p>", remove("i"), "01"],
+    ["it is left alone by a later one", "u:only-child", "<p><u></u><i></i></p>", remove("i"), "01"],
+    [
+      "a later one of its type goes",
+      "b:only-of-type u",
+      "<p><b><u></u></b><i></i><b id=a></b></p>",
+      remove("#a"),
+      "01",
+    ],
+    [
+      "an earlier one of its type goes, then what is in between",
+      "b:first-of-type u",
+      "<p><b id=a></b><i></i><b><u></u></b></p>",
+      (page: any) => (remove("#a")(page), remove("i")(page)),
+      "01",
+    ],
+    [
+      "a later one of its type goes, then what is in between",
+      "b:last-of-type u",
+      "<p><b><u></u></b><i></i><b id=a></b></p>",
+      (page: any) => (remove("#a")(page), remove("i")(page)),
+      "01",
+    ],
+    [
+      "one of its type comes, then what is in between moves",
+      "b:first-of-type u",
+      "<p><i></i><b><u></u></b></p>",
+      (page: any) => (prepend("p", "<b id=a></b>")(page), page.$("p").append(page.$("i"))),
+      "10",
+    ],
+    [
+      "an earlier sibling among many comes",
+      ".a ~ u",
+      `<p>${"<b></b>".repeat(60)}<u></u></p>`,
+      prepend("p", "<i class=a></i>"),
+      "01",
+    ],
+    ["the index among many changes", "u:nth-child(odd)", `<p>${"<b></b>".repeat(60)}<u></u></p>`, remove("b"), "10"],
+    ["it stops being empty", "u:empty", "<u></u>", prepend("u", "a"), "10"],
+    [":has() of an ancestor", "p:has(> .a) u", "<p><i></i><u></u></p>", set("i", "class", "a"), "01"],
+    [
+      ":has() of what is moved",
+      "u:has(+ .a)",
+      "<p><u></u><i class=a></i></p><nav></nav>",
+      (page: any) => page.$("nav").moveBefore(page.$("u"), null),
+      "10",
+    ],
+    [
+      ":has() of what has changed elsewhere",
+      "b:has(.a) + u",
+      "<p><b hidden></b><u></u></p>",
+      (page: any) => {
+        const b = page.$("b");
+        b.remove();
+        b.innerHTML = "<i class=a></i>";
+        page.$("p").prepend(b);
+      },
+      "01",
+    ],
+    [
+      "the rule that wins stops matching",
+      "p u { z-index: 1 } .a p u { z-index: 0 } x",
+      "<nav class=a><p><u></u></p></nav>",
+      set("nav", "class", ""),
+      "01",
+    ],
+    [
+      "a rule starts to match while another wins, which then stops",
+      ".b u { z-index: 1 } nav.a p u { z-index: 0 } x",
+      "<nav class=a><p><u></u></p></nav>",
+      (page: any) => {
+        set("p", "class", "b")(page);
+        page.computed("u", "z-index");
+        set("nav", "class", "")(page);
+      },
+      "01",
+    ],
+    [
+      "a media query",
+      "x {} @media (max-width: 300px) { p u { z-index: 1 } } x",
+      "<p><u></u></p>",
+      (page: any) => page.resize(200, 200, 1),
+      "01",
+    ],
+    [
+      "a media query of the rule that wins",
+      "p u { z-index: 1 } @media (min-width: 300px) { p > u { z-index: 0 } } x",
+      "<p><u></u></p>",
+      (page: any) => page.resize(200, 200, 1),
+      "01",
+    ],
+  ])("%s", (_, selector, html, change, expected) => {
+    for (const pseudo of [undefined, "::before"]) {
+      const rules = `u { z-index: 0 } ${others} ${selector} { z-index: 1 }`.replace(
+        / \{(?= z-index| outline)/g,
+        `${pseudo ?? ""} { content: "";`,
+      );
+      using page = open(`<style>${rules}</style>${html}`);
+      page.resize(400, 200, 1);
+      page.$("u").offsetWidth;
+      const before = page.computed("u", "z-index", pseudo);
+      change(page);
+      page.$("u").offsetWidth;
+      expect(before + page.computed("u", "z-index", pseudo)).toBe(expected);
+    }
+  });
+
+  test.each([
+    ["revert-rule", "u { z-index: 1 } p u { z-index: revert-rule }"],
+    ["revert-rule from a variable", "u { z-index: 1 } p u { z-index: var(--a, revert-rule) }"],
+    ["revert-rule after a value", "u { z-index: 1 } p u { z-index: 2; z-index: var(--a, revert-rule) }"],
+    ["revert-rule for all", "u { z-index: 1 } p u { z-index: 2; all: revert-rule }"],
+    ["revert-layer", "@layer a { u { z-index: 1 } } u { z-index: 2 } p u { z-index: revert-layer }"],
+    ["!important", "u { z-index: 1 !important } p u { z-index: 2 }"],
+    ["another property", "u { z-index: 1; order: 1 } p u { order: 2 }"],
+    ["a custom property", "u { --a: 1; order: 1 } p u { order: 2; z-index: var(--a) }"],
+    ["a nearer scope", "@scope (p) { u { z-index: 1 } } @scope (body) { u { z-index: 2 } }"],
+  ])("a rule counts because of %s", (_, rules) => {
+    using page = open(`<style>${others} ${rules}</style><p><u></u></p>`);
+    expect(page.computed("u", "z-index")).toBe("1");
+  });
+
+  test("content comes and goes", () => {
+    using page = open(
+      `<style>${others} .a u::before { content: ""; display: inline-block; width: 9px } .a.b u::before { content: none }</style><p><u></u></p>`,
+    );
+    expect(["", "a", "a b", "a", ""].map(it => ((page.$("p").className = it), page.$("u").offsetWidth))).toEqual([
+      0, 9, 0, 9, 0,
+    ]);
+  });
 });
 
 describe("a change gives what a new page gives", () => {
@@ -1052,6 +1680,46 @@ describe("a change gives what a new page gives", () => {
       `<div style='width: 200px'>${"<i style='display: inline-block; vertical-align: top; width: 60px'>a</i> ".repeat(5)}</div>`,
       set("div", "style", "width: 130px"),
     ],
+    [
+      "a plain inline element that gets padding",
+      "<p>a <span>b</span> <i>c</i></p>",
+      set("span", "style", "padding: 5px"),
+    ],
+    [
+      "an inline element that loses its padding",
+      "<p>a <span style='padding: 5px'>b</span> <i>c</i></p>",
+      set("span", "style", "color: red"),
+    ],
+    [
+      "a plain inline element that gets a child",
+      "<p>a <span>b</span> <i>c</i></p>",
+      (page: any) => page.$("span").append(Object.assign(page.document.createElement("b"), { textContent: "d" })),
+    ],
+    [
+      "a plain inline element that loses its text",
+      "<p>a <span>b</span> <i>c</i></p>",
+      (page: any) => page.$("span").firstChild.remove(),
+    ],
+    [
+      "a plain inline element whose text becomes a space",
+      "<p>a <span>b</span> <i>c</i></p>",
+      (page: any) => (page.$("span").firstChild.data = " "),
+    ],
+    [
+      "a plain inline element that gets a higher line",
+      "<p>a <span>b</span> <i>c</i></p>",
+      set("span", "style", "line-height: 50px"),
+    ],
+    [
+      "a plain inline element that gets generated text",
+      "<style>.on::after { content: 'dd' }</style><p>a <span>b</span> <i>c</i></p>",
+      set("span", "class", "on"),
+    ],
+    [
+      "a plain inline element after many others",
+      `<pre>${"<span>a</span> <span>b</span>\n".repeat(200)}</pre>`,
+      (page: any) => page.$("pre").lastElementChild.append("cc"),
+    ],
   ])("%s", (_, html, change) => {
     const measure = (page: any) =>
       [...page.document.body.querySelectorAll("*")].map(it => [it.getBoundingClientRect().toJSON(), it.scrollHeight]);
@@ -1067,7 +1735,7 @@ describe("a change gives what a new page gives", () => {
 test.each([
   ["a word that is too long", "overflow-wrap: break-word", "aa <b>bbbbbbb</b> c", "0,0,20 0,10,50 0,20,20 20,20,20"],
   ["line-break: anywhere", "line-break: anywhere", "aaa bbbb cc", "0,0,50 0,10,50 0,20,10"],
-  ["a soft hyphen", "", "aa bb&shy;cccc", "0,0,20 0,10,20 0,20,40"],
+  ["a soft hyphen", "", "aa bb&shy;cccc", "0,0,20 0,10,20 20,10,10 0,20,40"],
   ["text without a width", "", "aaaa&#x200b;bbbb", "0,0,40 0,10,40"],
   ["justification", "text-align: justify", "a b ccc d", "0,0,50 0,10,50"],
   ["text-indent", "text-indent: 20px", "aa bb cc", "20,0,20 0,10,50"],
@@ -1077,7 +1745,12 @@ test.each([
     "aa <b style='padding-left: 10px'>b</b> cccc",
     "20,0,10 30,0,20 10,0,10 10,10,40",
   ],
-  ["tabs", "white-space: pre-wrap; tab-size: 2", "a\tb\tcc\td", "0,0,40 0,10,50"],
+  [
+    "tabs",
+    "white-space: pre-wrap; tab-size: 2",
+    "a\tb\tcc\td",
+    "0,0,10 10,0,10 20,0,10 30,0,10 0,10,20 20,10,20 40,10,10",
+  ],
   ["break-spaces", "white-space: break-spaces", "aa    bbb", "0,0,50 0,10,40"],
   [
     "elements that are moved",
@@ -1196,7 +1869,7 @@ test("declarations may end with a block", () => {
 
 test("a scrollbar goes away once container units are known", () => {
   using page = open(
-    `<div style="container-type: size; width: 100px; height: 100px; overflow: auto scroll"><p style="margin: 0; width: 100cqw; height: 200px">`,
+    `${scrollbars}<div style="container-type: size; width: 100px; height: 100px; overflow: auto scroll"><p style="margin: 0; width: 100cqw; height: 200px">`,
   );
   expect(page.$("div").clientHeight).toBe(100);
 });
@@ -1326,6 +1999,9 @@ describe("values that scripts keep writing", () => {
     "background-color",
     "inline-size",
     "z-index",
+    "color",
+    "outline-color",
+    "lighting-color",
   ];
   const measure = (page: any) =>
     [...page.document.querySelectorAll("p, i")].map(it => [
@@ -1371,6 +2047,10 @@ describe("values that scripts keep writing", () => {
     ],
     ["opacity", (p, i) => (p.style.opacity = [0.5, 0.25, 1, 0.75, 0, 2, "50%"][i % 7])],
     [
+      "numbers with many digits",
+      (p, i) => (p.style.opacity = [0.5, 0.11905790492892265, 0.25, 1.1905790492892265e-7][i % 4]),
+    ],
+    [
       "transforms",
       (p, i) =>
         (p.style.transform = [
@@ -1383,6 +2063,24 @@ describe("values that scripts keep writing", () => {
         ][i % 6]),
     ],
     ["colors", (p, i) => (p.style.backgroundColor = `rgb(${i}, 0, 0)`)],
+    [
+      "the color of the text",
+      (p, i) =>
+        (p.style.color = [`rgb(${i}, 0, 0)`, `#00${i % 10}`, `hsl(${i}, 50%, 50%)`, "currentcolor", `rgb(0, ${i}, 0)`][
+          i % 5
+        ]),
+    ],
+    [
+      "a color that others are made of",
+      (p, i) => (
+        i == 1 && (p.style.cssText += "lighting-color: color-mix(in srgb, currentcolor, red); caret-color: var(--no)"),
+        (p.style.color = `rgb(${i}, 0, 0)`)
+      ),
+    ],
+    [
+      "a color and a move",
+      (p, i) => Object.assign(p.style, { backgroundColor: `#${i % 10}00`, transform: `rotate(${i}deg)` }),
+    ],
     ["without a box", (p, i) => ((p.style.left = i + "px"), (p.parentNode.style.display = i % 3 ? "" : "none"))],
     ["zoom", (p, i) => ((p.style.width = i + "px"), i == 3 && (p.parentNode.style.zoom = 2))],
   ])("%s", (_, change) => {
@@ -1396,6 +2094,60 @@ describe("values that scripts keep writing", () => {
       using fresh = open(sheet + page.document.body.innerHTML);
       expect(measure(page)).toEqual(measure(fresh));
     }
+  });
+
+  test.each([
+    [
+      "color",
+      "rgb(1, 2, 3)|rgba(1,2,3,.5)|rgb(300, -1, 127.5)|rgb(1, 2, 3, 2)|rgba(0, 0, 0)|rgb(1 2 3)|rgb(1%, 2%, 3%)|rgb(1, 2)|rgb(1, 2, 3,)|rgb(1, 2, 3) 4|#abc|#abcd|#a1b2c3|#a1b2c3d4|#ab|#ggg|#",
+    ],
+    [
+      "background-color",
+      "hsl(120, 100%, 25%)|hsla(-30.5,100%,49.99%,0.01)|hsl(720, 150%, 50%)|hsl(10, -5%, 50%)|hsl(10, 50, 50)|hsl(10deg, 50%, 50%)|hsla(1e-7,1e-7%,50%,1e-7)|hsl(0, 0%, 50%, 50%)",
+    ],
+    [
+      "transform",
+      "rotatez(1rad)|rotateZ(1rad)|rotate(.25turn)|rotate(1e-7deg)|rotate(90deg)translate(1px, 2px)|translate(1px,2px)rotateZ(-2rad) scale(2)|translateZ(5px) rotateZ(90deg)|rotate(1)|rotate(1deg)x|scale(1e-30)",
+    ],
+    ["width", "1e-2px|1e-10px|1e-px|1e-123px|1em|1e2px"],
+  ])("%s means the same in capitals", (property, values) => {
+    using page = open(
+      "<p style='color: #010101; background-color: #010101; transform: scale(3); width: 7px'></p>".repeat(2),
+    );
+    const [first, second] = page.document.querySelectorAll("p");
+    for (const value of values.split("|")) {
+      first.style.setProperty(property, value);
+      second.style.setProperty(property, value.toUpperCase());
+      expect([
+        value,
+        first.style.cssText,
+        page.computed(first, property),
+        first.getBoundingClientRect().toJSON().width,
+      ]).toEqual([
+        value,
+        second.style.cssText,
+        page.computed(second, property),
+        second.getBoundingClientRect().toJSON().width,
+      ]);
+    }
+  });
+
+  test("a scroller that hides what sticks out knows how far it goes", () => {
+    using page = open(
+      "<div style='overflow: hidden; width: 50px; height: 50px'><p style='margin: 0; height: 10px; transform: translateY(1px)'></p></div>",
+    );
+    const seen = [];
+    for (const y of [2, 90, 60, 0]) {
+      page.$("p").style.transform = `translateY(${y}px)`;
+      seen.push([page.$("div").scrollTop, page.$("div").scrollHeight]);
+      page.$("div").scrollTop = 1000;
+    }
+    expect(seen).toEqual([
+      [0, 50],
+      [0, 100],
+      [20, 70],
+      [0, 50],
+    ]);
   });
 
   test.each([
@@ -1683,4 +2435,188 @@ test("searches that follow each other see what changes in between", () => {
       }
     }
   }
+});
+
+test.each([
+  ["a string that is not closed keeps its spaces", `<p style='--a: "b  '>`, "p", "--a", `"b  `],
+  [
+    "named-feature()",
+    "<style>@supports named-feature(anchor-position-follows-transforms) { p { order: 1 } }</style><p>",
+    "p",
+    "order",
+    "1",
+  ],
+  [
+    "unitless lengths are not supported",
+    "<style>@supports (width: 1) { p { order: 1 } }</style><p>",
+    "p",
+    "order",
+    "0",
+  ],
+  [
+    "an argument has no initial value",
+    "<style>@function --f(--x) { result: if(style(--x): 1; else: 2) } p { order: --f(a) }</style><p>",
+    "p",
+    "order",
+    "1",
+  ],
+  [
+    "invalid values are equal in @container",
+    "<style>@container style(--a: var(--b)) { p { order: 1 } }</style><p>",
+    "p",
+    "order",
+    "1",
+  ],
+  [
+    "invalid values are not equal in if()",
+    "<p style='order: if(style(--a: var(--b)): 1; else: 2)'>",
+    "p",
+    "order",
+    "2",
+  ],
+  [
+    "a default refers to a later argument",
+    "<style>@function --f(--x: var(--y, 1), --y: 2) { result: var(--x) } p { --y: 3; order: --f() }</style><p>",
+    "p",
+    "order",
+    "1",
+  ],
+  [
+    "the type of a parameter is valid",
+    "<style>@function --f(--x type(!)) { result: 1 } p { order: --f(1) }</style><p>",
+    "p",
+    "order",
+    "0",
+  ],
+  [
+    "negative padding",
+    "<p style='width: 10px; padding-left: calc(10% - 1000px); display: inline-block; box-sizing: border-box'>",
+    "p",
+    "padding-left",
+    "0px",
+  ],
+  [
+    "font-size depends on a length in em",
+    "<style>@property --a { syntax: '<length>'; inherits: false; initial-value: 1px } p { --a: 2em; font-size: var(--a, 42px) }</style><p>",
+    "p",
+    "font-size",
+    "16px",
+  ],
+  [
+    "a length in em depends on font-size",
+    "<style>@property --a { syntax: '<length>'; inherits: false; initial-value: 1px } p { --b: 2em; --a: var(--b); font-size: var(--a) }</style><p>",
+    "p",
+    "--a",
+    "1px",
+  ],
+  [
+    "line-height depends on a length in lh",
+    "<style>@property --a { syntax: '<length>'; inherits: false; initial-value: 1px } p { --a: 2lh; line-height: var(--a) }</style><p>",
+    "p",
+    "line-height",
+    "normal",
+  ],
+  [
+    "the font-size of the root depends on a length in rem",
+    "<style>@property --a { syntax: '<length>'; inherits: false; initial-value: 1px } html { --a: 2rem; font-size: var(--a) }</style>",
+    "html",
+    "font-size",
+    "16px",
+  ],
+  [
+    "font-size takes an inherited length in em",
+    "<style>@property --a { syntax: '<length>'; inherits: true; initial-value: 1px } body { --a: 2em } p { font-size: var(--a) }</style><p>",
+    "p",
+    "font-size",
+    "32px",
+  ],
+  [
+    "font-size takes a length in rem",
+    "<style>@property --a { syntax: '<length>'; inherits: false; initial-value: 1px } p { --a: 2rem; font-size: var(--a) }</style><p>",
+    "p",
+    "font-size",
+    "32px",
+  ],
+])("%s", (_, html, target, property, value) => {
+  using page = open(html);
+  expect(page.computed(target, property)).toBe(value);
+});
+
+test("@supports takes unitless lengths in quirks mode", () => {
+  using page = open("<style>@supports (width: 1) { p { order: 1 } }</style><p>", "");
+  expect(page.computed("p", "order")).toBe("1");
+});
+
+test.each([
+  ["width", "calc(1px * progress(1px * 1px, 1px * 1px, 2px * 1px))"],
+  ["cursor", "light-dark(linear-gradient(red, blue), none), auto"],
+])("%s: %s is refused", (property, value) => {
+  using page = open();
+  expect(page.window.CSS.supports(property, value)).toBe(false);
+});
+
+test("the basis of calc-size() is a sum", () => {
+  using page = open("<p style='width: calc-size(10px + 20px, size * 2)'>");
+  expect(page.computed("p", "width")).toBe("60px");
+});
+
+test(":root is an element of any name", () => {
+  using page = open();
+  const { document, window } = page;
+  const root = document.createElementNS("urn:a", "a");
+  document.replaceChild(root, document.documentElement);
+  root.append(
+    Object.assign(document.createElement("style"), { textContent: ":root { order: 1 } :root > * { order: 2 }" }),
+  );
+  expect([root, root.firstChild].map(it => page.computed(it, "order"))).toEqual(["1", "2"]);
+  expect(document.querySelector(":root")).toBe(root);
+  const other = new window.DOMParser().parseFromString("<a><b/></a>", "application/xml");
+  expect(other.querySelector(":root")).toBe(other.documentElement);
+  expect(other.querySelector(":root > b")).toBe(other.documentElement.firstChild);
+});
+
+test("@scope in an adopted sheet has the document for its root", () => {
+  using page = open("<p>");
+  const sheet = new page.window.CSSStyleSheet();
+  sheet.replaceSync("@scope { p, html { order: 1 } :scope { z-index: 1 } }");
+  page.document.adoptedStyleSheets = [sheet];
+  expect(["p", "html"].map(it => page.computed(it, "order"))).toEqual(["1", "1"]);
+  expect(page.computed("html", "z-index")).toBe("auto");
+});
+
+test.each(["(width = calc(10px * sibling-index()))", "style(--a: calc(10px * sibling-index()))"])(
+  "@container %s follows the siblings of the container",
+  query => {
+    using page = open(`<style>
+    @property --a { syntax: "<length>"; inherits: false; initial-value: 0px }
+    div { container-type: inline-size; width: 10px; --a: 10px }
+    @container ${query} { p { order: 1 } }
+  </style><section><i></i><div><p>`);
+    expect(page.computed("p", "order")).toBe("0");
+    page.$("i").remove();
+    expect(page.computed("p", "order")).toBe("1");
+  },
+);
+
+test("the weight of an additive symbol is not negative", () => {
+  using page = open(`<style>
+    @counter-style a { system: additive; additive-symbols: 1 a, calc(-1) bbbbbbbb; range: infinite infinite }
+    b::before { content: counter(a, a) }
+  b { font-weight: normal }
+  </style><b></b><span>bbbbbbbb</span>`);
+  expect(page.$("b").offsetWidth).toBe(page.$("span").offsetWidth);
+});
+
+test("commitStyles() resolves percentages that are interpolated as a matrix", () => {
+  using page = open("<p style='width: 200px; height: 200px'>");
+  const animation = page.$("p").animate({ transform: ["translate(100%, 0%)", "scale(3)"] }, 1000);
+  animation.currentTime = 500;
+  animation.commitStyles();
+  animation.cancel();
+  expect(page.computed("p", "transform")).toBe("matrix(2, 0, 0, 2, 100, 0)");
+});
+
+test("a shape is the subject of a timeline in the scroll container around the svg", () => {
+  using page = open("<svg height=3000><path d='M 50 0 V 3000'/></svg>");
+  expect(new page.window.ViewTimeline({ subject: page.$("path") }).source).toBe(page.document.documentElement);
 });

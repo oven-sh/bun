@@ -10,7 +10,7 @@ use std::ops::{Add, Mul, Neg, Sub};
 #[path = "gfx/stroke.rs"]
 mod stroke;
 
-pub use stroke::{Cap, Join, Stroke, length};
+pub use stroke::{Cap, Join, Room as StrokeRoom, Stroke, length, roots};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Point {
@@ -436,9 +436,13 @@ impl Pixmap {
         })
     }
 
+    pub fn is_shared(&self) -> bool {
+        matches!(&self.data, Data::Shared(data) if Arc::strong_count(data) > 1)
+    }
+
     /// False if that is no better than writing to the pixels.
     pub fn fill_instead_of_copying(&mut self, pixel: [u8; 4]) -> bool {
-        let is_shared = matches!(&self.data, Data::Shared(data) if Arc::strong_count(data) > 1);
+        let is_shared = self.is_shared();
         if is_shared {
             self.data = Data::Own(written(self.data().len(), |_, to| {
                 to.as_chunks_mut().0.fill(pixel.map(MaybeUninit::new))

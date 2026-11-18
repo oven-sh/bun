@@ -57,8 +57,8 @@ impl Target {
         [(f64::from(at.x) - x) / scale, (f64::from(at.y) - y) / scale]
     }
 
-    fn describe(&self, at: Located) -> Value {
-        let [x, y] = self.to_local(at);
+    fn describe(&self, at: Located, magnified: f64) -> Value {
+        let [x, y] = self.to_local(at).map(|it| it * magnified);
         record! { "x": x, "y": y, "modifiers": keys::modifiers(at.modifiers) }
     }
 
@@ -101,6 +101,8 @@ pub(super) struct View {
     /// Device pixels for each pixel of `size`.
     pub(super) scale: f64,
     pub(super) zoom: Cell<f64>,
+    /// What the engine scales the page by after it has laid it out. Its input is scaled alike.
+    pub(super) magnified: Cell<f64>,
     /// Pixels of the image for each unit of the display list that has it.
     pub(super) shown_at: Cell<f64>,
     pub(super) may_rest: Cell<bool>,
@@ -169,6 +171,7 @@ impl View {
             surface,
             scale,
             zoom: 1.0.into(),
+            magnified: 1.0.into(),
             shown_at: scale.into(),
             may_rest: true.into(),
             frame_rate: 60.0.into(),
@@ -756,7 +759,7 @@ impl View {
             Some(it) => it,
             None => self.target_at(at).await?,
         };
-        let local = target.describe(at);
+        let local = target.describe(at, self.magnified.get());
         if self.is_dragging() {
             let kind = if action == MouseAction::Up {
                 "drop"
@@ -841,10 +844,13 @@ impl View {
         } else {
             [dx, dy]
         };
-        let [dx, dy] = delta.map(|it| it / self.zoom.get());
+        let [dx, dy] = match self.engine.kind {
+            Kind::Chromium => delta.map(|it| it / self.zoom.get()),
+            Kind::Electron => delta,
+        };
         at.modifiers |= if is_pinch { CONTROL } else { 0 };
-        let params =
-            record! { "type": "mouseWheel", "deltaX": dx, "deltaY": dy }.and(&target.describe(at));
+        let params = record! { "type": "mouseWheel", "deltaX": dx, "deltaY": dy }
+            .and(&target.describe(at, self.magnified.get()));
         {
             self.engine
                 .command("Input.dispatchMouseEvent", params, &target.session);
@@ -896,7 +902,8 @@ impl View {
             _ => "dragOver",
         };
         {
-            self.continue_drag(&target, kind, target.describe(at)).await;
+            let local = target.describe(at, self.magnified.get());
+            self.continue_drag(&target, kind, local).await;
             Some(())
         }
     }
@@ -1303,6 +1310,10 @@ impl View {
             &target.session,
             Box::new(changed),
         );
+    }
+
+    pub(super) fn size(&self) -> [f64; 2] {
+        self.size.get()
     }
 
     pub(super) fn resize(&self, size: [f64; 2]) {

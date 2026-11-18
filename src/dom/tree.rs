@@ -13,7 +13,7 @@ use crate::api::core::{Atom, DomString, Ns, QualName, StoredText};
 
 use crate::boxes::BoxId;
 use crate::cascade::RuleList;
-use crate::name::{Map, Name, Set, name};
+use crate::name::{Map, Name, Set, is_name, name};
 use crate::properties::Style;
 use crate::rules::Classes;
 use crate::selector::{Found, Pseudo};
@@ -331,6 +331,10 @@ pub(crate) struct Rare {
     pub(crate) pseudo: Pseudo,
     pub(crate) shadow_root: NodeId,
     pub(crate) hints: Option<Rc<Block>>,
+    /// Its `transform` attribute has changed, and `hints` only refer to it.
+    pub(crate) has_moved: bool,
+    /// It has been a child of a document, and is neither `html` nor `svg`.
+    pub(crate) is_unusual_root: bool,
     pub(crate) custom_states: Vec<Name>,
     pub(crate) replaced: Option<Replaced>,
     /// If it has a prefix, or `Namespace::Other`.
@@ -343,6 +347,8 @@ pub(crate) struct Rare {
     /// For `contain-intrinsic-size: auto`.
     /// Inline and block.
     pub(crate) remembered_size: [Option<f32>; 2],
+    /// `Element::text_to_show`, once it has differed from the attribute.
+    pub(crate) edited_text: Option<StoredText>,
 }
 
 impl Rare {
@@ -358,6 +364,8 @@ impl Rare {
             pseudo,
             shadow_root: 0,
             hints: None,
+            has_moved: false,
+            is_unusual_root: false,
             custom_states: Vec::new(),
             replaced: None,
             space: None,
@@ -365,6 +373,7 @@ impl Rare {
             scroll: [0.0; 2],
             container_size: None,
             remembered_size: [None; 2],
+            edited_text: None,
         }
     }
 }
@@ -622,7 +631,7 @@ pub(crate) struct Node {
     /// `selector::filter` of `key::of_element`
     pub(crate) keys: u64,
     /// The `keys` of its shadow-including descendants, and some that they had.
-    keys_below: u64,
+    pub(crate) keys_below: u64,
     pub(crate) parent: NodeId,
     pub(crate) first_child: NodeId,
     pub(crate) next: NodeId,
@@ -852,6 +861,7 @@ impl FreeList {
         Some(word as u32 * 64 + ids.trailing_zeros())
     }
 
+    #[inline(never)]
     fn take_lowest(&mut self) {
         while self.words[self.first] == 0 {
             self.first += 1;
@@ -883,6 +893,8 @@ pub(crate) struct Tree {
     cold: Vec<Cold>,
     /// The address of the newest one.
     last_element: usize,
+    /// The parent of what was last sought, and could only be there once. It may be gone.
+    pub(crate) last_found_in: Cell<NodeId>,
     free: FreeList,
     /// To selectors, it has neither a parent nor siblings.
     pub(crate) cut_at: Cell<NodeId>,
@@ -969,7 +981,7 @@ impl core::ops::IndexMut<NodeId> for Tree {
 const AT_ONCE: usize = 1 << 12;
 
 /// One call takes half as long as a fault for each page.
-fn map_in<T>(room: &mut [core::mem::MaybeUninit<T>]) {
+pub(crate) fn map_in<T>(room: &mut [core::mem::MaybeUninit<T>]) {
     #[cfg(target_os = "linux")]
     {
         unsafe extern "C" {
@@ -1002,6 +1014,7 @@ impl Tree {
             nodes,
             cold: vec![Cold::default(), Cold::default()],
             last_element: 0,
+            last_found_in: Cell::new(0),
             free: FreeList::default(),
             cut_at: Cell::new(0),
             matched_part: Cell::new(0),
@@ -1122,6 +1135,7 @@ impl Tree {
         id
     }
 
+    #[inline(never)]
     fn add_vacant(&mut self) -> NodeId {
         if self.nodes.len() == self.nodes.capacity() {
             self.grow();
@@ -1131,10 +1145,10 @@ impl Tree {
         (self.nodes.len() - 1) as NodeId
     }
 
-    #[inline]
+    #[inline(always)]
     fn vacant(&mut self) -> NodeId {
         let id = self.free.pop().unwrap_or_else(|| self.add_vacant());
-        let later = self.free.ahead(id, 6) as usize;
+        let later = id as usize + 6;
         prefetch_write(self.nodes.as_mut_ptr().wrapping_add(later), Locality::L1);
         prefetch_write(self.cold.as_mut_ptr().wrapping_add(later), Locality::L1);
         id
@@ -1191,6 +1205,7 @@ impl Tree {
         let previous = core::mem::replace(&mut self.cold_mut(parent).last_child, id);
         let above = &mut self[parent];
         let (scope, is_news) = (above.scope, keys & !above.keys_below != 0);
+        let is_root = parent == DOCUMENT || above.has(Flags::OTHER_DOCUMENT);
         match previous {
             0 => above.first_child = id,
             _ => self[previous].next = id,
@@ -1220,8 +1235,11 @@ impl Tree {
             let _ = core::mem::ManuallyDrop::new(core::mem::replace(&mut self[id], node));
             self.cold_mut(id).cell.set(sketch.to_cell());
         }
-        if is_news {
-            self.add_keys_below(parent, keys);
+        if is_root {
+            self.prepare_root(id);
+        }
+        if is_news || is_root {
+            self.add_keys_below(parent, self[id].keys);
         }
         id
     }
@@ -1237,6 +1255,10 @@ impl Tree {
             );
         }
         let (keys, keys_below) = (self[of].keys, self[of].keys_below);
+        let state = self
+            .element(of)
+            .and_then(Element::state_if_dormant)
+            .unwrap_or_default();
         let Some(Likeness {
             tag,
             namespace,
@@ -1259,6 +1281,7 @@ impl Tree {
                 element.classes,
                 element.attributes,
             ) = (local, is_unprepared, id, classes, attributes);
+            element.state = state;
             space
                 .into_iter()
                 .for_each(|it| element.rare_mut().space = Some(it));
@@ -1275,10 +1298,19 @@ impl Tree {
         &mut self,
         tag: Name,
         namespace: Namespace,
+        keys: u64,
         fill: impl FnOnce(&mut Element),
     ) -> NodeId {
         let element = self.new_element(tag, namespace, fill);
-        self.create(Data::Element(element))
+        let id = self.vacant();
+        let node = &mut self[id];
+        node.keys = keys;
+        // It is `Data::Free`.
+        let _ = core::mem::ManuallyDrop::new(core::mem::replace(
+            &mut node.data,
+            Data::Element(element),
+        ));
+        id
     }
 
     #[inline(always)]
@@ -1519,6 +1551,9 @@ impl Tree {
 
     #[inline]
     pub(crate) fn link(&mut self, parent: NodeId, child: NodeId, before: NodeId) {
+        if parent == DOCUMENT || self[parent].has(Flags::OTHER_DOCUMENT) {
+            self.prepare_root(child);
+        }
         let previous = match before {
             0 => core::mem::replace(&mut self.cold_mut(parent).last_child, child),
             _ => core::mem::replace(&mut self[before].previous, child),
@@ -1535,6 +1570,18 @@ impl Tree {
             self.sequence.shape_changed(child);
         }
         self.add_keys_below(parent, keys);
+    }
+
+    #[cold]
+    fn prepare_root(&mut self, id: NodeId) {
+        let Some(element) = self
+            .element_mut(id)
+            .filter(|it| !is_name!(it.tag, "html" | "svg"))
+        else {
+            return;
+        };
+        element.rare_mut().is_unusual_root = true;
+        self[id].keys |= crate::selector::filter(core::iter::once(crate::selector::key::ROOT));
     }
 
     /// Of `root` and its descendants.
@@ -1802,6 +1849,17 @@ impl Tree {
         }
         if previous == 0 && next == 0 && !self[parent].has(Flags::REDIRECTS_CHILDREN) {
             self[parent].keys_below = 0;
+        }
+    }
+
+    /// It is not rendered anymore.
+    #[inline]
+    pub(crate) fn reset(&mut self, id: NodeId) {
+        self.visit(id).set(0);
+        let node = &mut self[id];
+        node.flags.set(node.flags.get() & Flags::REDIRECTS_CHILDREN);
+        if !matches!(node.data, Data::ShadowRoot { .. }) && node.scope == DOCUMENT {
+            node.scope = 0;
         }
     }
 

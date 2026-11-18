@@ -23,7 +23,7 @@ impl LengthOrNumber {
     // parse + to_css — provided by #[derive(css::Parse, css::ToCss)]
     // (f32 resolves via generics::{Parse,ToCss} for f32). is_compatible KEPT.
 
-    pub fn is_compatible(&self, browsers: &Browsers) -> bool {
+    pub(crate) fn is_compatible(&self, browsers: &Browsers) -> bool {
         match self {
             Self::Length(l) => l.is_compatible(browsers),
             Self::Number(_) => true,
@@ -37,11 +37,13 @@ impl Default for LengthOrNumber {
     }
 }
 
-pub type LengthPercentage = DimensionPercentage<LengthValue>;
+pub(crate) type LengthPercentage = DimensionPercentage<LengthValue>;
 
 impl LengthPercentage {
     /// `<length-percentage [0,∞]>`
-    pub fn parse_non_negative<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
+    pub(crate) fn parse_non_negative<'bump>(
+        input: &mut Parser<'_, 'bump>,
+    ) -> CssResult<'bump, Self> {
         input.parse_with_non_negative(true, Self::parse)
     }
 }
@@ -58,7 +60,7 @@ pub enum LengthPercentageOrAuto {
 impl LengthPercentageOrAuto {
     // parse + to_css — provided by #[derive(css::Parse, css::ToCss)]. is_compatible KEPT.
 
-    pub fn is_compatible(&self, browsers: &Browsers) -> bool {
+    pub(crate) fn is_compatible(&self, browsers: &Browsers) -> bool {
         match self {
             Self::Length(l) => l.is_compatible(browsers),
             _ => true,
@@ -272,7 +274,7 @@ define_length_units! {
 // construction (one `=> $feature` per variant), so no separate assert needed.
 
 impl LengthValue {
-    pub fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let location = input.current_source_location();
         let token = *input.next()?;
         match &token {
@@ -288,7 +290,7 @@ impl LengthValue {
         Err(location.new_unexpected_token_error(token))
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         let (value, unit) = self.to_unit_value();
 
         // The unit can be omitted if the value is zero, except inside calc()
@@ -300,20 +302,20 @@ impl LengthValue {
         css::serializer::serialize_dimension(value, unit, dest)
     }
 
-    pub fn is_zero(self) -> bool {
+    pub(crate) fn is_zero(self) -> bool {
         self.value() == 0.0
     }
 
     // deep_clone / eql / hash — provided by `#[derive(DeepClone, CssEql, CssHash)]`
     // on the macro-generated enum (POD f32 payload → bitwise/structural).
 
-    pub fn zero() -> LengthValue {
+    pub(crate) fn zero() -> LengthValue {
         Self::Px(0.0)
     }
 
     /// Attempts to convert the value to pixels.
     /// Returns `None` if the conversion is not possible.
-    pub fn to_px(self) -> Option<CSSNumber> {
+    pub(crate) fn to_px(self) -> Option<CSSNumber> {
         match self {
             Self::Px(v) => Some(v),
             Self::In(v) => Some(v * PX_PER_IN),
@@ -334,7 +336,7 @@ impl LengthValue {
         css::signfns::sign_f32(self.value())
     }
 
-    pub fn try_from_token(token: &Token) -> Maybe<Self, ()> {
+    pub(crate) fn try_from_token(token: &Token) -> Maybe<Self, ()> {
         match token {
             Token::Dimension(dim) => {
                 if let Some(v) = Self::from_unit_ci(dim.unit, dim.num.value) {
@@ -346,7 +348,7 @@ impl LengthValue {
         Err(())
     }
 
-    pub fn to_unit_value(self) -> (CSSNumber, &'static [u8]) {
+    pub(crate) fn to_unit_value(self) -> (CSSNumber, &'static [u8]) {
         (self.value(), self.unit())
     }
 
@@ -385,7 +387,7 @@ impl LengthValue {
         None
     }
 
-    pub fn is_compatible(self, browsers: &Browsers) -> bool {
+    pub(crate) fn is_compatible(self, browsers: &Browsers) -> bool {
         match self.feature() {
             Some(feature) => feature.is_compatible(browsers),
             None => true,
@@ -412,16 +414,16 @@ pub enum Length {
 }
 
 impl Length {
-    pub fn zero() -> Length {
+    pub(crate) fn zero() -> Length {
         Self::Value(LengthValue::zero())
     }
 
-    pub fn deep_clone(&self) -> Length {
+    pub(crate) fn deep_clone(&self) -> Length {
         // derive(Clone) on Box<Calc<Length>> already deep-clones.
         self.clone()
     }
 
-    pub fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Length> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Length> {
         match input.try_parse(Calc::<Length>::parse) {
             // PERF: I don't like this redundant allocation
             Ok(Calc::Value(v)) => return Ok(*v),
@@ -440,25 +442,25 @@ impl Length {
     // to_css — provided by #[derive(css::ToCss)] (Box<Calc<Length>> auto-derefs
     // to Calc::<V: CalcValue>::to_css inherent). parse KEPT (custom Calc::Value unwrap).
 
-    pub fn px(p: CSSNumber) -> Length {
+    pub(crate) fn px(p: CSSNumber) -> Length {
         Self::Value(LengthValue::Px(p))
     }
 
-    pub fn to_px(&self) -> Option<CSSNumber> {
+    pub(crate) fn to_px(&self) -> Option<CSSNumber> {
         match self {
             Self::Value(a) => a.to_px(),
             _ => None,
         }
     }
 
-    pub fn mul_f32(self, other: f32) -> Length {
+    pub(crate) fn mul_f32(self, other: f32) -> Length {
         match self {
             Self::Value(v) => Self::Value(v.mul_f32(other)),
             Self::Calc(c) => Self::Calc(Box::new(c.mul_f32(other))),
         }
     }
 
-    pub fn add(self, other: Length) -> Length {
+    pub(crate) fn add(self, other: Length) -> Length {
         // Unwrap calc(...) functions so we can add inside.
         // Then wrap the result in a calc(...) again if necessary.
         let a = Self::unwrap_calc(self);
@@ -480,14 +482,14 @@ impl Length {
         res
     }
 
-    pub fn add_internal(self, other: Length) -> Length {
+    pub(crate) fn add_internal(self, other: Length) -> Length {
         if let Some(r) = self.try_add(&other) {
             return r;
         }
         self.add__(other)
     }
 
-    pub fn into_calc(self) -> Calc<Length> {
+    pub(crate) fn into_calc(self) -> Calc<Length> {
         match self {
             Self::Calc(c) => *c,
             v => Calc::Value(Box::new(v)),
@@ -595,7 +597,7 @@ impl Length {
         // For borrowck, this moves out of the Box once and rebuilds.
     }
 
-    pub fn try_sign(&self) -> Option<f32> {
+    pub(crate) fn try_sign(&self) -> Option<f32> {
         match self {
             Self::Value(v) => Some(v.sign()),
             Self::Calc(v) => v.try_sign(),
@@ -616,14 +618,14 @@ impl Length {
         s.is_sign_positive()
     }
 
-    pub fn partial_cmp(&self, other: &Length) -> Option<Ordering> {
+    pub(crate) fn partial_cmp(&self, other: &Length) -> Option<Ordering> {
         if let (Self::Value(a), Self::Value(b)) = (self, other) {
             return LengthValue::partial_cmp(*a, *b);
         }
         None
     }
 
-    pub fn try_map(&self, map_fn: impl FnOnce(f32) -> f32) -> Option<Length> {
+    pub(crate) fn try_map(&self, map_fn: impl FnOnce(f32) -> f32) -> Option<Length> {
         match self {
             Self::Value(v) => Some(Self::Value(v.map(map_fn))),
             _ => None,
@@ -637,7 +639,7 @@ impl Length {
         }
     }
 
-    pub fn is_compatible(&self, browsers: &Browsers) -> bool {
+    pub(crate) fn is_compatible(&self, browsers: &Browsers) -> bool {
         match self {
             Self::Value(v) => v.is_compatible(browsers),
             Self::Calc(c) => c.is_compatible(browsers),

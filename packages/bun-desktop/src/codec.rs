@@ -8,6 +8,8 @@ use crate::bun::{self, abi, host};
 
 pub const MAX_SIDE: u32 = 32768;
 pub const MAX_BYTES: usize = 512 << 20;
+/// Several copies are needed to put a frame together.
+const MAX_BYTES_IN_FRAME: usize = MAX_BYTES / 4;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Format {
@@ -62,6 +64,11 @@ impl Rgba {
             height,
             data: vec![0; width as usize * height as usize * 4],
         })
+    }
+
+    fn canvas((width, height): (u32, u32)) -> Option<Rgba> {
+        (u64::from(width) * u64::from(height) * 4 <= MAX_BYTES_IN_FRAME as u64)
+            .then(|| Rgba::blank(width, height))?
     }
 
     fn pixels_mut(&mut self) -> &mut [[u8; 4]] {
@@ -299,17 +306,42 @@ pub fn orientation(bytes: &[u8]) -> u8 {
     read().unwrap_or(1) as u8
 }
 
-/// Of a PNG, JPEG or WebP file, as it is shown.
-pub fn size(bytes: &[u8]) -> Option<(u32, u32)> {
-    let mut size = [0; 2];
-    // SAFETY: a live slice with its length.
-    (unsafe { (host().image_size)(bytes.as_ptr(), bytes.len(), &mut size) }
-        && fits(size[0], size[1]))
-    .then_some(())?;
-    Some(if orientation(bytes) > 4 {
-        (size[1], size[0])
+fn stored_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    match Format::of(bytes)? {
+        Format::Bmp => dib_size(bytes.get(14..)?, false),
+        Format::Ico => best_icon(bytes).and_then(|it| {
+            if Format::of(it) == Some(Format::Png) {
+                stored_size(it)
+            } else {
+                dib_size(it, true)
+            }
+        }),
+        Format::Gif => {
+            let [x, y, width, height] = gif_parts(bytes).next()?.area;
+            Some((
+                little::<2>(bytes, 6)?.max(x + width),
+                little::<2>(bytes, 8)?.max(y + height),
+            ))
+        }
+        Format::WebP if is_animated(bytes) => {
+            Some((little::<3>(bytes, 24)? + 1, little::<3>(bytes, 27)? + 1))
+        }
+        _ => {
+            let mut size = [0; 2];
+            // SAFETY: a live slice with its length.
+            unsafe { (host().image_size)(bytes.as_ptr(), bytes.len(), &mut size) }
+                .then_some(size.into())
+        }
+    }
+}
+
+/// Of what `decode` returns.
+pub fn size(bytes: &[u8], is_oriented: bool) -> Option<(u32, u32)> {
+    let (width, height) = stored_size(bytes).filter(|it| fits(it.0, it.1))?;
+    Some(if is_oriented && orientation(bytes) > 4 {
+        (height, width)
     } else {
-        (size[0], size[1])
+        (width, height)
     })
 }
 
@@ -325,8 +357,8 @@ pub fn is_animated(bytes: &[u8]) -> bool {
     }
 }
 
-fn decode_in_bun(bytes: &[u8], mut size: [u32; 2]) -> Option<Rgba> {
-    let most = MAX_BYTES as u64 / 4;
+fn decode_in_bun(bytes: &[u8], mut size: [u32; 2], most_bytes: usize) -> Option<Rgba> {
+    let most = most_bytes as u64 / 4;
     // SAFETY: a live slice with its length.
     let data = bun::collect(|sink, context| unsafe {
         (host().decode_image)(bytes.as_ptr(), bytes.len(), most, &mut size, sink, context)
@@ -363,12 +395,13 @@ pub fn decode(bytes: &[u8], is_oriented: bool, least: (u32, u32)) -> Option<Rgba
             } else {
                 [least.0, least.1]
             },
+            MAX_BYTES,
         ),
     };
     Some(image?.oriented(orientation))
 }
 
-fn decode_icon(bytes: &[u8]) -> Option<Rgba> {
+fn best_icon(bytes: &[u8]) -> Option<&[u8]> {
     let entries = bytes
         .get(6..)?
         .as_chunks::<16>()
@@ -378,34 +411,43 @@ fn decode_icon(bytes: &[u8]) -> Option<Rgba> {
     let side = |it: u8| u32::from(it.wrapping_sub(1)) + 1;
     let best = entries.max_by_key(|it| (side(it[0]) * side(it[1]), little::<2>(*it, 6)))?;
     let data = bytes.get(little::<4>(best, 12)? as usize..)?;
-    let data = &data[..data.len().min(little::<4>(best, 8)? as usize)];
+    Some(&data[..data.len().min(little::<4>(best, 8)? as usize)])
+}
+
+fn decode_icon(bytes: &[u8]) -> Option<Rgba> {
+    let data = best_icon(bytes)?;
     if Format::of(data) == Some(Format::Png) {
-        decode_in_bun(data, [0; 2])
+        decode_in_bun(data, [0; 2], MAX_BYTES)
     } else {
         decode_dib(data, None, true)
     }
 }
 
+fn dib_size(dib: &[u8], is_icon: bool) -> Option<(u32, u32)> {
+    let (width, height) = match little::<4>(dib, 0)? {
+        12 => (little::<2>(dib, 4)?, little::<2>(dib, 6)?),
+        _ => (
+            little::<4>(dib, 4)?,
+            (little::<4>(dib, 8)? as i32).unsigned_abs(),
+        ),
+    };
+    Some((width, height >> u32::from(is_icon)))
+}
+
 /// What follows the header of a BMP file. In an icon, a mask comes after the pixels.
 fn decode_dib(dib: &[u8], pixels_at: Option<usize>, is_icon: bool) -> Option<Rgba> {
     let header = little::<4>(dib, 0)? as usize;
-    let (width, height, depth, compression, colors) = match header {
-        12 => (
-            little::<2>(dib, 4)?,
-            little::<2>(dib, 6)? as i32,
-            little::<2>(dib, 10)?,
-            0,
-            0,
-        ),
+    let (is_top_down, depth, compression, colors) = match header {
+        12 => (false, little::<2>(dib, 10)?, 0, 0),
         _ => (
-            little::<4>(dib, 4)?,
-            little::<4>(dib, 8)? as i32,
+            little::<4>(dib, 8)? >> 31 != 0,
             little::<2>(dib, 14)?,
             little::<4>(dib, 16)?,
             little::<4>(dib, 32)?,
         ),
     };
-    let mut image = Rgba::blank(width, height.unsigned_abs() >> u32::from(is_icon))?;
+    let (width, height) = dib_size(dib, is_icon)?;
+    let mut image = Rgba::blank(width, height)?;
     let (columns, rows, has_masks) = (
         width as usize,
         image.height as usize,
@@ -443,7 +485,7 @@ fn decode_dib(dib: &[u8], pixels_at: Option<usize>, is_icon: bool) -> Option<Rgb
         _ => [0, 0, 0, 255],
     };
     let data = dib.get(pixels_at.unwrap_or(palette_at + colors * entry)..)?;
-    let target = |row: usize| (if height < 0 { row } else { rows - 1 - row }) * columns;
+    let target = |row: usize| (if is_top_down { row } else { rows - 1 - row }) * columns;
     let pixels = image.pixels_mut();
     if matches!(compression, 1 | 2) {
         let (mut x, mut y, mut rest) = (0, 0, data);
@@ -590,8 +632,25 @@ fn show(
     Some(())
 }
 
-/// The parts of all frames may be this large together, whatever the size of the image is.
-const MAX_PIXELS_IN_FRAMES: usize = 1 << 27;
+/// How long each frame is shown, going by what the file says.
+pub fn delays(bytes: &[u8]) -> Box<dyn Iterator<Item = Duration> + '_> {
+    let millis = |it: u32| Duration::from_millis(it.into());
+    match Format::of(bytes) {
+        Some(Format::Png) => Box::new(
+            png_chunks(bytes)
+                .filter(|it| it.0 == b"fcTL")
+                .map_while(|it| png_delay(it.1))
+                .map(millis),
+        ),
+        Some(Format::WebP) => Box::new(
+            riff_chunks(&bytes[12..])
+                .filter(|it| it.0 == b"ANMF")
+                .map_while(|it| little::<3>(it.1, 12))
+                .map(millis),
+        ),
+        _ => Box::new(gif_parts(bytes).map(|it| it.delay()).map(millis)),
+    }
+}
 
 /// Each with how long it is shown, up to one that is broken.
 pub fn frames(bytes: &[u8], take: Take) {
@@ -603,15 +662,23 @@ pub fn frames(bytes: &[u8], take: Take) {
     };
 }
 
+fn png_delay(control: &[u8]) -> Option<u32> {
+    Some(
+        big::<2>(control, 20)? * 1000
+            / Some(big::<2>(control, 22)?)
+                .filter(|it| *it > 0)
+                .unwrap_or(100),
+    )
+}
+
 fn png_frames(bytes: &[u8], take: Take) -> Option<()> {
     let header = png_chunks(bytes).next()?.1;
-    let mut canvas = Rgba::blank(big::<4>(header, 0)?, big::<4>(header, 4)?)?;
+    let mut canvas = Rgba::canvas((big::<4>(header, 0)?, big::<4>(header, 4)?))?;
     let (mut control, mut data): (Option<&[u8]>, Vec<u8>) = (None, Vec::new());
     let shared: Vec<_> = png_chunks(bytes)
         .filter(|it| matches!(it.0, b"PLTE" | b"tRNS"))
         .take(2)
         .collect();
-    let mut room = MAX_PIXELS_IN_FRAMES;
     for (kind, body) in png_chunks(bytes).chain([(b"IEND", &[][..])]) {
         match kind {
             b"IDAT" if control.is_some() => data.extend(body),
@@ -637,16 +704,13 @@ fn png_frames(bytes: &[u8], take: Take) -> Option<()> {
                     file.extend(kind.iter().chain(body));
                     file.extend(bun::crc32(&file[start..]).to_be_bytes());
                 }
-                let per_second = Some(big::<2>(control, 22)?)
-                    .filter(|it| *it > 0)
-                    .unwrap_or(100);
                 let disposal = *[Disposal::Keep, Disposal::Clear, Disposal::Restore]
                     .get(usize::from(*control.get(24)?))?;
                 let (at, delay) = (
                     [big::<4>(control, 12)?, big::<4>(control, 16)?],
-                    big::<2>(control, 20)? * 1000 / per_second,
+                    png_delay(control)?,
                 );
-                let frame = decode_in_bun(&file, [0; 2])?;
+                let frame = decode_in_bun(&file, [0; 2], canvas.data.len())?;
                 show(
                     &mut canvas,
                     &frame,
@@ -656,7 +720,6 @@ fn png_frames(bytes: &[u8], take: Take) -> Option<()> {
                     delay.into(),
                     take,
                 )?;
-                room = room.checked_sub(frame.data.len() / 4)?;
             }
             _ => {}
         }
@@ -665,9 +728,7 @@ fn png_frames(bytes: &[u8], take: Take) -> Option<()> {
 }
 
 fn webp_frames(bytes: &[u8], take: Take) -> Option<()> {
-    let header = riff_chunks(&bytes[12..]).next()?.1;
-    let mut canvas = Rgba::blank(little::<3>(header, 4)? + 1, little::<3>(header, 7)? + 1)?;
-    let mut room = MAX_PIXELS_IN_FRAMES;
+    let mut canvas = Rgba::canvas(stored_size(bytes)?)?;
     for (_, frame) in riff_chunks(&bytes[12..]).filter(|it| it.0 == b"ANMF") {
         let (fields, data) = frame.split_first_chunk::<16>()?;
         let extended = [b"VP8X\x0a\0\0\0\x10\0\0\0", &fields[6..12]].concat();
@@ -684,7 +745,7 @@ fn webp_frames(bytes: &[u8], take: Take) -> Option<()> {
             Disposal::Keep
         };
         let at = [little::<3>(fields, 0)? * 2, little::<3>(fields, 3)? * 2];
-        let frame = decode_in_bun(&file, [0; 2])?;
+        let frame = decode_in_bun(&file, [0; 2], canvas.data.len())?;
         show(
             &mut canvas,
             &frame,
@@ -694,13 +755,12 @@ fn webp_frames(bytes: &[u8], take: Take) -> Option<()> {
             little::<3>(fields, 12)?.into(),
             take,
         )?;
-        room = room.checked_sub(frame.data.len() / 4)?;
     }
     Some(())
 }
 
 /// Up to the first error.
-fn decode_lzw(data: &[u8], least_bits: u8, most: usize) -> Vec<u8> {
+fn decode_lzw<'a>(data: impl Iterator<Item = &'a u8>, least_bits: u8, most: usize) -> Vec<u8> {
     let clear = 1usize << least_bits;
     // Each code stands for what was written before: where, and how much.
     let (mut known, mut out) = (
@@ -737,7 +797,32 @@ fn decode_lzw(data: &[u8], least_bits: u8, most: usize) -> Vec<u8> {
     out
 }
 
-fn gif_frames(bytes: &[u8], take: Take) -> Option<()> {
+/// Takes them off `rest` as it goes.
+fn gif_blocks<'a>(rest: &mut &'a [u8]) -> impl Iterator<Item = &'a [u8]> {
+    std::iter::from_fn(|| {
+        rest.split_off_first()
+            .filter(|it| **it > 0)
+            .and_then(|len| rest.split_off(..usize::from(*len).min(rest.len())))
+    })
+}
+
+struct GifPart<'a> {
+    control: [u8; 4],
+    area: [u32; 4],
+    is_interlaced: bool,
+    colors: &'a [[u8; 3]],
+    least_bits: u8,
+    /// From its first block on.
+    rest: &'a [u8],
+}
+
+impl GifPart<'_> {
+    fn delay(&self) -> u32 {
+        u32::from(u16::from_le_bytes([self.control[1], self.control[2]])) * 10
+    }
+}
+
+fn gif_parts(bytes: &[u8]) -> impl Iterator<Item = GifPart<'_>> {
     fn palette<'a>(flags: u8, rest: &mut &'a [u8]) -> Option<&'a [[u8; 3]]> {
         Some(
             rest.split_off(
@@ -751,86 +836,100 @@ fn gif_frames(bytes: &[u8], take: Take) -> Option<()> {
             .0,
         )
     }
-    fn blocks(rest: &mut &[u8]) -> Vec<u8> {
-        let mut data = Vec::new();
-        while let Some(&len @ 1..) = rest.split_off_first() {
-            data.extend(
-                rest.split_off(..usize::from(len).min(rest.len()))
-                    .unwrap_or_default(),
-            );
+    let mut rest = bytes.get(13..).unwrap_or_default();
+    let global = bytes.get(10).and_then(|it| palette(*it, &mut rest));
+    std::iter::from_fn(move || {
+        let (global, mut control) = (global?, [0; 4]);
+        while *rest.first()? == b'!' {
+            let label = rest.split_off(..2)?[1];
+            let first = gif_blocks(&mut rest).reduce(|first, _| first);
+            control = first
+                .and_then(|it| it.first_chunk())
+                .filter(|_| label == 0xf9)
+                .map_or(control, |it| *it);
         }
-        data
-    }
-    let (header, mut rest) = bytes.split_first_chunk::<13>()?;
-    let (global, mut canvas, mut control) = (palette(header[10], &mut rest)?, None, [0; 4]);
-    let mut room = MAX_PIXELS_IN_FRAMES;
-    loop {
-        match rest.split_off_first()? {
-            b'!' => {
-                let (label, data) = (*rest.split_off_first()?, blocks(&mut rest));
-                control = data
-                    .first_chunk()
-                    .filter(|_| label == 0xf9)
-                    .map_or(control, |it| *it);
-            }
-            b',' => {
-                let fields = rest.split_off(..9)?;
-                let [x, y, width, height] =
-                    [0, 2, 4, 6].map(|at| little::<2>(fields, at).unwrap_or(0));
-                let colors = Some(palette(fields[8], &mut rest)?)
-                    .filter(|it| !it.is_empty())
-                    .unwrap_or(global);
-                let least_bits = rest
-                    .split_off_first()
-                    .copied()
-                    .filter(|it| (1..12).contains(it))?;
-                room = room.checked_sub(width as usize * height as usize)?;
-                let mut frame = Rgba::blank(width, height)?;
-                let indexes = decode_lzw(&blocks(&mut rest), least_bits, frame.data.len() / 4);
-                let passes: &[(usize, usize)] = if fields[8] & 0x40 != 0 {
-                    &[(0, 8), (4, 8), (2, 4), (1, 2)]
-                } else {
-                    &[(0, 1)]
-                };
-                let rows = passes
-                    .iter()
-                    .flat_map(|&(first, step)| (first..height as usize).step_by(step));
-                for (row, indexes) in rows.zip(indexes.chunks(width as usize)) {
-                    for (pixel, index) in frame.pixels_mut()[row * width as usize..]
-                        .iter_mut()
-                        .zip(indexes)
-                    {
-                        if let Some(&[red, green, blue]) = colors
-                            .get(usize::from(*index))
-                            .filter(|_| control[0] & 1 == 0 || *index != control[3])
-                        {
-                            *pixel = [red, green, blue, 255];
-                        }
-                    }
+        let [b',', fields @ ..] = rest.split_off(..10)? else {
+            return None;
+        };
+        let colors = Some(palette(fields[8], &mut rest)?)
+            .filter(|it| !it.is_empty())
+            .unwrap_or(global);
+        let least_bits = rest
+            .split_off_first()
+            .copied()
+            .filter(|it| (1..12).contains(it))?;
+        let area = [0, 2, 4, 6].map(|at| little::<2>(fields, at).unwrap_or(0));
+        let part = GifPart {
+            control,
+            area,
+            is_interlaced: fields[8] & 0x40 != 0,
+            colors,
+            least_bits,
+            rest,
+        };
+        gif_blocks(&mut rest).for_each(drop);
+        Some(part)
+    })
+}
+
+fn gif_frames(bytes: &[u8], take: Take) -> Option<()> {
+    let mut canvas = Rgba::canvas(stored_size(bytes)?)?;
+    // What sticks out of the image is decoded, too.
+    let mut spare_pixels = 1 << 22;
+    for part in gif_parts(bytes) {
+        let GifPart {
+            control,
+            area: [x, y, width, height],
+            colors,
+            least_bits,
+            mut rest,
+            ..
+        } = part;
+        spare_pixels = usize::checked_sub(
+            spare_pixels,
+            (width as usize * height as usize).saturating_sub(canvas.data.len() / 4),
+        )?;
+        let mut frame = Rgba::blank(width, height)?;
+        let indexes = decode_lzw(
+            gif_blocks(&mut rest).flatten(),
+            least_bits,
+            frame.data.len() / 4,
+        );
+        let passes: &[(usize, usize)] = if part.is_interlaced {
+            &[(0, 8), (4, 8), (2, 4), (1, 2)]
+        } else {
+            &[(0, 1)]
+        };
+        let rows = passes
+            .iter()
+            .flat_map(|&(first, step)| (first..height as usize).step_by(step));
+        for (row, indexes) in rows.zip(indexes.chunks(width as usize)) {
+            for (pixel, index) in frame.pixels_mut()[row * width as usize..]
+                .iter_mut()
+                .zip(indexes)
+            {
+                if let Some(&[red, green, blue]) = colors
+                    .get(usize::from(*index))
+                    .filter(|_| control[0] & 1 == 0 || *index != control[3])
+                {
+                    *pixel = [red, green, blue, 255];
                 }
-                if canvas.is_none() {
-                    canvas = Rgba::blank(
-                        little::<2>(header, 6)?.max(x + width),
-                        little::<2>(header, 8)?.max(y + height),
-                    );
-                }
-                let disposal = match control[0] >> 2 & 7 {
-                    2 => Disposal::Clear,
-                    3 => Disposal::Restore,
-                    _ => Disposal::Keep,
-                };
-                show(
-                    canvas.as_mut()?,
-                    &frame,
-                    [x, y],
-                    true,
-                    disposal,
-                    u64::from(little::<2>(&control, 1)?) * 10,
-                    take,
-                )?;
-                control = [0; 4];
             }
-            _ => return Some(()),
         }
+        let disposal = match control[0] >> 2 & 7 {
+            2 => Disposal::Clear,
+            3 => Disposal::Restore,
+            _ => Disposal::Keep,
+        };
+        show(
+            &mut canvas,
+            &frame,
+            [x, y],
+            true,
+            disposal,
+            part.delay().into(),
+            take,
+        )?;
     }
+    Some(())
 }

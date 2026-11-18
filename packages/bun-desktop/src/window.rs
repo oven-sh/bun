@@ -62,6 +62,8 @@ pub struct WindowState {
     is_stale: Cell<bool>,
     redraw_at: Cell<Option<Instant>>,
     draw_at: Cell<Option<Instant>>,
+    /// How long it has lately taken.
+    drawing_time: Cell<Duration>,
     /// When it moved there.
     #[cfg(target_os = "macos")]
     covered_caret: Cell<Option<Instant>>,
@@ -141,6 +143,7 @@ thread_local! {
 }
 
 const WAIT_FOR_IMAGES: Duration = Duration::from_millis(24);
+const LONGEST_FRAME: Duration = Duration::from_secs(2);
 
 pub fn next_redraw() -> Option<Instant> {
     WINDOWS.with_borrow(|windows| {
@@ -194,6 +197,9 @@ pub mod layers {
         static HAS_CHANGES: Cell<bool> = const { Cell::new(false) };
         static RELEASE_AT: Cell<Option<Instant>> = const { Cell::new(None) };
         static PAUSE_AT: Cell<Option<Instant>> = const { Cell::new(None) };
+        /// The surface, and the place in its window.
+        static POINTER: Cell<Option<(u32, platform::Point)>> = const { Cell::new(None) };
+        static LOOK_AT: Cell<Option<Instant>> = const { Cell::new(None) };
     }
 
     /// Leaves out what Core Animation can move, fade or blink in a layer of its own.
@@ -337,6 +343,11 @@ pub mod layers {
             .into_iter()
             .filter_map(|it| it.borrow_mut().take_jump())
             .for_each(|it| layers.note_jump(in_pixels(it, scale)));
+        LOOK_AT.set(LOOK_AT.get().or_else(|| {
+            POINTER
+                .get()
+                .map(|_| Instant::now() + Duration::from_millis(500))
+        }));
         if layers.frames_scrolled().is_multiple_of(8) {
             let shows = software::see_through(&state.compositor.lock().primitives, all);
             let points = [shows.start, shows.end].map(|it| f64::from(it) / f64::from(scale));
@@ -344,6 +355,7 @@ pub mod layers {
                 .fit_backdrop(points)
                 .map(|it| (it * f64::from(scale)).round() as i32);
             layers.keep_apart(left..right);
+            layers.target.keep_apart(left..right);
         }
         layers.paint(&mut state.compositor.lock(), all.right, all.bottom);
         layers.target.show_caret(caret);
@@ -377,6 +389,35 @@ pub mod layers {
         })
     }
 
+    pub fn note_pointer(over: Option<(u32, platform::Point)>, is_about_to_scroll: bool) {
+        POINTER.set(over);
+        LOOK_AT.set(Some(
+            Instant::now() + Duration::from_millis(if is_about_to_scroll { 0 } else { 80 }),
+        ));
+    }
+
+    fn look_under_pointer(state: &WindowState) {
+        let port = |(id, at): (u32, platform::Point)| {
+            surface::shown_in(state)
+                .iter()
+                .find(|it| it.borrow().id == id)?
+                .borrow()
+                .port_at(at.x, at.y)
+        };
+        let port = POINTER
+            .get()
+            .and_then(port)
+            .map(|it| in_pixels(it, state.metrics.get().scale));
+        if state
+            .layers
+            .borrow_mut()
+            .as_mut()
+            .is_some_and(|it| it.expect_scroll(port))
+        {
+            refresh(state.id);
+        }
+    }
+
     /// Not from inside of AppKit, which commits what belongs together.
     pub fn flush() {
         if HAS_CHANGES.take() {
@@ -391,7 +432,10 @@ pub mod layers {
     }
 
     pub fn next_chore() -> Option<Instant> {
-        RELEASE_AT.get().into_iter().chain(PAUSE_AT.get()).min()
+        [RELEASE_AT.get(), PAUSE_AT.get(), LOOK_AT.get()]
+            .into_iter()
+            .flatten()
+            .min()
     }
 
     pub fn do_chores() {
@@ -399,10 +443,20 @@ pub mod layers {
             PAUSE_AT.set(None);
             core_animation::note_pause();
         }
+        if LOOK_AT.get().is_some_and(|time| time <= Instant::now()) {
+            LOOK_AT.set(None);
+            ids()
+                .into_iter()
+                .filter_map(|id| state(id).ok())
+                .for_each(|it| look_under_pointer(&it));
+        }
         if RELEASE_AT.get().is_some_and(|time| time <= Instant::now()) {
             let mut has_spares = false;
             for state in ids().into_iter().filter_map(|id| state(id).ok()) {
                 if let Some(layers) = &mut *state.layers.borrow_mut() {
+                    if layers.is_loose() {
+                        refresh(state.id);
+                    }
                     layers.release_spares(SPARES_LAST);
                     has_spares |= layers.has_spares();
                     if !layers.has_spares() {
@@ -466,6 +520,14 @@ pub fn draw_now(id: u32) {
         if can_present == Some(true) {
             draw(&state, &*window);
         }
+    }
+}
+
+/// There may be a newer scene among them.
+pub fn draw_after_jobs(id: u32) {
+    match state(id) {
+        Ok(state) if host::thread::has_jobs() => state.draw_at.set(Some(Instant::now())),
+        _ => draw_now(id),
     }
 }
 
@@ -542,6 +604,7 @@ pub fn create(options: Options, icon: Option<&[u8]>, cover: Option<u32>) -> Resu
         is_stale: Cell::default(),
         redraw_at: Cell::default(),
         draw_at: Cell::default(),
+        drawing_time: Cell::default(),
         forget_at: Cell::default(),
         geometry: Cell::default(),
         cache: RefCell::default(),
@@ -640,6 +703,7 @@ fn release_memory() {
     surface::release_memory();
     images::release_memory();
     cpu::release_memory();
+    crate::canvas::release_memory();
     text::release_memory();
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     // SAFETY: it has no preconditions.
@@ -758,14 +822,21 @@ pub fn appearance_changed() {
 // ───────────────────────────── drawing ─────────────────────────────
 
 /// Whether it is shown, and until when.
-fn blink(since: Instant, now: Instant) -> (bool, Instant) {
+pub fn blink(since: Instant, now: Instant) -> (bool, Instant) {
     const PHASE: Duration = Duration::from_millis(500);
     let phases = (now.saturating_duration_since(since).as_millis() / PHASE.as_millis()) as u32;
     (phases.is_multiple_of(2), since + PHASE * (phases + 1))
 }
 
 fn draw(state: &WindowState, window: &dyn platform::Window) {
+    let start = Instant::now();
+    if host::thread::exists() && state.is_shown.get() {
+        surface::begin_frames_until(state, start + state.drawing_time.get());
+    }
     crate::guard("error", (), || try_to_draw(state, window));
+    state
+        .drawing_time
+        .update(|it| start.elapsed().max(it * 7 / 8));
 }
 
 fn try_to_draw(state: &WindowState, window: &dyn platform::Window) {
@@ -842,7 +913,7 @@ fn flatten_surfaces(
     })
     .outset(1);
     let mut redraw_at: Option<Instant> = None;
-    let deadline = Instant::now() + WAIT_FOR_IMAGES;
+    let [deadline, gives_up_at] = [WAIT_FOR_IMAGES, LONGEST_FRAME].map(|it| Instant::now() + it);
     state.is_stale.set(false);
     state.draw_at.set(None);
     cache.begin();
@@ -853,11 +924,14 @@ fn flatten_surfaces(
             continue;
         }
         let mut frame = Frame::new(metrics.scale * surface.scene.zoom, true);
-        frame.deadline = Some(if surface.is_scrolling() {
-            frame.now
-        } else {
-            deadline
-        });
+        (frame.deadline, frame.gives_up_at) = (
+            Some(if surface.is_scrolling() {
+                frame.now
+            } else {
+                deadline
+            }),
+            gives_up_at,
+        );
         if blinks && surface.scene.caret.is_some() && state.is_active.get() {
             let (is_shown, until) = blink(surface.caret_moved_at, frame.now);
             frame.shows_caret = is_shown;
@@ -869,17 +943,32 @@ fn flatten_surfaces(
             rect.intersect(device(metrics.content)),
         );
         #[cfg(target_os = "macos")]
-        let (movers, in_motion) = (&layers::movers(state, &surface, frame.now), &[]);
+        let (movers, in_motion, staying) = (
+            &layers::movers(state, &surface, frame.now),
+            &[],
+            Some(
+                state
+                    .unlifted
+                    .borrow()
+                    .iter()
+                    .map(|it| it.0)
+                    .collect::<Vec<_>>(),
+            ),
+        );
         #[cfg(not(target_os = "macos"))]
-        let (movers, in_motion) = (&[], &surface.motion.in_motion());
+        let (movers, in_motion, staying) = (&[], &surface.motion.in_motion(), None::<Vec<_>>);
         flatten::paint(
             &surface.scene,
             &frame,
             &Placement {
                 movers,
+                staying: staying.as_deref(),
                 in_motion,
                 origin,
                 clip,
+                is_active: state.is_active.get(),
+                depth: 0,
+                shown_by: None,
             },
             atlas,
             cache,
@@ -894,9 +983,13 @@ fn flatten_surfaces(
     state.frame_buttons.replace(buttons);
     let placement = Placement {
         movers: &[],
+        staying: None,
         in_motion: &[],
         origin: (0, 0),
         clip: everything,
+        is_active: false,
+        depth: 0,
+        shown_by: None,
     };
     flatten::paint(
         &scene,

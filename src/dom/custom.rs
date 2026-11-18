@@ -363,8 +363,14 @@ impl<'a> Changed<'a> {
         outer: Option<&'a Changed<'a>>,
     ) -> Option<Changed<'a>> {
         let mut names = names.into_iter();
-        let (few, many): (SmallVec<_>, Set<_>) =
-            (names.by_ref().take(4).collect(), names.collect());
+        Changed::of(names.by_ref().take(4).collect(), names.collect(), outer)
+    }
+
+    fn of(
+        few: SmallVec<[Name; 4]>,
+        many: Set<Name>,
+        outer: Option<&'a Changed<'a>>,
+    ) -> Option<Changed<'a>> {
         let marks = few
             .iter()
             .chain(&many)
@@ -393,6 +399,25 @@ impl<'a> Changed<'a> {
                 .all()
                 .any(|it| it.few.contains(&name) || it.many.contains(&name))
     }
+}
+
+pub(crate) fn has_unit(source: &[u8], units: &[Unit]) -> bool {
+    fn find(p: &mut P, units: &[Unit], depth: u8) -> bool {
+        let mut found = false;
+        while let Ok(token) = p.next().copied() {
+            found |= match token {
+                Token::Dimension(it) => {
+                    Unit::from_name(it.unit).is_some_and(|it| units.contains(&it))
+                }
+                Token::Function(_) | Token::OpenParen if depth < 128 => {
+                    nested(p, |p| Some(find(p, units, depth + 1))) == Some(true)
+                }
+                _ => false,
+            };
+        }
+        found
+    }
+    with_parser(source, |p| find(p, units, 0))
 }
 
 /// Whether it is valid, and stands for itself.
@@ -693,7 +718,9 @@ impl Signature {
         let parameter = |source: &[u8]| {
             let (name, syntax, rest) = with_parser(source, |p| {
                 let name = ident(p).filter(|it| it.starts_with(b"--"))?.into();
-                let syntax = Syntax::parse_type(p).unwrap_or_default();
+                let before = p.position();
+                let syntax = Syntax::parse_type(p)
+                    .or_else(|| (p.position() == before).then(Syntax::default))?;
                 Some((
                     name,
                     syntax,
@@ -920,6 +947,13 @@ impl Lookup for Frame<'_> {
     fn wide(&mut self, name: Name, wide: Wide) -> Option<Text> {
         self.resolve(name, &Declared::Wide(wide))
     }
+    fn initial(&mut self, name: Name) -> Option<Text> {
+        if self.argument(name).is_some() || self.locals.iter().any(|it| it.0 == name) {
+            None
+        } else {
+            self.caller.initial(name)
+        }
+    }
     fn matches_media(&self, condition: &Condition) -> bool {
         self.caller.matches_media(condition)
     }
@@ -948,11 +982,15 @@ fn call(lookup: &mut dyn Lookup, name: &str, arguments: &[Template]) -> Option<T
     .then_some(())?;
     let key = Name::new(&Rc::as_ptr(&function).addr().to_le_bytes()).salted(10);
     guarded(lookup, key, |caller| {
+        let arguments = parameters
+            .iter()
+            .map(|it| (Name::new(&it.name), None))
+            .collect();
         let mut frame = Frame {
             caller,
             function: &function,
             scope,
-            arguments: Vec::new(),
+            arguments,
             locals: Vec::new(),
         };
         for (index, it) in parameters.iter().enumerate() {
@@ -967,7 +1005,7 @@ fn call(lookup: &mut dyn Lookup, name: &str, arguments: &[Template]) -> Option<T
                     .resolve(name, &it.default.as_ref()?.1)
                     .and_then(|value| frame.compute(&it.syntax, &value))
             });
-            frame.arguments.push((name, value));
+            frame.arguments[index].1 = value;
         }
         for (name, value, guards) in function.body.iter().rev() {
             let holds = |guard: &Rc<Guard>| match &**guard {
@@ -1027,6 +1065,10 @@ pub(crate) struct Stack {
 }
 
 impl Stack {
+    pub(crate) fn keys(&self) -> &[Name] {
+        &self.keys
+    }
+
     /// Whether `key` is being resolved, which makes a cycle.
     pub(crate) fn reaches(&mut self, key: Name) -> bool {
         let at = self.keys.iter().position(|it| *it == key);
@@ -1094,6 +1136,10 @@ pub(crate) trait Lookup {
     fn syntax_of(&self, name: Name) -> Option<Syntax>;
     /// What the variable would be if it were set to that.
     fn wide(&mut self, name: Name, wide: Wide) -> Option<Text>;
+    /// What it is if nothing sets it.
+    fn initial(&mut self, name: Name) -> Option<Text> {
+        self.wide(name, Wide::Initial)
+    }
     fn matches_media(&self, condition: &Condition) -> bool;
     fn matches_container(&self, query: &ContainerQuery) -> bool;
     /// With the tree that defines it. It is searched for from `scope` outwards.
@@ -1114,11 +1160,15 @@ impl Subject for Queried<'_> {
         0.0
     }
     fn other(&self, condition: &Condition) -> Option<bool> {
-        style_query(condition, &mut **self.0.borrow_mut())
+        style_query(condition, &mut **self.0.borrow_mut(), false)
     }
 }
 
-pub(crate) fn style_query(condition: &Condition, lookup: &mut dyn Lookup) -> Option<bool> {
+pub(crate) fn style_query(
+    condition: &Condition,
+    lookup: &mut dyn Lookup,
+    is_of_container: bool,
+) -> Option<bool> {
     let value = |declared: &Declared, lookup: &mut dyn Lookup| match declared {
         Declared::Wide(wide) => Some(wide.name().as_bytes().into()),
         Declared::Text(text) => Some(Rc::clone(text)),
@@ -1134,7 +1184,7 @@ pub(crate) fn style_query(condition: &Condition, lookup: &mut dyn Lookup) -> Opt
     match condition {
         Condition::Media(query) => Some(lookup.matches_media(query)),
         Condition::Style(name, None) => {
-            Some(clean(lookup.var(*name), lookup) != lookup.wide(*name, Wide::Initial))
+            Some(clean(lookup.var(*name), lookup) != lookup.initial(*name))
         }
         Condition::Style(name, Some(declared)) => {
             let [actual, expected] =
@@ -1151,7 +1201,7 @@ pub(crate) fn style_query(condition: &Condition, lookup: &mut dyn Lookup) -> Opt
                     (None, Some(syntax)) => expected
                         .and_then(|it| lookup.compute(&syntax, &it, b""))
                         .is_some_and(|it| Some(it) == actual),
-                    (None, None) => expected.is_some() && expected == actual,
+                    (None, None) => (is_of_container || expected.is_some()) && expected == actual,
                 },
             )
         }
@@ -1407,8 +1457,11 @@ impl AttrType {
                             None => Some(scan::trim(value.as_bytes()).into()),
                         },
                     )?;
-                return (syntax.0.is_empty() || syntax.matching(&value, Mode::Check).is_some())
-                    .then_some(value);
+                return if syntax.0.is_empty() {
+                    Some(value)
+                } else {
+                    Some(syntax.matching(&value, Mode::Specified)?.1.into())
+                };
             }
         }
         Some(out.into())

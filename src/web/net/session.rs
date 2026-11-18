@@ -167,6 +167,18 @@ impl Session {
         Session::make(None, |_| None)
     }
 
+    /// In a page process, for what needs nothing from outside.
+    pub(crate) fn stand_in_for(id: u32) -> Arc<Session> {
+        static ALL: Guarded<Vec<(u32, Arc<Session>)>> = Guarded::new(Vec::new());
+        let mut all = ALL.lock();
+        if let Some(known) = all.iter().find(|it| it.0 == id) {
+            return Arc::clone(&known.1);
+        }
+        let made = Session::without_embedder();
+        all.push((id, Arc::clone(&made)));
+        made
+    }
+
     fn make(
         directory: Option<&[u8]>,
         embedder: impl FnOnce(u32) -> Option<Rc<dyn Embedder>>,
@@ -206,10 +218,6 @@ impl Session {
 
     pub fn id(&self) -> u32 {
         self.id
-    }
-
-    pub fn find(id: u32) -> Arc<Session> {
-        Arc::clone(&SESSIONS.read()[id as usize])
     }
 
     fn embedder(id: u32) -> Option<Rc<dyn Embedder>> {

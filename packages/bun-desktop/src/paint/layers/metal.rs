@@ -209,7 +209,7 @@ pub fn note_pause() {
     }
 }
 
-/// Getting ready takes time and memory, so not for a frame or two, and not while the app starts. It holds up the window server, so it waits for a pause if it can.
+/// Getting ready takes time and memory, so not for a frame or two, and not while the app starts. It holds up a resize, so then it waits for a pause if it can.
 pub fn is_ready(is_urgent: bool) -> bool {
     let is_ready = IS_USABLE.load(Ordering::Acquire);
     if !is_ready {
@@ -264,4 +264,12 @@ fn succeeded(result: Result<()>) -> bool {
         IS_USABLE.store(false, Ordering::Relaxed);
     }
     result.is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn it_draws_what_the_cpu_paints() {
+        super::set_up().unwrap();
+    }
 }

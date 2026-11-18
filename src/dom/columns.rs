@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use crate::boxes::BoxId;
+use crate::boxes::{BoxId, Kind, LayoutBox};
 use crate::document::Document;
 use crate::fragment::{Appeal, Breaks, Decision, MAX_COLUMNS, Row};
 use crate::layout::{
@@ -38,20 +38,29 @@ fn balanced_height(runs: &[f32], count: usize) -> f32 {
     tallest(&columns).1
 }
 
+impl LayoutBox {
+    fn lets_spanners_out(&self) -> bool {
+        self.joins_formatting_context && self.inline.is_none() && !self.style.contains_fixed()
+    }
+}
+
 impl Document {
-    fn spanners_in(&self, id: BoxId, out: &mut Vec<BoxId>) {
+    pub(crate) fn spanners_in(&self, id: BoxId, out: &mut Vec<BoxId>) {
         for child in &self.boxes[id].children {
             match &self.boxes[*child] {
                 it if it.spans_columns() => out.push(*child),
-                it if it.joins_formatting_context
-                    && it.inline.is_none()
-                    && !it.style.contains_fixed() =>
-                {
-                    self.spanners_in(*child, out)
-                }
+                it if it.lets_spanners_out() => self.spanners_in(*child, out),
                 _ => {}
             }
         }
+    }
+
+    pub(crate) fn is_spanner(&self, id: BoxId) -> bool {
+        let mut around = self.boxes.containers(id).map(|it| &self.boxes[it]);
+        self.boxes[id].spans_columns()
+            && around
+                .find(|it| it.parent_kind == Kind::Columns || !it.lets_spanners_out())
+                .is_some_and(|it| it.parent_kind == Kind::Columns)
     }
 
     pub(crate) fn columns_widths(&mut self, id: BoxId, height: Option<f32>) -> Widths {
@@ -159,7 +168,8 @@ impl Document {
             if flow == 0 {
                 break;
             }
-            let mut top = y + strut.sum();
+            let margins = strut.sum();
+            let mut top = y + margins;
             let mut used_of_row = used_of_row(top - rows_start);
             if let Some(row) = row_height.filter(|it| used_of_row > 0.0 && used_of_row >= *it) {
                 (top, used_of_row) = (top + row + row_gap - used_of_row, 0.0);
@@ -325,6 +335,9 @@ impl Document {
                     .into_iter()
                     .for_each(|it| it.height = 0.0);
             }
+            if is_empty && breaks.found_spanner.is_none() && rare.margin_trim.0[1] {
+                y -= margins;
+            }
             let columns = if goes_on { count } else { columns };
             (first, start) = (
                 first + columns,
@@ -367,8 +380,13 @@ impl Document {
             let own_width = self.resolve_width(spanner, &room, auto);
             let own_input = self.input_for(spanner, own_width, &room);
             let x = self.align_in_flow(&style, spanner, width, own_width, &mut margin);
+            let is_trimmed = rare.margin_trim.0[0] && breaks.spanners.is_empty() && y == inset.top;
             let (mut top, used) = (
-                y + strut.with(margin.top).sum(),
+                y + if is_trimmed {
+                    0.0
+                } else {
+                    strut.with(margin.top).sum()
+                },
                 row_height.map_or(0.0, |it| (y - rows_start).max(0.0) % (it + row_gap)),
             );
             if let Some(row) = row_height.filter(|it| {
@@ -428,6 +446,16 @@ impl Document {
             (y, strut) = (top + own.height, Strut::default().with(margin.bottom));
             if outer.as_ref().is_some_and(|it| it.must_stop()) {
                 break;
+            }
+        }
+        for (spanner, ..) in &breaks.spanners {
+            let (escapes, mut at) = (
+                self.boxes[*spanner].cache.escapes(),
+                self.boxes[*spanner].parent,
+            );
+            while at != id {
+                self.boxes[at].cache.let_escape(escapes);
+                at = self.boxes[at].parent;
             }
         }
         output.intrinsic = end_of_flow

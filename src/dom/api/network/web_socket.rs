@@ -5,12 +5,12 @@ use bun_web::client::{Client, SocketRefusal};
 use bun_web::convert::blob_from_js;
 use bun_web::exec;
 use bun_web::headers::is_token;
-use bun_web::net::body::{Chunk, Data};
+use bun_web::net::body::Chunk;
 use bun_web::net::web_socket::{Closed, Kind, Outbox};
 use bun_web::origin::Origin;
 use bun_web::runtime::create_blob;
 
-use super::body::{array_buffer, copy_of_buffer, well_formed_utf8};
+use super::body::{array_buffer, unshared_buffer};
 use super::*;
 use crate::api::messaging::MessageEvent;
 
@@ -65,6 +65,7 @@ pub(crate) struct WebSocket {
     url: Url,
     state: Cell<u16>,
     binary_type: Cell<DomBinaryType>,
+    origin: DomString,
     buffered: Cell<u64>,
     /// The subprotocol and the extensions.
     agreed: RefCell<(Bytes, Bytes)>,
@@ -186,11 +187,13 @@ impl WebSocket {
             allowed.clone().unwrap_or(url),
             Cell::new(DomBinaryType::Blob),
         );
+        let origin = DomString::from_latin1(Origin::of(&url).as_bytes());
         let this = structure.create(
             heap,
             WebSocket {
                 base: Default::default(),
                 url,
+                origin,
                 state,
                 binary_type,
                 buffered: Cell::default(),
@@ -230,7 +233,6 @@ impl WebSocket {
                 array_buffer(&cx.heap, Chunk::Owned(data))
             }
         };
-        let origin = DomString::from_latin1(Origin::of(&self.url).as_bytes());
         let received = data.map(|it| {
             _ = dispatch(
                 cx,
@@ -239,7 +241,7 @@ impl WebSocket {
                     &cx.heap,
                     atom!("message").into(),
                     it,
-                    origin,
+                    self.origin.clone(),
                     DomString::default(),
                 ),
             )
@@ -336,31 +338,43 @@ impl WebSocket {
         Ok(())
     }
 
-    #[optimize(size)]
-    pub(crate) fn send<'a>(&self, cx: Cx<'_, 'a>, data: JsLocal<'a>) -> Result<'a> {
-        let (kind, data) = if let Some(blob) = data.to_js().as_class_ref::<JsBlob>() {
-            (
-                Kind::Binary,
-                blob_from_js(&blob)
-                    .ok_or_else(|| type_error(&cx.heap, "The blob cannot be read."))?
-                    .data,
-            )
-        } else if let Some(bytes) = copy_of_buffer(cx, data)? {
-            (Kind::Binary, Data::Bytes(bytes.into()))
-        } else {
-            (Kind::Text, Data::Bytes(well_formed_utf8(cx, data)?.into()))
-        };
+    fn send_by<'a>(
+        &self,
+        heap: &JsHeap<'a>,
+        length: u64,
+        send: impl FnOnce(&Outbox),
+    ) -> Result<'a> {
         if self.state.get() == CONNECTING {
             return Err(dom_error(
-                &cx.heap,
+                heap,
                 DomError::InvalidStateError,
                 "Still in CONNECTING state.",
             ));
         }
-        self.buffered.update(|it| it + data.len());
+        self.buffered.update(|it| it + length);
         if self.state.get() == OPEN {
-            self.outbox.send(kind, data);
+            send(&self.outbox);
         }
         Ok(())
+    }
+
+    #[optimize(size)]
+    pub(crate) fn send<'a>(&self, cx: Cx<'_, 'a>, data: JsLocal<'a>) -> Result<'a> {
+        if let Some(blob) = data.to_js().as_class_ref::<JsBlob>() {
+            let data = blob_from_js(&blob)
+                .ok_or_else(|| type_error(&cx.heap, "The blob cannot be read."))?
+                .data;
+            self.send_by(&cx.heap, data.len(), |it| it.send(Kind::Binary, data))
+        } else if let Some(buffer) = unshared_buffer(cx, data)? {
+            self.send_by(&cx.heap, buffer.byte_slice().len() as u64, |it| {
+                it.send_bytes(Kind::Binary, buffer.byte_slice())
+            })
+        } else {
+            let text = DomString::from_js(cx, data)?;
+            let text = text.to_utf8();
+            self.send_by(&cx.heap, text.len() as u64, |it| {
+                it.send_bytes(Kind::Text, text.as_bytes())
+            })
+        }
     }
 }

@@ -5,11 +5,11 @@ use crate::{PrintErr, Printer};
 /// A `@media` rule.
 pub struct MediaRule<'bump, R> {
     /// The media query list.
-    pub query: MediaList<'bump>,
+    pub(crate) query: MediaList<'bump>,
     /// The rules within the `@media` rule.
-    pub rules: CssRuleList<'bump, R>,
+    pub(crate) rules: CssRuleList<'bump, R>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 // ─── behavior bodies ──────────────────────────────────────────────────────
@@ -25,7 +25,7 @@ impl<'bump, R> MediaRule<'bump, R> {
     }
 }
 
-pub fn block_to_css<'p>(
+pub(crate) fn block_to_css<'p>(
     query: &MediaList,
     dest: &mut Printer<'p>,
     body: impl FnOnce(&mut Printer<'p>) -> Result<(), PrintErr>,
@@ -43,7 +43,7 @@ pub fn block_to_css<'p>(
 }
 
 impl<'bump, R> MediaRule<'bump, R> {
-    pub fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: crate::generics::DeepClone<'bump>,
     {

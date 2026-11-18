@@ -530,6 +530,8 @@ impl Order {
 /// It gets the method and the parameters of an event of the DevTools protocol.
 pub(crate) type Listener = Rc<dyn Fn(&str, &Value) -> JsResult<()>>;
 
+struct Pending(Box<dyn FnOnce(Reply)>);
+
 /// The pipes, as `child.stdio` has them.
 const TO_BROWSER: u32 = 3;
 const FROM_BROWSER: u32 = 4;
@@ -568,7 +570,7 @@ pub(crate) struct Engine {
     objects: RefCell<BTreeMap<i32, Strong>>,
     /// By the id of the session, which is empty for the browser.
     inspected: RefCell<BTreeMap<Box<str>, Listener>>,
-    pending: RefCell<BTreeMap<i32, Box<dyn FnOnce(Reply)>>>,
+    pending: RefCell<BTreeMap<i32, Pending>>,
     read: RefCell<Read>,
     collectable: Cell<Vec<i32>>,
     holds: Cell<u32>,
@@ -633,8 +635,10 @@ impl Engine {
                 format!("--{name}={value}")
             });
         }
+        let scale = crate::screen::primary_display()?.scale.into();
         if kind == Kind::Chromium {
-            arguments.extend(chromium::switches(&files::join(&[&directory, "profile"])));
+            let profile = files::join(&[&directory, "profile"]);
+            arguments.extend(chromium::switches(&profile, scale));
         } else if !has_own_script(&choice.path) {
             write_helper(&directory)?;
             arguments.push(directory.clone());
@@ -685,7 +689,7 @@ impl Engine {
             metrics: Default::default(),
             collected: Default::default(),
             child: keep(child),
-            backend: Backend::new(user_agent.clone()),
+            backend: Backend::new(user_agent.clone(), scale),
             itself: Weak::clone(engine),
             views: Default::default(),
             sessions: Default::default(),
@@ -895,8 +899,8 @@ impl Engine {
 
     pub(crate) fn settle(&self, id: i32, reply: Reply) {
         let pending = self.pending.borrow_mut().remove(&id);
-        if let Some(pending) = pending {
-            pending(reply);
+        if let Some(Pending(then)) = pending {
+            then(reply);
         }
     }
 
@@ -905,7 +909,7 @@ impl Engine {
             return then(Err(gone()));
         }
         let id = -self.new_id();
-        self.pending.borrow_mut().insert(id, then);
+        self.pending.borrow_mut().insert(id, Pending(then));
         send(id);
     }
 
@@ -1128,7 +1132,7 @@ impl Engine {
         self.pending
             .take()
             .into_values()
-            .for_each(|it| it(Err(gone())));
+            .for_each(|it| it.0(Err(gone())));
         let views: Vec<i32> = self.views.borrow().keys().copied().collect();
         for view in views.into_iter().filter_map(|it| self.view(it)) {
             task::report(view.engine_closed());

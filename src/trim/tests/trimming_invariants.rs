@@ -602,7 +602,7 @@ fn features_opened_by(cause: UnseenCodeCause) -> FeatureSet {
         RunsUnseenCode,
     };
 
-    let program_features = Feature::all_entered_from(EnteredFrom::Program);
+    let program_features = Feature::all_open_to_any_code();
     let outside_language = [Feature::WebAssembly, Feature::Inspector, Feature::Profilers];
     let only_when_named = bun_trim::features_retained_by_name();
     match cause {
@@ -695,10 +695,10 @@ fn check_plan(
         if !request.is_template {
             entered_by_programs.subtract(&Feature::all_entered_from(EnteredFrom::CompiledCode));
             if !can_enter_test_runner {
-                entered_by_programs.subtract(&FeatureSet::from_features(&[
-                    Feature::Test,
-                    Feature::Desktop,
-                ]));
+                entered_by_programs.subtract(&FeatureSet::from_features(&[Feature::Test]));
+            }
+            if !builds_executables {
+                entered_by_programs.remove(Feature::Desktop);
             }
         }
         seed.union_with(&entered_by_programs);

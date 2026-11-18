@@ -843,16 +843,21 @@ pub fn is_settable(forest: &Forest, id: Id, name: &str) -> bool {
         match name {
             "AXFocused" => node.has(abi::FOCUSABLE),
             // After an increment VoiceOver would set a slider to a step of its own.
+            // It would call a combo box clickable.
             "AXValue" => {
                 is_writable
                     && (node.has(abi::TEXT_FIELD)
-                        || matches!(node.role, Role::Date | Role::DateTime | Role::InputTime))
+                        || matches!(
+                            node.role,
+                            Role::Combobox | Role::Date | Role::DateTime | Role::InputTime
+                        ))
             }
             "AXSelectedText" | "AXReplaceRangeWithText" => is_writable && node.has(abi::TEXT_FIELD),
             "AXSelectedTextRange" => node.has(abi::TEXT_FIELD) || node.is_text(),
             "AXSelectedTextMarkerRange" => true,
+            // VoiceOver would expand a combo box, and click it as well.
             "AXDisclosing" | "AXExpanded" => {
-                node.has(abi::EXPANDED | abi::COLLAPSED) && !node.has(abi::DISABLED)
+                is_row(node) && node.has(abi::EXPANDED | abi::COLLAPSED) && !node.has(abi::DISABLED)
             }
             _ => false,
         }
@@ -894,6 +899,9 @@ pub fn set(id: Id, name: &str, to: Parameter) -> bool {
             perform(id, Action::ReplaceSelectedText, [0; 4], &it)
         }
         ("AXSelectedTextRange", Parameter::Range(it)) => return select(id, it).is_some(),
+        // VoiceOver does so wherever it reads, which would take the caret from the field that has the focus.
+        ("AXSelectedTextMarkerRange", Parameter::Markers([start, end]))
+            if start == end && !has(abi::EDITABLE) => {}
         ("AXSelectedTextMarkerRange", Parameter::Markers(ends)) => {
             crate::accessibility::select_text(ends)
         }

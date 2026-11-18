@@ -9,19 +9,19 @@ use crate::css_values::length::LengthValue as Length;
 #[derive(Clone, PartialEq)]
 pub struct TextShadow {
     /// The color of the text shadow.
-    pub color: CssColor,
+    pub(crate) color: CssColor,
     /// The x offset of the text shadow.
-    pub x_offset: Length,
+    pub(crate) x_offset: Length,
     /// The y offset of the text shadow.
-    pub y_offset: Length,
+    pub(crate) y_offset: Length,
     /// The blur radius of the text shadow.
-    pub blur: Length,
+    pub(crate) blur: Length,
     /// The spread distance of the text shadow.
-    pub spread: Length, // added in Level 4 spec
+    pub(crate) spread: Length, // added in Level 4 spec
 }
 
 impl TextShadow {
-    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, Self> {
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         let mut color: Option<CssColor> = None;
         type Lengths = (Length, Length, Length, Length);
         let mut lengths: Option<Lengths> = None;
@@ -64,7 +64,7 @@ impl TextShadow {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.x_offset.to_css(dest)?;
         dest.write_char(b' ')?;
         self.y_offset.to_css(dest)?;
@@ -95,7 +95,7 @@ impl TextShadow {
             && self.spread.is_compatible(browsers)
     }
 
-    pub fn deep_clone(&self, alloc: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, alloc: &bun_alloc::Arena) -> Self {
         // Fields deep-clone via `#[derive(Clone)]` (`CssColor`/`Length`
         // `Box`-carrying variants clone deeply onto the global heap), so a
         // plain Clone is equivalent; arena param retained for signature

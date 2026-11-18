@@ -68,6 +68,17 @@ impl Range {
             .for_each(|it| self.unregister(it));
     }
 
+    pub(crate) fn extract_between<'a>(
+        cx: Cx<'_, 'a>,
+        start: Point<'a>,
+        end: Point<'a>,
+    ) -> Result<'a, &'a DocumentFragment> {
+        let range = Range::new(&cx.heap, start, end);
+        range
+            .extract_contents(cx)
+            .inspect(|_| range.stop_following())
+    }
+
     pub(super) fn put<'a>(&'a self, cx: Cx<'_, 'a>, start: Point<'a>, end: Point<'a>) {
         let (old_start, old_end) = (self.start(), self.end());
         if (start, end) == (old_start, old_end) {

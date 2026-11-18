@@ -25,6 +25,15 @@ describe("tree", () => {
     expect(() => list.firstChild.append(list)).toThrow(expect.objectContaining({ name: "HierarchyRequestError" }));
   });
 
+  test("getElementById() out of the document finds an id that the script has only computed", () => {
+    using page = open(`<template><div><h3 id="only-computed"></h3></div></template>`);
+    const { content } = page.$("template");
+    const shadow = page.document.createElement("div").attachShadow({ mode: "open" });
+    shadow.append(page.document.importNode(content, true));
+    const id = ["only", "computed"].join("-");
+    expect([shadow.getElementById(id)?.localName, content.getElementById(id)?.localName]).toEqual(["h3", "h3"]);
+  });
+
   test("selectors match alike in and out of the document", () => {
     using page = open(
       `<section><p id=a class="x  Y" data-k=1><b class=xy hidden></b></p><svg><foreignObject class=x /></svg><input type=TEXT></section>`,
@@ -562,6 +571,242 @@ test("custom elements", () => {
   expect(page.document.createElement("x-a")).toBeInstanceOf(A);
 });
 
+test("a control that changes pages before it was shown is brought up to date", () => {
+  using from = open();
+  using to = open();
+  from.document.body.innerHTML = "<fieldset><input required></fieldset>";
+  to.document.body.append(from.document.body.firstChild);
+  expect(to.document.querySelectorAll(":invalid").length).toBe(2);
+});
+
+test("the text of what is around a modal dialog includes that of the dialog", () => {
+  using page = open("<div>out <dialog>in</dialog></div>");
+  page.$("dialog").showModal();
+  page.window.getSelection().selectAllChildren(page.document.documentElement);
+  expect([String(page.window.getSelection()).trim(), page.$("div").innerText]).toEqual(["in", "out\nin"]);
+});
+
+describe("radio buttons", () => {
+  const radio = (more = "") => `<input type=radio name=a ${more}>`;
+  const states = (page: any, test: (it: any) => boolean) =>
+    [...page.document.querySelectorAll("input")].map(it => +test(it)).join("");
+
+  test("the last of those that come checked stays so", () => {
+    using page = open();
+    page.document.body.innerHTML = `<div>${radio("checked")}${radio("checked")}</div><form>${radio("checked")}</form>`;
+    expect(states(page, it => it.checked)).toBe("011");
+  });
+
+  test("hear of what happens to their group", () => {
+    using page = open(radio("checked") + radio() + radio());
+    const [first, second] = page.document.querySelectorAll("input");
+    const seen = [] as string[];
+    const see = () =>
+      seen.push(states(page, it => it.matches(":indeterminate")) + " " + states(page, it => it.matches(":invalid")));
+    see();
+    first.name = "b";
+    see();
+    second.required = true;
+    see();
+    first.name = "a";
+    see();
+    first.type = "checkbox";
+    see();
+    first.type = "radio";
+    first.remove();
+    see();
+    second.remove();
+    see();
+    expect(seen).toEqual(["000 000", "011 000", "011 011", "000 000", "011 011", "11 11", "1 0"]);
+  });
+
+  test("change groups with their form", () => {
+    using page = open(`<form id=x>${radio("checked")}</form>${radio("checked form=f")}${radio("form=f")}`);
+    expect(states(page, it => it.checked)).toBe("110");
+    page.$("form").id = "f";
+    expect(states(page, it => it.checked)).toBe("010");
+    page.document.querySelectorAll("input")[1].removeAttribute("form");
+    expect(states(page, it => it.matches(":indeterminate"))).toBe("101");
+  });
+});
+
+test("the controls of a form are in tree order wherever they are", () => {
+  using page = open(
+    "<input id=a form=f><table><form id=f><tr><td><input id=b></td><td><input id=c></td></tr></form></table><input id=d form=f><form id=g><input id=e form=f><input id=h></form>",
+  );
+  const ids = (form: string) => Array.from(page.$(form).elements, (it: any) => it.id).join("");
+  expect([ids("#f"), ids("#g")]).toEqual(["abcde", "h"]);
+  page.$("#f").append(page.$("#h"));
+  page.$("#b").parentNode.before(page.$("#c").parentNode);
+  expect([ids("#f"), ids("#g")]).toEqual(["ahbde", ""]);
+});
+
+test("only the first legend of a disabled fieldset is spared", () => {
+  using page = open("<fieldset disabled><legend><input></legend><legend><input></legend></fieldset>");
+  const [fieldset, disabled] = [
+    page.$("fieldset"),
+    () => [...page.document.querySelectorAll("input")].map(it => +it.matches(":disabled")).join(""),
+  ];
+  const seen = [disabled()];
+  fieldset.prepend(fieldset.lastChild);
+  seen.push(disabled());
+  fieldset.prepend(fieldset.lastChild.cloneNode(true));
+  seen.push(disabled());
+  page.document.body.append(fieldset.firstChild);
+  seen.push(disabled());
+  expect(seen).toEqual(["01", "01", "011", "010"]);
+});
+
+test.each<[string, (i: number) => string, string?]>([
+  ["forms with remote controls", i => `<input form=f${i}><form id=f${i}></form>`],
+  ["forms with the same id", () => "<input form=a><form id=a></form>"],
+  ["forms in tables", () => "<form><tr><td><input required></form>", "<table>"],
+  ["checked radio buttons", () => "<input type=radio name=a checked>" + Buffer.alloc(7 * 20, "<b></b>").toString()],
+  [
+    "groups of radio buttons",
+    i =>
+      `<input type=radio name=a${i}><input type=radio name=a${i} checked>` + Buffer.alloc(7 * 20, "<b></b>").toString(),
+  ],
+  ["radio buttons of a remote form", () => "<input type=radio name=a form=f checked>"],
+  ["legends", () => "<legend><input></legend>", "<fieldset disabled>"],
+])("many %s take no time", (_, piece, start = "") => {
+  using page = open("<body hidden>" + start + Array.from({ length: 12_000 }, (_, i) => piece(i)).join(""));
+  expect(page.document.querySelectorAll("input:enabled, input:disabled").length).toBeGreaterThanOrEqual(12_000);
+});
+
+describe("all children are removed at once", () => {
+  const rows = (row: string) => `<div id=list>${row}${row}${row}</div>`;
+
+  test("and know nothing of their parent or each other", () => {
+    using page = open(rows("<p id=a>x<b id=b></b></p>text"));
+    const list = page.$("#list");
+    const [all, live] = [[...list.childNodes], page.document.getElementsByTagName("b")];
+    expect([list.offsetHeight > 0, live.length]).toEqual([true, 3]);
+    list.innerHTML = "";
+    expect(all.map(it => [it.parentNode, it.previousSibling, it.nextSibling, it.isConnected])).toEqual(
+      all.map(() => [null, null, null, false]),
+    );
+    expect([live.length, list.offsetHeight, list.firstChild, list.lastChild, list.matches(":empty")]).toEqual([
+      0,
+      0,
+      null,
+      null,
+      true,
+    ]);
+    expect(["a", "b"].map(it => page.document.getElementById(it))).toEqual([null, null]);
+    expect([all[0].outerHTML, all[0].lastChild.isConnected]).toEqual(['<p id="a">x<b id="b"></b></p>', false]);
+    list.append(all[2], all[0]);
+    expect([page.document.getElementById("b") === all[2].lastChild, live.length, all[0].offsetHeight > 0]).toEqual([
+      true,
+      2,
+      true,
+    ]);
+  });
+
+  test("and observers hear of it", () => {
+    using page = open(rows("<p></p>"));
+    const list = page.$("#list");
+    const [all, observer] = [[...list.children], new page.window.MutationObserver(() => {})];
+    observer.observe(list, { childList: true, attributes: true, subtree: true });
+    list.replaceChildren();
+    all[1].title = "x";
+    expect(observer.takeRecords().map(it => [it.type, it.removedNodes.length])).toEqual([
+      ["childList", 3],
+      ["attributes", 0],
+    ]);
+  });
+
+  test("and forms lose their controls", () => {
+    using page = open(
+      `<form>${rows("<label><input required name=a></label><input type=radio name=b required>")}</form>`,
+    );
+    const [form, all] = [page.$("form"), [...page.document.querySelectorAll("input")]];
+    expect([form.elements.length, form.matches(":invalid")]).toEqual([6, true]);
+    page.$("#list").textContent = "";
+    expect([form.elements.length, form.matches(":invalid"), all.map(it => it.form)]).toEqual([
+      0,
+      false,
+      all.map(() => null),
+    ]);
+  });
+
+  test("and transitions are cancelled", async () => {
+    using page = open(`<style>b { transition: color 100s } .on b { color: red }</style>${rows("<p><b>x</b></p>")}`);
+    const [list, all] = [page.$("#list"), [...page.document.querySelectorAll("b")]];
+    list.offsetTop;
+    list.className = "on";
+    expect(page.document.getAnimations().length).toBe(3);
+    list.innerHTML = "";
+    expect([page.document.getAnimations().length, all.map(it => it.getAnimations().length)]).toEqual([0, [0, 0, 0]]);
+  });
+
+  test.each(["<x-a></x-a>", "<p><x-a></x-a></p>"])("unless scripts run in between: %s", row => {
+    using page = open(rows("<i></i>" + row));
+    const [list, seen] = [page.$("#list"), [] as boolean[]];
+    const first = list.firstChild;
+    page.window.customElements.define(
+      "x-a",
+      class extends page.window.HTMLElement {
+        disconnectedCallback() {
+          seen.push(this.isConnected || first.isConnected);
+        }
+      },
+    );
+    list.innerHTML = "";
+    expect(seen).toEqual([false, false, false]);
+  });
+
+  test("with the focus, ranges and iterators in them", () => {
+    using page = open(rows("<p><input>x</p>"));
+    const { document } = page;
+    const list = page.$("#list");
+    const [range, iterator] = [document.createRange(), document.createNodeIterator(list)];
+    range.selectNodeContents(list.children[1].lastChild);
+    (iterator.nextNode(), iterator.nextNode());
+    page.$("input").focus();
+    list.innerHTML = "";
+    expect([
+      document.activeElement === document.body,
+      range.startContainer === list,
+      range.collapsed,
+      iterator.referenceNode === list,
+    ]).toEqual([true, true, true, true]);
+  });
+});
+
+test("the only element with an attribute is found wherever it is", () => {
+  using page = open("<p><i data-a=1></i><i data-a=2></i></p><div><i data-a=3></i><b><i data-a=4></i></b></div>");
+  const find = (root: any, value: number) => root.querySelector(`[data-a="${value}"]`)?.parentNode.localName;
+  expect([1, 2, 3, 4, 1, 5].map(it => find(page.document, it))).toEqual(["p", "p", "div", "b", "p", undefined]);
+  expect([find(page.$("div"), 2), find(page.document, 4), find(page.$("p"), 4), find(page.$("b"), 4)]).toEqual([
+    undefined,
+    "b",
+    undefined,
+    "b",
+  ]);
+  page.$("p").append(page.$("b i").cloneNode());
+  expect(find(page.document, 4)).toBe("p");
+  page.$("p").lastChild.remove();
+  page.$("b").remove();
+  expect(find(page.document, 4)).toBe(undefined);
+});
+
+test("what was selected before does not slow down changes", () => {
+  using page = open("<input>");
+  page.$("input").focus();
+  for (let i = 0; i < 40_000; i++) page.$("input").value = i % 2 ? "a" : "";
+  expect(page.$("input").selectionStart).toBe(1);
+});
+
+test("a click that no pointer has caused has no offset", () => {
+  using page = open("<p style=margin:20px>a");
+  const seen: number[] = [];
+  page.$("p").onclick = (event: any) => seen.push(event.offsetX, event.offsetY);
+  page.$("p").click();
+  page.$("p").dispatchEvent(new page.window.MouseEvent("click"));
+  expect(seen).toEqual([0, 0, -28, -20]);
+});
+
 describe("forms", () => {
   test("FormData, reset and validity", () => {
     using page =
@@ -807,6 +1052,22 @@ describe("forms", () => {
         .assignedNodes()
         .map((it: any) => it.localName),
     ).toEqual(["a", "b", "i"]);
+  });
+
+  test("many color schemes take time in proportion to their number", () => {
+    using page = open("<meta name=color-scheme content=no>".repeat(30_000));
+    const color = () => page.window.getComputedStyle(page.document.documentElement).color;
+    const before = color();
+    page.document.head.lastChild.content = "dark";
+    expect([before, color()]).toEqual(["rgb(0, 0, 0)", "rgb(255, 255, 255)"]);
+  });
+
+  test("many container queries take no time in proportion to the square of their number", () => {
+    const rules = Array.from({ length: 20_000 }, (_, i) => `@container (width > ${i}px) { p { order: ${i} } }`);
+    using page = open(
+      `<style>${rules.join("")}</style><div style="container-type: inline-size; width: 9px">${"<p></p><p id=a></p>".repeat(100)}</div>`,
+    );
+    expect(page.window.getComputedStyle(page.$("p")).order).toBe("8");
   });
 
   test("many slots take time in proportion to their number", () => {
@@ -1715,6 +1976,100 @@ describe("nodes that no script has asked for", () => {
     expect(count() - before).toBe(1000);
   });
 
+  test("have no object after they have left a document with quirks", () => {
+    using page = open();
+    const count = () => (Bun.gc(true), heapStats().objectTypeCounts.HTMLModElement ?? 0);
+    const before = count();
+    const parsed = new page.window.DOMParser().parseFromString(
+      "<p><b><ins class=a></ins><ins class=B></ins></b>",
+      "text/html",
+    );
+    const found = (root: any) => ["A", "a", "B", "b"].map(it => root.matches(`:has(.${it})`));
+    expect(found(parsed.body)).toEqual([true, true, true, true]);
+    page.document.body.replaceChildren(...parsed.body.childNodes);
+    expect([found(page.document.body), count() - before]).toEqual([[false, true, true, false], 0]);
+  });
+
+  describe("and that are controls", () => {
+    const counts = (...names: string[]) => (Bun.gc(true), names.map(it => heapStats().objectTypeCounts[it] ?? 0));
+    const more = (before: number[], after: number[]) => after.map((it, index) => it - before[index]);
+
+    test("have no object, even if they are shown", () => {
+      using page = open("<style>p { display: none }</style><div></div>");
+      const count = () => counts("HTMLInputElement", "HTMLButtonElement", "ShadowRoot");
+      const [div, before] = [page.$("div"), count()];
+      div.innerHTML =
+        `<i><input type=checkbox checked><button>a</button><input value=b><p><input value=c></p></i>`.repeat(100);
+      expect([div.offsetHeight > 0, more(before, count())]).toEqual([true, [0, 0, 0]]);
+      expect(div.cloneNode(true).querySelectorAll(":checked:default, :valid:enabled").length).toBe(400);
+    });
+
+    test("get their parts when they are displayed, as they do if a script has made them", () => {
+      using page = open(
+        "<style>input { field-sizing: content; padding: 0; border: 0 } .no { display: none }</style><div class=no></div>",
+      );
+      const [div, before] = [page.$("div"), counts("ShadowRoot")];
+      const made = Array.from({ length: 50 }, () =>
+        div.appendChild(Object.assign(page.document.createElement("input"), { value: "aaaa" })),
+      );
+      div.insertAdjacentHTML(
+        "beforeend",
+        "<p><input value=aaaa><input placeholder=aaaa><input type=button value=aaaa><input>",
+      );
+      expect([div.offsetWidth, more(before, counts("ShadowRoot"))]).toEqual([0, [0]]);
+      const widths = () => [made[0], ...div.lastChild.children].map(it => it.offsetWidth);
+      div.className = "";
+      const [width] = widths();
+      expect([width > 10, widths().map(it => it === width)]).toEqual([true, [true, true, true, true, false]]);
+      div.className = "no";
+      expect(widths()).toEqual([0, 0, 0, 0, 0]);
+      made[0].value = "";
+      div.lastChild.lastChild.value = "aaaa";
+      div.className = "";
+      expect(widths().map(it => it === width)).toEqual([false, true, true, true, true]);
+      div.lastChild.firstChild.focus();
+      page.document.execCommand("insertText", false, "b");
+      expect([div.lastChild.firstChild.value, widths()[1] > width]).toEqual(["baaaa", true]);
+    });
+
+    test.each([
+      ["form", "form"],
+      ["fieldset", "fieldset disabled"],
+      ["datalist", "datalist"],
+      ["label", "label"],
+    ])("hear of the %s that they are put in", (name, tag) => {
+      using page = open(`<${tag} id=a></${name}><${tag} id=b></${name}>`);
+      const markup = "<p><b><input type=checkbox name=n checked><button>a</button><input type=submit></b></p>";
+      const [lazy, eager] = ["#a", "#b"].map(id => {
+        const [group, from] = [page.$(id), page.document.createElement("div")];
+        from.innerHTML = markup;
+        if (id === "#b") from.querySelectorAll("input, button").forEach((it: any) => it.toggleAttribute("x"));
+        group.append(from);
+        const states = [":valid", ":default", ":disabled"].map(it => group.querySelectorAll(it).length);
+        return [states, group.elements?.length, group.control?.type];
+      });
+      expect(lazy).toEqual(eager);
+      expect(lazy).toEqual(
+        {
+          form: [[3, 2, 0], 3, undefined],
+          fieldset: [[0, 1, 3], 3, undefined],
+          datalist: [[0, 1, 0], undefined, undefined],
+          label: [[3, 1, 0], undefined, "checkbox"],
+        }[name]!,
+      );
+    });
+
+    test("start from their attributes", () => {
+      using page = open("<input type=checkbox checked value=a><input value=b><input type=checkbox>");
+      const [box, field, parent] = page.document.body.children;
+      box.type = "text";
+      field.removeAttribute("value");
+      expect([box.value, box.checked, box.matches(":checked"), field.value]).toEqual(["a", true, false, ""]);
+      parent.append(Object.assign(page.document.createElement("p"), { textContent: "a" }));
+      expect(parent.firstChild.offsetHeight).toBe(0);
+    });
+  });
+
   test.each<[string, (page: any, root: any) => any]>([
     ["stay where they are", (_, root) => root],
     ["are inserted with their parent", (page, root) => page.document.body.appendChild(root)],
@@ -2098,14 +2453,15 @@ test("margins collapse through a block that is no longer a flex item", () => {
 });
 
 test("a scroll container without a height gets its scrollbar when the overflow changes", () => {
-  using page = open(`<div style="overflow-y: auto; height: 0; width: 200px">
+  using page =
+    open(`<style>::-webkit-scrollbar { width: 15px }</style><div style="overflow-y: auto; height: 0; width: 200px">
     <div id="outer" style="height: 0"><div id="inner" style="height: 0"><p style="margin: 0; height: 100px"></p></div></div>
   </div>`);
-  const width = page.$("#outer").offsetWidth;
+  expect(page.$("#outer").offsetWidth).toBe(185);
   page.$("#inner").style.contain = "paint";
   expect(page.$("#outer").offsetWidth).toBe(200);
   page.$("#inner").style.contain = "";
-  expect(page.$("#outer").offsetWidth).toBe(width);
+  expect(page.$("#outer").offsetWidth).toBe(185);
 });
 
 test("selectAll stays in the shadow tree that has the caret", () => {
@@ -3022,6 +3378,104 @@ describe.concurrent("optimized code", () => {
         same(element.nodeType === "other", i >= 1700);
       });`));
 
+  test.each([
+    {},
+    { BUN_JSC_collectContinuously: "1" },
+    { BUN_JSC_gcMaxHeapSize: "100000", BUN_JSC_sweepSynchronously: "1" },
+  ])("indexes lists that change %j", env =>
+    run(
+      `const root = document.body.appendChild(make("<form id=f></form><select></select>"));
+      const parent = root.appendChild(make(""));
+      const select = root.querySelector("select");
+      const all = selector => Array.prototype.slice.call(root.querySelectorAll(selector));
+      const lists = [
+        [parent.childNodes, () => { const all = []; for (let it = parent.firstChild; it; it = it.nextSibling) all.push(it); return all; }],
+        [parent.children, () => all(":scope > div > *")],
+        [root.getElementsByTagName("input"), () => all("input")],
+        [root.getElementsByClassName("a"), () => all(".a")],
+        [document.getElementsByName("n"), () => all("[name=n]")],
+        [root.firstChild.elements, () => all("input[form=f]")],
+        [select.options, () => all("option")],
+        [select.selectedOptions, () => all("option:checked")],
+      ];
+      let seed = 1;
+      const random = below => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) >> 8) % below;
+      const any = () => parent.children[random(parent.children.length)] ?? document.createElement("input");
+      const changes = [
+        () => parent.append(document.createElement("input"), "text"),
+        () => parent.prepend(document.createElement("input")),
+        () => any().remove(),
+        () => any().classList.toggle("a"),
+        () => any().setAttribute("name", "mn"[random(2)]),
+        () => any().setAttribute("form", "fg"[random(2)]),
+        () => random(8) || (parent.innerHTML = "<input class=a name=n form=f>".repeat(random(20))),
+        () => random(8) || new Document().adoptNode(parent).ownerDocument.append(root.appendChild(parent).cloneNode()),
+        () => (select.length = random(6)),
+        () => (select.selectedIndex = random(6)),
+        () => {},
+      ];
+      hot(() => {
+        const fixed = root.querySelectorAll("input"), copy = [...fixed];
+        changes[random(changes.length)]();
+        for (const [list, expected] of [...lists.map(it => [it[0], it[1]()]), [fixed, copy]]) {
+          for (let pass = random(3); pass >= 0; pass--) {
+            same(list.length, expected.length);
+            for (let i = 0; i <= expected.length; i++) same(list[i], expected[i]), same(list.item(i), expected[i] ?? null);
+          }
+        }
+      }, 600);`,
+      env,
+    ),
+  );
+
+  test("calls methods that can do anything", () =>
+    run(`const parent = document.body.appendChild(make("")), log = [];
+      customElements.define("x-a", class extends HTMLElement {
+        static observedAttributes = ["a"];
+        connectedCallback() { log.push("connected"); }
+        attributeChangedCallback() { log.push("changed"); }
+        disconnectedCallback() { log.push("disconnected"); }
+      });
+      customElements.define("x-b", class extends HTMLParagraphElement {}, { extends: "p" });
+      const wrong = [
+        () => parent.appendChild(1),
+        () => parent.appendChild(parent),
+        () => parent.removeChild(parent),
+        () => parent.insertBefore(parent.cloneNode()),
+        () => parent.setAttribute("", ""),
+        () => parent.matches("!"),
+        () => parent.querySelector({ toString() { throw new RangeError(); } }),
+        () => parent.appendChild.call({}, parent),
+      ];
+      hot(i => {
+        const child = document.createElement(i % 2 ? "x-a" : { toString: () => "X-A" });
+        same(parent.appendChild(child), child);
+        same(child.setAttribute("a", i), undefined);
+        same(parent.insertBefore(document.createTextNode(i), child).data, child.getAttribute("a"));
+        same(parent.insertBefore(document.createDocumentFragment(), null).nodeType, 11);
+        same(parent.contains(child) && !parent.contains(null) && child.matches("[a]"), true);
+        same(child.closest("div"), parent);
+        same(parent.querySelector("[a]"), parent.querySelectorAll("[a]")[0]);
+        same(parent.getElementsByTagName("x-a")[0], child);
+        same(parent.getElementsByClassName("a").length, 0);
+        child.removeAttribute("a");
+        same(parent.replaceChild(document.createElement("p", { is: "x-b" }), child), child);
+        same(parent.removeChild(parent.lastChild).constructor, customElements.get("x-b"));
+        parent.firstChild.remove();
+        same(parent.firstChild, null);
+        same(log.splice(0).join(), "connected,changed,changed,disconnected");
+        same(wrong.map(it => { try { it(); } catch (error) { return error.name; } }).join(), "TypeError,HierarchyRequestError,NotFoundError,TypeError,InvalidCharacterError,SyntaxError,RangeError,TypeError");
+      });`));
+
+  test("a list does not keep the nodes that have left it", () =>
+    run(`const parent = make("<i></i>".repeat(500)), list = parent.childNodes;
+      hot(i => list.length + list[i % 500].nodeType);
+      const refs = Array.from(list, it => new WeakRef(it));
+      parent.textContent = "";
+      await Bun.sleep(0);
+      Bun.gc(true);
+      same(refs.filter(it => it.deref()).length < 50, true);`));
+
   test("walks a tree of many kinds of nodes while it is collected", () =>
     run(
       `const html = "<p>a<b>b</b><i>c</i></p><ul><li><a>d</a><li><span>e</span></ul><!--f--><svg><g/></svg>";
@@ -3029,6 +3483,43 @@ describe.concurrent("optimized code", () => {
       hot(() => same(walk(make(html).cloneNode(true)), "DIVP#textB#textI#textULLIA#textLISPAN#text#commentsvgg"), 600);`,
       { BUN_JSC_collectContinuously: "1" },
     ));
+
+  test.each([
+    { BUN_JSC_collectContinuously: "1" },
+    { BUN_JSC_gcMaxHeapSize: "100000", BUN_JSC_sweepSynchronously: "1" },
+    {
+      BUN_JSC_slowPathAllocsBetweenGCs: "20",
+      BUN_JSC_useEdenCollectionsAtSlowPathAllocs: "1",
+      BUN_JSC_sweepSynchronously: "1",
+    },
+  ])("new nodes among old ones stay, from either end %j", env =>
+    run(
+      `const parents = [make(""), document.body.appendChild(make(""))].map(node => ({ node, marks: [] }));
+      let seed = 1;
+      const random = below => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) >> 8) % below;
+      const child = (parent, index) => { let it = parent.firstChild; while (index--) it = it.nextSibling; return it; };
+      const read = (it, next) => { const all = []; for (; it; it = it[next]) all.push(it.mark.value); return all; };
+      const change = ({ node, marks }, value) => {
+        const at = random(3) ? random(marks.length + 1) : random(2) * marks.length;
+        if (marks.length > random(40)) return marks.splice(at % marks.length, 1), child(node, at % (marks.length + 1)).remove();
+        const added = random(2) ? document.createElement("p") : document.createTextNode("a");
+        node.insertBefore(Object.assign(added, { mark: { value } }), child(node, at));
+        marks.splice(at, 0, value);
+      };
+      noInline(change);
+      hot(i => {
+        const parent = parents[i & 1];
+        for (let k = random(4); k >= 0; k--) change(parent, i * 4 + k);
+        same(read(parent.node.lastChild, "previousSibling").reverse().join(), parent.marks.join());
+        same(read(parent.node.firstChild, "nextSibling").join(), parent.marks.join());
+        const parsed = make("<!--a--><!--b-->c<i></i><!--d-->" + "<b></b>".repeat(i % 40) + "<!--e-->");
+        let count = 0;
+        for (let it = parsed.lastChild; it; it = it.previousSibling) count += it.parentNode === parsed;
+        same(count, 6 + (i % 40));
+      });`,
+      env,
+    ),
+  );
 });
 
 test.each([1, 2, 3])("a target with many listeners calls those that are left, in order (seed %d)", seed => {

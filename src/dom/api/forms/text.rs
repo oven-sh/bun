@@ -166,7 +166,30 @@ impl<'a> TextControl<'a> {
     }
 
     pub(crate) fn editor(self) -> Option<&'a Element> {
+        let element = self.element;
+        if !element.has(NodeFlags::HOST)
+            && element.is_rendered()
+            && element.is_html(atom!("input"))
+            && !element.adopt_parts()
+        {
+            self.leave_text_to_engine();
+            element.engine(|engine, id| engine.provide_parts(id));
+        }
+        self.editor_if_any()
+    }
+
+    fn editor_if_any(self) -> Option<&'a Element> {
+        if !self.element.has(NodeFlags::HOST) {
+            self.element.adopt_parts();
+        }
         self.element.edge_node(Edge::Editor)?.as_element()
+    }
+
+    fn leave_text_to_engine(self) {
+        if self.element.is_rendered() && self.kind().is_some_and(InputType::has_editor) {
+            self.element
+                .engine(|engine, id| engine.set_text_to_show(id, &self.state.text.borrow()));
+        }
     }
 
     pub(crate) fn editor_text(self) -> Option<&'a Node> {
@@ -200,7 +223,9 @@ impl<'a> TextControl<'a> {
             State::PLACEHOLDER_SHOWN,
             placeholder.is_some() && text.is_empty(),
         );
-        let Some(editor) = self.editor() else { return };
+        let Some(editor) = self.editor_if_any() else {
+            return self.leave_text_to_engine();
+        };
         if let Some((placeholder, parent)) = placeholder.zip(editor.parent()) {
             let shown = editor
                 .previous_sibling()
@@ -245,7 +270,14 @@ impl<'a> TextControl<'a> {
     }
 
     pub(crate) fn show_selection(self, cx: &mut Cx<'a>) {
-        let Some(node) = self.editor_text() else {
+        let editor = if focus::has_focus(self.element) {
+            self.editor()
+        } else {
+            self.element
+                .edge_node(Edge::Editor)
+                .and_then(Node::as_element)
+        };
+        let Some(node) = editor.and_then(|it| it.first_child()) else {
             return;
         };
         let is_here = || {

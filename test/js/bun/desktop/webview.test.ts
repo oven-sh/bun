@@ -1,4 +1,5 @@
 import { hasLibrary } from "./library";
+import { hasScreen, openScreen, readScreen } from "./screen";
 
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -38,11 +39,14 @@ const prelude = `
   };
 `;
 
-async function spawn(files: Record<string, string>, engine: object | null, ...cmd: string[]) {
+const spawn = (files: Record<string, string>, engine: object | null, ...cmd: string[]) =>
+  spawnWith({}, files, engine, ...cmd);
+
+async function spawnWith(env: object, files: Record<string, string>, engine: object | null, ...cmd: string[]) {
   using dir = tempDir("webview", files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...cmd],
-    env: { ...bunEnv, BUN_DESKTOP_HEADLESS: "1", ENGINE: JSON.stringify(engine), XDG_CONFIG_HOME: String(dir) },
+    env: { ...bunEnv, BUN_DESKTOP_HEADLESS: "1", ENGINE: JSON.stringify(engine), XDG_CONFIG_HOME: String(dir), ...env },
     cwd: String(dir),
     stderr: "pipe",
   });
@@ -57,8 +61,9 @@ async function spawn(files: Record<string, string>, engine: object | null, ...cm
 /** What the app has passed to `print`. */
 const runWith =
   (engine: object | null) =>
-  (main: string, files: Record<string, string> = {}) =>
-    spawn(
+  (main: string, files: Record<string, string> = {}, env = {}) =>
+    spawnWith(
+      env,
       {
         "package.json": JSON.stringify({ name: "fixture", main: "main.js" }),
         "main.js": `${prelude}\napp.whenReady().then(async () => {${main}\n}).then(() => app.exit(0), error => { console.error(error); app.exit(1); });`,
@@ -962,6 +967,21 @@ for (const engine of engines) {
       ).toEqual([["InvalidStateError", [0.25, 0.5, 1, "k-rate"], [true, 1, 2], 0.5, "IndexSizeError", "AbortError"]]);
     });
 
+    test("an audio worklet of a page that only runs compiled scripts", async () => {
+      expect(
+        await run(`
+          app.setCompiledScripts({}, { exclusive: true });
+          const worklet = () => new Response("registerProcessor('a', class extends AudioWorkletProcessor { process() {} })", { headers: { "content-type": "text/javascript", "access-control-allow-origin": "*" } });
+          const other = site({ "/a.js": worklet });
+          const page = await open(request => request.url.endsWith(".js") ? worklet() : respond("")());
+          print(await page.executeJavaScript(\`Promise.all(["/a.js", "\${other}/a.js"].map(async url => {
+            const context = new OfflineAudioContext(1, 128, 8000);
+            await context.audioWorklet.addModule(url);
+            return new AudioWorkletNode(context, "a").numberOfOutputs;
+          }).map(it => it.catch(error => error.name)))\`));`),
+      ).toEqual([[1, "AbortError"]]);
+    });
+
     test("a recording", async () => {
       expect(
         await run(`
@@ -1423,6 +1443,113 @@ for (const engine of engines) {
           opened.setContentSize(340, 200);
           await shows("255,0,0,255", 340);`),
       ).toEqual([300, 320, 320, 340]);
+    });
+
+    test("a page that does not change is shown in every new size, also after it was captured", async () => {
+      expect(
+        await run(`
+          const window = new BrowserWindow({ width: 400, height: 300 });
+          await window.loadURL(site({ "/": "<body bgcolor=lime><div style='position:fixed;inset:0 0 0 auto;width:50px;background:blue'>" }));
+          let edge;
+          let flashes = 0;
+          let wasShown = false;
+          window.webContents.beginFrameSubscription(image => {
+            const row = image.crop({ x: 0, y: 100, width: 1000, height: 1 }).toBitmap();
+            edge = row.findIndex((blue, at) => at % 4 === 0 && blue > 127) / 4;
+            if (edge === 0 && wasShown) flashes++;
+            wasShown ||= edge > 0;
+          });
+          for (let round = 0; round < 12; round++) {
+            const width = round % 2 ? 400 : 200 + round;
+            window.setContentSize(width, 300);
+            await until(() => edge === width - 50);
+            await pixel(window.webContents, width - 5, 5);
+          }
+          print(flashes);`),
+      ).toEqual([0]);
+    });
+
+    test("capturePage() takes a part of what is shown", async () => {
+      expect(
+        await run(`
+          const { webContents: page } = new BrowserWindow({ width: 400, height: 300 });
+          await page.loadURL(site({ "/": "<body style='margin:0;height:3000px;background:linear-gradient(lime 1050px,blue 0)'>" }));
+          const endsAt = y =>
+            until(async () => (await pixel(page, 5, y - 10)) === "0,255,0,255" && (await pixel(page, 5, y + 10)) === "255,0,0,255");
+          await page.executeJavaScript("scrollTo(0, 1000)");
+          await endsAt(50);
+          page.setZoomFactor(2);
+          await until(async () => (await page.executeJavaScript("scrollTo(0, 1000), devicePixelRatio")) === 2);
+          await endsAt(100);
+          print((await page.capturePage({ x: 1, y: 2, width: 30, height: 40 })).getSize());`),
+      ).toEqual([{ width: 30, height: 40 }]);
+    });
+
+    test.skipIf(!hasScreen)("a page has the resolution of the screen", async () => {
+      await using screen = await openScreen();
+      expect(
+        await run(
+          `${readScreen}
+          const window = new BrowserWindow({ x: 0, y: 0, width: 200, height: 150, frame: false });
+          await window.loadURL(site({ "/": "<body style='background:repeating-linear-gradient(90deg,#000 0 .5px,#fff 0 1px)'>" }));
+          await until(() => colorAt(100, 100) === "000000" && colorAt(101, 100) === "ffffff");
+          print(await window.webContents.executeJavaScript("devicePixelRatio"));`,
+          {},
+          { ...screen.env, GDK_SCALE: "2" },
+        ),
+      ).toEqual([2]);
+    });
+
+    test.skipIf(!hasScreen).each([2, 0.5])(
+      "a page fills its window at a zoom of %d, and gets the mouse where it is",
+      async zoom => {
+        await using screen = await openScreen();
+        expect(
+          await run(
+            `${readScreen}
+          const { webContents: page } = new BrowserWindow({ x: 0, y: 0, width: 400, height: 300, frame: false });
+          await page.loadURL(site({ "/": "<body style=height:9000px><div style='position:fixed;inset:50% 0 0 50%;background:blue'>" }));
+          page.setZoomFactor(${zoom});
+          await until(async () => (await page.executeJavaScript("devicePixelRatio")) === ${zoom});
+          await page.executeJavaScript("document.body.bgColor = 'lime', onclick = event => (clicked = [event.clientX, event.clientY]), onscrollend = () => (scrolled = scrollY), 0");
+          await until(() => colorAt(5, 5) === "00ff00");
+          print([colorAt(195, 145), colorAt(205, 155), colorAt(350, 260)]);
+          click(page, 300, 200);
+          page.sendInputEvent({ type: "mouseWheel", x: 300, y: 200, deltaX: 0, deltaY: -100, hasPreciseScrollingDeltas: true });
+          await until(() => page.executeJavaScript("'clicked' in window && 'scrolled' in window"));
+          print(await page.executeJavaScript("[clicked, scrolled]"));`,
+            {},
+            screen.env,
+          ),
+        ).toEqual([
+          ["00ff00", "0000ff", "0000ff"],
+          [[300 / zoom, 200 / zoom], 100 / zoom],
+        ]);
+      },
+    );
+
+    test("what is painted last is shown, even if the app was busy", async () => {
+      expect(
+        await run(`
+          const { webContents: page } = new BrowserWindow({ width: 400, height: 300 });
+          await page.loadURL(site({}));
+          let shown;
+          page.beginFrameSubscription(image => (shown = [...image.toBitmap().subarray(0, 4)].join()));
+          const flag = path.join(__dirname, "done");
+          const worker = new Worker(URL.createObjectURL(new Blob([\`postMessage(Bun.serve({ port: 0, fetch: () => (require("fs").writeFileSync(\${JSON.stringify(flag)}, ""), new Response()) }).url.href)\`])));
+          const [{ data: url }] = await once(worker, "message");
+          await page.executeJavaScript(\`{
+            let left = 30;
+            const step = () => {
+              document.body.bgColor = left > 10 ? "#0000" + (left + 10) : "lime";
+              left-- ? requestAnimationFrame(step) : fetch("\${url}", { mode: "no-cors" });
+            };
+            requestAnimationFrame(step);
+          }\`);
+          while (!require("fs").existsSync(flag)) Bun.sleepSync(5);
+          await until(() => shown === "0,255,0,255");
+          print("shown");`),
+      ).toEqual(["shown"]);
     });
 
     test("an engine that does not start", async () => {

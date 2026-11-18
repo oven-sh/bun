@@ -678,32 +678,33 @@ impl<'a> Builder<'a> {
             .inline
             .as_deref()
             .filter(|it| it.items.len() > 64 && document.tree.html_tag(id) != Name::NONE)?;
-        let rects =
-            self.inline_rects.entry(lines).or_insert_with(|| {
-                let mut all: Map<_, _> = inline
-                    .items
-                    .iter()
-                    .filter(|it| it.kind == ItemKind::Close(false))
-                    .map(|it| (it.node, None))
-                    .collect();
-                for it in inline.lines.fragments.iter().filter(|it| {
-                    !matches!(it.kind, FragmentKind::Text { .. } | FragmentKind::Hyphen)
-                }) {
-                    let rect = document.from_lines(lines, it.rect());
-                    if let Some(whole) = all
-                        .entry(inline.items[it.item as usize].node)
-                        .or_insert(Some(rect))
-                        && !rect.is_empty()
-                    {
-                        *whole = if whole.is_empty() {
-                            rect
-                        } else {
-                            whole.union(&rect)
-                        };
-                    }
+        let rects = self.inline_rects.entry(lines).or_insert_with(|| {
+            let mut all: Map<_, _> = inline
+                .items
+                .iter()
+                .filter(|it| it.kind == ItemKind::Close(false))
+                .map(|it| (it.node, None))
+                .collect();
+            for it in &inline.lines.fragments {
+                let item = &inline.items[it.item as usize];
+                let node = if let FragmentKind::Text { .. } | FragmentKind::Hyphen = it.kind {
+                    item.element
+                } else {
+                    item.node
+                };
+                let rect = document.from_lines(lines, it.rect());
+                if let Some(whole) = all.entry(node).or_insert(Some(rect))
+                    && !rect.is_empty()
+                {
+                    *whole = if whole.is_empty() {
+                        rect
+                    } else {
+                        whole.union(&rect)
+                    };
                 }
-                all
-            });
+            }
+            all
+        });
         match rects.get(&id).copied() {
             Some(rect) => Some(self.map(lines, rect?)),
             None => Some(self.nowhere(context)),
@@ -856,11 +857,17 @@ impl<'a> Builder<'a> {
         else {
             return Items::new();
         };
+        let is_leaf = |it: &usize| is_leaf_of(&inline.items[*it], id);
+        let is_between = |it: &usize| {
+            inline.has_split_text
+                && !matches!(inline.items[*it].kind, ItemKind::Text | ItemKind::Break)
+        };
         let items: Items = (first..inline.items.len())
-            .take_while(|it| is_leaf_of(&inline.items[*it], id))
+            .take_while(|it| is_leaf(it) || is_between(it))
+            .filter(is_leaf)
             .map(|it| (lines, inline, it))
             .collect();
-        self.cursor = (lines, first + items.len());
+        self.cursor = (lines, items.last().map_or(first, |it| it.2 + 1));
         items
     }
 
@@ -950,9 +957,13 @@ impl<'a> Builder<'a> {
             }
             return;
         };
-        let range =
-            inline.items[first].start as usize..inline.items[first + items.len() - 1].end as usize;
-        let name = &inline.text[range.clone()];
+        let last = items[items.len() - 1].2;
+        let range = inline.items[first].start as usize..inline.items[last].end as usize;
+        let joined: Option<String> =
+            (last - first >= items.len()).then(|| items.iter().map(text_of).collect());
+        let name = joined
+            .as_deref()
+            .unwrap_or_else(|| &inline.text[range.clone()]);
         let matters = || {
             context.inherited & abi::EDITABLE != 0
                 || style.text.collapse.preserves_spaces()
@@ -961,8 +972,7 @@ impl<'a> Builder<'a> {
         if name.is_empty() || role == Role::StaticText && !has_text(name) && !matters() {
             return;
         }
-        let clusters =
-            inline.items[first].clusters.start..inline.items[first + items.len() - 1].clusters.end;
+        let clusters = inline.items[first].clusters.start..inline.items[last].clusters.end;
         let all = &inline.lines.lines;
         let first_line = all.partition_point(|it| it.clusters.end <= clusters.start);
         let mut pieces = SmallVec::<[_; 4]>::new();
@@ -975,7 +985,7 @@ impl<'a> Builder<'a> {
             let start = pieces.len();
             pieces.extend(
                 self.fragments_for(
-                    first..first + items.len(),
+                    first..last + 1,
                     lines,
                     index,
                     inline.lines.fragments_of(line),
@@ -1060,15 +1070,24 @@ impl<'a> Builder<'a> {
         let out = &mut self.out;
         let starts = [out.runs.len(), out.advances.len(), out.misspelled.len()];
         let is_vertical = self.document.boxes[lines].mode.is_vertical();
-        let offset = |cluster: u32| {
+        let in_lines = |cluster: u32| {
             inline
                 .clusters
                 .get(cluster as usize)
                 .map_or(inline.text.len(), |it| it.start as usize)
                 .clamp(range.start, range.end)
         };
+        let before =
+            |at: usize, it: &Item| at.clamp(it.start as usize, it.end as usize) - it.start as usize;
+        let offset = |cluster: u32| match joined {
+            Some(_) => items
+                .iter()
+                .map(|it| before(in_lines(cluster), &inline.items[it.2]))
+                .sum(),
+            None => in_lines(cluster) - range.start,
+        };
         for (index, (piece, rect)) in pieces.iter().zip(&rects).enumerate() {
-            let start = (offset(piece.2) - range.start) as u32;
+            let start = offset(piece.2) as u32;
             out.runs.push(Run {
                 start,
                 rect: Rect::new(relative(rect)),
@@ -1093,9 +1112,7 @@ impl<'a> Builder<'a> {
                 } else {
                     0.0
                 };
-                let characters = inline.text[offset(cluster)..offset(cluster + 1)]
-                    .chars()
-                    .count();
+                let characters = name[offset(cluster)..offset(cluster + 1)].chars().count();
                 out.advances
                     .extend((0..characters).map(|it| if it == 0 { advance } else { 0.0 }));
             }

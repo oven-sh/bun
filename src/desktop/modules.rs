@@ -14,7 +14,7 @@ use crate::{
 };
 
 pub(crate) const CHROME: &str = "156.0.0.0";
-const ELECTRON: &str = "45.0.0";
+pub(crate) const ELECTRON: &str = "45.0.0";
 
 state!(fn electron_clipboard() -> StrongCell);
 
@@ -160,6 +160,11 @@ fn extend_process() -> JsResult<()> {
             process.put(global(), b"defaultApp", JSValue::TRUE);
         }
     }
+    add_methods_to_process()
+}
+
+pub(crate) fn add_methods_to_process() -> JsResult<()> {
+    let process = process::object();
     let methods = only_electron::js_DesktopProcess::CLASS.constructor(heap());
     let mut names = methods.keys(global())?.array_iterator(global())?;
     while let Some(name) = names.next()? {
@@ -176,6 +181,13 @@ fn of_utility_process() -> JsResult<JSValue> {
         "systemPreferences": system::js_DesktopSystemPreferences,
     });
     Ok(all)
+}
+
+pub(crate) fn of_page_process() -> JsResult<()> {
+    pretend_to_be_electron()?;
+    warn_about_rejections()?;
+    process::object().put(global(), b"type", js("renderer")?);
+    add_methods_to_process()
 }
 
 pub(crate) fn electron(cx: Cx<'_, '_>) -> JsResult<JSValue> {

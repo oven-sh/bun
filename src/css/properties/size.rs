@@ -28,7 +28,9 @@ pub enum BoxSizing {
 // Hand-written (only two variants) so the inherent `parse`/`to_css` participate in
 // `impl_parse_tocss_via_inherent!` without a derive-coherence clash.
 impl BoxSizing {
-    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, BoxSizing> {
+    pub(crate) fn parse<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> css::Result<'bump, BoxSizing> {
         let location = input.current_source_location();
         let ident = input.expect_ident()?;
         if bun_core::eql_case_insensitive_ascii(ident, b"content-box", true) {
@@ -40,7 +42,7 @@ impl BoxSizing {
         }
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         dest.write_str(match self {
             BoxSizing::ContentBox => "content-box",
             BoxSizing::BorderBox => "border-box",
@@ -81,7 +83,7 @@ macro_rules! size_ident_match {
 }
 
 impl Size {
-    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, Size> {
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, Size> {
         let res = input.try_parse(|i: &mut css::Parser| -> css::Result<Size> {
             let ident = i.expect_ident()?;
             size_ident_match!(ident, {
@@ -114,7 +116,7 @@ impl Size {
         Ok(Size::LengthPercentage(lp))
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             Size::Auto => dest.write_str("auto"),
             Size::Contain => dest.write_str("contain"),
@@ -181,12 +183,12 @@ impl Size {
         }
     }
 
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         // `Size` carries only `LengthPercentage`/`VendorPrefix` payloads, both `Clone`-via-derive.
         self.clone()
     }
 
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
+    pub(crate) fn eql(lhs: &Self, rhs: &Self) -> bool {
         lhs == rhs
     }
 }
@@ -215,7 +217,7 @@ pub enum MaxSize {
 }
 
 impl MaxSize {
-    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, MaxSize> {
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, MaxSize> {
         let res = input.try_parse(|i: &mut css::Parser| -> css::Result<MaxSize> {
             let ident = i.expect_ident()?;
             size_ident_match!(ident, {
@@ -250,7 +252,7 @@ impl MaxSize {
         }
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             MaxSize::None => dest.write_str("none"),
             MaxSize::Contain => dest.write_str("contain"),
@@ -317,12 +319,12 @@ impl MaxSize {
         }
     }
 
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         // `MaxSize` carries only `LengthPercentage`/`VendorPrefix` payloads, both `Clone`-via-derive.
         self.clone()
     }
 
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
+    pub(crate) fn eql(lhs: &Self, rhs: &Self) -> bool {
         lhs == rhs
     }
 }
@@ -331,13 +333,15 @@ impl MaxSize {
 #[derive(Copy, Clone, PartialEq)]
 pub struct AspectRatio {
     /// The `auto` keyword.
-    pub auto: bool,
+    pub(crate) auto: bool,
     /// A preferred aspect ratio for the box, specified as width / height.
-    pub ratio: Option<Ratio>,
+    pub(crate) ratio: Option<Ratio>,
 }
 
 impl AspectRatio {
-    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, AspectRatio> {
+    pub(crate) fn parse<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> css::Result<'bump, AspectRatio> {
         let location = input.current_source_location();
         let mut auto = input.try_parse(|i| i.expect_ident_matching(b"auto"));
 
@@ -355,7 +359,7 @@ impl AspectRatio {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if self.auto {
             dest.write_str("auto")?;
         }
@@ -369,12 +373,12 @@ impl AspectRatio {
         Ok(())
     }
 
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         // `Ratio` is two `f32`s; #[derive(Clone)] is exact.
         *self
     }
 
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
+    pub(crate) fn eql(lhs: &Self, rhs: &Self) -> bool {
         lhs == rhs
     }
 }
@@ -427,21 +431,21 @@ impl SizeProperty {
 
 #[derive(Default)]
 pub struct SizeHandler {
-    pub width: Option<Size>,
-    pub height: Option<Size>,
-    pub min_width: Option<Size>,
-    pub min_height: Option<Size>,
-    pub max_width: Option<MaxSize>,
-    pub max_height: Option<MaxSize>,
-    pub block_size: Option<Size>,
-    pub inline_size: Option<Size>,
-    pub min_block_size: Option<Size>,
-    pub min_inline_size: Option<Size>,
-    pub max_block_size: Option<MaxSize>,
-    pub max_inline_size: Option<MaxSize>,
-    pub has_any: bool,
-    pub flushed_properties: SizeProperty,
-    pub category: PropertyCategory,
+    pub(crate) width: Option<Size>,
+    pub(crate) height: Option<Size>,
+    pub(crate) min_width: Option<Size>,
+    pub(crate) min_height: Option<Size>,
+    pub(crate) max_width: Option<MaxSize>,
+    pub(crate) max_height: Option<MaxSize>,
+    pub(crate) block_size: Option<Size>,
+    pub(crate) inline_size: Option<Size>,
+    pub(crate) min_block_size: Option<Size>,
+    pub(crate) min_inline_size: Option<Size>,
+    pub(crate) max_block_size: Option<MaxSize>,
+    pub(crate) max_inline_size: Option<MaxSize>,
+    pub(crate) has_any: bool,
+    pub(crate) flushed_properties: SizeProperty,
+    pub(crate) category: PropertyCategory,
 }
 
 // `context.arena` was dropped from PropertyHandlerContext; the
@@ -566,7 +570,7 @@ fn flush_size_property<'bump, T: PrefixedKeyword>(
 }
 
 impl SizeHandler {
-    pub fn handle_property<'bump>(
+    pub(crate) fn handle_property<'bump>(
         &mut self,
         property: &Property<'bump>,
         dest: &mut DeclarationList<'bump>,
@@ -852,7 +856,11 @@ impl SizeHandler {
         );
     }
 
-    pub fn finalize(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+    pub(crate) fn finalize(
+        &mut self,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
         self.flush(dest, context);
         self.flushed_properties = SizeProperty::empty();
     }

@@ -3,6 +3,7 @@
 use smallvec::SmallVec;
 
 use crate::calc::{Node, Unit};
+use crate::color::{Color, Rgba};
 use crate::properties::{Id, Value};
 use crate::transform::{Name, Transform, Transforms, Z_AXIS};
 use crate::types::Inset;
@@ -34,19 +35,68 @@ impl Plain<'_> {
         let (mut digits, mut end, mut point) = (0u64, start, None);
         while let Some(&byte) = self.rest.get(end) {
             match byte {
-                b'0'..=b'9' if digits < u64::MAX / 16 => {
-                    digits = digits * 10 + u64::from(byte - b'0')
+                b'0'..=b'9' => {
+                    digits = digits
+                        .saturating_mul(10)
+                        .saturating_add(u64::from(byte - b'0'))
                 }
                 b'.' if point.is_none() => point = Some(end),
                 _ => break,
             }
             end += 1;
         }
-        let (number, rest) = self.rest.split_at(end);
-        (end > start && !number.ends_with(b".")).then_some(())?;
-        self.rest = rest;
-        let unsigned = digits as f64 / POWERS.get(point.map_or(0, |it| end - it - 1))?;
-        Some(if start == 1 { -unsigned } else { unsigned })
+        (end > start && self.rest[end - 1] != b'.').then_some(())?;
+        let mut power = POWERS
+            .get(point.map_or(0, |it| end - it - 1))
+            .filter(|_| digits < 1 << f64::MANTISSA_DIGITS);
+        if let [b'e', b'-', b'0'..=b'9', rest @ ..] = &self.rest[end..] {
+            (end, power) = (
+                end + 3 + rest.iter().take_while(|it| it.is_ascii_digit()).count(),
+                None,
+            );
+        }
+        let number;
+        (number, self.rest) = self.rest.split_at(end);
+        let Some(power) = power else {
+            return crate::values::text(number)
+                .parse()
+                .ok()
+                .filter(|it: &f64| it.abs() < 1e22);
+        };
+        Some(if start == 1 {
+            -(digits as f64 / power)
+        } else {
+            digits as f64 / power
+        })
+    }
+
+    fn degrees(&mut self) -> Option<f32> {
+        let number = self.number()?;
+        let per_unit = match () {
+            () if self.take(b"deg") => 1.0,
+            () if self.take(b"rad") => 180.0 / core::f64::consts::PI,
+            () if self.take(b"turn") => 360.0,
+            () => return None,
+        };
+        Some(((number * per_unit) as f32).clamp(-MAX_DEGREES, MAX_DEGREES))
+    }
+
+    fn color(&mut self) -> Option<Color> {
+        if self.take(b"#") {
+            return Color::from_digits(core::mem::take(&mut self.rest));
+        }
+        let is_rgb = self.take(b"rgb(") || self.take(b"rgba(");
+        (is_rgb || self.take(b"hsl(") || self.take(b"hsla(")).then_some(())?;
+        let first = self.number()?;
+        let mut next = || {
+            self.comma()
+                .then(|| self.number())?
+                .filter(|_| is_rgb || self.take(b"%"))
+        };
+        let channels = [first, next()?, next()?];
+        let alpha = if self.comma() { self.number()? } else { 1.0 };
+        self.take(b")")
+            .then(|| Color::from_channels(is_rgb, channels, alpha))
     }
 
     fn length(&mut self) -> Option<Lp> {
@@ -118,12 +168,10 @@ impl Plain<'_> {
             () if self.take(b"scaleY(") => {
                 Transform::Scale(Name::ScaleY, [1.0, self.number()? as f32, 1.0])
             }
-            () if self.take(b"rotate(") => Transform::Rotate(
-                Name::Rotate,
-                Z_AXIS,
-                (self.number().filter(|_| self.take(b"deg"))? as f32)
-                    .clamp(-MAX_DEGREES, MAX_DEGREES),
-            ),
+            () if self.take(b"rotate(") => Transform::Rotate(Name::Rotate, Z_AXIS, self.degrees()?),
+            () if self.take(b"rotateZ(") => {
+                Transform::Rotate(Name::RotateZ, Z_AXIS, self.degrees()?)
+            }
             () => return None,
         };
         self.take(b")").then_some(transform)
@@ -133,10 +181,24 @@ impl Plain<'_> {
         let mut all = SmallVec::new();
         loop {
             all.push(self.transform()?);
-            if !self.take(b" ") {
+            if !self.take(b" ") && self.rest.is_empty() {
                 return Some(all);
             }
         }
+    }
+}
+
+/// In which a number is a length.
+pub(crate) fn svg_length(source: &[u8], zoom: f32) -> Option<Lp> {
+    let p = &mut Plain {
+        rest: source,
+        zoom: zoom.into(),
+    };
+    let number = p.number()?;
+    match p.rest {
+        b"" => Some(Lp::Px(number as f32 * zoom)),
+        b"%" => Some(Lp::new(Node::Value(number, Unit::Percent))),
+        _ => None,
     }
 }
 
@@ -179,6 +241,8 @@ impl Id {
             Id::Bottom => Value::Bottom(Inset::Length(p.length()?)),
             Id::Left => Value::Left(Inset::Length(p.length()?)),
             Id::Opacity => Value::Opacity(Alpha::new(p.number()? as f32)),
+            Id::BackgroundColor => Value::BackgroundColor(p.color()?),
+            Id::Color => Value::Color(Rgba::plain(p.color()?.resolve(0))),
             Id::Transform => Value::Transform(Transforms(NoneOrSpaces(
                 p.transforms()?.into_iter().collect(),
             ))),

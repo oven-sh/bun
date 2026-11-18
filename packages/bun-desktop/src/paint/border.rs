@@ -23,6 +23,7 @@ pub fn inset(shape: &RoundedRect, [top, right, bottom, left]: [f32; 4]) -> Round
             shrink(br, right, bottom),
             shrink(bl, left, bottom),
         ],
+        ..*shape
     }
 }
 

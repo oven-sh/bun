@@ -51,7 +51,7 @@ void CryptoAlgorithmSHA1::digest(Vector<uint8_t>&& message, VectorCallback&& cal
         return;
     }
 
-    if (message.size() < 64) {
+    if (message.size() <= maximumSizeToDigestInline) {
         auto moved = WTF::move(message);
         digest->addBytes(moved.begin(), moved.size());
         auto result = digest->computeHash();

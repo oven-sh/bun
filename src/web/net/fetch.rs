@@ -30,6 +30,7 @@ use crate::exec::{LocalFuture, Waiter};
 use crate::headers::{HeaderList, split};
 use crate::integrity::bytes_match_metadata;
 use crate::origin::{Origin, Site, is_potentially_trustworthy};
+use crate::outside::Outside;
 use crate::referrer::ReferrerPolicy;
 use crate::request::{
     CacheMode, Credentials, Destination, InitiatorType, Mode, Redirect, Request, RequestBody,
@@ -40,26 +41,32 @@ use crate::time::{monotonic_now, wall_now};
 use crate::url::Url;
 use crate::{Bytes, mime, sniff};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Role {
-    /// The rules of the web do not apply.
-    App {
-        bypasses_handlers: bool,
-    },
-    Page,
-    PageWithoutWebSecurity,
+crate::wire! {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum Role {
+        /// The rules of the web do not apply.
+        App {
+            bypasses_handlers: bool,
+        },
+        Page,
+        PageWithoutWebSecurity,
+    }
 }
 
-#[derive(Clone, Copy, Default)]
-pub struct Isolation {
-    pub enforced: EmbedderPolicy,
-    pub reported: EmbedderPolicy,
+crate::wire! {
+    #[derive(Clone, Copy, Default)]
+    pub struct Isolation {
+        pub enforced: EmbedderPolicy,
+        pub reported: EmbedderPolicy,
+    }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum IsolationKind {
-    Embedder,
-    Document,
+crate::wire! {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum IsolationKind {
+        Embedder,
+        Document,
+    }
 }
 
 /// Who a request is made for, which a page has no say in.
@@ -347,6 +354,54 @@ pub struct Failure {
     pub needs_web_engine: bool,
 }
 
+fn block_or_upgrade_insecure(
+    request: &mut Request,
+    initiator: &Initiator,
+    observer: &dyn Observer,
+    first: Option<&Url>,
+) -> Result<()> {
+    if let Some(upgraded) =
+        checks::upgrade_insecure(&request.url).filter(|_| initiator.upgrades_insecure_requests)
+    {
+        request.url = upgraded;
+    }
+    if initiator.prohibits_mixed_content && checks::is_insecure(&request.url) {
+        let is_upgradable = matches!(
+            request.destination,
+            Destination::Image | Destination::Audio | Destination::Video
+        );
+        if !is_upgradable || request.is_image_set || initiator.blocks_all_mixed_content {
+            observer.blocked_as_mixed_content(request, first);
+            return Err(NetError::AccessDenied);
+        }
+        if let Some(upgraded) =
+            checks::upgrade_insecure(&request.url).filter(|it| !it.has_address())
+        {
+            request.url = upgraded;
+        }
+    }
+    Ok(())
+}
+
+fn check_or_upgrade(
+    request: &mut Request,
+    initiator: &Initiator,
+    observer: &dyn Observer,
+    first: Option<&Url>,
+) -> Result<()> {
+    if checks::has_bad_port(&request.url) {
+        return Err(NetError::UnsafePort);
+    }
+    observer.will_check(request, first);
+    if initiator.role == Role::Page {
+        block_or_upgrade_insecure(request, initiator, observer, first)?;
+    }
+    match observer.allows(request, first) {
+        true => Ok(()),
+        false => Err(NetError::BlockedByCsp),
+    }
+}
+
 struct Fetch<'a> {
     session: &'a Arc<Session>,
     initiator: &'a Initiator,
@@ -411,31 +466,6 @@ impl Fetch<'_> {
             referrer: self.referrer.clone(),
             is_inspected: self.initiator.is_inspected,
         }
-    }
-
-    fn block_or_upgrade_insecure(&mut self) -> Result<()> {
-        let (request, initiator) = (&mut self.request, self.initiator);
-        if let Some(upgraded) =
-            checks::upgrade_insecure(&request.url).filter(|_| initiator.upgrades_insecure_requests)
-        {
-            request.url = upgraded;
-        }
-        if initiator.prohibits_mixed_content && checks::is_insecure(&request.url) {
-            let is_upgradable = matches!(
-                request.destination,
-                Destination::Image | Destination::Audio | Destination::Video
-            );
-            if !is_upgradable || request.is_image_set || initiator.blocks_all_mixed_content {
-                (self.observer).blocked_as_mixed_content(request, self.urls.first());
-                return Err(NetError::AccessDenied);
-            }
-            if let Some(upgraded) =
-                checks::upgrade_insecure(&request.url).filter(|it| !it.has_address())
-            {
-                request.url = upgraded;
-            }
-        }
-        Ok(())
     }
 
     fn taint(&mut self) -> Result<()> {
@@ -1058,16 +1088,8 @@ impl Fetch<'_> {
     /// `None` after a redirect.
     async fn main_fetch(&mut self) -> Result<Option<Response>> {
         let session = self.session;
-        if checks::has_bad_port(&self.request.url) {
-            return Err(NetError::UnsafePort);
-        }
-        self.observer.will_check(&self.request, self.urls.first());
-        if self.is_checked() {
-            self.block_or_upgrade_insecure()?;
-        }
-        if !self.observer.allows(&self.request, self.urls.first()) {
-            return Err(NetError::BlockedByCsp);
-        }
+        let (initiator, first) = (self.initiator, self.urls.first());
+        check_or_upgrade(&mut self.request, initiator, self.observer, first)?;
         if session.hsts.upgrades(&self.request.url) {
             self.request.url = self.request.url.with_scheme(b"https");
         }
@@ -1226,23 +1248,13 @@ impl Fetch<'_> {
         };
         let ending = Ending {
             session: Arc::clone(session),
-            about,
-            head: head.clone(),
+            about: Some(about),
+            head,
             observer: self.observer.end_of_body(),
         };
-        if !has_body {
-            ending.run(Ok(0));
-            return Ok(Some(Response { head, body: None }));
-        }
-        *self.controller.body.lock() = Some(Arriving {
-            source: answer.body,
-            size: 0,
-            ending: Some(ending),
-        });
-        Ok(Some(Response {
-            head,
-            body: Some(Body::new(Tracked(self.controller.clone()))),
-        }))
+        Ok(Some(
+            ending.of(has_body.then_some(answer.body), self.controller),
+        ))
     }
 }
 
@@ -1270,12 +1282,30 @@ fn escape_unless_utf8(location: &[u8]) -> std::borrow::Cow<'_, [u8]> {
 
 struct Ending {
     session: Arc<Session>,
-    about: About,
+    /// Unless another process tells the app.
+    about: Option<About>,
     head: Head,
     observer: Option<EndOfBody>,
 }
 
 impl Ending {
+    fn of(self, body: Option<Body>, controller: &Controller) -> Response {
+        let head = self.head.clone();
+        let Some(source) = body else {
+            self.run(Ok(0));
+            return Response { head, body: None };
+        };
+        *controller.body.lock() = Some(Arriving {
+            source,
+            size: 0,
+            ending: Some(self),
+        });
+        Response {
+            head,
+            body: Some(Body::new(Tracked(controller.clone()))),
+        }
+    }
+
     fn run(self, outcome: Result<u64>) {
         let Head {
             status,
@@ -1289,16 +1319,18 @@ impl Ending {
         } else {
             RequestEvent::ErrorOccurred
         };
-        self.session.tell(event, &self.about, || Details {
-            received: Some(Received {
-                status: *status,
-                status_text: status_text.clone(),
-                headers: headers.clone(),
-                cached: *cached,
-            }),
-            outcome: Some(outcome.map(|_| ())),
-            ..Details::default()
-        });
+        if let Some(about) = &self.about {
+            self.session.tell(event, about, || Details {
+                received: Some(Received {
+                    status: *status,
+                    status_text: status_text.clone(),
+                    headers: headers.clone(),
+                    cached: *cached,
+                }),
+                outcome: Some(outcome.map(|_| ())),
+                ..Details::default()
+            });
+        }
         if let Some(observer) = self.observer {
             observer(&self.head, outcome);
         }
@@ -1345,10 +1377,15 @@ impl Source for Tracked {
         read
     }
 
-    fn expect_read_to_end(&mut self, budget: &'static super::body::Budget) {
+    fn expect_read_to_end(&mut self, budget: &'static super::body::Budget, read: &mut Vec<u8>) {
         if let Some(body) = &mut *self.0.body.lock() {
-            body.source.expect_read_to_end(budget);
+            body.size = body.size.saturating_sub(read.len() as u64);
+            body.source.expect_read_to_end(budget, read);
         }
+    }
+
+    fn gathered(&self) -> u64 {
+        (self.0.body.lock().as_ref()).map_or(0, |it| it.source.gathered())
     }
 }
 
@@ -1391,6 +1428,29 @@ pub fn fetch<'a>(
     controller: &'a Controller,
 ) -> LocalFuture<'a, core::result::Result<Response, Failure>> {
     Box::pin(run_fetch(session, initiator, request, observer, controller))
+}
+
+/// In a page process, where what the request violates can be traced to a script.
+pub(crate) async fn fetch_by_host(
+    outside: Outside,
+    session: &Arc<Session>,
+    initiator: &Initiator,
+    mut request: Request,
+    observer: &dyn Observer,
+    controller: &Controller,
+) -> Result<Response> {
+    check_or_upgrade(&mut request, initiator, observer, None)?;
+    let fetching = outside.fetch(request.into(), controller.upload.is_some());
+    (controller.upload.iter()).for_each(|it| fetching.report_upload_to(it.clone()));
+    let fetched = controller.race(async { fetching.await.ok_or(NetError::Aborted)? });
+    let Response { head, body } = *fetched.await?;
+    let ending = Ending {
+        session: Arc::clone(session),
+        about: None,
+        head,
+        observer: observer.end_of_body(),
+    };
+    Ok(ending.of(body, controller))
 }
 
 async fn run_fetch(

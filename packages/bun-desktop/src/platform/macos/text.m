@@ -34,6 +34,23 @@ CTFontRef bd_font_with_traits(CTFontRef font, bool isBold, bool isItalic)
     return CTFontCreateCopyWithSymbolicTraits(font, 0, NULL, traits, traits);
 }
 
+CTFontRef bd_font_with_weight(CTFontRef font, double size, double weight)
+{
+    @autoreleasepool {
+        id axes = CFBridgingRelease(CTFontDescriptorCreateWithAttributes((__bridge CFDictionaryRef) @{ (id)kCTFontVariationAttribute : @{ @('wght') : @(weight) } }));
+        return CTFontCreateCopyWithAttributes(font, size, NULL, weight == 400 ? NULL : (__bridge CTFontDescriptorRef)axes);
+    }
+}
+
+CTFontRef bd_font_of_data(const uint8_t* bytes, size_t length, uint32_t index)
+{
+    @autoreleasepool {
+        NSData* data = [NSData dataWithBytesNoCopy:(void*)bytes length:length freeWhenDone:NO];
+        NSArray* all = CFBridgingRelease(CTFontManagerCreateFontDescriptorsFromData((__bridge CFDataRef)data));
+        return index < all.count ? CTFontCreateWithFontDescriptorAndOptions((__bridge CTFontDescriptorRef)all[index], 12, NULL, withoutAsking) : NULL;
+    }
+}
+
 /// One unit is one point.
 CTFontRef bd_font_unscaled(CTFontRef font) { return CTFontCreateCopyWithAttributes(font, CTFontGetUnitsPerEm(font), NULL, NULL); }
 
@@ -100,6 +117,13 @@ void bd_font_outline(CTFontRef font, uint16_t glyph, double scale, void* pen, vo
 }
 
 CTFontRef bd_font_sized(CTFontRef font, double size) { return CTFontCreateCopyWithAttributes(font, size, NULL, NULL); }
+
+void bd_font_metrics(CTFontRef font, double size, double* metrics)
+{
+    CTFontRef sized = bd_font_sized(font, size);
+    metrics[0] = CTFontGetAscent(sized), metrics[1] = CTFontGetDescent(sized), metrics[2] = CTFontGetLeading(sized);
+    CFRelease(sized);
+}
 
 BDRect bd_glyph_bounds(CTFontRef font, uint16_t glyph)
 {

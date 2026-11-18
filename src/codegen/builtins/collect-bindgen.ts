@@ -1004,8 +1004,12 @@ function collectConstruction(type: ClassType): DeclaredField | undefined {
   }
   const instance = b.instance(name);
   // A constructor that makes the object itself can keep it.
-  return createField(construct, null, (type.passStructure ? instance : instance.fresh).spec, true);
+  if (type.passStructure) return createField(construct, null, instance.spec, true);
+  return createField(construct, null, (hasOwnMembers(type) ? instance.unaliased : instance.fresh).spec, true);
 }
+
+const hasOwnMembers = (type: ClassType | undefined): boolean =>
+  !!type?.web && (membersOf(type).some(({ member }) => isUnforgeable(member)) || hasOwnMembers(type.base));
 
 /** An instance that gets a name which it announces, and which hides a member, leaves the structure of its class. */
 const overridesBuiltIns = (type: ClassType | undefined): boolean => {
@@ -1034,6 +1038,10 @@ function collectPrototypeOfInterface(type: ClassType, path: BuiltinPath): Declar
 
 const featuresOfFile = (file: ModuleDefinition | null): readonly string[] =>
   file?.feature === undefined ? [] : file.feature === desktopFeatures[0] ? desktopFeatures : [file.feature];
+
+/** Only a build with `--desktop` has it. */
+const markIfOptional = (root: BuiltinPath, file: ModuleDefinition | null): Declaration[] =>
+  file?.feature === desktopFeatures[0] ? b.extend(root, { marks: ["IsOptional"] }) : [];
 
 function collectClass(type: ClassType, joins: Joins, file: ModuleDefinition | null): Declaration[] {
   const usesFeature = type.web ? featuresOfFile(file) : [];
@@ -1094,6 +1102,7 @@ function collectClass(type: ClassType, joins: Joins, file: ModuleDefinition | nu
           .toSorted(byName)
           .flatMap(member => collectClassMember(type, member, pathOfMember(path, "proto", member.name), false))),
     ...(usesFeature.length > 0 ? b.extend(path, { usesFeature }) : []),
+    ...markIfOptional(construct === null ? joinPath([path, "prototype"]) : path, file),
     ...(hasMembers || type.staticMembers.length === 0 ? [] : b.extend(path, { hasUndeclaredMembers: true })),
     // A member that does run such code says `runsUnseenCode`.
     ...(type.web ? b.seenCodeOnly({ holders: [construct === null ? joinPath([path, "prototype"]) : path] }) : []),
@@ -1185,6 +1194,7 @@ function collectSchema(schema: SchemaFile, joins: Joins, report: (message: strin
     const header = `Generated${cppNamespace}.h`;
     const usesFeature = joins.writtenFeatureUses.get(binding) ?? usesOfFile;
     declarations.push(...tryCollect(() => collectBoundNamespace(namespace, boundPath, binding, header, usesFeature)));
+    declarations.push(...[boundPath, binding].flatMap(root => markIfOptional(root, schema.moduleDefinition)));
   }
   for (const fn of schema.functions) {
     if (placedFunctions.has(fn)) continue;

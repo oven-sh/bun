@@ -1036,6 +1036,16 @@ pub(crate) mod command {
             }
         }
 
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+        if bun_removable_features::call_removable_or!(
+            Desktop,
+            ReturnDefault,
+            { false },
+            crate::desktop::is_page_process,
+        ) {
+            return call_removable!(Tools, Abort, boot_pages, log);
+        }
+
         #[cfg(not(bun_locked_environment))]
         if let Some(first) = bun::argv().get(1 + bun::bun_options_argc())
             && first
@@ -1276,6 +1286,21 @@ pub(crate) mod command {
 
         let entry_name = graph.main_module_path().to_vec().into_boxed_slice();
         super::run_command::RunCommand::boot_standalone(ctx, entry_name, graph)?;
+        Ok(())
+    }
+
+    /// A process that `bun:desktop` has started for pages.
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    #[cold]
+    #[inline(never)]
+    fn boot_pages(log: &mut bun_ast::Log) -> CmdResult {
+        arguments::disallow_code_generation_from_strings_as_compiled(&bun::argv().to_vec());
+        let ctx = write_context_no_parse(log);
+        ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
+        ctx.args.disable_default_env_files = true;
+        ctx.debug.loaded_bunfig = true;
+        ctx.debug.global_cache = bun_options_types::global_cache::GlobalCache::disable;
+        super::run_command::RunCommand::boot(ctx, b"/"[..].into(), None)?;
         Ok(())
     }
 

@@ -413,7 +413,7 @@ impl<'a> Editor<'_, 'a> {
         self.insert_after(made, container)?;
         if start != end_of(container) {
             let fragment: &Node = self
-                .change(|cx| Range::new(&cx.heap, start, end_of(container)).extract_contents(cx))?
+                .change(|cx| Range::extract_between(cx, start, end_of(container)))?
                 .map_err(|_| Stuck)?;
             let mut copies = core::iter::successors(fragment.first_child(), |it| it.first_child())
                 .take_while(|it| !moved.contains(it));
@@ -454,7 +454,7 @@ impl<'a> Editor<'_, 'a> {
         }
         let end = after(inline)?;
         let rest: &Node = self
-            .change(|cx| Range::new(&cx.heap, start, end).extract_contents(cx))?
+            .change(|cx| Range::extract_between(cx, start, end))?
             .map_err(|_| Stuck)?;
         self.insert(rest, made, None)?;
         self.insert_after(made, inline)?;

@@ -819,6 +819,20 @@ mod draft {
                 {
                     let _panic_guard = PANIC_MUTEX.lock();
 
+                    #[cfg(unix)]
+                    if let Some(record) = RECORDER.get() {
+                        let context = match seed {
+                            TraceSeed::FaultOnStack { context, .. } => Some(context),
+                            _ => None,
+                        };
+                        let fault = match reason {
+                            CrashReason::SegmentationFault(address)
+                            | CrashReason::BusError(address) => Some(address),
+                            _ => None,
+                        };
+                        record(reason.terminal_signal(), fault, context, &reason);
+                    }
+
                     // Use an raw unbuffered writer to stderr to avoid losing information on
                     // panic in a panic. There is also a possibility that `Output` related code
                     // is not configured correctly, so that would also mask the message.
@@ -1546,7 +1560,7 @@ mod draft {
             mc.map(Self)
         }
 
-        pub(crate) fn mcontext(self) -> &'a MContext {
+        pub fn mcontext(self) -> &'a MContext {
             self.0
         }
 
@@ -3375,6 +3389,24 @@ mod draft {
     pub fn suppress_reporting() {
         suppress_core_dumps_if_necessary();
         SUPPRESS_REPORTING.store(true, Ordering::Relaxed);
+    }
+
+    /// For a program whose crashes are the business of whoever ships it.
+    pub fn never_report() {
+        SUPPRESS_REPORTING.store(true, Ordering::Relaxed);
+    }
+
+    /// Gets the signal that ends the process, the address that could not be accessed, the registers at that point, and the
+    /// reason. It may be called from the handler of a signal.
+    #[cfg(unix)]
+    pub type Recorder = fn(c_int, Option<usize>, Option<SignalContext<'_>>, &dyn fmt::Display);
+
+    #[cfg(unix)]
+    static RECORDER: std::sync::OnceLock<Recorder> = std::sync::OnceLock::new();
+
+    #[cfg(unix)]
+    pub fn record_crashes_with(recorder: Recorder) {
+        let _ = RECORDER.set(recorder);
     }
 
     // src/ptr/ref_count.rs:16). Re-export so `bun_crash_handler::StoredTrace` paths

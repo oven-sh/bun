@@ -8,7 +8,7 @@ use crate::api::core::{DomString, Known};
 use crate::api::graphics::Affine;
 use crate::calc::{Kind, Unit};
 use crate::path::Numbers;
-use crate::sheet::supports_declaration;
+use crate::sheet::{Within, supports_declaration};
 use crate::values::{Out, Str, text, write_list, write_number};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -199,8 +199,8 @@ impl Length {
     pub(super) fn parse(source: &str, axis: Axis) -> Option<Length> {
         let Some((value, unit)) = dimension(source) else {
             let source = source.trim_ascii();
-            let is_calculation =
-                source.ends_with(')') && supports_declaration(b"x", source.as_bytes());
+            let is_calculation = source.ends_with(')')
+                && supports_declaration(b"x", source.as_bytes(), Within::Style);
             return is_calculation.then(|| Length {
                 calculation: Some(source.into()),
                 ..Length::new(0.0, Unit::Number, axis)

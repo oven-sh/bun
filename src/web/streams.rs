@@ -15,7 +15,7 @@ use bun_jsc::{
 };
 
 use crate::exec::{self, Either, Realm, Waiter};
-use crate::net::body::{Body, Chunk, FOR_DATA, Read, Source, Writer, pipe};
+use crate::net::body::{Body, Chunk, FOR_DATA, Read, Source, Writer, concat, pipe};
 use crate::net::response::{Answer, Cached, Protocol};
 use crate::net::{NetError, Result};
 
@@ -109,6 +109,9 @@ where
                 return;
             };
             let promise = JSPromise::opaque_mut(promise);
+            if promise.status() != bun_jsc::js_promise::Status::Pending {
+                return;
+            }
             let settled = match converted {
                 Ok(value) => promise.resolve(global, value.to_js()),
                 Err(reason) => promise.reject(global, Ok(reason.to_js())),
@@ -234,14 +237,21 @@ impl Incoming {
     }
 
     pub async fn read_to_end(&self) -> Result<Chunk> {
-        self.source.borrow_mut().expect_read_to_end(&FOR_DATA);
+        let mut read = Vec::new();
+        if let Some(Chunk::Owned(first)) = self.ahead.borrow_mut().front_mut() {
+            read = core::mem::take(first);
+        }
+        if !read.is_empty() {
+            (self.ahead.take().iter()).for_each(|it| read.extend_from_slice(it));
+        }
+        (self.source.borrow_mut()).expect_read_to_end(&FOR_DATA, &mut read);
         let Some(first) = self.read().await? else {
             return Ok(Chunk::Owned(Vec::new()));
         };
         let Some(second) = self.read().await? else {
             return Ok(first);
         };
-        let mut all = [&*first, &*second].concat();
+        let mut all = concat(&[&first, &second]);
         while let Some(more) = self.read().await? {
             all.extend_from_slice(&more);
         }

@@ -406,6 +406,9 @@ impl Doc {
                 .for_each(|it| it.measure(cx));
         }
         if self.is_rendered() && self.arena().needs_sync.replace(false) {
+            if self.arena().has_new_color_scheme.take() {
+                super::metadata::update_color_scheme(self);
+            }
             ui::flush_controls(cx, self);
             crate::api::cssom::flush_sheets(&cx.heap, self);
             ui::flush_selection(cx, self);
@@ -448,18 +451,17 @@ impl Doc {
             arena.free_dead(engine);
             slot(engine)
         });
-        let node = allocate(
-            heap,
-            kind,
-            structure,
-            Node::new(self.share_arena(), id, kind, flags),
-        );
+        let class: Class<Node> = kind.interface().class;
+        // SAFETY: it was made for that class.
+        let node = unsafe { class.structure_from_extern(structure, heap) }
+            .create(heap, Node::new(self.share_arena(), id, kind, flags));
+        arena.read(|engine| engine.tree.clothe(id, node));
         node.set_link(Link::Document, Some(self));
         node
     }
 
     /// Of a bare node.
-    #[inline]
+    #[inline(always)]
     pub(super) fn object_for<'a>(
         &'a self,
         heap: &JsHeap<'a>,
@@ -477,10 +479,10 @@ impl Doc {
         let node = unsafe { class.structure_from_extern(structure, heap) }
             .create(heap, Node::new(self.share_arena(), id, kind, flags));
         tree.clothe(id, node);
-        tree.dirty_child(id)
-            .update(|it| if kind == Kind::Comment { 0 } else { it });
-        tree.visit(id)
-            .update(|it| if kind == Kind::Comment { 0 } else { it });
+        if kind == Kind::Comment {
+            tree.dirty_child(id).set(0);
+            tree.visit(id).set(0);
+        }
         node.set_link(Link::Document, Some(self));
         node
     }
@@ -517,7 +519,7 @@ impl Doc {
             self.create_node(heap, kind, NodeFlags::empty(), slot)
                 .cast()
         };
-        if element.steps().contains(Has::CREATED) {
+        if self.arena().steps[kind as usize].contains(Has::CREATED) {
             seams::created(heap, element);
         }
         element

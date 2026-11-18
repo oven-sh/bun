@@ -72,10 +72,6 @@ import default68, * as namespace68 from "node:zlib";
 import default69, * as namespace69 from "undici";
 import default70, * as namespace70 from "utf-8-validate";
 import default71, * as namespace71 from "ws";
-import default72, * as namespace72 from "bun:desktop";
-import default73, * as namespace73 from "bun:desktop/jsx-dev-runtime";
-import default74, * as namespace74 from "bun:desktop/jsx-runtime";
-import default75, * as namespace75 from "bun:desktop/dom";
 
 function describeValue(value, required) {
   const matches = [];
@@ -167,7 +163,3 @@ describe("node:zlib", default68, namespace68, namespace68.default, require("node
 describe("undici", default69, namespace69, namespace69.default, require("undici"), await import("undici"));
 describe("utf-8-validate", default70, namespace70, namespace70.default, require("utf-8-validate"), await import("utf-8-validate"));
 describe("ws", default71, namespace71, namespace71.default, require("ws"), await import("ws"));
-describe("bun:desktop", default72, namespace72, namespace72.default, require("bun:desktop"), await import("bun:desktop"));
-describe("bun:desktop/jsx-dev-runtime", default73, namespace73, namespace73.default, require("bun:desktop/jsx-dev-runtime"), await import("bun:desktop/jsx-dev-runtime"));
-describe("bun:desktop/jsx-runtime", default74, namespace74, namespace74.default, require("bun:desktop/jsx-runtime"), await import("bun:desktop/jsx-runtime"));
-describe("bun:desktop/dom", default75, namespace75, namespace75.default, require("bun:desktop/dom"), await import("bun:desktop/dom"));

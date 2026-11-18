@@ -5786,6 +5786,29 @@ pub mod bv2_impl {
                             has_modules_of_electron: self.transpiler.options.is_desktop_app,
                         },
                     ) {
+                        if self.transpiler.options.compile_mode.is_executable()
+                            && !self.transpiler.options.is_desktop_app
+                            && bun_resolve_builtins::HardcodedModule::Alias::is_desktop_module(
+                                replacement.path.as_bytes(),
+                            )
+                            && !import_record
+                                .flags
+                                .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                        {
+                            self.log_for_resolution_failures(
+                                source.path.text,
+                                ctx.target.bake_graph(),
+                            )
+                            .add_range_error_fmt(
+                                Some(source),
+                                import_record.range,
+                                format_args!(
+                                    "\"{}\" is only in an executable that is built with --desktop",
+                                    bstr::BStr::new(import_record.path.text)
+                                ),
+                            );
+                            continue;
+                        }
                         // When bundling node builtins, remove the "node:" prefix.
                         // This supports special use cases where the bundle is put
                         // into a non-node module resolver that doesn't support

@@ -31,17 +31,19 @@ pub(crate) fn variable(name: &str) -> JsResult<Option<String>> {
     Ok(value.filter(|it| !it.is_empty()).map(|it| string(&it)))
 }
 
+pub(crate) fn variables() -> JsResult<Vec<(String, String)>> {
+    let all = get(object(), "env")?;
+    let with_value = |name: String| Ok((text_of(get_by_value(global(), all, js(&*name)?)?)?, name));
+    let entries = texts_of(all.keys(global())?)?.into_iter().map(with_value);
+    entries
+        .map(|it| it.map(|(value, name)| (name, value)))
+        .collect()
+}
+
 pub(crate) fn environment(except: &str) -> JsResult<CStringList> {
-    let (all, mut entries) = (get(object(), "env")?, Vec::new());
-    for name in texts_of(all.keys(global())?)? {
-        if name != except {
-            let value = text_of(get_by_value(global(), all, js(&*name)?)?)?;
-            entries.push([name, value]);
-        }
-    }
-    let entries = entries
-        .iter()
-        .map(|[name, value]| [name.as_bytes(), b"=", value.as_bytes()]);
+    let mut all = variables()?;
+    all.retain(|it| it.0 != except);
+    let entries = (all.iter()).map(|it| [it.0.as_bytes(), b"=", it.1.as_bytes()]);
     Ok(CStringList::from_parts(entries))
 }
 

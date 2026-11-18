@@ -32,6 +32,24 @@ unsafe extern "C" {
     fn Bun__DOM__destroyEraser(eraser: *mut c_void);
 }
 
+/// For what tends to be short.
+#[inline(always)]
+pub(super) fn are_same(a: &[u8], b: &[u8]) -> bool {
+    #[inline(always)]
+    fn ends<const N: usize>(it: &[u8]) -> Option<(&[u8; N], &[u8; N])> {
+        it.first_chunk().zip(it.last_chunk())
+    }
+    a.len() == b.len()
+        && match a.len() {
+            0 => true,
+            1 => a[0] == b[0],
+            2..4 => ends::<2>(a) == ends(b),
+            4..8 => ends::<4>(a) == ends(b),
+            8..=16 => ends::<8>(a) == ends(b),
+            _ => a == b,
+        }
+}
+
 #[inline(always)]
 pub(super) fn is_ascii(text: &[u8]) -> bool {
     let bits = match (
@@ -535,6 +553,64 @@ pub(super) fn impl_to_js<'a>(heap: &JsHeap<'a>, string: &Impl) -> JsLocal<'a, JS
             },
             heap,
         )
+    }
+}
+
+/// A text that scripts tend to ask for again.
+pub(crate) enum Familiar {
+    Cell(JSValue),
+    /// With its place among the recent ones, if it is short and ASCII.
+    New(DomString, Option<usize>),
+}
+
+impl Familiar {
+    #[inline]
+    pub(crate) fn from_utf8(text: &[u8]) -> Familiar {
+        let (start, end) = match (
+            text.first_chunk().zip(text.last_chunk()),
+            text.first_chunk().zip(text.last_chunk()),
+            text,
+        ) {
+            (Some((start, end)), ..) => (u64::from_le_bytes(*start), u64::from_le_bytes(*end)),
+            (_, Some((start, end)), _) => (
+                u32::from_le_bytes(*start).into(),
+                u32::from_le_bytes(*end).into(),
+            ),
+            (.., [start, .., end]) => (u16::from_le_bytes([*start, text[1]]).into(), (*end).into()),
+            _ => (0x80, 0),
+        };
+        if text.len() > 16 || (start | end) & 0x8080_8080_8080_8080 != 0 {
+            return Familiar::New(DomString::from_utf8(crate::values::text(text)), None);
+        }
+        let place = ((start ^ end.rotate_left(29)).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 40)
+            as usize
+            % RECENT;
+        let recent = CELLS
+            .get()
+            .map_or(JSValue::ZERO, |it| it.recent[place].get());
+        // SAFETY: as in `impl_to_js`. It is no rope.
+        let fiber = || unsafe { &*(recent.encoded() as *const *const Impl).add(1).read() };
+        match (!recent.is_empty()).then(fiber) {
+            Some(it) if it.is_8bit() && are_same(it.latin1_slice(), text) => Familiar::Cell(recent),
+            _ => Familiar::New(DomString::from_latin1(text), Some(place)),
+        }
+    }
+
+    /// Before anything else is allocated.
+    #[inline]
+    pub(crate) fn to_js<'a>(self, heap: &JsHeap<'a>) -> JsLocal<'a, JSString> {
+        match self {
+            // SAFETY: a string.
+            Familiar::Cell(cell) => unsafe { JsLocal::from_extern(cell, heap) },
+            Familiar::New(string, place) => {
+                let cell = string.to_js(heap);
+                CELLS
+                    .get()
+                    .zip(place)
+                    .inspect(|(cells, place)| cells.recent[*place].set(cell.to_js()));
+                cell
+            }
+        }
     }
 }
 

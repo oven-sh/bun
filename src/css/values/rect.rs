@@ -14,17 +14,17 @@ use crate::values::protocol::{IsCompatible, Parse, ToCss};
 /// there are duplicate values.
 pub struct Rect<T> {
     /// The top component.
-    pub top: T,
+    pub(crate) top: T,
     /// The right component.
-    pub right: T,
+    pub(crate) right: T,
     /// The bottom component.
-    pub bottom: T,
+    pub(crate) bottom: T,
     /// The left component.
-    pub left: T,
+    pub(crate) left: T,
 }
 
 impl<T> Rect<T> {
-    pub fn eql(&self, other: &Self) -> bool
+    pub(crate) fn eql(&self, other: &Self) -> bool
     where
         T: PartialEq,
     {
@@ -34,7 +34,7 @@ impl<T> Rect<T> {
             && self.left == other.left
     }
 
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self
+    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self
     where
         T: Clone,
     {
@@ -48,7 +48,7 @@ impl<T> Rect<T> {
         }
     }
 
-    pub fn all(val: T) -> Self
+    pub(crate) fn all(val: T) -> Self
     where
         T: Clone,
     {
@@ -60,14 +60,14 @@ impl<T> Rect<T> {
         }
     }
 
-    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, Self>
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, Self>
     where
         T: Parse<'bump> + Clone,
     {
         Self::parse_with(input, Self::val_parse)
     }
 
-    pub fn parse_with<'bump, F>(
+    pub(crate) fn parse_with<'bump, F>(
         input: &mut css::Parser<'_, 'bump>,
         parse_fn: F,
     ) -> Result<'bump, Self>
@@ -121,7 +121,7 @@ impl<T> Rect<T> {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>
     where
         T: ToCss + PartialEq,
     {

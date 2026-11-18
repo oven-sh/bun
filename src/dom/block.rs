@@ -58,12 +58,15 @@ pub(crate) struct Floats {
     width: f32,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct Slot {
     pub(crate) x: f32,
     pub(crate) y: f32,
     pub(crate) width: f32,
     /// Where it may get wider.
     pub(crate) next: Option<f32>,
+    /// A float on the left reaches past one on the right.
+    pub(crate) is_closed: bool,
 }
 
 /// Left and right.
@@ -123,9 +126,20 @@ impl Floats {
         self.slot_for(range, y, height, false)
     }
 
+    /// The first that is open, as it was when there were so many floats.
+    pub(crate) fn slot_among(&mut self, count: usize, range: [f32; 2], y: f32) -> Slot {
+        let later = self.all.split_off(count);
+        let mut slot = self.slot(range, y, 0.0);
+        while let Some(next) = slot.next.filter(|_| slot.is_closed) {
+            slot = self.slot(range, next, 0.0);
+        }
+        self.all.extend(later);
+        slot
+    }
+
     pub(crate) fn slot_for(
         &self,
-        [mut left, mut right]: [f32; 2],
+        range @ [mut left, mut right]: [f32; 2],
         y: f32,
         height: f32,
         is_line: bool,
@@ -185,6 +199,7 @@ impl Floats {
             y,
             width: right - left,
             next,
+            is_closed: right < left && range[0] < left && right < range[1],
         }
     }
 
@@ -243,7 +258,10 @@ impl Floats {
         let slot = loop {
             let slot = self.slot(range, y, height.max(0.0));
             match slot.next {
-                Some(next) if slot.width + 0.01 < width && slot.width < range[1] - range[0] => {
+                Some(next)
+                    if slot.width.max(0.0) + 0.01 < width && slot.width < range[1] - range[0]
+                        || slot.is_closed =>
+                {
                     y = next
                 }
                 _ => break slot,
@@ -252,18 +270,24 @@ impl Floats {
         let x = if is_left {
             slot.x
         } else {
-            slot.x + slot.width - width
+            slot.x + slot.width.max(0.0) - width
         };
         let (top, bottom) = (self.origin[1] + y, self.origin[1] + y + height);
+        let edge = match (is_left, width > 0.0) {
+            (true, true) => x + width,
+            (false, true) => x,
+            (true, false) => f32::NEG_INFINITY,
+            (false, false) => f32::INFINITY,
+        };
         self.add(Exclusion {
             is_left,
-            x: self.origin[0] + if is_left { x + width } else { x },
+            x: self.origin[0] + edge,
             top,
             bottom,
             lowest: [bottom; 2],
             is_in_order: true,
             row: Default::default(),
-            area: area.map(|it| (it, width)),
+            area: area.filter(|_| width > 0.0).map(|it| (it, width)),
         });
         [x, y]
     }
@@ -585,10 +609,10 @@ impl Document {
                 || it.is_skipped
                 || it.is_parking
                 || it.splits_layers
-                || input.is_restricted
                 || it.has_floats
                 || self.boxes.has_annotations)
             && input.trim == [false; 2]
+            && !(input.is_restricted && it.children.iter().any(|it| self.boxes[*it].scrolls()))
             && it.style.fixed().traits.contains(Traits::IS_PLAIN_INSIDE)
             && self.environment.quirks == Quirks::None
             && self.boxes.is_unbroken(id)
@@ -621,7 +645,9 @@ impl Document {
             (border, fixed.padding, input.width);
         let inset = border + fixed.padding;
         let definite = match input.height {
-            None => fixed.height.filter(|_| !input.ignores_height),
+            None => fixed
+                .height
+                .filter(|_| !input.ignores_height && !it.is_cell()),
             height => height.filter(|_| !input.is_indefinite),
         };
         let basis = (
@@ -773,7 +799,7 @@ impl Document {
         if at_top || at_bottom {
             output.margins[usize::from(!at_top)] = strut;
         }
-        if self.boxes[id].parent_kind == Kind::Row && self.boxes[id].is_cell() {
+        if self.boxes[id].is_cell() {
             let mut finished = self.finish_block(id, input, inset, false, output, None);
             finished.last_baseline = if finished.baselines[0].is_none() {
                 finished.baselines[1]
@@ -800,7 +826,7 @@ impl Document {
         it.forget_hoisted();
         if it.outside_marker != 0 || !output.escapes.is_empty() {
             let mut finished = output;
-            self.place_outside_marker(id, input, &mut finished);
+            self.place_outside_marker(id, input, None, &mut finished);
             self.boxes[id].layout.size.height = finished.height;
             self.lay_out_positioned(id, &mut finished, None);
             return finished;
@@ -1183,10 +1209,10 @@ impl Document {
                     let slot = floats.slot(range, top, height);
                     let taken = [slot.x - range[0], range[1] - slot.x - slot.width];
                     let beside = [0, 1].map(|side| {
-                        if taken[side] > 0.0 {
-                            (taken[side] - margin.along(0)[side]).max(0.0)
-                        } else {
+                        if taken == [0.0; 2] {
                             0.0
+                        } else {
+                            taken[side].max(margin.along(0)[side]) - margin.along(0)[side]
                         }
                     });
                     let space = basis.0 - beside[0] - beside[1];
@@ -1202,14 +1228,19 @@ impl Document {
                         top,
                     );
                     let needs = laid_out.height.min(column_end - top);
-                    let needed = width
-                        + if style.is_rtl() {
-                            margin.right + beside[1] - taken[1]
-                        } else {
-                            margin.left + beside[0] - taken[0]
-                        };
+                    let mut used = margin;
+                    let (left, free) = (
+                        inset.left
+                            + beside[0]
+                            + self.align_in_flow(&style, child, space, width, &mut used),
+                        slot.width.max(0.0) + 0.01,
+                    );
+                    let overlaps = slot.is_closed
+                        || taken[0] > 0.0 && left + 0.01 < slot.x
+                        || taken[1] > 0.0 && left + width > slot.x + free
+                        || width > free;
                     match slot.next {
-                        Some(next) if needed > slot.width + 0.01 && taken != [0.0; 2] => {
+                        Some(next) if overlaps && taken != [0.0; 2] => {
                             is_cleared |= at_top && floats.has_one_at(y);
                             (top, height) = (next, 0.0);
                         }
@@ -1219,10 +1250,7 @@ impl Document {
                             height = needs
                         }
                         _ => {
-                            x = inset.left
-                                + beside[0]
-                                + self.align_in_flow(&style, child, space, width, &mut margin);
-                            own = laid_out;
+                            (x, margin, own) = (left, used, laid_out);
                             break;
                         }
                     }
@@ -1324,23 +1352,14 @@ impl Document {
         }
         if trims_last_margin {
             strut = Strut::default();
-            for index in (0..self.boxes[id].children.len()).rev() {
-                let child = self.boxes[id].children[index];
-                let it = &mut self.boxes[child];
-                if !it.style.is_out_of_flow() && !it.style.is_floating() {
-                    if !it.cache.collapses_through() {
-                        break;
-                    }
-                    it.layout.location.y = it.layout.location.y.min(y);
-                }
-            }
+            self.trim_last_margins(id, y);
         }
         output.room_for_annotations = if inset.bottom == 0.0 {
             room_for_annotations
         } else {
             0.0
         };
-        let at_bottom = joins && inset.bottom == 0.0 && has_auto_height && !ends_with_clearance;
+        let at_bottom = joins && inset.bottom == 0.0 && !ends_with_clearance;
         if !at_bottom && !at_top {
             let limit = flow.as_ref().map_or(f32::INFINITY, |it| it.end().max(y));
             y = (y + strut.sum()).min(limit);
@@ -1359,15 +1378,52 @@ impl Document {
             .filter(|_| self.boxes[id].is_clamped())
             && let Some([baseline, bottom]) = self.clamp_lines(id, lines.max(1) as usize)
         {
-            (output.intrinsic, output.last_baseline) = (bottom + inset.bottom, Some(baseline));
+            (output.intrinsic, output.baselines[1], output.last_baseline) =
+                (bottom + inset.bottom, Some(baseline), Some(baseline));
         }
-        if at_top || at_bottom {
+        if at_top || at_bottom && has_auto_height {
             output.margins[usize::from(!at_top)] = strut;
         }
         if gathers {
             self.gathered.set(Some((id, contents)));
         }
         self.finish_block(id, input, inset, at_top, output, flow)
+    }
+
+    /// What margins collapse through does not come after `end`. Returns whether something has moved.
+    fn trim_last_margins(&mut self, id: BoxId, end: f32) -> bool {
+        crate::recovery::need_stack();
+        let mut has_moved = false;
+        for index in (0..self.boxes[id].children.len()).rev() {
+            let child = self.boxes[id].children[index];
+            let it = &mut self.boxes[child];
+            if it.style.is_out_of_flow() || it.style.is_floating() {
+                continue;
+            }
+            let collapses_through = it.cache.collapses_through();
+            if collapses_through && it.layout.location.y > end {
+                (it.layout.location.y, has_moved) = (end, true);
+            }
+            let is_open = it.joins_formatting_context
+                && it.has_auto_size(1)
+                && it.layout.border.bottom + it.layout.padding.bottom == 0.0;
+            if is_open
+                && it.kind == Kind::Block
+                && it.mode == WritingMode::HorizontalTb
+                && !it.cache.has_escapees()
+            {
+                let height = it.layout.size.height;
+                if self.trim_last_margins(child, height) {
+                    self.boxes[child].cache.forget_layout();
+                    self.boxes[child].forget_extents();
+                    has_moved = true;
+                }
+            }
+            if !collapses_through {
+                break;
+            }
+        }
+        has_moved
     }
 
     fn finish_block(
@@ -1403,8 +1459,6 @@ impl Document {
         }
         if self.boxes[id].tag == name!("textarea") {
             output.baselines = [None; 2];
-        } else if self.boxes[id].tag == name!("button") && output.baselines[0].is_none() {
-            output.baselines = [Some(output.height - inset.bottom); 2];
         }
         output
     }
@@ -1414,12 +1468,22 @@ impl Document {
         id: BoxId,
         offset: f32,
         output: &mut Output,
+        flow: Option<&mut Flow>,
+    ) {
+        if offset != 0.0 {
+            self.shift_children_from(id, 0, offset, output, flow);
+        }
+    }
+
+    pub(crate) fn shift_children_from(
+        &mut self,
+        id: BoxId,
+        first: usize,
+        offset: f32,
+        output: &mut Output,
         mut flow: Option<&mut Flow>,
     ) {
-        if offset == 0.0 {
-            return;
-        }
-        for index in 0..self.boxes[id].children.len() {
+        for index in first..self.boxes[id].children.len() {
             let child = self.boxes[id].children[index];
             let it = &mut self.boxes[child];
             it.layout.location.y += offset;
@@ -1459,8 +1523,8 @@ impl Document {
 
     /// Returns the baseline and the end of the last line, if there are more.
     fn clamp_lines(&mut self, id: BoxId, count: usize) -> Option<[f32; 2]> {
-        let mut all = Vec::new();
-        self.collect_lines(id, 0.0, &mut all);
+        let (mut all, mode) = (Vec::new(), self.boxes[id].mode);
+        self.collect_lines(id, mode, 0.0, &mut all);
         let total: usize = all.iter().map(|it| it.2).sum();
         let (mut remaining, mut bottom) = (count, None);
         for (lines, y, len) in all {
@@ -1475,21 +1539,38 @@ impl Document {
             inline.lines.visible = (total > count && len >= remaining).then_some(remaining as u32);
             if total > count && (1..=len).contains(&remaining) {
                 let last = &inline.lines.lines[remaining - 1];
-                let (mut end, mut at) = (y + last.y + last.height, self.boxes[lines].parent);
+                let [baseline, end] = match mode.flips_lines() {
+                    true => {
+                        [last.baseline, last.y].map(|it| self.block_extent(lines, mode)[1] - it)
+                    }
+                    false => [last.baseline, last.y + last.height],
+                };
+                let (mut end, mut at) = (y + end, self.boxes[lines].parent);
                 if self.boxes[id].style.rare.box_trim.sides()[1] {
                     end -= crate::lines::trimmed(self, &self.boxes[lines].style, 1, false, last);
                 }
-                let mut top = y - self.boxes[lines].layout.location.y;
+                let mut top = y - self.block_extent(lines, mode)[0];
                 while at != id {
+                    let ([offset, height], turned) =
+                        (self.block_extent(at, mode), self.turn(at, mode));
                     let it = &mut self.boxes[at];
                     end += it.layout.padding.bottom + it.layout.border.bottom;
                     if it.has_auto_size(1) {
                         it.layout.size.height = end - top;
                         it.cache.forget_layout();
+                        if mode.reverses()[1] {
+                            let cut = height - (end - top);
+                            it.layout.location.x += if turned == mode { 0.0 } else { cut };
+                            (0..it.children.len()).for_each(|index| {
+                                let child = self.boxes[at].children[index];
+                                self.boxes[child].layout.location.x -= cut;
+                            });
+                        }
                     }
-                    (top, at) = (top - it.layout.location.y, it.parent);
+                    self.turn(at, turned);
+                    (top, at) = (top - offset, self.boxes[at].parent);
                 }
-                bottom = Some([y + last.baseline, end]);
+                bottom = Some([y + baseline, end]);
                 let truncation = self.truncate(
                     &inline.lines,
                     &inline.clusters,
@@ -1505,16 +1586,32 @@ impl Document {
         bottom
     }
 
-    fn collect_lines(&self, id: BoxId, y: f32, out: &mut Vec<(BoxId, f32, usize)>) {
+    /// Where it starts in its parent and how far it goes, also if it has been made physical.
+    fn block_extent(&self, id: BoxId, mode: WritingMode) -> [f32; 2] {
+        let it = &self.boxes[id];
+        let (at, size) = (it.layout.location, it.layout.size);
+        match it.turned == mode {
+            true => [at.y, size.height],
+            false if mode.reverses()[1] => [
+                self.block_extent(it.parent, mode)[1] - at.x - size.width,
+                size.width,
+            ],
+            false => [at.x, size.width],
+        }
+    }
+
+    fn collect_lines(
+        &self,
+        id: BoxId,
+        mode: WritingMode,
+        y: f32,
+        out: &mut Vec<(BoxId, f32, usize)>,
+    ) {
         for child in &self.boxes[id].children {
-            let it = &self.boxes[*child];
+            let (it, y) = (&self.boxes[*child], y + self.block_extent(*child, mode)[0]);
             match &it.inline {
-                Some(inline) => {
-                    out.push((*child, y + it.layout.location.y, inline.lines.lines.len()))
-                }
-                None if it.joins_formatting_context => {
-                    self.collect_lines(*child, y + it.layout.location.y, out)
-                }
+                Some(inline) => out.push((*child, y, inline.lines.lines.len())),
+                None if it.joins_formatting_context => self.collect_lines(*child, mode, y, out),
                 None => {}
             }
         }

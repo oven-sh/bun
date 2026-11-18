@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 
 use super::decoded::map;
-use super::fonts::{Capabilities, DEFAULT_OBLIQUE_ANGLE, index_of};
+use super::fonts::{Capabilities, DEFAULT_OBLIQUE_ANGLE, Like, index_of};
 use super::sfnt::{self, variations};
 use super::woff::write_sfnt;
 use crate::abi::Rect;
@@ -23,6 +23,9 @@ unsafe extern "C" {
     safe fn bd_font_with_traits(font: &c_void, is_bold: bool, is_italic: bool) -> Option<Object>;
     safe fn bd_font_unscaled(font: &c_void) -> Object;
     safe fn bd_font_sized(font: &c_void, size: f64) -> Object;
+    fn bd_font_of_data(bytes: *const u8, length: usize, index: u32) -> Option<Object>;
+    safe fn bd_font_with_weight(font: &c_void, size: f64, weight: f64) -> Object;
+    safe fn bd_font_metrics(font: &c_void, size: f64, metrics: &mut [f64; 3]);
     fn bd_font_for_text(base: &c_void, text: *const c_char, language: *const c_char) -> Object;
     fn bd_fonts_of_family(family: *const c_char, fonts: *mut Object, capacity: usize) -> usize;
     safe fn bd_font_families() -> *mut c_char;
@@ -126,6 +129,20 @@ impl NativeFont {
                 add_to_path,
             )
         };
+    }
+
+    /// Ascent, descent and leading. Small emoji are drawn larger.
+    pub fn metrics(&self, size: f32) -> [f32; 3] {
+        let mut metrics = [0.; 3];
+        bd_font_metrics(&self.0, size.into(), &mut metrics);
+        metrics.map(|it| it as f32)
+    }
+
+    /// Of a picture, without tracking.
+    pub fn advance(&self, glyph: u32, size: f32) -> f32 {
+        ((bd_glyph_bounds(&bd_font_sized(&self.0, size.into()), glyph as u16).width * 64.).round()
+            / 64.)
+            .round_ties_even()
     }
 
     /// The glyph's origin is at `x` and `y`.
@@ -279,9 +296,10 @@ fn css_weight(font: &Object) -> Option<f32> {
 
 /// What it takes to shape text.
 fn without_glyphs(font: &Object) -> Option<&'static [u8]> {
-    const TABLES: [&[u8; 4]; 19] = [
+    const TABLES: [&[u8; 4]; 24] = [
         b"head", b"hhea", b"maxp", b"OS/2", b"cmap", b"hmtx", b"name", b"post", b"vhea", b"vmtx",
-        b"VORG", b"GDEF", b"GPOS", b"GSUB", b"kern", b"kerx", b"morx", b"ankr", b"feat",
+        b"VORG", b"GDEF", b"GPOS", b"GSUB", b"kern", b"kerx", b"morx", b"ankr", b"feat", b"trak",
+        b"STAT", b"fvar", b"avar", b"HVAR",
     ];
     let table = |tag: &&[u8; 4]| {
         let (mut bytes, mut length) = (std::ptr::null(), 0);
@@ -331,9 +349,11 @@ pub struct Catalog {
     ids: FastMap<String, FamilyId>,
     /// One member of each.
     families: Vec<NativeFont>,
+    alone: Vec<FamilyId>,
     available: Vec<String>,
     mapped: FastMap<PathBuf, Option<&'static [u8]>>,
     opened: FastMap<String, Option<(Font, Capabilities)>>,
+    natives: FastMap<(u64, u32), Option<NativeFont>>,
 }
 
 impl Catalog {
@@ -347,6 +367,17 @@ impl Catalog {
 
     pub fn load(&mut self, font: &Font) -> Option<(&'static [u8], u32)> {
         Some((font.data, font.index))
+    }
+
+    pub fn path(&self, font: &Font) -> Option<&PathBuf> {
+        self.mapped.iter().find_map(|(path, data)| {
+            data.is_some_and(|it| it.as_ptr() == font.data.as_ptr())
+                .then_some(path)
+        })
+    }
+
+    pub fn has(&self, family: FamilyId) -> bool {
+        (family as usize) < self.families.len()
     }
 
     fn file_of(&mut self, font: &Object, name: &str) -> Option<Font> {
@@ -390,6 +421,8 @@ impl Catalog {
                     NativeFont(bd_font_unscaled(native)),
                 );
             }
+            self.natives
+                .insert(Catalog::identity(&font), Some(NativeFont(native.clone())));
             Some((font, capabilities))
         });
         crate::diagnostics::log!(
@@ -462,7 +495,7 @@ impl Catalog {
         } else {
             members_of(&name)
         };
-        if members.is_empty() {
+        if members.is_empty() && !self.alone.contains(&family) {
             let traits = [(true, false), (false, true), (true, true)].into_iter();
             members.extend(
                 traits.filter_map(|(bold, italic)| bd_font_with_traits(&member, bold, italic)),
@@ -478,18 +511,78 @@ impl Catalog {
         fonts.into()
     }
 
+    fn native(
+        &mut self,
+        Like {
+            file,
+            weight,
+            device_scale,
+            ..
+        }: Like,
+    ) -> Option<Object> {
+        const USUAL_SIZE: f32 = 14.;
+        // SAFETY: a slice with its length, which is never freed.
+        let of_data = || {
+            unsafe { bd_font_of_data(file.data.as_ptr(), file.data.len(), file.index) }
+                .map(NativeFont)
+        };
+        let font = &self
+            .natives
+            .entry(Catalog::identity(&Font {
+                data: file.data,
+                index: file.index,
+            }))
+            .or_insert_with(of_data)
+            .as_ref()?
+            .0;
+        Some(if family_name(font).starts_with('.') {
+            bd_font_with_weight(font, (USUAL_SIZE * device_scale).into(), weight.into())
+        } else {
+            font.clone()
+        })
+    }
+
+    /// The members of a hidden family cannot be listed, and this one was chosen for its style.
+    fn only(&mut self, font: Object) -> FamilyId {
+        *self
+            .ids
+            .entry(postscript_name(&font) + "/")
+            .or_insert_with(|| {
+                self.families.push(NativeFont(font));
+                self.alone.push(self.families.len() as u32 - 1);
+                self.families.len() as u32 - 1
+            })
+    }
+
     /// The families that may have the character, the best one first.
-    pub fn fallbacks(&mut self, character: char, color: bool, language: &[u8]) -> Vec<FamilyId> {
+    pub fn fallbacks(
+        &mut self,
+        character: char,
+        color: bool,
+        language: &[u8],
+        like: Option<Like>,
+    ) -> Vec<FamilyId> {
         if color {
             return self.generic("emoji").into_iter().collect();
         }
         let text = terminated(character.to_string());
         let language = terminated(std::str::from_utf8(language).unwrap_or(""));
+        let base = like
+            .and_then(|it| self.native(it))
+            .unwrap_or_else(|| named("Times"));
         // SAFETY: strings.
-        let found =
-            unsafe { bd_font_for_text(&named("Helvetica"), text.as_ptr(), language.as_ptr()) };
+        let found = unsafe { bd_font_for_text(&base, text.as_ptr(), language.as_ptr()) };
         let found = Some(found).filter(|font| !family_name(font).contains("LastResort"));
-        let mut families: Vec<_> = found.map(|font| self.family_of(font)).into_iter().collect();
+        let mut families: Vec<_> = found
+            .map(|font| {
+                if family_name(&font).starts_with('.') {
+                    self.only(font)
+                } else {
+                    self.family_of(font)
+                }
+            })
+            .into_iter()
+            .collect();
         families.extend(SYMBOL_FAMILIES.iter().filter_map(|name| self.family(name)));
         families
     }

@@ -19,8 +19,9 @@ const path = (name: string) => `crate::api::core::${name}`;
 export const Collection = b.interface("Collection", {
   abstract: true,
   rustPath: path("Collection"),
-  size: 96,
+  size: 104,
   internalFields: ["owner"],
+  publishesItems: true,
 });
 
 export const NodeList = b.interface("NodeList", {
@@ -28,8 +29,8 @@ export const NodeList = b.interface("NodeList", {
   indexed: { getter: b.ref("Node"), length: "len" },
   iterable: "values",
   proto: {
-    length: { getter: b.u32, ...heap },
-    item: { args: { index }, returns: b.ref("Node").nullable, rustName: "indexed_get" },
+    length: { getter: b.u32, countsItems: true, onlyReads: true, ...heap },
+    item: { args: { index }, returns: b.ref("Node").nullable, rustName: "indexed_get", onlyReads: true },
   },
 });
 
@@ -38,8 +39,8 @@ export const HTMLCollection = b.interface("HTMLCollection", {
   indexed: { getter: b.ref("Node"), length: "len" },
   named: { getter: b.any, unenumerable: true, ...heap },
   proto: {
-    length: { getter: b.u32, ...heap },
-    item: { args: { index }, returns: b.ref("Node").nullable, rustName: "indexed_get" },
+    length: { getter: b.u32, countsItems: true, onlyReads: true, ...heap },
+    item: { args: { index }, returns: b.ref("Node").nullable, rustName: "indexed_get", onlyReads: true },
     namedItem: { args: { name: string.atom }, returns: b.any, ...heap },
   },
 });

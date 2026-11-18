@@ -106,6 +106,7 @@ extern "C" EncodedJSValue Bun__DOM__textOfTrustedScript(JSGlobalObject*, Encoded
 extern "C" BunString Bun__Desktop__createObjectURL(JSGlobalObject*, void* blob);
 extern "C" void Bun__Desktop__revokeObjectURL(JSGlobalObject*, const BunString*);
 extern "C" BunString Bun__WebRealm__originOf(const BunString*);
+extern "C" void Bun__enablePrefault();
 extern "C" bool Bun__WebRealm__allowsEval(void* realm, const BunString* code);
 
 static void* stateOf(JSGlobalObject* realm) { return uncheckedDowncast<WebGlobalObject>(realm)->realm(); }
@@ -561,14 +562,15 @@ static const GlobalObjectMethodTable& desktopRealmMethodTable()
     return table;
 }
 
-static WebGlobalObject* createRealm(JSGlobalObject* globalObject, WebGlobalObject::Kind kind, bool isIsolated, JSGlobalProxy* proxy)
+static WebGlobalObject* createRealm(JSGlobalObject* globalObject, WebGlobalObject::Kind kind, bool isIsolated, bool runsProgram, JSGlobalProxy* proxy)
 {
     VM& vm = globalObject->vm();
-    bool runsCompiledProgram = vm.hasCompiledCode() && compiledProgramRunsInSeveralRealmsAtOnce();
+    bool runsCompiledProgram = runsProgram && vm.hasCompiledCode() && compiledProgramRunsInSeveralRealmsAtOnce();
     DeferGC deferGC(vm);
     auto& methodTable = runsCompiledProgram
         ? (isIsolated ? desktopRealmMethodTable<true, true>() : desktopRealmMethodTable<true, false>())
         : (isIsolated ? desktopRealmMethodTable<false, true>() : desktopRealmMethodTable<false, false>());
+    Bun__enablePrefault();
     auto* realm = WebGlobalObject::create(vm, kind, &methodTable);
     if (proxy) {
         proxy->setTarget(vm, realm);
@@ -576,7 +578,7 @@ static WebGlobalObject* createRealm(JSGlobalObject* globalObject, WebGlobalObjec
         realm->addressOfGlobalThis()->set(vm, realm, proxy);
     }
 #if ENABLE(AOT)
-    if (runsCompiledProgram) {
+    if (vm.hasCompiledCode()) {
         AOT::acceptForeignBinaryData(globalObject);
         AOT::acceptForeignBinaryData(realm);
     }
@@ -594,7 +596,7 @@ static void setUpMembers(WebGlobalObject* realm)
 extern "C" void Bun__WebRealm__adoptClient(void*, uint32_t client);
 
 // `page` is for an isolated world, `window` the handle of the object to take over. Null if it throws.
-extern "C" JSGlobalObject* Bun__DesktopRealm__createWindow(JSGlobalObject* globalObject, uint32_t client, bool isSecure, bool isIsolated, WebGlobalObject::NodeGlobals nodeGlobals, EncodedJSValue window, JSGlobalObject* page)
+extern "C" JSGlobalObject* Bun__DesktopRealm__createWindow(JSGlobalObject* globalObject, uint32_t client, bool isSecure, bool isIsolated, bool runsProgram, WebGlobalObject::NodeGlobals nodeGlobals, EncodedJSValue window, JSGlobalObject* page)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -603,7 +605,7 @@ extern "C" JSGlobalObject* Bun__DesktopRealm__createWindow(JSGlobalObject* globa
         throwStackOverflowError(globalObject, scope);
         return nullptr;
     }
-    auto* realm = createRealm(globalObject, { WebGlobalObject::Scope::Window, isSecure, isIsolated, nodeGlobals, !!page }, isIsolated, dynamicDowncast<JSGlobalProxy>(RealmBridge::peek(JSValue::decode(window))));
+    auto* realm = createRealm(globalObject, { WebGlobalObject::Scope::Window, isSecure, isIsolated, nodeGlobals, !!page }, isIsolated, runsProgram, dynamicDowncast<JSGlobalProxy>(RealmBridge::peek(JSValue::decode(window))));
     Bun__WebRealm__adoptClient(realm->realm(), client);
     if (page) {
         IsolatedWorld::enter(realm, page);
@@ -629,9 +631,9 @@ extern "C" EncodedJSValue Bun__DesktopRealm__members(WebGlobalObject* realm)
     return JSValue::encode(realm->members());
 }
 
-extern "C" JSGlobalObject* Bun__DesktopRealm__createForWorker(JSGlobalObject* globalObject, WebGlobalObject::Scope scope, bool isSecureContext, bool isIsolated)
+extern "C" JSGlobalObject* Bun__DesktopRealm__createForWorker(JSGlobalObject* globalObject, WebGlobalObject::Scope scope, bool isSecureContext, bool isIsolated, bool runsProgram)
 {
-    return createRealm(globalObject, { scope, isSecureContext, isIsolated, {}, false }, isIsolated, nullptr);
+    return createRealm(globalObject, { scope, isSecureContext, isIsolated, {}, false }, isIsolated, runsProgram, nullptr);
 }
 
 extern "C" void Bun__DesktopRealm__setUpWorker(WebGlobalObject* realm)
@@ -818,7 +820,7 @@ extern "C" EncodedJSValue Bun__DesktopRealm__inject(JSGlobalObject* realm, Encod
     return JSValue::encode(result);
 }
 
-extern "C" EncodedJSValue Bun__DesktopRealm__compileHandler(JSGlobalObject* realm, const EncodedJSValue* strings, const EncodedJSValue* scopes)
+extern "C" EncodedJSValue Bun__DesktopRealm__compileHandler(JSGlobalObject* realm, StringImpl* const* texts, const EncodedJSValue* scopes)
 {
     VM& vm = realm->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -826,18 +828,15 @@ extern "C" EncodedJSValue Bun__DesktopRealm__compileHandler(JSGlobalObject* real
         throwException(realm, scope, createEvalError(realm, realm->evalDisabledErrorMessage()));
         return {};
     }
-    std::array<String, 5> texts;
-    for (size_t i = 0; i < texts.size(); i++) {
-        texts[i] = JSValue::decode(strings[i]).toWTFString(realm);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-    auto& [name, parameters, body, url, base] = texts;
+    String name { texts[0] }, parameters { texts[1] }, body { texts[2] }, url { texts[3] }, base { texts[4] };
+    auto* last = realm->m_executableForCachedFunctionExecutableForFunctionConstructor.get();
+    auto origin = last && last->sourceOrigin().string() == base && !last->sourceOrigin().fetcher() ? last->sourceOrigin() : SourceOrigin { URL({}, base) };
     String program = tryMakeString("function "_s, name, '(', parameters, ") {\n"_s, body, "\n}"_s);
     if (!program) {
         throwOutOfMemoryError(realm, scope);
         return {};
     }
-    JSObject* function = constructFunctionSkippingEvalEnabledCheck(realm, WTF::move(program), TaintedByWithScopeLexicallyScopedFeature, Identifier::fromString(vm, name), SourceOrigin { URL({}, base) }, url, SourceTaintedOrigin::Untainted, TextPosition());
+    JSObject* function = constructFunctionSkippingEvalEnabledCheck(realm, WTF::move(program), TaintedByWithScopeLexicallyScopedFeature, Identifier::fromString(vm, name), origin, url, SourceTaintedOrigin::Untainted, TextPosition());
     RETURN_IF_EXCEPTION(scope, {});
     auto* handler = uncheckedDowncast<JSFunction>(function);
     for (EncodedJSValue it : std::span { scopes, 3 }) {
@@ -894,6 +893,8 @@ extern "C" EncodedJSValue Bun__exchangeAsyncContext(JSGlobalObject* globalObject
 static EncodedJSValue runCompiled(JSGlobalObject* globalObject, const String& path, bool isSynchronous)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (!globalObject->globalObjectMethodTable()->moduleHost) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, "This page cannot run compiled scripts"_s);
     auto* realm = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     JSValue result = isSynchronous ? loadCompiledModuleNamespace(realm, path) : JSValue(importCompiledModule(realm, path, nullptr, -1));
     RETURN_IF_EXCEPTION(scope, {});

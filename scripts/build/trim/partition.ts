@@ -1,7 +1,7 @@
 import { deriveFeatureEdges } from "./edges.ts";
 import { isUnwindRecordOf, onlyReturns, sortedUnique } from "./entry-points.ts";
 import { isOutsideCompiledPrograms } from "./features.ts";
-import { findEdge, propagateFeatureSets, reach, type SectionGraph } from "./graph.ts";
+import { findEdge, madeByLinker, propagateFeatureSets, reach, type SectionGraph } from "./graph.ts";
 import {
   EdgeKind,
   featureIndexLimit,
@@ -289,7 +289,8 @@ function joinSmallSets(
     if (superset !== undefined) joinedSet[set] = superset.set;
   }
   // removed_feature_at answers by address, so a soft entry has to leave as soon as its own features do.
-  return exactSetOf.map((set, node) => (isSoftEntry[node] !== 0 ? set : joinedSet[set]!));
+  const keepsItsSet = (node: number) => isSoftEntry[node] !== 0 || graph.object[node] === madeByLinker;
+  return exactSetOf.map((set, node) => (keepsItsSet(node) ? set : joinedSet[set]!));
 }
 
 function orderGroups(

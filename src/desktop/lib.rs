@@ -16,6 +16,11 @@ mod clipboard;
 mod command_line;
 mod contents;
 mod cover;
+#[cfg_attr(
+    not(any(target_os = "linux", target_os = "macos")),
+    path = "no_crash_reporter.rs"
+)]
+mod crash_reporter;
 mod devtools;
 mod dialog;
 mod drawn_menus;
@@ -33,9 +38,9 @@ mod paths;
 mod ports;
 mod power;
 mod preferences;
-mod preload;
 mod process;
 mod realm;
+mod renderer;
 mod roles;
 mod safe_storage;
 mod screen;

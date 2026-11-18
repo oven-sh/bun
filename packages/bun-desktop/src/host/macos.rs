@@ -136,7 +136,7 @@ pub fn wait(
         return false;
     }
     if !is_launched {
-        return unix::poll(&unix::WAKE, source, timeout());
+        return unix::poll(&unix::WAKE, source, &mut Vec::new(), timeout());
     }
     window::layers::flush();
     let timeout = timeout();
@@ -149,5 +149,5 @@ pub fn wait(
 
 /// On the thread that runs JavaScript, if that is not the UI's.
 pub fn wait_for_events(source: Option<isize>, timeout: Option<Duration>) {
-    unix::poll(&unix::WAKE, source, timeout);
+    unix::poll(&unix::WAKE, source, &mut Vec::new(), timeout);
 }

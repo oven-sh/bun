@@ -167,12 +167,14 @@ fn damage(id: Id) -> Damage {
         | Id::ColumnSpan
         | Id::LineClamp
         | Id::BoxOrient
+        | Id::WebkitBoxOrdinalGroup
         | Id::WritingMode => Damage::PARENT | Damage::CONTENTS | Damage::LAYOUT | Damage::COUNTERS,
         Id::ScrollMarkerGroup => Damage::PARENT | Damage::CONTENTS | Damage::LAYOUT,
         Id::Content | Id::ListStyleType | Id::ListStyleImage | Id::ListStylePosition => {
             Damage::PARENT | Damage::CONTENTS | Damage::GENERATED
         }
         Id::CounterReset | Id::CounterIncrement | Id::CounterSet | Id::Quotes => Damage::COUNTERS,
+        Id::Locale => Damage::CONTENTS | Damage::LAYOUT | Damage::COUNTERS,
         Id::UnicodeBidi | Id::TextOverflow => Damage::CONTENTS | Damage::LAYOUT,
         Id::ScrollbarColor
         | Id::ContentVisibility
@@ -183,7 +185,9 @@ fn damage(id: Id) -> Damage {
         | Id::ScrollSnapType
         | Id::ScrollSnapAlign
         | Id::ScrollSnapStop
-        | Id::ScrollInitialTarget => Damage::LAYOUT,
+        | Id::ScrollInitialTarget
+        | Id::WebkitBoxDirection
+        | Id::WebkitBoxPack => Damage::LAYOUT,
         _ if is_in(Id::ScrollMarginTop, Id::ScrollPaddingLeft) => Damage::LAYOUT,
         Id::Color => Damage::COLOR | Damage::BORDER_COLOR,
         Id::BackgroundColor => Damage::BOX,
@@ -572,10 +576,11 @@ impl Document {
         }
         loop {
             while self.styles.dependencies.get_mut().has_pending() {
-                self.styles
-                    .dependencies
-                    .get_mut()
-                    .flush(&self.tree, &self.styles.has_results);
+                self.styles.dependencies.get_mut().flush(
+                    &self.tree,
+                    &self.styles.has_results,
+                    &self.styles.scopes,
+                );
             }
             if !self.tree[DOCUMENT].has(Flags::DIRTY_DESCENDANTS) {
                 break;
@@ -657,10 +662,11 @@ impl Document {
             return false;
         }
         while self.styles.dependencies.get_mut().has_pending() {
-            self.styles
-                .dependencies
-                .get_mut()
-                .flush(&self.tree, &self.styles.has_results);
+            self.styles.dependencies.get_mut().flush(
+                &self.tree,
+                &self.styles.has_results,
+                &self.styles.scopes,
+            );
         }
         true
     }
@@ -804,7 +810,7 @@ impl Document {
             rules: Some(rules),
             inline_style: Some(block),
             namespace: Namespace::Html,
-            generated_by_rules: Some(generated),
+            generated_by_rules,
             ..
         }) = self.tree.element(id)
         else {
@@ -825,7 +831,7 @@ impl Document {
         }
         let Some(mut it) = self
             .amendments(id, rules, style, parent)
-            .filter(|it| it.customs.is_none() || *generated == 0)
+            .filter(|it| it.customs.is_none() || *generated_by_rules == Some(0))
         else {
             return false;
         };
@@ -844,6 +850,58 @@ impl Document {
             customs.as_ref(),
             traversal,
         );
+        true
+    }
+
+    /// For an element whose `transform` attribute has changed. Whether that is all that has to be done.
+    pub(crate) fn move_svg_element(&mut self, id: NodeId) -> bool {
+        let Some(
+            element @ Element {
+                style: Some(style),
+                base_style: Some(base),
+                rules: Some(rules),
+                ..
+            },
+        ) = self.tree.element(id)
+        else {
+            self.tree.mark_style(id, Flags::RECASCADE);
+            return false;
+        };
+        let is_simple = element.has_moved
+            && !self.tree[id].has(Flags::STYLE_DIRTY | Flags::ANIMATED)
+            && Rc::ptr_eq(style, base)
+            && style.is_inert()
+            && !style.deps.contains(Deps::REVERTED)
+            && !style.effects.transform.0.is_empty()
+            && self.tree[id].layout_box == 0
+            && self.is_set_by_hint(rules, style, Id::Transform);
+        let matrix = is_simple
+            .then(|| crate::svg::transform_attribute(element))
+            .flatten()
+            .filter(|it| it.iter().all(|it| it.is_finite()));
+        let value = matrix
+            .map(|it| Value::Transform(crate::transform::Transforms::of_matrix(it, style.zoom)));
+        let Some(element) = self.tree.element_to_style(id) else {
+            return false;
+        };
+        let (Some(value), Some(style)) = (value, &mut element.style) else {
+            element.rare_mut().has_moved = true;
+            self.tree.mark_style(id, Flags::RECASCADE);
+            return false;
+        };
+        element.base_style = None;
+        Rc::make_mut(style).amend(&[value], Deps::empty());
+        element.base_style = Some(Rc::clone(style));
+        for child in self.rendered_children(id).filter(|it| {
+            self.tree
+                .style(*it)
+                .is_none_or(|it| it.deps.contains(Deps::PARENT))
+        }) {
+            self.tree
+                .element(child)
+                .into_iter()
+                .for_each(|_| self.tree.mark_style(child, Flags::RECASCADE));
+        }
         true
     }
 
@@ -948,6 +1006,7 @@ impl Document {
         parent: &Style,
         edit: impl FnOnce(&mut Style),
     ) -> Option<Rc<Style>> {
+        self.matrices.forget();
         own.into_iter()
             .for_each(|it| self.boxes[it].style = Rc::clone(&self.styles.initial));
         let element = self.tree.element_to_style(id)?;
@@ -1143,6 +1202,7 @@ impl Document {
         if element.is_generated() && element.pseudo == Pseudo::None {
             return;
         }
+        let is_input = element.tag == name!("input");
         let looks = if element.rules.is_none() {
             self.looks_of(id, element, parent, &traversal.bloom)
         } else {
@@ -1157,6 +1217,9 @@ impl Document {
                     .is_some_and(|it| it.generated_by_rules > Some(0))
             {
                 self.update_generated(id, &new, true, traversal);
+            }
+            if is_input {
+                self.provide_parts(id);
             }
             return self.restyle_children(
                 id,
@@ -1211,7 +1274,7 @@ impl Document {
                 }
             }
         };
-        debug_assert!(!rematches || Rc::ptr_eq(&rules, &self.match_rules(id, None, false)));
+        debug_assert!(!rematches || rules.has_same_winners(&self.match_rules(id, None, false)));
         let is_ordinary = old.is_some()
             && !change.intersects(Change::RECASCADE_ALL | Change::DISPLAY)
             && self.is_ordinary(id, flags, rematches);
@@ -1423,10 +1486,11 @@ impl Document {
             element.generated_by_rules.take_if(|_| rematches);
         }
 
-        if old
-            .as_ref()
-            .is_some_and(|it| !Rc::ptr_eq(it, &new) || change.contains(Change::RECASCADE_ALL))
-        {
+        if old.as_ref().is_some_and(|it| {
+            !Rc::ptr_eq(it, &new)
+                || change.contains(Change::RECASCADE_ALL)
+                || flags.contains(Flags::REMATCH_SUBTREE)
+        }) {
             self.container_changed(id, false);
         }
         if rematches && old.is_some() {
@@ -1526,6 +1590,9 @@ impl Document {
             });
         }
         let is_new = old.is_none_or(|it| it.display() == Display::None);
+        if is_input && is_new {
+            self.provide_parts(id);
+        }
         self.restyle_children(
             id,
             &new,
@@ -2287,6 +2354,7 @@ impl Document {
 
     fn set_box_style(&mut self, id: NodeId, new: &Rc<Style>) {
         if let Some(own) = self.own_box(id) {
+            self.matrices.forget();
             self.boxes[own].style = if self.boxes[own].parent == crate::boxes::VIEWPORT {
                 self.used_style(id, new)
             } else {
@@ -2302,6 +2370,16 @@ impl Document {
         damage: Damage,
         change: Change,
     ) {
+        if old.display() == Display::Inline
+            && old.leaves_no_trace()
+            && !new.leaves_no_trace()
+            && self.boxes[self.tree[id].layout_box]
+                .inline
+                .as_ref()
+                .is_some_and(|it| it.has_text_in_place_of(id))
+        {
+            self.mark_parent_rebuild(id);
+        }
         if self
             .tree
             .element(id)
@@ -2323,13 +2401,22 @@ impl Document {
         if !(old.paint.decoration_line.is_empty() && new.paint.decoration_line.is_empty()) {
             return self.repaint_subtree(id);
         }
-        let Some(own) = self
-            .own_box(id)
-            .filter(|it| matches!(self.boxes[*it].kind, Kind::Block | Kind::Flex | Kind::Grid))
-        else {
+        let is_bare = || {
+            (Damage::COLOR | Damage::BORDER_COLOR).contains(damage)
+                && old.is_bare()
+                && new.is_bare()
+        };
+        let Some(own) = self.own_box(id).filter(|it| match self.boxes[*it].kind {
+            Kind::Block | Kind::Flex | Kind::Grid => true,
+            Kind::Table | Kind::RowGroup | Kind::Row => {
+                is_bare() && new.text.border_collapse != BorderCollapse::Collapse
+            }
+            _ => false,
+        }) else {
             return self.repaint(id);
         };
-        if (Damage::LOOKS - Damage::PAINT).contains(damage) {
+        if !self.boxes[own].has_anonymous_children && is_bare() && !self.uses_color_elsewhere(own) {
+        } else if (Damage::LOOKS - Damage::PAINT).contains(damage) {
             let mut what = Retouch::empty();
             what.set(
                 Retouch::DECORATIONS,
@@ -2341,7 +2428,7 @@ impl Document {
             self.retouch(own, what);
         } else if (Damage::LOOKS | Damage::INK).contains(damage)
             && !damage.contains(Damage::PAINT)
-            && !change.contains(Change::INHERITED)
+            && !(change.contains(Change::INHERITED) && self.boxes[own].has_anonymous_children)
         {
             self.repaint_box(own);
         } else {
@@ -2504,7 +2591,7 @@ impl Document {
             self.boxes.mark_layout(own);
             self.needs_layout = true;
         }
-        if total == Damage::INK && Rc::ptr_eq(old, new) {
+        if total - (Damage::BOX | Damage::OPACITY) == Damage::INK && Rc::ptr_eq(old, new) {
             self.boxes.mark_moved(own);
         } else if total.contains(Damage::INK) {
             if !Rc::ptr_eq(&old.ink, &new.ink) {

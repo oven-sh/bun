@@ -4,6 +4,7 @@ use super::graph;
 use super::raster::{
     Clip, IntRect, Layer, Paint, average_scale, demultiply, multiply, premultiply,
 };
+use super::scene::Frame;
 use crate::abi::Filter;
 use crate::gfx::Transform;
 
@@ -66,9 +67,19 @@ fn color_matrix(filter: Filter) -> Option<[[f32; 4]; 3]> {
 }
 
 /// The result is right in `wanted`, and `layer` may get other bounds.
-pub fn apply(layer: &mut Layer, filters: &[Filter], matrix: &Transform, wanted: IntRect) {
+pub fn apply(
+    layer: &mut Layer,
+    filters: &[Filter],
+    matrix: &Transform,
+    wanted: IntRect,
+    frame: &Frame,
+) {
     let scale = average_scale(matrix);
-    for (index, filter) in filters.iter().enumerate() {
+    for (index, filter) in filters
+        .iter()
+        .enumerate()
+        .take_while(|_| !frame.is_overdue())
+    {
         let needed = wanted.outset(filter_reach(&filters[index + 1..], matrix));
         let nothing = || {
             Layer::new(IntRect::new(

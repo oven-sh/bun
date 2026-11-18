@@ -25,6 +25,7 @@ ${name.slice(2)}
 -webkit-box-orient
 -webkit-box-pack
 -webkit-box-reflect
+-webkit-calendar-picker-indicator
 -webkit-color-swatch-wrapper
 -webkit-datetime-edit-fields-wrapper
 -webkit-font-smoothing

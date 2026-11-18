@@ -1,5 +1,5 @@
 import { deserialize, serialize } from "bun:jsc";
-import { openSync } from "fs";
+import { existsSync, openSync, readFileSync } from "fs";
 import { bunEnv, bunExe, tls } from "harness";
 import { createPrivateKey, createPublicKey, createSecretKey, KeyObject, X509Certificate } from "node:crypto";
 import { BlockList } from "node:net";
@@ -617,6 +617,27 @@ function createBlob(arr: number[]): Blob {
   return new Blob([view]);
 }
 
+const hugePages = "/sys/kernel/mm/transparent_hugepage/enabled";
+const hugePagesAreAskedFor = existsSync(hugePages) && readFileSync(hugePages, "utf8").includes("[madvise]");
+test.skipIf(!hugePagesAreAskedFor)("a large copy does not ask for huge pages", async () => {
+  const script = `
+    const buffer = new Uint8Array(16 << 20).fill(1);
+    const kept = [structuredClone(buffer), structuredClone({ buffer, map: new Map() }).buffer];
+    const rollup = require("fs").readFileSync("/proc/self/smaps_rollup", "utf8");
+    console.log(kept.map(it => it.at(-1)).join(), /AnonHugePages: +(\\d+)/.exec(rollup)[1]);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "inherit" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("1,1 0\n");
+  expect(exitCode).toBe(0);
+});
+
+test("serialize() writes each string once", () => {
+  const texts = Array.from({ length: 1000 }, (_, i) => `text ${i};`);
+  const bytes = Buffer.from(serialize([texts, texts.toReversed()])).toString("latin1");
+  expect(bytes.split("text ").length - 1).toBe(texts.length);
+});
+
 describe("structuredClone with ArrayBuffer larger than serialization buffer capacity", () => {
   // The serialization buffer is a WTF::Vector<uint8_t> capped at 2GiB. Cloning an
   // ArrayBuffer at or above that size must throw DataCloneError instead of aborting.
@@ -629,6 +650,7 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
     ["SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31)", "SHARED"],
     ["growable SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31, { maxByteLength: 2 ** 31 + 1 })", "SHARED"],
     ["Uint8Array", "new Uint8Array(2 ** 31)", "DataCloneError"],
+    ["several ArrayBuffers together", "[1, 2, 3].map(() => new ArrayBuffer(3 * 2 ** 28))", "DataCloneError"],
   ] as const) {
     test(label, async () => {
       const script = `
@@ -1373,4 +1395,99 @@ test("objects of a shape that was cloned before", () => {
   const shared = Array.from({ length: 40 }, (_, id) => ({ id }));
   const [first, second] = structuredClone([shared, shared.toReversed()]);
   expect(first.map((it, index) => it === second[39 - index])).toEqual(shared.map(() => true));
+});
+
+describe.each([structuredClone, jscSerializeRoundtrip])("graphs of plain objects", clone => {
+  test("getters that change what is being cloned", () => {
+    const object: any = {
+      a: {
+        get first() {
+          delete object.b;
+          object.c = 4;
+          object.added = 5;
+          return 1;
+        },
+      },
+      b: 2,
+      c: 3,
+    };
+    expect(clone(object)).toStrictEqual({ a: { first: 1 }, c: 4 });
+
+    const array: any = [
+      {
+        get first() {
+          array.length = 2;
+          array[1] = "changed";
+          array.named = { a: 1 };
+          return 1;
+        },
+      },
+      2,
+      3,
+    ];
+    const copy = clone(array);
+    expect([copy.length, Object.entries(copy)]).toEqual([
+      3,
+      [
+        ["0", { first: 1 }],
+        ["1", "changed"],
+        ["named", { a: 1 }],
+      ],
+    ]);
+  });
+
+  test.each([3, 20, 300, 70_000])("references among %d objects", count => {
+    const nodes = Array.from({ length: count }, (_, i): any => ({ i, text: "text " + (i % 1000), list: [i] }));
+    nodes.forEach((it, i) => (it.other = nodes[i >> 1]));
+    const copy = clone({ nodes, map: new Map([[nodes[1], nodes]]) });
+    expect(copy.nodes.every((it, i) => it.i === i && it.other === copy.nodes[i >> 1])).toBe(true);
+    expect(copy.nodes.every((it, i) => it.text === "text " + (i % 1000) && it.list[0] === i)).toBe(true);
+    expect(copy.map.get(copy.nodes[1])).toBe(copy.nodes);
+  });
+
+  test("strings of all kinds, many times", () => {
+    const make = (i: number) => [String(i), "é" + i, "\u{1f600}" + i, String(i).padEnd(33), "", String(i % 7)];
+    const rows = Array.from({ length: 12_000 }, (_, i) => ({ row: make(i), ["key" + (i % 50)]: i }));
+    expect(clone(rows)).toEqual(rows);
+  });
+
+  test("deep, and of mixed kinds", () => {
+    let value: any = "end";
+    for (let i = 0; i < 5000; i++) value = [[value], { value }, new Map([[1, value]]), new Set([value])][i % 4];
+    let depth = 0;
+    for (value = clone(value); value !== "end"; depth++)
+      value = value instanceof Map ? value.get(1) : value instanceof Set ? [...value][0] : (value.value ?? value[0]);
+    expect(depth).toBe(5000);
+  });
+
+  test("elements of all kinds, holes, and more members than fit in an object", () => {
+    const wide = (i: number) => Object.fromEntries(Array.from({ length: 80 }, (_, k) => ["k" + k, i + k]));
+    const value = [[1, 2.5], [1, "a"], [1.5, 1], [, 1], [1, , {}], [undefined], [], new Array(3), wide(0), wide(1)];
+    expect(clone(value)).toStrictEqual(value);
+    const named = clone([JSON.parse('{"__proto__":1,"0":2}'), JSON.parse('{"__proto__":3,"0":4}')]);
+    expect(named.map(Object.entries).flat()).toEqual([
+      ["0", 2],
+      ["__proto__", 1],
+      ["0", 4],
+      ["__proto__", 3],
+    ]);
+  });
+
+  test("buffers and views", () => {
+    const { buffer } = new Uint8Array(1 << 20).fill(7);
+    const whole = new Uint16Array(buffer);
+    const copy = clone({ whole, buffer, again: whole, own: new Float64Array([1.5]), node: Buffer.alloc(9000, 1) });
+    expect([copy.whole.buffer === copy.buffer, copy.again === copy.whole, copy.buffer === buffer]).toEqual([
+      true,
+      true,
+      false,
+    ]);
+    expect([copy.whole, copy.own, copy.node]).toStrictEqual([
+      whole,
+      new Float64Array([1.5]),
+      new Uint8Array(9000).fill(1),
+    ]);
+    const { part } = clone({ part: new Uint8Array(buffer, 8, 4) });
+    expect([part.byteOffset, part.length, part.buffer.byteLength]).toEqual([8, 4, 1 << 20]);
+  });
 });

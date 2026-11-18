@@ -211,7 +211,6 @@ ul {
   display: inline-block !important;
   unicode-bidi: isolate;
   font-variant-numeric: tabular-nums;
-  white-space: pre;
   text-transform: none;
   text-indent: 0 !important;
   text-align: start !important;
@@ -991,6 +990,11 @@ input::-internal-date-picker-days {
 input::-internal-date-picker-months {
   display: grid;
   grid: auto-flow 40px / repeat(4, 49px);
+}
+input::-internal-date-picker-week {
+  display: grid;
+  grid: auto / subgrid;
+  grid-column: 1 / -1;
 }
 input::-internal-date-picker-column {
   width: 48px;

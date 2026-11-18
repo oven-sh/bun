@@ -105,7 +105,7 @@ pub enum Baseline {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct TextStyle {
     pub font: u32,
     pub size: f32,
@@ -155,6 +155,7 @@ pub enum Command {
         id: u32,
         size: [u32; 2],
         is_opaque: bool,
+        is_read_often: bool,
     },
     Snapshot(Snapshot),
     Release(u32),

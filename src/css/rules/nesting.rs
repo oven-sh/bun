@@ -12,13 +12,13 @@ use bun_alloc::ArenaPtr;
 /// A [@nest](https://www.w3.org/TR/css-nesting-1/#at-nest) rule.
 pub struct NestingRule<'bump, R> {
     /// The style rule that defines the selector and declarations for the `@nest` rule.
-    pub style: StyleRule<'bump, R>,
+    pub(crate) style: StyleRule<'bump, R>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl<'bump, R> NestingRule<'bump, R> {
-    pub fn to_css(
+    pub(crate) fn to_css(
         &self,
         dest: &mut Printer,
         ctx: Option<&StyleContext<'_, 'bump>>,
@@ -33,7 +33,7 @@ impl<'bump, R> NestingRule<'bump, R> {
 }
 
 impl<'bump, R> NestingRule<'bump, R> {
-    pub fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: crate::generics::DeepClone<'bump>,
     {
@@ -46,8 +46,8 @@ impl<'bump, R> NestingRule<'bump, R> {
 
 /// A [nested declarations rule](https://drafts.csswg.org/css-nesting-1/#nested-declarations-rule).
 pub struct NestedDeclarationsRule<'bump> {
-    pub declarations: DeclarationBlock<'bump>,
-    pub loc: Location,
+    pub(crate) declarations: DeclarationBlock<'bump>,
+    pub(crate) loc: Location,
 }
 
 /// Where nesting is compiled away, prints the selectors of the enclosing style rule, for the
@@ -67,7 +67,11 @@ pub(super) fn enclosing_selectors_to_css(
 }
 
 impl<'bump> NestedDeclarationsRule<'bump> {
-    pub fn to_css(&self, dest: &mut Printer, ctx: Option<&StyleContext>) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(
+        &self,
+        dest: &mut Printer,
+        ctx: Option<&StyleContext>,
+    ) -> Result<(), PrintErr> {
         if enclosing_selectors_to_css(dest, ctx)? {
             return super::decl_block_to_css(&self.declarations, dest);
         }
@@ -98,7 +102,7 @@ impl<'bump> NestedDeclarationsRule<'bump> {
     }
 
     /// Returns the `:dir()` rules of the declarations, then their other fallback rules.
-    pub fn minify<R>(
+    pub(crate) fn minify<R>(
         &mut self,
         context: &mut MinifyContext<'_, 'bump>,
         enclosing: Option<&mut PropertyHandlerContext<'_, 'bump>>,
@@ -150,7 +154,7 @@ impl<'bump> NestedDeclarationsRule<'bump> {
         Ok((dir_rules.v, fallbacks))
     }
 
-    pub fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         Self {
             declarations: super::dc::decl_block(&self.declarations, bump),
             loc: self.loc,

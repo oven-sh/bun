@@ -336,6 +336,7 @@ impl Rule {
             condition,
             Parser {
                 namespaces: &self.settings.namespaces.borrow(),
+                is_quirky: self.settings.is_quirky.get(),
                 ..Parser::default()
             },
         ) == Some(true)

@@ -9,7 +9,7 @@ use bun_web::headers::{
 };
 use bun_web::mime::{self, Mime};
 use bun_web::net::NetError;
-use bun_web::net::body::{Chunk, Data, FOR_DATA, Share};
+use bun_web::net::body::{Chunk, Data, FOR_DATA, Share, Source as _};
 use bun_web::net::fetch::Controller;
 use bun_web::net::response::{Head, Response as Fetched};
 use bun_web::permissions_policy::Feature;
@@ -103,16 +103,16 @@ struct Running {
 impl Running {
     /// `None` if it is over.
     #[optimize(size)]
-    async fn step(
+    async fn step<T: 'static>(
         &self,
-        steps: impl for<'a> FnOnce(Cx<'_, 'a>, &'a XMLHttpRequest) + 'static,
-    ) -> Option<()> {
+        steps: impl for<'a> FnOnce(Cx<'_, 'a>, &'a XMLHttpRequest) -> T + 'static,
+    ) -> Option<T> {
         let generation = self.generation;
         let goes_on = self.kept.in_task(move |cx, this| {
             let this = XMLHttpRequest::from_js(&cx.heap, this.to_js())
                 .filter(|it| it.generation.get() == generation)?;
-            steps(cx, this);
-            (this.generation.get() == generation).then_some(())
+            let result = steps(cx, this);
+            (this.generation.get() == generation).then_some(result)
         });
         goes_on.await?
     }
@@ -153,26 +153,39 @@ impl Running {
         );
         self.step(move |cx, this| this.start_response(cx, &head, length))
             .await?;
-        let (mut received, mut told, mut last, mut share) =
-            (0, 0, f64::NEG_INFINITY, Share::of(&FOR_DATA));
+        let (mut received, mut told, mut last, mut share, mut is_whole) =
+            (0, 0, f64::NEG_INFINITY, Share::of(&FOR_DATA), false);
         loop {
-            let chunk = match body.read().await {
-                Ok(Some(chunk)) => chunk,
-                Ok(None) => break,
-                Err(error) => return Some(Err(error)),
+            let interval = async {
+                match is_whole {
+                    false => core::future::pending().await,
+                    true => exec::sleep(Duration::from_millis(PROGRESS_INTERVAL as u64)).await,
+                }
             };
-            if let Err(error) = share.grow(chunk.len()) {
+            let chunk = match exec::race(body.read(), interval).await {
+                exec::Either::First(Ok(Some(chunk))) => chunk,
+                exec::Either::First(Ok(None)) => break,
+                exec::Either::First(Err(error)) => return Some(Err(error)),
+                exec::Either::Second(()) => Chunk::Owned(Vec::new()),
+            };
+            if let Err(error) = share.grow(if body.gathered() == 0 { chunk.len() } else { 0 }) {
                 return Some(Err(error));
             }
             received += chunk.len() as u64;
-            let tells = now() - last >= PROGRESS_INTERVAL;
+            let (arrived, is_first) = (received.max(body.gathered()), told == 0);
+            let tells = now() - last >= PROGRESS_INTERVAL && arrived > told;
             if tells {
-                (last, told) = (now(), received);
+                (last, told) = (now(), arrived);
             }
-            self.step(move |cx, this| {
-                this.take_chunk(cx, chunk, tells.then_some((received, total)))
-            })
-            .await?;
+            let unread = self
+                .step(move |cx, this| {
+                    this.take_chunk(cx, chunk, tells.then_some((arrived, total)), is_first)
+                })
+                .await?;
+            if let Some(mut unread) = unread {
+                body.expect_read_to_end(&FOR_DATA, &mut unread);
+                (received, share, is_whole) = (0, Share::of(&FOR_DATA), true);
+            }
         }
         self.step(move |cx, this| this.finish(cx, received, total, received > told))
             .await
@@ -616,7 +629,14 @@ impl XMLHttpRequest {
     }
 
     #[optimize(size)]
-    fn take_chunk<'a>(&'a self, cx: Cx<'_, 'a>, chunk: Chunk, to_tell: Option<(u64, u64)>) {
+    /// Gives the first one back if nothing can be read before the end.
+    fn take_chunk<'a>(
+        &'a self,
+        cx: Cx<'_, 'a>,
+        chunk: Chunk,
+        to_tell: Option<(u64, u64)>,
+        is_first: bool,
+    ) -> Option<Vec<u8>> {
         if let Some(Received { bytes, .. }) = self.received.borrow_mut().as_deref_mut() {
             if bytes.is_empty() {
                 *bytes = chunk.into_vec();
@@ -631,6 +651,16 @@ impl XMLHttpRequest {
                 progress(cx, self, atom!("progress"), received, total);
             }
         }
+        let is_whole = is_first
+            && !matches!(
+                self.response_type.get(),
+                ResponseType::Empty | ResponseType::Text
+            );
+        self.received
+            .borrow_mut()
+            .as_mut()
+            .filter(|_| is_whole)
+            .map(|it| core::mem::take(&mut it.bytes))
     }
 
     #[optimize(size)]
@@ -841,14 +871,16 @@ impl XMLHttpRequest {
             url,
             headers,
             ..
-        }: &Received,
+        }: &mut Received,
         mime: &Mime,
         encoding: Option<Encoding>,
     ) -> Result<'a, JSValue> {
         let realm = self.realm(&cx.heap);
         Ok(match self.response_type.get() {
-            ResponseType::ArrayBuffer => array_buffer(realm, Chunk::Owned(bytes.clone()))?,
-            ResponseType::Blob => create_blob(global_of(realm), bytes.clone(), &mime.serialize()),
+            ResponseType::ArrayBuffer => array_buffer(realm, Chunk::Owned(core::mem::take(bytes)))?,
+            ResponseType::Blob => {
+                create_blob(global_of(realm), core::mem::take(bytes), &mime.serialize())
+            }
             ResponseType::Json => {
                 parse_json(cx, bytes).or_else(|it| cx.catch(it).map(|_| JSValue::NULL))?
             }
@@ -908,13 +940,13 @@ impl XMLHttpRequest {
         if let Some(value) = js_XMLHttpRequest::value(self) {
             return Ok(value);
         }
-        let (received, generation) = (self.received.take(), self.generation.get());
+        let (mut received, generation) = (self.received.take(), self.generation.get());
         let found = received
-            .as_ref()
+            .as_mut()
             .filter(|_| self.state.get() == DONE)
-            .and_then(|it| Some((it, self.final_type(it)?)));
+            .and_then(|it| Some((self.final_type(it)?, it)));
         let value =
-            found.map(|(received, (mime, encoding))| self.convert(cx, received, &mime, encoding));
+            found.map(|((mime, encoding), received)| self.convert(cx, received, &mime, encoding));
         if self.generation.get() != generation {
             return Ok(value.transpose()?.unwrap_or(JSValue::NULL));
         }

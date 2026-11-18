@@ -3,6 +3,7 @@
 //! Text, comments and elements without steps can be bare. The closest ancestor that has an object owns them.
 
 use core::ffi::c_void;
+use core::sync::atomic::{Ordering, fence};
 
 use bun_jsc::JSGlobalObject;
 use bun_jsc::bindgen::{JsHeap, JsScope};
@@ -13,10 +14,11 @@ use super::mutation::{children_changed, let_go_before_changing};
 use super::node::Link;
 use super::steps::Has;
 use super::{NodeFlags as F, *};
+use crate::api::forms::dormant;
 use crate::document::{Above, Document};
 use crate::name::{Name, name};
 use crate::selector::{filter, key};
-use crate::tree::{Data, Inert, Namespace, NodeId, Step, Tree, Walk};
+use crate::tree::{DOCUMENT, Data, Inert, Namespace, NodeId, Step, Tree, Walk};
 
 unsafe extern "C" {
     fn Bun__DOM__withoutCollecting(
@@ -85,8 +87,21 @@ unsafe extern "C" fn make_children(context: *mut c_void) {
         parent.flags() & (F::CONNECTED | F::RENDERED | F::USER_AGENT | F::IN_SELECT),
     );
     let heap = JsHeap::from_global(global);
-    let (mut comments, mut last) = (tree.take_comments(parent.id()), None::<&Node>);
-    let mut make = |id: NodeId| {
+    let (mut comments, mut first, mut last) =
+        (tree.take_comments(parent.id()), None, None::<&Node>);
+    let (mut before, mut child) = (0, tree[parent.id()].first_child);
+    loop {
+        let id = match comments.last().copied() {
+            Some((comment, follows)) if follows == before => {
+                comments.pop();
+                comment
+            }
+            _ if child == 0 => break,
+            _ => {
+                (before, child) = (child, tree[child].next);
+                before
+            }
+        };
         let Sketch(sketch) = tree
             .sketch(id)
             .unwrap_or(Sketch((Kind::Comment as usize) << 8));
@@ -104,33 +119,71 @@ unsafe extern "C" fn make_children(context: *mut c_void) {
             flags |= F::HAS_BARE_CHILDREN;
             tree.prefetch_children(id);
         }
-        let node = doc.object_for(heap, tree, id, Kind::ALL[sketch >> 8 & 0xff], flags);
+        let kind = Kind::ALL[sketch >> 8 & 0xff];
+        let node = doc.object_for(
+            heap,
+            tree,
+            id,
+            kind,
+            if matches!(kind, Kind::Input | Kind::Button) {
+                flags | F::DORMANT
+            } else {
+                flags
+            },
+        );
         node.bits_of_kind().set((sketch >> 16) as u16);
         node.set_link(Link::Parent, Some(parent));
         node.set_link(Link::Previous, last);
-        node.written();
-        let (holder, link) = last.map_or((parent, Link::First), |it| (it, Link::Next));
-        holder.set_link(link, Some(node));
-        holder.written();
-        last = Some(node);
-    };
-    for id in core::iter::once(0).chain(tree.children(parent.id())) {
-        if id != 0 {
-            make(id);
-        }
-        while let Some((comment, _)) = comments.last().copied().filter(|it| it.1 == id) {
-            comments.pop();
-            make(comment);
+        match last.replace(node) {
+            Some(previous) => previous.set_link(Link::Next, Some(node)),
+            None => first = Some(node),
         }
     }
+    // The collector cannot have seen them before this.
+    fence(Ordering::Release);
+    parent.set_link(Link::First, first);
     parent.set_link(Link::Last, last);
     parent.written();
+}
+
+unsafe extern "C" fn make_parts(context: *mut c_void) {
+    // SAFETY: what `Node::make_parts_in` passes.
+    let (host, tree, root) = unsafe { *context.cast::<(&Node, &Tree, NodeId)>() };
+    let (doc, flags) = (
+        host.doc(),
+        F::SHADOW_ROOT
+            | F::USER_AGENT
+            | F::HAS_BARE_CHILDREN
+            | host.flags() & (F::CONNECTED | F::RENDERED),
+    );
+    let heap = JsHeap::from_global(doc.global());
+    let root = doc.object_for(heap, tree, root, Kind::ShadowRoot, flags);
+    root.set_edge(heap, Edge::Host, host.to_js());
+    host.set_edge(heap, Edge::ShadowRoot, root.to_js());
+    host.set(F::HOST);
+    dormant::note_parts(heap, host, root, tree);
 }
 
 /// With the siblings and the ancestors.
 #[cold]
 #[inline(never)]
 pub(crate) fn make_object(tree: &Tree, id: NodeId) -> *const Node {
+    if let scope = tree[id].scope
+        && scope > DOCUMENT
+        && tree.is_bare(scope)
+    {
+        let host = Some(tree.host_of(scope))
+            .filter(|it| tree.element(*it).is_some_and(|it| it.shadow_root == scope));
+        // SAFETY: as below.
+        host.and_then(|it| unsafe { tree.cell(it).as_ref() })
+            .into_iter()
+            .for_each(|it| it.make_parts_in(tree, scope));
+        return if tree.is_bare(id) {
+            core::ptr::null()
+        } else {
+            tree.object(id)
+        };
+    }
     let path =
         SmallVec::<[NodeId; 16]>::from_iter(core::iter::successors(Some(tree[id].parent), |it| {
             tree.is_bare(*it).then(|| tree[*it].parent)
@@ -153,6 +206,25 @@ impl Node {
         let mut context = (self, tree, global);
         // SAFETY: `context` outlives the call.
         unsafe { Bun__DOM__withoutCollecting(global, (&raw mut context).cast(), make_children) };
+    }
+
+    fn make_parts_in(&self, tree: &Tree, root: NodeId) {
+        let mut context = (self, tree, root);
+        // SAFETY: `context` outlives the call.
+        unsafe {
+            Bun__DOM__withoutCollecting(self.doc().global(), (&raw mut context).cast(), make_parts)
+        };
+    }
+
+    /// For those that the engine has given a control. Whether there were any.
+    pub(crate) fn adopt_parts(&self) -> bool {
+        self.read(|tree, id| {
+            tree.element(id)
+                .map(|it| it.shadow_root)
+                .filter(|it| *it != 0 && tree.is_bare(*it))
+                .map(|it| self.make_parts_in(tree, it))
+                .is_some()
+        })
     }
 
     #[cold]
@@ -253,6 +325,21 @@ impl Doc {
         is_possible && !self.structure(kind).is_null()
     }
 
+    pub(crate) fn prepare_for_parts(&self) {
+        [Kind::ShadowRoot, Kind::Div, Kind::Text]
+            .into_iter()
+            .for_each(|it| _ = self.structure(it));
+    }
+
+    pub(crate) fn prepare_for_dormant_controls(&self) {
+        if !self.arena().has_dormant_controls.replace(true) {
+            self.prepare_for_parts();
+            [Kind::Input, Kind::Button]
+                .into_iter()
+                .for_each(|it| _ = self.structure(it));
+        }
+    }
+
     /// The collector does not see them.
     #[inline]
     pub(crate) fn report_bare<'a>(&'a self, cx: &mut JsScope<'a>) {
@@ -278,6 +365,13 @@ pub(super) fn id_of(tree: &Tree, element: NodeId) -> Option<Atom> {
         .iter()
         .find(|it| it.local == atom!("id") && it.space.is_none())
         .map(|it| Atom::from_string(it.value.string()))
+}
+
+#[inline]
+pub(super) fn may_have_ids_below(parent: &Node) -> bool {
+    parent.read(|tree, id| {
+        tree.may_have_below(id, filter(core::iter::once(key::attribute(name!("id")))))
+    })
 }
 
 /// Of the descendants, which are bare.
@@ -332,11 +426,11 @@ pub(super) fn drop_children<'a>(cx: &mut JsScope<'a>, parent: &'a Node) {
 /// Whether what is bare in one can stay so in the other.
 #[inline]
 pub(super) fn are_alike(from: &Doc, to: &Doc) -> bool {
-    from == to
-        || from.is_in_arena_of(to)
-            && from.quirks() == to.quirks()
-            && !to.is(DocFlags::CHECKS_STYLE_ATTRIBUTES)
-            && !has_scoped_registries()
+    from == to || from.quirks() == to.quirks() && are_alike_but_for_quirks(from, to)
+}
+
+pub(super) fn are_alike_but_for_quirks(from: &Doc, to: &Doc) -> bool {
+    from.is_in_arena_of(to) && !to.is(DocFlags::CHECKS_STYLE_ATTRIBUTES) && !has_scoped_registries()
 }
 
 /// Appends those of a fragment, if they are bare and can stay so.
@@ -347,6 +441,7 @@ pub(super) fn move_children<'a>(cx: &mut JsScope<'a>, from: &'a Node, parent: &'
         || !from.takes_bare()
         || !parent.takes_bare()
         || !are_alike(from.doc(), parent.doc())
+        || !dormant::can_stay(from, parent)
     {
         return false;
     }
@@ -423,6 +518,7 @@ pub(super) fn is_plain(node: &Node, doc: &Doc) -> bool {
         None => {
             matches!(node.kind(), Kind::Text | Kind::Comment) && doc.prepare_for_bare(node.kind())
         }
+        Some(_) if node.has(F::DORMANT) => !node.has(SPECIAL),
         Some(element) => {
             !node.has(SPECIAL)
                 && doc.prepare_for_bare(node.kind())

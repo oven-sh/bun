@@ -10,6 +10,7 @@ use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use super::system;
+use crate::remote::guest;
 use crate::sync::{Condvar, Mutex};
 
 type Job = Box<dyn FnOnce() + Send>;
@@ -162,7 +163,9 @@ pub fn set_name(name: &CStr) {
 /// `run` calls `enter`.
 pub fn spawn(run: fn()) {
     let is_wanted = std::env::var("BUN_DESKTOP_THREADS").as_deref() != Ok("1");
-    if system::RUNS_ON_ANY_THREAD && is_wanted && !EXISTS.swap(true, Ordering::Relaxed) {
+    if (system::RUNS_ON_ANY_THREAD && is_wanted || guest::is_on())
+        && !EXISTS.swap(true, Ordering::Relaxed)
+    {
         EXISTS.store(detach(8 << 20, run), Ordering::Relaxed);
     }
 }
@@ -180,7 +183,7 @@ pub fn post(job: impl FnOnce() + Send + 'static) {
     if !is_elsewhere() {
         return job();
     }
-    if JOBS.push(Box::new(job)) {
+    if JOBS.push(Box::new(job)) && !guest::is_on() {
         if HOLDS_JOBS.get() {
             HAS_HELD_JOBS.set(true)
         } else {
@@ -252,6 +255,25 @@ pub fn run_jobs() {
         }
     }
     system::wake_ui();
+}
+
+static IS_BUSY: AtomicBool = AtomicBool::new(false);
+
+/// Where there are no windows.
+pub fn only_run_jobs() {
+    loop {
+        JOBS.wait(None);
+        IS_BUSY.store(true, Ordering::SeqCst);
+        while let Some(job) = JOBS.pop() {
+            crate::guard("error", (), job);
+        }
+        IS_BUSY.store(false, Ordering::SeqCst);
+    }
+}
+
+/// That thread is not done with what this one has posted.
+pub fn is_behind() -> bool {
+    is_elsewhere() && (has_jobs() || IS_BUSY.load(Ordering::SeqCst))
 }
 
 /// JavaScript is waiting for this thread.

@@ -4133,7 +4133,7 @@ declare module "bun" {
     jitPolicy?: number;
     /**
      * Put the executable of a `bun:desktop` app into a bundle: a `.app` for macOS,
-     * an AppDir for Linux, a folder for Windows. `outfile` names the bundle.
+     * an AppDir for Linux. `outfile` names the bundle.
      *
      * What this leaves out comes from `"desktop"` in the `package.json` nearest to the entry point.
      *

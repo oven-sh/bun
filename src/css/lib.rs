@@ -69,7 +69,7 @@ pub mod declaration;
 
 // Crate-root re-exports so `bun_css::DeclarationBlock` etc. resolve for the
 // rule modules without going through the (still-shimmed) css_parser hub.
-pub use context::PropertyHandlerContext;
+pub(crate) use context::PropertyHandlerContext;
 pub use declaration::{DeclarationBlock, DeclarationHandler, DeclarationList};
 
 // Path aliases the submodules expect at crate root (the crate re-nests under
@@ -89,7 +89,7 @@ pub use css_parser::{
 
 // ─── selectors/ crate-root surface ────────────────────────────────────────
 // The selector grammar references these via `bun_css::*`.
-pub use compat::Feature;
+pub(crate) use compat::Feature;
 /// Alias of `error::ParserErrorKind`.
 pub use error::ParserErrorKind as ParseErrorKind;
 pub use properties::custom::{TokenList, TokenListFns};
@@ -149,7 +149,7 @@ impl core::error::Error for PrintErr {}
 /// path. Distinct from `css_parser::PrintResult<T> = Maybe<T, PrinterError>`,
 /// which carries the rich `Err<PrinterErrorKind>` — this is just the bubbled
 /// signal (the *kind* lives in `Printer.error_kind`).
-pub type PrintResult<T = ()> = core::result::Result<T, PrintErr>;
+pub(crate) type PrintResult<T = ()> = core::result::Result<T, PrintErr>;
 
 // Re-export the hub types at the crate root so `bun_css::Foo` paths resolve
 // for css_jsc / bundler.
@@ -168,7 +168,7 @@ pub use error::{
     BasicParseErrorKind, Err, ErrorLocation, MinifyError, MinifyErrorKind, ParseError, ParserError,
     ParserErrorKind, PrinterError, PrinterErrorKind, SelectorError,
 };
-pub use logical::PropertyCategory;
+pub(crate) use logical::PropertyCategory;
 pub use targets::{Browsers, Features, Targets};
 
 // Bundler-facing surface (`bun_bundler::Chunk` / `scanImportsAndExports`
@@ -199,7 +199,7 @@ bitflags::bitflags! {
 
 impl VendorPrefix {
     /// Fields listed here so we can iterate them in the order we want
-    pub const FIELDS: &'static [VendorPrefix] = &[
+    pub(crate) const FIELDS: &'static [VendorPrefix] = &[
         VendorPrefix::WEBKIT,
         VendorPrefix::MOZ,
         VendorPrefix::MS,
@@ -210,7 +210,7 @@ impl VendorPrefix {
     // NOTE: bitflags 2.x already generates `from_name(&str) -> Option<Self>`;
     // the panicking variant is exposed as `from_name_str`.
     #[inline]
-    pub fn from_name_str(name: &str) -> VendorPrefix {
+    pub(crate) fn from_name_str(name: &str) -> VendorPrefix {
         match name {
             "none" => VendorPrefix::NONE,
             "webkit" => VendorPrefix::WEBKIT,
@@ -223,17 +223,17 @@ impl VendorPrefix {
 
     /// Returns VendorPrefix::None if empty.
     #[inline]
-    pub fn or_none(self) -> VendorPrefix {
+    pub(crate) fn or_none(self) -> VendorPrefix {
         self.or(VendorPrefix::NONE)
     }
 
     /// **WARNING**: NOT THE SAME as bitwise-or!!
     #[inline]
-    pub fn or(self, other: VendorPrefix) -> VendorPrefix {
+    pub(crate) fn or(self, other: VendorPrefix) -> VendorPrefix {
         if self.is_empty() { other } else { self }
     }
 
-    pub fn as_bits(self) -> u8 {
+    pub(crate) fn as_bits(self) -> u8 {
         self.bits()
     }
 
@@ -245,7 +245,7 @@ impl VendorPrefix {
     /// `-ms-`); callers that previously matched without the trailing dash were
     /// only correct because their input domain was already constrained.
     #[inline]
-    pub fn strip_from(name: &[u8]) -> (VendorPrefix, &[u8]) {
+    pub(crate) fn strip_from(name: &[u8]) -> (VendorPrefix, &[u8]) {
         use bun_core::strings::starts_with_case_insensitive_ascii as has;
         if has(name, b"-webkit-") {
             (VendorPrefix::WEBKIT, &name[8..])
@@ -268,24 +268,24 @@ impl VendorPrefix {
 /// Line/column within a single source. Column is 1-based, line is 0-based.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct SourceLocation {
-    pub line: u32,
-    pub column: u32,
+    pub(crate) line: u32,
+    pub(crate) column: u32,
 }
 
 /// Cross-source location (carries a source-map source index).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, DeepClone)]
 pub struct Location {
     /// The index of the source file within the source map.
-    pub source_index: u32,
+    pub(crate) source_index: u32,
     /// The line number, starting at 0.
-    pub line: u32,
+    pub(crate) line: u32,
     /// The column number within a line, starting at 1. Counted in UTF-16 code units.
-    pub column: u32,
+    pub(crate) column: u32,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct Num {
-    pub has_sign: bool,
+    pub(crate) has_sign: bool,
     pub value: f32,
     pub int_value: Option<i32>,
 }

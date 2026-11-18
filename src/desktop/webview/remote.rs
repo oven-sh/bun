@@ -71,12 +71,7 @@ impl Emitted {
         then(&self.name, event, both.get_index(global(), 1)?)
     }
 
-    /// As [`Emitted::with`], after the listeners of the `webContents` have been called.
-    pub(super) fn on<T>(
-        mut self,
-        contents: JSValue,
-        then: impl FnOnce(Option<&Event>) -> JsResult<T>,
-    ) -> JsResult<T> {
+    fn shift_process_id(&mut self) {
         let ends_with_ids = ["did-frame-", "did-fail-"]
             .iter()
             .any(|it| self.name.starts_with(it))
@@ -94,6 +89,15 @@ impl Emitted {
         {
             *process += f64::from(FIRST_PROCESS_ID);
         }
+    }
+
+    /// As [`Emitted::with`], after the listeners of the `webContents` have been called.
+    pub(super) fn on<T>(
+        mut self,
+        contents: JSValue,
+        then: impl FnOnce(Option<&Event>) -> JsResult<T>,
+    ) -> JsResult<T> {
+        self.shift_process_id();
         self.with(|name, event, arguments| {
             emit_all(
                 contents,

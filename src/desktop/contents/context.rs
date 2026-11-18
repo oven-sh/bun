@@ -2,19 +2,23 @@
 
 use std::rc::Rc;
 
+use bun_ui::protocol::PageCommand;
 use bun_web::host::{Verdict, Wish};
-use bun_web::origin::is_same_site;
-use bun_web::page::Change;
+use bun_web::origin::{Site, is_same_site};
+use bun_web::page::{self, Change, Link as _};
 use bun_web::url::Url;
 
 use super::load::Initiator;
 use super::page::Page;
+use super::process::{self, Process};
 use super::{Contents, fields, with_id, without_hash};
 use crate::prelude::*;
 
 #[derive(Default)]
 struct Group {
     members: RefCell<Vec<u32>>,
+    /// What knows all of them.
+    process: RefCell<Option<Rc<Process>>>,
 }
 
 /// A window or a frame, whatever document it has.
@@ -51,6 +55,11 @@ impl Context {
     }
 }
 
+fn site_of(page: &Page) -> Option<String> {
+    let origin = Some(page.client.origin()).filter(|it| !it.is_opaque())?;
+    Some(string(Site::of_origin(&origin).as_bytes()))
+}
+
 impl Contents {
     pub(super) fn opened_by(&self) -> Option<&'static Contents> {
         fields::opened_by(self.itself())
@@ -68,7 +77,71 @@ impl Contents {
     }
 
     pub(super) fn tell_pages(&self, change: Change) {
-        self.link.change(self.id, change);
+        if process::are_wanted() {
+            return self.process().map_or((), |it| it.change(self.id, change));
+        }
+        page::here().change(self.id, change);
+    }
+
+    pub(super) fn creation(&self, related: Option<u32>) -> Change {
+        let embedded = self.embedded.as_ref();
+        Change::Created {
+            embedder: fields::embedder(self).map(|it| it.id),
+            frame: embedded.map_or(0, |it| it.number),
+            image: embedded.map_or(0, |it| it.image),
+            opener: self.opened_by().map(|it| it.id),
+            related,
+        }
+    }
+
+    pub(super) fn process(&self) -> Option<Rc<Process>> {
+        let process = self.context.group.process.borrow().clone();
+        process.filter(|it| !it.is_gone())
+    }
+
+    /// `None` for this one.
+    pub(super) fn process_for(&self, page: &Page) -> JsResult<Option<Rc<Process>>> {
+        if !process::are_wanted() {
+            return Ok(None);
+        }
+        let process = match (self.process(), page.opener().and_then(Page::process)) {
+            (Some(known), _) => known,
+            (None, of_opener) => {
+                let process = of_opener.map_or_else(process::take, Ok)?;
+                let group = &self.context.group;
+                group.process.replace(Some(Rc::clone(&process)));
+                let members = group.members.borrow().clone();
+                let members = members.iter().filter_map(|it| with_id(*it));
+                let mut first = None;
+                for it in members.filter(|it| !it.is_frame() || it.embedder().is_in(&process)) {
+                    it.tell_pages(it.creation(first));
+                    it.rename(it.name());
+                    it.set_page(it.page());
+                    first = first.or(Some(it.id));
+                }
+                process
+            }
+        };
+        if process.site.borrow().is_none() {
+            let site = site_of(page);
+            (site.iter())
+                .for_each(|it| process.command(PageCommand::StoreFontsFor((&**it).into())));
+            process.site.replace(site);
+        }
+        Ok(Some(process))
+    }
+
+    pub(super) fn leave_process_unless_it_suits(&self, page: &Page) {
+        let Some(process) = self.process().filter(|_| !page.is_started()) else {
+            return;
+        };
+        let is_of_other_site = (process.site.borrow().as_ref().zip(site_of(page)))
+            .is_some_and(|(known, new)| *known != new);
+        if self.context.is_alone() && (is_of_other_site || process.is_late()) {
+            self.tell_pages(Change::Discarded);
+            process.command(PageCommand::Revoke(self.surface));
+            self.context.group.process.take();
+        }
     }
 
     pub(super) fn rename(&self, name: String) {

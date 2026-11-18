@@ -2,6 +2,7 @@
 
 use core::cell::Cell;
 
+use bun_jsc::bindgen::ItemsClock;
 use smallvec::SmallVec;
 
 use super::arena::Arena;
@@ -70,6 +71,14 @@ impl Journal {
     }
 }
 
+/// By `Reads`. They move with the versions of all arenas.
+#[thread_local]
+static CLOCKS: [ItemsClock; 3] = [const { ItemsClock::new() }; 3];
+
+pub(super) fn with_clock<R>(reads: Reads, run: impl FnOnce(&ItemsClock) -> R) -> R {
+    run(&CLOCKS[reads as usize])
+}
+
 /// The attributes that a list depends on.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Reads {
@@ -115,6 +124,13 @@ fn moves<'a>(entries: impl Iterator<Item = Entry>) -> Few<Move<'a>> {
 }
 
 impl Arena {
+    /// `counts`: for `version`.
+    #[inline(always)]
+    pub(super) fn tree_changed(&self, counts: bool) {
+        self.version.update(|it| it + u64::from(counts));
+        CLOCKS.iter().for_each(ItemsClock::advance);
+    }
+
     /// After `version` has changed for it.
     #[inline(always)]
     pub(super) fn record_move(&self, node: &Node, parent: &Node, is_removal: bool, flags: F) {
@@ -161,6 +177,7 @@ impl Arena {
         };
         let version = &self.changes.versions[reads as usize];
         version.update(|it| it + 1);
+        CLOCKS[reads as usize].advance();
         self.changes.of_attributes[reads as usize - 1].record(Entry {
             version: version.get() as u32,
             is_removal: false,
@@ -173,11 +190,13 @@ impl Arena {
     /// In a way that may affect any element.
     pub(super) fn ties_changed(&self) {
         self.changes.versions[Reads::Ties as usize].update(|it| it + 1);
+        CLOCKS[Reads::Ties as usize].advance();
     }
 
     /// Likewise.
     pub(super) fn classes_changed(&self) {
         self.changes.versions[Reads::Classes as usize].update(|it| it + 1);
+        CLOCKS[Reads::Classes as usize].advance();
     }
 
     pub(super) fn collections(&self) -> u32 {

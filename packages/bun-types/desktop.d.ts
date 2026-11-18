@@ -440,7 +440,7 @@ declare module "bun:desktop" {
     setAsDefaultProtocolClient(protocol: string, path?: string, args?: string[]): boolean;
     isDefaultProtocolClient(protocol: string, path?: string, args?: string[]): boolean;
     removeAsDefaultProtocolClient(protocol: string, path?: string, args?: string[]): boolean;
-    getLoginItemSettings(): { openAtLogin: boolean };
+    getLoginItemSettings(): { openAtLogin: boolean; executableWillLaunchAtLogin: boolean };
     setLoginItemSettings(settings: { openAtLogin?: boolean; path?: string; args?: string[] }): void;
     /** The names of the installed font families. */
     getFonts(): string[];
@@ -1175,6 +1175,7 @@ declare module "bun:desktop/electron" {
       ): void;
       /**
        * Where the scripts of pages are in an executable that `bun compile` has made.
+       * They run in the pages at the origins of these URLs.
        *
        * @param roots For the start of a URL, a directory such as `"/$bunfs/root/web/"`
        */

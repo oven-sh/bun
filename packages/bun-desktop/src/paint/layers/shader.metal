@@ -17,6 +17,7 @@ struct Instance {
     uint width;
     uint height;
     float opacity;
+    float4 smoothing;
 };
 
 struct Varyings {
@@ -39,6 +40,39 @@ static float4 rgba(uint bgra) {
     return unpack_unorm4x8_to_float(bgra).zyxw;
 }
 
+static float smooth_distance(float2 from_corner, float radius, float2 smoothings) {
+    bool is_across = from_corner.x <= from_corner.y;
+    float along = is_across ? -from_corner.x : -from_corner.y;
+    float depth = is_across ? -from_corner.y : -from_corner.x;
+    float smoothing = is_across ? smoothings.x : smoothings.y;
+    float left = radius * (1.0f + smoothing) - along;
+    if (left <= 0.0f || depth >= radius || radius <= 0.0f) {
+        return -depth;
+    }
+    float sine = sin(smoothing * 0.78539816f);
+    float cosine = cos(smoothing * 0.78539816f);
+    float u = radius - along;
+    float v = radius - depth;
+    if (u * cosine >= v * sine) {
+        return length(float2(u, v)) - radius;
+    }
+    float first = radius * (smoothing + sine / (1.0f + cosine));
+    float rest = radius * sine * cosine / (1.0f + cosine);
+    float rise = radius * (1.0f - cosine);
+    float t = 1.0f - sqrt(fmax(1.0f - left / (first + rest), 0.0f));
+    for (int step = 0; step < 2; step++) {
+        t = saturate(t + (left - first * t * (2.0f - t) - rest * t * t * t) / (2.0f * first * (1.0f - t) + 3.0f * rest * t * t));
+    }
+    float slope = 3.0f * rise * t * t / (2.0f * first * (1.0f - t) + 3.0f * rest * t * t);
+    return (rise * t * t * t + (left - first * t * (2.0f - t) - rest * t * t * t) * slope - depth) / sqrt(1.0f + slope * slope);
+}
+
+static float2 smoothing_of_corner(float2 size, float4 radii, float smoothing, bool is_left, bool is_top) {
+    float across = is_top ? radii.x + radii.y : radii.z + radii.w;
+    float down = is_left ? radii.w + radii.x : radii.y + radii.z;
+    return float2(clamp(size.x / fmax(across, 1e-6f) - 1.0f, 0.0f, smoothing), clamp(size.y / fmax(down, 1e-6f) - 1.0f, 0.0f, smoothing));
+}
+
 static float2 coverage(const device Instance &it, float2 at) {
     float2 half_size = it.bounds.zw / 2.0f;
     float2 from_center = at - it.bounds.xy - half_size;
@@ -51,6 +85,16 @@ static float2 coverage(const device Instance &it, float2 at) {
     float2 border = float2(across == 0.0f ? -0.5f : across, down == 0.0f ? -0.5f : down);
     float2 uv = from_corner + radius;
     float2 from_inner_corner = from_corner + border;
+    if (it.smoothing.x > 0.0f) {
+        float4 sides = it.border;
+        float4 inner_radii = float4(fmax(it.radii.x - fmax(sides.x, sides.w), 0.0f), fmax(it.radii.y - fmax(sides.x, sides.y), 0.0f),
+                                    fmax(it.radii.z - fmax(sides.z, sides.y), 0.0f), fmax(it.radii.w - fmax(sides.z, sides.w), 0.0f));
+        float2 inner_size = it.bounds.zw - float2(sides.w + sides.y, sides.x + sides.z);
+        float2 of_outer = smoothing_of_corner(it.bounds.zw, it.radii, it.smoothing.x, is_left, is_top);
+        float2 of_inner = smoothing_of_corner(inner_size, inner_radii, it.smoothing.x, is_left, is_top);
+        float inside = smooth_distance(from_inner_corner, radius - fmax(border.x, border.y), of_inner);
+        return float2(saturate(0.5f - smooth_distance(from_corner, radius, of_outer)), saturate(0.5f + inside));
+    }
     float outer = length(float2(fmax(uv.x, 0.0f), fmax(uv.y, 0.0f))) + fmin(fmax(uv.x, uv.y), 0.0f) - radius;
     float inner;
     if (uv.x <= 0.0f || uv.y <= 0.0f) {

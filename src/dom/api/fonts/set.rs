@@ -416,7 +416,7 @@ impl FontFaceSet {
         self.join(&cx.heap, face);
         match face.status.get() {
             FontFaceLoadStatus::Loading => self.started(cx, face),
-            FontFaceLoadStatus::Loaded => _ = face.publish(cx),
+            FontFaceLoadStatus::Loaded => face.publish_again(cx),
             _ => face.start_loading(cx, self.doc()),
         }
         Ok(self)

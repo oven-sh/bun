@@ -2,7 +2,7 @@ use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::gfx::{Pixmap, Transform};
+use crate::gfx::Transform;
 use crate::hash::FastMap;
 use crate::small_vec::SmallVec;
 
@@ -22,7 +22,7 @@ use crate::images::{self, Content};
 use crate::motion::sample;
 use crate::sync::Mutex;
 use crate::text::{self, GlyphPixels};
-use crate::{parallel, webview};
+use crate::{parallel, surface, webview, window};
 
 /// What is rasterized in one piece, visible or not, so that scrolling finds it in the atlas.
 const WHOLE_AREA: i64 = 512 * 512;
@@ -49,6 +49,8 @@ pub enum Kind {
         id: u32,
         to_texels: Transform,
     },
+    /// An index in `Flattener::jobs`. None is left in the end.
+    Pending(u32),
 }
 
 pub(super) const TURNED_EDGE: i32 = 2;
@@ -59,6 +61,7 @@ pub struct Primitive {
     pub bounds: Rect,
     pub clip: IntRect,
     pub radii: [f32; 4],
+    pub smoothing: f32,
     pub opacity: f32,
     /// Neighbors with the same number but 0 may be drawn in any order.
     pub(super) run: u32,
@@ -71,6 +74,7 @@ impl Primitive {
             bounds,
             clip,
             radii: [0.; 4],
+            smoothing: 0.,
             opacity: 1.,
             run: 0,
             kind,
@@ -78,14 +82,26 @@ impl Primitive {
     }
 
     pub(super) fn looks_like(&self, other: &Primitive) -> bool {
-        (self.clip, self.bounds, self.kind, self.radii, self.opacity)
-            == (
-                other.clip,
-                other.bounds,
-                other.kind,
-                other.radii,
-                other.opacity,
-            )
+        (
+            self.clip,
+            self.bounds,
+            self.kind,
+            self.radii,
+            self.smoothing,
+            self.opacity,
+        ) == (
+            other.clip,
+            other.bounds,
+            other.kind,
+            other.radii,
+            other.smoothing,
+            other.opacity,
+        )
+    }
+
+    /// How far the curves may go along the edges.
+    pub(super) fn reach(&self) -> [f32; 4] {
+        self.radii.map(|it| it * (1. + self.smoothing))
     }
 
     fn visible(&self) -> IntRect {
@@ -117,6 +133,8 @@ pub struct Cache {
     waiting: FastMap<(u128, u32), (Instant, u64)>,
     /// Of masks, and when they were last needed.
     opaque_parts: FastMap<u128, (Option<IntRect>, u64)>,
+    /// The raster for which there was not enough time. It gets another chance.
+    cut_short: Option<u128>,
     primitives: Vec<Primitive>,
     /// Of this draw.
     pub lifted: Vec<Lifted>,
@@ -217,12 +235,15 @@ pub struct Lifted {
     pub item: usize,
     pub clip: IntRect,
     pub radius: f32,
+    pub is_smooth: bool,
     pub opacity: f32,
     pub rect: IntRect,
     /// `None` if there is nothing but what is lifted on its own.
     pub contents: Option<u128>,
     /// BGRA.
     pub pixels: Option<Vec<u8>>,
+    #[cfg(target_os = "macos")]
+    pub drawn: Option<super::vector::Picture>,
     pub fades: Option<Curve>,
     pub moves: Option<Curve>,
     origin: [f64; 5],
@@ -243,6 +264,7 @@ impl Lifted {
         let has_shape = it.radii == [0.; 4]
             || it.radii == [it.radii[0]; 4] && self.clip == self.marker.1 && self.radius == 0.;
         (self.radius, self.opacity) = (self.radius + it.radii[0], self.opacity * it.opacity);
+        self.is_smooth |= it.smoothing > 0.3;
         (it.visible() == self.marker.1 && has_shape && is_uncovered(primitives, index))
             .then_some(())
     }
@@ -264,6 +286,13 @@ fn bgra(layer: &Layer, rect: IntRect) -> Vec<u8> {
         );
     }
     pixels.into_flattened()
+}
+
+fn needs_this_thread(item: &Item) -> bool {
+    matches!(
+        item,
+        Item::Image { .. } | Item::ImagePart { .. } | Item::Caret { .. }
+    )
 }
 
 fn painted_rect(layer: &Layer) -> IntRect {
@@ -307,7 +336,6 @@ fn part_of(mut tile: Tile, part: IntRect) -> Tile {
     tile
 }
 
-/// With a copy of the edge around it, for the GPU to interpolate with.
 /// Whether what is in a layer is added up, which would be too bright on what is behind the layer.
 fn is_isolating(scene: &Scene, contents: Range<usize>) -> bool {
     scene
@@ -317,11 +345,6 @@ fn is_isolating(scene: &Scene, contents: Range<usize>) -> bool {
             Item::PushClip(_) | Item::PushTransform(_) => is_isolating(scene, scene.content(index)),
             _ => false,
         })
-}
-
-fn padded(pixmap: &Pixmap) -> Option<Layer> {
-    let rect = IntRect::new(0, 0, pixmap.width() as i32, pixmap.height() as i32);
-    cpu::extend_edges(rect, pixmap, 1)
 }
 
 impl Cache {
@@ -343,6 +366,7 @@ impl Cache {
     }
 
     pub fn finish(&mut self, compositor: &mut Compositor) {
+        thin_out(&mut self.primitives);
         std::mem::swap(&mut self.primitives, &mut compositor.primitives);
         self.primitives.clear();
         self.evict(&compositor.atlas);
@@ -465,6 +489,7 @@ fn map_shape(matrix: &Transform, shape: &RoundedRect) -> RoundedRect {
             true => [x * matrix.sx, y * matrix.sy],
             false => [0., 0.],
         }),
+        ..*shape
     }
 }
 
@@ -485,6 +510,16 @@ fn ends_in_border(background: &Primitive, rect: Rect, radii: [f32; 4], width: f3
 
 /// `None` for radii that are not circular.
 fn circular_radii(shape: &RoundedRect) -> Option<[f32; 4]> {
+    if shape.smoothing > 0. {
+        let has_own_quarter = |[x, y]: &[f32; 2]| {
+            *x <= shape.rect.width / 2. + 0.01 && *y <= shape.rect.height / 2. + 0.01
+        };
+        return shape
+            .reach()
+            .iter()
+            .all(has_own_quarter)
+            .then(|| shape.smaller_radii());
+    }
     let largest = shape.rect.width.min(shape.rect.height) / 2. + 0.01;
     let is_simple = |[x, y]: &[f32; 2]| (x - y).abs() < 0.05 && *x <= largest;
     shape
@@ -502,7 +537,7 @@ fn corner_rects(shape: &RoundedRect) -> [IntRect; 4] {
         width,
         height,
     } = shape.rect;
-    let [tl, tr, br, bl] = shape.radii;
+    let [tl, tr, br, bl] = shape.reach();
     let corner = |x: f32, y: f32, [width, height]: [f32; 2]| {
         IntRect::around(Rect {
             x,
@@ -528,7 +563,7 @@ fn is_within_curve(shape: &RoundedRect, corner: usize, area: IntRect) -> bool {
             height,
         },
         [rx, ry],
-    ) = (shape.rect, shape.radii[corner]);
+    ) = (shape.rect, shape.reach()[corner]);
     let across = if matches!(corner, 0 | 3) {
         x + rx - area.left as f32
     } else {
@@ -544,6 +579,18 @@ fn is_within_curve(shape: &RoundedRect, corner: usize, area: IntRect) -> bool {
 
 fn is_axis_aligned(matrix: &Transform) -> bool {
     matrix.kx.abs() < 1e-5 && matrix.ky.abs() < 1e-5 && matrix.sx > 0. && matrix.sy > 0.
+}
+
+/// A primitive cannot be that and wider than it was painted.
+fn has_smooth_corners(item: &Item) -> bool {
+    match item {
+        Item::PushClip(shape)
+        | Item::Backdrop { shape, .. }
+        | Item::Fill { shape, .. }
+        | Item::Border { shape, .. } => shape.smoothing > 0.,
+        Item::Gradient { clip, .. } | Item::Image { clip, .. } => clip.smoothing > 0.,
+        _ => false,
+    }
 }
 
 fn is_identity(filter: &Filter) -> bool {
@@ -564,10 +611,44 @@ fn is_identity(filter: &Filter) -> bool {
 /// Where a scene goes in the window.
 pub struct Placement<'a> {
     pub movers: &'a [Mover<'a>],
+    /// The identities of what cannot be lifted, if anything can.
+    pub staying: Option<&'a [[f64; 5]]>,
     /// Sorted indices of items.
     pub in_motion: &'a [usize],
     pub origin: (i32, i32),
     pub clip: IntRect,
+    /// The window is.
+    pub is_active: bool,
+    /// In how many other scenes it is shown.
+    pub depth: usize,
+    /// The item that shows it in the outermost one.
+    pub shown_by: Option<usize>,
+}
+
+/// What is rasterized together with others.
+struct Job {
+    key: u128,
+    index: usize,
+    matrix: Transform,
+    area: IntRect,
+    /// Without its opacity.
+    is_layer: bool,
+}
+
+impl Job {
+    fn render(&self, painter: &Painter) -> Option<Layer> {
+        if self.is_layer {
+            return painter.render_layer(self.index, &self.matrix, self.area);
+        }
+        let mut layer = Layer::new(self.area)?;
+        painter.paint(
+            self.index..painter.scene.end(self.index),
+            &mut layer,
+            &self.matrix,
+            &Clip::new(self.area),
+        );
+        Some(layer)
+    }
 }
 
 struct Flattener<'a> {
@@ -581,6 +662,16 @@ struct Flattener<'a> {
     layer_start: Option<usize>,
     /// Beyond it, the CPU paints what the primitives leave out.
     flattened: IntRect,
+    jobs: Vec<Job>,
+    area_of_jobs: i64,
+    /// The indices of `jobs` by their keys.
+    pending: FastMap<u128, u32>,
+    /// No primitive before this one is pending.
+    settled: usize,
+    /// In a layer that is not opaque.
+    is_faded: bool,
+    /// The first primitive of the last scene that is shown in this one.
+    last_nested: Option<usize>,
 }
 
 const CARET: u32 = u32::MAX;
@@ -591,12 +682,89 @@ fn is_marker(primitive: &Primitive) -> bool {
     (CARET - MAX_LIFTED..CARET).contains(&primitive.run)
 }
 
+/// In pixels of a plain rectangle.
+fn work_for(primitive: &Primitive, visible: IntRect) -> i64 {
+    let side = software::border_of(primitive)
+        .into_iter()
+        .chain(primitive.radii)
+        .fold(0., f32::max) as i64;
+    let corners = if side <= 128 {
+        side * side * 128
+    } else {
+        visible.area() * 8
+    };
+    let per_pixel = match primitive.kind {
+        Kind::Quad { .. } => 1,
+        Kind::Mask(..) => 2,
+        _ => 4,
+    };
+    visible.area() * per_pixel + corners
+}
+
+/// Where so much is on top of each other that it would take seconds to draw, what is at the bottom goes.
+fn thin_out(primitives: &mut Vec<Primitive>) {
+    const LAYERS: i64 = 256;
+    const CELLS: i32 = 8;
+    if primitives.len() as i64 <= LAYERS / 8 {
+        return;
+    }
+    let (mut all, mut work) = (IntRect::default(), 0);
+    for primitive in &*primitives {
+        let visible = primitive.visible();
+        (all, work) = (all.union(visible), work + work_for(primitive, visible));
+    }
+    if work <= all.area().max(WHOLE_AREA) * LAYERS {
+        return;
+    }
+    let [width, height] = [all.width(), all.height()].map(|it| it as i32 / CELLS + 1);
+    let mut left =
+        [all.area().max(WHOLE_AREA) * LAYERS / i64::from(CELLS * CELLS); (CELLS * CELLS) as usize];
+    for primitive in primitives
+        .iter_mut()
+        .rev()
+        .filter(|it| !it.visible().is_empty() && it.run != CARET && !is_marker(it))
+    {
+        let cells_in = |area: IntRect| {
+            let area = area.offset(-all.left, -all.top);
+            let columns = area.left / width..=(area.right - 1) / width;
+            (area.top / height..=(area.bottom - 1) / height)
+                .flat_map(move |row| columns.clone().map(move |column| (column, row)))
+        };
+        let open = cells_in(primitive.visible())
+            .filter(|(column, row)| left[(row * CELLS + column) as usize] > 0);
+        let cell = |(column, row)| {
+            IntRect::new(
+                column * width,
+                row * height,
+                (column + 1) * width,
+                (row + 1) * height,
+            )
+            .offset(all.left, all.top)
+        };
+        primitive.clip = primitive
+            .clip
+            .intersect(open.map(cell).fold(IntRect::default(), IntRect::union));
+        let visible = primitive.visible();
+        if !visible.is_empty() {
+            let share = work_for(primitive, visible) / cells_in(visible).count() as i64 + 1;
+            cells_in(visible)
+                .for_each(|(column, row)| left[(row * CELLS + column) as usize] -= share);
+        }
+    }
+    primitives.retain(|it| !it.clip.is_empty());
+}
+
 fn is_uncovered(primitives: &[Primitive], index: usize) -> bool {
     let rect = primitives[index].visible();
     primitives[index + 1..].iter().all(|it| match it.kind {
         _ if is_marker(it) => true,
         Kind::Quad { color, border, .. } if color & 0xFF == 0 => {
-            let edge = border.into_iter().chain(it.radii).fold(0., f32::max).ceil() as i32 + 1;
+            let edge = border
+                .into_iter()
+                .chain(it.reach())
+                .fold(0., f32::max)
+                .ceil() as i32
+                + 1;
             !it.visible().overlaps(rect) || IntRect::around(it.bounds).outset(-edge).contains(rect)
         }
         _ => !it.visible().overlaps(rect),
@@ -652,6 +820,7 @@ pub fn paint(
     let mut memo = scene.memo.as_ref().map(|it| it.lock());
     memo.iter_mut()
         .for_each(|it| it.begin((cache.id, cache.draw), scene.items.len()));
+    let first = cache.primitives.len();
     let mut flattener = Flattener {
         painter: Painter {
             scene,
@@ -663,10 +832,17 @@ pub fn paint(
         cache,
         memo: memo.as_deref_mut(),
         budget: BUDGET,
-        layer_start: None,
+        layer_start: (placement.depth > 0).then_some(first),
         flattened: IntRect::new(i32::MIN, i32::MIN, i32::MAX, i32::MAX),
+        jobs: Vec::new(),
+        area_of_jobs: 0,
+        pending: FastMap::default(),
+        settled: first,
+        is_faded: false,
+        last_nested: None,
     };
     flattener.range(0..scene.items.len(), &root, placement.clip);
+    flattener.settle();
     if let Some(memo) = memo.as_mut().filter(|_| cache.evicts()) {
         memo.tidy(cache.draw - IN_FLIGHT, |key, last_used| {
             if let Some(raster) = cache.rasters.get_mut(&key) {
@@ -703,6 +879,30 @@ impl Flattener<'_> {
         area.area() <= self.budget || self.cache.rasters.contains_key(&key)
     }
 
+    fn put_off(&mut self) {
+        self.is_provisional();
+        self.painter
+            .frame
+            .changes_at(Instant::now() + Duration::from_millis(100));
+    }
+
+    fn can_render(&self) -> bool {
+        !(self.painter.frame.is_overdue() || self.atlas.is_full())
+    }
+
+    /// For what has been rendered.
+    fn is_final(&mut self, key: u128) -> bool {
+        !self.painter.frame.is_overdue() || self.cache.cut_short.replace(key) == Some(key)
+    }
+
+    fn known_raster(&mut self, key: u128) -> Option<&Raster> {
+        self.memo.iter_mut().for_each(|it| it.needs(key));
+        let raster = self.cache.rasters.get_mut(&key)?;
+        raster.was_reused |= raster.last_used != self.cache.draw;
+        raster.last_used = self.cache.draw;
+        Some(raster)
+    }
+
     /// The sprite's rectangle is relative to `origin`.
     fn raster(
         &mut self,
@@ -711,14 +911,17 @@ impl Flattener<'_> {
         trims: bool,
         render: impl FnOnce(&Painter) -> Option<Layer>,
     ) -> Option<Sprite> {
-        let draw = self.cache.draw;
-        self.memo.iter_mut().for_each(|it| it.needs(key));
-        if let Some(raster) = self.cache.rasters.get_mut(&key) {
-            raster.was_reused |= raster.last_used != draw;
-            raster.last_used = draw;
+        if let Some(raster) = self.known_raster(key) {
             return raster.sprite;
         }
-        let sprite = crate::guard("error", None, || render(&self.painter)).and_then(|layer| {
+        let rendered = self
+            .can_render()
+            .then(|| crate::guard("error", None, || render(&self.painter)));
+        let Some(rendered) = rendered.filter(|_| self.is_final(key)) else {
+            self.put_off();
+            return None;
+        };
+        let sprite = rendered.and_then(|layer| {
             self.budget -= layer.rect.area();
             let rect = if trims {
                 painted_rect(&layer).intersect(origin)
@@ -726,8 +929,11 @@ impl Flattener<'_> {
                 layer.rect
             };
             (!rect.is_empty()).then_some(())?;
-            let bytes = bgra(&layer, rect);
-            let tile = self.atlas.insert(true, rect.width(), rect.height(), &bytes);
+            let tile = self
+                .atlas
+                .insert_rows([rect.width(), rect.height()], 0, |y| {
+                    layer.row(rect.top + y as i32, rect.left, rect.right)
+                });
             Some(Sprite {
                 tile,
                 rect: rect.offset(-origin.left, -origin.top),
@@ -737,7 +943,55 @@ impl Flattener<'_> {
             key,
             Raster {
                 sprite,
-                last_used: draw,
+                last_used: self.cache.draw,
+                was_reused: false,
+            },
+        );
+        sprite
+    }
+
+    /// With a copy of the edge around it, for the GPU to interpolate with.
+    fn padded_image(&mut self, image: u32, version: u32, area: IntRect) -> Option<Sprite> {
+        let mut digest = Digest::new(area);
+        digest.value((image, version));
+        let key = digest.finish();
+        if let Some(raster) = self.known_raster(key) {
+            return raster.sprite;
+        }
+        if !self.can_render() {
+            self.put_off();
+            return None;
+        }
+        let insert = |content: Content| {
+            let Content::Pixels(pixmap) = content else {
+                return None;
+            };
+            let (size, pixels) = (
+                [pixmap.width(), pixmap.height()].map(|it| it as usize),
+                pixmap.data().as_chunks().0,
+            );
+            let tile = self
+                .atlas
+                .insert_rows(size, 1, |y| &pixels[y * size[0]..][..size[0]]);
+            Some(Sprite {
+                tile,
+                rect: tile.part.offset(-1, -1),
+            })
+        };
+        let sprite = crate::guard("error", None, || {
+            images::with_size(
+                image,
+                self.painter.frame,
+                |_| (area.right as u32, area.bottom as u32),
+                insert,
+            )?
+        });
+        self.budget -= sprite.map_or(0, |it| it.rect.area());
+        self.cache.rasters.insert(
+            key,
+            Raster {
+                sprite,
+                last_used: self.cache.draw,
                 was_reused: false,
             },
         );
@@ -755,6 +1009,163 @@ impl Flattener<'_> {
             let bounds = sprite.rect.offset(area.left, area.top).to_rect();
             self.push(Primitive::new(bounds, clip, Kind::Image(sprite.tile)));
         }
+    }
+
+    fn push_job(&mut self, job: Job, clip: IntRect) {
+        let scene = self.painter.scene;
+        let must_be_now = || {
+            scene.changes(job.index)
+                && scene.items[job.index..scene.end(job.index)]
+                    .iter()
+                    .any(needs_this_thread)
+        };
+        if self.cache.rasters.contains_key(&job.key)
+            || parallel::threads() == 1
+            || !self.can_render()
+            || must_be_now()
+        {
+            return self.push_raster(job.key, job.area, clip, |painter| job.render(painter));
+        }
+        self.is_provisional();
+        let (area, next) = (job.area, self.jobs.len() as u32);
+        let number = *self.pending.entry(job.key).or_insert(next);
+        if number == next {
+            self.budget -= area.area();
+            self.area_of_jobs += area.area();
+            self.jobs.push(job);
+        }
+        self.settled = self.settled.min(self.cache.primitives.len());
+        self.push(Primitive::new(area.to_rect(), clip, Kind::Pending(number)));
+        if self.area_of_jobs > BUDGET / 2 {
+            self.settle();
+        }
+    }
+
+    /// Does the jobs whose primitives are still there.
+    fn settle(&mut self) {
+        type Painted = (IntRect, Vec<u8>);
+        const WORK_TO_START: i64 = 2048;
+        const WORK_TO_SHARE: i64 = 1 << 14;
+        const WORTH_SHARING: i64 = 1 << 17;
+        if self.jobs.is_empty() {
+            return;
+        }
+        let (
+            Painter {
+                scene,
+                frame,
+                left_out,
+            },
+            jobs,
+            draw,
+        ) = (
+            self.painter,
+            std::mem::take(&mut self.jobs),
+            self.cache.draw,
+        );
+        let unsettled = self.settled.min(self.cache.primitives.len());
+        let mut is_needed = vec![false; jobs.len()];
+        for primitive in &self.cache.primitives[unsettled..] {
+            if let Kind::Pending(job) = primitive.kind {
+                is_needed[job as usize] = true;
+            }
+        }
+        let needed: Vec<_> = jobs
+            .iter()
+            .zip(is_needed)
+            .filter_map(|(job, is_needed)| is_needed.then_some(job))
+            .collect();
+        let (work_for, mut work) = (|job: &Job| WORK_TO_START + job.area.area(), 0);
+        let shares = needed.split_inclusive(|job| {
+            work += work_for(job);
+            work >= WORK_TO_SHARE && std::mem::take(&mut work) > 0
+        });
+        let shares: Vec<_> = shares.map(|it| (frame.rescaled(1.), it)).collect();
+        let (atlas, rasters) = (self.atlas, &mut self.cache.rasters);
+        let render = |frame: &Frame, job: &Job| {
+            let layer = crate::guard("error", None, || {
+                job.render(&Painter {
+                    scene,
+                    frame,
+                    left_out,
+                })
+            })?;
+            let rect =
+                Some(painted_rect(&layer).intersect(job.area)).filter(|it| !it.is_empty())?;
+            Some((
+                rect.offset(-job.area.left, -job.area.top),
+                bgra(&layer, rect),
+            ))
+        };
+        let paint = |frame: &Frame, job: &Job| {
+            (!frame.is_overdue()).then(|| (render(frame, job), frame.is_overdue()))
+        };
+        let (was_cut_short, mut cut_short, mut has_kept_all) = (self.cache.cut_short, None, true);
+        let mut keep = |key: u128, painted: Option<(Option<Painted>, bool)>| match painted {
+            Some((painted, is_late))
+                if (!is_late || was_cut_short == Some(key)) && !atlas.is_full() =>
+            {
+                let sprite = painted.map(|(rect, bytes)| Sprite {
+                    tile: atlas.insert(true, rect.width(), rect.height(), &bytes),
+                    rect,
+                });
+                rasters.insert(
+                    key,
+                    Raster {
+                        sprite,
+                        last_used: draw,
+                        was_reused: false,
+                    },
+                );
+            }
+            _ => {
+                (cut_short, has_kept_all) =
+                    (cut_short.max(painted.filter(|it| it.1).map(|_| key)), false)
+            }
+        };
+        if needed.iter().copied().map(work_for).sum::<i64>() < WORTH_SHARING {
+            needed
+                .iter()
+                .for_each(|job| keep(job.key, paint(frame, job)));
+        } else {
+            let mut painted = Mutex::new(Vec::with_capacity(shares.len()));
+            parallel::for_each(shares.into_iter(), |(frame, share)| {
+                let share: Vec<_> = share
+                    .iter()
+                    .map(|job| (job.key, paint(&frame, job)))
+                    .collect();
+                painted.lock().push(share);
+            });
+            painted
+                .get_mut()
+                .drain(..)
+                .flatten()
+                .for_each(|(key, painted)| keep(key, painted));
+        }
+        for primitive in &mut self.cache.primitives[unsettled..] {
+            let Kind::Pending(job) = primitive.kind else {
+                continue;
+            };
+            match rasters
+                .get(&jobs[job as usize].key)
+                .and_then(|it| it.sprite)
+            {
+                Some(Sprite { tile, rect }) => {
+                    (primitive.bounds, primitive.kind) = (
+                        rect.offset(primitive.bounds.x as i32, primitive.bounds.y as i32)
+                            .to_rect(),
+                        Kind::Image(tile),
+                    );
+                }
+                None => (primitive.clip, primitive.kind) = (IntRect::default(), solid(0)),
+            }
+        }
+        if !has_kept_all {
+            self.cache.cut_short = cut_short.or(was_cut_short);
+            self.put_off();
+        }
+        self.pending.clear();
+        (self.settled, self.area_of_jobs) = (self.cache.primitives.len(), 0);
     }
 
     /// Everything that follows is faster with few primitives.
@@ -848,11 +1259,16 @@ impl Flattener<'_> {
                 let mut digest = Digest::new(piece);
                 digest.matrix(matrix);
                 digest.range(&self.painter, range.clone(), matrix, piece);
-                self.push_raster(digest.finish(), piece, clip, |painter| {
-                    let mut layer = Layer::new(piece)?;
-                    painter.paint(range.clone(), &mut layer, matrix, &Clip::new(piece));
-                    Some(layer)
-                });
+                self.push_job(
+                    Job {
+                        key: digest.finish(),
+                        index,
+                        matrix: *matrix,
+                        area: piece,
+                        is_layer: false,
+                    },
+                    clip,
+                );
             }
         }
     }
@@ -895,18 +1311,14 @@ impl Flattener<'_> {
                 .copied()
                 .collect::<Vec<_>>()
         });
-        let mut bands: Vec<_> = missing.filter(|it| !it.is_empty()).collect();
+        let mut bands: Vec<_> = missing
+            .filter(|it| !it.is_empty() && self.can_render())
+            .collect();
         let around = |band: &[(u128, IntRect)]| {
             band.iter()
                 .fold(IntRect::default(), |all, it| all.union(it.1))
         };
         let area: i64 = bands.iter().flatten().map(|it| it.1.area()).sum();
-        let needs_this_thread = |item: &Item| {
-            matches!(
-                item,
-                Item::Image { .. } | Item::ImagePart { .. } | Item::Caret { .. }
-            )
-        };
         let is_shared = area >= WHOLE_AREA / 2
             && parallel::threads() > 1
             && !scene.items[range.clone()].iter().any(needs_this_thread);
@@ -961,7 +1373,8 @@ impl Flattener<'_> {
                 .for_each(|band| painted.get_mut().extend(paint(frame, band))),
         }
         self.budget -= area;
-        for (key, part) in painted.get_mut().drain(..) {
+        let is_final = bands.first().is_none_or(|it| self.is_final(it[0].0));
+        for (key, part) in painted.get_mut().drain(..).filter(|_| is_final) {
             let sprite = part.map(|(rect, bytes)| Sprite {
                 tile: self.atlas.insert(true, rect.width(), rect.height(), &bytes),
                 rect,
@@ -1012,6 +1425,7 @@ impl Flattener<'_> {
 
     /// What the primitives from `first` on draw in `area`, inside of `shape`.
     fn cut_out(&mut self, first: usize, shape: &RoundedRect, area: IntRect) -> Option<Sprite> {
+        self.settle();
         let (mut digest, render) = self.snapshot(first, area, 1);
         digest.shape(&Transform::identity(), shape);
         let key = digest.finish();
@@ -1048,12 +1462,14 @@ impl Flattener<'_> {
         if holes.is_empty() {
             return;
         }
-        let reads_backdrop = self.painter.scene.reads_backdrop(index);
+        let cuts = self.painter.scene.reads_backdrop(index)
+            || self.last_nested.is_some_and(|it| it >= first);
         let cut: SmallVec<_, 4> = holes
             .iter()
-            .filter(|_| reads_backdrop)
+            .filter(|_| cuts)
             .filter_map(|hole| Some((self.cut_out(first, shape, *hole)?, hole)))
             .collect();
+        self.settled = self.settled.min(first);
         for primitive in self.cache.primitives.split_off(first) {
             let visible = primitive.visible();
             let mut pieces: SmallVec<IntRect, 4> = SmallVec::from_iter([visible]);
@@ -1076,7 +1492,7 @@ impl Flattener<'_> {
                 Kind::Image(sprite.tile),
             ));
         }
-        for hole in holes.iter().filter(|_| !reads_backdrop) {
+        for hole in holes.iter().filter(|_| !cuts) {
             self.rasterize(index, matrix, *hole, clip);
         }
     }
@@ -1094,6 +1510,13 @@ impl Flattener<'_> {
             return;
         }
         let (corners, radii, rect) = (corner_rects(shape), circular_radii(shape), shape.rect);
+        let is_pending = |it: &Primitive| {
+            matches!(it.kind, Kind::Pending(_))
+                && corners.iter().any(|corner| corner.overlaps(it.visible()))
+        };
+        if !self.jobs.is_empty() && self.cache.primitives[first..].iter().any(is_pending) {
+            self.settle();
+        }
         let mut is_touched = [false; 4];
         for primitive in &mut self.cache.primitives[first..] {
             let visible = primitive.visible();
@@ -1111,6 +1534,7 @@ impl Flattener<'_> {
             match (primitive.kind, radii) {
                 (Kind::Quad { .. } | Kind::Image(_), Some(radii))
                     if is_same
+                        && primitive.smoothing >= shape.smoothing
                         && (0..4).all(|corner| primitive.radii[corner] + 0.02 >= radii[corner]) => {
                 }
                 (
@@ -1120,10 +1544,11 @@ impl Flattener<'_> {
                     },
                     Some(radii),
                 ) if covers && primitive.radii == [0.; 4] => {
-                    (primitive.bounds, primitive.radii) = (rect, radii);
+                    (primitive.bounds, primitive.radii, primitive.smoothing) =
+                        (rect, radii, shape.smoothing);
                 }
                 (Kind::Image(_), Some(radii)) if is_same && primitive.radii == [0.; 4] => {
-                    primitive.radii = radii
+                    (primitive.radii, primitive.smoothing) = (radii, shape.smoothing)
                 }
                 _ => (0..4).for_each(|corner| is_touched[corner] |= touches[corner]),
             }
@@ -1307,12 +1732,71 @@ impl Flattener<'_> {
             item,
             clip,
             radius,
+            is_smooth: false,
             opacity,
             rect,
             contents,
             pixels,
             fades: fading,
             moves,
+            origin,
+            is_clipped,
+            marker,
+            #[cfg(target_os = "macos")]
+            drawn: None,
+        });
+        Some(())
+    }
+
+    /// A canvas that the GPU draws on is shown as it is.
+    #[cfg(target_os = "macos")]
+    fn leave_out_canvas(
+        &mut self,
+        item: usize,
+        image: u32,
+        rect: IntRect,
+        clip: IntRect,
+    ) -> Option<()> {
+        let (origin, number, visible) = (
+            [f64::NEG_INFINITY, image.into(), 0., 0., 0.],
+            self.cache.lifted.len() as u32,
+            rect.intersect(clip),
+        );
+        let item = self.placement.shown_by.unwrap_or(item);
+        let has_its_place = self
+            .cache
+            .lifted
+            .iter()
+            .all(|it| it.item != item || !it.clip.overlaps(visible));
+        (!self.placement.staying?.contains(&origin)
+            && number + 1 < MAX_LIFTED
+            && !visible.is_empty()
+            && has_its_place)
+            .then_some(())?;
+        let drawn = Some(crate::canvas::picture(image)?);
+        let (marker, mut digest) = (
+            (CARET - 1 - number, visible),
+            Digest::new(IntRect::default()),
+        );
+        digest.value(image);
+        self.is_provisional();
+        self.cache.primitives.push(Primitive {
+            run: marker.0,
+            ..Primitive::new(rect.to_rect(), clip, solid(0))
+        });
+        let (contents, is_clipped) = (Some(digest.finish()), visible != rect);
+        self.cache.lifted.push(Lifted {
+            item,
+            clip: visible,
+            radius: 0.,
+            is_smooth: false,
+            opacity: 1.,
+            rect,
+            contents,
+            pixels: None,
+            drawn,
+            fades: None,
+            moves: None,
             origin,
             is_clipped,
             marker,
@@ -1374,6 +1858,94 @@ impl Flattener<'_> {
         Some(())
     }
 
+    /// For a transform with nothing in it but an image.
+    fn turn_image(&mut self, index: usize, matrix: &Transform, clip: IntRect) -> Option<()> {
+        let Painter { scene, frame, .. } = self.painter;
+        let (opacity, item) = match scene.items[scene.content(index)] {
+            _ if cfg!(target_os = "macos") => return None,
+            [item] => (1., item),
+            [
+                Item::PushLayer {
+                    opacity,
+                    blend: BlendMode::Normal,
+                    filters,
+                    ..
+                },
+                item,
+                Item::Pop,
+            ] if scene.filters(filters).is_empty() => (opacity, item),
+            _ => return None,
+        };
+        let Item::Image {
+            clip: shape,
+            tile,
+            image,
+            pixelated: false,
+        } = item
+        else {
+            return None;
+        };
+        let (rect, (x, y)) = (cpu::snap_tile(frame, &tile).rect, matrix.get_scale());
+        (tile.step == [0.; 2] && !has_radii(&shape) && frame.snap(shape.rect) == rect)
+            .then_some(())?;
+        let info = images::info(image, frame)?;
+        let (columns, rows) = images::size_to_draw(
+            image,
+            frame,
+            matrix,
+            images::reduced_size(info.size?, rect.width * x, rect.height * y),
+        );
+        let area = IntRect::new(0, 0, columns as i32, rows as i32);
+        let edge = TURNED_EDGE as f32;
+        let to_texels = matrix
+            .invert()?
+            .post_translate(-rect.x, -rect.y)
+            .post_scale(columns as f32 / rect.width, rows as f32 / rect.height)
+            .post_translate(edge, edge);
+        // The edges are as soft as a texel is large.
+        let is_sharp = [
+            to_texels.sx.hypot(to_texels.kx),
+            to_texels.ky.hypot(to_texels.sy),
+        ]
+        .iter()
+        .all(|it| (0.8..=2.).contains(it));
+        (is_sharp && area.area() <= WHOLE_AREA && columns.max(rows) <= MAX_SIDE as u32)
+            .then_some(())?;
+        let mut digest = Digest::new(area);
+        digest.value((image, info.version, "turned"));
+        let Sprite { tile, .. } = self.raster(digest.finish(), area, false, |_| {
+            images::with_size(
+                image,
+                frame,
+                |_| (columns, rows),
+                |content| match content {
+                    Content::Pixels(pixmap) => Layer {
+                        rect: area,
+                        pixmap: pixmap.cropped(0, 0, area.right, area.bottom)?,
+                    }
+                    .copy(area.outset(TURNED_EDGE)),
+                    Content::Svg(_) => None,
+                },
+            )?
+        })?;
+        let bounds = IntRect::around(map_rect(matrix, rect)).outset(1);
+        if software::alpha(opacity) != 0 {
+            self.push(Primitive {
+                opacity,
+                ..Primitive::new(
+                    bounds.to_rect(),
+                    clip,
+                    Kind::Turned {
+                        texture: tile.texture,
+                        id: tile.id,
+                        to_texels,
+                    },
+                )
+            });
+        }
+        Some(())
+    }
+
     /// `matrix` is axis aligned.
     fn item(&mut self, index: usize, matrix: &Transform, clip: IntRect) {
         let Painter { scene, frame, .. } = self.painter;
@@ -1391,8 +1963,20 @@ impl Flattener<'_> {
                 self.round(first, &shape, index, matrix, clip);
             }
             Item::PushTransform(by) => match frame.concat(matrix, by) {
-                inner if is_axis_aligned(&inner) => self.range(scene.content(index), &inner, clip),
-                inner if self.turn(index, &inner, clip).is_some() => {}
+                inner
+                    if is_axis_aligned(&inner)
+                        && ((inner.sx - inner.sy).abs() < 1e-3
+                            || !scene.items[scene.content(index)]
+                                .iter()
+                                .any(has_smooth_corners)) =>
+                {
+                    self.range(scene.content(index), &inner, clip)
+                }
+                inner
+                    if self
+                        .turn(index, &inner, clip)
+                        .or_else(|| self.turn_image(index, &inner, clip))
+                        .is_some() => {}
                 _ => self.rasterize_all(index, matrix, clip),
             },
             Item::PushLayer { .. } => self.layer(index, matrix, clip),
@@ -1418,6 +2002,7 @@ impl Flattener<'_> {
                     _ if color & 0xFF == 0 => {}
                     Some(radii) => self.push(Primitive {
                         radii,
+                        smoothing: shape.smoothing,
                         ..Primitive::new(shape.rect, clip, solid(color))
                     }),
                     None => self.stretch_box(index, matrix, clip),
@@ -1492,8 +2077,9 @@ impl Flattener<'_> {
             }
             Item::Caret { rect, color } => {
                 if frame.shows_caret {
+                    let run = if self.placement.depth == 0 { CARET } else { 0 };
                     self.push(Primitive {
-                        run: CARET,
+                        run,
                         ..Primitive::new(map_rect(matrix, frame.snap(rect)), clip, solid(color))
                     });
                 }
@@ -1587,7 +2173,7 @@ impl Flattener<'_> {
                     scene.items[index.saturating_sub(1)],
                     self.cache.primitives.last_mut(),
                 ) && matches!(last.kind, Kind::Quad { color, border: [0., 0., 0., 0.], .. } if color == fill && fill & 0xFF != 0)
-                    && last.clip == clip
+                    && (last.clip, last.smoothing) == (clip, shape.smoothing)
                     && ((last.bounds, last.radii) == (rect, radii)
                         || color & 0xFF == 0xFF && ends_in_border(last, rect, radii, top))
                 {
@@ -1609,6 +2195,7 @@ impl Flattener<'_> {
                 };
                 return self.push(Primitive {
                     radii,
+                    smoothing: shape.smoothing,
                     ..Primitive::new(rect, clip, kind)
                 });
             }
@@ -1618,7 +2205,7 @@ impl Flattener<'_> {
         }
         let bounds = self.device_bounds(index, matrix);
         let reach = shape
-            .radii
+            .reach()
             .as_flattened()
             .iter()
             .chain(&border)
@@ -1772,9 +2359,10 @@ impl Flattener<'_> {
             return false;
         }
         let bounds = map_rect(matrix, frame.snap(tile.rect));
-        if webview::with(image, |view, _| {
-            self.web_page(image, view, matrix, bounds, clip)
-        }) == Some(true)
+        if self.nest(index, image, matrix, bounds, clip).is_some()
+            || webview::with(image, |view, _| {
+                self.web_page(image, view, matrix, bounds, clip)
+            }) == Some(true)
         {
             return true;
         }
@@ -1789,6 +2377,15 @@ impl Flattener<'_> {
         if pixelated && !is_unscaled(size) {
             return false;
         }
+        #[cfg(target_os = "macos")]
+        if matrix.sx > 0.
+            && matrix.sy > 0.
+            && self
+                .leave_out_canvas(index, image, IntRect::nearest(bounds), clip)
+                .is_some()
+        {
+            return true;
+        }
         let (width, height) = (bounds.width.min(LARGEST), bounds.height.min(LARGEST));
         let (columns, rows) = images::size_to_draw(
             image,
@@ -1797,20 +2394,7 @@ impl Flattener<'_> {
             images::reduced_size(size, width, height),
         );
         let area = IntRect::new(0, 0, columns as i32, rows as i32);
-        let mut digest = Digest::new(area);
-        digest.value((image, info.version));
-        let sprite = self.raster(digest.finish(), area, false, |_| {
-            images::with_size(
-                image,
-                frame,
-                |_| (columns, rows),
-                |content| match content {
-                    Content::Pixels(pixmap) => padded(pixmap),
-                    Content::Svg(_) => None,
-                },
-            )?
-        });
-        let Some(sprite) = sprite else {
+        let Some(sprite) = self.padded_image(image, info.version, area) else {
             return info.is_deferred;
         };
         let (mut bounds, mut part) = (bounds, area.offset(1, 1));
@@ -1827,6 +2411,80 @@ impl Flattener<'_> {
             Kind::Image(part_of(sprite.tile, part)),
         ));
         true
+    }
+
+    /// For an image that shows another scene.
+    fn nest(
+        &mut self,
+        index: usize,
+        image: u32,
+        matrix: &Transform,
+        bounds: Rect,
+        clip: IntRect,
+    ) -> Option<()> {
+        const MAX_DEPTH: usize = 16;
+        let (surface, scale) = webview::mirrored(image)
+            .filter(|_| !self.is_faded && self.placement.depth < MAX_DEPTH)?;
+        ((matrix.sx - scale).abs() <= 0.001 && (matrix.sy - scale).abs() <= 0.001).then_some(())?;
+        let (surface, all, outer) = (
+            surface::get(surface)?,
+            IntRect::nearest(bounds),
+            self.painter.frame,
+        );
+        let surface = surface.try_borrow().ok()?;
+        if surface
+            .scene
+            .memo
+            .as_ref()
+            .is_some_and(|it| it.try_lock().is_none())
+        {
+            return Some(());
+        }
+        if outer.is_overdue() {
+            self.put_off();
+            return Some(());
+        }
+        let mut frame = Frame {
+            scale: scale * surface.scene.zoom,
+            shows_caret: false,
+            snaps: true,
+            ..outer.rescaled(1.)
+        };
+        if surface.scene.caret.is_some() && self.placement.is_active {
+            let (is_shown, until) = window::blink(surface.caret_moved_at, frame.now);
+            frame.shows_caret = is_shown;
+            frame.changes_at(until);
+        }
+        let Placement {
+            staying,
+            is_active,
+            depth,
+            shown_by,
+            ..
+        } = *self.placement;
+        let (origin, clip, shown_by) = (
+            (all.left, all.top),
+            clip.intersect(all),
+            shown_by.or(Some(index)),
+        );
+        let placement = Placement {
+            movers: &[],
+            staying,
+            in_motion: &[],
+            origin,
+            clip,
+            is_active,
+            depth: depth + 1,
+            shown_by,
+        };
+        self.last_nested = Some(self.cache.primitives.len());
+        paint(&surface.scene, &frame, &placement, self.atlas, self.cache);
+        frame
+            .next_change
+            .get()
+            .into_iter()
+            .for_each(|it| outer.changes_at(it));
+        Some(())
     }
 
     /// In pieces, of which few change. It is not stretched while it catches up with the size of its box.
@@ -1962,9 +2620,16 @@ impl Flattener<'_> {
                 return false;
             }
         }
-        self.push_raster(key, area, clip, |painter| {
-            painter.render_layer(index, matrix, area)
-        });
+        self.push_job(
+            Job {
+                key,
+                index,
+                matrix: *matrix,
+                area,
+                is_layer: true,
+            },
+            clip,
+        );
         true
     }
 
@@ -1980,9 +2645,10 @@ impl Flattener<'_> {
             return;
         }
         let first = self.cache.primitives.len();
-        let outer = self.layer_start.replace(first);
+        let outer = (self.layer_start.replace(first), self.is_faded);
+        self.is_faded |= opacity < 1.;
         self.contents_of_layer(index, matrix, clip);
-        self.layer_start = outer;
+        (self.layer_start, self.is_faded) = outer;
     }
 
     fn contents_of_layer(&mut self, index: usize, matrix: &Transform, clip: IntRect) {
@@ -2012,9 +2678,16 @@ impl Flattener<'_> {
                 let mut digest = Digest::new(piece);
                 digest.matrix(matrix);
                 digest.range(&self.painter, index..scene.end(index), matrix, piece);
-                self.push_raster(digest.finish(), piece, clip, |painter| {
-                    painter.render_layer(index, matrix, piece)
-                });
+                self.push_job(
+                    Job {
+                        key: digest.finish(),
+                        index,
+                        matrix: *matrix,
+                        area: piece,
+                        is_layer: true,
+                    },
+                    clip,
+                );
             }
             return;
         }
@@ -2134,10 +2807,16 @@ impl Flattener<'_> {
         reduction: i32,
     ) -> (Digest, impl FnOnce() -> Option<Layer> + use<'_>) {
         let mut digest = Digest::new(area);
-        let (atlas, primitives) = (self.atlas, &self.cache.primitives[first..]);
-        digest.value((reduction, software::hash_of_snapshot(primitives, area)));
+        let (atlas, frame, can_render) = (self.atlas, self.painter.frame, self.can_render());
+        let primitives = &self.cache.primitives[first..];
+        digest.value((
+            reduction,
+            (!frame.is_overdue()).then(|| software::hash_of_snapshot(primitives, area)),
+        ));
         (digest, move || {
-            atlas.snapshot(primitives, area, reduction as usize)
+            can_render.then(|| {
+                atlas.snapshot(primitives, area, reduction as usize, || frame.is_overdue())
+            })?
         })
     }
 
@@ -2162,6 +2841,7 @@ impl Flattener<'_> {
         let needed = area
             .outset(self.painter.reach_of_backdrops(index..end, matrix))
             .intersect(self.placement.clip);
+        self.settle();
         let (mut digest, render) = self.snapshot(self.layer_start.unwrap_or(0), needed, 1);
         digest.value(area);
         digest.matrix(matrix);
@@ -2228,6 +2908,7 @@ impl Flattener<'_> {
         let reduction = (1..=((sigma / 2.) as i32).clamp(1, 8))
             .rfind(fits)
             .unwrap_or(1);
+        self.settle();
         let (mut digest, render) = self.snapshot(first, shown, reduction);
         digest.filters(self.painter.scene, matrix, filters);
         let key = digest.finish();
@@ -2264,6 +2945,7 @@ impl Flattener<'_> {
         );
         self.push(Primitive {
             radii: radii.unwrap_or_default(),
+            smoothing: shape.smoothing,
             ..primitive
         });
     }
@@ -2283,6 +2965,7 @@ mod tests {
                 height,
             },
             radii: [[radius; 2]; 4],
+            smoothing: 0.,
         }
     }
 
@@ -2298,9 +2981,13 @@ mod tests {
     fn flatten(scene: &Scene, cache: &mut Cache, compositor: &mut Compositor) -> Vec<Primitive> {
         let placement = Placement {
             movers: &[],
+            staying: None,
             in_motion: &[],
             origin: (3, 5),
             clip: IntRect::new(0, 0, 800, 600),
+            is_active: false,
+            depth: 0,
+            shown_by: None,
         };
         cache.begin();
         paint(
@@ -2360,7 +3047,8 @@ mod tests {
             };
             items.push(Item::Shadow {
                 shape: card,
-                shadow: card,
+                shadow: card.rect,
+                radii: card.radii,
                 blur: 4.,
                 color,
                 inset: false,
@@ -2430,18 +3118,27 @@ mod tests {
             scene.index_around(vec![driven[0]]);
             let remembered = flatten(&scene, &mut cache, &mut compositor);
             let area = IntRect::new(0, 0, 500, 600);
-            let shown = compositor.atlas.snapshot(&remembered, area, 1).unwrap();
+            let shown = compositor
+                .atlas
+                .snapshot(&remembered, area, 1, || false)
+                .unwrap();
             let (memo, mut other) = (scene.memo.take(), Compositor::default());
             let fresh = flatten(&scene, &mut Cache::default(), &mut other);
             scene.memo = memo;
             let outline = |all: &[Primitive]| {
                 all.iter()
-                    .map(|it| (it.bounds, it.clip, it.run, it.radii, it.opacity))
+                    .filter(|it| !it.visible().is_empty())
+                    .map(|it| (it.bounds, it.visible(), it.run != 0, it.radii, it.opacity))
                     .collect::<Vec<_>>()
             };
             assert!(outline(&remembered) == outline(&fresh), "step {step}");
             assert!(
-                shown.pixels() == other.atlas.snapshot(&fresh, area, 1).unwrap().pixels(),
+                shown.pixels()
+                    == other
+                        .atlas
+                        .snapshot(&fresh, area, 1, || false)
+                        .unwrap()
+                        .pixels(),
                 "step {step}"
             );
         }
@@ -2494,6 +3191,91 @@ mod tests {
     }
 
     #[test]
+    fn what_there_is_no_time_for_is_painted_later() {
+        let (atlas, mut cache, clip) = (
+            Atlas::default(),
+            Cache::default(),
+            IntRect::new(0, 0, 800, 600),
+        );
+        let (placement, scene) = (
+            Placement {
+                movers: &[],
+                staying: None,
+                in_motion: &[],
+                origin: (0, 0),
+                clip,
+                is_active: false,
+                depth: 0,
+                shown_by: None,
+            },
+            triangles(usize::MAX),
+        );
+        let mut shows = |frame: Frame| {
+            cache.begin();
+            paint(&scene, &frame, &placement, &atlas, &mut cache);
+            (
+                !cache.primitives.is_empty(),
+                frame.next_change.get().is_some(),
+            )
+        };
+        assert_eq!(
+            shows(Frame {
+                gives_up_at: Instant::now(),
+                ..Frame::new(1., false)
+            }),
+            (false, true)
+        );
+        assert_eq!(shows(Frame::new(1., false)), (true, false));
+    }
+
+    #[test]
+    fn what_is_under_too_much_else_is_left_out() {
+        let mut scene = Scene::default();
+        scene.items.push(Item::Fill {
+            shape: shape(0., 0., 400., 300., 0.),
+            color: 0xFF,
+        });
+        scene.items.extend((1..=20_000).map(|it| Item::Fill {
+            shape: shape(0., 0., 200., 300., 0.),
+            color: it << 8 | 1,
+        }));
+        scene.index();
+        let shown = flatten(&scene, &mut Cache::default(), &mut Compositor::default());
+        assert!((200..2000).contains(&shown.len()));
+        assert!(
+            shown[0].kind == solid(0xFF)
+                && shown[0].visible().contains(IntRect::new(500, 5, 800, 600))
+        );
+        assert!(shown[shown.len() - 1].kind == solid(20_000 << 8 | 1));
+    }
+
+    #[test]
+    fn rasters_take_limited_memory() {
+        let mut scene = Scene::default();
+        for index in 0..200 {
+            let shape = RoundedRect {
+                radii: [[10. + index as f32, 5.]; 4],
+                ..shape(0., 0., 400., 300., 0.)
+            };
+            scene.items.push(Item::Shadow {
+                shape,
+                shadow: shape.rect,
+                radii: shape.radii,
+                blur: 200.,
+                color: 0x10,
+                inset: true,
+                covered: false,
+            });
+        }
+        scene.index();
+        assert!(
+            (10..100).contains(
+                &flatten(&scene, &mut Cache::default(), &mut Compositor::default()).len()
+            )
+        );
+    }
+
+    #[test]
     fn a_large_drawing_is_painted_again_where_it_changes() {
         let (atlas, mut cache, frame, clip) = (
             Atlas::default(),
@@ -2503,9 +3285,13 @@ mod tests {
         );
         let placement = Placement {
             movers: &[],
+            staying: None,
             in_motion: &[],
             origin: (0, 0),
             clip,
+            is_active: false,
+            depth: 0,
+            shown_by: None,
         };
         let mut counts = Vec::new();
         for moved in [usize::MAX, 77] {
@@ -2523,7 +3309,9 @@ mod tests {
                 &Transform::identity(),
                 &Clip::new(clip),
             );
-            let shown = atlas.snapshot(&cache.primitives, clip, 1).unwrap();
+            let shown = atlas
+                .snapshot(&cache.primitives, clip, 1, || false)
+                .unwrap();
             assert!(
                 shown
                     .pixmap

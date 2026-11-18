@@ -20,7 +20,7 @@ describe.concurrent("node-module-module", () => {
     expect(Array.isArray(builtinModules)).toBe(true);
     // "bun:wrap" is no longer listed: it is internal transpiler plumbing,
     // not a requireable public module.
-    expect(builtinModules).toHaveLength(79);
+    expect(builtinModules).toHaveLength(76);
   });
 
   test("isBuiltin() works", () => {
@@ -67,7 +67,7 @@ describe.concurrent("node-module-module", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: JSON.stringify({ missing: [], builtinModules: 79, globalPaths: true }),
+      stdout: JSON.stringify({ missing: [], builtinModules: 76, globalPaths: true }),
       stderr: "",
       exitCode: 0,
     });

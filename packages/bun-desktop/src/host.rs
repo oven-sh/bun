@@ -1,5 +1,6 @@
 //! The window system as a guest of Bun's event loop.
 
+pub mod alarm;
 #[cfg_attr(target_os = "macos", path = "host/macos.rs")]
 #[cfg_attr(not(target_os = "macos"), path = "host/linux.rs")]
 mod system;
@@ -13,7 +14,8 @@ use std::time::{Duration, Instant};
 use crate::diagnostics::{self, Step};
 use crate::error::{Context as _, Result};
 use crate::platform::Platform;
-use crate::{app, bridge, input, surface, window};
+use crate::remote::{guest, pages};
+use crate::{app, bridge, canvas, input, surface, window};
 
 const FOR_RESIZE: Duration = Duration::from_millis(100);
 
@@ -28,7 +30,7 @@ thread_local! {
     static DEFERRED_FRAMES: RefCell<Vec<u32>> = RefCell::default();
     static DEFERRED_SINCE: Cell<Option<Instant>> = const { Cell::new(None) };
     /// What `bridge::taken` was when JavaScript last finished with its events.
-    static HANDLED: Cell<[u32; 2]> = const { Cell::new([0; 2]) };
+    static HANDLED: Cell<[u32; 3]> = const { Cell::new([0; 3]) };
     /// JavaScript was not done with the last frame when this one began.
     static WAS_LATE: Cell<bool> = const { Cell::new(false) };
     static IS_IN_FRAME: Cell<bool> = const { Cell::new(false) };
@@ -62,7 +64,11 @@ pub fn init(has_main_thread: bool) {
         false => thread::spawn(|| {
             thread::set_name(c"UI");
             thread::enter();
-            run_ui_thread();
+            if guest::is_on() {
+                thread::only_run_jobs()
+            } else {
+                run_ui_thread()
+            }
         }),
     }
 }
@@ -97,7 +103,8 @@ pub fn frame_is_due(window: u32) {
         IS_IN_FRAME.set(false);
         return window::draw_if_stale(window);
     }
-    WAS_LATE.set(HANDLED.get() != bridge::emitted());
+    pages::forgive(FOR_RESIZE);
+    WAS_LATE.set(is_handled() != [true; 3]);
     if !is_about_to_draw(window) {
         DEFERRED_FRAMES.with_borrow_mut(|frames| frames.push(window));
     }
@@ -108,6 +115,14 @@ pub fn frame_is_due(window: u32) {
         present();
         window::layers::flush();
     }
+}
+
+/// For a frame that the platform has not asked for yet.
+pub fn wait_for_frame(window: u32, since: Instant) {
+    if !is_about_to_draw(window) {
+        DEFERRED_FRAMES.with_borrow_mut(|frames| frames.push(window));
+    }
+    DEFERRED_SINCE.set(DEFERRED_SINCE.get().or(Some(since)));
 }
 
 /// The window has another size, and shows what is drawn next together with that.
@@ -169,12 +184,21 @@ pub fn deliver_events(patience: Duration) {
         return;
     }
     let deadline = Instant::now() + patience;
-    while HANDLED.get() != bridge::emitted() && thread::wait_for_jobs(deadline) {
+    while is_handled() != [true; 3] && thread::wait_for_jobs(deadline) {
         thread::run_jobs();
     }
 }
 
+/// Frames, sizes and bounds.
+fn is_handled() -> [bool; 3] {
+    let (handled, emitted, [frames, sizes]) = (HANDLED.get(), bridge::emitted(), pages::owed());
+    [0, 1, 2].map(|it| handled[it] == emitted[it] && [frames, sizes, 0][it] == 0)
+}
+
 pub fn events_were_handled() {
+    if guest::is_on() {
+        return guest::events_were_handled();
+    }
     let taken = bridge::taken();
     if thread::is_elsewhere() {
         if HANDLED.replace(taken) != taken {
@@ -210,11 +234,10 @@ pub fn present_at_once() {
 
 /// When the UI thread stops waiting for what JavaScript paints.
 fn presentation_deadline() -> Option<Instant> {
-    let (since, [frames, resizes], emitted) =
-        (DEFERRED_SINCE.get()?, HANDLED.get(), bridge::emitted());
-    if resizes != emitted[1] {
+    let (since, [frames, resizes, _]) = (DEFERRED_SINCE.get()?, is_handled());
+    if !resizes {
         Some(since + FOR_RESIZE)
-    } else if frames == emitted[0] || IS_URGENT.get() {
+    } else if frames || IS_URGENT.get() {
         Some(since)
     } else {
         window::any_is_stale().then(|| {
@@ -230,7 +253,8 @@ fn presentation_deadline() -> Option<Instant> {
 fn next_deadline() -> Option<Instant> {
     let deadlines = surface::next_deadline()
         .into_iter()
-        .chain(window::next_redraw());
+        .chain(window::next_redraw())
+        .chain(canvas::next_chore());
     #[cfg(target_os = "macos")]
     let deadlines = deadlines.chain(window::layers::next_chore());
     deadlines.min()
@@ -239,6 +263,7 @@ fn next_deadline() -> Option<Instant> {
 fn run_what_is_due() {
     surface::begin_overdue_frames();
     window::redraw_what_is_due();
+    canvas::do_chores();
     #[cfg(target_os = "macos")]
     window::layers::do_chores();
 }
@@ -284,6 +309,13 @@ fn has_work() -> bool {
         || DEFERRED_FRAMES.with_borrow(|frames| !frames.is_empty())
 }
 
+/// On the thread that runs JavaScript. Returns whether `other` is readable.
+pub fn wait_for(source: Option<isize>, other: i32, timeout: Option<Duration>) -> bool {
+    let mut others = vec![other];
+    unix::poll(&unix::WAKE, source, &mut others, timeout);
+    !others.is_empty()
+}
+
 pub fn has_input() -> bool {
     bridge::has_events_but_frames() || thread::has_calls()
 }
@@ -292,6 +324,12 @@ pub fn pump(source: isize, timeout_ns: i64, from_tick: bool) -> bool {
     // An event loop that is busy asks after every task.
     const MIN_INTERVAL: Duration = Duration::from_millis(1);
     let (start, source) = (Instant::now(), Some(source).filter(|source| *source != -1));
+    if guest::is_on() {
+        return guest::pump(
+            source,
+            u64::try_from(timeout_ns).ok().map(Duration::from_nanos),
+        );
+    }
     if thread::is_elsewhere() {
         thread::release_jobs();
         if timeout_ns != 0 && !bridge::has_events() && !thread::has_calls() {

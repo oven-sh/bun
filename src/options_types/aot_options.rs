@@ -120,6 +120,8 @@ pub struct AotOptions {
     pub runs_in_several_realms: bool,
     /// `--desktop`: some of the realms are windows and workers of the web, whose global objects have other names than Bun's.
     pub has_realms_of_the_web: bool,
+    /// For a command that takes no `--desktop`: the build sets it and stops where the program imports `bun:desktop` without `has_realms_of_the_web`.
+    pub imports_desktop: Option<Arc<AtomicBool>>,
     /// The global object of the program is a window.
     pub starts_in_window: bool,
     pub replaced_by_tests: ReplacedByTests,
@@ -214,6 +216,7 @@ impl Default for AotOptions {
             typescript_drops_absent_exports: false,
             runs_in_several_realms: false,
             has_realms_of_the_web: false,
+            imports_desktop: None,
             starts_in_window: false,
             replaced_by_tests: ReplacedByTests::default(),
             preload: None,
@@ -285,6 +288,7 @@ mod tests {
             typescript_drops_absent_exports,
             runs_in_several_realms,
             has_realms_of_the_web,
+            imports_desktop,
             starts_in_window,
             replaced_by_tests,
             preload,
@@ -347,6 +351,7 @@ mod tests {
         assert!(!typescript_drops_absent_exports);
         assert!(!runs_in_several_realms);
         assert!(!has_realms_of_the_web);
+        assert!(imports_desktop.is_none());
         assert!(!starts_in_window);
         assert!(builtins.is_empty());
         assert!(test_files.is_empty());

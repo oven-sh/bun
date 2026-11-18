@@ -873,7 +873,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'disable'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'."
         ),
         parse_param!(
-            "--desktop                        Build a <b>bun:desktop<r> app: a .app for macOS, an AppDir for Linux, a folder for Windows. Requires --compile"
+            "--desktop                        Build a <b>bun:desktop<r> app: a .app for macOS, an AppDir for Linux. Requires --compile"
         ),
         parse_param!(
             "--desktop-name <STR>             With --desktop: the name people see. Defaults to productName or name in package.json"
@@ -885,7 +885,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--desktop-version <STR>          With --desktop: the version. Defaults to version in package.json"
         ),
         parse_param!(
-            "--desktop-icon <STR>             With --desktop: a square .png of 512 or 1024 pixels, or a .icns for macOS, a .svg for Linux, a .ico for Windows"
+            "--desktop-icon <STR>             With --desktop: a square .png of 512 or 1024 pixels, or a .icns for macOS, a .svg for Linux"
         ),
         parse_param!(
             "--windows-hide-console           When using --compile targeting Windows, prevent a Command prompt from opening alongside the executable"

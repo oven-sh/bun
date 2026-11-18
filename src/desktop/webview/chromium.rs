@@ -58,7 +58,7 @@ pub(super) fn from_engine(href: &str) -> String {
     convert().unwrap_or_else(|| href.to_owned())
 }
 
-pub(super) fn switches(profile: &str) -> impl Iterator<Item = String> {
+pub(super) fn switches(profile: &str, scale: f64) -> impl Iterator<Item = String> {
     let fixed = [
         "--remote-debugging-pipe",
         "--headless",
@@ -77,10 +77,10 @@ pub(super) fn switches(profile: &str) -> impl Iterator<Item = String> {
         // The handler of the app decides.
         "--disable-popup-blocking",
     ];
-    fixed
-        .into_iter()
-        .map(String::from)
-        .chain([format!("--user-data-dir={profile}")])
+    fixed.into_iter().map(String::from).chain([
+        format!("--user-data-dir={profile}"),
+        format!("--force-device-scale-factor={scale}"),
+    ])
 }
 
 pub(super) fn unsupported(what: &str) -> Failure {
@@ -125,6 +125,8 @@ pub(super) struct Session {
 #[derive(Default)]
 pub(super) struct Backend {
     pub(super) user_agent: String,
+    /// Of the screen that the engine takes itself to paint on.
+    pub(super) scale: f64,
     pub(super) media: RefCell<Value>,
     /// By the ids of their frames.
     pub(super) pages: RefCell<BTreeMap<Box<str>, Rc<Page>>>,
@@ -139,9 +141,10 @@ pub(super) struct Backend {
 }
 
 impl Backend {
-    pub(super) fn new(user_agent: String) -> Backend {
+    pub(super) fn new(user_agent: String, scale: f64) -> Backend {
         Backend {
             user_agent,
+            scale,
             media: Value::empty().into(),
             ..Default::default()
         }
@@ -605,9 +608,8 @@ impl Browser {
             );
         }
         page.set_background([0; 4]);
-        drop(page.resize());
         page.attach(session).await;
-        page.tell("Page.startScreencast", record! { "format": "png" });
+        page.paint(true);
         if let Some(it) = self.0.view(page.id) {
             it.view.target_id.set(Some(target.into()));
         }

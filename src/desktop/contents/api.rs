@@ -30,7 +30,7 @@ use crate::text::{split, split_once};
 use crate::webview::embedded;
 use crate::webview::remote::Remote;
 use crate::webview::{print, wire};
-use crate::{accelerator, app, files, process, task};
+use crate::{accelerator, app, files, task};
 
 fn raw<'b>(values: Values<'_, 'b>) -> &'b [JSValue] {
     JsLocal::to_js_slice(values)
@@ -617,10 +617,13 @@ impl Contents {
 
     pub(crate) fn forcefully_crash_renderer(&self, _: Cx<'_, '_>) -> JsResult<()> {
         if self.told_guest("forcefullyCrashRenderer", &[])? {
-            Ok(())
-        } else {
-            self.crash("killed")
+            return Ok(());
         }
+        if let Some(process) = self.page().process() {
+            process.kill("killed");
+            return Ok(());
+        }
+        self.crash("killed", 2)
     }
 
     pub(crate) fn invalidate(&self, _: Cx<'_, '_>) -> JsResult<()> {
@@ -738,7 +741,7 @@ impl Contents {
         js(match self.guest() {
             Some(guest) => guest.mirrored("pid").number(),
             None if self.has_crashed() => 0.,
-            None => process::id().into(),
+            None => self.page().process_id().into(),
         })
     }
 
@@ -861,14 +864,18 @@ impl Contents {
             files if files.is_array() => texts_of(files)?,
             _ => text_if_any(file?)?.into_iter().collect(),
         };
-        let icon = NativeImage::with(global(), icon?, |it| it.icon(global()))?;
+        let icon = icon?;
+        if icon.is_undefined_or_null() {
+            return Err(error(format_args!("'icon' parameter is required")));
+        }
+        let icon = NativeImage::with(global(), icon, |it| it.icon(global()))?;
+        if icon.bytes.is_empty() {
+            return Ok(());
+        }
         if paths.is_empty() {
             return Err(error(format_args!(
                 "Must specify either 'file' or 'files' option"
             )));
-        }
-        if icon.bytes.is_empty() {
-            return Err(error(format_args!("Must specify non-empty 'icon' option")));
         }
         if !IS_MAC {
             return Err(unsupported("startDrag"));
@@ -914,7 +921,7 @@ impl Contents {
             let options = wire::data_from_js(argument(raw(values), 1))?;
             let headers: HeaderList = crate::session::load::from_record(&options["headers"]);
             self.session
-                .download(&text_at(raw(values), 0)?, headers, self.to_js(), None);
+                .download(&text_at(raw(values), 0)?, headers, self.to_js(), None)?;
         }
         Ok(())
     }
@@ -1195,7 +1202,7 @@ impl Contents {
             if it.has_crashed() {
                 return Ok(NativeImage::from_bytes(Vec::new()).to_js(global()));
             }
-            (it.started_page()?).tell(|it| it.input(Input::Frame { is_urgent: true }))?;
+            it.started_page()?.ask(Controls::render)?;
             let bitmap = answer((bun_ui::renderer(global())?.capture)(
                 it.surface,
                 area.into(),

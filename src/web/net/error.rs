@@ -40,6 +40,16 @@ macro_rules! net_errors {
     };
 }
 
+impl crate::wire::Wire for NetError {
+    fn write(self, to: &mut crate::wire::Writer) {
+        (self as i32).write(to);
+    }
+
+    fn read(from: &mut crate::wire::Reader<'_>) -> crate::wire::Result<NetError> {
+        i32::read(from).map(NetError::from_number)
+    }
+}
+
 net_errors! {
     Failed = "FAILED", -2;
     Aborted = "ABORTED", -3;

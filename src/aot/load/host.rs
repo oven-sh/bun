@@ -57,7 +57,6 @@ use crate::load::disk_delegation::{
 use crate::load::externals::{contains, is_external};
 use crate::load::import_functions;
 use crate::load::import_meta_glob;
-use crate::load::is_host_path;
 use crate::load::known_evaluations::{self, CodeBeside};
 use crate::load::loaders::{
     BY_NAME, HostLoaderKind, gives_data, host_loader_kind, is_taken_by_written_type,
@@ -85,6 +84,7 @@ use crate::load::sources::{
 };
 use crate::load::test_runner_names;
 use crate::load::text_for_json_parse::is_taken_by_json_parse;
+use crate::load::{is_host_path, is_in_node_modules};
 use crate::module_keys::{is_url_with_text, loader_name, name_of_text};
 use crate::options::{EntryText, Options};
 use crate::statistics::{Stage, StepClock};
@@ -1192,6 +1192,19 @@ impl CodeHost for LoadHost<'_> {
         let mut entry_texts = self.input.options.load.entry_texts.iter();
         if !is_import && let Some(text) = entry_texts.find(|it| it.name == request.specifier) {
             return HostResolution::Path(self.plugins.add_entry_text(text, None));
+        }
+        let aot = self.input.options.aot;
+        if let Some(imports_desktop) = &aot.imports_desktop
+            && !aot.has_realms_of_the_web
+            && is_import
+            && matches!(
+                request.form,
+                CodeImportForm::Static | CodeImportForm::Dynamic
+            )
+            && Alias::is_desktop_module(request.specifier)
+            && !is_in_node_modules(request.importer)
+        {
+            imports_desktop.store(true, Ordering::Relaxed);
         }
         if is_import && let Some(resolution) = self.runtime_resolution(request.specifier) {
             if builtin_uses::is_module_with_source(&resolution) {

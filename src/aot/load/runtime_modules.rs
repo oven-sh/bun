@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use bun_ast::Target;
 use bun_builtin_sources::{Archive, Manifest, PartSeenByEveryFile, VIRTUAL_ROOT};
 use bun_core::strings;
+use bun_options_types::aot_options::AotOptions;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_resolve_builtins::HardcodedModule::BUN_ALIASES;
@@ -87,8 +88,11 @@ impl RuntimeModules {
         self
     }
 
-    pub(crate) fn with_modules_of_electron(mut self, has_them: bool) -> RuntimeModules {
+    pub(crate) fn with_desktop_modules(mut self, options: &AotOptions) -> RuntimeModules {
+        let has_them = options.has_realms_of_the_web;
         self.aliases.has_modules_of_electron = has_them;
+        self.public_specifiers
+            .retain(|&(_, specifier)| has_them || !Alias::is_desktop_module(specifier));
         self
     }
 
@@ -231,6 +235,9 @@ impl RuntimeModules {
     }
 
     fn refuses(&self, specifier: &[u8], importer: &[u8]) -> bool {
+        if !self.aliases.has_modules_of_electron && Alias::is_desktop_module(specifier) {
+            return true;
+        }
         !self.answers_modules_of_own_tests
             && !self.files.contains_key(importer)
             && is_module_of_own_tests(specifier, self.aliases)

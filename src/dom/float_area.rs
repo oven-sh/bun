@@ -47,7 +47,7 @@ impl FloatArea {
     /// From left to right, between `top` and `bottom`.
     pub(crate) fn across(&self, top: f32, bottom: f32) -> Option<[f32; 2]> {
         match self {
-            FloatArea::Rounded(RoundedRect { rect, radii }) => {
+            FloatArea::Rounded(RoundedRect { rect, radii, .. }) => {
                 if rect.is_empty()
                     || top >= rect.bottom()
                     || bottom <= rect.y && !(top == bottom && top == rect.y)
@@ -195,6 +195,7 @@ impl Document {
             let RoundedRect {
                 rect,
                 radii: [a, b, c, d],
+                ..
             } = reference;
             let down = |x: f32, upper: [f32; 2], lower: [f32; 2]| {
                 [
@@ -331,7 +332,7 @@ impl Document {
                     known.insert(0, (key, Rc::clone(&rows)));
                     FloatArea::Rows(rows)
                 }
-                (_, Resolved::Rounded(RoundedRect { rect, radii })) => {
+                (_, Resolved::Rounded(RoundedRect { rect, radii, .. })) => {
                     let (turned, mut turned_radii) = (rect.transformed(&turn), radii);
                     for (corner, radius) in
                         [[0.0, 0.0], [width, 0.0], [width, height], [0.0, height]]
@@ -349,6 +350,7 @@ impl Document {
                     FloatArea::Rounded(RoundedRect {
                         rect: turned.grown(grown),
                         radii: turned_radii.map(|it| it.map(|it| it + grown)),
+                        smoothing: 0.0,
                     })
                 }
                 (_, Resolved::Path(path, _)) => FloatArea::Edges(

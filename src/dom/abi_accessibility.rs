@@ -339,7 +339,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 15] = {
+    pub(crate) const ALL: [Action; 15] = {
         use Action::*;
         [
             Click,

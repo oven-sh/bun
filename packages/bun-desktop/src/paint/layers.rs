@@ -46,7 +46,7 @@ pub trait Target {
     fn lock(surface: &Self::Surface, writes: bool) -> Locked;
     fn unlock(surface: &Self::Surface, wrote: bool);
     /// With the time that the CPU has needed for the last frame.
-    fn can_draw(&mut self, painting_took: Duration) -> bool;
+    fn can_draw(&mut self, painting_took: Duration, is_resized: bool) -> bool;
     /// Replaces what is on the surfaces, and returns when that is done.
     fn draw(&mut self, instances: &[Instance], passes: &[Pass<Self::Surface>]) -> bool;
     fn show(&mut self, position: Position, rect: IntRect, surface: &Self::Surface, is_opaque: bool);
@@ -70,6 +70,8 @@ pub struct Instance {
     width: u32,
     height: u32,
     opacity: f32,
+    /// The rest is padding.
+    smoothing: [f32; 4],
 }
 
 pub struct Batch {
@@ -94,6 +96,7 @@ fn instance<'a>(
         bounds: [bounds.x, bounds.y, bounds.width, bounds.height],
         area: [area.left, area.top, area.right, area.bottom].map(|it| it as f32),
         radii: primitive.radii,
+        smoothing: [primitive.smoothing, 0., 0., 0.],
         ..Instance::default()
     };
     let (tile, kind, color, bytes) = match primitive.kind {
@@ -115,7 +118,7 @@ fn instance<'a>(
                 None,
             ));
         }
-        Kind::Turned { .. } => return None,
+        Kind::Turned { .. } | Kind::Pending(_) => return None,
         Kind::Mask(tile, color) => (tile, 2, bgra(color, primitive.opacity), 1),
         Kind::Image(tile) => (tile, 3 + u32::from(is_shaped(primitive)), [0; 4], 4),
     };
@@ -240,6 +243,10 @@ impl Sample {
         compositor
             .primitives
             .push(at(100.5, 24.25, 40., 20., 6., Kind::Image(image)));
+        compositor.primitives.push(Primitive {
+            smoothing: 0.6,
+            ..at(140.5, 20., 48., 26., 8., quad(0x40FF_20C0, 2.))
+        });
         let summaries = compositor.primitives.iter().map(Summary::of).collect();
         Sample(compositor, summaries)
     }
@@ -264,7 +271,11 @@ impl Sample {
     }
 
     fn difference(&self, drawn: &Locked) -> u8 {
-        let Some(painted) = self.0.atlas.snapshot(&self.0.primitives, Self::AREA, 1) else {
+        let Some(painted) = self
+            .0
+            .atlas
+            .snapshot(&self.0.primitives, Self::AREA, 1, || false)
+        else {
             return u8::MAX;
         };
         let rows = (0..Self::HEIGHT).flat_map(|y| {
@@ -437,6 +448,8 @@ fn steps(start: i32, end: i32, step: i32) -> impl Iterator<Item = (i32, i32)> + 
 
 #[derive(Default)]
 struct Division {
+    /// While the size keeps changing, the surfaces at the edges suit every size.
+    is_loose: bool,
     window: IntRect,
     apart: Range<i32>,
     /// Side by side.
@@ -465,6 +478,7 @@ impl Division {
             for (top, bottom) in steps(area.top, area.bottom, height) {
                 for (left, right) in steps(area.left, area.right, width) {
                     let fit = |length: i32, is_last: bool, usual: i32| match is_last && !is_exact {
+                        true if self.is_loose => (length, usual),
                         true => (
                             round_up(length, usual / 4),
                             (round_up(length, usual / 4) + usual / 4).min(usual),
@@ -661,7 +675,9 @@ pub struct Layers<T: Target> {
     scrolled: Option<(IntRect, bool)>,
     /// The port of what a script has last scrolled, when, and whether it has just done so again.
     jumped: Option<(IntRect, Instant, bool)>,
-    resized_at: Instant,
+    /// The port of what may be scrolled next, and whether that is news.
+    expected: Option<(IntRect, bool)>,
+    resized_at: Option<Instant>,
     resizing_lasts: Duration,
     frames_scrolled: u32,
     painting_took: Duration,
@@ -686,10 +702,34 @@ impl<T: Target> Layers<T> {
         self.scrolled = port.map(|port| (port, self.scrolled == Some((port, true))));
     }
 
+    /// The next size would take other cells, and the system is slow to give back what is released.
+    fn is_being_resized(&self) -> bool {
+        self.resized_at
+            .is_some_and(|it| it.elapsed() < self.resizing_lasts)
+    }
+
+    /// The window server misses frames if much is cut up when a scroll begins. Returns whether there is something to paint.
+    pub fn expect_scroll(&mut self, port: Option<IntRect>) -> bool {
+        let port = port
+            .filter(|_| !self.is_being_resized())
+            .map(|it| within(self.division.window, in_whole_tiles(it)));
+        if port == self.expected.map(|it| it.0) {
+            return false;
+        }
+        let is_ready = |port| {
+            self.division
+                .ports
+                .iter()
+                .any(|it| it.rect == port && it.has_large_cells)
+                || !self.division.is_worth_cells(port)
+        };
+        self.expected = port.map(|it| (it, !is_ready(it)));
+        self.expected.is_some_and(|it| it.1)
+    }
+
     /// A script has scrolled what is seen in `port`.
     pub fn note_jump(&mut self, port: IntRect) {
-        // The next size would take other cells, and the system is slow to give back what is released.
-        if self.resized_at.elapsed() < self.resizing_lasts {
+        if self.is_being_resized() {
             return;
         }
         let port = in_whole_tiles(port);
@@ -716,7 +756,8 @@ impl<T: Target> Layers<T> {
             apart: 0..0,
             scrolled: None,
             jumped: None,
-            resized_at: Instant::now(),
+            expected: None,
+            resized_at: None,
             resizing_lasts: Duration::from_millis(500),
             frames_scrolled: 0,
             painting_took: Duration::ZERO,
@@ -727,18 +768,22 @@ impl<T: Target> Layers<T> {
     /// Returns whether the cells are others, and not just larger or smaller with the window.
     fn arrange(&mut self, grid: &Grid, tiles: &[Tile]) -> bool {
         const TO_KNOW: usize = 32;
+        let was_being_resized = self.is_being_resized();
         let Layers {
             division, shown, ..
         } = self;
         let is_resized = std::mem::replace(&mut division.window, grid.window) != grid.window;
         let mut are_others =
             std::mem::replace(&mut division.apart, self.apart.clone()) != self.apart;
+        let was_loose = division.is_loose;
+        division.is_loose = (is_resized || was_loose) && was_being_resized;
         if is_resized {
-            (self.jumped, self.resized_at) = (None, Instant::now());
+            (self.jumped, self.expected, self.resized_at) = (None, None, Some(Instant::now()));
             are_others |= !std::mem::take(&mut division.ports).is_empty();
             division.divide(grid);
             return are_others;
         }
+        are_others |= was_loose != division.is_loose;
         let changes_in = |division: &Division, part: IntRect| {
             let known = division
                 .cells_in(part)
@@ -760,11 +805,22 @@ impl<T: Target> Layers<T> {
             let port = within(grid.window, *port);
             let changed = changes_in(division, port);
             are_others |= changed.len() >= TO_KNOW && division.begin_scroll(port, &changed, false);
+        } else if let (None, Some((port, is_new @ true))) = (self.scrolled, &mut self.expected) {
+            *is_new = false;
+            let is_known = division.ports.iter().any(|it| it.rect == *port);
+            let filled: Vec<_> = tiles_in(grid, *port)
+                .filter(|it| !is_known && !tiles[*it].is_flat)
+                .map(|it| rect_of(grid, it))
+                .collect();
+            are_others |= (is_known || filled.len() >= TO_KNOW)
+                && division.begin_scroll(*port, &filled, true);
         }
         let now = Instant::now();
         for index in 0..division.ports.len() {
             let port = &division.ports[index];
-            if self.scrolled.is_some_and(|it| it.0.overlaps(port.rect)) {
+            if self.scrolled.is_some_and(|it| it.0.overlaps(port.rect))
+                || self.expected.is_some_and(|it| it.0 == port.rect)
+            {
                 division.ports[index].scrolled_at = now;
             } else if port.has_large_cells
                 && now - port.scrolled_at >= self.large_cells_last
@@ -793,6 +849,12 @@ impl<T: Target> Layers<T> {
         if self.spare.is_empty() {
             self.instances = Vec::new();
         }
+    }
+
+    /// Whether the next paint makes do with less memory.
+    #[cfg(target_os = "macos")]
+    pub fn is_loose(&self) -> bool {
+        self.division.is_loose
     }
 
     /// For another `Compositor`, whose hashes mean something else.
@@ -872,6 +934,7 @@ impl<T: Target> Layers<T> {
             !before.is_empty() && window.right > before.right,
             !before.is_empty() && window.bottom > before.bottom,
         );
+        let grows = (grows.0 || division.is_loose, grows.1 || division.is_loose);
         for (position, buffer) in self
             .shown
             .extract_if(|it, _| division.cells.iter().all(|cell| cell.position() != *it))
@@ -943,7 +1006,11 @@ impl<T: Target> Layers<T> {
         let (atlas, primitives) = (compositor.atlas.0.borrow(), &compositor.primitives);
         let textures = &atlas.slots[..];
         let work = changes.iter().map(|change| change.work).sum::<usize>();
-        if work >= WORTH_DRAWING && self.target.can_draw(self.painting_took) {
+        if work >= WORTH_DRAWING
+            && self
+                .target
+                .can_draw(self.painting_took, self.is_being_resized())
+        {
             self.instances.clear();
             let passes = changes
                 .iter()
@@ -1215,7 +1282,7 @@ mod tests {
 
         fn unlock(_: &Rc<Memory>, _: bool) {}
 
-        fn can_draw(&mut self, _: Duration) -> bool {
+        fn can_draw(&mut self, _: Duration, _: bool) -> bool {
             self.draws
         }
 
@@ -1534,6 +1601,27 @@ mod tests {
     }
 
     #[test]
+    fn a_scroll_that_is_expected_leaves_the_rest_alone() {
+        let mut chat = Chat::new((5120, 2800));
+        chat.layers.large_cells_last = Duration::ZERO;
+        let port = Some(IntRect::new(576, 72, 5120, 2776));
+        assert!(!chat.layers.expect_scroll(port));
+        chat.layers.resizing_lasts = Duration::ZERO;
+        assert!(chat.layers.expect_scroll(port) && !chat.frame(None, 0).is_empty());
+        assert!(!chat.layers.expect_scroll(port) && chat.frame(None, 0).is_empty());
+        let large = [
+            IntRect::new(2048, 64, 3648, 2800),
+            IntRect::new(5056, 64, 5120, 2800),
+        ];
+        assert_eq!(chat.frame(None, 1), large[..1]);
+        let mut changed = chat.frame(Some(40), 1);
+        changed.sort_by_key(|it| it.left);
+        assert_eq!(changed, large);
+        assert!(!chat.layers.expect_scroll(None) && chat.frame(None, 2).len() > 2);
+        assert!(chat.layers.expect_scroll(port));
+    }
+
+    #[test]
     fn what_a_script_keeps_scrolling_has_cells_of_its_own() {
         let mut chat = Chat::new((3400, 1600));
         chat.layers.resizing_lasts = Duration::ZERO;
@@ -1570,7 +1658,12 @@ mod tests {
             }
         }
         let windows = chat.layers.target.pixels_created / (2432 * 1552);
-        assert!(windows < 12, "{windows}");
+        assert!(windows < 5, "{windows}");
+        chat.layers.resizing_lasts = Duration::ZERO;
+        chat.frame(None, 0);
+        chat.layers.release_spares(Duration::ZERO);
+        chat.frame(None, 0);
+        assert!(chat.layers.target.pixels_alive() <= 2624 * 1792);
     }
 
     #[test]
@@ -1602,6 +1695,7 @@ mod tests {
             layers
                 .set_scrolling((frame % 13 > 1 && frame % 7 != 3).then_some(ports[frame / 3 % 4]));
             layers.note_jump(ports[frame / 5 % 4]);
+            layers.expect_scroll((frame % 7 != 0).then_some(ports[frame / 2 % 4]));
             (layers.large_cells_last, layers.resizing_lasts) =
                 (Duration::from_secs(frame as u64 % 2), Duration::ZERO);
             layers.paint(&mut compositor, size.0, size.1);

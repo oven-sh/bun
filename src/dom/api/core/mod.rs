@@ -64,7 +64,9 @@ pub(crate) use node::{Node, NodeFlags, NodeInterface, node_interface};
 pub(crate) use observers::{MutationObserver, MutationRecord, Record, queue_mutation_record};
 pub(crate) use recent::Recent;
 pub(crate) use slots::{ShadowFlags, assign_slottables};
-pub(crate) use string::{DomString, StoredText, StringBuilder, impl_of, is_ascii_whitespace};
+pub(crate) use string::{
+    DomString, Familiar, StoredText, StringBuilder, impl_of, is_ascii_whitespace,
+};
 pub(crate) use tokens::DOMTokenList;
 
 pub(crate) use crate::generated_bindgen::collections::{

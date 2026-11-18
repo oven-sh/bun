@@ -15,6 +15,7 @@ use bun_web::net::NetError;
 use bun_web::net::body::{Body, Chunk, Data, Read, SharedBytes, Source, time_of_modification};
 use bun_web::net::response::Answer;
 use bun_web::realm::Realm;
+use bun_web::runtime::LooseBlob;
 use bun_web::storage::files::mime_of_name;
 use bun_web::streams::{promise_for, stream_of};
 
@@ -283,24 +284,20 @@ fn __bun_web_create_file(
     file
 }
 
-fn snapshot_of(
+fn of_snapshot(
     global: &JSGlobalObject,
     path: Vec<u8>,
-    stat: &bun_sys::Stat,
-    name: &[u8],
-    was_chosen_by_user: bool,
-) -> JSValue {
-    let modified = time_of_modification(stat);
+    mode: bun_sys::Mode,
+    size: u64,
+    snapshot: store::Snapshot,
+) -> Blob {
     let file = store::File {
         pathlike: PathOrFileDescriptor::Path(PathLike::owned(path)),
         mime_type: bun_http_types::MimeType::NONE,
-        mode: stat.st_mode as bun_sys::Mode,
+        mode,
         seekable: Some(true),
-        max_size: stat.st_size as u64,
-        snapshot: Some(store::Snapshot {
-            modified,
-            was_chosen_by_user,
-        }),
+        max_size: size,
+        snapshot: Some(snapshot),
         ..Default::default()
     };
     let blob = Blob::init_with_store(
@@ -310,7 +307,28 @@ fn snapshot_of(
         )),
         global,
     );
-    blob.size.set(stat.st_size as u64);
+    blob.size.set(size);
+    blob
+}
+
+fn snapshot_of(
+    global: &JSGlobalObject,
+    path: Vec<u8>,
+    stat: &bun_sys::Stat,
+    name: &[u8],
+    was_chosen_by_user: bool,
+) -> JSValue {
+    let modified = time_of_modification(stat);
+    let blob = of_snapshot(
+        global,
+        path,
+        stat.st_mode as bun_sys::Mode,
+        stat.st_size as u64,
+        store::Snapshot {
+            modified,
+            was_chosen_by_user,
+        },
+    );
     let file = as_file(
         as_plain(blob, &mime_of_name(name)),
         name,
@@ -425,6 +443,58 @@ extern "C" fn Bun__Desktop__retainBlob(blob: &Blob, id: &mut [u8; 16]) {
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Desktop__releaseBlob(id: &[u8; 16]) {
     ObjectURLRegistry::singleton().remove(&Owner::Message, UUID { bytes: *id });
+}
+
+#[unsafe(no_mangle)]
+fn __bun_web_loosen_blob(id: &[u8; 16]) -> Option<LooseBlob> {
+    ObjectURLRegistry::singleton().inspect(&Owner::Message, UUID { bytes: *id }, |it| LooseBlob {
+        data: data_of(it),
+        mime: it.content_type.get().given().into(),
+        name_of_file: it
+            .is_jsdom_file
+            .get()
+            .then(|| Bun__Desktop__nameOfFile(it).to_owned_slice().into()),
+        modified: it.get_last_modified(),
+        was_chosen_by_user: it.snapshot().is_some_and(|it| it.was_chosen_by_user),
+    })
+}
+
+#[unsafe(no_mangle)]
+fn __bun_web_retain_blob(global: &JSGlobalObject, it: LooseBlob) -> [u8; 16] {
+    let blob = match it.data {
+        Data::File {
+            path,
+            range,
+            modified,
+        } => {
+            let snapshot = store::Snapshot {
+                modified: modified.unwrap_or_default(),
+                was_chosen_by_user: it.was_chosen_by_user,
+            };
+            let blob = of_snapshot(
+                global,
+                path.into(),
+                bun_sys::S::IFREG as _,
+                range.end,
+                snapshot,
+            );
+            blob.offset.set(range.start);
+            blob.size.set(range.end - range.start);
+            blob
+        }
+        data => Blob::init(
+            data.read_now().map(Chunk::into_vec).unwrap_or_default(),
+            global,
+        ),
+    };
+    let blob = as_plain(blob, &it.mime);
+    let blob = match &it.name_of_file {
+        Some(name) => as_file(blob, name, it.modified),
+        None => blob,
+    };
+    let mut id = [0; 16];
+    Bun__Desktop__retainBlob(&blob, &mut id);
+    id
 }
 
 /// `JSValue::ZERO` if no message has it.

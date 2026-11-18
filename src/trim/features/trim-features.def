@@ -61,7 +61,7 @@ trim-feature ipc : Ipc ProcessIpc
 
 trim-feature native-code : Ffi NativeAddons SqliteExtensions Desktop
   about "Everything that loads native code: `bun:ffi`, `process.dlopen()`, `.node` addons, `bun:desktop`, and `Database.loadExtension()` in `bun:sqlite`. Includes `\"ffi\"`, `\"native-addons\"` and `\"desktop\"`. Without it, `loadExtension()` throws an `SQLiteError`. On macOS, `\"sqlite\"` loads native code too: the system's SQLite library."
-  saves 0.7 0.5
+  saves 15.0 13.8
 
 trim-feature jit : JIT
   about "The JIT compilers for JavaScript, regular expressions and WebAssembly. An executable built with `aot` never starts them, so `trim` removes them. Without `aot`, `trim` keeps them."
@@ -147,7 +147,7 @@ trim-feature webview : WebView
 
 trim-feature desktop : Desktop
   about "`bun:desktop`. Included in `\"native-code\"`."
-  saves 0.0 0.0
+  saves 14.3 13.3
 
 trim-feature fetch : HttpClient Fetch
   about "Bun's HTTP client: `fetch()`, `Bun.fetch()` and `Bun.FetchSession`. `Request`, `Response` and `Headers` don't need it. Neither does `http.request()` in `node:http`, which needs `\"sockets\"`."

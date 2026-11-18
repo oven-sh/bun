@@ -25,6 +25,9 @@ export interface SectionGraph {
   stringHash: Map<number, number>;
 }
 
+/** The object of a node that no input holds. It stays where the linker puts it. */
+export const madeByLinker = "<internal>";
+
 export type Edges = Pick<SectionGraph, "count" | "successorStart" | "successors">;
 
 export interface SectionGraphParts {

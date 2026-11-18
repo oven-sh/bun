@@ -1,5 +1,6 @@
 use std::arch::aarch64::*;
 
+use super::super::scan::Floats;
 use super::{Pixel, Samples};
 
 pub type Eight = [uint8x16_t; 2];
@@ -117,6 +118,165 @@ pub fn splat(by: u8) -> Factors {
 pub fn spread(by: u64) -> Factors {
     let by = vreinterpretq_u8_u64(vdupq_n_u64(by));
     [pick(by, [0, 1, 2, 3]), pick(by, [4, 5, 6, 7])]
+}
+
+pub fn prefetch(_: *const Pixel) {}
+
+#[derive(Clone, Copy)]
+pub struct Numbers([float32x4_t; 2]);
+
+macro_rules! operations {
+    ($($name:ident($a:ident, $b:ident) $body:expr;)*) => {$(
+        #[inline(always)]
+        fn $name(self, other: Self) -> Self {
+            // SAFETY: the processor has the instructions.
+            let half = |$a, $b| unsafe { $body };
+            Numbers([half(self.0[0], other.0[0]), half(self.0[1], other.0[1])])
+        }
+    )*};
+}
+
+impl Floats for Numbers {
+    type Order = [uint8x16_t; 2];
+
+    #[inline(always)]
+    fn choice(bits: u32) -> Self {
+        // SAFETY: the processor has the instructions.
+        unsafe {
+            let each =
+                vreinterpretq_u32_u8(bytes([1, 0, 0, 0, 2, 0, 0, 0, 4, 0, 0, 0, 8, 0, 0, 0]));
+            Numbers([
+                vreinterpretq_f32_u32(vtstq_u32(vdupq_n_u32(bits), each)),
+                vreinterpretq_f32_u32(vtstq_u32(vdupq_n_u32(bits >> 4), each)),
+            ])
+        }
+    }
+
+    #[inline(always)]
+    fn or(self, other: Self, choice: Self) -> Self {
+        // SAFETY: likewise.
+        unsafe {
+            Numbers([
+                vbslq_f32(vreinterpretq_u32_f32(choice.0[0]), self.0[0], other.0[0]),
+                vbslq_f32(vreinterpretq_u32_f32(choice.0[1]), self.0[1], other.0[1]),
+            ])
+        }
+    }
+
+    #[inline(always)]
+    fn order(indices: [u8; 8]) -> Self::Order {
+        // SAFETY: likewise.
+        unsafe {
+            let [low, high] = spread(u64::from_le_bytes(indices) << 2);
+            let within = vreinterpretq_u8_u32(vdupq_n_u32(0x0302_0100));
+            [vorrq_u8(low, within), vorrq_u8(high, within)]
+        }
+    }
+
+    #[inline(always)]
+    fn reorder(self, order: Self::Order) -> Self {
+        // SAFETY: likewise.
+        unsafe {
+            let table = uint8x16x2_t(
+                vreinterpretq_u8_f32(self.0[0]),
+                vreinterpretq_u8_f32(self.0[1]),
+            );
+            Numbers([
+                vreinterpretq_f32_u8(vqtbl2q_u8(table, order[0])),
+                vreinterpretq_f32_u8(vqtbl2q_u8(table, order[1])),
+            ])
+        }
+    }
+
+    #[inline(never)]
+    fn apart<R>(f: impl FnOnce() -> R) -> R {
+        f()
+    }
+
+    #[inline(always)]
+    fn all(self) -> [f32; 8] {
+        // SAFETY: both are 32 bytes, for which any value will do.
+        unsafe { std::mem::transmute::<[float32x4_t; 2], [f32; 8]>(self.0) }
+    }
+
+    #[inline(always)]
+    fn trunc(self) -> Self {
+        // SAFETY: the processor has the instructions.
+        unsafe { Numbers([vrndq_f32(self.0[0]), vrndq_f32(self.0[1])]) }
+    }
+
+    #[inline(always)]
+    fn whole(self) -> [i32; 8] {
+        // SAFETY: likewise, and both are 32 bytes, for which any value will do.
+        unsafe {
+            std::mem::transmute::<[int32x4_t; 2], [i32; 8]>([
+                vcvtq_s32_f32(self.0[0]),
+                vcvtq_s32_f32(self.0[1]),
+            ])
+        }
+    }
+
+    #[inline(always)]
+    fn above(self, other: Self) -> u32 {
+        // SAFETY: likewise.
+        unsafe {
+            let bits =
+                vreinterpretq_u32_u8(bytes([1, 0, 0, 0, 2, 0, 0, 0, 4, 0, 0, 0, 8, 0, 0, 0]));
+            vaddvq_u32(vandq_u32(vcgtq_f32(self.0[0], other.0[0]), bits))
+                | vaddvq_u32(vandq_u32(vcgtq_f32(self.0[1], other.0[1]), bits)) << 4
+        }
+    }
+
+    #[inline(always)]
+    fn new(all: [f32; 8]) -> Self {
+        // SAFETY: both are 32 bytes, for which any value will do.
+        Numbers(unsafe { std::mem::transmute::<[f32; 8], [float32x4_t; 2]>(all) })
+    }
+
+    operations! {
+        add(a, b) vaddq_f32(a, b);
+        sub(a, b) vsubq_f32(a, b);
+        mul(a, b) vmulq_f32(a, b);
+        min(a, b) vminq_f32(a, b);
+        max(a, b) vmaxq_f32(a, b);
+    }
+
+    #[inline(always)]
+    fn after(self, other: Self) -> Self {
+        // SAFETY: the processor has the instructions.
+        unsafe {
+            Numbers([
+                vextq_f32::<3>(other.0[1], self.0[0]),
+                vextq_f32::<3>(self.0[0], self.0[1]),
+            ])
+        }
+    }
+
+    #[inline(always)]
+    fn bytes(self) -> [u8; 8] {
+        // SAFETY: the processor has the instructions.
+        unsafe {
+            vget_lane_u64::<0>(vreinterpret_u64_u8(vqmovn_u16(vqmovn_high_u32(
+                vqmovn_u32(vcvtq_u32_f32(self.0[0])),
+                vcvtq_u32_f32(self.0[1]),
+            ))))
+            .to_le_bytes()
+        }
+    }
+}
+
+/// `color` through `Floats::bytes` of the alphas.
+#[inline]
+#[target_feature(enable = "neon")]
+pub fn cover(pixels: Eight, color: Eight, alphas: Numbers) -> Eight {
+    let four = |it| {
+        pick(
+            vreinterpretq_u8_u32(vminq_u32(vcvtq_u32_f32(it), vdupq_n_u32(255))),
+            [0, 4, 8, 12],
+        )
+    };
+    let shown = scale(color, [four(alphas.0[0]), four(alphas.0[1])]);
+    add(shown, scale(pixels, kept(shown)))
 }
 
 #[inline]

@@ -77,12 +77,6 @@ function whatIsCompressedIn(bytes: Buffer): Uint8Array[] {
 }
 
 const heldByWhatStays = ["exhaustive-deps", "rules-of-hooks", "use-memo", "Substitutions for pattern "];
-const inSourcesOfBunDesktop = [
-  "aria-activedescendant",
-  "aria-roledescription",
-  "--disable-component-update",
-  "force-renderer-accessibility",
-];
 const stillLeftOnLinux = [
   "error-message",
   "no-console",
@@ -111,7 +105,6 @@ function notAccountedFor(found: string[]) {
       text =>
         !isWindows &&
         !heldByWhatStays.includes(text) &&
-        !inSourcesOfBunDesktop.some(source => source.includes(text)) &&
         !(isMacOS && stillLeftOnMacOS.includes(text)) &&
         !(isLinux && stillLeftOnLinux.includes(text)),
     )

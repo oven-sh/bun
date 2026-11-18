@@ -768,6 +768,9 @@ impl Node {
                     F::Min | F::Max | F::Clamp | F::Round | F::Mod | F::Rem | F::Abs | F::Hypot,
                     of,
                 ) => of,
+                (F::Progress, of) if of != number && of.iter().filter(|it| **it != 0).ne([&1]) => {
+                    return None;
+                }
                 (F::Sign | F::Progress, _) => number,
                 (F::Atan2, _) => angle,
                 (F::Sin | F::Cos | F::Tan, of) if of == angle => number,

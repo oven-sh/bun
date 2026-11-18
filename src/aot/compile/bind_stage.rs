@@ -1,3 +1,5 @@
+use std::sync::atomic::Ordering;
+
 use super::guessed_workers::{
     describe_guessed_files, describe_silent_failure, find_guessed_names, refuse_guessed_file,
 };
@@ -24,7 +26,7 @@ use crate::load::source_provider::{RefusedText, SourceProvider};
 use crate::load::sources::{
     JSON_PARSE_ERROR_FOR_BLANK_TEXT, Sources, may_replace_evaluators, parsed_source,
 };
-use crate::load::{PerProject, ProjectId};
+use crate::load::{PerProject, ProjectId, is_in_node_modules};
 use crate::module_keys::type_attribute_of;
 use crate::modules::{
     self, BindInput, BoundModules, DeferredExports, ImportBinding, LinkedProject, ModuleGraph,
@@ -36,6 +38,7 @@ use bun_options_types::aot_options::ExplainSet;
 use bun_paths::is_absolute;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
+use bun_resolve_builtins::Alias;
 use bun_sema::atom::Atom;
 use bun_sema::bind::{
     Binding, BindingInitializer, CommonJsVariable, Decl, FnOwner, FunctionFlags, Parent,
@@ -45,11 +48,50 @@ use bun_sema::check::aot::{BuiltinTypeSymbols, FunctionRef};
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{ExprId, ExprKind, Flags, MemberKey, NodeData, PatKind, StmtId, StmtKind};
-use bun_sema::import_sites::ImportSiteKind;
+use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
 use bun_sema::program::{CodeAnswer, CodeView, ComputedTargets, FileId, Files, Sym};
 use bun_sema::resolve::CodeImportKind;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::host::{from_argument, from_native, to_native};
+
+/// A package may try to load it and go on without, so only a statement counts there.
+fn cannot_load_without_desktop(files: &Files<'_>, written_entry_point_count: usize) -> bool {
+    let compiled = files.compiled_files().iter();
+    let of_project = compiled.filter(|&&file| !is_in_node_modules(files.module(file).file_name()));
+    let given = files.entry_points().iter().take(written_entry_point_count);
+    let mut left: Vec<FileId> = of_project.chain(given).copied().collect();
+    let mut is_reached = vec![false; files.modules.len()];
+    while let Some(file) = left.pop() {
+        if core::mem::replace(&mut is_reached[file.idx()], true) {
+            continue;
+        }
+        let Some(compiled) = files.compiled(file) else {
+            continue;
+        };
+        let sites = compiled.analysis.import_sites.iter();
+        for (site, answer) in sites.zip(compiled.code_answers) {
+            let is_statement = matches!(
+                site.kind,
+                ImportSiteKind::JsxRuntime
+                    | ImportSiteKind::JsxPackage
+                    | ImportSiteKind::Import(_)
+                    | ImportSiteKind::ExportFrom(_)
+                    | ImportSiteKind::ExportStar(_)
+            );
+            match (*answer, site.specifier) {
+                _ if !is_statement => {}
+                (CodeAnswer::File(target), _) => left.push(target),
+                (CodeAnswer::NotFound(_), ImportSpecifier::Constant(name))
+                    if Alias::is_desktop_module(files.atoms.bytes(name)) =>
+                {
+                    return true;
+                }
+                _ => {}
+            }
+        }
+    }
+    false
+}
 
 fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules, left_out_files: &[FileId]) {
     for &module in &reached.looked_at {
@@ -1650,6 +1692,12 @@ impl Build<'_> {
         }
         steps.end_with(|| format!("{project_name}: bind modules"));
         self.diagnostics.add_module_failures(view, &graph);
+        if let Some(imports_desktop) = &self.options.aot.imports_desktop
+            && project == ProjectId::Application
+            && cannot_load_without_desktop(view.files(), written_entry_point_count)
+        {
+            imports_desktop.store(true, Ordering::Relaxed);
+        }
         let runs_tests = self.options.load.runs_tests;
         if runs_tests {
             known_helpers.leave_replaceable_variables(&graph);

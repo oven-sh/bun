@@ -866,7 +866,8 @@ impl<'a> Painter<'a> {
                 self.emit(
                     &Item::Shadow {
                         shape,
-                        shadow,
+                        shadow: shadow.rect,
+                        radii: shadow.radii,
                         blur: it.blur,
                         color,
                         inset: false,
@@ -889,7 +890,8 @@ impl<'a> Painter<'a> {
                 self.emit(
                     &Item::Shadow {
                         shape,
-                        shadow,
+                        shadow: shadow.rect,
+                        radii: shadow.radii,
                         blur: it.blur,
                         color,
                         inset: true,

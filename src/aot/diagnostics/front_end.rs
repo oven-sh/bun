@@ -1,5 +1,6 @@
 use bun_ast::Kind;
 use bun_core::fmt::QuotedFormatter;
+use bun_resolve_builtins::Alias;
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::{Effect, FileOrigin};
 use bun_sema::fold::{FoldError, FoldErrorKind};
@@ -146,7 +147,12 @@ impl Diagnostics {
             let mut diagnostic = match failure.kind {
                 ModuleFailureKind::Unresolved { specifier, reason }
                 | ModuleFailureKind::UnresolvedAtLoad { specifier, reason } => {
-                    Diagnostic::new(code_of_failure(reason), span, &[atoms.bytes(specifier)])
+                    let specifier = atoms.bytes(specifier);
+                    let code = match Alias::is_desktop_module(specifier) {
+                        true => Code::DesktopModuleWithoutFlag,
+                        false => code_of_failure(reason),
+                    };
+                    Diagnostic::new(code, span, &[specifier])
                 }
                 ModuleFailureKind::NotAProgram {
                     is_silent: true, ..

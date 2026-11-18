@@ -70,38 +70,42 @@ keywords! {
     }
 }
 
-/// https://fetch.spec.whatwg.org/#fetch-timing-info, in milliseconds since the epoch.
-#[derive(Clone, Copy, Default)]
-pub struct Timing {
-    pub start: f64,
-    pub redirect_start: f64,
-    pub redirect_end: f64,
-    pub fetch_start: f64,
-    pub request_start: f64,
-    pub response_start: f64,
+crate::wire! {
+    /// https://fetch.spec.whatwg.org/#fetch-timing-info, in milliseconds since the epoch.
+    #[derive(Clone, Copy, Default)]
+    pub struct Timing {
+        pub start: f64,
+        pub redirect_start: f64,
+        pub redirect_end: f64,
+        pub fetch_start: f64,
+        pub request_start: f64,
+        pub response_start: f64,
+    }
 }
 
-/// All but the body of the internal response.
-#[derive(Clone)]
-pub struct Head {
-    pub kind: ResponseType,
-    pub url: Url,
-    pub status: u16,
-    pub status_text: Bytes,
-    pub headers: HeaderList,
-    pub redirects: u8,
-    pub has_cross_origin_redirects: bool,
-    pub includes_credentials: bool,
-    /// What `*` exposes depends on it.
-    pub has_credentials_mode_include: bool,
-    pub allows_timing: bool,
-    /// To the document that it becomes.
-    pub exposes_redirects: bool,
-    pub cached: Cached,
-    pub protocol: Protocol,
-    pub timing: Timing,
-    /// That was sent.
-    pub referrer: Option<Url>,
+crate::wire! {
+    /// All but the body of the internal response.
+    #[derive(Clone)]
+    pub struct Head {
+        pub kind: ResponseType,
+        pub url: Url,
+        pub status: u16,
+        pub status_text: Bytes,
+        pub headers: HeaderList,
+        pub redirects: u8,
+        pub has_cross_origin_redirects: bool,
+        pub includes_credentials: bool,
+        /// What `*` exposes depends on it.
+        pub has_credentials_mode_include: bool,
+        pub allows_timing: bool,
+        /// To the document that it becomes.
+        pub exposes_redirects: bool,
+        pub cached: Cached,
+        pub protocol: Protocol,
+        pub timing: Timing,
+        /// That was sent.
+        pub referrer: Option<Url>,
+    }
 }
 
 impl Head {
@@ -141,7 +145,9 @@ impl Head {
     }
 }
 
-pub struct Response {
-    pub head: Head,
-    pub body: Option<Body>,
+crate::wire! {
+    pub struct Response {
+        pub head: Head,
+        pub body: Option<Body>,
+    }
 }

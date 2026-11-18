@@ -219,7 +219,8 @@ impl Classic {
 
     fn evaluate_here<'a>(&self, cx: Cx<'_, 'a>) -> Result<'a, JSValue> {
         if !self.is_inline()
-            && let Some(path) = bun_web::compiled::path_of(&self.url)
+            && let Some(path) =
+                client_of(&cx.heap).and_then(|it| it.compiled_path_by_any_policy(&self.url))
         {
             return modules::run_compiled(cx, &path, true);
         }

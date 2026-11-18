@@ -10,7 +10,7 @@ use crate::geometry::translation;
 use crate::name::{Map, Name, Set, is_name, name};
 use crate::path::{Numbers, Path, at_distance, distance};
 use crate::properties::{Id, Style};
-use crate::svg_paint::Reads;
+use crate::svg_paint::{Change, Reads};
 use crate::svg_values::*;
 use crate::tree::{Element, Namespace, NodeId, Tree};
 use crate::types::*;
@@ -402,11 +402,27 @@ impl Document {
             .element(id)
             .is_some_and(|it| it.namespace == Namespace::Svg)
         {
-            self.svg_or_reference_changed(id, true);
+            self.svg_or_reference_changed(id, Change::Itself);
         }
     }
 
-    fn svg_or_reference_changed(&mut self, id: NodeId, is_itself: bool) {
+    pub(crate) fn svg_element_moved(&mut self, id: NodeId) {
+        let referenced = self.referenced_elements.get_mut();
+        let is_referenced = !referenced.is_empty()
+            && core::iter::once(id)
+                .chain(self.tree.flat_ancestors(id))
+                .any(|it| referenced.contains(&it));
+        self.svg_or_reference_changed(
+            id,
+            if is_referenced {
+                Change::Itself
+            } else {
+                Change::Place
+            },
+        );
+    }
+
+    fn svg_or_reference_changed(&mut self, id: NodeId, change: Change) {
         let Some(outer) = self.outer_svg(id) else {
             return;
         };
@@ -418,7 +434,7 @@ impl Document {
             self.repaint(outer);
         }
         if let Some(users) = Some(self.referenced_svgs.get_mut())
-            .filter(|it| !it.is_empty())
+            .filter(|it| !it.is_empty() && change != Change::Place)
             .and_then(|it| it.remove(&outer))
         {
             self.svg_generation += 1;
@@ -427,7 +443,7 @@ impl Document {
                     continue;
                 }
                 match self.outer_svg(user) {
-                    Some(_) => self.svg_or_reference_changed(user, false),
+                    Some(_) => self.svg_or_reference_changed(user, Change::Inside),
                     None => {
                         self.repaint_subtree(user);
                         self.boxes.mark_ink(self.nearest_box(user));
@@ -440,7 +456,7 @@ impl Document {
             if !recordings.is_empty()
                 && recordings
                     .get_mut(&own)
-                    .is_some_and(|it| !it.note_change(&self.tree, id, outer, is_itself))
+                    .is_some_and(|it| !it.note_change(&self.tree, id, outer, change))
             {
                 recordings.remove(&own);
             }
@@ -495,6 +511,7 @@ impl Document {
             .entry(self.outer_svg(found?)?)
             .or_default()
             .insert(user);
+        self.referenced_elements.borrow_mut().extend(found);
         found
     }
 
@@ -554,6 +571,7 @@ impl Document {
         self.svg_ids.take();
         self.smil.needs_update = !self.smil.is_empty();
         self.referenced_svgs.get_mut().clear();
+        self.referenced_elements.get_mut().clear();
         self.referenced_svg_changed();
     }
 
@@ -892,6 +910,9 @@ impl Document {
 
     pub(crate) fn parse_svg_length(&self, node: &Node, value: &str) -> Option<Lp> {
         let style = &node.style;
+        if let Some(plain) = crate::plain::svg_length(value.as_bytes(), style.zoom) {
+            return Some(plain);
+        }
         let metrics = || style.metrics;
         let viewport = self.environment.viewport;
         if value
@@ -1037,6 +1058,7 @@ impl Document {
                     radius => Path::rounded_rect(&RoundedRect {
                         rect,
                         radii: [radius; 4],
+                        smoothing: 0.0,
                     }),
                 }
             }

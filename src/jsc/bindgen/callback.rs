@@ -101,20 +101,21 @@ impl<'a> JsHeap<'a> {
         })
     }
 
-    /// Takes over the allocation, which is not empty and has a whole number of elements.
+    /// Takes over the allocation of `bytes`, which has a whole number of elements.
     pub fn create_typed_array_from_box(
         &self,
         kind: JSType,
         bytes: Box<[u8]>,
     ) -> Result<'a, JsLocal<'a, BufferSource>> {
+        let is_allocated = !bytes.is_empty();
         let buffer = ArrayBuffer::from_bytes(Box::leak(bytes), kind);
         let (context, free) = (
             buffer.ptr.cast(),
             crate::array_buffer::MarkedArrayBuffer_deallocator,
         );
-        // SAFETY: an allocation of the default allocator that nothing else owns, which `free` frees.
+        // SAFETY: nothing else owns the bytes. `free` is for the default allocator, from which an empty box has nothing.
         JsLocal::from_js_result(unsafe {
-            buffer.to_js_with_context(self.global_object(), context, Some(free))
+            buffer.to_js_with_context(self.global_object(), context, is_allocated.then_some(free))
         })
     }
 }

@@ -329,7 +329,7 @@ pub(super) const BODY_STEPS: Steps = Steps {
 fn base_changed<'a>(cx: Cx<'_, 'a>, doc: &'a Doc) {
     let fallback = doc.fallback_base_url();
     let href = doc
-        .elements_with_objects()
+        .objects_with_tag(atom!("base"))
         .filter(|it| it.kind() == Kind::Base)
         .find_map(|it| it.attr(atom!("href")));
     let url = href.and_then(|it| Url::parse(&cx.heap, &it, Some(&fallback)));

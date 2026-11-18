@@ -53,7 +53,7 @@ fn superellipse(style: &Style, id: Id) -> f32 {
 }
 
 /// So that corners that are opposite of each other do not overlap.
-fn without_overlap(RoundedRect { rect, radii }: RoundedRect, shapes: [f32; 4]) -> Radii {
+fn without_overlap(RoundedRect { rect, radii, .. }: RoundedRect, shapes: [f32; 4]) -> Radii {
     let reach = |corner: usize, [x, y]: [f32; 2]| {
         let ([rx, ry], bulge) = (
             radii[corner],
@@ -180,6 +180,7 @@ fn corners(
     RoundedRect {
         rect,
         radii: [a, b, c, d],
+        ..
     }: &RoundedRect,
     shapes: &[f32; 4],
     [top, right, bottom, left]: [f32; 4],
@@ -243,7 +244,7 @@ fn relevant_side(style: &Style) -> usize {
 
 /// Whether the inner edge is no rounded rectangle.
 fn curves_cross(
-    RoundedRect { rect, radii }: &RoundedRect,
+    RoundedRect { rect, radii, .. }: &RoundedRect,
     [top, right, bottom, left]: [f32; 4],
 ) -> bool {
     let inner = |corner: usize, x: f32, y: f32| {
@@ -322,6 +323,7 @@ pub(crate) fn rounded_border_shape(style: &Style, frame: &Frame) -> Option<Round
         radii: shape
             .radii
             .map(|it| it.map(|it| if it > 0.0 { it + by } else { 0.0 })),
+        ..shape
     })
 }
 

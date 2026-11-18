@@ -1,7 +1,7 @@
 //! A node is its JavaScript object, which has the links that keep the tree alive, and a slot in the arena.
 
-use core::any::{Any, TypeId};
-use core::cell::{Cell, OnceCell, UnsafeCell};
+use core::any::TypeId;
+use core::cell::{Cell, UnsafeCell};
 use core::cmp::Ordering;
 use core::iter::successors;
 use core::marker::PhantomData;
@@ -64,6 +64,8 @@ bitflags::bitflags! {
         const BEING_PARSED = 1 << 26;
         const AWAITS_CONNECTION_STEPS = 1 << 28;
         const SHOWS_AS_POPOVER = 1 << 29;
+        /// `forms::dormant`
+        const DORMANT = 1 << 31;
     }
 }
 
@@ -82,20 +84,20 @@ pub(super) enum Link {
 /// More are looked up in a list.
 const FEW_CHILDREN: usize = 16;
 
-struct Extra {
-    /// That of `value`, which would answer through its vtable.
+#[repr(C)]
+struct Extra<T = ()> {
+    /// That of `value`.
     kind: TypeId,
-    value: Box<dyn Any>,
-    next: OnceCell<Box<Extra>>,
+    next: Cell<*const Extra>,
+    free: unsafe fn(*const Extra),
+    value: T,
 }
 
-impl Extra {
-    #[inline(always)]
-    fn get<T: 'static>(&self) -> Option<&T> {
-        // SAFETY: of that type.
-        (self.kind == TypeId::of::<T>())
-            .then(|| unsafe { &*core::ptr::from_ref(&*self.value).cast() })
-    }
+/// # Safety
+/// It is a `Box<Extra<T>>`.
+unsafe fn free_extra<T>(extra: *const Extra) {
+    // SAFETY: the caller's contract.
+    drop(unsafe { Box::from_raw(extra.cast::<Extra<T>>().cast_mut()) });
 }
 
 /// Two bytes, and an address in the six that it needs, as in `WTF::PackedPtr`.
@@ -106,22 +108,13 @@ pub(crate) struct Packed<Low, T> {
     pointee: PhantomData<*const T>,
 }
 
-impl<Low, T> Packed<Low, T> {
+impl<T> Packed<Cell<u16>, T> {
     #[inline(always)]
-    fn new(low: Low, pointer: *const T) -> Self {
-        const {
-            assert!(
-                size_of::<Low>() == 2 && size_of::<Self>() == 8 && cfg!(target_endian = "little")
-            )
-        };
-        let address = pointer.expose_provenance();
+    fn null(low: u16) -> Self {
+        const { assert!(size_of::<Self>() == 8 && cfg!(target_endian = "little")) };
         Packed {
-            low,
-            address: UnsafeCell::new([
-                address as u16,
-                (address >> 16) as u16,
-                (address >> 32) as u16,
-            ]),
+            low: Cell::new(low),
+            address: UnsafeCell::new([0; 3]),
             pointee: PhantomData,
         }
     }
@@ -138,18 +131,13 @@ impl<Low, T> Packed<Low, T> {
     fn set(&self, pointer: *const T) {
         let address = pointer.expose_provenance();
         assert!(address >> 48 == 0);
-        // SAFETY: there is no reference to it.
-        unsafe {
-            *self.address.get() = [
-                address as u16,
-                (address >> 16) as u16,
-                (address >> 32) as u16,
-            ]
-        };
+        // SAFETY: eight aligned bytes, in cells.
+        unsafe { &*core::ptr::from_ref(self).cast::<Cell<usize>>() }
+            .update(|it| it & 0xffff | address << 16);
     }
 }
 
-/// The address of the arena, which is an `Rc`, takes five bytes.
+/// The address of the arena, which is an `Rc`, takes five bytes. It is written as a whole: a load has to wait for stores that are narrower.
 #[repr(C, align(8))]
 pub(crate) struct Head {
     kind: Cell<Kind>,
@@ -165,7 +153,7 @@ const MANY_EDGES: u8 = u8::MAX;
 
 impl Head {
     #[inline(always)]
-    fn bytes_of(arena: *const Arena) -> [u8; 5] {
+    fn new(kind: Kind, arena: *const Arena) -> Head {
         const {
             assert!(
                 align_of::<Arena>() == 256
@@ -173,8 +161,26 @@ impl Head {
                     && cfg!(target_endian = "little")
             )
         };
-        let [_, address @ .., _, _] = arena.expose_provenance().to_le_bytes();
-        address
+        // SAFETY: the fields, from the lowest byte up.
+        unsafe {
+            core::mem::transmute(
+                kind as usize
+                    | (kind.node_type() as usize) << 8
+                    | usize::from(NO_EDGE) << 16
+                    | arena.expose_provenance() << 16,
+            )
+        }
+    }
+
+    #[inline(always)]
+    fn replace(&self, old: usize, new: usize) {
+        // SAFETY: eight aligned bytes, in cells.
+        unsafe { &*core::ptr::from_ref(self).cast::<Cell<usize>>() }.update(|it| it & !old | new);
+    }
+
+    #[inline(always)]
+    fn set_edge(&self, edge: u8) {
+        self.replace(0xff << 16, usize::from(edge) << 16);
     }
 
     #[inline(always)]
@@ -256,10 +262,13 @@ impl Drop for Node {
         if self.kind().is_document() {
             self.arena().document_collected();
         }
-        // SAFETY: it owns both.
+        let mut next = self.extras.get();
+        // SAFETY: it owns them, and a share of the arena.
         unsafe {
-            if !self.extras.get().is_null() {
-                drop(Box::from_raw(self.extras.get().cast_mut()));
+            while !next.is_null() {
+                let extra = next;
+                next = (*extra).next.get();
+                ((*extra).free)(extra);
             }
             drop(Rc::from_raw(self.head.arena()));
         }
@@ -306,13 +315,7 @@ pub(crate) use node_interface;
 
 impl Node {
     pub(super) fn new(arena: Rc<Arena>, id: NodeId, kind: Kind, flags: NodeFlags) -> Node {
-        let head = Head {
-            kind: Cell::new(kind),
-            node_type: Cell::new(kind.node_type() as u8),
-            edge: Cell::new(NO_EDGE),
-            arena: UnsafeCell::new(Head::bytes_of(Rc::into_raw(arena))),
-        };
-        let extras = Packed::new(Cell::new(0), core::ptr::null());
+        let (head, extras) = (Head::new(kind, Rc::into_raw(arena)), Packed::null(0));
         let node = Node {
             base: Default::default(),
             fields: Default::default(),
@@ -378,7 +381,7 @@ impl Node {
             .then(|| unsafe { Node::from_cell(value) })
     }
 
-    /// The caller tells the collector, with `written`.
+    /// The caller tells the collector, with `written`. It need not for `Last` and `Previous`: the other links lead there too.
     #[inline(always)]
     pub(super) fn set_link(&self, link: Link, to: Option<&Node>) {
         self.slot(link).set(to.map_or(JSValue::NULL, Node::to_js));
@@ -412,11 +415,12 @@ impl Node {
     pub(super) fn move_to(&self, arena: Rc<Arena>, id: NodeId) {
         let old = self.head.arena();
         self.id.set(id);
-        // SAFETY: there is no reference to the bytes, and `old` is the share that it had.
-        unsafe {
-            *self.head.arena.get() = Head::bytes_of(Rc::into_raw(arena));
-            drop(Rc::from_raw(old));
-        }
+        self.head.replace(
+            usize::MAX << 24,
+            Rc::into_raw(arena).expose_provenance() << 16,
+        );
+        // SAFETY: the share that it had.
+        drop(unsafe { Rc::from_raw(old) });
     }
 
     #[inline(always)]
@@ -438,12 +442,22 @@ impl Node {
     /// The prototype stays.
     pub(crate) fn set_kind(&self, kind: Kind) {
         debug_assert!(kind.node_type() == self.node_type());
-        self.head.kind.set(kind);
+        self.head.replace(0xff, kind as usize);
     }
 
     #[inline(always)]
     pub(crate) fn steps(&self) -> Has {
         self.arena().steps[self.kind() as usize]
+    }
+
+    /// Those that it needs when it is inserted or removed.
+    #[inline]
+    pub(super) fn steps_for_moving(&self) -> Has {
+        if self.has(NodeFlags::DORMANT) {
+            Has::empty()
+        } else {
+            self.steps()
+        }
     }
 
     #[inline]
@@ -688,7 +702,7 @@ impl Node {
 
     /// As `change`, for what the links between objects rely on. It is run again if it panics.
     #[inline]
-    pub(super) fn restructure<R>(&self, run: impl Fn(&mut Document, NodeId) -> R) -> R {
+    pub(crate) fn restructure<R>(&self, run: impl Fn(&mut Document, NodeId) -> R) -> R {
         while self.is_rendered() && !self.arena().is_broken() {
             if let Some(result) = self.arena().attempt(|engine| run(engine, self.id())) {
                 return result;
@@ -725,36 +739,56 @@ impl Node {
 
     // ───────────────────────────── state ─────────────────────────────
 
+    #[inline]
     pub(crate) fn try_extra<T: 'static>(&self) -> Option<&T> {
-        successors(self.first_extra(), |it| it.next.get().map(|it| &**it)).find_map(|it| it.get())
+        // SAFETY: of that type, and once it is there it stays.
+        unsafe {
+            self.find_extra(TypeId::of::<T>())
+                .cast::<Extra<T>>()
+                .as_ref()
+        }
+        .map(|it| &it.value)
     }
 
-    #[inline(always)]
-    fn first_extra(&self) -> Option<&Extra> {
-        // SAFETY: once it is there it stays.
-        unsafe { self.extras.get().as_ref() }
+    /// One that is far from the start of the list goes there.
+    fn find_extra(&self, kind: TypeId) -> *const Extra {
+        let (first, mut before, mut passed) = (self.extras.get(), None::<&Extra>, 0);
+        let mut at = first;
+        // SAFETY: the node owns them.
+        while let Some(it) = unsafe { at.as_ref() } {
+            if it.kind == kind {
+                if let Some(before) = before.filter(|_| passed > 1) {
+                    before.next.set(it.next.replace(first));
+                    self.extras.set(at);
+                }
+                break;
+            }
+            (before, at, passed) = (Some(it), it.next.get(), passed + 1);
+        }
+        at
     }
 
     /// If it has none yet.
+    #[inline]
     pub(crate) fn extra_with<T: 'static>(&self, make: impl FnOnce() -> T) -> &T {
-        if let Some(found) = self.try_extra() {
-            return found;
-        }
-        let made = Box::new(Extra {
-            kind: TypeId::of::<T>(),
-            value: Box::new(make()),
-            next: OnceCell::new(),
-        });
-        let made = match successors(self.first_extra(), |it| it.next.get().map(|it| &**it)).last() {
-            Some(last) => last.next.get_or_init(|| made),
-            None => {
-                self.extras.set(Box::into_raw(made));
-                self.first_extra().expect("it was made")
-            }
-        };
-        made.get().expect("it was made")
+        self.try_extra().unwrap_or_else(|| self.add_extra(make))
     }
 
+    #[inline(never)]
+    fn add_extra<T: 'static>(&self, make: impl FnOnce() -> T) -> &T {
+        let value = make();
+        let made = Box::into_raw(Box::new(Extra {
+            kind: TypeId::of::<T>(),
+            next: Cell::new(self.extras.get()),
+            free: free_extra::<T>,
+            value,
+        }));
+        self.extras.set(made.cast());
+        // SAFETY: once it is there it stays.
+        unsafe { &(*made).value }
+    }
+
+    #[inline]
     pub(crate) fn extra<T: Default + 'static>(&self) -> &T {
         self.extra_with(T::default)
     }
@@ -810,7 +844,7 @@ impl Node {
         }
         if only == NO_EDGE || only == edge as u8 + 1 {
             slot.set(value);
-            self.head.edge.set(edge as u8 + 1);
+            self.head.set_edge(edge as u8 + 1);
         } else {
             let both = [
                 JSValue::js_number_from_int32(i32::from(only) - 1),
@@ -819,7 +853,7 @@ impl Node {
                 value,
             ];
             slot.set(List::from_fn(heap, 4, |it| both[it as usize]).to_js());
-            self.head.edge.set(MANY_EDGES);
+            self.head.set_edge(MANY_EDGES);
         }
         self.written();
     }
@@ -828,7 +862,7 @@ impl Node {
         let (only, slot) = (self.head.edge.get(), self.slot(Link::Rare));
         if only == edge as u8 + 1 {
             slot.set(JSValue::ZERO);
-            self.head.edge.set(NO_EDGE);
+            self.head.set_edge(NO_EDGE);
         } else if only == MANY_EDGES
             && let Some(index) = List::from_value(slot.get())
                 .position_of_key(JSValue::js_number_from_int32(edge as i32))

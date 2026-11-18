@@ -634,6 +634,15 @@ pub fn cursor_changed(state: &WindowState) {
 }
 
 fn hover(state: &WindowState, target: Target, position: Point, modifiers: Modifiers) {
+    #[cfg(target_os = "macos")]
+    window::layers::note_pointer(
+        if let Target::Surface(id) = target {
+            Some((id, position))
+        } else {
+            None
+        },
+        false,
+    );
     let before = state.pointer.hovered.replace(target);
     if before != target {
         if let Target::Surface(id) = before {
@@ -800,6 +809,11 @@ fn scroll(
     };
     let [dx, dy] = [delta.x, delta.y].map(|it| if is_precise { it } else { it * PIXELS_PER_LINE });
     let at = located(state, id, position, modifiers);
+    #[cfg(target_os = "macos")]
+    window::layers::note_pointer(
+        Some((id, position)),
+        phase == Phase::Started && dx == 0. && dy == 0.,
+    );
     if phase == Phase::Started {
         offer(id, at, |motion, _, _| motion.begin_gesture());
     }

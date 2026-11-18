@@ -15,7 +15,7 @@ use crate::layout::{
 };
 use crate::order::Order as _;
 use crate::positioned::{Edge, halves};
-use crate::properties::Style;
+use crate::properties::{Id, Style};
 use crate::types::*;
 use crate::values::{Lp, Size};
 
@@ -66,32 +66,76 @@ struct Line {
     ascents: [f32; 2],
 }
 
+impl Style {
+    pub(crate) fn is_webkit_box(&self) -> bool {
+        matches!(
+            self.display(),
+            Display::WebkitBox | Display::WebkitInlineBox
+        )
+    }
+
+    #[inline]
+    pub(crate) fn flex_direction(&self) -> FlexDirection {
+        if !self.is_webkit_box() {
+            return self.layout.flex_direction;
+        }
+        match (
+            self.rare.box_orient,
+            self.other_if_set(Id::WebkitBoxDirection).is_some(),
+        ) {
+            (BoxOrient::Horizontal, false) => FlexDirection::Row,
+            (BoxOrient::Horizontal, true) => FlexDirection::RowReverse,
+            (BoxOrient::Vertical, false) => FlexDirection::Column,
+            (BoxOrient::Vertical, true) => FlexDirection::ColumnReverse,
+        }
+    }
+
+    pub(crate) fn has_flex_columns(&self) -> bool {
+        matches!(
+            self.flex_direction(),
+            FlexDirection::Column | FlexDirection::ColumnReverse
+        )
+    }
+
+    pub(crate) fn order_in(&self, parent: &Style) -> i32 {
+        match () {
+            () if self.is_out_of_flow() => 0,
+            () if parent.is_webkit_box() => {
+                self.other(Id::WebkitBoxOrdinalGroup).parse().unwrap_or(1)
+            }
+            () => self.layout.order,
+        }
+    }
+}
+
 impl Container {
+    fn justify_content(&self) -> Align {
+        if !self.is_webkit_box {
+            return self.style.layout.justify_content;
+        }
+        let name = match self.style.other(Id::WebkitBoxPack) {
+            "center" => AlignName::Center,
+            "justify" => AlignName::SpaceBetween,
+            "end" => AlignName::FlexEnd,
+            _ => AlignName::FlexStart,
+        };
+        Align(name, Align::NORMAL.1)
+    }
+
     fn new(style: &Rc<Style>, size: [Option<f32>; 2]) -> Container {
         let l = &style.layout;
-        let (main, is_reversed, wrap, align_items) = match style.display() {
-            Display::WebkitBox | Display::WebkitInlineBox => (
-                usize::from(style.rare.box_orient == BoxOrient::Vertical),
-                false,
-                FlexWrap::default(),
-                style.rare.box_align,
-            ),
-            _ => (
-                usize::from(matches!(
-                    l.flex_direction,
-                    FlexDirection::Column | FlexDirection::ColumnReverse
-                )),
-                matches!(
-                    l.flex_direction,
-                    FlexDirection::RowReverse | FlexDirection::ColumnReverse
-                ),
-                l.flex_wrap,
-                l.align_items,
-            ),
+        let (is_webkit_box, direction) = (style.is_webkit_box(), style.flex_direction());
+        let (wrap, align_items) = if is_webkit_box {
+            (FlexWrap::default(), style.rare.box_align)
+        } else {
+            (l.flex_wrap, l.align_items)
         };
-        let is_webkit_box = matches!(
-            style.display(),
-            Display::WebkitBox | Display::WebkitInlineBox
+        let (main, is_reversed) = (
+            usize::from(style.has_flex_columns()),
+            matches!(
+                direction,
+                FlexDirection::RowReverse | FlexDirection::ColumnReverse
+            ),
         );
         let balanced = wrap
             .is_balanced
@@ -673,10 +717,7 @@ impl Document {
     fn divides_height(&self, id: BoxId) -> bool {
         let it = &self.boxes[id];
         it.kind == Kind::Flex
-            && matches!(
-                it.style.layout.flex_direction,
-                FlexDirection::Column | FlexDirection::ColumnReverse
-            )
+            && it.style.has_flex_columns()
             && it
                 .children
                 .iter()
@@ -852,12 +893,8 @@ impl Document {
             if auto_count > 0 && free > 0.0 {
                 (share, free) = (free / auto_count as f32, 0.0);
             }
-            let (mut offset, between) = container.content_alignment(
-                container.style.layout.justify_content,
-                main,
-                free,
-                items.len(),
-            );
+            let (mut offset, between) =
+                container.content_alignment(container.justify_content(), main, free, items.len());
             let mut fallback = [None; 2];
             if breaks.is_some() {
                 stacks.push((
@@ -1041,7 +1078,7 @@ impl Document {
                 output.escapes |= it.out_of_flow();
                 it.static_position = [0, 1].map(|axis| {
                     let align = match axis == main {
-                        true => container.style.layout.justify_content,
+                        true => container.justify_content(),
                         false => align_self(&it.style, container.align_items),
                     };
                     let align = match container.along_flow(align, axis, it.starts_far(axis), 0.0) {

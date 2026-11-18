@@ -205,6 +205,16 @@ impl<'a> InternalState<'a> {
         }
     }
 
+    /// If what is left decodes as what `decoded_body` has.
+    pub(crate) fn expected_length_of_decoded_body(&self) -> Option<usize> {
+        let (decoded, received) = (self.decoded_body.list.len(), self.total_body_received);
+        let left = self.content_length?.saturating_sub(received);
+        Some(match self.encoding.is_compressed() {
+            true => decoded.saturating_add(left.saturating_mul(decoded / received.max(1) + 1)),
+            false => decoded.saturating_add(left),
+        })
+    }
+
     pub(crate) fn is_done(&self) -> bool {
         if self.is_chunked_encoding() {
             return self.flags.received_last_chunk;
@@ -392,7 +402,7 @@ impl<'a> InternalState<'a> {
 
             let is_done = self.is_done();
             let limit = if self.flags.is_decode_limited {
-                LIMITED_DECODE_MAX
+                self.decoded_body.list.len() + LIMITED_DECODE_MAX
             } else {
                 usize::MAX
             };

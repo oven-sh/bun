@@ -1,6 +1,6 @@
 //! Which rules apply to an element, and which elements a change can affect.
 
-use core::cell::{Cell, RefCell};
+use core::cell::{Cell, OnceCell, RefCell};
 use std::rc::{Rc, Weak};
 
 use crate::api::core::StoredText;
@@ -16,19 +16,27 @@ use crate::name::{Map, Name, Set, keyed_hash, keyed_hash_of_words, name};
 use crate::order::Order as _;
 use crate::properties::Only;
 use crate::selector::{
-    Bloom, Combinator, HasResult, HasResults, List, Matcher, Pseudo, Relation, ScrollPart, Simple,
-    key,
+    Bloom, Combinator, Compound, HasResult, HasResults, List, Matcher, Pseudo, Relation,
+    ScrollPart, Simple, key,
 };
-use crate::sheet::{AtKind, AtRule, Block, ContainerQuery, Defined, Rule, ScopeRule, Sheet};
-use crate::tree::{AFTER, BEFORE, Element, Flags, MARKER, NodeId, State, Tree};
+use crate::sheet::{AtKind, AtRule, Block, ContainerQuery, Cover, Defined, Rule, ScopeRule, Sheet};
+use crate::tree::{AFTER, BEFORE, DOCUMENT, Element, Flags, MARKER, NodeId, State, Tree};
 use crate::values::Str;
 
 #[derive(Clone)]
 struct Entry {
     rule: Rc<Rule>,
+    /// `Cover::sets`, or else `UNKNOWN` or `LASTING`.
+    sets: Cell<[u16; 4]>,
+    /// `Compound::bits_above`
+    above: u64,
     ancestors: [u32; 3],
     states: State,
+    specificity: u32,
+    order: u32,
     slot: u16,
+    layer: u16,
+    media: u16,
     /// `tag_of_part`, by which those for pseudo-elements are ordered.
     part: u16,
     /// For an element that has the key.
@@ -36,6 +44,90 @@ struct Entry {
     follows_from_signature: bool,
     /// The roots of its `@scope` do.
     has_known_roots: bool,
+    is_scoped: bool,
+}
+
+const UNKNOWN: [u16; 4] = [0; 4];
+const LASTING: [u16; 4] = [0, 1, 0, 0];
+
+/// For each property, the priority of a rule that applies and overrides it. Rules that are left without effect need not be matched.
+#[derive(Clone)]
+struct Winners {
+    best: Vec<u128>,
+    known: Vec<u16>,
+}
+
+impl Winners {
+    /// With fewer candidates it does not pay.
+    const LEAST: usize = 32;
+
+    fn clear(&mut self) {
+        self.known
+            .drain(..)
+            .for_each(|it| self.best[usize::from(it)] = 0);
+    }
+
+    fn add(&mut self, priority: u128, block: &Block) {
+        for it in &block.declarations().cover().overrides {
+            let best = &mut self.best[usize::from(*it)];
+            if *best == 0 {
+                self.known.push(*it);
+            }
+            if *best < priority || *best >> 96 != priority >> 96 {
+                *best = priority;
+            }
+        }
+    }
+
+    fn beat(&self, sets: [u16; 4], priority: u128) -> bool {
+        sets.iter()
+            .map(|it| self.best[usize::from(*it)])
+            .all(|best| best > priority && best >> 96 == priority >> 96)
+    }
+
+    /// Of those from `start`, which are in ascending priority.
+    fn drop_beaten<A: smallvec::Array<Item = (u128, Matched)>>(
+        &mut self,
+        found: &mut SmallVec<A>,
+        start: usize,
+    ) {
+        self.clear();
+        let mut kept = found.len();
+        for at in (start..found.len()).rev() {
+            if !found[at]
+                .1
+                .block
+                .declarations()
+                .cover()
+                .sets
+                .is_some_and(|it| self.beat(it, found[at].0))
+            {
+                kept -= 1;
+                found.swap(at, kept);
+                self.add(found[kept].0, &found[kept].1.block);
+            }
+        }
+        found.drain(start..kept);
+    }
+}
+
+/// What rules out most candidates.
+#[derive(Clone, Copy)]
+struct Sieve {
+    state: State,
+    above: u64,
+}
+
+impl Sieve {
+    const NONE: Sieve = Sieve {
+        state: State::all(),
+        above: u64::MAX,
+    };
+
+    #[inline]
+    fn passes(self, entry: &Entry) -> bool {
+        self.above & entry.above == entry.above && self.state.contains(entry.states)
+    }
 }
 
 /// What a rule set has for the elements with the same signature.
@@ -51,9 +143,11 @@ pub(crate) struct Memo {
     undecided: Vec<Entry>,
     /// How far away they are.
     roots: Vec<(*const ScopeRule, SmallVec<[u16; 2]>)>,
-    matched: Vec<(u128, Matched)>,
+    matched: SmallVec<[(u128, Matched); 0]>,
     /// `RuleSet::generated`
     generated: u8,
+    /// Rules without effect are left out.
+    has_many_candidates: bool,
 }
 
 impl Entry {
@@ -84,7 +178,7 @@ impl Memo {
     }
 }
 
-/// By `Kind`: for elements, for pseudo-elements, and for `@starting-style`.
+/// By `Kind`: for elements, for pseudo-elements, and for `@starting-style`. What is likely to win comes late.
 type Bucket = [Vec<Entry>; 3];
 
 const ELEMENTS: usize = 0;
@@ -118,14 +212,13 @@ impl Index {
             && context.scope.is_none();
         let add = |bucket: &mut Bucket| {
             let all = &mut bucket[part];
-            all.insert(
-                if part == PSEUDOS {
-                    all.partition_point(|it| it.part <= entry.part)
-                } else {
-                    all.len()
-                },
-                entry.clone(),
-            );
+            let after_part = all.partition_point(|it| it.part <= entry.part);
+            let more_specific = all[..after_part]
+                .iter()
+                .rev()
+                .take(256)
+                .take_while(|it| it.part == entry.part && it.specificity > entry.specificity);
+            all.insert(after_part - more_specific.count(), entry.clone());
         };
         if let Some(keys) = key
             .map(|it| smallvec::smallvec![it])
@@ -177,6 +270,8 @@ pub(crate) struct Classes {
     pub(crate) source: StoredText,
     /// Whether that has no name twice, and a space between two.
     is_tidy: Cell<Option<bool>>,
+    /// Quirks make a difference.
+    pub(crate) has_capitals: bool,
     /// The newest first.
     pub(crate) decided: RefCell<[Decided; 2]>,
     candidates: RefCell<SmallVec<[(u32, Rc<Candidates>); 1]>>,
@@ -216,6 +311,7 @@ impl Classes {
             names,
             filter,
             second_filter,
+            has_capitals: source.bytes().any(|it| it.is_ascii_uppercase()),
             ..Classes::default()
         }
     }
@@ -328,11 +424,41 @@ pub(crate) struct Subjects {
     keys: Set<Name>,
     parent_keys: Set<Name>,
     others: Vec<Rc<Rule>>,
+    checked: Dependents,
     pub(crate) is_everything: bool,
     pub(crate) definitions: Vec<AtKind>,
 }
 
 impl Subjects {
+    pub(crate) fn check(&self, tree: &Tree, rules: &RuleSet, has_results: &HasResults) {
+        if self.checked.own.is_empty() {
+            return;
+        }
+        tree.forget_found();
+        let (mut check, by_subject) = (
+            Check::new(tree, rules, DOCUMENT, has_results),
+            BySubject::new(&self.checked.own),
+        );
+        for id in tree.descendants_with(DOCUMENT, self.checked.filter) {
+            let Some(element) = check.subject(id) else {
+                continue;
+            };
+            let mut matters = false;
+            by_subject.visit(element, |index| {
+                let it = &self.checked.own[index];
+                matters = matters
+                    || if check.is_active(it) {
+                        check.gains(it, id, element)
+                    } else {
+                        has_applied(tree, it, id, element)
+                    };
+            });
+            if matters {
+                tree.mark_style(id, Flags::REMATCH);
+            }
+        }
+    }
+
     pub(crate) fn mark(&self, tree: &Tree, root: NodeId) {
         if self.keys.is_empty() && self.parent_keys.is_empty() && self.others.is_empty() {
             return;
@@ -390,6 +516,9 @@ pub(crate) struct RuleSet {
     host: Vec<Entry>,
     slotted: Vec<Entry>,
     parts: Vec<Entry>,
+    /// By the feature, and by a key that the element that has it has to have.
+    dependents: Map<(Name, Name), Dependents>,
+    winners: RefCell<Option<Box<Winners>>>,
     memos: RefCell<Map<Name, Rc<Memo>>>,
     pub(crate) version_of_memos: Cell<u32>,
 }
@@ -409,6 +538,8 @@ pub(crate) enum Level {
 #[derive(Clone)]
 pub(crate) struct Matched {
     pub(crate) block: Rc<Block>,
+    /// If it has `Rule::mentions`.
+    pub(crate) rule: Option<Rc<Rule>>,
     pub(crate) level: Level,
     pub(crate) layer: u16,
     pub(crate) only: Only,
@@ -435,6 +566,8 @@ pub(crate) struct Query<'a> {
     pub(crate) pseudo: Pseudo,
     pub(crate) pseudo_state: State,
     pub(crate) with_starting: bool,
+    /// Also the rules that have no effect.
+    pub(crate) keeps_all: bool,
     pub(crate) bloom: Option<&'a Bloom>,
     pub(crate) has_results: &'a HasResults,
     pub(crate) roots: &'a ScopeRoots,
@@ -506,6 +639,9 @@ impl RuleSet {
             [&mut self.host, &mut self.slotted, &mut self.parts]
                 .into_iter()
                 .for_each(|it| it.retain(&mut keeps));
+            self.dependents
+                .values_mut()
+                .for_each(|it| it.retain(|it| !slots[usize::from(it.slot)].is_removed));
             self.compact();
         }
         let mut free: Vec<_> = (0..self.slots.len())
@@ -663,7 +799,8 @@ impl RuleSet {
         is_new_key: bool,
         dependencies: &mut Dependencies,
     ) {
-        dependencies.add(&rule);
+        let is_checked = !self.is_of_user_agent && can_be_checked(&rule);
+        dependencies.add(&rule, slot, is_checked.then_some(&mut self.dependents));
         let selector = &rule.selector;
         self.has_starting |= rule.context.is_starting;
         self.pseudos.insert(selector.pseudo);
@@ -706,11 +843,25 @@ impl RuleSet {
                     .all(|it| it.iter().all(|it| it.follows_from_signature()))
         });
         let follows_from_signature = has_known_roots && selector.follows_from_signature();
+        let (specificity, order, layer, media, is_scoped) = (
+            selector.specificity,
+            rule.order,
+            rule.context.layer,
+            rule.context.media,
+            rule.context.scope.is_some(),
+        );
         let entry = Entry {
+            above: Compound::bits_above(&selector.compounds),
             ancestors: selector.ancestor_hashes(),
             states: selector.states(),
             part: tag_of_part(selector.pseudo),
             rule,
+            sets: Cell::new(UNKNOWN),
+            specificity,
+            order,
+            layer,
+            media,
+            is_scoped,
             slot,
             always_matches: false,
             follows_from_signature,
@@ -723,10 +874,7 @@ impl RuleSet {
                 .iter()
                 .any(Simple::is_about_host)
         {
-            self.host.push(Entry {
-                rule: Rc::clone(&entry.rule),
-                ..entry
-            });
+            self.host.push(entry.clone());
         }
         match combinator {
             Combinator::Slot => self.slotted.push(entry),
@@ -855,7 +1003,12 @@ impl RuleSet {
         found
     }
 
-    fn visit_candidates<'a>(&'a self, query: &Query, part: usize, mut visit: impl FnMut(&Entry)) {
+    fn with_candidates<'a>(
+        &self,
+        query: &Query<'a>,
+        part: usize,
+        run: impl FnOnce(&[&[Entry]], Sieve),
+    ) {
         let Some(element) = query.tree.element(query.id) else {
             return;
         };
@@ -864,56 +1017,161 @@ impl RuleSet {
             .filter(|_| part != STARTING)
             .into_iter()
             .for_each(|it| it.count(query.tree));
-        let (parent, state) = (
-            query.tree.element(query.tree[query.id].parent),
-            element.state,
-        );
-        let applies = |it: &&Entry| state.contains(it.states) && self.is_active(it);
-        let tag = tag_of_part(query.pseudo);
-        let of_part = |bucket: &'a Bucket| {
-            let all = &*bucket[part];
-            if part == PSEUDOS {
-                &all[all.partition_point(|it| it.part < tag)
-                    ..all.partition_point(|it| it.part <= tag)]
-            } else {
-                all
-            }
-            .iter()
+        let parent = query
+            .tree
+            .element(query.tree[query.id].parent)
+            .filter(|_| !self.index.by_parent_key.is_empty());
+        let looks_up = |it: &Element| {
+            it.classes().len() <= 4 && !self.index.by_key.contains_key(&CLASS_ATTRIBUTE)
         };
-        for (element, map, is_parent) in [
-            (Some(element), &self.index.by_key, false),
-            (parent, &self.index.by_parent_key, true),
-        ] {
-            let Some(element) = element.filter(|_| !map.is_empty()) else {
-                continue;
+        let by_class = |it: &Element| {
+            it.classes
+                .as_ref()
+                .filter(|_| !self.is_of_user_agent && !looks_up(it))
+                .map(|it| self.candidates(it))
+        };
+        let (own, of_parent) = (
+            if self.index.by_key.is_empty() {
+                None
+            } else {
+                by_class(element)
+            },
+            parent.and_then(by_class),
+        );
+        let tag = tag_of_part(query.pseudo);
+        let of_part = |all: &'_ [Entry]| {
+            if part == PSEUDOS {
+                all.partition_point(|it| it.part < tag)..all.partition_point(|it| it.part <= tag)
+            } else {
+                0..all.len()
+            }
+        };
+        let mut found = SmallVec::<[&[Entry]; 12]>::new();
+        found.extend(
+            own.iter()
+                .map(|it| &it.own[part][..])
+                .chain(of_parent.iter().map(|it| &it.of_children[part][..])),
+        );
+        let keys = |it: &'a Element, has_candidates: bool| {
+            let classes = if has_candidates || self.is_of_user_agent {
+                &[]
+            } else {
+                it.classes()
             };
-            if let Some(classes) = element.classes.as_ref().filter(|_| !self.is_of_user_agent) {
-                let candidates = self.candidates(classes);
-                let candidates = if is_parent {
-                    &candidates.of_children
-                } else {
-                    &candidates.own
-                };
-                candidates[part]
-                    .iter()
-                    .filter(|it| state.contains(it.states))
-                    .for_each(&mut visit);
-            }
-            let keys =
-                key::besides_classes(element).filter(|it| is_parent || *it != CLASS_ATTRIBUTE);
-            for bucket in keys.filter_map(|key| map.get(&key)) {
-                of_part(bucket).filter(applies).for_each(&mut visit);
-            }
-        }
-        of_part(&self.index.others).filter(applies).for_each(visit);
+            classes
+                .iter()
+                .map(|it| key::class(*it))
+                .chain(key::besides_classes(it))
+        };
+        let own_keys = keys(element, own.is_some())
+            .filter(|it| *it != CLASS_ATTRIBUTE)
+            .filter_map(|key| self.index.by_key.get(&key));
+        let keys_of_parent = parent
+            .into_iter()
+            .flat_map(|it| keys(it, of_parent.is_some()))
+            .filter_map(|key| self.index.by_parent_key.get(&key));
+        found.extend(
+            own_keys
+                .chain(keys_of_parent)
+                .chain([&self.index.others])
+                .map(|it| &it[part][of_part(&it[part])]),
+        );
+        run(
+            &found,
+            Sieve {
+                state: element.state,
+                above: query.bloom.map_or(u64::MAX, Bloom::keys),
+            },
+        );
+    }
+
+    fn visit_all(&self, all: &[&[Entry]], sieve: Sieve, visit: impl FnMut(&Entry)) {
+        all.iter()
+            .flat_map(|it| it.iter().rev())
+            .filter(|it| sieve.passes(it) && self.is_active(it))
+            .for_each(visit);
+    }
+
+    fn visit_candidates(&self, query: &Query, part: usize, visit: impl FnMut(&Entry)) {
+        self.with_candidates(query, part, |all, sieve| self.visit_all(all, sieve, visit));
+    }
+
+    fn with_winners(&self, run: impl FnOnce(&mut Winners)) {
+        let mut winners = self.winners.take().unwrap_or_else(|| {
+            Box::new(Winners {
+                best: vec![0; Cover::COUNT],
+                known: Vec::new(),
+            })
+        });
+        run(&mut winners);
+        winners.clear();
+        self.winners.replace(Some(winners));
+    }
+
+    fn are_many(&self, all: &[&[Entry]], query: &Query) -> bool {
+        let count = all.iter().map(|it| it.len()).sum::<usize>();
+        query
+            .bloom
+            .filter(|_| count >= 256)
+            .into_iter()
+            .for_each(Bloom::save_memos);
+        !self.is_of_user_agent && !query.keeps_all && count >= Winners::LEAST
     }
 
     fn is_active(&self, entry: &Entry) -> bool {
-        self.slots[usize::from(entry.slot)].active_media[usize::from(entry.rule.context.media)]
+        self.slots[usize::from(entry.slot)].active_media[usize::from(entry.media)]
+    }
+
+    fn is_of_user(&self, slot: u16) -> bool {
+        self.first_of_user
+            .is_some_and(|it| self.slots[usize::from(slot)].rank >= it)
+    }
+
+    fn priority(&self, entry: &Entry, proximity: u16) -> u128 {
+        let slot = &self.slots[usize::from(entry.slot)];
+        u128::from(self.is_of_user(entry.slot)) << 112
+            | u128::from(slot.layer_ranks[usize::from(entry.layer)]) << 96
+            | u128::from(entry.specificity) << 64
+            | u128::from(!proximity) << 48
+            | u128::from(slot.rank) << 32
+            | u128::from(entry.order)
+    }
+
+    /// Whether it makes no difference if it matches, or else is already known not to.
+    #[inline]
+    fn is_beaten(&self, entry: &Entry, query: &Query, winners: &Winners) -> bool {
+        if winners.known.is_empty() {
+            return false;
+        }
+        if entry.sets.get() == UNKNOWN {
+            if query.bloom.is_some_and(|it| !it.may_have(&entry.ancestors)) {
+                return true;
+            }
+            entry.sets.set(
+                entry
+                    .rule
+                    .block
+                    .declarations()
+                    .cover()
+                    .sets
+                    .unwrap_or(LASTING),
+            );
+        }
+        let sets = entry.sets.get();
+        winners.best[usize::from(sets[0])] != 0
+            && winners.beat(
+                sets,
+                self.priority(entry, if entry.is_scoped { 0 } else { u16::MAX }),
+            )
     }
 
     /// Adds what the queries that have changed their answer apply to.
-    pub(crate) fn evaluate_media(&mut self, media: &dyn Subject, affected: &mut Subjects) {
+    pub(crate) fn evaluate_media(
+        &mut self,
+        media: &dyn Subject,
+        is_of_document: bool,
+        affected: &mut Subjects,
+    ) {
         let before: Vec<_> = self
             .slots
             .iter()
@@ -937,14 +1195,30 @@ impl RuleSet {
             before[slot].get(usize::from(media))
                 != self.slots[slot].active_media.get(usize::from(media))
         };
-        let has_flipped = |it: &&Entry| flips(usize::from(it.slot), it.rule.context.media);
+        let has_flipped = |it: &&Entry| flips(usize::from(it.slot), it.media);
+        let mut is_left = |it: &&Entry| {
+            let is_checked = is_of_document && can_be_checked(&it.rule);
+            if is_checked {
+                affected
+                    .checked
+                    .add(Dependent::new(&it.rule, it.slot, 0, Reach::ITSELF));
+            }
+            !is_checked
+        };
         for (map, keys) in [
             (&self.index.by_key, &mut affected.keys),
             (&self.index.by_parent_key, &mut affected.parent_keys),
         ] {
             keys.extend(
                 map.iter()
-                    .filter(|it| it.1.iter().flatten().any(|it| has_flipped(&it)))
+                    .filter(|it| {
+                        it.1.iter()
+                            .flatten()
+                            .filter(has_flipped)
+                            .filter(&mut is_left)
+                            .count()
+                            > 0
+                    })
                     .map(|it| *it.0),
             );
         }
@@ -954,6 +1228,7 @@ impl RuleSet {
                 .iter()
                 .flatten()
                 .filter(has_flipped)
+                .filter(is_left)
                 .map(|it| Rc::clone(&it.rule)),
         );
         affected.is_everything |= is_reordered
@@ -1056,55 +1331,49 @@ impl RuleSet {
         Some(known)
     }
 
-    /// The proximity of the scope, if it matches.
-    /// `decide` is given the candidates that can match, with the proximity if they do.
+    /// For all elements with the same signature: the proximity if it is decided, and whether it can match if not.
+    fn may_match(&self, entry: &Entry, query: &Query, host: NodeId) -> Option<u16> {
+        if entry.follows_from_signature {
+            return self.matches(
+                entry,
+                &Query {
+                    container: &|_| true,
+                    ..*query
+                },
+                host,
+            );
+        }
+        let may_match = |scope| {
+            query
+                .matcher(host, scope)
+                .may_match(&entry.rule.selector.compounds, query.id)
+        };
+        (query.bloom.is_none_or(|it| it.may_have(&entry.ancestors))
+            && match &entry.rule.context.scope {
+                None => may_match(None),
+                Some(scope) => {
+                    !entry.has_known_roots
+                        || scope_roots(scope, query, host)
+                            .iter()
+                            .any(|it| may_match(Some(it.1)))
+                }
+            })
+        .then_some(0)
+    }
+
     fn memo(
         &self,
         key: Name,
         query: &Query,
         part: usize,
         host: NodeId,
-        decide: impl Fn(&Entry, &mut Memo, &dyn Fn(&Query) -> Option<u16>),
+        fill: impl FnOnce(&mut Memo, &[&[Entry]], Sieve),
     ) -> Rc<Memo> {
         if let Some(known) = self.known_memo(key, query) {
             return known;
         }
         let mut memo = Memo::default();
-        self.visit_candidates(query, part, |entry| {
-            let container = &|_: &ContainerQuery| true;
-            decide(
-                entry,
-                &mut memo,
-                &|query| match entry.follows_from_signature {
-                    true => self.matches(
-                        entry,
-                        &Query {
-                            container,
-                            ..*query
-                        },
-                        host,
-                    ),
-                    false => {
-                        let may_match = |scope| {
-                            query
-                                .matcher(host, scope)
-                                .may_match(&entry.rule.selector.compounds, query.id)
-                        };
-                        (query.bloom.is_none_or(|it| it.may_have(&entry.ancestors))
-                            && match &entry.rule.context.scope {
-                                None => may_match(None),
-                                Some(scope) => {
-                                    !entry.has_known_roots
-                                        || scope_roots(scope, query, host)
-                                            .iter()
-                                            .any(|it| may_match(Some(it.1)))
-                                }
-                            })
-                        .then_some(0)
-                    }
-                },
-            );
-        });
+        self.with_candidates(query, part, |all, sieve| fill(&mut memo, all, sieve));
         for scope in memo
             .undecided
             .iter()
@@ -1121,6 +1390,10 @@ impl RuleSet {
                 ));
             }
         }
+        self.remember(key, memo)
+    }
+
+    fn remember(&self, key: Name, memo: Memo) -> Rc<Memo> {
         let (memo, mut memos) = (Rc::new(memo), self.memos.borrow_mut());
         if memos.len() >= 8192 {
             memos.clear();
@@ -1130,6 +1403,7 @@ impl RuleSet {
         memo
     }
 
+    /// The proximity of the scope, if it matches.
     fn matches(&self, entry: &Entry, query: &Query, host: NodeId) -> Option<u16> {
         if query
             .bloom
@@ -1202,10 +1476,17 @@ impl RuleSet {
                 query,
                 PSEUDOS,
                 host,
-                |entry, memo, matches| match bit_of(entry).filter(|it| matches(&it.1).is_some()) {
-                    Some((bit, _)) if entry.is_decided() => memo.generated |= bit,
-                    Some(_) => memo.undecided.push(entry.clone()),
-                    None => {}
+                |memo, all, sieve| {
+                    self.visit_all(all, sieve, |entry| {
+                        match bit_of(entry).filter(|it| {
+                            memo.generated & it.0 == 0
+                                && self.may_match(entry, &it.1, host).is_some()
+                        }) {
+                            Some((bit, _)) if entry.is_decided() => memo.generated |= bit,
+                            Some(_) => memo.undecided.push(entry.clone()),
+                            None => {}
+                        }
+                    });
                 },
             )
         });
@@ -1229,7 +1510,6 @@ impl RuleSet {
         list.iter().filter(|it| self.is_active(it)).for_each(visit);
     }
 
-    /// Appends in ascending priority.
     /// With those of the undecided rules that match, as bits. Together they tell what `collect` would add.
     pub(crate) fn decide(&self, query: &Query, host: NodeId) -> Option<(Rc<Memo>, u32)> {
         let memo = self.known_memo(query.signature.salted(salt_of(query.pseudo)?), query)?;
@@ -1241,12 +1521,15 @@ impl RuleSet {
         {
             return None;
         }
-        let matching = memo
-            .undecided
-            .iter()
-            .enumerate()
-            .filter(|it| self.matches(it.1, query, host).is_some())
-            .fold(0, |all, it| all | 1 << it.0);
+        let mut matching = 0;
+        self.visit_matching(
+            &[&memo.undecided],
+            Sieve::NONE,
+            memo.has_many_candidates,
+            query,
+            host,
+            |index, _, _| matching |= 1 << index,
+        );
         Some((memo, matching))
     }
 
@@ -1269,6 +1552,40 @@ impl RuleSet {
         }
     }
 
+    /// With the index in its slice and the proximity.
+    fn visit_matching(
+        &self,
+        all: &[&[Entry]],
+        sieve: Sieve,
+        skips_beaten: bool,
+        query: &Query,
+        host: NodeId,
+        mut visit: impl FnMut(usize, &Entry, u16),
+    ) {
+        let all = all
+            .iter()
+            .flat_map(|it| it.iter().enumerate().rev())
+            .filter(|(_, it)| sieve.passes(it) && self.is_active(it));
+        if !skips_beaten {
+            return all.for_each(|(index, it)| {
+                self.matches(it, query, host)
+                    .into_iter()
+                    .for_each(|proximity| visit(index, it, proximity))
+            });
+        }
+        self.with_winners(|winners| {
+            for (index, entry) in all {
+                if !self.is_beaten(entry, query, winners)
+                    && let Some(proximity) = self.matches(entry, query, host)
+                {
+                    winners.add(self.priority(entry, proximity), &entry.rule.block);
+                    visit(index, entry, proximity);
+                }
+            }
+        });
+    }
+
+    /// Appends in ascending priority.
     pub(crate) fn collect(
         &self,
         query: &Query,
@@ -1286,26 +1603,19 @@ impl RuleSet {
             },
         );
         let matched = |entry: &Entry, proximity: u16| {
-            let (slot, rule) = (&self.slots[usize::from(entry.slot)], &entry.rule);
-            let layer = slot.layer_ranks[usize::from(rule.context.layer)];
-            let is_of_user = self.first_of_user.is_some_and(|it| slot.rank >= it);
-            let (level, only) = if is_of_user {
+            let priority = self.priority(entry, proximity);
+            let (level, only) = if self.is_of_user(entry.slot) {
                 (Level::User, Only::of(query.pseudo))
             } else {
                 (level, only)
             };
-            let priority = u128::from(is_of_user) << 112
-                | u128::from(layer) << 96
-                | u128::from(rule.selector.specificity) << 64
-                | u128::from(!proximity) << 48
-                | u128::from(slot.rank) << 32
-                | u128::from(rule.order);
             (
                 priority,
                 Matched {
-                    block: Rc::clone(&rule.block),
+                    block: Rc::clone(&entry.rule.block),
+                    rule: (entry.rule.mentions.get() != 0).then(|| Rc::clone(&entry.rule)),
                     level,
-                    layer,
+                    layer: (priority >> 96) as u16,
                     only,
                 },
             )
@@ -1326,14 +1636,37 @@ impl RuleSet {
                 query,
                 part,
                 host,
-                |entry, memo, matches| match matches(query) {
-                    Some(proximity) if entry.is_decided() => {
-                        memo.matched.push(matched(entry, proximity))
+                |memo, all, sieve| {
+                    memo.has_many_candidates = self.are_many(all, query);
+                    let sort_out =
+                        |entry: &Entry, memo: &mut Memo| match self.may_match(entry, query, host) {
+                            Some(proximity) if entry.is_decided() => {
+                                memo.matched.push(matched(entry, proximity))
+                            }
+                            Some(_) if entry.rule.selector.pseudo.selects(query.pseudo) => {
+                                memo.undecided.push(entry.clone())
+                            }
+                            _ => {}
+                        };
+                    if !memo.has_many_candidates {
+                        return self.visit_all(all, sieve, |it| sort_out(it, memo));
                     }
-                    Some(_) if entry.rule.selector.pseudo.selects(query.pseudo) => {
-                        memo.undecided.push(entry.clone())
-                    }
-                    _ => {}
+                    self.with_winners(|winners| {
+                        self.visit_all(all, sieve, |entry| {
+                            if !self.is_beaten(entry, query, winners) {
+                                let before = memo.matched.len();
+                                sort_out(entry, memo);
+                                memo.matched[before..]
+                                    .iter()
+                                    .for_each(|it| winners.add(it.0, &it.1.block));
+                            }
+                        });
+                        memo.undecided
+                            .retain(|it| !self.is_beaten(it, query, winners));
+                        memo.undecided.order_by_key(|it| it.specificity);
+                        memo.matched.order_by_key(|it| it.0);
+                        winners.drop_beaten(&mut memo.matched, 0);
+                    });
                 },
             )
         });
@@ -1347,24 +1680,36 @@ impl RuleSet {
         let applies = |it: &&Entry| {
             self.is_active(it) && (query.with_starting || !it.rule.context.is_starting)
         };
+        let mut are_many = false;
         match kind {
             Kind::Host => self.host.iter().filter(applies).for_each(visit),
             Kind::Slotted => self.slotted.iter().filter(applies).for_each(visit),
             Kind::Part => self.parts.iter().filter(applies).for_each(visit),
             Kind::Normal => {
-                match &memo {
-                    Some(memo) => memo.undecided.iter().for_each(&mut visit),
-                    None => self.visit_candidates(query, part, &mut visit),
-                }
                 if query.with_starting {
                     self.visit_candidates(query, STARTING, &mut visit);
                 }
                 if host != 0 {
                     self.parts.iter().filter(applies).for_each(visit);
                 }
+                let mut add = |all: &[&[Entry]], sieve, many| {
+                    are_many = many;
+                    self.visit_matching(all, sieve, many, query, host, |_, entry, proximity| {
+                        out.push(matched(entry, proximity))
+                    });
+                };
+                match &memo {
+                    Some(memo) => add(&[&memo.undecided], Sieve::NONE, memo.has_many_candidates),
+                    None => self.with_candidates(query, part, |all, sieve| {
+                        add(all, sieve, self.are_many(all, query))
+                    }),
+                }
             }
         }
         out[start..].order_by_key(|it| it.0);
+        if are_many {
+            self.with_winners(|it| it.drop_beaten(out, start));
+        }
     }
 }
 
@@ -1404,7 +1749,9 @@ fn scope_roots(scope: &Rc<ScopeRule>, query: &Query, host: NodeId) -> SmallVec<[
             } else {
                 query.tree.parent_or_host(*id)
             })
-            .filter(|it| query.tree.element(*it).is_some())
+            .filter(|it| {
+                query.tree.element(*it).is_some() || *it == DOCUMENT && scope.start.is_none()
+            })
         };
         let path = || core::iter::successors(Some(query.id), up);
         roots.extend((0..u16::MAX).zip(path()).filter(|(distance, root)| {
@@ -1416,7 +1763,7 @@ fn scope_roots(scope: &Rc<ScopeRule>, query: &Query, host: NodeId) -> SmallVec<[
             };
             let starts = |around| match &scope.start {
                 Some(start) => matcher(around).any(start, *root),
-                None if scope.owner == 0 => *root == host || query.tree.is_root(*root),
+                None if scope.owner == 0 => *root == host || *root == DOCUMENT,
                 None => *root == scope.owner,
             };
             outer.as_ref().map_or_else(
@@ -1440,6 +1787,541 @@ struct Affected {
     /// `None` is any element.
     subjects: Option<Set<Name>>,
     filter: u64,
+    /// The key in `RuleSet::dependents`, if any has it.
+    checked: Option<(Name, Name)>,
+}
+
+bitflags::bitflags! {
+    /// Where the subject can be.
+    #[derive(Clone, Copy, Default, PartialEq)]
+    struct Reach: u8 {
+        const ITSELF = 1;
+        const BELOW = 2;
+        const LATER = 4;
+        const BELOW_LATER = 8;
+    }
+}
+
+/// Whether the rules that an element has tell if it has matched.
+fn can_be_checked(rule: &Rule) -> bool {
+    let (selector, context) = (&rule.selector, &rule.context);
+    context.scope.is_none()
+        && context.container.is_none()
+        && !context.is_starting
+        && matches!(
+            selector.pseudo,
+            Pseudo::None | Pseudo::Before | Pseudo::After
+        )
+        && selector.pseudo_state.is_empty()
+        && selector.compounds.len() < usize::from(NESTED)
+        && selector.stays_in_tree()
+}
+
+const NESTED: u8 = u8::MAX;
+
+/// A rule that can start or stop to match when an element gets or loses a feature.
+#[derive(Clone)]
+struct Dependent {
+    rule: Rc<Rule>,
+    /// Of `Node::keys`: the subject has one of `any` and all of `all`.
+    any: u64,
+    all: u64,
+    above_subject: u64,
+    /// The same for the element with the feature.
+    needs: u64,
+    above: u64,
+    slot: u16,
+    media: u16,
+    /// The compound that the element with the feature is matched against, or `NESTED`.
+    at: u8,
+    reach: Reach,
+}
+
+impl Dependent {
+    fn new(rule: &Rc<Rule>, slot: u16, at: u8, reach: Reach) -> Dependent {
+        let compounds = &rule.selector.compounds;
+        Dependent {
+            any: if compounds[0].filter == 0 {
+                u64::MAX
+            } else {
+                compounds[0].filter
+            },
+            all: compounds[0].required_bits(),
+            above_subject: Compound::bits_above(compounds),
+            needs: compounds
+                .get(usize::from(at))
+                .map_or(0, Compound::required_bits),
+            above: compounds
+                .get(usize::from(at)..)
+                .map_or(0, Compound::bits_above),
+            rule: Rc::clone(rule),
+            slot,
+            media: rule.context.media,
+            at,
+            reach,
+        }
+    }
+
+    /// The compound for the last of the siblings that lead to the subject.
+    fn last_sibling(&self) -> usize {
+        let compounds = &self.rule.selector.compounds[..usize::from(self.at)];
+        compounds.len()
+            - compounds
+                .iter()
+                .rev()
+                .take_while(|it| matches!(it.combinator, Combinator::Next | Combinator::Later))
+                .count()
+    }
+}
+
+#[derive(Clone, Default)]
+struct Dependents {
+    /// The element with the feature is the subject.
+    own: Vec<Dependent>,
+    others: Vec<Dependent>,
+    by_subject: OnceCell<BySubject>,
+    reach: Reach,
+    /// `Dependent::any` of all.
+    filter: u64,
+    /// Getting the feature can make one stop to match, or losing it can make one match.
+    works_both_ways: bool,
+    has_pseudo_elements: bool,
+}
+
+impl Dependents {
+    fn note(&mut self, it: &Dependent) {
+        self.reach |= it.reach;
+        self.filter |= it.any;
+        self.has_pseudo_elements |= it.rule.selector.pseudo != Pseudo::None;
+    }
+
+    fn add(&mut self, it: Dependent) {
+        self.note(&it);
+        let list = if it.reach == Reach::ITSELF {
+            &mut self.own
+        } else {
+            &mut self.others
+        };
+        if !list.last().is_some_and(|last| {
+            Rc::ptr_eq(&last.rule, &it.rule)
+                && (last.slot, last.at, last.reach) == (it.slot, it.at, it.reach)
+        }) {
+            list.push(it);
+            self.by_subject.take();
+        }
+    }
+
+    fn retain(&mut self, keeps: impl Fn(&Dependent) -> bool) {
+        self.own.retain(&keeps);
+        self.others.retain(keeps);
+        self.by_subject.take();
+    }
+}
+
+/// Indices in a list.
+#[derive(Clone, Default)]
+struct BySubject {
+    by_key: Map<Name, SmallVec<[u32; 4]>>,
+    others: Vec<u32>,
+}
+
+impl BySubject {
+    fn new(list: &[Dependent]) -> BySubject {
+        let mut index = BySubject::default();
+        for (at, it) in (0..).zip(list) {
+            match it.rule.selector.compounds[0].keys() {
+                Some(keys) => keys
+                    .iter()
+                    .for_each(|key| index.by_key.entry(*key).or_default().push(at)),
+                None => index.others.push(at),
+            }
+        }
+        index
+    }
+
+    fn visit(&self, element: &Element, mut visit: impl FnMut(usize)) {
+        key::of_element(element)
+            .filter_map(|key| self.by_key.get(&key))
+            .flatten()
+            .chain(&self.others)
+            .for_each(|it| visit(*it as usize));
+    }
+}
+
+/// The rules that it has been given, or else whether a rule has asked for it in vain.
+fn rules_for<'a>(
+    tree: &'a Tree,
+    element: &'a Element,
+    pseudo: Pseudo,
+) -> Result<&'a RuleList, bool> {
+    let index = match pseudo {
+        Pseudo::None => return element.rules.as_deref().ok_or(false),
+        Pseudo::Before => BEFORE,
+        _ => AFTER,
+    };
+    let rules = tree
+        .element(element.generated[index])
+        .and_then(|it| it.rules.as_deref());
+    rules.ok_or_else(|| {
+        element
+            .generated_by_rules
+            .is_some_and(|it| it >> index & 1 != 0)
+    })
+}
+
+fn has_applied(tree: &Tree, it: &Dependent, id: NodeId, element: &Element) -> bool {
+    let has_it = |rules: &RuleList| {
+        rules
+            .matched()
+            .iter()
+            .any(|matched| Rc::ptr_eq(&matched.block, &it.rule.block))
+    };
+    tree[id].keys & it.all == it.all
+        && rules_for(tree, element, it.rule.selector.pseudo)
+            .map_or_else(|may_have| may_have, has_it)
+}
+
+/// Compares what matches in one tree with the rules that the elements have.
+struct Check<'a> {
+    tree: &'a Tree,
+    rules: &'a RuleSet,
+    matcher: Matcher<'a>,
+    /// A parent, and the keys of it and of its ancestors.
+    above: (NodeId, u64),
+    /// How often in a row there was a difference. Once it is the rule, it is taken for granted for a while.
+    streak: u32,
+}
+
+impl<'a> Check<'a> {
+    fn new(
+        tree: &'a Tree,
+        rules: &'a RuleSet,
+        scope: NodeId,
+        has_results: &'a HasResults,
+    ) -> Check<'a> {
+        let host = tree.host_of(scope);
+        Check {
+            tree,
+            rules,
+            matcher: Matcher::new(
+                tree,
+                host,
+                if host == 0 { 0 } else { NodeId::MAX },
+                Some(has_results),
+            ),
+            above: (0, 0),
+            streak: 0,
+        }
+    }
+
+    fn subject(&self, id: NodeId) -> Option<&'a Element> {
+        self.tree.element(id).filter(|it| {
+            it.rules.is_some() && !self.tree[id].has(Flags::REMATCH | Flags::REMATCH_SUBTREE)
+        })
+    }
+
+    fn is_active(&self, it: &Dependent) -> bool {
+        self.rules.slots[usize::from(it.slot)].active_media[usize::from(it.media)]
+    }
+
+    fn keys_above(&mut self, id: NodeId) -> u64 {
+        let parent = self.tree[id].parent;
+        if self.above.0 != parent {
+            let (mut at, mut keys) = (parent, 0);
+            while at != 0 && at != self.above.0 {
+                keys |= self.tree[at].keys;
+                at = self.tree[at].parent;
+            }
+            self.above = (parent, if at == 0 { keys } else { keys | self.above.1 });
+        }
+        self.above.1
+    }
+
+    fn takes_for_granted(&mut self) -> bool {
+        let does = self.streak >= 24;
+        if does {
+            self.streak = if self.streak == 150 {
+                16
+            } else {
+                self.streak + 1
+            };
+        }
+        does
+    }
+
+    fn count(&mut self, differs: bool) -> bool {
+        self.streak = if differs { self.streak + 1 } else { 0 };
+        differs
+    }
+
+    /// Whether `rules` have it, or leave it without effect.
+    fn is_settled(&self, it: &Dependent, rules: &RuleList) -> bool {
+        let rule = &it.rule;
+        let level = if self.rules.is_of_user(it.slot) {
+            Level::User
+        } else {
+            Level::Own
+        };
+        let is_unlayered = self.rules.slots[usize::from(it.slot)].layer_ranks
+            [usize::from(rule.context.layer)]
+            == UNLAYERED;
+        let (mut sets, mut beaten) = (None, [false; 4]);
+        for (matched, other) in rules
+            .matched()
+            .iter()
+            .rev()
+            .filter_map(|it| Some((it, it.rule.as_ref()?)))
+        {
+            if Rc::ptr_eq(other, rule) {
+                return true;
+            }
+            let is_higher = match Rc::ptr_eq(&other.context, &rule.context) {
+                true => {
+                    (other.selector.specificity, other.order)
+                        > (rule.selector.specificity, rule.order)
+                }
+                false => {
+                    is_unlayered
+                        && matched.layer == UNLAYERED
+                        && other.selector.specificity > rule.selector.specificity
+                }
+            };
+            if is_higher
+                && matched.level == level
+                && let Some(sets) =
+                    *sets.get_or_insert_with(|| rule.block.declarations().cover().sets)
+            {
+                let overrides = &matched.block.declarations().cover().overrides;
+                beaten =
+                    core::array::from_fn(|index| beaten[index] || overrides.contains(&sets[index]));
+                if beaten == [true; 4] {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Whether the rule has come to matter.
+    fn gains(&mut self, it: &Dependent, id: NodeId, element: &Element) -> bool {
+        let keys = self.tree[id].keys;
+        if keys & it.any == 0 || keys & it.all != it.all {
+            return false;
+        }
+        let selector = &it.rule.selector;
+        if self.takes_for_granted() {
+            return self.is_active(it) && self.matcher.compound(&selector.compounds[0], id);
+        }
+        if it.above_subject != 0 && self.keys_above(id) & it.above_subject != it.above_subject {
+            return self.count(false);
+        }
+        self.is_active(it) && self.matcher.compound(&selector.compounds[0], id) && {
+            let is_open = match rules_for(self.tree, element, selector.pseudo) {
+                Ok(rules) => !self.is_settled(it, rules),
+                Err(is_wanted) => {
+                    is_wanted
+                        || element.generated_by_rules.is_some()
+                            && it.rule.block.declarations().sets_content
+                }
+            };
+            self.count(is_open && self.matcher.matches_beyond(&selector.compounds, id))
+        }
+    }
+
+    /// Whether a rule that it has, and that `mentions` the feature, no longer matches.
+    fn loses(
+        &mut self,
+        mentions: u64,
+        has_pseudo_elements: bool,
+        id: NodeId,
+        element: &Element,
+    ) -> bool {
+        let generates = has_pseudo_elements && element.generated_by_rules > Some(0);
+        [Pseudo::None, Pseudo::Before, Pseudo::After][..if generates { 3 } else { 1 }]
+            .iter()
+            .any(|pseudo| match rules_for(self.tree, element, *pseudo) {
+                Ok(rules) if rules.mentions & mentions == 0 => false,
+                Ok(_) if self.takes_for_granted() => true,
+                Ok(rules) => {
+                    let mut mentioning = rules
+                        .matched()
+                        .iter()
+                        .filter_map(|it| it.rule.as_ref())
+                        .filter(|it| it.mentions.get() & mentions != 0);
+                    let has_lost = mentioning.any(|it| !self.matcher.matches(&it.selector, id));
+                    self.count(has_lost)
+                }
+                Err(may_have_lost) => may_have_lost,
+            })
+    }
+
+    fn mark_if(&mut self, id: NodeId, differs: impl FnOnce(&mut Self, &Element) -> bool) {
+        if self.subject(id).is_some_and(|it| differs(self, it)) {
+            self.tree.mark_style(id, Flags::REMATCH);
+        }
+    }
+
+    fn mark_gains(&mut self, it: &Dependent, id: NodeId) {
+        self.mark_if(id, |check, element| check.gains(it, id, element));
+    }
+
+    /// Of the later siblings of `id` and what is in them. `searched` has how often those of a parent have been.
+    fn mark_gains_after(
+        &mut self,
+        it: &Dependent,
+        id: NodeId,
+        searched: &mut Map<(NodeId, *const Dependent), u8>,
+    ) {
+        let tree = self.tree;
+        let last = (it.at != NESTED).then(|| it.last_sibling());
+        let steps = last.map_or(&[][..], |last| {
+            &it.rule.selector.compounds[last..usize::from(it.at)]
+        });
+        let mut visit = |sibling: NodeId| {
+            if it.reach.contains(Reach::LATER) {
+                self.mark_gains(it, sibling);
+            }
+            if it.reach.contains(Reach::BELOW_LATER)
+                && tree.may_have_below(sibling, it.any)
+                && last.is_none_or(|last| {
+                    self.matcher
+                        .matches_from(&it.rule.selector.compounds[last..], sibling)
+                })
+            {
+                tree.descendants_with(sibling, it.any)
+                    .for_each(|id| self.mark_gains(it, id));
+            }
+        };
+        if !steps.is_empty() && steps.iter().all(|it| it.combinator == Combinator::Next) {
+            return tree
+                .next_elements(id)
+                .nth(steps.len() - 1)
+                .into_iter()
+                .for_each(visit);
+        }
+        let count = searched
+            .entry((tree[id].parent, core::ptr::from_ref(it)))
+            .or_default();
+        match core::mem::replace(count, count.saturating_add(1)) {
+            0 => tree.next_elements(id).for_each(&mut visit),
+            1 => tree.element_children(tree[id].parent).for_each(&mut visit),
+            _ => {}
+        }
+    }
+
+    /// `is_repeated`: the same has happened to the parent. `is_new` tells whether a sibling is yet to be looked at.
+    fn feature_changed(
+        &mut self,
+        id: NodeId,
+        feature: Name,
+        all: &Dependents,
+        is_repeated: bool,
+        mut is_new: impl FnMut(NodeId) -> bool,
+        searched: &mut Map<(NodeId, *const Dependent), u8>,
+    ) {
+        let tree = self.tree;
+        let has_it = |id| {
+            feature == key::ARRIVAL
+                || tree
+                    .element(id)
+                    .is_some_and(|it| key::of_element(it).any(|it| it == feature))
+        };
+        let may_gain = all.works_both_ways || has_it(id);
+        let may_lose = all.works_both_ways || !may_gain;
+        let mentions = if may_lose {
+            crate::selector::filter(core::iter::once(feature))
+        } else {
+            0
+        };
+        let loses = |check: &mut Self, id, element: &Element| {
+            may_lose && check.loses(mentions, all.has_pseudo_elements, id, element)
+        };
+        self.streak = 0;
+        if all.reach.contains(Reach::ITSELF) {
+            self.mark_if(id, |check, element| {
+                loses(check, id, element) || all.own.iter().any(|it| check.gains(it, id, element))
+            });
+        }
+        let has_next = all.reach.intersects(Reach::LATER | Reach::BELOW_LATER)
+            && tree.next_elements(id).next().is_some();
+        let has_below = all.reach.contains(Reach::BELOW) && tree.may_have_below(id, all.filter);
+        if !has_next && !has_below {
+            return;
+        }
+        let looks_for_losses =
+            may_lose && !(is_repeated && (all.works_both_ways || !has_it(tree[id].parent)));
+        let (mut below, mut filter) = (
+            SmallVec::<[u32; 32]>::new(),
+            if looks_for_losses { all.filter } else { 0 },
+        );
+        if may_gain {
+            let (keys, keys_below, above) =
+                (tree[id].keys, tree[id].keys_below, self.keys_above(id));
+            for (index, it) in (0..).zip(&all.others) {
+                let is_below = it.reach.contains(Reach::BELOW)
+                    && keys_below & it.any != 0
+                    && keys_below & it.all == it.all;
+                let is_after = has_next && it.reach != Reach::BELOW;
+                if !(is_below || is_after)
+                    || keys & it.needs != it.needs
+                    || above & it.above != it.above
+                    || !self.is_active(it)
+                {
+                    continue;
+                }
+                let matcher = self.matcher;
+                let fits = |id| {
+                    it.at == NESTED
+                        || matcher
+                            .matches_from(&it.rule.selector.compounds[usize::from(it.at)..], id)
+                };
+                if !fits(id) {
+                    continue;
+                }
+                if is_below && !(is_repeated && fits(tree[id].parent)) {
+                    below.push(index);
+                    filter |= it.any;
+                }
+                if is_after {
+                    self.mark_gains_after(it, id, searched);
+                }
+            }
+        }
+        if has_below && filter != 0 {
+            let by_subject = (below.len() > 32)
+                .then(|| all.by_subject.get_or_init(|| BySubject::new(&all.others)));
+            for id in tree.descendants_with(id, filter) {
+                self.mark_if(id, |check, element| {
+                    if looks_for_losses && loses(check, id, element) {
+                        return true;
+                    }
+                    let Some(by_subject) = by_subject else {
+                        return below
+                            .iter()
+                            .any(|it| check.gains(&all.others[*it as usize], id, element));
+                    };
+                    let mut gains = false;
+                    by_subject.visit(element, |it| {
+                        gains = gains
+                            || below.binary_search(&(it as u32)).is_ok()
+                                && check.gains(&all.others[it], id, element)
+                    });
+                    gains
+                });
+            }
+        }
+        if has_next && may_lose {
+            for sibling in tree.next_elements(id).take_while(|it| is_new(*it)) {
+                let inside = all
+                    .reach
+                    .contains(Reach::BELOW_LATER)
+                    .then(|| tree.descendants_with(sibling, all.filter));
+                core::iter::once(sibling)
+                    .chain(inside.into_iter().flatten())
+                    .for_each(|id| self.mark_if(id, |check, element| loses(check, id, element)));
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1482,53 +2364,184 @@ pub(crate) struct Dependencies {
     affected: Vec<Affected>,
 
     pending: Set<(NodeId, u32)>,
+    /// The feature has changed from each element on to the last of its siblings, or to the first, for those whose tag is in the `selector::filter`.
+    runs: Map<(NodeId, Name), u64>,
     changed_in_has: Set<Name>,
     has_origins: Vec<NodeId>,
 }
 
+fn filter_of_tag(tree: &Tree, id: NodeId) -> u64 {
+    crate::selector::filter(tree.element(id).map(|it| key::tag(it.tag)).into_iter())
+}
+
 impl Dependencies {
-    fn add(&mut self, rule: &Rule) {
+    fn affected_by(&mut self, pair: (Name, Name)) -> &mut Affected {
+        if self.of_others.insert(pair.0) {
+            self.version_of_others = next_version();
+        }
+        let next = self.affected.len() as u32;
+        let index = *self.by_pair.entry(pair).or_insert(next);
+        if index == next {
+            self.affected.push(Affected {
+                relation: Relation::empty(),
+                subjects: Some(Set::default()),
+                filter: 0,
+                checked: None,
+            });
+        }
+        &mut self.affected[index as usize]
+    }
+
+    fn note(
+        &mut self,
+        key: Name,
+        relation: Relation,
+        required: Name,
+        subjects: &Option<SmallVec<[Name; 1]>>,
+    ) {
+        self.mentioned.add(key);
+        if relation.is_empty() {
+            let always = self.of_subject.entry(key).or_default();
+            match subjects {
+                _ if required != Name::NONE => _ = self.of_subject_with.insert((key, required)),
+                Some(keys) if !keys.contains(&key) => self
+                    .of_subject_with
+                    .extend(keys.iter().map(|it| (key, *it))),
+                _ => *always = true,
+            }
+            return;
+        }
+        let affected = self.affected_by((key, required));
+        affected.relation |= relation;
+        match (&mut affected.subjects, subjects) {
+            (Some(all), Some(keys)) => {
+                all.extend(keys.iter().copied());
+                affected.filter |= crate::selector::filter(keys.iter().copied());
+            }
+            (all, _) => *all = None,
+        }
+    }
+
+    fn add_checked(
+        &mut self,
+        rule: &Rc<Rule>,
+        slot: u16,
+        dependents: &mut Map<(Name, Name), Dependents>,
+    ) {
+        let (compounds, subjects) = (&rule.selector.compounds, rule.selector.compounds[0].keys());
+        let mut add = |this: &mut Dependencies,
+                       pair: (Name, Name),
+                       at: usize,
+                       reach: Reach,
+                       works_both_ways: bool| {
+            this.mentioned.add(pair.0);
+            this.affected_by(pair).checked = Some(pair);
+            let (all, it) = (
+                dependents.entry(pair).or_default(),
+                Dependent::new(rule, slot, at as u8, reach),
+            );
+            all.works_both_ways |= works_both_ways;
+            if pair.0 == key::DEPARTURE {
+                all.note(&it)
+            } else {
+                all.add(it)
+            }
+            rule.mentions
+                .update(|it| it | crate::selector::filter(core::iter::once(pair.0)));
+        };
+        let (mut reach, mut after) = (Reach::ITSELF, Combinator::None);
+        for (at, compound) in compounds.iter().enumerate() {
+            compound.features(
+                &mut |key, inner, required| match inner.is_empty() {
+                    true if at == 0 && !key::STRUCTURAL.contains(&key) => {
+                        self.note(key, inner, required, &subjects)
+                    }
+                    true => add(
+                        self,
+                        (key, required),
+                        at,
+                        reach,
+                        !compound.only_requires(key),
+                    ),
+                    false => {
+                        let (is_below, is_later) = (
+                            inner.contains(Relation::DESCENDANT),
+                            inner.contains(Relation::SIBLING),
+                        );
+                        let mut from_there = Reach::empty();
+                        from_there.set(Reach::BELOW, is_below);
+                        from_there.set(Reach::LATER, is_later);
+                        from_there.set(
+                            Reach::BELOW_LATER,
+                            is_later
+                                && (is_below
+                                    || reach.intersects(Reach::BELOW | Reach::BELOW_LATER)),
+                        );
+                        add(self, (key, required), NESTED.into(), from_there, true);
+                    }
+                },
+                false,
+            );
+            let with = compound.key().unwrap_or(Name::NONE);
+            if after == Combinator::Later {
+                add(self, (key::ARRIVAL, with), at, reach, false);
+            }
+            after = compound.combinator;
+            reach = match after {
+                Combinator::Next | Combinator::Later => {
+                    let is_next = after == Combinator::Next;
+                    add(
+                        self,
+                        (
+                            if is_next {
+                                key::PREVIOUS
+                            } else {
+                                key::DEPARTURE
+                            },
+                            with,
+                        ),
+                        at,
+                        reach,
+                        is_next,
+                    );
+                    if reach.intersects(Reach::ITSELF | Reach::LATER) {
+                        Reach::LATER
+                    } else {
+                        Reach::BELOW_LATER
+                    }
+                }
+                _ => Reach::BELOW,
+            };
+        }
+    }
+
+    fn add(
+        &mut self,
+        rule: &Rc<Rule>,
+        slot: u16,
+        dependents: Option<&mut Map<(Name, Name), Dependents>>,
+    ) {
         {
-            let (subjects, base) = (rule.selector.compounds[0].keys(), Relation::empty());
-            let mut report = |key, relation: Relation, required| {
-                self.mentioned.add(key);
-                if relation.is_empty() {
-                    let always = self.of_subject.entry(key).or_default();
-                    match &subjects {
-                        _ if required != Name::NONE => {
-                            _ = self.of_subject_with.insert((key, required))
-                        }
-                        Some(keys) if !keys.contains(&key) => self
-                            .of_subject_with
-                            .extend(keys.iter().map(|it| (key, *it))),
-                        _ => *always = true,
-                    }
-                    return;
+            let base = Relation::empty();
+            let subjects = match dependents {
+                Some(dependents) => {
+                    self.add_checked(rule, slot, dependents);
+                    None
                 }
-                if self.of_others.insert(key) {
-                    self.version_of_others = next_version();
-                }
-                let next = self.affected.len() as u32;
-                let index = *self.by_pair.entry((key, required)).or_insert(next);
-                if index == next {
-                    let subjects = Some(Set::default());
-                    self.affected.push(Affected {
-                        relation,
-                        subjects,
-                        filter: 0,
-                    });
-                }
-                let affected = &mut self.affected[index as usize];
-                affected.relation |= relation;
-                match (&mut affected.subjects, &subjects) {
-                    (Some(all), Some(keys)) => {
-                        all.extend(keys.iter().copied());
-                        affected.filter |= crate::selector::filter(keys.iter().copied());
-                    }
-                    (all, _) => *all = None,
+                None => {
+                    let subjects = rule.selector.compounds[0].keys();
+                    rule.selector.features(
+                        base,
+                        &mut |key, relation, required| {
+                            self.note(key, relation, required, &subjects)
+                        },
+                        false,
+                    );
+                    subjects
                 }
             };
-            rule.selector.features(base, &mut report, false);
+            let mut report =
+                |key, relation, required| self.note(key, relation, required, &subjects);
             let scopes =
                 core::iter::successors(rule.context.scope.as_ref(), |it| it.outer.as_ref());
             let limits = scopes
@@ -1728,11 +2741,11 @@ impl Dependencies {
     }
 
     /// While `child` is linked: after it was inserted, or before it is removed.
-    pub(crate) fn children_changed(&mut self, tree: &Tree, child: NodeId) {
+    pub(crate) fn children_changed(&mut self, tree: &Tree, child: NodeId, is_new: bool) {
         let parent = tree[child].parent;
         let flags = tree[parent].flags.get();
         if flags.contains(Flags::EMPTINESS) {
-            self.feature_changed(tree, parent, key::STRUCTURE);
+            self.feature_changed(tree, parent, key::EMPTY);
         }
         if tree[child].element().is_none() {
             return;
@@ -1747,32 +2760,60 @@ impl Dependencies {
             tree.previous_elements(child).next(),
             tree.next_elements(child).next(),
         );
-        let mut changed = |id| self.feature_changed(tree, id, key::STRUCTURE);
-        if flags.contains(Flags::CHILD_INDEX) {
-            tree.element_children(parent).for_each(changed);
-        } else {
-            if flags.contains(Flags::LATER_SIBLINGS) {
-                tree.next_elements(child).for_each(&mut changed);
+        let tags = [key::TYPE_BEFORE, key::TYPE_AFTER].map(|it| {
+            filter_of_tag(tree, child)
+                | if is_new {
+                    0
+                } else {
+                    self.runs.remove(&(child, it)).unwrap_or(0)
+                }
+        });
+        if let Some(next) = next {
+            if flags.intersects(Flags::CHILD_INDEX | Flags::LATER_SIBLINGS) {
+                self.add_run(next, key::STRUCTURE, u64::MAX);
             } else if flags.contains(Flags::NEXT_SIBLING) {
-                tree.next_elements(child).take(2).for_each(&mut changed);
+                tree.next_elements(child)
+                    .take(2)
+                    .for_each(|it| self.feature_changed(tree, it, key::STRUCTURE));
             }
-            if flags.contains(Flags::EDGE_CHILDREN) {
-                previous
-                    .filter(|_| next.is_none())
-                    .into_iter()
-                    .for_each(&mut changed);
-                next.filter(|_| previous.is_none())
-                    .into_iter()
-                    .for_each(&mut changed);
+            if flags.contains(Flags::CHILD_INDEX) {
+                self.add_run(next, key::TYPE_BEFORE, tags[0]);
+            }
+            if flags.contains(Flags::EDGE_CHILDREN) && previous.is_none() {
+                self.feature_changed(tree, next, key::FIRST);
+            }
+            if flags.contains(Flags::LATER_SIBLINGS) {
+                match is_new {
+                    true => self.feature_changed(tree, child, key::ARRIVAL),
+                    false => self.add_run(next, key::DEPARTURE, u64::MAX),
+                }
+            }
+            if flags.contains(Flags::NEXT_SIBLING) {
+                self.feature_changed(tree, next, key::PREVIOUS);
+            }
+        }
+        if let Some(previous) = previous {
+            if flags.contains(Flags::CHILD_INDEX) {
+                self.add_run(previous, key::REMAINDER, u64::MAX);
+                self.add_run(previous, key::TYPE_AFTER, tags[1]);
+            }
+            if flags.contains(Flags::EDGE_CHILDREN) && next.is_none() {
+                self.feature_changed(tree, previous, key::LAST);
             }
         }
         self.changed_for_has(tree, child, previous);
     }
 
+    fn add_run(&mut self, first: NodeId, feature: Name, tags: u64) {
+        if self.mentioned.may_have(feature) {
+            *self.runs.entry((first, feature)).or_default() |= tags;
+        }
+    }
+
     /// All of them have come, or are about to go.
     pub(crate) fn children_replaced(&mut self, tree: &Tree, parent: NodeId) {
         if tree[parent].has(Flags::EMPTINESS) {
-            self.feature_changed(tree, parent, key::STRUCTURE);
+            self.feature_changed(tree, parent, key::EMPTY);
         }
         if self.looks_for_descendants() {
             tree.element_children(parent)
@@ -1786,7 +2827,7 @@ impl Dependencies {
 
     fn changed_for_has(&mut self, tree: &Tree, child: NodeId, previous: Option<NodeId>) {
         if !self.in_has.is_empty() {
-            self.changed_in_has.insert(key::STRUCTURE);
+            self.changed_in_has.extend(key::STRUCTURAL);
             let this = (tree[child].keys & self.in_has_filter != 0).then_some(child);
             for element in this
                 .into_iter()
@@ -1813,19 +2854,69 @@ impl Dependencies {
     }
 
     pub(crate) fn has_pending(&self) -> bool {
-        !self.pending.is_empty() || !self.has_origins.is_empty()
+        !self.pending.is_empty() || !self.has_origins.is_empty() || !self.runs.is_empty()
     }
 
     /// Marks the elements that the changes so far can affect.
-    pub(crate) fn flush(&mut self, tree: &Tree, has_results: &HasResults) {
+    pub(crate) fn flush(
+        &mut self,
+        tree: &Tree,
+        has_results: &HasResults,
+        scopes: &Map<NodeId, Rc<RefCell<RuleSet>>>,
+    ) {
+        let mut seen = Map::<_, u64>::default();
+        for ((mut at, feature), mut tags) in core::mem::take(&mut self.runs)
+            .into_iter()
+            .filter(|it| tree.contains(it.0.0))
+        {
+            while at != 0 && tags != 0 {
+                if tree[at].element().is_some() {
+                    let done = seen.entry((at, feature)).or_default();
+                    (tags, *done) = (tags & !*done, tags | *done);
+                    if tags & filter_of_tag(tree, at) != 0 {
+                        self.feature_changed(tree, at, feature);
+                    }
+                }
+                at = if feature == key::REMAINDER || feature == key::TYPE_AFTER {
+                    tree[at].previous
+                } else {
+                    tree[at].next
+                };
+            }
+        }
         self.flush_has(tree, has_results);
         let (mut later, mut earlier) = (Set::default(), Set::default());
+        let (mut checked, mut searched, mut above) = (Set::default(), Map::default(), (0, 0));
         let pending = core::mem::take(&mut self.pending);
-        for &(id, index) in &pending {
+        let mut in_order: Vec<_> = pending.iter().copied().collect();
+        in_order.order_by(Ord::cmp);
+        for (id, index) in in_order {
             if !tree.contains(id) {
                 continue;
             }
             let (affected, mut known) = (&self.affected[index as usize], Map::default());
+            if let Some((pair, rules)) = affected.checked.zip(scopes.get(&tree[id].scope)) {
+                let rules = rules.borrow();
+                if let Some(all) = rules.dependents.get(&pair) {
+                    let is_repeated = pending.contains(&(tree[id].parent, index));
+                    let mut check = Check {
+                        above,
+                        ..Check::new(tree, &rules, tree[id].scope, has_results)
+                    };
+                    check.feature_changed(
+                        id,
+                        pair.0,
+                        all,
+                        is_repeated,
+                        |it| checked.insert((it, index)),
+                        &mut searched,
+                    );
+                    above = check.above;
+                }
+            }
+            if affected.relation.is_empty() {
+                continue;
+            }
             let mut visit = |id, element: &Element| {
                 if let Some(subjects) = &affected.subjects
                     && (element.classes.as_ref().is_some_and(|it| {

@@ -657,6 +657,15 @@ impl Motion {
         (!self.is_scrolling()).then(|| self.port_of(jumped.0, scene))
     }
 
+    /// The same for what would scroll at `position`.
+    #[cfg(target_os = "macos")]
+    pub fn port_at(&self, scene: &Scene, position: [f32; 2]) -> Option<Rect> {
+        [-1., 1.]
+            .into_iter()
+            .find_map(|way| self.target(scene, position, [0., way])?)
+            .map(|id| self.port_of(id, scene))
+    }
+
     #[cfg(target_os = "macos")]
     fn port_of(&self, id: u32, scene: &Scene) -> Rect {
         let follows = |it: &&Driver| matches!(it.source, Source::Scroll { scroller } if self.tables.scrollers.get(scroller as usize).is_some_and(|it| it.id == id));

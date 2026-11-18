@@ -4634,7 +4634,7 @@
         },
         {
           "name": "desktop",
-          "description": "Build a bun:desktop app: a .app for macOS, an AppDir for Linux, a folder for Windows. Requires --compile",
+          "description": "Build a bun:desktop app: a .app for macOS, an AppDir for Linux. Requires --compile",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -4665,7 +4665,7 @@
         },
         {
           "name": "desktop-icon",
-          "description": "With --desktop: a square .png of 512 or 1024 pixels, or a .icns for macOS, a .svg for Linux, a .ico for Windows",
+          "description": "With --desktop: a square .png of 512 or 1024 pixels, or a .icns for macOS, a .svg for Linux",
           "hasValue": true,
           "valueType": "val",
           "required": false,

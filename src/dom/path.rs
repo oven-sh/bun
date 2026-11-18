@@ -525,6 +525,22 @@ impl Path {
     }
 
     pub(crate) fn rounded_rect(shape: &RoundedRect) -> Path {
+        if shape.smoothing > 0.0 {
+            let corners = shape.smooth_corners();
+            let curves = |it: &[Point; 10]| {
+                [
+                    PathVerb::Line(it[0]),
+                    PathVerb::Cubic(it[1], it[2], it[3]),
+                    PathVerb::Cubic(it[4], it[5], it[6]),
+                    PathVerb::Cubic(it[7], it[8], it[9]),
+                ]
+            };
+            let verbs = [PathVerb::Move(corners[0][0])]
+                .into_iter()
+                .chain(corners.iter().flat_map(curves).skip(1))
+                .chain([PathVerb::Close]);
+            return Path::from(&verbs.collect::<Vec<_>>()[..]);
+        }
         let (rect, [a, b, c, d]) = (shape.rect, shape.radii);
         let (left, top, right, bottom) = (rect.x, rect.y, rect.right(), rect.bottom());
         let mut path = Path::polygon([[left + a[0], top]], false);

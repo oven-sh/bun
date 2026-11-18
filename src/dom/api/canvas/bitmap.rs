@@ -5,7 +5,7 @@ use core::ffi::c_void;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::rc::Rc;
 
-use bun_jsc::DOMExceptionCode;
+use bun_jsc::{DOMExceptionCode, JSValue};
 
 use super::Failure;
 use super::recorder::Recorder;
@@ -17,6 +17,10 @@ pub(super) const MAX_AREA: u64 = 1 << 28;
 
 pub(super) fn area_of([width, height]: [u32; 2]) -> u64 {
     u64::from(width) * u64::from(height)
+}
+
+pub(super) fn size_from(serialized: [JSValue; 2]) -> [u32; 2] {
+    serialized.map(|it| it.get_number().unwrap_or_default() as u32)
 }
 
 /// An id of the library.
@@ -173,12 +177,13 @@ fn bytes_of(size: [u32; 2]) -> usize {
 
 impl Bitmap {
     #[optimize(size)]
-    pub(crate) fn new(size: [u32; 2], is_opaque: bool) -> Rc<Bitmap> {
+    pub(crate) fn new(size: [u32; 2], is_opaque: bool, is_read_often: bool) -> Rc<Bitmap> {
         let pixels = Owned::reserve();
         pixels.recorder.send(Command::Create {
             id: pixels.id,
             size,
             is_opaque,
+            is_read_often,
         });
         Rc::new(Bitmap {
             pixels,

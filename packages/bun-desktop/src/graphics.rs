@@ -1,5 +1,6 @@
 //! `abi_graphics::Graphics`
 
+use std::cell::RefCell;
 use std::ffi::c_void;
 use std::mem::MaybeUninit;
 use std::slice::{from_raw_parts, from_raw_parts_mut};
@@ -9,6 +10,8 @@ use crate::abi::{Matrix, PathVerb, Slice};
 use crate::abi_graphics::{
     Area, Commands, Decoded, Format, Graphics, Pen, Sink, TextMetrics, TextStyle,
 };
+use crate::canvas::Loan;
+use crate::hash::FastMap;
 use crate::host::thread;
 use crate::{canvas, codec, guard, images};
 
@@ -31,6 +34,11 @@ pub extern "C" fn bun_desktop_graphics() -> *const Graphics {
     &GRAPHICS
 }
 
+thread_local! {
+    /// Of the canvases that this thread, to which they belong, has read and not drawn on since.
+    static LOANS: RefCell<FastMap<u32, Loan>> = RefCell::default();
+}
+
 fn byte_count(width: u32, height: u32) -> usize {
     width as usize * height as usize * 4
 }
@@ -42,7 +50,13 @@ extern "C" fn reserve_id() -> u32 {
 unsafe extern "C" fn draw(commands: *const Commands) {
     // SAFETY: the contract of `Graphics`.
     let commands = unsafe { canvas::Owned::new(&*commands) };
-    post_limited(commands.len(), move || commands.run());
+    // A canvas may be released while its thread ends.
+    _ = LOANS.try_with(|loans| {
+        Some(loans.borrow_mut())
+            .filter(|it| !it.is_empty())
+            .map(|mut it| commands.canvases().for_each(|id| drop(it.remove(&id))))
+    });
+    post_limited(commands.len(), move || std::rc::Rc::new(commands).run());
 }
 
 /// Scripts do not get far ahead of the pixels.
@@ -90,15 +104,21 @@ unsafe extern "C" fn is_in_stroke(
 }
 
 unsafe extern "C" fn read(id: u32, area: &Area, is_on_black: bool, rgba: *mut u8) {
-    // SAFETY: the contract of `Graphics`. `ask` returns once the job is over.
-    let (area, pixels) = (*area, || unsafe {
-        from_raw_parts_mut(rgba.cast(), byte_count(area[2] as u32, area[3] as u32) / 4)
-    });
-    let to = pixels();
-    if !guard("error", false, || {
-        thread::ask(move || canvas::read(id, area, is_on_black, to))
-    }) {
-        pixels().fill(MaybeUninit::new([0; 4]));
+    // SAFETY: the contract of `Graphics`.
+    let pixels =
+        unsafe { from_raw_parts_mut(rgba.cast(), byte_count(area[2] as u32, area[3] as u32) / 4) };
+    let read = |loans: &mut FastMap<u32, Loan>| {
+        if !loans.get(&id).is_some_and(|it| it.has(*area)) {
+            let area = *area;
+            loans.remove(&id);
+            loans.extend(thread::ask(move || canvas::lend(id, area)).map(|it| (id, it)));
+        }
+        loans
+            .get(&id)
+            .is_some_and(|it| it.read(*area, is_on_black, pixels))
+    };
+    if !guard("error", false, || LOANS.with_borrow_mut(read)) {
+        pixels.fill(MaybeUninit::new([0; 4]));
     }
 }
 
@@ -107,9 +127,22 @@ unsafe extern "C" fn write(id: u32, area: &Area, dirty: &Area, rgba: *const u8) 
         // SAFETY: the contract of `Graphics`.
         let rgba = unsafe { from_raw_parts(rgba, byte_count(area[2] as u32, area[3] as u32)) };
         let (dirty, rgba) = (*dirty, canvas::part_of(rgba, *area, *dirty));
-        post_limited(1 + (rgba.len() >> 13), move || {
-            canvas::write(id, dirty, rgba)
-        });
+        let weight = 1 + (rgba.len() >> 13);
+        match LOANS
+            .with_borrow_mut(|it| it.remove(&id))
+            .filter(|it| it.is_all_in(dirty))
+        {
+            Some(mut loan) => {
+                let pixmap = loan.replace(rgba);
+                LOANS.with_borrow_mut(|it| it.insert(id, loan));
+                post_limited(weight, move || canvas::write(id, dirty, |_| pixmap));
+            }
+            None => post_limited(weight, move || {
+                canvas::write(id, dirty, |is_opaque| {
+                    canvas::premultiplied(dirty, rgba, is_opaque)
+                })
+            }),
+        }
     });
 }
 

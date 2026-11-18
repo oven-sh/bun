@@ -1,15 +1,13 @@
 //! Between the types of this crate and JS values.
 
-use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, to_js};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
 use bun_jsc::node_path::PathOrFileDescriptor;
 use bun_jsc::webcore_types::{Blob as JsBlob, Store, store};
 use bun_jsc::{DOMExceptionCode, JSGlobalObject, JSObject, JSValue};
 use bun_ptr::RefPtr;
 
-use crate::headers::HeaderList;
 use crate::net::NetError;
-use crate::net::body::{Blob, Data, SharedBytes};
-use crate::net::cookies::Cookie;
+use crate::net::body::{Blob, Data, Owner, SharedBytes};
 use crate::runtime;
 use crate::url::Url;
 
@@ -27,17 +25,6 @@ impl<'a> Object<'a> {
             .put(cx.global(), name.as_bytes(), value.to_js());
     }
 
-    pub fn text(
-        self,
-        cx: &mut JsScope<'a>,
-        name: &'static str,
-        text: &[u8],
-    ) -> bindgen::Result<'a, ()> {
-        let text = to_js::utf8(&cx.heap, text)?;
-        self.set(cx, name, text);
-        Ok(())
-    }
-
     pub fn latin1(self, cx: &mut JsScope<'a>, name: &'static str, text: &[u8]) {
         let text = cx.heap.create_latin1_string(text);
         self.set(cx, name, text.as_value());
@@ -49,12 +36,6 @@ impl<'a> Object<'a> {
             name.as_bytes(),
             bun_jsc::JSValue::js_number(number),
         );
-    }
-
-    pub fn flag(self, cx: &mut JsScope<'a>, name: &'static str, flag: bool) {
-        self.0
-            .to_js()
-            .put(cx.global(), name.as_bytes(), flag.into());
     }
 
     pub fn into_value(self) -> JsLocal<'a> {
@@ -76,30 +57,9 @@ pub fn isomorphic_encode(text: &bun_core::String) -> Vec<u8> {
     narrow.flatten().unwrap_or_else(|| text.to_owned_slice())
 }
 
-pub fn headers_from_pairs(pairs: &[Vec<bun_core::String>]) -> HeaderList {
-    pairs
-        .iter()
-        .filter_map(|it| {
-            Some((
-                isomorphic_encode(it.first()?),
-                isomorphic_encode(it.get(1)?),
-            ))
-        })
-        .collect()
-}
-
-pub fn headers_to_pairs<'a>(
-    heap: &JsHeap<'a>,
-    headers: &HeaderList,
-) -> bindgen::Result<'a, JsLocal<'a>> {
-    to_js::array(heap, headers.iter(), |heap, it| {
-        to_js::array(heap, [it.0, it.1], |heap, it| {
-            Ok(heap.create_latin1_string(it).as_value())
-        })
-    })
-}
-
 struct StoredBytes(RefPtr<Store>);
+
+impl Owner for StoredBytes {}
 
 impl AsRef<[u8]> for StoredBytes {
     fn as_ref(&self) -> &[u8] {
@@ -157,46 +117,6 @@ pub fn unreadable<'a>(heap: &JsHeap<'a>, reason: NetError) -> bindgen::Error<'a>
 
 pub fn resolve_blob_url(url: &Url) -> Option<Blob> {
     blob_from_js(&runtime::resolve_blob_url(url.href())?)
-}
-
-/// As Electron has it.
-pub fn cookie_to_js<'a>(heap: &JsHeap<'a>, cookie: &Cookie) -> bindgen::Result<'a, JsLocal<'a>> {
-    enum Member<'a> {
-        Text(&'a [u8]),
-        Flag(bool),
-        Number(f64),
-    }
-    use Member::*;
-    let domain = [
-        if cookie.is_host_only { &b""[..] } else { b"." },
-        &cookie.domain,
-    ]
-    .concat();
-    let members = [
-        ("name", Some(Text(&cookie.name))),
-        ("value", Some(Text(&cookie.value))),
-        ("domain", Some(Text(&domain))),
-        ("hostOnly", Some(Flag(cookie.is_host_only))),
-        ("path", Some(Text(&cookie.path))),
-        ("secure", Some(Flag(cookie.is_secure))),
-        ("httpOnly", Some(Flag(cookie.is_http_only))),
-        ("session", Some(Flag(cookie.expires.is_none()))),
-        ("expirationDate", cookie.expires.map(Number)),
-        ("sameSite", Some(Text(cookie.same_site.as_bytes()))),
-        (
-            "partition",
-            cookie.partition.as_ref().map(|it| Text(it.as_bytes())),
-        ),
-    ];
-    to_js::record(
-        heap,
-        members.into_iter().filter_map(|it| Some((it.0, it.1?))),
-        |heap, it| match it {
-            Text(it) => to_js::utf8(heap, it),
-            Flag(it) => to_js::bool(heap, it),
-            Number(it) => to_js::f64(heap, it),
-        },
-    )
 }
 
 unsafe extern "C" {

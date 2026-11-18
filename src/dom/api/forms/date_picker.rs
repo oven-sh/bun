@@ -236,6 +236,27 @@ pub(super) fn semantics(input: Input<'_>, part: &Element) -> Semantics {
     if picker(input) == Some(part) {
         return vec![("role", "dialog".to_owned())];
     }
+    let roles = [
+        ("days", "grid"),
+        ("months", "grid"),
+        ("week", "row"),
+        ("label", "columnheader"),
+    ];
+    if let Some((_, role)) = roles
+        .into_iter()
+        .find(|it| part.is_part(&format!("-internal-date-picker-{}", it.0)))
+    {
+        return vec![("role", role.to_owned())];
+    }
+    let is_cell = part
+        .parent()
+        .is_some_and(|it| it.is_part("-internal-date-picker-week"));
+    if is_cell && part.is_part("-internal-date-picker-disabled") {
+        return vec![
+            ("role", "gridcell".to_owned()),
+            ("aria-disabled", "true".to_owned()),
+        ];
+    }
     let all = with_fields(input, |fields| {
         let label = match fields.picker.actions.iter().find(|it| it.0 == part.id())?.1 {
             Action::ShowMonth(month) => fields
@@ -253,10 +274,15 @@ pub(super) fn semantics(input: Input<'_>, part: &Element) -> Semantics {
             }
             _ => String::new(),
         };
-        let mut all = vec![("role", "button".to_owned()), ("aria-label", label)];
+        let (role, chosen) = if is_cell {
+            ("gridcell", "aria-selected")
+        } else {
+            ("button", "aria-pressed")
+        };
+        let mut all = vec![("role", role.to_owned()), ("aria-label", label)];
         all.extend(
             part.is_part("-internal-date-picker-chosen")
-                .then(|| ("aria-pressed", "true".to_owned())),
+                .then(|| (chosen, "true".to_owned())),
         );
         Some(all)
     });
@@ -269,12 +295,22 @@ fn fill<'a>(cx: &mut Cx<'a>, input: Input<'a>) {
         it.picker.actions.clear();
         it.picker.filled_for = input.text.text();
     });
-    remove_children(cx, picker);
+    // A screen reader would introduce a new table at every step.
+    let kept = picker
+        .element_children()
+        .next()
+        .filter(|it| is_open(input) && it.is_part("-internal-date-picker-calendar"));
+    picker
+        .element_children()
+        .filter(|it| Some(*it) != kept)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .for_each(|it| remove(cx, it, Observers::Suppress));
     if !is_open(input) {
         return;
     }
     if input.kind() != InputType::Time {
-        let calendar = piece(cx, input, picker, "calendar", "");
+        let calendar = kept.unwrap_or_else(|| piece(cx, input, picker, "calendar", ""));
         fill_calendar(cx, input, calendar);
         mark_cursor(cx, input);
     }
@@ -372,7 +408,14 @@ fn fill_calendar<'a>(cx: &mut Cx<'a>, input: Input<'a>, calendar: &'a Element) {
     let Some((first, start, title, names)) = texts else {
         return;
     };
-    let head = piece(cx, input, calendar, "row", "");
+    let mut kept = calendar.element_children().collect::<Vec<_>>().into_iter();
+    let [head, grid, foot] = ["row", if by_year { "months" } else { "days" }, "row"].map(|name| {
+        let it = kept
+            .next()
+            .unwrap_or_else(|| piece(cx, input, calendar, name, ""));
+        remove_children(cx, it);
+        it
+    });
     piece(cx, input, head, "title", &title);
     for (arrow, step) in [("↑", -1), ("↓", 1)] {
         let month = Date::first_of(
@@ -389,13 +432,6 @@ fn fill_calendar<'a>(cx: &mut Cx<'a>, input: Input<'a>, calendar: &'a Element) {
         );
     }
     let pick = |day| can_pick(input, day).then_some(Action::PickDay(day));
-    let grid = piece(
-        cx,
-        input,
-        calendar,
-        if by_year { "months" } else { "days" },
-        "",
-    );
     let cells: Vec<_> = if by_year {
         names
             .into_iter()
@@ -403,37 +439,40 @@ fn fill_calendar<'a>(cx: &mut Cx<'a>, input: Input<'a>, calendar: &'a Element) {
             .map(|(name, month)| (name, Date::first_of(first.year, month)))
             .collect()
     } else {
+        let labels = piece(cx, input, grid, "week", "");
         names
             .iter()
-            .for_each(|it| _ = piece(cx, input, grid, "label", it));
+            .for_each(|it| _ = piece(cx, input, labels, "label", it));
         (start..start + 42)
             .map(Date::from_days)
             .map(|it| (it.day.to_string(), it))
             .collect()
     };
-    for (text, day) in cells {
-        let name = match () {
-            () if value
-                .latin1()
-                .is_some_and(|it| it.starts_with(&value_of(kind, day))) =>
-            {
-                "chosen"
-            }
-            () if day
-                == if by_year {
-                    Date { day: 1, ..today }
-                } else {
-                    today
-                } =>
-            {
-                "today"
-            }
-            () if !by_year && day.month != first.month => "outside",
-            () => "cell",
-        };
-        button(cx, input, grid, name, &text, pick(day));
+    for cells in cells.chunks(if by_year { 4 } else { 7 }) {
+        let row = piece(cx, input, grid, "week", "");
+        for &(ref text, day) in cells {
+            let name = match () {
+                () if value
+                    .latin1()
+                    .is_some_and(|it| it.starts_with(&value_of(kind, day))) =>
+                {
+                    "chosen"
+                }
+                () if day
+                    == if by_year {
+                        Date { day: 1, ..today }
+                    } else {
+                        today
+                    } =>
+                {
+                    "today"
+                }
+                () if !by_year && day.month != first.month => "outside",
+                () => "cell",
+            };
+            button(cx, input, row, name, text, pick(day));
+        }
     }
-    let foot = piece(cx, input, calendar, "row", "");
     button(cx, input, foot, "link", "Clear", Some(Action::Clear));
     let now = match kind {
         InputType::Month => "This month",

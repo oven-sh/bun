@@ -87,6 +87,8 @@ bitflags::bitflags! {
         const SNAPS = 1 << 10;
         /// A descendant has a `backdrop-filter`.
         const HAS_BACKDROP = 1 << 11;
+        /// All of the children are.
+        const HAS_ONLY_LAYERS = 1 << 12;
     }
 }
 
@@ -380,6 +382,7 @@ pub(crate) struct Pictures {
     spare: Picture,
     segments: Segments,
     changes: u32,
+    last_changed: NodeId,
     retouched: Vec<(BoxId, Retouch)>,
     /// The boxes may not know that they have changed.
     pub(crate) were_discarded: bool,
@@ -706,7 +709,7 @@ impl Document {
             return self.repaint_box(id);
         }
         self.pictures.outdate();
-        if self.pictures.retouched.len() > 8192 {
+        if self.pictures.retouched.len() > 32768 {
             self.pictures.discard();
             self.pictures.retouched.clear();
             self.boxes.recordings.get_mut().clear();
@@ -746,7 +749,9 @@ impl Document {
     }
 
     fn repaint_with(&mut self, node: NodeId, descendants: bool) {
-        self.pictures.changes += u32::from(self.pictures.changes <= 500 && !self.is_locked(node));
+        let is_another = core::mem::replace(&mut self.pictures.last_changed, node) != node;
+        self.pictures.changes +=
+            u32::from(is_another && self.pictures.changes <= 500 && !self.is_locked(node));
         if self.pictures.changes > 500 {
             return self.pictures.discard();
         }
@@ -859,7 +864,7 @@ impl Shift {
             }
             Item::Shadow { shape, shadow, .. } => {
                 self.rect(&mut shape.rect);
-                self.rect(&mut shadow.rect);
+                self.rect(shadow);
             }
             Item::Gradient {
                 clip, tile, stops, ..

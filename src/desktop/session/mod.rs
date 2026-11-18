@@ -107,7 +107,10 @@ fn open(
             "Session can only be received when app is ready"
         )));
     }
-    let storage_path = directory()?;
+    create(key, directory()?)
+}
+
+fn create(key: String, storage_path: Option<String>) -> JsResult<&'static Session> {
     let directory = storage_path.as_ref().map(String::as_bytes);
     let session = fields::create(
         heap(),

@@ -81,8 +81,8 @@ test("the programs import every module of module-exports.txt", () => {
       match => match[1],
     );
   });
-  // Importing bun:desktop/electron starts an app: test/bundler/compile-desktop.test.ts.
-  const leftOut = /^bun:(test|desktop\/electron$)/;
+  // bun:desktop takes a build with --desktop: test/bundler/compile-desktop.test.ts.
+  const leftOut = /^bun:(test|desktop)/;
   expect(imported.sort()).toEqual([...written.keys()].filter(specifier => !leftOut.test(specifier)).sort());
 });
 

@@ -341,16 +341,27 @@ impl Document {
                 && !own.is_parking
                 && !tree[id].has(Flags::REDIRECTS_CHILDREN)
         })?;
+        if self
+            .top_layer
+            .iter()
+            .any(|it| tree.flat_ancestors(*it).any(|it| it == id))
+        {
+            return None;
+        }
         let is_like_node = |it: &Item| {
             let is_child = || {
-                tree[it.node].parent
+                tree[if it.element == 0 { it.node } else { it.element }].parent
                     == it
                         .parent
                         .checked_sub(1)
                         .map_or(id, |it| inline.items[it as usize].node)
             };
             match it.kind {
-                ItemKind::Text => tree[it.node].text().is_some() && is_child(),
+                ItemKind::Text => {
+                    tree[it.node].text().is_some()
+                        && is_child()
+                        && tree.html_tag(it.element) != name!("p")
+                }
                 ItemKind::Open(_) => {
                     is_child()
                         && !tree[it.node].has(Flags::REDIRECTS_CHILDREN | Flags::SKIPPED)
@@ -377,11 +388,11 @@ impl Document {
                 .filter(|it| matches!(it.kind, ItemKind::Text | ItemKind::Break))
                 .map(move |it| {
                     let style = known
-                        .filter(|known: &(u32, _)| {
-                            known.0 == it.parent && it.kind == ItemKind::Text
+                        .filter(|known: &(_, _)| {
+                            known.0 == [it.parent, it.element] && it.kind == ItemKind::Text
                         })
                         .map_or_else(|| &**self.current_style(it), |it| it.1);
-                    known = (it.kind == ItemKind::Text).then_some((it.parent, style));
+                    known = (it.kind == ItemKind::Text).then_some(([it.parent, it.element], style));
                     (
                         it,
                         &inline.text.as_bytes()[it.start as usize..it.end as usize],
@@ -588,7 +599,11 @@ impl Document {
     fn empty_place(&self, id: NodeId) -> Option<Place> {
         let Some(own) = self.own_box(id) else {
             let lines = self.tree[id].layout_box;
-            let item = self.inline(lines)?.items.iter().find(|it| it.node == id)?;
+            let item = self
+                .inline(lines)?
+                .items
+                .iter()
+                .find(|it| it.stands_for(id))?;
             return Some(Place {
                 lines,
                 at: item.clusters.start.min(self.inline(lines)?.last_place()),
@@ -665,18 +680,17 @@ impl Document {
     }
 
     /// The outermost element around the item that can not be edited, in lines that can.
-    fn island<'a>(&self, lines: BoxId, inline: &'a Inline, item: &Item) -> Option<&'a Item> {
+    fn island(&self, lines: BoxId, inline: &Inline, item: &Item) -> Option<NodeId> {
+        self.boxes[lines].style.is_editable().then_some(())?;
         let (mut key, mut found) = (
-            if self.boxes[lines].style.is_editable() {
-                item.parent
-            } else {
-                0
-            },
-            None,
+            item.parent,
+            (item.element != 0 && !item.style.is_editable()).then_some(item.element),
         );
         while key != 0 {
             let around = &inline.items[key as usize - 1];
-            found = Some(around).filter(|it| !it.style.is_editable()).or(found);
+            found = (!around.style.is_editable())
+                .then_some(around.node)
+                .or(found);
             key = around.parent;
         }
         found
@@ -717,9 +731,7 @@ impl Document {
             offset: inline.node_offset(it, inline.offset_of(place.at).min(it.end).max(it.start)),
         };
         let beside = |it: &Item, is_after: bool| {
-            let node = self
-                .island(place.lines, inline, it)
-                .map_or(it.node, |it| it.node);
+            let node = self.island(place.lines, inline, it).unwrap_or(it.node);
             Point {
                 node: self.tree[node].parent,
                 offset: if is_after { self.tree[node].next } else { node },
@@ -1330,12 +1342,7 @@ impl Document {
                 crossed
             };
             let item = inline.item_at(crossed)?;
-            let island = |cluster: u32| {
-                Some(
-                    self.island(place.lines, inline, inline.item_at(cluster)?)?
-                        .node,
-                )
-            };
+            let island = |cluster: u32| self.island(place.lines, inline, inline.item_at(cluster)?);
             let next = if forward { Some(at) } else { at.checked_sub(1) };
             let is_inside_island =
                 island(crossed).is_some() && next.and_then(island) == island(crossed);
@@ -1591,18 +1598,14 @@ impl Document {
                     let (lines, inline) = self
                         .plain_lines(id)
                         .filter(|it| !it.1.has_bidi && !self.boxes[it.0].style.is_rtl())?;
-                    let is_text = |it: &&Fragment| {
-                        matches!(&it.kind, FragmentKind::Text { clusters, .. } if !clusters.is_empty())
-                            && inline.items[it.item as usize].kind == ItemKind::Text
-                    };
-                    let matrix = matrix_of(lines);
-                    rects.extend(
-                        inline
-                            .lines
-                            .fragments
-                            .iter()
-                            .filter(is_text)
-                            .map(|it| place(lines, &matrix, it.rect())),
+                    let (is_text, matrix) = (
+                        |it: &&Fragment| inline.items[it.item as usize].kind == ItemKind::Text,
+                        matrix_of(lines),
+                    );
+                    inline.rects_of_text(
+                        inline.lines.fragments.iter().filter(is_text),
+                        &(0..u32::MAX),
+                        |it| rects.push(place(lines, &matrix, it)),
                     );
                     return Some(());
                 }
@@ -1629,39 +1632,13 @@ impl Document {
                     }
                     let clusters =
                         inline.cluster_in(item, span.start)..inline.cluster_in(item, span.end);
-                    for fragment in inline
+                    let own = inline
                         .lines
                         .fragments_with(&clusters)
                         .iter()
-                        .filter(|it| inline.items[it.item as usize].node == id)
-                    {
-                        if let FragmentKind::Text { clusters: all, .. } = &fragment.kind
-                            && clusters.start <= all.start
-                            && all.end <= clusters.end
-                            && !all.is_empty()
-                        {
-                            rects.push(place(lines, &matrix, fragment.rect()));
-                            continue;
-                        }
-                        let inside = inline
-                            .positions(fragment)
-                            .skip_while(|it| it.0 < clusters.start)
-                            .take_while(|it| it.0 < clusters.end);
-                        if let Some([left, right]) = inside
-                            .map(|it| [it.1, it.1 + it.2])
-                            .reduce(|a, b| [a[0].min(b[0]), a[1].max(b[1])])
-                        {
-                            rects.push(place(
-                                lines,
-                                &matrix,
-                                Rect {
-                                    x: left,
-                                    width: right - left,
-                                    ..fragment.rect()
-                                },
-                            ));
-                        }
-                    }
+                        .filter(|it| inline.items[it.item as usize].node == id);
+                    inline
+                        .rects_of_text(own, &clusters, |it| rects.push(place(lines, &matrix, it)));
                 }
             }
             None

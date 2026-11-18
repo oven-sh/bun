@@ -25,6 +25,10 @@
 #if OS(DARWIN)
 #include <mach-o/loader.h>
 #endif
+#if OS(LINUX)
+#include <sys/mman.h>
+#include <wtf/PageBlock.h>
+#endif
 #if defined(BUN_SAFE_STACK)
 #include <climits>
 #include <sys/mman.h>
@@ -1472,3 +1476,35 @@ extern "C" uint8_t* Bun__getStandaloneModuleGraphPEData()
 }
 
 #endif
+
+static std::atomic<bool> hasPages { false };
+
+extern "C" void Bun__enablePrefault()
+{
+    hasPages.store(true, std::memory_order_relaxed);
+}
+
+// For memory that is about to be written from end to end: a fault for each page costs more than the writing.
+extern "C" void Bun__prefault(void* start, size_t length)
+{
+#if OS(LINUX)
+    constexpr int populateWrite = 23;
+    constexpr uintptr_t hugePage = 2 * MB;
+    if (length < 256 * KB || !hasPages.load(std::memory_order_relaxed))
+        return;
+    uintptr_t first = reinterpret_cast<uintptr_t>(start);
+    auto advise = [&](uintptr_t alignment, int advice) {
+        uintptr_t from = (first + alignment - 1) & ~(alignment - 1);
+        uintptr_t to = (first + length) & ~(alignment - 1);
+        return from < to && !madvise(reinterpret_cast<void*>(from), to - from, advice);
+    };
+    bool isHuge = advise(hugePage, MADV_HUGEPAGE);
+    advise(WTF::pageSize(), populateWrite);
+    // The allocator puts small things here later.
+    if (isHuge)
+        advise(hugePage, MADV_NOHUGEPAGE);
+#else
+    UNUSED_PARAM(start);
+    UNUSED_PARAM(length);
+#endif
+}

@@ -40,7 +40,7 @@ pub enum CalcUnit {
 
 impl CalcUnit {
     /// Case-insensitive lookup of a `CalcUnit` by its function name.
-    pub fn get_any_case(f: &[u8]) -> Option<Self> {
+    pub(crate) fn get_any_case(f: &[u8]) -> Option<Self> {
         // PERF: linear match on a stack-lowercased byte slice. Profile
         // before swapping in a `comptime_string_map!`.
         // §Strings: source bytes are &[u8], never &str/String — no from_utf8/to_ascii_lowercase().
@@ -71,7 +71,7 @@ impl CalcUnit {
         }
     }
 
-    pub fn arg_parse_is_type_independent(self) -> bool {
+    pub(crate) fn arg_parse_is_type_independent(self) -> bool {
         matches!(
             self,
             Self::Sin
@@ -187,7 +187,7 @@ impl<V: PartialEq + Clone> PartialEq for Calc<V> {
 }
 
 impl<V> Calc<V> {
-    pub fn deep_clone(&self) -> Self
+    pub(crate) fn deep_clone(&self) -> Self
     where
         V: Clone,
     {
@@ -209,7 +209,7 @@ impl<V> Calc<V> {
         }
     }
 
-    pub fn deep_clone_boxed(&self) -> Box<Self>
+    pub(crate) fn deep_clone_boxed(&self) -> Box<Self>
     where
         V: Clone,
     {
@@ -226,26 +226,29 @@ impl<V> Calc<V> {
 /// Resolves a bare identifier inside a math function (e.g. a relative color
 /// channel keyword). Type-erased so the recursive calc parser exists once
 /// per `V` instead of once per call site.
-pub type ParseIdent<'a, V> = &'a dyn Fn(&[u8]) -> Option<Calc<V>>;
+pub(crate) type ParseIdent<'a, V> = &'a dyn Fn(&[u8]) -> Option<Calc<V>>;
 
 impl<V: CalcValue> Calc<V> {
     fn mul_value_f32(lhs: V, rhs: f32) -> V {
         lhs.mul_f32(rhs)
     }
 
-    pub fn add_value(lhs: V, rhs: V) -> V {
+    pub(crate) fn add_value(lhs: V, rhs: V) -> V {
         lhs.add_internal(rhs)
     }
 
-    pub fn into_value<'bump>(self, input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, V> {
+    pub(crate) fn into_value<'bump>(
+        self,
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> CssResult<'bump, V> {
         V::from_calc(self, input)
     }
 
-    pub fn into_calc(val: V) -> Self {
+    pub(crate) fn into_calc(val: V) -> Self {
         val.into_calc()
     }
 
-    pub fn add<'bump>(
+    pub(crate) fn add<'bump>(
         self,
         rhs: Self,
         input: &mut css::Parser<'_, 'bump>,
@@ -307,7 +310,7 @@ impl<V: CalcValue> Calc<V> {
         })
     }
 
-    pub fn parse_with<'bump>(
+    pub(crate) fn parse_with<'bump>(
         input: &mut css::Parser<'_, 'bump>,
         parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<'bump, Self> {
@@ -506,7 +509,7 @@ impl<V: CalcValue> Calc<V> {
         }
     }
 
-    pub fn parse_numeric_fn<'bump>(
+    pub(crate) fn parse_numeric_fn<'bump>(
         input: &mut css::Parser<'_, 'bump>,
         op: NumericFnOp,
         parse_ident: ParseIdent<'_, V>,
@@ -520,7 +523,7 @@ impl<V: CalcValue> Calc<V> {
         })
     }
 
-    pub fn parse_math_fn<'bump, OC: Copy>(
+    pub(crate) fn parse_math_fn<'bump, OC: Copy>(
         input: &mut css::Parser<'_, 'bump>,
         ctx_for_op_and_fallback: OC,
         op: fn(OC, f32, f32) -> f32,
@@ -538,7 +541,7 @@ impl<V: CalcValue> Calc<V> {
     }
 
     #[inline(never)]
-    pub fn parse_sum<'bump>(
+    pub(crate) fn parse_sum<'bump>(
         input: &mut css::Parser<'_, 'bump>,
         parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<'bump, Self> {
@@ -578,7 +581,7 @@ impl<V: CalcValue> Calc<V> {
     }
 
     #[inline(never)]
-    pub fn parse_product<'bump>(
+    pub(crate) fn parse_product<'bump>(
         input: &mut css::Parser<'_, 'bump>,
         parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<'bump, Self> {
@@ -622,7 +625,7 @@ impl<V: CalcValue> Calc<V> {
     }
 
     #[inline(never)]
-    pub fn parse_value<'bump>(
+    pub(crate) fn parse_value<'bump>(
         input: &mut css::Parser<'_, 'bump>,
         parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<'bump, Self> {
@@ -683,7 +686,7 @@ impl<V: CalcValue> Calc<V> {
         Ok(Calc::Value(Box::new(value)))
     }
 
-    pub fn parse_trig<'bump>(
+    pub(crate) fn parse_trig<'bump>(
         input: &mut css::Parser<'_, 'bump>,
         trig_fn_kind: TrigFnKind,
         to_angle: bool,
@@ -749,7 +752,7 @@ impl<V: CalcValue> Calc<V> {
         }
     }
 
-    pub fn parse_atan2<'bump>(
+    pub(crate) fn parse_atan2<'bump>(
         input: &mut css::Parser<'_, 'bump>,
         parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<'bump, Angle> {
@@ -814,7 +817,7 @@ impl<V: CalcValue> Calc<V> {
         Calc::<CSSNumber>::parse_atan2_args(input, &Self::number_ident(parse_ident))
     }
 
-    pub fn parse_atan2_args<'bump>(
+    pub(crate) fn parse_atan2_args<'bump>(
         input: &mut css::Parser<'_, 'bump>,
         parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<'bump, Angle> {
@@ -837,7 +840,7 @@ impl<V: CalcValue> Calc<V> {
         Err(input.new_custom_error(css::ParserError::invalid_value))
     }
 
-    pub fn parse_numeric<'bump>(
+    pub(crate) fn parse_numeric<'bump>(
         input: &mut css::Parser<'_, 'bump>,
         parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<'bump, f32> {
@@ -851,7 +854,7 @@ impl<V: CalcValue> Calc<V> {
         Ok(val)
     }
 
-    pub fn parse_hypot(args: &mut [Self]) -> Option<Self> {
+    pub(crate) fn parse_hypot(args: &mut [Self]) -> Option<Self> {
         if args.len() == 1 {
             let v = core::mem::replace(&mut args[0], Calc::Number(0.0));
             return Some(v);
@@ -881,7 +884,7 @@ impl<V: CalcValue> Calc<V> {
         Self::apply_map(&sum, sqrtf32)
     }
 
-    pub fn apply_op<OC: Copy>(
+    pub(crate) fn apply_op<OC: Copy>(
         a: &Self,
         b: &Self,
         ctx: OC,
@@ -901,7 +904,7 @@ impl<V: CalcValue> Calc<V> {
         None
     }
 
-    pub fn apply_map(this: &Self, op: fn(f32) -> f32) -> Option<Self> {
+    pub(crate) fn apply_map(this: &Self, op: fn(f32) -> f32) -> Option<Self> {
         match this {
             Calc::Number(n) => return Some(Calc::Number(op(*n))),
             Calc::Value(v) => {
@@ -924,7 +927,7 @@ impl<V: CalcValue> Calc<V> {
         res
     }
 
-    pub fn to_css_impl(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css_impl(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             Calc::Value(v) => v.to_css(dest),
             Calc::Number(n) => CSSNumberFns::to_css(*n, dest),
@@ -960,7 +963,7 @@ impl<V: CalcValue> Calc<V> {
         }
     }
 
-    pub fn try_sign(&self) -> Option<f32> {
+    pub(crate) fn try_sign(&self) -> Option<f32> {
         match self {
             Calc::Value(v) => v.try_sign(),
             Calc::Number(n) => Some(css::signfns::sign_f32(*n)),
@@ -968,14 +971,14 @@ impl<V: CalcValue> Calc<V> {
         }
     }
 
-    pub fn is_sign_negative(&self) -> bool {
+    pub(crate) fn is_sign_negative(&self) -> bool {
         let Some(s) = self.try_sign() else {
             return false;
         };
         s.is_sign_negative()
     }
 
-    pub fn mul_f32(self, other: f32) -> Self {
+    pub(crate) fn mul_f32(self, other: f32) -> Self {
         if other == 1.0 {
             return self;
         }
@@ -1046,7 +1049,7 @@ impl<V: CalcValue> Calc<V> {
         *args = reduced;
     }
 
-    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         match self {
             Calc::Sum { left, right } => {
                 left.is_compatible(browsers) && right.is_compatible(browsers)
@@ -1178,7 +1181,7 @@ impl<V: PartialEq + Clone> PartialEq for MathFunction<V> {
 }
 
 impl<V> MathFunction<V> {
-    pub fn deep_clone(&self) -> Self
+    pub(crate) fn deep_clone(&self) -> Self
     where
         V: Clone,
     {
@@ -1292,7 +1295,7 @@ impl<V> MathFunction<V> {
         }
     }
 
-    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool
+    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool
     where
         V: CalcValue,
     {
@@ -1418,7 +1421,7 @@ pub enum Constant {
 }
 
 impl Constant {
-    pub fn into_f32(self) -> f32 {
+    pub(crate) fn into_f32(self) -> f32 {
         match self {
             Constant::E => core::f32::consts::E,
             Constant::Pi => core::f32::consts::PI,

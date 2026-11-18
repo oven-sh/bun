@@ -89,7 +89,7 @@ pub(crate) struct LayoutBox {
     pub(crate) spread: Extent,
     pub(crate) painted: crate::segments::Remembered,
     rare: Option<Box<Rare>>,
-    pub(crate) collapsed: Option<Box<Collapsed>>,
+    pub(crate) collapsed: Option<Rc<Collapsed>>,
     /// The preferred aspect ratio.
     pub(crate) ratio: Option<f32>,
     pub(crate) tag: Name,
@@ -433,9 +433,8 @@ impl LayoutBox {
     }
 
     fn flows_back(&self) -> [bool; 2] {
-        let l = &self.style.layout;
-        let wraps_back = l.flex_wrap.is_reversed;
-        match (self.kind, l.flex_direction) {
+        let wraps_back = self.style.layout.flex_wrap.is_reversed && !self.style.is_webkit_box();
+        match (self.kind, self.style.flex_direction()) {
             (Kind::Flex, FlexDirection::Row) => [false, wraps_back],
             (Kind::Flex, FlexDirection::RowReverse) => [true, wraps_back],
             (Kind::Flex, FlexDirection::Column) => [wraps_back, false],
@@ -539,6 +538,13 @@ impl Boxes {
                     self.boxes.reserve(1 << 14);
                 } else if self.boxes.len() == self.boxes.capacity() && self.boxes.len() > 1 << 9 {
                     self.boxes.reserve(self.boxes.len() * 3);
+                }
+                if self.boxes.len() >= 1 << 12 && self.boxes.len().is_multiple_of(1 << 9) {
+                    self.boxes
+                        .spare_capacity_mut()
+                        .first_chunk_mut::<{ 1 << 9 }>()
+                        .into_iter()
+                        .for_each(|it| crate::tree::map_in(it));
                 }
                 self.boxes.push(LayoutBox::new(kind, node, style));
                 (self.boxes.len() - 1) as BoxId
@@ -919,9 +925,9 @@ impl Document {
     }
 
     /// `changed` is `id`, or a child that comes, goes or changes.
-    fn mark_rebuild_from(&mut self, id: NodeId, changed: NodeId) {
-        let owner = core::iter::once(id)
-            .chain(self.tree.flat_ancestors(id))
+    fn mark_rebuild_from(&mut self, start: NodeId, changed: NodeId) {
+        let owner = core::iter::once(start)
+            .chain(self.tree.flat_ancestors(start))
             .find(|it| self.own_box(*it).is_some() || self.tree[*it].has(Flags::REBUILD));
         if let Some(owner) = owner.filter(|it| self.own_box(*it).is_some()) {
             if !self.tree[owner].has(Flags::REBUILD) || !self.boxes.edited.is_empty() {
@@ -973,7 +979,7 @@ impl Document {
             if self.tree[at].layout_box == lines {
                 let near = inline.items.len().saturating_sub(256);
                 let found = inline.items[near..].iter().rposition(|it| {
-                    it.node == at && (is_over || !matches!(it.kind, ItemKind::Close(_)))
+                    it.stands_for(at) && (is_over || !matches!(it.kind, ItemKind::Close(_)))
                 });
                 return Some(near + found? + usize::from(at != changed));
             }
@@ -993,20 +999,20 @@ impl Document {
         let starts_word = |it: &Item| {
             it.kind == ItemKind::Text
                 && !it.has_own_style
+                && (it.element == 0 || self.tree[it.element].first_child == it.node)
                 && self.tree[it.node].layout_box == lines
                 && self.tree[it.node]
                     .text()
                     .is_some_and(|it| matches!(it, [b'!'..=b'~' | 0xc2..=0xe1 | 0xe3.., ..]))
         };
-        let first = kept
-            - 1
-            - inline
-                .items
-                .get(..kept)?
-                .iter()
-                .rev()
-                .take(16)
-                .position(starts_word)?;
+        let back = inline
+            .items
+            .get(..kept)?
+            .iter()
+            .rev()
+            .take(16)
+            .position(starts_word)?;
+        let first = kept - 1 - back;
         let is_plain = |it: NodeId| {
             !self.tree[it].has(Flags::REDIRECTS_CHILDREN)
                 && self
@@ -1014,11 +1020,16 @@ impl Document {
                     .element(it)
                     .is_some_and(|it| it.generated[AFTER] == 0 && it.namespace == Namespace::Html)
         };
-        let (mut open, mut levels, mut at, mut parent) = (
+        let Item {
+            node: text,
+            element,
+            mut parent,
+            ..
+        } = inline.items[first];
+        let (mut open, mut levels, mut at) = (
             Vec::new(),
             Vec::new(),
-            inline.items[first].node,
-            inline.items[first].parent,
+            if element == 0 { text } else { element },
         );
         loop {
             let (around, mut children) = (self.tree[at].parent, Gathered::new());
@@ -1141,7 +1152,7 @@ impl Document {
     fn place_among_siblings(&self, id: NodeId, style: &Style) -> Option<[BoxId; 2]> {
         let node = self.tree[id].parent;
         let (parent, element) = (self.own_box(node)?, self.tree.element(node)?);
-        let (outer, display) = (&self.boxes[parent], style.display());
+        let (outer, display) = (&self.boxes[parent], self.display_in_tables(id, style));
         let fits = match outer.kind {
             Kind::Block => {
                 !display.is_inline_level()
@@ -1238,13 +1249,7 @@ impl Document {
             _ if siblings.last() == Some(&before) => siblings.len(),
             _ => siblings.iter().take(4096).position(|it| *it == before)? + 1,
         };
-        let order = |style: &Style| {
-            if style.is_out_of_flow() {
-                0
-            } else {
-                style.layout.order
-            }
-        };
+        let order = |style: &Style| style.order_in(&self.boxes[parent].style);
         let neighbor = if before == 0 {
             siblings.first().copied()
         } else {
@@ -1521,7 +1526,11 @@ impl Document {
                     Kind::Math
                 }
             }
-            _ if style.clamps_lines() => Kind::Block,
+            _ if style.clamps_lines()
+                || style.is_webkit_box() && is_name!(tag, "fieldset" | "button") =>
+            {
+                Kind::Block
+            }
             Display::Flex | Display::InlineFlex | Display::WebkitBox | Display::WebkitInlineBox => {
                 Kind::Flex
             }
@@ -1543,6 +1552,20 @@ impl Document {
             }
             _ => Kind::Block,
         })
+    }
+
+    /// What has a layout of its own is no part of a table.
+    fn display_in_tables(&self, id: NodeId, style: &Style) -> Display {
+        let has_own_layout = || {
+            is_name!(self.tree.html_tag(id), "fieldset" | "button")
+                || style.is_atomic
+                    && matches!(self.kind_of(id, style), Some(Kind::Replaced | Kind::Svg))
+        };
+        if style.display() as u8 >= Display::TableRowGroup as u8 && has_own_layout() {
+            Display::Block
+        } else {
+            style.display()
+        }
     }
 
     fn adopt(&mut self, parent: BoxId, child: BoxId) {
@@ -1660,6 +1683,10 @@ impl Document {
         if (tag == name!("body") || self.tree[node].parent == DOCUMENT)
             && node == self.overflow_source()
             || matches!(self.boxes[id].kind, Kind::Row | Kind::RowGroup)
+            || self.boxes[id].kind == Kind::Table
+                && overflow
+                    .iter()
+                    .any(|it| matches!(it, Overflow::Scroll | Overflow::Auto))
         {
             overflow = [Overflow::Visible; 2];
         }
@@ -1722,9 +1749,16 @@ impl Document {
             && !style
                 .contain()
                 .intersects(Contain::SIZE | Contain::INLINE_SIZE);
+        let is_alt_text = || {
+            it.kind == Kind::Block
+                && style.display() == Display::Inline
+                && tag == name!("img")
+                && it.has_auto_size(0)
+                && it.has_auto_size(1)
+        };
         it.ratio = natural_ratio
             .filter(|_| is_natural)
-            .or_else(|| ratio.value());
+            .or_else(|| ratio.value().filter(|_| !is_alt_text()));
         (it.tag, it.uses_parent) = (
             tag,
             crate::layout::uses_parent(&style).map(|uses| uses || it.is_orthogonal()),
@@ -1998,20 +2032,25 @@ impl Document {
                 && !it.is_out_of_flow()
                 && !matches!(it.display(), Display::None | Display::Contents)
         };
-        let children = (self.tree.html_tag(fieldset) == name!("fieldset"))
-            .then(|| self.tree.element_children(fieldset))?;
-        let is_slot = |it: NodeId| self.tree.html_tag(it) == name!("slot");
-        let children = children.flat_map(|it| {
-            if is_slot(it) {
-                self.rendered_children(it).collect()
-            } else {
-                vec![it]
+        let mut left = (self.tree.html_tag(fieldset) == name!("fieldset"))
+            .then(|| self.tree.element_children(fieldset))?
+            .collect::<Vec<_>>();
+        left.reverse();
+        while let Some(it) = left.pop() {
+            match self.tree.style(it) {
+                Some(style) if style.display() == Display::Contents => left.extend(
+                    self.rendered_children(it)
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev(),
+                ),
+                Some(style) if self.tree.html_tag(it) == name!("legend") && is_in_flow(style) => {
+                    return Some(it);
+                }
+                _ => {}
             }
-        });
-        { children }.find(|it| {
-            self.tree.html_tag(*it) == name!("legend")
-                && self.tree.style(*it).is_some_and(is_in_flow)
-        })
+        }
+        None
     }
 
     pub(crate) fn is_legend(&self, id: BoxId) -> bool {
@@ -2188,7 +2227,7 @@ impl Document {
             Kind::Column => {
                 for child in children {
                     if let Child::Element(node, style) = child
-                        && style.display() == Display::TableColumn
+                        && self.display_in_tables(*node, style) == Display::TableColumn
                     {
                         let column = self.box_for(id, *node, kind, style);
                         self.boxes[id].children.push(column);
@@ -2230,10 +2269,7 @@ impl Document {
         }
         self.end_lines(&mut siblings);
         if matches!(kind, Kind::Flex | Kind::Grid) {
-            let order = |it: &BoxId| match self.boxes[*it].style.is_out_of_flow() {
-                true => 0,
-                false => self.boxes[*it].style.layout.order,
-            };
+            let order = |it: &BoxId| self.boxes[*it].style.order_in(&self.boxes[id].style);
             if !siblings.boxes.iter().is_sorted_by_key(order) {
                 siblings.boxes.order_by_key(order);
             }
@@ -2577,8 +2613,8 @@ impl Document {
                 .tree
                 .element(id)
                 .is_some_and(|it| it.pseudo == Pseudo::Marker);
-            let is_table_part = matches!(kind, Kind::Row | Kind::RowGroup | Kind::Column)
-                || matches!(style.display(), Display::TableCell | Display::TableCaption);
+            let is_table_part =
+                self.display_in_tables(id, style) as u8 >= Display::TableRowGroup as u8;
             if is_marker && style.display() != Display::Inline {
                 self.boxes[parent].outside_marker = self.box_for(parent, id, kind, style);
             } else if is_table_part {
@@ -2588,8 +2624,8 @@ impl Document {
                         .unwrap_or_default()
                         .trim_ascii()
                         .is_empty(),
-                    Child::Element(_, style) => {
-                        style.display() as u8 >= Display::TableRowGroup as u8
+                    Child::Element(id, style) => {
+                        self.display_in_tables(*id, style) as u8 >= Display::TableRowGroup as u8
                     }
                 };
                 let start = index - 1;
@@ -2678,6 +2714,14 @@ impl Document {
         if siblings.open.len() >= usize::from(MAX_DEPTH) {
             return;
         }
+        if let Some(only) = self.text_in_place_of(id, style) {
+            self.lines(siblings);
+            if let (Some(lines), Some(text)) = (&mut siblings.lines, self.tree[only].stored_text())
+            {
+                lines.text_in_place_of(id, only, text, style);
+            }
+            return;
+        }
         self.lines(siblings).open(id, style, true);
         siblings.open.push((id, Rc::clone(style)));
         let mut children = Gathered::new();
@@ -2694,12 +2738,28 @@ impl Document {
         siblings.open.pop();
     }
 
+    /// See `Item::element`.
+    #[inline]
+    fn text_in_place_of(&self, id: NodeId, style: &Style) -> Option<NodeId> {
+        let (node, element) = (&self.tree[id], self.tree.element(id)?);
+        let only = &self.tree[node.first_child];
+        (style.leaves_no_trace()
+            && only.next == 0
+            && !is_collapsible_space(only.text()?, style)
+            && (element.generated, element.pseudo, element.namespace)
+                == ([0; 4], Pseudo::None, Namespace::Html)
+            && !node.has(Flags::REDIRECTS_CHILDREN)
+            && self.boxes.styles_first == [false; 2]
+            && self.environment.quirks == Quirks::None
+            && self.carousels.is_empty())
+        .then_some(node.first_child)
+    }
+
     /// Wraps what does not belong in a table, a row group or a row in the anonymous boxes that do.
     fn fill_table_part(&mut self, id: BoxId, kind: Kind, children: &[Child]) {
-        let belongs = |child: &Child| match child {
+        let belongs = |document: &Document, child: &Child| match child {
             Child::Text(..) => false,
-            Child::Element(_, style) => match (kind, style.display()) {
-                _ if style.is_out_of_flow() => true,
+            Child::Element(id, style) => match (kind, document.display_in_tables(*id, style)) {
                 (
                     Kind::Table,
                     Display::TableCaption | Display::TableColumn | Display::TableColumnGroup,
@@ -2721,12 +2781,15 @@ impl Document {
                 {
                     (0, 1)
                 }
-                Child::Element(node, style) if belongs(first) => {
+                Child::Element(node, style) if belongs(self, first) => {
                     let kind = self.kind_of(*node, style).unwrap_or(Kind::Block);
                     (self.box_for(id, *node, kind, style), 1)
                 }
                 _ => {
-                    let count = rest.iter().take_while(|child| !belongs(child)).count();
+                    let count = rest
+                        .iter()
+                        .take_while(|child| !belongs(self, child))
+                        .count();
                     let (inner, display) = match kind {
                         Kind::Table => (Kind::RowGroup, Display::TableRowGroup),
                         Kind::RowGroup => (Kind::Row, Display::TableRow),

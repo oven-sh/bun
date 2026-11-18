@@ -14,7 +14,7 @@ use crate::prefixes::Feature as PrefixFeature;
 use crate::targets::Targets;
 use crate::{PrintErr, Printer, SmallList, VendorPrefix};
 
-use super::custom::{CustomProperty, CustomPropertyName, SourceDeclaration, UnparsedProperty};
+use super::custom::{CustomProperty, CustomPropertyName, UnparsedProperty};
 use super::{
     CSSWideKeyword, align, animation, background, border, border_image, border_radius, box_shadow,
     css_modules, display, flex, font, margin_padding, masking, outline, overflow, position, size,
@@ -69,7 +69,6 @@ macro_rules! define_properties {
             All(CSSWideKeyword),
             Unparsed(UnparsedProperty<'bump>),
             Custom(CustomProperty<'bump>),
-            Source(SourceDeclaration<'bump>),
         }
 
         impl PropertyIdTag {
@@ -140,7 +139,6 @@ macro_rules! define_properties {
                     Property::All(..) => PropertyId::All,
                     Property::Unparsed(u) => u.property_id,
                     Property::Custom(c) => PropertyId::Custom(c.name),
-                    Property::Source(s) => PropertyId::from_string(s.name),
                 }
             }
 
@@ -152,7 +150,6 @@ macro_rules! define_properties {
                     Property::All(v) => css::generic::to_css(v, dest),
                     Property::Unparsed(u) => u.value.to_css(dest),
                     Property::Custom(c) => c.value.to_css(dest),
-                    Property::Source(s) => dest.write_str(s.value),
                 }
             }
 
@@ -206,7 +203,6 @@ macro_rules! define_properties {
                     Property::All(a) => Property::All(*a),
                     Property::Unparsed(u) => Property::Unparsed(u.deep_clone(arena)),
                     Property::Custom(c) => Property::Custom(c.deep_clone(arena)),
-                    Property::Source(s) => Property::Source(*s),
                 }
             }
 
@@ -220,7 +216,6 @@ macro_rules! define_properties {
                     (Property::All(_), Property::All(_)) => true,
                     (Property::Unparsed(a), Property::Unparsed(b)) => a.eql(b),
                     (Property::Custom(a), Property::Custom(b)) => a.eql(b),
-                    (Property::Source(a), Property::Source(b)) => a == b,
                     _ => false,
                 }
             }
@@ -571,7 +566,7 @@ impl<'bump> PropertyId<'bump> {
     }
 
     /// Empty for a property that has no prefixed form.
-    pub fn prefix(&self) -> VendorPrefix {
+    pub(crate) fn prefix(&self) -> VendorPrefix {
         let mut id = *self;
         id.prefix_slot_mut().map_or(VendorPrefix::empty(), |p| *p)
     }
@@ -643,19 +638,15 @@ impl Property<'_> {
     #[inline]
     pub(crate) fn variant_tag(&self) -> PropertyIdTag {
         match self {
-            Property::Unparsed(_) | Property::Source(_) => PropertyIdTag::Unparsed,
+            Property::Unparsed(_) => PropertyIdTag::Unparsed,
             Property::Custom(_) => PropertyIdTag::Custom,
             _ => self.property_id().tag(),
         }
     }
 
     pub fn to_css(&self, dest: &mut Printer, important: bool) -> Result<(), PrintErr> {
-        if let Property::Custom(_) | Property::Source(_) = self {
-            match self {
-                Property::Custom(custom) => custom.name.to_css(dest)?,
-                Property::Source(source) => dest.serialize_identifier(source.name)?,
-                _ => unreachable!(),
-            }
+        if let Property::Custom(custom) = self {
+            custom.name.to_css(dest)?;
             return self.after_name_to_css(dest, important);
         }
         let id = self.property_id();

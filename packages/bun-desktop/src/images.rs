@@ -2,13 +2,13 @@
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::panic::catch_unwind;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
-use crate::abi::Rect;
+use crate::abi::{DisplayList, Rect};
 use crate::abi_graphics::Decoded;
 use crate::codec::{self, Format, Rgba};
 use crate::error::{Context as _, Result};
@@ -16,13 +16,17 @@ use crate::gfx::{Pixmap, Transform};
 use crate::hash::FastMap;
 use crate::icc::Conversion;
 use crate::paint::cpu::Painter;
-use crate::paint::raster::{Clip, IntRect, Layer, demultiply, multiply};
+use crate::paint::raster::{Clip, IntRect, Layer, demultiply_row, multiply, premultiply_row};
 use crate::paint::scene::{Frame, Scene};
+use crate::remote::guest;
+use crate::remote::pages::Original;
 use crate::small_vec::SmallVec;
 use crate::sync::{Condvar, Mutex};
 use crate::{bridge, canvas, png_rows, webview};
 
 const MAX_ANIMATION_BYTES: usize = 64 << 20;
+/// Of all animations that are playing.
+const PLAYING_BYTES: usize = 4 * MAX_ANIMATION_BYTES;
 /// The GPU has what is on screen.
 const DECODED_BYTES: usize = 16 << 20;
 /// From there on, an image is decoded once it is known how large it is drawn.
@@ -40,13 +44,17 @@ pub struct Svg {
 }
 
 impl Svg {
-    pub fn draw(&self, target: &mut Layer, rect: Rect, matrix: &Transform) {
+    pub fn draw(&self, target: &mut Layer, rect: Rect, matrix: &Transform, within: &Frame) {
         let matrix = matrix
             .pre_translate(rect.x, rect.y)
             .pre_scale(rect.width / self.size[0], rect.height / self.size[1]);
+        let frame = Frame {
+            gives_up_at: within.gives_up_at,
+            ..Frame::new(1., false)
+        };
         let painter = Painter {
             scene: &self.scene,
-            frame: &Frame::new(1., false),
+            frame: &frame,
             left_out: &[],
         };
         painter.paint(
@@ -79,6 +87,8 @@ struct Fitted {
     was_missed: bool,
     was_drawn: bool,
     is_broken: bool,
+    /// The frames of an animation are.
+    stands_still: bool,
     other_sizes: u32,
 }
 
@@ -88,10 +98,15 @@ struct Bitmap {
     start: Instant,
     /// What `frames` are decoded from again after they were dropped. Without it, they are kept.
     encoded: Option<Vec<u8>>,
+    is_oriented: bool,
+    /// In its place.
+    original: Option<Original>,
     frames: Mutex<Option<Arc<Frames>>>,
     last_used: AtomicU32,
     /// In seconds since `start`.
     last_played: AtomicU32,
+    /// `frames` are on their way, or failed to come.
+    was_requested: AtomicBool,
     is_deferred: bool,
     fitted: Mutex<Fitted>,
     was_fitted: Condvar,
@@ -135,9 +150,12 @@ impl Bitmap {
             ends: frames.iter().map(|(_, end)| *end).collect(),
             start: Instant::now(),
             encoded,
+            is_oriented: true,
+            original: None,
             frames: Mutex::new(Some(Arc::new(frames))),
             last_used: AtomicU32::new(USES.fetch_add(1, Ordering::Relaxed)),
             last_played: AtomicU32::new(0),
+            was_requested: AtomicBool::new(false),
             is_deferred: false,
             fitted: Mutex::default(),
             was_fitted: Condvar::new(),
@@ -145,24 +163,103 @@ impl Bitmap {
         }
     }
 
-    fn deferred(size: Size, encoded: Vec<u8>) -> Option<Bitmap> {
+    fn deferred(
+        Outline {
+            size,
+            ends,
+            is_oriented,
+        }: Outline,
+        encoded: Vec<u8>,
+    ) -> Option<Bitmap> {
         let bitmap = Bitmap::new(vec![(Pixmap::new(1, 1)?, Duration::ZERO)], Some(encoded));
         Some(Bitmap {
             size,
+            ends,
+            is_oriented,
             frames: Mutex::new(None),
             is_deferred: true,
             ..bitmap
         })
     }
 
+    fn decode(&self) -> Option<Frames> {
+        decode_bitmap(
+            self.encoded.as_ref()?,
+            self.is_oriented,
+            !self.is_deferred || self.ends.len() > 1,
+        )
+        .ok()
+    }
+
+    fn bytes_of_frames(&self) -> usize {
+        byte_count(self.size).saturating_mul(self.ends.len())
+    }
+
+    /// Whether it is drawn from `fitted`. An animation stands still until its frames are there.
+    fn is_fitted(&self, image: &Arc<Image>, frame: &Frame) -> bool {
+        const RETRY: Duration = Duration::from_secs(1);
+        if self.ends.len() == 1 {
+            return self.is_deferred;
+        }
+        self.note_use();
+        if frame.deadline.is_none() || self.frames.lock().is_some() {
+            return false;
+        }
+        if !self.was_requested.load(Ordering::Relaxed) && reserve_for_playing(self) {
+            let image = image.clone();
+            spawn_decoding(self, move || {
+                let Image::Bitmap(bitmap) = &*image else {
+                    return;
+                };
+                let frames = || Arc::strong_count(&image) > 1 && bitmap.frames().is_some();
+                let has_frames = catch_unwind(AssertUnwindSafe(frames)).unwrap_or(false);
+                let mut fitted = bitmap.fitted.lock();
+                fitted.pixels.take_if(|_| has_frames);
+                fitted.stands_still = !has_frames && bitmap.original.is_none();
+                bitmap
+                    .was_requested
+                    .store(fitted.stands_still, Ordering::Relaxed);
+            });
+        }
+        let fitted = self.fitted.lock();
+        let is_awaited = self.was_requested.load(Ordering::Relaxed) || fitted.was_missed;
+        if !fitted.stands_still || fitted.was_missed {
+            frame.changes_at(frame.now + if is_awaited { POLL } else { RETRY });
+        }
+        true
+    }
+
+    fn version(&self, is_fitted: bool, frame: &Frame) -> u32 {
+        if is_fitted {
+            !self.generation.load(Ordering::Relaxed)
+        } else {
+            self.index_at(frame) as u32
+        }
+    }
+
+    fn note_use(&self) {
+        self.last_played
+            .store(self.start.elapsed().as_secs() as u32, Ordering::Relaxed);
+        self.last_used
+            .store(USES.fetch_add(1, Ordering::Relaxed), Ordering::Relaxed);
+    }
+
     fn fit(&self, size: Size) -> Option<Arc<Pixmap>> {
         let whole = self.frames.lock().clone();
         match whole {
             Some(frames) => resample(&frames[0].0, size),
-            None => self
-                .encoded
-                .as_ref()
-                .and_then(|bytes| Some(in_srgb(decode_at(bytes, self.size, size)?, bytes))),
+            None => match &self.original {
+                Some(original) => original
+                    .fetch_now(size)
+                    .pop()
+                    .filter(|it| size_of(it) == size),
+                None => self.encoded.as_ref().and_then(|bytes| {
+                    Some(in_srgb(
+                        decode_at(bytes, self.is_oriented, self.size, size)?,
+                        bytes,
+                    ))
+                }),
+            },
         }
         .map(Arc::new)
     }
@@ -173,10 +270,7 @@ impl Bitmap {
             .store(USES.fetch_add(1, Ordering::Relaxed), Ordering::Relaxed);
         let mut fitted = self.fitted.lock();
         if !std::mem::replace(&mut fitted.was_drawn, true) {
-            let mut drawn = DRAWN.lock();
-            drawn.retain(|it| it.0 != self.size);
-            drawn.truncate(7);
-            drawn.push_front((self.size, size));
+            note_drawn(self.size, size);
         }
         loop {
             let halves = if fitted.other_sizes < FEW_SIZES { 3 } else { 2 };
@@ -234,13 +328,20 @@ impl Bitmap {
     }
 
     fn frames(&self) -> Option<Arc<Frames>> {
-        self.last_played
-            .store(self.start.elapsed().as_secs() as u32, Ordering::Relaxed);
-        self.last_used
-            .store(USES.fetch_add(1, Ordering::Relaxed), Ordering::Relaxed);
+        self.note_use();
         let known = self.frames.lock().clone();
         known.or_else(|| {
-            let frames = Arc::new(decode_bitmap(self.encoded.as_ref()?, true).ok()?);
+            let frames = Arc::new(match &self.original {
+                Some(original) => {
+                    let frames = Some(original.fetch_now((0, 0)))
+                        .filter(|it| (1..=self.ends.len()).contains(&it.len()))?;
+                    frames
+                        .iter()
+                        .all(|it| size_of(it) == self.size)
+                        .then(|| frames.into_iter().zip(self.ends.clone()).collect())?
+                }
+                None => self.decode()?,
+            });
             *self.frames.lock() = Some(frames.clone());
             drop_pixels(DECODED_BYTES);
             Some(frames)
@@ -248,7 +349,82 @@ impl Bitmap {
     }
 }
 
+fn byte_count((width, height): Size) -> usize {
+    width as usize * height as usize * 4
+}
+
+fn taken_for_playing() -> usize {
+    // What has not played for a while may be further down in this frame.
+    drop_pixels(DECODED_BYTES);
+    let is_taken = |it: &Bitmap| match it.was_requested.load(Ordering::Relaxed) {
+        true => !it.fitted.lock().stands_still,
+        false => it.is_playing() && it.frames.lock().is_some(),
+    };
+    let bytes = |image: &Arc<Image>| match &**image {
+        Image::Bitmap(it) if is_taken(it) => it.bytes_of_frames(),
+        _ => 0,
+    };
+    IMAGES
+        .lock()
+        .values()
+        .map(bytes)
+        .fold(0, usize::saturating_add)
+}
+
+fn reserve_for_playing(bitmap: &Bitmap) -> bool {
+    static TAKEN: Mutex<Option<(Instant, usize)>> = Mutex::new(None);
+    let mut taken = TAKEN.lock();
+    taken.take_if(|it| it.0.elapsed() > Duration::from_millis(500));
+    let (_, taken) = taken.get_or_insert_with(|| (Instant::now(), taken_for_playing()));
+    let fits = taken.saturating_add(bitmap.bytes_of_frames()) <= PLAYING_BYTES;
+    if fits {
+        *taken += bitmap.bytes_of_frames();
+        bitmap.was_requested.store(true, Ordering::Relaxed);
+    }
+    fits
+}
+
+/// Of large images.
+#[derive(Default)]
+struct Decoding {
+    count: usize,
+    bytes: usize,
+    waiting: VecDeque<(usize, Box<dyn FnOnce() + Send>)>,
+}
+
+static DECODING: LazyLock<Mutex<Decoding>> = LazyLock::new(Mutex::default);
+
+impl Decoding {
+    /// Together they are no larger than one can be, and they leave a thread to others.
+    fn proceed(&mut self) {
+        while let Some((bytes, job)) = self.waiting.pop_front_if(|it| {
+            self.count == 0 || self.count < 3 && self.bytes + it.0 <= codec::MAX_BYTES
+        }) {
+            (self.count, self.bytes) = (self.count + 1, self.bytes + bytes);
+            bridge::spawn(move || {
+                job();
+                let mut decoding = DECODING.lock();
+                (decoding.count, decoding.bytes) = (decoding.count - 1, decoding.bytes - bytes);
+                decoding.proceed();
+            });
+        }
+    }
+}
+
+fn spawn_decoding(bitmap: &Bitmap, job: impl FnOnce() + Send + 'static) {
+    let bytes = bitmap.bytes_of_frames().min(codec::MAX_BYTES);
+    if bytes <= DECODED_BYTES {
+        return bridge::spawn(job);
+    }
+    let mut decoding = DECODING.lock();
+    decoding.waiting.push_back((bytes, Box::new(job)));
+    decoding.proceed();
+}
+
 fn start_fitting(image: &Arc<Image>, fitted: &mut Fitted, size: Size) {
+    let Image::Bitmap(bitmap) = &**image else {
+        return;
+    };
     if std::mem::replace(&mut fitted.is_pending, true) {
         return;
     }
@@ -264,31 +440,173 @@ fn start_fitting(image: &Arc<Image>, fitted: &mut Fitted, size: Size) {
         .filter(|_| fitted.other_sizes >= FEW_SIZES);
     let size = known.map_or(size, |it| (it.0.max(size.0), it.1.max(size.1)));
     // It is being resized.
-    let (keeps_whole, image) = (fitted.other_sizes > 1, image.clone());
-    bridge::spawn(move || {
+    let (keeps_whole, image) = (
+        fitted.other_sizes > 1 && bitmap.ends.len() == 1,
+        image.clone(),
+    );
+    if let Some(original) = &bitmap.original {
+        return original.fetch(size, fitted.pixels.is_some(), move |mut it| {
+            bridge::spawn(move || finish_fitting(&image, it.pop().map(Arc::new)))
+        });
+    }
+    spawn_decoding(bitmap, move || {
         let Image::Bitmap(bitmap) = &*image else {
             return;
         };
-        let fit = std::panic::AssertUnwindSafe(|| {
+        let fit = AssertUnwindSafe(|| {
             if keeps_whole {
                 bitmap.frames();
             }
             bitmap.fit(size)
         });
-        let pixels = if Arc::strong_count(&image) > 1 {
-            catch_unwind(fit).ok().flatten()
-        } else {
-            None
-        };
-        let mut fitted = bitmap.fitted.lock();
-        (fitted.is_pending, fitted.is_broken, fitted.pixels) = (false, pixels.is_none(), pixels);
-        if std::mem::take(&mut fitted.was_missed) {
-            bitmap.generation.fetch_add(1, Ordering::Relaxed);
-        }
-        drop(fitted);
-        bitmap.was_fitted.notify_all();
-        drop_pixels(DECODED_BYTES);
+        finish_fitting(
+            &image,
+            if Arc::strong_count(&image) > 1 {
+                catch_unwind(fit).ok().flatten()
+            } else {
+                None
+            },
+        );
     });
+}
+
+fn finish_fitting(image: &Image, pixels: Option<Arc<Pixmap>>) {
+    let Image::Bitmap(bitmap) = image else { return };
+    let mut fitted = bitmap.fitted.lock();
+    (fitted.is_pending, fitted.is_broken, fitted.pixels) = (false, pixels.is_none(), pixels);
+    if std::mem::take(&mut fitted.was_missed) {
+        bitmap.generation.fetch_add(1, Ordering::Relaxed);
+        bitmap.note_use();
+    }
+    drop(fitted);
+    bitmap.was_fitted.notify_all();
+    drop_pixels(DECODED_BYTES);
+}
+
+fn note_drawn(whole: Size, size: Size) {
+    let mut drawn = DRAWN.lock();
+    drawn.retain(|it| it.0 != whole);
+    drawn.truncate(7);
+    drawn.push_front((whole, size));
+}
+
+pub enum Exported<'a> {
+    Recording {
+        list: DisplayList,
+        size: [f32; 2],
+    },
+    /// `ends` are in milliseconds.
+    Bitmap {
+        size: [u32; 2],
+        ends: Vec<u32>,
+        is_deferred: bool,
+        can_be_fetched: bool,
+        frames: &'a [&'a Pixmap],
+    },
+}
+
+/// For the process that draws it, which keeps the pixels from now on.
+pub fn export<R>(id: u32, f: impl FnOnce(Exported) -> R) -> Option<R> {
+    let image = IMAGES.lock().get(&id).cloned()?;
+    Some(match &*image {
+        Image::Svg(svg) => f(Exported::Recording {
+            list: svg.scene.list(),
+            size: svg.size,
+        }),
+        Image::Bitmap(bitmap) => {
+            let (is_deferred, can_be_fetched) = (bitmap.is_deferred, bitmap.encoded.is_some());
+            let fitted = bitmap
+                .fitted
+                .lock()
+                .pixels
+                .take()
+                .filter(|_| bitmap.ends.len() == 1);
+            let whole = if can_be_fetched {
+                bitmap.frames.lock().take_if(|_| !is_deferred)
+            } else {
+                bitmap.frames.lock().clone()
+            };
+            let frames: Vec<_> = fitted
+                .as_deref()
+                .into_iter()
+                .chain(whole.iter().flat_map(|it| it.iter().map(|it| &it.0)))
+                .collect();
+            let ends = bitmap.ends.iter().map(|it| it.as_millis() as u32).collect();
+            f(Exported::Bitmap {
+                size: bitmap.size.into(),
+                ends,
+                is_deferred,
+                can_be_fetched,
+                frames: &frames,
+            })
+        }
+    })
+}
+
+pub fn import(
+    size: [u32; 2],
+    ends: &[u32],
+    is_deferred: bool,
+    original: Option<Original>,
+    mut frames: Vec<Pixmap>,
+) -> u32 {
+    let (id, ends): (_, Vec<_>) = (
+        next_id(),
+        ends.iter()
+            .map(|it| Duration::from_millis((*it).into()))
+            .collect(),
+    );
+    let pixels = frames.pop_if(|_| is_deferred).map(Arc::new);
+    let frames = (!is_deferred && !frames.is_empty())
+        .then(|| Arc::new(frames.into_iter().zip(ends.clone()).collect()));
+    let empty = Bitmap::new(
+        vec![(Pixmap::new(1, 1).expect("it is a size"), Duration::ZERO)],
+        None,
+    );
+    let fitted = Mutex::new(Fitted {
+        pixels,
+        ..Fitted::default()
+    });
+    let bitmap = Bitmap {
+        size: size.into(),
+        ends,
+        original,
+        frames: Mutex::new(frames),
+        is_deferred,
+        fitted,
+        ..empty
+    };
+    IMAGES.lock().insert(id, Arc::new(Image::Bitmap(bitmap)));
+    drop_pixels(DECODED_BYTES);
+    id
+}
+
+/// All frames for a size of zero.
+pub fn fetch(id: u32, size: Size, is_exact: bool, reply: impl FnOnce(&[&Pixmap])) -> Option<()> {
+    let image = IMAGES.lock().get(&id).cloned()?;
+    let Image::Bitmap(bitmap) = &*image else {
+        return None;
+    };
+    if size == (0, 0) {
+        let known = bitmap.frames.lock().take();
+        let frames = known.or_else(|| bitmap.decode().map(Arc::new))?;
+        reply(&frames.iter().map(|it| &it.0).collect::<Vec<_>>());
+        return Some(());
+    }
+    let mut fitted = bitmap.fitted.lock();
+    bitmap
+        .was_fitted
+        .wait_while(&mut fitted, |it| it.is_pending);
+    if !std::mem::replace(&mut fitted.was_drawn, true) {
+        note_drawn(bitmap.size, size);
+    }
+    let will_do = |it: &Arc<Pixmap>| {
+        size_of(it) == size || !is_exact && it.width() + 1 >= size.0 && it.height() + 1 >= size.1
+    };
+    let known = fitted.pixels.take().filter(will_do);
+    drop(fitted);
+    reply(&[&*known.or_else(|| bitmap.fit(size))?]);
+    Some(())
 }
 
 /// They are about to be drawn, that many device pixels large.
@@ -309,8 +627,7 @@ fn expect(id: u32, width: f32, height: f32, budget: &mut usize) {
             reduced_size(bitmap.size, width, height),
             bitmap.fitted.lock(),
         );
-        let bytes = (size.0 as usize * size.1 as usize * 4)
-            .max(fitted.pixels.as_ref().map_or(0, |it| it.data().len()));
+        let bytes = byte_count(size).max(fitted.pixels.as_ref().map_or(0, |it| it.data().len()));
         let Some(left) = budget.checked_sub(bytes) else {
             return;
         };
@@ -335,7 +652,9 @@ fn drop_pixels(kept: usize) {
     let images = IMAGES.lock();
     let mut decoded: Vec<_> = (images.values())
         .filter_map(|image| match &**image {
-            Image::Bitmap(bitmap) if bitmap.encoded.is_some() => Some(bitmap),
+            Image::Bitmap(bitmap) if bitmap.encoded.is_some() || bitmap.original.is_some() => {
+                Some(bitmap)
+            }
             _ => None,
         })
         .collect();
@@ -345,7 +664,7 @@ fn drop_pixels(kept: usize) {
     for (index, bitmap) in decoded.into_iter().enumerate() {
         let (mut fitted, mut frames) = (bitmap.fitted.lock(), bitmap.frames.lock());
         let (total, most) = if kept > 0 && bitmap.is_playing() {
-            (&mut playing, 4 * MAX_ANIMATION_BYTES)
+            (&mut playing, PLAYING_BYTES)
         } else {
             (&mut still, kept)
         };
@@ -370,39 +689,38 @@ pub fn release_memory() {
 }
 
 fn with_changing<R>(id: u32, f: impl FnOnce(&Pixmap, u32) -> R) -> Option<R> {
-    match webview::with(id, |_, _| ()) {
-        Some(()) => webview::with(id, |view, version| f(&view.pixmap, version)),
+    match webview::size_and_version(id) {
+        Some(_) => webview::with(id, |view, version| f(&view.pixmap, version)),
         None => canvas::with_pixels(id, f),
     }
 }
 
 pub fn info(id: u32, frame: &Frame) -> Option<Info> {
-    match IMAGES.lock().get(&id).map(|image| &**image) {
-        Some(Image::Svg(_)) => Some(Info {
+    let image = IMAGES.lock().get(&id).cloned();
+    match image.as_ref().map(|image| (image, &**image)) {
+        Some((_, Image::Svg(_))) => Some(Info {
             size: None,
             version: 0,
             is_deferred: false,
         }),
-        Some(Image::Bitmap(bitmap)) if bitmap.is_deferred => {
-            if bitmap.fitted.lock().was_missed {
+        Some((image, Image::Bitmap(bitmap))) => {
+            let is_deferred = bitmap.is_fitted(image, frame);
+            if bitmap.is_deferred && bitmap.fitted.lock().was_missed {
                 frame.changes_at(frame.now + POLL);
             }
             Some(Info {
                 size: Some(bitmap.size),
-                version: bitmap.generation.load(Ordering::Relaxed),
-                is_deferred: true,
+                version: bitmap.version(is_deferred, frame),
+                is_deferred,
             })
         }
-        Some(Image::Bitmap(bitmap)) => Some(Info {
-            size: Some(bitmap.size),
-            version: bitmap.index_at(frame) as u32,
-            is_deferred: false,
-        }),
-        None => with_changing(id, |pixmap, version| Info {
-            size: Some(size_of(pixmap)),
-            version,
-            is_deferred: false,
-        }),
+        None => (webview::size_and_version(id).or_else(|| canvas::size_and_version(id))).map(
+            |(size, version)| Info {
+                size: Some(size),
+                version,
+                is_deferred: false,
+            },
+        ),
     }
 }
 
@@ -455,8 +773,8 @@ pub fn with_size<R>(
     let mut call = |content: Content| result = f.take().map(|f| f(content));
     let image = IMAGES.lock().get(&id).cloned();
     match image.as_ref().map(|image| (image, &**image)) {
-        Some((image, Image::Bitmap(bitmap))) if bitmap.is_deferred => {
-            let (version, size) = (bitmap.generation.load(Ordering::Relaxed), pick(bitmap.size));
+        Some((image, Image::Bitmap(bitmap))) if bitmap.is_fitted(image, frame) => {
+            let (version, size) = (bitmap.version(true, frame), pick(bitmap.size));
             resize(
                 &*bitmap.fitted(image, frame, size)?,
                 version,
@@ -464,12 +782,18 @@ pub fn with_size<R>(
                 &mut |it| call(Content::Pixels(it)),
             );
         }
-        _ => with(id, frame, |content, version| match content {
-            Content::Pixels(pixmap) => resize(pixmap, version, pick(size_of(pixmap)), &mut |it| {
-                call(Content::Pixels(it))
-            }),
-            Content::Svg(_) => call(content),
-        })?,
+        _ => with_frame(
+            id,
+            |bitmap| bitmap.index_at(frame),
+            |content, version| match content {
+                Content::Pixels(pixmap) => {
+                    resize(pixmap, version, pick(size_of(pixmap)), &mut |it| {
+                        call(Content::Pixels(it))
+                    })
+                }
+                Content::Svg(_) => call(content),
+            },
+        )?,
     }
     result
 }
@@ -494,9 +818,11 @@ fn likely_size(whole: Size, density: f32, scale: f32) -> Size {
         })
 }
 
-/// `f` also gets `Info::version`.
-pub fn with<R>(id: u32, frame: &Frame, f: impl FnOnce(Content, u32) -> R) -> Option<R> {
-    with_frame(id, |bitmap| bitmap.index_at(frame), f)
+pub fn with<R>(id: u32, frame: &Frame, f: impl FnOnce(Content) -> R) -> Option<R> {
+    match frame.deadline {
+        Some(_) => with_size(id, frame, |whole| whole, f),
+        None => with_frame(id, |bitmap| bitmap.index_at(frame), |content, _| f(content)),
+    }
 }
 
 pub fn with_first_frame<R>(id: u32, f: impl FnOnce(Content, u32) -> R) -> Option<R> {
@@ -514,9 +840,9 @@ fn with_frame<R>(
     match &*image {
         Image::Svg(svg) => Some(f(Content::Svg(svg), 0)),
         Image::Bitmap(bitmap) => {
-            let index = pick(bitmap);
+            let (index, frames) = (pick(bitmap), bitmap.frames()?);
             Some(f(
-                Content::Pixels(&bitmap.frames()?.get(index)?.0),
+                Content::Pixels(&frames.get(index).or(frames.last())?.0),
                 index as u32,
             ))
         }
@@ -539,12 +865,20 @@ pub fn take_recording(id: u32, width: i32, height: i32) -> Option<Pixmap> {
             height: height as f32,
         },
         &Transform::identity(),
+        &Frame::new(1., false),
     );
     Some(layer.pixmap)
 }
 
 pub fn alpha(id: u32, width: u32, height: u32) -> Option<Vec<u8>> {
-    with(id, &Frame::new(1., false), |content, _| match content {
+    let frame = Frame::new(1., false);
+    if info(id, &frame)?
+        .size
+        .is_some_and(|it| byte_count(it) > MAX_ANIMATION_BYTES)
+    {
+        return None;
+    }
+    with(id, &frame, |content| match content {
         Content::Svg(svg) => {
             let mut layer = Layer::new(IntRect::new(0, 0, width as i32, height as i32))?;
             let rect = Rect {
@@ -553,7 +887,7 @@ pub fn alpha(id: u32, width: u32, height: u32) -> Option<Vec<u8>> {
                 width: width as f32,
                 height: height as f32,
             };
-            svg.draw(&mut layer, rect, &Transform::identity());
+            svg.draw(&mut layer, rect, &Transform::identity(), &frame);
             Some(layer.alpha().data)
         }
         Content::Pixels(pixmap) => {
@@ -591,17 +925,13 @@ pub fn insert_as(id: u32, pixmap: Pixmap) {
 
 pub fn release(id: u32) {
     drop(IMAGES.lock().remove(&id));
+    if guest::is_on() {
+        guest::image_released(id);
+    }
 }
 
 pub fn pixmap_from_rgba(width: u32, height: u32, mut rgba: Vec<u8>) -> Option<Pixmap> {
-    for [r, g, b, a] in rgba
-        .as_chunks_mut()
-        .0
-        .iter_mut()
-        .filter(|pixel| pixel[3] != 255)
-    {
-        (*r, *g, *b) = (multiply(*r, *a), multiply(*g, *a), multiply(*b, *a));
-    }
+    premultiply_row(rgba.as_chunks_mut().0);
     Pixmap::from_vec(rgba, width, height)
 }
 
@@ -610,11 +940,9 @@ fn pixmap_from(image: Rgba) -> Option<Pixmap> {
 }
 
 pub fn straight_rgba(layer: &Layer) -> Vec<u8> {
-    layer
-        .pixels()
-        .iter()
-        .flat_map(|pixel| demultiply(*pixel))
-        .collect()
+    let mut pixels = layer.pixels().to_vec();
+    demultiply_row(&mut pixels);
+    pixels.into_flattened()
 }
 
 fn in_srgb(mut pixmap: Pixmap, encoded: &[u8]) -> Pixmap {
@@ -632,16 +960,20 @@ pub fn decode_pixmap(bytes: &[u8]) -> Option<Pixmap> {
     pixmap_from(codec::decode(bytes, true, (0, 0))?)
 }
 
+/// What browsers do with one that is too short.
+fn actual_delay(delay: Duration) -> Duration {
+    if delay <= Duration::from_millis(10) {
+        Duration::from_millis(100)
+    } else {
+        delay
+    }
+}
+
 /// Stops at a frame that is broken or does not fit in memory.
 fn decode_animation(bytes: &[u8]) -> Frames {
     let (mut frames, mut end, mut total) = (Frames::new(), Duration::ZERO, 0);
     codec::frames(bytes, &mut |frame, delay| {
-        // What browsers do with a delay that is too short.
-        end += if delay <= Duration::from_millis(10) {
-            Duration::from_millis(100)
-        } else {
-            delay
-        };
+        end += actual_delay(delay);
         total += frame.data.len();
         let frame = (total <= MAX_ANIMATION_BYTES)
             .then(|| pixmap_from(frame.clone()))
@@ -651,8 +983,8 @@ fn decode_animation(bytes: &[u8]) -> Frames {
     frames
 }
 
-fn decode_bitmap(bytes: &[u8], is_oriented: bool) -> Result<Frames> {
-    let frames = if codec::is_animated(bytes) {
+fn decode_bitmap(bytes: &[u8], is_oriented: bool, may_play: bool) -> Result<Frames> {
+    let frames = if may_play && codec::is_animated(bytes) {
         decode_animation(bytes)
     } else {
         Frames::new()
@@ -669,15 +1001,39 @@ fn decode_bitmap(bytes: &[u8], is_oriented: bool) -> Result<Frames> {
     )])
 }
 
-/// The size of a large still image.
-fn size_to_defer(bytes: &[u8]) -> Option<Size> {
-    let is_still = match Format::of(bytes)? {
-        Format::Png => codec::png_chunks(bytes).any(|it| it.0 == b"IDAT"),
-        format => matches!(format, Format::Jpeg | Format::WebP),
-    } && !codec::is_animated(bytes);
-    is_still
-        .then(|| codec::size(bytes))?
-        .filter(|(width, height)| u64::from(*width) * u64::from(*height) >= DEFERRED_PIXELS)
+struct Outline {
+    size: Size,
+    ends: Vec<Duration>,
+    is_oriented: bool,
+}
+
+/// Of a large image.
+fn outline_to_defer(bytes: &[u8], is_oriented: bool) -> Option<Outline> {
+    if codec::is_animated(bytes) {
+        let (size, mut end) = (codec::size(bytes, false)?, Duration::ZERO);
+        let ends = codec::delays(bytes)
+            .take(MAX_ANIMATION_BYTES / byte_count(size))
+            .map(|delay| {
+                end += actual_delay(delay);
+                end
+            });
+        if let Some(ends) = Some(ends.collect::<Vec<_>>()).filter(|it| it.len() > 1) {
+            return (ends.len() * byte_count(size) > DECODED_BYTES / 4).then_some(Outline {
+                size,
+                ends,
+                is_oriented: false,
+            });
+        }
+    }
+    (Format::of(bytes)? != Format::Png || codec::png_chunks(bytes).any(|it| it.0 == b"IDAT"))
+        .then_some(())?;
+    let size = codec::size(bytes, is_oriented)
+        .filter(|it| byte_count(*it) as u64 >= DEFERRED_PIXELS * 4)?;
+    Some(Outline {
+        size,
+        ends: vec![Duration::ZERO],
+        is_oriented,
+    })
 }
 
 /// Never has all of the pixels. What comes after an error stays transparent.
@@ -709,9 +1065,9 @@ fn decode_png_at(bytes: &[u8], whole: Size, size: Size) -> Option<Pixmap> {
     }
 }
 
-fn decode_at(bytes: &[u8], whole: Size, size: Size) -> Option<Pixmap> {
+fn decode_at(bytes: &[u8], is_oriented: bool, whole: Size, size: Size) -> Option<Pixmap> {
     decode_png_at(bytes, whole, size).or_else(|| {
-        let decoded = pixmap_from(codec::decode(bytes, true, size)?)?;
+        let decoded = pixmap_from(codec::decode(bytes, is_oriented, size)?)?;
         if size_of(&decoded) == size {
             Some(decoded)
         } else {
@@ -722,12 +1078,12 @@ fn decode_at(bytes: &[u8], whole: Size, size: Size) -> Option<Pixmap> {
 
 pub fn decode(bytes: Vec<u8>, is_oriented: bool) -> Result<Decoded> {
     let orientation = codec::orientation(&bytes);
-    let bitmap = match size_to_defer(&bytes).filter(|_| is_oriented) {
-        Some(size) => Bitmap::deferred(size, bytes).context("out of memory")?,
-        None => Bitmap::new(
-            decode_bitmap(&bytes, is_oriented)?,
-            is_oriented.then_some(bytes),
-        ),
+    let bitmap = match outline_to_defer(&bytes, is_oriented) {
+        Some(outline) => Bitmap::deferred(outline, bytes).context("out of memory")?,
+        None => Bitmap {
+            is_oriented,
+            ..Bitmap::new(decode_bitmap(&bytes, is_oriented, true)?, Some(bytes))
+        },
     };
     let (id, (width, height)) = (next_id(), bitmap.size);
     IMAGES.lock().insert(id, Arc::new(Image::Bitmap(bitmap)));
@@ -740,13 +1096,11 @@ pub fn decode(bytes: Vec<u8>, is_oriented: bool) -> Result<Decoded> {
 }
 
 pub fn open(bytes: &[u8], density: f32, scale: f32) -> Option<Decoded> {
-    let ((width, height), id) = (size_to_defer(bytes)?, next_id());
+    let (outline, id) = (outline_to_defer(bytes, true)?, next_id());
+    let (width, height) = outline.size;
     IMAGES.lock().insert(
         id,
-        Arc::new(Image::Bitmap(Bitmap::deferred(
-            (width, height),
-            bytes.to_vec(),
-        )?)),
+        Arc::new(Image::Bitmap(Bitmap::deferred(outline, bytes.to_vec())?)),
     );
     let likely = likely_size((width, height), density, scale);
     expect_all([(id, [likely.0 as f32, likely.1 as f32])].into_iter());
@@ -764,7 +1118,7 @@ thread_local! {
 }
 
 /// `resample` for an image that is drawn piece by piece.
-fn resampled(id: u32, version: u32, source: &Pixmap, size: Size) -> Option<Rc<Pixmap>> {
+pub fn resampled(id: u32, version: u32, source: &Pixmap, size: Size) -> Option<Rc<Pixmap>> {
     let key = (id, version, size);
     REDUCED.with_borrow_mut(|recent| {
         if let Some((_, known)) = recent.iter().find(|(known, _)| *known == key) {
@@ -920,4 +1274,48 @@ pub fn reduced_size(source: Size, width: f32, height: f32) -> Size {
 pub fn reduce(source: &Pixmap, width: f32, height: f32) -> Option<Pixmap> {
     let size = reduced_size(size_of(source), width, height);
     (size != size_of(source)).then(|| resample(source, size))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn animations_keep_no_memory_that_is_not_counted_after_a_pause() {
+        let [on_its_way, decoded, broken] = [2, 3, 4].map(|frames| {
+            let outline = Outline {
+                size: (2048, 2048),
+                ends: vec![Duration::from_millis(50); frames],
+                is_oriented: true,
+            };
+            let bitmap = Bitmap::deferred(outline, Vec::new()).unwrap();
+            let image = Arc::new(Image::Bitmap(Bitmap {
+                start: Instant::now() - Duration::from_secs(10),
+                ..bitmap
+            }));
+            IMAGES.lock().insert(next_id(), image.clone());
+            image
+        });
+        let [
+            Image::Bitmap(on_its_way),
+            Image::Bitmap(decoded),
+            Image::Bitmap(broken),
+        ] = [&*on_its_way, &*decoded, &*broken]
+        else {
+            unreachable!()
+        };
+        on_its_way.was_requested.store(true, Ordering::Relaxed);
+        *decoded.frames.lock() = Some(Arc::new(
+            decoded
+                .ends
+                .iter()
+                .map(|it| (Pixmap::new(2048, 2048).unwrap(), *it))
+                .collect(),
+        ));
+        broken.note_use();
+        broken.was_requested.store(true, Ordering::Relaxed);
+        broken.fitted.lock().stands_still = true;
+        assert_eq!(taken_for_playing(), on_its_way.bytes_of_frames());
+        assert!(decoded.frames.lock().is_none());
+    }
 }

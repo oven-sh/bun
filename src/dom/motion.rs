@@ -72,12 +72,12 @@ impl Document {
         let (it, container) = (&self.boxes[id], self.boxes[id].container);
         it.style.other_if_set(Id::OffsetPath)?;
         let area = |area| {
-            let RoundedRect { rect, radii } = self
+            let shape = self
                 .frame_of(container, self.border_box(container))
                 .area(area);
             RoundedRect {
-                rect: rect.moved(self.offset_in_container(id).map(|it| -it)),
-                radii,
+                rect: shape.rect.moved(self.offset_in_container(id).map(|it| -it)),
+                ..shape
             }
         };
         let contour = |area: BoxArea| {

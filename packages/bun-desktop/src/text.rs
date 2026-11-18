@@ -23,7 +23,14 @@ mod shaper;
 mod woff;
 mod words;
 
-pub use fonts::{Description, Levels, Palette, Recipe, describe, face, levels, metrics, prewarm};
+pub use decoded::{keep_font, map_file, open_stored, store_for};
+pub use fonts::{
+    Description, Levels, Palette, Recipe, describe, face, generation, levels, metrics, prewarm,
+};
+pub use fonts::{
+    Origin, fallback_family, family_named, file_of, font_named, fonts_of, generic_family,
+    import_face, listed_file, open_font,
+};
 pub use fonts::{
     decode_font, decode_font_later, drop_font_scope, font_families, order_font, register_font,
     unregister_font,

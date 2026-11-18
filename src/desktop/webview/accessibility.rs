@@ -615,7 +615,7 @@ impl Tree {
         let selected = ends.map(|it| places.get(&it).map_or("", |it| &it.text));
         __bun_dom_submit_remote_accessibility(
             view.image,
-            1. / view.scale,
+            view.magnified.get() / view.scale,
             head,
             selected,
             &ids,

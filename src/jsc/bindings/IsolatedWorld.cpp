@@ -308,7 +308,7 @@ const ClassInfo Constructor::s_info = { "Function"_s, &Base::s_info, nullptr, nu
 
 static bool isInterfaceCell(JSObject* object)
 {
-    return object->type() == Bindgen::JSInterfaceObject<0>::cellType || object->type() == Bindgen::JSInterfaceObject<2>::cellType;
+    return object->type() == Bindgen::JSInterfaceObject<0>::cellType || object->type() == Bindgen::JSInterfaceObject<2>::cellType || object->type() == Bindgen::JSInterfaceList::cellType;
 }
 
 static JSGlobalObject* asGlobalObject(JSObject* object)

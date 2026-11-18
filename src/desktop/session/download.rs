@@ -8,7 +8,7 @@ use bun_web::headers::HeaderList;
 use bun_web::net::body::Body;
 use bun_web::net::fetch::{Controller, Observer};
 use bun_web::origin::Origin;
-use bun_web::request::{Credentials, Destination, Mode};
+use bun_web::request::{Credentials, Destination, Mode, Request};
 use bun_web::time::wall_now;
 use bun_web::url::{Url, percent_decode};
 
@@ -163,8 +163,7 @@ impl Session {
         options: JsLocal<'a>,
     ) -> JsResult<()> {
         let headers = from_record(&wire::data_from_js(options.to_js())?["headers"]);
-        self.download(&string(url), headers, JSValue::UNDEFINED, None);
-        Ok(())
+        self.download(&string(url), headers, JSValue::UNDEFINED, None)
     }
 
     pub(crate) fn download(
@@ -173,10 +172,21 @@ impl Session {
         headers: HeaderList,
         contents: JSValue,
         wish: Option<Wish>,
+    ) -> JsResult<()> {
+        match request_for(url) {
+            Ok(request) => self.download_with(request, headers, contents, wish),
+            Err(error) => warn(&format!("Failed to download {url}: {}", error.message()))?,
+        }
+        Ok(())
+    }
+
+    fn download_with(
+        &self,
+        mut request: Request,
+        headers: HeaderList,
+        contents: JSValue,
+        wish: Option<Wish>,
     ) {
-        let Ok(mut request) = request_for(url) else {
-            return;
-        };
         request.headers = headers;
         let origin = (wish.as_ref()).map(|it| Origin::from_serialized(it.origin.as_bytes()));
         if let (Some(wish), Some(origin)) = (&wish, &origin) {

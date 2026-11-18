@@ -14,6 +14,11 @@ use bun_threading::Guarded;
 use crate::exec::Thread;
 use crate::wire;
 
+#[path = "channel_far.rs"]
+pub(crate) mod far;
+#[path = "channel_flat.rs"]
+mod flat;
+
 bun_opaque::opaque_ffi! { struct SerializedScriptValue; }
 
 unsafe extern "C" {
@@ -53,6 +58,9 @@ enum Form {
     /// No cell.
     Immediate(usize),
     Wire(Arc<Wire>),
+    Flat(Arc<flat::Flat>),
+    /// It could not leave the process that it is from.
+    Unreadable,
 }
 
 #[derive(Clone)]
@@ -89,9 +97,30 @@ impl Serialized {
         )))))
     }
 
+    /// Of data alone, for another process.
+    pub fn of_data(global: &JSGlobalObject, value: JSValue) -> JsResult<Serialized> {
+        if let Some(immediate) = Serialized::immediate(value) {
+            return Ok(immediate);
+        }
+        let how = bun_jsc::SerializedFlags {
+            for_cross_process_transfer: true,
+            for_storage: false,
+        };
+        let bytes = value.serialize(global, how)?.data().to_vec();
+        Ok(Serialized(Form::Flat(Arc::new(flat::Flat::trusting(
+            bytes,
+        )))))
+    }
+
+    fn unreadable() -> Serialized {
+        Serialized(Form::Unreadable)
+    }
+
     pub fn deserialize(&self, global: &JSGlobalObject, objects: &[JSValue]) -> JsResult<JSValue> {
         match &self.0 {
             Form::Immediate(value) => Ok(JSValue::from_encoded(*value)),
+            Form::Flat(value) => value.deserialize(global, objects),
+            Form::Unreadable => Err(flat::unreadable(global)),
             // SAFETY: as in `new`.
             Form::Wire(wire) => from_js_host_call(global, || unsafe {
                 Bun__SerializedScriptValue__deserialize(
@@ -143,19 +172,7 @@ impl Message {
     }
 }
 
-thread_local! {
-    static IN_TRANSIT: ManuallyDrop<RefCell<Vec<Message>>> = ManuallyDrop::default();
-}
-
-impl wire::Wire for Message {
-    fn write(self, _: &mut wire::Writer) {
-        IN_TRANSIT.with(|it| it.borrow_mut().push(self));
-    }
-
-    fn read(_: &mut wire::Reader<'_>) -> wire::Result<Message> {
-        IN_TRANSIT.with(|it| it.borrow_mut().pop().ok_or(wire::Malformed))
-    }
-}
+crate::wire!(impl Message { value, transferred, kind });
 
 impl From<Serialized> for Message {
     fn from(value: Serialized) -> Message {
@@ -177,6 +194,8 @@ struct Side {
     inbox: VecDeque<Arrival>,
     is_closed: bool,
     listener: Option<(Thread, u64)>,
+    /// It is in another process, by that number.
+    carrier: Option<(wire::Peer, u32)>,
 }
 
 type Listener = Rc<dyn Fn()>;
@@ -207,6 +226,11 @@ impl Address {
         if side.is_closed {
             drop(side);
             return;
+        }
+        if let Some(carrier) = side.carrier {
+            side.carrier.take_if(|_| is_end);
+            side.is_closed = is_end;
+            return far::pass_on(carrier, arrival);
         }
         side.inbox.push_back(arrival);
         let Some((thread, id)) = side.listener.clone() else {

@@ -303,7 +303,7 @@ fn dashed_ident_to_css(
 /// optimization — omitting it diverges output (e.g. `@media not all
 /// { a{color:red} }` must be removed).
 impl<'bump, R> media::MediaRule<'bump, R> {
-    pub fn minify(
+    pub(crate) fn minify(
         &mut self,
         context: &mut MinifyContext<'_, 'bump>,
         parent_is_unused: bool,
@@ -395,7 +395,7 @@ impl<'bump, R> CssRuleList<'bump, R> {
         Ok(previous)
     }
 
-    pub fn minify(
+    pub(crate) fn minify(
         &mut self,
         context: &mut MinifyContext<'_, 'bump>,
         parent_is_unused: bool,
@@ -407,7 +407,7 @@ impl<'bump, R> CssRuleList<'bump, R> {
     }
 
     /// `enclosing`: the handler context of the style rule that owns this list.
-    pub fn minify_nested(
+    pub(crate) fn minify_nested(
         &mut self,
         context: &mut MinifyContext<'_, 'bump>,
         parent_is_unused: bool,
@@ -613,7 +613,7 @@ impl<'bump, R> CssRuleList<'bump, R> {
         Ok(())
     }
 
-    pub fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: css::generics::DeepClone<'bump>,
     {
@@ -880,7 +880,7 @@ fn split_off_nested_rules<'bump, R>(
 /// the equality check in `StyleRuleKeyMap::remove_duplicate`, which receives
 /// the live `&[CssRule<R>]` slice explicitly at the call site.
 #[derive(Clone, Copy)]
-pub struct StyleRuleKey {
+pub(crate) struct StyleRuleKey {
     index: usize,
     hash: u64,
 }
@@ -902,7 +902,7 @@ impl StyleRuleKey {
 /// against an explicitly-passed `&[CssRule<R>]` so we never smuggle a stale
 /// raw pointer across `&mut rules` writes (see the note on `StyleRuleKey`).
 #[derive(Default)]
-pub struct StyleRuleKeyMap {
+pub(crate) struct StyleRuleKeyMap {
     buckets: bun_collections::HashMap<u64, Vec<usize>>,
     /// Inserted keys in index order. A popped rule may no longer hash to the bucket that holds it.
     keys: Vec<StyleRuleKey>,
@@ -974,7 +974,7 @@ impl StyleRuleKeyMap {
 /// whenever the last rule changes and updated incrementally on selector
 /// merges (the merged result is compatible iff both inputs were).
 #[derive(Default)]
-pub struct StyleRuleMergeState {
+pub(crate) struct StyleRuleMergeState {
     pending_minify: bool,
     last_compat: Option<bool>,
 }
@@ -1176,10 +1176,10 @@ pub use crate::Location;
 /// Nesting cursor of the rule printers — linked list of parent selector lists used to
 /// resolve `&` during serialization.
 pub struct StyleContext<'a, 'bump> {
-    pub selectors: &'a crate::selectors::SelectorList<'bump>,
-    pub parent: Option<&'a StyleContext<'a, 'bump>>,
+    pub(crate) selectors: &'a crate::selectors::SelectorList<'bump>,
+    pub(crate) parent: Option<&'a StyleContext<'a, 'bump>>,
     /// The vendor prefix pass in which the rule of `selectors` prints its block.
-    pub vendor_prefix: crate::VendorPrefix,
+    pub(crate) vendor_prefix: crate::VendorPrefix,
 }
 
 /// Upper bound on the number of selectors that compiling nested rules away for
@@ -1194,7 +1194,7 @@ pub struct StyleContext<'a, 'bump> {
 /// expanded selectors already corresponds to megabytes of output — so exceeding
 /// it is reported as a `selector_expansion_limit_exceeded` minify error
 /// instead.
-pub const MAX_SELECTOR_EXPANSION: u32 = 65_536;
+pub(crate) const MAX_SELECTOR_EXPANSION: u32 = 65_536;
 
 /// Per-stylesheet minification state threaded through `CssRuleList::minify`
 /// and every leaf rule's `minify`.
@@ -1207,35 +1207,35 @@ pub const MAX_SELECTOR_EXPANSION: u32 = 65_536;
 // making `Stylesheet::minify`'s stack-local handlers unusable.
 pub struct MinifyContext<'a, 'bump> {
     /// Arena that owns the AST being minified (same arena it was parsed into).
-    pub arena: &'bump bun_alloc::Arena,
-    pub targets: &'a css::targets::Targets,
-    pub handler: &'a mut css::DeclarationHandler<'bump>,
-    pub important_handler: &'a mut css::DeclarationHandler<'bump>,
-    pub handler_context: css::PropertyHandlerContext<'a, 'bump>,
+    pub(crate) arena: &'bump bun_alloc::Arena,
+    pub(crate) targets: &'a css::targets::Targets,
+    pub(crate) handler: &'a mut css::DeclarationHandler<'bump>,
+    pub(crate) important_handler: &'a mut css::DeclarationHandler<'bump>,
+    pub(crate) handler_context: css::PropertyHandlerContext<'a, 'bump>,
     /// Class/id names known to be unused (tree-shaking input).
     // `selector::is_unused` currently borrows `&ArrayHashMap<&[u8], ()>`; the
     // owning `MinifyOptions` stores `Box<[u8]>` keys — reconcile to a
     // single key type with `Borrow<[u8]>` lookup.
-    pub unused_symbols: &'a bun_collections::ArrayHashMap<Box<[u8]>, ()>,
+    pub(crate) unused_symbols: &'a bun_collections::ArrayHashMap<Box<[u8]>, ()>,
     /// Pre-scanned `@custom-media` definitions, if the feature is enabled.
-    pub custom_media:
+    pub(crate) custom_media:
         Option<bun_collections::ArrayHashMap<Box<[u8]>, custom_media::CustomMediaRule<'bump>>>,
-    pub extra: &'a css::StylesheetExtra,
-    pub css_modules: bool,
+    pub(crate) extra: &'a css::StylesheetExtra,
+    pub(crate) css_modules: bool,
     /// First minification error encountered (surfaced out-of-band).
-    pub err: Option<css::error::MinifyError>,
+    pub(crate) err: Option<css::error::MinifyError>,
     /// How many copies of the current rule's selectors compiling the enclosing
     /// nesting for the targets will produce — the product of the enclosing
     /// style rules' selector-list lengths. `1` at the top level.
-    pub selector_expansion_multiplier: u32,
+    pub(crate) selector_expansion_multiplier: u32,
     /// Running total of selectors that compiling nested rules for the targets
     /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
-    pub selector_expansion_total: u32,
+    pub(crate) selector_expansion_total: u32,
 }
 
 impl MinifyContext<'_, '_> {
     /// See `StyleRule::charge_selector_expansion`. The rule at `loc` prints `selectors` selectors.
-    pub fn charge_selector_expansion(
+    pub(crate) fn charge_selector_expansion(
         &mut self,
         selectors: u32,
         loc: Location,

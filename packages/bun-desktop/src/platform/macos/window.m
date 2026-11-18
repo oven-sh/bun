@@ -177,6 +177,9 @@ static bool isFullscreen(NSWindow* window) { return window.styleMask & NSWindowS
     /// Refreshes are not worth waking up for until then.
     _Atomic CFTimeInterval restsUntil, lastRefresh;
     NSHashTable<BunDesktopView*>* listeners;
+    /// Timers are punctual while something moves.
+    id activity;
+    unsigned ticksInARow;
 }
 
 #pragma clang diagnostic push
@@ -198,7 +201,10 @@ static CVReturn displayIsReady(CVDisplayLinkRef link, const CVTimeStamp* now, co
 static void tickAll(void* context)
 {
     @autoreleasepool {
-        for (BunDesktopView* view in ((__bridge BunDesktopClock*)context)->listeners.allObjects)
+        BunDesktopClock* clock = (__bridge BunDesktopClock*)context;
+        if (++clock->ticksInARow == 8 && CVDisplayLinkIsRunning(clock->link))
+            clock->activity = [NSProcessInfo.processInfo beginActivityWithOptions:NSActivityLatencyCritical reason:@"Animation"];
+        for (BunDesktopView* view in clock->listeners.allObjects)
             [view tick:nil];
     }
 }
@@ -244,8 +250,14 @@ static void tickAll(void* context)
 - (void)remove:(BunDesktopView*)view
 {
     [listeners removeObject:view];
-    if (!listeners.anyObject && CVDisplayLinkIsRunning(link))
+    if (listeners.anyObject)
+        return;
+    if (CVDisplayLinkIsRunning(link))
         CVDisplayLinkStop(link);
+    if (activity)
+        [NSProcessInfo.processInfo endActivity:activity];
+    activity = nil;
+    ticksInARow = 0;
 }
 
 #pragma clang diagnostic pop
@@ -581,11 +593,13 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
 
 - (void)paintBackground
 {
-    bool isOpaque = background.tag == BDBackgroundOpaque;
     uint32_t color = backgroundColor.value;
+    // The shadow of a clear window is computed again for every frame.
+    bool isFilled = background.tag == BDBackgroundTransparent && backgroundColor.has && (color & 255) == 255;
+    bool isOpaque = background.tag == BDBackgroundOpaque || isFilled;
     if (!claimedColor || [claimedColor isEqual:owned.backgroundColor]) {
         owned.opaque = isOpaque;
-        // The blur hides it, and the shadow of a clear window is computed again for every frame.
+        // The blur hides it.
         if (background.tag == BDBackgroundBlurred)
             owned.backgroundColor = NSColor.windowBackgroundColor;
         else if (!isOpaque)
@@ -1366,7 +1380,9 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
         return NO;
     sentEquivalent = event;
     reportKey(event);
-    return bd_key(true);
+    // The item lights up, and VoiceOver names it.
+    bool edits = event.modifierFlags & NSEventModifierFlagCommand && [@"cvxz" containsString:event.charactersIgnoringModifiers.lowercaseString];
+    return bd_key(true) && !edits;
 }
 
 - (bool)sendPendingKey

@@ -8,16 +8,17 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::error::{Result, failure};
 use crate::protocol::{DragPhase, Event, Input, MouseAction, Reply, SystemEvent, WindowEvent};
+use crate::remote::{guest, pages};
 use crate::sync::Mutex;
 use crate::{diagnostics, host};
 
 static EVENTS: Mutex<VecDeque<Event>> = Mutex::new(VecDeque::new());
 
-/// How many `Frame` and `Resize` events were queued, and how many of them JavaScript took.
-static EMITTED: [AtomicU32; 2] = [const { AtomicU32::new(0) }; 2];
-static DRAINED: [AtomicU32; 2] = [const { AtomicU32::new(0) }; 2];
+/// How many `Frame`, `Resize` and `Bounds` events were queued, and how many of them JavaScript took.
+static EMITTED: [AtomicU32; 3] = [const { AtomicU32::new(0) }; 3];
+static DRAINED: [AtomicU32; 3] = [const { AtomicU32::new(0) }; 3];
 
-fn count(event: &Event, counters: &[AtomicU32; 2]) {
+fn count(event: &Event, counters: &[AtomicU32; 3]) {
     match event {
         Event::Surface {
             input: Input::Frame { .. },
@@ -27,17 +28,21 @@ fn count(event: &Event, counters: &[AtomicU32; 2]) {
             input: Input::Resize { .. },
             ..
         } => counters[1].fetch_add(1, Ordering::Relaxed),
+        Event::Window {
+            event: WindowEvent::Bounds(_),
+            ..
+        } => counters[2].fetch_add(1, Ordering::Relaxed),
         _ => 0,
     };
 }
 
-pub fn emitted() -> [u32; 2] {
+pub fn emitted() -> [u32; 3] {
     EMITTED
         .each_ref()
         .map(|counter| counter.load(Ordering::Relaxed))
 }
 
-pub fn taken() -> [u32; 2] {
+pub fn taken() -> [u32; 3] {
     DRAINED
         .each_ref()
         .map(|counter| counter.load(Ordering::Relaxed))
@@ -85,11 +90,20 @@ pub fn has_events_but_frames() -> bool {
 pub fn drain(buffer: &mut [MaybeUninit<Event>]) -> usize {
     let mut events = EVENTS.lock();
     if events.len() == 1 && is_frame(&events[0]) {
-        host::thread::hold_jobs();
+        if guest::is_on() {
+            guest::hold()
+        } else {
+            host::thread::hold_jobs()
+        }
     }
     let length = events.len().min(buffer.len());
     for (event, slot) in events.drain(..length).zip(buffer) {
-        EDITS_TAKEN.fetch_add(is_edit(&event).into(), Ordering::Relaxed);
+        match &event {
+            Event::Message { from: 0, message } => {
+                EDITS_TAKEN.store(message.edits, Ordering::Relaxed)
+            }
+            event => drop(EDITS_TAKEN.fetch_add(is_edit(event).into(), Ordering::Relaxed)),
+        }
         crate::diagnostics::trace!("JavaScript takes {:.60}", format!("{event:?}"));
         count(&event, &DRAINED);
         slot.write(event);
@@ -170,7 +184,9 @@ fn replaces(new: &Event, old: &Event) -> bool {
 pub fn emit(event: Event) {
     let (is_replaceable_now, mut is_frequent, mut is_awaited) =
         (is_replaceable(&event), false, is_edit(&event));
-    if let Event::Surface { input, .. } = &event {
+    if let Event::Message { .. } = &event {
+        is_frequent = true;
+    } else if let Event::Surface { input, .. } = &event {
         is_frequent = matches!(
             input,
             Input::Frame { .. }
@@ -224,7 +240,9 @@ pub fn emit(event: Event) {
 }
 
 pub fn emit_input(surface: u32, input: Input) {
-    emit(Event::Surface { id: surface, input });
+    if !pages::exist() || !pages::tell(surface, &input) {
+        emit(Event::Surface { id: surface, input });
+    }
 }
 
 pub fn emit_system(event: SystemEvent) {

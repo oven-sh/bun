@@ -13,7 +13,7 @@ void* bd_surface_create(int32_t width, int32_t height)
             IOSurfacePropertyKeyWidth : @(width),
             IOSurfacePropertyKeyHeight : @(height),
             IOSurfacePropertyKeyBytesPerElement : @4,
-            IOSurfacePropertyKeyBytesPerRow : @(width * 4),
+            IOSurfacePropertyKeyBytesPerRow : @((width * 4 + 63) & ~63),
             IOSurfacePropertyKeyPixelFormat : @((OSType)'BGRA'),
         }];
         if (surface)
@@ -100,12 +100,13 @@ void bd_layer_blink(void* pointer, uint32_t rgba, double secondsAgo, bool blinks
     }
 }
 
-void bd_layer_clip(void* pointer, double radius, float opacity, double order)
+void bd_layer_clip(void* pointer, double radius, bool isSmooth, float opacity, double order)
 {
     CALayer* layer = (__bridge CALayer*)pointer;
     layer.opaque = NO;
     layer.masksToBounds = YES;
     layer.cornerRadius = radius;
+    layer.cornerCurve = isSmooth ? kCACornerCurveContinuous : kCACornerCurveCircular;
     layer.opacity = opacity;
     layer.zPosition = order;
 }

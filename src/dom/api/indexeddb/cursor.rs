@@ -9,6 +9,7 @@ pub(crate) struct IDBCursor {
     position: RefCell<Option<Key>>,
     /// <https://w3c.github.io/IndexedDB/#cursor-got-value-flag>
     got_value: Cell<bool>,
+    ahead: RefCell<stored::Ahead>,
 }
 
 impl IDBCursor {
@@ -26,6 +27,7 @@ impl IDBCursor {
             has_value,
             position: None.into(),
             got_value: false.into(),
+            ahead: RefCell::default(),
         };
         let this: &IDBCursor = if has_value {
             js_IDBCursorWithValue::create(heap, made)
@@ -79,15 +81,26 @@ impl IDBCursor {
             ]
             .iter()
             .for_each(|set| set(self, JSValue::UNDEFINED));
+            self.ahead.take();
             return Ok(JSValue::NULL);
         };
         js_IDBCursor::set_key(self, value_of_key(&cx.heap, &entry)?);
         js_IDBCursor::set_primary_key(self, value_of_key(&cx.heap, source.primary_key(&entry))?);
         if self.has_value {
-            js_IDBCursor::set_value(
-                self,
-                transaction.read(cx, source.store.table, source.primary_key(&entry))?,
-            );
+            let walk = stored::Walk {
+                store: source.store.table,
+                index: source.index.as_ref().map(|it| it.table),
+                range: &self.range,
+                direction,
+            };
+            let mut ahead = self.ahead.take();
+            let written = transaction.stored(cx, |it| it.read_at(&walk, &entry, &mut ahead))?;
+            let value = JSValue::deserialize(
+                written.as_deref().unwrap_or_else(|| ahead.value()),
+                cx.global(),
+            )?;
+            self.ahead.replace(ahead);
+            js_IDBCursor::set_value(self, value);
         }
         self.position.replace(Some(entry));
         self.got_value.set(true);

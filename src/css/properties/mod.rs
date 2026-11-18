@@ -317,7 +317,7 @@ mod generic_registrations {
     /// Indirection so the `generic::{Parse,ToCss}` impls above don't have to
     /// repeat `GenericBorder`'s `S`-bounds (which name the same protocol
     /// traits and would otherwise create a coherence cycle).
-    pub trait GenericBorderImpl: Sized {
+    pub(crate) trait GenericBorderImpl: Sized {
         fn parse<'bump>(
             input: &mut crate::css_parser::Parser<'_, 'bump>,
         ) -> crate::css_parser::CssResult<'bump, Self>;
@@ -327,4 +327,4 @@ mod generic_registrations {
         ) -> ::core::result::Result<(), crate::PrintErr>;
     }
 }
-pub use generic_registrations::GenericBorderImpl;
+pub(crate) use generic_registrations::GenericBorderImpl;

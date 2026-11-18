@@ -253,7 +253,9 @@ impl LayoutBox {
         ] {
             *edges = Edges::new(to.turn_sides(&from.physical_sides(&edges.to_array())));
         }
-        self.collapsed.iter_mut().for_each(|it| moved(it, from, to));
+        self.collapsed
+            .iter_mut()
+            .for_each(|it| moved(Rc::make_mut(it), from, to));
     }
 }
 

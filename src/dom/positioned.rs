@@ -82,9 +82,17 @@ impl Document {
             let (wanted, kind) = (wanted - it.claimed_by_inline, it.out_of_flow());
             if wanted.intersects(kind) {
                 out.push(*child);
-            } else if kind.is_empty() {
+            } else if kind.is_empty() && !self.is_spanner(*child) {
                 self.collect_escapees(*child, wanted, out);
             }
+        }
+        if let (Kind::Columns, Some(flow)) = (self.boxes[id].kind, self.boxes[id].children.first())
+        {
+            let mut spanners = Vec::new();
+            self.spanners_in(*flow, &mut spanners);
+            spanners
+                .into_iter()
+                .for_each(|it| self.collect_escapees(it, wanted, out));
         }
     }
 
@@ -421,11 +429,7 @@ impl Document {
         let (style, size) = (Rc::clone(&it.style), [area.width, area.height]);
         let l = &style.layout;
         let parent = &self.boxes[it.parent];
-        let is_in_column = parent.kind == Kind::Flex
-            && matches!(
-                parent.style.layout.flex_direction,
-                FlexDirection::Column | FlexDirection::ColumnReverse
-            );
+        let is_in_column = parent.kind == Kind::Flex && parent.style.has_flex_columns();
         let swaps_alignment = is_in_column != (parent.mode.is_vertical() != mode.is_vertical());
         let insets = [(0, &l.left, &l.right), (1, &l.top, &l.bottom)].map(|(axis, start, end)| {
             let is_zero = has_area || center[axis].is_some();

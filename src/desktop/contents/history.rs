@@ -334,6 +334,7 @@ impl Contents {
         }
         page.restores_scroll
             .set(is_repeated && !navigation.starts_over);
+        page.is_from_history.set(matches!(how, How::Traverse(_)));
         let is_first = before.is_none() && !self.is_frame() && !matches!(how, How::Traverse(_));
         self.activation.replace(Some(Activation {
             kind: if is_first { How::Replace } else { how }.name().to_owned(),

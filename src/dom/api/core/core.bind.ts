@@ -15,6 +15,7 @@ const string = b.DOMString;
 const offset = b.u32.wrap;
 const nodes = { nodes: b.rest(b.any) };
 const onlyReads = true;
+const withoutFrame = true;
 const reflected = { getter: string, setter: js, ceReactions: true, onlyReads, ...heap } as const;
 
 export const DesktopEventListenerOptions = b.dictionary({ capture: b.bool.loose.default(false) }, { webidl: true });
@@ -113,7 +114,7 @@ export const Node = b.interface("Node", {
     isEqualNode: { args: { other: node.nullable }, returns: b.bool, rustName: "js_is_equal_node", ...runs },
     isSameNode: { args: { other: node.nullable }, returns: b.bool },
     compareDocumentPosition: { args: { other: node }, returns: b.i32 },
-    contains: { args: { other: node.nullable }, returns: b.bool, rustName: "js_contains" },
+    contains: { args: { other: node.nullable }, returns: b.bool, rustName: "js_contains", withoutFrame },
     lookupPrefix: { args: { namespace: string.nullable }, returns: string.nullable, ...allocates },
     lookupNamespaceURI: {
       args: { prefix: string.nullable },
@@ -122,10 +123,10 @@ export const Node = b.interface("Node", {
       ...allocates,
     },
     isDefaultNamespace: { args: { namespace: string.nullable }, returns: b.bool, ...allocates },
-    insertBefore: { args: { node, child: node.nullable }, returns: node, ...ce },
-    appendChild: { args: { node }, returns: node, ...ce },
-    replaceChild: { args: { node, child: node }, returns: node, ...ce },
-    removeChild: { args: { child: node }, returns: node, ...ce },
+    insertBefore: { args: { node, child: node.nullable }, returns: node, withoutFrame, ...ce },
+    appendChild: { args: { node }, returns: node, withoutFrame, ...ce },
+    replaceChild: { args: { node, child: node }, returns: node, withoutFrame, ...ce },
+    removeChild: { args: { child: node }, returns: node, withoutFrame, ...ce },
   },
 });
 
@@ -140,11 +141,18 @@ export const ParentNode = b.mixin("ParentNode", {
     append: { args: nodes, unscopable: true, ...ce },
     replaceChildren: { args: nodes, unscopable: true, ...ce },
     moveBefore: { args: { node, child: node.nullable }, ...ce },
-    querySelector: { args: { selectors: string }, returns: element.nullable, rustName: "js_query_selector", ...js },
+    querySelector: {
+      args: { selectors: string },
+      returns: element.nullable,
+      rustName: "js_query_selector",
+      withoutFrame,
+      ...js,
+    },
     querySelectorAll: {
       args: { selectors: string },
       returns: b.ref("NodeList"),
       rustName: "js_query_selector_all",
+      withoutFrame,
       ...js,
     },
   },
@@ -153,14 +161,14 @@ export const ParentNode = b.mixin("ParentNode", {
 export const ElementLookups = b.mixin("ElementLookups", {
   on: Node,
   proto: {
-    getElementsByTagName: { args: { qualifiedName: string.atom }, returns: b.any, ...heap },
+    getElementsByTagName: { args: { qualifiedName: string.atom }, returns: b.any, withoutFrame, ...heap },
     getElementsByTagNameNS: {
       args: { namespace: string.atom.nullable, localName: string.atom },
       returns: b.ref("HTMLCollection"),
       rustName: "get_elements_by_tag_name_ns",
       ...heap,
     },
-    getElementsByClassName: { args: { classNames: string.atom }, returns: b.any, ...heap },
+    getElementsByClassName: { args: { classNames: string.atom }, returns: b.any, withoutFrame, ...heap },
   },
 });
 
@@ -175,7 +183,7 @@ export const ChildNode = b.mixin("ChildNode", {
     before: { args: nodes, unscopable: true, ...ce },
     after: { args: nodes, unscopable: true, ...ce },
     replaceWith: { args: nodes, unscopable: true, ...ce },
-    remove: { unscopable: true, ...ce },
+    remove: { unscopable: true, withoutFrame, ...ce },
   },
 });
 
@@ -325,13 +333,13 @@ export const DomElement = b.interface("DomElement", {
       rustName: "get_attribute_ns",
       ...js,
     },
-    setAttribute: { args: { qualifiedName: string, value: b.any }, ...ce },
+    setAttribute: { args: { qualifiedName: string, value: b.any }, withoutFrame, ...ce },
     setAttributeNS: {
       args: { namespace: string.nullable, qualifiedName: string, value: b.any },
       rustName: "set_attribute_ns",
       ...ce,
     },
-    removeAttribute: { args: { qualifiedName: string }, ...ce },
+    removeAttribute: { args: { qualifiedName: string }, withoutFrame, ...ce },
     removeAttributeNS: {
       args: { namespace: string.nullable, localName: string },
       rustName: "remove_attribute_ns",
@@ -355,9 +363,9 @@ export const DomElement = b.interface("DomElement", {
     setAttributeNode: { args: { attr }, returns: attr.nullable, ...ce },
     setAttributeNodeNS: { args: { attr }, returns: attr.nullable, rustName: "set_attribute_node", ...ce },
     removeAttributeNode: { args: { attr }, returns: attr, ...ce },
-    matches: { args: { selectors: string }, returns: b.bool, rustName: "js_matches", ...js },
+    matches: { args: { selectors: string }, returns: b.bool, rustName: "js_matches", withoutFrame, ...js },
     webkitMatchesSelector: { args: { selectors: string }, returns: b.bool, rustName: "js_matches", ...js },
-    closest: { args: { selectors: string }, returns: element.nullable, rustName: "js_closest", ...js },
+    closest: { args: { selectors: string }, returns: element.nullable, rustName: "js_closest", withoutFrame, ...js },
     insertAdjacentElement: { args: { position: string, element }, returns: element.nullable, ...ce },
     insertAdjacentText: { args: { position: string, data: string }, ...js },
     insertAdjacentHTML: { args: { position: string, string: b.any }, rustName: "insert_adjacent_html", ...ce },
@@ -412,6 +420,7 @@ export const Doc = b.interface("Doc", {
       args: { localName: string, options: b.any.omittable },
       returns: element,
       rustName: "js_create_element",
+      withoutFrame,
       ...ce,
     },
     createElementNS: {
@@ -421,8 +430,8 @@ export const Doc = b.interface("Doc", {
       ...ce,
     },
     customElementRegistry,
-    createDocumentFragment: { returns: b.ref("DocumentFragment"), ...heap },
-    createTextNode: { args: { data: string }, returns: b.ref("Text"), ...allocates },
+    createDocumentFragment: { returns: b.ref("DocumentFragment"), withoutFrame, ...heap },
+    createTextNode: { args: { data: string }, returns: b.ref("Text"), withoutFrame, ...allocates },
     createComment: { args: { data: string }, returns: node, rustName: "js_create_comment", ...allocates },
     createCDATASection: {
       args: { data: string },

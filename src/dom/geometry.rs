@@ -1,5 +1,7 @@
 //! Where boxes are.
 
+use core::cell::{Cell, RefCell};
+
 use crate::abi::{Matrix, Rect};
 use crate::boxes::{BoxId, Kind, VIEWPORT};
 use crate::document::Document;
@@ -9,7 +11,7 @@ use crate::layout::margin;
 use crate::layout::{at_least, at_most};
 use crate::lines::Fragment;
 use crate::name::{is_name, name};
-use crate::properties::Id;
+use crate::properties::{Id, Style};
 use crate::svg_values::TransformBox;
 use crate::tree::{DOCUMENT, Flags, NodeId};
 use crate::types::*;
@@ -213,6 +215,40 @@ impl Fragment {
     }
 }
 
+/// What `Style::transform` has returned since the styles last changed.
+#[derive(Default)]
+pub(crate) struct Matrices {
+    version: u64,
+    /// By the id of the box.
+    known: RefCell<Vec<((u64, usize, [f32; 2]), Matrix)>>,
+    displaced: Cell<usize>,
+}
+
+impl Matrices {
+    pub(crate) fn forget(&mut self) {
+        (self.version, *self.displaced.get_mut()) = (self.version + 1, 0);
+    }
+
+    fn of(&self, id: BoxId, style: &Style, size: [f32; 2]) -> Matrix {
+        const MOST: usize = 8192;
+        let (mut known, key) = (
+            self.known.borrow_mut(),
+            (self.version + 1, core::ptr::from_ref(style).addr(), size),
+        );
+        if known.is_empty() || self.displaced.get() > known.len() && known.len() < MOST {
+            self.displaced.set(0);
+            *known = vec![Default::default(); (known.len() * 4).max(32)];
+        }
+        let slot = id as usize & (known.len() - 1);
+        if known[slot].0 != key {
+            self.displaced
+                .update(|it| it + usize::from(known[slot].0.0 == key.0));
+            known[slot] = (key, style.transform(size[0], size[1]));
+        }
+        known[slot].1
+    }
+}
+
 impl Document {
     #[inline]
     pub(crate) fn border_box(&self, id: BoxId) -> Rect {
@@ -375,8 +411,8 @@ impl Document {
             });
         }
         (it.style.has_transform() && !it.is_foreign_object).then(|| {
-            it.style
-                .transform(it.layout.size.width, it.layout.size.height)
+            self.matrices
+                .of(id, &it.style, [it.layout.size.width, it.layout.size.height])
         })
     }
 
@@ -481,7 +517,9 @@ impl Document {
             if self.own_box(id).is_none_or(|it| self.boxes.is_parked(it)) {
                 continue;
             }
-            let is_near = self.locks.are_open || self.intersect(id, &mut root).is_some();
+            let is_near = self.locks.are_open
+                || self.intersect(id, &mut root).is_some()
+                || self.clip_margin_is_shown(id, &mut root);
             if known == Some(is_near)
                 && is_near != self.tree[id].has(Flags::SKIPPED)
                 && self.anchored.is_empty()
@@ -534,75 +572,114 @@ impl Document {
         }
         let mut rects = Vec::new();
         for (id, inline) in self.lines_with(node) {
-            rects.extend(
-                inline
-                    .fragments_of_node(node)
-                    .map(|it| (id, self.from_lines(id, it.rect()))),
-            );
+            match inline.has_text_in_place_of(node) {
+                true => rects.extend(
+                    inline
+                        .rects_in_place_of(node)
+                        .into_iter()
+                        .map(|it| (id, self.from_lines(id, it))),
+                ),
+                false => rects.extend(
+                    inline
+                        .fragments_of_node(node)
+                        .map(|it| (id, self.from_lines(id, it.rect()))),
+                ),
+            }
         }
-        if let (Some(first), Some(last)) =
-            (rects.first().map(|it| it.0), rects.last().map(|it| it.0))
+        let Some((first, last)) = rects
+            .first()
+            .zip(rects.last())
+            .map(|it| (it.0.0, it.1.0))
+            .filter(|it| it.0 != it.1)
+        else {
+            return rects;
+        };
+        let parent = self.boxes[first].parent;
+        let ([x, y, width, height], mode) = (self.content_box(parent), self.boxes[parent].mode);
+        let column = (!self.boxes.pieces.is_empty() && self.is_in_columns(first))
+            .then(|| mode.turn_axes(self.boxes[first].size())[0]);
+        let (mut on_lines, mut follows_block) =
+            (core::mem::take(&mut rects).into_iter().peekable(), false);
+        for &id in self.boxes[parent]
+            .children
+            .iter()
+            .skip_while(|it| **it != first)
+            .take_while(|it| **it != last)
         {
-            let (parent, is_block) = (self.boxes[first].parent, |id: &&BoxId| {
-                self.boxes[**id].kind != Kind::Lines
-            });
-            let between = self.boxes[parent]
-                .children
-                .iter()
-                .skip_while(|it| **it != first)
-                .take_while(|it| **it != last);
-            let ([x, y, width, height], mode) = (self.content_box(parent), self.boxes[parent].mode);
-            if !self.boxes.pieces.is_empty() && self.is_in_columns(first) {
-                let width = mode.turn_axes(self.boxes[first].size())[0];
-                for id in between
-                    .filter(is_block)
-                    .filter(|it| !self.boxes[**it].spans_columns())
-                {
-                    let (margin, whole) = (self.boxes[*id].layout.margin, [self.border_box(*id)]);
-                    let pieces = self.pieces(*id).map_or_else(
-                        || whole.to_vec(),
+            let (it, layout) = (&self.boxes[id], &self.boxes[id].layout);
+            match column {
+                _ if it.kind == Kind::Lines => {
+                    rects.extend(core::iter::from_fn(|| on_lines.next_if(|it| it.0 == id)))
+                }
+                Some(_) if it.spans_columns() => {}
+                Some(width) => {
+                    let pieces = self.pieces(id).map_or_else(
+                        || vec![self.border_box(id)],
                         |it| it.iter().map(|it| it.rect).collect(),
                     );
                     rects.extend(pieces.into_iter().map(|it| match mode.is_vertical() {
                         true => (
-                            *id,
+                            id,
                             Rect {
-                                y: it.y - margin.top,
+                                y: it.y - layout.margin.top,
                                 height: width,
                                 ..it
                             },
                         ),
                         false => (
-                            *id,
+                            id,
                             Rect {
-                                x: it.x - margin.left,
+                                x: it.x - layout.margin.left,
                                 width,
                                 ..it
                             },
                         ),
                     }));
                 }
-                return rects;
-            }
-            rects.extend(between.filter(is_block).map(|id| {
-                let layout = &self.boxes[*id].layout;
-                match mode.is_vertical() {
-                    true => (
-                        *id,
-                        Rect::new([0.0, y - layout.location.y, layout.size.width, height]),
-                    ),
-                    false => (
-                        *id,
-                        Rect::new([x - layout.location.x, 0.0, width, layout.size.height]),
-                    ),
+                None => {
+                    let (origin, [left, top]) = (
+                        self.boxes[first].layout.location,
+                        crate::lines::relative_offset(&it.style, width, Some(height)),
+                    );
+                    let rect = match mode.is_vertical() {
+                        true => Rect::new([
+                            layout.location.x - left - origin.x,
+                            y - origin.y,
+                            layout.size.width,
+                            height,
+                        ]),
+                        false => Rect::new([
+                            x - origin.x,
+                            layout.location.y - top - origin.y,
+                            width,
+                            layout.size.height,
+                        ]),
+                    };
+                    match rects.last_mut().filter(|_| follows_block) {
+                        Some((_, it)) => {
+                            *it = Rect::from_edges(
+                                it.x.min(rect.x),
+                                it.y.min(rect.y),
+                                it.right().max(rect.right()),
+                                it.bottom().max(rect.bottom()),
+                            )
+                        }
+                        None => rects.push((first, rect)),
+                    }
                 }
-            }));
+            }
+            follows_block = it.kind != Kind::Lines;
         }
+        rects.extend(on_lines);
         rects
     }
 
     pub(crate) fn client_rects(&self, node: NodeId) -> Vec<Rect> {
-        let rects = self.local_rects(node);
+        let rects = if self.tree.html_tag(node) == name!("wbr") && self.own_box(node).is_none() {
+            Vec::new()
+        } else {
+            self.local_rects(node)
+        };
         rects
             .iter()
             .map(|(id, rect)| self.map_to_viewport(*id, *rect))
@@ -727,11 +804,7 @@ impl Document {
 
     /// Without transforms and scrolling.
     pub(crate) fn layout_rects(&self, node: NodeId) -> Vec<Rect> {
-        let rects = self.own_box(node).map_or_else(
-            || self.local_rects(node),
-            |own| vec![(own, self.border_box(own))],
-        );
-        rects
+        self.local_rects(node)
             .into_iter()
             .map(|(id, rect)| rect.moved(self.layout_position(id)))
             .collect()
@@ -747,6 +820,9 @@ impl Document {
             return [0.0; 5];
         };
         let parent = self.offset_parent(node);
+        if is_name!(self.tree.html_tag(node), "br" | "wbr") && self.own_box(node).is_none() {
+            return [parent as f32, 0.0, 0.0, 0.0, 0.0];
+        }
         let is_static_body = parent == self.tree.body()
             && self
                 .tree
@@ -927,6 +1003,21 @@ impl Document {
             rect = rect.union(&other.transformed(&self.to_container(*id)));
         }
         self.shown_part(at, rect, root)
+    }
+
+    fn clip_margin_is_shown(&self, node: NodeId, root: &mut ObservedRoot) -> bool {
+        let own = self
+            .own_box(node)
+            .filter(|it| self.boxes[*it].style.effects.clip_margin.1 > 0.0);
+        own.and_then(|own| {
+            self.shown_part(
+                own,
+                self.overflow_clip(own)?
+                    .transformed(&self.to_container(own)),
+                root,
+            )
+        })
+        .is_some()
     }
 
     /// `rect` is in the viewport of a frame. With what maps that to this one.

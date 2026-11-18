@@ -98,6 +98,7 @@ pub(crate) struct Ui {
     pub(crate) has_spell_checker: bool,
     /// Its invalid forms and fieldsets are among `dirty_controls`.
     pub(crate) scope_of_dirty_groups: Cell<usize>,
+    pub(crate) radios: Box<crate::api::forms::input::Radios>,
     pub(crate) focus: focus::Focus,
     pub(crate) assistive: assistive::Assistive,
     pub(crate) activation: activation::Activation,

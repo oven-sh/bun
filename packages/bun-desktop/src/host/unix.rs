@@ -49,9 +49,14 @@ pub fn wake() {
     WAKE.write();
 }
 
-/// Returns whether `source` is readable. The system puts off the end of a `select` or a `poll` by up to 75 ms to save energy.
+/// Returns whether `source` is readable, and keeps the `others` that are. The system puts off the end of a `select` or a `poll` by up to 75 ms to save energy.
 #[cfg(target_os = "macos")]
-pub fn poll(pipe: &Pipe, source: Option<isize>, timeout: Option<Duration>) -> bool {
+pub fn poll(
+    pipe: &Pipe,
+    source: Option<isize>,
+    others: &mut Vec<i32>,
+    timeout: Option<Duration>,
+) -> bool {
     use std::cell::Cell;
     let change = |fd: isize, flags| libc::kevent {
         ident: fd as usize,
@@ -70,7 +75,12 @@ pub fn poll(pipe: &Pipe, source: Option<isize>, timeout: Option<Duration>) -> bo
         tv_sec: it.as_secs() as _,
         tv_nsec: it.subsec_nanos() as _,
     });
-    let mut ready = [change(-1, 0); 2];
+    let once: Vec<_> = others
+        .iter()
+        .map(|it| change(*it as isize, libc::EV_ADD | libc::EV_ONESHOT))
+        .collect();
+    let mut ready: crate::small_vec::SmallVec<_, 4> =
+        std::iter::repeat_n(change(-1, 0), 2 + once.len()).collect();
     // SAFETY: arrays with their lengths.
     let count = unsafe {
         let apply = |queue, change| {
@@ -87,10 +97,10 @@ pub fn poll(pipe: &Pipe, source: Option<isize>, timeout: Option<Duration>) -> bo
         QUEUE.set((queue, source));
         libc::kevent(
             queue,
-            std::ptr::null(),
-            0,
+            once.as_ptr(),
+            once.len() as _,
             ready.as_mut_ptr(),
-            2,
+            ready.len() as _,
             timeout
                 .as_ref()
                 .map_or(std::ptr::null(), std::ptr::from_ref),
@@ -100,6 +110,7 @@ pub fn poll(pipe: &Pipe, source: Option<isize>, timeout: Option<Duration>) -> bo
     if is_ready(pipe.fd() as isize) {
         pipe.clear();
     }
+    others.retain(|fd| is_ready(*fd as isize));
     // A signal is for the event loop to look at.
     count < 0 || source.is_some_and(is_ready)
 }

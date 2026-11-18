@@ -8,12 +8,12 @@ use std::rc::Rc;
 
 use smallvec::SmallVec;
 
-use crate::calc::Node;
 use crate::calc::scope_random;
+use crate::calc::{Node, Unit};
 use crate::condition::{Actual, Condition, Feature, Subject};
 use crate::custom::{
     Changed, Customs, Entries, Function, Inherited, Lookup, Recent, Registry, Stack, Syntax, Text,
-    guarded, has_tainted_url, mark, style_query, untainted,
+    guarded, has_tainted_url, has_unit, mark, style_query, untainted,
 };
 use crate::declarations::InlineBlocks;
 use crate::document::{Document, Environment, Quirks};
@@ -90,6 +90,8 @@ impl HiddenStyles {
 #[repr(C)]
 pub(crate) struct RuleList {
     matched: Box<[Matched]>,
+    /// `Rule::mentions` of them.
+    pub(crate) mentions: u64,
     /// In `Stylist::lists`, or 0.
     key: u64,
     /// The address of the last block, once that has been amended.
@@ -179,8 +181,13 @@ pub(crate) struct Amendments {
 
 impl RuleList {
     fn new(matched: Box<[Matched]>, epoch: u32) -> RuleList {
+        let mentions = matched
+            .iter()
+            .filter_map(|it| it.rule.as_ref())
+            .fold(0, |all, it| all | it.mentions.get());
         RuleList {
             matched,
+            mentions,
             amended: Cell::new(0),
             key: 0,
             amended_block: 0,
@@ -195,6 +202,10 @@ impl RuleList {
             plan: OnceCell::new(),
             other_plans: OnceCell::new(),
         }
+    }
+
+    pub(crate) fn matched(&self) -> &[Matched] {
+        &self.matched
     }
 
     fn has_important(&self) -> bool {
@@ -311,6 +322,25 @@ impl RuleList {
         plan.get_or_init(|| Box::new(Plan::new(&self.matched, flow, &[])))
     }
 
+    pub(crate) fn has_same_winners(&self, other: &RuleList) -> bool {
+        let winners = |it: &RuleList| {
+            let (plan, address) = (it.plan(Flow::DEFAULT), |at: At| {
+                (Rc::as_ptr(&it.matched[usize::from(at.0)].block), at.1)
+            });
+            (
+                plan.longhands
+                    .iter()
+                    .map(|it| (it.0, address(it.1)))
+                    .collect::<Vec<_>>(),
+                plan.customs
+                    .iter()
+                    .map(|it| (it.0, address(it.1)))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        winners(self) == winners(other)
+    }
+
     fn declaration(&self, at: At) -> (&Declaration, &Block) {
         let block = &self.matched[usize::from(at.0)].block;
         (&block.declarations().list[usize::from(at.1)], block)
@@ -339,7 +369,7 @@ pub(crate) struct Stylist {
     pub(crate) registry: Registry,
     pub(crate) dependencies: RefCell<Dependencies>,
     pub(crate) has_results: HasResults,
-    /// What each container has been asked.
+    /// What each container has been asked, in the order of the addresses.
     pub(crate) answers: RefCell<Map<NodeId, Vec<(Rc<Wanted>, bool)>>>,
     pub(crate) initial: Rc<Style>,
     anonymous_block: Rc<crate::properties::Layout>,
@@ -519,9 +549,25 @@ impl Stylist {
     fn intern_all<'a>(&self, found: impl Iterator<Item = &'a Matched> + Clone) -> Rc<RuleList> {
         let mut hasher = FastHasher::default();
         for it in found.clone() {
-            (Rc::as_ptr(&it.block), it.level, it.layer, it.only).hash(&mut hasher);
+            (
+                it.rule
+                    .as_ref()
+                    .map_or_else(|| Rc::as_ptr(&it.block).addr(), |it| Rc::as_ptr(it).addr()),
+                it.level,
+                it.layer,
+                it.only,
+            )
+                .hash(&mut hasher);
         }
-        let identity = |it: &Matched| (Rc::as_ptr(&it.block), it.level, it.layer, it.only);
+        let identity = |it: &Matched| {
+            (
+                Rc::as_ptr(&it.block),
+                it.rule.as_ref().map(Rc::as_ptr),
+                it.level,
+                it.layer,
+                it.only,
+            )
+        };
         let same = |list: &RuleList| {
             list.matched
                 .iter()
@@ -705,6 +751,7 @@ impl Subject for Container<'_> {
                     style_query(
                         condition,
                         &mut self.document.resolver(self.id, &self.style.customs, cx),
+                        true,
                     )
                 }),
         }
@@ -739,6 +786,7 @@ bitflags::bitflags! {
         /// So it takes the room of the image, if that is known.
         const LACKS_ALT = 1 << 18;
         const REPRESENTS_NOTHING = 1 << 19;
+        const OUTSIDE_MARKER = 1 << 21;
     }
 }
 
@@ -816,11 +864,32 @@ struct Resolver<'a> {
     declared: Vec<(Name, Pending<'a>)>,
     /// Those whose values have turned out to revert.
     reverting: Vec<(Name, Wide)>,
+    /// They depend on the property that is being resolved as `Name::NONE`.
+    relative_units: &'a [Unit],
+    /// Those that are in a cycle with it.
+    relative: Vec<Name>,
     cx: &'a Ctx<'a>,
     stack: Stack,
 }
 
 impl Resolver<'_> {
+    fn is_relative(&mut self, name: Name, value: &[u8]) -> bool {
+        let is_relative = !self.relative_units.is_empty()
+            && self
+                .document
+                .styles
+                .registry
+                .get(&name)
+                .is_some_and(|it| it.interpolates())
+            && has_unit(value, self.relative_units)
+            && self.stack.reaches(Name::NONE);
+        if is_relative {
+            self.relative
+                .extend(self.stack.keys()[1..].iter().chain([&name]));
+        }
+        is_relative
+    }
+
     fn declared_value(&mut self, index: usize) -> Option<Text> {
         let (registry, name) = (&self.document.styles.registry, self.declared[index].0);
         let (declaration, block) = match &self.declared[index].1 {
@@ -879,11 +948,13 @@ impl Resolver<'_> {
         let mut open_cycle = None;
         let value = match &declaration.value {
             Declared::Wide(wide) => self.wide(name, *wide),
+            Declared::Text(value) if self.is_relative(name, value) => None,
             Declared::Text(value) => {
                 compute(Rc::clone(value), self.cx).or_else(|| unset(self.customs))
             }
             Declared::Template(template) => {
-                let substituted = guarded(self, name, |this| template.value(this));
+                let substituted = guarded(self, name, |this| template.value(this))
+                    .filter(|it| !self.is_relative(name, it));
                 open_cycle = self.stack.open_cycle.take();
                 if let Some(wide @ (Wide::Revert | Wide::RevertLayer | Wide::RevertRule)) =
                     substituted.as_ref().and_then(|it| Wide::of(it))
@@ -1046,6 +1117,21 @@ enum Outcome {
 impl Resolver<'_> {
     fn resolve(&mut self, declaration: &Declaration, block: &Block) -> Outcome {
         let (cx, prop) = (self.cx, declaration.prop);
+        if matches!(&declaration.value, Declared::Text(it) if **it == *Transforms::ATTRIBUTE.as_bytes())
+            && prop == Prop::Long(Id::Transform)
+        {
+            cx.uses(Deps::ATTRIBUTES);
+            let matrix = self
+                .document
+                .tree
+                .element(self.id)
+                .and_then(crate::svg::transform_attribute);
+            return Outcome::Values(Rc::new([Value::Transform(
+                matrix
+                    .map(|it| Transforms::of_matrix(it, cx.zoom))
+                    .unwrap_or_default(),
+            )]));
+        }
         let is_valid = matches!(declaration.value, Declared::Text(_));
         let parse = |source: &[u8]| {
             let (base_url, deps) = (&*block.base_url, Cell::default());
@@ -1413,21 +1499,24 @@ impl Document {
             let Some(container) = container else {
                 return false;
             };
+            let place = |all: &[(Rc<Wanted>, bool)]| {
+                all.binary_search_by_key(&Rc::as_ptr(wanted), |it| Rc::as_ptr(&it.0))
+            };
             let known = self
                 .styles
                 .answers
                 .borrow()
                 .get(&container.id)
-                .and_then(|it| Some(it.iter().find(|it| Rc::ptr_eq(&it.0, wanted))?.1));
+                .and_then(|it| Some(it[place(it).ok()?].1));
             known.unwrap_or_else(|| {
                 let answer = wanted.condition.evaluate(&container) == Some(true);
                 self.tree[container.id].set(Flags::HAS_ANSWERED);
-                self.styles
-                    .answers
-                    .borrow_mut()
-                    .entry(container.id)
-                    .or_default()
-                    .push((Rc::clone(wanted), answer));
+                let mut answers = self.styles.answers.borrow_mut();
+                let all = answers.entry(container.id).or_default();
+                all.insert(
+                    place(all).unwrap_or_else(|it| it),
+                    (Rc::clone(wanted), answer),
+                );
                 answer
             })
         };
@@ -1531,16 +1620,23 @@ impl Document {
             pseudo,
             pseudo_state: State::empty(),
             with_starting: false,
+            keeps_all: false,
             bloom,
             has_results: &self.styles.has_results,
             roots: &Default::default(),
             signature: bloom
                 .filter(|it| it.is_above(&self.tree, id))
                 .map_or(Name::NONE, |it| {
-                    self.styles
+                    let signature = self
+                        .styles
                         .dependencies
                         .borrow()
-                        .signature(&self.tree, id, it)
+                        .signature(&self.tree, id, it);
+                    if it.is_worth_a_memo(signature, id) {
+                        signature
+                    } else {
+                        Name::NONE
+                    }
                 }),
             container: &|query| {
                 self.tree[id].set(Flags::QUERIES_CONTAINER);
@@ -1645,6 +1741,7 @@ impl Document {
                 0,
                 Matched {
                     block: Rc::clone(block),
+                    rule: None,
                     level: Level::Hints,
                     layer: 0,
                     only: Only::default(),
@@ -1710,15 +1807,15 @@ impl Document {
                             &Query {
                                 with_starting,
                                 signature: Name::NONE,
+                                keeps_all: true,
                                 ..query
                             },
                             &mut expected,
                             hints,
                         );
-                        expected
-                            .iter()
-                            .map(|it| it.0)
-                            .eq(matched.iter().map(|it| it.0))
+                        let [expected, matched] = [&expected, &matched]
+                            .map(|it| RuleList::new(it.iter().map(|it| it.1.clone()).collect(), 0));
+                        expected.has_same_winners(&matched)
                     });
                 });
                 let (memo, key) = decided.ok_or(())?;
@@ -1736,6 +1833,7 @@ impl Document {
                 if let Some(block) = &element.hints {
                     let hints = Matched {
                         block: Rc::clone(block),
+                        rule: None,
                         level: Level::Hints,
                         layer: 0,
                         only: Only::default(),
@@ -1824,6 +1922,7 @@ impl Document {
             let inline = Matched {
                 only: Only::default(),
                 block: Rc::clone(block),
+                rule: None,
                 level: Level::Own,
                 layer: INLINE,
             };
@@ -1837,6 +1936,7 @@ impl Document {
                 0,
                 Matched {
                     block: Rc::clone(block),
+                    rule: None,
                     level: Level::Outer(u8::MAX),
                     layer: INLINE,
                     only: Only::default(),
@@ -2039,6 +2139,7 @@ impl Document {
         let inline = block.map(|it| Matched {
             only: Only::default(),
             block: Rc::clone(it),
+            rule: None,
             level: Level::Own,
             layer: INLINE,
         });
@@ -2059,8 +2160,13 @@ impl Document {
         property: Prop,
         source: &[u8],
     ) -> Option<bool> {
+        let value = if let Prop::Long(property) = property {
+            property.parse_plain(crate::scan::trim(source), 1.0)
+        } else {
+            None
+        };
         let is_amendable = if let Prop::Long(it) = property {
-            it.stands_alone()
+            it.stands_alone() || matches!(value, Some(Value::Color(_)))
         } else {
             matches!(property, Prop::Custom(_))
         };
@@ -2077,11 +2183,6 @@ impl Document {
         let rules = self.styles.take_over(rules)?;
         let block = &mut rules.matched.last_mut()?.block;
         element.inline_style = None;
-        let value = if let Prop::Long(property) = property {
-            property.parse_plain(crate::scan::trim(source), 1.0)
-        } else {
-            None
-        };
         let has_changed = self
             .styles
             .blocks
@@ -2220,6 +2321,9 @@ impl Document {
     }
 
     fn if_amendable(&self, id: NodeId, style: &Style, it: Amendments) -> Option<Amendments> {
+        (!(style.deps | it.deps).contains(Deps::INK)
+            || !it.values.iter().any(|it| matches!(it, Value::Color(_))))
+        .then_some(())?;
         (it.values.is_empty()
             || self.can_be_amended(id, style)
                 && !it
@@ -2662,10 +2766,12 @@ impl Document {
                     .tree
                     .style(element.originator)
                     .is_some_and(|it| it.text.list_position == ListStylePosition::Inside);
-                adjust.set(
-                    Adjust::INSIDE_MARKER,
-                    is_inside || self.tree.html_tag(element.originator) == name!("summary"),
-                );
+                adjust |= if is_inside || self.tree.html_tag(element.originator) == name!("summary")
+                {
+                    Adjust::INSIDE_MARKER
+                } else {
+                    Adjust::OUTSIDE_MARKER
+                };
             }
             _ => {}
         }
@@ -2768,7 +2874,7 @@ impl Document {
                 _ => {}
             }
             if !has_room(style) && style.display() == Display::Inline {
-                [Id::Width, Id::Height, Id::AspectRatio]
+                [Id::Width, Id::Height]
                     .into_iter()
                     .for_each(|id| style.groups.set(&initial.get(id)));
             }
@@ -2834,6 +2940,7 @@ impl Document {
             .cloned()
             .chain([Matched {
                 block,
+                rule: None,
                 level: Level::Outer(u8::MAX),
                 layer: INLINE - 1,
                 only: Only::default(),
@@ -2868,6 +2975,14 @@ impl Document {
             _ => None,
         };
         self.tree[in_tree.unwrap_or(of)].scope
+    }
+
+    pub(crate) fn is_set_by_hint(&self, rules: &RuleList, style: &Style, property: Id) -> bool {
+        rules
+            .plan(style.flow())
+            .longhands
+            .iter()
+            .any(|it| it.0 == property && rules.matched[usize::from(it.1.0)].level == Level::Hints)
     }
 
     pub(crate) fn is_set_by_page(&self, id: NodeId, property: Id) -> bool {
@@ -3051,6 +3166,8 @@ impl Document {
             customs,
             declared: Vec::new(),
             reverting: Vec::new(),
+            relative_units: &[],
+            relative: Vec::new(),
             cx,
             stack: Stack::default(),
         }
@@ -3152,6 +3269,72 @@ impl Document {
         })
     }
 
+    /// https://drafts.css-houdini.org/css-properties-values-api/#dependency-cycles. Adds what the custom properties in one are, and returns the other declarations.
+    fn find_unit_cycles(
+        &self,
+        id: NodeId,
+        rules: &RuleList,
+        parent: &Style,
+        customs: &mut Vec<(Name, Option<Text>)>,
+    ) -> SmallVec<[At; 2]> {
+        use Unit as U;
+        const UNITS: [Unit; 12] = [
+            U::Em,
+            U::Ex,
+            U::Ch,
+            U::Cap,
+            U::Ic,
+            U::Lh,
+            U::Rlh,
+            U::Rem,
+            U::Rex,
+            U::Rch,
+            U::Rcap,
+            U::Ric,
+        ];
+        let (plan, inherited, registry) = (
+            rules.plan(Flow::DEFAULT),
+            Customs::inheriting(&parent.customs),
+            &self.styles.registry,
+        );
+        let of_root = usize::from(self.tree.is_root(id));
+        let is_in_cycle = |(property, relative_units): (Id, &[Unit])| {
+            let at = plan.longhands.iter().find(|it| it.0 == property)?.1;
+            let Declared::Template(template) = &rules.declaration(at).0.value else {
+                return None;
+            };
+            self.with_context(id, parent, parent, |cx| {
+                let pending = |(declaration, block)| Pending::Declared(declaration, block);
+                let declared = plan
+                    .customs
+                    .iter()
+                    .map(|it| (it.0, pending(rules.declaration(it.1))))
+                    .collect();
+                let mut resolver = Resolver {
+                    declared,
+                    relative_units,
+                    ..self.resolver(id, &inherited, cx)
+                };
+                drop(guarded(&mut resolver, Name::NONE, |it| template.value(it)));
+                let unset = |name| {
+                    registry
+                        .get(&name)
+                        .filter(|it| it.interpolates())
+                        .and_then(|_| inherited.get(name, registry).cloned())
+                };
+                customs.extend(resolver.relative.iter().map(|it| (*it, unset(*it))));
+                (!resolver.relative.is_empty()).then_some(at)
+            })
+        };
+        [
+            (Id::FontSize, &UNITS[..6 + 6 * of_root]),
+            (Id::LineHeight, &UNITS[5..6 + of_root]),
+        ]
+        .into_iter()
+        .filter_map(is_in_cycle)
+        .collect()
+    }
+
     /// `fonts_from` is the style itself if it is `None`.
     fn cascade_phase(
         &self,
@@ -3161,6 +3344,7 @@ impl Document {
         parent: &Style,
         style: &mut Style,
         fonts_from: Option<&Style>,
+        invalid: &[At],
     ) {
         let (flow, initial) = (style.flow(), &self.styles.initial.groups);
         let mut winners = rules.plan(flow).phase(phase);
@@ -3193,7 +3377,11 @@ impl Document {
                 let mut resolver = self.resolver(id, &style.customs, cx);
                 for won in winners.chunk_by(|a, b| a.1 == b.1) {
                     let (declaration, block) = rules.declaration(won[0].1);
-                    let outcome = resolver.resolve(declaration, block);
+                    let outcome = if invalid.contains(&won[0].1) {
+                        Outcome::Wide(Wide::Unset)
+                    } else {
+                        resolver.resolve(declaration, block)
+                    };
                     if matches!(outcome, Outcome::Wide(_))
                         && !matches!(declaration.value, Declared::Wide(_))
                         && won.iter().any(|it| is_ink(it.0))
@@ -3276,10 +3464,22 @@ impl Document {
         animated_customs: &[(Name, Option<Text>)],
         animated: &[Value],
     ) -> Style {
-        let (customs, deps) = match animated_customs.is_empty() && parent.zoom == 1.0 {
+        let (mut customs, deps) = match animated_customs.is_empty() && parent.zoom == 1.0 {
             true => self.shared_customs(id, rules, parent),
             false => self.cascade_customs(id, rules, parent, parent, animated_customs),
         };
+        let mut known = animated_customs.to_vec();
+        let invalid = if deps.intersects(Deps::FONT_UNITS | Deps::ROOT) {
+            self.find_unit_cycles(id, rules, parent, &mut known)
+        } else {
+            SmallVec::new()
+        };
+        let animated_customs = &known[..];
+        if !invalid.is_empty() {
+            customs = self
+                .cascade_customs(id, rules, parent, parent, animated_customs)
+                .0;
+        }
         let animate = |style: &mut Style, phase| {
             animated
                 .iter()
@@ -3312,7 +3512,15 @@ impl Document {
             .is_some_and(|it| Phase::of(it.0) != Phase::Rest)
             || !animated.is_empty()
         {
-            self.cascade_phase(id, rules, Phase::First, parent, &mut style, Some(parent));
+            self.cascade_phase(
+                id,
+                rules,
+                Phase::First,
+                parent,
+                &mut style,
+                Some(parent),
+                &[],
+            );
             animate(&mut style, Phase::First);
             let (scheme, zoom) = (style.ink.color_scheme, style.rare.zoom.0);
             style.dark = self.environment.is_dark(scheme);
@@ -3332,7 +3540,15 @@ impl Document {
                 zoomed = Some(style.clone());
             }
             let fonts_from = zoomed.as_ref().unwrap_or(parent);
-            self.cascade_phase(id, rules, Phase::Font, parent, &mut style, Some(fonts_from));
+            self.cascade_phase(
+                id,
+                rules,
+                Phase::Font,
+                parent,
+                &mut style,
+                Some(fonts_from),
+                &invalid,
+            );
             if style.deps.contains(Deps::MATH_FONT_SIZE) {
                 style.groups.set(&Value::FontSize(FontSize::new(
                     style.font.size.1 * self.script_scale(&style, parent),
@@ -3365,7 +3581,15 @@ impl Document {
                 self.resolve_font(id, &mut plain, parent);
                 style.metrics = plain.metrics;
             }
-            self.cascade_phase(id, rules, Phase::LineHeight, parent, &mut style, None);
+            self.cascade_phase(
+                id,
+                rules,
+                Phase::LineHeight,
+                parent,
+                &mut style,
+                None,
+                &invalid,
+            );
             animate(&mut style, Phase::LineHeight);
             self.resolve_font(id, &mut style, parent);
             if deps.contains(Deps::FONT_UNITS) && !Rc::ptr_eq(&style.font, &parent.font)
@@ -3397,7 +3621,7 @@ impl Document {
                     .set(&self.styles.initial.get(it).zoomed(1.0, style.zoom))
             });
         }
-        self.cascade_phase(id, rules, Phase::Rest, parent, &mut style, None);
+        self.cascade_phase(id, rules, Phase::Rest, parent, &mut style, None, &[]);
         animate(&mut style, Phase::Rest);
         if self.environment.forces_colors {
             self.force_colors(id, rules, parent, adjust, &mut style);
@@ -3486,7 +3710,13 @@ impl Document {
         let intrinsic_size = [style.rare.intrinsic_width, style.rare.intrinsic_height];
         let is_unused = adjust.contains(Adjust::SELECT_SIZER)
             && style.rare.field_sizing == FieldSizing::Content;
+        let inherits_white_space =
+            (style.text.collapse, style.text.wrap) == (parent.text.collapse, parent.text.wrap);
         let mut set = |value| style.groups.set(&value);
+        if adjust.contains(Adjust::OUTSIDE_MARKER) && inherits_white_space {
+            set(Value::WhiteSpaceCollapse(WhiteSpaceCollapse::Preserve));
+            set(Value::TextWrapMode(TextWrapMode::Nowrap));
+        }
         let mut display = if is_unused {
             Display::None
         } else {
@@ -3590,6 +3820,15 @@ impl Document {
             layout.overflow_y,
             layout.overflow_x,
         )));
+        if has_own_writing_mode
+            && (display.is_row_group()
+                || matches!(
+                    display,
+                    Display::TableRow | Display::TableColumn | Display::TableColumnGroup
+                ))
+        {
+            set(Value::WritingMode(parent.text.writing_mode));
+        }
 
         let scale = self.environment.scale;
         let snapped = |width: BorderWidth| BorderWidth(snap_border(width.0, scale));
@@ -3897,9 +4136,9 @@ impl Document {
             .filter(|it| it.0 == last_version())
             .map(|it| Rc::clone(&it.1));
         debug_assert!(
-            known.as_ref().is_none_or(
-                |it| it.matched.len() == self.match_rules(id, None, false).matched.len()
-            )
+            known
+                .as_ref()
+                .is_none_or(|it| it.has_same_winners(&self.match_rules(id, None, false)))
         );
         known.unwrap_or_else(|| {
             let rules = self.match_rules(id, None, false);

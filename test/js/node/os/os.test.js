@@ -118,12 +118,10 @@ it("userInfo", () => {
   const info = os.userInfo();
 
   if (process.platform !== "win32") {
-    expect(info.username).toBe(
-      Bun.spawnSync({ cmd: ["id", "-un"] })
-        .stdout.toString()
-        .trim(),
-    );
-    expect(info.shell).toStartWith("/");
+    const cmd = process.platform === "darwin" ? ["id", "-P"] : ["getent", "passwd", String(process.geteuid())];
+    const passwd = Bun.spawnSync({ cmd }).stdout.toString().trim().split(":");
+    expect(info.username).toBe(passwd[0]);
+    expect(info.shell).toBe(passwd.at(-1));
     expect(info.uid >= 0).toBe(true);
     expect(info.gid >= 0).toBe(true);
   } else {

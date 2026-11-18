@@ -1201,7 +1201,7 @@ A build overwrites the files of an earlier bundle and removes none, so delete th
 
 - **macOS**: on a Mac, Bun signs the bundle ad hoc, which is enough to run it there. To distribute it, [sign it with your identity](#code-signing-on-macos) and notarize it. A bundle built on another system is not signed as a whole.
 - **Linux**: `AppRun` starts the app on X11 and Wayland. `appimagetool notes.AppDir` makes an AppImage of it (it needs an icon), and `usr` is laid out to be copied into a `.deb`, `.rpm` or Flatpak. URL schemes and file associations apply once the `.desktop` file is installed. Graphics drivers generate machine code, so unlike other executables that `bun compile` builds, the app does not turn on `PR_SET_MDWE`.
-- **Windows**: the executable opens no console. Its icon and version are only set when you build on Windows. URL schemes and file associations are left to an installer.
+- **Windows**: there is no UI library yet, so the app opens no windows. The executable opens no console. Its icon and version are only set when you build on Windows. URL schemes and file associations are left to an installer.
 
 Bun downloads the UI library for the target from npm (`@oven/bun-desktop-<os>-<arch>`) and caches it. Set `BUN_DESKTOP_LIBRARY` to use a local file.
 

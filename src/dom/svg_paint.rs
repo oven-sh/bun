@@ -39,8 +39,18 @@ pub(crate) struct Recording {
     blends: bool,
     /// Unless it is small.
     parts: Vec<Part>,
-    /// The elements that have changed, and whether it is not only something in them.
-    changed: Map<NodeId, bool>,
+    changed: Map<NodeId, Change>,
+    /// How many of them have only moved.
+    moved: usize,
+}
+
+/// Of an element.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Change {
+    Inside,
+    /// Its `transform`, and nothing refers to it.
+    Place,
+    Itself,
 }
 
 bitflags::bitflags! {
@@ -63,6 +73,8 @@ struct Part {
     next: u32,
     viewport: [f32; 2],
     reads: Reads,
+    /// All of it is in the first item, which is `svg_to_parent`.
+    is_placed: bool,
 }
 
 struct Previous {
@@ -104,19 +116,28 @@ impl Recording {
         tree: &Tree,
         mut id: NodeId,
         outer: NodeId,
-        is_itself: bool,
+        mut change: Change,
     ) -> bool {
-        if self.changed.len() >= self.parts.len() / 2 {
+        if self.changed.len() - self.moved >= self.parts.len() / 2 {
             return false;
         }
-        *self.changed.entry(id).or_default() |= is_itself;
-        while id != outer {
-            id = tree[id].parent;
-            if self.changed.try_insert(id, false).is_err() {
-                break;
+        loop {
+            match self.changed.try_insert(id, change) {
+                Ok(_) => self.moved += usize::from(change == Change::Place),
+                Err(mut known) => {
+                    let old = known.entry.get_mut();
+                    if *old != change && (*old, change) != (Change::Itself, Change::Inside) {
+                        self.moved -= usize::from(*old == Change::Place);
+                        *old = Change::Itself;
+                    }
+                    return true;
+                }
             }
+            if id == outer {
+                return true;
+            }
+            (id, change) = (tree[id].parent, Change::Inside);
         }
-        true
     }
 
     /// Also in `shown`, which begins with a copy of the items. False if it has to be recorded again.
@@ -240,6 +261,16 @@ fn in_linear_light(stops: &[GradientStop]) -> Vec<GradientStop> {
         })
     });
     stops.first().copied().into_iter().chain(between).collect()
+}
+
+/// If all that the element paints is under one matrix.
+fn placement(node: &Node) -> Option<Matrix> {
+    let is_simple = !node.establishes_viewport()
+        && node.tag != name!("foreignObject")
+        && node.style.outline_width() <= 0.0;
+    node.document
+        .svg_to_parent(node)
+        .filter(|it| is_simple && *it != IDENTITY && invert(it).is_some())
 }
 
 fn has_transform((node, element): &(Node, &Element)) -> bool {
@@ -605,7 +636,7 @@ impl<'a> Painter<'a> {
             outdated.set(
                 Reads::MATRIX | Reads::VISIBLE,
                 (known.size, known.scale) != (size, scale)
-                    || known.changed.get(&it.node) == Some(&true),
+                    || known.changed.get(&it.node) == Some(&Change::Itself),
             );
             outdated.set(
                 Reads::REFERENCES,
@@ -677,6 +708,7 @@ impl<'a> Painter<'a> {
                     blends,
                     parts,
                     changed: Map::default(),
+                    moved: 0,
                 }
             }
         };
@@ -745,11 +777,18 @@ impl<'a> Painter<'a> {
             next: parts.len() as u32 + 1,
             viewport,
             reads: Reads::empty(),
+            is_placed: false,
         });
         parts.len() - 1
     }
 
-    fn copy_parts(&mut self, previous: Option<&Previous>, range: Range<u32>) {
+    /// `moved` has the first items of those that get another matrix.
+    fn copy_parts(
+        &mut self,
+        previous: Option<&Previous>,
+        range: Range<u32>,
+        moved: &mut Vec<(u32, Matrix)>,
+    ) {
         let Some(Previous {
             recording: from, ..
         }) = previous.filter(|_| !range.is_empty())
@@ -763,6 +802,10 @@ impl<'a> Painter<'a> {
         );
         self.out
             .append_part(&from.picture, &first.start, &end.start);
+        moved.drain(..).for_each(|(item, matrix)| {
+            self.out.items[(item - first.start.items() + start.items()) as usize] =
+                Item::PushVector(matrix)
+        });
         let (parts, mut first_tint) = (self.svg.parts.get_or_insert_default(), 0);
         if let (Some(tints), Some(from)) = (&mut self.svg.tints, &from.tints) {
             first_tint = tints.len() as u32;
@@ -794,7 +837,8 @@ impl<'a> Painter<'a> {
         let (document, previous, outdated) =
             (self.document, self.svg.previous.clone(), self.svg.outdated);
         let (previous, viewport) = (previous.as_deref(), document.viewport_in(node));
-        let (mut expected, mut unchanged) = (core::mem::take(&mut self.svg.inside), 0..0);
+        let (mut expected, mut unchanged, mut moved) =
+            (core::mem::take(&mut self.svg.inside), 0..0, Vec::new());
         self.enter(space.link);
         for id in document.tree.element_children(node.id) {
             let Some(element) = document.tree.element(id).filter(|it| is_graphic(it)) else {
@@ -808,46 +852,64 @@ impl<'a> Painter<'a> {
             if let Some((_, part)) = known.filter(|it| expected.contains(&it.0)) {
                 expected.start = part.next;
             }
+            let can_move = |it: &Part| {
+                change == Some(&Change::Place)
+                    && it.is_placed
+                    && !it.reads.intersects(Reads::MATRIX | Reads::VISIBLE)
+            };
+            let place = known
+                .filter(|it| can_move(it.1))
+                .and_then(|_| placement(&document.svg_child(node, id, viewport)?));
             if let Some((at, part)) = known.filter(|(_, it)| {
-                change.is_none() && it.viewport == viewport && !it.reads.intersects(outdated)
+                (change.is_none() || place.is_some())
+                    && it.viewport == viewport
+                    && !it.reads.intersects(outdated)
             }) {
                 if unchanged.end != at {
-                    self.copy_parts(previous, core::mem::replace(&mut unchanged, at..at));
+                    self.copy_parts(
+                        previous,
+                        core::mem::replace(&mut unchanged, at..at),
+                        &mut moved,
+                    );
                 }
+                moved.extend(place.map(|it| (part.start.items(), it)));
                 unchanged.end = part.next;
                 document.svg_has_read(part.reads);
                 continue;
             }
-            self.copy_parts(previous, core::mem::take(&mut unchanged));
+            self.copy_parts(previous, core::mem::take(&mut unchanged), &mut moved);
             let (own, reads, was_volatile) = (
                 self.begin_part(id, viewport),
                 document.svg_reads.take(),
                 core::mem::take(&mut self.is_volatile),
             );
             self.svg.inside = known.map_or(0..0, |(at, part)| at + 1..part.next - 1);
-            self.svg.outdated = if change == Some(&true) {
+            self.svg.outdated = if matches!(change, Some(Change::Itself | Change::Place)) {
                 outdated | Reads::MATRIX | Reads::VISIBLE
             } else {
                 outdated
             };
+            let (first, mut is_placed) = (self.out.items.len(), false);
             if let Some(child) = passes_tests(element)
                 .then(|| document.svg_child(node, id, viewport))
                 .flatten()
             {
                 self.svg_element(&child, space);
                 self.enter(space.link);
+                is_placed = element.has_moved
+                    && matches!(self.out.items.get(first), Some(Item::PushVector(it)) if Some(*it) == placement(&child));
             }
             if self.is_volatile || element.style.is_none() {
                 document.svg_has_read(Reads::ANYTHING);
             }
             if let Some(parts) = &mut self.svg.parts {
-                (parts[own].next, parts[own].reads) =
-                    (parts.len() as u32, document.svg_reads.get());
+                (parts[own].next, parts[own].reads, parts[own].is_placed) =
+                    (parts.len() as u32, document.svg_reads.get(), is_placed);
             }
             document.svg_has_read(reads);
             self.is_volatile |= was_volatile;
         }
-        self.copy_parts(previous, unchanged);
+        self.copy_parts(previous, unchanged, &mut moved);
         self.begin_part(0, viewport);
         self.svg.outdated = outdated;
     }

@@ -34,6 +34,7 @@ mod platform;
 mod png_rows;
 #[path = "../../../src/ui/protocol.rs"]
 mod protocol;
+mod remote;
 mod small_vec;
 mod surface;
 mod sync;
@@ -301,7 +302,7 @@ pub extern "C" fn bun_desktop_init(tick: extern "C" fn(), has_main_thread: bool)
         host::thread::runs_javascript();
         init(has_main_thread);
         #[cfg(target_os = "macos")]
-        if !has_main_thread {
+        if !has_main_thread && !remote::guest::is_on() {
             platform::macos::create_application();
         }
     });

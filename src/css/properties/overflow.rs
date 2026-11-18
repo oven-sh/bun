@@ -5,19 +5,19 @@ use crate::{Parser, PrintErr, Printer};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Overflow {
     /// A value for the [overflow](https://www.w3.org/TR/css-overflow-3/#overflow-properties) shorthand property.
-    pub x: OverflowKeyword,
+    pub(crate) x: OverflowKeyword,
     /// The overflow mode for the y direction.
-    pub y: OverflowKeyword,
+    pub(crate) y: OverflowKeyword,
 }
 
 impl Overflow {
-    pub fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Overflow> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Overflow> {
         let x = OverflowKeyword::parse(input)?;
         let y = input.try_parse(OverflowKeyword::parse).unwrap_or(x);
         Ok(Overflow { x, y })
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.x.to_css(dest)?;
         if self.y != self.x {
             dest.write_char(b' ')?;

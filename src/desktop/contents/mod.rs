@@ -14,9 +14,10 @@ mod load;
 mod open;
 pub(crate) mod page;
 pub(crate) mod parts;
+pub(crate) mod process;
 mod sandbox;
 mod save;
-pub(crate) mod worlds;
+mod worlds;
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -41,7 +42,7 @@ use crate::session::{self, Session};
 use crate::view::View;
 use crate::webview::remote::Remote;
 use crate::window::Window;
-use crate::{app, process};
+use crate::{app, renderer};
 
 pub(crate) use self::history::{Document, Entry, History};
 pub(crate) use self::hooks::all_chosen;
@@ -261,7 +262,6 @@ pub(crate) struct State {
     id: u32,
     surface: u32,
     kind: Cell<Kind>,
-    link: Rc<dyn bun_web::page::Link>,
     size: Cell<Option<Extent>>,
     session: &'static Session,
     preferences: Rc<Preferences>,
@@ -426,12 +426,14 @@ impl Contents {
             } => Some(page),
             _ => None,
         };
+        if let Start::Alone = start {
+            process::prepare()?;
+        }
         all().last_id.update(|it| it + 1);
         let state = State {
             id: all().last_id.get(),
             surface: surfaces::next_id(),
             kind: kind.into(),
-            link: bun_web::page::here(),
             size: None.into(),
             session,
             throttles_background: preferences.throttles_background.into(),
@@ -475,14 +477,7 @@ impl Contents {
             }
             Start::Framed(parent, ..) => this.embed(parent),
         }
-        let embedded = this.embedded.as_ref();
-        this.tell_pages(Change::Created {
-            embedder: fields::embedder(this).map(|it| it.id),
-            frame: embedded.map_or(0, |it| it.number),
-            image: embedded.map_or(0, |it| it.image),
-            opener: this.opened_by().map(|it| it.id),
-            related: creator.map(|it| it.contents().id),
-        });
+        this.tell_pages(this.creation(creator.map(|it| it.contents().id)));
         if let Start::Framed(_, _, element) = *start {
             this.rename(element.name.clone());
         }
@@ -573,6 +568,11 @@ impl Contents {
 
     pub(crate) fn size(&self) -> Option<Extent> {
         self.size.get()
+    }
+
+    /// It is known before the surface has it.
+    pub(crate) fn size_of_view(&self) -> Option<[f64; 2]> {
+        fields::view(self)?.area()
     }
 
     pub(crate) fn window(&self) -> Option<&'static Window> {
@@ -768,7 +768,7 @@ impl Contents {
 
     pub(crate) fn live_page(&self) -> JsResult<&'static Page> {
         match self.has_crashed() {
-            true => Err(worlds::disposed()),
+            true => Err(renderer::disposed()),
             false => self.started_page(),
         }
     }
@@ -829,7 +829,7 @@ impl Contents {
         self.crashed_at.replace(Some(url));
     }
 
-    fn crash(&self, reason: &str) -> JsResult<()> {
+    fn crash(&self, reason: &str, exit_code: i32) -> JsResult<()> {
         self.page().dispose()?;
         self.cancel_pending()?;
         let (old, url) = (self.page(), self.page().url_in_history());
@@ -841,7 +841,7 @@ impl Contents {
         self.tell_pages(Change::Crashed);
         self.has_crashed_at(url);
         self.set_loading(false)?;
-        let details = object!({ "reason": reason, "exitCode": 2 });
+        let details = object!({ "reason": reason, "exitCode": exit_code });
         self.announce("render-process-gone", &[details])?;
         announce(
             app::object(),
@@ -864,14 +864,16 @@ impl Contents {
         self.destroy_now()
     }
 
-    /// With the window that it fills.
+    /// With the window that it fills, after the tasks that pages have queued so far.
     fn close_soon(&self) {
-        self.later(
-            |it| match it.window().filter(|_| it.kind.get() == Kind::Window) {
+        let this = Root::new(self);
+        post(Priority::Visible, move || {
+            let it = this.get();
+            match it.window().filter(|_| it.kind.get() == Kind::Window) {
                 Some(window) => window.request_close(),
                 None => it.owner().close_now(),
-            },
-        );
+            }
+        });
     }
 
     fn destroy_now(&self) -> JsResult<()> {
@@ -1046,7 +1048,7 @@ impl Contents {
 fn logs_to_stderr() -> bool {
     state!(fn known() -> core::cell::OnceCell<bool>);
     *known().get_or_init(|| {
-        process::variable("ELECTRON_ENABLE_LOGGING")
+        crate::process::variable("ELECTRON_ENABLE_LOGGING")
             .is_ok_and(|it| it.is_some_and(|it| !it.is_empty()))
             || crate::command_line::switch("enable-logging").is_some()
     })

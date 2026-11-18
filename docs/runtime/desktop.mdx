@@ -38,7 +38,7 @@ bun app.tsx
 bun compile --desktop app.tsx
 ```
 
-The second command makes a `.app`, an AppDir or a folder with an `.exe`. See [Desktop apps](/compiler/executables#desktop-apps).
+The second command makes a `.app` or an AppDir. An executable that is built without `--desktop` has no `bun:desktop`. With `--aot`, `bun run`, `bun test` and `bun check` need no flag: an import of the module is enough. In `node_modules`, only an `import` statement counts. See [Desktop apps](/compiler/executables#desktop-apps).
 
 For the types of `document` and of the elements, add `"DOM"` to `lib` in `tsconfig.json`.
 
@@ -99,7 +99,7 @@ Scripts in the document only run in the window whose `window` is `globalThis`.
 
 A new window starts with `color-scheme: light dark`, the font of the system, no margin on `body`, and `user-select: none`. These are in a cascade layer, so any rule of yours wins. `loadFile()` and `loadHTML()` remove them, and leave the defaults of a browser.
 
-In a window without a title bar, `app-region: drag` makes an element move the window, and `app-region: no-drag` exempts what is inside of it.
+In a window without a title bar, `app-region: drag` makes an element move the window, and `app-region: no-drag` exempts what is inside of it. `-electron-corner-smoothing` smooths the curves of `border-radius` like in Electron.
 
 ---
 
@@ -297,17 +297,19 @@ app.setCompiledScripts(roots, { exclusive: true, source: url => rarelyNeeded.get
 
 Compiled scripts are part of your program. They do not find the globals of Bun, but they can import its modules, such as `node:fs`.
 
+Compiled scripts run in the pages and workers at the origins of these URLs, so name the origin of your pages even if their scripts come from another one. With `exclusive`, they run in all pages. There, built-in objects are [read-only](/compiler/compatibility), also for scripts that were not compiled, and so they are in a page that shares its global object with Node.js or a preload script (`contextIsolation: false`). All other pages load their scripts as usual and can change their built-in objects.
+
 ## Troubleshooting
 
-| Variable                       | Effect                                                                                                                           |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| `BUN_DESKTOP_LOG`              | `1` prints what the UI library does, and `frames` every frame as well.                                                           |
-| `BUN_DESKTOP_RENDERER`         | `software` or `gpu`. The default on macOS is `layers`, which paints small changes with the CPU and large ones with the GPU.      |
-| `BUN_DESKTOP_CONFINE_BACKDROP` | `0` leaves the blur of a sidebar on macOS as AppKit has set it up. Scrolling next to it may miss frames.                         |
-| `BUN_DESKTOP_SPELLING`         | `0` does not ask macOS to check the spelling of text that is being edited.                                                       |
-| `BUN_DESKTOP_THREADS`          | `1` draws on the thread that runs JavaScript. `2` draws on another thread, which on macOS is the default for packaged apps only. |
+| Variable                       | Effect                                                                                                                                                                                                                            |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BUN_DESKTOP_LOG`              | `1` prints what the UI library does, and `frames` every frame as well.                                                                                                                                                            |
+| `BUN_DESKTOP_RENDERER`         | `software` or `gpu`. The default on macOS is `layers`, which paints small changes with the CPU and large ones with the GPU. A 2D canvas moves to the GPU while the CPU takes long to draw it, unless it has `willReadFrequently`. |
+| `BUN_DESKTOP_CONFINE_BACKDROP` | `0` leaves the blur of a sidebar on macOS as AppKit has set it up. Scrolling next to it may miss frames.                                                                                                                          |
+| `BUN_DESKTOP_SPELLING`         | `0` does not ask macOS to check the spelling of text that is being edited.                                                                                                                                                        |
+| `BUN_DESKTOP_THREADS`          | `1` draws on the thread that runs JavaScript. `2` draws on another thread, which on macOS is the default for packaged apps only.                                                                                                  |
 
-With two threads on macOS, AppKit has the main thread. The functions of Node-API addons still run there, while JavaScript waits. Functions that are called through `bun:ffi` do not.
+With two threads on macOS, AppKit has the main thread. The functions of Node-API addons still run there, while JavaScript waits. Functions that are called through `bun:ffi` do not, nor do addons that are written against V8's C++ API. A Node-API function cannot use that API: `v8::Isolate::GetCurrent()` is null in it.
 
 ## Testing
 

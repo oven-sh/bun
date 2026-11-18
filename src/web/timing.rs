@@ -8,12 +8,15 @@ use crate::mime;
 use crate::net::response::{Cached, Head, Protocol, ResponseType, Timing};
 use crate::request::InitiatorType;
 use crate::time::monotonic_now;
+use crate::wire::{self, Wire};
 
-#[derive(Clone)]
-pub struct ServerTiming {
-    pub name: Bytes,
-    pub duration: f64,
-    pub description: Bytes,
+crate::wire! {
+    #[derive(Clone)]
+    pub struct ServerTiming {
+        pub name: Bytes,
+        pub duration: f64,
+        pub description: Bytes,
+    }
 }
 
 fn token_at_start(text: &[u8]) -> &[u8] {
@@ -102,6 +105,24 @@ pub struct ResourceTiming {
     pub transfer_size: u64,
     pub server_timing: Vec<ServerTiming>,
 }
+
+impl Wire for &'static [u8] {
+    fn write(self, to: &mut wire::Writer) {
+        to.put_bytes(self);
+    }
+
+    fn read(from: &mut wire::Reader<'_>) -> wire::Result<Self> {
+        Ok(match from.take_bytes()? {
+            b"multiple" => b"multiple",
+            other => name_of_encoding(other),
+        })
+    }
+}
+
+crate::wire!(impl ResourceTiming {
+    name, initiator_type, blocks_rendering, allows_timing, timing, response_end, redirects, is_secure, is_from_cache,
+    protocol, content_type, content_encoding, status, encoded_size, decoded_size, transfer_size, server_timing,
+});
 
 impl ResourceTiming {
     pub fn of_failure(name: &[u8], initiator_type: InitiatorType, start: f64) -> ResourceTiming {

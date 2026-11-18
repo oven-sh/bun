@@ -450,7 +450,7 @@ impl Element {
         name: impl Into<Atom>,
         value: impl Borrow<DomString>,
     ) {
-        self.change_attr(cx, &QualName::plain(name), Some(value.borrow()));
+        self.set_attr_to_impl(cx, &name.into(), value.borrow().as_impl());
     }
 
     /// One that exists keeps its prefix.
@@ -692,6 +692,9 @@ impl Element {
         if old.is_none() && new.is_none() {
             return false;
         }
+        if self.kind() == Kind::Input {
+            crate::api::forms::before_attribute_changes(self);
+        }
         if let Some(attr) = old
             .as_ref()
             .filter(|_| new.is_none())
@@ -864,26 +867,6 @@ impl Element {
     /// Only styles see it. The name ends with ` source`.
     pub(crate) fn set_presentation_attr(&self, name: &str, value: Option<&str>) {
         self.change(|engine, id| engine.set_attribute(id, name, value));
-    }
-
-    /// For a document with other quirks.
-    pub(super) fn reclassify(&self) {
-        let is_quirky = self.doc().quirks();
-        self.arena().classes_changed();
-        self.arena().write(|engine| {
-            let Some(element) = engine.tree.element_mut(self.id()) else {
-                return;
-            };
-            element.is_unprepared = true;
-            if let Some(index) = element
-                .attributes
-                .iter()
-                .position(|it| it.local == atom!("class") && it.space.is_none())
-            {
-                let value = element.attributes[index].value.clone();
-                engine.change_attribute(self.id(), Ok(index), Some(value), is_quirky);
-            }
-        });
     }
 
     #[inline]

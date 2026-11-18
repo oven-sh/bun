@@ -1,8 +1,12 @@
 //! The loops of `raster.rs` and `warp.rs` for processors with AVX2 or NEON. The results are the same, but for rounding when interpolating.
 
+use std::ops::Range;
+
 use super::blend::Factor;
 use super::blur::{Kernel, Strip, convolve_strips};
-use super::raster::{self, Outlined, Pixel};
+use super::edges::{Edges, Shape};
+use super::raster::{self, IntRect, Outlined, Pixel};
+use super::scan::{Scanner, Sink, Stored};
 use super::warp::Samples;
 
 #[cfg_attr(target_arch = "x86_64", path = "wide/avx2.rs")]
@@ -11,8 +15,8 @@ mod lanes;
 
 pub use lanes::is_available;
 use lanes::{
-    Eight, Sampler, add, change, is_clear, is_opaque, kept, scale, splat, spread, spread_pairs,
-    weigh,
+    Eight, Numbers, Sampler, add, change, cover, is_clear, is_opaque, kept, prefetch, scale, splat,
+    spread, spread_pairs, weigh,
 };
 
 macro_rules! wide {
@@ -40,6 +44,41 @@ fn store(pixels: Eight) -> [Pixel; 8] {
 #[inline(always)]
 fn join<T: Copy>([a, b, c, d]: [T; 4], [e, f, g, h]: [T; 4]) -> [T; 8] {
     [a, b, c, d, e, f, g, h]
+}
+
+/// Only for functions that are wide.
+struct Filler<'a> {
+    pixels: &'a mut [Pixel],
+    color: Pixel,
+}
+
+impl Sink<Numbers> for Filler<'_> {
+    #[inline(always)]
+    fn eights(&mut self, places: &[u32], alphas: &[Stored]) {
+        // SAFETY: the processor has the instructions.
+        unsafe { cover_eights(self.pixels, self.color, places, alphas) };
+    }
+
+    #[inline(always)]
+    fn expect(&self, place: u32) {
+        prefetch(self.pixels.as_ptr().wrapping_add(place as usize + 4));
+    }
+
+    fn some(&mut self, place: usize, alphas: &[u8]) {
+        raster::fill_through(
+            &mut self.pixels[place..][..alphas.len()],
+            self.color,
+            alphas,
+        );
+    }
+
+    #[inline(always)]
+    fn run(&mut self, places: Range<usize>, alpha: u8) {
+        match alpha & self.color[3] {
+            255 => raster::set_row(&mut self.pixels[places], self.color),
+            _ => raster::fill_row(&mut self.pixels[places], raster::scale(self.color, alpha)),
+        }
+    }
 }
 
 wide! {
@@ -89,6 +128,24 @@ pub fn fill_through<'a>(rows: impl Iterator<Item = (&'a mut [Pixel], &'a [u8])>,
     }
 }
 
+pub fn write_alphas(scanner: &mut Scanner, edges: &Edges, shape: &Shape, rect: IntRect, alphas: &mut [u8]) {
+    scanner.scan::<Numbers>(edges, shape, rect, alphas);
+}
+
+pub fn fill_shape(scanner: &mut Scanner, edges: &Edges, shape: &Shape, rect: IntRect, pixels: &mut [Pixel], color: Pixel) {
+    scanner.scan(edges, shape, rect, Filler { pixels, color });
+}
+
+#[inline]
+fn cover_eights(pixels: &mut [Pixel], color: Pixel, places: &[u32], alphas: &[Stored]) {
+    let all = load([color; 8]);
+    for (place, alphas) in places.iter().zip(alphas) {
+        if let Some(eight) = pixels.get_mut(*place as usize..).and_then(|it| it.first_chunk_mut()) {
+            *eight = store(cover(load(*eight), all, alphas.get()));
+        }
+    }
+}
+
 pub fn fill_outlined(row: &mut [Pixel], colors: &Outlined, coverage: &[[u8; 2]]) {
     let (fill, border) = (load([colors.fill; 8]), load([colors.border; 8]));
     let eight = |pixels: &[Pixel; 8], coverage: &[[u8; 2]; 8]| {
@@ -120,6 +177,24 @@ pub fn blend<'a>(rows: impl Iterator<Item = (&'a mut [Pixel], &'a [Pixel])>, by:
             _ => update(row, colors, |pixels, colors| shown(colors).map(|it| over(load(*pixels), scale(it, all)))),
         }
     }
+}
+
+pub fn premultiply(row: &mut [[u8; 4]]) {
+    let (black, opposite) = (load([[0, 0, 0, 255]; 8]), [splat(255); 2]);
+    update(row, &vec![(); row.len()], |pixels, _| Some(load(*pixels)).filter(|it| !is_opaque(*it)).map(|it| scale(add(it, black), change(kept(it), opposite))));
+}
+
+pub fn demultiply(row: &mut [Pixel]) {
+    update(row, &vec![(); row.len()], |pixels, _| {
+        if is_opaque(load(*pixels)) || is_clear(load(*pixels)) {
+            return None;
+        }
+        let mut straight = *pixels;
+        for pixel in &mut straight {
+            *pixel = raster::divide_by_alpha(*pixel);
+        }
+        Some(load(straight))
+    });
 }
 
 pub fn stamp<'a>(runs: impl Iterator<Item = &'a mut [Pixel; 8]>, colors: [Pixel; 8]) {
@@ -247,6 +322,26 @@ mod tests {
             check(0, &|it| fill_outlined(it, &outlined, &pairs), &|it| {
                 outlined.at(pairs[it])
             });
+            let (mut straight, mut back) = (
+                colors.clone(),
+                pairs
+                    .iter()
+                    .map(|&[a, b]| [b, !b, a ^ b, a])
+                    .collect::<Vec<_>>(),
+            );
+            let expected: Vec<_> = back
+                .iter()
+                .map(|it| raster::premultiply(u32::from_be_bytes(*it)))
+                .collect();
+            raster::demultiply_row(&mut straight);
+            raster::premultiply_row(&mut back);
+            assert_eq!(
+                (straight, back),
+                (
+                    colors.iter().map(|it| raster::demultiply(*it)).collect(),
+                    expected
+                )
+            );
             let factors = [byte(), byte()].map(|it| {
                 [Factor::NONE, Factor::ALL, Factor::COVERED, Factor::OPEN][usize::from(it) % 4]
             });

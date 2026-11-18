@@ -4,12 +4,15 @@ use std::fs::{self, File};
 use std::hash::{Hash as _, Hasher as _};
 use std::io::Write as _;
 use std::os::fd::AsRawFd as _;
+use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use super::fonts::Origin;
 use super::sfnt::Font;
 use super::woff;
 use crate::hash::{FastHasher, FastMap};
+use crate::remote::guest;
 use crate::sync::Mutex;
 
 struct Decoded {
@@ -23,7 +26,10 @@ type Slot = Arc<Mutex<Vec<Decoded>>>;
 static BY_HASH: Mutex<Option<FastMap<u64, Slot>>> = Mutex::new(None);
 
 pub fn map(path: &Path) -> Option<&'static [u8]> {
-    let file = File::open(path).ok()?;
+    map_file(&File::open(path).ok()?)
+}
+
+pub fn map_file(file: &File) -> Option<&'static [u8]> {
     let len = file.metadata().ok()?.len().try_into().ok()?;
     // SAFETY: it is never unmapped, and fonts are replaced, not written to.
     unsafe {
@@ -50,12 +56,73 @@ fn cache_directory() -> Option<PathBuf> {
 }
 
 /// The file has the original, and then what it decodes to.
-fn read(path: &Path, original: &[u8]) -> Option<Decoded> {
-    let (stored, data) = map(path)?.split_at_checked(original.len())?;
+fn split(all: &'static [u8], original: &[u8]) -> Option<Decoded> {
+    let (stored, data) = all.split_at_checked(original.len())?;
     (stored == original).then_some(Decoded {
         original: Some(stored),
         data,
     })
+}
+
+/// By the address of the data.
+static STORED: Mutex<Vec<(usize, u32)>> = Mutex::new(Vec::new());
+
+pub fn origin(data: &[u8]) -> Origin {
+    STORED
+        .lock()
+        .iter()
+        .find(|it| it.0 == data.as_ptr().addr())
+        .map_or(Origin::Unknown, |it| Origin::Stored(it.1))
+}
+
+/// Writes `data` first.
+fn stored(hash: u64, original: &[u8], data: Option<&[u8]>) -> Option<Decoded> {
+    if guest::is_on() {
+        let (all, number) = guest::stored_font(hash, original, data)?;
+        return split(all, original)
+            .inspect(|it| STORED.lock().push((it.data.as_ptr().addr(), number)));
+    }
+    let path = cache_directory()?.join(format!("bun/desktop-fonts-1/{hash:016x}"));
+    data.is_none_or(|data| write(&path, original, data).is_ok())
+        .then(|| split(map(&path)?, original))?
+}
+
+/// What the pages of a site have decoded is only for them. The path lacks an extension.
+pub fn store_for(site: &str) -> Option<PathBuf> {
+    let name: String = site.bytes().map(|it| format!("{it:02x}")).collect();
+    (1..200)
+        .contains(&name.len())
+        .then(|| Some(cache_directory()?.join("bun/desktop-fonts-1").join(name)))?
+}
+
+/// For another process.
+pub fn open_stored(
+    path: &Path,
+    original: &[u8],
+    data: Option<&[u8]>,
+) -> Option<(File, &'static [u8])> {
+    type PathAndInode = (PathBuf, u64);
+    static MAPPED: Mutex<Option<FastMap<PathAndInode, &'static [u8]>>> = Mutex::new(None);
+    if let Some(data) = data {
+        write(path, original, data).ok()?;
+    }
+    let file = File::open(path).ok()?;
+    let (key, mut mapped) = (
+        (path.to_owned(), file.metadata().ok()?.ino()),
+        MAPPED.lock(),
+    );
+    let all = mapped
+        .get_or_insert_default()
+        .get(&key)
+        .copied()
+        .or_else(|| map_file(&file))?;
+    mapped.get_or_insert_default().insert(key, all);
+    Some((file, all))
+}
+
+/// What another process has decoded.
+pub fn keep_font(data: Vec<u8>) -> Option<&'static [u8]> {
+    (!woff::is_compressed(&data)).then(|| decode(data, true))?
 }
 
 fn write(path: &Path, original: &[u8], data: &[u8]) -> std::io::Result<()> {
@@ -107,15 +174,15 @@ pub fn decode(original: Vec<u8>, may_be_slow: bool) -> Option<&'static [u8]> {
         return Some(known.data);
     }
     let decoded = if woff::is_compressed(&original) {
-        let directory = cache_directory().filter(|_| original.len() >= WORTH_STORING);
-        let path = directory.map(|it| it.join(format!("bun/desktop-fonts-1/{hash:016x}")));
-        match path.as_ref().and_then(|path| read(path, &original)) {
+        let is_large = original.len() >= WORTH_STORING;
+        match is_large.then(|| stored(hash, &original, None)).flatten() {
             Some(decoded) => decoded,
-            None if path.is_some() && !may_be_slow => return None,
+            None if is_large && !may_be_slow => return None,
             None => {
                 let data = woff::decode(&original).filter(|data| Font::is_font(data))?;
-                let stored = path.filter(|path| write(path, &original, &data).is_ok());
-                let stored = stored.and_then(|path| read(&path, &original));
+                let stored = is_large
+                    .then(|| stored(hash, &original, Some(&data)))
+                    .flatten();
                 stored.unwrap_or_else(|| Decoded {
                     original: Some(original.leak()),
                     data: data.leak(),

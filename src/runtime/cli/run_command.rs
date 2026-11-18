@@ -1030,7 +1030,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             graph: crate::cli::run_compiled::graph(),
             ..Default::default()
         };
-        bun_jsc::start_in_window_if_preloaded(&ctx.preloads);
+        if options.graph.is_none() {
+            bun_jsc::start_in_window_if_preloaded(&ctx.preloads);
+        }
         let vm = VirtualMachine::init(ctx.log, options)?;
         crate::cli::run_compiled::decode_requested_crash_report();
 
@@ -1235,7 +1237,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if graph.flags.contains(GraphFlags::STARTS_IN_WINDOW) {
             bun_jsc::start_in_window();
         }
-        bun_jsc::start_in_window_if_preloaded(&ctx.preloads);
+        if graph.flags.contains(GraphFlags::LOADS_GRAPHICS_DRIVERS) {
+            bun_jsc::start_in_window_if_preloaded(&ctx.preloads);
+        }
         let vm = VirtualMachine::init_with_module_graph(ctx.log, options)?;
         crate::cli::run_compiled::decode_requested_crash_report();
         if graph.runtime_options.jit_policy > 1.0 {
@@ -1524,7 +1528,16 @@ impl Run<'_> {
                 !crate::cli::check_command::check_project_before(watching)
             }
         };
-        let loaded = (!has_type_errors).then(|| vm.load_entry_point(entry));
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+        let shows_pages = false;
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+        let shows_pages = bun_removable_features::call_removable_or!(
+            Desktop,
+            ReturnDefault,
+            { false },
+            crate::desktop::enter_page_process,
+        );
+        let loaded = (!has_type_errors && !shows_pages).then(|| vm.load_entry_point(entry));
         match loaded {
             None => {}
             Some(Ok(promise)) => {

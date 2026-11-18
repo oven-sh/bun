@@ -80,6 +80,8 @@ pub(crate) struct Item {
     /// It comes after a letter.
     is_in_word: bool,
     pub(crate) node: NodeId,
+    /// The element that has nothing but the text, and no items of its own. 0 is none.
+    pub(crate) element: NodeId,
     /// For text, of the parent.
     pub(crate) style: Rc<Style>,
     /// In `text`.
@@ -91,6 +93,12 @@ pub(crate) struct Item {
     pub(crate) segments: Range<u32>,
     /// The `Open` item that it is in, plus one. 0 is the root.
     pub(crate) parent: u32,
+}
+
+impl Item {
+    pub(crate) fn stands_for(&self, node: NodeId) -> bool {
+        self.node == node || self.element == node && node != 0
+    }
 }
 
 pub(crate) struct Paragraph {
@@ -234,6 +242,10 @@ impl Clusters {
             return None;
         };
         only.shaped.label.filter(|_| self.are_as_shaped())
+    }
+
+    pub(crate) fn as_shaped(&self) -> Option<&[Paragraph]> {
+        self.are_as_shaped().then_some(&self.paragraphs)
     }
 
     fn are_as_shaped(&self) -> bool {
@@ -397,7 +409,7 @@ impl Inline {
                     ItemKind::Text | ItemKind::Open(_) | ItemKind::Break
                 )
             })
-            .map(|item| item.node)
+            .flat_map(|item| [item.node, item.element])
             .filter(|node| *node != 0)
     }
 
@@ -434,10 +446,17 @@ impl Inline {
     }
 
     pub(crate) fn character(&self, cluster: u32) -> char {
-        self.text[self.clusters.start_of(cluster) as usize..]
-            .chars()
-            .next()
-            .unwrap_or_default()
+        match self.clusters.len() == self.text.len() {
+            true => self
+                .text
+                .as_bytes()
+                .get(cluster as usize)
+                .map_or('\0', |it| char::from(*it)),
+            false => self.text[self.clusters.start_of(cluster) as usize..]
+                .chars()
+                .next()
+                .unwrap_or_default(),
+        }
     }
 
     /// What has the styles and the glyphs for the line.
@@ -525,7 +544,7 @@ impl Inline {
         match self.items.len() {
             ..24 => all()
                 .filter(is_first)
-                .find(|it| it.1.node == node)
+                .find(|it| it.1.stands_for(node))
                 .map(|it| it.0),
             _ if !self.has_split_text
                 && self.firsts.get().is_none()
@@ -533,7 +552,7 @@ impl Inline {
                     .rev()
                     .take(16)
                     .filter(is_first)
-                    .find(|it| it.1.node == node) =>
+                    .find(|it| it.1.stands_for(node)) =>
             {
                 Some(found.0)
             }
@@ -544,7 +563,9 @@ impl Inline {
                         all()
                             .rev()
                             .filter(is_first)
-                            .map(|it| (it.1.node, it.0 as u32))
+                            .flat_map(|it| {
+                                [it.1.node, it.1.element].map(|node| (node, it.0 as u32))
+                            })
                             .collect(),
                     )
                 })
@@ -555,7 +576,13 @@ impl Inline {
 
     /// The first one that is text, a line break or an atomic inline.
     pub(crate) fn leaf(&self, node: NodeId) -> Option<&Item> {
-        Some(&self.items[self.first_of(node)?]).filter(|it| !matches!(it.kind, ItemKind::Open(_)))
+        Some(&self.items[self.first_of(node)?])
+            .filter(|it| !matches!(it.kind, ItemKind::Open(_)) && it.node == node)
+    }
+
+    pub(crate) fn has_text_in_place_of(&self, element: NodeId) -> bool {
+        self.first_of(element)
+            .is_some_and(|it| self.items[it].element == element)
     }
 
     /// If it is worth finding out.
@@ -751,6 +778,7 @@ impl Builder {
             is_in_word: self.in_word,
             run_start: 0,
             node,
+            element: 0,
             style: Rc::clone(style),
             start,
             end: self.text.len() as u32,
@@ -920,6 +948,22 @@ impl Builder {
         self.text_from(node, data, 0, style);
     }
 
+    /// See `Item::element`.
+    pub(crate) fn text_in_place_of(
+        &mut self,
+        element: NodeId,
+        node: NodeId,
+        data: &str,
+        style: &Rc<Style>,
+    ) {
+        let first = self.items.len();
+        self.text_from(node, data, 0, style);
+        self.items[first..]
+            .iter_mut()
+            .filter(|it| it.node == node)
+            .for_each(|it| it.element = element);
+    }
+
     /// `data` starts at `base` in the node.
     pub(crate) fn text_from(&mut self, node: NodeId, data: &str, base: usize, style: &Rc<Style>) {
         if !self.contexts.is_empty()
@@ -1077,7 +1121,7 @@ impl Builder {
                 };
                 item.has_own_style = true;
             }
-            (items, root)
+            (items, self.items.clone(), root)
         });
         let former = former.filter(|it| {
             first_line.is_none()
@@ -1096,6 +1140,7 @@ impl Builder {
             take_out(&mut self.items),
             &self.root,
             former,
+            false,
         );
         (inline.segments, inline.force_line, inline.has_split_text) = (
             take_out(&mut self.segments),
@@ -1105,7 +1150,7 @@ impl Builder {
         inline
             .outset
             .set(if outset.0 > 0 { outset } else { (0, 0.0) });
-        inline.first_line = first_line.map(|(items, root)| {
+        inline.first_line = first_line.and_then(|(items, normal, root)| {
             let (mut text, mut moved, mut in_word) = (String::new(), items.clone(), false);
             for (item, normal) in moved.iter_mut().zip(&inline.items) {
                 let data = &inline.text[normal.start as usize..normal.end as usize];
@@ -1121,20 +1166,51 @@ impl Builder {
                 }
                 item.end = text.len() as u32;
             }
-            let mut restyled = shape_items(document, &mut text, moved, &root, None);
-            if restyled
-                .items
-                .iter()
-                .zip(&inline.items)
-                .any(|(a, b)| a.clusters != b.clusters)
-            {
-                restyled = shape_items(document, &mut inline.text.to_string(), items, &root, None);
+            let differ = |a: &Inline, b: &Inline| {
+                a.items
+                    .iter()
+                    .zip(&b.items)
+                    .any(|(a, b)| a.clusters != b.clusters)
+            };
+            let mut restyled = shape_items(document, &mut text, moved, &root, None, false);
+            if differ(&restyled, &inline) {
+                restyled = shape_items(
+                    document,
+                    &mut inline.text.to_string(),
+                    items.clone(),
+                    &root,
+                    None,
+                    false,
+                );
+            }
+            if differ(&restyled, &inline) {
+                let segments = core::mem::take(&mut inline.segments);
+                restyled = shape_items(
+                    document,
+                    &mut inline.text.to_string(),
+                    items,
+                    &root,
+                    None,
+                    true,
+                );
+                inline = shape_items(
+                    document,
+                    &mut inline.text.to_string(),
+                    normal,
+                    &self.root,
+                    None,
+                    true,
+                );
+                (inline.segments, inline.force_line, inline.has_split_text) =
+                    (segments, self.force_line, self.has_split_text);
             }
             (restyled.segments, restyled.force_line) = (inline.segments.clone(), inline.force_line);
-            Box::new((
-                *restyled,
-                document.turned_style(&root, root.text.writing_mode),
-            ))
+            (!differ(&restyled, &inline)).then(|| {
+                Box::new((
+                    *restyled,
+                    document.turned_style(&root, root.text.writing_mode),
+                ))
+            })
         });
         inline.label = inline.find_label();
         inline
@@ -1360,7 +1436,7 @@ impl Former {
     fn compare(&self, text: &str, items: &mut [Item]) -> Change {
         let (inline, [count, base]) = (&*self.inline, self.passed_on);
         let is_like = |a: &Item, b: &Item| {
-            (a.kind, a.parent) == (b.kind, b.parent)
+            (a.kind, a.parent, a.element == 0) == (b.kind, b.parent, b.element == 0)
                 && (Rc::ptr_eq(&a.style, &b.style)
                     || matches!(a.kind, ItemKind::Text | ItemKind::Control)
                         && writes_like(&a.style, &b.style))
@@ -1428,16 +1504,28 @@ impl Former {
     }
 }
 
+#[derive(Default)]
+struct Runs {
+    runs: SmallVec<[TextRun; 16]>,
+    /// For the addresses of a font and of a text style.
+    known: Option<([usize; 2], u32, TextRun)>,
+    are_apart: bool,
+}
+
 /// For the paragraph, from the run on that starts at `from` and has the first of `items`.
 fn find_runs(
     text: &str,
     Range { start, end }: Range<usize>,
     from: usize,
     items: &mut [Item],
-    runs: &mut SmallVec<[TextRun; 16]>,
+    Runs {
+        runs,
+        known,
+        are_apart,
+    }: &mut Runs,
 ) {
     runs.clear();
-    let (mut is_apart, mut known) = (false, None::<([usize; 2], u32, TextRun)>);
+    let mut is_apart = false;
     for item in items
         .iter_mut()
         .take_while(|item| (item.start as usize) < end)
@@ -1446,7 +1534,8 @@ fn find_runs(
             is_apart |= interrupts_shaping(item);
             continue;
         }
-        if let (ItemKind::Atomic(_), Some(last)) = (item.kind, runs.last_mut()) {
+        is_apart |= *are_apart;
+        if let (ItemKind::Atomic(_), Some(last), false) = (item.kind, runs.last_mut(), *are_apart) {
             last.end = item.end - start as u32;
             continue;
         }
@@ -1510,12 +1599,14 @@ fn find_runs(
     }
 }
 
+/// No cluster goes from one item into another if they `are_apart`.
 fn shape_items(
     document: &Document,
     whole: &mut String,
     mut items: SmallVec<[Item; 1]>,
     root: &Style,
     former: Option<Former>,
+    are_apart: bool,
 ) -> Box<Inline> {
     let text = &**whole;
     let direction = match (root.layout.unicode_bidi, root.is_rtl()) {
@@ -1545,8 +1636,16 @@ fn shape_items(
         direction: direction | anywhere,
         found: Found::default(),
     };
-    let (mut changed, mut tail, mut runs, mut replaced, mut same_items) =
-        (0..text.len(), Vec::new(), SmallVec::new(), None, 0);
+    let (mut changed, mut tail, mut runs, mut replaced, mut same_items) = (
+        0..text.len(),
+        Vec::new(),
+        Runs {
+            are_apart,
+            ..Runs::default()
+        },
+        None,
+        0,
+    );
     let mut former = former.filter(|it| {
         it.inline.clusters.direction == clusters.direction
             && root.text.writing_mode == WritingMode::HorizontalTb
@@ -1591,9 +1690,9 @@ fn shape_items(
         while items[first_item].end as usize <= start {
             first_item += 1;
         }
-        let shape = |items: &mut [Item], runs: &mut _| {
+        let shape = |items: &mut [Item], runs: &mut Runs| {
             find_runs(text, start..end, start, items, runs);
-            document.shape(&text[start..end], runs, clusters.direction)
+            document.shape(&text[start..end], &runs.runs, clusters.direction)
         };
         let shaped = match replaced.take() {
             None => shape(&mut items[first_item..], &mut runs),
@@ -1617,7 +1716,7 @@ fn shape_items(
                             old,
                             known,
                             &text[start..end],
-                            (&runs, from - start),
+                            (&runs.runs, from - start),
                             clusters.direction,
                         )
                     };

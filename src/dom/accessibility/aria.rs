@@ -155,6 +155,28 @@ fn is_named_by_content(role: Role) -> bool {
         )
 }
 
+fn prohibits_name(role: Role) -> bool {
+    use Role::*;
+    matches!(
+        role,
+        Caption
+            | Code
+            | Definition
+            | Deletion
+            | Emphasis
+            | Generic
+            | Insertion
+            | Mark
+            | None
+            | Paragraph
+            | Strong
+            | Subscript
+            | Suggestion
+            | Superscript
+            | Time
+    )
+}
+
 impl<'a> Reader<'a> {
     pub(super) fn new(document: &'a Document, facts: &'a Map<NodeId, Facts>) -> Self {
         let (ids, labels, radios, last_row, owners, searches, sources) = Default::default();
@@ -636,6 +658,12 @@ impl<'a> Reader<'a> {
             .filter_map(|it| tree[it].text())
             .map(text)
             .collect()
+    }
+
+    fn only_says(&self, id: NodeId, words: &str) -> bool {
+        const FEW: usize = 8;
+        self.document.tree.descendants(id).nth(FEW).is_none()
+            && collapsed(&self.text_content(id)) == words
     }
 
     pub(super) fn option_label(&self, option: NodeId) -> String {
@@ -1169,15 +1197,16 @@ impl<'a> Reader<'a> {
 
     pub(super) fn control_text(&self, control: NodeId) -> String {
         let (tree, mut out) = (&self.document.tree, String::new());
-        let Some(editor) = self.find_part(control, name!("-internal-editor")) else {
-            return self
-                .attribute(control, name!("value"))
-                .unwrap_or_default()
-                .to_owned();
-        };
-        tree.children(editor)
-            .filter_map(|it| tree[it].text())
-            .for_each(|it| out.push_str(text(it)));
+        match self.find_part(control, name!("-internal-editor")) {
+            Some(editor) => tree
+                .children(editor)
+                .filter_map(|it| tree[it].text())
+                .for_each(|it| out.push_str(text(it))),
+            None => self
+                .element(control)
+                .into_iter()
+                .for_each(|it| out.push_str(&it.text_to_show())),
+        }
         match self
             .element(control)
             .is_some_and(|it| it.input_type() == name!("password"))
@@ -1420,6 +1449,9 @@ impl<'a> Reader<'a> {
         role: Role,
     ) -> (String, NameFrom) {
         let (mut name, from) = self.name(id);
+        if from == NameFrom::Title && prohibits_name(role) && !self.supports_focus(id) {
+            return (String::new(), NameFrom::Nothing);
+        }
         if element.html_tag() == name!("input") && element.input_type() == name!("file") {
             self.document
                 .rendered_children(id)
@@ -1540,6 +1572,7 @@ impl<'a> Reader<'a> {
                 .attribute(name!("title"))
                 .filter(|_| from != NameFrom::Title)
                 .map(collapsed)
+                .filter(|it| !self.only_says(id, it))
         };
         let is_news = |it: &String| !it.is_empty() && it != name;
         native

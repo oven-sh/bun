@@ -14,6 +14,24 @@ use bun_threading::Guarded;
 use super::error::{NetError, Result};
 use crate::Bytes;
 use crate::exec::{Receiver, Waiter, blocking};
+use crate::remote;
+use crate::wire::{self, Wire};
+
+/// Before all of `room` is written.
+pub fn prefault<T>(room: &mut [T]) {
+    unsafe extern "C" {
+        fn Bun__prefault(start: *mut core::ffi::c_void, length: usize);
+    }
+    // SAFETY: what the memory holds does not change.
+    unsafe { Bun__prefault(room.as_mut_ptr().cast(), size_of_val(room)) };
+}
+
+pub fn concat(parts: &[&[u8]]) -> Vec<u8> {
+    let mut all = Vec::with_capacity(parts.iter().map(|it| it.len()).sum());
+    prefault(all.spare_capacity_mut());
+    parts.iter().for_each(|it| all.extend_from_slice(it));
+    all
+}
 
 pub enum Chunk {
     Owned(Vec<u8>),
@@ -24,7 +42,7 @@ impl Chunk {
     pub fn into_vec(self) -> Vec<u8> {
         match self {
             Chunk::Owned(bytes) => bytes,
-            Chunk::Shared(bytes) => bytes.to_vec(),
+            Chunk::Shared(bytes) => bytes.into_vec(),
         }
     }
 
@@ -47,14 +65,39 @@ impl Deref for Chunk {
     }
 }
 
+pub trait Owner: AsRef<[u8]> + Send + Sync + 'static {
+    fn take(&mut self) -> Option<Vec<u8>> {
+        None
+    }
+}
+
+impl Owner for &'static [u8] {}
+
+impl Owner for Vec<u8> {
+    fn take(&mut self) -> Option<Vec<u8>> {
+        Some(core::mem::take(self))
+    }
+}
+
 #[derive(Clone)]
 pub struct SharedBytes {
-    owner: Arc<dyn AsRef<[u8]> + Send + Sync>,
+    owner: Arc<dyn Owner>,
     range: Range<usize>,
 }
 
 impl SharedBytes {
-    pub fn new(owner: impl AsRef<[u8]> + Send + Sync + 'static) -> SharedBytes {
+    fn into_vec(mut self) -> Vec<u8> {
+        let is_most = self.range.len() > (*self.owner).as_ref().len() / 2;
+        let owner = Arc::get_mut(&mut self.owner).filter(|_| is_most);
+        let Some(mut all) = owner.and_then(Owner::take) else {
+            return concat(&[&self]);
+        };
+        all.truncate(self.range.end);
+        all.drain(..self.range.start);
+        all
+    }
+
+    pub fn new(owner: impl Owner) -> SharedBytes {
         SharedBytes {
             range: 0..owner.as_ref().len(),
             owner: Arc::new(owner),
@@ -104,7 +147,7 @@ impl Data {
             _ => None,
         });
         match in_memory.collect::<Option<Vec<_>>>() {
-            Some(all) => Data::Bytes(all.concat().into()),
+            Some(all) => Data::Bytes(concat(&all).into()),
             None => Data::Parts(parts.into()),
         }
     }
@@ -157,6 +200,7 @@ impl Data {
             } => Body::new(FileSource {
                 file: Err(path.clone()),
                 modified: *modified,
+                first: range.start,
                 left: range.clone(),
                 reading: None,
                 part: PART,
@@ -185,6 +229,86 @@ impl Data {
     }
 }
 
+impl Wire for SharedBytes {
+    fn write(self, to: &mut wire::Writer) {
+        to.put_bytes(&self);
+    }
+
+    fn read(from: &mut wire::Reader<'_>) -> wire::Result<SharedBytes> {
+        Vec::read(from).map(Into::into)
+    }
+}
+
+crate::wire! {
+    enum Part {
+        Bytes(SharedBytes),
+        File { path: Bytes, range: Range<u64>, modified: Option<i64> },
+    }
+}
+
+impl Data {
+    fn flatten(self, into: &mut Vec<Part>) {
+        match self {
+            Data::Bytes(bytes) => into.push(Part::Bytes(bytes)),
+            Data::File {
+                path,
+                range,
+                modified,
+            } => into.push(Part::File {
+                path,
+                range,
+                modified,
+            }),
+            Data::Parts(parts) => parts.iter().for_each(|it| it.clone().flatten(into)),
+        }
+    }
+}
+
+/// A page process can only name the files that it has been given.
+impl Wire for Data {
+    fn write(self, to: &mut wire::Writer) {
+        let mut parts = Vec::new();
+        self.flatten(&mut parts);
+        for part in &parts {
+            if let (Part::File { path, .. }, Some(peer)) = (part, to.peer()) {
+                remote::grant(peer, path);
+            }
+        }
+        parts.write(to);
+    }
+
+    fn read(from: &mut wire::Reader<'_>) -> wire::Result<Data> {
+        let (peer, mut length) = (from.peer(), 0u64);
+        let check = |part| {
+            let data = match part {
+                Part::Bytes(bytes) => Data::Bytes(bytes),
+                Part::File { path, .. }
+                    if peer.is_some_and(|it| !remote::is_granted(it, &path)) =>
+                {
+                    return Err(wire::Malformed);
+                }
+                Part::File {
+                    path,
+                    range,
+                    modified,
+                } => Data::File {
+                    path,
+                    range,
+                    modified,
+                },
+            };
+            length = length.checked_add(data.len()).ok_or(wire::Malformed)?;
+            Ok(data)
+        };
+        let mut parts =
+            (Vec::read(from)?.into_iter().map(check)).collect::<wire::Result<Vec<_>>>()?;
+        Ok(match parts.pop_if(|_| true) {
+            Some(only) if parts.is_empty() => only,
+            last => Data::Parts(parts.into_iter().chain(last).collect()),
+        })
+    }
+}
+
 struct Chain(VecDeque<Body>);
 
 impl Source for Chain {
@@ -199,10 +323,12 @@ impl Source for Chain {
     }
 }
 
-#[derive(Clone)]
-pub struct Blob {
-    pub data: Data,
-    pub mime: Bytes,
+crate::wire! {
+    #[derive(Clone)]
+    pub struct Blob {
+        pub data: Data,
+        pub mime: Bytes,
+    }
 }
 
 /// For the responses that are on their way into memory as a whole.
@@ -256,8 +382,13 @@ pub type Read = Result<Option<Chunk>>;
 pub trait Source: Send {
     fn poll_read(&mut self, cx: &mut Context<'_>) -> Poll<Read>;
 
-    /// There is no use in holding back, or in small parts.
-    fn expect_read_to_end(&mut self, _: &'static Budget) {}
+    /// There is no use in holding back, or in small parts. If it takes what has been `read`, it returns that again.
+    fn expect_read_to_end(&mut self, _: &'static Budget, _read: &mut Vec<u8>) {}
+
+    /// The bytes that it has gathered since.
+    fn gathered(&self) -> u64 {
+        0
+    }
 }
 
 #[derive(Default)]
@@ -308,10 +439,24 @@ impl Source for Body {
         Poll::Ready(read)
     }
 
-    fn expect_read_to_end(&mut self, budget: &'static Budget) {
-        if let Some(rest) = &mut self.rest {
-            rest.expect_read_to_end(budget);
+    /// It always takes it.
+    fn expect_read_to_end(&mut self, budget: &'static Budget, read: &mut Vec<u8>) {
+        let mut read = core::mem::take(read);
+        match self.first.take() {
+            Some(first) if !read.is_empty() => read.extend_from_slice(&first),
+            Some(Chunk::Owned(first)) => read = first,
+            first => self.first = first,
         }
+        if let Some(rest) = &mut self.rest {
+            rest.expect_read_to_end(budget, &mut read);
+        }
+        if !read.is_empty() {
+            self.first = Some(Chunk::Owned(read));
+        }
+    }
+
+    fn gathered(&self) -> u64 {
+        self.rest.as_ref().map_or(0, |it| it.gathered())
     }
 }
 
@@ -320,6 +465,13 @@ impl Body {
         Body {
             first: None,
             rest: Some(Box::new(source)),
+        }
+    }
+
+    pub(crate) fn after(self, start: Vec<u8>) -> Body {
+        Body {
+            first: Some(Chunk::Owned(start)).filter(|it| !it.is_empty()),
+            ..self
         }
     }
 
@@ -332,16 +484,18 @@ impl Body {
     }
 
     pub async fn read_within(mut self, budget: &'static Budget) -> Result<Chunk> {
-        self.expect_read_to_end(budget);
+        self.expect_read_to_end(budget, &mut Vec::new());
         let Some(first) = self.read().await? else {
             return Ok(Chunk::Owned(Vec::new()));
         };
         let Some(second) = self.read().await? else {
             return Ok(first);
         };
-        let mut all = first.into_vec();
-        all.extend_from_slice(&second);
+        let (mut all, mut share) = (concat(&[&first, &second]), Share::of(budget));
         while let Some(more) = self.read().await? {
+            if self.gathered() == 0 {
+                share.grow(more.len())?;
+            }
             all.extend_from_slice(&more);
         }
         Ok(Chunk::Owned(all))
@@ -371,6 +525,7 @@ struct FileSource {
     /// The path, until it is opened.
     file: core::result::Result<Arc<File>, Bytes>,
     modified: Option<i64>,
+    first: u64,
     left: Range<u64>,
     reading: Option<Receiver<Result<(Arc<File>, Vec<u8>)>>>,
     part: u64,
@@ -399,9 +554,16 @@ fn read_part(
         return Err(NetError::UploadFileChanged);
     }
     let length = (range.end - range.start).min(size.saturating_sub(range.start));
-    let mut bytes = vec![0; length as usize];
-    let read = file.pread_all(&mut bytes, range.start)?;
-    bytes.truncate(read);
+    let mut bytes = Vec::new();
+    (bytes.try_reserve_exact(length as usize)).map_err(|_| NetError::InsufficientResources)?;
+    prefault(bytes.spare_capacity_mut());
+    // SAFETY: `pread_all` only writes, and returns how much.
+    unsafe {
+        bun_core::vec::fill_spare(&mut bytes, 0, |room| {
+            let read = file.pread_all(&mut room[..length as usize], range.start);
+            (*read.as_ref().unwrap_or(&0), read)
+        })
+    }?;
     Ok((file, bytes))
 }
 
@@ -428,9 +590,11 @@ impl Source for FileSource {
         Poll::Ready(Ok(Some(Chunk::Owned(bytes)).filter(|it| !it.is_empty())))
     }
 
-    fn expect_read_to_end(&mut self, _: &'static Budget) {
-        if self.reading.is_none() {
-            self.part = u64::MAX;
+    fn expect_read_to_end(&mut self, _: &'static Budget, read: &mut Vec<u8>) {
+        let has_read = read.len() as u64 <= self.left.start - self.first;
+        if has_read && !self.left.is_empty() && self.part != u64::MAX {
+            self.left.start -= core::mem::take(read).len() as u64;
+            (self.reading, self.part) = (None, u64::MAX);
         }
     }
 }

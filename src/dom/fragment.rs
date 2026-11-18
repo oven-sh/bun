@@ -590,7 +590,9 @@ impl Flow<'_> {
             if inside.is_none() {
                 self.breaks.lacks(self.column, bottom - top - space);
             }
-            if let Some(early) = early.filter(|it| it.appeal > before) {
+            if let Some(early) =
+                early.filter(|it| it.appeal > before && self.earlier(it.id, it.line).is_none())
+            {
                 self.breaks.retry = Some(early);
                 return Decision::Abort;
             }
@@ -992,7 +994,12 @@ impl<'a> Flow<'a> {
                 };
                 if output.height <= output.intrinsic {
                     appeal = Appeal::LastResort;
-                    if self.outcome.early.is_some() && self.breaks.budget > 0 {
+                    if self
+                        .outcome
+                        .early
+                        .is_some_and(|it| self.earlier(it.id, it.line).is_none())
+                        && self.breaks.budget > 0
+                    {
                         self.breaks.retry = self.outcome.early;
                         break (self.column, top);
                     }
@@ -1046,6 +1053,8 @@ struct Mapping<'a> {
     breaks: &'a Breaks,
     /// Of the content box, in the strip around.
     x: f32,
+    /// Of the content box, like `Row::y`.
+    end: f32,
     outer: Option<&'a Mapping<'a>>,
 }
 
@@ -1746,6 +1755,7 @@ impl Document {
             &Mapping {
                 breaks,
                 x: 0.0,
+                end: size[1],
                 outer: None,
             },
             [0.0; 2],
@@ -1768,11 +1778,10 @@ impl Document {
         let columns = (0..breaks.tally.reach[0].len().max(1)).map(|column| {
             let [x, y] = mapping.locate(column, [0.0, breaks.start(column)]);
             let (row, origin) = (breaks.row(column), origin.map(|it| -it));
-            let fills = mapping.outer.is_none() && breaks.is_in_last_row(column);
             let length = if column == row.first {
                 0.0
-            } else if fills {
-                row.height.max(root.size[1] - y)
+            } else if breaks.is_in_last_row(column) {
+                row.height.max(mapping.end - row.y)
             } else {
                 row.height
             };
@@ -1792,6 +1801,15 @@ impl Document {
         });
         self.boxes.pieces.insert(flow, columns.collect());
         self.distribute_contents(flow, mapping, [0.0; 2], origin, shift, root);
+    }
+
+    fn inset_at_end(&self, id: BoxId) -> f32 {
+        let it = &self.boxes[id];
+        (it.layout.border + it.layout.padding).to_array()[if it.turned.is_vertical() {
+            2
+        } else {
+            it.mode.sides()[2]
+        }]
     }
 
     /// Along the lines, from its container.
@@ -1919,11 +1937,27 @@ impl Document {
                 let x = x + self.inline_offset(flow, root.mode, size[0]);
                 let layout = &mut self.boxes[flow].layout;
                 (layout.location, layout.size) = (Point::default(), Default::default());
+                let (last, inset) = (
+                    breaks.rows.last().map_or(0, |it| it.outer_column),
+                    self.inset_at_end(child),
+                );
+                let end = match placed.pieces.iter().position(|it| it.0 == last) {
+                    Some(index) => {
+                        placed.pieces[index].2
+                            - if index + 1 == placed.pieces.len() {
+                                inset
+                            } else {
+                                0.0
+                            }
+                    }
+                    None => placed.top + placed.height - inset,
+                };
                 self.distribute_flow(
                     flow,
                     &Mapping {
                         breaks,
                         x,
+                        end,
                         outer: Some(mapping),
                     },
                     origin,

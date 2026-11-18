@@ -1115,10 +1115,19 @@ impl Size {
         }
         eq(function(p)?, "calc-size").then_some(())?;
         nested(p, |p| {
-            let basis = if keyword(p, "any") {
-                Size::Any
-            } else {
-                Size::parse_with(p, cx, auto)?
+            let sum = |p: &mut P| {
+                Node::parse_sum(
+                    p,
+                    &Options {
+                        anchor_size: true,
+                        ..Options::LENGTH_PERCENTAGE
+                    },
+                )
+            };
+            let basis = match attempt(p, sum) {
+                Some(sum) => Size::new(sum.simplified(Some(cx), false)),
+                None if keyword(p, "any") => Size::Any,
+                None => Size::parse_with(p, cx, auto)?,
             };
             comma(p).then_some(())?;
             let size = Size::Calc(Rc::new((

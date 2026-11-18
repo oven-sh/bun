@@ -3,11 +3,12 @@
 use std::ffi::{CStr, CString, OsStr, c_char, c_double, c_int, c_void};
 use std::ops::Deref;
 use std::os::unix::ffi::OsStrExt as _;
+use std::path::Path;
 use std::ptr::null_mut;
 use std::sync::{Arc, LazyLock};
 
 use super::decoded::map;
-use super::fonts::{Capabilities, DEFAULT_OBLIQUE_ANGLE};
+use super::fonts::{Capabilities, DEFAULT_OBLIQUE_ANGLE, Like};
 use super::sfnt::{self, variations};
 use crate::hash::FastMap;
 
@@ -231,6 +232,14 @@ impl Catalog {
         Some(((*data)?, font.index() & 0xFFFF))
     }
 
+    pub fn path(&self, font: &Font) -> Option<&Path> {
+        Some(OsStr::from_bytes(font.bytes(c"file", 0)?.to_bytes()).as_ref())
+    }
+
+    pub fn has(&self, family: FamilyId) -> bool {
+        (family as usize) < self.families.len()
+    }
+
     pub fn family(&mut self, name: &str) -> Option<FamilyId> {
         self.names.get(&name.to_lowercase()).copied()
     }
@@ -324,7 +333,13 @@ impl Catalog {
     }
 
     /// Like `gfx::GetFallbackFontForChar` in Chromium.
-    pub fn fallbacks(&mut self, character: char, color: bool, language: &[u8]) -> Vec<FamilyId> {
+    pub fn fallbacks(
+        &mut self,
+        character: char,
+        color: bool,
+        language: &[u8],
+        _: Option<Like>,
+    ) -> Vec<FamilyId> {
         let sorted = self
             .sorted_by_language
             .get(language)

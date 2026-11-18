@@ -702,6 +702,7 @@ longhands! {
         BorderTopRightRadius "border-top-right-radius" top_right: Corner = SQUARE;
         BorderBottomRightRadius "border-bottom-right-radius" bottom_right: Corner = SQUARE;
         BorderBottomLeftRadius "border-bottom-left-radius" bottom_left: Corner = SQUARE;
+        CornerSmoothing "-electron-corner-smoothing" corner_smoothing: CornerSmoothing = CornerSmoothing::None;
         BoxShadow "box-shadow" box_shadow: Shadows = Shadows::default();
         OutlineWidth "outline-width" outline_width: BorderWidth = BorderWidth(3.0);
         OutlineStyle "outline-style" outline_style: OutlineStyle = OutlineStyle::None;
@@ -798,7 +799,6 @@ longhands! {
         Resize "resize" resize: Resize = Resize::None;
     }
     @ others in svg {
-        WebkitBoxDirection "-webkit-box-direction"
         WebkitFontSmoothing "-webkit-font-smoothing"
         WebkitRtlOrdering "-webkit-rtl-ordering"
         WebkitRubyPosition "-webkit-ruby-position"
@@ -841,6 +841,7 @@ longhands! {
         WebkitTransformOriginY "-webkit-transform-origin-y"
         WebkitTransformOriginZ "-webkit-transform-origin-z"
         WebkitBorderImage "-webkit-border-image"
+        WebkitBoxDirection "-webkit-box-direction"
         WebkitBoxOrdinalGroup "-webkit-box-ordinal-group"
         WebkitBoxPack "-webkit-box-pack"
         WebkitBoxReflect "-webkit-box-reflect"
@@ -2044,7 +2045,7 @@ impl Style {
         {
             return only.matrix(width, height);
         }
-        if self.is_3d() {
+        if !self.transforms().all(Transform::is_flat) {
             let matrix = self.transform_3d(
                 crate::abi::Rect {
                     x: 0.0,

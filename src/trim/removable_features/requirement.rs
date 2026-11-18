@@ -1,4 +1,4 @@
-use crate::{EnteredFrom, Feature, FeatureSet, TrimFeature, is_removed};
+use crate::{Feature, FeatureSet, TrimFeature, is_removed};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum RuntimeRequirement {
@@ -23,7 +23,7 @@ impl RuntimeRequirement {
             RuntimeRequirement::Nothing => FeatureSet::EMPTY,
             RuntimeRequirement::Feature(feature) => FeatureSet::from_features(&[feature]),
             RuntimeRequirement::WholeRuntime | RuntimeRequirement::RuntimeCode => {
-                Feature::all_entered_from(EnteredFrom::Program)
+                Feature::all_open_to_any_code()
             }
         }
     }

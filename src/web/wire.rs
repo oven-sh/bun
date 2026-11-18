@@ -15,13 +15,30 @@ pub struct Malformed;
 
 pub type Result<T> = core::result::Result<T, Malformed>;
 
+/// Another process, by the number that the library has for it.
+pub type Peer = u32;
+
+/// What is left to do once a message has been sent.
+pub(crate) type Afterwards = Vec<Box<dyn FnOnce()>>;
+
 #[derive(Default)]
 pub struct Writer {
     bytes: Vec<u8>,
     items: usize,
+    peer: Option<Peer>,
+    afterwards: Afterwards,
 }
 
 impl Writer {
+    /// `None` if the message stays in the process.
+    pub fn peer(&self) -> Option<Peer> {
+        self.peer
+    }
+
+    pub(crate) fn afterwards(&mut self, step: impl FnOnce() + 'static) {
+        self.afterwards.push(Box::new(step));
+    }
+
     pub fn put(&mut self, bytes: &[u8]) {
         self.bytes.extend_from_slice(bytes);
     }
@@ -46,9 +63,14 @@ pub struct Reader<'a> {
     rest: &'a [u8],
     items_left: usize,
     depth: u32,
+    peer: Option<Peer>,
 }
 
 impl<'a> Reader<'a> {
+    pub fn peer(&self) -> Option<Peer> {
+        self.peer
+    }
+
     pub fn take<const N: usize>(&mut self) -> Result<[u8; N]> {
         let (taken, rest) = self.rest.split_first_chunk().ok_or(Malformed)?;
         self.rest = rest;
@@ -113,12 +135,30 @@ fn is_too_long<T: Message>(bytes: &[u8]) -> bool {
 
 /// `None` if [`decode`] would not take so much.
 pub fn encode<T: Message>(message: T) -> Option<Vec<u8>> {
-    let mut to = Writer::default();
+    encode_for(None, &[], message).map(|it| it.0)
+}
+
+pub(crate) fn encode_for<T: Message>(
+    peer: Option<Peer>,
+    head: &[u8],
+    message: T,
+) -> Option<(Vec<u8>, Afterwards)> {
+    let mut to = Writer {
+        peer,
+        bytes: Vec::with_capacity(128),
+        ..Writer::default()
+    };
+    to.put(head);
     message.write(&mut to);
-    (to.items <= MOST_ITEMS && !is_too_long::<T>(&to.bytes)).then_some(to.bytes)
+    (to.items <= MOST_ITEMS && !is_too_long::<T>(&to.bytes[head.len()..]))
+        .then_some((to.bytes, to.afterwards))
 }
 
 pub fn decode<T: Message>(bytes: &[u8]) -> Result<T> {
+    decode_from(None, bytes)
+}
+
+pub(crate) fn decode_from<T: Message>(peer: Option<Peer>, bytes: &[u8]) -> Result<T> {
     if is_too_long::<T>(bytes) {
         return Err(Malformed);
     }
@@ -126,6 +166,7 @@ pub fn decode<T: Message>(bytes: &[u8]) -> Result<T> {
         rest: bytes,
         items_left: MOST_ITEMS,
         depth: 0,
+        peer,
     };
     let message = T::read(&mut from)?;
     from.rest.is_empty().then_some(message).ok_or(Malformed)
@@ -159,7 +200,25 @@ macro_rules! numbers {
     )*};
 }
 
-numbers!(i8, u16, i16, u32, i32, u64, i64, f32, f64);
+numbers!(i8, i16, u32, i32, u64, i64);
+
+macro_rules! floats {
+    ($($T:ty),*) => {$(
+        impl Wire for $T {
+            fn write(self, to: &mut Writer) {
+                to.put(&self.to_le_bytes());
+            }
+
+            /// A `JSValue` that is made of another NaN is a pointer.
+            fn read(from: &mut Reader<'_>) -> Result<Self> {
+                let it = <$T>::from_le_bytes(from.take()?);
+                Ok(if it.is_nan() { <$T>::NAN } else { it })
+            }
+        }
+    )*};
+}
+
+floats!(f32, f64);
 
 impl Wire for u8 {
     fn write(self, to: &mut Writer) {
@@ -176,6 +235,28 @@ impl Wire for u8 {
 
     fn read_all(from: &mut Reader<'_>) -> Result<Vec<u8>> {
         from.take_bytes().map(<[u8]>::to_vec)
+    }
+}
+
+impl Wire for u16 {
+    fn write(self, to: &mut Writer) {
+        to.put(&self.to_le_bytes());
+    }
+
+    fn read(from: &mut Reader<'_>) -> Result<Self> {
+        from.take().map(u16::from_le_bytes)
+    }
+
+    fn write_all(all: Vec<u16>, to: &mut Writer) {
+        to.put_length(all.len() * 2);
+        to.bytes.extend(all.into_iter().flat_map(u16::to_le_bytes));
+    }
+
+    fn read_all(from: &mut Reader<'_>) -> Result<Vec<u16>> {
+        match from.take_bytes()?.as_chunks() {
+            (units, []) => Ok(units.iter().copied().map(u16::from_le_bytes).collect()),
+            _ => Err(Malformed),
+        }
     }
 }
 
@@ -289,6 +370,27 @@ impl<T: Wire> Wire for Box<[T]> {
     }
 }
 
+impl Wire for usize {
+    fn write(self, to: &mut Writer) {
+        (self as u64).write(to);
+    }
+
+    fn read(from: &mut Reader<'_>) -> Result<Self> {
+        u64::read(from)?.try_into().map_err(|_| Malformed)
+    }
+}
+
+impl<T: Wire + PartialOrd> Wire for core::ops::Range<T> {
+    fn write(self, to: &mut Writer) {
+        (self.start, self.end).write(to);
+    }
+
+    fn read(from: &mut Reader<'_>) -> Result<Self> {
+        let (start, end) = Wire::read(from)?;
+        (start <= end).then_some(start..end).ok_or(Malformed)
+    }
+}
+
 impl<T: Wire + Clone> Wire for Arc<[T]> {
     fn write(self, to: &mut Writer) {
         self.to_vec().write(to);
@@ -350,16 +452,7 @@ macro_rules! wire {
     };
     ($(#[$meta:meta])* $vis:vis struct $Name:ident($field_vis:vis $Field:ty); $($rest:tt)*) => {
         $(#[$meta])* $vis struct $Name($field_vis $Field);
-
-        impl $crate::wire::Wire for $Name {
-            fn write(self, to: &mut $crate::wire::Writer) {
-                $crate::wire::Wire::write(self.0, to);
-            }
-
-            fn read(from: &mut $crate::wire::Reader<'_>) -> $crate::wire::Result<Self> {
-                $crate::wire::Wire::read(from).map($Name)
-            }
-        }
+        $crate::wire!(impl $Name(_));
         $crate::wire! { $($rest)* }
     };
     (
@@ -378,6 +471,17 @@ macro_rules! wire {
         $crate::wire!(impl enum $Name { $($Variant $(($Only))? $({ $($field),* })?,)* });
         $crate::wire! { $($rest)* }
     };
+    (impl $Name:ident(_)) => {
+        impl $crate::wire::Wire for $Name {
+            fn write(self, to: &mut $crate::wire::Writer) {
+                $crate::wire::Wire::write(self.0, to);
+            }
+
+            fn read(from: &mut $crate::wire::Reader<'_>) -> $crate::wire::Result<Self> {
+                $crate::wire::Wire::read(from).map($Name)
+            }
+        }
+    };
     (impl $Name:ident { $($field:ident),* $(,)? }) => {
         impl $crate::wire::Wire for $Name {
             fn write(self, to: &mut $crate::wire::Writer) {
@@ -392,7 +496,7 @@ macro_rules! wire {
     };
     (impl enum $Name:ident { $($Variant:ident $(($Only:ty))? $({ $($field:ident),* })?,)* }) => {
         const _: () = {
-            use $crate::wire::{Malformed, Reader, Result, Wire, Writer};
+            use $crate::wire::{Malformed, Reader, Wire, Writer};
 
             enum Tag {
                 $($Variant,)*
@@ -409,7 +513,7 @@ macro_rules! wire {
                     }
                 }
 
-                fn read(from: &mut Reader<'_>) -> Result<Self> {
+                fn read(from: &mut Reader<'_>) -> $crate::wire::Result<Self> {
                     let tag = u16::read(from)?;
                     $(if tag == Tag::$Variant as u16 {
                         return Ok($Name::$Variant $((<$Only>::read(from)?))? $({ $($field: Wire::read(from)?),* })?);
@@ -473,6 +577,13 @@ macro_rules! messages {
             fn most_bytes(kind: u16) -> usize {
                 let all = [$($crate::most_bytes!($($asked)?),)* $($crate::most_bytes!($($requested)?),)*];
                 all.get(usize::from(kind)).copied().unwrap_or_default()
+            }
+        }
+
+        impl $Question {
+            /// The answer may take a while.
+            pub fn is_request(&self) -> bool {
+                matches!(self, $($Question::$Requested { .. })|*)
             }
         }
 

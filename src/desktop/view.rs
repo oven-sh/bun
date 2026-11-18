@@ -115,6 +115,12 @@ impl View {
         self.bounds.get().width > 0. && self.bounds.get().height > 0.
     }
 
+    pub(crate) fn area(&self) -> Option<[f64; 2]> {
+        let Rect { width, height, .. } = self.bounds.get();
+        self.has_area()
+            .then(|| [width.ceil().into(), height.ceil().into()])
+    }
+
     fn origin(&self) -> Point {
         let top = self
             .lineage()

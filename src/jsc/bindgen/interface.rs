@@ -3,6 +3,7 @@
 use super::*;
 use crate::DOMExceptionCode;
 use bun_core::WTFStringImplStruct;
+use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed};
 
 /// Hands an argument to a body that takes it over or borrows it.
 pub trait Pass<'s, To> {
@@ -55,6 +56,13 @@ unsafe extern "C" {
     static Bun__Bindgen__interfaceInfos: u8;
     static Bun__Bindgen__offsetOfBarrierThreshold: u32;
     static Bun__Bindgen__blockMask: usize;
+    fn Bun__Bindgen__publishItems(
+        list: *const c_void,
+        addresses: *const usize,
+        count: u32,
+        offset_in_cell: usize,
+        clock: *const u64,
+    );
     fn Bun__Bindgen__writeBarrier(from: *const c_void, to: JSValue);
     safe fn Bun__Bindgen__constructorForInterface(global: &JSGlobalObject, number: u32) -> JSValue;
     safe fn Bun__Bindgen__prototypeForInterface(global: &JSGlobalObject, number: u32) -> JSValue;
@@ -164,6 +172,8 @@ pub unsafe trait JsInterface: JsPayload {
     #[doc(hidden)]
     const INLINE_CAPACITY: usize;
     #[doc(hidden)]
+    const CELL_TYPE: u8;
+    #[doc(hidden)]
     const NUMBER: u32;
     #[doc(hidden)]
     const SPAN: u32;
@@ -215,8 +225,7 @@ pub unsafe trait JsInterface: JsPayload {
         let cell = value.encoded() as *const c_void;
         // SAFETY: every cell has a type, and one of this type has a ClassInfo.
         unsafe {
-            cell.byte_add(TYPE_OFFSET).cast::<u8>().read()
-                == 0xE0 + u8::from(Self::INLINE_CAPACITY > 0)
+            cell.byte_add(TYPE_OFFSET).cast::<u8>().read() == Self::CELL_TYPE
                 && has_class_info_of::<Self>(cell)
         }
     }
@@ -273,6 +282,96 @@ unsafe fn has_class_info_of<T: JsInterface>(cell: *const c_void) -> bool {
     };
     let first = (&raw const Bun__Bindgen__interfaceInfos).addr() + T::NUMBER as usize * INFO_SIZE;
     info.wrapping_sub(first) < T::SPAN as usize * INFO_SIZE
+}
+
+/// `JSC::EmbedderListItems`
+#[repr(C)]
+struct Items {
+    /// The collector clears it from its own thread.
+    items: AtomicUsize,
+    time: AtomicU64,
+    clock: *const AtomicU64,
+}
+
+/// What is published holds until this has been advanced.
+#[repr(transparent)]
+pub struct ItemsClock(AtomicU64);
+
+impl ItemsClock {
+    pub const fn new() -> ItemsClock {
+        ItemsClock(AtomicU64::new(0))
+    }
+
+    /// From one thread only.
+    #[inline(always)]
+    pub fn advance(&self) {
+        self.0.store(self.0.load(Relaxed) + 1, Relaxed);
+    }
+}
+
+#[inline(always)]
+fn items_of<T: PublishesItems>(this: &T) -> &Items {
+    // SAFETY: JSInterface.cpp asserts the layout.
+    unsafe { &*cell_of(this).byte_add(24).cast() }
+}
+
+/// # Safety
+/// Implemented by generated code only.
+pub unsafe trait PublishesItems: JsInterface + Sized {
+    /// From now on the engine may answer indexed reads with them. It may collect no garbage meanwhile.
+    ///
+    /// # Safety
+    /// They are instances that are alive. `clock` outlives the VM.
+    unsafe fn publish_instances<T: JsInterface>(&self, items: &[*const T], clock: &ItemsClock) {
+        let Ok(count) = u32::try_from(items.len()) else {
+            return;
+        };
+        // SAFETY: the caller's contract.
+        unsafe {
+            Bun__Bindgen__publishItems(
+                cell_of(self),
+                items.as_ptr().cast(),
+                count,
+                T::PAYLOAD_OFFSET,
+                clock.0.as_ptr(),
+            )
+        }
+    }
+
+    /// Likewise, for good.
+    ///
+    /// # Safety
+    /// They are alive.
+    unsafe fn publish_values(&self, items: &[JSValue]) {
+        let Ok(count) = u32::try_from(items.len()) else {
+            return;
+        };
+        // SAFETY: the caller's contract.
+        unsafe {
+            Bun__Bindgen__publishItems(
+                cell_of(self),
+                items.as_ptr().cast(),
+                count,
+                0,
+                core::ptr::null(),
+            )
+        }
+    }
+
+    /// What was published last still holds. Whether it is still there.
+    #[inline(always)]
+    fn renew_items(&self) -> bool {
+        let items = items_of(self);
+        // SAFETY: the contract of `publish_instances`, or else it points to `time`.
+        let now = unsafe { &*items.clock }.load(Relaxed);
+        items.time.store(now, Relaxed);
+        items.items.load(Relaxed) != 0
+    }
+
+    #[inline(always)]
+    fn withdraw_items(&self) {
+        items_of(self).items.store(0, Relaxed);
+    }
 }
 
 impl<'a, T: JsInterface> JsWrapper<'a, T> {

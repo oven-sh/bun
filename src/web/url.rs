@@ -1,6 +1,7 @@
 use bun_core::{StringView, strings};
 
 use crate::Bytes;
+use crate::wire::{self, Wire};
 
 /// A URL record, kept as its serialization.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -14,6 +15,20 @@ pub struct Url {
     path_start: u32,
     path_end: u32,
     query_end: u32,
+}
+
+impl Wire for Url {
+    fn write(self, to: &mut wire::Writer) {
+        self.href.write(to);
+    }
+
+    fn read(from: &mut wire::Reader<'_>) -> wire::Result<Url> {
+        let url = match from.peer() {
+            Some(crate::remote::HOST) => Url::serialized(Bytes::read(from)?),
+            _ => Url::parse(from.take_bytes()?),
+        };
+        url.ok_or(wire::Malformed)
+    }
 }
 
 impl Url {

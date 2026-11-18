@@ -5,6 +5,7 @@ pub mod files;
 mod import;
 pub mod indexed;
 pub mod key;
+mod large;
 mod sql;
 mod upgrade;
 
@@ -28,10 +29,12 @@ use crate::serial::Serial;
 pub const QUOTA: u64 = 1 << 36;
 const DELAY_OF_AREA_CHANGES: Duration = Duration::from_millis(500);
 
-/// Some origins, or all others.
-pub struct Origins {
-    pub listed: Vec<Bytes>,
-    pub are_meant: bool,
+crate::wire! {
+    /// Some origins, or all others.
+    pub struct Origins {
+        pub listed: Vec<Bytes>,
+        pub are_meant: bool,
+    }
 }
 
 impl Origins {
@@ -51,17 +54,21 @@ bitflags::bitflags! {
     }
 }
 
-/// Of `localStorage`. The strings are UTF-16LE.
-pub enum AreaChange {
-    Set { key: Bytes, value: Bytes },
-    Remove { key: Bytes },
-    Clear,
+crate::wire! {
+    /// Of `localStorage`. The strings are UTF-16LE.
+    pub enum AreaChange {
+        Set { key: Bytes, value: Bytes },
+        Remove { key: Bytes },
+        Clear,
+    }
 }
 
-pub struct Usage {
-    pub of_databases: f64,
-    pub of_caches: f64,
-    pub of_files: f64,
+crate::wire! {
+    pub struct Usage {
+        pub of_databases: f64,
+        pub of_caches: f64,
+        pub of_files: f64,
+    }
 }
 
 struct Connections {
@@ -80,6 +87,7 @@ impl Connections {
             CREATE TABLE IF NOT EXISTS databases (bucket TEXT, name BLOB, version INTEGER, stores BLOB, PRIMARY KEY (bucket, name));
             CREATE TABLE IF NOT EXISTS tables (id INTEGER PRIMARY KEY, bucket TEXT, name BLOB, next_key REAL);
             CREATE TABLE IF NOT EXISTS records (tab INTEGER, key BLOB, value BLOB, PRIMARY KEY (tab, key));
+            CREATE INDEX IF NOT EXISTS large_records ON records (tab, key, value) WHERE typeof(value) = 'text';
             CREATE TABLE IF NOT EXISTS cache_names (id INTEGER PRIMARY KEY AUTOINCREMENT, bucket TEXT, name BLOB);
             CREATE TABLE IF NOT EXISTS cached (cache INTEGER, url TEXT, request BLOB, response BLOB, body BLOB);
             CREATE INDEX IF NOT EXISTS cached_by_url ON cached (cache, url);
@@ -142,6 +150,7 @@ pub struct Storage {
     databases: Guarded<Vec<Weak<Database>>>,
     area_changes: Guarded<Vec<(Bytes, AreaChange)>>,
     has_imported_areas: AtomicBool,
+    has_looked_for_unused_values: AtomicBool,
     persisted: Guarded<Vec<Bytes>>,
     areas_cleared: OnceLock<fn(&Storage, &Origins)>,
     files: files::Files,
@@ -158,6 +167,7 @@ impl Storage {
             databases: Guarded::default(),
             area_changes: Guarded::default(),
             has_imported_areas: AtomicBool::new(false),
+            has_looked_for_unused_values: AtomicBool::new(false),
             persisted: Guarded::default(),
             areas_cleared: OnceLock::new(),
             files: files::Files::default(),
@@ -404,7 +414,7 @@ impl Storage {
             };
             Ok(Usage {
                 of_databases: sum(
-                    "SELECT total(length(key) + length(value)) FROM records JOIN tables ON id = tab WHERE bucket = ?",
+                    "SELECT total(length(key) + iif(typeof(value) = 'text', CAST(value AS INTEGER), length(value))) FROM records JOIN tables ON id = tab WHERE bucket = ?",
                 )? + sum(
                     "SELECT total(length(name) + length(stores)) FROM databases WHERE bucket = ?",
                 )?,
@@ -485,7 +495,7 @@ impl Storage {
         open.iter()
             .filter(|it| origins.include(&it.bucket))
             .for_each(|it| it.forget());
-        self.clear_buckets(
+        let cleared = self.clear_buckets(
             origins,
             "SELECT DISTINCT bucket FROM databases",
             &[
@@ -493,7 +503,10 @@ impl Storage {
                 "DELETE FROM tables WHERE bucket = ?",
                 "DELETE FROM databases WHERE bucket = ?",
             ],
-        )
+        );
+        let this = Arc::clone(self);
+        let removed = self.write(move |sql| Ok(_ = this.remove_unused_large_values(sql)));
+        Box::pin(async { cleared.await.and(removed.await) })
     }
 
     fn clear_caches(self: &Arc<Self>, origins: Arc<Origins>) -> LocalFuture<'static, sql::Result> {

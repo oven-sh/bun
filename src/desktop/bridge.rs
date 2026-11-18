@@ -262,9 +262,9 @@ impl Copier<'_> {
             });
         }
         let copy = self.remember(source, JSValue::create_empty_object(to, 0));
-        let mut keys = source.keys(from)?.array_iterator(from)?;
+        let (receiver, mut keys) = (source, source.keys(from)?.array_iterator(from)?);
         while let Some(key) = keys.next()? {
-            let member = self.copy(get_by_value(from, source, key)?, source, depth + 1)?;
+            let member = self.copy(get_by_value(from, receiver, key)?, receiver, depth + 1)?;
             JSValue::put_to_property_key(copy, to, key, member)?;
         }
         Ok(copy)

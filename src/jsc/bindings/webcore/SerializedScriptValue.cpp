@@ -87,10 +87,14 @@
 #include <JavaScriptCore/WasmModule.h>
 #include <JavaScriptCore/YarrFlags.h>
 #include <limits>
+#include <wtf/BitSet.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/MainThread.h>
 #include <wtf/RunLoop.h>
+#include <wtf/SegmentedVector.h>
+#include <wtf/SetForScope.h>
+#include <wtf/UnalignedAccess.h>
 #include <wtf/Vector.h>
 #include <wtf/threads/BinarySemaphore.h>
 
@@ -656,6 +660,146 @@ static bool tryMaterializeAsFinalObject(JSC::VM& vm, JSC::JSObject* object)
 #endif
 }
 
+static bool mayBePlatformObject(Structure* structure)
+{
+    auto* realm = structure->realm();
+    return realm && Bun::isDesktopRealm(realm) && (structure->hasPolyProto() || structure->storedPrototype() != realm->objectPrototype());
+}
+
+// This is based on `checkStrucureForClone`
+static bool isObjectFastPathCandidate(Structure* structure)
+{
+    static constexpr bool verbose = false;
+
+    if (mayBePlatformObject(structure)) [[unlikely]]
+        return false;
+
+    if (structure->typeInfo().type() != FinalObjectType) {
+        dataLogLnIf(verbose, "target is not final object");
+        return false;
+    }
+
+    if (!structure->canAccessPropertiesQuicklyForEnumeration()) {
+        dataLogLnIf(verbose, "target cannot access properties quickly for enumeration");
+        return false;
+    }
+
+    if (hasIndexedProperties(structure->indexingType())) {
+        dataLogLnIf(verbose, "target has indexing mode");
+        return false;
+    }
+
+    if (structure->isBrandedStructure()) {
+        dataLogLnIf(verbose, "target has isBrandedStructure");
+        return false;
+    }
+
+    if (structure->hasAnyKindOfGetterSetterProperties()) {
+        dataLogLnIf(verbose, "target has any kind of getter setter properties");
+        return false;
+    }
+
+    if (structure->hasNonConfigurableProperties() || structure->hasNonEnumerableProperties()) {
+        dataLogLnIf(verbose, "target has non-configurable or non-enumerable properties");
+        return false;
+    }
+
+    return true;
+}
+
+extern "C" void Bun__prefault(void*, size_t);
+
+static RefPtr<ArrayBuffer> tryCopyToArrayBuffer(std::span<const uint8_t> bytes)
+{
+    RefPtr buffer = ArrayBuffer::tryCreateUninitialized(bytes.size(), 1);
+    if (buffer) {
+        Bun__prefault(buffer->data(), bytes.size());
+        memcpySpan(buffer->mutableSpan(), bytes);
+    }
+    return buffer;
+}
+
+// Most graphs are trees: a bit tells that an object is new, and there is no table before one is met again.
+class NumberedObjects {
+public:
+    size_t size() const { return m_inOrder.size(); }
+
+    ALWAYS_INLINE std::optional<uint32_t> find(JSObject* object)
+    {
+        if (size() <= maximumWithoutBits) {
+            for (uint32_t i = 0; i < size(); ++i) {
+                if (at(i) == object)
+                    return i;
+            }
+            return std::nullopt;
+        }
+        if (!bitsFor(object).get(bitFor(object))) [[likely]]
+            return std::nullopt;
+        return numberOf(object);
+    }
+
+    ALWAYS_INLINE void add(JSObject* object)
+    {
+        m_inOrder.appendWithCrashOnOverflow(object);
+        if (size() <= maximumWithoutBits)
+            return;
+        for (; m_marked < size(); ++m_marked)
+            bitsFor(at(m_marked)).set(bitFor(at(m_marked)));
+    }
+
+    void shrink(size_t newSize)
+    {
+        while (size() > newSize) {
+            auto* object = m_inOrder.takeLast();
+            if (m_marked > size()) {
+                bitsFor(object).clear(bitFor(object));
+                --m_marked;
+            }
+            if (m_numbered > size()) {
+                m_numbers.remove(object);
+                --m_numbered;
+            }
+        }
+    }
+
+private:
+    static constexpr size_t maximumWithoutBits = 16;
+    static constexpr size_t bitsPerRegion = 1024;
+    using Bits = WTF::BitSet<bitsPerRegion>;
+
+    JSObject* at(size_t i) const { return m_inOrder.at(i); }
+    static uintptr_t atomOf(JSObject* object) { return std::bit_cast<uintptr_t>(object) / MarkedBlock::atomSize; }
+    static size_t bitFor(JSObject* object) { return atomOf(object) % bitsPerRegion; }
+
+    ALWAYS_INLINE Bits& bitsFor(JSObject* object)
+    {
+        uintptr_t region = atomOf(object) / bitsPerRegion;
+        auto& recent = m_recentRegions[region % m_recentRegions.size()];
+        if (recent.first != region) [[unlikely]]
+            recent = { region, lookUp(region) };
+        return *recent.second;
+    }
+
+    NEVER_INLINE Bits* lookUp(uintptr_t region)
+    {
+        return m_regions.ensure(region, [] { return makeUniqueWithoutFastMallocCheck<Bits>(); }).iterator->value.get();
+    }
+
+    NEVER_INLINE uint32_t numberOf(JSObject* object)
+    {
+        for (; m_numbered < size(); ++m_numbered)
+            m_numbers.add(at(m_numbered), m_numbered);
+        return m_numbers.get(object);
+    }
+
+    MarkedVector<JSObject*, 32> m_inOrder;
+    size_t m_marked { 0 };
+    size_t m_numbered { 0 };
+    std::array<std::pair<uintptr_t, Bits*>, 16> m_recentRegions {};
+    UncheckedKeyHashMap<uintptr_t, std::unique_ptr<Bits>> m_regions;
+    UncheckedKeyHashMap<JSObject*, uint32_t> m_numbers;
+};
+
 class CloneBase {
     WTF_FORBID_HEAP_ALLOCATION;
 
@@ -680,15 +824,25 @@ protected:
 // already large (from serializing a big ArrayBuffer), 1.5x can exceed the ~2GB Vector capacity
 // limit and CRASH() even though the exact needed size would fit. This helper grows by 1.5x when
 // possible but clamps to the maximum valid capacity, and reports failure instead of crashing.
-static bool ensureBufferCapacity(Vector<uint8_t>& buffer, size_t needed)
+static NEVER_INLINE bool growBuffer(Vector<uint8_t>& buffer, size_t needed)
 {
-    if (needed <= buffer.capacity()) [[likely]]
-        return true;
     constexpr size_t maxCapacity = std::numeric_limits<unsigned>::max() >> 1;
     if (needed > maxCapacity) [[unlikely]]
         return false;
-    size_t grown = std::min(std::max(needed, buffer.capacity() + buffer.capacity() / 2), maxCapacity);
+    size_t grown = std::min(std::max<size_t>({ needed, buffer.capacity() + buffer.capacity() / (buffer.capacity() < 4 * MB ? 1 : 2), 64 }), maxCapacity);
     return buffer.tryReserveCapacity(grown) || buffer.tryReserveCapacity(needed);
+}
+
+static ALWAYS_INLINE bool ensureBufferCapacity(Vector<uint8_t>& buffer, size_t needed)
+{
+    return needed <= buffer.capacity() || growBuffer(buffer, needed);
+}
+
+static ALWAYS_INLINE void appendToReservedCapacity(Vector<uint8_t>& buffer, const uint8_t* bytes, size_t length)
+{
+    if (length >= 64 * KB) [[unlikely]]
+        Bun__prefault(buffer.end(), length);
+    buffer.unsafeAppendWithoutCapacityCheck(bytes, length);
 }
 
 #if ASSUME_LITTLE_ENDIAN
@@ -696,7 +850,9 @@ template<typename T> static bool writeLittleEndian(Vector<uint8_t>& buffer, T va
 {
     if (!ensureBufferCapacity(buffer, buffer.size() + sizeof(value))) [[unlikely]]
         return false;
-    buffer.append(std::span { reinterpret_cast<uint8_t*>(&value), sizeof(value) });
+    size_t offset = buffer.size();
+    buffer.grow(offset + sizeof(value));
+    WTF::unalignedStore(buffer.begin() + offset, value);
     return true;
 }
 #else
@@ -716,7 +872,7 @@ template<> bool writeLittleEndian<uint8_t>(Vector<uint8_t>& buffer, uint8_t valu
 {
     if (!ensureBufferCapacity(buffer, buffer.size() + 1)) [[unlikely]]
         return false;
-    buffer.append(value);
+    buffer.unsafeAppendWithoutCapacityCheck(value);
     return true;
 }
 
@@ -728,7 +884,7 @@ template<typename T> static bool writeLittleEndian(Vector<uint8_t>& buffer, cons
     if (!ensureBufferCapacity(buffer, buffer.size() + static_cast<size_t>(length) * sizeof(T))) [[unlikely]]
         return false;
 #if ASSUME_LITTLE_ENDIAN
-    buffer.append(std::span { reinterpret_cast<const uint8_t*>(values), length * sizeof(T) });
+    appendToReservedCapacity(buffer, reinterpret_cast<const uint8_t*>(values), length * sizeof(T));
 #else
     for (unsigned i = 0; i < length; i++) {
         T value = values[i];
@@ -745,7 +901,7 @@ template<> bool writeLittleEndian<uint8_t>(Vector<uint8_t>& buffer, const uint8_
 {
     if (!ensureBufferCapacity(buffer, buffer.size() + length)) [[unlikely]]
         return false;
-    buffer.append(std::span { values, length });
+    appendToReservedCapacity(buffer, values, length);
     return true;
 }
 
@@ -869,26 +1025,21 @@ private:
         return object->inherits<JSSet>();
     }
 
-    bool checkForDuplicate(JSObject* object)
+    ALWAYS_INLINE bool checkForDuplicate(JSObject* object)
     {
         // Record object for graph reconstruction
-        ObjectPool::const_iterator found = m_objectPool.find(object);
-
-        // Handle duplicate references
-        if (found != m_objectPool.end()) {
+        if (auto found = m_objectPool.find(object)) {
             write(ObjectReferenceTag);
-            ASSERT(found->value < m_objectPool.size());
-            writeObjectIndex(found->value);
+            writeObjectIndex(*found);
             return true;
         }
 
         return false;
     }
 
-    void recordObject(JSObject* object)
+    ALWAYS_INLINE void recordObject(JSObject* object)
     {
-        m_objectPool.add(object, m_objectPool.size());
-        m_gcBuffer.appendWithCrashOnOverflow(object);
+        m_objectPool.add(object);
     }
 
     bool startObjectInternal(JSObject* object)
@@ -912,9 +1063,7 @@ private:
         if (!startObjectInternal(array))
             return false;
 
-        unsigned length = array->length();
-        write(ArrayTag);
-        write(length);
+        writeAtOnce(static_cast<uint8_t>(ArrayTag), array->length());
         return true;
     }
 
@@ -938,7 +1087,7 @@ private:
 
     void endObject()
     {
-        write(TerminatorTag);
+        writeAtOnce(TerminatorTag);
     }
 
     JSValue getProperty(JSObject* object, const Identifier& propertyName)
@@ -997,7 +1146,10 @@ private:
             write(EmptyStringTag);
         else {
             write(StringTag);
-            write(string);
+            if (string.length() <= maximumShortStringLength && (m_forStorage == SerializationForStorage::No || m_isInDesktopRealm))
+                writeShortString(*string.impl());
+            else
+                write(string);
         }
     }
 
@@ -1250,7 +1402,7 @@ private:
             }
         }
 
-        if (isArray(value))
+        if (value.asCell()->type() == FinalObjectType || isArray(value))
             return false;
 
         if (value.isObject()) {
@@ -1393,7 +1545,7 @@ private:
             }
 #if ENABLE(WEB_CRYPTO)
             if (auto* key = JSCryptoKey::toWrapped(vm, obj)) {
-                if ((m_forStorage == SerializationForStorage::Yes || m_forTransfer == SerializationForCrossProcessTransfer::Yes) && !key->extractable()) {
+                if ((m_forStorage == SerializationForStorage::Yes || m_forTransfer == SerializationForCrossProcessTransfer::Yes) && !key->extractable() && m_context != SerializationContext::BrowserStorage) {
                     code = SerializationReturnCode::DataCloneError;
                     return true;
                 }
@@ -1667,22 +1819,17 @@ private:
             fail();
     }
 
-    void writeStringIndex(unsigned i)
-    {
-        writeConstantPoolIndex(m_constantPool, i);
-    }
-
     void writeObjectIndex(unsigned i)
     {
-        writeConstantPoolIndex(m_objectPool, i);
+        writeConstantPoolIndex(m_objectPool.size(), i);
     }
 
-    template<class T> void writeConstantPoolIndex(const T& constantPool, unsigned i)
+    void writeConstantPoolIndex(size_t poolSize, unsigned i)
     {
-        ASSERT(i < constantPool.size());
-        if (constantPool.size() <= 0xFF)
+        ASSERT(i < poolSize);
+        if (poolSize <= 0xFF)
             write(static_cast<uint8_t>(i));
-        else if (constantPool.size() <= 0xFFFF)
+        else if (poolSize <= 0xFFFF)
             write(static_cast<uint16_t>(i));
         else
             write(static_cast<uint32_t>(i));
@@ -1690,16 +1837,63 @@ private:
 
     void write(const Identifier& ident)
     {
-        const String& str = ident.string();
-        StringConstantPool::AddResult addResult = m_constantPool.add(ident.impl(), m_constantPool.size());
+        writePooledString(*ident.impl());
+    }
+
+    template<typename... Types> ALWAYS_INLINE void writeAtOnce(Types... values)
+    {
+        static_assert(ASSUME_LITTLE_ENDIAN);
+        size_t offset = m_buffer.size();
+        if (!ensureBufferCapacity(m_buffer, offset + (sizeof(values) + ...))) [[unlikely]]
+            return fail();
+        m_buffer.grow(offset + (sizeof(values) + ...));
+        ((WTF::unalignedStore(m_buffer.begin() + offset, values), offset += sizeof(values)), ...);
+    }
+
+    ALWAYS_INLINE void writeStringReference(uint32_t index)
+    {
+        ASSERT(index < m_constantCount);
+        if (m_constantCount <= 0xFF)
+            writeAtOnce(StringPoolTag, static_cast<uint8_t>(index));
+        else if (m_constantCount <= 0xFFFF)
+            writeAtOnce(StringPoolTag, static_cast<uint16_t>(index));
+        else
+            writeAtOnce(StringPoolTag, index);
+    }
+
+    uint32_t writePooledString(StringImpl& str)
+    {
+        auto addResult = m_constantPool.add(&str, m_constantCount);
         if (!addResult.isNewEntry) {
-            write(StringPoolTag);
-            writeStringIndex(addResult.iterator->value);
-            return;
+            writeStringReference(addResult.iterator->value);
+            return addResult.iterator->value;
         }
         if (m_dropsUncloneableCauses)
-            m_constantsInOrder.append(ident.impl());
+            m_constantsInOrder.append(&str);
+        writeNewString(str);
+        return m_constantCount - 1;
+    }
 
+    // To write one twice costs less than to remember all of them.
+    void writeShortString(StringImpl& str)
+    {
+        if (m_recentStrings.isEmpty()) {
+            if (m_constantCount < recentStringCount / 8) {
+                writePooledString(str);
+                return;
+            }
+            m_recentStrings.grow(recentStringCount);
+        }
+        auto& recent = m_recentStrings[str.hash() % recentStringCount];
+        if (recent.string && recent.string->existingHash() == str.existingHash() && WTF::equal(*recent.string, str))
+            return writeStringReference(recent.index);
+        recent = { &str, m_constantCount };
+        writeNewString(str);
+    }
+
+    void writeNewString(StringImpl& str)
+    {
+        ++m_constantCount;
         unsigned length = str.length();
 
         // Guard against overflow
@@ -1732,7 +1926,7 @@ private:
         if (str.isNull())
             write(m_emptyIdentifier);
         else
-            write(Identifier::fromString(m_lexicalGlobalObject->vm(), str));
+            writePooledString(*str.impl());
     }
 
     void writeNullableString(const String& str)
@@ -1740,7 +1934,7 @@ private:
         bool isNull = str.isNull();
         write(isNull);
         if (!isNull)
-            write(Identifier::fromString(m_lexicalGlobalObject->vm(), str));
+            writePooledString(*str.impl());
     }
 
     void write(const Vector<uint8_t>& vector)
@@ -2032,17 +2226,45 @@ private:
         }
     }
 #endif
-    ObjectPool m_objectPool;
+
+    struct Shape {
+        struct Member {
+            Identifier name;
+            PropertyOffset offset;
+            std::optional<uint32_t> indexOfName;
+        };
+        Vector<Member, 8> members;
+        unsigned timesRolledBack;
+    };
+
+    Shape* shapeOf(JSObject*);
+    std::optional<SerializationReturnCode> tryWritePlain(JSCell*, size_t maximumDepth);
+    SerializationReturnCode writeMember(JSValue, size_t maximumDepth);
+    SerializationReturnCode writeMembers(JSObject*, Shape&, size_t maximumDepth);
+    SerializationReturnCode writeElements(JSArray*, size_t maximumDepth);
+
+    NumberedObjects m_objectPool;
+    UncheckedKeyHashMap<Structure*, std::unique_ptr<Shape>> m_shapes;
+    std::array<std::pair<Structure*, Shape*>, 8> m_recentShapes {};
+    unsigned m_nesting { 0 };
+    unsigned m_timesRolledBack { 0 };
     bool m_dropsUncloneableCauses { false };
     ObjectPool m_hostObjects;
     bool m_isInDesktopRealm { Bun::isDesktopRealm(m_lexicalGlobalObject) };
     ObjectPool m_transferredMessagePorts;
     ObjectPool m_transferredArrayBuffers;
-    typedef HashMap<RefPtr<UniquedStringImpl>, uint32_t, IdentifierRepHash> StringConstantPool;
-    StringConstantPool m_constantPool;
-    Vector<UniquedStringImpl*> m_constantsInOrder;
+    static constexpr unsigned maximumShortStringLength = 32;
+    static constexpr unsigned recentStringCount = 256;
+    struct RecentString {
+        RefPtr<StringImpl> string;
+        uint32_t index { 0 };
+    };
+    uint32_t m_constantCount { 0 };
+    HashMap<RefPtr<StringImpl>, uint32_t, StringHash> m_constantPool;
+    Vector<RecentString> m_recentStrings;
+    Vector<StringImpl*> m_constantsInOrder;
     HashSet<EncodedJSValue> m_droppedCauses;
-    MarkedArgumentBuffer m_droppedCauseRoots;
+    MarkedArgumentBuffer m_rootsUntilTheEnd;
     Identifier m_emptyIdentifier;
     SerializationContext m_context;
     ArrayBufferContentsArray& m_sharedBuffers;
@@ -2073,6 +2295,7 @@ SerializationReturnCode CloneSerializer::serializeCauseOrNothing(JSValue cause, 
     size_t objects = m_objectPool.size();
     size_t roots = m_gcBuffer.size();
     size_t constants = m_constantsInOrder.size();
+    uint32_t constantCount = m_constantCount;
     write(vm.propertyNames->cause);
     auto code = serialize(cause, maximumDepth);
     if (scope.exception()) {
@@ -2084,16 +2307,161 @@ SerializationReturnCode CloneSerializer::serializeCauseOrNothing(JSValue cause, 
         return SerializationReturnCode::UnspecifiedError;
 
     m_droppedCauses.add(JSValue::encode(cause));
-    m_droppedCauseRoots.appendWithCrashOnOverflow(cause);
+    m_rootsUntilTheEnd.appendWithCrashOnOverflow(cause);
     m_buffer.shrink(bytes);
     while (m_constantsInOrder.size() > constants)
         m_constantPool.remove(m_constantsInOrder.takeLast());
-    while (m_gcBuffer.size() > roots) {
-        if (auto* object = m_gcBuffer.takeLast().getObject()) {
-            if (auto found = m_objectPool.find(object); found != m_objectPool.end() && found->value >= objects)
-                m_objectPool.remove(found);
+    m_constantCount = constantCount;
+    m_recentStrings.clear();
+    ++m_timesRolledBack;
+    m_gcBuffer.shrink(roots);
+    m_objectPool.shrink(objects);
+    return SerializationReturnCode::SuccessfullyCompleted;
+}
+
+auto CloneSerializer::shapeOf(JSObject* object) -> Shape*
+{
+    VM& vm = m_lexicalGlobalObject->vm();
+    Structure* structure = object->structure();
+    auto& recent = m_recentShapes[std::bit_cast<uintptr_t>(structure) / MarkedBlock::atomSize % m_recentShapes.size()];
+    if (recent.first == structure) [[likely]]
+        return recent.second;
+    // These change in place.
+    if (structure->isDictionary())
+        return nullptr;
+
+    auto known = m_shapes.add(structure, nullptr);
+    if (known.isNewEntry) {
+        m_rootsUntilTheEnd.appendWithCrashOnOverflow(structure);
+        if (isObjectFastPathCandidate(structure) && (!m_isInDesktopRealm || (!structure->hasPolyProto() && structure->storedPrototype() == m_lexicalGlobalObject->objectPrototype()))) {
+            auto shape = makeUniqueWithoutFastMallocCheck<Shape>();
+            shape->timesRolledBack = m_timesRolledBack;
+            structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+                if (!entry.key()->isSymbol())
+                    shape->members.append({ Identifier::fromUid(vm, entry.key()), entry.offset(), std::nullopt });
+                return true;
+            });
+            known.iterator->value = WTF::move(shape);
         }
     }
+    recent = { structure, known.iterator->value.get() };
+    return recent.second;
+}
+
+// Writes what the walk in serialize() would.
+std::optional<SerializationReturnCode> CloneSerializer::tryWritePlain(JSCell* cell, size_t maximumDepth)
+{
+    constexpr unsigned maximumNesting = 32;
+    if (!maximumDepth || m_nesting == maximumNesting || !m_lexicalGlobalObject->vm().isSafeToRecurse())
+        return std::nullopt;
+    SetForScope nesting(m_nesting, m_nesting + 1);
+    if (cell->type() == ArrayType) {
+        auto* array = asArray(cell);
+        if (array->structure()->maxOffset() != invalidOffset || hasAnyArrayStorage(array->indexingType()))
+            return std::nullopt;
+        return startArray(array) ? writeElements(array, maximumDepth - 1) : SerializationReturnCode::SuccessfullyCompleted;
+    }
+    if (cell->type() != FinalObjectType)
+        return std::nullopt;
+    auto* object = asObject(cell);
+    auto* shape = shapeOf(object);
+    if (!shape || m_hostObjects.contains(object))
+        return std::nullopt;
+    return startObject(object) ? writeMembers(object, *shape, maximumDepth - 1) : SerializationReturnCode::SuccessfullyCompleted;
+}
+
+ALWAYS_INLINE SerializationReturnCode CloneSerializer::writeMember(JSValue value, size_t maximumDepth)
+{
+    auto code = SerializationReturnCode::SuccessfullyCompleted;
+    if (value.isInt32() && static_cast<uint32_t>(value.asInt32()) > 1) {
+        writeAtOnce(static_cast<uint8_t>(IntTag), value.asInt32());
+        return code;
+    }
+    if (!value.isCell()) {
+        dumpImmediate(value, code);
+        return code;
+    }
+    if (value.isString()) {
+        dumpString(asString(value)->value(m_lexicalGlobalObject));
+        return code;
+    }
+    if (auto written = tryWritePlain(value.asCell(), maximumDepth))
+        return *written;
+    return serialize(value, maximumDepth);
+}
+
+SerializationReturnCode CloneSerializer::writeMembers(JSObject* object, Shape& shape, size_t maximumDepth)
+{
+    auto scope = DECLARE_THROW_SCOPE(m_lexicalGlobalObject->vm());
+    StructureID structureID = object->structureID();
+    for (auto& member : shape.members) {
+        JSValue value;
+        if (object->structureID() == structureID) [[likely]]
+            value = object->getDirect(member.offset);
+        else {
+            value = getProperty(object, member.name);
+            RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+            if (!value)
+                continue;
+        }
+        if (shape.timesRolledBack != m_timesRolledBack) [[unlikely]] {
+            shape.timesRolledBack = m_timesRolledBack;
+            for (auto& it : shape.members)
+                it.indexOfName = std::nullopt;
+        }
+        if (member.indexOfName) [[likely]]
+            writeStringReference(*member.indexOfName);
+        else
+            member.indexOfName = writePooledString(*member.name.impl());
+        auto code = writeMember(value, maximumDepth);
+        RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+        if (code != SerializationReturnCode::SuccessfullyCompleted)
+            return code;
+    }
+    endObject();
+    return SerializationReturnCode::SuccessfullyCompleted;
+}
+
+SerializationReturnCode CloneSerializer::writeElements(JSArray* array, size_t maximumDepth)
+{
+    VM& vm = m_lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    for (unsigned i = 0, length = array->length(); i < length; ++i) {
+        JSValue value;
+        if ((hasContiguous(array->indexingType()) || hasInt32(array->indexingType())) && i < array->butterfly()->publicLength()) [[likely]]
+            value = array->butterfly()->contiguous().at(array, i).get();
+        else {
+            value = array->getDirectIndex(m_lexicalGlobalObject, i);
+            RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+        }
+        if (!value)
+            continue;
+        writeAtOnce(i);
+        auto code = writeMember(value, maximumDepth);
+        RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+        if (code != SerializationReturnCode::SuccessfullyCompleted)
+            return code;
+    }
+    // A getter has added to it.
+    if (array->structure()->maxOffset() != invalidOffset) [[unlikely]] {
+        PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        array->getOwnNonIndexPropertyNames(m_lexicalGlobalObject, names, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+        if (names.size())
+            write(NonIndexPropertiesTag);
+        for (auto& name : names) {
+            JSValue value = getProperty(array, name);
+            RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+            if (!value)
+                continue;
+            write(name);
+            auto code = serialize(value, maximumDepth);
+            RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+            if (code != SerializationReturnCode::SuccessfullyCompleted)
+                return code;
+        }
+    }
+    endObject();
     return SerializationReturnCode::SuccessfullyCompleted;
 }
 
@@ -2386,6 +2754,15 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in, size_t maximumDep
                 break;
             }
 
+            if (inputObjectStack.size() < maximumDepth) {
+                auto written = tryWritePlain(inValue.asCell(), maximumDepth - inputObjectStack.size());
+                RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+                if (written == SerializationReturnCode::SuccessfullyCompleted)
+                    break;
+                if (written)
+                    return *written;
+            }
+
             if (auto* error = dynamicDowncast<ErrorInstance>(inValue)) [[unlikely]] {
                 if (inputObjectStack.size() >= maximumDepth)
                     return SerializationReturnCode::StackOverflowError;
@@ -2503,9 +2880,14 @@ private:
         {
         }
 
-        Identifier identifier(JSC::VM& vm)
+        explicit CachedString(JSString* string)
+            : m_jsString(string)
         {
-            if (m_identifier.isEmpty())
+        }
+
+        ALWAYS_INLINE const Identifier& identifier(JSC::VM& vm)
+        {
+            if (m_identifier.isNull())
                 m_identifier = Identifier::fromString(vm, string());
             return m_identifier;
         }
@@ -2519,7 +2901,12 @@ private:
             }
             return m_jsString;
         }
-        const String& string() { return m_string; }
+        const String& string()
+        {
+            if (m_string.isNull() && m_jsString)
+                m_string = asString(m_jsString)->tryGetValue();
+            return m_string;
+        }
 
     private:
         String m_string;
@@ -2527,27 +2914,23 @@ private:
         Identifier m_identifier;
     };
 
+    using ConstantPool = SegmentedVector<CachedString, 128, 8>;
+
     struct CachedStringRef {
-        CachedStringRef()
-            : m_base(0)
-            , m_index(0)
-        {
-        }
-        CachedStringRef(Vector<CachedString>* base, size_t index)
-            : m_base(base)
-            , m_index(index)
+        CachedStringRef() = default;
+        CachedStringRef(ConstantPool* base, size_t index)
+            : m_string(&base->at(index))
         {
         }
 
         CachedString* operator->()
         {
-            ASSERT(m_base);
-            return &m_base->at(m_index);
+            ASSERT(m_string);
+            return m_string;
         }
 
     private:
-        Vector<CachedString>* m_base;
-        size_t m_index;
+        CachedString* m_string { nullptr };
     };
 
     CloneDeserializer(JSGlobalObject* lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<RefPtr<MessagePort>>& messagePorts, ArrayBufferContentsArray* arrayBufferContents, const std::span<uint8_t>& buffer
@@ -2898,7 +3281,7 @@ private:
         object->putDirectIndex(m_lexicalGlobalObject, index, value);
     }
 
-    void putProperty(JSObject* object, const Identifier& property, JSValue value)
+    ALWAYS_INLINE void putProperty(JSObject* object, const Identifier& property, JSValue value)
     {
         if (object->type() == ErrorInstanceType) [[unlikely]] {
             if (parseIndex(property))
@@ -2906,7 +3289,93 @@ private:
             object->putDirect(m_lexicalGlobalObject->vm(), property, value, static_cast<unsigned>(PropertyAttribute::DontEnum));
             return;
         }
+        if (object->type() == FinalObjectType && putAsInEarlierObject(object, property, value)) [[likely]]
+            return;
         object->putDirectMayBeIndex(m_lexicalGlobalObject, property, value);
+    }
+
+    ALWAYS_INLINE bool putAsInEarlierObject(JSObject* object, const Identifier& property, JSValue value)
+    {
+        VM& vm = m_lexicalGlobalObject->vm();
+        Structure* structure = object->structure();
+        Structure* next = structure->trySingleTransition();
+        if (!next && !structure->isDictionary()) {
+            PropertyOffset offset;
+            next = Structure::addPropertyTransitionToExistingStructure(structure, property.impl(), 0, offset);
+        }
+        if (!next || next->transitionKind() != TransitionKind::PropertyAddition || next->transitionPropertyName() != property.impl() || next->transitionPropertyAttributes())
+            return false;
+        if (next->transitionOffset() >= firstOutOfLineOffset || structure->mayBePrototype() || (vm.mayHaveUncacheableTransitions() && !next->isCacheableTransitionFrom(structure)))
+            return false;
+        object->putDirectWithoutBarrier(next->transitionOffset(), value);
+        object->setStructureIDDirectly(next->id());
+        vm.writeBarrier(object);
+        return true;
+    }
+
+    JSObject* createEmptyObject()
+    {
+        if (!m_emptyObjectStructure) {
+            m_emptyObjectStructure = m_lexicalGlobalObject->structureCache().emptyObjectStructureForPrototype(m_lexicalGlobalObject, m_globalObject->objectPrototype(), JSFinalObject::defaultInlineCapacity);
+            m_gcBuffer.appendWithCrashOnOverflow(m_emptyObjectStructure);
+        }
+        return constructEmptyObject(m_lexicalGlobalObject->vm(), m_emptyObjectStructure);
+    }
+
+    IndexingType indexingTypeForNextElement() const
+    {
+        uint32_t index;
+        const uint8_t* tag = m_ptr;
+        if (!readLittleEndian(tag, m_end, index) || index || tag >= m_end)
+            return ArrayWithUndecided;
+        switch (*tag) {
+        case IntTag:
+        case ZeroTag:
+        case OneTag:
+            return ArrayWithInt32;
+        case DoubleTag:
+            return ArrayWithUndecided;
+        default:
+            return ArrayWithContiguous;
+        }
+    }
+
+    ALWAYS_INLINE JSValue tryReadNewLatin1String()
+    {
+        uint32_t length;
+        const uint8_t* characters = m_ptr + 1;
+        if (!readLittleEndian(characters, m_end, length) || !(length & StringDataIs8BitFlag))
+            return {};
+        // What the tags that may be in its place come to is too long.
+        length &= ~StringDataIs8BitFlag;
+        if (length >= std::numeric_limits<int32_t>::max() / sizeof(char16_t) || length > static_cast<size_t>(m_end - characters))
+            return {};
+        auto* string = jsString(m_lexicalGlobalObject->vm(), String { std::span { byteCast<Latin1Character>(characters), length } });
+        m_gcBuffer.appendWithCrashOnOverflow(string);
+        m_constantPool.constructAndAppend(string);
+        m_ptr = characters + length;
+        return string;
+    }
+
+    ALWAYS_INLINE JSValue readTerminalMember()
+    {
+        if (m_ptr < m_end) [[likely]] {
+            switch (*m_ptr) {
+            case ArrayTag:
+            case ObjectTag:
+                return {};
+            case IntTag: {
+                int32_t i;
+                ++m_ptr;
+                return read(i) ? jsNumber(i) : JSValue();
+            }
+            case StringTag:
+                if (JSValue string = tryReadNewLatin1String())
+                    return string;
+                break;
+            }
+        }
+        return readTerminal();
     }
 
     template<typename LengthType>
@@ -2915,9 +3384,9 @@ private:
         LengthType length;
         if (!read(length))
             return false;
-        if (m_ptr + length > m_end)
+        if (length > static_cast<size_t>(m_end - m_ptr))
             return false;
-        arrayBuffer = ArrayBuffer::tryCreate({ m_ptr, length });
+        arrayBuffer = tryCopyToArrayBuffer({ m_ptr, static_cast<size_t>(length) });
         if (!arrayBuffer)
             return false;
         m_ptr += length;
@@ -4185,7 +4654,8 @@ private:
     const uint8_t* m_ptr;
     const uint8_t* const m_end;
     unsigned m_version;
-    Vector<CachedString> m_constantPool;
+    ConstantPool m_constantPool;
+    Structure* m_emptyObjectStructure { nullptr };
     // Mirrors CloneSerializer's m_objectPool: ObjectReferenceTag indexes into this.
     // Only values the serializer passed to recordObject() may be appended here (via
     // addToObjectPool), in the same order, or every later back-reference is wrong.
@@ -4212,7 +4682,7 @@ DeserializationResult CloneDeserializer::deserialize()
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     Vector<uint32_t, 16> indexStack;
-    Vector<Identifier, 16> propertyNameStack;
+    Vector<CachedStringRef, 16> propertyNameStack;
     MarkedVector<JSObject*, 32> outputObjectStack;
     Vector<uint32_t> platformObjectStack;
     MarkedVector<JSValue, 4> mapKeyStack;
@@ -4234,9 +4704,11 @@ DeserializationResult CloneDeserializer::deserialize()
             }
             if (throwOutOfMemoryErrorIfOwed(vm, m_lexicalGlobalObject, scope)) [[unlikely]]
                 goto error;
-            JSArray* outArray = constructEmptyArray(m_globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), length);
-            if (scope.exception()) [[unlikely]]
+            JSArray* outArray = JSArray::tryCreate(vm, m_globalObject->arrayStructureForIndexingTypeDuringAllocation(length < MIN_ARRAY_STORAGE_CONSTRUCTION_LENGTH ? indexingTypeForNextElement() : ArrayWithArrayStorage), length);
+            if (!outArray) [[unlikely]] {
+                throwOutOfMemoryError(m_globalObject, scope);
                 goto error;
+            }
             addToObjectPool(outArray);
             outputObjectStack.append(outArray);
         }
@@ -4256,7 +4728,7 @@ DeserializationResult CloneDeserializer::deserialize()
                 goto objectStartVisitMember;
             }
 
-            JSValue terminal = readTerminal();
+            JSValue terminal = readTerminalMember();
             if (scope.exception()) [[unlikely]]
                 goto error;
             if (m_failed)
@@ -4289,7 +4761,7 @@ DeserializationResult CloneDeserializer::deserialize()
                 return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
             if (throwOutOfMemoryErrorIfOwed(vm, m_lexicalGlobalObject, scope)) [[unlikely]]
                 goto error;
-            JSObject* outObject = constructEmptyObject(m_lexicalGlobalObject, m_globalObject->objectPrototype());
+            JSObject* outObject = createEmptyObject();
             addToObjectPool(outObject);
             outputObjectStack.append(outObject);
         }
@@ -4319,7 +4791,7 @@ DeserializationResult CloneDeserializer::deserialize()
                 break;
             }
 
-            JSValue terminal = readTerminal();
+            JSValue terminal = readTerminalMember();
             if (scope.exception()) [[unlikely]]
                 goto error;
             if (m_failed)
@@ -4332,11 +4804,11 @@ DeserializationResult CloneDeserializer::deserialize()
                 goto objectStartVisitMember;
             }
             stateStack.append(ObjectEndVisitMember);
-            propertyNameStack.append(cachedString->identifier(vm));
+            propertyNameStack.append(cachedString);
             goto stateUnknown;
         }
         case ObjectEndVisitMember: {
-            putProperty(outputObjectStack.last(), propertyNameStack.last(), outValue);
+            putProperty(outputObjectStack.last(), propertyNameStack.last()->identifier(vm), outValue);
             if (scope.exception()) [[unlikely]] {
                 goto error;
             }
@@ -4411,7 +4883,7 @@ DeserializationResult CloneDeserializer::deserialize()
 
         stateUnknown:
         case StateUnknown:
-            JSValue terminal = readTerminal();
+            JSValue terminal = readTerminalMember();
             if (scope.exception()) [[unlikely]]
                 goto error;
             if (m_failed)
@@ -4721,53 +5193,6 @@ static Exception exceptionForSerializationFailure(SerializationReturnCode code)
     return Exception { TypeError };
 }
 
-static bool mayBePlatformObject(Structure* structure)
-{
-    auto* realm = structure->realm();
-    return realm && Bun::isDesktopRealm(realm) && (structure->hasPolyProto() || structure->storedPrototype() != realm->objectPrototype());
-}
-
-// This is based on `checkStrucureForClone`
-static bool isObjectFastPathCandidate(Structure* structure)
-{
-    static constexpr bool verbose = false;
-
-    if (mayBePlatformObject(structure)) [[unlikely]]
-        return false;
-
-    if (structure->typeInfo().type() != FinalObjectType) {
-        dataLogLnIf(verbose, "target is not final object");
-        return false;
-    }
-
-    if (!structure->canAccessPropertiesQuicklyForEnumeration()) {
-        dataLogLnIf(verbose, "target cannot access properties quickly for enumeration");
-        return false;
-    }
-
-    if (hasIndexedProperties(structure->indexingType())) {
-        dataLogLnIf(verbose, "target has indexing mode");
-        return false;
-    }
-
-    if (structure->isBrandedStructure()) {
-        dataLogLnIf(verbose, "target has isBrandedStructure");
-        return false;
-    }
-
-    if (structure->hasAnyKindOfGetterSetterProperties()) {
-        dataLogLnIf(verbose, "target has any kind of getter setter properties");
-        return false;
-    }
-
-    if (structure->hasNonConfigurableProperties() || structure->hasNonEnumerableProperties()) {
-        dataLogLnIf(verbose, "target has non-configurable or non-enumerable properties");
-        return false;
-    }
-
-    return true;
-}
-
 class PlainDataCopier {
 public:
     explicit PlainDataCopier(JSGlobalObject& globalObject)
@@ -4778,7 +5203,20 @@ public:
     {
     }
 
-    JSValue copy(JSValue value, unsigned depth = 0)
+    JSValue copyAll(JSValue value)
+    {
+        JSValue result = copy(value, 0);
+        if (!result)
+            return {};
+        for (auto& [to, from] : m_bytesToCopy) {
+            Bun__prefault(to.data(), to.size());
+            memcpySpan(to, from);
+        }
+        return result;
+    }
+
+private:
+    JSValue copy(JSValue value, unsigned depth)
     {
         if (!value.isCell() || value.isString() || value.isHeapBigInt())
             return value;
@@ -4789,10 +5227,13 @@ public:
             return known;
         if (isJSArray(object))
             return copyArray(asArray(object), depth + 1);
+        if (object->type() == ArrayBufferType)
+            return copyBuffer(uncheckedDowncast<JSArrayBuffer>(object));
+        if (isTypedArrayType(object->type()))
+            return copyView(uncheckedDowncast<JSArrayBufferView>(object));
         return object->type() == JSDateType ? copyDate(uncheckedDowncast<DateInstance>(object)) : copyObject(object, depth + 1);
     }
 
-private:
     static constexpr unsigned maximumDepth = 200;
 
     struct KnownShape {
@@ -4814,21 +5255,80 @@ private:
         return shapes;
     }
 
-    JSObject* copyOf(JSObject* object) const
+    JSObject* copyOf(JSObject* object)
     {
-        for (auto [original, copied] : m_firstCopies) {
-            if (original == object)
-                return copied;
-        }
-        return m_copies.get(object);
+        auto number = m_originals.find(object);
+        return number ? m_copies[*number] : nullptr;
     }
 
     void didCopy(JSObject* object, JSObject* copied)
     {
-        if (m_firstCopies.size() < m_firstCopies.capacity())
-            m_firstCopies.unsafeAppendWithoutCapacityCheck(std::pair { object, copied });
-        else
-            m_copies.add(object, copied);
+        m_originals.add(object);
+        m_copies.append(copied);
+    }
+
+    // Of all buffers. The serializer says what is too large.
+    static constexpr size_t maximumByteLength = 1 * GB;
+
+    // It is filled once it is certain that the serializer is not needed.
+    RefPtr<ArrayBuffer> tryCreateBufferFor(std::span<const uint8_t> bytes)
+    {
+        if (bytes.size() > maximumByteLength - m_byteLength)
+            return nullptr;
+        m_byteLength += bytes.size();
+        RefPtr buffer = ArrayBuffer::tryCreateUninitialized(bytes.size(), 1);
+        if (buffer)
+            m_bytesToCopy.append({ buffer->mutableSpan(), bytes });
+        return buffer;
+    }
+
+    JSArrayBuffer* copyBuffer(JSArrayBuffer* buffer)
+    {
+        auto* contents = buffer->impl();
+        if (contents->isShared() || contents->isDetached() || contents->isResizableOrGrowableShared())
+            return nullptr;
+        RefPtr bytes = tryCreateBufferFor(contents->span());
+        if (!bytes)
+            return nullptr;
+        auto* result = JSArrayBuffer::create(m_vm, m_globalObject.arrayBufferStructure(ArrayBufferSharingMode::Default), WTF::move(bytes));
+        didCopy(buffer, result);
+        return result;
+    }
+
+    JSValue copyView(JSArrayBufferView* view)
+    {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        if (view->isDetached() || view->isResizableOrGrowableShared())
+            return {};
+        RefPtr<ArrayBuffer> bytes;
+        if (view->hasArrayBuffer()) {
+            auto* buffer = view->possiblySharedJSBuffer(view->structure()->realm());
+            RETURN_IF_EXCEPTION(scope, {});
+            // Not all callers hand over the rest of it.
+            if (view->byteLength() != buffer->impl()->byteLength())
+                return {};
+            auto* copied = copyOf(buffer);
+            if (!copied && !(copied = copyBuffer(buffer)))
+                return {};
+            bytes = uncheckedDowncast<JSArrayBuffer>(copied)->impl();
+        } else if (!(bytes = tryCreateBufferFor(view->span())))
+            return {};
+        auto type = typedArrayType(view->type());
+        auto* structure = m_globalObject.typedArrayStructure(type, false);
+        JSObject* result = nullptr;
+        switch (type) {
+#define CREATE_VIEW(name)                                                                                  \
+    case Type##name:                                                                                       \
+        result = JS##name##Array::create(&m_globalObject, structure, WTF::move(bytes), 0, view->length()); \
+        break;
+            FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(CREATE_VIEW)
+#undef CREATE_VIEW
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        RETURN_IF_EXCEPTION(scope, {});
+        didCopy(view, result);
+        return result;
     }
 
     JSValue copyArray(JSArray* array, unsigned depth)
@@ -4948,15 +5448,17 @@ private:
     JSGlobalObject& m_globalObject;
     VM& m_vm;
     DeferGC m_deferGC;
-    Vector<std::pair<JSObject*, JSObject*>, 12> m_firstCopies;
-    UncheckedKeyHashMap<JSObject*, JSObject*> m_copies;
+    NumberedObjects m_originals;
+    Vector<JSObject*, 12> m_copies;
+    Vector<std::pair<std::span<uint8_t>, std::span<const uint8_t>>, 2> m_bytesToCopy;
+    size_t m_byteLength { 0 };
     KnownShapes& m_knownShapes;
 };
 
 JSValue SerializedScriptValue::tryCopyPlainData(JSGlobalObject& globalObject, JSValue value)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject.vm());
-    JSValue result = PlainDataCopier(globalObject).copy(value);
+    JSValue result = PlainDataCopier(globalObject).copyAll(value);
     // No script has run: it has run out of memory, which a collection may change.
     if (scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
@@ -5378,6 +5880,181 @@ JSValue SerializedScriptValue::deserializeWithHostObjects(JSGlobalObject& global
     maybeThrowExceptionIfSerializationFailed(globalObject, result.second);
     RETURN_IF_EXCEPTION(scope, {});
     return result.first ? result.first : jsNull();
+}
+
+namespace {
+
+class FastPathWriter {
+public:
+    FastPathWriter() { writeLittleEndian(m_out, OldestWrittenVersion); }
+
+    std::span<const uint8_t> span() const { return m_out.span(); }
+
+    void value(JSValue value)
+    {
+        if (value.isInt32()) {
+            m_out.append(IntTag);
+            writeLittleEndian(m_out, static_cast<uint32_t>(value.asInt32()));
+        } else if (value.isDouble()) {
+            m_out.append(DoubleTag);
+            writeLittleEndian(m_out, std::bit_cast<uint64_t>(value.asDouble()));
+        } else
+            m_out.append(value.isNull() ? NullTag : value.isTrue() ? TrueTag
+                    : value.isFalse()                              ? FalseTag
+                                                                   : UndefinedTag);
+    }
+
+    void value(const String& string)
+    {
+        m_out.append(string.isEmpty() ? EmptyStringTag : StringTag);
+        if (!string.isEmpty())
+            characters(string);
+    }
+
+    void value(const SimpleCloneableObject& object) { value(object.properties); }
+
+    void value(const FixedVector<SimpleInMemoryPropertyTableEntry>& properties)
+    {
+        m_out.append(ObjectTag);
+        for (size_t at = 0; at < properties.size(); ++at) {
+            name(properties[at].propertyName, at);
+            value(properties[at].value);
+        }
+        writeLittleEndian(m_out, TerminatorTag);
+    }
+
+    template<typename... Types> void value(const std::variant<Types...>& variant)
+    {
+        std::visit([&](auto& it) { value(it); }, variant);
+    }
+
+    template<typename Elements, typename IsHole> void array(const Elements& elements, const IsHole& isHole)
+    {
+        m_out.append(ArrayTag);
+        writeLittleEndian(m_out, static_cast<uint32_t>(elements.size()));
+        for (uint32_t index = 0; index < elements.size(); ++index) {
+            if (isHole(elements[index]))
+                continue;
+            writeLittleEndian(m_out, index);
+            value(elements[index]);
+        }
+        writeLittleEndian(m_out, TerminatorTag);
+    }
+
+private:
+    void value(double number) { value(JSValue(JSValue::EncodeAsDouble, number)); }
+
+    void characters(const String& string)
+    {
+        ++m_strings;
+        writeLittleEndian(m_out, string.length() | (string.is8Bit() ? StringDataIs8BitFlag : 0));
+        m_out.append(string.is8Bit() ? byteCast<uint8_t>(string.span8()) : asBytes(string.span16()));
+    }
+
+    void name(const String& string, size_t at)
+    {
+        if (at == m_lastNames.size())
+            m_lastNames.append({});
+        auto& [last, index] = m_lastNames[at];
+        if (!last || *last != string) {
+            m_lastNames[at] = { &string, m_strings };
+            return characters(string);
+        }
+        writeLittleEndian(m_out, StringPoolTag);
+        if (m_strings <= 0xFF)
+            m_out.append(static_cast<uint8_t>(index));
+        else if (m_strings <= 0xFFFF)
+            writeLittleEndian(m_out, static_cast<uint16_t>(index));
+        else
+            writeLittleEndian(m_out, index);
+    }
+
+    Vector<uint8_t> m_out;
+    Vector<std::pair<const String*, uint32_t>> m_lastNames;
+    uint32_t m_strings { 0 };
+};
+
+}
+
+bool SerializedScriptValue::flatten(void* to, AppendFlatPart append) const
+{
+    constexpr uint64_t fixedLength = UINT64_MAX;
+    if (m_fastPath == FastPath::None) {
+        if ((m_sharedBufferContentsArray && !m_sharedBufferContentsArray->isEmpty()) || !m_serializedBlockLists.isEmpty() || !m_serializedHistograms.isEmpty())
+            return false;
+        append(to, FlatPart::WireBytes, m_data.begin(), m_data.size(), 0);
+        if (m_arrayBufferContentsArray) {
+            for (auto& contents : *m_arrayBufferContentsArray)
+                append(to, FlatPart::Buffer, contents.span().data(), contents.sizeInBytes(), contents.maxByteLength().value_or(fixedLength));
+        }
+        for (auto& blob : m_serializedBlobs)
+            append(to, FlatPart::Blob, blob->id.data(), blob->id.size(), 0);
+        return true;
+    }
+    FastPathWriter writer;
+    auto never = [](auto&) { return false; };
+    switch (m_fastPath) {
+    case FastPath::None:
+        break;
+    case FastPath::String:
+        writer.value(m_fastPathString);
+        break;
+    case FastPath::SimpleObject:
+        writer.value(m_simpleInMemoryPropertyTable);
+        break;
+    case FastPath::SimpleArray:
+        writer.array(m_simpleArrayElements, never);
+        break;
+    case FastPath::DenseArray:
+        writer.array(m_denseArrayElements, never);
+        break;
+    case FastPath::Int32Array:
+        writer.array(spanReinterpretCast<const JSValue>(m_arrayButterflyData.span()).first(m_arrayLength), [](JSValue it) { return !it; });
+        break;
+    case FastPath::DoubleArray:
+        writer.array(spanReinterpretCast<const double>(m_arrayButterflyData.span()).first(m_arrayLength), [](double it) { return it != it; });
+        break;
+    }
+    append(to, FlatPart::WireBytes, writer.span().data(), writer.span().size(), 0);
+    return true;
+}
+
+struct LentBuffer {
+    const uint8_t* bytes;
+    size_t length;
+    uint64_t maxByteLength;
+};
+
+extern "C" bool Bun__SerializedScriptValue__flatten(SerializedScriptValue* value, void* to, SerializedScriptValue::AppendFlatPart append)
+{
+    return value->flatten(to, append);
+}
+
+extern "C" NEVER_INLINE EncodedJSValue Bun__SerializedScriptValue__deserializeFlat(JSGlobalObject* globalObject, uint8_t* bytes, size_t length, const LentBuffer* buffers, size_t bufferCount, const EncodedJSValue* objects, size_t objectCount)
+{
+    BUN_REMOVABLE_DEFINITION(StructuredClone, &Bun__SerializedScriptValue__deserializeFlat);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    ArrayBufferContentsArray transferred;
+    for (auto& it : std::span { buffers, bufferCount }) {
+        auto buffer = it.maxByteLength == UINT64_MAX ? ArrayBuffer::tryCreateUninitialized(it.length, 1) : ArrayBuffer::tryCreate(it.length, 1, it.maxByteLength);
+        ArrayBufferContents contents;
+        if (buffer)
+            memcpySpan(buffer->mutableSpan(), std::span { it.bytes, it.length });
+        if (!buffer || !buffer->transferTo(globalObject->vm(), contents)) {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
+        transferred.append(WTF::move(contents));
+    }
+    auto result = CloneDeserializer::deserialize(globalObject, globalObject, {}, &transferred, std::span { bytes, length }, {}, {}, nullptr,
+#if ENABLE(WEBASSEMBLY)
+        nullptr, nullptr,
+#endif
+        std::span { objects, objectCount });
+    RETURN_IF_EXCEPTION(scope, {});
+    maybeThrowExceptionIfSerializationFailed(*globalObject, result.second);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(result.first ? result.first : jsNull());
 }
 
 Ref<SerializedScriptValue> SerializedScriptValue::createStringFastPath(const String& string)

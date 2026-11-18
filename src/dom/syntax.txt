@@ -34,6 +34,7 @@ value. `keep=`: what is written if everything could be left out.
 <image> = <url> | <gradient> | <image-set> | -webkit-cross-fade( <image-or-none> , <image-or-none> , <alpha> ) | ^light-dark light-dark( <image-or-none> , <image-or-none> ) | paint( <custom-ident> [ , <any> ]? ) | image( <color> )
 <url-modifiers> = cross-origin( anonymous | use-credentials ) || integrity( <string> ) || referrer-policy( no-referrer | no-referrer-when-downgrade | same-origin | origin | strict-origin | origin-when-cross-origin | strict-origin-when-cross-origin | unsafe-url )
 <image-or-none> = none | <image>
+<cursor-image> = <url> | <image-set> | light-dark( [ none | <cursor-image> ] , [ none | <cursor-image> ] )
 <image-set> = ^unprefix [ image-set( <image-set-option># ) | -webkit-image-set( <image-set-option># ) ]
 <image-set-option> = [ <string-url> | <url> | <gradient> ] [ <resolution [0,inf]> && <image-type> | <resolution [0,inf]> | [ +1x ]~~1x ++1dppx <image-type>? ]
 <image-type> = type( <string> )
@@ -73,9 +74,10 @@ value. `keep=`: what is written if everything could be left out.
 <paint> = none | context-fill | context-stroke | <color> | <url> [ none | <color> ]?
 
 <size-keyword> = min-content | max-content | fit-content | stretch | -webkit-min-content | -webkit-max-content | -webkit-fit-content | -webkit-fill-available
-<size> = auto | <size-keyword> | <anchored-size [0,inf]> | calc-size( [ <size> , <size-sum> | any , <sum> ] )
-<max-size> = none | <size-keyword> | <anchored-size [0,inf]> | calc-size( [ <size-keyword> | <lp+> | <max-calc-size> ] , <size-sum> ) | calc-size( any , <sum> )
-<max-calc-size> = calc-size( [ <size-keyword> | <lp+> | <max-calc-size> ] , <size-sum> ) | calc-size( any , <sum> )
+<size> = auto | <size-keyword> | <anchored-size [0,inf]> | calc-size( [ <size-basis> , <size-sum> | any , <sum> ] )
+<size-basis> = auto | <size-keyword> | <anchored-sum> | calc-size( [ <size-basis> , <size-sum> | any , <sum> ] )
+<max-size> = none | <size-keyword> | <anchored-size [0,inf]> | calc-size( [ <size-keyword> | <sum> | <max-calc-size> ] , <size-sum> ) | calc-size( any , <sum> )
+<max-calc-size> = calc-size( [ <size-keyword> | <sum> | <max-calc-size> ] , <size-sum> ) | calc-size( any , <sum> )
 <margin> = auto | <anchored-size>
 <inset> = auto | <anchored-inset>
 <baseline-position> = baseline | first>_ && baseline | last && baseline
@@ -196,6 +198,7 @@ animation-range-start = [ normal | <range-start> ]#
 animation-timeline = <timeline>#
 animation-timing-function = <easing>#
 animation-trigger i=none x = [ none | <dashed-ident> <trigger-behavior>{1,2} ]#
+-electron-corner-smoothing = system-ui | <percentage [0,inf]>
 app-region = none | drag | no-drag
 appearance = none | auto | base-select | checkbox | radio | button | listbox | menulist | menulist-button | meter | progress-bar | searchfield | textfield | textarea | slider-vertical
 aspect-ratio = auto || <ratio>
@@ -287,7 +290,7 @@ corner-top-right-shape i=round ~ = <corner-shape>
 counter-increment = none | [ <counter-name> [ <integer> | +1 ] ]+
 counter-reset = none | [ <counter-name> [ <integer> | +0 ] ]+
 counter-set = none | [ <counter-name> [ <integer> | +0 ] ]+
-cursor = [ [ <url> | <image-set> | light-dark( <image-or-none> , <image-or-none> ) ] ^integers <number>{2}? , ]* [ auto | default | none | context-menu | help | pointer | progress | wait | cell | crosshair | text | vertical-text | alias | copy | move | no-drop | not-allowed | grab | grabbing | e-resize | n-resize | ne-resize | nw-resize | s-resize | se-resize | sw-resize | w-resize | ew-resize | ns-resize | nesw-resize | nwse-resize | col-resize | row-resize | all-scroll | zoom-in | zoom-out | -webkit-grab>>grab | -webkit-grabbing>>grabbing | -webkit-zoom-in>>zoom-in | -webkit-zoom-out>>zoom-out ]
+cursor = [ <cursor-image> ^integers <number>{2}? , ]* [ auto | default | none | context-menu | help | pointer | progress | wait | cell | crosshair | text | vertical-text | alias | copy | move | no-drop | not-allowed | grab | grabbing | e-resize | n-resize | ne-resize | nw-resize | s-resize | se-resize | sw-resize | w-resize | ew-resize | ns-resize | nesw-resize | nwse-resize | col-resize | row-resize | all-scroll | zoom-in | zoom-out | -webkit-grab>>grab | -webkit-grabbing>>grabbing | -webkit-zoom-in>>zoom-in | -webkit-zoom-out>>zoom-out ]
 cx i=0px ~ = <svg-length>
 cy i=0px ~ = <svg-length>
 d i=none = none | path( <path-data> )
@@ -301,7 +304,7 @@ fill = <paint>
 fill-opacity = <alpha>
 fill-rule = nonzero | evenodd
 filter = <filter>
-flex-basis = content | auto | <size-keyword> | <lp+> | calc-size( [ content | <size> ] , <size-sum> ) | calc-size( any , <sum> )
+flex-basis = content | auto | <size-keyword> | <lp+> | calc-size( [ content | <size-basis> ] , <size-sum> ) | calc-size( any , <sum> )
 flex-direction = row | row-reverse | column | column-reverse
 flex-grow = <number+>
 flex-line-count i=1 ~ = <integer [1,inf]>

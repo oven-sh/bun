@@ -39,6 +39,8 @@ pub struct SqlError(c_int);
 
 impl SqlError {
     const CANNOT_OPEN: SqlError = SqlError(14);
+    pub(super) const FULL: SqlError = SqlError(13);
+    pub(super) const IO: SqlError = SqlError(10);
 
     pub fn is_damage(self) -> bool {
         matches!(self.0 & 0xff, 11 | 26)
@@ -75,6 +77,12 @@ impl Row<'_> {
         const NULL: c_int = 5;
         // SAFETY: the statement is at a row.
         unsafe { (self.0.column_type)(self.1, column) == NULL }
+    }
+
+    pub(super) fn is_text(&self, column: c_int) -> bool {
+        const TEXT: c_int = 3;
+        // SAFETY: the statement is at a row.
+        unsafe { (self.0.column_type)(self.1, column) == TEXT }
     }
 
     pub(super) fn integer(&self, column: c_int) -> i64 {
@@ -228,6 +236,17 @@ impl Connection {
         let mut found = None;
         self.each(text, values, |it| found = Some(read(it)))?;
         Ok(found)
+    }
+
+    /// The file is locked once for all that they read.
+    pub(super) fn at_once<T, E: From<SqlError>>(
+        &mut self,
+        steps: impl FnOnce(&mut Connection) -> core::result::Result<T, E>,
+    ) -> core::result::Result<T, E> {
+        self.run("BEGIN", &[])?;
+        let result = steps(self);
+        let _ = self.run("COMMIT", &[]);
+        result
     }
 
     pub(super) fn atomically<T, E: From<SqlError>>(

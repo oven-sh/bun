@@ -70,6 +70,9 @@ pub(crate) fn compile_to_executable(
         bun_standalone_graph::desktop::library_for(request.executable.target, env)
             .map_err(CompileFailure::Executable)?;
     }
+    if request.options.has_realms_of_the_web {
+        request.executable.flags |= Flags::LOADS_GRAPHICS_DRIVERS;
+    }
     // Code from disk finds what it imports as under `bun run`: by the package.json and tsconfig.json files that lie there.
     if request.options.loads_code_from_disk {
         let disabled = Flags::DISABLE_AUTOLOAD_PACKAGE_JSON | Flags::DISABLE_AUTOLOAD_TSCONFIG;
@@ -601,9 +604,11 @@ fn build_program(
         ..request.options.clone()
     };
     if let Some(desktop) = request.executable.desktop {
-        options.option_words.push(Box::from(&b"several-realms"[..]));
         options.has_realms_of_the_web = true;
         options.starts_in_window = desktop.starts_in_window;
+    }
+    if options.has_realms_of_the_web {
+        options.option_words.push(Box::from(&b"several-realms"[..]));
     }
     // Anything but an executable at that path is a file of the user's, which the program may name.
     let is_executable = |path: &[u8]| {

@@ -1,9 +1,11 @@
 //! What attributes mean for styles: presentational hints, and the states that pseudo-classes match.
 
+use crate::api::core::{Known, Meaning};
 use crate::document::Document;
 use crate::name::{Name, is_name, name};
 use crate::selector::key;
-use crate::tree::{Data, Element, Fact, Flags, Namespace, NodeId, State};
+use crate::transform::Transforms;
+use crate::tree::{Attribute, Data, Element, Fact, Flags, Namespace, NodeId, State};
 use crate::values::Out;
 
 const SVG_PRESENTATION: &str = " alignment-baseline baseline-shift buffered-rendering clip clip-path clip-rule color \
@@ -47,7 +49,11 @@ pub(crate) fn is_presentation_attribute(element: &Element, name: Name) -> bool {
 
 impl Element {
     pub(crate) fn input_type(&self) -> Name {
-        Name::lowercase(self.attribute(name!("type")).unwrap_or("text").as_bytes())
+        match self.attribute(name!("type")) {
+            None | Some("text") => name!("text"),
+            Some("checkbox") => name!("checkbox"),
+            Some(other) => Name::lowercase(other.as_bytes()),
+        }
     }
 
     pub(crate) fn is_text_field(&self) -> bool {
@@ -147,6 +153,17 @@ impl Element {
         } else {
             Some(State::empty())
         }
+    }
+
+    /// It has none, and its attributes give it none.
+    pub(crate) fn lacks_hints(&self) -> bool {
+        let is_hint = |it: &Attribute| match it.local.known() {
+            Known::Other => can_be_hint_in_html(it.name),
+            known => it.space.is_some() || known.meaning().contains(Meaning::HINT),
+        };
+        self.namespace == Namespace::Html
+            && !self.has_rare()
+            && !self.attributes.iter().any(is_hint)
     }
 
     /// There is nothing to prepare, unless it inherits a state.
@@ -760,9 +777,14 @@ fn hints(element: &Element, table: Option<&Element>, is_outer_svg: bool) -> Out 
         if let Some(matrix) =
             crate::svg::transform_attribute(element).filter(|it| it.iter().all(|it| it.is_finite()))
         {
+            let hint = Transforms::hint(&matrix);
             declare(
                 "transform",
-                crate::values::text(&crate::transform::Transforms::hint(&matrix)),
+                if element.has_moved {
+                    Transforms::ATTRIBUTE
+                } else {
+                    crate::values::text(&hint)
+                },
             );
         }
         match element.attribute(name!("space http://www.w3.org/XML/1998/namespace")) {

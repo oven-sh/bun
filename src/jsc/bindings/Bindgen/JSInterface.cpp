@@ -8,10 +8,12 @@
 #include "JSAbortController.h"
 #include "JSEventTarget.h"
 #include "RemovableFeatures.h"
+#include "WebGlobalObject.h"
 #include "webcore/streams/JSWritableStream.h"
 #include <JavaScriptCore/AsyncIteratorPrototype.h>
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/DOMAttributeGetterSetter.h>
+#include <JavaScriptCore/DeferGCInlines.h>
 #include <JavaScriptCore/ErrorHandlingScope.h>
 #include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
@@ -98,10 +100,36 @@ void JSInterfaceObject<2>::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     analyzeFields(cell, static_cast<JSInterfaceObject<2>*>(cell)->interfaceInfo(), analyzer);
 }
 
-template<unsigned capacity>
-struct AnyInterfaceObject : JSInterfaceObject<capacity> {
+template<typename Visitor>
+void JSInterfaceList::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    Base::visitChildren(cell, visitor);
+    static_cast<JSInterfaceList*>(cell)->m_items.visit(visitor);
+}
+DEFINE_VISIT_CHILDREN(JSInterfaceList);
+
+// For `bindgen::PublishesItems`.
+static_assert(sizeof(JSInterfaceList) == 48 && EmbedderListType == 0xE2);
+static_assert(EmbedderListItems::offsetOfItems() == 24 && EmbedderListItems::offsetOfTime() == 32 && EmbedderListItems::offsetOfClock() == 40);
+
+extern "C" void Bun__Bindgen__publishItems(JSCell* list, const uintptr_t* addresses, uint32_t count, uintptr_t offsetInCell, const uint64_t* clock)
+{
+    VM& vm = list->vm();
+    DeferGCForAWhile deferGC(vm);
+    auto* items = JSCellButterfly::tryCreate(vm, vm.cellButterflyStructure(CopyOnWriteArrayWithContiguous), count);
+    if (!items)
+        return;
+    auto* values = items->toButterfly()->contiguous().data();
+    for (uint32_t i = 0; i < count; i++)
+        values[i].setWithoutWriteBarrier(JSValue::decode(addresses[i] - offsetInCell));
+    vm.mutatorFence();
+    EmbedderListItems::of(list).publish(vm, list, items, clock);
+}
+
+template<typename Base>
+struct AnyInterfaceObject : Base {
     AnyInterfaceObject(VM& vm, Structure* structure)
-        : JSInterfaceObject<capacity>(vm, structure)
+        : Base(vm, structure)
     {
         forEachRunOfFields(this, this->interfaceInfo(), [](auto fields, unsigned) {
             for (auto& field : fields)
@@ -121,7 +149,9 @@ JSObject* createInterfaceObjectOutOfLine(Zig::GlobalObject* globalObject, unsign
         object->finishCreation(vm);
         return object;
     };
-    return hasInlineStorage ? finish(new (NotNull, cell) AnyInterfaceObject<2>(vm, structure)) : finish(new (NotNull, cell) AnyInterfaceObject<0>(vm, structure));
+    if (structure->typeInfo().type() == JSInterfaceList::cellType)
+        return finish(new (NotNull, cell) AnyInterfaceObject<JSInterfaceList>(vm, structure));
+    return hasInlineStorage ? finish(new (NotNull, cell) AnyInterfaceObject<JSInterfaceObject<2>>(vm, structure)) : finish(new (NotNull, cell) AnyInterfaceObject<JSInterfaceObject<0>>(vm, structure));
 }
 
 void destroyInterfaceWithInlineStorage(JSCell* cell)
@@ -617,11 +647,10 @@ void setupInterface(LazyClassStructure::Initializer& init, const InterfaceDescri
             constructor = JSClassConstructor::create(vm, globalObject, info->className, call, construct, description.length, text.constructorTable.span(), prototype, constructorBase);
         reifyWhatIsExposed(*constructor, true);
     }
-    JSC::JSType cellType = description.inlineCapacity ? JSInterfaceObject<2>::cellType : JSInterfaceObject<0>::cellType;
     if (description.structureFlags & MasqueradesAsUndefined)
         globalObject->masqueradesAsUndefinedWatchpointSet().fireAll(vm, "Created an interface whose instances masquerade as undefined");
     init.setPrototype(prototype);
-    Structure* structure = Structure::create(vm, globalObject, prototype, TypeInfo(cellType, description.structureFlags), info, description.hasIndexedProperties ? MayHaveIndexedAccessors : NonArray, description.inlineCapacity);
+    Structure* structure = Structure::create(vm, globalObject, prototype, TypeInfo(description.cellType, description.structureFlags), info, description.hasIndexedProperties ? MayHaveIndexedAccessors : NonArray, description.inlineCapacity);
     for (int16_t index : description.inlineUnforgeables) {
         if (index < 0)
             break;
@@ -1245,8 +1274,10 @@ static JSObject* holderOfReceiver(JSGlobalObject* globalObject, JSValue thisValu
     return object->isEnvironment() && !object->isGlobalObject() ? globalObject : object;
 }
 
-static JSObject* receiverHeldBy(VM& vm, JSObject* holder)
+static ALWAYS_INLINE JSObject* receiverHeldBy(VM& vm, JSObject* holder)
 {
+    if (holder->methodTable()->destroy == WebGlobalObject::destroy) [[likely]]
+        return uncheckedDowncast<WebGlobalObject>(holder)->m_bindgenAdditions.m_globalReceiver.get();
     if (auto* global = dynamicDowncast<Zig::GlobalObject>(holder))
         return global->m_bindgenAdditions.m_globalReceiver.get();
     return holder->inherits<JSGlobalStandIn>() ? holder->getDirect(vm, WebCore::builtinNames(vm).hostPrivateName()).getObject() : nullptr;

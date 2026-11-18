@@ -585,6 +585,12 @@ impl Cache {
         self.performed.is_some() && !self.is_stale
     }
 
+    pub(crate) fn collapsed_top_margin(&self) -> Strut {
+        self.performed
+            .as_ref()
+            .map_or_else(Strut::default, |it| it.margins[0])
+    }
+
     pub(crate) fn collapsed_bottom_margin(&self) -> Strut {
         self.performed
             .as_ref()
@@ -609,6 +615,12 @@ impl Cache {
     pub(crate) fn performed(&self) -> (Input, Output) {
         self.performed
             .map_or_else(Default::default, |it| (it.key.input(), it.output()))
+    }
+
+    pub(crate) fn let_escape(&mut self, escapes: Claims) {
+        self.performed
+            .iter_mut()
+            .for_each(|it| it.escapes |= escapes);
     }
 
     pub(crate) fn collapses_through(&self) -> bool {
@@ -706,7 +718,7 @@ pub(crate) fn margins(style: &Style) -> [&Auto<Lp>; 4] {
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
-    pub(crate) struct Traits: u8 {
+    pub(crate) struct Traits: u16 {
         const HAS_FIXED_PADDING = 1;
         const HAS_FIXED_MARGIN = 1 << 1;
         const HAS_AUTO_MARGIN = 1 << 2;
@@ -720,6 +732,8 @@ bitflags::bitflags! {
         const HAS_FIXED_SIZES = 1 << 6;
         /// As an inline element, it takes no room and moves nothing.
         const IS_PLAIN_IN_LINES = 1 << 7;
+        /// Nor does it paint anything, so that its text can stand in for it.
+        const LEAVES_NO_TRACE = 1 << 8;
     }
 }
 
@@ -764,6 +778,11 @@ impl Style {
             self.find_fixed();
         }
         self.measures.0.get()
+    }
+
+    #[inline]
+    pub(crate) fn leaves_no_trace(&self) -> bool {
+        self.fixed().traits.contains(Traits::LEAVES_NO_TRACE)
     }
 
     #[cold]
@@ -825,8 +844,6 @@ impl Style {
                     | Display::InlineBlock
                     | Display::TableCell
             )
-            && (self.display() != Display::TableCell
-                || heights.iter().all(|it| matches!(it, Size::Auto)))
             && self.contain().is_empty()
             && l.align_content == Align::NORMAL
             && self.rare.box_trim == TextBoxTrim::None
@@ -867,6 +884,18 @@ impl Style {
                 && self.rare.box_trim == TextBoxTrim::None
                 && self.rare.decoration_break != DecorationBreak::Clone,
         );
+        traits.set(
+            Traits::LEAVES_NO_TRACE,
+            traits.contains(Traits::IS_PLAIN_IN_LINES | Traits::IS_QUIET)
+                && (self.display(), l.unicode_bidi, self.text.writing_mode)
+                    == (
+                        Display::Inline,
+                        UnicodeBidi::Normal,
+                        WritingMode::HorizontalTb,
+                    )
+                && self.paint.decoration_line.is_empty()
+                && self.is_bare(),
+        );
         self.measures.0.set(Fixed {
             units: units_per_pixel(),
             traits,
@@ -883,12 +912,14 @@ impl Style {
 }
 
 fn resolve_padding(style: &Style, basis: f32) -> Edges {
-    let l = &style.layout;
+    let (l, resolve) = (&style.layout, |it: &PositiveLp| {
+        resolve(&it.0, basis).max(0.0)
+    });
     Edges {
-        top: resolve(&l.padding_top.0, basis),
-        right: resolve(&l.padding_right.0, basis),
-        bottom: resolve(&l.padding_bottom.0, basis),
-        left: resolve(&l.padding_left.0, basis),
+        top: resolve(&l.padding_top),
+        right: resolve(&l.padding_right),
+        bottom: resolve(&l.padding_bottom),
+        left: resolve(&l.padding_left),
     }
 }
 
@@ -1073,7 +1104,7 @@ impl LayoutBox {
     }
 
     pub(crate) fn is_cell(&self) -> bool {
-        self.style.display() == Display::TableCell
+        self.style.display() == Display::TableCell && self.parent_kind == Kind::Row
     }
 
     pub(crate) fn width_uses_height(&self) -> bool {
@@ -1090,7 +1121,7 @@ impl LayoutBox {
             ) && !self.style.look.is_checkable()
     }
 
-    /// A control with a percentage for a width has no least width.
+    /// A percentage in the width of a control counts for nothing in its least width.
     fn gives_way(&self) -> bool {
         is_name!(self.tag, "input" | "textarea" | "select")
             && is_relative(&self.style.layout.width)
@@ -1419,8 +1450,8 @@ impl Document {
         };
         if let Some(legend) = legend {
             self.boxes[id].children.insert(0, legend);
-            let own = self.contribution(legend, height, None).sizes;
             if self.fixed_content_size(id)[0].is_none() {
+                let own = self.contribution(legend, height, None).sizes;
                 widths.sizes = [0, 1].map(|it| widths.sizes[it].max(own[it]));
             }
         }
@@ -1432,7 +1463,22 @@ impl Document {
             && let [width, height] = self.fixed_content_size(id)
             && (width.is_some() || height.is_none() && self.boxes[id].tag == name!("select"))
         {
-            widths.sizes[0] = 0.0;
+            let (it, room) = (
+                &self.boxes[id],
+                Room {
+                    basis: [Some(0.0), None],
+                    ..Room::default()
+                },
+            );
+            widths.sizes[0] = it
+                .resolve_size(
+                    &it.style.layout.width,
+                    0,
+                    &room,
+                    it.border_and_padding(0.0).sums(),
+                    &mut |_| None,
+                )
+                .map_or(0.0, |it| it - inset);
         }
         if self.boxes[id].kind != Kind::Table {
             widths.sizes = widths.sizes.map(|it| it.max(0.0) + inset);
@@ -2236,7 +2282,7 @@ impl Document {
         &mut self,
         id: BoxId,
         input: &Input,
-        floats: Option<&mut Floats>,
+        mut floats: Option<&mut Floats>,
         mut breaks: Option<&mut Breaks>,
     ) -> Output {
         crate::recovery::need_stack();
@@ -2253,18 +2299,23 @@ impl Document {
         if it.turned.is_vertical() && !it.is_replaced() {
             self.turn_children(id, self.boxes[id].mode);
         }
-        let legend = self.boxes[id]
-            .has_legend
-            .then(|| self.lay_out_legend(id, input));
+        let (legend, earlier) = (
+            self.boxes[id]
+                .has_legend
+                .then(|| self.lay_out_legend(id, input)),
+            floats.as_ref().map_or(0, |it| it.len()),
+        );
         let mut output = match self.boxes[id].kind {
-            Kind::Lines => self.lay_out_lines(id, input, floats, breaks.as_deref_mut()),
+            Kind::Lines => {
+                self.lay_out_lines(id, input, floats.as_deref_mut(), breaks.as_deref_mut())
+            }
             Kind::Replaced | Kind::Svg | Kind::Bullet => self.lay_out_replaced(id, input),
             Kind::Flex => self.lay_out_flex(id, input, breaks.as_deref_mut()),
             Kind::Grid => self.lay_out_grid(id, input, breaks.as_deref_mut()),
             Kind::Table => self.lay_out_table(id, input, breaks.as_deref_mut()),
             Kind::Columns => self.lay_out_columns(id, input, breaks.as_deref_mut()),
             Kind::Math => self.lay_out_math(id, input),
-            _ => self.lay_out_block(id, input, floats, breaks.as_deref_mut()),
+            _ => self.lay_out_block(id, input, floats.as_deref_mut(), breaks.as_deref_mut()),
         };
         if self.environment.has_math {
             match self.boxes[id].kind {
@@ -2289,7 +2340,12 @@ impl Document {
         if self.boxes[id].kind != Kind::Block || output.baselines[0].is_none() {
             output.last_baseline = output.baselines[1];
         }
-        self.place_outside_marker(id, input, &mut output);
+        self.place_outside_marker(
+            id,
+            input,
+            floats.filter(|_| earlier > 0).map(|it| (it, earlier)),
+            &mut output,
+        );
         self.boxes[id].layout.size.height = output.height;
         self.settle_children(id);
         self.lay_out_positioned(id, &mut output, breaks);
@@ -2997,7 +3053,14 @@ impl Document {
         }
     }
 
-    pub(crate) fn place_outside_marker(&mut self, id: BoxId, input: &Input, output: &mut Output) {
+    /// So many of the floats came before the box.
+    pub(crate) fn place_outside_marker(
+        &mut self,
+        id: BoxId,
+        input: &Input,
+        floats: Option<(&mut Floats, usize)>,
+        output: &mut Output,
+    ) {
         let marker = self.boxes[id].outside_marker;
         if marker == 0 {
             return;
@@ -3023,43 +3086,80 @@ impl Document {
                 )
             }
         };
-        let inset = self.boxes[id].inset(input.basis.0);
-        let ascent = own.baselines[0].unwrap_or(own.height);
+        let (inset, ascent) = (
+            self.boxes[id].inset(input.basis.0),
+            own.baselines[0].unwrap_or(own.height),
+        );
+        let [above, below] = if self.boxes[marker].kind == Kind::Bullet {
+            self.strut(&self.boxes[marker].style)
+        } else {
+            [ascent, own.height - ascent]
+        };
+        let is_block = |it: &BoxId| {
+            Some(&self.boxes[*it]).is_some_and(|it| {
+                it.kind != Kind::Lines && !it.style.is_out_of_flow() && !it.style.is_floating()
+            })
+        };
         let baseline = match output.baselines[0] {
             Some(baseline) => {
-                let (ascent, descent) = if self.boxes[marker].is_replaced() {
-                    (ascent, 0.0)
-                } else {
-                    (ascent, own.height - own.baselines[1].unwrap_or(ascent))
+                let children = &self.boxes[id].children;
+                let has_baseline = |it: &BoxId| {
+                    Some(&self.boxes[*it]).is_some_and(|it| {
+                        !it.style.is_floating()
+                            && it
+                                .cache
+                                .performed
+                                .as_ref()
+                                .is_some_and(|it| it.output().baselines[0].is_some())
+                    })
                 };
-                let missing = (inset.top + ascent - baseline).max(0.0);
-                let bottom = baseline + missing + descent + inset.bottom;
-                if missing > 0.0 || bottom > output.intrinsic {
-                    self.shift_children(id, missing, output, None);
-                    output.intrinsic = (output.intrinsic + missing).max(bottom);
+                let first = children
+                    .iter()
+                    .position(|it| {
+                        (self.boxes[*it].kind == Kind::Lines || is_block(it)) && has_baseline(it)
+                    })
+                    .filter(|_| self.boxes[id].kind == Kind::Block);
+                let missing = (first
+                    .map_or(inset.top, |it| self.boxes[children[it]].layout.location.y)
+                    + above
+                    - baseline)
+                    .max(0.0);
+                if missing > 0.0 {
+                    self.shift_children_from(id, first.unwrap_or(0), missing, output, None);
+                    output.intrinsic += missing;
                     self.finish_height(id, input, inset, output);
                 }
                 baseline + missing
             }
+            None if !self.boxes[id].is_skipped && self.boxes[id].children.iter().any(is_block) => {
+                (output.intrinsic, output.height) = (
+                    output.intrinsic.max(above + below),
+                    output.height.max(above + below),
+                );
+                output.collapses_through = false;
+                above
+            }
             None => {
-                let style = &self.boxes[marker].style;
-                let line_height = unit(style.line_height());
-                let baseline = inset.top
-                    + style.metrics.ascent
-                    + ((line_height - style.metrics.ascent - style.metrics.descent) / 2.0).floor();
-                output.intrinsic = output
-                    .intrinsic
-                    .max(line_height.max(own.height) + inset.sums()[1]);
+                let line = self.strut(&self.boxes[id].style);
+                let baseline = inset.top + line[0].max(above);
+                output.intrinsic = output.intrinsic.max(baseline + line[1] + inset.bottom);
                 self.finish_height(id, input, inset, output);
-                output.collapses_through &= output.height == 0.0;
-                output.baselines = [Some(baseline); 2];
+                (
+                    output.collapses_through,
+                    output.baselines,
+                    output.last_baseline,
+                ) = (false, [Some(baseline); 2], Some(baseline));
                 baseline
             }
         };
-        let x = if self.boxes[id].style.is_rtl() {
-            input.width
-        } else {
-            -width
+        let (range, is_rtl) = (
+            [inset.left, input.width - inset.right],
+            self.boxes[id].style.is_rtl(),
+        );
+        let free = floats.map(|(floats, count)| floats.slot_among(count, range, baseline - above));
+        let x = match is_rtl {
+            true => input.width - free.map_or(0.0, |it| range[1] - it.x - it.width),
+            false => free.map_or(0.0, |it| it.x - range[0]) - width,
         };
         self.place_child(
             marker,

@@ -6,6 +6,7 @@ use bun_jsc::{JSGlobalObject, JSValue};
 use crate::channel::Message;
 use crate::input::Input;
 use crate::js_link::JsLink;
+use crate::net::body::Blob;
 use crate::permissions_policy::Feature;
 use crate::wire;
 use crate::wire::messages;
@@ -325,6 +326,8 @@ wire! {
         pub initiator: Option<u32>,
         /// What the element of the frame hears if a `javascript:` URL comes to nothing.
         pub fires_load_otherwise: Option<bool>,
+        /// What a `blob:` URL stands for, in a process that the host has no part in.
+        pub blob: Option<Blob>,
     }
 
     /// About a wish for another window.
@@ -394,7 +397,7 @@ wire! {
     pub enum ToFrame {
         OwnerChanged(Box<Owner>),
         SetInitialUrl(String),
-        Navigate { url: String, srcdoc: Option<String>, referrer_policy: String },
+        Navigate { url: String, srcdoc: Option<String>, referrer_policy: String, blob: Option<Blob> },
         Place { size: [f64; 2], scale: f64, is_visible: bool },
         Stop,
         Remove,
@@ -414,6 +417,32 @@ wire! {
         Focus,
         Close,
         Remove,
+    }
+
+    pub enum Relation {
+        Top,
+        Parent,
+        Opener,
+        FirstChild,
+        NextSibling,
+        Name(String),
+        Token(String),
+        /// In the same tree.
+        Page(u32),
+        /// In a frame that the page has found.
+        Selected(u32),
+    }
+
+    pub struct Relative {
+        pub page: u32,
+        pub token: String,
+    }
+
+    pub struct Thrown {
+        pub message: String,
+        pub stack: Option<String>,
+        /// For the terminal.
+        pub description: String,
     }
 
     /// The path of a file that the user or the app has chosen.
@@ -570,10 +599,23 @@ messages! {
         TargetUrlChanged = target_url_changed(url: String);
         ThemeColorChanged = theme_color_changed(color: Option<u32>);
         #[size = large]
+        IpcSend = ipc_send(channel: String, message: Message, has_ports: bool);
+        #[size = large]
+        IpcInvoke = ipc_invoke(channel: String, message: Message, ticket: u32);
+        #[size = large]
         Uncaught = uncaught(message: String, url: String, line: u32, column: u32, stack: String, is_rejection: bool);
     }
     ask Question -> Answer {
         Activated = activated() -> ();
+        ActivatedByPreload = activated_by_preload() -> ();
+        #[size = large]
+        PreloadFailed = preload_failed(file: String, error: Thrown) -> ();
+        /// One that is in the same process. `None` if `of` is gone.
+        Relative = relative(of: u32, relation: Relation) -> Option<Option<Relative>>;
+        /// The factor and the level.
+        Zoom = zoom() -> [f64; 2];
+        /// Returns why not.
+        SetZoom = set_zoom(value: f64, is_level: bool) -> Option<String>;
         ActivationConsumed = activation_consumed() -> ();
         BaseUrlChanged = base_url_changed(url: String) -> ();
         ChooseWindow = choose_window(target: String, wish: Option<Box<Wish>>, becomes_opener: bool) -> Chosen;
@@ -657,6 +699,8 @@ messages! {
     }
     request {
         PickFiles = pick_files(choice: FileChoice) -> Option<Vec<String>>;
+        #[size = large]
+        IpcSendSync = ipc_send_sync(channel: String, message: Message) -> Option<Result<Message, String>>;
         Microphone = microphone() -> Permission;
         Permission = permission(name: String) -> String;
         #[size = large]
@@ -680,6 +724,29 @@ impl Rect {
 }
 
 impl Question {
+    /// By a page in another process. What has no answer may have effects that the page counts on.
+    pub fn is_waited_for(&self) -> bool {
+        !matches!(
+            self,
+            Question::Activated {}
+                | Question::ActivationConsumed {}
+                | Question::BaseUrlChanged { .. }
+                | Question::FocusOther { .. }
+                | Question::Frame {
+                    message: ToFrame::OwnerChanged(_) | ToFrame::Place { .. },
+                    ..
+                }
+                | Question::Guest { .. }
+                | Question::PaintedInFrame { .. }
+                | Question::PreloadFailed { .. }
+                | Question::Reload {}
+                | Question::SecurityPolicyAdded { .. }
+                | Question::SetReferrerPolicy { .. }
+                | Question::SetTitle { .. }
+                | Question::UnhandledKey { .. }
+        )
+    }
+
     /// If not now, then as soon as there is room on the stack.
     pub(crate) fn has_to_arrive(&self) -> bool {
         matches!(
@@ -696,7 +763,7 @@ impl Question {
     }
 
     /// What a page may do does not depend on the room that it has left on the stack.
-    pub(crate) fn is_answered_without_scripts(&self) -> bool {
+    pub fn is_answered_without_scripts(&self) -> bool {
         matches!(
             self,
             Question::Activated {}

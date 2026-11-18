@@ -20,8 +20,8 @@ use crate::timeline::{Snapshot, Watched, trigger_ranges};
 use crate::tree::{Flags, NodeId};
 use crate::types::*;
 use crate::values::{
-    ALLOWS_KEYWORDS, Composite, Css, Ctx, Deps, Lp, Mixing, Out, Str, keywords, mix, parse_all,
-    with_current_color,
+    ALLOWS_KEYWORDS, Composite, Css, Ctx, Deps, Lp, Mixing, NoneOrSpaces, Out, Str, keywords, mix,
+    parse_all, with_current_color,
 };
 
 #[derive(Clone, PartialEq)]
@@ -3635,10 +3635,14 @@ impl Document {
     }
 
     pub(crate) fn committed_styles(&mut self, id: u32) -> Vec<(Prop, Out)> {
-        self.update_style();
         let Some(node) = self.animations.all.get(&id).map(|it| it.node) else {
             return Vec::new();
         };
+        self.update_layout_for(node);
+        let size = self
+            .own_box(node)
+            .map(|it| self.transform_reference(it))
+            .map_or([0.0; 2], |it| [it.width, it.height]);
         let Some(base) = self.tree.element(node).and_then(|it| it.base_style.clone()) else {
             return Vec::new();
         };
@@ -3662,10 +3666,21 @@ impl Document {
         };
         let values = self.animated_values(&ids, &base, false, sample);
         for track in &animation.tracks {
-            let value = values
-                .iter()
-                .find(|it| it.target() == track.target)
-                .cloned();
+            let value = match values.iter().find(|it| it.target() == track.target) {
+                Some(Animated::Property(Value::Transform(it)))
+                    if it.0.iter().any(|it| matches!(it, Transform::Deferred(_))) =>
+                {
+                    let [width, height] = size;
+                    Some(Animated::Property(Value::Transform(Transforms(
+                        NoneOrSpaces(
+                            [Transform::Matrix(Rc::new(it.matrix_3d(width, height)))]
+                                .into_iter()
+                                .collect(),
+                        ),
+                    ))))
+                }
+                value => value.cloned(),
+            };
             out.extend(
                 value
                     .unwrap_or_else(|| self.value_in(&base, track.target))

@@ -133,8 +133,8 @@ impl Drop for Block {
 pub struct Arena(Vec<Arc<Chunk>>);
 
 impl Arena {
-    pub fn store(&mut self, bytes: &[u8]) -> Block {
-        let needed = reserved(bytes.len());
+    pub fn store(&mut self, len: usize, write: impl FnOnce(&mut [u8])) -> Block {
+        let needed = reserved(len);
         let found = self
             .0
             .iter()
@@ -147,15 +147,10 @@ impl Arena {
             }
             (chunk.take(needed).unwrap_or(0), chunk)
         });
-        // SAFETY: nothing else has this part of the chunk.
-        unsafe {
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), chunk.start.add(offset), bytes.len())
-        };
-        Block {
-            chunk,
-            offset,
-            len: bytes.len(),
-        }
+        let block = Block { chunk, offset, len };
+        // SAFETY: nothing else has this part of the chunk, which began as zeros.
+        write(unsafe { std::slice::from_raw_parts_mut(block.chunk.start.add(offset), len) });
+        block
     }
 
     pub fn release_empty_chunks(&mut self) {

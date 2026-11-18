@@ -134,7 +134,6 @@ describe.concurrent("the built-in code that is part of every program", () => {
   // The rows above and runtime-use-of-util-inspect.test.ts call a function of these and find the report closed.
   const calledElsewhere = ["sys", "util"];
   const openTheReport = [
-    ...["bun:desktop", "bun:desktop/dom", "bun:desktop/electron"].map(name => [name, "pages run code of their own"]),
     ["bun:ffi", "what the module exports as a whole counts as called: CFunction, cc, dlopen and linkSymbols"],
     ["repl", "Function counts as called"],
     ["vm", "a load under a name that nobody knows counts as made"],

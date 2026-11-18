@@ -21,6 +21,7 @@ impl Resolved {
             Resolved::Rounded(it) => Resolved::Rounded(RoundedRect {
                 rect: it.rect.transformed(&matrix),
                 radii: it.radii.map(|it| it.map(|it| it * by)),
+                ..it
             }),
             Resolved::Path(path, rule) => Resolved::Path(path.transformed(&matrix), rule),
         }
@@ -84,6 +85,7 @@ pub(crate) fn resolve(shape: &Shape, reference: &RoundedRect, zoom: f32) -> Reso
             Resolved::Rounded(RoundedRect {
                 rect,
                 radii: [[rx, ry]; 4],
+                smoothing: 0.0,
             })
         }
         Shape::Polygon(rule, points, radius) => {

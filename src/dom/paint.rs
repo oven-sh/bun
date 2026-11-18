@@ -217,7 +217,7 @@ pub(crate) fn alpha(color: u32) -> u32 {
 pub(crate) fn square(rect: Rect) -> RoundedRect {
     RoundedRect {
         rect,
-        radii: Radii::default(),
+        ..RoundedRect::default()
     }
 }
 
@@ -240,7 +240,11 @@ pub(crate) fn fit(rect: Rect, mut radii: Radii) -> RoundedRect {
             [0.0; 2]
         };
     }
-    RoundedRect { rect, radii }
+    RoundedRect {
+        rect,
+        radii,
+        smoothing: 0.0,
+    }
 }
 
 pub(crate) fn with_corners(rect: Rect, basis: [f32; 2], corners: [&Corner; 4]) -> RoundedRect {
@@ -261,11 +265,15 @@ pub(crate) fn rounded(rect: Rect, style: &Style) -> RoundedRect {
         return square(rect);
     }
     let p = &style.paint;
-    with_corners(
+    let shape = with_corners(
         rect,
         [rect.width, rect.height],
         [&p.top_left, &p.top_right, &p.bottom_right, &p.bottom_left],
-    )
+    );
+    RoundedRect {
+        smoothing: p.corner_smoothing.amount(),
+        ..shape
+    }
 }
 
 impl RoundedRect {
@@ -279,7 +287,10 @@ impl RoundedRect {
             .iter_mut()
             .zip(by)
             .for_each(|(it, by)| *it = (*it - by).max(0.0));
-        fit(self.rect.shrunk([top, right, bottom, left]), radii)
+        RoundedRect {
+            smoothing: self.smoothing,
+            ..fit(self.rect.shrunk([top, right, bottom, left]), radii)
+        }
     }
 
     /// Sharp corners stay sharp.
@@ -309,7 +320,10 @@ impl RoundedRect {
         let radii = [0, 1, 2, 3].map(|corner| {
             [0, 1].map(|axis| grow(self.radii[corner][axis], by[corner][axis], coverage[corner]))
         });
-        fit(self.rect.shrunk([-top, -right, -bottom, -left]), radii)
+        RoundedRect {
+            smoothing: self.smoothing,
+            ..fit(self.rect.shrunk([-top, -right, -bottom, -left]), radii)
+        }
     }
 
     pub(crate) fn spread(&self, by: f32) -> RoundedRect {
@@ -391,10 +405,10 @@ impl Document {
         if item.has_own_style {
             return &item.style;
         }
-        let node = if item.kind == ItemKind::Text {
-            self.tree.flat_parent(item.node)
-        } else {
-            item.node
+        let node = match item.kind {
+            _ if item.element != 0 => item.element,
+            ItemKind::Text => self.tree.flat_parent(item.node),
+            _ => item.node,
         };
         self.tree.style(node).unwrap_or(&item.style)
     }
@@ -732,6 +746,7 @@ impl Document {
             .any(|it| blends(self.current_style(it)))
             || it.kind == Kind::Svg && self.blends_in_svg.get() && in_svg();
         layers.set(Layers::HAS_BLEND, has_blend);
+        layers.set(Layers::HAS_ONLY_LAYERS, it.children.len() >= 32);
         for id in &it.children {
             if !self.boxes[*id].is_quiet() {
                 let style = &self.boxes[*id].style;
@@ -751,6 +766,12 @@ impl Document {
             }
             let child = self.layers(*id);
             layers |= child & Layers::HAS_BACKDROP;
+            if !child.contains(Layers::IS_LAYER)
+                || self.boxes[*id].kind == Kind::RowGroup
+                || self.boxes[*id].is_in_inline
+            {
+                layers -= Layers::HAS_ONLY_LAYERS;
+            }
             if child.contains(Layers::IS_LAYER) {
                 layers |= if child.contains(Layers::IS_RAISED) {
                     Layers::HAS_RAISED
@@ -877,9 +898,12 @@ impl Document {
         }
         it.painted.was_laid_out.set(false);
         let mut last = f32::MIN;
+        let [first, end] = [it.children[0], it.children[it.children.len() - 1]]
+            .map(|it| self.boxes[it].layout.location.y);
         let column = it.children.iter().enumerate().try_fold(
             [0.0f32; 2],
             |[above, below], (index, child)| {
+                (first < end).then_some(())?;
                 it.children
                     .get(index + 8)
                     .into_iter()
@@ -910,6 +934,17 @@ impl Document {
         }
         known.insert(id, column);
         column
+    }
+
+    /// It can neither be seen nor hit.
+    fn is_blank(&self, id: BoxId) -> bool {
+        let it = &self.boxes[id];
+        it.children.is_empty()
+            && !it.style.is_visible()
+            && (it.kind, it.outside_marker) == (Kind::Block, 0)
+            && it.style.effects.filter.0.is_empty()
+            && !self.tree[it.node].has(Flags::ANIMATED)
+            && self.view_transitions.is_empty()
     }
 
     fn is_layer(&self, id: BoxId) -> bool {
@@ -2105,6 +2140,9 @@ impl<'a> Painter<'a> {
         if layers.contains(Layers::IS_STICKY) {
             self.layers_depend_on_scroller(id);
         }
+        if document.is_blank(child) {
+            return;
+        }
         let space = self.place(
             child,
             if document.is_legend(child) {
@@ -2919,7 +2957,14 @@ impl<'a> Painter<'a> {
             [0.0; 2]
         };
         let is_simple = !it.has_legend && !document.has_depth.get();
-        let children = self.children_in_sight(id, &contents);
+        let children = if is_simple
+            && it.children.len() >= 32
+            && document.layers(id).contains(Layers::HAS_ONLY_LAYERS)
+        {
+            &[]
+        } else {
+            self.children_in_sight(id, &contents)
+        };
         for (index, child) in children.iter().copied().enumerate() {
             children
                 .get(index + 8)
@@ -3696,10 +3741,11 @@ impl<'a> Painter<'a> {
         let line = match p.outline_style {
             OutlineStyle::Auto => {
                 (width, offset) = (2.0 * style.zoom, offset - style.zoom);
-                shape = fit(
+                shape.radii = fit(
                     shape.rect,
                     shape.radii.map(|it| it.map(|it| it.max(2.0 * style.zoom))),
-                );
+                )
+                .radii;
                 ring(
                     self,
                     shape,
@@ -3900,10 +3946,7 @@ impl<'a> Painter<'a> {
             size,
             size,
         ]);
-        let round = RoundedRect {
-            rect,
-            radii: [[size / 2.0; 2]; 4],
-        };
+        let round = fit(rect, [[size / 2.0; 2]; 4]);
         match &**name {
             "square" => self.fill(square(rect), color, space),
             "circle" => {
@@ -4197,5 +4240,5 @@ pub(crate) fn resolve_padding(style: &Style, basis: f32) -> [f32; 4] {
         &l.padding_bottom.0,
         &l.padding_left.0,
     ]
-    .map(|it: &Lp| it.resolve(basis))
+    .map(|it: &Lp| it.resolve(basis).max(0.0))
 }

@@ -232,7 +232,7 @@ export const ImageData = b.interface("ImageData", {
   proto: {
     width: { getter: b.u32, pure: true },
     height: { getter: b.u32, pure: true },
-    data: { getter: b.object, field: "data" },
+    data: { getter: b.object, field: "data", onlyReads: true },
     pixelFormat: { getter: ImageDataPixelFormat },
     colorSpace: { getter: PredefinedColorSpace },
   },

@@ -86,7 +86,10 @@ pub(crate) fn create(
     let (engine, session) = contents.get_session().link()?;
     let (size, scale) = match contents.size() {
         Some(it) => (it.size, it.scale),
-        None => ([800., 600.], screen::primary_display()?.scale.into()),
+        None => (
+            contents.size_of_view().unwrap_or([800., 600.]),
+            screen::primary_display()?.scale.into(),
+        ),
     };
     let view = View::new(&engine, contents.surface(), size, scale, false)?;
     let history = contents.history().borrow();
@@ -222,6 +225,13 @@ impl Guest {
         if own.items().len() != self.first_entries.get() {
             self.after.take();
         }
+        let is_shown = |url: &str| own.items().iter().any(|it| it["url"].is(url));
+        let mut newer = self.asked_for.borrow().len();
+        self.asked_for.borrow_mut().retain(|it| {
+            newer -= 1;
+            // The history may not have the last ones yet.
+            newer < 8 || is_shown(&it.0)
+        });
         let own = own.items().iter().zip(0..).map(|(it, index)| {
             let document = Document::Guest(remote.id(), index);
             let entry = Entry::new(it["url"].display(), it["title"].text().to_owned(), document);
@@ -417,7 +427,10 @@ impl Remote {
         let first = values[0].clone();
         self.view.tell_page(method, values);
         match method {
-            "setZoomLevel" => self.mirrored.borrow_mut().set("zoomLevel", first),
+            "setZoomLevel" => {
+                self.view.zoom.set(1.2f64.powf(first.number()));
+                self.mirrored.borrow_mut().set("zoomLevel", first);
+            }
             "setFrameRate" => self.view.frame_rate.set(first.number()),
             "setBackgroundThrottling" => {
                 self.view.may_rest.set(first.is_truthy());

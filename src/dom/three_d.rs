@@ -165,7 +165,7 @@ impl Style {
         self.other_if_set(Id::TransformStyle).is_some()
     }
 
-    fn transforms(&self) -> impl Iterator<Item = &Transform> {
+    pub(crate) fn transforms(&self) -> impl Iterator<Item = &Transform> {
         let e = &self.effects;
         [&e.translate.0, &e.rotate.0, &e.scale.0]
             .into_iter()

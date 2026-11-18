@@ -375,8 +375,9 @@ fn create_linked<'a>(
 
 fn may_import(css: &[u8]) -> bool {
     !css.is_ascii()
-        || strings::contains_case_insensitive_ascii(css, b"@i")
-        || strings::contains(css, b"@\\")
+        || strings::split(css, b"@")
+            .skip(1)
+            .any(|it| matches!(it.first(), Some(b'i' | b'I' | b'\\')))
 }
 
 /// <https://html.spec.whatwg.org/#link-type-stylesheet>

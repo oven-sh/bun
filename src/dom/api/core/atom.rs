@@ -136,16 +136,17 @@ static MEANINGS: [u8; TEXTS.len() + 1] = {
 };
 
 /// That atoms come with.
-static BY_HASH: LazyLock<Box<[u16; SLOTS * 2]>> = LazyLock::new(|| {
-    let mut slots = Box::new([Known::Other as u16; SLOTS * 2]);
+/// A slot has the upper bits of the hash above the `Known`.
+static BY_HASH: LazyLock<Box<[u32; SLOTS * 2]>> = LazyLock::new(|| {
+    let mut slots = Box::new([Known::Other as u32; SLOTS * 2]);
     for (text, known) in TEXTS.iter().zip(ALL) {
         // SAFETY: the pointer and the length are of one slice.
-        let mut slot = unsafe { Bun__DOM__hashOfLatin1(text.as_ptr(), text.len() as u32) } as usize
-            % slots.len();
-        while slots[slot] != Known::Other as u16 {
+        let hash = unsafe { Bun__DOM__hashOfLatin1(text.as_ptr(), text.len() as u32) };
+        let mut slot = hash as usize % slots.len();
+        while slots[slot] != Known::Other as u32 {
             slot = (slot + 1) % slots.len();
         }
-        slots[slot] = *known as u16;
+        slots[slot] = hash >> 8 << 16 | *known as u32;
     }
     slots
 });
@@ -238,19 +239,20 @@ impl Known {
     fn from_atom(atom: &Impl) -> Known {
         const HASH_AND_FLAGS: usize = 4;
         // SAFETY: `StringImpl::m_hashAndFlags` follows the count, the length and the pointer.
-        let (slots, mut slot) = (
-            &**BY_HASH,
-            unsafe {
-                core::ptr::from_ref(atom)
-                    .cast::<u32>()
-                    .add(HASH_AND_FLAGS)
-                    .read()
-            } as usize
-                >> 8,
-        );
+        let (slots, hash_and_flags) = (&**BY_HASH, unsafe {
+            core::ptr::from_ref(atom)
+                .cast::<u32>()
+                .add(HASH_AND_FLAGS)
+                .read()
+        });
+        let mut slot = hash_and_flags as usize >> 8;
         loop {
-            let known = Known::from_index(slots[slot % slots.len()]);
-            if known == Known::Other || known.as_str().as_bytes() == atom.latin1_slice() {
+            let found = slots[slot % slots.len()];
+            let known = Known::from_index(found as u16);
+            if known == Known::Other
+                || found >> 16 == hash_and_flags >> 16
+                    && super::string::are_same(known.as_str().as_bytes(), atom.latin1_slice())
+            {
                 return known;
             }
             slot += 1;

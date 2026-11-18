@@ -17,6 +17,8 @@ use bun_standalone_graph::desktop as bundle;
 
 #[path = "../../dom/abi.rs"]
 mod abi;
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+mod child;
 mod host;
 mod host_abi;
 #[path = "../../ui/protocol.rs"]
@@ -29,6 +31,7 @@ pub(crate) mod tasks;
 pub(crate) mod web;
 
 struct Library {
+    path: Box<[u8]>,
     init: extern "C" fn(tick: extern "C" fn(), has_main_thread: bool),
     #[cfg(unix)]
     run: extern "C" fn() -> !,
@@ -87,6 +90,7 @@ impl Library {
         }
         let ui: extern "C" fn() -> &'static protocol::Ui = lookup!("bun_desktop_ui");
         Ok(Library {
+            path: path.into(),
             init: lookup!("bun_desktop_init"),
             #[cfg(unix)]
             run: lookup!("bun_desktop_run"),
@@ -198,6 +202,19 @@ pub(crate) fn on_events(global: &JSGlobalObject) {
     Bun__Ui__handleEvents(global);
 }
 
+#[unsafe(no_mangle)]
+fn __bun_web_handle_input(vm: &VirtualMachine) {
+    let has_input = |library: &Library| (library.ui.has_input)();
+    if !vm.is_main_thread.get() || !LIBRARY.get().is_some_and(has_input) {
+        return;
+    }
+    if !IDLE_WORK.get().is_null() {
+        // SAFETY: it is never freed, and this is the thread of its VM.
+        unsafe { Bun__DesktopIdleWork__didGetEvents(IDLE_WORK.get(), true) };
+    }
+    Bun__Ui__handleEvents(vm.global());
+}
+
 /// # Safety
 /// It has the tag `Ui`, and has left the heap.
 pub(crate) unsafe fn fire_timer(timer: *mut EventLoopTimer) {
@@ -206,6 +223,10 @@ pub(crate) unsafe fn fire_timer(timer: *mut EventLoopTimer) {
 }
 
 fn find_library(global: &JSGlobalObject) -> Result<Vec<u8>, Vec<u8>> {
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    if let Some(path) = child::library() {
+        return Ok(path.to_vec());
+    }
     if global.bun_vm().standalone_module_graph.is_some() {
         return bundle::library_in_bundle().ok_or_else(|| {
             b"This executable is not in the bundle that has its UI library. Build it with --desktop, and keep the bundle's files together.".to_vec()
@@ -225,6 +246,9 @@ fn load(global: &JSGlobalObject) -> JsResult<()> {
     let opened = find_library(global)
         .and_then(|path| Library::open(&path))
         .map_err(|message| global.throw(format_args!("{}", BStr::new(&message))))?;
+    if is_page_process() {
+        (opened.ui.become_page_process)();
+    }
     (opened.init)(tick, main_thread::is_lent());
     LIBRARY.get_or_init(|| opened);
     let loop_ = global.bun_vm().event_loop().usockets_loop();
@@ -243,6 +267,38 @@ extern "C" fn Bun__Desktop__load(global: &JSGlobalObject) -> *const c_void {
     load(global).map_or(core::ptr::null(), |()| {
         core::ptr::from_ref(library().ui).cast()
     })
+}
+
+/// A realm that is none of the program has only the text of built-in functions.
+#[unsafe(no_mangle)]
+fn __bun_desktop_can_show_pages_without_program() -> bool {
+    bun_removable_features::can_run_uncompiled_code()
+        && bun_core::code_generation_from_strings_by_flags()
+            != bun_core::CodeGenerationFromStrings::Strict
+}
+
+#[unsafe(no_mangle)]
+fn __bun_desktop_path_of_library() -> &'static [u8] {
+    &library().path
+}
+
+#[inline(never)]
+pub(crate) fn is_page_process() -> bool {
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    return child::has_pages();
+    #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+    false
+}
+
+/// In place of the entry point. False if this is no such process.
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+#[inline(never)]
+pub(crate) fn enter_page_process() -> bool {
+    if child::has_pages() {
+        child::enter();
+        return true;
+    }
+    false
 }
 
 #[unsafe(no_mangle)]

@@ -7,9 +7,9 @@ use bun_ui::dom;
 
 use super::contents::Contents;
 use super::{Emit, Failure, Outcome, target_id_of};
-use crate::contents::worlds::World;
 use crate::prelude::*;
 use crate::realm::{self, Realm};
+use crate::renderer::World;
 use crate::task;
 use crate::value::{Value, number_to_string};
 

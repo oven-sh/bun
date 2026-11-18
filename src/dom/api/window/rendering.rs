@@ -109,7 +109,7 @@ static CANVAS: Canvas = Canvas {
             // What they have left to a task probably belongs in the frame.
             match may_wait && has_run_any && tasks::has_ready_tasks(global) {
                 true => window.schedule(cx, true),
-                false => window.update_rendering(cx),
+                false => bun_ui::queue::send_together(|| window.update_rendering(cx)),
             }
         });
     },
@@ -819,6 +819,7 @@ impl Window {
                 .any(|it| self.is(it))
             || self.has_callbacks_of(FramePhase::AfterEvents);
         let moves = doc.engine(|engine, _| {
+            engine.scrolling.time_scrollbars(engine.animations.now);
             engine.needs_painting() || engine.is_animating() || engine.scrolling.is_animating()
         });
         if animation::has_queued_events(&cx.heap, doc) {

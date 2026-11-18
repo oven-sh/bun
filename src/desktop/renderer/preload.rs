@@ -2,12 +2,18 @@
 
 use std::time::Instant;
 
-use bun_jsc::bindgen::Result as CallbackResult;
-use bun_jsc::{JSPromise, JSString};
+use bun_jsc::{JSMap, JSPromise, JSString, from_js_host_call_generic};
+use bun_web::channel::{Endpoint, Message, Serialized, Transferred};
+use bun_web::convert::path_of_file;
+use bun_web::dom;
+use bun_web::exec::block_pages;
+use bun_web::host::{Host, Relation};
+use bun_web::page::{Order, Outcome, Query};
+use bun_web::renderer::Preloads;
 use bun_web::tasks::{self, Work};
 
+use super::{Document, Nearby, Step, disposed, ports_in};
 use crate::bridge::Link;
-use crate::contents::page::Page;
 use crate::generated_bindgen::electron::DesktopProcess;
 use crate::generated_bindgen::renderer::{
     ExecutionScript, RendererContextBridge, RendererCrashReporter, RendererElectron, RendererIpc,
@@ -16,43 +22,21 @@ use crate::generated_bindgen::renderer::{
     js_RendererProcess, js_RendererWebFrame as frames, js_RendererWebUtils,
 };
 use crate::generated_bindgen::system::js_DesktopShell;
-use crate::ipc::Sender;
 use crate::prelude::*;
 use crate::realm::{self, Module, Realm, answer_to};
-use crate::{files, modules, process};
-
-const PATIENCE: f64 = 5000.;
+use crate::{files, modules, process, task};
 
 state!(fn active() -> RefCell<Vec<(*const Realm, Root<Preload>)>>);
 
-pub(crate) struct Init {
-    pub(crate) global: JSValue,
-    pub(crate) members: JSValue,
-    pub(crate) host: JSValue,
-    pub(crate) page: JSValue,
-    pub(crate) contents: JSValue,
-    pub(crate) is_isolated: bool,
-    pub(crate) is_sandboxed: bool,
-    pub(crate) integrates_node: bool,
-    pub(crate) document_path: String,
-    pub(crate) additional_arguments: Vec<String>,
-}
-
 pub(crate) struct Preload {
-    frame_id: u32,
-    process_id: u32,
-    is_isolated: bool,
     is_sandboxed: bool,
     started: Instant,
     is_disposed: Cell<bool>,
+    last_ticket: Cell<u32>,
 }
 
 fn field(value: Option<JSValue>) -> JSValue {
     value.unwrap_or(JSValue::UNDEFINED)
-}
-
-fn frame_of(page: JSValue) -> JSValue {
-    cast(page).map_or(JSValue::UNDEFINED, Page::handle)
 }
 
 fn captured(value: JSValue) -> &'static Preload {
@@ -73,40 +57,33 @@ impl Preload {
         Preload::of(realm).ok_or_else(|| realm.throw(format_args!("The frame was disposed")))
     }
 
-    pub(crate) fn create(it: &Init) -> JsResult<&'static Preload> {
-        let (sender, realm) = (
-            Sender::new(it.contents, frame_of(it.page))?,
-            realm::of(it.global),
-        );
+    pub(super) fn create(
+        document: &Document,
+        window: JSValue,
+        members: JSValue,
+        it: Preloads,
+    ) -> JsResult<&'static Preload> {
+        let realm = realm::of(window);
         let preload = Preload {
-            frame_id: sender.frame_id,
-            process_id: sender.process_id,
-            is_isolated: it.is_isolated,
             is_sandboxed: it.is_sandboxed,
             started: Instant::now(),
             is_disposed: false.into(),
+            last_ticket: 0.into(),
         };
         let preload = fields::create(heap(), preload);
-        fields::set_global(preload, it.global);
-        fields::set_host(preload, it.host);
-        fields::set_page(preload, it.page);
-        fields::set_contents(preload, sender.contents);
-        fields::set_process(preload, preload.describe_process(it)?);
+        fields::set_global(preload, window);
+        fields::set_document(preload, Some(document));
+        fields::set_process(preload, preload.describe_process(&it)?);
         active().borrow_mut().push((realm, Root::new(preload)));
 
-        let members = it.members;
         members.put(realm, b"process", field(fields::process(preload)));
-        members.put(realm, b"global", it.global);
+        members.put(realm, b"global", window);
         for name in ["Buffer", "setImmediate", "clearImmediate"] {
             members.put(realm, name.as_bytes(), realm::native(realm, name)?);
         }
         if it.integrates_node {
             members.put(realm, b"module", preload.module()?);
-            members.put(
-                realm,
-                b"require",
-                preload.require_from(it.document_path.clone())?,
-            );
+            members.put(realm, b"require", preload.require_from(it.document_path)?);
         }
         Ok(preload)
     }
@@ -115,27 +92,15 @@ impl Preload {
         realm::of(field(fields::global(self)))
     }
 
-    fn sender(&self) -> Sender {
-        let (contents, frame) = (
-            field(fields::contents(self)),
-            frame_of(field(fields::page(self))),
-        );
-        Sender {
-            contents,
-            frame,
-            frame_id: self.frame_id,
-            process_id: self.process_id,
-        }
+    fn document(&self) -> &Document {
+        fields::document(self).expect("it was made with one")
     }
 
-    fn ask(&self, method: &str, arguments: &[JSValue]) -> JsResult<JSValue> {
-        answer_to(
-            self.realm(),
-            invoke(field(fields::host(self)), method, arguments),
-        )
+    fn ask<T>(&self, question: impl FnOnce(&Host) -> T) -> JsResult<T> {
+        from_js_host_call_generic(self.realm(), || question(&self.document().host))
     }
 
-    fn describe_process(&self, it: &Init) -> JsResult<JSValue> {
+    fn describe_process(&self, it: &Preloads) -> JsResult<JSValue> {
         let (realm, real) = (self.realm(), process::object());
         let own = match self.is_sandboxed {
             true => js_RendererProcess::CLASS.constructor(JsHeap::from_global(realm)),
@@ -156,6 +121,13 @@ impl Preload {
                 }
                 own.put(realm, name.as_bytes(), copy);
             }
+            if let Some(environment) = &it.environment {
+                let copy = JSValue::create_empty_object(realm, 0);
+                for (name, value) in environment {
+                    JSValue::put_to_property_key(copy, realm, js(&**name)?, js(&**value)?)?;
+                }
+                own.put(realm, b"env", copy);
+            }
         }
         let more = it.additional_arguments.iter().cloned();
         let arguments: Vec<String> = [process::executable(), "--type=renderer".into()]
@@ -164,7 +136,11 @@ impl Preload {
             .collect();
         own.put(realm, b"type", js("renderer")?);
         own.put(realm, b"argv", arguments.into_js(realm)?);
-        own.put(realm, b"contextIsolated", self.is_isolated.into());
+        own.put(
+            realm,
+            b"contextIsolated",
+            self.document().isolates_context.into(),
+        );
         own.put(
             realm,
             b"sandboxed",
@@ -174,15 +150,11 @@ impl Preload {
                 JSValue::UNDEFINED
             },
         );
-        own.put(
-            realm,
-            b"isMainFrame",
-            get(self.sender().frame, "parent")?.is_null().into(),
-        );
+        own.put(realm, b"isMainFrame", it.is_main_frame.into());
         own.put(
             realm,
             b"contextId",
-            js(format!("{}-{}", self.process_id, self.frame_id))?,
+            js(format!("{}-{}", it.process, self.document().id))?,
         );
         Ok(own)
     }
@@ -234,7 +206,7 @@ impl Preload {
         }
     }
 
-    pub(crate) fn run(&self, script: JSValue, file: &str) -> JsResult<()> {
+    pub(super) fn run(&self, script: JSValue, file: &str) -> JsResult<()> {
         let (realm, path, module) = (self.realm(), file.to_owned(), self.module()?);
         let exports = get(module, "exports")?;
         let arguments = [
@@ -258,7 +230,7 @@ impl Preload {
             .map(drop)
     }
 
-    pub(crate) fn loaded(&self) -> JsResult<()> {
+    pub(super) fn loaded(&self) -> JsResult<()> {
         if !self.is_sandboxed {
             return Ok(());
         }
@@ -271,28 +243,41 @@ impl Preload {
         .map(drop)
     }
 
-    pub(crate) fn dispose(&self) {
+    pub(super) fn dispose(&self) {
         self.is_disposed.set(true);
         active().borrow_mut().retain(|it| !same(it.1.get(), self));
     }
 
     // ── from the app ──
 
-    pub(crate) fn send(&self, channel: JSValue, values: JSValue, ports: JSValue) -> JsResult<()> {
-        let realm = self.realm();
-        let values = realm::clone(global(), realm, values)?;
-        let values = [self.to_js(), channel, values, ports];
-        tasks::post(
-            realm,
-            Priority::Visible,
-            Work::Function(Self::receive, 0),
-            &values,
-        );
+    pub(super) fn send(
+        &self,
+        channel: JSValue,
+        values: JSValue,
+        ports: Vec<Endpoint>,
+    ) -> JsResult<()> {
+        let values = realm::clone(global(), self.realm(), values)?;
+        self.queue(channel, values, ports);
         Ok(())
     }
 
-    fn receive(realm: &Realm, _: u64, task: &[JSValue]) -> JsResult<()> {
-        let &[preload, channel, values, given] = task else {
+    pub(super) fn accept(&self, channel: &str, message: Message) -> JsResult<()> {
+        let values = realm::unpack(self.realm(), &message.value)?;
+        self.queue(js(channel)?, values, ports_in(message.transferred));
+        Ok(())
+    }
+
+    fn queue(&self, channel: JSValue, values: JSValue, ports: Vec<Endpoint>) {
+        let work = match ports.is_empty() {
+            true => Work::Function(|realm, _, task| Self::receive(realm, task, Vec::new()), 0),
+            false => Work::Once(Box::new(|realm, task| Self::receive(realm, task, ports))),
+        };
+        let values = [self.to_js(), channel, values];
+        tasks::post(self.realm(), Priority::Visible, work, &values);
+    }
+
+    fn receive(realm: &Realm, task: &[JSValue], given: Vec<Endpoint>) -> JsResult<()> {
+        let &[preload, channel, values] = task else {
             return Ok(());
         };
         if captured(preload).is_disposed.get() {
@@ -302,9 +287,9 @@ impl Preload {
             js_RendererIpc::CLASS.constructor(JsHeap::from_global(realm)),
             JSValue::create_empty_array(realm, 0)?,
         );
-        for index in 0..given.get_length(realm)? as u32 {
-            let parked = crate::ports::park(given.get_index(realm, index)?);
-            ports.push(realm, captured(preload).ask("adoptPort", &[js(parked)?])?)?;
+        for port in given {
+            let adopted = captured(preload).document().adopt_port(port);
+            ports.push(realm, answer_to(realm, adopted)?)?;
         }
         let event = bun_ui::object!(realm, { "sender": ipc, "ports": ports });
         with_elements_after(&[channel, event], values, |all| {
@@ -312,105 +297,41 @@ impl Preload {
         })
     }
 
-    // ── to the app ──
+    pub(crate) fn is_disposed(&self) -> bool {
+        self.is_disposed.get()
+    }
 
-    fn post(
+    /// Of a value of the realm of the app.
+    pub(crate) fn copy(&self, value: JSValue) -> JsResult<JSValue> {
+        realm::clone(global(), self.realm(), value)
+    }
+
+    /// The error is a message.
+    pub(crate) fn reply(&self, promise: JSValue, result: Result<JSValue, JSValue>) {
+        let work = Work::Function(Self::receive_reply, result.is_err().into());
+        let values = [self.to_js(), promise, result.unwrap_or_else(|it| it)];
+        tasks::post(self.realm(), Priority::Visible, work, &values);
+    }
+
+    fn pending(&self) -> &'static mut JSMap {
+        if fields::pending(self).is_none() {
+            fields::set_pending(self, JSMap::create(global()));
+        }
+        map_in(field(fields::pending(self)))
+    }
+
+    pub(super) fn accept_reply(
         &self,
-        deliver: fn(&Realm, u64, &[JSValue]) -> JsResult<()>,
-        channel: JSValue,
-        values: JSValue,
-        last: JSValue,
-    ) {
-        tasks::post(
-            global(),
-            Priority::Host,
-            Work::Function(deliver, 0),
-            &[self.to_js(), channel, values, last],
-        );
-    }
-
-    fn deliver_message(_: &Realm, _: u64, task: &[JSValue]) -> JsResult<()> {
-        let &[preload, channel, values, ports] = task else {
-            return Ok(());
-        };
-        let sender = captured(preload).sender();
-        if invoke(sender.contents, "isDestroyed", &[])?.to_boolean() {
-            return Ok(());
-        }
-        sender.send(channel, values, Some(ports).filter(|it| it.is_object()))
-    }
-
-    fn deliver_invocation(_: &Realm, _: u64, task: &[JSValue]) -> JsResult<()> {
-        fn settled<'a>(
-            _: Cx<'a, '_>,
-            [preload, pending]: [JsLocal<'a>; 2],
-            is_rejected: u64,
-            arguments: &'a [JsLocal<'a>],
-        ) -> CallbackResult<'a, JSValue> {
-            let [promise, channel] = [0, 1].map(|it| pending.to_js().get_index(global(), it));
-            let value = argument(JsLocal::to_js_slice(arguments), 0);
-            let result = if is_rejected == 0 {
-                Ok(value)
-            } else {
-                Err(value)
-            };
-            captured(preload.to_js()).reply(promise?, channel?, result)?;
-            Ok(JSValue::UNDEFINED)
-        }
-        let &[preload, channel, values, promise] = task else {
-            return Ok(());
-        };
-        match catch(captured(preload).sender().invoke(channel, values))? {
-            Ok(result) if result.is_object() => {
-                let pending = array(&[promise, channel])?;
-                let reaction = |is_rejected| {
-                    heap()
-                        .create_callback(settled, [preload, pending], is_rejected)
-                        .to_js()
-                };
-                react(global(), result, reaction(0), reaction(1))
-            }
-            result => captured(preload).reply(promise, channel, result),
-        }
-    }
-
-    fn reply(
-        &self,
-        promise: JSValue,
-        channel: JSValue,
-        result: Result<JSValue, JSValue>,
+        ticket: u32,
+        result: Result<Message, String>,
     ) -> JsResult<()> {
+        let promise = self.pending().get(global(), js(ticket)?)?;
+        self.pending().remove(global(), js(ticket)?)?;
         let result = match result {
-            Ok(_) if self.is_disposed.get() => return Ok(()),
-            Ok(value) => catch(realm::clone(global(), self.realm(), value))?,
-            failure => failure,
+            Ok(message) => Ok(realm::unpack(self.realm(), &message.value)?),
+            Err(message) => Err(js(message)?),
         };
-        let (value, is_rejected) = match result {
-            Ok(value) => (value, 0),
-            Err(thrown) => {
-                let channel = text_of(channel)?;
-                let message = js(format!("Error occurred in handler for '{channel}':"))?;
-                invoke(
-                    get(global().to_js_value(), "console")?,
-                    "error",
-                    &[message, thrown],
-                )?;
-                let reason = catch(text_of(thrown))?.unwrap_or_default();
-                (
-                    js(format!(
-                        "Error invoking remote method '{channel}': {reason}"
-                    ))?,
-                    1,
-                )
-            }
-        };
-        let work = Work::Function(Self::receive_reply, is_rejected);
-        tasks::post(
-            self.realm(),
-            Priority::Visible,
-            work,
-            &[self.to_js(), promise, value],
-        );
+        self.reply(promise, result);
         Ok(())
     }
 
@@ -429,47 +350,110 @@ impl Preload {
         realm::settle(realm, promise, result)
     }
 
-    fn send_and_wait(&self, channel: JSValue, values: JSValue) -> JsResult<JSValue> {
-        let (sender, event) = (self.sender(), self.sender().event(true));
-        sender.dispatch(Some("ipc-message-sync"), event, channel, values)?;
-        if event.answer().is_none() && sender.is_listened_to(channel)? {
-            let done = std::rc::Rc::new(Deferred::new());
-            let (answered, given_up) = (std::rc::Rc::clone(&done), std::rc::Rc::clone(&done));
-            event.on_answer(procedure(move |_| answered.resolve(JSValue::UNDEFINED))?);
-            // All pages wait, so an answer that depends on one of them never comes.
-            let _timer = later::after(PATIENCE, move |_| given_up.resolve(JSValue::UNDEFINED));
-            invoke(field(fields::host(self)), "block", &[done.promise()])?;
+    // ── to the app ──
+
+    fn post(&self, deliver: Step, more: [JSValue; 4]) {
+        let [channel, values, third, fourth] = more;
+        let values = [self.document().owner(), channel, values, third, fourth];
+        tasks::post(
+            global(),
+            Priority::Host,
+            Work::Function(deliver, 0),
+            &values,
+        );
+    }
+
+    fn post_message(
+        &self,
+        channel: JSValue,
+        values: Packed,
+        ports: Option<Vec<Endpoint>>,
+    ) -> JsResult<()> {
+        match values {
+            Packed::Nearby(app, values) => {
+                let ports = field(ports.map(app.wrap_ports).transpose()?);
+                self.post(app.send, [channel, values, ports, JSValue::UNDEFINED]);
+            }
+            Packed::Far(value) => {
+                let has_ports = ports.is_some();
+                let message = Message {
+                    transferred: ports.into_iter().flatten().map(Transferred::Port).collect(),
+                    ..value.into()
+                };
+                (self.document().host).ipc_send(text_of(channel)?, message, has_ports);
+            }
         }
-        match event.answer() {
-            Some(answer) => realm::clone(global(), self.realm(), answer),
-            None => Err(error(format_args!(
-                "event.returnValue of '{}' was not set",
-                text_of(channel)?
-            ))),
+        Ok(())
+    }
+
+    fn invoke(&self, channel: JSValue, values: Packed, promise: JSValue) -> JsResult<()> {
+        match values {
+            Packed::Nearby(app, values) => {
+                self.post(app.invoke, [channel, values, self.to_js(), promise]);
+            }
+            Packed::Far(value) => {
+                self.last_ticket.update(|it| it.wrapping_add(1));
+                let ticket = self.last_ticket.get();
+                self.pending().set(global(), js(ticket)?, promise)?;
+                (self.document().host).ipc_invoke(text_of(channel)?, value.into(), ticket);
+            }
+        }
+        Ok(())
+    }
+
+    fn send_and_wait(&self, channel: JSValue, values: Packed) -> JsResult<JSValue> {
+        let value = match values {
+            Packed::Nearby(app, values) => {
+                return self.copy((app.send_and_wait)(
+                    self.document().owner(),
+                    channel,
+                    values,
+                )?);
+            }
+            Packed::Far(value) => value,
+        };
+        let (answer, answered) = task::oneshot();
+        let (channel, now) = (text_of(channel)?, std::rc::Rc::new(Cell::new(None)));
+        let slot = std::rc::Rc::clone(&now);
+        self.ask(|it| {
+            it.ipc_send_sync(channel, value.into(), move |_, it| {
+                slot.set(Some(it));
+                answer.send(());
+            })
+        })?;
+        let answer = now.take().or_else(|| {
+            block_pages(global(), answered);
+            now.take()
+        });
+        match answer.flatten().ok_or_else(disposed)? {
+            Ok(message) => realm::unpack(self.realm(), &message.value),
+            Err(message) => Err(error(format_args!("{message}"))),
         }
     }
 
     fn link_to(&self, world: u32) -> JsResult<(Link<'static>, &'static Realm)> {
-        if !self.is_isolated {
+        if !self.document().isolates_context {
             let message = "contextBridge API can only be used when contextIsolation is enabled";
             return Err(self.realm().throw(format_args!("{message}")));
         }
-        let world = realm::of(self.ask("window", &[js(world)?])?);
+        let world = answer_to(self.realm(), self.document().world_with_id(world))?;
+        let world = realm::of(world.window);
         Ok((Link::new(self.realm(), world), world))
     }
 }
 
-fn message(
-    realm: &Realm,
-    method: &str,
-    channel: JsLocal<'_>,
-    values: &[JsLocal<'_>],
-) -> JsResult<(JSValue, JSValue)> {
-    let values = JSValue::create_array_from_slice(realm, JsLocal::to_js_slice(values))?;
-    Ok((
-        valid_channel(realm, method, channel)?,
-        realm::clone(realm, global(), values)?,
-    ))
+enum Packed {
+    /// In the realm of the app.
+    Nearby(&'static Nearby, JSValue),
+    Far(Serialized),
+}
+
+fn pack(realm: &Realm, preload: Option<&Preload>, values: &[JSValue]) -> JsResult<Packed> {
+    let values = JSValue::create_array_from_slice(realm, values)?;
+    Ok(match preload.and_then(|it| it.document().nearby) {
+        Some(app) => Packed::Nearby(app, realm::clone(realm, global(), values)?),
+        None => Packed::Far(realm::pack(realm, values)?),
+    })
 }
 
 fn valid_channel(realm: &Realm, method: &str, channel: JsLocal<'_>) -> JsResult<JSValue> {
@@ -487,16 +471,11 @@ impl RendererIpc {
         channel: JsLocal<'a>,
         values: &[JsLocal<'a>],
     ) -> JsResult<()> {
-        let (channel, values) = message(cx.global(), "send", channel, values)?;
-        if let Some(preload) = Preload::of(cx.global()) {
-            preload.post(
-                Preload::deliver_message,
-                channel,
-                values,
-                JSValue::UNDEFINED,
-            );
-        }
-        Ok(())
+        let realm = cx.global();
+        let preload = Preload::of(realm);
+        let channel = valid_channel(realm, "send", channel)?;
+        let values = pack(realm, preload, JsLocal::to_js_slice(values))?;
+        preload.map_or(Ok(()), |it| it.post_message(channel, values, None))
     }
 
     pub(crate) fn send_sync<'a>(
@@ -505,7 +484,8 @@ impl RendererIpc {
         values: &[JsLocal<'a>],
     ) -> JsResult<JSValue> {
         let realm = cx.global();
-        let (channel, values) = message(realm, "sendSync", channel, values)?;
+        let channel = valid_channel(realm, "sendSync", channel)?;
+        let values = pack(realm, Preload::of(realm), JsLocal::to_js_slice(values))?;
         answer_to(
             realm,
             Preload::of_or_throw(realm)?.send_and_wait(channel, values),
@@ -519,11 +499,12 @@ impl RendererIpc {
         channel: JsLocal<'a>,
         values: &[JsLocal<'a>],
     ) -> JsResult<JSValue> {
-        let (channel, values) = message(cx.global(), "invoke", channel, values)?;
-        let promise = JSPromise::create(cx.global()).to_js();
-        if let Some(preload) = Preload::of(cx.global()) {
-            preload.post(Preload::deliver_invocation, channel, values, promise);
-        }
+        let realm = cx.global();
+        let preload = Preload::of(realm);
+        let channel = valid_channel(realm, "invoke", channel)?;
+        let values = pack(realm, preload, JsLocal::to_js_slice(values))?;
+        let promise = JSPromise::create(realm).to_js();
+        preload.map_or(Ok(()), |it| it.invoke(channel, values, promise))?;
         Ok(promise)
     }
 
@@ -540,17 +521,14 @@ impl RendererIpc {
         ) else {
             return Ok(());
         };
-        let values = JSValue::create_array_from_slice(realm, &[message.to_js()])?;
-        let (values, ports) = (realm::clone(realm, global(), values)?, array(&[])?);
+        let (values, mut ports) = (pack(realm, Some(preload), &[message.to_js()])?, Vec::new());
         for port in transfer.into_iter().flatten() {
-            let parked = preload.ask("releasePort", &[port.to_js()])?;
-            if !parked.is_number() {
-                return Err(realm.throw_type_error(format_args!("Invalid value for transfer")));
-            }
-            ports.push(global(), crate::ports::unpark(parked.as_number()))?;
+            let released = answer_to(realm, preload.document().release_port(port.to_js()))?;
+            ports.push(released.ok_or_else(|| {
+                realm.throw_type_error(format_args!("Invalid value for transfer"))
+            })?);
         }
-        preload.post(Preload::deliver_message, channel, values, ports);
-        Ok(())
+        preload.post_message(channel, values, Some(ports))
     }
 }
 
@@ -595,55 +573,51 @@ impl RendererContextBridge {
     }
 }
 
-fn zoom(realm: &Realm, method: &str, arguments: &[JSValue]) -> JsResult<JSValue> {
-    answer_to(
-        realm,
-        invoke(
-            Preload::of_or_throw(realm)?.sender().contents,
-            method,
-            arguments,
-        ),
-    )
+fn set_zoom(realm: &Realm, value: f64, is_level: bool) -> JsResult<()> {
+    match Preload::of_or_throw(realm)?.ask(|it| it.set_zoom(value, is_level))? {
+        Some(problem) => Err(realm.throw(format_args!("{problem}"))),
+        None => Ok(()),
+    }
 }
 
-#[derive(Default)]
-pub(crate) struct WebFrame(#[expect(dead_code)] HasFields);
+pub(crate) struct WebFrame {
+    page: u32,
+    token: String,
+}
 
 macro_rules! relatives {
-    ($($method:ident: $kind:literal),*) => {$(
+    ($($method:ident: $kind:ident),*) => {$(
         pub(crate) fn $method(&self, cx: Cx<'_, '_>) -> JsResult<JSValue> {
-            self.relative(cx.global(), $kind, JSValue::UNDEFINED)
+            self.relative(cx.global(), Relation::$kind)
         }
     )*};
 }
 
 macro_rules! finders {
-    ($($method:ident: $kind:literal),*) => {$(
+    ($($method:ident: $kind:ident),*) => {$(
         pub(crate) fn $method<'a>(&self, cx: Cx<'a, '_>, text: JsLocal<'a, JSString>) -> JsResult<JSValue> {
-            self.relative(cx.global(), $kind, text.to_js())
+            self.relative(cx.global(), Relation::$kind(text_of(text.to_js())?))
         }
     )*};
 }
 
 impl WebFrame {
-    fn create(realm: &Realm, host: JSValue) -> JSValue {
-        let frame = frames::create(JsHeap::from_global(realm), WebFrame::default());
-        frames::set_host(frame, host);
-        frame.to_js()
+    fn create(realm: &Realm, page: u32, token: String) -> JSValue {
+        frames::create(JsHeap::from_global(realm), WebFrame { page, token }).to_js()
     }
 
-    fn ask(&self, realm: &Realm, method: &str, arguments: &[JSValue]) -> JsResult<JSValue> {
+    fn tell(&self, realm: &Realm, order: Order) -> JsResult<()> {
         Preload::of_or_throw(realm)?;
-        answer_to(realm, invoke(field(frames::host(self)), method, arguments))
+        let obey = || dom::obey(self.page, order);
+        answer_to(realm, from_js_host_call_generic(global(), obey))
     }
 
-    fn relative(&self, realm: &Realm, kind: &str, more: JSValue) -> JsResult<JSValue> {
-        let host = self.ask(realm, "relative", &[js(kind)?, more])?;
-        Ok(if host.is_object() {
-            WebFrame::create(realm, host)
-        } else {
-            JSValue::NULL
-        })
+    fn relative(&self, realm: &Realm, relation: Relation) -> JsResult<JSValue> {
+        let found = Preload::of_or_throw(realm)?.ask(|it| it.relative(self.page, relation))?;
+        let found = answer_to(realm, found.ok_or_else(disposed))?;
+        Ok(found.map_or(JSValue::NULL, |it| {
+            WebFrame::create(realm, it.page, it.token)
+        }))
     }
 
     fn execute(
@@ -654,8 +628,11 @@ impl WebFrame {
         is_by_user: bool,
         callback: JSValue,
     ) -> JsResult<JSValue> {
-        let arguments = [js(world)?, code, is_by_user.into()];
-        let promise = realm::adopt(realm, self.ask(realm, "executeJavaScript", &arguments)?)?;
+        let preload = Preload::of_or_throw(realm)?;
+        if is_by_user {
+            preload.ask(Host::activated_by_preload)?;
+        }
+        let promise = realm::adopt(realm, Document::execute(self.page, world, code, is_by_user))?;
         if callback.is_callable() {
             let tell = |arrange: fn(JSValue) -> [JSValue; 2]| {
                 function_in(realm, callback, move |callback, it| {
@@ -679,45 +656,61 @@ impl WebFrame {
     pub(crate) fn nothing(&self) {}
 
     pub(crate) fn get_routing_id(&self, cx: Cx<'_, '_>) -> JsResult<JSValue> {
-        self.ask(cx.global(), "routingId", &[])
+        Preload::of_or_throw(cx.global())?;
+        js(self.page)
     }
 
     pub(crate) fn get_frame_token(&self, cx: Cx<'_, '_>) -> JsResult<JSValue> {
-        self.ask(cx.global(), "frameToken", &[])
+        Preload::of_or_throw(cx.global())?;
+        js(&*self.token)
     }
 
     relatives!(
-        get_top: "top",
-        get_parent: "parent",
-        get_opener: "opener",
-        get_first_child: "firstChild",
-        get_next_sibling: "nextSibling"
+        get_top: Top,
+        get_parent: Parent,
+        get_opener: Opener,
+        get_first_child: FirstChild,
+        get_next_sibling: NextSibling
     );
 
-    finders!(
-        find_frame_by_token: "token",
-        find_frame_by_name: "name",
-        get_frame_for_selector: "selector"
-    );
+    finders!(find_frame_by_token: Token, find_frame_by_name: Name);
+
+    pub(crate) fn get_frame_for_selector<'a>(
+        &self,
+        cx: Cx<'a, '_>,
+        selector: JsLocal<'a, JSString>,
+    ) -> JsResult<JSValue> {
+        Preload::of_or_throw(cx.global())?;
+        let select = || {
+            let document = Document::of(self.page).ok_or_else(disposed)?;
+            document.inspect("selectFrame", &[selector.to_js()])
+        };
+        let page = answer_to(cx.global(), select())?.get_number();
+        self.relative(
+            cx.global(),
+            Relation::Selected(page.unwrap_or_default() as u32),
+        )
+    }
 
     pub(crate) fn find_frame_by_routing_id(&self, cx: Cx<'_, '_>, id: f64) -> JsResult<JSValue> {
-        self.relative(cx.global(), "routingId", js(id)?)
+        let page = Some(id as u32).filter(|it| f64::from(*it) == id);
+        self.relative(cx.global(), Relation::Page(page.unwrap_or_default()))
     }
 
     pub(crate) fn get_zoom_factor(&self, cx: Cx<'_, '_>) -> JsResult<f64> {
-        zoom(cx.global(), "getZoomFactor", &[]).map(JSValue::as_number)
+        Ok(Preload::of_or_throw(cx.global())?.ask(Host::zoom)?[0])
     }
 
     pub(crate) fn set_zoom_factor(&self, cx: Cx<'_, '_>, factor: f64) -> JsResult<()> {
-        zoom(cx.global(), "setZoomFactor", &[js(factor)?]).map(drop)
+        set_zoom(cx.global(), factor, false)
     }
 
     pub(crate) fn get_zoom_level(&self, cx: Cx<'_, '_>) -> JsResult<f64> {
-        zoom(cx.global(), "getZoomLevel", &[]).map(JSValue::as_number)
+        Ok(Preload::of_or_throw(cx.global())?.ask(Host::zoom)?[1])
     }
 
     pub(crate) fn set_zoom_level(&self, cx: Cx<'_, '_>, level: f64) -> JsResult<()> {
-        zoom(cx.global(), "setZoomLevel", &[js(level)?]).map(drop)
+        set_zoom(cx.global(), level, true)
     }
 
     pub(crate) fn insert_css<'a>(
@@ -732,7 +725,12 @@ impl WebFrame {
         };
         let origin = origin.map(|it| it.to_utf8(cx.global())).transpose()?;
         let is_of_user = origin.is_some_and(|it| *it == *b"user");
-        self.ask(cx.global(), "insertCSS", &[css.to_js(), is_of_user.into()])
+        Preload::of_or_throw(cx.global())?;
+        let css = text_of(css.to_js())?;
+        match dom::answer(self.page, Query::InsertSheet { css, is_of_user }) {
+            Some(Outcome::InsertSheet(key)) => js(key.to_string()),
+            _ => js("0"),
+        }
     }
 
     pub(crate) fn remove_inserted_css<'a>(
@@ -740,8 +738,8 @@ impl WebFrame {
         cx: Cx<'a, '_>,
         key: JsLocal<'a, JSString>,
     ) -> JsResult<()> {
-        self.ask(cx.global(), "removeInsertedCSS", &[key.to_js()])
-            .map(drop)
+        let key = key.to_js().to_number(cx.global())? as u32;
+        self.tell(cx.global(), Order::RemoveSheet { key })
     }
 
     pub(crate) fn insert_text<'a>(
@@ -749,8 +747,8 @@ impl WebFrame {
         cx: Cx<'a, '_>,
         text: JsLocal<'a, JSString>,
     ) -> JsResult<()> {
-        self.ask(cx.global(), "insertText", &[text.to_js()])
-            .map(drop)
+        let text = text_of(text.to_js())?;
+        self.tell(cx.global(), Order::InsertText { text })
     }
 
     pub(crate) fn execute_java_script<'a>(
@@ -801,8 +799,9 @@ impl WebFrame {
     }
 
     pub(crate) fn get_isolated_worlds(&self, cx: Cx<'_, '_>) -> JsResult<JSValue> {
-        let ids = self.ask(cx.global(), "isolatedWorlds", &[])?;
-        realm::clone(global(), cx.global(), ids)
+        Preload::of_or_throw(cx.global())?;
+        let ids = Document::of(self.page).map(Document::isolated_worlds);
+        ids.transpose()?.unwrap_or_default().into_js(cx.global())
     }
 
     pub(crate) fn is_word_misspelled(&self) -> bool {
@@ -816,7 +815,14 @@ impl WebFrame {
 
 impl RendererWebUtils {
     pub(crate) fn get_path_for_file<'a>(cx: Cx<'a, '_>, file: JsLocal<'a>) -> JsResult<JSValue> {
-        Preload::of_or_throw(cx.global())?.ask("pathForFile", &[file.to_js()])
+        let document = Preload::of_or_throw(cx.global())?.document();
+        let find = || {
+            let file =
+                (document.world_of_preload()?).carry(file.to_js(), document.world_with_id(0)?)?;
+            let path = file.is_object().then(|| path_of_file(global(), file));
+            path.filter(|it| it.is_string()).map_or_else(|| js(""), Ok)
+        };
+        answer_to(cx.global(), find())
     }
 }
 
@@ -856,7 +862,8 @@ impl RendererElectron {
     pub(crate) fn get_web_frame(cx: Cx<'_, '_>) -> JsResult<JSValue> {
         let preload = Preload::of_or_throw(cx.global())?;
         if fields::frame(preload).is_none() {
-            let frame = WebFrame::create(cx.global(), field(fields::host(preload)));
+            let document = preload.document();
+            let frame = WebFrame::create(cx.global(), document.id, string(&document.client.token));
             fields::set_frame(preload, frame);
         }
         Ok(field(fields::frame(preload)))

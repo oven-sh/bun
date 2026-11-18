@@ -1,4 +1,5 @@
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, LazyLock, OnceLock};
 
 use super::catalog::{Catalog, FamilyId, Font};
@@ -14,8 +15,9 @@ use crate::bridge;
 use crate::error::{Context as _, Result};
 use crate::hash::{FastHasher, FastMap, keyed};
 use crate::host::thread;
-use crate::json::record;
+use crate::json::{self, Deserialize as _, Serialize as _, record};
 use crate::protocol::{FontFace, FontFaceStyle, FontSource, List, Maybe, Reply, Text};
+use crate::remote::guest;
 use crate::small_vec::SmallVec;
 use crate::sync::{Mutex, RwLock};
 use crate::unicode::{self, Script, compose, decompose};
@@ -23,9 +25,20 @@ use crate::unicode::{self, Script, compose, decompose};
 pub const DEFAULT_OBLIQUE_ANGLE: f32 = 14.;
 const BOLD_THRESHOLD: f32 = 600.;
 
+/// What the process with the windows knows a file as.
+#[derive(Clone, Copy)]
+pub enum Origin {
+    Unknown,
+    Listed(u32),
+    Stored(u32),
+}
+
 /// Never freed. Equal bytes are loaded once.
 pub struct File {
     pub data: &'static [u8],
+    pub origin: Origin,
+    #[cfg(target_os = "macos")]
+    pub index: u32,
     pub font: sfnt::Font,
     pub tables: Tables,
     #[cfg(target_os = "macos")]
@@ -40,13 +53,16 @@ pub struct File {
 }
 
 impl File {
-    fn load(data: &'static [u8], index: u32) -> Option<&'static File> {
+    fn load(data: &'static [u8], index: u32, origin: Origin) -> Option<&'static File> {
         let mut font =
             sfnt::Font::new(data, index).filter(|it| it.units_per_em > 0 && it.has_charmap())?;
         font.remember_glyphs();
         let has_table = |tag: &Tag| font.table(tag).is_some();
         Some(Box::leak(Box::new(File {
             data,
+            origin,
+            #[cfg(target_os = "macos")]
+            index,
             tables: Tables::new(&font),
             #[cfg(target_os = "macos")]
             native: super::catalog::NativeFont::of(data, index),
@@ -170,6 +186,10 @@ impl Face {
         Some(self.file.font.table(&tag.to_be_bytes())?.0)
     }
 
+    pub fn palette(&self) -> &Palette {
+        &self.palette
+    }
+
     pub fn palette_color(&self, index: u16) -> Option<[u8; 4]> {
         let (font, count) = (&self.file.font, color::palette_count(&self.file.font));
         let first = |wanted| {
@@ -202,7 +222,12 @@ impl Face {
     }
 
     /// Instead of the one in `hmtx`, which differs a little.
-    pub fn bitmap_advance(&self, glyph: u32, size: f32) -> Option<f32> {
+    pub fn bitmap_advance(&self, glyph: u32, size: f32, device_scale: f32) -> Option<f32> {
+        #[cfg(target_os = "macos")]
+        if let Some(native) = &self.file.native {
+            return Some(native.advance(glyph, size * device_scale) / device_scale);
+        }
+        _ = device_scale;
         Some(bitmap::find(&self.file.font, glyph, size)?.advance? * size)
     }
 
@@ -212,6 +237,13 @@ impl Face {
 }
 
 static FACES: RwLock<Vec<&'static Face>> = RwLock::new(Vec::new());
+
+static GENERATION: AtomicU32 = AtomicU32::new(0);
+
+/// Changes when the same text may be shaped differently.
+pub fn generation() -> u32 {
+    GENERATION.load(Ordering::Relaxed)
+}
 
 pub fn face(id: u32) -> Option<&'static Face> {
     FACES.read().get(id as usize).copied()
@@ -397,15 +429,20 @@ impl Candidate {
     pub fn line_metrics(&self, face: &Face, size: f32, device_scale: f32) -> abi::Face {
         let scale = size * device_scale / face.units_per_em();
         let descriptors = self.web.as_ref().map(|web| &web.descriptors);
-        let (mut ascent, mut descent) = (
-            (face.metrics.ascent * scale).round(),
-            (-face.metrics.descent * scale).round(),
-        );
-        if cfg!(target_os = "linux")
-            && device_scale >= 1.5
-            && descent < -face.metrics.descent * scale
-            && ascent >= 1.
-        {
+        let exact = [
+            face.metrics.ascent,
+            -face.metrics.descent,
+            face.metrics.leading,
+        ]
+        .map(|it| it * scale);
+        #[cfg(target_os = "macos")]
+        let exact = face
+            .file
+            .native
+            .as_ref()
+            .map_or(exact, |it| it.metrics(size * device_scale));
+        let [mut ascent, mut descent, leading] = exact.map(f32::round);
+        if cfg!(target_os = "linux") && device_scale >= 1.5 && descent < exact[1] && ascent >= 1. {
             (ascent, descent) = (ascent - 1., descent + 1.);
         }
         if self.is_taller {
@@ -419,10 +456,7 @@ impl Candidate {
             size,
             ascent: overridden(descriptors.and_then(|them| them.ascent_override), ascent),
             descent: overridden(descriptors.and_then(|them| them.descent_override), descent),
-            line_gap: overridden(
-                descriptors.and_then(|them| them.line_gap_override),
-                (face.metrics.leading * scale).round(),
-            ),
+            line_gap: overridden(descriptors.and_then(|them| them.line_gap_override), leading),
         }
     }
 }
@@ -458,11 +492,28 @@ struct Described {
     resolved: Option<Resolved>,
 }
 
+/// The font that lacks a character.
+#[derive(Clone, Copy)]
+pub struct Like {
+    pub file: &'static File,
+    pub weight: f32,
+    pub is_italic: bool,
+    pub device_scale: f32,
+}
+
+/// An index in `System::listed` of the process that has the catalog.
+type Listed = u32;
+
+#[derive(Default)]
 struct System {
-    catalog: Catalog,
-    files: FastMap<(u64, u32), Option<&'static File>>,
-    families: FastMap<FamilyId, Arc<[(Font, Capabilities)]>>,
+    /// The process of a page asks for what is in it.
+    catalog: Option<Catalog>,
+    listed: Vec<Font>,
+    numbers: FastMap<(u64, u32), Listed>,
+    files: FastMap<Listed, Option<&'static File>>,
+    families: FastMap<FamilyId, Arc<[(Listed, Capabilities)]>>,
     fallbacks: FastMap<(char, bool, u64), Option<FamilyId>>,
+    answers: FastMap<(bool, String), Option<FamilyId>>,
 }
 
 type InstanceKey = (usize, Vec<i16>, [bool; 3], Palette);
@@ -480,16 +531,17 @@ pub struct Fonts {
     web_files: FastMap<usize, Option<&'static File>>,
     next_web_id: u32,
     pages_of_sorts: usize,
+    /// By face, for those of other processes.
+    recipes: FastMap<u32, (Recipe, Option<&'static [u8]>)>,
 }
 
 pub static FONTS: LazyLock<Mutex<Fonts>> = LazyLock::new(|| {
     Mutex::new(Fonts {
         system: System {
-            catalog: Catalog::new(),
-            files: FastMap::default(),
-            families: FastMap::default(),
-            fallbacks: FastMap::default(),
+            catalog: (!guest::is_on()).then(Catalog::new),
+            ..System::default()
         },
+        recipes: FastMap::default(),
         instances: Instances::default(),
         pages_of_sorts: 0,
         described: Vec::new(),
@@ -607,24 +659,72 @@ fn metric_aliases(name: &str) -> &'static [&'static str] {
 }
 
 impl System {
-    fn file(&mut self, font: &Font) -> Option<&'static File> {
+    fn file(&mut self, font: Listed) -> Option<&'static File> {
+        *self.files.entry(font).or_insert_with(|| {
+            let (data, index) = match &mut self.catalog {
+                Some(catalog) => catalog.load(self.listed.get(font as usize)?)?,
+                None => guest::open_font(font)?,
+            };
+            File::load(data, index, Origin::Listed(font))
+        })
+    }
+
+    fn list(&mut self, font: Font) -> Listed {
         *self
-            .files
-            .entry(Catalog::identity(font))
+            .numbers
+            .entry(Catalog::identity(&font))
             .or_insert_with(|| {
-                let (data, index) = self.catalog.load(font)?;
-                File::load(data, index)
+                self.listed.push(font);
+                self.listed.len() as Listed - 1
             })
     }
 
-    fn fonts(&mut self, family: FamilyId) -> Arc<[(Font, Capabilities)]> {
-        self.families
-            .entry(family)
-            .or_insert_with(|| self.catalog.fonts(family))
-            .clone()
+    fn fonts(&mut self, family: FamilyId) -> Arc<[(Listed, Capabilities)]> {
+        if let Some(known) = self.families.get(&family) {
+            return known.clone();
+        }
+        let fonts: Arc<[_]> = match &mut self.catalog {
+            Some(catalog) => catalog
+                .fonts(family)
+                .iter()
+                .map(|(font, capabilities)| (self.list(*font), *capabilities))
+                .collect(),
+            None => (guest::fonts_of(family).into_iter())
+                .map(|(font, [a, b, c, d, e, f])| {
+                    (
+                        font,
+                        Capabilities {
+                            weight: (a, b),
+                            stretch: (c, d),
+                            slope: (e, f),
+                        },
+                    )
+                })
+                .collect(),
+        };
+        self.families.insert(family, fonts.clone());
+        fonts
+    }
+
+    fn asked(&mut self, is_generic: bool, name: &str) -> Option<FamilyId> {
+        const LONGEST: usize = 512;
+        let ask = if is_generic {
+            guest::generic_family
+        } else {
+            guest::family_named
+        };
+        (name.len() <= LONGEST).then(|| {
+            *self
+                .answers
+                .entry((is_generic, name.to_owned()))
+                .or_insert_with(|| ask(name))
+        })?
     }
 
     fn named(&mut self, name: &str) -> Option<FamilyId> {
+        if self.catalog.is_none() {
+            return self.asked(false, name);
+        }
         if cfg!(target_os = "macos") && name.eq_ignore_ascii_case("BlinkMacSystemFont") {
             return self.generic("system-ui");
         }
@@ -633,11 +733,14 @@ impl System {
             .filter(|_| cfg!(all(unix, not(target_os = "macos"))));
         std::iter::once(&name)
             .chain(aliases)
-            .find_map(|name| self.catalog.family(name))
+            .find_map(|name| self.catalog.as_mut()?.family(name))
     }
 
     /// With the defaults of Chromium's settings.
     fn generic(&mut self, name: &str) -> Option<FamilyId> {
+        if self.catalog.is_none() {
+            return self.asked(true, name);
+        }
         let by_platform = |macos, windows, other| match std::env::consts::OS {
             "macos" => macos,
             "windows" => windows,
@@ -654,12 +757,72 @@ impl System {
                     "Comic Sans MS",
                 ));
             }
-            "fantasy" => return self.named(by_platform("Papyrus", "Impact", "Impact")),
+            "fantasy" => return self.named("Impact"),
             "system-ui" | "emoji" | "math" | "fangsong" => "",
             // Chromium does not know the `ui-*` families, and style sheets list what it is to use after them.
             _ => return None,
         };
-        self.named(preferred).or_else(|| self.catalog.generic(name))
+        self.named(preferred)
+            .or_else(|| self.catalog.as_mut()?.generic(name))
+    }
+
+    /// If Chromium's settings have another default for it.
+    fn for_language(&mut self, generic: &str, language: &[u8]) -> Option<Option<FamilyId>> {
+        let language = std::str::from_utf8(language).ok()?.to_ascii_lowercase();
+        let has = |all: &str| {
+            language
+                .split(['-', '_'])
+                .skip(1)
+                .any(|it| all.split(' ').any(|one| one == it))
+        };
+        let script = match language.split(['-', '_']).next()? {
+            "zh" | "yue" if !has("hans") && (has("hant tw hk mo") || language.starts_with('y')) => {
+                "hant"
+            }
+            "ar" | "fa" | "ur" | "ps" => "ar",
+            "ru" | "uk" | "bg" | "be" | "mk" | "sr" | "kk" | "el" => "ru",
+            first => first,
+        };
+        let names = match (
+            std::env::consts::OS,
+            script,
+            if generic == "standard" {
+                "sans-serif"
+            } else {
+                generic
+            },
+        ) {
+            ("macos", "ja", "sans-serif") => "Hiragino Kaku Gothic ProN",
+            ("macos", "ja", "serif") => "Hiragino Mincho ProN",
+            ("macos", "ja", "monospace") => "Osaka-Mono,BIZ UDGothic,Menlo",
+            ("macos", "ko", "sans-serif") => "Apple SD Gothic Neo",
+            ("macos", "ko", "serif") => "AppleMyungjo",
+            ("macos", "zh", "sans-serif") => "PingFang SC,STHeiti",
+            ("macos", "zh", "serif") => "Songti SC",
+            ("macos", "zh", "cursive") => "Kaiti SC",
+            ("macos", "hant", "sans-serif") => "PingFang TC,Heiti TC",
+            ("macos", "hant", "serif") => "Songti TC",
+            ("macos", "hant", "cursive") => "Kaiti TC",
+            ("windows", "ar", "sans-serif") if generic != "standard" => "Segoe UI",
+            ("windows", "ar" | "ru", "monospace") => "Courier New",
+            ("windows", "ja", "sans-serif") => "Noto Sans JP,Noto Sans CJK JP,Meiryo,Yu Gothic",
+            ("windows", "ja", "serif") => "Noto Serif JP,Noto Serif CJK JP,Yu Mincho,MS PMincho",
+            ("windows", "ja", "monospace") => "BIZ UDGothic,MS Gothic",
+            ("windows", "ko", "sans-serif") => "Noto Sans KR,Noto Sans CJK KR,Malgun Gothic",
+            ("windows", "ko", "serif") => "Noto Serif KR,Noto Serif CJK KR,Batang",
+            ("windows", "ko", "monospace") => "Gulimche",
+            ("windows", "ko", "cursive") => "Gungsuh",
+            ("windows", "zh", "sans-serif") => "Noto Sans SC,Noto Sans CJK SC,Microsoft YaHei",
+            ("windows", "zh", "serif") => "Noto Serif SC,Noto Serif CJK SC,Simsun",
+            ("windows", "zh", "monospace") => "NSimsun",
+            ("windows", "zh", "cursive") => "KaiTi",
+            ("windows", "hant", "sans-serif") => "Noto Sans TC,Noto Sans CJK TC,Microsoft JhengHei",
+            ("windows", "hant", "serif") => "Noto Serif TC,Noto Serif CJK TC,PMingLiU",
+            ("windows", "hant", "monospace") => "MingLiU",
+            ("windows", "hant", "cursive") => "DFKai-SB",
+            _ => return None,
+        };
+        Some(names.split(',').find_map(|it| self.named(it)))
     }
 
     fn covers(&mut self, family: FamilyId, character: char, color: bool) -> bool {
@@ -667,20 +830,63 @@ impl System {
         regular.is_some_and(|regular| regular.file.has_color == color && regular.covers(character))
     }
 
-    fn fallback(&mut self, character: char, color: bool, language: &[u8]) -> Option<FamilyId> {
-        let language = if Script::of(character) == Script::HAN {
-            language
+    fn fallback(
+        &mut self,
+        character: char,
+        color: bool,
+        wanted: &Description,
+        primary: Option<&'static File>,
+    ) -> Option<FamilyId> {
+        let language = if Script::of(character) == Script::HAN && !cfg!(target_os = "macos") {
+            &*wanted.language
         } else {
             &[]
         };
-        let key = (character, color, keyed(language));
+        let like = primary
+            .filter(|_| cfg!(target_os = "macos") && !color)
+            .map(|file| Like {
+                file,
+                weight: wanted.weight,
+                is_italic: wanted.slope() > 0.,
+                device_scale: wanted.device_scale,
+            });
+        self.fallback_like(character, color, language, like)
+    }
+
+    fn fallback_like(
+        &mut self,
+        character: char,
+        color: bool,
+        language: &[u8],
+        like: Option<Like>,
+    ) -> Option<FamilyId> {
+        let key = (
+            character,
+            color,
+            keyed((
+                language,
+                like.map(|it| {
+                    (
+                        std::ptr::from_ref(it.file),
+                        it.weight.to_bits(),
+                        it.is_italic,
+                        it.device_scale.to_bits(),
+                    )
+                }),
+            )),
+        );
         if let Some(found) = self.fallbacks.get(&key) {
             return *found;
         }
-        let families = self.catalog.fallbacks(character, color, language);
-        let found = families
-            .into_iter()
-            .find(|family| self.covers(*family, character, color));
+        let found = match &mut self.catalog {
+            Some(catalog) => catalog
+                .fallbacks(character, color, language, like)
+                .into_iter()
+                .find(|family| self.covers(*family, character, color)),
+            None => {
+                guest::fallback_family(character, color, language.get(..64).unwrap_or(language))
+            }
+        };
         crate::diagnostics::log!("fallback for {character:?}: {found:?}");
         self.fallbacks.insert(key, found);
         found
@@ -688,14 +894,24 @@ impl System {
 
     /// `local()` names a face by its full or PostScript name.
     fn local(&mut self, name: &str) -> Option<&'static File> {
-        let font = self.catalog.by_full_name(name)?;
-        self.file(&font)
+        let font = self.by_full_name(name)?;
+        self.file(font)
+    }
+
+    fn by_full_name(&mut self, name: &str) -> Option<Listed> {
+        let Some(catalog) = &mut self.catalog else {
+            return Some(name)
+                .filter(|it| it.len() <= 512)
+                .and_then(guest::font_named);
+        };
+        let font = catalog.by_full_name(name)?;
+        Some(self.list(font))
     }
 
     fn candidate(&mut self, family: FamilyId, wanted: &Description) -> Option<Candidate> {
         let fonts = self.fonts(family);
         let (font, capabilities) = best(wanted, &fonts, |(_, capabilities)| *capabilities, true)?;
-        Some(candidate(self.file(font)?, *capabilities, None, wanted))
+        Some(candidate(self.file(*font)?, *capabilities, None, wanted))
     }
 
     /// It tends to have more characters than the other faces.
@@ -707,7 +923,7 @@ impl System {
             |(_, capabilities)| *capabilities,
             true,
         )?;
-        Some(candidate(self.file(font)?, *capabilities, None, wanted))
+        Some(candidate(self.file(*font)?, *capabilities, None, wanted))
     }
 }
 
@@ -835,31 +1051,43 @@ impl Instances {
             .then_some((*b"opsz", size * candidate.size_adjust));
         let settings = candidate.variations.iter().copied().chain(optical_size);
         let coords = variations::normalize(&file.font, &file.axes, settings);
-        let key = (
-            std::ptr::from_ref(file).addr(),
+        self.of(
+            file,
             coords,
             [candidate.embolden, candidate.skew, candidate.is_smoothed],
             candidate.palette.clone(),
-        );
-        self.0.entry(key).or_insert_with_key(|(_, coords, ..)| {
-            let mut faces = FACES.write();
-            if (faces.len() + 1).is_multiple_of(MANY) {
-                forget_plans(&faces);
-            }
-            let face = Box::leak(Box::new(Face {
-                id: faces.len() as u32,
-                file,
-                embolden: candidate.embolden,
-                skew: candidate.skew,
-                is_smoothed: candidate.is_smoothed,
-                palette: candidate.palette.clone(),
-                coords: coords.clone().leak(),
-                metrics: file.font.metrics(coords),
-                plans: Mutex::default(),
-            }));
-            faces.push(face);
-            face
-        })
+        )
+    }
+
+    fn of(
+        &mut self,
+        file: &'static File,
+        coords: Vec<i16>,
+        style: [bool; 3],
+        palette: Palette,
+    ) -> &'static Face {
+        let key = (std::ptr::from_ref(file).addr(), coords, style, palette);
+        self.0.entry(key).or_insert_with_key(
+            |(_, coords, [embolden, skew, is_smoothed], palette)| {
+                let mut faces = FACES.write();
+                if (faces.len() + 1).is_multiple_of(MANY) {
+                    forget_plans(&faces);
+                }
+                let face = Box::leak(Box::new(Face {
+                    id: faces.len() as u32,
+                    file,
+                    embolden: *embolden,
+                    skew: *skew,
+                    is_smoothed: *is_smoothed,
+                    palette: palette.clone(),
+                    coords: coords.clone().leak(),
+                    metrics: file.font.metrics(coords),
+                    plans: Mutex::default(),
+                }));
+                faces.push(face);
+                face
+            },
+        )
     }
 }
 
@@ -906,7 +1134,9 @@ fn resolve(wanted: &Description, system: &mut System, web: &[Arc<WebFont>]) -> R
             continue;
         }
         let family = if is_generic {
-            system.generic(name)
+            system
+                .for_language(name, &wanted.language)
+                .unwrap_or_else(|| system.generic(name))
         } else {
             system.named(name)
         };
@@ -931,9 +1161,15 @@ fn resolve(wanted: &Description, system: &mut System, web: &[Arc<WebFont>]) -> R
         [0, ..] => wanted.language.clone(),
         tag => format!("x-hbot-{:08x}", u32::from_be_bytes(tag)).into_bytes(),
     };
-    let last_resort = ["Times New Roman", "Times"]
-        .into_iter()
-        .find_map(|name| system.named(name));
+    let standard = if cfg!(target_os = "macos") {
+        ["Times", "Times New Roman"]
+    } else {
+        ["Times New Roman", "Times"]
+    };
+    let last_resort = system
+        .for_language("standard", &wanted.language)
+        .flatten()
+        .or_else(|| standard.into_iter().find_map(|name| system.named(name)));
     let last_resort = last_resort.or_else(|| system.generic("sans-serif"));
     candidates.extend(last_resort.and_then(|family| system.candidate(family, wanted)));
     Resolved {
@@ -1092,9 +1328,12 @@ impl Fonts {
         let mut listed = resolved.candidates[..resolved.listed].iter();
         let listed = listed.position(|candidate| candidate.covers(character));
         let mut from_system = |color: bool| {
-            let family = self
-                .system
-                .fallback(character, color, &description.language)?;
+            let family = self.system.fallback(
+                character,
+                color,
+                description,
+                resolved.candidates.get(resolved.primary).map(|it| it.file),
+            )?;
             let fallback = self
                 .system
                 .candidate(family, description)
@@ -1203,6 +1442,7 @@ impl Fonts {
     }
 
     fn invalidate(&mut self, scope: u32) {
+        GENERATION.fetch_add(1, Ordering::Relaxed);
         for described in &mut self.described {
             if described.description.scope == scope {
                 described.resolved = None;
@@ -1223,7 +1463,7 @@ impl Fonts {
                     *self
                         .web_files
                         .entry(data.as_ptr() as usize)
-                        .or_insert_with(|| File::load(data, 0))
+                        .or_insert_with(|| File::load(data, 0, decoded::origin(data)))
                 });
                 (file.context("the font could not be decoded")?, None)
             }
@@ -1331,6 +1571,7 @@ pub fn describe(description: Description) -> u32 {
 record! {
     required
     /// A font for the next run.
+    #[derive(Clone)]
     pub struct Recipe {
         families: Vec<u8>,
         numbers: [f32; 4],
@@ -1346,7 +1587,8 @@ record! {
 impl Recipe {
     /// With the file, if the system does not have it.
     pub fn of(face: u32) -> Option<(Recipe, Option<&'static [u8]>)> {
-        FONTS.lock().described.iter().rev().find_map(
+        let fonts = FONTS.lock();
+        let described = fonts.described.iter().rev().find_map(
             |Described {
                  description: it,
                  resolved,
@@ -1375,7 +1617,16 @@ impl Recipe {
                 };
                 Some((recipe, file))
             },
-        )
+        );
+        described.or_else(|| fonts.recipes.get(&face).cloned())
+    }
+
+    /// For `import_face`.
+    pub fn exported(face: u32) -> String {
+        Recipe::of(face)
+            .map(|it| it.0.to_json().to_string())
+            .filter(|it| it.len() < 1 << 16)
+            .unwrap_or_default()
     }
 
     pub fn describe(&self, file: &std::path::Path) -> Option<u32> {
@@ -1384,7 +1635,7 @@ impl Recipe {
             let fonts = &mut *FONTS.lock();
             let file = match &web.local {
                 Some(name) => fonts.system.local(name)?,
-                None => File::load(decoded::map(file)?, 0)?,
+                None => File::load(decoded::map(file)?, 0, Origin::Unknown)?,
             };
             fonts.add_web_font(
                 file,
@@ -1627,9 +1878,101 @@ pub fn drop_font_scope(scope: u32) {
 
 pub fn font_families() -> List<Text> {
     let fonts = &mut *FONTS.lock();
-    let mut names: Vec<&str> = fonts.system.catalog.family_names().collect();
+    let Some(catalog) = &mut fonts.system.catalog else {
+        return guest::family_names().lines().map(Text::from).collect();
+    };
+    let mut names: Vec<&str> = catalog.family_names().collect();
     names.sort_unstable();
     names.into_iter().map(Text::from).collect()
+}
+
+pub fn family_named(name: &str) -> Option<FamilyId> {
+    FONTS.lock().system.named(name)
+}
+
+pub fn generic_family(name: &str) -> Option<FamilyId> {
+    FONTS.lock().system.generic(name)
+}
+
+pub fn fallback_family(character: char, color: bool, language: &[u8]) -> Option<FamilyId> {
+    FONTS
+        .lock()
+        .system
+        .fallback_like(character, color, language, None)
+}
+
+pub fn font_named(name: &str) -> Option<Listed> {
+    FONTS.lock().system.by_full_name(name)
+}
+
+pub fn fonts_of(family: FamilyId) -> Vec<(Listed, [f32; 6])> {
+    let system = &mut FONTS.lock().system;
+    let fonts = if system.catalog.as_ref().is_some_and(|it| it.has(family)) {
+        system.fonts(family)
+    } else {
+        Default::default()
+    };
+    fonts
+        .iter()
+        .map(
+            |&(
+                font,
+                Capabilities {
+                    weight: (a, b),
+                    stretch: (c, d),
+                    slope: (e, f),
+                },
+            )| (font, [a, b, c, d, e, f]),
+        )
+        .collect()
+}
+
+/// The file if there is one, what is in it, and which of its fonts it is.
+pub fn open_font(font: Listed) -> Option<(Option<std::fs::File>, &'static [u8], u32)> {
+    let System {
+        catalog, listed, ..
+    } = &mut FONTS.lock().system;
+    let (catalog, font) = (catalog.as_mut()?, listed.get(font as usize)?);
+    let (data, index) = catalog.load(font)?;
+    Some((
+        catalog
+            .path(font)
+            .and_then(|it| std::fs::File::open(it).ok()),
+        data,
+        index,
+    ))
+}
+
+pub fn listed_file(font: Listed) -> Option<&'static File> {
+    let system = &mut FONTS.lock().system;
+    ((font as usize) < system.listed.len()).then(|| system.file(font))?
+}
+
+pub fn file_of(data: &'static [u8]) -> Option<&'static File> {
+    *FONTS
+        .lock()
+        .web_files
+        .entry(data.as_ptr().addr())
+        .or_insert_with(|| File::load(data, 0, Origin::Unknown))
+}
+
+pub fn import_face(
+    file: &'static File,
+    coords: Vec<i16>,
+    style: [bool; 3],
+    palette: Palette,
+    recipe: &[u8],
+    is_from_web: bool,
+) -> u32 {
+    let (fonts, recipe) = (
+        &mut *FONTS.lock(),
+        json::parse(recipe).and_then(Recipe::deserialize),
+    );
+    let face = fonts.instances.of(file, coords, style, palette).id;
+    fonts
+        .recipes
+        .extend(recipe.map(|it| (face, (it, is_from_web.then_some(file.data)))));
+    face
 }
 
 #[cfg(test)]

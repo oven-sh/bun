@@ -246,6 +246,12 @@ pub fn alias_cfg() -> bun_resolve_builtins::Cfg {
     }
 }
 
+#[unsafe(no_mangle)]
+extern "C" fn Bun__isExecutableWithoutDesktop() -> bool {
+    crate::virtual_machine::standalone_module_graph()
+        .is_some_and(|graph| !graph.loads_graphics_drivers())
+}
+
 #[inline]
 pub fn bun_aliases_get(name: &[u8]) -> Option<bun_resolve_builtins::Alias> {
     HardcodedModule::Alias::get(name, bun_ast::Target::Bun, alias_cfg())

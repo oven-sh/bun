@@ -146,7 +146,7 @@ impl Text {
         unsafe { String::from_utf8_unchecked(self.0.into_vec()) }
     }
 
-    pub fn unless_empty(&self) -> Option<&str> {
+    pub(crate) fn unless_empty(&self) -> Option<&str> {
         (!self.0.is_empty()).then_some(self)
     }
 }
@@ -937,7 +937,7 @@ pub struct Uncovered {
 /// What is behind the contents of a window. It blurs unless it has a color.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
-pub struct BackdropPart {
+pub(crate) struct BackdropPart {
     pub frame: [f64; 4],
     pub color: Maybe<[f64; 4]>,
 }
@@ -1527,6 +1527,64 @@ pub enum Event {
     Warning(Text),
     /// The library is of no more use.
     Fatal(Text),
+    /// From a [`PageProcess`], or with 0 to one.
+    Message {
+        from: u32,
+        message: Message,
+    },
+    Disconnected {
+        from: u32,
+        has_misbehaved: bool,
+    },
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct Message {
+    pub bytes: List<u8>,
+    /// The receiver's, or -1.
+    pub descriptor: i32,
+    pub edits: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct PageProcess {
+    pub id: u32,
+    /// The caller's. It is [`SOCKET_TO_PARENT`] in the process.
+    pub socket: i32,
+}
+
+/// The first argument of such a process. The second is the path of the library.
+pub const PAGE_PROCESS_MARKER: &core::ffi::CStr = c"--bun-desktop-child=page";
+pub(crate) const SOCKET_TO_PARENT: i32 = 3;
+
+#[repr(C, u8)]
+#[derive(Debug)]
+pub enum PageCommand {
+    /// A surface, which it paints and gets the frames of.
+    Grant(u32),
+    Revoke(u32),
+    /// The image of a web view, which it knows as that number plus [`LENT_IMAGE`].
+    Lend(u32),
+    TakeBack(u32),
+    StoreFontsFor(Text),
+    /// The length of a message.
+    Handled(usize),
+    Close,
+}
+
+pub const LENT_IMAGE: u32 = 1 << 30;
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lane {
+    /// From a page, it can wait until the events are handled.
+    Scripts,
+    /// The same, and windows wait for what is painted next.
+    NewSize,
+    /// For [`Ui::receive`].
+    Elsewhere,
 }
 
 #[repr(u8)]
@@ -1554,6 +1612,18 @@ pub struct Ui {
     pub has_input: extern "C" fn() -> bool,
     /// Draws the windows that waited for their [`Input::Frame`] to be handled.
     pub present: extern "C" fn(),
+    /// What is sent until the next `present` or `pump` arrives together.
+    pub hold: extern "C" fn(),
+
+    /// Before `bun_desktop_init`.
+    pub become_page_process: extern "C" fn(),
+    pub open_page_process: extern "C" fn() -> Outcome<PageProcess>,
+    /// Takes effect at once.
+    pub tell_page_process: extern "C" fn(id: u32, PageCommand),
+    /// From any thread. It takes the descriptor. A page process only passes the bytes.
+    pub send: unsafe extern "C" fn(to: u32, Lane, bytes: *const u8, length: usize, descriptor: i32),
+    /// In a page process. It waits.
+    pub receive: extern "C" fn() -> Message,
 
     pub window_geometry: extern "C" fn(window: u32) -> Outcome<Geometry>,
     pub window_mouse: extern "C" fn(window: u32) -> Outcome<Point>,

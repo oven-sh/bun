@@ -1,5 +1,6 @@
 //! Threads that help with pixels. They stay for as long as they are in demand.
 
+use std::cell::Cell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
@@ -40,7 +41,17 @@ pub fn threads() -> usize {
     *COUNT
 }
 
-fn help() {
+thread_local! {
+    static SEAT: Cell<usize> = const { Cell::new(0) };
+}
+
+/// 0 unless this is a helper.
+pub fn seat() -> usize {
+    SEAT.get()
+}
+
+fn help(seat: usize) {
+    SEAT.set(seat);
     crate::host::thread::is_needed_for_frames();
     let mut crew = CREW.lock();
     loop {
@@ -88,14 +99,15 @@ fn share(helpers: usize, work: Work) {
         Some(unsafe { std::mem::transmute::<Work, Work<'static>>(work) }),
         helpers,
     );
-    while crew.size < helpers
+    while let seat = crew.size + 1
+        && seat <= helpers
         && std::thread::Builder::new()
             .name("pixels".into())
             .stack_size(8 << 20)
-            .spawn(help)
+            .spawn(move || help(seat))
             .is_ok()
     {
-        crew.size += 1;
+        crew.size = seat;
     }
     drop(crew);
     let mut has_failed = false;
@@ -106,6 +118,15 @@ fn share(helpers: usize, work: Work) {
     work();
     drop(dismissal);
     assert!(!has_failed, "a helper panicked");
+}
+
+/// On this one, and on those of the others that are in time.
+pub fn on_threads(count: usize, work: impl Fn() + Sync) {
+    if count > 1 {
+        share(count - 1, &work)
+    } else {
+        work()
+    }
 }
 
 /// In any order.

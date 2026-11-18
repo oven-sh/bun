@@ -129,12 +129,31 @@ pub(crate) static LEGEND_STEPS: Steps = Steps {
             .or_else(|| legend.parent())
             .filter(|it| it.is_html(atom!("fieldset")))
             .and_then(Node::as_element);
-        if let Some(fieldset) = fieldset.filter(|it| it.has_attr(atom!("disabled"))) {
-            if fieldset.is_rendered() {
-                fieldset.engine(|engine, id| engine.update_derived_state(id, true));
-                fieldset.doc().invalidate(cx);
+        let Some(fieldset) = fieldset.filter(|it| it.has_attr(atom!("disabled"))) else {
+            return;
+        };
+        if left.is_some() {
+            let_go_before_changing(cx, fieldset);
+        }
+        let mut legends = fieldset
+            .children()
+            .filter(|it| it.is_html(atom!("legend")))
+            .filter_map(Node::as_element);
+        // The one that is the first now, or that was it.
+        let affected = if left.is_some() {
+            legends.next()
+        } else {
+            legends
+                .next()
+                .filter(|it| *it == legend)
+                .and_then(|_| legends.next())
+        };
+        for it in affected.into_iter().chain([legend]) {
+            if it.is_rendered() {
+                it.engine(|engine, id| engine.update_derived_state(id, true));
+                it.doc().invalidate(cx);
             }
-            disabled_controls_changed(cx, fieldset);
+            disabled_controls_changed(cx, it);
         }
     }),
     ..Steps::NONE

@@ -2824,7 +2824,9 @@ impl TestCommand {
             graph: run_compiled::graph(),
             ..Default::default()
         };
-        bun_jsc::start_in_window_if_preloaded(&ctx.preloads);
+        if options.graph.is_none() {
+            bun_jsc::start_in_window_if_preloaded(&ctx.preloads);
+        }
         let vm = VirtualMachine::init(ctx.log, options)?;
         crate::jsc_hooks::runtime_state_of(vm)
             .test_runner

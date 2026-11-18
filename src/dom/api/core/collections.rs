@@ -5,7 +5,7 @@ use core::num::NonZeroU32;
 
 use bun_core::WTFStringImplStruct as Impl;
 use bun_jsc::JSValue;
-use bun_jsc::bindgen::{Class, JsAtom, JsHeap, JsInterface, PropertyNames};
+use bun_jsc::bindgen::{Class, JsAtom, JsHeap, JsInterface, PropertyNames, PublishesItems};
 use smallvec::SmallVec;
 
 use super::changes::{Few, Move};
@@ -262,6 +262,8 @@ pub(crate) struct Collection {
     hints: Cell<[u32; 2]>,
     /// `Arena::collections` then. What was corrected is not relied on to keep nodes alive.
     corrected_at: Cell<Option<NonZeroU32>>,
+    /// How often scripts have to read it before it is worth publishing.
+    patience: Cell<u32>,
     reads: Reads,
     is_complete: Cell<bool>,
     was_in_tree_order: Cell<bool>,
@@ -355,6 +357,7 @@ impl Collection {
             names: OnceCell::new(),
             hints: Cell::new([0; 2]),
             corrected_at: Cell::new(None),
+            patience: Cell::new(0),
             is_complete: Cell::new(false),
             was_in_tree_order: Cell::new(false),
         };
@@ -390,6 +393,7 @@ impl Collection {
     /// For one that is `listed`.
     pub(crate) fn outdate(&self) {
         self.version.set(0);
+        self.withdraw_items();
     }
 
     #[inline]
@@ -444,6 +448,7 @@ impl Collection {
         self.corrected_at
             .set(corrected.and_then(|()| NonZeroU32::new(arena.collections())));
         if corrected.is_none() {
+            self.found_changes(found);
             found.clear();
             self.is_complete.set(false);
             self.names.get().inspect(|it| it.borrow_mut().forget());
@@ -451,6 +456,43 @@ impl Collection {
         root.set(self.filter.flag().unwrap_or(F::empty()));
         self.version.set(arena.version.get());
         self.version_of_attributes.set(arena.version_of(self.reads));
+    }
+
+    #[inline]
+    fn found_changes(&self, found: &Found) {
+        self.withdraw_items();
+        self.patience.set(found.len() as u32 / 4);
+    }
+
+    /// For scripts.
+    #[inline]
+    fn read(&self, index: u32) -> Option<&Node> {
+        let node = self.node(index);
+        if !self.renew_items() {
+            match self.patience.get() {
+                0 => self.publish(),
+                patience => self.patience.set(patience - 1),
+            }
+        }
+        node
+    }
+
+    /// It is current.
+    #[inline(never)]
+    fn publish(&self) {
+        if let Some(list) = self.fixed() {
+            // SAFETY: the list holds them.
+            list.contiguous()
+                .into_iter()
+                .for_each(|it| unsafe { self.publish_values(it) });
+        } else if self.owner().has(F::USER_AGENT) {
+            self.patience.set(u32::MAX);
+        } else if self.is_complete.get() {
+            // SAFETY: they are current, and the thread outlives its VM.
+            super::changes::with_clock(self.reads, |clock| unsafe {
+                self.publish_instances(&*self.found.get(), clock)
+            });
+        }
     }
 
     fn position(&self, found: &[*const Node], node: &Node) -> Option<usize> {
@@ -506,6 +548,7 @@ impl Collection {
 
     fn take_out(&self, found: &mut Found, node: &Node) {
         if let Some(index) = self.position(found, node) {
+            self.found_changes(found);
             found.remove(index);
             self.names
                 .get()
@@ -533,6 +576,7 @@ impl Collection {
                 .filter_map(|it| it.as_element())
                 .for_each(|it| names.add(it, next.is_none()));
         }
+        self.found_changes(found);
         match nodes {
             [only] => found.insert(index, *only),
             _ => found.insert_many(index, nodes.iter().map(|it| core::ptr::from_ref(*it))),
@@ -850,7 +894,7 @@ macro_rules! members {
 
             #[inline]
             pub(crate) fn indexed_get(&self, index: u32) -> Option<&Node> {
-                self.node(index)
+                self.read(index)
             }
         })*
     };
@@ -1054,7 +1098,7 @@ impl Node {
         make: impl FnOnce(&Atom) -> JSValue,
     ) -> JSValue {
         #[derive(Default)]
-        struct Keys(RefCell<Indices>);
+        struct Keys(RefCell<Indices>, Cell<Option<((u8, usize), u32)>>);
         type Indices = Map<(u8, usize), (u32, Atom)>;
         fn remember(
             heap: &JsHeap<'_>,
@@ -1069,11 +1113,17 @@ impl Node {
                 all.push(heap, made);
             }
         }
-        let (mut keys, all) = (
-            self.extra::<Keys>().0.borrow_mut(),
+        let (Keys(keys, last), all, sought) = (
+            self.extra::<Keys>(),
             self.edge_list(heap, Edge::Collections),
+            (kind, key.identity()),
         );
-        if let Some((index, _)) = keys.get(&(kind, key.identity())) {
+        if let Some((_, index)) = last.get().filter(|it| it.0 == sought) {
+            return all.get(index);
+        }
+        let mut keys = keys.borrow_mut();
+        if let Some((index, _)) = keys.get(&sought) {
+            last.set(Some((sought, *index)));
             return all.get(*index);
         }
         let made = make(key);

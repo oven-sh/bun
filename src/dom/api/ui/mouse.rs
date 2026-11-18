@@ -163,12 +163,13 @@ pub(super) fn follow<'a>(cx: &mut Cx<'a>, ui: &'a Ui) {
             );
             let wanted = [size[0] + sign * (x - from[0]), size[1] + y - from[1]];
             for axis in (0..2).filter(|it| axes[*it]) {
-                host::set_style(
-                    cx,
-                    element,
+                let (name, wanted) = (
                     ["width", "height"][axis],
-                    &format!("{}px", wanted[axis].round().max(15.0)),
+                    format!("{}px", wanted[axis].round().max(15.0)),
                 );
+                if wanted.as_bytes() != &layout::computed(cx, element, name)[..] {
+                    host::set_style(cx, element, name, &wanted);
+                }
             }
         }
         _ => {}

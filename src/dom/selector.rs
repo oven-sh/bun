@@ -210,7 +210,33 @@ pub(crate) mod key {
 
     use super::*;
 
+    /// The elements before it are others.
     pub(crate) const STRUCTURE: Name = name!("structure").salted(6);
+    /// The elements after it are others.
+    pub(crate) const REMAINDER: Name = name!("structure").salted(15);
+    /// The same for those of its type.
+    pub(crate) const TYPE_BEFORE: Name = name!("type").salted(6);
+    pub(crate) const TYPE_AFTER: Name = name!("type").salted(15);
+    pub(crate) const FIRST: Name = name!("start").salted(6);
+    pub(crate) const LAST: Name = name!("start").salted(15);
+    pub(crate) const EMPTY: Name = name!("start").salted(12);
+    pub(crate) const STRUCTURAL: [Name; 7] = [
+        STRUCTURE,
+        REMAINDER,
+        TYPE_BEFORE,
+        TYPE_AFTER,
+        FIRST,
+        LAST,
+        EMPTY,
+    ];
+    /// `Rare::is_unusual_root`
+    pub(crate) const ROOT: Name = name!("html").salted(6);
+    /// The element before it is another.
+    pub(crate) const PREVIOUS: Name = name!("structure").salted(12);
+    /// It has been inserted before other elements.
+    pub(crate) const ARRIVAL: Name = name!("structure").salted(13);
+    /// An earlier sibling is gone.
+    pub(crate) const DEPARTURE: Name = name!("structure").salted(14);
 
     pub(crate) fn class(name: Name) -> Name {
         name
@@ -282,6 +308,7 @@ pub(crate) mod key {
             .then(|| id(element.id))
             .into_iter())
         .chain([tag(element.tag)])
+        .chain(element.is_unusual_root.then_some(ROOT))
         .chain(element.attributes.iter().map(|it| attribute(it.name)))
         .chain(
             element
@@ -388,6 +415,19 @@ pub(crate) struct Nth {
     pub(crate) b: i32,
 }
 
+impl Nth {
+    fn is_of_type(self) -> bool {
+        matches!(
+            self.kind,
+            NthKind::OfType | NthKind::LastOfType | NthKind::OnlyOfType
+        )
+    }
+
+    fn is_edge(self) -> bool {
+        (self.a, self.b) == (0, 1)
+    }
+}
+
 pub(crate) struct AttributeTest {
     pub(crate) names: (Name, Name),
     pub(crate) operator: Operator,
@@ -441,11 +481,19 @@ pub(crate) struct Step {
 impl Step {
     fn all_of(selector: &Selector) -> Option<Box<[Step]>> {
         let step = |compound: &Compound| {
+            let name_of = |it: &Simple| {
+                if let Simple::Attribute(test) = it {
+                    (test.names.0 == test.names.1).then(|| key::attribute(test.names.0))
+                } else {
+                    None
+                }
+            };
             let keys = || {
                 compound
                     .simples
                     .iter()
-                    .filter_map(|it| best_key(core::iter::once(it)))
+                    .flat_map(|it| [best_key(core::iter::once(it)), name_of(it)])
+                    .flatten()
             };
             let is_child = compound.combinator == Combinator::Child;
             let mut step = Step {
@@ -878,10 +926,161 @@ impl Compound {
             }
             Simple::Root => Some(smallvec::smallvec![
                 key::tag(name!("html")),
-                key::tag(name!("svg"))
+                key::tag(name!("svg")),
+                key::ROOT
             ]),
             _ => None,
         })
+    }
+
+    /// `required_bits` of the ancestors of an element that matches the first.
+    pub(crate) fn bits_above(compounds: &[Compound]) -> u64 {
+        let pairs = compounds
+            .iter()
+            .zip(compounds.iter().skip(1))
+            .take_while(|it| !matches!(it.0.combinator, Combinator::Slot | Combinator::Part));
+        pairs
+            .filter(|it| matches!(it.0.combinator, Combinator::Child | Combinator::Descendant))
+            .fold(0, |all, it| all | it.1.required_bits())
+    }
+
+    /// `filter` of keys that an element has to have all of.
+    pub(crate) fn required_bits(&self) -> u64 {
+        filter(
+            self.simples
+                .iter()
+                .filter_map(|it| best_key(core::iter::once(it))),
+        )
+    }
+
+    /// Whether an element cannot match by losing the key, nor stop matching by getting it.
+    pub(crate) fn only_requires(&self, wanted: Name) -> bool {
+        let is_it = |it: &Simple| {
+            matches!(it, Simple::Class(name) if key::class(*name) == wanted)
+                || matches!(it, Simple::Id(name) if key::id(*name) == wanted)
+        };
+        self.simples.iter().any(is_it)
+            && !self
+                .simples
+                .iter()
+                .any(|it| matches!(it, Simple::Is(_) | Simple::Not(_)))
+    }
+
+    /// `Selector::features`, with an element that this is matched against for the subject.
+    pub(crate) fn features(&self, report: &mut dyn FnMut(Name, Relation, Name), into_has: bool) {
+        let relation = Relation::empty();
+        let with_besides = |attribute: Name| {
+            let is_other = |it: &&Simple| match it {
+                Simple::Exists(_, name) => *name != attribute,
+                Simple::Attribute(test) => test.names.1 != attribute,
+                _ => true,
+            };
+            best_key(self.simples.iter().filter(is_other)).unwrap_or(Name::NONE)
+        };
+        let with = with_besides(Name::NONE);
+        let lasting = best_key(
+            self.simples
+                .iter()
+                .filter(|it| !matches!(it, Simple::Exists(..) | Simple::Attribute(_))),
+        );
+        let lasting = lasting.unwrap_or(Name::NONE);
+        let nested = |list: &[Selector], relation, report: &mut dyn FnMut(_, _, _)| {
+            for selector in list {
+                let mut forward = |key, inner, required| match (inner == relation, required) {
+                    (true, Name::NONE) if key != lasting => report(key, inner, lasting),
+                    _ => report(key, inner, required),
+                };
+                selector.features(relation, &mut forward, into_has);
+            }
+        };
+        for simple in &self.simples {
+            match simple {
+                Simple::Class(class) => report(key::class(*class), relation, Name::NONE),
+                Simple::Id(id) => report(key::id(*id), relation, Name::NONE),
+                Simple::Tag(_, tag) if into_has => report(key::tag(*tag), relation, Name::NONE),
+                Simple::Exists(name, lower) => {
+                    report(key::attribute(*name), relation, with_besides(*lower));
+                    report(key::attribute(*lower), relation, with_besides(*lower));
+                }
+                Simple::Attribute(test) if test.key != Name::NONE => {
+                    report(test.key, relation, with_besides(test.names.1))
+                }
+                Simple::Attribute(test) => {
+                    report(
+                        key::attribute(test.names.0),
+                        relation,
+                        with_besides(test.names.1),
+                    );
+                    report(
+                        key::attribute(test.names.1),
+                        relation,
+                        with_besides(test.names.1),
+                    );
+                }
+                Simple::AnyNamespace(it) => {
+                    report(key::attribute(it.1), relation, with);
+                    report(key::attribute(name!("\0")), relation, with);
+                }
+                Simple::Lang(_) => {
+                    for key in LANGUAGES.map(key::attribute) {
+                        report(key, relation | Relation::DESCENDANT, Name::NONE);
+                        report(key, relation, Name::NONE);
+                    }
+                }
+                Simple::State(state) | Simple::NotState(state) => {
+                    state
+                        .iter()
+                        .for_each(|bit| report(key::state(bit), relation, with));
+                }
+                Simple::CustomState(state) => report(key::custom_state(*state), relation, with),
+                Simple::Part(_) => {
+                    report(key::attribute(name!("part")), relation, with);
+                    report(
+                        key::attribute(name!("exportparts")),
+                        relation | Relation::DESCENDANT,
+                        Name::NONE,
+                    );
+                }
+                Simple::Empty => report(key::EMPTY, relation, with),
+                Simple::Nth(data, of) => {
+                    let sibling = if data.kind == NthKind::LastChild {
+                        Relation::EARLIER_SIBLING
+                    } else {
+                        Relation::SIBLING
+                    };
+                    let [before, after] = match data.is_of_type() {
+                        true => [key::TYPE_BEFORE, key::TYPE_AFTER],
+                        false if of.is_none() && data.is_edge() => [key::FIRST, key::LAST],
+                        false => [key::STRUCTURE, key::REMAINDER],
+                    };
+                    if !matches!(data.kind, NthKind::LastChild | NthKind::LastOfType) {
+                        report(before, relation, with);
+                    }
+                    if !matches!(data.kind, NthKind::Child | NthKind::OfType) {
+                        report(after, relation, with);
+                    }
+                    for selector in of.iter().flat_map(|list| list.iter()) {
+                        let mut both = |key, relation: Relation, with| {
+                            report(key, relation, with);
+                            if !relation.contains(sibling) {
+                                report(key, relation | sibling, with);
+                            }
+                        };
+                        selector.features(relation, &mut both, into_has);
+                    }
+                }
+                Simple::Is(list) | Simple::Not(list) | Simple::Host(Some(list)) => {
+                    nested(list, relation, report);
+                }
+                Simple::HostContext(list) => {
+                    for selector in list.iter() {
+                        selector.features(relation | Relation::DESCENDANT, report, into_has);
+                    }
+                }
+                Simple::Has(has) => report(key::has(has.id), relation, with),
+                _ => {}
+            }
+        }
     }
 }
 
@@ -985,118 +1184,49 @@ impl Selector {
         into_has: bool,
     ) {
         for compound in &self.compounds {
-            let with_besides = |attribute: Name| {
-                let is_other = |it: &&Simple| match it {
-                    Simple::Exists(_, name) => *name != attribute,
-                    Simple::Attribute(test) => test.names.1 != attribute,
-                    _ => true,
-                };
-                best_key(compound.simples.iter().filter(is_other)).unwrap_or(Name::NONE)
-            };
-            let with = with_besides(Name::NONE);
-            let lasting = best_key(
-                compound
-                    .simples
-                    .iter()
-                    .filter(|it| !matches!(it, Simple::Exists(..) | Simple::Attribute(_))),
+            compound.features(
+                &mut |key, inner, required| report(key, relation | inner, required),
+                into_has,
             );
-            let lasting = lasting.unwrap_or(Name::NONE);
-            let nested = |list: &[Selector], relation, report: &mut dyn FnMut(_, _, _)| {
-                for selector in list {
-                    let mut forward = |key, inner, required| match (inner == relation, required) {
-                        (true, Name::NONE) if key != lasting => report(key, inner, lasting),
-                        _ => report(key, inner, required),
-                    };
-                    selector.features(relation, &mut forward, into_has);
-                }
-            };
-            for simple in &compound.simples {
-                match simple {
-                    Simple::Class(class) => report(key::class(*class), relation, Name::NONE),
-                    Simple::Id(id) => report(key::id(*id), relation, Name::NONE),
-                    Simple::Tag(_, tag) if into_has => report(key::tag(*tag), relation, Name::NONE),
-                    Simple::Exists(name, lower) => {
-                        report(key::attribute(*name), relation, with_besides(*lower));
-                        report(key::attribute(*lower), relation, with_besides(*lower));
-                    }
-                    Simple::Attribute(test) if test.key != Name::NONE => {
-                        report(test.key, relation, with_besides(test.names.1))
-                    }
-                    Simple::Attribute(test) => {
-                        report(
-                            key::attribute(test.names.0),
-                            relation,
-                            with_besides(test.names.1),
-                        );
-                        report(
-                            key::attribute(test.names.1),
-                            relation,
-                            with_besides(test.names.1),
-                        );
-                    }
-                    Simple::AnyNamespace(it) => {
-                        report(key::attribute(it.1), relation, with);
-                        report(key::attribute(name!("\0")), relation, with);
-                    }
-                    Simple::Lang(_) => {
-                        for key in LANGUAGES.map(key::attribute) {
-                            report(key, relation | Relation::DESCENDANT, Name::NONE);
-                            report(key, relation, Name::NONE);
-                        }
-                    }
-                    Simple::State(state) | Simple::NotState(state) => {
-                        state
-                            .iter()
-                            .for_each(|bit| report(key::state(bit), relation, with));
-                    }
-                    Simple::CustomState(state) => report(key::custom_state(*state), relation, with),
-                    Simple::Part(_) => {
-                        report(key::attribute(name!("part")), relation, with);
-                        report(
-                            key::attribute(name!("exportparts")),
-                            relation | Relation::DESCENDANT,
-                            Name::NONE,
-                        );
-                    }
-                    Simple::Empty => report(key::STRUCTURE, relation, with),
-                    Simple::Nth(data, of) => {
-                        let sibling = if data.kind == NthKind::LastChild {
-                            Relation::EARLIER_SIBLING
-                        } else {
-                            Relation::SIBLING
-                        };
-                        report(key::STRUCTURE, relation, with);
-                        for selector in of.iter().flat_map(|list| list.iter()) {
-                            let mut both = |key, relation: Relation, with| {
-                                report(key, relation, with);
-                                if !relation.contains(sibling) {
-                                    report(key, relation | sibling, with);
-                                }
-                            };
-                            selector.features(relation, &mut both, into_has);
-                        }
-                    }
-                    Simple::Is(list) | Simple::Not(list) | Simple::Host(Some(list)) => {
-                        nested(list, relation, report);
-                    }
-                    Simple::HostContext(list) => {
-                        for selector in list.iter() {
-                            selector.features(relation | Relation::DESCENDANT, report, into_has);
-                        }
-                    }
-                    Simple::Has(has) => report(key::has(has.id), relation, with),
-                    _ => {}
-                }
-            }
             relation |= match compound.combinator {
                 Combinator::Next | Combinator::Later => {
-                    report(key::STRUCTURE, relation, with);
+                    report(
+                        key::STRUCTURE,
+                        relation,
+                        compound.key().unwrap_or(Name::NONE),
+                    );
                     Relation::SIBLING
                 }
                 Combinator::Slot => Relation::DESCENDANT | Relation::SLOTTED,
                 _ => Relation::DESCENDANT,
             };
         }
+    }
+
+    /// Whether all that it looks at is in the tree of the subject, and not after it.
+    pub(crate) fn stays_in_tree(&self) -> bool {
+        self.compounds.iter().all(|compound| {
+            !matches!(compound.combinator, Combinator::Slot | Combinator::Part)
+                && compound.simples.iter().all(|it| match it {
+                    Simple::Class(_)
+                    | Simple::Id(_)
+                    | Simple::Tag(..)
+                    | Simple::Exists(..)
+                    | Simple::Attribute(_)
+                    | Simple::State(_)
+                    | Simple::NotState(_) => true,
+                    Simple::CustomState(_)
+                    | Simple::Root
+                    | Simple::Empty
+                    | Simple::Namespace(_)
+                    | Simple::Nth(_, None)
+                    | Simple::Has(_) => true,
+                    Simple::Is(list) | Simple::Not(list) => {
+                        list.iter().all(Selector::stays_in_tree)
+                    }
+                    _ => false,
+                })
+        })
     }
 
     /// Those left of a combinator in a nested selector, and what is inherited.
@@ -1206,6 +1336,11 @@ pub(crate) fn filter_of(element: &Element) -> u64 {
         } else {
             bit(key::id(element.id))
         };
+    let own = if element.is_unusual_root {
+        own | bit(key::ROOT)
+    } else {
+        own
+    };
     element.attributes.iter().fold(own, |all, it| {
         all | bit(key::attribute(it.name)) | bit(it.key)
     })
@@ -1279,8 +1414,8 @@ struct Search {
 /// What is known of the ancestors of the element that is being styled.
 pub(crate) struct Bloom {
     counters: Box<[Cell<u8>; 1 << 14]>,
-    /// What has been counted, and for each of the first of `known` how much of it was there before.
-    pushed: RefCell<(Vec<u32>, Vec<u32>)>,
+    /// What has been counted, and for each of the first of `known` how much of it was there before, and `Node::keys` of all up to it.
+    pushed: RefCell<(Vec<u32>, Vec<(u32, u64)>)>,
     /// All of `known` are. Otherwise the ancestors may have anything.
     is_counted: Cell<bool>,
     searches: Box<[Cell<Search>; 512]>,
@@ -1299,6 +1434,8 @@ pub(crate) struct Bloom {
     pub(crate) last_generated: Cell<Option<(NodeId, u8)>>,
     /// The last element whose rules follow from its signature, also those that generate something.
     pub(crate) last_decided: Cell<NodeId>,
+    /// Signatures, with the element that has had it first. Empty until memos have turned out to be expensive.
+    sighted: core::cell::OnceCell<Box<[Cell<(u32, NodeId)>]>>,
 }
 
 impl Bloom {
@@ -1334,6 +1471,7 @@ impl Bloom {
             last_signature: Cell::default(),
             last_generated: Cell::default(),
             last_decided: Cell::default(),
+            sighted: Default::default(),
         }
     }
 
@@ -1401,7 +1539,7 @@ impl Bloom {
             }
         }
         let (pushed, marks) = self.pushed.get_mut();
-        if let Some(mark) = marks.get(self.same).copied() {
+        if let Some((mark, _)) = marks.get(self.same).copied() {
             marks.truncate(self.same);
             for slot in pushed.drain(mark as usize..).flat_map(Bloom::slots) {
                 self.counters[slot].update(|it| it - u8::from(it != u8::MAX));
@@ -1423,7 +1561,10 @@ impl Bloom {
         }
         let (pushed, marks) = &mut *self.pushed.borrow_mut();
         for (id, _) in &self.known[marks.len()..] {
-            marks.push(pushed.len() as u32);
+            marks.push((
+                pushed.len() as u32,
+                marks.last().map_or(0, |it| it.1) | tree[*id].keys,
+            ));
             for hash in tree
                 .element(*id)
                 .into_iter()
@@ -1435,6 +1576,33 @@ impl Bloom {
                     .into_iter()
                     .for_each(|slot| self.counters[slot].update(|it| it.saturating_add(1)));
             }
+        }
+    }
+
+    pub(crate) fn save_memos(&self) {
+        self.sighted
+            .get_or_init(|| vec![Cell::default(); 4096].into());
+    }
+
+    pub(crate) fn is_worth_a_memo(&self, signature: Name, id: NodeId) -> bool {
+        let Some(sighted) = self.sighted.get() else {
+            return true;
+        };
+        let (slot, tag) = (
+            &sighted[(signature.bits() >> 8) as usize % sighted.len()],
+            (signature.bits() >> 32) as u32,
+        );
+        if slot.get().0 != tag {
+            slot.set((tag, id));
+        }
+        slot.get().1 != id
+    }
+
+    pub(crate) fn keys(&self) -> u64 {
+        if self.is_counted.get() {
+            self.pushed.borrow().1.last().map_or(0, |it| it.1)
+        } else {
+            u64::MAX
         }
     }
 
@@ -1487,6 +1655,12 @@ pub(crate) struct Found {
     indices: RefCell<Map<(u64, [NodeId; 5], bool), (Indices, Option<List>)>>,
     /// An element, and how many are before it.
     last_child: Cell<(NodeId, usize)>,
+    /// An element, how many are before it, and how many of its type. The same for those after it.
+    neighbors: [Cell<(NodeId, [u8; 2])>; 2],
+    /// Elements, and `Node::keys` of those before them.
+    keys_before: [Cell<(NodeId, u64)>; 8],
+    /// It has too many children to count them for each.
+    crowded: Cell<NodeId>,
     pub(crate) selections: RefCell<Vec<crate::bindings::Selected>>,
     /// No other has had it.
     number: Cell<u64>,
@@ -1499,6 +1673,9 @@ impl Found {
     pub(crate) fn clear(&self) {
         self.indices.take();
         self.last_child.take();
+        self.neighbors.iter().for_each(|it| _ = it.take());
+        self.keys_before.iter().for_each(|it| _ = it.take());
+        self.crowded.take();
         self.selections.take();
         self.rules.take();
         self.hidden.borrow_mut().clear();
@@ -1619,6 +1796,15 @@ impl<'a> Matcher<'a> {
         }
     }
 
+    pub(crate) fn matches_from(&self, compounds: &[Compound], id: NodeId) -> bool {
+        self.chain(compounds, id) == Outcome::Matched
+    }
+
+    /// `id` matches the first.
+    pub(crate) fn matches_beyond(&self, compounds: &[Compound], id: NodeId) -> bool {
+        self.beyond(compounds, id) == Outcome::Matched
+    }
+
     fn chain(&self, compounds: &[Compound], id: NodeId) -> Outcome {
         match self.compound(&compounds[0], id) {
             true => self.beyond(compounds, id),
@@ -1651,6 +1837,9 @@ impl<'a> Matcher<'a> {
             }
             Combinator::Later => {
                 self.note(self.tree[id].parent, Flags::LATER_SIBLINGS);
+                if rest[0].filter != 0 && self.keys_before(id) & rest[0].filter == 0 {
+                    return Outcome::TryAnotherAncestor;
+                }
                 Outcome::TryAnotherAncestor
             }
             Combinator::Descendant
@@ -1681,6 +1870,23 @@ impl<'a> Matcher<'a> {
                 _ => {}
             }
         }
+    }
+
+    fn keys_before(&self, id: NodeId) -> u64 {
+        let known = |id: NodeId| &self.tree.found().keys_before[id as usize % 8];
+        let (mut at, mut keys) = (id, 0);
+        for _ in 0..48 {
+            let (of, before) = known(at).get();
+            if of == at || self.tree[at].previous == 0 {
+                keys |= if of == at { before } else { 0 };
+                known(id).set((id, keys));
+                return keys;
+            }
+            at = self.tree[at].previous;
+            keys |= self.tree[at].keys;
+        }
+        known(id).set((id, u64::MAX));
+        u64::MAX
     }
 
     fn part(&self, compound: &Compound, rest: &[Compound], id: NodeId) -> bool {
@@ -1825,7 +2031,7 @@ impl<'a> Matcher<'a> {
         Some(Outcome::Failed)
     }
 
-    fn compound(&self, compound: &Compound, id: NodeId) -> bool {
+    pub(crate) fn compound(&self, compound: &Compound, id: NodeId) -> bool {
         let node = &self.tree[id];
         if compound.filter != 0 && node.keys & compound.filter == 0 {
             return false;
@@ -2017,11 +2223,8 @@ impl<'a> Matcher<'a> {
     }
 
     fn nth(&self, data: Nth, of: Option<&List>, element: &Element, id: NodeId) -> bool {
-        let of_type = matches!(
-            data.kind,
-            NthKind::OfType | NthKind::LastOfType | NthKind::OnlyOfType
-        );
-        let is_edge = of.is_none() && !of_type && data.a == 0 && data.b == 1;
+        let of_type = data.is_of_type();
+        let is_edge = of.is_none() && !of_type && data.is_edge();
         let flag = if is_edge {
             Flags::EDGE_CHILDREN
         } else {
@@ -2072,12 +2275,63 @@ impl<'a> Matcher<'a> {
             }
             None
         };
+        let neighbors = |is_after: bool| {
+            let found = self.tree.found();
+            let known = &found.neighbors[usize::from(is_after)];
+            if known.get().0 != id {
+                let step = |id: NodeId| {
+                    if is_after {
+                        self.tree[id].next
+                    } else {
+                        self.tree[id].previous
+                    }
+                };
+                let (mut at, mut counts, mut steps) = (
+                    step(id),
+                    [0; 2],
+                    if found.crowded.get() == parent { 0 } else { 48 },
+                );
+                while at != 0 {
+                    if steps == 0 {
+                        found.crowded.set(parent);
+                        return None;
+                    }
+                    if let Some(it) = self.tree[at].element() {
+                        counts = [
+                            counts[0] + 1,
+                            counts[1]
+                                + u8::from(
+                                    (it.tag, it.namespace) == (element.tag, element.namespace),
+                                ),
+                        ];
+                    }
+                    (at, steps) = (step(at), steps - 1);
+                }
+                known.set((id, counts));
+            }
+            Some(usize::from(known.get().1[usize::from(of_type)]))
+        };
+        let near = |is_after: bool| match limit == usize::MAX
+            || self.tree.found().neighbors[usize::from(is_after)].get().0 == id
+        {
+            true => neighbors(is_after),
+            false => among_few(if is_after {
+                |it| it.next
+            } else {
+                |it| it.previous
+            })
+            .or_else(|| neighbors(is_after)),
+        };
         let near = match data.kind {
             _ if of.is_some() || element.namespace == Namespace::Other => None,
-            NthKind::Child if self.tree.found().last_child.get().0 != 0 => None,
-            NthKind::Child | NthKind::OfType => among_few(|it| it.previous),
-            NthKind::LastChild | NthKind::LastOfType => among_few(|it| it.next),
-            NthKind::OnlyChild | NthKind::OnlyOfType => None,
+            _ if id == self.cut_at => Some(0),
+            NthKind::Child if limit != usize::MAX && self.tree.found().last_child.get().0 != 0 => {
+                None
+            }
+            NthKind::Child | NthKind::OfType => near(false),
+            NthKind::LastChild | NthKind::LastOfType => near(true),
+            NthKind::OnlyChild | NthKind::OnlyOfType => near(false)
+                .and_then(|before| Some(before + if before == 0 { near(true)? } else { 0 })),
         };
         let indices = |makes: bool| {
             let what = of.map_or_else(

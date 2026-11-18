@@ -3,11 +3,11 @@
 use std::rc::Rc;
 use std::sync::LazyLock;
 
-use super::cpu::blend_mode;
+use super::cpu::{Painter, blend_mode};
 use super::raster::{
     Clip, IntRect, Layer, Paint, Pixel, demultiply, map_point, map_rect, multiply,
 };
-use super::scene::Scene;
+use super::scene::Frame;
 use crate::abi::{self, BlendMode, Filter, Primitive, Rect};
 use crate::gfx::Transform;
 
@@ -74,6 +74,7 @@ struct Image {
 struct Graph<'a> {
     rect: IntRect,
     matrix: &'a Transform,
+    frame: &'a Frame,
     source: Image,
     results: Vec<Option<Image>>,
 }
@@ -90,16 +91,6 @@ fn at(layer: &Layer, x: i32, y: i32) -> Pixel {
     } else {
         [0; 4]
     }
-}
-
-fn generate(rect: IntRect, area: IntRect, f: impl Fn(i32, i32) -> Pixel) -> Option<Layer> {
-    let mut output = Layer::new(rect)?;
-    for y in (area.top..area.bottom).filter(|_| !area.is_empty()) {
-        (area.left..)
-            .zip(output.row_mut(y, area.left, area.right))
-            .for_each(|(x, pixel)| *pixel = f(x, y));
-    }
-    Some(output)
 }
 
 fn composite(top: &Layer, bottom: &Layer, mode: super::blend::Mode) -> Option<Layer> {
@@ -253,6 +244,18 @@ impl Noise {
 }
 
 impl Graph<'_> {
+    fn generate(&self, area: IntRect, f: impl Fn(i32, i32) -> Pixel) -> Option<Layer> {
+        let mut output = Layer::new(self.rect)?;
+        for y in
+            (area.top..area.bottom).take_while(|_| !area.is_empty() && !self.frame.is_overdue())
+        {
+            (area.left..)
+                .zip(output.row_mut(y, area.left, area.right))
+                .for_each(|(x, pixel)| *pixel = f(x, y));
+        }
+        Some(output)
+    }
+
     fn input(&self, which: f32, linear: bool) -> Option<Image> {
         let mut image = match which {
             abi::INPUT_GRAPHIC => self.source.clone(),
@@ -356,7 +359,7 @@ impl Graph<'_> {
             bottom,
         } = area;
         let height = |x: i32, y: i32| f32::from(at(&input.layer, x, y)[3]);
-        generate(self.rect, area, |column, row| {
+        self.generate(area, |column, row| {
             let (x0, x1, y0, y1) = (
                 (column - 1).max(left),
                 (column + 1).min(right - 1),
@@ -434,7 +437,7 @@ impl Graph<'_> {
                 [period, (start * frequency[axis] + 4096.) as i64 + period]
             })
         });
-        generate(self.rect, area, |column, row| {
+        self.generate(area, |column, row| {
             let (x, y) = map_point(&inverse, column as f32 + 0.5, row as f32 + 0.5);
             premultiply(std::array::from_fn(|channel| {
                 let (mut sum, mut ratio, mut stitch) = (0., 1., stitch);
@@ -484,7 +487,7 @@ impl Graph<'_> {
             1. => Some(low + (at - low).rem_euclid(high - low)),
             _ => (low..high).contains(&at).then_some(at),
         };
-        generate(self.rect, area, |x, y| {
+        self.generate(area, |x, y| {
             let mut sum = [0.; 4];
             for (index, weight) in (0..).zip(kernel.iter().rev()) {
                 let column = inside(
@@ -542,7 +545,7 @@ impl Graph<'_> {
         let (rect, input) = (self.rect, |which| self.input(which, linear));
         let each = |f: &dyn Fn(Pixel) -> Pixel| {
             let input = input(first)?;
-            generate(rect, area, |x, y| {
+            self.generate(area, |x, y| {
                 premultiply(f(demultiply(at(&input.layer, x, y))))
             })
         };
@@ -590,7 +593,7 @@ impl Graph<'_> {
                 };
                 let pixel = |x, y| (at(&a.layer, x, y), at(&b.layer, x, y));
                 (
-                    generate(rect, area, |x, y| {
+                    self.generate(area, |x, y| {
                         valid(std::array::from_fn(|c| {
                             mix(pixel(x, y).0[c], pixel(x, y).1[c])
                         }))
@@ -631,7 +634,7 @@ impl Graph<'_> {
                     input(second)?,
                     [x * self.matrix.sx, y * self.matrix.sy],
                 );
-                let displaced = generate(rect, area, |x, y| {
+                let displaced = self.generate(area, |x, y| {
                     let by = demultiply(at(&map.layer, x, y));
                     let shift = |axis: usize, channel: f32| {
                         (scale[axis] * (f32::from(by[channel as usize & 3]) / 255. - 0.5) + 0.5)
@@ -677,7 +680,7 @@ impl Graph<'_> {
             }
             (Primitive::Merge, inputs) => {
                 let mut layer = Layer::new(rect)?;
-                for which in inputs {
+                for which in inputs.iter().take_while(|_| !self.frame.is_overdue()) {
                     layer.draw(&input(*which)?.layer, None, &Clip::new(area));
                 }
                 (layer, linear)
@@ -715,7 +718,7 @@ impl Graph<'_> {
                     )
                 };
                 (
-                    generate(rect, if cell.is_empty() { cell } else { area }, tiled)?,
+                    self.generate(if cell.is_empty() { cell } else { area }, tiled)?,
                     linear,
                 )
             }
@@ -743,7 +746,7 @@ pub fn apply(
     layer: &mut Layer,
     region: Rect,
     primitives: &[Filter],
-    scene: &Scene,
+    &Painter { scene, frame, .. }: &Painter,
     matrix: &Transform,
     draw: &dyn Fn(usize, &mut Layer),
 ) {
@@ -762,6 +765,7 @@ pub fn apply(
     let mut graph = Graph {
         rect,
         matrix,
+        frame,
         source,
         results: Vec::new(),
     };
@@ -797,7 +801,7 @@ pub fn apply(
         kept.extract_if(.., |it: &mut usize| last_use[*it] <= index)
             .for_each(|it| graph.results[it] = None);
         kept.push(index);
-        if kept.len() > most {
+        if kept.len() > most || frame.is_overdue() {
             return;
         }
     }

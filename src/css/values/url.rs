@@ -7,11 +7,11 @@ pub struct Url<'bump> {
     /// The url as written.
     text: &'bump [u8],
     /// The import record of this `url()`.
-    pub import_record_idx: u32,
+    pub(crate) import_record_idx: u32,
 }
 
 impl<'bump> Url<'bump> {
-    pub fn new(text: &'bump [u8], import_record_idx: u32) -> Url<'bump> {
+    pub(crate) fn new(text: &'bump [u8], import_record_idx: u32) -> Url<'bump> {
         Url {
             text,
             import_record_idx,
@@ -71,7 +71,7 @@ impl<'bump> Url<'bump> {
         Ok(())
     }
 
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         self.clone()
     }
 
@@ -80,7 +80,7 @@ impl<'bump> Url<'bump> {
         self.text == other.text
     }
 
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
+    pub(crate) fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         hasher.update(self.text);
     }
 }

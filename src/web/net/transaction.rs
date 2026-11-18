@@ -199,17 +199,16 @@ impl Transaction<'_> {
         if url.scheme() == b"https" || proxy.is_some_and(|it| it.peer.scheme() == b"https") {
             chain::read_distrusted().await;
         }
-        let keeps_certificates = self.pool.is_some()
-            || self.judges_certificate
-            || session.settings.read().verifies_certificates;
+        let judges = self.judges_certificate || session.settings.read().verifies_certificates;
+        let keeps_certificates = self.pool.is_some() || judges;
         let handshake = (url.scheme() == b"https")
             .then(|| tls::Handshake::new(choice, bare_hostname(url), keeps_certificates));
         // What a page was excused for is not good enough for the app.
         let is_for_app = self.requester.about.destination.is_none();
         let kind = u64::from(self.requester.includes_credentials)
             + 2 * u64::from(trusts_system())
-            + 4 * u64::from(self.judges_certificate)
-            + 8 * u64::from(self.judges_certificate && is_for_app);
+            + 4 * u64::from(judges)
+            + 8 * u64::from(judges && is_for_app);
         let pool = self.pool.map(|first| first + kind).unwrap_or_else(|| {
             match proxy.filter(|it| is_socks(&it.peer)) {
                 Some(proxy) => session.pool_for(Some(
@@ -240,13 +239,9 @@ impl Transaction<'_> {
                 .map(|it| ("Proxy-Authorization", it))
                 .collect()
         };
-        let (disables_http2, ignores_certificate_errors, verifies_certificates) = {
+        let (disables_http2, ignores_certificate_errors) = {
             let settings = session.settings.read();
-            (
-                settings.disables_http2,
-                settings.ignores_certificate_errors,
-                settings.verifies_certificates,
-            )
+            (settings.disables_http2, settings.ignores_certificate_errors)
         };
         let body = self.request.body.as_mut().map(RequestBody::take);
         let this = &*self;
@@ -266,9 +261,7 @@ impl Transaction<'_> {
                 ..Default::default()
             },
             ignores_certificate_errors,
-            verify: if (verifies_certificates || this.judges_certificate)
-                && !ignores_certificate_errors
-            {
+            verify: if judges && !ignores_certificate_errors {
                 Some(&verify)
             } else {
                 None

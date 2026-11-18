@@ -11,8 +11,8 @@ type Cx<'c, 'a> = &'c mut JsScope<'a>;
 
 pub(crate) use crate::api::cssom::{flush_style, shadow_root_rendered, shadow_root_unrendered};
 pub(crate) use crate::api::ui::seams::{
-    after_move, autofocus_inserted, before_move, before_remove, id_changed, make_form_associated,
-    show_controls, slotted_first,
+    after_move, autofocus_inserted, before_move, before_remove, id_changed, is_left_alone,
+    make_form_associated, show_controls, slotted_first,
 };
 
 // ───────────────────────────── steps ─────────────────────────────

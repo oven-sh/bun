@@ -96,6 +96,16 @@ impl MouseEvent {
         Ok(this)
     }
 
+    pub(crate) fn blank<'a>(heap: &JsHeap<'a>) -> &'a Event {
+        js_MouseEvent::create(
+            heap,
+            MouseEvent::base(
+                UIEvent::base(Atom::EMPTY, EventInit::default(), Trusted::No, 0, 0),
+                Mouse::default(),
+            ),
+        )
+    }
+
     pub(crate) fn mouse(&self) -> Mouse {
         self.mouse.get()
     }
@@ -163,6 +173,7 @@ impl MouseEvent {
 
     pub(crate) fn offset<'a>(&'a self, cx: &mut Cx<'a>) -> [f64; 2] {
         match self.shown_target() {
+            _ if self.has(EventFlags::HAS_NO_POSITION) => [0.0; 2],
             Some(target) => layout::offset_in(cx, target, self.mouse().client),
             None => [0, 1].map(|it| self.page(&cx.heap, it)),
         }

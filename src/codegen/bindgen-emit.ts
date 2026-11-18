@@ -2164,7 +2164,7 @@ ${cppConstructorSignature(type)}
 /** The fields follow the `JSC::JSDestructibleObject`, which is 24 bytes. */
 const offsetOfInternalField = (index: number) => 24 + 8 * index;
 const offsetOfPayload = (type: ClassType) =>
-  offsetOfInternalField(type.root.internalFields.length + inlineCapacityOf(type));
+  offsetOfInternalField(type.root.internalFields.length + wordsBesideClassInfo(type));
 /** A larger cell would not be in a `MarkedBlock`. C++ checks it against `MarkedSpace::largeCutoff`. */
 const maxCellSize = 8000;
 
@@ -2469,6 +2469,8 @@ ${tables.classes.map(type => `    setup${type.name}ClassStructure,`).join("\n")}
 // The cell: JSObject | inline properties | ClassInfo* | the fields of the root | the struct. The struct of a subclass begins with that of its base, and the fields of a subclass follow that.
 
 const inlineCapacityOf = (type: ClassType) => type.root.web?.options.inlineCapacity ?? 0;
+const publishesItems = (type: ClassType) => !!type.root.web?.options.publishesItems;
+const wordsBesideClassInfo = (type: ClassType) => (publishesItems(type) ? 3 : inlineCapacityOf(type));
 /** It and what it extends, the root last. */
 const chainOf = (type: ClassType): ClassType[] => [type, ...(type.base ? chainOf(type.base) : [])];
 /** Whose struct an instance is made from. */
@@ -2495,7 +2497,7 @@ function sizeOfStruct(owner: ClassType, askedBy: ClassType): number {
 }
 
 function offsetOfField(holder: ClassType, index: number): number {
-  if (!holder.base) return offsetOfInternalField(inlineCapacityOf(holder) + index);
+  if (!holder.base) return offsetOfInternalField(wordsBesideClassInfo(holder) + index);
   const before = fieldsAfterStructOfBase(holder) - holder.internalFields.length;
   return offsetOfPayload(holder) + sizeOfStruct(structOwner(holder.base), holder) + 8 * (before + index);
 }
@@ -2527,7 +2529,11 @@ const overridesPut = (type: ClassType) => type.specialOperations.length > 0 && c
 
 function cppDeclareInterface(type: ClassType): string {
   const { name } = type;
-  const base = type.base ? `JS${type.base.name}` : `JSInterfaceObject<${inlineCapacityOf(type)}>`;
+  const base = type.base
+    ? `JS${type.base.name}`
+    : publishesItems(type)
+      ? "JSInterfaceList"
+      : `JSInterfaceObject<${inlineCapacityOf(type)}>`;
   const ownsStruct = type === structOwner(type);
   const fields = type.internalFields;
   const padding = fields.length > 0 && type.base ? offsetOfField(type, 0) - sizeOfCppClass(type.base) : 0;
@@ -2750,7 +2756,9 @@ function cppAssignToAttribute(
   const type = getter.setterType;
   const symbol = setterSymbolName(owner, getter);
   const byPointer = isPassedByPointer(type);
-  const { holder, value } = cppHeldValue(type, "assigned");
+  const { holder, value } = type.returnsValueUnchanged
+    ? { holder: "JSC::EnsureStillAliveScope", value: "assigned.value()" }
+    : cppHeldValue(type, "assigned");
   const ofKind = particulars && getter.web.ignoreInvalid ? datumOf(type) : null;
   const converted =
     particulars && !getter.web.ignoreInvalid
@@ -2903,24 +2911,30 @@ function domJITOf(type: ClassType, member: ClassMember): DOMJIT | null {
   if (index < 0 || privateSymbol(member) || wellKnownSymbol(member.name)) return null;
   if (hasGlobalInstances(type) || type.isBehindInstance) return null;
   const { owner } = members[index];
-  const operation = (name: string, parameters: readonly string[], result: string) => {
-    const list = `(${["JSC::JSGlobalObject*", ...parameters].join(", ")})`;
-    return `JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(${name}, JSC::EncodedJSValue, ${list});
-JSC_DEFINE_JIT_OPERATION(${name}, JSC::EncodedJSValue, ${list})
-{
-    auto* globalObject = static_cast<JSC::JSObject*>(thisObject)->realm();
-    BINDGEN_OPERATION_PROLOGUE(globalObject);
-    OPERATION_RETURN(scope, ${result});
-}
-`;
-  };
   if (member instanceof FunctionDefinition) {
     const [method, ...overloads] = member.signatures as readonly Method[];
-    if (!method.web.onlyReads) return null;
-    assert(overloads.length === 0, `${type.name}.${member.name}: what only reads has no overloads`);
-    assert(member.length === method.args.length, `${type.name}.${member.name}: the length is the number of arguments`);
+    const { onlyReads, withoutFrame } = method.web;
+    if (!onlyReads && !withoutFrame) return null;
+    assert(overloads.length === 0, `${type.name}.${member.name}: what is called without a frame has no overloads`);
+    assert(
+      member.length <= 2,
+      `${type.name}.${member.name}: what is called without a frame requires at most two arguments`,
+    );
+    assert(
+      !onlyReads || member.length === method.args.length,
+      `${type.name}.${member.name}: the length is the number of arguments`,
+    );
     const host = methodHostFunctionName(type, member);
-    const args = method.args.map(arg => speculatedArgument(arg.type)!);
+    const anything = { speculation: "SpecBytecodeTop", cppType: "JSC::EncodedJSValue", box: "JSC::JSValue::decode" };
+    const args = method.args.slice(0, member.length).map(arg => (onlyReads ? speculatedArgument(arg.type)! : anything));
+    const parameters = `(${["JSC::JSGlobalObject* globalObject", "JSC::JSCell* thisObject", ...args.map((arg, i) => `${arg.cppType} argument${i}`)].join(", ")})`;
+    const values = method.args.map((_, i) =>
+      args[i]
+        ? `${args[i].box}(argument${i})`
+        : isIfPassed(method.args[i].type)
+          ? "JSC::JSValue()"
+          : "JSC::jsUndefined()",
+    );
     const symbol = methodSymbolName(owner, method);
     const object = `${host}Signature`;
     return {
@@ -2928,16 +2942,18 @@ JSC_DEFINE_JIT_OPERATION(${name}, JSC::EncodedJSValue, ${list})
       throwing: [],
       aborting: [`${host}WithoutTypeCheck`],
       definition: `${cppExtern(symbol, method, ["JSC::JSCell*"])}
-static ALWAYS_INLINE JSC::EncodedJSValue ${host}WithArguments(${["JSC::JSGlobalObject* globalObject", "JSC::JSCell* thisObject", ...args.map((_, i) => `JSC::JSValue parameter${i}`)].join(", ")})
+static ALWAYS_INLINE JSC::EncodedJSValue ${host}WithArguments(${["JSC::JSGlobalObject* globalObject", "JSC::JSCell* thisObject", ...values.map((_, i) => `JSC::JSValue parameter${i}`)].join(", ")})
 {
 ${cppPrologue}
 ${cppCallBody(method, symbol, ["thisObject"], undefined, { failure: "{}" })}
 }
-${operation(
-  `${host}WithoutTypeCheck`,
-  ["JSC::JSCell* thisObject", ...args.map((arg, i) => `${arg.cppType} argument${i}`)],
-  `${host}WithArguments(${["globalObject", "thisObject", ...args.map((arg, i) => `${arg.box}(argument${i})`)].join(", ")})`,
-)}static const JSC::DOMJIT::Signature ${object} { ${[`${host}WithoutTypeCheck`, `${type.cpp}::info()`, "Bun::Bindgen::DOMJIT::readsNativeState", speculatedResult(method.returns), ...args.map(arg => `JSC::${arg.speculation}`)].join(", ")} };
+JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(${host}WithoutTypeCheck, JSC::EncodedJSValue, ${parameters});
+JSC_DEFINE_JIT_OPERATION(${host}WithoutTypeCheck, JSC::EncodedJSValue, ${parameters})
+{
+    BINDGEN_OPERATION_PROLOGUE(globalObject);
+${onlyReads ? "" : ["thisObject", ...values.slice(0, args.length)].map((it, i) => `    JSC::EnsureStillAliveScope keep${i} { ${it} };\n`).join("")}    OPERATION_RETURN(scope, ${host}WithArguments(${["globalObject", "thisObject", ...values].join(", ")}));
+}
+static const JSC::DOMJIT::Signature ${object} { ${[`${host}WithoutTypeCheck`, `${type.cpp}::info()`, `Bun::Bindgen::DOMJIT::${onlyReads ? "readsNativeState" : "doesAnything"}`, speculatedResult(method.returns), ...args.map(arg => `JSC::${arg.speculation}`)].join(", ")} };
 `,
     };
   }
@@ -2963,9 +2979,8 @@ ${operation(
     before = `namespace Bun::Bindgen::DOMJIT { Shortcut ${web.shortcut}; }\n`;
     snippet = `tryOrCall(Bun::Bindgen::DOMJIT::${web.shortcut}, ${get}, ${web.onlyReads ? reads : "Bun::Bindgen::DOMJIT::doesAnything"})`;
   } else if (web.onlyReads) {
-    const call = `${get}(globalObject, JSC::JSValue::encode(static_cast<JSC::JSObject*>(thisObject)), JSC::PropertyName())`;
-    before = operation(`${get}Operation`, ["void* thisObject"], call);
-    snippet = `call(${get}Operation, ${reads})`;
+    assert(!web.countsItems || publishesItems(type), `${type.name}.${member.name}: it publishes no items`);
+    snippet = web.countsItems ? `countItemsOrCall(${get}, ${reads})` : `call(${reads})`;
   } else return null;
   return {
     object: `${get}DOMJIT`,
@@ -3497,21 +3512,44 @@ DEFINE_VISIT_CHILDREN(${cpp});
 `;
   }
   if (!ownsLayout(type)) return text;
-  const install = classesWithUnforgeables.flatMap((holder, index) => {
+  const installs = classesWithUnforgeables.flatMap((holder, index) => {
     const end = unforgeableCount(chainOf(holder));
-    const call =
-      end <= inlineCapacityOf(holder)
-        ? `Bun::Bindgen::defineInlineUnforgeables(object, structureHasThem, ${index}, ${end - unforgeableCount([holder])}, ${end});`
-        : `Bun::Bindgen::defineUnforgeables(object, ${index});`;
-    if (chainOf(type).includes(holder)) return [call];
-    return layoutOwner(holder) === type ? [`if (object->inherits<${holder.cpp}>()) [[unlikely]]`, `    ${call}`] : [];
+    const isInline = end <= inlineCapacityOf(holder);
+    const call = isInline
+      ? `Bun::Bindgen::defineInlineUnforgeables(object, structureHasThem, ${index}, ${end - unforgeableCount([holder])}, ${end});`
+      : `Bun::Bindgen::defineUnforgeables(object, ${index});`;
+    if (chainOf(type).includes(holder)) return [{ call, isInline, condition: "" }];
+    const condition = `interfaceNumber - ${holder.web!.number} < ${holder.web!.span}`;
+    return layoutOwner(holder) === type ? [{ call, isInline, condition }] : [];
   });
   const hasDrop = owner.hasOwnStruct;
-  return `${text}${hasDrop ? `extern "C" const size_t ${symbolName(owner, "structSize")};\nextern "C" const bool ${symbolName(owner, "needsDrop")};\n` : ""}// The struct is uninitialized: the caller writes it before anything else can run. If it is empty, a pointer to it still has to be in the cell.
-extern "C" JSC::JSCell* ${symbolName(type, "create")}(Zig::GlobalObject* globalObject, uint32_t interfaceNumber, JSC::Structure* structure)
+  const create = symbolName(type, "create");
+  const parameters = "(Zig::GlobalObject* globalObject, uint32_t interfaceNumber, JSC::Structure* structure)";
+  const cell = `std::max<size_t>(${type.hasOwnStruct ? `${offsetOfPayload(type)} + ${symbolName(type, "structSize")}` : `sizeof(${cpp})`}, ${offsetOfPayload(type) + 1}), ${hasDrop ? symbolName(owner, "needsDrop") : "false"}`;
+  const body = `{
+    auto* object = Bun::Bindgen::createInterfaceObjectOutOfLine(globalObject, interfaceNumber, structure, ${cell});
+${installs.some(it => it.isInline) ? "    bool structureHasThem = object->structure()->maxOffset() != JSC::invalidOffset;\n" : ""}${installs.map(it => (it.condition ? `    if (${it.condition}) [[unlikely]]\n        ${it.call}\n` : `    ${it.call}\n`)).join("")}    return object;
+}
+`;
+  const always = installs.filter(it => !it.condition);
+  text += `${hasDrop ? `extern "C" const size_t ${symbolName(owner, "structSize")};\nextern "C" const bool ${symbolName(owner, "needsDrop")};\n` : ""}// The struct is uninitialized: the caller writes it before anything else can run. If it is empty, a pointer to it still has to be in the cell.
+`;
+  if (isWritingForSize() || always.some(it => !it.isInline))
+    return `${text}extern "C" JSC::JSCell* ${create}${parameters}\n${body}`;
+  const isUsual = [
+    "structure",
+    ...installs.filter(it => it.condition).map(it => `!(${it.condition})`),
+    ...(always.length > 0 ? ["structure->maxOffset() != JSC::invalidOffset"] : []),
+  ];
+  return `${text}static NEVER_INLINE JSC::JSCell* ${create}Slowly${parameters}
+${body}extern "C" JSC::JSCell* ${create}${parameters}
 {
-    auto* object = Bun::Bindgen::createInterfaceObject${isWritingForSize() ? "OutOfLine" : `<${cpp}>`}(globalObject, interfaceNumber, structure, std::max<size_t>(${type.hasOwnStruct ? `${offsetOfPayload(type)} + ${symbolName(type, "structSize")}` : `sizeof(${cpp})`}, ${offsetOfPayload(type) + 1}), ${hasDrop ? symbolName(owner, "needsDrop") : "false"});
-${install.some(line => line.includes("structureHasThem")) ? "    bool structureHasThem = object->structure()->maxOffset() != JSC::invalidOffset;\n" : ""}${install.map(line => `    ${line}\n`).join("")}    return object;
+    if (!structure)
+        structure = Bun::Bindgen::structureForInterfaceConcurrently(globalObject, interfaceNumber);
+    auto* object = ${isUsual.join(" && ")} ? Bun::Bindgen::tryCreateInterfaceObject<${cpp}>(globalObject, structure, ${cell}) : nullptr;
+    if (!object) [[unlikely]]
+        return ${create}Slowly(globalObject, interfaceNumber, structure);
+${always.map(it => `    ${it.call.replace("structureHasThem", "true")}\n`).join("")}    return object;
 }
 `;
 }
@@ -3840,6 +3878,7 @@ function cppSourceForInterface(type: ClassType, guards: Guards): string {
     unforgeablesIndex: classesWithUnforgeables.indexOf(type),
     inlineUnforgeables: `{ ${[...inlineUnforgeables, -1, -1].slice(0, 2).join(", ")} }`,
     prototypeBase: `Bun::Bindgen::PrototypeBase::${chainOf(type).find(it => it.prototypeBase)?.prototypeBase ?? "Object"}`,
+    cellType: `${type.cpp}::cellType`,
     inlineCapacity: inlineCapacityOf(type),
     length: type.construct ? lengthOfConstructor(type) : 0,
     numberOfConditions: conditionalTables.length,
@@ -4648,10 +4687,11 @@ unsafe impl bindgen::JsInterface for ${rustPath} {
     type Root = ${type.root.rustPath};
     type Struct = ${owner.rustPath};
     const INLINE_CAPACITY: usize = ${inlineCapacityOf(type)};
+    const CELL_TYPE: u8 = ${publishesItems(type) ? "0xE2" : inlineCapacityOf(type) ? "0xE1" : "0xE0"};
     const NUMBER: u32 = ${web.number};
     const SPAN: u32 = ${web.span};
 }
-pub mod js_${name} {
+${publishesItems(type) ? `// SAFETY: its cell is a \`JSInterfaceList\`.\nunsafe impl bindgen::PublishesItems for ${rustPath} {}\n` : ""}pub mod js_${name} {
     use super::*;
     unsafe extern "C" {
         pub(super) fn ${create}(global: *mut JSGlobalObject, number: u32, structure: *mut core::ffi::c_void) -> core::ptr::NonNull<core::ffi::c_void>;${collection ? `\n        fn ${symbolName(type, "backing")}(this: JSValue) -> JSValue;` : ""}${type.calledFromRust

@@ -28,7 +28,7 @@ The main script goes in the executable. Pages and preload scripts go in a direct
 bun compile --desktop ./main.js
 ```
 
-In an app that is built with `--desktop`, these modules are built in from the start, whether or not the `electron` package is installed. `bun build --compile --desktop` does the same without compiling ahead of time.
+In an app that is built with `--desktop`, these modules are built in from the start, whether or not the `electron` package is installed. `bun build --compile --desktop` does the same without compiling ahead of time, and so does `bun run --aot` for a program that imports `bun:desktop`.
 
 ## One process
 
@@ -88,7 +88,9 @@ These throw or reject:
 
 `contentTracing` records the process of the app: the performance timelines of pages and workers, and samples of the stack of the main thread. See `getCategories()`. `netLog` has the requests of that process, with their status and response headers.
 
-These do nothing: `crashReporter`, network emulation, the settings of the host resolver, and the `webPreferences` `offscreen` and `nodeIntegrationInWorker` for a trusted page.
+`crashReporter` writes minidumps on macOS and Linux, for the main process and for utility processes, into the directories that Crashpad uses. Nothing is written until the app calls `start()`. A dump has the registers and up to 512 KB of the stack of the thread that crashed, the paths of the executable and of the loaded libraries (which can have the name of the user), the message of the crash and the parameters. It has neither the heap nor other threads. Trusted pages run in the main process, so unlike in Electron its stack can have pieces of what a page was working on, such as text, URLs and form values. Treat reports as personal data. A report waits in `queued` and is uploaded when the app is launched again. There is one attempt: a report that the server has refused, or that is over the rate limit, stays in `completed`. What other programs have put into `pending` is left alone. `ignoreSystemCrashHandler` and the parameters of preload scripts are ignored. A compiled app never reports its crashes to Bun.
+
+These do nothing: network emulation, the settings of the host resolver, and the `webPreferences` `offscreen` and `nodeIntegrationInWorker` for a trusted page.
 
 `print()` and `printToPDF()` give a copy of a trusted page to the web engine, which lays it out. Videos, and frames that the engine renders, are empty in it.
 

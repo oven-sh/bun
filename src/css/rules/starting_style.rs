@@ -4,13 +4,13 @@ use crate::{PrintErr, Printer};
 /// A [@starting-style](https://drafts.csswg.org/css-transitions-2/#defining-before-change-style-the-starting-style-rule) rule.
 pub struct StartingStyleRule<'bump, R> {
     /// Nested rules within the `@starting-style` rule.
-    pub rules: CssRuleList<'bump, R>,
+    pub(crate) rules: CssRuleList<'bump, R>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl<'bump, R> StartingStyleRule<'bump, R> {
-    pub fn to_css(
+    pub(crate) fn to_css(
         &self,
         dest: &mut Printer,
         ctx: Option<&StyleContext<'_, 'bump>>,
@@ -27,7 +27,7 @@ impl<'bump, R> StartingStyleRule<'bump, R> {
 }
 
 impl<'bump, R> StartingStyleRule<'bump, R> {
-    pub fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: crate::generics::DeepClone<'bump>,
     {

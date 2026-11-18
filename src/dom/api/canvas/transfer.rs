@@ -7,7 +7,7 @@ use bun_jsc::{DOMExceptionCode, JSType, JSValue};
 use bun_web::channel::{Arrival, Endpoint, Message, Serialized, Transferred};
 
 use super::Failure;
-use super::bitmap::{Owned, Source, area_of, snapshot};
+use super::bitmap::{Owned, Source, area_of, size_from, snapshot};
 use super::context::Context;
 use super::element::{Frame, commit, frames_of};
 use super::image_bitmap::ImageBitmap;
@@ -81,19 +81,15 @@ impl ImageBitmap {
     #[optimize(size)]
     pub(crate) fn deserialize<'a>(cx: Cx<'_, 'a>, parts: JsLocal<'a>) -> Result<'a, JSValue> {
         let mut part = |at| parts.to_js().get_index(cx.global(), at);
-        let (data, size) = (part(0)?, [part(1)?.to_u32(), part(2)?.to_u32()]);
+        let (data, size) = (part(0)?, size_from([part(1)?, part(2)?]));
         let data = data.as_array_buffer(cx.global());
         let whole = data
             .as_ref()
             .map(|it| it.byte_slice())
-            .filter(|it| it.len() as u64 == area_of(size) * 4);
-        Ok(ImageBitmap::create(
-            &cx.heap,
-            whole.map_or_else(|| Owned::adopt(0), |it| Owned::from_pixels(size, it)),
-            size,
-            true,
-        )
-        .to_js())
+            .filter(|it| it.len() as u64 == area_of(size).saturating_mul(4));
+        Ok(whole.map_or(JSValue::NULL, |it| {
+            ImageBitmap::create(&cx.heap, Owned::from_pixels(size, it), size, true).to_js()
+        }))
     }
 }
 

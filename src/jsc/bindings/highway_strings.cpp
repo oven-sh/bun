@@ -2194,6 +2194,8 @@ size_t FirstNonAscii8Impl(const uint8_t* HWY_RESTRICT input, size_t len)
     return len;
 }
 
+#if HWY_ARCH_X86
+
 // An "escape character" for ANSI tokenizing: ESC, the ST-terminated C1
 // introducers, plus C1 ST (0x9C) itself so a standalone terminator stops the
 // scan. Matches ANSIHelpers.h's scalar contract (isEscapeCharacter + 0x9C).
@@ -2285,6 +2287,8 @@ size_t IndexOfEscapeChar16Impl(const uint16_t* HWY_RESTRICT input, size_t len)
 {
     return IndexOfEscapeCharImpl<uint16_t>(input, len);
 }
+
+#endif // HWY_ARCH_X86
 
 size_t CopyAsciiPrefixImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
 {
@@ -2750,8 +2754,10 @@ HWY_EXPORT(HtmlEscapeExtraLen16Impl);
 HWY_EXPORT(HtmlEscapeExtraLen8Impl);
 HWY_EXPORT(IndexOfAnyCharImpl);
 HWY_EXPORT(IndexOfCharImpl);
+#if HWY_ARCH_X86
 HWY_EXPORT(IndexOfEscapeChar16Impl);
 HWY_EXPORT(IndexOfEscapeChar8Impl);
+#endif
 HWY_EXPORT(IndexOfFirstAsciiUpper16Impl);
 HWY_EXPORT(IndexOfFirstAsciiUpperImpl);
 HWY_EXPORT(IndexOfHTMLEscapeChar8Impl);
@@ -2944,6 +2950,7 @@ size_t highway_unpack_words(const uint8_t* HWY_RESTRICT controls, size_t groups,
     return BUN_HWY_DISPATCH(UnpackWordsImpl)(controls, groups, data, data_len, words, used);
 }
 
+#if HWY_ARCH_X86
 size_t highway_index_of_escape_char8(const uint8_t* HWY_RESTRICT input, size_t len)
 {
     return BUN_HWY_DISPATCH(IndexOfEscapeChar8Impl)(input, len);
@@ -2953,6 +2960,7 @@ size_t highway_index_of_escape_char16(const uint16_t* HWY_RESTRICT input, size_t
 {
     return BUN_HWY_DISPATCH(IndexOfEscapeChar16Impl)(input, len);
 }
+#endif
 
 size_t highway_index_of_html_escape_char8(const uint8_t* HWY_RESTRICT text, size_t text_len)
 {

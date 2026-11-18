@@ -979,6 +979,64 @@ impl Round<'_> {
         }
     }
 
+    /// Next to steps in the results that the other parts seldom get to.
+    #[optimize(size)]
+    #[rustfmt::skip]
+    fn brotli_steps(&mut self) {
+        let (random, [a, b, c, ..], at) = (&mut self.random, &mut *self.rooms, self.offset);
+        let (gaps, count, first) = (&[132, 57, 23, 10, 4][..random.below(6)], random.one_of(&[48, 209, 400, 704, 705]), random.one_of(&[0, 0, 5, 16]));
+        let mut leaves = vec![0; count + brotli::LEAF_SLACK];
+        // The first passes leave the leaf at `first` before all that are no sum of their gaps away.
+        for i in 0..count {
+            leaves[i] = u64::from(i == first || gaps.iter().any(|&gap| i >= gap && leaves[i - gap] >> 32 != 0)) << 32 | i as u64;
+        }
+        leaves[random.one_of(&[0, 20, count - 1])] |= random.one_of(&[0, 0, 0, 0, 0x7FFF << 32, 1 << 63]);
+        let sorted = b.copy_of(&vec![7; leaves.len()], at);
+        let did = brotli::sort_leaves(a.copy_of(&leaves, at), count, true, sorted);
+        self.digests.add("brotli::sort_leaves", hash(&[did.number(), hash(&sorted[..count])]));
+
+        let (count, ids, lowest) = (random.one_of(&[4, 40]), random.one_of(&[1, 2, 12]), random.one_of(&[0, (1 << 31) - 6]));
+        let costs = a.copy_of(&Vec::from_iter((0..count).map(|_| random.below(2) as f64)), at);
+        let mut pair = |_| Some(lowest + random.below(ids) as u32).map(|it| [it, it + 1 + random.below(ids) as u32]);
+        let (pairs, merged) = (b.copy_of(&Vec::from_iter((0..count).filter_map(&mut pair)), at), pair(0));
+        let kept = brotli::remove_pairs(costs, pairs, merged.unwrap_or_default());
+        self.digests.add("brotli::remove_pairs", hash(&[kept.number(), hash(&costs[..kept.max(1)]), hash(&pairs[..kept.max(1)])]));
+
+        let (zeros, each) = (random.one_of(&[0, 2, 9, 65, 513, 698]) + random.below(2), random.one_of(&[1, 256]));
+        let (mut counts, mut gaps) = ([0; 704], [[0; 4]; 2]);
+        match random.below(4) {
+            0 => counts[..512].fill(each),
+            // 256 codes in each lane.
+            1 => (counts, gaps[0]) = (from_fn(|i| u32::from(i < 256 && i % 2 == 0 || i == 255)), [127; 4]),
+            _ => {
+                (counts[0], gaps[usize::from(zeros > 2)]) = (252, [if zeros > 2 { 1 } else { zeros as u32 }; 4]);
+                counts[1 + zeros..][..4].fill(1);
+            }
+        }
+        let used = from_fn(|word| (0..64).map(|i| u64::from(counts[64 * word + i] != 0) << i).sum());
+        let entry = |n: u32| [if n < 256 { f64::from(n.ilog2()) + 0.37 } else { 99.0 }, n.into()];
+        let table = Vec::from_iter([[1e6, 0.0]].into_iter().chain((1..256 + brotli::SPARE_LOGARITHMS as u32).map(entry)));
+        let (totals, others) = ([counts.iter().sum(); 4], [&*b.copy_of(&[0; 704], at); 4]);
+        let costs = brotli::estimate_costs(a.copy_of(&counts, at), others, &used, &totals, &gaps, c.copy_of(&table, at));
+        self.digests.add("brotli::estimate_costs", hash(&costs));
+
+        let place = brotli::Place { ring: a.copy_of(&random.bytes(72, b"ab"), at), ring_mask: 63, position: random.next() as u32, pair: *b"ab" };
+        let ranked = from_fn(|_| u64::from(random.one_of(&[-3f32, -0.5, -0.0, 1e-9]).to_bits()) << 32 | random.next() >> 32);
+        let distances = from_fn(|_| from_fn(|_| random.next() as i32));
+        let (best, others) = brotli::short_codes_of_five(place, &distances, &ranked, -2.0);
+        self.digests.add("brotli::short_codes_of_five", hash(&[best.into(), others]));
+
+        let (count, longest, table) = (1 + random.below(4), [9, 20, 33, 69], &from_fn(|i| i as f32 * 0.37));
+        let matches = from_fn(|i| match random.next() {
+            any if i >= count => any,
+            any => longest[i] << brotli::LENGTH_SHIFT | any >> 59 << 32 | ((8 << (any % 28)) - 4 + (any >> 8) % 3),
+        });
+        let (costs, nodes) = (b.copy_of(&[1e9; 73], at), c.copy_of(&[7; 3 * 73], at));
+        let (ways, starts) = (brotli::Ways { costs, nodes, offset: 0 }, [brotli::Start { cost: 1.0, symbol_costs: table, insert: 5 }; 2]);
+        brotli::try_matches(ways, 2..longest[count - 1] as usize + 1, table, starts, &matches, count, &from_fn(|i| i as f32));
+        self.digests.add("brotli::try_matches", hash(&[hash(costs), hash(nodes)]));
+    }
+
     #[optimize(size)]
     fn webp_alphabet(&mut self) -> Vec<u8> {
         let (first, count) = (self.random.next() as u8, self.random.one_of(&[4, 13, 64]));
@@ -1400,6 +1458,7 @@ pub(crate) fn run(rounds: u64, only: &[u8], traced: Vec<u8>) -> bool {
             ("brotli_blocks", Round::brotli_blocks),
             ("brotli_costs", Round::brotli_costs),
             ("brotli_matches", Round::brotli_matches),
+            ("brotli_steps", Round::brotli_steps),
         ];
         for (name, part) in parts.into_iter().filter(|it| is_chosen(it.0.as_bytes())) {
             round.random = Random(hash(&[number, hash(name.as_bytes())]) | 1);

@@ -478,6 +478,9 @@ impl DateHeaderTimer {
             vm.uws_loop().update_date();
 
             self.event_loop_timer.next.set(now.add_ms(1000));
+        } else if !last_update.greater(now) {
+            // The date is fresh until a second after the last update.
+            self.event_loop_timer.next.set(last_update.add_ms(1000));
         }
         timers.insert(&raw const self.event_loop_timer);
     }

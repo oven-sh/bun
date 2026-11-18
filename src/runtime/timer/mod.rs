@@ -10,6 +10,7 @@ use bun_libuv_sys::UvHandle as _;
 use bun_sys::windows::libuv as uv;
 use bun_threading::Guarded;
 use core::cell::{Cell, UnsafeCell};
+use core::sync::atomic::{AtomicU32, Ordering};
 use std::rc::Rc;
 
 // Low-tier timer node + tag (per §Dispatch hot-path list, the `match tag`
@@ -508,6 +509,12 @@ pub(crate) struct HotRun {
     pub(crate) only_intervals: bool,
 }
 
+/// One `drain_timers` call: the clock reading it fires by and, once a timer is due, its generation.
+struct Drain {
+    now: Timespec,
+    seq: Option<u32>,
+}
+
 /// Timers fire JavaScript that schedules and clears timers, so this is only ever shared.
 pub(crate) struct All {
     /// Id of the next timer. Allocate ids with [`All::next_id`].
@@ -529,6 +536,8 @@ pub(crate) struct All {
     /// Incremented when timers are scheduled or rescheduled. See
     /// TimerObjectInternals.epoch. Masked to 24 bits on increment.
     pub(crate) epoch: Cell<u32>,
+    /// The latest generation of [`All::open_drain`], the stamp of a timer armed now. Read on any thread.
+    drain_seq: AtomicU32,
     pub(crate) immediate_ref_count: Cell<i32>,
     #[cfg(windows)]
     uv_idle: UnsafeCell<uv::uv_idle_t>,
@@ -553,6 +562,7 @@ impl All {
             warned_not_number: Cell::new(false),
             zero_delay_is_due_when_idle: Cell::new(false),
             epoch: Cell::new(0),
+            drain_seq: AtomicU32::new(0),
             immediate_ref_count: Cell::new(0),
             #[cfg(windows)]
             uv_idle: UnsafeCell::new(bun_core::ffi::zeroed()),
@@ -616,6 +626,8 @@ impl All {
             node.in_heap.set(InHeap::Fake);
             self.fake_timers.post_auto_step();
         } else {
+            node.armed_in_drain
+                .set(self.drain_seq.load(Ordering::Relaxed));
             // SAFETY: see fn contract
             unsafe { self.timers.insert(timer) };
             node.state.set(EventLoopTimerState::ACTIVE);
@@ -776,6 +788,9 @@ impl All {
                     wtf.remove(timer);
                 }
                 node.next.set(*time);
+                // Relaxed: a stale generation fires this timer one turn early, once.
+                node.armed_in_drain
+                    .set(self.drain_seq.load(Ordering::Relaxed));
                 wtf.insert(timer);
             }
             node.state.set(EventLoopTimerState::ACTIVE);
@@ -796,11 +811,24 @@ impl All {
         }
     }
 
+    /// Opens the next generation. A drain leaves the timers stamped from its generation on for the next turn.
+    fn open_drain(&self) -> u32 {
+        let seq = self.drain_seq.load(Ordering::Relaxed).wrapping_add(1);
+        self.drain_seq.store(seq, Ordering::Relaxed);
+        seq
+    }
+
+    /// Whether a timer with `stamp` was armed since generation `seq` opened, in the drain or in a nested one.
+    fn armed_in_drain(&self, stamp: u32, seq: u32) -> bool {
+        stamp.wrapping_sub(seq) <= self.drain_seq.load(Ordering::Relaxed).wrapping_sub(seq)
+    }
+
     fn drain_due_wtf_timers(
         &self,
         maybe_now: &mut Option<Timespec>,
         vm: &VirtualMachine,
     ) -> Option<Timespec> {
+        let mut seq: Option<u32> = None;
         loop {
             let min = {
                 let wtf = self.wtf_timers.lock();
@@ -810,6 +838,11 @@ impl All {
                 let now = *maybe_now
                     .get_or_insert_with(|| Timespec::now(TimespecMockMode::ForceRealTime));
                 if min_next.greater(&now) {
+                    return Some(min_next);
+                }
+                let seq = *seq.get_or_insert_with(|| self.open_drain());
+                // SAFETY: as above.
+                if self.armed_in_drain(unsafe { (*min).armed_in_drain.get() }, seq) {
                     return Some(min_next);
                 }
                 let min = wtf.delete_min().expect("peek succeeded");
@@ -911,33 +944,36 @@ impl All {
         })
     }
 
-    /// Pop the next due timer. `now` is filled lazily on first call so we
-    /// don't pay for `clock_gettime` when the heap is empty.
-    fn next(&self, has_set_now: &mut bool, now: &mut Timespec) -> Option<*mut EventLoopTimer> {
+    /// Pop the next due timer. `drain` is filled lazily, so an empty heap pays no `clock_gettime`.
+    fn next(&self, drain: &mut Option<Drain>) -> Option<(*mut EventLoopTimer, Timespec)> {
         // SAFETY: peek returns a live heap node
         let first = unsafe { &*self.timers.peek()? };
-        if !*has_set_now {
+        let drain = drain.get_or_insert_with(|| {
             // Real clock: this heap is the opt-out-of-fake-timers set.
-            *now = Timespec::now(TimespecMockMode::ForceRealTime);
-            *has_set_now = true;
-            // What this drain's callbacks set is due later than this, so it waits for the next turn of the event loop.
-            if first.is_due_when_idle.get() && first.next.get().greater(now) {
-                *now = first.next.get();
+            let mut now = Timespec::now(TimespecMockMode::ForceRealTime);
+            // What this drain's callbacks set waits for the next turn of the event loop: see `armed_in_drain`.
+            if first.is_due_when_idle.get() && first.next.get().greater(&now) {
+                now = first.next.get();
             }
-        }
-        if first.next.get().greater(now) {
+            Drain { now, seq: None }
+        });
+        if first.next.get().greater(&drain.now) {
             return None;
         }
-        self.timers.delete_min()
+        let seq = *drain.seq.get_or_insert_with(|| self.open_drain());
+        // Due by this drain's reading of the clock, but armed from a later one. The next turn's reading decides.
+        if self.armed_in_drain(first.armed_in_drain.get(), seq) {
+            return None;
+        }
+        Some((self.timers.delete_min()?, drain.now))
     }
 
     pub(crate) fn drain_timers(&self, vm: &VirtualMachine) {
         let mut wtf_now: Option<Timespec> = None;
         let _ = self.drain_due_wtf_timers(&mut wtf_now, vm);
 
-        let mut now = Timespec { sec: 0, nsec: 0 };
-        let mut has_set_now = false;
-        while let Some(t) = self.next(&mut has_set_now, &mut now) {
+        let mut drain: Option<Drain> = None;
+        while let Some((t, now)) = self.next(&mut drain) {
             // Note: re-pack into bun_event_loop's local Timespec stub
             // until the lower tier unifies on bun_core::Timespec.
             let el_now = ElTimespec {

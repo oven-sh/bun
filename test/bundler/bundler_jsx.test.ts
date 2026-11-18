@@ -1805,8 +1805,13 @@ describe("bundler", () => {
         jsx: { runtime: "preserve" },
         minifyIdentifiers,
         onAfterBundle(api) {
+          let sharedChunk: string | undefined;
           for (const file of ["/out/a.js", "/out/b.js"]) {
             const out = api.readFile(file);
+            const chunk = out.match(/^import\s*\{[^}]+\}\s*from\s*["'](\.\/[^"']+\.js)["']/m)?.[1];
+            expect(chunk).toBeString();
+            if (sharedChunk != null) expect(chunk).toBe(sharedChunk);
+            sharedChunk = chunk;
             expect(out).toMatch(/<[A-Z][\w$]*(?:\.[\w$]+)* \/>/);
             const { code } = transformSync(out, { loader: "jsx", jsxFactory: "typeOfComponent" });
             api.writeFile(file, `const typeOfComponent = type => typeof type;\n${code}`);

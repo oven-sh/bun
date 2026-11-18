@@ -701,6 +701,10 @@ function expectBundled(
   if (ESBUILD && skipOnEsbuild) {
     return testRef(id, opts);
   }
+  const esbuildFormat = format === "internal_bake_dev" ? undefined : format;
+  if (ESBUILD && esbuildFormat === undefined) {
+    throw new UnsupportedOptionError("internal_bake_dev format not implemented in esbuild");
+  }
   if (ESBUILD && dotenv) {
     throw new UnsupportedOptionError("dotenv not implemented in esbuild");
   }
@@ -1002,7 +1006,7 @@ function expectBundled(
               ESBUILD_PATH,
               bundling && "--bundle",
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
-              `--format=${format}`,
+              `--format=${esbuildFormat}`,
               `--platform=${target === "bun" ? "node" : target}`,
               minifyIdentifiers && `--minify-identifiers`,
               minifySyntax && `--minify-syntax`,
@@ -1491,7 +1495,8 @@ for (const [key, blob] of build.outputs) {
       } else {
         await esbuild.build({
           bundle: true,
-          format,
+          format: esbuildFormat,
+          splitting,
           entryPoints: [...entryPaths, ...(entryPointsRaw ?? [])],
           external,
           ...(useOutFile ? { outfile: outfile! } : { outdir: outdir! }),

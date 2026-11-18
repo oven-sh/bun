@@ -295,7 +295,7 @@ fn cluster_blocks(
     drop(batch);
 
     let mut live = memory::collected(0..clusters.len() as u32)?;
-    let left = combiner.combine(&mut clusters, &mut live, MAX_BLOCK_TYPES)?;
+    let left = combiner.combine(&mut clusters, &mut live, 1..=MAX_BLOCK_TYPES)?;
     live.truncate(left);
     let mut previous = 0;
     let mut assignments = memory::collected(with_symbols(blocks, data).map(|(_, symbols)| {

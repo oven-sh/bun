@@ -1,5 +1,7 @@
 //! Merges histograms that are alike.
 
+use core::ops::RangeInclusive;
+
 use bun_highway::brotli::{PAIR_GROUP, remove_pairs};
 
 use super::histogram::{Estimator, Histogram, Indexed, IndexedList};
@@ -7,11 +9,11 @@ use super::log2::fast_log2;
 use crate::memory::{self, Result};
 
 pub(super) const BATCH: usize = 64;
-const LARGE_BATCH: usize = 512;
+const LARGE_BATCH: usize = 1024;
 
 /// How many clusters with so many symbols in all get combined at once.
 pub(super) fn max_at_once(symbols: usize) -> usize {
-    (8 * symbols.isqrt()).clamp(2 * LARGE_BATCH, 16 * LARGE_BATCH)
+    (8 * symbols.isqrt()).clamp(LARGE_BATCH, 8 * LARGE_BATCH)
 }
 
 #[derive(Clone, Copy)]
@@ -196,7 +198,7 @@ impl Combiner {
         for &id in &*live {
             clusters.summaries[id as usize].cost = self.together[id as usize];
         }
-        self.combine(clusters, live, max_clusters)
+        self.combine(clusters, live, 1..=max_clusters)
     }
 
     /// In batches first. Returns those that are left.
@@ -216,17 +218,18 @@ impl Combiner {
         while live.len() > max_at_once(symbols) {
             self.halve(clusters, &mut live)?;
         }
-        let left = self.combine(clusters, &mut live, max_clusters)?;
+        let left = self.combine(clusters, &mut live, 1..=max_clusters)?;
         live.truncate(left);
         Ok(live)
     }
 
-    /// Leaves no more than half of each full [`LARGE_BATCH`]. The first one stays.
+    /// Leaves half of each full [`LARGE_BATCH`]. The first one stays.
     pub(super) fn halve(&mut self, clusters: &mut Clusters, live: &mut Vec<u32>) -> Result<()> {
+        const HALF: usize = LARGE_BATCH / 2;
         let mut kept = 0;
         for start in (0..live.len()).step_by(LARGE_BATCH) {
             let end = live.len().min(start + LARGE_BATCH);
-            let left = self.combine(clusters, &mut live[start..end], LARGE_BATCH / 2)?;
+            let left = self.combine(clusters, &mut live[start..end], HALF..=HALF)?;
             live.copy_within(start..start + left, kept);
             kept += left;
         }
@@ -234,12 +237,12 @@ impl Combiner {
         Ok(())
     }
 
-    /// Merges while that saves bits or there are too many. Returns how many are left at the start of `live`. The first one stays.
+    /// Merges while there are more than `wanted`, and within it while that saves bits. Returns how many are left at the start of `live`. The first one stays.
     pub(super) fn combine(
         &mut self,
         clusters: &mut Clusters,
         live: &mut [u32],
-        max_clusters: usize,
+        wanted: RangeInclusive<usize>,
     ) -> Result<usize> {
         let mut count = live.len();
         self.make_room(clusters.len())?;
@@ -263,12 +266,12 @@ impl Combiner {
         }
 
         let mut threshold = 0.0;
-        let mut min_clusters = 1;
+        let mut min_clusters = *wanted.start();
         let mut compared = u32::MAX;
         while count > min_clusters {
             if pairs.cost_changes[0] >= threshold {
                 threshold = Pairs::NO_LIMIT;
-                min_clusters = max_clusters;
+                min_clusters = *wanted.end();
                 continue;
             }
             let [first, second] = pairs.clusters[0];

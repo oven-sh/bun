@@ -2,39 +2,39 @@
 
 use crate::wrapped;
 
-pub(crate) const STORED: u32 = 0;
-pub(crate) const STATIC: u32 = 1;
-pub(crate) const DYNAMIC: u32 = 2;
+pub const STORED: u32 = 0;
+pub const STATIC: u32 = 1;
+pub const DYNAMIC: u32 = 2;
 
-pub(crate) const MIN_MATCH_LEN: usize = 3;
-pub(crate) const MAX_MATCH_LEN: usize = 258;
+pub const MIN_MATCH_LEN: usize = 3;
+pub const MAX_MATCH_LEN: usize = 258;
 
-pub(crate) const PRECODE_SYMBOLS: usize = 19;
-pub(crate) const LITLEN_SYMBOLS: usize = 288;
-pub(crate) const OFFSET_SYMBOLS: usize = 32;
+pub const PRECODE_SYMBOLS: usize = 19;
+pub const LITLEN_SYMBOLS: usize = 288;
+pub const OFFSET_SYMBOLS: usize = 32;
 /// How many symbols at the end of either code have static codewords but no meaning.
-pub(crate) const RESERVED_SYMBOLS: usize = 2;
+pub const RESERVED_SYMBOLS: usize = 2;
 
-pub(crate) const END_OF_BLOCK: usize = 256;
-pub(crate) const FIRST_LENGTH_SYMBOL: usize = 257;
+pub const END_OF_BLOCK: usize = 256;
+pub const FIRST_LENGTH_SYMBOL: usize = 257;
 
-pub(crate) const MAX_PRECODE_LEN: u32 = 7;
-pub(crate) const MAX_CODEWORD_LEN: u32 = 15;
+pub const MAX_PRECODE_LEN: u32 = 7;
+pub const MAX_CODEWORD_LEN: u32 = 15;
 
 /// The order in which a header lists the lengths of the precode's codewords.
-pub(crate) const PRECODE_ORDER: [u8; PRECODE_SYMBOLS] = [
+pub const PRECODE_ORDER: [u8; PRECODE_SYMBOLS] = [
     16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15,
 ];
 
 /// The numbers from `base` on that `extra_bits` more bits tell apart.
 #[derive(Clone, Copy)]
-pub(crate) struct Slot {
-    pub(crate) base: u32,
-    pub(crate) extra_bits: u32,
+pub struct Slot {
+    pub base: u32,
+    pub extra_bits: u32,
 }
 
 /// For symbol `FIRST_LENGTH_SYMBOL + index`.
-pub(crate) const fn length_slot(index: usize) -> Slot {
+pub const fn length_slot(index: usize) -> Slot {
     match index as u32 {
         index @ ..28 => geometric_slot(index, 2, MIN_MATCH_LEN as u32),
         _ => Slot {
@@ -44,7 +44,7 @@ pub(crate) const fn length_slot(index: usize) -> Slot {
     }
 }
 
-pub(crate) const fn offset_slot(symbol: usize) -> Slot {
+pub const fn offset_slot(symbol: usize) -> Slot {
     geometric_slot(symbol as u32, 1, 1)
 }
 
@@ -63,7 +63,7 @@ const fn geometric_slot(index: u32, group_bits: u32, first: u32) -> Slot {
 }
 
 /// How often precode symbol 16 repeats the previous length, and 17 or 18 repeat zero. The others stand for themselves.
-pub(crate) const fn repeat_slot(symbol: usize) -> Slot {
+pub const fn repeat_slot(symbol: usize) -> Slot {
     let (base, extra_bits) = match symbol {
         16 => (3, 2),
         17 => (3, 3),
@@ -75,12 +75,12 @@ pub(crate) const fn repeat_slot(symbol: usize) -> Slot {
 
 /// A codeword with its first bit lowest, as it is in the stream.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct Codeword {
-    pub(crate) bits: u32,
-    pub(crate) len: u32,
+pub struct Codeword {
+    pub bits: u32,
+    pub len: u32,
 }
 
-pub(crate) const fn static_litlen_codeword(symbol: usize) -> Codeword {
+pub const fn static_litlen_codeword(symbol: usize) -> Codeword {
     let (first_symbol, first_code, len) = match symbol {
         ..144 => (0, 0b0011_0000, 8),
         144..256 => (144, 0b1_1001_0000, 9),
@@ -94,7 +94,7 @@ pub(crate) const fn static_litlen_codeword(symbol: usize) -> Codeword {
     }
 }
 
-pub(crate) const fn static_offset_codeword(symbol: usize) -> Codeword {
+pub const fn static_offset_codeword(symbol: usize) -> Codeword {
     Codeword {
         bits: (symbol as u32).reverse_bits() >> (32 - 5),
         len: 5,
@@ -116,12 +116,12 @@ const fn geometric_index(distance: u32, group_bits: u32) -> u8 {
 }
 
 #[inline(always)]
-pub(crate) const fn length_slot_of(len: usize) -> usize {
+pub const fn length_slot_of(len: usize) -> usize {
     *wrapped(&LENGTH_SLOTS, len - MIN_MATCH_LEN) as usize
 }
 
 #[inline(always)]
-pub(crate) fn offset_slot_of(offset: usize) -> usize {
+pub fn offset_slot_of(offset: usize) -> usize {
     // Fourteen slots on, slots are 128 times as wide.
     let shift = (256u32.wrapping_sub(offset as u32) >> 29) as usize;
     let near = offset.wrapping_sub(1) >> shift;

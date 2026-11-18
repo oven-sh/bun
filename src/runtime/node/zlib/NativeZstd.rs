@@ -14,7 +14,7 @@ mod _impl {
     };
     use crate::node::util::validators;
     // #[repr(u8)] enum shared by all native-zlib stream types.
-    use bun_zlib::NodeMode;
+    use crate::node::node_zlib_binding::NodeMode;
 
     pub(crate) struct NativeZstd {
         stream: Cell<Option<Box<Stream<Context>>>>,
@@ -329,7 +329,7 @@ mod _impl {
                 ),
                 Some(err) => Err(Error {
                     err: err.0 as c_int,
-                    msg: err.message(),
+                    msg: err.message().to_bytes(),
                     code: match err.0 {
                         c::ZSTD_error_no_error => c"ZSTD_error_no_error",
                         c::ZSTD_error_GENERIC => c"ZSTD_error_GENERIC",

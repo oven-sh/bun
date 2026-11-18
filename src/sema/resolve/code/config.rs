@@ -358,16 +358,8 @@ impl<'h> Resolver<'h> {
         let is_development = (options.forced_jsx_development)
             .or(stated.jsx.is_development)
             .unwrap_or(options.jsx.is_development);
-        let settings = self.session.keep(TranspileSettings {
-            jsx: JsxSettings {
-                is_development,
-                ..stated.jsx.apply_to(&JsxSettings::default())
-            },
-            experimental_decorators: stated.experimental_decorators,
-            emits_decorator_metadata: stated.emits_decorator_metadata,
-            use_define_for_class_fields: stated.use_define_for_class_fields,
-            bun_run_assigns_class_fields: self.bun_run_assigns_class_fields(),
-        });
+        let settings =
+            self.create_settings_with_jsx(&stated, &JsxSettings::default(), is_development);
         *by_directory.insert_ref(self.keep(directory), settings)
     }
 
@@ -450,16 +442,22 @@ impl<'h> Resolver<'h> {
     }
 
     fn create_settings(&self, config: &ParsedConfig) -> &'h TranspileSettings {
-        let session: &'h Session = self.session;
-        session.keep(TranspileSettings {
-            jsx: {
-                let mut jsx = config.jsx.apply_to(&self.code_options().jsx);
-                if self.code_options().jsx.runtime == JsxRuntime::Preserve {
-                    jsx.runtime = JsxRuntime::Preserve;
-                }
-                jsx.is_development = self.is_jsx_development();
-                jsx
-            },
+        self.create_settings_with_jsx(config, &self.code_options().jsx, self.is_jsx_development())
+    }
+
+    fn create_settings_with_jsx(
+        &self,
+        config: &ParsedConfig,
+        defaults: &JsxSettings,
+        is_development: bool,
+    ) -> &'h TranspileSettings {
+        let mut jsx = config.jsx.apply_to(defaults);
+        if self.code_options().jsx.runtime == JsxRuntime::Preserve {
+            jsx.runtime = JsxRuntime::Preserve;
+        }
+        jsx.is_development = is_development;
+        self.session.keep(TranspileSettings {
+            jsx,
             experimental_decorators: config.experimental_decorators,
             emits_decorator_metadata: config.emits_decorator_metadata,
             use_define_for_class_fields: config.use_define_for_class_fields,

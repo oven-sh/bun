@@ -1051,6 +1051,31 @@ describe("bundler", () => {
       run: { stdout: "div" },
     });
 
+    for (const backend of ["cli", "api"] as const) {
+      itBundled(`jsx/PreserveAotDependencyOptionRejected-${backend}`, {
+        files: {
+          "/in.ts": 'import { element } from "dep"; console.log(element);',
+          "/node_modules/dep/package.json": JSON.stringify({
+            name: "dep",
+            exports: { ".": { aot: "./index.aot.tsx", default: "./index.js" } },
+            compilerOptions: { jsx: "react", jsxFactory: "h" },
+          }),
+          "/node_modules/dep/index.aot.tsx": `
+            declare namespace JSX { interface IntrinsicElements { div: {} } type Element = string; }
+            function h(type: string) { return type; }
+            export const element = <div />;
+          `,
+          "/node_modules/dep/index.js": 'export const element = "fallback";',
+        },
+        backend,
+        target: "bun",
+        compile: { aot: true },
+        skipOnEsbuild: true,
+        jsx: { runtime: "preserve" },
+        bundleErrors: { "/node_modules/dep/index.aot.tsx": ["--aot does not support preserved JSX"] },
+      });
+    }
+
     itBundled("jsx/PreserveAotDependencyPragmaRejected", {
       files: { "/in.js": 'import "./dep.jsx";', "/dep.jsx": "/** @jsxRuntime preserve */ console.log(<div/>);" },
       backend: "cli",

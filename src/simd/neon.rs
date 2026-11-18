@@ -3,11 +3,11 @@ pub(crate) use crate::native::{load_shared, store_shared};
 pub(crate) use crate::portable::masked::*;
 pub use crate::portable::{bit_indices, prefix_xor};
 use crate::vector::{from_slice, to_array};
-use crate::{Int, opaque};
-use bun_simd_trusted::opaque16;
+use crate::{Int, Lane, opaque};
+use bun_simd_trusted::{from_array, opaque16};
 use core::arch::aarch64::*;
 use core::array::from_fn;
-use core::simd::{ToBytes, prelude::*};
+use core::simd::{Select, ToBytes, prelude::*};
 
 #[cfg(target_endian = "big")]
 compile_error!("these ops assume little-endian lanes");
@@ -70,6 +70,25 @@ impl<const S: bool> crate::Isa for Neon<S> {
     const HAS_INTERLEAVED_MEMORY: bool = true;
     const HAS_PAIRWISE_DOT: bool = false;
     const HAS_SINGLE_CYCLE_OPS: bool = false;
+
+    /// LLVM would move up to 8 bits through the stack, and add up 64 in four parts.
+    #[inline(always)]
+    fn to_bitmask<T: Lane, const N: usize>(mask: crate::Mask<T, N, Self>) -> u64 {
+        let own_bit = Simd::splat(1) << crate::Vector::<u32, N, Self>::iota().0;
+        match N {
+            ..8 => mask.0.select(own_bit, Simd::splat(0)).reduce_sum().into(),
+            8 => (mask.0.select(own_bit.cast::<u16>(), Simd::splat(0)))
+                .reduce_sum()
+                .into(),
+            64 => {
+                let all = Lanes::<i8, 64, S>::new(mask.0.cast::<i8>().to_simd().resize(0));
+                let [[a, b], [c, d]] = all.halves().map(|half| half.halves());
+                let part = |lanes: Lanes<i8, 16, S>, start| (lanes.simd_lt(0), start);
+                Self::bitmask_of(&[part(a, 0), part(b, 16), part(c, 32), part(d, 48)])
+            }
+            _ => mask.0.to_bitmask(),
+        }
+    }
 
     /// `shrn` leaves 4 bits per byte.
     #[inline(always)]
@@ -288,6 +307,26 @@ impl<const S: bool> Lanes<u64, 2, S> {
     pub fn carryless_mul_upper(self, other: Self) -> Self {
         let [a, b] = [self, other].map(|it| vreinterpretq_p64_u64(it.0.into()));
         Self::new(vreinterpretq_u64_p128(vmull_high_p64(a, b)))
+    }
+}
+
+impl<const N: usize, const S: bool> Lanes<f64, N, S> {
+    #[inline]
+    #[target_feature(enable = "neon")]
+    pub fn min(self, other: Self) -> Self {
+        const { assert!(N.is_multiple_of(2)) };
+        let (mut lanes, others) = (self.to_array(), other.to_array());
+        for (a, &b) in lanes.as_chunks_mut().0.iter_mut().zip(others.as_chunks().0) {
+            *a = to_array(vminnmq_f64(from_array(*a).into(), from_array(b).into()).into());
+        }
+        Self::from_array(lanes)
+    }
+}
+
+impl<const S: bool> Lanes<f64, 4, S> {
+    #[inline(always)]
+    pub fn to_i32(self) -> Lanes<i32, 4, S> {
+        Lanes::new(self.0.cast::<i64>().cast())
     }
 }
 

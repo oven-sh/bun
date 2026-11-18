@@ -2,7 +2,7 @@
 #![feature(portable_simd)]
 #![forbid(unsafe_code)]
 use bun_simd_trusted::{Out, SharedOutU8, SharedU8, extend_vec, quarters, spare_capacity};
-use bun_simd_trusted::{copy_from_shared, copy_to_shared, from_array, load_or_default};
+use bun_simd_trusted::{copy_from_shared, copy_to_shared, from_array, load_or_default, windows};
 use core::simd::{Simd, num::SimdUint};
 use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering::Relaxed};
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
@@ -96,6 +96,27 @@ fn loads() {
         assert_eq!(load_or_default(&x32), want.cast());
         assert_eq!(load_or_default(&x64), want.cast());
     }
+}
+
+#[test]
+fn windows_stay_inside() {
+    let starts = Simd::from_array([1, 0, u32::MAX, 1 << 31]);
+    let all: Box<[u16]> = (0..5).collect();
+    let want = [&[1, 2, 3], &[0, 1, 2], &[2, 3, 4], &[2, 3, 4]];
+    assert_eq!(windows(&all, starts), Some(want));
+    assert_eq!(windows(&all, starts), Some([&[0, 1, 2, 3, 4]; 4]));
+    assert_eq!(windows::<_, 6>(&all, starts), None);
+    assert_eq!(windows(&all[5..], starts), Some([&[]; 4]));
+    assert_eq!(windows(&[(); usize::MAX], starts), Some([&[(); 2]; 4]));
+}
+
+#[test]
+#[ignore = "needs 4 GiB of addresses"]
+fn windows_in_more_than_a_lane_can_count() {
+    let all = vec![0u8; (1 << 32) + 9];
+    let got = windows::<_, 8>(&all, Simd::from_array([u32::MAX, 0, 1 << 31, 5])).unwrap();
+    let got = got.map(|it| it.as_ptr().addr() - all.as_ptr().addr());
+    assert_eq!(got, [(1 << 32) - 1, 0, 1 << 31, 5]);
 }
 
 #[test]

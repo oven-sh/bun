@@ -189,6 +189,17 @@ fn portable_copies_take_the_paths_of_the_others() {
     }
 }
 
+#[test]
+fn baseline_is_what_the_lowest_copy_has() {
+    use bun_simd::baseline::Isa as Baseline;
+    let got = [
+        Baseline::HAS_INTERLEAVED_MEMORY,
+        Baseline::HAS_LEADING_ZEROS,
+    ];
+    assert_eq!(got, [!cfg!(target_arch = "x86_64"); 2]);
+    assert_eq!(Baseline::MASKED_BYTES, 0);
+}
+
 fn neither() -> &'static str {
     "neither"
 }
@@ -198,6 +209,11 @@ mod listed_simd {
     #[export(or = neither)]
     pub fn module() -> &'static str {
         module_path!().rsplit("::").next().unwrap()
+    }
+
+    #[export(or = neither)]
+    pub fn last_feature() -> &'static str {
+        MORE_FEATURES.last().unwrap_or(&stringify!(this_target))
     }
 }
 
@@ -227,8 +243,10 @@ fn further_features() {
         };
         limit_to_with(target, ["vaes", "aes", "pclmulqdq", "unknown"]);
         assert_eq!(listed_simd::module(), best, "{target:?}");
+        assert_eq!(best.rsplit('_').next(), Some(listed_simd::last_feature()));
         limit_to(target);
         assert_eq!(listed_simd::module(), plain, "{target:?}");
+        assert_eq!(listed_simd::last_feature(), plain, "{target:?}");
         limit_to_named(format!("{}+vaes+aes+pclmulqdq", target.name()).as_bytes());
         limit_to_named(b"none+aes");
         assert_eq!(listed_simd::module(), best, "{target:?}");

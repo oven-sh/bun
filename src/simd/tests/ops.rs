@@ -46,6 +46,16 @@ impl Random {
     }
 }
 
+impl Random {
+    /// Often equal, or zero with either sign.
+    fn doubles<const N: usize>(&mut self) -> [f64; N] {
+        black_box(from_fn(|_| match self.next() % 8 {
+            few @ ..4 => [0.0, -0.0, 3.0, -1e99][few as usize],
+            _ => self.next() as i64 as f64 / 1e12,
+        }))
+    }
+}
+
 fn saturating_dot(a: [u8; 2], b: [i8; 2]) -> i16 {
     let [first, second] = [0, 1].map(|i| i16::from(a[i]) * i16::from(b[i]));
     first.saturating_add(second)
@@ -204,7 +214,7 @@ mod simd {
 
     #[bun_simd::foreach_width(full, x128, x256)]
     mod width {
-        use isa::{F32, I8, I16, I32, I64, U8, U16, U32, U64, Vector};
+        use isa::{F32, F64, I8, I16, I32, I64, Mask, U8, U16, U32, U64, Vector};
         const N: usize = U8::LEN;
 
         pub fn pairs_of_bytes() {
@@ -388,6 +398,42 @@ mod simd {
             assert!(rounded.contains(&got));
             let truncated = a.map(|a| (a as f32 * 0.333) as i32);
             assert_eq!((x * 0.333).to_i32().to_array(), truncated);
+            let want = from_fn(|i| a[i].min(b[i]) as f32);
+            assert_eq!(x.simd_lt(y).select(x, y).to_array(), want);
+
+            let [a, b]: [[f64; F64::LEN]; 2] = from_fn(|_| random.doubles());
+            let (x, y) = (F64::load(&a), F64::load(&b));
+            let each = |f: fn(f64, f64) -> f64| from_fn(|i| f(a[i], b[i]));
+            assert_eq!((x + y).to_array(), each(|a, b| a + b));
+            assert_eq!((x - y).to_array(), each(|a, b| a - b));
+            assert_eq!((x * y).to_array(), each(|a, b| a * b));
+            assert_eq!(x.min(y).to_array(), each(f64::min));
+            let (even, odd) = x.interleave_in_blocks(y);
+            assert_eq!(even.to_array(), from_fn(|i| [a, b][i % 2][i & !1]));
+            assert_eq!(odd.to_array(), from_fn(|i| [a, b][i % 2][i | 1]));
+            let a = a.map(|a| if a == 3.0 { f64::NAN } else { a });
+            let x = F64::load(&a);
+            let holds = |got: Mask<f64, { F64::LEN }>, want: fn(&f64, &f64) -> bool| {
+                let want: [bool; F64::LEN] = from_fn(|i| want(&a[i], &b[i]));
+                let bits = (0..F64::LEN).map(|i| u64::from(want[i]) << i).sum();
+                assert_eq!(got.to_bitmask(), bits, "{a:?} {b:?}");
+                assert_eq!(got.select(1.0, 0.0).to_array(), want.map(f64::from));
+                let bytes = got.cast::<u8>();
+                assert_eq!(bytes.select(1, 0).to_array(), want.map(u8::from));
+                assert_eq!(
+                    bytes.cast::<i64>().select(1, 0).to_array(),
+                    want.map(i64::from)
+                );
+            };
+            holds(x.simd_eq(y), f64::eq);
+            holds(x.simd_ne(y), f64::ne);
+            holds(x.simd_lt(y), f64::lt);
+            holds(x.simd_le(y), f64::le);
+            holds(x.simd_gt(y), f64::gt);
+            holds(x.simd_ge(y), f64::ge);
+            holds(x.simd_lt(y) | x.simd_eq(y), f64::le);
+            holds(x.simd_le(y) & !x.simd_eq(y), f64::lt);
+            holds(x.simd_ge(y) ^ x.simd_gt(y), f64::eq);
 
             let (a, b) = (random.lanes::<u64, _>(), random.lanes::<u64, _>());
             let (x, y) = (U64::load(&a), U64::load(&b));
@@ -500,6 +546,23 @@ mod simd {
             };
             let got = isa::x128::U32::distances(Vector::load(&a), Vector::load(&b));
             assert_eq!(got.to_array(), from_fn(sum));
+            let a: [i32; 4] = random.lanes();
+            let doubles: isa::x256::F64 = Vector::load(&a).cast();
+            assert_eq!(doubles.to_array(), a.map(f64::from));
+            let truncated = a.map(|a| (f64::from(a) * 0.999) as i32);
+            assert_eq!((doubles * 0.999).to_i32().to_array(), truncated);
+            let a: [u64; 4] = random.lanes();
+            for bits in 0..16 {
+                let want: Vec<u64> = (0..4)
+                    .filter(|i| bits >> i & 1 != 0)
+                    .map(|i| a[i])
+                    .collect();
+                let got = Vector::load(&a).compress(black_box(bits)).to_array();
+                assert_eq!(got[..want.len()], want);
+            }
+            let (all, starts): ([u16; 9], [u32; 4]) = (random.lanes(), random.lanes());
+            let want = starts.map(|at| all[at.min(6) as usize..].first_chunk::<3>().unwrap());
+            assert_eq!(Vector::load(&starts).windows(&all), Some(want));
             any_lanes::<u8, 8>(random);
             any_lanes::<u8, 64>(random);
             any_lanes::<i32, 16>(random);

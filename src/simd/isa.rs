@@ -1,4 +1,4 @@
-use crate::{Int, Mask, Vector, opaque};
+use crate::{Int, Lane, Mask, Vector, opaque};
 use core::simd::prelude::{Simd, SimdInt, SimdOrd};
 
 /// An instruction set. The methods are ops that LLVM lowers better from another spelling on some.
@@ -17,6 +17,16 @@ pub trait Isa: Copy {
     const HAS_PAIRWISE_DOT: bool = true;
     /// The result of a simple op is there as soon as in a general register.
     const HAS_SINGLE_CYCLE_OPS: bool = true;
+
+    #[doc(hidden)]
+    #[inline(always)]
+    fn to_bitmask<T: Lane, const N: usize>(mask: Mask<T, N, Self>) -> u64 {
+        match N {
+            // `core::simd` moves lanes around to have 8.
+            ..8 => (0..N).fold(0, |bits, i| bits | u64::from(mask.0.test(i)) << i),
+            _ => mask.0.to_bitmask(),
+        }
+    }
 
     /// The cheapest move to a general register: the bits, and the number of bits per lane.
     #[doc(hidden)]
@@ -143,6 +153,7 @@ macro_rules! vector_types {
         pub type F32 = Vector<f32, { $bytes / 4 }>;
         pub type U64 = Vector<u64, { $bytes / 8 }>;
         pub type I64 = Vector<i64, { $bytes / 8 }>;
+        pub type F64 = Vector<f64, { $bytes / 8 }>;
     };
 }
 pub(crate) use vector_types;

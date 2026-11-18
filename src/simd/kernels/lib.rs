@@ -8,6 +8,8 @@
 #![cfg_attr(mordant, allow(reimplemented_helper))]
 
 mod adler32;
+mod brotli_entropy;
+mod brotli_matches;
 mod byte_set;
 mod convert;
 mod crc32;
@@ -86,6 +88,17 @@ pub use xml::simd::{
 };
 pub use xxhash::XxHash64State;
 pub use xxhash::simd::{xxhash3_64_shared, xxhash32, xxhash32_shared, xxhash64, xxhash64_shared};
+
+pub mod brotli {
+    pub use crate::brotli_entropy::simd::{
+        estimate_costs, find_switches, remove_pairs, sort_leaves,
+    };
+    pub use crate::brotli_entropy::{LEAF_SLACK, PAIR_GROUP, SPARE_LOGARITHMS};
+    pub use crate::brotli_matches::{
+        CostByCopyLength, LENGTH_SHIFT, Place, SLOT_SHIFT, Start, Ways, short_codes,
+        short_codes_of_five, try_lengths, try_lengths_at_cost, try_matches,
+    };
+}
 
 /// `None` means that the arguments do not fit together. A part of the work may be done.
 pub mod webp {

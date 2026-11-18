@@ -851,6 +851,56 @@ fn webp_encoder() {
 }
 
 #[optimize(size)]
+fn brotli() {
+    let random = &mut Random(17);
+    let symbols = &Vec::from_iter((0..4096).map(|_| random.below(256) as u16));
+    let added = &Vec::from_iter((0..256 * 13).map(|_| from_fn(|_| random.below(99) as f64 / 9.0)));
+    let (switches, cheapest) = (&mut vec![0; 4096 * 13], &mut vec![0; 4096]);
+    for groups in [1, 4, 13] {
+        let sums = &mut vec![[0.0; 8]; groups];
+        time! {
+            "brotli::find_switches 4096 in {groups} groups", brotli::find_switches(symbols, added, 28.1, sums, switches, cheapest);
+        }
+    }
+    let entry = |n: usize| [if n == 0 { 1e6 } else { (n as f64).log2() }, n as f64];
+    let table = &mut Vec::from_iter((0..1024 + brotli::SPARE_LOGARITHMS).map(entry));
+    for (size, one_in) in [(256, 1), (256, 4), (704, 20)] {
+        let has = Vec::from_iter((0..size).map(|_| random.below(one_in) == 0));
+        let mut count = |&has: &bool| u32::from(has) * (1 + random.below(99) as u32);
+        let [common, a, b, c, d]: &[Vec<_>; 5] = &from_fn(|_| has.iter().map(&mut count).collect());
+        let bit = |i: usize| u64::from(has.get(i) == Some(&true)) << (i % 64);
+        let used = &from_fn(|word| (64 * word..64 * word + 64).map(bit).sum());
+        let gaps = &[[9; 4], [u32::from(one_in > 1); 4]];
+        time! {
+            "brotli::estimate_costs {size}, 1 in {one_in} used", brotli::estimate_costs(common, [a, b, c, d], used, &[1 << 16; 4], gaps, table);
+        }
+    }
+    let costs = &Vec::from_iter((0..1000).map(|_| -(random.below(20) as f64)));
+    let pair = |_| [random.below(32) as u32, 32 + random.below(32) as u32];
+    let pairs = &Vec::from_iter((0..1000).map(pair));
+    let (kept_costs, kept_pairs) = (&mut costs.clone(), &mut pairs.clone());
+    time!("brotli::remove_pairs 1000, with a copy", {
+        kept_costs.copy_from_slice(costs);
+        kept_pairs.copy_from_slice(pairs);
+        brotli::remove_pairs(kept_costs, kept_pairs, [3, 40])
+    });
+    for (count, like_shell_sort) in [
+        (12, false),
+        (60, false),
+        (256, false),
+        (60, true),
+        (256, true),
+    ] {
+        let leaf = |i| (random.below(999) << 32 | i) as u64;
+        let leaves = &mut Vec::from_iter((0..count + brotli::LEAF_SLACK).map(leaf));
+        let sorted = &mut leaves.clone();
+        time! {
+            "brotli::sort_leaves {count}, like Shell sort: {like_shell_sort}", brotli::sort_leaves(leaves, count, like_shell_sort, sorted);
+        }
+    }
+}
+
+#[optimize(size)]
 fn jpeg() {
     const STRIDE: usize = 2048;
     let random = &mut Random(11);
@@ -1077,6 +1127,7 @@ pub(crate) fn of_kernels(js: &[u8], json: &[u8], map: &[u8]) {
     whole_files(js, json, map);
     conversions(js);
     images();
+    brotli();
     jpeg();
     webp_decoder();
     webp_encoder();

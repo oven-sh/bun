@@ -40,10 +40,11 @@ fn main() {
 
 In a module with `#[foreach_target]`:
 
-- `isa` has the types of the target: `U8`, `I16`, `F32` and so on fill a register. `Vector<T, N>` has up to 64 bytes.
+- `isa` has the types of the target: `U8`, `I16`, `F64` and so on fill a register. `Vector<T, N>` has up to 64 bytes.
 - `isa::x128` and `isa::x256` have the same types for 128 and 256 bits. The latter can take two registers. A nested module with `#[foreach_width]` is compiled as `full` and as `x128`. `#[foreach_width(x128, x256)]` and `#[foreach_width(full, x128, x256)]` name others.
 - `#[export]` adds a function of the same name to the module itself, which dispatches. It can be generic only over lifetimes. It gets the attributes after `#[export]`, and `cfg` and comments before it. With `#[inline]`, LLVM can inline a direct call unless debug assertions are on.
 - `this_target` is the name of the target: `use other::simd::this_target::helper;`
+- `#[inline]` is only a hint. What has to become a part of its caller's loop is an `#[inline(always)]` function outside the module, with the types in `bun_simd::baseline`. It gets an op that needs an intrinsic from a small `#[export(baseline)]`.
 - Trait methods, `const fn` and functions from a macro outside the module do not get the features of the target. They can use only the ops that need no intrinsic, and run baseline code unless they are inlined.
 - `#[inline(always)]` becomes `#[rustc_force_inline]`. Use it only on functions that no other crate calls. If rustc reports a recursion limit, raise `#![recursion_limit]`. A closure with the attribute loses the features until it is inlined, and cannot call such a function.
 - These do not compile: `async`, `unsafe` and `extern` functions, and a fragment of several tokens from a macro around the module.
@@ -180,7 +181,7 @@ In Bun, lints keep `core::simd` and `core::arch` out of the kernels. Add the op 
 | `#[export(up_to = avx2, up_to = neon)]` | `avx2`, `sse4` and `neon`    |
 | `#[export(baseline)]`                   | The lowest of each family    |
 
-A module that needs more than a target has lists its copies, best first. `or` names what runs on a CPU that can run none of them, in place of the portable copy, which the list can then leave out.
+A module that needs more than a target has lists its copies, best first. `or` names what runs on a CPU that can run none of them, in place of the portable copy, which the list can then leave out. `MORE_FEATURES` has what the copy adds to its target.
 
 ```rust
 #[bun_simd::foreach_target(avx2 + "vpclmulqdq", sse4 + "pclmulqdq", neon + "aes")]
@@ -199,7 +200,7 @@ fn with_tables(a: &[u64], b: &[u64]) -> u64 {
 
 Before Ice Lake, a core can lower its clock for about 0.7 ms after any 512-bit instruction. On a busy Cascade Lake server, one short search every 0.5 ms takes the clock from 3.1 to 2.7 GHz for all the code around it. So a kernel has to ask for `avx512_skx`. Ask only if one call runs long enough to make up for that.
 
-A Cascade Lake core does the same once 46 multiplications of 256 bits fall into about 64 cycles, and each change of the clock stalls it for about 10 µs. A tight loop does not show that, so also time a kernel with many multiplications after a pause of 1 ms.
+A Cascade Lake core does the same once 46 multiplications of 256 bits fall into about 64 cycles, and each change of the clock stalls it for about 10 µs. A tight loop does not show that, so also time a kernel with many multiplications after a pause of 1 ms. Floating-point ops count too: two comparisons in each turn of a loop of 7 cycles can be enough. The lower clock outlasts the kernel, so let each side of a comparison run for some milliseconds before you time it.
 
 With AVX-512, a slice that is shorter than a vector takes one masked access. That can fetch a cache line that the slice does not reach, and waits for stores to its neighbors. A load right after a masked store to the same bytes takes about 5 ns longer. A branch on the length costs more, because lengths are hard to predict.
 
@@ -214,7 +215,7 @@ What you have to trust:
 - **Detection.** A feature counts only if the CPU reports it and the system saves its registers. The same has to hold for every feature that it implies. SVE does not count on Linux before 6.2 but for 5.14.0, as [for glibc](https://sourceware.org/pipermail/glibc-cvs/2024q2/084813.html): it traps after each system call. Arm requires and LLVM assumes that the length of its vectors is a power of two. `trusted/os.rs` makes the queries. The decoders are pure functions of the answers.
 - **`if_supported!` and `AtomicFn`**, which stores the chosen pointer.
 - **`opaque` and `keep16`**, which are `asm!` without an instruction.
-- **`from_array` and `load_or_default`.** The first takes the lanes of an array as a vector of the same size. The second enables only the lanes that the slice has. Miri runs both.
+- **`from_array`, `load_or_default` and `windows`.** The first takes the lanes of an array as a vector of the same size. The second enables only the lanes that the slice has. The third clamps indices before it uses them. Miri runs all three.
 - **`Out`, `Writer` and `spare_capacity`.** They write only initialized values, and count them. Miri runs their tests, but for `fill_from_last`, which needs AVX-512.
 - **Access to shared memory.** A `SharedArrayBuffer` can change while a kernel reads it, so it is never a `&[u8]`. It is a `&[SharedU8]` for input and a `&[SharedOutU8]` for output, which may be uninitialized too. Rust has no vector access that may race. `trusted/shared.rs` has an `asm!` load and store for each width, which stand for a relaxed access to each byte. This relies on the CPU not to tear a byte. A masked access that skips what is before a slice is `asm!` for plain memory too, since LLVM takes its own to start in the object. `copy_from_shared` and `copy_to_shared` jump to `memmove` where LLVM does not see it, and rely on it to stay in bounds and to store each byte, whatever it reads. Miri runs loops over bytes in place of all this. The loops do not depend on two reads giving the same value.
 

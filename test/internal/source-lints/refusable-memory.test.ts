@@ -8,7 +8,7 @@ import path from "node:path";
 //
 // What fills a `Vec` (`push()`, `extend()`, `resize()`) is invisible to this lint. It aborts in the same way once it
 // leaves the room that was reserved.
-const crates = ["deflate", "jpeg", "png", "webp"];
+const crates = ["brotli", "deflate", "jpeg", "png", "webp"];
 test.each(crates)("bun_%s does not ask for memory in a way that aborts on a refusal", async name => {
   const crate = path.resolve(import.meta.dir, "..", "..", "..", "src", name);
   const functions = `
@@ -39,4 +39,11 @@ test.each(crates)("bun_%s does not ask for memory in a way that aborts on a refu
   }
   expect(scanned).toBeGreaterThan(0);
   expect(found.sort()).toEqual([]);
+});
+
+test("bun_brotli uses memory::resize(), because Vec::resize() is slow in hardened builds", async () => {
+  const crate = path.resolve(import.meta.dir, "..", "..", "..", "src", "brotli");
+  const files = await Array.fromAsync(new Glob("**/*.rs").scan({ cwd: crate }));
+  expect(files).toContain("memory.rs");
+  expect(files.filter(file => readFileSync(path.join(crate, file), "utf8").includes(".resize("))).toEqual([]);
 });

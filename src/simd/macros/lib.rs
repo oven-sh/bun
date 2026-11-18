@@ -389,7 +389,9 @@ pub fn foreach_target(list: TokenStream, item: TokenStream) -> TokenStream {
                 copy.extend(parse("#![allow(clippy::redundant_closure)]"));
             }
             copy.extend(parse(&format!(
-                "#[allow(unused_imports)] use {{super::super::*, ::bun_simd::{name} as isa}};"
+                "#[allow(unused_imports)] use {{super::super::*, ::bun_simd::{name} as isa}};
+                 const MORE_FEATURES: &[&str] = &{:?};",
+                version.1
             )));
             let with_name = |ident: Ident| TokenTree::from(Ident::new(name, ident.span())).into();
             let body = replace_ident(body.clone(), "this_target", &with_name);

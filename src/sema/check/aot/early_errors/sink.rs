@@ -2,7 +2,7 @@ use crate::check::Checker;
 use crate::check::aot::DiagnosticClass;
 use crate::check::errors_type_nodes::has_parse_diagnostics;
 use crate::check::sink::{Arg, Reported};
-use crate::check::spans::{skip_trivia, start_of_token_before};
+use crate::check::spans::{skip_trivia_of, start_of_token_before_of};
 use crate::node::ToNode;
 use crate::program::FileId;
 
@@ -65,7 +65,7 @@ impl Checker<'_, '_> {
         token: &[u8],
         code: u32,
     ) -> bool {
-        start_of_token_before(&self.hir(file).text, position, token).is_some_and(|start| {
+        start_of_token_before_of(self.hir(file), position, token).is_some_and(|start| {
             self.early_grammar_error_at((file, start, start + token.len() as u32), code, &[])
         })
     }
@@ -77,9 +77,9 @@ impl Checker<'_, '_> {
         token: u8,
         code: u32,
     ) -> bool {
-        let text = &self.hir(file).text;
-        let start = skip_trivia(text, end as usize) as u32;
-        text.get(start as usize) == Some(&token)
+        let hir = self.hir(file);
+        let start = skip_trivia_of(hir, end as usize) as u32;
+        hir.text.get(start as usize) == Some(&token)
             && self.early_grammar_error_at((file, start, start + 1), code, &[])
     }
 

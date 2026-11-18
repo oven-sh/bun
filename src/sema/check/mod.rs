@@ -123,6 +123,7 @@ use spans::start_of_token_before;
 use spans::token_end;
 use spans::{is_word_at, word_at, word_end, word_start};
 use spans::{skip_trivia_back, trim_trivia_end};
+use spans::{skip_trivia_back_of, skip_trivia_of};
 use std::hash::{Hash, Hasher};
 use std::hint::cold_path;
 use symbols::AliasTarget;

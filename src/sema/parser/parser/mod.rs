@@ -859,15 +859,15 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             if is_in_prologue {
                 is_in_prologue = self.take_directive(statement);
             }
-            has_module_declaration =
-                has_module_declaration || self.is_module_declaration(statement);
+            if !has_module_declaration && self.is_module_declaration(statement) {
+                has_module_declaration = true;
+                self.note_module_proof(statement);
+            }
             self.take_stray_decorators(0);
             if is_an_external_module_indicator(&self.f, statement) {
                 self.f.has_module_syntax = true;
                 self.module_statements.1 += 1;
-                if self.options.compiles && !self.f.is_proved_module {
-                    self.f.is_proved_module = self.f.proves_module_to_bun_run(statement);
-                }
+                self.note_module_proof(statement);
             }
             if self.reads_jsdoc() {
                 self.statement_jsdoc(statement);
@@ -1050,11 +1050,26 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         }
     }
 
+    /// For a text that is compiled, at a top-level statement that TypeScript or the run-time reads as a module declaration: notes whether it makes the
+    /// file a module for the parser of `bun run`. See `FileIn::is_proved_module`.
+    #[inline]
+    fn note_module_proof(&mut self, statement: StmtId) {
+        if self.options.compiles && !self.f.is_proved_module {
+            self.f.is_proved_module = self.f.proves_module_to_bun_run(statement);
+        }
+    }
+
     /// Turns `Lexer::flagged` into diagnostics. A legacy HTML comment mark is none yet: the first one is noted for those that know what the file is.
     fn report_scanner_flagged_errors(&mut self) {
         for (code, start, end) in std::mem::take(&mut self.lx.flagged) {
             if code == HTML_COMMENT_MARK {
-                if self.f.html_comment_end == 0 {
+                if !self.f.jsx.is_empty() && self.f.is_between_tokens_of_jsx_tag(start) {
+                    // A parse error, as every `<!--` was when the lexer reported it.
+                    let at = (start, end);
+                    let error = Diagnostic::new(DiagnosticKind::Parse, at, HTML_COMMENT_MARK, &[]);
+                    self.f.diagnostics.push(error);
+                    self.f.has_parse_diagnostics = true;
+                } else if self.f.html_comment_end == 0 {
                     self.f.html_comment_end = end;
                 }
                 continue;

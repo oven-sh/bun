@@ -155,6 +155,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         // What was scanned as a comment is JSX text.
         let keep_len = self.lx.comments.partition_point(|it| it.pos < from);
         self.lx.comments.truncate(keep_len);
+        let keep_len = self.lx.flagged.partition_point(|it| it.1 < from);
+        self.lx.flagged.truncate(keep_len);
         self.lx.end = from;
         self.lx.next_jsx_child();
         // The native parser's `parseJsxChildren` reads the scanner's token and leaves `p.token` as it was: a `<<` or a

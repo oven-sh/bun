@@ -212,13 +212,13 @@ impl Checker<'_, '_> {
         if last_byte_of_token_before(text, parameters).is_some_and(|last| last != b'>') {
             return false;
         }
-        let close = skip_trivia_back(text, parameters);
+        let close = skip_trivia_back_of(hir, parameters);
         if !text[..close].ends_with(b">") {
             return false;
         }
         // `typeParameters.Pos()`, which is its `End()`.
         let greater_than = hir.skip_trivia_of_node_at(close as u32 - 1);
-        let pos = skip_trivia_back(text, greater_than as usize);
+        let pos = skip_trivia_back_of(hir, greater_than as usize);
         let end = skip_trivia(text, pos) + 1;
         text[..pos].ends_with(b"<")
             && self.early_grammar_error_at((file, pos as u32 - 1, end as u32), 1098, &[])
@@ -975,7 +975,7 @@ impl Checker<'_, '_> {
                 && prop.kind == PropKind::Shorthand
                 && prop.value.is_some()
                 && matches!(hir[prop.value].kind, ExprKind::Assign { op: None, .. })
-                && let Some(start) = equals_token_after_name(text, prop.pos)
+                && let Some(start) = equals_token_after_name(hir, prop.pos)
             {
                 self.early_grammar_error_at((file, start, start + 1), 1312, &[]);
             }
@@ -1152,10 +1152,11 @@ fn end_of_name(text: &[u8], start: usize) -> Option<usize> {
 
 /// Returns the start of the `=` in the shorthand property `name = initializer`. A `?` or `!` may
 /// follow the name.
-fn equals_token_after_name(text: &[u8], name: u32) -> Option<u32> {
-    let mut at = skip_trivia(text, end_of_name(text, name as usize)?);
+fn equals_token_after_name(hir: &File, name: u32) -> Option<u32> {
+    let text = &hir.text[..];
+    let mut at = skip_trivia_of(hir, end_of_name(text, name as usize)?);
     if matches!(text.get(at), Some(b'?' | b'!')) {
-        at = skip_trivia(text, at + 1);
+        at = skip_trivia_of(hir, at + 1);
     }
     (text.get(at) == Some(&b'=')).then_some(at as u32)
 }

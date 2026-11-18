@@ -217,6 +217,30 @@ impl<S: Storage> FileIn<S> {
     }
 }
 
+impl<S: Storage> FileIn<S> {
+    /// True if `pos` lies between two tokens of a JSX tag, and in no expression of the tag. Only whitespace, `//` and `/* */` are trivia there: every
+    /// reader refuses a legacy HTML comment mark between the tokens of a tag.
+    pub fn is_between_tokens_of_jsx_tag(&self, pos: u32) -> bool {
+        let is_inside = |(from, to): (u32, u32)| from < pos && pos < to;
+        self.exprs.iter().any(|element| {
+            let ExprKind::Jsx(jsx) = element.kind else {
+                return false;
+            };
+            let jsx = &self[jsx];
+            let tags = [(element.pos, jsx.opening_end), (jsx.close_pos, jsx.end)];
+            let is_in_expression_of = |tag: (u32, u32)| {
+                let mut braces = self.jsx_expressions.iter().map(|it| (it.1, it.2));
+                let mut spreads = jsx.attrs.iter().map(|attribute| &self[attribute]);
+                braces.any(|it| tag.0 < it.0 && it.1 <= tag.1 && is_inside(it))
+                    || spreads
+                        .any(|it| it.kind == PropKind::Spread && is_inside((it.start, it.end)))
+            };
+            tags.into_iter()
+                .any(|tag| tag.0 != u32::MAX && is_inside(tag) && !is_in_expression_of(tag))
+        })
+    }
+}
+
 /// "Invalid character."
 pub const INVALID_CHARACTER: u32 = 1127;
 

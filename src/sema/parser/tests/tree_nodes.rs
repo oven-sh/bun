@@ -189,6 +189,9 @@ const HTML_COMMENT_MARKS: &[(&str, &str, Option<(u32, u32)>)] = &[
     ("a.js", "var a = 1; /** @type {number} */ <!-- b\nvar c = 2;", Some((33, 37))),
     ("a.js", "/** @type {number} */ var a = 1 <!-- b\n; /** @type {number} */ var c = 2;", Some((32, 36))),
     ("a.jsx", "<!-- b\nconst e = <a b=\"x\" c=\"y\"/>;", Some((0, 4))),
+    ("a.jsx", "const e = <a b={1 <!-- c\n} />;", Some((18, 22))),
+    ("a.jsx", "const e = <a {... <!-- c\nb} />;", Some((18, 22))),
+    ("a.jsx", "const e = <a>{1 <!-- c\n}</a>;", Some((16, 20))),
     ("a.js", "// @bun\nexport {};\n--> c", Some((19, 22))),
     ("a.js", "a = \"<!--\"; b = `-->`; c = /<!--/; // <!--\n/* --> */ d = a-- > b;", None),
     ("a.js", "a = b\n--c > d;", None),
@@ -204,6 +207,17 @@ const HTML_COMMENT_MARKS_OF_PROVED_MODULES: &[(&str, &str, (u32, u32))] = &[
     ("a.mjs", "import \"b\";\n--> c", (12, 15)),
     ("a.js", "await 0;\n<!-- c\n--> d", (9, 13)),
     ("a.js", "/** @type {number} */ <!-- b\nexport var a = 1;", (22, 26)),
+];
+
+/// A mark between two tokens of a JSX tag is a parse error in every file: only the expressions of a tag hold JavaScript trivia.
+#[rustfmt::skip]
+const HTML_COMMENT_MARKS_IN_JSX_TAGS: &[(&str, (u32, u32))] = &[
+    ("const e = <a <!-- c\nb=\"x\" />;", (13, 17)),
+    ("const e = <a b <!-- c\n=\"x\" />;", (15, 19)),
+    ("const e = <a b=\"x\" <!-- c\n/>;", (19, 23)),
+    ("const e = <a>x</a <!-- c\n>;", (18, 22)),
+    ("const e = <a\n--> c\nb=\"x\" />;", (13, 16)),
+    ("const e = <a b={<c <!-- d\n/>} />;", (19, 23)),
 ];
 
 /// Whether the parser of `bun run` reads the file as a module.
@@ -238,6 +252,8 @@ const MODULE_PROOFS: &[(&str, &str, bool)] = &[
     ("a.ts", "export interface A {}", true),
     ("a.ts", "export declare const a: number;", true),
     ("a.ts", "type A = number; export type { A };", true),
+    ("a.ts", "export as namespace NS;", true),
+    ("a.ts", "import type { A } from \"b\"; export as namespace NS;", true),
     ("a.cts", "export = 1;", false),
     ("a.ts", "declare module \"b\" { export const a: number; }", false),
     ("a.ts", "namespace N { export const a = 1; }", false),
@@ -920,6 +936,22 @@ fn html_like_comments() {
             );
             assert!(hir.is_proved_module, "{path}: {text}");
             assert_eq!(hir.legacy_html_comment(), None, "{path}: {text}");
+        });
+    }
+    for &(text, mark) in HTML_COMMENT_MARKS_IN_JSX_TAGS {
+        parsed("a.jsx", text, |_, hir| {
+            let errors = of_class(hir, EarlyError);
+            let [error] = errors[..] else {
+                panic!("{text}: {errors:?}");
+            };
+            let found = (error.kind, error.code, (error.start, error.end));
+            assert_eq!(
+                found,
+                (DiagnosticKind::Parse, INVALID_CHARACTER, mark),
+                "{text}"
+            );
+            assert!(hir.has_parse_diagnostics && !hir.has_errors, "{text}");
+            assert_eq!(hir.legacy_html_comment(), None, "{text}");
         });
     }
     with_workspace(|w| {

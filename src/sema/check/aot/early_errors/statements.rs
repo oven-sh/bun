@@ -239,7 +239,10 @@ impl Checker<'_, '_> {
             outer = parent;
             is_labeled = true;
         }
-        let is_strict_text = || hir.is_strict_to_its_reader(hir.node(s));
+        // A signature has no body. `bun run` erases it, so it is no declaration in strict mode code either.
+        let is_erased =
+            matches!(declaration, BodyDeclaration::Function(f) if !crate::hir::has_body(&hir[f]));
+        let is_strict_text = || !is_erased && hir.is_strict_to_its_reader(hir.node(s));
         let enclosing_statement = statement_parent(bound, outer);
         if is_labeled && enclosing_statement.is_none() && is_strict_text() {
             let at = (file, hir[s].start, hir[s].loc.end);

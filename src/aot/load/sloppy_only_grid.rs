@@ -51,6 +51,35 @@ const PLACES: &[(&str, &str)] = &[
     ("class A { static { ", " } }"),
     ("class A { a = () => { ", " }; }"),
     ("class A extends (function () { ", " }) {}"),
+    ("@(function () { ", " }) class A {}"),
+    ("(@(function () { ", " }) class {});"),
+    ("class A { @(function () { ", " }) m() {} }"),
+];
+
+/// A legacy HTML comment between two tokens of one construct, and the same construct with a comment that every reader knows. An early error of the
+/// construct stays one with the mark in it.
+#[rustfmt::skip]
+const FORMS_WITH_A_MARK_INSIDE: &[(&str, bool)] = &[
+    ("function f(...a <!-- b\n,) {}", false),
+    ("function f(...a\n--> b\n,) {}", false),
+    ("function f(...a /* b */\n,) {}", false),
+    ("function f(... <!-- b\na, c) {}", false),
+    ("function f(...\n--> b\na, c) {}", false),
+    ("var b; [...b = <!-- b\n1] = [1];", false),
+    ("var o = ({ a <!-- b\n= 1 });", false),
+    ("var o = ({ a\n--> b\n= 1 });", false),
+    ("function g() { for <!-- b\nawait (const a of []) {} }", false),
+    ("function f <!-- <>\n() { return 1; }", false),
+    ("function f\n--> <>\n() { return 1; }", false),
+    ("function f(a <!-- b\n, c) {}", false),
+    ("var o = ({ a /* b */\n: 1 });", true),
+];
+
+/// Where a form with a mark inside stands.
+const PLACES_OF_A_MARK_INSIDE: &[(&str, &str)] = &[
+    ("", ""),
+    ("function h() { ", " }"),
+    ("class A { m() { ", " } }"),
 ];
 
 /// What a file has in front of the place and behind it: what can make it a module or strict mode code, and what looks like it.
@@ -97,7 +126,15 @@ struct Cell {
     is_control: bool,
 }
 
-fn write_cells((folder, extension, of_package): (&str, &str, ModuleType)) -> Vec<Cell> {
+type Axes = (
+    &'static [(&'static str, bool)],
+    &'static [(&'static str, &'static str)],
+);
+
+fn write_cells(
+    (folder, extension, of_package): (&str, &str, ModuleType),
+    (forms, places): Axes,
+) -> Vec<Cell> {
     // What the module loader takes the type of a file from: its name, then its package.json.
     let module_type = match extension {
         "mjs" => ModuleType::Esm,
@@ -107,8 +144,8 @@ fn write_cells((folder, extension, of_package): (&str, &str, ModuleType)) -> Vec
     };
     let mut cells = Vec::new();
     for (file_start, file_end) in FILES {
-        for (place_start, place_end) in PLACES {
-            for &(form, is_control) in FORMS {
+        for (place_start, place_end) in places {
+            for &(form, is_control) in forms {
                 cells.push(Cell {
                     name: format!("{folder}c{}.{extension}", cells.len()),
                     text: format!("{file_start}{place_start}{form}{place_end}{file_end}\n"),
@@ -183,8 +220,8 @@ fn find_cells_refused_by_build(cells: &[Cell], folder: &str) -> Vec<usize> {
 }
 
 /// The partings of one kind of file, and how many of its cells `bun run` refuses.
-fn find_partings(name: (&str, &str, ModuleType)) -> (usize, usize, Vec<String>) {
-    let cells = write_cells(name);
+fn find_partings(name: (&str, &str, ModuleType), axes: Axes) -> (usize, usize, Vec<String>) {
+    let cells = write_cells(name, axes);
     let define = Define::with_pure_globals(false, true);
     let refused_by_build = find_cells_refused_by_build(&cells, name.0);
     let (mut refused, mut partings) = (0, Vec::new());
@@ -205,12 +242,12 @@ fn find_partings(name: (&str, &str, ModuleType)) -> (usize, usize, Vec<String>) 
     (cells.len(), refused, partings)
 }
 
-#[test]
-fn build_refuses_a_sloppy_form_where_the_parser_of_bun_run_does() {
+/// How many cells the axes make, how many of them `bun run` refuses, and the partings.
+fn compare_readers(axes: Axes) -> (usize, usize, Vec<String>) {
     let found: Vec<(usize, usize, Vec<String>)> = std::thread::scope(|scope| {
         let running: Vec<_> = NAMES
             .iter()
-            .map(|&name| scope.spawn(move || find_partings(name)))
+            .map(|&name| scope.spawn(move || find_partings(name, axes)))
             .collect();
         let found = running
             .into_iter()
@@ -219,12 +256,34 @@ fn build_refuses_a_sloppy_form_where_the_parser_of_bun_run_does() {
     });
     let cell_count: usize = found.iter().map(|it| it.0).sum();
     let refused: usize = found.iter().map(|it| it.1).sum();
+    let partings: Vec<String> = found.into_iter().flat_map(|it| it.2).collect();
+    (cell_count, refused, partings)
+}
+
+#[test]
+fn build_refuses_a_sloppy_form_where_the_parser_of_bun_run_does() {
+    let (cell_count, refused, partings) = compare_readers((FORMS, PLACES));
     // Both answers are in the grid: a reader that refuses everything, or nothing, agrees with no one.
     assert!(
         refused * 8 > cell_count && refused * 2 < cell_count,
         "bun run refuses {refused} of {cell_count} cells"
     );
-    let partings: Vec<String> = found.into_iter().flat_map(|it| it.2).collect();
+    assert!(
+        partings.is_empty(),
+        "{} of {cell_count} cells:\n{}",
+        partings.len(),
+        partings.join("\n")
+    );
+}
+
+#[test]
+fn build_reads_a_legacy_html_comment_between_tokens_as_the_parser_of_bun_run_does() {
+    let axes = (FORMS_WITH_A_MARK_INSIDE, PLACES_OF_A_MARK_INSIDE);
+    let (cell_count, refused, partings) = compare_readers(axes);
+    assert!(
+        refused > 0 && refused < cell_count,
+        "bun run refuses {refused} of {cell_count} cells"
+    );
     assert!(
         partings.is_empty(),
         "{} of {cell_count} cells:\n{}",

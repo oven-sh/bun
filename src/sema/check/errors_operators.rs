@@ -101,10 +101,9 @@ pub(super) fn start_of_equals_before(
     file: FileId,
     value: ExprId,
 ) -> Option<u32> {
-    let text = &c.hir(file).text;
-    let start = (c.start_of(file, value) as usize).min(text.len());
-    let end = skip_trivia_back(text, start);
-    (end > 0 && text[end - 1] == b'=').then(|| end as u32 - 1)
+    let hir = c.hir(file);
+    let end = skip_trivia_back_of(hir, c.start_of(file, value) as usize);
+    (end > 0 && hir.text[end - 1] == b'=').then(|| end as u32 - 1)
 }
 
 /// Position of the `...` directly before `operand`.

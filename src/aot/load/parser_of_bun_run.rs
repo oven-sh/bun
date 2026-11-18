@@ -20,6 +20,7 @@ pub(super) fn parser_options_of_bun_run(
     options.features.minify_syntax = true;
     options.features.trim_unused_imports = loader.is_typescript();
     options.features.commonjs_at_runtime = true;
+    options.features.standard_decorators = !loader.is_typescript();
     options.features.lower_using = false;
     options.features.ascii_only = true;
     options

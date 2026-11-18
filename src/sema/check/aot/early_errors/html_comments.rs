@@ -5,8 +5,9 @@ use crate::program::FileId;
 
 impl Checker<'_, '_> {
     /// The legacy HTML comment at `start..end` of `file` is an error in a module. The parser has reported it in a file that `import`, `export` or a
-    /// top-level `await` makes one for `bun run`. Of the others a file is none if its own syntax makes it CommonJS. After that its name decides, however
-    /// the file is loaded.
+    /// top-level `await` makes one for `bun run`. Of the others a file is none if its own syntax makes it CommonJS. After that its name decides, with
+    /// the type of its package. The build knows no package for a text that a plugin serves, so such a `.js` file has the answer of a file outside of
+    /// every package.
     #[cold]
     pub(super) fn check_legacy_html_comment(&mut self, file: FileId, (start, end): (u32, u32)) {
         let hir = self.hir(file);

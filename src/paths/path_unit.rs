@@ -23,7 +23,7 @@ pub trait PathUnit: PathChar + Default {
     /// SAFETY: `ptr[..=len]` is readable for `'a` and `ptr[len]` is NUL.
     unsafe fn zslice_from_raw<'a>(ptr: *const Self, len: usize) -> &'a Self::ZSlice;
 
-    /// Upper bound on the converted length. Exact, except from WTF-8 to WTF-16.
+    /// Upper bound on the converted length. Exact if there is nothing to transcode.
     fn max_len_for<C: PathChar>(from: &[C]) -> usize;
 
     /// `to` is at least `max_len_for(from)` long. Returns the number of units written.
@@ -57,7 +57,7 @@ impl PathUnit for u8 {
     fn max_len_for<C: PathChar>(from: &[C]) -> usize {
         match C::units(from) {
             CodeUnits::U8(from) => from.len(),
-            CodeUnits::U16(from) => strings::element_length_utf16_into_utf8(from),
+            CodeUnits::U16(from) => 3 * from.len(),
         }
     }
 
@@ -150,16 +150,33 @@ impl PathUnit for u16 {
     }
 
     fn index_of_untidy_slash(path: &[u16]) -> Option<usize> {
-        (0..path.len()).find(|&at| {
-            matches!(
-                path[at..],
-                [SLASH, SLASH, ..]
-                    | [SLASH, DOT]
-                    | [SLASH, DOT, SLASH, ..]
-                    | [SLASH, DOT, DOT]
-                    | [SLASH, DOT, DOT, SLASH, ..]
-            )
-        })
+        const BLOCK: usize = 16;
+        let is_untidy = |&at: &usize| {
+            path[at] == SLASH
+                && matches!(
+                    path[at + 1..],
+                    [SLASH, ..] | [DOT] | [DOT, SLASH, ..] | [DOT, DOT] | [DOT, DOT, SLASH, ..]
+                )
+        };
+        // `&` and `|` are what let this be vectorized. `.` is `/` without its lowest bit.
+        let has_suspect = |units: &[u16; BLOCK + 1]| {
+            let is_suspect = |at: usize| (units[at] == SLASH) & ((units[at + 1] | 1) == SLASH);
+            (0..BLOCK).fold(false, |any, at| any | is_suspect(at))
+        };
+        let mut start = 0;
+        while let Some(units) = path[start..].first_chunk() {
+            if has_suspect(units)
+                && let Some(found) = (start..start + BLOCK).find(is_untidy)
+            {
+                return Some(found);
+            }
+            start += BLOCK;
+        }
+        // Overlaps the block before it, in place of a scalar loop.
+        if path.last_chunk().is_some_and(|units| !has_suspect(units)) {
+            return None;
+        }
+        (start..path.len()).find(is_untidy)
     }
 
     fn last_index_of_slash(path: &[u16]) -> Option<usize> {

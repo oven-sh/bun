@@ -19,7 +19,7 @@ use crate::{NameTooLong, OSPathChar, PathChar};
 pub type Path = GenericPath<PoolBackend>;
 /// In a `Vec`. For storing a path, or when more than 4 (the size of the pool) are alive.
 pub type VecPath = GenericPath<VecBackend>;
-/// In an inline `[u8; N]`, NUL included. `NameTooLong` if a result does not fit. Allocates only to normalize input that does not.
+/// In an inline `[u8; N]`, NUL included. `NameTooLong` if a result does not fit. Allocates only to normalize or transcode input that might not.
 pub type StackPath<const N: usize> = GenericPath<StackBackend<N>>;
 /// [`Path`] in the encoding that syscalls take. For names that go from one syscall to the next.
 pub type OSPath = GenericPath<PoolBackend<OSPathChar>>;
@@ -483,7 +483,7 @@ impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
 /// See [`PathUnit::max_len_for`].
 #[inline(always)]
 const fn is_max_len_exact<To: PathChar, From: PathChar>() -> bool {
-    !To::IS_U16 || From::IS_U16
+    To::IS_U16 == From::IS_U16
 }
 
 #[cold]

@@ -546,11 +546,11 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         }
         let perm = (entry.perm() & 0o777) as bun_sys::Mode;
         let size = usize::try_from(entry.size().max(0)).expect("int cast");
-        let rel = bun_paths::VecPath::from(&bun_archive::normalize_npm_entry_path(entry));
+        let rel = bun_paths::Path::from(&bun_archive::normalize_npm_entry_path(entry));
         if rel.is_empty() {
             continue;
         }
-        let rel = rel.into_portable().into_vec();
+        let rel = rel.into_portable().to_vec();
         let mut data = Vec::new();
         if let Err(err) = reader.read_data(size, &mut data) {
             if let tar::Error::Alloc(err) = err {

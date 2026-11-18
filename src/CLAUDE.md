@@ -241,7 +241,7 @@ write!(path, "-{hash:x}");                            // no separator; `push_fmt
 | `OSPath`       | pooled buffer | with `OSPathSlice`, which is UTF-16 on Windows                     |
 
 They have the same methods. `StackPath` returns `Result<T, NameTooLong>`, is unchanged on `Err`, and
-allocates only to normalize or transcode input that does not fit. The others grow, and the syscall returns
+allocates only to normalize or transcode input that might not fit. The others grow, and the syscall returns
 `ENAMETOOLONG`. Call `check_len()` where no syscall would say so, as with `exists`.
 
 - `from`, `set`, `extend_from_slice` and `prepend` copy as is.

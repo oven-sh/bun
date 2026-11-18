@@ -159,7 +159,7 @@ impl<U: PathUnit> Drop for PoolBackend<U> {
     }
 }
 
-/// A `Vec`. The first allocation is not rounded up.
+/// A `Vec`. The first allocation is what the first edit reserves, not rounded up.
 #[derive(Default)]
 pub struct VecBackend<U: PathUnit = u8>(RawBuf<U>);
 

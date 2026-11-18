@@ -1503,6 +1503,9 @@ fn transcodes_lone_surrogates_and_invalid_utf8() {
     );
     let invalid = GenericPath::<VecBackend<u16>, Posix>::from(b"\x80\xFF\xE4\xB8");
     assert_eq!(invalid.as_slice(), [0xFFFD; 4]);
+    let widest = u16::encode("世世世世");
+    assert_eq!(text(&VecPath::from(&widest)), "世世世世");
+    assert!(StackPath::<{ 3 * 4 }>::from(&widest).is_err());
 
     let mut exact = GenericPath::<StackBackend<9>, Posix>::new();
     assert_eq!(exact.set(&lone), Ok(()));
@@ -1512,6 +1515,26 @@ fn transcodes_lone_surrogates_and_invalid_utf8() {
     assert_eq!(exact.set("世世".as_bytes()), Ok(()));
     assert_eq!(exact.set(b"\x80\x80\x80"), Err(NameTooLong));
     assert_eq!(exact.as_slice(), u16::encode("世世"));
+}
+
+#[test]
+fn finds_an_untidy_slash_wherever_it_is() {
+    const MIDDLES: &[&str] = &[
+        "", "/", "//", "/.", "/./", "/..", "/../", "/.a", "/..a", "/...", "/.a/..", "/Į", "/į",
+        "į/",
+    ];
+    let lens = (0..40).step_by(if cfg!(miri) { 15 } else { 1 });
+    for (before, after) in lens.clone().flat_map(|n| lens.clone().map(move |m| (n, m))) {
+        for middle in MIDDLES {
+            let path = "a".repeat(before) + middle + &"b".repeat(after);
+            let found = u8::index_of_untidy_slash(path.as_bytes());
+            assert_eq!(
+                u16::index_of_untidy_slash(&u16::encode(&path)),
+                found.map(|at| path[..at].encode_utf16().count()),
+                "{path:?}"
+            );
+        }
+    }
 }
 
 fn check_pool_limit<U: Unit>(limit: usize) {
@@ -1580,6 +1603,12 @@ fn check_stack<S: PathStyle, U: Unit>() {
 fn stack_does_not_allocate() {
     check_stack::<Posix, u8>();
     check_stack::<Windows, u16>();
+
+    let widest = u16::encode("世世世世");
+    let allocations = ALLOCATIONS.get();
+    let path = StackPath::<{ 3 * 4 + 1 }>::from(&widest).unwrap();
+    assert_eq!(ALLOCATIONS.get(), allocations);
+    assert_eq!(text(&path), "世世世世");
 }
 
 #[test]

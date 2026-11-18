@@ -42,8 +42,7 @@ impl Lexer<'_> {
         }
     }
 
-    /// Records the comment mark at `pos` of a text that is compiled: a `<!--`, or a `-->` at the start of a line. It starts a comment. It is an
-    /// error if the file turns out to be a module, which is known after the parse at the earliest: `FileIn::html_comment_end`.
+    /// Records the legacy HTML comment mark at `pos` of a compiled text. Whether it is an error is known after the parse at the earliest: `FileIn::html_comment_end`.
     #[cold]
     #[inline(never)]
     pub(super) fn flag_html_comment(&mut self, pos: usize) {

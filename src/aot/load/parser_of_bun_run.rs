@@ -4,8 +4,7 @@ use bun_ast::Loader;
 use bun_js_parser::ParserOptions;
 use bun_options_types::bundle_enums::ModuleType;
 
-/// What the module loader gives the parser for a file that `bun run` loads (`Transpiler::parse`), as far as it decides what a text is. `module_type`
-/// is what the name of the file and its package.json say.
+/// What the module loader gives the parser for a file that `bun run` loads (`Transpiler::parse`). `module_type` is what the name of the file and its package.json say.
 pub(super) fn parser_options_of_bun_run(
     loader: Loader,
     module_type: ModuleType,

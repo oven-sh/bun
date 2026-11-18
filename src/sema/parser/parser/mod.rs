@@ -879,8 +879,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             self.end_of_file_jsdoc(reparsed);
         }
         self.f.body = self.take_ids(base);
-        // Every module declaration has an `export`, or is an import of JavaScript: each proves a module to the parser of `bun run`. `export as
-        // namespace` is one that the loop above does not see.
+        // A module declaration has an `export` or is an import of JavaScript: each proves a module to the parser of `bun run`, also `export as namespace`.
         if has_module_declaration && self.options.compiles {
             self.f.is_proved_module = true;
         }
@@ -1055,8 +1054,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         }
     }
 
-    /// Notes the legacy HTML comment marks of a text that is compiled. The first one is kept for those that know what the file is. One between the
-    /// tokens of a JSX tag is a parse error at once, as every `<!--` was when the lexer reported it.
+    /// Notes the first legacy HTML comment mark of a compiled text for those that know what the file is. One between the tokens of a JSX tag is a parse error at once.
     #[cold]
     #[inline(never)]
     fn note_html_comment_marks(&mut self, flagged: &[(u32, u32, u32)]) {

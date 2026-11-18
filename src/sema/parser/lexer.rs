@@ -57,8 +57,8 @@ pub(crate) struct Lexer<'a> {
     /// `hir::File::comments`
     pub(crate) comments: Vec<Comment>,
     /// Errors that TypeScript's scanner reports about syntax ECMAScript allows outside strict mode: the message code,
-    /// start and end. Only filled in with `is_ecmascript`. Otherwise the text is rejected. In a text that is compiled
-    /// it holds the legacy HTML comment marks alone, under [`HTML_COMMENT_MARK`]: see `flag_html_comment`.
+    /// start and end. Only filled in with `is_ecmascript`. Otherwise the text is rejected.
+    /// In a compiled text it holds the legacy HTML comment marks alone, under [`HTML_COMMENT_MARK`].
     pub(crate) flagged: Vec<(u32, u32, u32)>,
     /// The errors that [`Lexer::error`] reported and the parser hasn't taken yet (`Parser::take_scanner_errors`), in
     /// the order they were reported.
@@ -114,8 +114,7 @@ pub(crate) struct Lexer<'a> {
     pub(crate) skips_jsdoc_asterisks: bool,
 }
 
-/// The code of an entry of `Lexer::flagged` for a legacy HTML comment mark. It is the message that the mark gets where it is an error: "Invalid
-/// character."
+/// The code of an entry of `Lexer::flagged` for a legacy HTML comment mark: the message that the mark gets where it is an error.
 pub(crate) const HTML_COMMENT_MARK: u32 = bun_sema::hir::INVALID_CHARACTER;
 
 /// Outside a script: the position of the first `<!--` that was scanned as `<`, and of the first one preceded only by

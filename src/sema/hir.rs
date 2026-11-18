@@ -3226,8 +3226,7 @@ pub struct FileIn<S: Storage> {
     pub is_strict: bool,
     /// The same as far as the file's own syntax says: a `"use strict"` directive or a module declaration.
     pub is_strict_by_syntax: bool,
-    /// In a text that is compiled: the parser of `bun run` reads the file as a module, for an `import` that is not only of types, an `export` or a top-level `await`. See `is_strict_to_its_reader`.
-    /// It says what is written and is fixed when the text is parsed: an import that the loader adds to the tree later proves nothing.
+    /// In a text that is compiled: the parser of `bun run` reads the file as a module, for an `import` that is not only of types, an `export` or a top-level `await`. Fixed at the parse: an import that the loader adds later proves nothing.
     pub is_proved_module: bool,
     /// In a text that is compiled: the end of its first legacy HTML comment mark, a `<!--` or a `-->` at the start of a line. 0 if it has none, or once the mark is reported. See `legacy_html_comment`.
     pub html_comment_end: u32,

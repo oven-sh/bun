@@ -218,9 +218,7 @@ impl<S: Storage> FileIn<S> {
 }
 
 impl<S: Storage> FileIn<S> {
-    /// The first of `marks` that lies between two tokens of a JSX tag and in no expression of the tag. `marks` are the starts of the legacy HTML
-    /// comment marks of the text, in their order. Only whitespace, `//` and `/* */` are trivia between the tokens of a tag: every reader refuses a
-    /// mark there.
+    /// The first of `marks`, the sorted starts of the legacy HTML comment marks, that lies between two tokens of a JSX tag and in no expression of it. Every reader refuses a mark there.
     pub fn find_mark_between_tokens_of_jsx_tag(&self, marks: &[u32]) -> Option<u32> {
         let mut found: Option<u32> = None;
         for element in self.exprs.iter() {
@@ -332,8 +330,7 @@ impl File<'_> {
         }
     }
 
-    /// For a text that is compiled, when it is parsed and nothing has changed its tree: a top-level `await` makes the file a module for the parser of
-    /// `bun run` too, and the legacy HTML comment of such a module is reported. `text` is the text of the file.
+    /// For a compiled text, right after its parse: a top-level `await` makes the file a module for the parser of `bun run` too, and the legacy HTML comment of such a module is reported.
     #[inline]
     pub fn judge_as_parsed_by_bun_run(&mut self, text: &[u8]) {
         if !self.is_proved_module && self.has_top_level_await() {

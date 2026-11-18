@@ -164,8 +164,7 @@ pub(super) fn skip_trivia_ex(text: &[u8], mut at: usize, stop_after_line_break: 
     }
 }
 
-/// `skip_trivia` from the end of a token of `hir`. The lexer reads a legacy HTML comment of a compiled text as a comment, and so does this in a file
-/// that has one. The helpers over a plain text do not know the two marks, which are operators in TypeScript.
+/// `skip_trivia` from the end of a token of `hir`. In a compiled text that has a legacy HTML comment, such a comment is trivia too, as it is to the lexer.
 pub(super) fn skip_trivia_of(hir: &File, at: usize) -> usize {
     let next = skip_trivia(&hir.text, at);
     match hir.html_comment_end {
@@ -247,8 +246,7 @@ fn iterate_comment_ranges(text: &[u8], mut pos: usize, trailing: bool) -> Vec<(u
     ranges
 }
 
-/// Start of the `//` comment that ends `line`. With `HTML`, also of a legacy HTML comment: a `<!--`, or a `-->` that only whitespace and comments
-/// precede.
+/// Start of the `//` comment that ends `line`. With `HTML`, also of a `<!--`, and of a `-->` that only whitespace and comments precede.
 fn line_comment_start<const HTML: bool>(line: &[u8]) -> Option<usize> {
     let mut at = 0;
     let mut is_at_line_start = HTML;

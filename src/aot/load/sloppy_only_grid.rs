@@ -1,5 +1,4 @@
-//! The forms that only sloppy mode code has, and the legacy HTML comments that only a script has: the build refuses a text where the parser of `bun run`
-//! refuses it, and nowhere else. A cell is a form in a place, in a file that is a module or strict mode code for one reason or for none, under one name.
+//! The build refuses a form of sloppy mode code or a legacy HTML comment exactly where the parser of `bun run` refuses it. A cell is a form in a place, in a file, under a name.
 
 use bun_alloc::Arena as AstArena;
 use bun_ast::{ASTMemoryAllocator, Kind, Loader, Log, Source};
@@ -56,8 +55,7 @@ const PLACES: &[(&str, &str)] = &[
     ("class A { @(function () { ", " }) m() {} }"),
 ];
 
-/// A legacy HTML comment between two tokens of one construct, and the same construct with a comment that every reader knows. An early error of the
-/// construct stays one with the mark in it.
+/// A legacy HTML comment between two tokens of one construct, beside the same construct with a comment that every reader knows.
 #[rustfmt::skip]
 const FORMS_WITH_A_MARK_INSIDE: &[(&str, bool)] = &[
     ("function f(...a <!-- b\n,) {}", false),

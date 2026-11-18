@@ -393,8 +393,7 @@ const FORMS_OF_SLOPPY_MODE_CODE: &[(&str, &str, bool)] = &[
     ("ts", "export type T = number;\nif (1) function f() {}", true),
     ("mts", "if (1) function f() {}", false),
     ("cts", "import fs = require(\"node:fs\");\nif (1) function f() {}", false),
-    // A legacy HTML comment is an error in a module: one that a keyword proves, then no file that its own syntax makes CommonJS, then a module by
-    // the name of the file.
+    // A legacy HTML comment is an error in a module: by a keyword, else not in CommonJS by its own syntax, else by the name of the file.
     ("cjs", "var a = 1 <!-- c\n;", false),
     ("cjs", "<!-- c\nvar a = 1;\n--> c", false),
     ("cjs", "\"use strict\"; class A { m() { return 1 <!-- c\n; } }", false),

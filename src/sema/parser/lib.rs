@@ -345,8 +345,7 @@ mod entries_tests {
         (ENTRIES.get() - before, file.stmts.len(), leaves_out)
     }
 
-    /// The parse of a whole text is not entered again for a legacy HTML comment: the tree is whole, with the comment left out, also where the
-    /// parse reports the comment because an `export` proves a module.
+    /// A legacy HTML comment does not make the parser enter the text again, also where the parse reports it because an `export` proves a module.
     #[test]
     fn a_compiled_text_with_a_legacy_html_comment_is_entered_once() {
         let texts = [

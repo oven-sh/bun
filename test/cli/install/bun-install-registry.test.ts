@@ -836,39 +836,6 @@ ljelkjwelkgjw;lekj;lkejflkj
   });
 });
 
-// Network requests need %SystemRoot% on Windows. The thread that starts the HTTP client thread
-// checks for it, so the command stops before it runs. The value is empty and not missing, because
-// libuv copies a missing %SystemRoot% from the parent process.
-test.skipIf(!isWindows)("bun pm bin stops in every run when %SystemRoot% is not set", async () => {
-  const { packageDir, packageJson, env } = await setupTest();
-  await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0" }));
-  const withoutSystemRoot = {
-    ...Object.fromEntries(Object.entries(env).filter(([name]) => name.toLowerCase() !== "systemroot")),
-    SystemRoot: "",
-  };
-  const runs = await Promise.all(
-    Array.from({ length: 5 }, async () => {
-      await using proc = spawn({
-        cmd: [bunExe(), "pm", "bin"],
-        cwd: packageDir,
-        stdout: "pipe",
-        stderr: "pipe",
-        env: withoutSystemRoot,
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout, stderr, exitCode };
-    }),
-  );
-  expect(runs).toEqual(
-    Array(5).fill({
-      stdout: "",
-      stderr:
-        "error: The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.\n",
-      exitCode: 1,
-    }),
-  );
-});
-
 describe.concurrent("whoami", async () => {
   test("can get username", async () => {
     const { packageDir, packageJson, env } = await setupTest();

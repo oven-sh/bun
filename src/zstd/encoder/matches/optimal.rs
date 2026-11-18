@@ -4,7 +4,7 @@ use core::hint::black_box;
 use core::ops::RangeInclusive;
 
 use bun_zstd_decoder::Result;
-use bun_zstd_decoder::array::{At, allocate};
+use bun_zstd_decoder::array::{At, allocate, resize};
 
 use super::hash::Hasher;
 use super::long_distance::Cursor;
@@ -59,8 +59,8 @@ impl<'a> Ways<'a> {
         #[inline(never)]
         fn lengthen(prices: &mut Vec<i32>, ends: &mut Vec<End>, len: usize) {
             let len = len.min(prices.capacity()).min(ends.capacity());
-            prices.resize(len, 0);
-            ends.resize(len, End::default());
+            resize(prices, len, 0);
+            resize(ends, len, End::default());
         }
         let needed = end as usize + Self::MARGIN;
         if prices.len() < needed {
@@ -131,8 +131,9 @@ impl<'a> Ways<'a> {
             let lanes = (start + len) as usize..(start + len) as usize + LANES;
             let old = likely(self.prices.get(lanes))?.as_array::<LANES>()?;
             let mut cheaper = 0u8;
-            for (lane, (new, old)) in new.iter().zip(old).enumerate() {
-                cheaper |= u8::from(base_price + new < *old) << lane;
+            // Like `equal_bytes()`.
+            for lane in 0..LANES {
+                cheaper |= u8::from(base_price.wrapping_add(*new.at(lane)) < *old.at(lane)) << lane;
             }
             let mut cheaper = u32::from(cheaper) & !(u32::MAX << (found.len - len + 1).min(31));
             while cheaper != 0 {
@@ -368,15 +369,19 @@ impl Finder<'_> {
         let sufficient_len = self.sufficient_len;
         let mut longest = self.min_match - 1;
 
-        for (value, offset) in (1..).zip(repeats.numbered(has_literals)) {
+        let mut is_enough = #[inline(always)]
+        |value, offset| {
             let len = self.repeat_len::<REACH>(history, at, word as u32, offset, lowest);
-            if len > longest {
+            len > longest && {
                 longest = len;
                 push(matches, OffsetValue(value), len);
-                if len > sufficient_len || len == left {
-                    return Some(());
-                }
+                len > sufficient_len || len == left
             }
+        };
+        // The compiler does not always unroll a loop.
+        let [first, second, third] = repeats.numbered(has_literals);
+        if is_enough(1, first) || is_enough(2, second) || is_enough(3, third) {
+            return Some(());
         }
 
         if self.min_match == 3 && longest < 3 {

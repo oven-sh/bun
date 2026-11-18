@@ -215,8 +215,10 @@ impl Parser<'_> {
         let value = likely(u32_at(history.prefix, at))?;
         if REACH == Reach::Prefix {
             let earlier = at.wrapping_sub(offset);
-            return (earlier < at && u32_at(history.prefix, earlier) == Some(value))
-                .then(|| 4 + history.match_len(at + 4, earlier + 4));
+            return (earlier < at && u32_at(history.prefix, earlier) == Some(value)).then(
+                #[inline(always)]
+                || 4 + history.match_len(at + 4, earlier + 4),
+            );
         }
         let current = history.index(at);
         let earlier = current.wrapping_sub(offset);

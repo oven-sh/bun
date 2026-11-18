@@ -285,7 +285,8 @@ impl<'a> Searcher<'a> {
         let history = &self.history;
         let index = |at: usize| history.index(at as u32);
         let position = |entry: &Cell<u32>| history.position(entry.get()) as usize;
-        let match_len = |at: usize, earlier: usize, known: u32| {
+        let match_len = #[inline(always)]
+        |at: usize, earlier: usize, known: u32| {
             known + history.match_len(at as u32 + known, earlier as u32 + known)
         };
         let has_before =

@@ -3,7 +3,7 @@
 use core::hint::select_unpredictable;
 
 use bun_highway::with_bmi2;
-use bun_zstd_decoder::array::{At, grow};
+use bun_zstd_decoder::array::{At, grow, resize};
 use bun_zstd_decoder::format::CodeKind::{self, LiteralLength, MatchLength, Offset};
 use bun_zstd_decoder::format::{
     INITIAL_REPEAT_OFFSETS, LITERAL_LENGTH_BASES, LITERAL_LENGTH_BITS, MATCH_LENGTH_BASES,
@@ -286,7 +286,7 @@ fn copy_literals(block: &[u8], from: u32, literals: &mut Vec<u8>, to: u32, len: 
         && let Some(chunk) = block.first_chunk::<SHORT_LEN>()
     {
         if literals.len() < to + SHORT_LEN {
-            literals.resize(literals.capacity().min(2 * to), 0);
+            resize(literals, literals.capacity().min(2 * to), 0);
         }
         if let Some(room) = literals.get_mut(to..)?.first_chunk_mut() {
             *room = *chunk;

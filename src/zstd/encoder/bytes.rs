@@ -1,5 +1,7 @@
 //! Reads, writes and comparisons of bytes that cannot panic.
 
+use bun_zstd_decoder::array::At;
+
 /// Tells the compiler which loops are worth its registers.
 #[inline(always)]
 pub(crate) fn likely<T>(found: Option<T>) -> Option<T> {
@@ -115,12 +117,12 @@ pub(crate) fn compare(a: &[u8], b: &[u8]) -> (usize, bool) {
     }
 }
 
-/// One bit for each byte, from the lowest up. Compiles to vector instructions.
+/// One bit for each byte, from the lowest up. Compiles to vector instructions, which `zip()` prevents in hardened builds.
 #[inline(always)]
 pub(crate) fn equal_bytes(a: &[u8; 16], b: &[u8; 16]) -> u16 {
     let mut bits = 0;
-    for (index, (a, b)) in a.iter().zip(b).enumerate() {
-        bits |= u16::from(a == b) << index;
+    for index in 0..16 {
+        bits |= u16::from(a.at(index) == b.at(index)) << index;
     }
     bits
 }

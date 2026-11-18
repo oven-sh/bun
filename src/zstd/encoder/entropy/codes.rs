@@ -508,7 +508,9 @@ fn encode(
         - OFFSET_TABLE_LOG_MAX
         - MATCH_LENGTH_TABLE_LOG_MAX;
     let mut writer = BitWriter::new(out)?;
-    let add_extra_bits = |writer: &mut BitWriter<'_>, sequence: &Sequence| {
+    // The checks of hardened builds make it too large. In others, it gets better registers if it is not forced.
+    let add_extra_bits = #[cfg_attr(bun_hardened, inline(always))]
+    |writer: &mut BitWriter<'_>, sequence: &Sequence| {
         let (mut bits, mut count) = sequence.extra_bits();
         if count > ROOM_AFTER_STATES {
             writer.flush()?;

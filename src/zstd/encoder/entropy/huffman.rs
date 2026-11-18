@@ -410,10 +410,14 @@ impl Table {
             if len == 0 {
                 0
             } else {
-                self.log as u8 + 1 - len
+                (self.log as u8 + 1).wrapping_sub(len)
             }
         };
-        let mut weights = self.lens.map(weight);
+        // `map()` goes byte by byte in hardened builds.
+        let mut weights = self.lens;
+        for len in &mut weights {
+            *len = weight(*len);
+        }
         // The last one follows from the others.
         let described = self.max_symbol;
         let last = core::mem::take(weights.at_mut(described));

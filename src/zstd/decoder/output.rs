@@ -1,5 +1,6 @@
 //! Where the encoder and the decoder write to.
 
+use crate::array::resize;
 use crate::error::{Error, Result};
 
 /// Longer copies can crawl on Zen 3 and 4: https://sourceware.org/bugzilla/show_bug.cgi?id=30994
@@ -61,7 +62,7 @@ fn touch_pages(vec: &mut Vec<u8>, end: usize, is_ring: bool) {
 fn clear_up_to(vec: &mut Vec<u8>, len: usize) {
     // New pages are quicker to clear without `rep stosb`, too.
     while vec.len() < len {
-        vec.resize(len.min(vec.len() + PIECE_LEN), 0);
+        resize(vec, len.min(vec.len() + PIECE_LEN), 0);
     }
 }
 
@@ -151,7 +152,7 @@ impl Target<'_> {
     fn fill(&mut self, start: usize, len: usize, byte: u8) {
         debug_assert!(start <= self.bytes().len() && start + len <= self.capacity());
         if let Some(vec) = self.to_extend(start, len) {
-            vec.resize(start + len, byte);
+            resize(vec, start + len, byte);
         } else if let Some(to) = self.bytes_mut(0).get_mut(start..start + len) {
             to.fill(byte);
         }

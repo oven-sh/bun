@@ -35,12 +35,18 @@ impl<T, const N: usize> At<T> for [T; N] {
     }
 }
 
+/// `Vec::resize()` checks each element for overlap in hardened builds.
+#[inline(always)]
+pub fn resize<T: Copy>(vec: &mut Vec<T>, len: usize, value: T) {
+    vec.resize_with(len, || value);
+}
+
 /// Makes `vec` at least `len` long.
 #[inline]
-pub fn grow<T: Clone>(vec: &mut Vec<T>, value: T, len: usize) -> Result<()> {
+pub fn grow<T: Copy>(vec: &mut Vec<T>, value: T, len: usize) -> Result<()> {
     if let Some(more @ 1..) = len.checked_sub(vec.len()) {
         vec.try_reserve_exact(more)?;
-        vec.resize(len, value);
+        resize(vec, len, value);
     }
     Ok(())
 }

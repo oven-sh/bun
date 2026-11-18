@@ -72,10 +72,12 @@ fn copy_start(from: &[u8], to: &mut [u8], len: usize) -> Option<()> {
         cold_path();
         from = from.get(..len + CHUNK - 1)?;
         to = to.get_mut(..len + CHUNK - 1)?;
-        for (to, from) in (to.as_chunks_mut::<{ 2 * CHUNK }>().0.iter_mut()).zip(from.as_chunks().0)
-        {
+        let (to, from) = (to.as_chunks_mut::<{ 2 * CHUNK }>().0, from.as_chunks().0);
+        // `zip()` is not inlined in hardened builds.
+        for index in 0..to.len().min(from.len()) {
+            let to = to.get_mut(index)?;
             prefetch_write(to.as_mut_ptr().wrapping_add(LOAN_MAX), Locality::L1);
-            *to = *from;
+            *to = *from.get(index)?;
             // Most are short: neither unrolling nor a call of `memcpy()` pays.
             black_box(());
         }

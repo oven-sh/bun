@@ -69,9 +69,7 @@ impl PmSbomCommand {
     }
 }
 
-/// The `name` and `version` in the package.json of the root package (an empty `path`) or of the
-/// workspace at `path`. `None` for a workspace that is not in this checkout, as in a Docker layer
-/// that has a part of the project. Exits if the file is there and cannot be read or parsed.
+/// The `name` and `version` in the package.json at `path`, or `None` for a workspace that is not in this checkout.
 fn manifest(pm: &mut PackageManager, path: &[u8]) -> Option<Sbom::Manifest> {
     let top_level_dir = FileSystem::get().top_level_dir();
     let root = if path.is_empty() {
@@ -102,8 +100,7 @@ fn manifest(pm: &mut PackageManager, path: &[u8]) -> Option<Sbom::Manifest> {
 
     let mut name = string_field(b"name");
     if name.is_empty() && path.is_empty() {
-        // `bun add` creates a package.json without a name, and both formats need one. A project
-        // at the root of a file system is in a directory without a name.
+        // `bun add` creates a package.json without a name, and a project at `/` is in a directory without one.
         let directory = bun_paths::basename(top_level_dir);
         name = if directory.is_empty() {
             b"root".to_vec()

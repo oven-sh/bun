@@ -64,6 +64,7 @@ const noUnify: readonly string[] = [
 
   // No longer heavy; kept standalone so webcore bundle composition stays put.
   "src/jsc/bindings/webcore/HTTPParsers.cpp",
+  "src/jsc/bindings/webcore/JSWasmStreamingCompiler.cpp",
 
   // The ahead-of-time compiler's files: standalone, so that they move no other file into another bundle.
   "src/jsc/bindings/BunAOTCompile.cpp",
@@ -83,7 +84,6 @@ const noUnify: readonly string[] = [
   // on ordinary lookup at template definition time. That fails if an earlier
   // file in the bundle already parsed JSDOMConvertInterface.h /
   // JSDOMWrapperCache.h before the overload was visible.
-  "src/jsc/bindings/webcore/JSWasmStreamingCompiler.cpp",
   "src/jsc/bindings/webcore/JSDOMPromiseDeferred.cpp",
   "src/jsc/bindings/webcore/JSMessageEventCustom.cpp",
   "src/jsc/bindings/sqlite/JSSQLStatement.cpp",

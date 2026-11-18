@@ -642,3 +642,77 @@ impl Description {
         put(out, self.bytes.get(..self.len)?)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn with_all_lengths() -> (Table, Vec<u8>) {
+        let mut table = Table::EMPTY;
+        table.build_from_weights(&[1, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1], 12);
+        (table, (0..300).map(|it| (it * it / 7 % 13) as u8).collect())
+    }
+
+    #[test]
+    fn a_code_of_one_bit_is_counted_among_the_weights() {
+        // One symbol takes half of everything, so its code is a single bit.
+        let counts: Vec<u32> = (0..129)
+            .map(|it| if it == 0 { 1 << 20 } else { 1 + it % 9 })
+            .collect();
+        let mut table = Table::EMPTY;
+        table.build(&counts, counts.iter().sum::<u32>() as usize, true);
+        assert_eq!(
+            (table.log, table.code_len(0), table.max_symbol),
+            (8, 1, 128)
+        );
+        let mut out = [0; 2 * DESCRIPTION_LEN_MAX];
+        assert_eq!(table.describe(&mut out), Ok(8));
+        assert!(out[..8] == [7, 16, 240, 219, 1, 128, 24, 41]);
+    }
+
+    #[test]
+    fn what_the_kernel_refuses_is_written_without_it() {
+        let (table, symbols) = with_all_lengths();
+        let mut expected = [0; 400];
+        assert_eq!(table.compress(&symbols, &mut expected, false), Some(268));
+        for room in 260..400 {
+            let mut out = vec![0; room];
+            let len = table.compress_in_vectors(&symbols, &mut out);
+            assert_eq!(len, table.compress(&symbols, &mut vec![0; room], false));
+            assert!(len.is_none_or(|len| out.get(..len) == expected.get(..len)));
+        }
+    }
+
+    #[test]
+    fn what_the_kernel_writes_is_finished() {
+        let (table, symbols) = with_all_lengths();
+        for count in 0..40 {
+            let (symbols, mut out) = (symbols.split_at(300 - count).1, [0; 128]);
+            let written = write_codes(symbols, &table.codes.map(Code::short), &mut out);
+            let written = written.unwrap_or_default();
+            for more in 0..12 {
+                let out = out.split_at_mut(written.len as usize + more).0;
+                let mut expected = vec![0; out.len()];
+                let len = table.compress(symbols, &mut expected, true);
+                assert_eq!(finish_written(&written, out), len);
+                assert!(len.is_none_or(|len| out.get(..len) == expected.get(..len)));
+            }
+        }
+    }
+
+    #[test]
+    fn four_streams_take_12_symbols_and_18_bytes() {
+        let (table, _) = with_all_lengths();
+        let len = |count, room| table.compress(&vec![1; count], &mut vec![0; room], false);
+        assert_eq!([len(11, 99), len(12, 99)], [None, Some(10)]);
+        assert_eq!([len(12, 17), len(12, 18)], [None, Some(10)]);
+    }
+
+    #[test]
+    fn the_length_of_a_stream_fits_in_16_bits() {
+        let (table, _) = with_all_lengths();
+        let len = |count| table.compress(&vec![0; count], &mut vec![0; 1 << 19], false);
+        assert_eq!(len(4 * 43_689), Some(JUMP_TABLE_LEN + 4 * 65_534));
+        assert_eq!(len(4 * 43_690), None);
+    }
+}

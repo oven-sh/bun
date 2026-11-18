@@ -5,6 +5,7 @@ mod common;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
+use bun_highway::zstd::COUNT_MIN;
 use bun_zstd_decoder::{Dictionary, Error, Output, Result, Status, XxHash64, decompress};
 use bun_zstd_encoder::EndDirective::{Continue, End, Flush};
 use bun_zstd_encoder::{DEFAULT_LEVEL, Encoder, compress, compress_bound};
@@ -180,6 +181,82 @@ fn too_little_room_is_an_error() -> Result<()> {
                 }
             }
         }
+    }
+    Ok(())
+}
+
+/// The kernels give up before the room is exhausted.
+#[test]
+fn literals_fit_in_as_little_room_with_kernels() -> Result<()> {
+    let input: Vec<_> = (noise(8800).chunks(2).map(|it| it[0] & it[1])).collect();
+    let fits = |room| -> Result<_> {
+        let mut room = vec![0; room];
+        let mut out = Output::slice(&mut room);
+        compress(&input, &mut out, 1)?;
+        let len = out.written();
+        drop(out);
+        Ok(summary(&room[..len]))
+    };
+    for count_min in [usize::MAX, 4096] {
+        COUNT_MIN.set(count_min);
+        assert_eq!(fits(3700), Err(Error::DstSizeTooSmall));
+        for room in 3701..3900 {
+            assert_eq!(fits(room)?, (3694, 0x5E63_B143));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn kernels_do_not_change_the_output() -> Result<()> {
+    let input = sample(150_000);
+    for parameters in [[(LEVEL, 1)], [(LEVEL, 17)], [(TARGET_BLOCK_LEN, 1340)]] {
+        for dictionary in [&[], DICTIONARY] {
+            let [mut without, mut with] = [0; 2].map(|_| Vec::with_capacity(4 * input.len()));
+            for (count_min, out) in [(usize::MAX, &mut without), (0, &mut with)] {
+                COUNT_MIN.set(count_min);
+                three_frames(&mut encoder(&parameters, dictionary)?, &input, out)?;
+            }
+            assert!(with == without);
+        }
+    }
+    Ok(())
+}
+
+/// The blocks for the first part gain little each. The codes that all share are long for the last part.
+#[test]
+fn small_blocks_are_given_up_if_the_last_one_grows_too_much() -> Result<()> {
+    const LAST_PART: usize = 83_000;
+    let byte = |(index, random): (usize, &[u8; 3])| match u16::from_le_bytes([random[0], random[1]])
+    {
+        _ if random[2] < 3 => 0,
+        random if index < LAST_PART => (random % 180) as u8,
+        random => (180 + random % 76) as u8,
+    };
+    let noise = noise(300_000);
+    let mut input: Vec<_> = noise.as_chunks().0.iter().enumerate().map(byte).collect();
+    for at in (550..LAST_PART).step_by(550) {
+        input.copy_within(at - 40..at - 35, at);
+    }
+    let mut encoder = encoder(&[(LEVEL, 5), (TARGET_BLOCK_LEN, 1340)], &[])?;
+    let mut out = Vec::with_capacity(compress_bound(input.len()).unwrap());
+    write(&mut encoder, &input, End, usize::MAX, &mut out)?;
+    assert!(out.len() == 12 + input.len() && out.ends_with(&input));
+    Ok(())
+}
+
+#[test]
+fn matches_end_where_blocks_do() -> Result<()> {
+    let input = sample(6000);
+    for (block_len, expected) in [(10, (7723, 0x11B5_CCD9)), (11, (7169, 0x3BD5_8B28))] {
+        let mut encoder = encoder(&[(LEVEL, 19)], &[])?;
+        encoder.set_pledged_len(Some(input.len() as u64))?;
+        let mut out = Vec::with_capacity(2 * input.len());
+        for block in input.chunks(block_len) {
+            write(&mut encoder, block, Flush, usize::MAX, &mut out)?;
+        }
+        write(&mut encoder, &[], End, usize::MAX, &mut out)?;
+        assert_eq!(summary(&out), expected);
     }
     Ok(())
 }

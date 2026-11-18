@@ -642,6 +642,15 @@ describe("zstd codec: BMI2 runtime dispatch", () => {
   test.each(inParts(zstd.encode, ["small"], 20))("compress, part %#", async some => {
     expect(await zstdGolden.encodeDifferences(some)).toBe("");
   });
+  test("as many literals as src/jsc/bindings/highway_zstd.cpp takes where it can", () => {
+    let state = 1;
+    const next = () => (state = (Math.imul(state, 1103515245) + 12345) >>> 0) >>> 24;
+    const frame = Bun.zstdCompressSync(
+      Uint8Array.from({ length: 20_000 }, () => next() & next()),
+      { level: 1 },
+    );
+    expect([frame.length, crc32(frame)]).toEqual([16390, 1591368713]);
+  });
   test.each(inParts(zstd.decode, ["stored"], 40))("decompress, part %#", async some => {
     expect(await zstdGolden.decodeDifferences(some)).toBe("");
   });

@@ -97,3 +97,24 @@ fn count_interleaved<const SETS: usize>(symbols: &[u8]) -> [u32; 256] {
     *counts.at_mut(0) -= 4;
     counts
 }
+
+#[test]
+fn what_the_kernel_refuses_is_counted_without_it() {
+    for bytes in [&b"refused"[..], b"accepted"] {
+        let mut expected = [0; _];
+        add(&mut expected, bytes);
+        assert_eq!(count_bytes(bytes).is_some(), bytes == b"accepted");
+        assert_eq!(count_in_vectors(bytes), expected);
+    }
+}
+
+#[test]
+fn symbols_are_used_up_to_the_last_one_that_occurs() {
+    for (counts, used, largest) in [([0; 4], 1, 0), ([5, 0, 0, 0], 1, 5), ([1, 0, 0, 2], 4, 2)] {
+        let histogram = Histogram::new(counts);
+        assert_eq!(
+            (histogram.used().len(), histogram.largest_count),
+            (used, largest)
+        );
+    }
+}

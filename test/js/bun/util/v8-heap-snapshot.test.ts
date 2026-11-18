@@ -111,3 +111,21 @@ test("v8 heap snapshot labels Web Streams internal edges", async () => {
     expect.arrayContaining(["source", "destination", "reader", "writer", "promise"]),
   );
 });
+
+test("v8 heap snapshot names Web API objects after their class", async () => {
+  expect(await runFixture("wrapper-names")).toEqual({
+    heldAbortController: "AbortController",
+    heldAbortSignal: "AbortSignal",
+    heldCustomEvent: "CustomEvent",
+    heldEvent: "Event",
+    heldEventTarget: "EventTarget",
+    heldFormData: "FormData",
+    heldHeaders: "Headers",
+    heldPerformance: "Performance",
+    heldPerformanceMark: "PerformanceMark",
+    heldProcess: "Process",
+    heldSubtleCrypto: "SubtleCrypto",
+    heldTextEncoder: "TextEncoder",
+    heldURL: "URL",
+  });
+});

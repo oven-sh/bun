@@ -6,6 +6,7 @@
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
+#include "JSDOMPrototype.h"
 #include "JSDOMWrapperCache.h"
 #include "JSPullIntoDescriptor.h"
 #include "JSReadRequest.h"
@@ -22,7 +23,6 @@
 
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ExceptionHelpers.h>
-#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSArrayBufferViewInlines.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -176,7 +176,6 @@ namespace WebCore {
 using namespace JSC;
 using namespace Bun::WebStreams;
 
-static JSC_DECLARE_CUSTOM_GETTER(jsReadableByteStreamControllerConstructorGetter);
 static JSC_DECLARE_CUSTOM_GETTER(jsReadableByteStreamControllerPrototypeGetter_byobRequest);
 static JSC_DECLARE_CUSTOM_GETTER(jsReadableByteStreamControllerPrototypeGetter_desiredSize);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableByteStreamControllerPrototypeFunction_close);
@@ -184,40 +183,10 @@ static JSC_DECLARE_HOST_FUNCTION(jsReadableByteStreamControllerPrototypeFunction
 static JSC_DECLARE_HOST_FUNCTION(jsReadableByteStreamControllerPrototypeFunction_error);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableByteStreamControllerPrototype_inspectCustom);
 
-class JSReadableByteStreamControllerPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSReadableByteStreamControllerPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSReadableByteStreamControllerPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSReadableByteStreamControllerPrototype))) JSReadableByteStreamControllerPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableByteStreamControllerPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSReadableByteStreamControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableByteStreamControllerPrototype, JSReadableByteStreamControllerPrototype::Base);
+using JSReadableByteStreamControllerPrototype = JSDOMPrototype<JSReadableByteStreamController>;
 
 static const HashTableValue JSReadableByteStreamControllerPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsReadableByteStreamControllerConstructorGetter, 0 } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSReadableByteStreamControllerPrototype::constructorGetter, 0 } },
     { "byobRequest"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor, NoIntrinsic, { HashTableValue::GetterSetterType, jsReadableByteStreamControllerPrototypeGetter_byobRequest, 0 } },
     { "desiredSize"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor, NoIntrinsic, { HashTableValue::GetterSetterType, jsReadableByteStreamControllerPrototypeGetter_desiredSize, 0 } },
     { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableByteStreamControllerPrototypeFunction_close, 0 } },
@@ -225,7 +194,7 @@ static const HashTableValue JSReadableByteStreamControllerPrototypeTableValues[]
     { "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableByteStreamControllerPrototypeFunction_error, 0 } },
 };
 
-const ClassInfo JSReadableByteStreamControllerPrototype::s_info = { "ReadableByteStreamController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableByteStreamControllerPrototype) };
+template<> const ClassInfo JSReadableByteStreamControllerPrototype::s_info = { "ReadableByteStreamController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableByteStreamControllerPrototype) };
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableByteStreamControllerPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -240,7 +209,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableByteStreamControllerPrototype_inspectCustom, 
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "ReadableByteStreamController"_s, data));
 }
 
-void JSReadableByteStreamControllerPrototype::finishCreation(VM& vm)
+template<> void JSReadableByteStreamControllerPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSReadableByteStreamController::info(), JSReadableByteStreamControllerPrototypeTableValues, *this);
@@ -249,17 +218,6 @@ void JSReadableByteStreamControllerPrototype::finishCreation(VM& vm)
 }
 
 template<> const ClassInfo JSReadableByteStreamControllerConstructor::s_info = { "ReadableByteStreamController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableByteStreamControllerConstructor) };
-
-template<> JSValue JSReadableByteStreamControllerConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    UNUSED_PARAM(vm);
-    return globalObject.functionPrototype();
-}
-
-template<> void JSReadableByteStreamControllerConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    initializeBaseProperties(vm, 0, "ReadableByteStreamController"_s, JSReadableByteStreamController::prototype(vm, globalObject));
-}
 
 const ClassInfo JSReadableByteStreamController::s_info = { "ReadableByteStreamController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableByteStreamController) };
 
@@ -295,9 +253,7 @@ Structure* JSReadableByteStreamController::createStructure(VM& vm, JSGlobalObjec
 
 JSObject* JSReadableByteStreamController::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSReadableByteStreamControllerPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
-    structure->setMayBePrototype(true);
-    return JSReadableByteStreamControllerPrototype::create(vm, &globalObject, structure);
+    return JSReadableByteStreamControllerPrototype::create(vm, globalObject, globalObject.objectPrototype());
 }
 
 JSObject* JSReadableByteStreamController::prototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -492,16 +448,6 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onRSByteControllerPullRejected, (JS
 }
 
 // Prototype accessors & methods.
-
-JSC_DEFINE_CUSTOM_GETTER(jsReadableByteStreamControllerConstructorGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSReadableByteStreamControllerPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(globalObject, scope);
-    return JSValue::encode(JSReadableByteStreamController::getConstructor(vm, prototype->globalObject()));
-}
 
 JSC_DEFINE_CUSTOM_GETTER(jsReadableByteStreamControllerPrototypeGetter_byobRequest, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
 {

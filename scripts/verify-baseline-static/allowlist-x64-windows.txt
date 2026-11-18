@@ -770,6 +770,17 @@ bun::N_AVX3_ZEN4::ParseMappingsImpl                                  [AVX, AVX2,
 
 
 # ----------------------------------------------------------------------------
+# Bun Brotli encoder (src/jsc/bindings/highway_brotli.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (5 symbols)
+# ----------------------------------------------------------------------------
+bun::N_AVX2::BrotliAddEntries                                        [AVX, AVX2, BMI1, BMI2]
+bun::N_AVX2::BrotliEstimateCosts                                     [AVX, AVX2, BMI1, BMI2]
+bun::N_AVX2::BrotliFindSwitches                                      [AVX, AVX2, BMI1, BMI2]
+bun::N_AVX2::BrotliRemovePairs                                       [AVX, AVX2, BMI1, BMI2]
+bun::N_AVX2::BrotliSortLeaves                                        [AVX, AVX2, BMI1, BMI2]
+
+
+# ----------------------------------------------------------------------------
 # Bun JPEG transforms and color conversions (src/jsc/bindings/highway_jpeg.cpp).
 # Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (6 symbols)
 # ----------------------------------------------------------------------------
@@ -811,6 +822,20 @@ bun::N_AVX3::Adler32                 [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BM
 bun::N_AVX3::CopyAndAdler32          [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2]
 bun::N_AVX3_DL::Adler32              [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
 bun::N_AVX3_DL::CopyAndAdler32       [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
+
+
+# ----------------------------------------------------------------------------
+# Bun Brotli (src/brotli).
+# Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (8 symbols)
+# ----------------------------------------------------------------------------
+bun_brotli::decoder::commands::read_many_literals::bmi2      [BMI2]
+bun_brotli::decoder::commands::run_fast_in_contexts::bmi2    [BMI2]
+bun_brotli::decoder::commands::run_fast_in_one_tree::bmi2    [BMI2]
+bun_brotli::decoder::prefix_code::read_symbol_lengths::bmi2  [BMI2]
+bun_brotli::encoder::bit_stream::write_indexed::bmi2         [BMI2]
+bun_brotli::encoder::bit_stream::write_literals::bmi2        [BMI2]
+bun_brotli::encoder::fragment::write_items::bmi2             [BMI2]
+bun_brotli::encoder::fragment::write_literals::bmi2          [BMI2]
 
 
 # ----------------------------------------------------------------------------

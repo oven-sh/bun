@@ -29,7 +29,7 @@ pub use atomic_cell::{Atom, AtomicCell, ThreadCell};
 pub use c_str_list::{CStrList, CStrRef, CStringList};
 
 /// Shared state-machine tag for the streaming (de)compressors in
-/// `bun_brotli` / `bun_zstd`.
+/// `bun_zstd`.
 pub mod compress {
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum State {
@@ -332,6 +332,13 @@ pub mod vec {
     #[inline]
     pub fn extend_from_fn<T>(v: &mut Vec<T>, n: usize, f: impl FnMut(usize) -> T) {
         v.extend((0..n).map(f));
+    }
+
+    /// `vec![0; len]` that reports a refusal. The allocator does not touch pages that are new from the OS.
+    pub fn try_zeroed<T: bun_pod::Zeroable>(len: usize) -> Result<Vec<T>, bun_alloc::AllocError> {
+        let zeroed = Box::<[T]>::try_new_zeroed_slice(len).map_err(|_| bun_alloc::AllocError)?;
+        // SAFETY: `T: Zeroable` asserts the all-zero bit pattern is a valid `T`.
+        Ok(unsafe { zeroed.assume_init() }.into_vec())
     }
 
     /// Extend `v` by `n` `T::default()` elements and return a mutable slice

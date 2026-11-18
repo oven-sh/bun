@@ -796,6 +796,17 @@ _ZN3bun11N_AVX3_ZEN417ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                 [
 
 
 # ----------------------------------------------------------------------------
+# Bun Brotli encoder (src/jsc/bindings/highway_brotli.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (5 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun6N_AVX2L16BrotliAddEntriesEPdjPjm                                       [AVX, AVX2, BMI1, BMI2]
+_ZN3bun6N_AVX2L16BrotliSortLeavesEPKmmbPm                                      [AVX, AVX2, BMI1, BMI2]
+_ZN3bun6N_AVX2L17BrotliRemovePairsEPdPjmjj                                     [AVX, AVX2, BMI1, BMI2]
+_ZN3bun6N_AVX2L18BrotliFindSwitchesEPKtmPKdmmdPdPhS6_                          [AVX, AVX2, BMI1, BMI2]
+_ZN3bun6N_AVX2L19BrotliEstimateCostsEPKjPKS2_mPKmS2_S2_PdjS7_                  [AVX, AVX2, BMI1, BMI2]
+
+
+# ----------------------------------------------------------------------------
 # Bun JPEG transforms and color conversions (src/jsc/bindings/highway_jpeg.cpp).
 # Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (6 symbols)
 # ----------------------------------------------------------------------------
@@ -837,6 +848,20 @@ _ZN3bun6N_AVX3L7Adler32EjPKhm                    [AVX, AVX2, AVX512BW, AVX512F, 
 _ZN3bun6N_AVX3L14CopyAndAdler32EjPKhPhm          [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2]
 _ZN3bun9N_AVX3_DLL7Adler32EjPKhm                 [AVX, AVX2, AVX512BW, AVX512F, AVX512_VNNI, BMI2]
 _ZN3bun9N_AVX3_DLL14CopyAndAdler32EjPKhPhm       [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
+
+
+# ----------------------------------------------------------------------------
+# Bun Brotli (src/brotli).
+# Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (8 symbols)
+# ----------------------------------------------------------------------------
+_RNvNvNtNt<rust-hash>10bun_brotli7decoder8commands18read_many_literals4bmi2       [BMI2]
+_RNvNvNtNt<rust-hash>10bun_brotli7decoder8commands20run_fast_in_contexts4bmi2     [BMI2]
+_RNvNvNtNt<rust-hash>10bun_brotli7decoder8commands20run_fast_in_one_tree4bmi2     [BMI2]
+_RNvNvNtNt<rust-hash>10bun_brotli7decoder11prefix_code19read_symbol_lengths4bmi2  [BMI2]
+_RNvNvNtNt<rust-hash>10bun_brotli7encoder10bit_stream13write_indexed4bmi2         [BMI2]
+_RNvNvNtNt<rust-hash>10bun_brotli7encoder10bit_stream14write_literals4bmi2        [BMI2]
+_RNvNvNtNt<rust-hash>10bun_brotli7encoder8fragment11write_items4bmi2              [BMI2]
+_RNvNvNtNt<rust-hash>10bun_brotli7encoder8fragment14write_literals4bmi2           [BMI2]
 
 
 # ----------------------------------------------------------------------------

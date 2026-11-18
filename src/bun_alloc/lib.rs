@@ -88,7 +88,6 @@ pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 // ── Allocator modules: per-module disposition (PORTING.md §Allocators) ──
 //
 //   MimallocArena            → prefer `bun_alloc::Arena` (= bumpalo::Bump)
-//   heap_breakdown           → macOS malloc_zone_* per-tag heaps (debug builds)
 //   basic                    → `impl GlobalAlloc for Mimalloc` above is the canonical impl
 pub mod stack_fallback;
 
@@ -1142,25 +1141,7 @@ mod __bss_macro_smoke {
     crate::bss_map_inner! { _mi : u32, 4, true }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// heap_breakdown — macOS `malloc_zone_*` per-tag heaps (debug-only)
-//
-// Full port lives in `heap_breakdown.rs`. It compiles on all targets: on
-// non-macOS the FFI surface is `unreachable!()` behind `ENABLED == false`.
-// ──────────────────────────────────────────────────────────────────────────
-
-#[path = "heap_breakdown.rs"]
 pub mod heap_breakdown;
-
-/// Comptime-literal form of `heap_breakdown::get_zone` — expands a per-name `OnceLock`.
-#[macro_export]
-macro_rules! get_zone {
-    ($name:literal) => {{
-        static ZONE: ::std::sync::OnceLock<&'static $crate::heap_breakdown::Zone> =
-            ::std::sync::OnceLock::new();
-        *ZONE.get_or_init(|| $crate::heap_breakdown::Zone::init($name))
-    }};
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // IndexMap / Result

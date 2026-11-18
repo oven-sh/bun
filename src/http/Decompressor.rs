@@ -72,7 +72,7 @@ impl ZlibDecoder {
 }
 
 impl Decompressor {
-    // Note: each variant's `Drop` releases the underlying state, so an
+    // Note: each variant's `Drop` releases the codec state, so an
     // explicit `Drop` is unnecessary. Callers that want a mid-lifecycle reset
     // assign `*self = Decompressor::None`.
 
@@ -114,9 +114,7 @@ impl Decompressor {
                 ) {
                     return Err(bun_brotli::Error::BrotliFailedToLoad.into());
                 }
-                *self = Decompressor::Brotli(Box::new(bun_brotli::StreamingDecoder::new(
-                    &Default::default(),
-                )?));
+                *self = Decompressor::Brotli(Box::default());
             }
             Encoding::Zstd => {
                 *self = Decompressor::Zstd(Box::new(bun_zstd::StreamingDecoder::new()?));

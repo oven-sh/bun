@@ -359,11 +359,7 @@ impl<P> Client<P> {
         matches!(self.phase(), Some(Phase::Dialing))
     }
 
-    pub fn is_asked(&self) -> bool {
-        matches!(&self.state, State::Active(active) if matches!(active.purpose, Purpose::Asked))
-    }
-
-    fn is_preconnect(&self) -> bool {
+    pub fn is_preconnect(&self) -> bool {
         matches!(&self.state, State::Active(active) if matches!(active.purpose, Purpose::Preconnect))
     }
 

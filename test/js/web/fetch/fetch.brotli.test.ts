@@ -116,27 +116,44 @@ test("fetch brotli streaming body delivers the whole flushed chunk at once", asy
   expect(rest).toBe(secondLine);
 });
 
-test("fetch takes a large-window response, DecompressionStream does not", async () => {
-  const largeWindow = brotliCompressSync("hello hello hello", {
-    params: {
-      [constants.BROTLI_PARAM_QUALITY]: 5,
-      [constants.BROTLI_PARAM_LARGE_WINDOW]: 1,
-      [constants.BROTLI_PARAM_LGWIN]: 25,
-    },
-  });
+test("fetch takes the same window sizes as DecompressionStream", async () => {
+  const compress = (windowBits: number, largeWindow: number) =>
+    brotliCompressSync("hello hello hello", {
+      params: {
+        [constants.BROTLI_PARAM_QUALITY]: 5,
+        [constants.BROTLI_PARAM_LARGE_WINDOW]: largeWindow,
+        [constants.BROTLI_PARAM_LGWIN]: windowBits,
+      },
+    });
+  const bodies = {
+    "/10": compress(10, 0),
+    "/24": compress(24, 0),
+    "/large-10": compress(10, 1),
+    "/large-25": compress(25, 1),
+  };
   using server = Bun.serve({
     port: 0,
-    fetch: () => new Response(largeWindow, { headers: { "Content-Encoding": "br" } }),
+    fetch: req => new Response(bodies[new URL(req.url).pathname], { headers: { "Content-Encoding": "br" } }),
   });
-  expect(await (await fetch(server.url)).text()).toBe("hello hello hello");
+  const byFetch = (path: string) => fetch(new URL(path, server.url)).then(res => res.text());
+  const byStream = (path: string) =>
+    fetch(new URL(path, server.url), { decompress: false }).then(res =>
+      res.body!.pipeThrough(new DecompressionStream("brotli")).text(),
+    );
 
-  const raw = await fetch(server.url, { decompress: false });
-  await expect(raw.body!.pipeThrough(new DecompressionStream("brotli")).text()).rejects.toMatchObject({
-    name: "TypeError",
-    code: "ERR__ERROR_FORMAT_WINDOW_BITS",
-    message: "brotli decode failed",
-    cause: { code: "ERR__ERROR_FORMAT_WINDOW_BITS", message: "_ERROR_FORMAT_WINDOW_BITS" },
-  });
+  for (const path of ["/10", "/24"]) {
+    expect(await byFetch(path)).toBe("hello hello hello");
+    expect(await byStream(path)).toBe("hello hello hello");
+  }
+  for (const path of ["/large-10", "/large-25"]) {
+    await expect(byFetch(path)).rejects.toMatchObject({ code: "BrotliDecompressionError" });
+    await expect(byStream(path)).rejects.toMatchObject({
+      name: "TypeError",
+      code: "ERR__ERROR_FORMAT_WINDOW_BITS",
+      message: "brotli decode failed",
+      cause: { code: "ERR__ERROR_FORMAT_WINDOW_BITS", message: "_ERROR_FORMAT_WINDOW_BITS" },
+    });
+  }
 });
 
 test.each(["with the stream", "after the stream"])("fetch ignores bytes that follow the end, sent %s", async when => {

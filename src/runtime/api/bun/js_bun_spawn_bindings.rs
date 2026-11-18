@@ -1188,7 +1188,7 @@ fn spawn_maybe_sync(
         weak_file_sink_stdin_ptr: Cell::new(None),
         abort_handle: bun_jsc::AbortHandle::for_owner::<SubprocessT<'static>>(),
         context: cx.context().id(),
-        timer_keep_alive: Cell::new(None),
+        timer_hold: Cell::new(None),
         event_loop_timer: crate::timer::EventLoopTimer::init_paused(
             crate::timer::EventLoopTimerTag::SubprocessTimeout,
         ),
@@ -1423,9 +1423,8 @@ fn spawn_maybe_sync(
             // owned by the boxed `Subprocess` and stays at a stable address
             // until `Subprocess::finalize` removes it from the heap.
             unsafe { jsc_vm.timer_insert(&raw const subprocess.event_loop_timer) };
-            subprocess
-                .timer_keep_alive
-                .set(Some(crate::timer::TimerKeepAlive::new()));
+            let hold = crate::timer::LoopHold::new(jsc_vm, crate::timer::WaitsIn::Heap);
+            subprocess.timer_hold.set(Some(hold));
         }
 
         debug_assert!(out != JSValue::ZERO);
@@ -1594,8 +1593,8 @@ fn spawn_maybe_sync(
                 // comparable with `now`.
                 if abort_signal_timeout.event_loop_timer.state.get()
                     == crate::timer::EventLoopTimerState::ACTIVE
-                    && abort_signal_timeout.event_loop_timer.in_heap.get()
-                        == crate::timer::InHeap::Regular
+                    && abort_signal_timeout.event_loop_timer.clock.get()
+                        == crate::timer::Clock::Real
                 {
                     let next_ts = abort_signal_timeout.event_loop_timer.next.get();
                     if user_timespec.eql(&Timespec::EPOCH)

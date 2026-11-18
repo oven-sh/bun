@@ -38,7 +38,7 @@ use super::cares_jsc;
 use crate::generated_bindgen::dns::LookupOptions;
 use crate::generated_bindgen::dns_internals::{ResolverOptions, js_DNSResolver};
 use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, TimerKeepAlive};
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, LoopHold, WaitsIn};
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_cares_sys::parse_ip;
 use c_ares::RecordType;
@@ -1635,7 +1635,7 @@ pub(crate) struct Resolver {
 
     pub(crate) event_loop_timer: EventLoopTimer,
     /// Held while the timer is armed.
-    timer_ref: JsCell<Option<(TimerKeepAlive, RefPtr<Resolver>)>>,
+    timer_ref: JsCell<Option<(LoopHold, RefPtr<Resolver>)>>,
 
     pending: enum_map::EnumMap<QueryKind, PendingCache>,
     /// Indexed by the slot in `pending[QueryKind::HostNative]`.
@@ -1908,8 +1908,8 @@ impl Resolver {
             return;
         }
 
-        self.timer_ref
-            .set(Some((TimerKeepAlive::new(), self.ref_guard())));
+        let hold = LoopHold::new(self.vm(), WaitsIn::Heap);
+        self.timer_ref.set(Some((hold, self.ref_guard())));
         let now_ts = now
             .copied()
             .unwrap_or_else(|| bun::timespec::now(bun::TimespecMockMode::ForceRealTime));

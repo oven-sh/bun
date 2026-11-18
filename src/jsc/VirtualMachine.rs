@@ -1130,15 +1130,6 @@ impl VirtualMachine {
         self.graph_contexts.get().get(&id).map(|context| &**context)
     }
 
-    /// Whether a timer or pool job made for `context` under `generation` (the
-    /// [`test_isolation_generation`](Self::test_isolation_generation) of then) has outlived the
-    /// script it would continue: its context has stopped, or `bun test --isolate` has moved on to
-    /// another file since.
-    #[inline]
-    pub fn has_outlived_its_script(&self, context: crate::ContextId, generation: u32) -> bool {
-        generation != self.test_isolation_generation.get() || !self.is_context_live(context)
-    }
-
     /// Whether the context `id` names has not stopped.
     #[inline]
     pub fn is_context_live(&self, id: crate::ContextId) -> bool {
@@ -2359,7 +2350,7 @@ impl VirtualMachine {
         if let Some(hooks) = hooks {
             (hooks.stop_watches_for_vm_teardown)();
             // Drop every TimeoutObject/ImmediateObject's heap node, JS pin and
-            // +1 while runtime state and the JSC heap are alive. The heap itself
+            // loop ref while runtime state and the JSC heap are alive. The heap itself
             // (and the loop handle it embeds) stays up: JSC's own RunLoop timers
             // — GC activity callbacks, sweeper, deferred work — are WTFTimers on
             // this heap and keep being scheduled until ~VM returns.
@@ -2716,7 +2707,7 @@ pub struct RuntimeHooks {
     /// `FakeTimers::min_delay_ms()` of the calling thread's VM. A slot for the same reason as `timer_insert`.
     pub timer_min_delay_ms: fn() -> u32,
     /// `FakeTimers::abort_signal_timeout_clock()` of the calling thread's VM.
-    pub abort_signal_timeout_clock: fn() -> bun_core::TimespecMockMode,
+    pub abort_signal_timeout_clock: fn() -> bun_event_loop::EventLoopTimer::Clock,
     /// Reads the calling thread's `Timer::All`; see `timer_insert`.
     pub timers_left: fn() -> TimersLeft,
     /// `RareData.defaultClientSslCtx()` — lazy default-trust-store client
@@ -2810,7 +2801,7 @@ pub struct RuntimeHooks {
     pub retroactively_report_discovered_tests:
         fn(agent: &mut crate::debugger::TestReporterHandle, next_test_id: i32) -> i32,
     /// Cancel every `TimeoutObject` / `ImmediateObject` still in the calling
-    /// thread's `timer::All` heap so their JS pins and in-heap `+1` refs drop
+    /// thread's `timer::All` heap so their JS pins drop
     /// before the GC sweep. `timer::All` lives in `bun_runtime` (forward-dep);
     /// callers (`global_exit`, `WebWorker::shutdown`) are in this crate.
     ///
@@ -2921,7 +2912,7 @@ impl VirtualMachine {
 
     /// The clock that an `AbortSignal.timeout()` armed now runs on.
     #[inline]
-    pub fn abort_signal_timeout_clock() -> bun_core::TimespecMockMode {
+    pub fn abort_signal_timeout_clock() -> bun_event_loop::EventLoopTimer::Clock {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         (hooks.abort_signal_timeout_clock)()
     }

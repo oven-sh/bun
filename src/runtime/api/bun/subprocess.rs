@@ -118,7 +118,7 @@ pub struct Subprocess<'a> {
     /// The context of the script that spawned the child: its exit is reported there.
     pub(crate) context: bun_jsc::ContextId,
 
-    pub(crate) timer_keep_alive: Cell<Option<crate::timer::TimerKeepAlive>>,
+    pub(crate) timer_hold: Cell<Option<crate::timer::LoopHold>>,
     /// Intrusive timer node; `dispatch.rs` recovers the container from it.
     pub(crate) event_loop_timer: EventLoopTimer,
     pub(crate) kill_signal: SignalCode,
@@ -463,17 +463,13 @@ impl Subprocess<'_> {
     }
 
     pub(crate) fn timeout_callback(&self) {
-        self.timer_keep_alive.set(None);
-        if self.event_loop_timer.state.get() == EventLoopTimerState::CANCELLED {
-            return;
-        }
+        self.timer_hold.set(None);
         if self.has_exited() {
             self.event_loop_timer
                 .state
                 .set(EventLoopTimerState::CANCELLED);
             return;
         }
-        self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
         let _ = self.try_kill(self.kill_signal);
     }
 
@@ -700,7 +696,7 @@ impl Subprocess<'_> {
         self.clear_abort_signal();
 
         self.event_loop_timer.disarm();
-        self.timer_keep_alive.set(None);
+        self.timer_hold.set(None);
 
         jsc_vm.on_subprocess_exit(&self.process);
 
@@ -980,7 +976,7 @@ impl Subprocess<'_> {
 
         self.process().detach();
         self.event_loop_timer.disarm();
-        self.timer_keep_alive.set(None);
+        self.timer_hold.set(None);
 
         self.stdout_maxbuf.set(None);
         self.stderr_maxbuf.set(None);

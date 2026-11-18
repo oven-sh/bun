@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 // Temporary: prints a table.
 test.skipIf(!process.env.BUN_SIMD_COMPARE)(
-  "Brotli against main",
+  "Against main",
   async () => {
     await using proc = Bun.spawn({
       cmd: [

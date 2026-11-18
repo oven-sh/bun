@@ -1404,7 +1404,7 @@ it("makes do with 256 prefix codes for literals", () => {
 
 it.each([
   ["all at once", 500, "33828 7f91fc2f"],
-  // This digest is Bun's own.
+  // Changes with that step. Checked against google/brotli with the same step added.
   ["in larger batches first", 400, "28077 d85580ba"],
 ])("combines the prefix codes for literals %s, for parts of %d bytes", (_, size, expected) => {
   let context = 0;

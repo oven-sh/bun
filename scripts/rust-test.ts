@@ -33,6 +33,7 @@ const repo = resolve(import.meta.dirname, "..");
 const crates = [
   "bun_aot",
   "bun_base64",
+  "bun_brotli",
   "bun_builtin_sources",
   "bun_bundler",
   "bun_collections",

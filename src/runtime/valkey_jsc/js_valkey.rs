@@ -1121,9 +1121,11 @@ impl JSValkeyClient {
     /// Keep the event loop alive, or don't keep it alive.
     fn update_poll_ref(&self, object: Object<'_>) {
         let client = self.client.get();
-        let has_work = client.has_pending_commands() || object.subscription_count() > 0;
-        let is_awaited = || !client.is_connected() && (client.is_asked() || object.has_handler());
-        if client.is_active() && (has_work || is_awaited()) {
+        let is_idle = client.is_connected()
+            && !client.has_pending_commands()
+            && object.subscription_count() == 0;
+        let is_awaited = || !client.is_preconnect() || object.has_handler();
+        if client.is_active() && !is_idle && is_awaited() {
             self.poll_ref.ref_(bun_io::js_vm_ctx());
         } else {
             self.poll_ref.unref(bun_io::js_vm_ctx());

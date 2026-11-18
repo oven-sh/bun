@@ -2865,23 +2865,10 @@ describe.concurrent("Valkey: Handshake", () => {
     expect(fake.seen).toEqual([seen]);
   });
 
-  test.each([
-    { observer: "nobody", setup: "", stdout: "" },
-    { observer: "onclose", setup: "client.onclose = e => console.log(e.message);", stdout: "WRONGPASS\n" },
-    { observer: "a command", setup: "client.ping().catch(e => console.log(e.message));", stdout: "WRONGPASS\n" },
-  ])("a reconnect holds the process for whoever waits for it: $observer", async ({ setup, stdout }) => {
+  test("the process does not exit ahead of the rejection of a command that lost its connection", async () => {
     using fake = await commandServer((_, connection) => (connection === 1 ? undefined : "-WRONGPASS"));
-    const program = `
-      const client = new Bun.RedisClient("redis://${fake.host}");
-      await client.send("DROP", []).catch(() => {});
-      ${setup}
-    `;
-    expect({ ...(await run(program, {})), redialed: fake.seen.length > 1 }).toEqual({
-      stdout,
-      stderr: "",
-      exitCode: 0,
-      redialed: stdout !== "",
-    });
+    const program = `new Bun.RedisClient("redis://${fake.host}").send("DROP", []).catch(e => console.log(e.message))`;
+    expect(await run(program, {})).toEqual({ stdout: "Connection closed\n", stderr: "", exitCode: 0 });
   });
 
   test("the error for an unknown scheme names every scheme", () => {

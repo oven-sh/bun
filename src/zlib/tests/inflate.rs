@@ -1234,12 +1234,14 @@ fn a_long_period_ends_where_the_output_or_the_input_does() {
 
 #[test]
 fn what_is_in_a_vec_already_is_out_of_reach() {
-    for (written, distance) in [(0, 1), (5, 6), (300, 301)] {
-        for len in [3, 258] {
+    for written in [0, 5, 300] {
+        let distance = written + 1;
+        // With less, a step ends in front of the match.
+        for (len, spare) in [(3, 9999), (258, 9999), (258, SPARE_CAPACITY - 1)] {
             let mut stream = Writer::default();
             stream.fixed(true).literals(&vec![7; written]);
             let stream = stream.copy(len, distance).literals(&[7; 30]).finish();
-            let mut out = Vec::with_capacity(9999);
+            let mut out = Vec::with_capacity(999 + written + spare);
             out.resize(999, 7);
             let status = raw_with(&[]).inflate_to_vec(&mut &stream[..], &mut out, usize::MAX);
             assert_eq!(status, Err(Damage::DistanceTooFarBack.into()));
@@ -1269,6 +1271,18 @@ fn a_period_that_a_stored_block_has_broken_is_over() {
         let result = run(&mut raw_with(&[]), &stream, false, sizes);
         assert!(result.bytes == plain::inflate(&stream, &[]).bytes, "{len}");
     }
+}
+
+#[test]
+fn a_period_that_goes_on_in_the_next_block_comes_last_in_the_checksum() {
+    let mut raw = Writer::default();
+    raw.fixed(false).literals(b"abc").literals(&[7; 300]);
+    raw.end_block().fixed(true).copy(258, 1).end_block();
+    let raw = raw.finish();
+    let stream = in_zlib(&raw, &plain::inflate(&raw, &[]).bytes, None);
+    let mut inflater = Inflater::new(Container::Zlib);
+    let status = inflater.inflate_to_vec(&mut &stream[..], &mut Vec::with_capacity(999), 999);
+    assert_eq!(status, Ok(Status::StreamEnd));
 }
 
 #[test]

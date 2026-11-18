@@ -46,7 +46,10 @@ impl Chains {
         debug_assert!(self.heads.iter().all(|&head| head == 0));
     }
 
-    pub(super) fn reset_rolling_hash(&mut self) {
+    /// For another stream. The heads have been cleared.
+    pub(super) fn start_over(&mut self) {
+        self.links.truncate(MIN_LINKS);
+        self.links.fill(0);
         self.rolling_hash = 0;
     }
 

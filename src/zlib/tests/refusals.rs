@@ -371,6 +371,25 @@ fn a_vec_that_cannot_grow_is_the_end_of_the_stream() {
 }
 
 #[test]
+fn also_in_the_middle_of_a_match() {
+    let mut stream = Writer::default();
+    stream.stored(false, &[7; 4990]).fixed(true).copy(99, 80);
+    let stream = stream.end_block().finish();
+    // The window is allocated in the first call that has to keep something.
+    for (earlier, grants) in [(0, 1), (999, 0)] {
+        let (mut inflater, mut out) = (Inflater::new(Container::Raw), Vec::with_capacity(5000));
+        let (mut first, mut rest) = stream.split_at(earlier);
+        let status = inflater.inflate_to_vec(&mut first, &mut out, usize::MAX);
+        assert_eq!(status, Ok(Status::NeedsInput));
+        GRANTS.set(Some((grants, 2)));
+        let refused = inflater.inflate_to_vec(&mut rest, &mut out, usize::MAX);
+        assert!(matches!(refused, Err(Error::Alloc(_))) && out == [7; 5000]);
+        let again = inflater.inflate_to_vec(&mut rest, &mut out, usize::MAX);
+        assert_eq!((again, out.len()), (refused, 5000));
+    }
+}
+
+#[test]
 fn reset_and_wait_keeps_nothing_after_a_refusal() {
     let stream = raw(&Random::new(6).mixed(50_000, 512), 6, 8);
     for grants in 0..3 {

@@ -47,6 +47,12 @@ impl Window {
         (self.position, self.end, self.block_start, self.unhashed) = (0, 0, 0, 0);
     }
 
+    /// After `rewind()`.
+    pub(super) fn forget_bytes(&mut self) {
+        debug_assert_eq!(self.end, 0);
+        self.bytes.clear();
+    }
+
     #[inline(always)]
     pub(super) fn lookahead(&self) -> u32 {
         self.end - self.position

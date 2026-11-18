@@ -374,6 +374,9 @@ impl Inflater {
         out: &mut Output<impl Target>,
         stops_at_block: bool,
     ) -> Result<Status> {
+        if let State::Failed(error) = self.state {
+            return Err(error);
+        }
         if self.run.is_none() {
             self.window.resume(self.reach())?;
         }
@@ -752,10 +755,10 @@ impl Inflater {
             && let Some(tables) = current_tables(&self.dynamic, fixed)
             && let Some(taken) = codes::take_unless_match(tables, bits, out.room())
         {
-            let NoMatch::Literal(literal) = taken else {
+            let NoMatch::Literal(literals) = taken else {
                 return true;
             };
-            out.target.append(&[literal], &mut self.checksum);
+            out.target.append(&literals[..1], &mut self.checksum);
             out.unrecorded += 1;
         }
         false
@@ -792,15 +795,18 @@ impl Inflater {
         }
         let tables = current_tables(&self.dynamic, fixed).ok_or(Error::Internal)?;
         let mut is_long_block = false;
-        while let (room @ SLACK.., history) = (out.room(), out.len().min(self.max_distance))
+        while let (room @ SLACK.., written) = (out.room(), out.len())
             && let Some(vec) = out.target.vec()
         {
-            let start = vec.len();
+            let (start, history) = (vec.len(), written.min(self.max_distance));
             let result = if is_long_block
                 && let Some(repeated) = LongestMatch::peek(tables, bits)
-                && repeated.distance <= history
-                && let Some(periods_len) = last_periods_len(vec, repeated.distance)
+                && repeated.distance <= self.max_distance
+                && let Some(periods_len) =
+                    last_periods_len(vec.split_at(start - written).1, repeated.distance)
             {
+                // As a step of this block came before.
+                debug_assert_eq!(out.unchecked, 0);
                 let len = repeated.take_all(bits, 0, room - MAX_MATCH_LEN);
                 append_periods(vec, repeated.distance, periods_len, len, &mut self.checksum);
                 Ok(None)

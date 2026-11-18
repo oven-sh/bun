@@ -300,7 +300,7 @@ impl Deflater {
         .map_err(|_| Error::Alloc(bun_alloc::AllocError))
     }
 
-    /// For another stream.
+    /// For another stream, for which it is like a new one with the last parameters.
     pub fn reset(&mut self) {
         self.phase = Phase::Header {
             dictionary_id: None,
@@ -308,7 +308,8 @@ impl Deflater {
         self.has_started = false;
         self.last_flush = None;
         self.forget_history();
-        self.chains.reset_rolling_hash();
+        self.window.forget_bytes();
+        self.chains.start_over();
         self.missed_slides = 0;
         self.block.clear();
         self.pending.clear();

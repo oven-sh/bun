@@ -1,4 +1,4 @@
-//! DEFLATE (RFC 1951), bare or in a zlib (RFC 1950) or gzip (RFC 1952) container. Derived from zlib-ng (LICENSE.md).
+//! DEFLATE (RFC 1951), bare or in a zlib (RFC 1950) or gzip (RFC 1952) container. An altered version of parts of zlib-ng (LICENSE).
 #![forbid(unsafe_code)]
 // Compressed data comes from anywhere and a panic aborts the process.
 #![deny(

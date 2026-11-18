@@ -77,13 +77,20 @@ fn check_stream(container: Container, stream: &mut [u8], dictionary: &[u8], inpu
     assert_eq!(found, trailer);
 }
 
+/// For the next stream.
+#[derive(Clone, Copy)]
+enum Next {
+    New,
+    Reset,
+}
+
 /// Calls in any order, with little room or none. Returns a hash of what each has read, written and returned.
-fn session(level: i32, mut strategy: i32, seed: u64) -> u32 {
+fn session(level: i32, mut strategy: i32, seed: u64, next: Next) -> u32 {
     let mut random = Random::new(seed << 8 | (level << 4 | strategy) as u64);
     let window_bits = random.pick(&[9, 9, 9, 10, 10, 11, 12, 15]);
     let size = 1 << window_bits;
     let container = random.pick(&[Container::Raw, Container::Zlib, Container::Gzip]);
-    let options = options(level, strategy, window_bits, 1 + random.below(9) as u8);
+    let mut options = options(level, strategy, window_bits, 1 + random.below(9) as u8);
     let mut deflater = Deflater::new(container, options).unwrap();
     let len = random.pick(&[10, size / 2, 3 * size, 6 * size]).min(80_000);
     let source = random.mixed(len, size);
@@ -134,12 +141,12 @@ fn session(level: i32, mut strategy: i32, seed: u64) -> u32 {
                     random.pick(&[any, any, 0, level]),
                     random.pick(&[strategy, other]),
                 );
-                let is_set = deflater
-                    .set_params(new.0.try_into().unwrap(), new.1.try_into().unwrap())
-                    .unwrap();
+                let params = (new.0.try_into().unwrap(), new.1.try_into().unwrap());
+                let is_set = deflater.set_params(params.0, params.1).unwrap();
                 note(format!("{is_set}"));
                 if is_set {
                     strategy = new.1;
+                    (options.level, options.strategy) = params;
                 }
             }
         }
@@ -164,7 +171,10 @@ fn session(level: i32, mut strategy: i32, seed: u64) -> u32 {
             check_stream(container, &mut out, dictionary, input);
             note(format!("{}", crc32(0, &out)));
         }
-        deflater.reset();
+        match next {
+            Next::New => deflater = Deflater::new(container, options).unwrap(),
+            Next::Reset => deflater.reset(),
+        }
     }
     hash
 }
@@ -175,47 +185,55 @@ fn calls_in_any_order_give_what_zlib_ng_gives() {
     #[rustfmt::skip]
     const EXPECTED: [[u32; 5]; 10] = [
         [0x7456_c348, 0xca2c_f35a, 0xb7a3_f7e0, 0x50b8_fec1, 0x4721_0046],
-        [0xb6d8_b25b, 0xa7d2_807a, 0x7a9a_3e41, 0x2bb7_0661, 0x19c3_0010],
-        [0xf04f_7c39, 0xad33_f143, 0x04fe_9f99, 0x0950_ca5f, 0x2ffd_c193],
-        [0x4be2_87ba, 0xd17a_875d, 0xdfa5_0dae, 0xfd0e_4369, 0xda68_da84],
-        [0x2bb1_09fb, 0xec3f_1cb7, 0xcfc5_afa2, 0xbe46_838f, 0x7867_1b97],
+        [0xb6d8_b25b, 0xa7d2_807a, 0x7a9a_3e41, 0x2bb7_0661, 0x7b2f_62e2],
+        [0xf04f_7c39, 0xad33_f143, 0x04fe_9f99, 0x0950_ca5f, 0x51d2_101f],
+        [0x4be2_87ba, 0x7ae5_df72, 0xdfa5_0dae, 0xfd0e_4369, 0xda68_da84],
+        [0xc751_9b89, 0xeca7_820b, 0xcfc5_afa2, 0xbe46_838f, 0x7867_1b97],
         [0x55cc_c07e, 0x3203_5aa3, 0x90a4_f9a8, 0xb7fe_6797, 0x67cf_6dbe],
-        [0x4fa1_d2a0, 0xbdc6_1165, 0xca25_1029, 0x3e5d_3e03, 0x4aa9_9c4f],
-        [0x6219_9654, 0x02e4_9533, 0x047b_ed37, 0x4fd7_950e, 0x72e1_e0a0],
-        [0x0d8d_2b25, 0xfa24_0a61, 0xe252_515d, 0x3733_a274, 0x7bdb_3e1e],
+        [0x4fa1_d2a0, 0xbdc6_1165, 0xca25_1029, 0x1872_17ab, 0x4aa9_9c4f],
+        [0x95be_e3a9, 0x02e4_9533, 0x047b_ed37, 0x4fd7_950e, 0x72e1_e0a0],
+        [0xb4ba_d80b, 0xfa24_0a61, 0x0580_4370, 0x883b_eeac, 0x7bdb_3e1e],
         [0x7c01_7d43, 0xbe1e_b051, 0x9623_575b, 0xe7c2_11fd, 0x5591_d790],
     ];
     let found: [[u32; 5]; 10] = std::array::from_fn(|level| {
         std::array::from_fn(|strategy| {
             (0..24).fold(0, |hash, seed| {
-                hash ^ session(level as i32, strategy as i32, seed)
+                hash ^ session(level as i32, strategy as i32, seed, Next::New)
             })
         })
     });
     assert_eq!(found, EXPECTED, "{found:x?}");
 }
 
+/// The first arguments of `session()`, and the result with zlib-ng 2.3.3.
+#[rustfmt::skip]
+const RARE: &[(i32, i32, u64, u32)] = &[
+    (0, 0, 1153, 0xfa28_4898), (0, 0, 2998, 0xfcee_8f7c), (1, 0, 130, 0x3a3c_eed9), (1, 0, 1811, 0x996b_a1f0),
+    (2, 0, 91, 0x06ff_1791), (2, 0, 141, 0x49ab_3ea9), (2, 0, 220, 0x50f3_16d3), (2, 0, 387, 0xf632_0ead),
+    (5, 0, 248, 0x5331_8687), (5, 0, 296, 0xa03a_5b17), (5, 0, 21359, 0x1a0f_de83), (6, 0, 1774, 0xc12f_eeb3),
+    (6, 2, 205, 0x11f0_a577), (6, 2, 2224, 0x2954_e4ca), (6, 3, 339, 0xdda6_19ed), (7, 0, 75, 0xb795_0925),
+    (7, 0, 236, 0x6eb7_f4a7), (7, 0, 1446, 0x11d1_bf7a), (8, 0, 116, 0x44b9_e4a8), (8, 0, 420, 0x6661_01d5),
+    (8, 0, 576, 0x1e19_a825), (8, 0, 1220, 0x98ca_b372), (8, 1, 51, 0xaaed_8204), (8, 1, 140, 0x7753_210c),
+    (8, 1, 1076, 0x958a_7ff9), (9, 0, 182, 0xea16_3040), (9, 0, 270, 0x0cb9_ce59), (9, 0, 279, 0x3205_5af5),
+    (9, 0, 290, 0x0dee_141e), (9, 0, 1958, 0x074c_9550), (9, 4, 665, 0x38c1_ccee), (9, 4, 1340, 0x6ddc_d3f7),
+    (9, 4, 1474, 0xd885_d9ad), (9, 4, 1861, 0x475c_bdbd), (9, 4, 2217, 0xc947_f92f),
+];
+
 #[test]
 fn and_so_do_some_that_few_sequences_are_like() {
-    /// The arguments of `session()`, and the result with zlib-ng 2.3.3.
-    #[rustfmt::skip]
-    const RARE: &[(i32, i32, u64, u32)] = &[
-        (0, 0, 1153, 0xfa28_4898), (0, 0, 2998, 0xfcee_8f7c), (1, 0, 130, 0x3a3c_eed9), (1, 0, 1811, 0x996b_a1f0),
-        (2, 0, 91, 0x06ff_1791), (2, 0, 141, 0x49ab_3ea9), (2, 0, 220, 0x50f3_16d3), (2, 0, 387, 0xf632_0ead),
-        (5, 0, 248, 0x5331_8687), (5, 0, 296, 0xa03a_5b17), (5, 0, 21359, 0x1a0f_de83), (6, 0, 1774, 0xc12f_eeb3),
-        (6, 2, 205, 0x11f0_a577), (6, 2, 2224, 0x2954_e4ca), (6, 3, 339, 0xdda6_19ed), (7, 0, 75, 0xb795_0925),
-        (7, 0, 236, 0x6eb7_f4a7), (7, 0, 1446, 0x11d1_bf7a), (8, 0, 116, 0x44b9_e4a8), (8, 0, 420, 0x6661_01d5),
-        (8, 0, 576, 0x1e19_a825), (8, 0, 1220, 0x98ca_b372), (8, 1, 51, 0xaaed_8204), (8, 1, 140, 0x7753_210c),
-        (8, 1, 1076, 0x958a_7ff9), (9, 0, 182, 0xea16_3040), (9, 0, 270, 0x0cb9_ce59), (9, 0, 279, 0x3205_5af5),
-        (9, 0, 290, 0x0dee_141e), (9, 0, 1958, 0x074c_9550), (9, 4, 665, 0x38c1_ccee), (9, 4, 1340, 0x6ddc_d3f7),
-        (9, 4, 1474, 0xd885_d9ad), (9, 4, 1861, 0x475c_bdbd), (9, 4, 2217, 0x5434_d741),
-    ];
     for &(level, strategy, seed, expected) in RARE {
-        assert_eq!(
-            session(level, strategy, seed),
-            expected,
-            "{level} {strategy} {seed}"
-        );
+        let found = session(level, strategy, seed, Next::New);
+        assert_eq!(found, expected, "{level} {strategy} {seed}");
+    }
+}
+
+#[test]
+fn a_deflater_is_as_good_as_new_after_reset() {
+    let rare = RARE.iter().map(|it| (it.0, it.1, it.2));
+    let all = (0..2000).map(|it| (it % 10, it / 10 % 5, it as u64 / 50));
+    for (level, strategy, seed) in rare.chain(all) {
+        let [new, reset] = [Next::New, Next::Reset].map(|it| session(level, strategy, seed, it));
+        assert_eq!(new, reset, "{level} {strategy} {seed}");
     }
 }
 

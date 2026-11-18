@@ -370,9 +370,14 @@ fn decode_fast<const MASK: bool>(
 }
 
 enum Symbol {
-    Literal(u8),
+    /// Only the first byte counts. Alone it is stored from a high-byte register, which some Raptor Lake CPUs get wrong:
+    /// https://github.com/trifectatechfoundation/zlib-rs/issues/306
+    Literal([u8; 4]),
     EndOfBlock,
-    Match { len: usize, distance: usize },
+    Match {
+        len: usize,
+        distance: usize,
+    },
 }
 
 /// The next symbol and how many bits it takes, if they are all there.
@@ -396,7 +401,7 @@ fn peek(tables: &Tables, bits: &mut BitReader<'_>) -> Result<Option<(Symbol, u32
     }
     if entry.literal_count() != 0 {
         let used = advance(&mut stream, entry.small());
-        return Ok(used.map(|used| (Symbol::Literal(entry.first_literal()), used)));
+        return Ok(used.map(|used| (Symbol::Literal(entry.literals()), used)));
     }
     let Some(used) = advance(&mut stream, entry.bits()) else {
         return Ok(None);
@@ -449,8 +454,8 @@ pub(super) fn decode_one(
     };
     bits.skip(used);
     match symbol {
-        Symbol::Literal(literal) => {
-            tape.push([literal, 0, 0, 0], 1);
+        Symbol::Literal(literals) => {
+            tape.push(literals, 1);
             Ok(Step::Literal)
         }
         Symbol::EndOfBlock => Ok(Step::EndOfBlock),
@@ -466,7 +471,8 @@ pub(super) fn decode_one(
 }
 
 pub(super) enum NoMatch {
-    Literal(u8),
+    /// Only the first byte counts.
+    Literal([u8; 4]),
     EndOfBlock,
 }
 
@@ -478,7 +484,7 @@ pub(super) fn take_unless_match(
     room: usize,
 ) -> Option<NoMatch> {
     let (taken, used) = match peek(tables, bits) {
-        Ok(Some((Symbol::Literal(byte), used))) if room != 0 => (NoMatch::Literal(byte), used),
+        Ok(Some((Symbol::Literal(bytes), used))) if room != 0 => (NoMatch::Literal(bytes), used),
         Ok(Some((Symbol::EndOfBlock, used))) => (NoMatch::EndOfBlock, used),
         _ => return None,
     };

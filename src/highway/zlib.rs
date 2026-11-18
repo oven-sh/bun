@@ -32,7 +32,8 @@ fn prefetch<T>(span: &Span<T>, offset: usize) {
     }
 }
 
-/// The first `len` bytes of `to`, up to `MAX_LEN`, come from the first `distance` of `from`, or from what this has written.
+/// Initializes the first `len` bytes of `to`, up to `MAX_LEN`, if the first `distance` of `from` are: the kernel repeats those,
+/// or `len` is no more than that, or each chunk ends in front of the one that it is written to.
 #[inline(always)]
 fn copy_cells<T: Copy>(
     from: &Span<T>,
@@ -156,7 +157,7 @@ impl<'a> Appender<'a> {
 impl Drop for Appender<'_> {
     #[inline(always)]
     fn drop(&mut self) {
-        // SAFETY: what is in front of `rest` is initialized.
+        // SAFETY: `rest` has lost nothing but what `push()` and `copy_cells()` have initialized.
         unsafe { self.vec.set_len(self.full_len - self.rest.len()) }
     }
 }

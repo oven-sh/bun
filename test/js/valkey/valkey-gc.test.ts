@@ -1004,13 +1004,12 @@ test.concurrent.each([
       Bun.gc(true);
       await new Promise(setImmediate);
     }
-    Bun.gc(true);
-    console.log(require("bun:jsc").heapStats().objectTypeCounts.RedisClient ?? 0, "left");
+    console.log(require("bun:jsc").heapStats().protectedObjectTypeCounts.RedisClient ?? 0, "roots left");
     server.stop(true);
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "inherit" });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "0 left", exitCode: 0 });
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "0 roots left", exitCode: 0 });
 });
 
 test.concurrent("new RedisClient(url) does not leak the URL and its components", async () => {

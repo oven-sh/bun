@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isGlibc, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 // Every workload below is time-bounded for 500ms. The sampler is a thread of its own, which on a busy machine runs a few
@@ -501,6 +501,294 @@ describe.concurrent("--cpu-prof", () => {
       expect(names).toContain("inFileA");
       expect(names).toContain("inFileB");
       expect(exitCode).toBe(0);
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/44077
+  // The timers in these fixtures are the waits being profiled.
+  describe("(idle)", () => {
+    async function run(flags: string[], script: string, env = bunEnv) {
+      using dir = tempDir("cpu-prof-idle", {
+        "test.js": `
+          function busy(ms) {
+            const end = performance.now() + ms;
+            while (performance.now() < end);
+          }
+          ${script}`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...flags, "--cpu-prof-dir=profiles", "test.js"],
+        cwd: String(dir),
+        env,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(exitCode).toBe(0);
+      const read = (extension: string) => {
+        const name = readdirSync(join(String(dir), "profiles")).find(name => name.endsWith(extension));
+        return name && readFileSync(join(String(dir), "profiles", name), "utf-8");
+      };
+      return { stdout, json: read(".cpuprofile")!, markdown: read(".md")! };
+    }
+
+    function readMarkdown(markdown: string) {
+      const milliseconds = (time: string) => {
+        const [, value, unit] = time.match(/^([\d.]+)(us|ms|s)$/)!;
+        return Number(value) * { us: 0.001, ms: 1, s: 1000 }[unit]!;
+      };
+      const [header, hotFunctions] = markdown.split("\n## ");
+      let idle = 0;
+      let functions = 0;
+      for (const [, self, name] of hotFunctions.matchAll(/^\| [\d.]+% \| (\S+) \| \S+ \| \S+ \| `([^`]+)` \|/gm)) {
+        if (name === "(idle)") idle += milliseconds(self);
+        else functions += milliseconds(self);
+      }
+      return { duration: milliseconds(header.match(/^\| ([\d.]+(?:us|ms|s)) \|/m)![1]), idle, functions };
+    }
+    // From one second on, times are cut off after two decimals.
+    const markdownPrecision = 10;
+
+    function readJSON(json: string) {
+      const { nodes, samples, timeDeltas, startTime, endTime } = JSON.parse(json);
+      const idleNode = nodes.find((node: any) => node.callFrame.functionName === "(idle)");
+      expect(idleNode).toEqual({
+        id: expect.any(Number),
+        callFrame: { functionName: "(idle)", scriptId: "0", url: "", lineNumber: -1, columnNumber: -1 },
+        hitCount: samples.filter((id: number) => id === idleNode?.id).length,
+      });
+      expect(nodes[0].children).toContain(idleNode.id);
+      expect(timeDeltas).toHaveLength(samples.length);
+      expect(timeDeltas.filter((delta: number) => delta < 0)).toEqual([]);
+
+      const untilEnd = endTime - startTime - timeDeltas.reduce((sum: number, delta: number) => sum + delta, 0);
+      expect(untilEnd).toBeGreaterThanOrEqual(0);
+      let idleByTimestamps = 0;
+      let functionsByTimestamps = 0;
+      let now = 0;
+      let lastFunctionSample = 0;
+      samples.forEach((id: number, i: number) => {
+        now += timeDeltas[i] / 1000;
+        const untilNext = (timeDeltas[i + 1] ?? untilEnd) / 1000;
+        if (id === idleNode.id) {
+          idleByTimestamps += untilNext;
+        } else if (id !== nodes[0].id) {
+          functionsByTimestamps += untilNext;
+          lastFunctionSample = now;
+        }
+      });
+
+      const duration = (endTime - startTime) / 1000;
+      const timePerSample = duration / nodes.reduce((sum: number, node: any) => sum + node.hitCount, 0);
+      return {
+        duration,
+        timePerSample,
+        lastFunctionSample,
+        idleSamples: idleNode.hitCount,
+        // DevTools' flame chart: a sample lasts until the next one.
+        idleByTimestamps,
+        functionsByTimestamps,
+        // DevTools' ProfileNode.self and pprof: every sample weighs the same.
+        idleByCount: idleNode.hitCount * timePerSample,
+      };
+    }
+
+    function expectBothFormatsToAgree(
+      json: ReturnType<typeof readJSON>,
+      { idle, functions }: ReturnType<typeof readMarkdown>,
+      interval: number,
+    ) {
+      const precision = 3 * json.timePerSample + markdownPrecision;
+      expect(json.idleByTimestamps).toBeWithin(idle - precision, idle + markdownPrecision);
+      // The interval is the limit when the sampler happened to find functions more often than that.
+      expect(Math.max(json.idleByCount, json.idleSamples * interval)).toBeWithin(idle - precision, idle + precision);
+      expect(functions).toBeWithin(json.lastFunctionSample - idle - precision, json.duration - idle + 1);
+      expect(json.functionsByTimestamps).toBeLessThan(functions + 2 * precision);
+    }
+
+    test.each([1000, 5000])("a wait between two calls, --cpu-prof-interval=%d", async interval => {
+      const profile = await run(
+        ["--cpu-prof", "--cpu-prof-md", `--cpu-prof-interval=${interval}`],
+        `busy(250);
+         setTimeout(() => {
+           busy(250);
+           setTimeout(() => {}, 100);
+         }, 500);`,
+      );
+      const json = readJSON(profile.json);
+      const markdown = readMarkdown(profile.markdown);
+
+      expect(markdown.idle).toBeWithin(250, json.duration - 500);
+      expectBothFormatsToAgree(json, markdown, interval / 1000);
+
+      const time = String.raw`[\d.]+% \| [\d.]+m?s`;
+      const row = expect.stringMatching(new RegExp(String.raw`^\| (${time}) \| \1 \| \x60\(idle\)\x60 \|  \|$`));
+      expect(profile.markdown.split("\n").filter(line => line.includes("(idle)"))).toEqual([
+        expect.stringMatching(/^\*\*Top 10:\*\* .*`\(idle\)` [\d.]+%/),
+        row,
+        row,
+      ]);
+      expect(profile.markdown).not.toContain("``");
+    });
+
+    test.each([
+      { interval: 100, call: 10, wait: 10, count: 40, name: "several between two samples" },
+      { interval: 10, call: 6, wait: 2, count: 100, name: "less than a sample's worth between two samples" },
+    ])("waits shorter than the sampling interval: $name", async ({ interval, call, wait, count }) => {
+      const profile = await run(
+        ["--cpu-prof", "--cpu-prof-md", `--cpu-prof-interval=${interval * 1000}`],
+        `let remaining = ${count};
+         let waited = 0;
+         let start = performance.now();
+         (function next() {
+           waited += performance.now() - start;
+           if (!remaining--) return console.log(waited);
+           busy(${call});
+           setTimeout(next, ${wait});
+           start = performance.now();
+         })();`,
+      );
+      const waited = Number(profile.stdout);
+      const markdown = readMarkdown(profile.markdown);
+
+      expect(markdown.idle).toBeWithin(waited / 3, waited + markdownPrecision);
+      expectBothFormatsToAgree(readJSON(profile.json), markdown, interval);
+    });
+
+    test("a wait after the last call", async () => {
+      const profile = await run(["--cpu-prof-md"], `busy(100); setTimeout(() => {}, 500);`);
+      const markdown = readMarkdown(profile.markdown);
+
+      expect(markdown.idle).toBeWithin(250, markdown.duration - 100 + markdownPrecision);
+    });
+
+    test("nothing but a wait", async () => {
+      const profile = await run(["--cpu-prof"], `setTimeout(() => {}, 500);`);
+      const json = readJSON(profile.json);
+
+      expect(json.idleByTimestamps).toBeWithin(250, json.duration);
+    });
+
+    test("a wait after another thread ended the one before it", async () => {
+      const profile = await run(
+        ["--cpu-prof-md"],
+        `const start = performance.now();
+         await Bun.password.hash("password", { algorithm: "bcrypt", cost: 8 });
+         console.log(performance.now() - start);
+         await Bun.sleep(500);`,
+      );
+      const hashing = Number(profile.stdout);
+      const markdown = readMarkdown(profile.markdown);
+
+      expect(markdown.idle).toBeGreaterThan(hashing + 250);
+    });
+
+    test("a wait beneath a JavaScript frame belongs to that frame", async () => {
+      const profile = await run(
+        ["--cpu-prof-md"],
+        `const start = performance.now();
+         // Bun.build() runs the event loop until setup() has settled.
+         const built = Bun.build({ entrypoints: [import.meta.path], plugins: [{ name: "slow", setup: () => Bun.sleep(400) }] });
+         console.log(performance.now() - start);
+         await built;
+         await Bun.sleep(200);`,
+      );
+      const blocked = Number(profile.stdout);
+      const markdown = readMarkdown(profile.markdown);
+
+      expect(blocked).toBeGreaterThan(390);
+      expect(markdown.idle).toBeWithin(100, markdown.duration - blocked + markdownPrecision);
+    });
+
+    // bun:jsc drives the same sampler. Keeping it from sampling makes busy() look like native code outside the VM.
+    test.each([
+      { name: "after the last sample", script: `busy(250); startSamplingProfiler(undefined, 60_000_000);` },
+      { name: "without any sample", script: `profile(() => {});` },
+    ])("work the sampler cannot see is neither idle nor billed to a function: $name", async ({ script }) => {
+      const profile = await run(
+        ["--cpu-prof", "--cpu-prof-md"],
+        `import { profile, startSamplingProfiler } from "bun:jsc";
+         ${script}
+         busy(400);
+         setTimeout(() => {}, 300);`,
+      );
+      const json = readJSON(profile.json);
+      const markdown = readMarkdown(profile.markdown);
+
+      expect(markdown.idle).toBeWithin(100, json.duration - 400);
+      expectBothFormatsToAgree(json, markdown, 1);
+    });
+
+    test("a wait that is much shorter than what the only sample stands for", async () => {
+      const profile = await run(
+        ["--cpu-prof", "--cpu-prof-md"],
+        `import { profile, startSamplingProfiler } from "bun:jsc";
+         profile(() => {});
+         busy(500);
+         startSamplingProfiler(undefined, 60_000_000);
+         busy(50);
+         setTimeout(() => {}, 200);`,
+      );
+      const { idle } = readMarkdown(profile.markdown);
+
+      expect(readJSON(profile.json).idleByTimestamps).toBeWithin(idle - markdownPrecision, idle + markdownPrecision);
+    });
+
+    const cc = Bun.which("cc") || Bun.which("clang") || Bun.which("gcc");
+    test.skipIf(!cc || !isGlibc)("a wait of ten days does not take a sample for each millisecond", async () => {
+      using dir = tempDir("cpu-prof-idle-clock", {
+        "skip.c": `
+          #define _GNU_SOURCE
+          #include <dlfcn.h>
+          #include <signal.h>
+          #include <sys/epoll.h>
+          #include <time.h>
+
+          static long skipped_seconds;
+
+          int clock_gettime(clockid_t clock, struct timespec *time) {
+            static int (*next)(clockid_t, struct timespec *);
+            if (!next) next = dlsym(RTLD_NEXT, "clock_gettime");
+            int result = next(clock, time);
+            if (clock == CLOCK_MONOTONIC) time->tv_sec += __atomic_load_n(&skipped_seconds, __ATOMIC_SEQ_CST);
+            return result;
+          }
+
+          int epoll_pwait(int fd, struct epoll_event *events, int count, int timeout, const sigset_t *mask) {
+            static int (*next)(int, struct epoll_event *, int, int, const sigset_t *);
+            if (!next) next = dlsym(RTLD_NEXT, "epoll_pwait");
+            if (timeout < 60 * 60 * 1000) return next(fd, events, count, timeout, mask);
+            __atomic_fetch_add(&skipped_seconds, timeout / 1000 + 1, __ATOMIC_SEQ_CST);
+            return 0;
+          }`,
+      });
+      await using compiler = Bun.spawn({
+        cmd: [cc!, "-shared", "-fPIC", "-o", "skip.so", "skip.c", "-ldl"],
+        cwd: String(dir),
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      expect(await compiler.exited).toBe(0);
+
+      const tenDays = 10 * 24 * 60 * 60 * 1000;
+      const spawnedAt = Date.now();
+      const profile = await run(["--cpu-prof", "--cpu-prof-md"], `busy(100); setTimeout(() => {}, ${tenDays});`, {
+        ...bunEnv,
+        LD_PRELOAD: join(String(dir), "skip.so"),
+        // epoll_pwait2() does not go through libc.
+        BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2: "1",
+        BUN_GC_TIMER_DISABLE: "1",
+      });
+
+      expect(readMarkdown(profile.markdown).idle).toBeWithin(tenDays - 60_000, tenDays + 60_000);
+      // Not parsed: that takes a debug build several seconds.
+      const { nodes, startTime } = JSON.parse(profile.json.slice(0, profile.json.indexOf(',"samples":[')) + "}");
+      const { hitCount } = nodes.find((node: any) => node.callFrame.functionName === "(idle)");
+      const timeDelta = Number(profile.json.slice(-2000).split(",")[1]);
+      expect(hitCount).toBeLessThanOrEqual(1_000_000);
+      expect((hitCount * timeDelta) / 1000).toBeWithin(tenDays - 60_000, tenDays + 60_000);
+      // The wall clock did not skip.
+      expect(startTime / 1000).toBeWithin(spawnedAt - 60_000, Date.now() + 60_000);
     });
   });
 

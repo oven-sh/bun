@@ -422,6 +422,153 @@ describe("node:inspector", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/44077
+  // The timers in these fixtures are the waits being profiled.
+  describe.concurrent("(idle)", () => {
+    async function run(script: string) {
+      const fixture = `
+        import { Session } from "node:inspector";
+
+        const session = new Session();
+        session.connect();
+        session.post("Profiler.enable");
+
+        const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+        function busy(ms) {
+          const end = performance.now() + ms;
+          while (performance.now() < end);
+        }
+
+        function stop() {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          session.post("Profiler.stop", (error, result) => (error ? reject(error) : resolve(summarize(result.profile))));
+          return promise;
+        }
+
+        function summarize({ nodes, samples, timeDeltas, startTime, endTime }) {
+          const idleNode = nodes.find(node => node.callFrame.functionName === "(idle)");
+          const untilEnd = endTime - startTime - timeDeltas.reduce((sum, delta) => sum + delta, 0);
+          let idle = 0;
+          samples.forEach((id, i) => {
+            if (id === idleNode?.id) idle += (timeDeltas[i + 1] ?? untilEnd) / 1000;
+          });
+          return {
+            callFrame: idleNode?.callFrame,
+            isChildOfRoot: !!nodes[0].children?.includes(idleNode?.id),
+            idleSamples: samples.filter(id => id === idleNode?.id).length,
+            idle,
+          };
+        }
+
+        ${script}
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      return JSON.parse(stdout);
+    }
+
+    test("a wait between two calls", async () => {
+      const { waited, idle, callFrame, isChildOfRoot } = await run(`
+        session.post("Profiler.start");
+        busy(100);
+        const start = performance.now();
+        await sleep(400);
+        const waited = performance.now() - start;
+        busy(100);
+        console.log(JSON.stringify({ waited, ...(await stop()) }));
+      `);
+      expect({ callFrame, isChildOfRoot }).toEqual({
+        callFrame: { functionName: "(idle)", scriptId: "0", url: "", lineNumber: -1, columnNumber: -1 },
+        isChildOfRoot: true,
+      });
+      expect(idle).toBeWithin(waited / 2, waited + 1);
+    });
+
+    test("is not sampled more often than the sampling interval", async () => {
+      const { waited, idleSamples } = await run(`
+        session.post("Profiler.setSamplingInterval", { interval: 50_000 });
+        session.post("Profiler.start");
+        const start = performance.now();
+        await sleep(400);
+        const waited = performance.now() - start;
+        console.log(JSON.stringify({ waited, ...(await stop()) }));
+      `);
+      expect(idleSamples).toBeWithin(1, waited / 50 + 2);
+    });
+
+    test("a profile has none of the waits from before it started", async () => {
+      const { first, second } = await run(`
+        session.post("Profiler.start");
+        await sleep(200);
+        const first = await stop();
+        await sleep(100);
+        session.post("Profiler.start");
+        busy(50);
+        console.log(JSON.stringify({ first, second: await stop() }));
+      `);
+      expect(first.idleSamples).toBeGreaterThan(0);
+      expect(second).toEqual({ isChildOfRoot: false, idleSamples: 0, idle: 0 });
+    });
+
+    test("is not the time of a poll that cannot block", async () => {
+      const { polling, waiting } = await run(`
+        session.post("Profiler.start");
+        const end = performance.now() + 300;
+        while (performance.now() < end) await new Promise(setImmediate);
+        const polling = await stop();
+        session.post("Profiler.start");
+        await sleep(200);
+        console.log(JSON.stringify({ polling, waiting: await stop() }));
+      `);
+      expect(polling).toEqual({ isChildOfRoot: false, idleSamples: 0, idle: 0 });
+      expect(waiting.idleSamples).toBeGreaterThan(0);
+    });
+
+    // On Windows the handler runs inside the uv_run() that waited.
+    test("ends where an I/O callback begins, also if that callback stops the profile", async () => {
+      using peer = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          data(socket, delay) {
+            setTimeout(() => socket.write("."), Number(delay.toString()));
+          },
+        },
+      });
+      const { waited, idle } = await run(`
+        const delays = [50, 400];
+        let start;
+        let waited = 0;
+        function next(socket) {
+          socket.write(String(delays.shift()));
+          start = performance.now();
+        }
+        await Bun.connect({
+          hostname: "127.0.0.1",
+          port: ${peer.port},
+          socket: {
+            open(socket) {
+              session.post("Profiler.start");
+              next(socket);
+            },
+            async data(socket) {
+              waited += performance.now() - start;
+              busy(200);
+              if (delays.length) return next(socket);
+              const profile = stop();
+              socket.end();
+              console.log(JSON.stringify({ waited, ...(await profile) }));
+            },
+          },
+        });
+      `);
+      expect(waited).toBeGreaterThan(400);
+      expect(idle).toBeWithin(waited / 2, waited + 1);
+    });
+  });
+
   describe("callback API", () => {
     test("post() with callback receives result", async () => {
       const session = new inspector.Session();

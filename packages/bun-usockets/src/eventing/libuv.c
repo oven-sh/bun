@@ -144,9 +144,14 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
   }
 }
 
+extern void Bun__CPUProfiler__willPoll(void *jsc_vm, uv_loop_t *uv_loop);
+
 static void prepare_cb(uv_prepare_t *p) {
   struct us_loop_t *loop = p->data;
   us_internal_loop_pre(loop);
+  if (loop->data.jsc_vm) {
+    Bun__CPUProfiler__willPoll(loop->data.jsc_vm, loop->uv_loop);
+  }
 }
 
 /* Note: libuv timers execute AFTER the post callback */

@@ -39,6 +39,37 @@ module.exports = debugMode => {
       }
     },
 
+    test_v8_cpu_profiler_idle() {
+      const { start_cpu_profile: start, stop_cpu_profile_and_log_idle_node: stop } = nativeModule;
+      const steps = [
+        () => start("first"),
+        // How @datadog/pprof restarts.
+        () => (start("second"), stop("first")),
+        () => (start("third"), stop("second")),
+        () => (start("started after the wait"), stop("started after the wait"), nativeModule.dispose_cpu_profiler()),
+      ];
+      // These timers are the waits being profiled.
+      (function next(delay) {
+        setTimeout(() => {
+          steps.shift()();
+          if (steps.length) next(150);
+        }, delay);
+      })(0);
+    },
+
+    test_v8_cpu_profiler_work_without_samples() {
+      nativeModule.start_cpu_profile("profile");
+      // Pauses the sampler, which makes the loop look like native code outside the VM.
+      require("bun:jsc").profile(() => {});
+      const end = performance.now() + 300;
+      while (performance.now() < end);
+      // This timer is the wait being profiled.
+      setTimeout(() => {
+        nativeModule.stop_cpu_profile_and_log_root_node("profile");
+        nativeModule.dispose_cpu_profiler();
+      }, 100);
+    },
+
     test_v8_value_to_int32() {
       const cases = [
         ["int", 42],

@@ -2,6 +2,7 @@
 #include "V8String.h"
 #include "V8HandleScope.h"
 #include "shim/CpuProfiler.h"
+#include "BunCPUProfiler.h"
 
 #include <JavaScriptCore/SamplingProfiler.h>
 #include <JavaScriptCore/VM.h>
@@ -26,10 +27,24 @@ namespace v8 {
 
 namespace shim {
 
+static int64_t toMicroseconds(WTF::MonotonicTime time)
+{
+    return static_cast<int64_t>(time.secondsSinceEpoch().microseconds());
+}
+
 static int64_t nowMicroseconds()
 {
-    return static_cast<int64_t>(
-        WTF::MonotonicTime::now().secondsSinceEpoch().microseconds());
+    return toMicroseconds(WTF::MonotonicTime::now());
+}
+
+static void stopSampling(JSC::VM& vm)
+{
+    Bun::IdleTime::stopRecording(vm);
+    if (JSC::SamplingProfiler* sampler = vm.samplingProfiler()) {
+        WTF::Locker locker { sampler->getLock() };
+        sampler->pause();
+        sampler->clearData();
+    }
 }
 
 uint32_t CpuProfilerImpl::start(WTF::String&& title, bool recordSamples)
@@ -45,6 +60,7 @@ uint32_t CpuProfilerImpl::start(WTF::String&& title, bool recordSamples)
         sampler.setTimingInterval(WTF::Seconds::fromMicroseconds(m_samplingIntervalUs));
         sampler.noticeCurrentThreadAsJSCExecutionThread();
         sampler.start();
+        Bun::IdleTime::startRecording(vm, WTF::Seconds::fromMicroseconds(m_samplingIntervalUs));
     }
 
     return id;
@@ -66,21 +82,22 @@ static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, int64_t start
 {
     JSC::SamplingProfiler* sampler = vm.samplingProfiler();
 
-    auto makeRoot = [&]() -> CpuProfileNodeImpl* {
-        auto root = makeUnique<CpuProfileNodeImpl>();
-        root->id = 1;
-        root->functionName = "(root)"_s;
-        root->scriptResourceName = ""_s;
-        CpuProfileNodeImpl* ptr = root.get();
-        profile.m_nodes.append(WTF::move(root));
-        profile.m_root = ptr;
+    unsigned nextNodeId = 1;
+    auto appendNodeWithoutScript = [&](ASCIILiteral functionName) -> CpuProfileNodeImpl* {
+        auto node = makeUnique<CpuProfileNodeImpl>();
+        node->id = nextNodeId++;
+        node->functionName = functionName;
+        node->scriptResourceName = ""_s;
+        CpuProfileNodeImpl* ptr = node.get();
+        profile.m_nodes.append(WTF::move(node));
         return ptr;
     };
 
+    CpuProfileNodeImpl* root = appendNodeWithoutScript("(root)"_s);
+    profile.m_root = root;
     profile.m_startTime = startTime;
 
     if (!sampler) {
-        makeRoot();
         profile.m_endTime = nowMicroseconds();
         return;
     }
@@ -94,44 +111,50 @@ static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, int64_t start
         stackTraces = sampler->releaseStackTraces();
     }
 
-    CpuProfileNodeImpl* root = makeRoot();
-
-    if (stackTraces.isEmpty()) {
-        profile.m_endTime = nowMicroseconds();
-        return;
-    }
-
     WTF::Vector<size_t> order;
     order.reserveInitialCapacity(stackTraces.size());
-    for (size_t i = 0; i < stackTraces.size(); ++i)
-        order.append(i);
+    for (size_t i = 0; i < stackTraces.size(); ++i) {
+        // Earlier traces belong to an overlapping session (see CpuProfiler::Start).
+        if (toMicroseconds(stackTraces[i].timestamp) >= startTime)
+            order.append(i);
+    }
     std::sort(order.begin(), order.end(), [&stackTraces](size_t a, size_t b) {
         return stackTraces[a].timestamp < stackTraces[b].timestamp;
     });
 
+    auto idleTime = Bun::IdleTime::release(vm, WTF::MonotonicTime() + WTF::Seconds::fromMicroseconds(startTime), order.map([&](size_t idx) { return stackTraces[idx].timestamp; }));
+
     WTF::HashMap<WTF::String, CpuProfileNodeImpl*> nodeByKey;
-    unsigned nextNodeId = 2;
     int64_t lastTimestamp = startTime;
 
-    for (size_t idx : order) {
-        auto& trace = stackTraces[idx];
+    auto appendSample = [&](CpuProfileNodeImpl* node, WTF::MonotonicTime time) {
+        lastTimestamp = std::max(lastTimestamp, toMicroseconds(time));
+        if (recordSamples) {
+            profile.m_samples.append(node);
+            profile.m_sampleTimestamps.append(lastTimestamp);
+        }
+    };
 
-        int64_t ts = static_cast<int64_t>(
-            trace.timestamp.secondsSinceEpoch().microseconds());
-        // Traces taken before this session started belong to an earlier,
-        // overlapping session (see CpuProfiler::Start); drop them.
-        if (ts < startTime)
-            continue;
-        if (ts < lastTimestamp)
-            ts = lastTimestamp;
-        lastTimestamp = ts;
+    CpuProfileNodeImpl* idleNode = nullptr;
+    auto appendIdleSamplesBefore = [&](size_t sampleIndex) {
+        idleTime.forEachSampleBefore(sampleIndex, [&](WTF::MonotonicTime time) {
+            if (!idleNode) {
+                idleNode = appendNodeWithoutScript(Bun::IdleTime::functionName);
+                root->children.append(idleNode);
+            }
+            idleNode->hitCount++;
+            appendSample(idleNode, time);
+        });
+    };
+
+    for (size_t sampleIndex = 0; sampleIndex < order.size(); ++sampleIndex) {
+        appendIdleSamplesBefore(sampleIndex);
+
+        auto& trace = stackTraces[order[sampleIndex]];
 
         if (trace.frames.isEmpty()) {
             root->hitCount++;
-            if (recordSamples) {
-                profile.m_samples.append(root);
-                profile.m_sampleTimestamps.append(ts);
-            }
+            appendSample(root, trace.timestamp);
             continue;
         }
 
@@ -266,12 +289,15 @@ static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, int64_t start
             }
         }
 
-        if (recordSamples) {
-            profile.m_samples.append(current);
-            profile.m_sampleTimestamps.append(ts);
-        }
+        appendSample(current, trace.timestamp);
     }
+    idleTime.forEachUnattributedSample([&](WTF::MonotonicTime time) {
+        root->hitCount++;
+        appendSample(root, time);
+    });
+    appendIdleSamplesBefore(order.size());
 
+    lastTimestamp = std::max(lastTimestamp, toMicroseconds(idleTime.profileEnd()));
     profile.m_endTime = lastTimestamp > startTime ? lastTimestamp : nowMicroseconds();
 }
 
@@ -295,13 +321,8 @@ CpuProfileImpl* CpuProfilerImpl::stop(uint32_t id)
     profile->m_title = WTF::move(session.title);
     buildProfileTree(vm, *profile, session.startTime, session.recordSamples);
 
-    if (m_sessions.isEmpty()) {
-        if (JSC::SamplingProfiler* sampler = vm.samplingProfiler()) {
-            WTF::Locker locker { sampler->getLock() };
-            sampler->pause();
-            sampler->clearData();
-        }
-    }
+    if (m_sessions.isEmpty())
+        stopSampling(vm);
 
     return profile;
 }
@@ -466,13 +487,8 @@ void CpuProfiler::CollectSample(Isolate*, const std::optional<uint64_t>)
 void CpuProfiler::Dispose()
 {
     auto* impl = toImpl(this);
-    if (!impl->m_sessions.isEmpty()) {
-        if (JSC::SamplingProfiler* sampler = impl->m_isolate->vm().samplingProfiler()) {
-            WTF::Locker locker { sampler->getLock() };
-            sampler->pause();
-            sampler->clearData();
-        }
-    }
+    if (!impl->m_sessions.isEmpty())
+        shim::stopSampling(impl->m_isolate->vm());
     delete impl;
 }
 

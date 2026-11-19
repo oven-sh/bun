@@ -88,6 +88,7 @@ class GlobalObject;
 class VersionSqlite3;
 
 namespace Bun {
+class IdleTimeRecorder;
 class StrongRootBlock;
 struct IsolatedInternalModule;
 
@@ -268,6 +269,9 @@ public:
     std::atomic<unsigned> idleCollectionsPending { 0 };
     // Their GCRequest::didFinishEndPhase, made once (JSC__VM__collectAsyncIdle).
     RefPtr<WTF::SharedTask<void()>> idleCollectionDidFinish;
+
+    // Null unless a CPU profile is being taken. JS thread only.
+    std::unique_ptr<Bun::IdleTimeRecorder> idleTimeRecorder;
 
     void* bunVM;
     // A count on the Rust VmHandle for this VM: what any *other* thread uses to post work / ref the loop (never bunVM).

@@ -530,6 +530,17 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       // google's pprof addon uses the title-keyed overloads (#19678).
       await checkSameOutput("test_v8_cpu_profiler_title_api");
     });
+    it("reports the time the event loop waits as (idle)", async () => {
+      const output = await checkSameOutput("test_v8_cpu_profiler_idle");
+      expect(output.match(/(?<=^idle != nullptr = )\d/gm)).toEqual(["1", "1", "0"]);
+    });
+    it("leaves work that the sampler cannot see before the last wait with (root)", async () => {
+      const output = await runOn(Runtime.bun, BuildMode.release, "test_v8_cpu_profiler_work_without_samples");
+      const [samples, hitCount] = output.match(/(?<=^root.* = )\d+/gm)!.map(Number);
+      // 300ms at 10ms for each sample.
+      expect(samples).toBeGreaterThan(25);
+      expect(hitCount).toBe(samples);
+    });
   });
 
   describe("uv_os_getpid", () => {

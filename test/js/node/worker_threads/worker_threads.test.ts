@@ -906,6 +906,27 @@ describe("getHeapSnapshot", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/44077
+test("startCpuProfile() reports the time a worker waits for messages as (idle)", async () => {
+  const worker = new Worker("require('worker_threads').parentPort.on('message', () => {}).postMessage('ready')", {
+    eval: true,
+  });
+  try {
+    await once(worker, "message");
+    const handle = await worker.startCpuProfile();
+    // The wait being profiled.
+    await Bun.sleep(200);
+    const { nodes, samples, startTime, endTime } = JSON.parse(await handle.stop());
+
+    const idleNode = nodes.find(node => node.callFrame.functionName === "(idle)");
+    expect(idleNode?.callFrame).toMatchObject({ functionName: "(idle)", url: "", lineNumber: -1, columnNumber: -1 });
+    expect(samples.filter(id => id === idleNode.id).length).toBeGreaterThan(samples.length / 2);
+    expect(endTime - startTime).toBeGreaterThan(190_000);
+  } finally {
+    await worker.terminate();
+  }
+});
+
 test("failed Worker construction restores transferred FileHandles", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");

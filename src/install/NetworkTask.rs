@@ -2,7 +2,6 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering;
 
 use crate::bun_fs::{FileSystem, FilenameStore};
-use bun_collections::HashMap;
 use bun_core::fmt::{quote, redacted_npm_url};
 use bun_core::{self, MutableString, strings};
 use bun_http::{
@@ -15,6 +14,7 @@ use std::io::Write as _;
 use crate::extract_tarball;
 use crate::npm::{self as npm, PackageManifest};
 use crate::package_manager::INBOX;
+use crate::package_manager_task::ManifestId;
 use crate::{ExtractTarball, PackageManager, TarballStream, Task};
 
 struct FilenameStoreAppender<'a>(&'a FilenameStore);
@@ -39,7 +39,6 @@ pub struct NetworkTask {
     /// `None` while the HTTP thread has it.
     pub(crate) http: Option<Box<AsyncHTTP<'static>>>,
     pub(crate) response: HTTPClientResult<'static>,
-    pub(crate) task_id: crate::package_manager_task::Id,
     // Owned in both `for_manifest` (toOwnedSlice) and `for_tarball`. Aliasing
     // `tarball.url` in the latter would be a self-reference
     // into `callback`; owning avoids that at the cost of one copy per tarball download.
@@ -83,59 +82,21 @@ unsafe impl bun_threading::Linked for NetworkTask {
 }
 
 /// What the response is for. A git clone or checkout is never a network task.
-pub enum Callback {
+pub(crate) enum Callback {
     PackageManifest {
+        request: ManifestRequest,
         loaded_manifest: Option<PackageManifest>,
-        name: strings::StringOrTinyString,
-        is_extended_manifest: bool,
-        registry: npm::registry::ManifestCacheKey,
     },
     Extract(ExtractTarball),
-    LocalTarball,
 }
 
-#[derive(Default, Clone, Copy)]
-pub struct DedupeMapEntry {
-    pub(crate) is_required: bool,
-    /// Set once the download/extract for this task id has terminally failed so a
-    /// later `enqueue_download` can observe the failure instead of
-    /// re-scheduling the entire network task (and its retry cycle) a second time.
-    pub(crate) failed: bool,
-    pub(crate) manifest: ManifestOrigin,
-    /// The event loop iteration in which a runtime lookup of this manifest found nothing, or in
-    /// which the task failed.
-    pub(crate) missed_in: Option<u64>,
-    /// `Registry::manifest_expiry` of a 404: a runtime lookup does not ask again before.
-    pub(crate) missing_until: u32,
+#[derive(Clone, Copy)]
+pub(crate) struct ManifestRequest {
+    pub(crate) id: ManifestId,
+    pub(crate) name: strings::StringOrTinyString,
+    pub(crate) is_extended: bool,
+    pub(crate) registry: npm::registry::ManifestCacheKey,
 }
-
-/// Where a manifest came from. If a cached copy doesn't have a version, the version may have been
-/// published since.
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
-pub enum ManifestOrigin {
-    /// The disk cache, also after a 304.
-    #[default]
-    Cache,
-    /// `refetch_stale_manifest` asked for it again without conditional headers.
-    Refetching,
-    /// The registry sent the document in this run, so a version that it doesn't have doesn't exist.
-    Registry,
-}
-/// `Id` is already a wyhash output, so identity hashing
-/// (hash = value bits) avoids re-hashing.
-impl bun_collections::IdentityHash for crate::package_manager_task::Id {
-    #[inline]
-    fn identity_hash(self) -> u64 {
-        self.get()
-    }
-}
-
-// `bun_collections::HashMap` uses the same 80% max load factor for all maps.
-pub(crate) type DedupeMap = HashMap<
-    crate::package_manager_task::Id,
-    DedupeMapEntry,
-    bun_collections::IdentityContext<crate::package_manager_task::Id>,
->;
 
 impl NetworkTask {
     fn notify(
@@ -418,64 +379,14 @@ fn redacted_url(url: &[u8]) -> Vec<u8> {
 }
 
 impl NetworkTask {
-    /// `needs_extended` means the caller can't use the abbreviated document.
     pub(crate) fn for_manifest(
         &mut self,
-        name: &[u8],
+        manifest_request: &ManifestRequest,
         scope: &npm::registry::Scope,
         loaded_manifest: Option<&PackageManifest>,
         is_optional: bool,
-        needs_extended: bool,
     ) -> Result<(), ForManifestError> {
-        let request = self.manifest_request(
-            name,
-            scope,
-            loaded_manifest,
-            is_optional,
-            needs_extended || npm::name_suggests_libc(name),
-        )?;
-        self.http = Some(request);
-        Ok(())
-    }
-
-    /// The full document could not be downloaded and only `libc` is lost without it.
-    pub(crate) fn retry_with_abbreviated_manifest(
-        &mut self,
-        scope: &npm::registry::Scope,
-        is_optional: bool,
-    ) -> Result<(), ForManifestError> {
-        let Callback::PackageManifest {
-            name,
-            loaded_manifest,
-            ..
-        } = core::mem::replace(&mut self.callback, Callback::LocalTarball)
-        else {
-            unreachable!("not a manifest task")
-        };
-        // The finished request's client borrows these until the assignment below drops it.
-        let _borrowed = (
-            core::mem::take(&mut self.url_buf),
-            core::mem::take(&mut self.header_buf),
-        );
-        let request = self.manifest_request(
-            name.slice(),
-            scope,
-            loaded_manifest.as_ref(),
-            is_optional,
-            false,
-        )?;
-        self.http = Some(request);
-        Ok(())
-    }
-
-    fn manifest_request(
-        &mut self,
-        name: &[u8],
-        scope: &npm::registry::Scope,
-        loaded_manifest: Option<&PackageManifest>,
-        is_optional: bool,
-        needs_extended: bool,
-    ) -> Result<Box<AsyncHTTP<'static>>, ForManifestError> {
+        let (name, needs_extended) = (manifest_request.name.slice(), manifest_request.is_extended);
         let pm = self.package_manager;
         // SAFETY: `pm.log` is the long-lived `*mut Log` the package manager
         // was constructed with.
@@ -684,10 +595,8 @@ impl NetworkTask {
         }
 
         self.callback = Callback::PackageManifest {
-            name: stored_string(name),
+            request: *manifest_request,
             loaded_manifest: loaded_manifest.cloned(),
-            is_extended_manifest: needs_extended,
-            registry: scope.manifest_cache_key(),
         };
 
         // Incase the ETag causes invalidation, we fallback to the last modified date.
@@ -701,7 +610,8 @@ impl NetworkTask {
             request.client.if_modified_since = unsafe { bun_ptr::detach_lifetime(last_modified) };
         }
 
-        Ok(request)
+        self.http = Some(request);
+        Ok(())
     }
 
     pub(crate) fn get_completion_callback(&mut self) -> HTTPClientResultCallback {
@@ -723,7 +633,7 @@ pub enum ForTarballError {
     /// package); callers treat it like `AlreadyFailed`.
     #[error("TarballFailedToDownload")]
     Offline,
-    /// Returned by `enqueue_install_task` when the dedupe map already records
+    /// Returned by `enqueue_install_task` when `Fetches` already records
     /// a terminal failure for this task id. Callers handle it silently (the
     /// original failure was already reported) and advance their own bookkeeping.
     #[error("TarballFailedToDownload")]
@@ -753,31 +663,24 @@ impl bun_core::output::ErrName for ForTarballError {
 }
 
 impl NetworkTask {
-    pub(crate) fn tarball(&self) -> &ExtractTarball {
-        let Callback::Extract(tarball) = &self.callback else {
-            unreachable!("not a tarball task")
-        };
-        tarball
-    }
-
     pub(crate) fn for_tarball(
         &mut self,
-        tarball_: ExtractTarball,
+        tarball: &ExtractTarball,
         scope: &npm::registry::Scope,
         authorization: Authorization,
     ) -> Result<(), ForTarballError> {
         let pm = self.package_manager;
 
-        let tarball_url = tarball_.url.slice();
+        let tarball_url = tarball.url.slice();
         let built_from_registry_url = tarball_url.is_empty();
         self.url_buf = if built_from_registry_url {
             // SAFETY: `value` is the `Npm` variant on this code path —
             // `for_tarball` is only reached for npm tarball downloads
             // (callers gate on `resolution.tag == .npm`).
-            let version = tarball_.resolution.npm().version;
+            let version = tarball.resolution.npm().version;
             Box::from(extract_tarball::build_url(
                 scope.url.href(),
-                tarball_.name.slice(),
+                tarball.name.slice(),
                 version,
                 pm.lockfile.buffers.string_bytes.as_slice(),
             )?)
@@ -785,10 +688,6 @@ impl NetworkTask {
             // Owning the copy (rather than aliasing `tarball.url`)
             // avoids a self-reference into `callback` (see `url_buf` field doc).
             Box::<[u8]>::from(tarball_url)
-        };
-        self.callback = Callback::Extract(tarball_);
-        let Callback::Extract(tarball) = &self.callback else {
-            unreachable!()
         };
 
         if !(self.url_buf.starts_with(b"https://") || self.url_buf.starts_with(b"http://")) {
@@ -953,7 +852,7 @@ impl NetworkTask {
     /// Prepare this task for another HTTP attempt. A stream that never ran is
     /// reused; one consumed by a download that failed mid-body (released in
     /// `TarballStream::finish`) is replaced, keeping the same extract Task.
-    pub(crate) fn reset_streaming_for_retry(&mut self) {
+    pub(crate) fn reset_for_retry(&mut self) {
         debug_assert!(!self.streaming_committed);
         if let Some(stream) = self.tarball_stream.as_deref_mut() {
             stream.reset_for_retry();
@@ -961,50 +860,38 @@ impl NetworkTask {
             let this: *mut NetworkTask = self;
             self.tarball_stream = Some(TarballStream::init(self.streaming_extract_task, this));
         }
+        // `notify` keeps the metadata it finds here if the next attempt gets none.
         self.response = HTTPClientResult::default();
     }
 
-    /// Initialize a freshly-vended pool slot in place — a full struct overwrite
-    /// that resets every other field to its struct default. The slot may be
-    /// uninitialized heap memory (from `HiveArrayFallback::claim()`'s
-    /// `Box::new_uninit()` fallback) or stale (reused hive slot whose prior
-    /// contents ARE now dropped on `put` since 1e76047), so each field is
-    /// written via `addr_of_mut!().write()` without dropping the previous
-    /// value — the slot is freshly poisoned/uninit from `claim()`.
-    ///
-    /// `callback` and `response_buffer` get placeholders that `for_manifest`/`for_tarball` replace.
-    ///
-    /// # Safety
-    /// `slot` must be the unique handle to a `HiveArrayFallback<NetworkTask>`
-    /// slot returned by `claim()`; its prior contents are treated as garbage
-    /// (no destructors run).
-    pub(crate) unsafe fn write_init(
-        slot: *mut NetworkTask,
-        task_id: crate::package_manager_task::Id,
-        package_manager: bun_ptr::ParentRef<PackageManager>,
-    ) {
-        use core::ptr::addr_of_mut;
-        // SAFETY: caller contract (see fn `# Safety`) — `slot` is the unique
-        // handle to a freshly-vended `HiveArrayFallback` slot whose prior
-        // contents are garbage; every field is written without dropping.
-        unsafe {
-            addr_of_mut!((*slot).task_id).write(task_id);
-            addr_of_mut!((*slot).package_manager).write(package_manager);
-            // Struct-default fields.
-            addr_of_mut!((*slot).http).write(None);
-            addr_of_mut!((*slot).response).write(HTTPClientResult::default());
-            addr_of_mut!((*slot).url_buf).write(Box::default());
-            addr_of_mut!((*slot).header_buf).write(Box::default());
-            addr_of_mut!((*slot).retried).write(0);
-            addr_of_mut!((*slot).next).write(bun_threading::Link::new());
-            addr_of_mut!((*slot).tarball_stream).write(None);
-            addr_of_mut!((*slot).streaming_extract_task).write(ptr::null_mut());
-            addr_of_mut!((*slot).streaming_committed).write(false);
-            addr_of_mut!((*slot).signal_store).write(http::signals::Store::default());
-            // Caller-initialized fields: write drop-safe placeholders so the
-            // plain `=` in `for_manifest`/`for_tarball` drops a valid value.
-            addr_of_mut!((*slot).response_buffer).write(MutableString::init_empty());
-            addr_of_mut!((*slot).callback).write(Callback::LocalTarball);
-        }
+    /// In a slot of `manager.preallocated_network_tasks`, which is free again if `build` fails.
+    pub(crate) fn create<E>(
+        manager: &PackageManager,
+        callback: Callback,
+        build: impl FnOnce(&mut Self) -> Result<(), E>,
+    ) -> Result<*mut Self, E> {
+        let slot = Self::in_slot(manager, callback);
+        let pool = &manager.preallocated_network_tasks;
+        // SAFETY: nothing else has the slot yet.
+        unsafe { build(&mut *slot).inspect_err(|_| pool.put(slot)) }.map(|()| slot)
+    }
+
+    fn in_slot(manager: &PackageManager, callback: Callback) -> *mut Self {
+        let task = NetworkTask {
+            http: None,
+            response: HTTPClientResult::default(),
+            url_buf: Box::default(),
+            header_buf: Box::default(),
+            retried: 0,
+            response_buffer: MutableString::init_empty(),
+            package_manager: bun_ptr::ParentRef::new(manager),
+            callback,
+            next: bun_threading::Link::new(),
+            tarball_stream: None,
+            streaming_extract_task: ptr::null_mut(),
+            streaming_committed: false,
+            signal_store: http::signals::Store::default(),
+        };
+        manager.preallocated_network_tasks.get_init(task).as_ptr()
     }
 }

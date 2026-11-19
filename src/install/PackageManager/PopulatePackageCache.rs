@@ -4,11 +4,12 @@ use bun_core::{Output, ZBox};
 
 use super::add_remove_with_filter::root_package_json_path;
 use super::enqueue::enqueue_install_task;
+use super::fetch_table::Asker;
 use super::install_with_manager::{install_with_manager, wait_for_everything_except_peers};
 use super::package_manager_options::{Do, LogLevel};
 use super::{Command, PackageManager};
 use crate::network_task::ForTarballError;
-use crate::{DependencyID, PackageID, PreinstallState, TaskCallbackContext, invalid_dependency_id};
+use crate::{DependencyID, PackageID, PreinstallState, invalid_dependency_id};
 
 #[derive(Clone, Copy, Default)]
 pub struct Summary {
@@ -135,18 +136,12 @@ pub(crate) fn download_pinned_packages(
             continue;
         }
 
-        let waiter = TaskCallbackContext::Dependency(dep_id);
-        let enqueued = enqueue_install_task(manager, dep_id, pkg_id, waiter, name_and_version_hash);
+        let enqueued =
+            enqueue_install_task(manager, dep_id, pkg_id, Asker::Cache, name_and_version_hash);
         // Any other error is already in `manager.log`.
         if let Err(ForTarballError::OutOfMemory) = enqueued {
             bun_core::out_of_memory();
         }
-    }
-
-    // A `Dependency` callback would resolve its dependency again, which would download a `github:`
-    // package twice.
-    for waiters in manager.task_queue.values_mut() {
-        waiters.retain(|waiter| matches!(waiter, TaskCallbackContext::GitCheckout { .. }));
     }
 
     let _ = super::run_tasks::schedule_tasks(manager);

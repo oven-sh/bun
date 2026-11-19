@@ -31,15 +31,17 @@ use crate::package_install::{
     rename_staging_into_place,
 };
 use crate::package_manager_real::directories;
+use crate::package_manager_real::fetch_table::Waiters;
 use crate::package_manager_real::package_manager_options::{Do, Enable};
 use crate::package_manager_real::{INBOX, THREAD_POOL};
+use crate::package_manager_task::PackageFetchId;
 use crate::postinstall_optimizer;
 use crate::postinstall_optimizer::PostinstallOptimizer;
 use crate::prune::LinkedNodeModules;
 use crate::resolution;
 use crate::{
-    self as install, Lockfile, PackageID, PackageManager, Resolution, TaskCallbackContext,
-    TruncatedPackageNameHash, bin, invalid_dependency_id,
+    self as install, Lockfile, PackageID, PackageManager, Resolution, TruncatedPackageNameHash,
+    bin, invalid_dependency_id,
 };
 
 /// The enum lives at module level in `crate::resolution`.
@@ -126,6 +128,7 @@ pub struct Installer<'a> {
 
     /// Main-thread only: entries that returned `Result::RunScripts`, in that order.
     pub(crate) pending_lifecycle_scripts: VecDeque<StoreEntryId>,
+    pub(crate) waits_for_fetch: Waiters<StoreEntryId>,
 }
 
 /// A task on the pool reads `self` and the store through `Task::installer`.
@@ -275,17 +278,10 @@ impl<'a> Installer<'a> {
 
     pub(crate) fn on_package_extracted(
         &mut self,
-        task_id: crate::package_manager_task::Id,
+        fetch: PackageFetchId,
         data: &install::ExtractData,
     ) {
-        let Some(removed) = self.manager_mut().task_queue.remove(&task_id) else {
-            return;
-        };
-        for install_ctx in removed.as_slice() {
-            let &TaskCallbackContext::IsolatedPackageInstallContext(entry_id) = install_ctx else {
-                continue;
-            };
-
+        for entry_id in self.waits_for_fetch.take(fetch) {
             let pkg_id = self.store.ids(entry_id).pkg_id;
             if data.integrity.tag.is_supported() {
                 self.record_extracted_integrity(pkg_id, &data.integrity);
@@ -329,19 +325,18 @@ impl<'a> Installer<'a> {
             .set(Enable::FORCE_SAVE_LOCKFILE, true);
     }
 
-    /// Called from main thread when a tarball download or extraction fails.
-    /// Without this, the upfront pending-task slot for each waiting entry is
-    /// never released and the install loop blocks forever on
-    /// `pendingTaskCount() == 0`.
+    /// Main thread. Releases the pending-task slot of each entry that waited.
     pub(crate) fn on_package_download_error(
         &mut self,
-        task_id: crate::package_manager_task::Id,
+        fetch: PackageFetchId,
+        is_required: bool,
         name: &[u8],
         resolution: &Resolution,
         err: crate::Error,
         url: &[u8],
     ) {
-        let Some(callbacks) = self.manager_mut().task_queue.remove(&task_id) else {
+        let entries = self.waits_for_fetch.take(fetch);
+        if is_required && entries.is_empty() {
             // No waiting entry — still surface the error so it isn't lost.
             let string_buf = self.lockfile().buffers.string_bytes.as_slice();
             Output::err_generic(
@@ -356,25 +351,12 @@ impl<'a> Installer<'a> {
                 ),
             );
             Output::flush();
-            return;
-        };
-        for install_ctx in callbacks.as_slice() {
-            if let &TaskCallbackContext::IsolatedPackageInstallContext(entry_id) = install_ctx {
+        }
+        for entry_id in entries {
+            if is_required {
                 let url = url.into();
                 self.on_task_fail(entry_id, &TaskError::Download { err, url });
-            }
-        }
-    }
-
-    pub(crate) fn on_optional_package_download_error(
-        &mut self,
-        task_id: crate::package_manager_task::Id,
-    ) {
-        let Some(callbacks) = self.manager_mut().task_queue.remove(&task_id) else {
-            return;
-        };
-        for install_ctx in callbacks.as_slice() {
-            if let &TaskCallbackContext::IsolatedPackageInstallContext(entry_id) = install_ctx {
+            } else {
                 self.leave_out_entry(entry_id);
             }
         }
@@ -962,7 +944,6 @@ fn download_error_reason(e: crate::Error) -> &'static [u8] {
         crate::Error::TarballHTTP404 => b"404 Not Found",
         crate::Error::TarballHTTP4xx => b"HTTP 4xx",
         crate::Error::TarballHTTP5xx => b"HTTP 5xx",
-        crate::Error::TarballFailedToExtract => b"failed to extract",
         crate::Error::TarballFailedToDownload => b"download failed",
         _ => e.name().as_bytes(),
     }

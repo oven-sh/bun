@@ -18,9 +18,6 @@ pub mod symlinker;
 
 pub(crate) use file_copier::FileCopier;
 pub use store::Store;
-/// Alias so `crate::isolated_install::store::EntryId` (used by
-/// `TaskCallbackContext` in lib.rs) resolves to the real `entry::Id` newtype.
-pub use store::entry::Id as EntryId;
 
 use crate::lockfile::package::PackageColumns as _;
 use std::io::Write as _;
@@ -2186,6 +2183,7 @@ pub(crate) fn install_isolated_packages(
             held_members: Some(Vec::new()),
             left_out_entries: Vec::new(),
             pending_lifecycle_scripts: Default::default(),
+            waits_for_fetch: Default::default(),
         };
         // From here on, no `&mut PackageManager` is held across a call on `installer`, because it
         // would alias.
@@ -2499,16 +2497,14 @@ pub(crate) fn install_isolated_packages(
                         continue;
                     }
 
-                    let ctx = install::TaskCallbackContext::IsolatedPackageInstallContext(entry_id);
-
                     match package_manager::enqueue_install_task(
                         installer.manager_mut(),
                         dep_id,
                         pkg_id,
-                        ctx,
+                        package_manager::fetch_table::Asker::IsolatedLinker,
                         patch_info.name_and_version_hash(),
                     ) {
-                        Ok(()) => {}
+                        Ok(fetch) => installer.waits_for_fetch.push(fetch, entry_id),
                         Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
                         Err(ForTarballError::AlreadyFailed | ForTarballError::Offline) => {
                             installer.on_download_not_queued(entry_id);

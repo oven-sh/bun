@@ -161,14 +161,14 @@ impl CopyFile {
 
         // Source first: if it fails, no destination file is left behind.
         let source = match source_file {
-            PathOrFileDescriptor::Fd(fd) => JobFd::borrowed(*fd),
+            PathOrFileDescriptor::Fd(fd) => JobFd::Borrowed(*fd),
             PathOrFileDescriptor::Path(path) => {
                 let mut buf = bun_paths::path_buffer_pool::get();
                 JobFd::opened(File::open(path.slice_z(&mut buf), OPEN_SOURCE_FLAGS, 0)?)
             }
         };
         let destination = match destination_file {
-            PathOrFileDescriptor::Fd(fd) => JobFd::borrowed(*fd),
+            PathOrFileDescriptor::Fd(fd) => JobFd::Borrowed(*fd),
             PathOrFileDescriptor::Path(path) => {
                 let mut buf = bun_paths::path_buffer_pool::get();
                 // `slice_z` makes "" of it.

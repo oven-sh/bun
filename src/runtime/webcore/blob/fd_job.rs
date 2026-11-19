@@ -1,11 +1,10 @@
-//! A read or write on the work pool that waits on the IO thread while its descriptor is not ready.
+//! A read or write on the work pool that leaves it while its descriptor is not ready.
 
-use bun_io::fd_wait::{FdWait, Interest, JobFd};
-use bun_jsc::job::JsAffine;
+use bun_io::fd_wait::{Canceller, FdWait, Interest, JobFd, Key};
+use bun_jsc::job::{JsAffine, OwnedJob, Running};
 use bun_jsc::node_path::{JoinedPath, PathLike};
-use bun_jsc::{Completion, Job, JobContext, JsResult, JsThread, SystemError};
+use bun_jsc::{Job, JsResult, JsThread, SystemError};
 use bun_sys::{E, Fd, File, O};
-use bun_threading::{IntrusiveWorkTask as _, WorkPoolTask};
 
 use crate::node::fs as node_fs;
 use crate::node::types::PathLikeExt as _;
@@ -32,86 +31,72 @@ pub(crate) trait FdOp: Send + Sized + 'static {
     fn then(self, result: Result<(), Box<SystemError>>, js: Self::Js) -> JsResult<()>;
 }
 
-pub(crate) struct FdJob<Op: FdOp> {
+pub(crate) struct FdJob<Op> {
     op: Op,
-    result: Result<(), Box<SystemError>>,
-    wait: FdWait,
-    done: Option<Completion<Self>>,
+    key: Key,
 }
 
-impl<Op: FdOp> JobContext for FdJob<Op> {
-    const CANCELLABLE: bool = true;
+impl<Op: FdOp> OwnedJob for FdJob<Op> {
     type OffThread = Self;
-    type Js = Op::Js;
+    type Js = (Op::Js, Canceller);
+    type Outcome = Result<(), Box<SystemError>>;
+    const CANCELLABLE: bool = true;
+    const OUTLIVES_SCRIPT: bool = false;
 
-    fn run(this: &mut Self, done: Completion<Self>) -> Option<Completion<Self>> {
-        this.done = Some(done);
-        let opened = this.op.open();
-        this.advance(opened);
-        None
+    fn run(mut job: Running<Self>) {
+        let Self { op, key } = job.off();
+        match op.open() {
+            Ok((fd, step)) => {
+                let wait = FdWait::new(*key, Op::INTEREST, fd);
+                Self::advance(job, wait, Ok(step))
+            }
+            Err(err) => job.finish(Err(err)),
+        }
     }
 
-    fn then(this: Self, js: Op::Js, _: &JsThread<'_>) -> JsResult<()> {
-        this.op.then(this.result, js)
+    fn unrun() -> Self::Outcome {
+        Err(Op::INTEREST.cancelled().into())
     }
 
-    unsafe fn cancel(this: *mut Self) {
-        // SAFETY: fn contract.
-        unsafe { FdWait::cancel(&raw mut (*this).wait) }
+    fn then(this: Self, outcome: Self::Outcome, js: Self::Js, _: &JsThread<'_>) -> JsResult<()> {
+        this.op.then(outcome, js.0)
+    }
+
+    fn cancel((_, canceller): &mut Self::Js) {
+        canceller.cancel();
     }
 }
 
 impl<Op: FdOp> FdJob<Op> {
     #[track_caller]
     pub(crate) fn schedule(op: Op, js: Op::Js, cx: &JsThread<'_>) {
-        let job = Self {
-            op,
-            result: Ok(()),
-            wait: FdWait::new(Op::INTEREST, Self::resume),
-            done: None,
+        let (key, canceller) = Key::next();
+        Job::<Self>::schedule(cx, Self { op, key }, (js, canceller));
+    }
+
+    fn advance(mut job: Running<Self>, wait: FdWait, mut step: Result<Step, Box<SystemError>>) {
+        let outcome = loop {
+            step = match step {
+                Ok(Step::Done) => break Ok(()),
+                Ok(Step::Wait) => return wait.park(|woken| Self::resume(job, woken)),
+                Ok(Step::Again) => match wait.check_cancelled() {
+                    Ok(()) => job.off().op.step(wait.fd(), false),
+                    Err(err) => break Err(err.into()),
+                },
+                Err(err) => break Err(err),
+            };
         };
-        Job::<Self>::schedule(cx, job, js);
+        drop(wait);
+        job.finish(outcome);
     }
 
-    unsafe fn resume(task: *mut WorkPoolTask) {
-        // SAFETY: the task of the `wait` that `step_until_parked` parked: the job is back.
-        unsafe {
-            let this = bun_core::from_field_ptr!(Self, wait, FdWait::from_task_ptr(task));
-            let stepped = (*this).wait.unpark().map_err(Into::into).and_then(|fd| {
-                let step = (*this).op.step(fd.get(), true)?;
-                Ok((fd, step))
-            });
-            (*this).advance(stepped);
-        }
-    }
-
-    /// The job is another thread's when this returns.
-    fn advance(&mut self, stepped: Result<(JobFd, Step), Box<SystemError>>) {
-        self.result = match stepped.and_then(|(fd, step)| self.step_until_parked(fd, step)) {
-            Ok(true) => return,
-            Ok(false) => Ok(()),
-            Err(err) => Err(err),
-        };
-        if let Some(done) = self.done.take() {
-            done.finish();
-        }
-    }
-
-    /// `false`: done.
-    fn step_until_parked(&mut self, fd: JobFd, mut step: Step) -> Result<bool, Box<SystemError>> {
-        loop {
-            match step {
-                Step::Done => return Ok(false),
-                Step::Again => {
-                    self.wait.check_cancelled()?;
-                    step = self.op.step(fd.get(), false)?;
-                }
-                Step::Wait => {
-                    // SAFETY: this thread has the boxed job, and every frame returns without touching it.
-                    unsafe { FdWait::park(&raw mut self.wait, fd)? };
-                    return Ok(true);
-                }
+    fn resume(mut job: Running<Self>, woken: bun_sys::Result<FdWait>) {
+        match woken {
+            Ok(wait) => {
+                let step = job.off().op.step(wait.fd(), true);
+                Self::advance(job, wait, step)
             }
+            Err(err) => job.finish(Err(err.into())),
         }
     }
 }
@@ -147,7 +132,7 @@ pub(super) fn open(
     mut mkdirp: bool,
 ) -> Result<JobFd, Box<SystemError>> {
     let path = match file {
-        PathOrFileDescriptor::Fd(fd) => return Ok(JobFd::borrowed(*fd)),
+        PathOrFileDescriptor::Fd(fd) => return Ok(JobFd::Borrowed(*fd)),
         PathOrFileDescriptor::Path(path) => path,
     };
     let mut buf = bun_paths::path_buffer_pool::get();

@@ -337,11 +337,11 @@ use bun_sys::Fd;
 // the `libc` crate's raw items) move the proof into the type signature.
 // Unused externs do not generate linker references, so per-target `#[cfg]` is
 // unnecessary; every caller is gated.
-#[cfg(unix)]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
 mod safe_c {
     use core::ffi::c_int;
     unsafe extern "C" {
-        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        #[cfg(target_os = "macos")]
         pub(super) safe fn kqueue() -> c_int;
         #[cfg(any(target_os = "linux", target_os = "android"))]
         pub(super) safe fn epoll_create1(flags: c_int) -> c_int;
@@ -403,7 +403,7 @@ pub enum PathOrFileDescriptor<'a> {
 
 pub mod waker {
     #[cfg(not(windows))]
-    use bun_sys::{Fd, File};
+    use bun_sys::File;
     #[cfg(windows)]
     use core::sync::atomic::{AtomicPtr, Ordering};
 
@@ -435,17 +435,12 @@ pub mod waker {
             }
         }
 
-        #[inline]
-        pub(crate) fn get_fd(&self) -> Fd {
-            self.eventfd.fd()
-        }
-
         pub fn wait(&self) {
             let _ = self.eventfd.read(&mut [0; size_of::<u64>()]);
         }
 
         pub fn wake(&self) {
-            let _ = bun_sys::write(self.get_fd(), &1u64.to_ne_bytes());
+            let _ = bun_sys::write(self.eventfd.fd(), &1u64.to_ne_bytes());
         }
     }
 
@@ -481,11 +476,6 @@ pub mod waker {
             let _ = io_darwin_schedule_wakeup(self.machport);
         }
 
-        #[inline]
-        pub(crate) fn get_fd(&self) -> Fd {
-            self.kq.fd()
-        }
-
         pub fn wait(&self) {
             let mut events = Self::ZEROED;
             // SAFETY: FFI syscall; pointers reference a stack-local array valid for the call.
@@ -511,7 +501,7 @@ pub mod waker {
                         .unwrap_or(crate::Error::Unexpected),
                 );
             }
-            let kq = File::from_fd(Fd::from_native(kq));
+            let kq = File::from_fd(bun_sys::Fd::from_native(kq));
             // Box<[u8]> owns the buffer for the machport's lifetime.
             let mut machport_buf = vec![0u8; 1024].into_boxed_slice();
             // SAFETY: FFI call; buf outlives the machport (owned by the returned Waker).

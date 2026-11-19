@@ -78,6 +78,18 @@ test.skipIf(isWindows)("a file that was empty and is a silent FIFO now reads as 
   expect(await file.text()).toBe("");
 });
 
+test.skipIf(isWindows)("a read of a pipe waits again after each chunk", async () => {
+  using dir = tempDir("bun-file-fd-read", {});
+  using fifo = openFifo(String(dir));
+  const text = Bun.file(fifo.reader).slice(0, 30).text();
+  for (let i = 0; i < 30; i++) {
+    // A writer that keeps up, and one that does not.
+    await Bun.sleep(i % 4);
+    writeSync(fifo.writer, "x");
+  }
+  expect(await text).toBe(Buffer.alloc(30, "x").toString());
+});
+
 describe.skipIf(!isLinux)("EPOLLERR while Bun.file(fd).text() waits for a socket", () => {
   const [AF_INET, SOCK_STREAM, SOCK_DGRAM, SOL_SOCKET, SO_TIMESTAMPING] = [2, 1, 2, 1, 37];
   const libc = () =>

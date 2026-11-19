@@ -2431,7 +2431,7 @@ describe("undici", () => {
       const text = Buffer.alloc(5000, "hello ").toString();
       const junk = Buffer.alloc(40000, "J");
       const bodies: Record<string, Buffer> = { zlib: zlib.deflateSync(text), raw: zlib.deflateRawSync(text) };
-      const completed: string[] = [];
+      const completed = { zlib: Promise.withResolvers<string>(), raw: Promise.withResolvers<string>() };
       const dispatcher = {
         dispatch(opts: any, handler: any) {
           const name = opts.path.slice(1);
@@ -2440,8 +2440,8 @@ describe("undici", () => {
           let sent = 0;
           const send = () => {
             while (sent < parts.length) if (handler.onData(parts[sent++]) === false) return;
-            completed.push(name);
             handler.onComplete([]);
+            completed[name as "zlib" | "raw"].resolve("sent all");
           };
           handler.onConnect(() => {});
           handler.onHeaders(200, [Buffer.from("content-encoding"), Buffer.from("deflate")], send, "OK");
@@ -2452,9 +2452,11 @@ describe("undici", () => {
       const read = async (name: string) =>
         (await (await undiciFetch(`http://localhost:1/${name}`, { dispatcher } as any)).text()) === text;
       expect({ zlib: await read("zlib"), raw: await read("raw") }).toEqual({ zlib: true, raw: true });
-      // The bytes after the end are dropped, and the dispatcher is not left paused on them.
-      while (completed.length < 2) await new Promise(resolve => setImmediate(resolve));
-      expect(completed).toEqual(["zlib", "raw"]);
+      // The bytes after the end are dropped, and the dispatcher is not left paused on them: it sends the rest.
+      expect({ zlib: await completed.zlib.promise, raw: await completed.raw.promise }).toEqual({
+        zlib: "sent all",
+        raw: "sent all",
+      });
     });
 
     it("fetch with a dispatcher does not follow a 301 with a stream body, like undici", async () => {

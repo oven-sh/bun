@@ -8,6 +8,8 @@ const { isDisturbed } = require("internal/streams/utils");
 
 const ObjectCreate = Object.create;
 const ObjectPrototypeToString = Object.prototype.toString;
+const SafeFinalizationRegistry = FinalizationRegistry;
+const SafeWeakRef = WeakRef;
 const kEmptyObject = Object.freeze(ObjectCreate(null));
 
 // The loose overload keeps request()'s extra init fields accepted; the intersection keeps preconnect typed.
@@ -241,7 +243,7 @@ async function request(
     return result;
   }
 
-  const resp: Response & { trailers?: undefined } = await nativeFetch(url, {
+  const nativeInit = {
     signal,
     mode: "cors",
     method,
@@ -250,8 +252,11 @@ async function request(
     redirect: followRedirects ? "follow" : "manual",
     maxRedirects: followRedirects ? maxRedirections : undefined,
     keepalive: !reset,
-    ...(routeOnly ? routed[kNativeInit]() : undefined),
-  });
+  };
+  // Through the agent, so that a closed one rejects, close() waits for the headers, and destroy() aborts.
+  const resp: Response & { trailers?: undefined } = await (routeOnly
+    ? routed[kFetch](url, nativeInit)
+    : nativeFetch(url, nativeInit));
 
   const { status: statusCode, headers, trailers } = resp;
 
@@ -537,8 +542,8 @@ function utf8WithoutBOM(buf: Buffer) {
 class DispatchBodyReadable extends Readable {
   #used = false;
   #reading = false;
-  #contentType;
-  #onDestroy;
+  #contentType: string | undefined = undefined;
+  #onDestroy: (err?: Error) => void = noop;
 
   constructor(read: () => void, onDestroy: (err?: Error) => void, contentType) {
     super({ read });
@@ -934,7 +939,7 @@ class Agent extends DispatcherBase {
 }
 
 class Pool extends DispatcherBase {
-  #origin;
+  #origin: URL | undefined = undefined;
 
   constructor(origin, _options) {
     super();
@@ -943,12 +948,12 @@ class Pool extends DispatcherBase {
   }
 
   [kDispatch](opts, handler) {
-    return fetchDispatch(this.#origin, opts, handler, this[kPending]);
+    return fetchDispatch(this.#origin!, opts, handler, this[kPending]);
   }
 }
 
 class BalancedPool extends DispatcherBase {
-  #upstreams;
+  #upstreams: URL[] = [];
 
   constructor(upstreams = [], _options) {
     super();
@@ -963,7 +968,7 @@ class BalancedPool extends DispatcherBase {
 }
 
 class Client extends DispatcherBase {
-  #origin;
+  #origin: URL | undefined = undefined;
 
   constructor(origin, _options) {
     super();
@@ -972,12 +977,12 @@ class Client extends DispatcherBase {
   }
 
   [kDispatch](opts, handler) {
-    return fetchDispatch(this.#origin, opts, handler, this[kPending]);
+    return fetchDispatch(this.#origin!, opts, handler, this[kPending]);
   }
 }
 
 class ProxyAgent extends DispatcherBase {
-  #nativeInit;
+  #nativeInit: { proxy: unknown } | undefined = undefined;
 
   constructor(opts) {
     super();
@@ -1030,7 +1035,7 @@ class EnvHttpProxyAgent extends DispatcherBase {
 }
 
 class RetryAgent extends DispatcherBase {
-  #agent;
+  #agent: any = undefined;
 
   constructor(agent, _options) {
     super();
@@ -1335,6 +1340,37 @@ function basicAuthorization(url: URL) {
   }
 }
 
+// Like undici's fetch: a body that a dispatcher delivers encoded is decoded, and the headers stay as they came.
+function decodedBody(body: ReadableStream, contentEncoding: string): ReadableStream {
+  const codings = contentEncoding.toLowerCase().split(",");
+  const formats: string[] = [];
+  for (let i = codings.length - 1; i >= 0; i--) {
+    const coding = codings[i].trim();
+    const format =
+      coding === "gzip" || coding === "x-gzip"
+        ? "gzip"
+        : coding === "deflate"
+          ? "deflate"
+          : coding === "br"
+            ? "brotli"
+            : coding === "zstd"
+              ? "zstd"
+              : undefined;
+    // One unknown coding leaves the whole body as it came, like undici.
+    if (format === undefined) return body;
+    formats.push(format);
+  }
+  for (const format of formats) body = body.pipeThrough(new DecompressionStream(format as any)) as ReadableStream;
+  return body;
+}
+
+function runHeldValue(held: () => void) {
+  held();
+}
+
+// Cancels the dispatch behind a fetch() response body that was collected unread, as undici does.
+let abandonedBodies: FinalizationRegistry<() => void> | undefined;
+
 // fetch through a dispatcher that is not route-only: every hop goes through dispatcher.dispatch(), as in undici.
 function fetchViaDispatcher(dispatcher, input, init) {
   let url: URL, method: string, headers: Headers, body: any, signal: any, redirect: any;
@@ -1393,10 +1429,20 @@ function fetchViaDispatcher(dispatcher, input, init) {
     return Promise.reject(err);
   }
 
-  const { promise, resolve, reject } = Promise.withResolvers<Response>();
+  const deferred = Promise.withResolvers<Response>();
+  let resolve: ((response: Response) => void) | null = deferred.resolve;
+  let reject: ((reason: unknown) => void) | null = deferred.reject;
   let settled = false;
+  // The resolving functions hold the promise and the promise holds the Response, so they go once it settled.
+  const settle = (fulfilled: boolean, value) => {
+    const resolver = fulfilled ? resolve : reject;
+    settled = true;
+    resolve = reject = null;
+    resolver!(value);
+  };
   let redirects = 0;
-  let streamController: ReadableStreamDefaultController | null = null;
+  // Weak: the dispatcher holds these callbacks, and a strong reference would keep an abandoned body alive forever.
+  let bodyController: WeakRef<ReadableStreamDefaultController> | null = null;
   let abortHop: ((reason?: Error) => void) | null = null;
   let onSignalAbort: (() => void) | null = null;
   const removeSignal = () => {
@@ -1407,15 +1453,11 @@ function fetchViaDispatcher(dispatcher, input, init) {
   };
   const routeError = err => {
     removeSignal();
-    if (!settled) {
-      settled = true;
-      // Null so a late onData cannot park the dispatcher on the orphaned stream's backpressure.
-      streamController = null;
-      reject(err);
-    } else if (streamController) {
-      streamController.error(err);
-      streamController = null;
-    }
+    const controller = bodyController?.deref();
+    // Null so a late onData cannot park the dispatcher on the orphaned stream's backpressure.
+    bodyController = null;
+    if (!settled) settle(false, err);
+    else controller?.error(err);
   };
   // Applies the WHATWG redirect rules to the request state; throws when the redirect cannot be followed.
   const redirectTo = (statusCode: number, location: string) => {
@@ -1456,10 +1498,22 @@ function fetchViaDispatcher(dispatcher, input, init) {
     // False once this hop reached a terminal callback or a redirect replaced it; its later callbacks are ignored.
     let live = true;
     let resumeData: (() => void) | null = null;
+    const endHop = () => {
+      live = false;
+      abandonedBodies?.unregister(cancelBody);
+    };
     const fail = err => {
       if (!live) return;
-      live = false;
+      endHop();
       routeError(err);
+    };
+    // The reader cancelled the response body, or the body was collected unread.
+    const cancelBody = (reason?: unknown) => {
+      if (!live) return;
+      endHop();
+      removeSignal();
+      bodyController = null;
+      abortHop?.(reason instanceof Error ? reason : undefined);
     };
     try {
       dispatcher.dispatch(
@@ -1529,53 +1583,57 @@ function fetchViaDispatcher(dispatcher, input, init) {
             }
             resumeData = resume;
             const responseHeaders: [string, string][] = [];
+            let contentEncoding = "";
             for (let i = 0; i + 1 < rawHeaders.length; i += 2) {
-              responseHeaders.push([String(rawHeaders[i]), String(rawHeaders[i + 1])]);
+              const name = String(rawHeaders[i]);
+              const value = String(rawHeaders[i + 1]);
+              responseHeaders.push([name, value]);
+              if (name.toLowerCase() === "content-encoding") contentEncoding += contentEncoding ? "," + value : value;
             }
             let responseBody: ReadableStream | null = null;
             const nullBody = statusCode === 204 || statusCode === 205 || statusCode === 304;
             if (!nullBody && method !== "HEAD") {
               responseBody = new ReadableStream({
                 start(controller) {
-                  streamController = controller;
+                  bodyController = new SafeWeakRef(controller);
                 },
                 pull() {
                   resumeData?.();
                 },
-                cancel(reason) {
-                  removeSignal();
-                  streamController = null;
-                  abortHop?.(reason instanceof Error ? reason : undefined);
-                },
+                cancel: cancelBody,
               });
+              if (contentEncoding) responseBody = decodedBody(responseBody, contentEncoding);
             }
-            // Built before flipping settled so a non-constructible status rejects; the constructor cannot set url or redirected.
+            // Built before the promise settles so a non-constructible status rejects; the constructor cannot set url or redirected.
             const response = new Response(responseBody, { status: statusCode, statusText, headers: responseHeaders });
-            settled = true;
-            resolve(response);
+            if (responseBody) {
+              (abandonedBodies ??= new SafeFinalizationRegistry(runHeldValue)).register(responseBody, cancelBody, cancelBody);
+            }
+            settle(true, response);
             return true;
           },
           onData: chunk => {
-            if (!live || !streamController) return true;
+            const controller = live ? bodyController?.deref() : undefined;
+            if (!controller) return true;
             // Copy: the dispatch contract only guarantees the chunk during the callback.
-            streamController.enqueue(new Uint8Array(chunk));
-            return (streamController.desiredSize ?? 1) > 0;
+            controller.enqueue(new Uint8Array(chunk));
+            return (controller.desiredSize ?? 1) > 0;
           },
           onComplete: () => {
             if (!live) return;
-            live = false;
+            endHop();
             removeSignal();
             if (!settled) {
-              settled = true;
-              reject(
+              settle(
+                false,
                 new TypeError(
                   `fetch failed for ${url.origin}: the dispatcher completed without calling onHeaders; onHeaders must be called before onComplete`,
                 ),
               );
               return;
             }
-            streamController?.close();
-            streamController = null;
+            bodyController?.deref()?.close();
+            bodyController = null;
           },
           onError: fail,
         },
@@ -1586,7 +1644,7 @@ function fetchViaDispatcher(dispatcher, input, init) {
     }
   };
   dispatchHop();
-  return promise;
+  return deferred.promise;
 }
 
 function fetch(input, init) {

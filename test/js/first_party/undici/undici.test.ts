@@ -4,6 +4,7 @@ import { once } from "node:events";
 import net from "node:net";
 import { join } from "node:path";
 import { Readable } from "node:stream";
+import zlib from "node:zlib";
 // @ts-ignore undici 5's types don't declare ping()
 import {
   Agent,
@@ -2058,6 +2059,126 @@ describe("undici", () => {
       const res = await undiciFetch(`${hostUrl}/get`, { dispatcher: new Counting() } as any);
       expect(await res.json()).toEqual({ url: `${hostUrl}/get`, method: "GET" });
       expect(calls).toBe(1);
+    });
+
+    it("close() resolves after an unread fetch() Response is collected", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        // The body never ends, so the dispatch can only finish by being cancelled.
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              pull(controller) {
+                controller.enqueue(new Uint8Array(65536));
+              },
+            }),
+          ),
+      });
+      const pool = new Pool(`http://localhost:${server.port}`);
+      // In a function of its own, so that no local of the test holds the Response.
+      const status = await (async () => (await undiciFetch(server.url, { dispatcher: pool } as any)).status)();
+      expect(status).toBe(200);
+      let closed = false;
+      const closing = pool.close().then(() => {
+        closed = true;
+      });
+      while (!closed) {
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      await closing;
+    });
+
+    it.each(["identity", "gzip"])("a collected %s fetch() body cancels its dispatch", async encoding => {
+      const cancelled = Promise.withResolvers<void>();
+      let cancelledYet = false;
+      const dispatcher = {
+        dispatch(_opts: any, handler: any) {
+          handler.onConnect(() => {
+            cancelledYet = true;
+            cancelled.resolve();
+          });
+          handler.onHeaders(200, [Buffer.from("content-encoding"), Buffer.from(encoding)], () => {}, "OK");
+          // One chunk, and the response never completes.
+          handler.onData(encoding === "gzip" ? zlib.gzipSync("partial").subarray(0, 10) : Buffer.from("partial"));
+          return true;
+        },
+      };
+      const status = await (async () => (await undiciFetch("http://localhost:1/", { dispatcher } as any)).status)();
+      expect(status).toBe(200);
+      while (!cancelledYet) {
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      await cancelled.promise;
+    });
+
+    it("a fetch() body stays readable while the caller holds only the stream", async () => {
+      const chunk = Buffer.alloc(65536, "a");
+      await using server = Bun.serve({
+        port: 0,
+        fetch() {
+          let sent = 0;
+          return new Response(
+            new ReadableStream({
+              pull(controller) {
+                if (sent++ < 8) controller.enqueue(chunk);
+                else controller.close();
+              },
+            }),
+          );
+        },
+      });
+      const pool = new Pool(`http://localhost:${server.port}`);
+      const body = (await undiciFetch(server.url, { dispatcher: pool } as any)).body!;
+      // The Response is garbage now. The dispatch must not be cancelled with it.
+      for (let i = 0; i < 10; i++) {
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      expect((await new Response(body).bytes()).length).toBe(8 * chunk.length);
+      await pool.close();
+    });
+
+    it("fetch with a dispatcher decodes a body that the dispatcher delivers encoded, like undici", async () => {
+      const text = Buffer.alloc(4096, "hello ").toString();
+      const bodies: Record<string, Buffer> = {
+        "gzip": zlib.gzipSync(text),
+        "x-gzip": zlib.gzipSync(text),
+        "deflate": zlib.deflateSync(text),
+        "br": zlib.brotliCompressSync(text),
+        "zstd": zlib.zstdCompressSync(text),
+        "br, gzip": zlib.gzipSync(zlib.brotliCompressSync(text)),
+        "x-unknown": Buffer.from(text),
+      };
+      const dispatcher = {
+        dispatch(opts: any, handler: any) {
+          const encoding = decodeURIComponent(opts.path.slice(1));
+          handler.onConnect(() => {});
+          handler.onHeaders(200, [Buffer.from("Content-Encoding"), Buffer.from(encoding)], () => {}, "OK");
+          const body = bodies[encoding];
+          // Two chunks, so a decoder sees its input split.
+          handler.onData(body.subarray(0, 7));
+          handler.onData(body.subarray(7));
+          handler.onComplete([]);
+          return true;
+        },
+      };
+      const results: Record<string, unknown> = {};
+      for (const encoding of Object.keys(bodies)) {
+        const res = await undiciFetch(`http://localhost:1/${encodeURIComponent(encoding)}`, { dispatcher } as any);
+        // The header stays, as in undici and in native fetch.
+        results[encoding] = [res.headers.get("content-encoding"), (await res.text()) === text];
+      }
+      expect(results).toEqual(Object.fromEntries(Object.keys(bodies).map(encoding => [encoding, [encoding, true]])));
+    });
+
+    it("request() through a closed stock Agent rejects, like fetch()", async () => {
+      const agent = new Agent();
+      await agent.close();
+      await expect(request(`${hostUrl}/get`, { dispatcher: agent } as any)).rejects.toBeInstanceOf(
+        errors.ClientDestroyedError,
+      );
     });
 
     it("request(url, { dispatcher }) routes through a custom dispatcher", async () => {

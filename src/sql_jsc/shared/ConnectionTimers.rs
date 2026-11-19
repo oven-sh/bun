@@ -109,7 +109,6 @@ pub trait TimedConnection {
     }
 
     fn on_connection_timeout(&self) {
-        self.timers().timer.state.set(EventLoopTimerState::FIRED);
         let (kind, ms, stage) = self.timeout();
         if ms != 0 && !self.is_processing_data() {
             self.fail_timeout(kind, format_args!("{}", fmt_conn_timeout(kind, ms, stage)));
@@ -127,10 +126,6 @@ pub trait TimedConnection {
 
     fn on_max_lifetime_timeout(&self) {
         let timers = self.timers();
-        timers
-            .max_lifetime_timer
-            .state
-            .set(EventLoopTimerState::FIRED);
         match self.phase() {
             Phase::Failed => {}
             Phase::Connected if self.is_busy() => {

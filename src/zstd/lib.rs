@@ -136,6 +136,7 @@ pub mod c {
         // note 5 : ZSTD_findDecompressedSize handles multiple frames, and so it must traverse the input to
         //          read each contained frame header.  This is fast as most of the data is skipped,
         //          however it does mean that all frame data must be present and valid. */
+        pub(crate) fn ZSTD_findFrameCompressedSize(src: *const c_void, src_size: usize) -> usize;
         pub(crate) fn ZSTD_findDecompressedSize(src: *const c_void, src_size: usize)
         -> c_ulonglong;
 
@@ -586,6 +587,27 @@ pub fn decompress_alloc_with_prefix(
     })
     .map_err(|code| ZstdError::for_decompression(code, ZstdError::DecompressionFailed))?;
     Ok(output)
+}
+
+/// The first frame of `src`, and what follows it.
+pub fn split_first_frame(src: &[u8]) -> Option<(&[u8], &[u8])> {
+    // SAFETY: src is valid for src.len() bytes.
+    let len = unsafe { c::ZSTD_findFrameCompressedSize(src.as_ptr().cast::<c_void>(), src.len()) };
+    src.split_at_checked(len)
+}
+
+/// Returns whether all of `out` has been written.
+pub fn decompress_exact(out: &mut [core::mem::MaybeUninit<u8>], src: &[u8]) -> bool {
+    // SAFETY: both are valid for their lengths, and at most `out.len()` bytes are written.
+    let rc = unsafe {
+        c::ZSTD_decompress(
+            out.as_mut_ptr().cast::<c_void>(),
+            out.len(),
+            src.as_ptr().cast::<c_void>(),
+            src.len(),
+        )
+    };
+    rc == out.len()
 }
 
 pub fn get_decompressed_size(src: &[u8]) -> usize {

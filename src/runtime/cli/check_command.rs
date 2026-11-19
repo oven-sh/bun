@@ -911,7 +911,7 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
     if bun_resolver::fs::FileSystem::init(None).is_err() {
         return Vec::new();
     }
-    let records = bun_bundler::html_scanner::scan_import_records(&mut log, &source);
+    let records = bun_bundler::html_scanner::scan_import_records(&mut log, &source, None);
     let directory = resolve_path::dirname::<Auto>(&page);
     let is_url = |path: &[u8]| path.starts_with(b"//") || bun_core::strings::contains(path, b"://");
     (records.unwrap_or_default().iter())

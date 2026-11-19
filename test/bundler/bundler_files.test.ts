@@ -990,4 +990,102 @@ describe("bundler files option", () => {
     const script = result.outputs.find(output => output.path.endsWith(".js"))!;
     expect(await script.text()).not.toContain("// @bun");
   });
+
+  // `rel="shortcut icon"`, `og:image` and other optional URLs are followed only when their file
+  // exists. A file in `files` exists, and it wins over a file of the same name on disk.
+  test("an optional URL of an html page names a file in files", async () => {
+    using dir = tempDir("files-html-optional-url", {
+      "index.html": `<!doctype html><html><head>
+<link rel="icon" href="./required.png">
+<link rel="shortcut icon" href="./optional.png">
+<meta property="og:image" content="./optional.png?v=2">
+<link rel="mask-icon" href="./on-disk.svg">
+<link rel="apple-touch-startup-image" href="./missing.png">
+</head><body></body></html>`,
+      "on-disk.svg": "<svg>from disk</svg>",
+    });
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.html`],
+      outdir: `${dir}/out`,
+      files: {
+        [`${dir}/required.png`]: "required, from files",
+        [`${dir}/optional.png`]: "optional, from files",
+        [`${dir}/on-disk.svg`]: "<svg>from files</svg>",
+      },
+    });
+
+    expect(result.logs.map(log => [log.level, log.message])).toEqual([
+      ["warn", `Could not resolve: "./missing.png". The URL stays as written.`],
+    ]);
+    const html = await Bun.file(`${dir}/out/index.html`).text();
+    const urls = [...html.matchAll(/ (?:href|content)="([^"]*)"/g)].map(m => m[1]);
+    expect(urls).toEqual([
+      expect.stringMatching(/^\.\/required-\w+\.png$/),
+      expect.stringMatching(/^\.\/optional-\w+\.png$/),
+      expect.stringMatching(/^\.\/optional-\w+\.png\?v=2$/),
+      expect.stringMatching(/^\.\/on-disk-\w+\.svg$/),
+      "./missing.png",
+    ]);
+    const output = (url: string) => Bun.file(`${dir}/out/${url.replace(/\?.*/, "")}`).text();
+    expect(await Promise.all(urls.slice(0, 4).map(output))).toEqual([
+      "required, from files",
+      "optional, from files",
+      "optional, from files",
+      "<svg>from files</svg>",
+    ]);
+  });
+
+  test("an optional URL of an html page in files names a file in files", async () => {
+    // A URL with a leading `/` is relative to the project root. For a build from `files` that is the working directory.
+    const root = `${process.cwd()}/optional-url-in-files`;
+    const result = await Bun.build({
+      entrypoints: [`${root}/index.html`],
+      files: {
+        [`${root}/index.html`]: `<!doctype html><link rel="shortcut icon" href="./favicon.ico">
+<link rel="icon" href="/optional-url-in-files/og.png"><meta property="og:image" content="/optional-url-in-files/og.png">`,
+        [`${root}/favicon.ico`]: "icon, from files",
+        [`${root}/og.png`]: "og, from files",
+      },
+    });
+
+    expect(result.logs).toEqual([]);
+    const texts = await Promise.all(
+      result.outputs.filter(output => !/\.(html|js)$/.test(output.path)).map(output => output.text()),
+    );
+    expect(texts.sort()).toEqual(["icon, from files", "og, from files"]);
+    const html = await result.outputs.find(output => output.path.endsWith(".html"))!.text();
+    const [favicon, required, optional] = [...html.matchAll(/ (?:href|content)="([^"]*)"/g)].map(m => m[1]);
+    expect(favicon).toMatch(/favicon-\w+\.ico$/);
+    expect(required).toMatch(/og-\w+\.png$/);
+    expect(optional).toBe(required);
+  });
+
+  test("an optional URL of an html page under a relative key of files names a file on disk", async () => {
+    using dir = tempDir("files-html-relative-key", { "favicon.ico": "icon, on disk" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const result = await Bun.build({
+          entrypoints: ["index.html"],
+          files: { "index.html": '<!doctype html><link rel="icon" href="./favicon.ico"><link rel="shortcut icon" href="./favicon.ico">' },
+        });
+        const html = await result.outputs.find(output => output.path.endsWith(".html")).text();
+        console.log(JSON.stringify({
+          logs: result.logs.map(log => log.message),
+          urls: [...html.matchAll(/ href="([^"]*)"/g)].map(m => m[1]),
+        }));`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // No warning, and the same output file for both links.
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: expect.stringMatching(/^\{"logs":\[\],"urls":\["(\.\/favicon-\w+\.ico)","\1"\]\}\n$/),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

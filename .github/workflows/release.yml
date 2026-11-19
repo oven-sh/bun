@@ -56,6 +56,7 @@ jobs:
   sign:
     name: Sign Release
     runs-on: ubuntu-latest
+    environment: release
     if: ${{ github.repository_owner == 'oven-sh' }}
     permissions:
       contents: write
@@ -87,6 +88,7 @@ jobs:
   npm:
     name: Release to NPM
     runs-on: ubuntu-latest
+    environment: release
     needs: sign
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-npm == 'true' }}
     permissions:
@@ -115,6 +117,7 @@ jobs:
   npm-types:
     name: Release types to NPM
     runs-on: ubuntu-latest
+    environment: release
     needs: sign
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-types == 'true' }}
     permissions:
@@ -171,6 +174,7 @@ jobs:
   definitelytyped:
     name: Make pr to DefinitelyTyped to update `bun-types` version
     runs-on: ubuntu-latest
+    environment: release
     needs: npm-types
     if: ${{ github.event_name == 'release' || github.event.inputs.use-definitelytyped == 'true' }}
     permissions:
@@ -219,6 +223,7 @@ jobs:
   docker:
     name: Release to Dockerhub
     runs-on: ubuntu-latest
+    environment: release
     needs: sign
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-docker == 'true' }}
     permissions:
@@ -282,6 +287,7 @@ jobs:
   homebrew:
     name: Release to Homebrew
     runs-on: ubuntu-latest
+    environment: release
     needs: sign
     permissions:
       contents: read
@@ -318,6 +324,7 @@ jobs:
   s3:
     name: Upload to S3
     runs-on: ubuntu-latest
+    environment: release
     needs: sign
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-s3 == 'true' }}
     permissions:
@@ -348,6 +355,7 @@ jobs:
   notify-sentry:
     name: Notify Sentry
     runs-on: ubuntu-latest
+    environment: release
     needs: s3
     steps:
       - name: Notify Sentry

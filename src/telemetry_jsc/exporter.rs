@@ -21,8 +21,9 @@ use bun_telemetry::MonoInstant;
 use bun_telemetry::processor::{
     self, Backoff, ExportAttempt, ExportPayload, ExportResult, Exporter, OwnerKey,
 };
+use bun_telemetry::thread::OnDemandThread;
 use bun_telemetry_cold::config::{Compression, ExporterConfig, OtlpExporterConfig};
-use bun_threading::{Condvar, Guarded, WorkPool};
+use bun_threading::{Condvar, Guarded};
 use bun_url::URL;
 
 use crate::context::Context;
@@ -284,6 +285,9 @@ impl OtlpHttpExporter {
         payload: &Arc<ExportPayload>,
         deadline: MonoInstant,
     ) -> Result<(), SendError> {
+        if deadline.remaining().is_zero() {
+            return Err(SendError::OutOfTime);
+        }
         let deadline = deadline.min(MonoInstant::now() + self.timeout);
         let outcome = Outcome::new();
         let receiver = Receiver::BlockedThread(Arc::clone(&outcome));
@@ -337,6 +341,9 @@ pub(crate) fn is_http_thread_stuck() -> bool {
         asked_at: MonoInstant,
     }
     static WATCH: Guarded<Option<Watch>> = Guarded::new(None);
+    if !bun_http::http_thread::is_initialized() {
+        return false;
+    }
     let (turn, now) = (HTTPThread::poke(), MonoInstant::now());
     let mut watch = WATCH.lock();
     match &mut *watch {
@@ -484,60 +491,55 @@ impl Exporter for OtlpHttpExporter {
     }
 }
 
-/// One OTLP/JSON document per batch on stderr, which may block. One thread of the work pool writes at a time.
+/// One OTLP/JSON document per batch on stderr, which may block. One thread writes them all.
 struct ConsoleExporter;
 
 struct ConsoleJob {
+    /// The processor ticks it for as long as it is alive.
+    _exporter: Arc<ConsoleExporter>,
     payload: Arc<ExportPayload>,
     receiver: Receiver,
     deadline: MonoInstant,
     has_begun: bool,
 }
 
-struct Console {
-    jobs: Vec<ConsoleJob>,
-    has_writer: bool,
-}
-
-static CONSOLE: Guarded<Console> = Guarded::new(Console {
-    jobs: Vec::new(),
-    has_writer: false,
-});
+static CONSOLE_JOBS: Guarded<Vec<ConsoleJob>> = Guarded::new(Vec::new());
 
 impl ConsoleExporter {
-    fn enqueue(payload: Arc<ExportPayload>, receiver: Receiver, deadline: MonoInstant) {
-        let mut console = CONSOLE.lock();
-        console.jobs.push(ConsoleJob {
+    fn enqueue(
+        self: Arc<Self>,
+        payload: Arc<ExportPayload>,
+        receiver: Receiver,
+        deadline: MonoInstant,
+    ) {
+        static WRITER: OnDemandThread = OnDemandThread::new(ConsoleExporter::write_all);
+        CONSOLE_JOBS.lock().push(ConsoleJob {
+            _exporter: self,
             payload,
             receiver,
             deadline,
             has_begun: false,
         });
-        if !core::mem::replace(&mut console.has_writer, true) {
-            bun_core::handle_oom(WorkPool::go((), |()| Self::write_all()));
-        }
+        WRITER.wake();
     }
 
     fn write_all() {
         loop {
-            let mut console = CONSOLE.lock();
-            let Some(job) = console.jobs.first_mut() else {
-                console.has_writer = false;
-                return;
-            };
+            let mut jobs = CONSOLE_JOBS.lock();
+            let Some(job) = jobs.first_mut() else { return };
             job.has_begun = true;
             let payload = Arc::clone(&job.payload);
-            drop(console);
+            drop(jobs);
             let mut json = bun_telemetry_cold::otlp_json::to_json(&payload.body);
             json.push(b'\n');
             bun_core::Output::print_error(bstr::BStr::new(&json));
             bun_core::Output::flush();
-            Self::finish(|job| job.has_begun, ExportResult::Success);
+            Self::finish(&|job| job.has_begun, ExportResult::Success);
         }
     }
 
-    fn finish(which: impl Fn(&ConsoleJob) -> bool, result: ExportResult) {
-        let finished: Vec<_> = (CONSOLE.lock().jobs.extract_if(.., |job| which(job))).collect();
+    fn finish(which: &dyn Fn(&ConsoleJob) -> bool, result: ExportResult) {
+        let finished: Vec<_> = (CONSOLE_JOBS.lock().extract_if(.., |job| which(job))).collect();
         for job in finished {
             match job.receiver {
                 Receiver::Processor(attempt) => attempt.done(result),
@@ -555,7 +557,7 @@ impl Exporter for ConsoleExporter {
         let timeout = processor::global().config().export_timeout_ms;
         let deadline = MonoInstant::now() + Duration::from_millis(timeout.into());
         let payload = Arc::clone(attempt.payload());
-        Self::enqueue(payload, Receiver::Processor(attempt), deadline);
+        self.enqueue(payload, Receiver::Processor(attempt), deadline);
     }
 
     fn export_blocking(
@@ -563,9 +565,15 @@ impl Exporter for ConsoleExporter {
         payload: &Arc<ExportPayload>,
         deadline: MonoInstant,
     ) -> ExportResult {
+        let now = MonoInstant::now();
+        if (CONSOLE_JOBS.lock().first()).is_some_and(|stuck| now >= stuck.deadline) {
+            return ExportResult::Failure;
+        }
+        // A collector may have used up the time.
+        let deadline = deadline.max(now + Duration::from_millis(250));
         let outcome = Outcome::new();
         let receiver = Receiver::BlockedThread(Arc::clone(&outcome));
-        Self::enqueue(Arc::clone(payload), receiver, deadline);
+        self.enqueue(Arc::clone(payload), receiver, deadline);
         match outcome.wait(deadline, || false) {
             Ok(()) => ExportResult::Success,
             Err(_) => ExportResult::Failure,
@@ -573,7 +581,7 @@ impl Exporter for ConsoleExporter {
     }
 
     fn tick(&self, now: MonoInstant) {
-        Self::finish(|job| now >= job.deadline, ExportResult::Failure);
+        Self::finish(&|job| now >= job.deadline, ExportResult::Failure);
     }
 }
 

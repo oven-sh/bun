@@ -53,6 +53,8 @@ const cleanEnv: Record<string, string> = Object.fromEntries(
   Object.entries(bunEnv).filter(([k]) => !/^(OTEL_|BUN_OTEL|HTTPS?_PROXY$|NO_PROXY$|https?_proxy$|no_proxy$)/.test(k)),
 ) as Record<string, string>;
 
+const withoutLeakCheck = [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":");
+
 async function run(script: string, env: Record<string, string>) {
   using dir = tempDir("otel-exporter", { "index.js": script });
   await using proc = Bun.spawn({
@@ -1327,7 +1329,7 @@ describe.concurrent("OTLP/HTTP exporter", () => {
         URL: stream.url.href,
         // Tearing the VM down waits for the HTTP thread too, with or without tracing.
         BUN_DESTRUCT_VM_ON_EXIT: "0",
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+        ASAN_OPTIONS: withoutLeakCheck,
       },
     );
     expect(exitCode).toBe(0);
@@ -1501,7 +1503,7 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0 });
   });
 
-  test("a batch that the work pool is taking goes to the exporter that it was recorded under", async () => {
+  test("a batch that another thread is taking goes to the exporter that it was recorded under", async () => {
     const { stdout, exitCode } = await run(
       `let wrong = 0, total = 0;
        for (let round = 0; round < 100; round++) {
@@ -1560,11 +1562,13 @@ describe.concurrent("OTLP/HTTP exporter", () => {
   test("more batches than may be in flight wait for their turn, and lose no attempt", async () => {
     let inFlight = 0,
       most = 0;
+    const full = Promise.withResolvers<void>();
     using slow = Bun.serve({
       port: 0,
       async fetch(req) {
         most = Math.max(most, ++inFlight);
-        await Promise.all([req.bytes(), Bun.sleep(20)]);
+        if (most === 8) full.resolve();
+        await Promise.all([req.bytes(), full.promise]);
         inFlight--;
         return new Response();
       },
@@ -1618,5 +1622,68 @@ describe.concurrent("OTLP/HTTP exporter", () => {
       { URL: c.url },
     );
     expect(stdout).toBe("new\n");
+  });
+
+  test.skipIf(isWindows).each(["process.exit(0)", "await Bun.otel.forceFlush(); process.kill(process.pid, 9)"])(
+    "exports do not need the work pool, which the program may have filled: %s",
+    async ending => {
+      using dir = tempDir("otel-full-pool", {});
+      mkfifo(join(String(dir), "fifo"), 0o600);
+      const { stderr } = await run(
+        `Bun.otel.start({ exporters: ["console"], instrumentations: [] });
+         const fs = require("node:fs");
+         // Until a call that is quick otherwise finds no thread.
+         do for (let i = 0; i < navigator.hardwareConcurrency; i++) fs.open(process.env.FIFO, "r", () => {});
+         while (await Promise.race([fs.promises.stat("."), Bun.sleep(200)]));
+         Bun.otel.span("s", () => {});
+         ${ending};`,
+        {
+          ...neverTimesOut,
+          FIFO: join(String(dir), "fifo"),
+          BUN_DESTRUCT_VM_ON_EXIT: "0",
+          ASAN_OPTIONS: withoutLeakCheck,
+        },
+      );
+      expect(JSON.parse(stderr).resourceSpans[0].scopeSpans[0].spans[0].name).toBe("s");
+    },
+  );
+
+  test.skipIf(isWindows)("a replaced console exporter that cannot write times out", async () => {
+    using dir = tempDir("otel-replaced-console", {});
+    mkfifo(join(String(dir), "fifo"), 0o600);
+    await using unread = await open(join(String(dir), "fifo"), "r+");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const batch = { timeoutMs: 100 };
+         Bun.otel.start({ exporters: ["console"], batch });
+         for (let i = 0; i < 100; i++) Bun.otel.span("s", { k: Buffer.alloc(4096, "a").toString() }, () => {});
+         Bun.otel.start({ exporters: [{ export: spans => console.log(spans[0].name) }], batch });
+         Bun.otel.span("new", () => {});
+         await Bun.otel.forceFlush();`,
+      ],
+      env: cleanEnv,
+      stderr: unread.fd,
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "new\n", exitCode: 0 });
+  });
+
+  test("a collector that uses up the time at exit takes nothing from the other exporters", async () => {
+    using hangs = Bun.serve({ port: 0, idleTimeout: 0, fetch: () => new Promise<Response>(() => {}) });
+    const { stdout, stderr } = await run(
+      `let n = 0;
+       Bun.otel.start({
+         exporters: [process.env.URL, "console", { export: spans => console.log((n += spans.length)) }],
+         batch: { timeoutMs: 100, maxExportBatchSize: 2 },
+       });
+       for (let i = 0; i < 9; i++) Bun.otel.span("s", () => {});
+       process.exit(0);`,
+      { URL: hangs.url.href },
+    );
+    const documents = stderr.split("\n").filter(line => line.startsWith("{"));
+    expect(documents.flatMap(d => JSON.parse(d).resourceSpans[0].scopeSpans[0].spans)).toHaveLength(9);
+    expect(stdout).toEndWith("9\n");
   });
 });

@@ -243,13 +243,14 @@ describe("Bun.spawn", () => {
 });
 
 test("Bun.spawn of a command that is not found has a failed span", async () => {
-  for (const command of ["TOKEN=secret made-up-command -psecret", "/made-up/command -psecret"])
+  for (const command of ["made-up-command\t-psecret", 'A="a/secret secret" command', "/made=up/command -psecret"])
     expect(() => Bun.otel.span("parent", () => Bun.spawn([command]))).toThrow(
       expect.objectContaining({ code: "ENOENT" }),
     );
   const got = await collect("bun.child_process");
   expect(got.map(s => [s.name, s.attributes["error.type"]])).toEqual([
     ["spawn made-up-command", "ENOENT"],
+    ["spawn _OTHER", "ENOENT"],
     ["spawn command", "ENOENT"],
   ]);
   expect(JSON.stringify(got)).not.toContain("secret");

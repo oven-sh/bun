@@ -15,6 +15,7 @@ pub mod proto;
 pub mod record;
 pub mod sampler;
 pub mod span;
+pub mod thread;
 
 #[cfg(test)]
 mod native_test_shims;

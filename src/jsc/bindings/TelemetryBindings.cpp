@@ -32,6 +32,7 @@
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/StackVisitor.h>
+#include <wtf/SetForScope.h>
 #if ENABLE(AOT)
 #include <JavaScriptCore/AOTHost.h>
 #include <JavaScriptCore/AOTPropertyWalk.h>
@@ -835,6 +836,8 @@ static JSValue registerNothing(JSFunction* registerGlobal)
     arguments.append(jsEmptyString(vm));
     arguments.append(jsUndefined());
     arguments.append(logger);
+    // It logs the stack of an Error, which is none of the program's.
+    SetForScope withoutHook(defaultGlobalObject(globalObject)->isInsideErrorPrepareStackTraceCallback, true);
     call(globalObject, registerGlobal, getCallData(registerGlobal), jsUndefined(), arguments);
     RETURN_IF_EXCEPTION(scope, {});
     return log->getField(registryField);
@@ -852,7 +855,9 @@ static JSValue versionBehind(JSGlobalObject* globalObject, JSValue logged, ASCII
     if (start == notFound)
         return jsUndefined();
     start += words.length();
-    size_t end = std::min<size_t>(text.find(isASCIIWhitespace<char16_t>, start), text.length());
+    size_t end = start;
+    while (end < text.length() && (isASCIIAlphanumeric(text[end]) || text[end] == '.' || text[end] == '-' || text[end] == '+'))
+        ++end;
     if (end > start && text[end - 1] == '.')
         --end;
     return jsString(vm, text.substring(start, end - start));

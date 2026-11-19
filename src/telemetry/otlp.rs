@@ -370,7 +370,11 @@ pub fn redact_urls_in(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {
                         rest[1..].starts_with(key) && rest.get(1 + key.len()) == Some(&b'=')
                     })
                     .map(|key| at + key.len() + 2)
-                    .map(|value| (value..until(value, word_end, b"&#'),"), &b"REDACTED"[..]))
+                    .map(|value| {
+                        let secret = &text[value..until(value, word_end, b"&#'")];
+                        let len = strings::trim_right(secret, b"),.;").len();
+                        (value..value + len, &b"REDACTED"[..])
+                    })
             } else {
                 None
             };
@@ -787,6 +791,7 @@ mod redact_tests {
                 "http://a/?to=http://REDACTED:REDACTED@b/&sig=REDACTED&y",
             ),
             ("http://a/?sig=", "http://a/?sig=REDACTED"),
+            ("(http://a/?sig=,a,b).", "(http://a/?sig=REDACTED)."),
             (
                 "http://@a ://:// ?sig=1",
                 "http://REDACTED:REDACTED@a ://:// ?sig=1",

@@ -65,5 +65,5 @@ in compiled code. `TelemetryBindings.cpp` does to it what `run()` and `enterWith
 - `tracestate` and `baggage` are shared by all the spans below the request that brought them.
 - An ended span is bytes in the one queue of the process. `maxQueueSize` bounds it, retries included.
 - The span of an HTTP request waits there as the facts of the request. It is encoded, like every full batch is
-  assembled, on the work pool.
+  assembled, on a thread that is there while it has work.
 - After a whole interval without a span the timer stops and the pooled buffers are freed.

@@ -341,6 +341,7 @@ describe("@opentelemetry/api", () => {
     ["assigned back", `globalThis[key] = globalThis[key];`],
     ["deleted and restored", `const saved = globalThis[key]; delete globalThis[key]; globalThis[key] = saved;`],
     ["made non-configurable", `Object.defineProperty(globalThis, key, { configurable: false });`],
+    ["left alone, under a hook", `Error.prepareStackTrace = e => { console.log("hook"); throw e; };`],
     // These hold the words of registerGlobal(), and are not to be called a second time.
     ["read by a module", `(globalThis[key] = globalThis[key] ?? {}).version; // WORDS`],
     ["read by a field", `new (class { f = ((globalThis[key] = globalThis[key]).version, "WORDS"); })();`],

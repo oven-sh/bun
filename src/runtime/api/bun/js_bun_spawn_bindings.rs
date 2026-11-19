@@ -1824,9 +1824,9 @@ fn name_span(record: &mut Record, executable: &[u8]) {
 #[inline]
 fn fail_span(span: NativeSpan, command: &[u8], failure: impl Outcome) {
     span.end_with(|r| {
-        let mut words = strings::split(command, b" ");
-        let name = words.find(|word| !strings::contains_char(word, b'='));
-        name_span(r, name.unwrap_or_default());
+        let first = &command[..strings::index_of_any(command, b" \t\r\n").unwrap_or(command.len())];
+        let is_variable = strings::contains_char(first, b'=') && !matches!(first[0], b'/' | b'.');
+        name_span(r, if is_variable { b"_OTHER" } else { first });
         failure.record(r);
     });
 }

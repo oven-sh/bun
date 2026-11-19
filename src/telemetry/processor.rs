@@ -2,7 +2,7 @@
 //! export (`OTEL_BSP_*` semantics), builds the OTLP request once and fans it
 //! out to every configured exporter.
 
-use bun_threading::{Condvar, Guarded, RwLock, WorkPool};
+use bun_threading::{Condvar, Guarded, RwLock};
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::collections::VecDeque;
 use std::sync::{Arc, OnceLock, Weak};
@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use crate::clock::MonoInstant;
 use crate::otlp::{self, RequestWriter};
+use crate::thread::OnDemandThread;
 use crate::{Instrument, ScopeId, http_record};
 
 pub struct ExportPayload {
@@ -22,6 +23,8 @@ pub struct ExportPayload {
     any_ok: core::sync::atomic::AtomicBool,
     /// Exporters that have this payload parked for retry.
     parked: core::sync::atomic::AtomicU32,
+    /// Those of them that are installed.
+    parked_by_installed: core::sync::atomic::AtomicU32,
     seq: u64,
     epoch: u64,
 }
@@ -35,6 +38,7 @@ impl ExportPayload {
             pending: core::sync::atomic::AtomicU32::new(0),
             any_ok: core::sync::atomic::AtomicBool::new(false),
             parked: core::sync::atomic::AtomicU32::new(0),
+            parked_by_installed: core::sync::atomic::AtomicU32::new(0),
             seq,
             epoch,
         }
@@ -182,6 +186,8 @@ struct ParkedRetry {
     attempt: u32,
     due: MonoInstant,
     is_asked_by_server: bool,
+    /// What a replaced exporter has left takes no room from the next.
+    takes_room: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -548,7 +554,11 @@ impl Processor {
             (self.retired.lock()).extend(replaced.map(|e| Arc::downgrade(&e)));
             list.extend(new);
         }
-        self.count_parked_spans();
+        for r in self.retries.lock().iter_mut() {
+            if !self.is_installed(&r.exporter) {
+                self.give_room_back(r);
+            }
+        }
     }
 
     /// Snapshot for calling into exporters. INVARIANT: no `Exporter` method is
@@ -578,14 +588,21 @@ impl Processor {
         let (Backoff::Own(delay) | Backoff::AskedByServer(delay)) = backoff;
         let due = MonoInstant::now() + delay;
         payload.parked.fetch_add(1, Ordering::AcqRel);
-        self.retries.lock().push(ParkedRetry {
+        let mut retries = self.retries.lock();
+        let takes_room = self.is_installed(&exporter);
+        // Once, however many exporters park it.
+        if takes_room && payload.parked_by_installed.fetch_add(1, Ordering::AcqRel) == 0 {
+            (self.parked_spans).fetch_add(payload.span_count, Ordering::Relaxed);
+        }
+        retries.push(ParkedRetry {
             exporter,
             payload,
             attempt,
             due,
             is_asked_by_server: matches!(backoff, Backoff::AskedByServer(_)),
+            takes_room,
         });
-        self.count_parked_spans();
+        drop(retries);
         self.finish_one();
         // Wake forceFlush() waiters: a flush waiting on this payload sends it
         // again now (`hurry_retries_before`) instead of waiting out the backoff.
@@ -623,28 +640,23 @@ impl Processor {
             }
         };
         self.inflight.fetch_add(due.len(), Ordering::AcqRel);
-        self.count_parked_spans();
-        for r in due {
+        for mut r in due {
+            self.give_room_back(&mut r);
             r.payload.parked.fetch_sub(1, Ordering::AcqRel);
             r.exporter.export(self.issue(r.payload, r.attempt));
         }
     }
 
-    /// Once, however many exporters park them. What a replaced exporter has left takes no room from the next.
-    fn count_parked_spans(&self) {
-        let retries = self.retries.lock();
-        let installed = self.exporters.read();
-        let mut seen = Vec::new();
-        let mut spans = 0;
-        for r in retries.iter() {
-            if installed.iter().any(|e| Arc::ptr_eq(e, &r.exporter))
-                && !seen.contains(&r.payload.seq)
-            {
-                seen.push(r.payload.seq);
-                spans += r.payload.span_count;
-            }
+    fn is_installed(&self, exporter: &Arc<dyn Exporter>) -> bool {
+        (self.exporters.read().iter()).any(|e| Arc::ptr_eq(e, exporter))
+    }
+
+    fn give_room_back(&self, r: &mut ParkedRetry) {
+        if core::mem::take(&mut r.takes_room)
+            && r.payload.parked_by_installed.fetch_sub(1, Ordering::AcqRel) == 1
+        {
+            (self.parked_spans).fetch_sub(r.payload.span_count, Ordering::Relaxed);
         }
-        self.parked_spans.store(spans, Ordering::Relaxed);
     }
 
     pub fn on_settle(&self, owner: OwnerKey, f: Box<dyn Fn() + Send + Sync>) {
@@ -701,15 +713,17 @@ impl Processor {
         }
     }
 
-    /// One at a time, as in the SDK: behind a slow exporter the queue fills up and then drops. On the work pool:
+    /// One at a time, as in the SDK: behind a slow exporter the queue fills up and then drops. On another thread:
     /// the caller has requests to serve.
     #[inline]
-    fn schedule_export(&'static self) {
+    fn schedule_export(&self) {
+        static EXPORTS: OnDemandThread = OnDemandThread::new(|| {
+            let this = global();
+            this.is_export_scheduled.store(false, Ordering::Release);
+            this.deliver_next(Taker::Schedule, MonoInstant::FAR_FUTURE);
+        });
         if self.inflight() == 0 && !self.is_export_scheduled.swap(true, Ordering::AcqRel) {
-            bun_core::handle_oom(WorkPool::go(self, |this| {
-                this.is_export_scheduled.store(false, Ordering::Release);
-                this.deliver_next(Taker::Schedule, MonoInstant::FAR_FUTURE);
-            }));
+            EXPORTS.wake();
         }
     }
 
@@ -766,10 +780,7 @@ impl Processor {
     /// What is pending now, and nothing that comes meanwhile.
     fn deliver_pending(&'static self, taker: Taker, deadline: MonoInstant) {
         let target = self.pending.lock().flush();
-        while self.pending.lock().has_older_than(target)
-            && self.deliver_next(taker, deadline)
-            && !deadline.remaining().is_zero()
-        {}
+        while self.pending.lock().has_older_than(target) && self.deliver_next(taker, deadline) {}
     }
 
     /// Until every payload that another thread has taken is with its exporters. That takes encoding and posting.
@@ -805,12 +816,14 @@ impl Processor {
             return false;
         }
         let retries = self.retries.lock();
+        let mut asked: Vec<_> = (retries.iter().filter(|r| r.is_asked_by_server))
+            .map(|r| (r.payload.seq, r.payload.pending.load(Ordering::Acquire)))
+            .collect();
+        asked.sort_unstable();
         let only_waits_for_servers = |seq: u64| {
-            let mut asked =
-                (retries.iter()).filter(|r| r.payload.seq == seq && r.is_asked_by_server);
-            asked.next().is_some_and(|first| {
-                first.payload.pending.load(Ordering::Acquire) as usize == 1 + asked.count()
-            })
+            let asked = &asked[asked.partition_point(|a| a.0 < seq)..];
+            let count = asked.partition_point(|a| a.0 == seq);
+            count != 0 && asked[count - 1].1 as usize == count
         };
         (self.outstanding.lock().iter())
             .all(|&(epoch, seq)| epoch >= t.0 || only_waits_for_servers(seq))
@@ -978,8 +991,8 @@ impl Processor {
         self.wait_idle(deadline, is_stuck);
         // What was in flight may have been parked by now, and a worker may have left its last spans.
         let parked = core::mem::take(&mut *self.retries.lock());
-        self.count_parked_spans();
-        for r in parked {
+        for mut r in parked {
+            self.give_room_back(&mut r);
             let result = r.exporter.export_blocking(&r.payload, deadline);
             r.payload.parked.fetch_sub(1, Ordering::AcqRel);
             self.record_result(&r.payload, result);

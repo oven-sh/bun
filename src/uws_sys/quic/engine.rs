@@ -8,14 +8,13 @@ use std::rc::Rc;
 use bun_core::ZStr;
 use bun_ptr::BackRef;
 use bun_quic::{
-    Addresses, Context, Direction, Endpoint, Event, Handle, Incoming, Instant, StreamId, Unrouted,
-    Version,
+    Context, Direction, Endpoint, Event, Handle, Incoming, Instant, StreamId, Unrouted, Version,
 };
 use bun_quic_tls::BoringSsl;
 
 use super::Header;
 use super::drivers::Driver;
-use super::io::{self, Outbox, now};
+use super::io::{Binding, Outbox, now};
 use crate::{Loop, udp};
 
 /// After which the rest of the loop gets its turn.
@@ -45,8 +44,8 @@ pub(super) struct Engine {
 }
 
 pub(super) struct Socket {
-    /// Null once it is closed.
-    udp: Cell<*mut udp::Socket>,
+    /// While it is open.
+    binding: Cell<Option<Binding>>,
     local: Cell<SocketAddr>,
     pub(super) owner: BackRef<dyn Application>,
     pub(super) is_close_pending: Cell<bool>,
@@ -154,10 +153,9 @@ impl Engine {
 
     fn transmit(&self) {
         let sockets = self.sockets.borrow();
-        let find = |local: &SocketAddr| {
-            let mut open = sockets.iter().filter(|it| it.is_open());
-            (open.find(|it| it.local.get() == *local))
-                .map_or(core::ptr::null_mut(), |it| it.udp.get())
+        let find = |local| {
+            let mut open = sockets.iter().filter_map(|it| it.binding.get());
+            open.find(|it| it.has(local))
         };
         (self.outbox.borrow_mut()).flush(&mut self.endpoint(), find, |_| {});
     }
@@ -174,7 +172,7 @@ impl Engine {
         flags: c_int,
     ) -> Option<Rc<Socket>> {
         let socket = Rc::new(Socket {
-            udp: Cell::new(core::ptr::null_mut()),
+            binding: Cell::new(None),
             local: Cell::new((Ipv4Addr::UNSPECIFIED, 0).into()),
             owner: BackRef::new(owner),
             is_close_pending: Cell::new(false),
@@ -186,8 +184,9 @@ impl Engine {
         if udp.is_null() {
             return None;
         }
-        socket.udp.set(udp);
-        socket.local.set(io::prepare(udp::Socket::opaque_mut(udp)));
+        let binding = Binding::new(udp);
+        socket.binding.set(Some(binding));
+        socket.local.set(binding.address);
         self.sockets.borrow_mut().push(Rc::clone(&socket));
         Some(socket)
     }
@@ -200,7 +199,7 @@ impl Socket {
     }
 
     pub(super) fn is_open(&self) -> bool {
-        !self.udp.get().is_null()
+        self.binding.get().is_some()
     }
 
     pub(super) fn local(&self) -> SocketAddr {
@@ -208,27 +207,25 @@ impl Socket {
     }
 
     pub(super) fn close(&self) {
-        if self.is_open() {
-            udp::Socket::opaque_mut(self.udp.get()).close();
+        if let Some(binding) = self.binding.get() {
+            udp::Socket::opaque_mut(binding.socket).close();
         }
     }
 }
 
 /// The answers wait until all polls of this turn have been dispatched.
 extern "C" fn on_data(udp: *mut udp::Socket, buffer: *mut udp::PacketBuffer, count: c_int) {
-    let (socket, buffer) = (Socket::of(udp), udp::PacketBuffer::opaque_mut(buffer));
+    let socket = Socket::of(udp);
     let (engine, now) = (socket.owner.engine(), now());
-    for at in 0..count {
-        let from = Addresses {
-            local: socket.local(),
-            peer: io::peer_address(buffer, at),
-        };
-        let datagram = buffer.get_payload(at);
-        let unrouted = (engine.endpoint()).receive(now, &from, datagram, engine.accepted);
+    let Some(binding) = socket.binding.get() else {
+        return;
+    };
+    binding.for_each_datagram(buffer, count, |from, datagram| {
+        let unrouted = (engine.endpoint()).receive(now, from, datagram, engine.accepted);
         if let Some(Unrouted::Incoming(incoming)) = unrouted {
             socket.owner.on_incoming(now, incoming);
         }
-    }
+    });
 }
 
 extern "C" fn on_drain(udp: *mut udp::Socket) {
@@ -236,7 +233,7 @@ extern "C" fn on_drain(udp: *mut udp::Socket) {
 }
 
 extern "C" fn on_close(udp: *mut udp::Socket) {
-    Socket::of(udp).udp.set(core::ptr::null_mut());
+    Socket::of(udp).binding.set(None);
     on_drain(udp);
 }
 

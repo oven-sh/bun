@@ -16,9 +16,15 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
+#include <netinet/udp.h>
 #include <arpa/inet.h>
 #else
 #include <ws2tcpip.h>
+#endif
+
+#if defined(__linux__) && !defined(UDP_GRO)
+#define UDP_SEGMENT 103
+#define UDP_GRO 104
 #endif
 
 extern "C" {
@@ -74,8 +80,30 @@ static socklen_t us_quic_address_to(const struct us_quic_address_t *from, union 
     return sizeof(to->v4);
 }
 
-void us_quic_peer_address(struct us_udp_packet_buffer_t *buf, int index, struct us_quic_address_t *out) {
-    us_quic_address_from((struct sockaddr *) us_udp_packet_buffer_peer(buf, index), out);
+struct us_quic_envelope_t {
+    struct us_quic_address_t local, peer;
+    /* Not 0 if the kernel has joined datagrams of this length, but for the last one, which can be shorter. */
+    int segment_len;
+};
+
+/* `local` is left alone where the system does not tell. */
+void us_quic_read_envelope(struct udp_recvbuf *buf, int index, struct us_quic_envelope_t *out) {
+    us_quic_address_from((struct sockaddr *) bsd_udp_packet_buffer_peer(buf, index), &out->peer);
+#ifdef __linux__
+    struct msghdr *message = &buf->msgvec[index].msg_hdr;
+    for (struct cmsghdr *it = CMSG_FIRSTHDR(message); it; it = CMSG_NXTHDR(message, it)) {
+        if (it->cmsg_level == IPPROTO_UDP && it->cmsg_type == UDP_GRO) {
+            memcpy(&out->segment_len, CMSG_DATA(it), sizeof(int));
+        } else if (it->cmsg_level == IPPROTO_IP && it->cmsg_type == IP_PKTINFO) {
+            memcpy(out->local.ip, CMSG_DATA(it) + offsetof(struct in_pktinfo, ipi_addr), 4);
+        } else if (it->cmsg_level == IPPROTO_IPV6 && it->cmsg_type == IPV6_PKTINFO) {
+            struct in6_pktinfo info;
+            memcpy(&info, CMSG_DATA(it), sizeof(info));
+            memcpy(out->local.ip, &info.ipi6_addr, 16);
+            out->local.scope_id = IN6_IS_ADDR_LINKLOCAL(&info.ipi6_addr) ? info.ipi6_ifindex : 0;
+        }
+    }
+#endif
 }
 
 void us_quic_local_address(struct us_udp_socket_t *udp, struct us_quic_address_t *out) {
@@ -148,103 +176,110 @@ void us_quic_set_dontfrag(struct us_udp_socket_t *udp) {
     (void) on;
 }
 
-/* Datagrams of segment_len bytes, but for the last one, which can be shorter. */
-struct us_quic_run_t {
-    const char *data;
-    size_t len;
-    size_t segment_len;
-    struct us_quic_address_t peer;
+/* Returns whether us_quic_message_t::segment_len is understood. */
+bool us_quic_enable_offload(struct us_udp_socket_t *udp) {
+#ifdef __linux__
+    int value = 1;
+    socklen_t len = sizeof(value);
+    setsockopt(us_poll_fd(&udp->p), IPPROTO_UDP, UDP_GRO, &value, len);
+    return getsockopt(us_poll_fd(&udp->p), IPPROTO_UDP, UDP_SEGMENT, &value, &len) == 0;
+#else
+    (void) udp;
+    return false;
+#endif
+}
+
+struct us_quic_message_t {
+    struct us_quic_address_t local, peer;
+    uint32_t start, len;
+    /* Not 0 for the kernel to cut it into datagrams of this length. */
+    uint16_t segment_len;
 };
 
-struct us_quic_datagram_t {
-    const char *data;
-    size_t len;
-    const struct sockaddr *peer;
-    socklen_t peer_len;
-};
-
+#ifdef __linux__
 #define US_QUIC_SEND_BATCH 64
 
+static void us_quic_add_control(struct msghdr *message, int level, int type, const void *data, size_t len) {
+    struct cmsghdr *it = (struct cmsghdr *) ((char *) message->msg_control + message->msg_controllen);
+    memset(it, 0, CMSG_SPACE(len));
+    it->cmsg_len = CMSG_LEN(len);
+    it->cmsg_level = level;
+    it->cmsg_type = type;
+    memcpy(CMSG_DATA(it), data, len);
+    message->msg_controllen += CMSG_SPACE(len);
+}
+
+static void us_quic_add_source(struct msghdr *message, const struct us_quic_address_t *source) {
+    if (source->is_ipv6) {
+        struct in6_pktinfo info = {};
+        memcpy(&info.ipi6_addr, source->ip, 16);
+        info.ipi6_ifindex = source->scope_id;
+        if (IN6_IS_ADDR_UNSPECIFIED(&info.ipi6_addr)) return;
+        us_quic_add_control(message, IPPROTO_IPV6, IPV6_PKTINFO, &info, sizeof(info));
+    } else {
+        struct in_pktinfo info = {};
+        memcpy(&info.ipi_spec_dst, source->ip, 4);
+        if (info.ipi_spec_dst.s_addr == INADDR_ANY) return;
+        us_quic_add_control(message, IPPROTO_IP, IP_PKTINFO, &info, sizeof(info));
+    }
+}
+#endif
+
 /* Returns how many were sent, or -1 with errno set. */
-static int us_quic_try_send(LIBUS_SOCKET_DESCRIPTOR fd, const struct us_quic_datagram_t *datagrams, unsigned int n) {
-#ifdef _WIN32
-    (void) n;
-    if (sendto(fd, datagrams->data, (int) datagrams->len, 0, datagrams->peer, datagrams->peer_len) >= 0) return 1;
-    int wsa = WSAGetLastError();
-    errno = wsa == WSAEWOULDBLOCK ? EAGAIN : wsa == WSAENOBUFS ? ENOBUFS : wsa == WSAEMSGSIZE ? EMSGSIZE : EIO;
-    return -1;
-#else
-    ssize_t r = 0; int unused = 0;
+static int us_quic_try_send(LIBUS_SOCKET_DESCRIPTOR fd, bool names_source, const char *bytes,
+    const struct us_quic_message_t *messages, size_t count) {
+    ssize_t r = 0;
+#ifndef _WIN32
+    int unused = 0;
     if (US_FAULT_CHECK(US_FAULT_SENDMSG, fd, r, unused)) return r < 0 ? -1 : 1;
     (void) unused;
+#endif
 #ifdef __linux__
-    struct mmsghdr messages[US_QUIC_SEND_BATCH];
-    struct iovec iov[US_QUIC_SEND_BATCH];
+    struct {
+        union us_quic_sockaddr_t peer;
+        struct iovec iov;
+        alignas(struct cmsghdr) char control[CMSG_SPACE(sizeof(struct in6_pktinfo)) + CMSG_SPACE(sizeof(uint16_t))];
+    } parts[US_QUIC_SEND_BATCH];
+    struct mmsghdr headers[US_QUIC_SEND_BATCH];
+    unsigned int n = (unsigned int) std::min<size_t>(count, US_QUIC_SEND_BATCH);
     for (unsigned int i = 0; i < n; i++) {
-        iov[i] = {(void *) datagrams[i].data, datagrams[i].len};
-        messages[i] = {};
-        messages[i].msg_hdr.msg_name = (void *) datagrams[i].peer;
-        messages[i].msg_hdr.msg_namelen = datagrams[i].peer_len;
-        messages[i].msg_hdr.msg_iov = &iov[i];
-        messages[i].msg_hdr.msg_iovlen = 1;
+        struct msghdr *header = &headers[i].msg_hdr;
+        headers[i] = {};
+        parts[i].iov = {(void *) (bytes + messages[i].start), messages[i].len};
+        header->msg_name = &parts[i].peer;
+        header->msg_namelen = us_quic_address_to(&messages[i].peer, &parts[i].peer);
+        header->msg_iov = &parts[i].iov;
+        header->msg_iovlen = 1;
+        header->msg_control = parts[i].control;
+        if (names_source) us_quic_add_source(header, &messages[i].local);
+        if (messages[i].segment_len) {
+            us_quic_add_control(header, IPPROTO_UDP, UDP_SEGMENT, &messages[i].segment_len, sizeof(uint16_t));
+        }
     }
-    do { r = sendmmsg(fd, messages, n, 0); } while (r < 0 && errno == EINTR);
+    do { r = sendmmsg(fd, headers, n, 0); } while (r < 0 && errno == EINTR);
     return (int) r;
 #else
     /* sendmsg_x of macOS takes no address for each datagram. */
-    (void) n;
-    do { r = sendto(fd, datagrams->data, datagrams->len, 0, datagrams->peer, datagrams->peer_len); } while (r < 0 && errno == EINTR);
+    (void) names_source; (void) count;
+    union us_quic_sockaddr_t peer;
+    socklen_t peer_len = us_quic_address_to(&messages->peer, &peer);
+    do { r = sendto(fd, bytes + messages->start, messages->len, 0, &peer.any, peer_len); } while (IS_EINTR(r));
     return r < 0 ? -1 : 1;
 #endif
+}
+
+/* Returns how many were sent, 0 if on_drain follows, or -1 if the first one was refused.
+ * `names_source` is for a socket that is not bound to one address. */
+int us_quic_send(struct us_udp_socket_t *udp, bool names_source, const char *bytes,
+    const struct us_quic_message_t *messages, size_t count) {
+    int sent = us_quic_try_send(us_poll_fd(&udp->p), names_source, bytes, messages, count);
+#ifdef _WIN32
+    if (sent > 0 || !(bsd_would_block() || WSAGetLastError() == WSAENOBUFS)) return sent;
+#else
+    if (sent > 0 || !(bsd_would_block() || errno == ENOBUFS)) return sent;
 #endif
-}
-
-static bool us_quic_would_block(int err) {
-    return err == EAGAIN || err == EWOULDBLOCK || err == ENOBUFS;
-}
-
-/* Returns how many are done with. What the kernel refuses for good is as if it got lost on the way. */
-static unsigned int us_quic_send_datagrams(struct us_udp_socket_t *udp, const struct us_quic_datagram_t *datagrams, unsigned int n) {
-    LIBUS_SOCKET_DESCRIPTOR fd = us_poll_fd((struct us_poll_t *) udp);
-    unsigned int done = 0;
-    while (done < n) {
-        int r = us_quic_try_send(fd, datagrams + done, n - done);
-        /* udp(7): the error can be that of an earlier datagram to another peer, and is cleared by now. */
-        if (r < 0 && !us_quic_would_block(errno) && errno != EMSGSIZE) r = us_quic_try_send(fd, datagrams + done, n - done);
-        if (r < 0 && us_quic_would_block(errno)) {
-            us_poll_change((struct us_poll_t *) udp, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
-            break;
-        }
-        done += r < 0 ? 1 : (unsigned int) r;
-    }
-    return done;
-}
-
-/* Returns how many bytes are done with. If not all, on_drain follows. */
-size_t us_quic_send(struct us_udp_socket_t *udp, const struct us_quic_run_t *runs, size_t count) {
-    union us_quic_sockaddr_t peers[US_QUIC_SEND_BATCH];
-    struct us_quic_datagram_t datagrams[US_QUIC_SEND_BATCH];
-    size_t done = 0, run = 0, offset = 0;
-    while (run < count) {
-        unsigned int n = 0;
-        for (unsigned int p = 0; run < count && n < US_QUIC_SEND_BATCH; p++) {
-            const struct us_quic_run_t *r = &runs[run];
-            socklen_t peer_len = us_quic_address_to(&r->peer, &peers[p]);
-            while (offset < r->len && n < US_QUIC_SEND_BATCH) {
-                size_t len = std::min(r->segment_len, r->len - offset);
-                datagrams[n++] = {r->data + offset, len, &peers[p].any, peer_len};
-                offset += len;
-            }
-            if (offset == r->len) {
-                run++;
-                offset = 0;
-            }
-        }
-        unsigned int sent = us_quic_send_datagrams(udp, datagrams, n);
-        for (unsigned int i = 0; i < sent; i++) done += datagrams[i].len;
-        if (sent < n) break;
-    }
-    return done;
+    us_poll_change(&udp->p, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    return 0;
 }
 
 #ifdef LIBUS_USE_LIBUV

@@ -16,6 +16,7 @@ pub(super) const INITIAL_PACKET_THRESHOLD: u64 = 3;
 const MAX_PACKET_THRESHOLD: u64 = 256;
 const PERSISTENT_CONGESTION_THRESHOLD: u64 = 3;
 const MIN_HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(10);
+const MIN_TAIL_TIMEOUT: Duration = Duration::from_millis(10);
 const MAX_PROBE_TIMEOUT: Duration = Duration::from_secs(60);
 /// For how long a peer that is there can leave a packet unacknowledged.
 const MAX_SILENCE: Duration = Duration::from_secs(30);
@@ -296,6 +297,10 @@ impl Connection {
         let timeout = match id {
             _ if !space.sent.has_in_flight() => return Instant::NEVER,
             SpaceId::Data if self.phase != Phase::Confirmed => return Instant::NEVER,
+            // Acknowledgments are not delayed for more than a packet.
+            SpaceId::Data if self.pto_count == 0 && space.sent.packets.len() > 1 => {
+                (self.probe_timeout()).min((self.rtt.smoothed * 2).max(MIN_TAIL_TIMEOUT))
+            }
             SpaceId::Data => self.probe_timeout(),
             _ => self.rtt.probe_timeout().max(MIN_HANDSHAKE_TIMEOUT),
         };

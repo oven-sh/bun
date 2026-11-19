@@ -21,7 +21,7 @@ use bun_quic::{
 };
 use bun_uws as uws;
 use bun_uws::quic::drivers::{self, Driver};
-use bun_uws::quic::io::{self, Outbox, now};
+use bun_uws::quic::io::{Binding, Outbox, now};
 
 use crate::jsc_hooks::timer_all;
 use crate::socket::SocketAddress;
@@ -142,7 +142,7 @@ pub(crate) struct QuicEndpoint {
     closing: Cell<bool>,
     closed: Cell<bool>,
 
-    socket: Cell<Option<*mut uws::udp::Socket>>,
+    binding: Cell<Option<Binding>>,
     bind_address: SocketAddr,
     local_addr: Cell<Option<SocketAddr>>,
     poll_ref: KeepAlive,
@@ -247,6 +247,13 @@ extern "C" fn on_drain(_socket: *mut uws::udp::Socket) {
     }
 }
 
+extern "C" fn on_close(socket: *mut uws::udp::Socket) {
+    for endpoint in registered_endpoints() {
+        (endpoint.binding).update(|it| it.filter(|it| it.socket != socket));
+    }
+    on_drain(socket);
+}
+
 thread_local! {
     /// A server may advertise another local endpoint's address as its
     /// preferred_address (RFC 9000 sec 9.6).
@@ -270,11 +277,8 @@ extern "C" fn on_data(
     buf: *mut uws::udp::PacketBuffer,
     packets: c_int,
 ) {
-    let (this, buf) = (
-        QuicEndpoint::of(socket),
-        uws::udp::PacketBuffer::opaque_mut(buf),
-    );
-    let Some(local) = this.local_addr.get() else {
+    let this = QuicEndpoint::of(socket);
+    let Some(binding) = this.binding.get() else {
         return;
     };
     // Apply a stashed close before feeding: a closing peer discards new
@@ -287,18 +291,13 @@ extern "C" fn on_data(
     // depth-0 pass applies it).
     let _send_scope = this.send_scope();
     let now = now();
-    for i in 0..packets {
-        let peer = io::peer_address(buf, i);
-        let payload = buf.get_payload(i);
-        if payload.is_empty() {
-            continue;
-        }
+    binding.for_each_datagram(buf, packets, |from, payload| {
         this.add_stat(IDX_STATS_PACKETS_RECEIVED, 1);
         this.add_stat(IDX_STATS_BYTES_RECEIVED, payload.len() as u64);
-        if !this.peer_blocked(peer) && !this.handle_version_negotiation(payload) {
-            this.receive(now, &Addresses { local, peer }, payload);
+        if !this.peer_blocked(from.peer) && !this.handle_version_negotiation(payload) {
+            this.receive(now, from, payload);
         }
-    }
+    });
     this.process();
 }
 
@@ -606,7 +605,7 @@ impl QuicEndpoint {
             stats: null_mut(),
             closing: Cell::new(false),
             closed: Cell::new(false),
-            socket: Cell::new(None),
+            binding: Cell::new(None),
             bind_address,
             local_addr: Cell::new(None),
             poll_ref: KeepAlive::init(),
@@ -729,7 +728,7 @@ impl QuicEndpoint {
 
     /// Returns `Ok(false)` when the bind fails: Node does not throw here.
     fn ensure_bound(&self, global: &JSGlobalObject, this_value: JSValue) -> JsResult<bool> {
-        if self.socket.get().is_some() {
+        if self.local_addr.get().is_some() {
             return Ok(true);
         }
         let mut err: c_int = 0;
@@ -741,7 +740,7 @@ impl QuicEndpoint {
             uws::Loop::get(),
             on_data,
             on_drain,
-            on_drain,
+            on_close,
             None,
             Some(&bun_core::ZBox::from_bytes(host.as_bytes())),
             self.bind_address.port(),
@@ -757,9 +756,9 @@ impl QuicEndpoint {
             self.deliver_endpoint_close(global, CLOSECONTEXT_BIND_FAILURE, err);
             return Ok(false);
         }
-        self.socket.set(Some(socket));
-        let local = io::prepare(uws::udp::Socket::opaque_mut(socket));
-        self.local_addr.set(Some(local));
+        let binding = Binding::new(socket);
+        self.binding.set(Some(binding));
+        self.local_addr.set(Some(binding.address));
         let driver = Rc::new(LoopDriver(BackRef::new(self)));
         drivers::register(uws::Loop::get(), Rc::<LoopDriver>::clone(&driver));
         self.driver.set(Some(driver));
@@ -775,7 +774,7 @@ impl QuicEndpoint {
     }
 
     fn update_keepalive(&self) {
-        if self.closed.get() || self.socket.get().is_none() {
+        if self.closed.get() || self.local_addr.get().is_none() {
             return;
         }
         let listening = self.with_state(|s| s.listening) != 0;
@@ -1041,22 +1040,15 @@ impl QuicEndpoint {
     }
 
     fn transmit(&self) {
-        let socket = |local: &SocketAddr| {
-            let is_bound_there = |it: &QuicEndpoint| it.local_addr.get() == Some(*local);
-            let socket = match is_bound_there(self) {
-                true => self.socket.get(),
-                false => (registered_endpoints().iter())
-                    .find(|it| is_bound_there(it))
-                    .and_then(|it| it.socket.get()),
-            };
-            socket.unwrap_or(null_mut())
+        let binding = |local| {
+            let of = |it: &QuicEndpoint| it.binding.get().filter(|it| it.has(local));
+            of(self).or_else(|| registered_endpoints().iter().find_map(|it| of(it)))
         };
         let count = |batch: &Batch| {
-            let bytes: usize = batch.runs().map(|it| it.1.len()).sum();
             self.add_stat(IDX_STATS_PACKETS_SENT, batch.len() as u64);
-            self.add_stat(IDX_STATS_BYTES_SENT, bytes as u64);
+            self.add_stat(IDX_STATS_BYTES_SENT, batch.bytes().len() as u64);
         };
-        (self.outbox.borrow_mut()).flush(&mut self.quic(), socket, count);
+        (self.outbox.borrow_mut()).flush(&mut self.quic(), binding, count);
     }
 
     pub(super) fn unregister_session(&self, session: *mut QuicSession) {
@@ -1080,8 +1072,8 @@ impl QuicEndpoint {
         }
         self.event_loop_timer.disarm();
         ENDPOINT_REGISTRY.with_borrow_mut(|v| v.retain(|it| !core::ptr::eq(&**it, self)));
-        if let Some(socket) = self.socket.take() {
-            uws::udp::Socket::opaque_mut(socket).close();
+        if let Some(binding) = self.binding.take() {
+            uws::udp::Socket::opaque_mut(binding.socket).close();
         }
         true
     }
@@ -1332,9 +1324,9 @@ impl QuicEndpoint {
         // Arms the timer that runs the sweep expiring it.
         self.schedule_process();
         self.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
-        if let Some(socket) = self.socket.get() {
+        if let Some(binding) = self.binding.get() {
             let remote = socket_address(remote);
-            uws::udp::Socket::opaque_mut(socket).send(
+            uws::udp::Socket::opaque_mut(binding.socket).send(
                 &[probe.as_ptr()],
                 &[probe.len()],
                 &[(&raw const remote._addr).cast()],

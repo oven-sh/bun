@@ -228,9 +228,8 @@ impl PosixLoop {
         unsafe { &*c::uws_get_loop() }
     }
 
-    /// Packetize HTTP/3 stream writes that happened since the last
-    /// process_conns. Early-returns when nothing wrote, so safe to call
-    /// from drainMicrotasks without per-iteration cost.
+    /// Sends what has been written to QUIC streams. Early-returns when nothing
+    /// was, so safe to call from drainMicrotasks without per-iteration cost.
     pub fn drain_quic_if_necessary(&self) {
         crate::quic::drivers::flush(self);
     }

@@ -24,7 +24,8 @@ use super::sent::Control;
 /// How far ahead of what TLS has got CRYPTO frames can be (RFC 9000 §7.5).
 const CRYPTO_WINDOW: u64 = 64 * 1024;
 const UNVALIDATED_CRYPTO_WINDOW: u64 = 16 * 1024;
-const MAX_TOKEN_LEN: usize = 512;
+/// It leaves room for frames in an Initial packet.
+const MAX_TOKEN_LEN: usize = 1100;
 const MAX_TICKETS: u8 = 16;
 const MAX_TOKENS: u8 = 16;
 const TICKET_FORMAT: u32 = 1;

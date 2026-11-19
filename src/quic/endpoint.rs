@@ -409,7 +409,7 @@ impl Endpoint {
                     self.track_handshake(index);
                 }
             }
-            Tenant::Gone { remains, .. } if *from != remains.addresses => {}
+            Tenant::Gone { remains, .. } if from.peer != remains.addresses.peer => {}
             Tenant::Gone {
                 remains,
                 datagrams_received,

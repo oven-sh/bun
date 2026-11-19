@@ -1099,13 +1099,17 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             const int run_recv = events & LIBUS_SOCKET_READABLE;
 #endif
             if (run_recv && !u->closed) {
+                /* Datagrams can come in faster than they are handled. The poll reports the rest again. */
+                int packets_left = 64;
+                const int max_packets = u->shared_fd ? 1 : LIBUS_UDP_RECV_COUNT;
 
                 do {
                     struct udp_recvbuf recvbuf;
                     bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
-                    int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT, u->shared_fd ? 1 : LIBUS_UDP_RECV_COUNT);
+                    int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT, max_packets);
                     if (npackets > 0) {
                         u->on_data(u, &recvbuf, npackets);
+                        if (!error && (npackets < max_packets || (packets_left -= npackets) <= 0)) break;
                     } else {
                         if (npackets == LIBUS_SOCKET_ERROR) {
                             if (!bsd_would_block()) {

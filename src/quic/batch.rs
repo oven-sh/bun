@@ -1,3 +1,5 @@
+use core::ops::Range;
+
 use crate::path::Addresses;
 
 const MAX_SEGMENTS: usize = 64;
@@ -36,13 +38,17 @@ impl Batch {
         self.len = 0;
     }
 
-    /// Where they go, the datagrams one after the other, and the length of all but the last one.
-    pub fn runs(&self) -> impl Iterator<Item = (&Addresses, &[u8], usize)> {
+    /// The datagrams one after the other.
+    #[inline]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Where they go, where they are in [`Self::bytes`], and the length of all but the last one.
+    pub fn runs(&self) -> impl Iterator<Item = (&Addresses, Range<usize>, usize)> {
         let ends = (self.runs.iter().skip(1).map(|it| it.start)).chain([self.bytes.len()]);
-        self.runs.iter().zip(ends).map(|(run, end)| {
-            let bytes = self.bytes.get(run.start..end).unwrap_or_default();
-            (&run.addresses, bytes, run.segment_len)
-        })
+        (self.runs.iter().zip(ends))
+            .map(|(run, end)| (&run.addresses, run.start..end, run.segment_len))
     }
 
     /// The bytes from `start` on are a datagram.

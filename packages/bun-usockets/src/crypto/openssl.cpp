@@ -1281,8 +1281,7 @@ int us_ssl_ctx_set_verify_signature_algorithms(SSL_CTX *ctx) {
   return SSL_CTX_set_verify_algorithm_prefs(ctx, algorithms, sizeof(algorithms) / sizeof(algorithms[0]));
 }
 
-/* Exported for quic.cpp (lsquic configures ALPN/transport-params on the SSL_CTX
- * directly) and as the body of us_ssl_ctx_from_options. */
+/* Exported for quic.cpp and as the body of us_ssl_ctx_from_options. */
 SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
                               enum create_bun_socket_error_t *err) {
   ERR_clear_error();
@@ -1397,7 +1396,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   /* The passphrase is borrowed for this call, and the context outlives it. */
   SSL_CTX_set_default_passwd_cb_userdata(ssl_context.get(), NULL);
 
-  /* The callback is set at SSL_VERIFY_NONE too: lsquic's SNI switch calls SSL_set_verify(ssl, mode, NULL), which keeps it. */
+  /* The callback is set at SSL_VERIFY_NONE too: quic.cpp can raise the mode of an SNI context afterwards. */
   SSL_CTX_set_verify(ssl_context.get(),
       !options.request_cert         ? SSL_VERIFY_NONE
       : options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)

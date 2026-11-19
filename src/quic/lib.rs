@@ -1,4 +1,4 @@
-//! QUIC (RFC 9000) and HTTP/3 (RFC 9114) without I/O.
+//! QUIC (RFC 9000) and HTTP/3 (RFC 9114) without I/O. Parts derive from lsquic (LICENSE.md).
 #![forbid(unsafe_code)]
 // Packets come from anywhere and a panic aborts the process.
 #![deny(

@@ -4,7 +4,7 @@ use core::ffi::c_int;
 use core::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV6};
 
 use bun_core::{Timespec, TimespecMockMode};
-use bun_quic::{Batch, Endpoint, Instant};
+use bun_quic::{Addresses, Batch, Endpoint, Instant};
 
 use crate::udp;
 
@@ -16,7 +16,7 @@ pub fn now() -> Instant {
 }
 
 #[repr(C)]
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub(super) struct Address {
     ip: [u8; 16],
     scope_id: u32,
@@ -68,43 +68,114 @@ pub(super) fn write_ip(ip: IpAddr, out: &mut [u8; 16]) -> c_int {
 }
 
 #[repr(C)]
-struct Run {
-    data: *const u8,
-    len: usize,
-    segment_len: usize,
+struct Envelope {
+    local: Address,
     peer: Address,
+    segment_len: c_int,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Message {
+    local: Address,
+    peer: Address,
+    start: u32,
+    len: u32,
+    segment_len: u16,
+}
+
+impl Message {
+    fn segments(self) -> impl Iterator<Item = Self> {
+        let (end, len) = (self.start + self.len, u32::from(self.segment_len));
+        (self.start..end).step_by(len as usize).map(move |start| Self {
+            start,
+            len: len.min(end - start),
+            segment_len: 0,
+            ..self
+        })
+    }
 }
 
 unsafe extern "C" {
-    safe fn us_quic_peer_address(buffer: &mut udp::PacketBuffer, index: c_int, out: &mut Address);
+    safe fn us_quic_read_envelope(buffer: &mut udp::PacketBuffer, index: c_int, out: &mut Envelope);
     safe fn us_quic_local_address(socket: &mut udp::Socket, out: &mut Address);
     safe fn us_quic_set_dontfrag(socket: &mut udp::Socket);
-    fn us_quic_send(socket: &mut udp::Socket, runs: *const Run, count: usize) -> usize;
+    safe fn us_quic_enable_offload(socket: &mut udp::Socket) -> bool;
+    fn us_quic_send(
+        socket: &mut udp::Socket,
+        names_source: bool,
+        bytes: *const u8,
+        messages: *const Message,
+        count: usize,
+    ) -> c_int;
 }
 
-#[inline]
-pub fn peer_address(buffer: &mut udp::PacketBuffer, index: c_int) -> SocketAddr {
-    let mut address = Address::default();
-    us_quic_peer_address(buffer, index, &mut address);
-    address.into()
+/// An open socket.
+#[derive(Clone, Copy)]
+pub struct Binding {
+    pub socket: *mut udp::Socket,
+    pub address: SocketAddr,
+    can_segment: bool,
 }
 
-/// Returns the address that it is bound to.
-pub fn prepare(socket: &mut udp::Socket) -> SocketAddr {
-    let mut address = Address::default();
-    us_quic_set_dontfrag(socket);
-    us_quic_local_address(socket, &mut address);
-    address.into()
+impl Binding {
+    pub fn new(socket: *mut udp::Socket) -> Self {
+        let (udp, mut address) = (udp::Socket::opaque_mut(socket), Address::default());
+        us_quic_set_dontfrag(udp);
+        us_quic_local_address(udp, &mut address);
+        Self {
+            socket,
+            address: address.into(),
+            can_segment: us_quic_enable_offload(udp),
+        }
+    }
+
+    #[inline]
+    pub fn has(&self, local: SocketAddr) -> bool {
+        let Self { address, .. } = self;
+        address.port() == local.port()
+            && (address.ip() == local.ip()
+                || address.ip().is_unspecified() && address.is_ipv6() == local.is_ipv6())
+    }
+
+    #[inline]
+    pub fn for_each_datagram(
+        &self,
+        buffer: *mut udp::PacketBuffer,
+        count: c_int,
+        mut f: impl FnMut(&Addresses, &mut [u8]),
+    ) {
+        let (buffer, local) = (udp::PacketBuffer::opaque_mut(buffer), self.address.into());
+        for at in 0..count {
+            let mut envelope = Envelope {
+                local,
+                peer: Address::default(),
+                segment_len: 0,
+            };
+            us_quic_read_envelope(buffer, at, &mut envelope);
+            let from = Addresses {
+                local: envelope.local.into(),
+                peer: envelope.peer.into(),
+            };
+            let len = match envelope.segment_len {
+                ..=0 => usize::MAX,
+                len => len as usize,
+            };
+            (buffer.get_payload(at).chunks_mut(len)).for_each(|it| f(&from, it));
+        }
+    }
 }
 
 /// The datagrams between an endpoint and its sockets.
 #[derive(Default)]
 pub struct Outbox {
     batch: Batch,
-    /// How many of its bytes are done with.
+    messages: Vec<Message>,
+    /// How many of them are done with.
     sent: usize,
-    runs: Vec<Run>,
     is_blocked: bool,
+    /// Not every network device can do it.
+    has_failed_to_segment: bool,
 }
 
 impl Outbox {
@@ -120,63 +191,90 @@ impl Outbox {
 
     #[inline]
     pub fn has_unsent(&self) -> bool {
-        !self.batch.is_empty()
+        self.sent < self.messages.len()
     }
 
-    /// `socket` is the one with this local address, or null. `on_batch` is called before it is sent.
+    /// `binding` finds the one that has this address. `on_batch` is called before it is sent.
     pub fn flush(
         &mut self,
         endpoint: &mut Endpoint,
-        socket: impl Fn(&SocketAddr) -> *mut udp::Socket,
+        binding: impl Fn(SocketAddr) -> Option<Binding>,
         mut on_batch: impl FnMut(&Batch),
     ) {
         while !self.is_blocked && (self.has_unsent() || endpoint.wants_to_transmit()) {
-            if self.batch.is_empty() {
+            if !self.has_unsent() {
+                self.batch.clear();
                 endpoint.poll_transmit(now(), &mut self.batch, DATAGRAMS_PER_BATCH);
                 on_batch(&self.batch);
+                self.address(&binding);
             }
-            self.send(&socket);
+            self.send(&binding);
         }
     }
 
-    fn send(&mut self, socket: impl Fn(&SocketAddr) -> *mut udp::Socket) {
-        let (mut runs, mut to_skip) = (self.batch.runs().peekable(), self.sent);
-        while let Some(&(first, ..)) = runs.peek() {
-            let mut len = 0;
-            self.runs.clear();
-            while let Some((to, mut bytes, segment_len)) =
-                runs.next_if(|it| it.0.local == first.local)
+    fn address(&mut self, binding: impl Fn(SocketAddr) -> Option<Binding>) {
+        self.messages.clear();
+        self.sent = 0;
+        for (to, bytes, segment_len) in self.batch.runs() {
+            let mut message = Message {
+                local: to.local.into(),
+                peer: to.peer.into(),
+                start: bytes.start as u32,
+                len: bytes.len() as u32,
+                segment_len: segment_len as u16,
+            };
+            if bytes.len() <= segment_len {
+                message.segment_len = 0;
+            } else if self.has_failed_to_segment || !binding(to.local).is_some_and(|it| it.can_segment)
             {
-                let skipped = to_skip.min(bytes.len());
-                to_skip -= skipped;
-                bytes = &bytes[skipped..];
-                len += bytes.len();
-                if !bytes.is_empty() {
-                    self.runs.push(Run {
-                        data: bytes.as_ptr(),
-                        len: bytes.len(),
-                        segment_len,
-                        peer: to.peer.into(),
-                    });
+                self.messages.extend(message.segments());
+                continue;
+            }
+            self.messages.push(message);
+        }
+    }
+
+    /// What the kernel refuses for good is as if it got lost on the way.
+    fn send(&mut self, binding: impl Fn(SocketAddr) -> Option<Binding>) {
+        let (mut is_retry, mut was_segmented) = (false, false);
+        while let unsent @ [first, ..] = &self.messages[self.sent..] {
+            let Some(binding) = binding(first.local.into()) else {
+                self.sent += 1;
+                continue;
+            };
+            let count = (unsent.iter().take_while(|it| binding.has(it.local.into()))).count();
+            // SAFETY: there are as many messages, and they are ranges of the bytes.
+            let result = unsafe {
+                us_quic_send(
+                    udp::Socket::opaque_mut(binding.socket),
+                    binding.address.ip().is_unspecified(),
+                    self.batch.bytes().as_ptr(),
+                    unsent.as_ptr(),
+                    count,
+                )
+            };
+            match result {
+                0 => {
+                    self.is_blocked = true;
+                    return;
+                }
+                1.. => {
+                    self.sent += result as usize;
+                    self.has_failed_to_segment |= core::mem::take(&mut was_segmented);
+                }
+                // udp(7): the error can be that of an earlier datagram to another peer.
+                _ if !is_retry => {}
+                _ if first.segment_len != 0 => {
+                    let segments = first.segments();
+                    self.messages.splice(self.sent..=self.sent, segments);
+                    was_segmented = true;
+                }
+                _ => {
+                    self.sent += 1;
+                    was_segmented = false;
                 }
             }
-            let socket = socket(&first.local);
-            let sent = match socket.is_null() {
-                true => len,
-                // SAFETY: the runs are as many as it says, and point into the batch.
-                false => unsafe {
-                    let socket = udp::Socket::opaque_mut(socket);
-                    us_quic_send(socket, self.runs.as_ptr(), self.runs.len())
-                },
-            };
-            self.sent += sent;
-            if sent < len {
-                self.is_blocked = true;
-                return;
-            }
+            is_retry = result < 0 && !is_retry;
         }
-        drop(runs);
-        self.batch.clear();
-        self.sent = 0;
     }
 }

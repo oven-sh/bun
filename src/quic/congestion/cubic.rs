@@ -9,8 +9,6 @@ const BETA: f64 = 0.8;
 /// In segments per round trip.
 const ALPHA: f64 = 0.8;
 const MIN_SEGMENTS: u64 = 2;
-/// The window counts as full with this many to spare.
-const SPARE_SEGMENTS: u64 = 3;
 const DEFAULT_RTT: Duration = Duration::from_millis(50);
 
 pub(super) struct Cubic {
@@ -21,7 +19,7 @@ pub(super) struct Cubic {
     plateau: u64,
     /// K, in seconds.
     time_to_plateau: f64,
-    /// t, which stands still while the window is not used up (§4.2).
+    /// t, which stands still while the window is not in use (§4.2).
     elapsed: Duration,
     updated_at: Instant,
     /// W_est.
@@ -29,9 +27,8 @@ pub(super) struct Cubic {
     /// The last packet that was sent before the window was reduced.
     recovery_end: u64,
     pub(super) is_recovering: bool,
-    max_in_flight: u64,
-    /// The last packet that filled the window.
-    filled_by: u64,
+    /// The last packet that filled half of the window or more (RFC 7661 §4.3).
+    used_by: u64,
 }
 
 impl Cubic {
@@ -47,8 +44,7 @@ impl Cubic {
             reno_window: MAX_WINDOW as f64,
             recovery_end: 0,
             is_recovering: false,
-            max_in_flight: 0,
-            filled_by: 0,
+            used_by: 0,
         }
     }
 
@@ -73,9 +69,8 @@ impl Cubic {
     /// `in_flight` includes the packet.
     #[inline]
     pub(super) fn on_sent(&mut self, sequence: u64, in_flight: u64) {
-        self.max_in_flight = self.max_in_flight.max(in_flight);
-        if in_flight + SPARE_SEGMENTS * self.segment >= self.window {
-            self.filled_by = sequence;
+        if 2 * in_flight >= self.window {
+            self.used_by = sequence;
         }
     }
 
@@ -95,16 +90,15 @@ impl Cubic {
             return;
         }
         self.is_recovering &= newest.sequence <= self.recovery_end;
+        // RFC 9002 §7.8.
+        if newest.sequence > self.used_by {
+            return;
+        }
         let limit = if self.window < self.slow_start_threshold {
-            // RFC 9002 §7.8.
-            (self.window + feedback.acked)
-                .min(2 * self.max_in_flight)
-                .min(self.slow_start_threshold)
-        } else if newest.sequence <= self.filled_by {
+            (self.window + feedback.acked).min(self.slow_start_threshold)
+        } else {
             self.elapsed = self.elapsed + since_update;
             self.avoid_congestion(feedback.acked, rtt)
-        } else {
-            0
         };
         if !self.is_recovering {
             self.window = self.window.max(limit);
@@ -138,7 +132,6 @@ impl Cubic {
     fn collapse(&mut self) {
         self.window = MIN_SEGMENTS * self.segment;
         self.start_epoch(self.slow_start_threshold);
-        self.max_in_flight = 0;
     }
 
     /// The curve leads from the threshold to `plateau`.

@@ -300,7 +300,7 @@ impl Network {
             let mut batch = Batch::default();
             self.peer(side).endpoint.poll_transmit(now, &mut batch, 64);
             for (addresses, bytes, segment_len) in batch.runs() {
-                for bytes in bytes.chunks(segment_len) {
+                for bytes in batch.bytes()[bytes].chunks(segment_len) {
                     self.transmit(Datagram {
                         sender: side,
                         from: self.peer_address(side),

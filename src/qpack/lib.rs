@@ -1,4 +1,4 @@
-//! QPACK, the field compression of HTTP/3 (RFC 9204).
+//! QPACK, the field compression of HTTP/3 (RFC 9204). Parts derive from ls-qpack (LICENSE.md).
 #![forbid(unsafe_code)]
 // Field sections and instructions come from anywhere and a panic aborts the process.
 #![deny(

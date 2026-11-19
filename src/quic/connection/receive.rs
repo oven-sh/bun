@@ -19,6 +19,7 @@ use crate::packet::{
     MIN_RESET_LEN, SPIN_BIT, Sealed, has_reserved_bits,
 };
 use crate::path::Addresses;
+use crate::stream_id::Side;
 use crate::time::{Duration, Instant};
 
 const MAX_COALESCED: usize = 8;
@@ -67,6 +68,14 @@ impl Connection {
     ) {
         self.stats.bytes_received += datagram.len() as u64;
         let len = datagram.len();
+        // A client may not know its address.
+        let from = &Addresses {
+            local: match self.side {
+                Side::Client => self.path.addresses.local,
+                Side::Server => from.local,
+            },
+            peer: from.peer,
+        };
         if *from == self.path.addresses {
             self.path.on_received(len);
         } else if !self.accepts_from(from) {

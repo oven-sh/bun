@@ -994,6 +994,11 @@ impl EventLoop {
             .immediate_tasks
             .replace(self.next_immediate_tasks.take());
 
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        if !to_run_now.is_empty() {
+            clear_stack_below_caller();
+        }
+
         let mut exception_thrown = false;
         for task in to_run_now.iter() {
             // SAFETY: the queue holds a ref on each, which `__bun_run_immediate_task` consumes.
@@ -1328,6 +1333,13 @@ pub(crate) fn get_active_tasks(
         num_polls: uws::Loop::get().poll_count(),
         iteration: event_loop.usockets_loop().iteration_number(),
     }
+}
+
+/// Each call has 32 bytes of stack that may never be written, where the collector finds what earlier calls have left.
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[inline(never)]
+fn clear_stack_below_caller() {
+    core::hint::black_box(&mut [0u8; 4000]);
 }
 
 // HOST_EXPORT(Bun__EventLoop__runCallback2, c)

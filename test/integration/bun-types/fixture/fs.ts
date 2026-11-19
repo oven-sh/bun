@@ -20,3 +20,8 @@ watch(".", (eventType, filename) => {
 await Bun.file("sdf").exists();
 
 readdir(".", { recursive: true }, (err, files) => {});
+
+fs.createReadStream("", { windowsHandle: 0n });
+fs.createWriteStream("", { windowsHandle: 0n, autoClose: true });
+// @ts-expect-error - windowsHandle is a bigint
+fs.createReadStream("", { windowsHandle: 1 });

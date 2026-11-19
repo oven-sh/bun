@@ -19,7 +19,11 @@ const manyLists: string[][] = [];
 for (let list = 1; list <= 8000; list++) manyLists.push(asNames(namesOfList(list, 40)));
 const manyNames = asNames(namesOfList(9000, 320000));
 
-const writtenOut: Counts = { a0: 0, a1: 1, a2: 2, a3: 3, a4: 4, a5: 5, a6: 6, a7: 7, a8: 8, a9: 9, a10: 10, a11: 11 };
+// Out of a text, so that the build does not know the names: it would read the twelve members in line,
+// and the loop would say nothing about the object.
+const writtenOut: Counts = JSON.parse(
+  '{ "a0": 0, "a1": 1, "a2": 2, "a3": 3, "a4": 4, "a5": 5, "a6": 6, "a7": 7, "a8": 8, "a9": 9, "a10": 10, "a11": 11 }',
+);
 const givenByKey: Counts = {};
 for (let k = 0; k < 12; k++) givenByKey["a" + k] = k;
 const asked = asNames(Array.from({ length: 24 }, (_, k) => "a" + k));

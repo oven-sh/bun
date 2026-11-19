@@ -1,0 +1,16 @@
+# -- source: main.cjs
+# 'use strict';
+# class Kind { constructor(kind) { this.kind = kind; } static code(kind) { return kind === Kind.Use ? 1 : kind === Kind.Def ? 2 : 3; } }
+# Kind.Use = Symbol("Use");
+# Kind.Def = Symbol("Def");
+# globalThis.holder = [Kind];
+# let sum = 0;
+# for (let i = 0; i < 9; i++) sum += Kind.code(i & 1 ? Kind.Use : Kind.Def);
+# console.log(sum);
+# -- end of source
+# What plain assignments add to a class without heritage are static fields of the class, in the order of the first assignment of each.
+# RUN(LAYOUT): print
+# LAYOUT: staticFields=[{key="Use" variable=g
+# RUN(READS): walk f2 mechanisms=all
+# READS: GetStaticFieldOrAbsent {{*}} variable=g
+# READS: GetStaticFieldOrAbsent {{*}} variable=g

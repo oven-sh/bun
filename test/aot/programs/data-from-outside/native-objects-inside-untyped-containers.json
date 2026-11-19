@@ -1,3 +1,0 @@
-{
-  "skipInShell": "uses Buffer and Response, which the jsc shell does not provide"
-}

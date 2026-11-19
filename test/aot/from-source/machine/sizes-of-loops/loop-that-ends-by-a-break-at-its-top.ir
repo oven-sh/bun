@@ -1,0 +1,21 @@
+# f1 = total
+# -- source: loop-that-ends-by-a-break-at-its-top.ts
+# function total(list: Float64Array): number {
+#   let sum = 0, k = 0;
+#   while (true) {
+#     if (k >= list.length) break;
+#     sum += list[k];
+#     k++;
+#   }
+#   return sum;
+# }
+# declare const input: any;
+# (globalThis as any).answer = total(new Float64Array(input));
+# -- end of source
+# The compiler before this one: 10 instructions, 8 of them patches, a turn of the written loop steps by 8.
+# When the bound was taken: loop: operations 5, patches 1, moves 0, unlikely 0 ; loop: operations 21, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:5,21 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 5
+# X64-NEXT: loop: at most 21

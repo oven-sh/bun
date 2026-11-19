@@ -169,20 +169,6 @@ export const bindingsChangingNothing: Readonly<Record<string, Binding>> = {
     taken: [0],
     refused: [],
   },
-  "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionIsDeepStrictEqual": {
-    functions: 1,
-    sets: 1065,
-    returned: 1065,
-    taken: [0, 1],
-    refused: [],
-  },
-  "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionPartialDeepStrictEqual": {
-    functions: 1,
-    sets: 360,
-    returned: 360,
-    taken: [0, 1],
-    refused: [],
-  },
   "native:NewCppFunction:decodeURIComponentSIMD.cpp:jsFunctionDecodeURIComponentSIMD": {
     functions: 1,
     sets: 192,

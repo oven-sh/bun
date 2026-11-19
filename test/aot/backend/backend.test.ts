@@ -7,18 +7,18 @@
 //   AOT_BACKEND_MODULES=<a node_modules folder> ..     the packages are already installed there, and nothing is downloaded
 //   AOT_BACKEND_DATABASE_URL=postgres://.. ..          a database that ./schema.sql may fill. Its tables of the same names are dropped.
 //
-// Without AOT_BACKEND everything is skipped: the packages named in ./app/package.json are downloaded from npm.
 // It needs Postgres. Without AOT_BACKEND_DATABASE_URL it uses the container that test/js/sql uses, and where there is no Docker
 // either, everything is skipped.
 //
 // ./measure has the benchmark. See ./README.md.
 import { SQL } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { cpSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isDockerEnabled, isWindows, tempDir } from "harness";
 import { join } from "path";
 import * as dockerCompose from "../../docker/index.ts";
-import { built, spawned, unsupported } from "../run-programs";
+import { built, spawned, unsupported } from "../harness/commands";
+import { afterAll, beforeAll, test } from "../harness/default-timeout";
 import { badOrders, carrierRates, fortunesPage, json, orders, plaintext, product, sessionToken } from "./answers";
 
 const wanted = !!process.env.AOT_BACKEND;
@@ -49,10 +49,7 @@ function expectWorld(world: World) {
   }
 }
 
-if (!wanted)
-  console.error(
-    "SKIPPED: test/aot/backend/backend.test.ts: it installs packages from npm and wants PostgreSQL. AOT_BACKEND=1 runs it",
-  );
+if (!wanted) console.error("SKIPPED: test/aot/backend/backend.test.ts: it wants PostgreSQL. AOT_BACKEND=1 runs it");
 else if (!hasPostgres)
   console.error(
     "SKIPPED: test/aot/backend/backend.test.ts: there is no PostgreSQL: neither AOT_BACKEND_DATABASE_URL nor docker",
@@ -118,11 +115,11 @@ describe.skipIf(!wanted || !hasPostgres || !!unsupported)("compile/aot/backend",
 
     cpSync(join(import.meta.dir, "app"), folder, { recursive: true });
     if (process.env.AOT_BACKEND_MODULES) {
-      symlinkSync(process.env.AOT_BACKEND_MODULES, join(folder, "node_modules"));
+      symlinkSync(process.env.AOT_BACKEND_MODULES, join(folder, "node_modules"), "junction");
     } else {
       const install = await spawned([bunExe(), "install", "--ignore-scripts"], folder, bunEnv);
-      expect({ stderr: install.stderr, exitCode: install.exitCode }).toEqual({
-        stderr: expect.any(String),
+      expect({ stderr: install.exitCode ? install.stderr : "", exitCode: install.exitCode }).toEqual({
+        stderr: "",
         exitCode: 0,
       });
     }

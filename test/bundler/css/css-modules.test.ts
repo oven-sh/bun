@@ -587,6 +587,63 @@ describe("css", () => {
       expect(css).toContain(`.${betaOwn}`);
     },
   });
+
+  // `.r` is outside the `.a`/`.b` composes cycle but leads into it, which must not overflow the stack.
+  itBundled("css-module/ComposesCycleWithoutTheExportedClass", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(styles);
+      `,
+      "/styles.module.css": `
+        .r { composes: a }
+        .a { composes: b; color: red }
+        .b { composes: a; margin: 0 }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          r: "b_-MSaAA a_-MSaAA r_-MSaAA",
+          a: "b_-MSaAA a_-MSaAA",
+          b: "a_-MSaAA b_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+    },
+  });
+
+  itBundled("css-module/ComposesCycleAcrossFilesWithoutTheExportedClass", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(styles);
+      `,
+      "/styles.module.css": `.r { composes: a from "./a.module.css" }`,
+      "/a.module.css": `.a { composes: b from "./b.module.css"; color: red }`,
+      "/b.module.css": `.b { composes: a from "./a.module.css"; margin: 0 }`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          r: "b_Kd7Gww a_BLNoTg r_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+    },
+  });
 });
 
 // `bun build --no-bundle` prints a module file with no link step. Class
@@ -932,6 +989,27 @@ describe("css modules", () => {
       logs: [],
       css: `.k { composes: g from "./g.css"; } .j { composes: m from "./missing.css"; } .i { composes: 12px; }`,
       styles: {},
+    });
+  });
+
+  test.concurrent("composes conflicts name the unprefixed property and come in a fixed order", async () => {
+    const { logs } = await bundle({
+      "styles.module.css": `.a { composes: b from "./other.module.css"; view-transition-group: x; -webkit-transform: none; margin-top: var(--m); background-color: red }`,
+      "other.module.css": `.b { margin-top: 0; view-transition-group: y; background-color: blue; transform: none }`,
+    });
+    expect(logs).toEqual(
+      ["background-color", "margin-top", "transform", "view-transition-group"].map(
+        name => `The value of ${name} in the class a is undefined.`,
+      ),
+    );
+  });
+
+  test.concurrent.each([
+    ["12px", "Invalid declaration"],
+    ["a, b", "Unexpected token: ,"],
+  ])("composes: %s in a module is an error, not an unparsed value", async (value, error) => {
+    expect(await bundle({ "styles.module.css": `.a { top: 0 } .b { top: 1px } .c { composes: ${value} }` })).toEqual({
+      logs: [error],
     });
   });
 });

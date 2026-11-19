@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { slot, spawned } from "../run-programs";
+import { slot, spawned } from "../harness/commands";
 import { describe, test } from "../supported";
 
 type Files = Record<string, string>;
@@ -75,7 +75,7 @@ import limits from "./limits.toml";
 import words from "./words.txt";
 // @ts-ignore
 import logo from "./logo.bin" with { type: "file" };
-import { stamp } from "./stamp.ts" with { type: "macro" };
+import { stamp } from "./stamp.ts";
 declare const Bun: any;
 console.log(total(1), settings.name, limits.max, words.trim(), (await Bun.file(logo).text()).length, JSON.stringify(stamp("a")));
 `,

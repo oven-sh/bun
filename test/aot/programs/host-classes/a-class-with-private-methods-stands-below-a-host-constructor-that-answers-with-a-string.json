@@ -1,3 +1,0 @@
-{
-  "skipWithASAN": "TODO: a build with assertions stops in the interpreter, in set_private_brand: baseValue.isObject()"
-}

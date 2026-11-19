@@ -1,0 +1,11 @@
+# The control of an-object-on-which-an-iterator-is-laid-by-a-written-descriptor-stays-in-sight.ir: flow brings the symbol: the key is not written: the object goes out of sight as before. L1 = the bag.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L1 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# -- source: an-object-defined-on-under-a-symbol-that-flow-brings-goes-out-of-sight.js
+# const key = process.argv.length > 99 ? Symbol.toPrimitive : Symbol.iterator;
+# const bag = { items: [1, 2, 3] };
+# Object.defineProperty(bag, key, { value: function () { return this.items[Symbol.iterator](); } });
+# let sum = 0;
+# for (const n of bag) sum += n;
+# console.log(sum);
+# -- end of source

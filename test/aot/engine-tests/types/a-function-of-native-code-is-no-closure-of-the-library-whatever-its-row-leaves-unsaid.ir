@@ -1,0 +1,13 @@
+# eval is native code of the engine: its row names functions of the library that it calls and says nothing of what becomes of their results, and it is a closure of none of them. Bun.$ is made by the host at the
+# first read by calling a function of the library: its row is as silent, and it may be what that function returns. The table calls both functions: what tells them apart is who makes them.
+# RUN(INTERSECT): intersect
+# INTERSECT: t0 & t2 = never
+# INTERSECT: t1 & t2 = builtin(BunDollar)|f1
+# INTERSECT: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" role=Signature parameters=[{type=builtin(Eval)}, {type=builtin(BunDollar)}, {type=f1}] results=[{type=undefined}]
+function f1 name="ofTheLibrary" role=Library results=[{type=anything}] {
+    Return
+}
+entry module=m0

@@ -1,4 +1,0 @@
-{
-  "env": { "BUN_JSC_collectContinuously": "1", "BUN_JSC_forceDidDeferGCWork": "1" },
-  "runWithASAN": "compiled code writes the table of names of an object that keeps its names for itself"
-}

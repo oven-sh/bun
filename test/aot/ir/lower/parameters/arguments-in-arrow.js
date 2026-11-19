@@ -5,8 +5,7 @@
 // CHECK-LABEL: function {{*}}kind=Arrow{{*}}captures=[{type=anything}]
 // CHECK: b0([[copy]]: anything):
 // CHECK-NOT: = Create
-// CHECK: [[result]] = [[cast]] [[copy]]
-// CHECK-NEXT: Return [[result]]
+// CHECK: Return [[copy]]
 
 // RUN(COPY): lower
 // COPY-NOT: GetEnvironmentField

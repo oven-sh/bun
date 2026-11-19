@@ -1,8 +1,0 @@
-sloppy length false
-sloppy character false
-sloppy past the end true
-sloppy another name true
-strict length TypeError
-strict character TypeError
-strict past the end true
-strict another name true

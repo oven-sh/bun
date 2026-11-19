@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunExe, isLinux, libcPathForDlopen, tempDir } from "harness";
 import { join } from "node:path";
 import { isHardened } from "./hardened";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { beforeAll, describe, test } from "./supported";
 
@@ -68,6 +69,7 @@ describe.skipIf(!isHardened)("an executable of a hardened build", () => {
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
     alone = await run([executable]);
   }, 120_000);
+  afterAll(() => directory?.[Symbol.dispose]());
 
   const under = (answers: { call: "prctl" | "seccomp"; request?: number; errno: number }[]) =>
     run([bunExe(), join(String(directory), "launcher.ts"), executable, JSON.stringify(answers)]);
@@ -107,11 +109,11 @@ describe.skipIf(!isHardened)("an executable of a hardened build", () => {
   });
 
   test("exits before the program runs when its filter is refused", async () => {
-    if (alone.exitCode !== 0) return;
-    expect(await under([{ call: "seccomp", errno: ENOSYS }])).toEqual({
-      stdout: "",
-      stderr: refusal("seccomp(SECCOMP_SET_MODE_FILTER) failed with ENOSYS"),
-      exitCode: 1,
-    });
+    // Where the kernel can't deny it executable memory it has exited before it asks for the filter.
+    expect(await under([{ call: "seccomp", errno: ENOSYS }])).toEqual(
+      alone.exitCode === 0
+        ? { stdout: "", stderr: refusal("seccomp(SECCOMP_SET_MODE_FILTER) failed with ENOSYS"), exitCode: 1 }
+        : alone,
+    );
   });
 });

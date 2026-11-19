@@ -1,6 +1,6 @@
 // Hardcoded module "node:_http_client"
 // This is a port of Node.js's lib/_http_client.js built on top of node:net /
-// node:tls sockets and the llhttp HTTPParser binding, matching the upstream
+// node:tls sockets and the HTTPParser binding, matching the upstream
 // implementation as closely as possible.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_client.js
 const { kEmptyObject, once, ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");
@@ -16,7 +16,7 @@ const {
 } = require("node:_http_common");
 const { kUniqueHeaders, parseUniqueHeadersOption, OutgoingMessage } = require("node:_http_outgoing");
 const Agent = require("node:_http_agent");
-const { urlToHttpOptions } = require("internal/url");
+const { isURL, urlToHttpOptions } = require("internal/url");
 const {
   kOutHeaders,
   kNeedDrain,
@@ -102,10 +102,6 @@ function closeRequest(req) {
   req.emit("close");
 }
 
-function isURLInstance(input) {
-  return input != null && typeof input === "object" && input instanceof URL;
-}
-
 // When proxying a HTTP request, the following needs to be done:
 // https://datatracker.ietf.org/doc/html/rfc7230#section-5.3.2
 // 1. Rewrite the request path to absolute-form.
@@ -176,7 +172,7 @@ function ClientRequest(input?, options?, cb?): void {
   if (typeof input === "string") {
     const urlStr = input;
     input = urlToHttpOptions(new URL(urlStr));
-  } else if (isURLInstance(input)) {
+  } else if (isURL(input)) {
     // url.URL instance
     input = urlToHttpOptions(input);
   } else {

@@ -1,10 +1,11 @@
 // A constant whose readers were all removed leaves nothing of its text in the executable, also where a function of another module read it, so that it was a variable and no folded constant.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { built, spawned, withoutDebugInformation } from "./harness/commands";
+import { afterAll } from "./harness/default-timeout";
 import { compileCommand } from "./harness/flags";
-import { built, spawned, withoutDebugInformation } from "./run-programs";
 import { beforeAll, describe, test } from "./supported";
 
 const unread = "the text of a constant that nothing reads";

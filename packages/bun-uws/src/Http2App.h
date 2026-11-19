@@ -11,18 +11,14 @@ namespace uWS {
  * (TLS) or the prior-knowledge preface (cleartext). Route registration
  * mirrors H3App so the C ABI stays 1:1 with uws_h3_app_*. */
 struct H2App {
-    Http2Context *http2Context;
+    std::unique_ptr<Http2Context> http2Context;
 
     template <bool SSL>
     static H2App *create(TemplatedApp<SSL> *parent, bool allowHttp1, unsigned idleTimeoutSecs = 0) {
         if (!parent || parent->constructorFailed()) return nullptr;
-        Http2Context *ctx = Http2Context::create(Loop::get(), idleTimeoutSecs);
-        parent->attachHttp2(ctx, allowHttp1);
-        return new H2App{ctx};
-    }
-
-    ~H2App() {
-        if (http2Context) http2Context->free();
+        auto ctx = std::make_unique<Http2Context>(Loop::get(), idleTimeoutSecs);
+        parent->attachHttp2(ctx.get(), allowHttp1);
+        return new H2App{std::move(ctx)};
     }
 
 #define H2_METHOD(name, verb)                                                            \
@@ -52,7 +48,7 @@ struct H2App {
     void clearRoutes() { http2Context->clearRoutes(); }
     /* GOAWAY + close every connection. */
     void close() { http2Context->closeAll(); }
-    void *getNativeHandle() { return http2Context; }
+    void *getNativeHandle() { return http2Context.get(); }
 };
 
 }

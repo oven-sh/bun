@@ -66,7 +66,7 @@ pub(crate) mod package_manager_command;
 // need `CommandLineReporter`. This is the sole live mount of the file.
 #[path = "test_command.rs"]
 pub(crate) mod test_command;
-/// `bun test` support modules (Scanner / ChangedFilesFilter / ParallelRunner).
+/// `bun test` support modules.
 /// Mounted here so `test_command.rs` can `use crate::cli::test::scanner` etc.
 pub(crate) mod test {
     #[path = "Scanner.rs"]
@@ -81,15 +81,11 @@ pub(crate) mod test {
     #[path = "Timings.rs"]
     pub(crate) mod timings;
 
-    /// `bun test --parallel`: process-pool coordinator/worker entry points.
-    /// Thin façade re-exporting from `parallel::runner`.
-    #[path = "ParallelRunner.rs"]
-    pub(crate) mod parallel_runner;
+    /// `bun test --aot --shard`: puts test files that import the same modules in the same shard.
+    #[path = "ShardsByReach.rs"]
+    pub(crate) mod shards_by_reach;
 
-    /// `test/parallel/` submodule directory (no `mod.rs` on disk; declared
-    /// inline). `ParallelRunner.rs`
-    /// re-exports the public entry points from `runner`; the rest are
-    /// implementation detail of the coordinator/worker split.
+    /// `bun test --parallel`: a coordinator hands test files to worker processes. `runner` has the entry points.
     pub(crate) mod parallel {
         #[path = "aggregate.rs"]
         pub(crate) mod aggregate;
@@ -97,8 +93,6 @@ pub(crate) mod test {
         pub(crate) mod channel;
         #[path = "Coordinator.rs"]
         pub(crate) mod coordinator;
-        #[path = "FileRange.rs"]
-        pub(crate) mod file_range;
         #[path = "Frame.rs"]
         pub(crate) mod frame;
         #[path = "runner.rs"]
@@ -203,6 +197,7 @@ pub(crate) mod remove_command;
 pub(crate) mod scan_command;
 #[path = "script_or_command.rs"]
 pub(crate) mod script_or_command;
+mod short_run;
 pub(crate) mod typescript_libs;
 #[path = "unlink_command.rs"]
 pub(crate) mod unlink_command;
@@ -259,7 +254,7 @@ pub(crate) static Bun__Node__DisabledWarnings: std::sync::OnceLock<Vec<Box<[u8]>
 /// thunk and the `std::sync::Once` poison/slow path it forces are `#[cold]`, and
 /// fat-LTO parks them tens of MB away from the startup symbol cluster.
 /// `cli_arena()` is on the hot `bun <file>` / `bun run <script>` path (via
-/// `cli_dupe` / `cli_dupe_z` / `runner_arena`), so a `LazyLock` there faults a
+/// `cli_dupe` / `cli_dupe_z`), so a `LazyLock` there faults a
 /// fresh cold page on every `bun` invocation; a plain cell is the correct shape.
 static CLI_ARENA: bun_core::RacyCell<core::mem::MaybeUninit<bun_alloc::Arena>> =
     bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
@@ -290,30 +285,19 @@ pub(crate) fn cli_dupe(s: &[u8]) -> &'static [u8] {
     cli_arena().alloc_slice_copy(s)
 }
 
-/// Adopt an already-owned `Box<[u8]>` into a process-lifetime side-table and
-/// return a `&'static [u8]` borrow — zero-copy (the `Box`'s heap allocation has
-/// a stable address; only the `Box` value moves into the table). Use when the
-/// caller already owns a large buffer (e.g. tarball, request body) so
-/// [`cli_dupe`]'s memcpy + transient double-peak is avoided. Thread-safe.
+/// [`cli_dupe`] without the copy, for a large buffer that the caller owns. Thread-safe.
 fn cli_adopt(b: Box<[u8]>) -> &'static [u8] {
-    static ADOPTED: bun_threading::Guarded<Vec<Box<[u8]>>> =
-        bun_threading::Guarded::new(Vec::new());
-    let (ptr, len) = (b.as_ptr(), b.len());
-    ADOPTED.lock().push(b);
-    // SAFETY: `ADOPTED` is never cleared/drained for the process lifetime; the
-    // `Box<[u8]>` pointee address is stable across `Vec` reallocs (only the
-    // `Box` pointer-value moves), so the returned slice stays valid `'static`.
-    unsafe { core::slice::from_raw_parts(ptr, len) }
+    bun_core::asan::ignore_object(b.as_ptr().cast());
+    Box::leak(b)
 }
 
-/// Dupe `s` into the process-lifetime CLI arena with a trailing NUL and
-/// return the C-string pointer (for argv/envp construction).
+/// Dupe `s` into the process-lifetime CLI arena with a trailing NUL.
 #[inline]
-fn cli_dupe_z(s: &[u8]) -> *const core::ffi::c_char {
+fn cli_dupe_z(s: &[u8]) -> bun_core::CStrRef<'static> {
     let buf: &'static mut [u8] = cli_arena().alloc_slice_fill_default(s.len() + 1);
     buf[..s.len()].copy_from_slice(s);
     // buf[s.len()] is already 0 (Default for u8).
-    buf.as_ptr().cast::<core::ffi::c_char>()
+    bun_core::CStrRef::from_slice_with_nul(buf)
 }
 
 /// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going
@@ -375,8 +359,8 @@ pub(crate) mod cli {
         // `panic(main thread): …` header) compares against a stored OS tid.
         bun_crash_handler::cli_state::set_main_thread_id(bun_threading::current_thread_id());
         bun_core::set_start_time(bun_core::time::nano_timestamp());
-        // SAFETY: single-threaded process startup
-        unsafe { (*LOG_.get()).write(bun_ast::Log::init()) };
+        // SAFETY: single-threaded process startup; nothing else refers to `LOG_` yet.
+        let log = unsafe { (*LOG_.get()).write(bun_ast::Log::init()) };
         // Init the process-lifetime CLI arena here (not via `LazyLock` on first
         // use) — see `super::CLI_ARENA`. The write happens before any worker
         // thread is spawned and before `Command::start` (the first
@@ -385,17 +369,13 @@ pub(crate) mod cli {
         unsafe { (*super::CLI_ARENA.get()).write(bun_alloc::Arena::new()) };
 
         // (The panic hook is installed by `bun_crash_handler::init()` in `bin_entry::main`.)
-        // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
-        let log = unsafe { (*LOG_.get()).assume_init_mut() };
         if let Err(err) = Command::start(log) {
             // Print accumulated diagnostics BEFORE the
             // generic `handle_root_error` "An internal error occurred (..)"
             // message. The bake production path returns `error.BuildFailed`
             // with the actual parse/link errors sitting in `ctx.log` (== this
             // `log`); without this print, users see only the opaque error name.
-            let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                bun_core::Output::error_writer(),
-            ));
+            let _ = log.print(bun_core::Output::error_writer());
             bun_crash_handler::handle_root_error(err);
         }
     }
@@ -620,7 +600,7 @@ pub(crate) mod command {
 
     pub(crate) use bun_options_types::command_tag::Tag;
     pub(crate) use bun_options_types::command_tag::{LOADS_CONFIG, USES_GLOBAL_OPTIONS};
-    pub(crate) use bun_options_types::context::{Context, ContextData, HotReload, TestOptions};
+    pub(crate) use bun_options_types::context::{Context, ContextData, HotReload};
 
     // Process-lifetime
     // storage, written exactly once in `create_context_data` during
@@ -1056,6 +1036,16 @@ pub(crate) mod command {
             }
         }
 
+        #[cfg(not(bun_locked_environment))]
+        if let Some(first) = bun::argv().get(1 + bun::bun_options_argc())
+            && first
+                .as_bytes()
+                .starts_with(run_compiled::PROGRAM_FILE_FLAG)
+            && let Some(graph) = run_compiled::load_program_file()?
+        {
+            return boot_standalone(graph, log);
+        }
+
         // Fast path: `bun -v` / `bun --version` / `bun --revision`, the
         // empty-eval forms `bun -e ''` / `bun -p ''` (and the `--eval=` /
         // `--print=` spellings), and the dominant `bun <path>` / `bun .` run
@@ -1209,22 +1199,9 @@ pub(crate) mod command {
     ) -> CmdResult {
         // SAFETY: `from_executable` returns a non-null `*mut Graph` whose
         // backing storage is process-static (owned by the executable image).
-        let graph: &mut bun_standalone_graph::Graph = unsafe { &mut *graph };
-        #[cfg(target_os = "macos")]
-        if graph.flags.contains(
-            bun_standalone_graph::StandaloneModuleGraph::Flags::NAMES_SYSTEM_CA_CERTIFICATES,
-        ) {
-            unsafe extern "C" {
-                safe fn us_prefetch_root_system_certs();
-            }
-            bun_removable_features::call_removable!(
-                SystemCaCertificates,
-                ReturnDefault,
-                us_prefetch_root_system_certs
-            );
-        }
+        let graph: &'static bun_standalone_graph::Graph = unsafe { &*graph };
         #[cfg(bun_hardened)]
-        if bun_resolver::StandaloneModuleGraph::compiled_program(&*graph).is_some() {
+        if bun_resolver::StandaloneModuleGraph::compiled_program(graph).is_some() {
             bun_jsc::compiled_program::deny_write_execute_memory();
             #[cfg(bun_locked_environment)]
             bun_jsc::compiled_program::refuse_variables_that_are_never_read();
@@ -1249,7 +1226,7 @@ pub(crate) mod command {
                 }
 
                 // Store the full argv including user arguments
-                let full_argv: &'static [&'static bun_core::ZStr] = bun::intern_argv(argv_list);
+                let full_argv: &'static [&'static bun_core::ZStr] = argv_list.leak();
                 let num_exec_argv_options = full_argv.len().saturating_sub(original_argv_len);
 
                 // Calculate offset: skip executable name + all exec argv options + BUN_OPTIONS args
@@ -1263,17 +1240,18 @@ pub(crate) mod command {
                 // Temporarily set bun.argv to only include executable name + exec_argv options + BUN_OPTIONS args.
                 // This prevents user arguments like --version/--help from being intercepted
                 // by Bun's argument parser (they should be passed through to user code).
-                // SAFETY: single-threaded startup; `full_argv` is process-static.
-                unsafe {
-                    bun::set_argv(&full_argv[..(1 + num_parsed_options).min(full_argv.len())]);
-                }
+                static VIEWS: bun_core::Once<[&[&bun_core::ZStr]; 2]> = bun_core::Once::new();
+                let [options_argv, full_argv] = VIEWS.get_or_init(|| {
+                    let options_len = (1 + num_parsed_options).min(full_argv.len());
+                    [&full_argv[..options_len], full_argv]
+                });
+                bun::set_argv(options_argv);
 
                 // Handle actual options to parse.
                 let result = init(Tag::AutoCommand, log)?;
 
                 // Restore full argv so passthrough calculation works correctly
-                // SAFETY: single-threaded startup.
-                unsafe { bun::set_argv(full_argv) };
+                bun::set_argv(full_argv);
 
                 break 'brk result;
             }
@@ -2060,6 +2038,7 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
 
   Short for <b>bun build --compile --aot<r>. Without an entry point, it compiles the file that \"bin\" in
   <b>package.json<r> points to, then \"module\", then \"main\", then index.ts, index.tsx, index.mts or index.js.
+  The entry point can be the name of an executable of an installed package, as in <b>bun run<r>.
 
 <b>Flags:<r>"
                 );
@@ -2073,6 +2052,9 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
 
   <d>Choose the name of the executable<r>
   <b><green>bun compile<r> <cyan>--outfile=my-app<r> <blue>./cli.ts<r>
+
+  <d>Compile the command-line tool of an installed package<r>
+  <b><green>bun compile<r> <blue>rollup<r>
 
   <d>List the code that compiled to a slow path<r>
   <b><green>bun compile<r> <cyan>--explain<r> <blue>./server.ts<r>
@@ -2116,9 +2098,6 @@ Full documentation is available at <magenta>https://bun.com/docs/compiler/aot<r>
 
   <d>Compile the test files ahead of time, then run them<r>
   <b><green>bun test<r> <cyan>--aot<r>
-
-  <d>The same, and log every value that doesn't match its declared type<r>
-  <b><green>bun test<r> <cyan>--aot-log-type-mismatches<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
 "

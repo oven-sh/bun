@@ -1,1 +1,0 @@
-{ "build": ["--aot-limit=MaxValueFlowEdgesLogged:1"] }

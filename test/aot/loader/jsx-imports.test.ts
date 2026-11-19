@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import type { DirectoryTree } from "harness";
-import { test } from "../supported";
+import { test } from "../with-compiler";
 import { describeTree } from "./describe";
 
 type JsxCase = [name: string, configuration: DirectoryTree, entryPoint: string, text: string, runtime: string | null];

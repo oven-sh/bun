@@ -42,21 +42,20 @@ console.log(helpers(), length(kept));
 
 const growsInAWorker = {
   "helpers.ts": countsHelpers,
-  "program.ts": `import { Worker } from "node:worker_threads";
-import { grow, helpers, length } from "./helpers";
+  "program.ts": `import { grow, helpers, length } from "./helpers";
 const kept = grow(400_000);
 const before = helpers();
 const worker = new Worker("./worker.ts");
-worker.once("message", (during: number) => {
-  worker.once("exit", () => console.log(before, during, helpers(), length(kept)));
+worker.onmessage = event => {
+  worker.addEventListener("close", () => console.log(before, event.data, helpers(), length(kept)));
   worker.postMessage("end");
-});
+};
 `,
-  "worker.ts": `import { parentPort } from "node:worker_threads";
-import { grow, helpers, length } from "./helpers";
+  "worker.ts": `import { grow, helpers, length } from "./helpers";
+declare var self: Worker;
 const kept = grow(400_000);
-parentPort!.once("message", () => process.exit(length(kept) === 400_000 ? 0 : 1));
-parentPort!.postMessage(helpers());
+self.onmessage = () => process.exit(length(kept) === 400_000 ? 0 : 1);
+postMessage(helpers());
 `,
 };
 

@@ -1,1 +1,0 @@
-{ "build": ["--aot-validate"], "skipInShell": "it asks for structuredClone, which the jsc shell does not provide" }

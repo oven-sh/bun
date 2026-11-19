@@ -1,6 +1,7 @@
 use bun_trim::Feature;
 
 use super::*;
+use crate::builtins::id::BuiltinId;
 use crate::engine::SourceLocation;
 use crate::engine::testing::ResultRecords;
 use crate::ir::generated::Witness;
@@ -158,6 +159,23 @@ fn unnamed_use_keeps_only_what_needs_no_name() {
 }
 
 #[test]
+fn use_named_at_run_time_keeps_nothing() {
+    let named_at_run_time = |feature| FeatureUseRecord {
+        kind: FeatureUseKind::NamedAtRunTime,
+        ..use_of(feature)
+    };
+    let records = [
+        named_at_run_time(Feature::RegExp),
+        named_at_run_time(Feature::ShadowRealm),
+        use_of(Feature::ShadowRealm),
+    ];
+    assert_eq!(
+        features_of(&records).features,
+        [used(Feature::ShadowRealm, 2)]
+    );
+}
+
+#[test]
 fn one_named_use_names_the_feature() {
     let records = [
         unnamed_use_of(Feature::ShadowRealm),
@@ -202,6 +220,8 @@ fn default_lets_nothing_be_removed() {
         causes: vec![missing],
         locales: UsedLocales::Unknown(None),
         starts_workers_from_unseen_code: true,
+        names_bun_build: false,
+        can_reach_test_runner: true,
     };
     assert_eq!(features_of(&[use_of_word(ABSENT_WORD)]), expected);
 }
@@ -224,7 +244,6 @@ fn every_engine_cause_maps() {
             EngineCause::OptionAdmitsCode,
             UnseenCodeCause::OptionAdmitsCode,
         ),
-        (EngineCause::LimitReached, UnseenCodeCause::FlowGaveUp),
         (
             EngineCause::FlowResultDisabled,
             UnseenCodeCause::FlowResultDisabled,
@@ -250,9 +269,9 @@ fn every_engine_cause_maps() {
 #[test]
 fn causes_follow_section() {
     let records = [
-        unseen_code(EngineCause::LimitReached),
+        unseen_code(EngineCause::FlowResultDisabled),
         unseen_code(EngineCause::EvaluatesText),
-        unseen_code(EngineCause::LimitReached),
+        unseen_code(EngineCause::FlowResultDisabled),
     ];
     let cause = |cause, index| UnseenCode {
         cause,
@@ -261,9 +280,9 @@ fn causes_follow_section() {
     assert_eq!(
         from_records(&[], &records, &[], &text_of).causes,
         [
-            cause(UnseenCodeCause::FlowGaveUp, 0),
+            cause(UnseenCodeCause::FlowResultDisabled, 0),
             cause(UnseenCodeCause::EvaluatesText, 1),
-            cause(UnseenCodeCause::FlowGaveUp, 2),
+            cause(UnseenCodeCause::FlowResultDisabled, 2),
         ]
     );
 }
@@ -298,13 +317,100 @@ fn no_record_gives_empty_list_and_no_cause() {
         causes: Vec::new(),
         locales: listed(&[]),
         starts_workers_from_unseen_code: true,
+        names_bun_build: false,
+        can_reach_test_runner: false,
     };
     assert_eq!(features_of(&[]), expected);
 }
 
 #[test]
+fn test_runner_is_reached_by_any_use_and_by_unseen_code() {
+    for kind in [
+        FeatureUseKind::Named,
+        FeatureUseKind::Unnamed,
+        FeatureUseKind::NamedAtRunTime,
+        FeatureUseKind::FoundByName,
+    ] {
+        let record = FeatureUseRecord {
+            kind,
+            ..use_of(Feature::Test)
+        };
+        assert!(features_of(&[record]).can_reach_test_runner, "{kind:?}");
+        let by = |builtin: BuiltinId| FeatureUseRecord {
+            builtin: builtin.to_wire(),
+            ..record
+        };
+        let of_function = features_of(&[by(BuiltinId::BunJest)]);
+        assert!(of_function.can_reach_test_runner, "{kind:?}");
+        let of_class = features_of(&[by(BuiltinId::ExpectAddEqualityTesters)]);
+        let is_named = matches!(kind, FeatureUseKind::Named | FeatureUseKind::FoundByName);
+        assert_eq!(of_class.can_reach_test_runner, is_named, "{kind:?}");
+    }
+    assert!(!features_of(&[use_of(Feature::Fetch)]).can_reach_test_runner);
+    for cause in [
+        EngineCause::EvaluatesText,
+        EngineCause::LoadsModuleByName,
+        EngineCause::RunsMachineCode,
+    ] {
+        let unseen = [unseen_code(cause)];
+        assert!(from_records(&[], &unseen, &[], &text_of).can_reach_test_runner);
+    }
+}
+
+#[test]
+fn bun_build_is_named_where_it_is_seen_asked_for_more_than_a_bundle() {
+    let by = |builtin: BuiltinId, feature: Feature| FeatureUseRecord {
+        builtin: builtin.to_wire(),
+        ..use_of(feature)
+    };
+    let bundling = || by(BuiltinId::BunBuild, Feature::Bundler);
+    let checking = || by(BuiltinId::BunBuild, Feature::Check);
+    let of_kind = |kind: FeatureUseKind| FeatureUseRecord { kind, ..checking() };
+
+    let asked = features_of(&[bundling(), checking()]);
+    assert!(asked.names_bun_build);
+    assert!(asked.uses(Feature::Bundler));
+    assert!(!asked.uses(Feature::Check));
+    let inspected = features_of(&[use_of(Feature::Bundler), use_of(Feature::Check)]);
+    assert!(!inspected.names_bun_build);
+    assert!(inspected.names(Feature::Bundler));
+    assert!(!inspected.uses(Feature::Check));
+
+    assert!(!features_of(&[bundling()]).names_bun_build);
+    for kind in [FeatureUseKind::Unnamed, FeatureUseKind::FoundByName] {
+        let reached = features_of(&[bundling(), of_kind(kind)]);
+        assert!(!reached.names_bun_build, "{kind:?}");
+        assert!(!reached.uses(Feature::Check), "{kind:?}");
+    }
+    let serving = features_of(&[by(BuiltinId::BunServe, Feature::Bundler)]);
+    assert!(serving.names(Feature::Bundler));
+    assert!(!serving.names_bun_build);
+}
+
+#[test]
 fn result_without_image_gives_default() {
     assert_eq!(used_features_of_result(b""), UsedFeatures::default());
+}
+
+#[test]
+fn name_read_off_unknown_value_names_its_feature_and_not_bun_build() {
+    let found_by_name = |feature: Feature| FeatureUseRecord {
+        kind: FeatureUseKind::FoundByName,
+        ..use_of(feature)
+    };
+    let building = FeatureUseRecord {
+        builtin: BuiltinId::BunBuild.to_wire(),
+        ..found_by_name(Feature::Bundler)
+    };
+    let used = features_of(&[building]);
+    assert!(used.names(Feature::Bundler));
+    assert!(!used.names_bun_build);
+    for feature in features_retained_by_name().iter() {
+        assert!(
+            features_of(&[found_by_name(feature)]).names(feature),
+            "{feature:?}"
+        );
+    }
 }
 
 #[test]
@@ -318,6 +424,8 @@ fn result_with_image_gives_its_records() {
         causes: vec![evaluates_text],
         locales: listed(&["de", "en-US"]),
         starts_workers_from_unseen_code: true,
+        names_bun_build: false,
+        can_reach_test_runner: true,
     };
     assert_eq!(used_features_of_result(b"image"), expected);
 }

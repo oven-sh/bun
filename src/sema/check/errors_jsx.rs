@@ -10,7 +10,7 @@
 //! `getCandidateForOverloadFailure` in its checker.go. `getJsxNamespaceContainerForImplicitImport` mirrors TypeScript
 //! 7.1.
 
-use super::call::{CallLike, ExpectsReturn};
+use super::call::{CallLike, ExpectsReturn, ResolvedMeanwhile};
 use super::errors_names_and_exports::is_valid_type_only_alias_use_site;
 use super::infer::Inference;
 use super::jsx::{JsxName, JsxReferenceKind};
@@ -343,17 +343,16 @@ impl Checker<'_, '_> {
                 self.grammar_error_at((file, tag.pos, tag.end), 2639, &[]);
             }
         }
-        let mut seen: Vec<PropKey> = Vec::new();
+        let mut seen = crate::util::FxHashSet::<PropKey>::default();
         for p in jsx.attrs.iter() {
             let attr = &hir[p];
             if attr.kind == PropKind::Spread {
                 continue;
             }
-            if seen.contains(&attr.key) {
+            if !seen.insert(attr.key) {
                 let at = (file, attr.pos, self.end_of_jsx_attr_name(file, p));
                 return self.grammar_error_at(at, 17001, &[]);
             }
-            seen.push(attr.key);
             // The parser places the `Missing` of `name={}` at the `{`.
             if attr.value.is_some() && matches!(hir[attr.value].kind, ExprKind::Missing) {
                 let at = (file, hir[attr.value].pos, attr.end);
@@ -438,11 +437,11 @@ impl Checker<'_, '_> {
                 ret: self.sig_return(fake_signature),
             };
             // As in `resolve_call`: expressions checked only to produce an error use the signature.
-            self.resolved_meanwhile.push((file, e, resolved));
+            self.push_resolved_meanwhile(file, e, resolved);
             let relation = Relation::Assignable;
             let at = Some(error_node);
             self.check_jsx_attributes_related_to(file, e, source, result, relation, at);
-            self.resolved_meanwhile.pop();
+            self.pop_resolved_meanwhile();
             if let Some(first) = hir.ids(jsx.type_args).next() {
                 let end = self.end_of_type_argument_list(file, jsx.type_args);
                 let args = [Arg::Number(0), Arg::Number(jsx.type_args.len())];
@@ -512,9 +511,9 @@ impl Checker<'_, '_> {
         // `getContextualTypeForArgumentAtIndex`: `resolvingSignature` isn't resolved again. That state belongs to this
         // checker, so it's read from its own query stack. Like `anySignature` and `unknownSignature`, it has no
         // parameters.
-        let is_this_element = |r: &(FileId, ExprId, ResolvedCall)| r.0 == file && r.1 == e;
+        let is_this_element = |entry: &ResolvedMeanwhile| entry.file == file && entry.call == e;
         if !self.resolved_meanwhile.iter().any(is_this_element)
-            && self.stack.contains(&Query::Call(file, e))
+            && self.is_in_flight(Query::Call(file, e))
         {
             let signature = self.any_signature();
             return Some(self.jsx_effective_first_argument(file, e, signature));
@@ -1102,7 +1101,8 @@ impl Checker<'_, '_> {
         }
         // `allPropertiesTable`, which excludes accessors: `prop.Name` and `prop.ValueDeclaration`, which is that of the
         // symbol that all declarations of the name share.
-        let mut explicit_props: Vec<(Atom, PropId)> = Vec::new();
+        let mut explicit_props: Vec<Option<(Atom, PropId)>> = Vec::new();
+        let mut places = crate::util::FxHashMap::<Atom, usize>::default();
         for p in props.iter() {
             let prop = &hir[p];
             if prop.kind != PropKind::Spread {
@@ -1112,8 +1112,10 @@ impl Checker<'_, '_> {
                 ) && let Some(name) = self.member_name(file, prop.key)
                 {
                     let value_declaration = self.first_declaration_of_literal_member(file, p);
-                    explicit_props.retain(|w| w.0 != name);
-                    explicit_props.push((name, value_declaration));
+                    if let Some(earlier) = places.insert(name, explicit_props.len()) {
+                        explicit_props[earlier] = None;
+                    }
+                    explicit_props.push(Some((name, value_declaration)));
                 }
                 continue;
             }
@@ -1128,7 +1130,7 @@ impl Checker<'_, '_> {
             // `tryMergeUnionOfObjectTypeAndEmptyObject`
             let merged = self.try_merge_union_of_object_type_and_empty_object(ty);
             let parts = self.parts(merged);
-            for &(name, overwritten) in &explicit_props {
+            for &(name, overwritten) in explicit_props.iter().flatten() {
                 // Neither optional nor partial: every constituent is guaranteed to have it.
                 let mut always = !parts.is_empty();
                 for &part in parts {

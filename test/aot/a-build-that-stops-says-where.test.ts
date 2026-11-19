@@ -1,185 +1,99 @@
 // A build that does not reach its end says on stderr what it was compiling: the function, the file and line where that function starts, and the step of the compiler.
-// That holds however it stops: an assertion of the compiler fails, the compiler reads a bad address, or somebody ends a build that takes too long.
-// A compiler that crashes ends as Bun does at any other crash: that line stands in the crash report, behind the reason, and the process ends by the signal.
-//
-// `--aot-sabotage=<name>` (hidden) makes a build stop at a known place: in a function named stopsTheCompiler, or at a step that every build has.
-import { afterAll, expect } from "bun:test";
-import { existsSync, rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+// A compiler that crashes says it in the crash report, behind the reason. No flag makes it crash at a known place, so here somebody ends a build that takes long.
+import { expect } from "bun:test";
+import { rmSync } from "fs";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { spawned, withoutCoreDump, withoutCrashReport, withoutDebugInformation } from "./run-programs";
+import { spawned, withoutCoreDump, withoutCrashReport, withoutDebugInformation } from "./harness/commands";
+import { afterAll } from "./harness/default-timeout";
+import { buildEnvironment } from "./harness/flags";
 import { describe, test } from "./supported";
 
-const program = `
-const seen: number[] = [];
-function stopsTheCompiler(count: number): number {
-  let sum = 0;
-  for (let index = 0; index < count; index++) sum += index * seen.length;
-  seen.push(sum);
-  return count > 3 ? stopsTheCompiler(count - 1) + sum : sum;
+const program = `console.log(process.argv.length);\n`;
+// One thread compiles a function from start to finish, so the build is at this one for a good part of its time however many threads it has.
+const takesLong = `
+function mixes(sum: number, next: number): number {
+  return ((sum * 31 + next) % 1000003) ^ (next << 3);
 }
-function isCompiledToo(count: number): number {
-  return count * 2;
+function takesLong(count: number): number {
+  let sum = count;
+${Array.from({ length: 30_000 }, (_, index) => `  sum = mixes(sum, ${index});\n`).join("")}  return sum;
 }
-console.log(stopsTheCompiler(process.argv.length), isCompiledToo(seen.length), [1, 2, 3].map(stopsTheCompiler).length);
+console.log(takesLong(process.argv.length));
 `;
-// Methods of one name, each compiled on whichever thread is free.
-const manyAtOnce = Array.from(
-  { length: 32 },
-  (_, index) => `
-export const holder${index} = {
-  stopsTheCompiler(count: number): number {
-    let sum = ${index};
-    for (let index = 0; index < count; index++) sum += index % ${index + 2};
-    return sum;
-  },
-};
-console.log(holder${index}.stopsTheCompiler(process.argv.length));`,
-).join("\n");
-const inTheFunction = String.raw`Stopped while compiling stopsTheCompiler \(.*program\.ts:3\)`;
+// The last line that the phase log prints before the stage that compiles function by function.
+const functionsComeNext = "| write what Facts found |";
 
 describe("compile/aot/a build that stops says where", () => {
-  const folder = String(tempDir("aot-a-build-that-stops", { "program.ts": program, "many-at-once.ts": manyAtOnce }));
+  const folder = String(tempDir("aot-a-build-that-stops", { "program.ts": program, "takes-long.ts": takesLong }));
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
   const carrier = withoutDebugInformation();
-  const command = (...flags: string[]) => commandFor("program.ts", ...flags);
-  const executableOf = (file: string, ...flags: string[]) =>
-    join(folder, `${file}-${flags.join("").replace(/[^A-Za-z0-9]/g, "")}${isWindows ? ".exe" : ""}`);
-  const commandFor = (file: string, ...flags: string[]) =>
+  const command = (file: string) =>
     withoutCoreDump([
       bunExe(),
       "build",
       "--compile",
       "--aot",
       ...carrier,
-      ...flags,
       join(folder, file),
       "--outfile",
-      executableOf(file, ...flags),
+      join(folder, file.replace(".ts", isWindows ? ".exe" : "")),
     ]);
   const environment = { ...bunEnv, ...withoutCrashReport };
-  // A sanitizer ends the process in its own way, and Windows has exit codes alone.
-  const endsBySignal = !isASAN && !isWindows;
-  const endOf = (build: { exitCode: number; signal: string | null }) =>
-    endsBySignal ? { signal: build.signal } : { hasEndedWell: build.exitCode === 0 };
-  const endBy = (signal: RegExp) =>
-    endsBySignal ? { signal: expect.stringMatching(signal) } : { hasEndedWell: false };
-  // macOS has a trap where the others call abort().
-  const failedAssertion = /^SIG(ABRT|TRAP)$/;
-  const reasonOfTheCrash = isASAN ? "" : "={60}\\n(?:.*\\n)*?panic.*: .+\\n";
-  // A build for debugging prints the frames by name in its place.
-  const linkOfTheCrash = isASAN || isDebug ? "" : "(?:.*\\n)*? \\S*/\\d+\\.\\d+\\.\\d+/\\S+\\n";
 
-  test.concurrent.each([
-    [
-      "FunctionPassFailsAssertion",
-      failedAssertion,
-      `${inTheFunction} in EliminateDeadCode\\.\nTo build without that step, add --aot-disable=pass:EliminateDeadCode\\.\n`,
-    ],
-    [
-      "FunctionPassReadsBadAddress",
-      /^SIGSEGV$/,
-      `${inTheFunction} in EliminateDeadCode\\.\nTo build without that step, add --aot-disable=pass:EliminateDeadCode\\.\n`,
-    ],
-    ["CodeGenerationFailsAssertion", failedAssertion, `${inTheFunction} in GenerateCode\\.\n`],
-    ["ProgramPassFailsAssertion", failedAssertion, "Stopped while compiling in BuildCallGraph\\.\n"],
-    ["FlowAnalysisFailsAssertion", failedAssertion, "Stopped while compiling in AnalyzeFlow[ .].*\n"],
-    ["ImageBuildingFailsAssertion", failedAssertion, "Stopped while compiling in BuildImage[ .].*\n"],
-    ["LoweringPanics", /^SIGABRT$/, "Stopped while compiling .*program\\.ts in Lower\\.\n"],
-  ] as const)(
-    "%s",
-    async (sabotage, signal, said) => {
-      const build = await spawned(command(`--aot-sabotage=${sabotage}`), folder, environment);
-      expect({ stderr: build.stderr, ...endOf(build) }).toEqual({
-        stderr: expect.stringMatching(new RegExp(reasonOfTheCrash + said + linkOfTheCrash)),
-        ...endBy(signal),
-      });
-      // Only threads that stopped are named. Versions of one function are compiled on several threads, which may stop together.
-      expect(build.stderr).not.toContain("isCompiledToo");
-      expect(build.stderr).not.toMatch(/^error\b/m);
-      expect(existsSync(executableOf("program.ts", `--aot-sabotage=${sabotage}`))).toBe(false);
-    },
-    300_000,
-  );
-
-  // On Windows whoever reports it has only what is left of the same stack.
-  test.skipIf(isWindows)(
-    "FunctionPassRunsOutOfStack",
-    async () => {
-      const build = await spawned(command("--aot-sabotage=FunctionPassRunsOutOfStack"), folder, environment);
-      expect({ stderr: build.stderr, ...endOf(build) }).toEqual({
-        stderr: expect.stringMatching(new RegExp(`${reasonOfTheCrash}${inTheFunction} in EliminateDeadCode\\.\n`)),
-        ...endBy(/^SIG(SEGV|BUS)$/),
-      });
-    },
-    300_000,
-  );
-
-  // The second thread to stop must not end the process in the middle of what the first one says.
-  test.concurrent.each([1, 2, 3, 4])(
-    "threads that stop at the same moment, %d",
-    async round => {
-      const build = await spawned(
-        commandFor("many-at-once.ts", "--aot-sabotage=FunctionPassFailsAssertion", `--aot-layout-seed=${round}`),
-        folder,
-        environment,
-      );
-      expect({ stderr: build.stderr, ...endOf(build) }).toEqual({
-        stderr: expect.stringMatching(
-          /Stopped while compiling stopsTheCompiler \(.*many-at-once\.ts:\d+\) in EliminateDeadCode\.\n/,
-        ),
-        ...endBy(failedAssertion),
-      });
-    },
-    300_000,
-  );
-
-  test("the option that the message names gets the build around the step", async () => {
-    const build = await spawned(
-      command("--aot-sabotage=FunctionPassFailsAssertion", "--aot-disable=pass:EliminateDeadCode"),
-      folder,
-      environment,
-    );
-    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
-      stderr: expect.not.stringContaining("Stopped while"),
-      exitCode: 0,
+  async function endWhileItCompiles(signal: NodeJS.Signals) {
+    const start = performance.now();
+    await using build = Bun.spawn({
+      cmd: command("takes-long.ts"),
+      cwd: folder,
+      env: { ...environment, [buildEnvironment.logsPhaseTimes]: "1" },
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "pipe",
+      timeout: 240_000,
+      killSignal: "SIGKILL",
     });
-  }, 300_000);
+    let stderr = "";
+    let isEnded = false;
+    const decoder = new TextDecoder();
+    for await (const chunk of build.stderr) {
+      stderr += decoder.decode(chunk, { stream: true });
+      if (isEnded || !stderr.includes(functionsComeNext)) continue;
+      isEnded = true;
+      // The threads take their first functions a moment after that line. How long that moment and the stage last depends on this Bun and this machine, like the time so far.
+      await Bun.sleep((performance.now() - start) / 20);
+      build.kill(signal);
+    }
+    await build.exited;
+    return { stderr, signal: build.signalCode };
+  }
 
-  test("a build without a sabotage says nothing of the kind", async () => {
-    const build = await spawned(command(), folder, environment);
+  test("a build that reaches its end says nothing of the kind", async () => {
+    const build = await spawned(command("program.ts"), folder, environment);
     expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
       stderr: expect.not.stringMatching(/Stopped while|Still compiling/),
       exitCode: 0,
     });
   }, 300_000);
 
+  // Any thread gets such a signal, so what that thread compiles is no hint.
+  test.skipIf(!isASAN || isWindows)(
+    "a build that another process ends by SIGILL says who sent it",
+    async () => {
+      expect(await endWhileItCompiles("SIGILL")).toEqual({
+        stderr: expect.stringContaining(`Signal 4 was sent by process ${process.pid}.\n`),
+        signal: "SIGILL",
+      });
+    },
+    300_000,
+  );
+
   // On Windows a process that another one ends runs nothing more. Ctrl+C in a console does reach it, and no test has a console.
   test.skipIf(isWindows).each(["SIGINT", "SIGTERM", "SIGQUIT"] as const)(
-    "a build that never ends, ended by %s, says what it is still compiling",
+    "a build that takes long, ended by %s, says what it is still compiling",
     async signal => {
-      await using build = Bun.spawn({
-        cmd: command("--aot-sabotage=FunctionPassNeverEnds"),
-        cwd: folder,
-        env: environment,
-        stdin: "ignore",
-        stdout: "ignore",
-        stderr: "pipe",
-        timeout: 240_000,
-        killSignal: "SIGKILL",
-      });
-      let stderr = "";
-      const decoder = new TextDecoder();
-      for await (const chunk of build.stderr) {
-        const hadArrived = stderr.includes("never ends");
-        stderr += decoder.decode(chunk, { stream: true });
-        if (!hadArrived && stderr.includes("never ends")) build.kill(signal);
-      }
-      await build.exited;
-      expect({ stderr, signal: build.signalCode }).toEqual({
-        stderr: expect.stringMatching(
-          /Still compiling stopsTheCompiler \(.*program\.ts:3\) in EliminateDeadCode for \d+ s\.\n/,
-        ),
+      expect(await endWhileItCompiles(signal)).toEqual({
+        stderr: expect.stringMatching(/^Still compiling .+ in (walk|sweep|emit|allocate|encode)\.$/m),
         signal,
       });
     },

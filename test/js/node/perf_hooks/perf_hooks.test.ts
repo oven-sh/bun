@@ -1,9 +1,8 @@
 import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe } from "harness";
 import net from "net";
 import perf, { PerformanceObserver, type PerformanceNodeEntry } from "perf_hooks";
-import { MessageChannel, receiveMessageOnPort, Worker } from "worker_threads";
 
 test("stubs", () => {
   expect(perf.performance.nodeTiming).toBeObject();
@@ -12,9 +11,6 @@ test("stubs", () => {
   expect(perf.performance.timeOrigin).toBeNumber();
   expect(perf.performance.eventLoopUtilization()).toBeObject();
 });
-
-// CI runs tests with BUN_GARBAGE_COLLECTOR_LEVEL=1, with which `expect()` collects. So a test of whether the GC runs by
-// itself is in `withoutAggressiveGC`.
 
 // Buckets are allocated 4 KB at a time, when a value is first recorded in them.
 const chunk = 4096;
@@ -71,47 +67,29 @@ test("heapStats() counts the histograms of each class", () => {
   ]);
 });
 
-test("histograms that grew are collected without an explicit GC", () => {
-  // How many it takes depends on the size of the heap, but 720 MB is far more than enough.
-  let created = 0;
-  withoutAggressiveGC(() => {
+// How many it takes until half of them are collected depends on the size of the heap, which a test file that ran
+// earlier in the same process may have left large. So each of these tests runs in a process of its own.
+const untilHalfAreCollected = `
+  const { heapStats } = require("bun:jsc");
+  const { createHistogram } = require("node:perf_hooks");
+  const { MessageChannel, receiveMessageOnPort, Worker } = require("node:worker_threads");
+  const values = ${JSON.stringify(valuesInEveryChunk)};
+  const fill = histogram => values.forEach(value => histogram.record(value));
+  function untilHalfAreCollected(createHundred) {
+    // heapStats() collects if nothing was collected before.
+    Bun.gc(true);
+    let created = 0;
     do {
-      for (let i = 0; i < 100; i++) {
-        const histogram = perf.createHistogram();
-        for (const value of valuesInEveryChunk) histogram.record(value);
-      }
+      if (createHundred() === false) return;
       created += 100;
     } while (created < 2000 && heapStats().objectTypeCounts.RecordableHistogram > created / 2);
-  });
-  expect(created).toBeLessThan(2000);
-});
+    console.log(created);
+  }
+`;
 
-// A clone did not allocate the buckets, but it keeps them alive once the original is dropped.
-test("structured clones are collected without an explicit GC", () => {
-  const histogram = perf.createHistogram();
-  for (const value of valuesInEveryChunk) histogram.record(value);
-  let created = 0;
-  withoutAggressiveGC(() => {
-    do {
-      for (let i = 0; i < 100; i++) structuredClone(histogram);
-      created += 100;
-    } while (created < 2000 && heapStats().objectTypeCounts.RecordableHistogram > created / 2);
-  });
-  expect(created).toBeLessThan(2000);
-});
-
-test.each([
-  ["full", `histograms = Array.from({ length: 100 }, () => createHistogram()); histograms.forEach(fill);`],
-  [
-    "empty, and again once it has filled them,",
-    `if (step % 2 === 1) histograms = Array.from({ length: 100 }, () => createHistogram());
-    else histograms.forEach(fill);`,
-  ],
-])("histograms that another thread sends %s are collected without an explicit GC", async (_, inWorker) => {
-  const { port1, port2 } = new MessageChannel();
-  const turn = new Int32Array(new SharedArrayBuffer(4));
-  const worker = new Worker(
-    `const { workerData: { port, turn, values } } = require("node:worker_threads");
+const fromAnotherThread = (inWorker: string) => {
+  const worker = `
+    const { workerData: { port, turn, values } } = require("node:worker_threads");
     const { createHistogram } = require("node:perf_hooks");
     const fill = histogram => values.forEach(value => histogram.record(value));
     let histograms;
@@ -128,31 +106,54 @@ test.each([
       }
       Atomics.store(turn, 0, step * 2);
       Atomics.notify(turn, 0);
-    }`,
-    { eval: true, workerData: { port: port2, turn, values: valuesInEveryChunk }, transferList: [port2] },
-  );
-  const failed = new Promise(resolve => worker.once("error", resolve));
-  try {
-    let received = 0;
-    withoutAggressiveGC(() => {
-      do {
-        Atomics.add(turn, 0, 1);
-        Atomics.notify(turn, 0);
-        // Not a turn of the event loop, in which an idle GC could run. So nothing would time the test out.
-        expect(Atomics.wait(turn, 0, (received / 100) * 2 + 1, 30_000)).not.toBe("timed-out");
-        if (Atomics.load(turn, 0) < 0) return;
-        for (let i = 0; i < 100; i++) expect(receiveMessageOnPort(port1)).toBeDefined();
-        received += 100;
-      } while (received < 2000 && heapStats().objectTypeCounts.RecordableHistogram > received / 2);
+    }`;
+  return `
+    const { port1, port2 } = new MessageChannel();
+    const turn = new Int32Array(new SharedArrayBuffer(4));
+    const workerData = { port: port2, turn, values };
+    const worker = new Worker(${JSON.stringify(worker)}, { eval: true, workerData, transferList: [port2] });
+    untilHalfAreCollected(() => {
+      const before = Atomics.add(turn, 0, 1);
+      Atomics.notify(turn, 0);
+      // Not a turn of the event loop, in which an idle GC could run. So it has a time limit of its own.
+      if (Atomics.wait(turn, 0, before + 1, 30_000) === "timed-out") throw new Error("The worker sent nothing");
+      if (Atomics.load(turn, 0) < 0) return false;
+      for (let i = 0; i < 100; i++) if (!receiveMessageOnPort(port1)) throw new Error("A message is missing");
     });
-    if (Atomics.load(turn, 0) < 0) throw await failed;
-    expect(received).toBeLessThan(2000);
-  } finally {
     Atomics.store(turn, 0, -1);
     Atomics.notify(turn, 0);
-    await worker.terminate();
-    port1.close();
-  }
+    port1.close();`;
+};
+
+test.each([
+  ["histograms that grew", `untilHalfAreCollected(() => { for (let i = 0; i < 100; i++) fill(createHistogram()); });`],
+  // A clone did not allocate the buckets, but it keeps them alive once the original is dropped.
+  [
+    "structured clones",
+    `const histogram = createHistogram();
+    fill(histogram);
+    untilHalfAreCollected(() => { for (let i = 0; i < 100; i++) structuredClone(histogram); });`,
+  ],
+  [
+    "histograms that another thread sends full",
+    fromAnotherThread(`histograms = Array.from({ length: 100 }, () => createHistogram()); histograms.forEach(fill);`),
+  ],
+  [
+    "histograms that another thread sends empty, and again once it has filled them,",
+    fromAnotherThread(`if (step % 2 === 1) histograms = Array.from({ length: 100 }, () => createHistogram());
+    else histograms.forEach(fill);`),
+  ],
+])("%s are collected without an explicit GC", async (_, source) => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", untilHalfAreCollected + source],
+    // CI runs tests with 1, which makes Bun collect explicitly.
+    env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect(Number(stdout)).toBeWithin(100, 2000);
 });
 
 test("the prototypes of a histogram can be printed", () => {
@@ -163,11 +164,11 @@ test("the prototypes of a histogram can be printed", () => {
     }
   }
   expect(printed).toEqual([
-    "{   p: RecordableHistogram {     record: [Function: record],",
     // As for every native class: the getter throws for a prototype.
-    "{   p: Histogram {     count: undefined,",
-    "{   p: ELDHistogram {     enable: [Function: enable],",
-    "{   p: Histogram {     count: undefined,",
+    "{   p: RecordableHistogram {     count: undefined,",
+    "{   p: Histogram {}, }",
+    "{   p: ELDHistogram {     count: undefined,",
+    "{   p: Histogram {}, }",
   ]);
 });
 
@@ -280,6 +281,19 @@ test("export surface matches Node v26.3.0", () => {
       .filter(k => !nodeExports.includes(k))
       .sort(),
   ).toEqual(["PerformanceNodeTiming"]);
+});
+
+test("monitorEventLoopDelay().enable() doesn't reset a histogram that's already enabled", async () => {
+  const histogram = perf.monitorEventLoopDelay({ resolution: 1 });
+  expect(histogram.enable()).toBe(true);
+  try {
+    while (histogram.count === 0) await new Promise(resolve => setTimeout(resolve, 1));
+    const { count } = histogram;
+    expect(histogram.enable()).toBe(false);
+    expect(histogram.count).toBeGreaterThanOrEqual(count);
+  } finally {
+    histogram.disable();
+  }
 });
 
 // The options defaults must not read through a polluted Object.prototype.
@@ -523,6 +537,43 @@ test("mark/measure toJSON and inspection include detail without perf_hooks being
   expect(result.generic).toBe("Fake { z: 1 }");
   expect(result.indexOption).toBe("PerformanceMark {");
   expect(result.polluted).toBe("PerformanceMark {");
+  expect(exitCode).toBe(0);
+});
+
+test("does not read performance and its classes from globalThis", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const natives = { performance, Performance, PerformanceEntry, PerformanceMark, PerformanceObserver };
+       for (const name in natives) globalThis[name] = class {};
+       const perf = require("node:perf_hooks");
+       console.log(JSON.stringify({
+         performance: perf.performance === natives.performance,
+         Performance: perf.Performance === natives.Performance,
+         PerformanceEntry: perf.PerformanceEntry === natives.PerformanceEntry,
+         PerformanceMark: perf.PerformanceMark === natives.PerformanceMark,
+         PerformanceObserver: Object.getPrototypeOf(perf.PerformanceObserver) === natives.PerformanceObserver,
+         nodeTiming: perf.performance.nodeTiming instanceof natives.PerformanceEntry,
+         eventLoopUtilization: typeof perf.performance.eventLoopUtilization,
+         timerified: perf.performance.timerify(() => 1)(),
+       }));`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    performance: true,
+    Performance: true,
+    PerformanceEntry: true,
+    PerformanceMark: true,
+    PerformanceObserver: true,
+    nodeTiming: true,
+    eventLoopUtilization: "function",
+    timerified: 1,
+  });
   expect(exitCode).toBe(0);
 });
 

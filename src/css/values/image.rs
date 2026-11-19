@@ -1,6 +1,5 @@
 use crate as css;
 use crate::css_parser::CssResult as Result;
-use crate::dependencies::UrlDependency;
 use crate::generics::DeepClone as _;
 use crate::values::color::ColorFallbackKind;
 use crate::values::gradient::Gradient;
@@ -12,19 +11,19 @@ use bun_ast::ImportKind;
 
 /// A CSS [`<image>`](https://www.w3.org/TR/css-images-3/#image-values) value.
 #[derive(Default)]
-pub enum Image {
+pub enum Image<'bump> {
     /// The `none` keyword.
     #[default]
     None,
     /// A `url()`.
-    Url(Url),
+    Url(Url<'bump>),
     /// A gradient.
     Gradient(Box<Gradient>),
     /// An `image-set()`.
-    ImageSet(ImageSet),
+    ImageSet(ImageSet<'bump>),
 }
 
-impl Image {
+impl<'bump> Image<'bump> {
     // No `Drop` impl needed — Box/Vec fields drop automatically.
 
     pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
@@ -61,7 +60,7 @@ impl Image {
         }
     }
 
-    pub(crate) fn get_prefixed(&self, arena: &Arena, prefix: css::VendorPrefix) -> Image {
+    pub(crate) fn get_prefixed(&self, arena: &Arena, prefix: css::VendorPrefix) -> Image<'bump> {
         match self {
             Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_prefixed(arena, prefix))),
             Image::ImageSet(image_set) => Image::ImageSet(image_set.get_prefixed(arena, prefix)),
@@ -95,12 +94,12 @@ impl Image {
     }
 
     /// Needed to satisfy ImageFallback interface
-    pub(crate) fn get_image(&self) -> &Image {
+    pub(crate) fn get_image(&self) -> &Image<'bump> {
         self
     }
 
     /// Needed to satisfy ImageFallback interface
-    pub(crate) fn with_image(&self, _arena: &Arena, image: Image) -> Self {
+    pub(crate) fn with_image(&self, _arena: &Arena, image: Image<'bump>) -> Self {
         let _ = self;
         image
     }
@@ -128,7 +127,7 @@ impl Image {
     /// Returns a legacy `-webkit-gradient()` value for the image.
     ///
     /// May return an error in case the gradient cannot be converted.
-    pub(crate) fn get_legacy_webkit(&self, arena: &Arena) -> Option<Image> {
+    pub(crate) fn get_legacy_webkit(&self, arena: &Arena) -> Option<Image<'bump>> {
         match self {
             Image::Gradient(gradient) => Some(Image::Gradient(Box::new(
                 gradient.get_legacy_webkit(arena)?,
@@ -141,7 +140,7 @@ impl Image {
         &mut self,
         arena: &Arena,
         targets: &css::targets::Targets,
-    ) -> css::SmallList<Image, 6> {
+    ) -> css::SmallList<Image<'bump>, 6> {
         // Determine which prefixes and color fallbacks are needed.
         let prefixes = self.get_necessary_prefixes(targets);
         let fallbacks = self.get_necessary_fallbacks(targets);
@@ -210,7 +209,7 @@ impl Image {
         res
     }
 
-    pub(crate) fn get_fallback(&self, arena: &Arena, kind: ColorFallbackKind) -> Image {
+    pub(crate) fn get_fallback(&self, arena: &Arena, kind: ColorFallbackKind) -> Image<'bump> {
         match self {
             Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_fallback(arena, kind))),
             _ => self.deep_clone(arena),
@@ -228,7 +227,7 @@ impl Image {
     }
 
     // Variants are tried in declaration order: none, url, gradient, image-set.
-    pub fn parse(input: &mut css::Parser) -> Result<Image> {
+    pub fn parse(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, Image<'bump>> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -254,13 +253,13 @@ impl Image {
     }
 }
 
-impl crate::small_list::ImageFallback for Image {
+impl<'bump> crate::small_list::ImageFallback<'bump> for Image<'bump> {
     #[inline]
-    fn get_image(&self) -> &Image {
+    fn get_image(&self) -> &Image<'bump> {
         Image::get_image(self)
     }
     #[inline]
-    fn with_image(&self, arena: &Arena, image: Image) -> Self {
+    fn with_image(&self, arena: &Arena, image: Image<'bump>) -> Self {
         Image::with_image(self, arena, image)
     }
     #[inline]
@@ -277,20 +276,18 @@ impl crate::small_list::ImageFallback for Image {
 ///
 /// `image-set()` allows the user agent to choose between multiple versions of an image to
 /// display the most appropriate resolution or file type that it supports.
-pub struct ImageSet {
+pub struct ImageSet<'bump> {
     /// The image options to choose from.
-    pub(crate) options: Vec<ImageSetOption>,
+    pub(crate) options: Vec<ImageSetOption<'bump>>,
 
     /// The vendor prefix for the `image-set()` function.
     pub(crate) vendor_prefix: VendorPrefix,
 }
 
-impl ImageSet {
-    fn parse(input: &mut css::Parser) -> Result<ImageSet> {
+impl<'bump> ImageSet<'bump> {
+    fn parse(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, ImageSet<'bump>> {
         let location = input.current_source_location();
-        // SAFETY: borrow detached (`'static` placeholder, see
-        // `css_parser::src_str`) so `input` is reusable below.
-        let f: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(input.expect_function()?) };
+        let f = input.expect_function()?;
         let vendor_prefix = crate::match_ignore_ascii_case! { f, {
             b"image-set" => VendorPrefix::NONE,
             b"-webkit-image-set" => VendorPrefix::WEBKIT,
@@ -328,7 +325,7 @@ impl ImageSet {
     }
 
     /// Returns the `image-set()` value with the given vendor prefix.
-    fn get_prefixed(&self, arena: &Arena, prefix: css::VendorPrefix) -> ImageSet {
+    fn get_prefixed(&self, arena: &Arena, prefix: css::VendorPrefix) -> ImageSet<'bump> {
         ImageSet {
             options: self.options.iter().map(|o| o.deep_clone(arena)).collect(),
             vendor_prefix: prefix,
@@ -363,53 +360,37 @@ impl ImageSet {
 }
 
 /// An image option within the `image-set()` function. See [ImageSet](ImageSet).
-pub struct ImageSetOption {
+pub struct ImageSetOption<'bump> {
     /// The image for this option.
-    pub(crate) image: Image,
+    pub(crate) image: Image<'bump>,
     /// The resolution of the image.
     pub(crate) resolution: Resolution,
     /// The mime type of the image.
-    // Arena-borrowed slice from the tokenizer input; the parser arena outlives
-    // this value (see SAFETY notes at the use sites).
-    pub(crate) file_type: Option<*const [u8]>,
+    pub(crate) file_type: Option<&'bump [u8]>,
 }
 
-impl ImageSetOption {
-    fn parse(input: &mut css::Parser) -> Result<ImageSetOption> {
+impl<'bump> ImageSetOption<'bump> {
+    fn parse(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, ImageSetOption<'bump>> {
         let start_position = input.input.tokenizer.get_position();
-        let loc = input.current_source_location();
-        // `expect_url_or_string` returns a borrow of the parser, so
-        // it can't be used as a `try_parse` callback directly (the result type
-        // `R` may not borrow the closure arg). Erase the borrow via `*const`
-        // — token slices are arena-static (see `css_parser::src_str`).
-        let image = if let Ok(url) =
-            input.try_parse(|p| p.expect_url_or_string().map(std::ptr::from_ref::<[u8]>))
-        {
-            // SAFETY: see above — `url` borrows the parser's source/arena.
-            let url: &[u8] = unsafe { crate::arena_str(url) };
+        let image = if let Ok(url) = input.try_parse(|p| p.expect_url_or_string()) {
             let end_position = input.input.tokenizer.get_position();
             let record_idx =
                 input.add_import_record(url, start_position, end_position, ImportKind::Url)?;
-            Image::Url(Url::new(
-                url,
-                record_idx,
-                css::dependencies::Location::from_source_location(loc),
-            ))
+            Image::Url(Url::new(url, record_idx))
         } else {
             Image::parse(input)?
         };
 
-        let (resolution, file_type): (Resolution, Option<*const [u8]>) =
-            if let Ok(res) = input.try_parse(Resolution::parse) {
-                let file_type = input.try_parse(parse_file_type).ok();
-                (res, file_type)
-            } else {
-                let file_type = input.try_parse(parse_file_type).ok();
-                let resolution = input
-                    .try_parse(Resolution::parse)
-                    .unwrap_or(Resolution::Dppx(1.0));
-                (resolution, file_type)
-            };
+        let (resolution, file_type) = if let Ok(res) = input.try_parse(Resolution::parse) {
+            let file_type = input.try_parse(parse_file_type).ok();
+            (res, file_type)
+        } else {
+            let file_type = input.try_parse(parse_file_type).ok();
+            let resolution = input
+                .try_parse(Resolution::parse)
+                .unwrap_or(Resolution::Dppx(1.0));
+            (resolution, file_type)
+        };
 
         Result::Ok(ImageSetOption {
             image,
@@ -427,35 +408,8 @@ impl ImageSetOption {
             let Image::Url(url) = &self.image else {
                 unreachable!()
             };
-            let dep_: Option<UrlDependency> = if dest.dependencies.is_some() {
-                // Hoist `get_import_records` (mut borrow) out of the
-                // arg list so `filename()` (shared borrow) can run; result is `&'a _`.
-                let import_records = dest.get_import_records()?;
-                Some(UrlDependency::new(
-                    dest.arena,
-                    url,
-                    dest.filename(),
-                    import_records,
-                ))
-            } else {
-                None
-            };
-
-            if let Some(dep) = dep_ {
-                // SAFETY: placeholder borrows the printer arena.
-                let placeholder = unsafe { crate::arena_str(dep.placeholder) };
-                dest.serialize_string(placeholder)?;
-                if let Some(dependencies) = &mut dest.dependencies {
-                    // Vec::push aborts on OOM by default.
-                    dependencies.push(css::Dependency::Url(dep));
-                }
-            } else {
-                let (record_url, _) = dest.get_import_record_url(url.import_record_idx)?;
-                // SAFETY: `record_url` borrows arena-backed `import_info` data
-                // valid for the printer's `'a`; detach so `dest` is reusable.
-                let record_url: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(record_url) };
-                dest.serialize_string(record_url)?;
-            }
+            let (record_url, _) = dest.get_import_record_url(url.import_record_idx)?;
+            dest.serialize_string(record_url)?;
         } else {
             self.image.to_css(dest)?;
         }
@@ -478,9 +432,7 @@ impl ImageSetOption {
 
         if let Some(file_type) = self.file_type {
             dest.write_str(" type(")?;
-            // SAFETY: file_type points into the arena-owned parser input which outlives printing.
-            let file_type_slice = unsafe { crate::arena_str(file_type) };
-            dest.serialize_string(file_type_slice)?;
+            dest.serialize_string(file_type)?;
             dest.write_char(b')')?;
         }
 
@@ -498,20 +450,11 @@ impl ImageSetOption {
     fn eql(&self, rhs: &ImageSetOption) -> bool {
         self.image.eql(&rhs.image)
             && self.resolution == rhs.resolution
-            && match (self.file_type, rhs.file_type) {
-                (None, None) => true,
-                // SAFETY: both point into the parser arena which outlives the parse session.
-                (Some(a), Some(b)) => unsafe { crate::arena_str(a) == crate::arena_str(b) },
-                _ => false,
-            }
+            && self.file_type == rhs.file_type
     }
 }
 
-fn parse_file_type(input: &mut css::Parser) -> Result<*const [u8]> {
+fn parse_file_type<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, &'bump [u8]> {
     input.expect_function_matching(b"type")?;
-    input.parse_nested_block(|i: &mut css::Parser| {
-        // expect_string returns an arena-borrowed &[u8]; coerced to a raw ptr to
-        // avoid a struct lifetime (token slices outlive the parse session).
-        i.expect_string().map(std::ptr::from_ref::<[u8]>)
-    })
+    input.parse_nested_block(|i| i.expect_string())
 }

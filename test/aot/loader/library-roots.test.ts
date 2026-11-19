@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import type { DirectoryTree } from "harness";
-import { test } from "../supported";
+import { test } from "../with-compiler";
 import { describeTree } from "./describe";
 
 const mainText = 'if (import.meta.main) require("./main-is-entry.ts"); else require("./main-is-imported.ts");';

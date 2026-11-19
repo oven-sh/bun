@@ -8,12 +8,12 @@
 // CHECK-LABEL: function {{*}}name="h"
 // CHECK: captures=[{type=env [[layout]] flags=[IsFromCompiler]}] thisType
 // CHECK-LABEL: function {{*}}kind=Arrow
-// CHECK: captures=[{type=anything}] thisType
+// CHECK: captures=[{type=anything variableName="a"}] thisType
 
-declare function g(): unknown;
+declare function g(early?: unknown): unknown;
 
 export function f() {
-  const a = g();
+  const a = g(h);
   return [h, () => a];
 
   function h() {

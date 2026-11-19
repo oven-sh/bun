@@ -4,6 +4,7 @@ pub mod entry_point;
 mod feature_set;
 mod requirement;
 mod state;
+pub mod trap;
 
 mod generated {
     use super::{EnteredFrom, FeatureRecord, TrimFeatureRecord};
@@ -12,7 +13,9 @@ mod generated {
 
 pub use feature_set::FeatureSet;
 pub use generated::{FEATURES_HASH, Feature, TrimFeature};
-pub use requirement::RuntimeRequirement;
+pub use requirement::{
+    RuntimeRequirement, can_run_uncompiled_code, features_running_uncompiled_code,
+};
 pub use state::{
     MAX_REMOVED_RANGES, RemovableFeatureState, RemovedRange, abort_for_removed_feature,
     abort_for_removed_feature_entered, find_removed_range, is_removed, is_trimmed, removal_of,
@@ -25,6 +28,8 @@ pub enum EnteredFrom {
     Program,
     Startup,
     CommandLine,
+    /// Machine code of the program calls it and nothing else does. The image lists what its code calls.
+    CompiledCode,
 }
 
 #[repr(u8)]
@@ -141,6 +146,13 @@ impl Feature {
         features
     }
 
+    pub fn all_that_leave_unasked() -> FeatureSet {
+        let mut features = Feature::all_outside_compiled_programs();
+        features.union_with(&Feature::all_entered_from(EnteredFrom::CompiledCode));
+        features.insert(Feature::Test);
+        features
+    }
+
     pub fn is_engine(self) -> bool {
         self.index() < Feature::FIRST_EMBEDDER_INDEX
     }
@@ -247,6 +259,10 @@ mod tests {
         );
         assert_eq!(Feature::Interpreter.entered_from(), EnteredFrom::Program);
         assert_eq!(Feature::Sql.entered_from(), EnteredFrom::Program);
+        assert_eq!(
+            Feature::MapAndSetOperations.entered_from(),
+            EnteredFrom::CompiledCode
+        );
     }
 
     #[test]
@@ -255,6 +271,7 @@ mod tests {
             EnteredFrom::Program,
             EnteredFrom::Startup,
             EnteredFrom::CommandLine,
+            EnteredFrom::CompiledCode,
         ];
         let counts = origins.map(|origin| Feature::all_entered_from(origin).len());
         assert_eq!(counts.iter().sum::<usize>(), Feature::ALL.len());

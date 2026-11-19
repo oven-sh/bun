@@ -24,13 +24,6 @@ impl JsonWriter {
         self.write_decimal(value);
     }
 
-    pub(super) fn tenths(&mut self, key: &str, tenths: u32) {
-        self.write_key(key);
-        self.write_decimal(u64::from(tenths / 10));
-        self.bytes.push(b'.');
-        self.write_decimal(u64::from(tenths % 10));
-    }
-
     pub(super) fn boolean(&mut self, key: &str, value: bool) {
         let text: &[u8] = if value { b"true" } else { b"false" };
         self.write_key(key);
@@ -68,25 +61,6 @@ impl JsonWriter {
         self.bytes.push(b']');
     }
 
-    pub(super) fn null(&mut self, key: &str) {
-        self.write_key(key);
-        self.bytes.extend_from_slice(b"null");
-    }
-
-    pub(super) fn optional_string(&mut self, key: &str, value: Option<&[u8]>) {
-        match value {
-            Some(value) => self.string(key, value),
-            None => self.null(key),
-        }
-    }
-
-    pub(super) fn optional_number(&mut self, key: &str, value: Option<u64>) {
-        match value {
-            Some(value) => self.number(key, value),
-            None => self.null(key),
-        }
-    }
-
     pub(super) fn begin_array(&mut self, key: &str) {
         self.write_key(key);
         self.bytes.push(b'[');
@@ -96,21 +70,6 @@ impl JsonWriter {
     pub(super) fn end_array(&mut self) {
         self.bytes.push(b']');
         self.needs_comma = true;
-    }
-
-    pub(super) fn objects<T>(
-        &mut self,
-        key: &str,
-        items: impl IntoIterator<Item = T>,
-        mut write_members: impl FnMut(&mut JsonWriter, T),
-    ) {
-        self.begin_array(key);
-        for item in items {
-            self.begin_element();
-            write_members(self, item);
-            self.end_object();
-        }
-        self.end_array();
     }
 
     pub(super) fn begin_element(&mut self) {
@@ -306,18 +265,6 @@ mod tests {
         });
         let expected = r#"{"a":1,"b":{"c":{},"d":true,"e":{"f":"g"}},"h":2}"#;
         assert_eq!(object, expected);
-    }
-
-    #[test]
-    fn absent_values_are_null() {
-        let object = object_with(|json| {
-            json.null("a");
-            json.optional_string("b", None);
-            json.optional_string("c", Some(b"x"));
-            json.optional_number("d", None);
-            json.optional_number("e", Some(7));
-        });
-        assert_eq!(object, r#"{"a":null,"b":null,"c":"x","d":null,"e":7}"#);
     }
 
     #[test]

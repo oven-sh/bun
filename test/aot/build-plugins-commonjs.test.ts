@@ -420,9 +420,8 @@ exports.sum = a.n + a.b.n; exports.names = a.b.seen;`,
     },
     plugins: [`build.onResolve({ filter: /written/ }, () => ({ path: join(folder, "picked.cjs") }));`],
     options: entry("main.cjs"),
-    prints: "written.cjs picked\n",
     // The path of the file that `require` loads.
-    differs: { stdout: "picked.cjs picked\n" },
+    prints: "picked.cjs picked\n",
   },
   "the paths that a CommonJS file is told, where onResolve picked it": {
     files: {
@@ -434,11 +433,11 @@ exports.sum = a.n + a.b.n; exports.names = a.b.seen;`,
     options: entry("main.cjs"),
   },
   "an entry point that is CommonJS only in the text of the plugin": {
+    alone: true,
     files: { "main.js": `export {}; console.log("disk", typeof module);` },
-    // TODO: on Windows `require.main === module` is false in an executable built without --aot.
     plugins: [
       replace({
-        "main.js": `console.log("plugin", typeof module, typeof exports, process.platform === "win32" || require.main === module, this === exports); exports.a = 1;`,
+        "main.js": `console.log("plugin", typeof module, typeof exports, require.main === module, this === exports); exports.a = 1;`,
       }),
     ],
     options: entry("main.js"),

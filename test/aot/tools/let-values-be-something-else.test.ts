@@ -1,9 +1,10 @@
 // ./let-values-be-something-else.ts writes no program without an end: where something else comes in the place of a value, the program still ends.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { availableParallelism } from "os";
 import { join } from "path";
+import { test } from "../harness/default-timeout";
 import { list, read, write } from "./let-values-be-something-else";
 
 const program = `const seen = [];
@@ -79,7 +80,7 @@ test("what the value did is still done where something else comes", () => {
   expect(write(file, "comes@0-9=2")).toBe(";(process.argv.length > 5 ? finish(1) : (void (finish(1)), []));\n");
 });
 
-test("a function or a class that is written in place goes into no literal", () => {
+test("wraps no function or class expression in an object or array literal", () => {
   const text =
     "exports.arrow = () => {};\nexports.plain = function () {};\nexports.made = class {};\nexports.read = kept;\n";
   const variants = list(read("program.cjs", text));
@@ -94,6 +95,15 @@ test("a function or a class that is written in place goes into no literal", () =
   }
   expect(formsOf("kept")).toContain("field");
   expect(formsOf("kept")).toContain("element");
+});
+
+test("leaves the function that a file marked as CommonJS consists of in its place", () => {
+  const wrapper = "function(exports, require, module, __filename, __dirname) {exports.made = function () {};\n}";
+  const placesIn = (text: string) => list(read("bundle.cjs", text)).map(variant => /@(\d+)-/.exec(variant)![1]);
+  const marked = `// @bun @bun-cjs\n(${wrapper})\n`;
+  expect(placesIn(marked)).not.toContain(String(marked.indexOf(wrapper)));
+  expect(placesIn(marked)).toContain(String(marked.indexOf("function () {}")));
+  expect(placesIn(`(${wrapper})\n`)).toContain("1");
 });
 
 test("every program in which something else comes ends", async () => {

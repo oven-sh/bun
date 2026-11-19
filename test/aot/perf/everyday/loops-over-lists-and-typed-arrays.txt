@@ -209,3 +209,14 @@ function turn(i: number): number {
   for (let k = 0; k < line.length; k++) sum += line.charCodeAt(k);
   return sum;
 }
+//// a-list-filled-with-new-objects-up-to-its-length
+type Entry = { weight: number };
+const list: Entry[] = [];
+for (let k = 0; k < 8; k++) list.push({ weight: k + 0.5 });
+function fill(list: Entry[], weight: number): void {
+  for (let index = 0; index < list.length; index++) list[index] = { weight: weight + index };
+}
+function turn(i: number): number {
+  fill(list, i & 7);
+  return list[3]!.weight;
+}

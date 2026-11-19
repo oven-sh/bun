@@ -1,9 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness";
 import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { readBuildReport } from "./harness/build-report";
-import { slot, spawned } from "./run-programs";
+import { join, resolve } from "node:path";
+import { slot, spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const tsconfig = JSON.stringify({
@@ -80,13 +79,13 @@ async function pack(root: string, folder = "library") {
 }
 
 /**
- * Compiles and runs the program. `aotFiles`: how many files under an "aot" condition were compiled with their types.
- * `functionsFrom`: the .aot.ts files that the functions of the executable were written in.
+ * Compiles and runs the program. `aotFiles`: how many files besides the entry point were compiled with their types.
+ * `compiledFrom`: the .aot.ts files among the inputs of the build.
  */
 async function compile(root: string, folder = "app", entry = "app.ts") {
   const app = join(root, folder);
-  const reportPath = join(app, "report.json");
-  const flags = ["--aot-report=" + reportPath, "--aot-report-detail=functions"];
+  const metafile = join(app, "meta.json");
+  const flags = ["--explain=statistics", "--metafile=" + metafile];
   const built = await spawned([bunExe(), "compile", `./${entry}`, ...flags], app, environment(root));
   const fromRoot = (text: string) => text.replaceAll("\\", "/").replaceAll(root.replaceAll("\\", "/"), "<root>");
   const said = (built.stdout + built.stderr)
@@ -96,12 +95,15 @@ async function compile(root: string, folder = "app", entry = "app.ts") {
   const name = entry.replace(/\.[a-z]+$/, isWindows ? ".exe" : "");
   const ran = built.exitCode === 0 ? await spawned([join(app, name)], app, environment(root)) : undefined;
   const plain = await spawned([bunExe(), entry], app, environment(root));
-  const report = built.exitCode === 0 ? readBuildReport(reportPath) : undefined;
-  const written = report?.functions?.map(({ file }) => file).filter(file => /\.aot\.[cm]?ts$/.test(file));
+  const typedFiles = Number(/^SourceFilesChecked (\d+)$/m.exec(built.stderr)?.[1]);
+  const inputs = built.exitCode === 0 ? Object.keys(JSON.parse(readFileSync(metafile, "utf8")).inputs) : undefined;
   return {
     said,
-    aotFiles: report?.statistics.AotFilesUsed,
-    functionsFrom: written && [...new Set(written.map(file => fromRoot(join(app, file))))].sort(),
+    aotFiles: inputs && typedFiles - Number(entry.endsWith(".ts")),
+    compiledFrom: inputs
+      ?.filter(file => /\.aot\.[cm]?ts$/.test(file))
+      .map(file => fromRoot(resolve(app, file)))
+      .sort(),
     exitCode: built.exitCode,
     signal: built.signal,
     stdout: ran?.stdout,
@@ -109,13 +111,12 @@ async function compile(root: string, folder = "app", entry = "app.ts") {
   };
 }
 
-/** `count` files of packages with the condition, and functions from index.aot.ts in each of the folders. */
-const typed = (count: number, ...folders: string[]) => ({
+/** `count` files of packages with the condition. `files`: those of them that are named .aot.ts. */
+const typed = (count: number, ...files: string[]) => ({
   aotFiles: count,
-  functionsFrom: folders.map(folder => `<root>/${folder}/index.aot.ts`).sort(),
+  compiledFrom: files.map(file => `<root>/${file}`).sort(),
 });
-// index.aot.ts and version.aot.ts; the second holds no function.
-const shapes = (folder = "app/node_modules/shapes") => typed(2, folder);
+const shapes = (folder = "app/node_modules/shapes") => typed(2, `${folder}/index.aot.ts`, `${folder}/version.aot.ts`);
 const compiled = (files: ReturnType<typeof typed>, stdout = "7 1.2.3\n", said: string[] = []) => ({
   said,
   ...files,
@@ -127,7 +128,7 @@ const compiled = (files: ReturnType<typeof typed>, stdout = "7 1.2.3\n", said: s
 const stopped = (said: string[], plain = "7 1.2.3\n") => ({
   said,
   aotFiles: undefined,
-  functionsFrom: undefined,
+  compiledFrom: undefined,
   exitCode: 1,
   signal: null,
   stdout: undefined,
@@ -162,9 +163,12 @@ describe.concurrent(
       await bun(root, "app", "add", "--linker", "isolated", await pack(root));
       expect(await compile(root)).toEqual({
         ...compiled(shapes()),
-        functionsFrom: [
+        compiledFrom: [
           expect.stringMatching(
             /^<root>\/app\/node_modules\/\.bun\/shapes@[^/]+\/node_modules\/shapes\/index\.aot\.ts$/,
+          ),
+          expect.stringMatching(
+            /^<root>\/app\/node_modules\/\.bun\/shapes@[^/]+\/node_modules\/shapes\/version\.aot\.ts$/,
           ),
         ],
       });
@@ -229,7 +233,7 @@ describe.concurrent(
         await bun(root, "app", "add", "--backend=copyfile", "../library/dist");
         const files = {
           aotFiles: 3,
-          functionsFrom: ["index.aot.ts", chunks[0], "make.aot.ts"]
+          compiledFrom: ["index.aot.ts", chunks[0], "make.aot.ts"]
             .map(name => `<root>/app/node_modules/shapes/${name}`)
             .sort(),
         };
@@ -273,8 +277,15 @@ console.log(total([make(2), { kind: "circle", size: 1 }, make(3)]));
         await build(root, "newer");
         cpSync(join(root, "newer/dist"), join(root, "app/node_modules/other/node_modules/shapes"), { recursive: true });
         expect(await compile(root)).toEqual(
-          // Of the newer version, version.aot.ts alone.
-          compiled(typed(3, "app/node_modules/shapes"), "7 1.2.3\n1.2.4\n"),
+          compiled(
+            typed(
+              3,
+              "app/node_modules/shapes/index.aot.ts",
+              "app/node_modules/shapes/version.aot.ts",
+              "app/node_modules/other/node_modules/shapes/version.aot.ts",
+            ),
+            "7 1.2.3\n1.2.4\n",
+          ),
         );
       },
       {
@@ -378,13 +389,9 @@ describe.concurrent("an .aot.ts file of an installed package", () => {
   };
   const unresolved = `error: TS100151: Could not resolve: "shapes". Maybe you need to "bun install"?`;
 
-  scene("that has a type error is compiled without its types, with a warning", async root => {
+  scene("that has a type error is compiled like the others, and the build says nothing of it", async root => {
     edit(join(await installed(root), "version.aot.ts"), "version: string", "version: number");
-    expect(await compile(root)).toEqual(
-      compiled({ ...shapes(), aotFiles: 1 }, undefined, [
-        `warn: TS100009: 'shapes' has 1 type error (the first at <root>/app/node_modules/shapes/version.aot.ts:2:7), so 1 of its 2 files are compiled without their types. They still work, but run slower.`,
-      ]),
-    );
+    expect(await compile(root)).toEqual(compiled(shapes()));
   });
 
   scene("that does not parse stops the build", async root => {
@@ -425,7 +432,140 @@ describe.concurrent(
       const tarball = await bun(root, "library/dist", "pm", "pack", "--quiet", "--destination", root);
       await bun(root, "app", "add", tarball.trim());
     };
-    const only = (name: string) => typed(1, `app/node_modules/${name}`);
+    const only = (name: string) => typed(1, `app/node_modules/${name}/index.aot.ts`);
+    const written = (
+      name: string,
+      compilerOptions: object | undefined,
+      files: Record<string, string>,
+      typedFile = "index.aot.ts",
+    ) =>
+      under(`app/node_modules/${name}`, {
+        "package.json": JSON.stringify({
+          name,
+          version: "1.0.0",
+          type: "module",
+          exports: { ".": { aot: `./${typedFile}`, default: "./index.js" } },
+          compilerOptions,
+        }),
+        ...files,
+      });
+
+    scene(
+      "two packages whose options are neither the program's nor each other's",
+      async root =>
+        expect(await compile(root)).toEqual(
+          compiled(
+            typed(2, "app/node_modules/exact/index.aot.ts", "app/node_modules/loose/index.aot.ts"),
+            "a null -1 2 undefined\n",
+          ),
+        ),
+      {
+        ...written(
+          "loose",
+          { strict: false, lib: ["es2020"] },
+          {
+            "index.js": `export function pick(list, at) {\n  return at < list.length ? list[at] : null;\n}\n`,
+            "index.aot.ts": `export function pick(list: string[], at: number): string {\n  return at < list.length ? list[at] : null;\n}\n`,
+          },
+        ),
+        ...written(
+          "exact",
+          { strict: true, exactOptionalPropertyTypes: true, noUncheckedIndexedAccess: true },
+          {
+            "index.js": `export function count(item) {\n  return "count" in item ? item.count : -1;\n}\n`,
+            "index.aot.ts": `export interface Item {\n  name: string;\n  count?: number;\n}\nexport function count(item: Item): number {\n  return "count" in item ? item.count : -1;\n}\n`,
+          },
+        ),
+        ...applicationWith(
+          {},
+          `import { count } from "exact";
+import { pick } from "loose";
+console.log(pick(["a"], 0), pick(["a"], 1), count({ name: "x" }), count({ name: "y", count: 2 }), count({ name: "z", count: undefined }));
+`,
+        ),
+      },
+    );
+
+    scene(
+      "a file of the package that its .aot.ts file imports",
+      async root =>
+        expect(await compile(root)).toEqual(compiled(typed(2, "app/node_modules/pair/index.aot.ts"), "4 null\n")),
+      {
+        ...written(
+          "pair",
+          { strict: false },
+          {
+            "index.js": `export function twice(n) {\n  return n ? n * 2 : null;\n}\n`,
+            "index.aot.ts": `import { double } from "./inner.ts";\nexport function twice(n: number): number {\n  return double(n);\n}\n`,
+            "inner.ts": `export function double(n: number): number {\n  return n ? n * 2 : null;\n}\n`,
+          },
+        ),
+        ...applicationWith({}, `import { twice } from "pair";\nconsole.log(twice(2), twice(0));\n`),
+      },
+    );
+
+    scene(
+      "no null checks, where the package.json has no compilerOptions",
+      async root => expect(await compile(root)).toEqual(compiled(only("bare"), "3 -1 -1\n")),
+      {
+        ...written("bare", undefined, {
+          "index.js": `export function size(text) {\n  return text == null ? -1 : text.length;\n}\n`,
+          "index.aot.ts": `export function size(text: string | null): number {\n  return text == null ? -1 : text.length;\n}\n`,
+        }),
+        ...applicationWith(
+          { strict: false },
+          `import { size } from "bare";\nconst nothing: string = undefined;\nconsole.log(size("abc"), size(null), size(nothing));\n`,
+        ),
+      },
+    );
+
+    scene(
+      "a package that bun link links",
+      async root => {
+        await bun(root, "library", "compile", "--library");
+        await bun(root, "library/dist", "link");
+        await bun(root, "app", "link", "joined");
+        expect(await compile(root)).toEqual(compiled(typed(1, "library/dist/index.aot.ts"), "a,b\n"));
+      },
+      {
+        ...libraryOf("joined", `export function join(list: string[]): string {\n  return list.join();\n}\n`),
+        ...applicationWith(
+          { exactOptionalPropertyTypes: true },
+          `import { join } from "joined";\nconsole.log(join(["a", "b"]));\n`,
+        ),
+      },
+    );
+
+    scene(
+      "another jsxImportSource than the package's",
+      async root => expect(await compile(root)).toEqual(compiled(typed(1), "theirs:a\n")),
+      {
+        ...written(
+          "views",
+          { strict: true, jsx: "react-jsx", jsxImportSource: "theirs" },
+          {
+            "index.js": `import { jsx } from "theirs/jsx-runtime";\nexport const view = jsx("a", {});\n`,
+            "index.aot.tsx": `export const view: string = <a />;\n`,
+          },
+          "index.aot.tsx",
+        ),
+        ...Object.assign(
+          {},
+          ...["theirs", "mine"].map(name => {
+            const runtime = `export const jsx = type => "${name}:" + type;\nexport const jsxDEV = jsx;\n`;
+            return under(`app/node_modules/${name}`, {
+              "package.json": JSON.stringify({ name, version: "1.0.0", type: "module" }),
+              "jsx-runtime.js": runtime,
+              "jsx-dev-runtime.js": runtime,
+            });
+          }),
+        ),
+        ...applicationWith(
+          { exactOptionalPropertyTypes: true, jsx: "react-jsx", jsxImportSource: "mine" },
+          `import { view } from "views";\nconsole.log(view);\n`,
+        ),
+      },
+    );
 
     scene(
       "nodenext, and every flag beyond strict",
@@ -1261,9 +1401,9 @@ console.log(sum, numbers.join(), all.map(mine => mine.n + ":" + mine.on).join(),
           compiled(
             typed(
               3,
-              "app/node_modules/between",
-              "app/node_modules/shapes",
-              "app/node_modules/between/node_modules/shapes",
+              "app/node_modules/between/index.aot.ts",
+              "app/node_modules/shapes/index.aot.ts",
+              "app/node_modules/between/node_modules/shapes/index.aot.ts",
             ),
             "6 16 7 seven no 0sevenundefined\n",
           ),
@@ -1371,7 +1511,7 @@ describe.concurrent("bun compile finds the file under the aot condition of a han
     "app.ts": `import { greet } from "dual";\nconsole.log(greet({ name: "Ada" }));\n`,
     "app.cjs": `const { greet } = require("dual");\nconsole.log(greet({ name: "Ada" }));\n`,
   };
-  const one = (name: string) => ({ aotFiles: 1, functionsFrom: [`<root>/node_modules/dual/dist/${name}`] });
+  const one = (name: string) => ({ aotFiles: 1, compiledFrom: [`<root>/node_modules/dual/dist/${name}`] });
 
   scene(
     "under import, in a package that has ES modules and CommonJS",

@@ -5,7 +5,10 @@ import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export function readBundle(path: string): Map<string, Buffer> {
-  const bytes = Buffer.from(Bun.zstdDecompressSync(readFileSync(path)));
+  return parseBundle(Buffer.from(Bun.zstdDecompressSync(readFileSync(path))));
+}
+
+export function parseBundle(bytes: Buffer): Map<string, Buffer> {
   const files = new Map<string, Buffer>();
   for (let at = 0; at < bytes.length; ) {
     const end = bytes.indexOf(10, at);

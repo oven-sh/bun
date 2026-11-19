@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
-import { measureUntilWithinBounds } from "./harness/measure-again";
+import { reads } from "./harness/reads";
 import { test } from "./supported";
 
 const isSlowBuild = isDebug || isASAN;
@@ -87,6 +87,22 @@ async function processorSecondsOfBuild(program: Program) {
   return Number(built.resourceUsage()!.cpuTime.user) / 1e6;
 }
 
+// CI ends a test file that has run for five minutes.
+const lastStart = 200_000;
+
+// Other work on the machine only adds to a time. One that is over its bound is measured again, four times at most: code that costs more does so every time.
+async function measureUntilWithinBounds(
+  name: string,
+  measure: () => Promise<number>,
+  isWithinBounds: (measured: number) => boolean,
+) {
+  for (let attemptsLeft = 3; ; attemptsLeft--) {
+    const measured = await measure();
+    if (attemptsLeft === 0 || isWithinBounds(measured) || performance.now() > lastStart) return measured;
+    console.error(`ASKED AGAIN: ${name}`);
+  }
+}
+
 // Four times the program takes four times as long where the time is linear, and sixteen times as long where it is quadratic.
 async function expectLinearBuildTime(name: string, few: number, writeProgramOfSize: (size: number) => Program) {
   const growth = await measureUntilWithinBounds(
@@ -98,6 +114,7 @@ async function expectLinearBuildTime(name: string, few: number, writeProgramOfSi
     },
     growth => growth < 6,
   );
+  reads("four times the live checked values", growth, 6, "times the processor seconds");
   expect(growth).toBeLessThan(6);
 }
 

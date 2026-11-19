@@ -1,1 +1,0 @@
-{ "skipInShell": "it needs node:async_hooks, Bun.serve and fetch, which the jsc shell does not have" }

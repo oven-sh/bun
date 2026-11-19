@@ -1,7 +1,7 @@
 // Compares two builds of Bun by instruction counts: every small benchmark, and one request of every route of every server.
 //
 //   bun test/aot/perf/compare-builds.ts --before <bun> --after <bun>
-//       [--threshold 2] [--only <regular expression>] [--sizes small,called,very-large] [--servers bun,node,hono | none]
+//       [--threshold 2] [--only <regular expression>] [--sizes small,called] [--servers bun,node,hono | none]
 //       [--modules <node_modules>] [--jobs 16] [--out <folder>] [--build-flag <flag>]..
 //
 // It prints the rows that got slower by more than the threshold, worst first, then the rows that got faster, and exits with 1 if any row got slower.
@@ -22,20 +22,19 @@ import { parseArgs } from "util";
 import { openInstructionCounter } from "../analysis-scaling/measure-check";
 import { routes as routesOfTheServers, type Route } from "../servers/answers";
 import { idiomsAgainstTheJit, isWhole } from "./measure-idioms";
+import { ownTemporaryFolder, removeOwnFoldersWhenStopped } from "../harness/temporary-folders";
 
-/** One measured number. `yardstick` is the same work under the same binary's JIT: when it moves like the row, the runtime changed and not the compiler. */
+/** One measured number. `yardstick` is the same work under the same binary's JIT: when it moves like the row, by the same factor or by about as many instructions, the runtime changed and not the compiler. */
 export type Reading = { instructions: number; yardstick?: number };
 export type Readings = Map<string, Reading>;
 export type Change = { name: string; before: number; after: number; percent: number; runtimeMovedToo: boolean };
 
 // The same text is compiled differently depending on what surrounds it.
-//   small       the benchmark is the whole program, and its loop calls turn() directly
-//   called      the loop finds turn() at run time, so turn() is compiled as a function that somebody calls, not as part of the loop
-//   very-large  the same, compiled as it would be inside a very large program, where little counts as code that runs often
+//   small   the benchmark is the whole program, and its loop calls turn() directly
+//   called  the loop finds turn() at run time, so turn() is compiled as a function that somebody calls, not as part of the loop
 export const sizes = {
-  "small": {},
-  "called": { inVeryLargeProgram: true, buildFlags: ["--aot-limit=MaxWarmCodeValues:1048576"] },
-  "very-large": { inVeryLargeProgram: true, buildFlags: [] as string[] },
+  small: { findsTurnAtRunTime: false },
+  called: { findsTurnAtRunTime: true },
 };
 export type Size = keyof typeof sizes;
 export const allServers = ["bun", "node", "hono", "elysia", "express", "fastify", "koa"];
@@ -74,15 +73,11 @@ export async function measureBenchmarks(
   size: Size,
   { only = /./, jobs = availableParallelism(), buildFlags = [] as string[] } = {},
 ): Promise<Readings> {
-  const { inVeryLargeProgram = false, buildFlags: flagsOfSize = [] } = sizes[size] as {
-    inVeryLargeProgram?: boolean;
-    buildFlags?: string[];
-  };
   mkdirSync(folder, { recursive: true });
   const { names, measure } = idiomsAgainstTheJit(bun, folder, {
     collections: false,
-    inVeryLargeProgram,
-    buildFlags: [...flagsOfSize, ...buildFlags],
+    inVeryLargeProgram: sizes[size].findsTurnAtRunTime,
+    buildFlags,
   });
   const readings: Readings = new Map();
   await inParallel(
@@ -249,12 +244,13 @@ export function compare(before: Readings, after: Readings, threshold: number): C
     const ratio = now.instructions / then.instructions;
     if (Math.abs(ratio - 1) * 100 <= threshold || Math.abs(now.instructions - then.instructions) <= 2) continue;
     const yardstickRatio = now.yardstick && then.yardstick ? now.yardstick / then.yardstick : 1;
+    const yardstickShare = now.yardstick && then.yardstick ? (now.yardstick - then.yardstick) / (now.instructions - then.instructions) : 0;
     changes.push({
       name,
       before: then.instructions,
       after: now.instructions,
       percent: (ratio - 1) * 100,
-      runtimeMovedToo: Math.abs(yardstickRatio - 1) > 0.04 && Math.abs(yardstickRatio - ratio) < 0.05,
+      runtimeMovedToo: (Math.abs(yardstickRatio - 1) > 0.04 && Math.abs(yardstickRatio - ratio) < 0.05) || yardstickShare >= 0.6,
     });
   }
   return changes.sort((a, b) => b.percent - a.percent);
@@ -306,7 +302,9 @@ if (import.meta.main) {
   for (const size of wantedSizes) if (!(size in sizes)) throw new Error(`Unknown size: ${size}`);
   const servers = options.servers === "none" ? [] : options.servers.split(",").filter(Boolean);
   for (const server of servers) if (!allServers.includes(server)) throw new Error(`Unknown server: ${server}`);
-  const work = mkdtempSync(join(tmpdir(), "compare-builds-"));
+  // With --jobs 32 the folder holds 64 executables at a time, 30 GB of them where Bun has its debug information.
+  removeOwnFoldersWhenStopped();
+  const work = ownTemporaryFolder(mkdtempSync(join(tmpdir(), "compare-builds-")));
 
   async function measureAll(side: "before" | "after", only: RegExp, onlyServers: string[], round: string): Promise<Readings> {
     const source = resolve(options[side]!);

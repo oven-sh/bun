@@ -1,6 +1,0 @@
-{
-  "build": ["--aot-heat=none"],
-  "env": {
-    "JSC_aotCountsPath": "/dev/null"
-  }
-}

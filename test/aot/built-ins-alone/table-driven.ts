@@ -17,7 +17,6 @@ export const neverEvaluated = [
   /^eval$/,
   /^Function$/,
   /^%(Async)?(Generator)?Function%/,
-  /^ShadowRealm/,
   /^WebAssembly/,
   /^Atomics\.(wait|waitAsync|pause|notify)$/,
   /^FinalizationRegistry/,
@@ -36,7 +35,7 @@ export const neverEvaluated = [
   /^(CompressionStream|DecompressionStream)\b/,
   /^console\./,
   /^process\.(_|abort|exit|reallyExit|kill|chdir|execve|binding|dlopen|loadEnvFile|report|set|initgroups|stdout|stderr|stdin|mainModule|emitWarning|assert|umask|title|debugPort|connected|exitCode|ref|unref)/,
-  /^Bun\.(\$|Archive|FetchSession|FileSystemRouter|Image|RedisClient|S3Client|Transpiler|build|connect|cron|fetch|file|gc|generateHeapSnapshot|jest|listen|mmap|openInEditor|registerMacro|resolve|resolveSync|serve|shrink|spawn|spawnSync|udpSocket|which|write|dns|secrets|unsafe|password|CSRF|sleepSync|sleep|Cookie|CookieMap|markdown)\b/,
+  /^Bun\.(\$|Archive|FFI|FetchSession|FileSystemRouter|Image|RedisClient|S3Client|Transpiler|build|connect|cron|fetch|file|gc|generateHeapSnapshot|jest|listen|mmap|openInEditor|registerMacro|resolve|resolveSync|serve|shrink|spawn|spawnSync|udpSocket|which|write|dns|secrets|unsafe|password|CSRF|sleepSync|sleep|Cookie|markdown)\b/,
   /^performance\.(addEventListener|removeEventListener|dispatchEvent|onresourcetimingbufferfull|markResourceTiming|timing)/,
   /^Temporal/,
   /^Request\.prototype\.(signal|clone)/,
@@ -70,6 +69,7 @@ export function wordsOf(path: string): string {
   return path
     .replace(/\.prototype\b/g, "")
     .replace(/\[Symbol\.([A-Za-z]+)\]/g, ".symbol-$1")
+    .replace(/\[Symbol\.for\("([^"]+)"\)\]/g, ".symbol-for-$1")
     .replace(/%/g, "")
     .replace(/\$/g, "dollar")
     .split(/[.:_]/)
@@ -90,7 +90,7 @@ export interface Shape {
 }
 
 export function shapeOf(path: string): Shape {
-  const match = /^(.*?)(\.prototype)?(\.[A-Za-z_$][A-Za-z0-9_$]*|\[Symbol\.[A-Za-z]+\])$/.exec(path);
+  const match = /^(.*?)(\.prototype)?(\.[A-Za-z_$][A-Za-z0-9_$]*|\[Symbol\.(?:[A-Za-z]+|for\("[^"]+"\))\])$/.exec(path);
   if (match === null) return { holder: "", accessor: path, isOnPrototype: false };
   return { holder: match[1], accessor: match[3], isOnPrototype: match[2] !== undefined };
 }

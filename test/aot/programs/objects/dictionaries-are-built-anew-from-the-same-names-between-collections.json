@@ -1,3 +1,0 @@
-{
-  "runWithASAN": "compiled code reads the tables of names that a collection takes from the shapes"
-}

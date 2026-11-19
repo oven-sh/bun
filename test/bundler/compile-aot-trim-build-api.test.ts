@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "node:path";
-import { spawned, unsupported } from "../aot/run-programs";
+import { spawned, unsupported } from "../aot/harness/commands";
 import { canTrim, tempDirForAotBuilds } from "./compile-trim-features";
 
 const buildsWhileMappingFiles = `
@@ -23,7 +23,12 @@ for (const outfiles of [["first"], ["first"], ["first", "second"], ["first"]]) {
     await Bun.sleep(1);
   }
   await builds;
-  for (const bytes of mappings) if (bytes[0] !== 7 || bytes[bytes.length - 1] !== 7) throw new Error("a mapping changed");
+  // A mapping has no page resident until it is read. Each is unmapped as soon as it has been read, so the pages of one count at a time, however many
+  // mappings a slow build leaves time for and however many pages the system maps for one that is read.
+  for (const bytes of mappings) {
+    if (bytes[0] !== 7 || bytes[bytes.length - 1] !== 7) throw new Error("a mapping changed");
+    bytes.buffer.transfer(0);
+  }
   mappings.length = 0;
   Bun.gc(true);
 }

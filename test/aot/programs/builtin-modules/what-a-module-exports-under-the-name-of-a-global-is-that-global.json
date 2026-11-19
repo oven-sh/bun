@@ -1,1 +1,0 @@
-{ "skipInShell": "it asks for modules of node and of Bun, which the jsc shell does not provide" }

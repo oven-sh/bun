@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness";
 import { join } from "path";
-import { unsupported } from "../aot/run-programs";
+import { unsupported } from "../aot/harness/commands";
 
 const compiles = !unsupported;
 const hasTheShellOfThePages = !isWindows;

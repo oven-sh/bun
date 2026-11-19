@@ -1,4 +1,0 @@
-{
-  "reference": "compiled",
-  "skipInShell": "it imports a page, which only the bundler makes, and reads it with Bun.file"
-}

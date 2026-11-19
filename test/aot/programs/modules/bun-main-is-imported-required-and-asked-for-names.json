@@ -1,1 +1,0 @@
-{ "entryPoints": ["./worker.mjs"], "skipInShell": "it needs the module loader of Bun and Workers" }

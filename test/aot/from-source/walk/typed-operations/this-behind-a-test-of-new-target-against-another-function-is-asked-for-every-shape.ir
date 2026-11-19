@@ -1,0 +1,28 @@
+# The control of this-behind-a-test-that-new-target-is-the-function-itself-is-asked-for-its-own-shape-alone.ir: the test names another function: what is allocated by it nobody says here: both layouts are asked for on both sides. f3 = Base.
+# RUN: walk f3 mechanisms=all-ParameterGuards
+# CHECK-NOT: = ShapeTest v0 layouts=[L0] 
+# CHECK: = ShapeTest v0 layouts=[L0, L1] 
+# -- source: this-behind-a-test-of-new-target-against-another-function-is-asked-for-every-shape.js
+# function slow(self, a) { self.a = a; self.late = true; }
+# function Base(a) {
+#   if (new.target !== Other) return slow(this, a);
+#   this.a = a;
+#   this.b = 1;
+#   this.c = "c";
+#   this.d = null;
+#   this.e = 0;
+#   this.f = false;
+#   this.g = undefined;
+#   this.h = 2.5;
+# }
+# function Other() {}
+# class Below extends Base {
+#   constructor(a) { super(a); this.own = "own"; this.more = a + 1; }
+# }
+# globalThis.madeUpBase = Base;
+# globalThis.madeUpBelow = Below;
+# let sum = 0;
+# for (let i = 0; i < 3; i++) { const made = Reflect.construct(Base, [i], Other); sum += made.a + made.b + made.c.length + made.h; }
+# const below = new Below(7);
+# console.log(sum, below.a, below.late, below.own, below.more, below.b);
+# -- end of source

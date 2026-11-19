@@ -1,3 +1,0 @@
-{
-  "skipInShell": "the texts of functions come from the bundler, which the jsc shell does not have, so every function prints [native code] there"
-}

@@ -1,3 +1,0 @@
-while it runs: threw ReferenceError
-first: object bump,one number function
-again: object bump,one number function

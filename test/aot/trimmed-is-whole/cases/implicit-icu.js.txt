@@ -18,9 +18,11 @@ console.log((1234567).toLocaleString("en", { notation: "compact", compactDisplay
 //@ trimmed-says toLocaleString was removed by --trim because your code never uses it by name. A name known only at run time, as in object[key]() or eval(text), does not count. To keep it, add "intl" to compile.trim.allow in Bun.build().
 console.log((1234567.891)[names[0]]("de-DE"));
 //// number-computed-name-that-a-list-names
+//@ alone
 const known = ["toLocaleString", "toFixed"];
 console.log(known.includes(names[0]) ? (1234567.891)[names[0]]("de-DE") : "unknown");
 //// number-computed-name-that-a-comparison-names
+//@ alone
 console.log(names[0] === "toLocaleString" ? (1234567.891)[names[0]]("de-DE") : "unknown");
 //// bigint-toLocaleString
 console.log((12345678901234567890n).toLocaleString("de-DE"));

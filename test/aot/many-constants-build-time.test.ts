@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { reads } from "./harness/reads";
 import { test } from "./supported";
 
 const few = isDebug || isASAN ? 1_000 : 15_000;
@@ -28,5 +29,6 @@ async function processorSecondsOfCheck(constantCount: number) {
 test("build time is linear in the number of object literals held by constants of one module", async () => {
   const withFew = await processorSecondsOfCheck(few);
   const withMany = await processorSecondsOfCheck(many);
+  reads("four times the constants", withMany / withFew, 8, "times the processor seconds");
   expect(withMany / withFew).toBeLessThan(8);
 }, 240_000);

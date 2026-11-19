@@ -12,10 +12,23 @@ export const imageHeader = {
   codeSize: 48,
   executableSize: 64,
   formatVersion: 72,
-  sections: 208,
+  sections: 112,
   numberOfSections: 27,
-  constantsOffset: 464,
-  constantsSize: 468,
+  ffiCodeSize: 360,
+  constantsOffset: 368,
+  constantsSize: 372,
+  flags: 376,
+} as const;
+
+/** Byte offsets of members of JSC::AOT::ProgramTables (aot/object/AOTProgramTables.h in WebKit), and which section of the image it is. */
+export const programTables = {
+  section: 22,
+  sizeOfMethodTable: 24,
+} as const;
+
+export const imageFlag = {
+  admitsUnknownJavaScript: 1 << 1,
+  loadsModulesByName: 1 << 2,
 } as const;
 
 const minFileAlignment = 512;

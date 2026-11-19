@@ -4,7 +4,7 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 /// Disallow unnecessary labels.
 pub struct NoExtraLabel;
 
-const UNEXPECTED: Message = Message::new("unexpected", "This label '{{name}}' is unnecessary.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "This label '{{name}}' is unnecessary.");
 
 /// True if the innermost loop or `switch` around `statement` has the label `label`. No statement in between can have
 /// it, because a label can't be declared twice.

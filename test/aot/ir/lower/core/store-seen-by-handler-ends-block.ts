@@ -1,10 +1,10 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="f"
-// CHECK: [[before]] = Convert {{*}}declared={type=number site=[[x]]} @
+// CHECK: [[before]] = Convert {{*}}declared={type=number} @
 // CHECK: handler=[[handler]]([[before]]):
 // CHECK-NEXT: = Call {{*}}calleeName="g"
 // CHECK-NEXT: [[one]] = Integer integer=1
-// CHECK-NEXT: [[after]] = Convert [[one]] declared={type=number site=[[x]]} @
+// CHECK-NEXT: [[after]] = Convert [[one]] declared={type=number} @
 // CHECK-NEXT: Jump -> next [[rest]]()
 // CHECK-NEXT: [[rest]]() handler=[[handler]]([[after]]):
 // CHECK-NEXT: = Call {{*}}calleeName="h"

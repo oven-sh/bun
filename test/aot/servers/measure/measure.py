@@ -52,12 +52,7 @@ executable that was made for it, in /dev/shm (nothing is written to a disk), und
 
 Where the compiled code lies matters as well, and that is fixed when the executable is built: two builds of Bun that make a server
 do the same work have differed by 3% in cycles per request on the small routes of `effect`, start after start, because the code of
-one lay elsewhere. Two builds compared in one layout each cannot resolve a change below that. `--layouts 5` builds every --aot
-column five times, each with other padding around its code (--aot-layout-seed=1 to 5),
-as the columns NAME.1 to NAME.5; layouts.py takes the mean over them, and their spread is the error bar:
-
-    python3 measure.py --layouts 5 --starts 2 --column new=/path/to/new/bun:--aot --column previous=/path/to/previous/bun:--aot --servers effect --out rows.jsonl
-    python3 layouts.py rows.jsonl new previous
+one lay elsewhere. A comparison of two builds cannot resolve a change below that.
 
 The column order rotates from start to start. Every response is compared with the expected one, byte for byte.
 `--servers go,rust` measures ../go (net/http) and ../rust (axum) for comparison. One handler serves their three POST routes: a typed
@@ -110,7 +105,7 @@ With `--events ex_ret_brn_misp,bp_de_redirect` those events are sampled as well 
     alive_mb                                                alive after a full collection under load: one start more, not timed, in which every collection is a full one
     idle_anon_mb, load_anon_mb, after_anon_mb               RssAnon after the first response, its maximum under load, and two seconds after the last request
 """
-import argparse, fcntl, functools, glob, json, multiprocessing, os, re, resource, shutil, signal, socket, statistics, subprocess, sys, tempfile, threading, time
+import argparse, fcntl, glob, json, multiprocessing, os, re, resource, shutil, signal, socket, statistics, subprocess, sys, tempfile, threading, time
 
 import layers
 
@@ -672,19 +667,6 @@ def run_checked(command, **more):
     return run.stdout
 
 
-@functools.lru_cache(maxsize=None)
-def accepts_layout_seed_flag(bun):
-    """Older Buns reject the flag and read BUN_AOT_LAYOUT_SEED instead."""
-    probe = subprocess.run([bun, "build", "--compile", "--aot", "--aot-layout-seed=1", "./no-such-file.ts"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
-    return "unknown flag" not in probe.stderr
-
-
-def with_layout_seed(column, seed):
-    """A copy of the column that is built with another code layout. The variable is always set, so a wrong probe cannot lose the seed: a Bun that takes the flag ignores the variable."""
-    flags = ["--aot-layout-seed=%d" % seed] if accepts_layout_seed_flag(column["bun"]) else []
-    return dict(column, name="%s.%d" % (column["name"], seed), flags=column["flags"] + flags, run_env=dict(column["run_env"]), build_env=dict(column["build_env"], BUN_AOT_LAYOUT_SEED=str(seed)), build_seconds={})
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--column", action="append", required=True, metavar="NAME=BUN[:FLAGS][@SERVER]")
@@ -701,7 +683,6 @@ def main():
     parser.add_argument("--server-cores", type=int, default=1, help="the cores that a server is pinned to and told that it has; a lane is that many and three for the client, rounded up to a multiple of four")
     parser.add_argument("--rate", type=float, default=0, metavar="PART", help="behind the closed loop, an open loop: every column is sent requests at this part of what the slowest column of the job served; 0: none")
     parser.add_argument("--starts", type=int, default=3)
-    parser.add_argument("--layouts", type=int, default=0, metavar="K", help="build every --aot column K times, as NAME.1 to NAME.K, each with a different code layout; see layouts.py")
     parser.add_argument("--first-responses", type=int, default=3)
     parser.add_argument("--warm-up", type=int, default=200000, help="requests; a JIT build needs 200,000, an --aot build is stable from the first window")
     parser.add_argument("--rounds", type=int, default=3)
@@ -727,12 +708,6 @@ def main():
         for text in values:
             name, _, pair = text.partition(":")
             next(column for column in options.columns if column["name"] == name)[kind].update([pair.split("=", 1)])
-    if options.layouts:
-        options.columns = [
-            copy
-            for column in options.columns
-            for copy in ([with_layout_seed(column, seed) for seed in range(1, options.layouts + 1)] if "--aot" in column["flags"] else [column])
-        ]
     for column in options.columns if options.layers else []:
         if "--aot" in column["flags"]:
             column["run_env"].setdefault("BUN_JSC_useAOTPerfMap", "1")

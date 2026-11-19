@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import type { DirectoryTree } from "harness";
-import { test } from "../supported";
+import { test } from "../with-compiler";
 import { describeTree, type TreeGraph } from "./describe";
 
 const tsconfig = JSON.stringify({

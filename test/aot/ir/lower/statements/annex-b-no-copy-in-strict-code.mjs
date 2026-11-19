@@ -1,6 +1,6 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="outer"
-// CHECK: = NewClosure
+// CHECK-NOT: = NewClosure
 // CHECK: [[read]] = PropGet {{*}}key="inner" [isFreeName]
 // CHECK: Return [[read]]
 

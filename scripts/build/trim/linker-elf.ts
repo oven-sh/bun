@@ -7,9 +7,10 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { BuildError } from "../error.ts";
 import { isElfObject } from "./binary-reader.ts";
 import { openElf } from "./elf-file.ts";
@@ -65,7 +66,23 @@ export function elf(linker: Linker): LinkerFormat {
   const orderAt = command.findIndex(argument => argument.startsWith(orderFlag));
   const commandOrder = orderAt >= 0 ? readFileSync(command[orderAt]!.slice(orderFlag.length), "latin1") : "";
   const orderFile = join(work, "order.txt");
-  const inputDirectories = new Set([work, ...linker.inputs.map(path => dirname(path))]);
+  const buildFolder = resolve(dirname(output)) + sep;
+  const isInBuildFolder = (path: string) => (resolve(path) + sep).startsWith(buildFolder);
+  const inputDirectories = new Set([work, ...linker.inputs.map(path => dirname(path))].filter(isInBuildFolder));
+  const ownNames = new Map<string, string>();
+  const underOwnName = (path: string) => {
+    if (isInBuildFolder(path)) return path;
+    let name = ownNames.get(path);
+    if (name === undefined) {
+      const folder = join(work, "elsewhere", String(ownNames.size));
+      mkdirSync(folder, { recursive: true });
+      name = join(folder, basename(path));
+      symlinkSync(resolve(path), name);
+      ownNames.set(path, name);
+      inputDirectories.add(folder);
+    }
+    return name;
+  };
   const executableNames = { first: linker.firstLinkName, second: basename(output) };
   const listCompiledObjects = (link: "first" | "second") =>
     findCompiledObjects(inputDirectories, executableNames[link]);
@@ -77,7 +94,6 @@ export function elf(linker: Linker): LinkerFormat {
   let splitOrdinal = 0;
   const splitInPlace = (path: string) => splitMergeableSections(path, `${unnamedSectionPrefix}piece${splitOrdinal++}`);
   return {
-    relinksSameInputs: false,
     firstInputs: [],
     builtinModulesOutput: ".bun_builtins",
     isMovable,
@@ -85,7 +101,7 @@ export function elf(linker: Linker): LinkerFormat {
     isCode,
     supportObjects: room => [linker.assemble("room.s", roomSource(room))],
     prepareInput(path) {
-      if (!isElfObject(path)) return path;
+      if (!isElfObject(path)) return underOwnName(path);
       let copy = splitCopies.get(path);
       if (copy === undefined) {
         copy = copyPath(join(work, "split"), path);
@@ -98,8 +114,10 @@ export function elf(linker: Linker): LinkerFormat {
     },
     prepareCompiledObjects(objects) {
       for (const object of objects) splitInPlace(object);
-      return objects.length > 0;
+      return objects.length > 0 ? objects : undefined;
     },
+    withoutBitcode: path => path,
+    relinksSameInputs: () => false,
     compiledObjects(link) {
       const objects = listCompiledObjects(link);
       const empty = objects.filter(object => statSync(object).size === 0);
@@ -116,7 +134,12 @@ export function elf(linker: Linker): LinkerFormat {
       without: debuggerOnlyFlags,
     }),
     secondLinkArguments(order) {
-      writeFileSync(orderFile, order.groups.flatMap(group => group.names).join("\n") + "\n" + commandOrder, "latin1");
+      // What the command's file lists lies together: first of every group, then of no group.
+      const names = order.groups.flatMap(group => group.names);
+      const listed = new Set(commandOrder.split("\n"));
+      const isListed = (name: string) => listed.has(name);
+      const lines = [...names.filter(isListed), commandOrder, ...names.filter(name => !isListed(name))];
+      writeFileSync(orderFile, lines.join("\n") + "\n", "latin1");
       if (orderAt >= 0) return { last: [...commonFlags], replaced: new Map([[orderAt, orderFlag + orderFile]]) };
       return { last: [...commonFlags, orderFlag + orderFile, "-Wl,--no-warn-symbol-ordering"], replaced: new Map() };
     },

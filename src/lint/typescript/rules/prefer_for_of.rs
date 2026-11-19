@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Enforce the use of `for-of` loop over the standard `for` loop where possible.
 pub struct PreferForOf;
 
-const PREFER_FOR_OF: Message = Message::new(
+const PREFER_FOR_OF: &Message = &Message::new(
     "preferForOf",
     "Expected a `for-of` loop instead of a `for` loop with this simple iteration.",
 );

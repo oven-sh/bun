@@ -1,0 +1,36 @@
+The factory awaits importOriginal() of a file that imports a package that is not installed, behind vi.resetModules(): the next test file runs.
+#### a-first.test.ts
+import { test } from "bun:test";
+import { key } from "./keys";
+test("first", () => console.log("| CASE first", key));
+#### b-resets.test.ts
+import { afterEach, test, vi } from "bun:test";
+afterEach(() => { vi.resetModules(); });
+test("resets", () => console.log("| CASE resets"));
+#### c-mocks.test.ts
+import { test, vi } from "bun:test";
+vi.mock("./state", async importOriginal => ({ ...(await importOriginal<any>()), made: 1 }));
+test("mocked", async () => {
+  try {
+    await import("./state");
+  } catch (error) {
+    console.log("| CASE mocked", String((error as Error).message).replace(/ from .*/, ""));
+  }
+});
+test("importer", async () => {
+  try {
+    await import("./uses-state");
+  } catch (error) {
+    console.log("| CASE importer", String((error as Error).message).replace(/ from .*/, ""));
+  }
+});
+#### d-last.test.ts
+import { test } from "bun:test";
+import { key } from "./keys";
+test("last", () => console.log("| CASE last", key));
+#### keys.ts
+export const key = 1;
+#### state.ts
+import { Base } from "not-installed/base"; import { key } from "./keys"; export class State extends Base { key = key; }
+#### uses-state.ts
+import { State } from "./state"; import { key } from "./keys"; export const made = () => [State, key];

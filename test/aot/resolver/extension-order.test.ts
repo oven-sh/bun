@@ -1,5 +1,5 @@
 import { isWindows, type DirectoryTree } from "harness";
-import { describe } from "../supported";
+import { describe } from "../with-compiler";
 import { packageFiles, testResolution, type Pin, type ResolutionCase } from "./resolution-cases";
 
 const orders = {
@@ -69,6 +69,19 @@ const cases: ResolutionCase[] = [
       orders.nodeModulesImport,
       orders.nodeModulesRequire,
     ),
+  },
+  {
+    // The compiler asks Bun once for a path, whoever spells it how, and once more where a package asks.
+    name: "one path, spelled from three folders",
+    files: { "p/b/c.ts": "", "p/b/c.js": "", "p/b/d/index.ts": "", "p/b/d/index.js": "" },
+    pins: [
+      ["p/b/importer.js", "./c"],
+      ["p/a/importer.js", "../b/c"],
+      ["p/node_modules/x/importer.js", "../../b/c"],
+      ["p/b/importer.js", "./d"],
+      ["p/a/importer.js", "../b/d"],
+      ["p/node_modules/x/importer.js", "../../b/d"],
+    ],
   },
   {
     name: "edges",

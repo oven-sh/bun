@@ -1,11 +1,9 @@
-// Writes small programs in which a built-in or an operator runs the program's own code on an operand.
-// Each program is one point of: use x holder x escape x mix x behavior. Its name spells the point, so `--name` writes it again.
+// Small programs in which a built-in or an operator runs the program's own code on an operand. Each program is one
+// point of use x holder x escape x mix x behavior. Its name encodes the point, so `--name` generates it again.
 //
 //   bun test/aot/fuzz/protocols.ts --out <folder> [--count 2000] [--seed 1] [--flavor shell|bun] [--only <regex>]
 //   bun test/aot/fuzz/protocols.ts --name <point> [--flavor shell|bun]     prints one program
 //   bun test/aot/fuzz/protocols.ts --list                                  prints the size of each dimension
-//
-// A program prints what it sees. It is right when the compiled program prints what the interpreter prints.
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -1159,7 +1157,8 @@ const functionOf = (code: Code, body = code.body) => `${code.functionKeyword} ($
 const methodOf = (code: Code, body = code.body) => `${code.methodPrefix}${code.key}(${code.parameters}) { ${body} }`;
 const getterOf = (code: Code, body = code.body) => `get ${code.key}() { ${body} }`;
 
-// The analysis meets the statement only after it has followed three calls, so whatever uses the object has been looked at before.
+// The analysis only reaches the statement after following three calls, so every use of the object has already been
+// analyzed.
 const deep = (statement: string) => `function third() { ${statement} }\nfunction second() { third(); }\nfunction first() { second(); }\nfirst();`;
 const byCallback = (statement: string) => `[0].forEach(() => { ${statement} });`;
 
@@ -1497,7 +1496,7 @@ ${isAsync ? `async function main() {\n${lines.join("\n")}\n}\nmain().catch(e => 
 `;
 }
 
-/** One point of the cross product, drawn at random. Its first line spells the point. */
+/** One random point of the cross product. Its first line encodes the point. */
 export function generate(random: Random, _typed: boolean, profile: { library: boolean } = { library: true }): string {
   const allUses = families.flatMap(family => family.uses.map(chosen => ({ family, chosen })));
   for (;;) {
@@ -1571,7 +1570,8 @@ if (import.meta.main) {
       written.add(name);
       writeFileSync(join(out, `${name}.js`), text);
     }
-    // A bundle is one program that imports several of the programs. One build then tries them all, and a runner goes back to the single programs where a bundle differs.
+    // A bundle is one program that imports several of the programs. One build then tests them all, and a runner falls
+    // back to the single programs if a bundle differs.
     const bundleSize = +(argumentOf("bundle") ?? 0);
     if (bundleSize) {
       const names = [...written];

@@ -1,5 +1,6 @@
 // test/harness.ts imports this file, so it takes nothing from there.
 import { closeSync, openSync, readSync } from "node:fs";
+import { declare } from "./harness/capabilities";
 
 function isPositionIndependent(path: string) {
   const header = Buffer.alloc(18);
@@ -34,3 +35,11 @@ export const hasGuardedPages =
     "guarded pages: what a compiled program maps for good has an address of its own",
     process.execPath,
   ]).exitCode === 0;
+
+declare("a hardened build", () => (isHardened ? undefined : "this Bun was not built with --hardened=on"));
+declare("a locked environment", () =>
+  locksEnvironment ? undefined : "this Bun was not built with --hardened=on, or with --lock-environment=off",
+);
+declare("guarded pages", () =>
+  hasGuardedPages ? undefined : "this Bun was not built with --hardened=on, or with --guarded-pages=off",
+);

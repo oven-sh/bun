@@ -4,8 +4,7 @@
 // CHECK-COUNT-2: = GetModuleVariable
 // CHECK-NOT: Convert
 // CHECK: [[sum]] = Add
-// CHECK-NEXT: [[result]] = Convert [[sum]] declared={type=number site=w{{*}}} @
-// CHECK-NEXT: Return [[result]]
+// CHECK-NEXT: Return [[sum]]
 
 export let n: number = 1;
 

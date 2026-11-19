@@ -1,7 +1,0 @@
-{
-  "build": ["--aot-validate"],
-  "env": {
-    "BUN_JSC_slowPathAllocsBetweenGCs": "1",
-    "BUN_JSC_scribbleFreeCells": "1"
-  }
-}

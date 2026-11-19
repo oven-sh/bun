@@ -14,8 +14,8 @@ pub struct OnlyThrowError {
     allow_throwing_unknown: bool,
 }
 
-const OBJECT: Message = Message::new("object", "Expected an error object to be thrown.");
-const UNDEF: Message = Message::new("undef", "Do not throw undefined.");
+const OBJECT: &Message = &Message::new("object", "Expected an error object to be thrown.");
+const UNDEF: &Message = &Message::new("undef", "Do not throw undefined.");
 
 fn is_rethrown_error(node: Expr) -> bool {
     if node.as_ident().is_none() {

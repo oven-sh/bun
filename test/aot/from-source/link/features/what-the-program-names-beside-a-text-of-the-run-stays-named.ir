@@ -1,0 +1,11 @@
+# the program names Bun.serve and evaluates a text: what it names counts, with its own place
+# -- source: what-the-program-names-beside-a-text-of-the-run-stays-named.ts
+# declare const input: any;
+# new Function(input)();
+# Bun.serve({ port: 0, fetch: () => new Response("x") });
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by BunServe named at f0 v
+# RUN(NEVER): features
+# NEVER-NOT: by BunServe named-at-run-time

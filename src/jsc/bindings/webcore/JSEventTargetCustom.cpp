@@ -32,6 +32,7 @@
 #include "JSDOMWrapperCache.h"
 #include "JSEventListener.h"
 #include "GlobalEventScope.h"
+#include <JavaScriptCore/AOTHost.h>
 
 #if ENABLE(OFFSCREEN_CANVAS)
 #include "OffscreenCanvas.h"
@@ -39,11 +40,6 @@
 
 namespace WebCore {
 using namespace JSC;
-
-JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<EventTarget>&& value)
-{
-    return createWrapper<EventTarget>(globalObject, WTF::move(value));
-}
 
 EventTarget* JSEventTarget::toWrapped(VM& vm, JSValue value)
 {
@@ -56,6 +52,11 @@ EventTarget* JSEventTarget::toWrapped(VM& vm, JSValue value)
     if (value.inherits<JSEventTarget>())
         return &uncheckedDowncast<JSEventTarget>(asObject(value))->wrapped();
     return nullptr;
+}
+
+void noteGlobalObjectStoodInForReceiverOfEvents(JSGlobalObject& lexicalGlobalObject)
+{
+    JSC::AOT::noteGlobalObjectStoodInForReceiverOfEvents(&lexicalGlobalObject);
 }
 
 JSEventTargetWrapper jsEventTargetCast(VM& vm, JSValue thisValue)

@@ -2,8 +2,9 @@ import { expect, test } from "bun:test";
 import { bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim, featureNamed, saysFeatureWasRemoved, withoutFeatures } from "../bundler/compile-trim-features";
+import { unsupported } from "./harness/commands";
 import { run } from "./harness/run";
-import { unsupported } from "./run-programs";
+import { withoutDebugInformation } from "./harness/without-debug-information";
 
 // A build of Bun that cannot trim compiles the program all the same, and says so only when it comes to the executable.
 test.skipIf(!!unsupported)(
@@ -11,7 +12,7 @@ test.skipIf(!!unsupported)(
   async () => {
     using dir = tempDir("match-on-a-literal-without-regular-expressions", {
       "program.ts": `function versionIn(value: unknown) {
-  return String(value).match(/(?<=bun )\\S+/)?.[0];
+  return String(value).match(/(?<=bun )\\S+/);
 }
 console.log(process.argv.length > 2 ? versionIn(process.argv[2]) : "no text");
 `,
@@ -23,8 +24,8 @@ console.log(process.argv.length > 2 ? versionIn(process.argv[2]) : "no text");
         bunExe(),
         "build",
         "--compile",
+        ...withoutDebugInformation,
         "--aot",
-        "--aot-verify-each-pass",
         "--trim",
         ...withoutFeatures([regExp]),
         "program.ts",

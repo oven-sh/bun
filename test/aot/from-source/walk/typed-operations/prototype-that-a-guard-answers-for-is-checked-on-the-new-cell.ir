@@ -1,0 +1,33 @@
+# -- source: main.js
+# function Dog(legs, age) { this.legs = legs; this.age = age; }
+# function keeps(count) { var total = 0; for (var i = 0; i < count; i++) { var made = new Dog(4, i); last = made; total += made.total(); } return total; }
+# Dog.prototype.total = function () { return this.legs + this.age; };
+# var last;
+# publish(Dog);
+# print(keeps(5));
+# change(Dog);
+# print(keeps(5) + (Object.getPrototypeOf(last) === Dog.prototype ? 1000 : 0));
+# -- end of source
+# f2 = keeps
+# Behind a guard of Dog the allocation names the prototype as that of a class does. That any guard of the class answers for what lies under `prototype` is a conclusion of the walk, which no test of the program's own shows.
+# Where proofs are checked, the allocation keeps that form, and the function itself is asked: what it holds under `prototype` is the object of the class table.
+# RUN(PLAIN): walk f2 mechanisms=all
+# PLAIN: = NewObject -,
+# RUN(CHECKED): walk f2 mechanisms=all testing=CheckProofsAtRunTime
+# CHECKED: = NewObject -,
+# CHECKED: = GetClassPrototype {{*}}[readsClassObjectItself]
+# CHECKED: [[same]]: boolean @Boolean = StrictEq
+# CHECKED-NEXT: CheckProof [[same]] checkedType=true {{*}}source=RememberedFact
+# RUN(QUIET): run-in-shell testing=CheckProofsAtRunTime globalThis.publish = () => { }; globalThis.change = () => { };
+# QUIET: 30
+# QUIET-NEXT: 1030
+# QUIET-NEXT: exited with 0
+# To store the same object again ends the guard of the name `prototype` and no other, and the conclusion stays true: a check that asked that guard would stop a program that is right.
+# RUN(SAME): run-in-shell testing=CheckProofsAtRunTime globalThis.publish = () => { }; globalThis.change = (Dog) => { Dog.prototype = Dog.prototype; };
+# SAME: 30
+# SAME-NEXT: 1030
+# SAME-NEXT: exited with 0
+# RUN(REPLACED): run-in-shell testing=CheckProofsAtRunTime globalThis.publish = () => { }; globalThis.change = (Dog) => { Dog.prototype = { total() { return 100; } }; };
+# REPLACED: 30
+# REPLACED-NEXT: 1500
+# REPLACED-NEXT: exited with 0

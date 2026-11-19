@@ -3,7 +3,7 @@ import { expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "../aot/supported";
+import { describe, test } from "../aot/supported";
 
 setDefaultTimeout(60_000);
 
@@ -69,36 +69,38 @@ async function ran(env: Record<string, string>) {
   return { path: `/tmp/perf-${pid}.map`, maps };
 }
 
-test.if(isLinux)("BUN_JSC_useAOTPerfMap=1 writes a map that perf reads: names, in anonymous memory", async () => {
-  const { path, maps } = await ran({ BUN_JSC_useAOTPerfMap: "1" });
-  const map = readFileSync(path, "utf8");
-  rmSync(path);
-  const rows = map
-    .trimEnd()
-    .split("\n")
-    .map(line => /^([0-9a-f]+) ([0-9a-f]+) (.+)$/.exec(line)!);
-  expect(rows).not.toContain(null);
-  const names = rows.map(row => row[3]);
-  expect(names).toContain("walk app.ts:9");
-  expect(names).toContain("plus app.ts:5");
-  const ranges = rows
-    .map(row => [parseInt(row[1], 16), parseInt(row[1], 16) + parseInt(row[2], 16)])
-    .sort((a, b) => a[0] - b[0]);
-  expect(ranges.slice(1).filter(([start], i) => start !== ranges[i][1])).toEqual([]);
-  // Anonymous memory that two mappings share is listed under this name.
-  const anonymous = maps
-    .split("\n")
-    .map(line => /^([0-9a-f]+)-([0-9a-f]+) r-xs \S+ \S+ \d+\s+\/dev\/zero \(deleted\)$/.exec(line))
-    .filter(found => found !== null)
-    .map(found => [BigInt("0x" + found[1]), BigInt("0x" + found[2])]);
-  for (const [, start, size] of rows) {
-    const from = BigInt("0x" + start);
-    expect(anonymous.some(([low, high]) => low <= from && from + BigInt("0x" + size) <= high)).toBe(true);
-  }
-});
+describe.concurrent("BUN_JSC_useAOTPerfMap", () => {
+  test.if(isLinux)("BUN_JSC_useAOTPerfMap=1 writes a map that perf reads: names, in anonymous memory", async () => {
+    const { path, maps } = await ran({ BUN_JSC_useAOTPerfMap: "1" });
+    const map = readFileSync(path, "utf8");
+    rmSync(path);
+    const rows = map
+      .trimEnd()
+      .split("\n")
+      .map(line => /^([0-9a-f]+) ([0-9a-f]+) (.+)$/.exec(line)!);
+    expect(rows).not.toContain(null);
+    const names = rows.map(row => row[3]);
+    expect(names).toContain("walk app.ts:9");
+    expect(names).toContain("plus app.ts:5");
+    const ranges = rows
+      .map(row => [parseInt(row[1], 16), parseInt(row[1], 16) + parseInt(row[2], 16)])
+      .sort((a, b) => a[0] - b[0]);
+    expect(ranges.slice(1).filter(([start], i) => start !== ranges[i][1])).toEqual([]);
+    // Anonymous memory that two mappings share is listed under this name.
+    const anonymous = maps
+      .split("\n")
+      .map(line => /^([0-9a-f]+)-([0-9a-f]+) r-xs \S+ \S+ \d+\s+\/dev\/zero \(deleted\)$/.exec(line))
+      .filter(found => found !== null)
+      .map(found => [BigInt("0x" + found[1]), BigInt("0x" + found[2])]);
+    for (const [, start, size] of rows) {
+      const from = BigInt("0x" + start);
+      expect(anonymous.some(([low, high]) => low <= from && from + BigInt("0x" + size) <= high)).toBe(true);
+    }
+  });
 
-test.if(isLinux)("without it no map is written and the code stays file-backed", async () => {
-  const { path, maps } = await ran({});
-  expect(() => readFileSync(path)).toThrow();
-  expect(maps.split("\n").filter(line => / r-xp \S+ \S+ 0\s*$/.test(line))).toEqual([]);
+  test.if(isLinux)("without it no map is written and the code stays file-backed", async () => {
+    const { path, maps } = await ran({});
+    expect(() => readFileSync(path)).toThrow();
+    expect(maps.split("\n").filter(line => / r-xp \S+ \S+ 0\s*$/.test(line))).toEqual([]);
+  });
 });

@@ -16,7 +16,7 @@ pub struct NoInternalModules {
     is_forbid: bool,
 }
 
-const REACHING: Message = Message::new("", "Reaching to \"{{importPath}}\" is not allowed.");
+const REACHING: &Message = &Message::new("", "Reaching to \"{{importPath}}\" is not allowed.");
 
 fn normalize_sep(some_path: &[u8]) -> Cow<'_, [u8]> {
     match strings::contains_char(some_path, b'\\') {

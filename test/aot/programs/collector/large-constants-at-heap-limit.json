@@ -1,7 +1,0 @@
-{
-  "env": {
-    "BUN_JSC_markedBlockCageSizeInMB": "64"
-  },
-  "skipInVariants": "the counts are tuned for the default build",
-  "alone": "how much fits in the 64 MB heap depends on what else the executable holds"
-}

@@ -315,19 +315,19 @@ impl Response {
         let _ = self;
         handler();
     }
-    pub(crate) fn run_corked_with_type<UD>(&mut self, handler: fn(*mut UD), ud: *mut UD) {
+    pub(crate) fn run_corked_with_type<UD>(&mut self, handler: fn(&UD), ud: &UD) {
         // cork is synchronous, so we stack-allocate the (handler, ud) pair and
         // recover it inside the trampoline — same shape as H1's
         // `Response::run_corked_with_type` so `AnyResponse` can dispatch uniformly.
-        type Ctx<UD> = (fn(*mut UD), *mut UD);
+        type Ctx<'a, UD> = (fn(&UD), &'a UD);
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD>(p: *mut c_void) {
             // SAFETY: p points at a stack Ctx<UD> valid for this synchronous call.
-            let ctx = unsafe { &*p.cast::<Ctx<UD>>() };
+            let ctx = unsafe { &*p.cast::<Ctx<'_, UD>>() };
             (ctx.0)(ctx.1);
         }
-        let mut ctx: Ctx<UD> = (handler, ud);
+        let mut ctx: Ctx<'_, UD> = (handler, ud);
         c::uws_h3_res_cork(self, (&raw mut ctx).cast(), cb::<UD>)
     }
 }
@@ -391,12 +391,34 @@ macro_rules! h3_route_methods {
     )*};
 }
 
-impl App {
-    pub fn create(opts: &BunSocketContextOptions, idle_timeout_s: u32) -> Option<*mut App> {
-        // SAFETY: opts is `#[repr(C)]` passed by value; uws owns the returned handle
+/// Never made when `!SSL`, so that a server without TLS links none of this.
+pub struct OwnedApp<const SSL: bool>(core::ptr::NonNull<App>);
+
+impl<const SSL: bool> OwnedApp<SSL> {
+    pub fn new(opts: &BunSocketContextOptions, idle_timeout_s: u32) -> Option<Self> {
+        if !SSL {
+            return None;
+        }
+        // SAFETY: opts is `#[repr(C)]` passed by value
         let p = unsafe { c::uws_h3_create_app(*opts, idle_timeout_s) };
-        if p.is_null() { None } else { Some(p) }
+        core::ptr::NonNull::new(p).map(Self)
     }
+
+    pub fn as_ptr(&self) -> *mut App {
+        self.0.as_ptr()
+    }
+}
+
+impl<const SSL: bool> Drop for OwnedApp<SSL> {
+    fn drop(&mut self) {
+        if SSL {
+            // SAFETY: created in `new`, destroyed once.
+            unsafe { c::uws_h3_app_destroy(self.as_ptr()) }
+        }
+    }
+}
+
+impl App {
     pub fn add_server_name_with_options(
         &mut self,
         hostname: &bun_core::ZStr,
@@ -407,13 +429,6 @@ impl App {
             return Err(AddServerNameError::FailedToAddServerName);
         }
         Ok(())
-    }
-    /// # Safety
-    /// `this` must be a live App handle previously returned by `App::create`;
-    /// it is freed by this call and must not be used afterwards.
-    pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: caller contract above
-        unsafe { c::uws_h3_app_destroy(this) }
     }
     pub fn close(&mut self) {
         c::uws_h3_app_close(self)

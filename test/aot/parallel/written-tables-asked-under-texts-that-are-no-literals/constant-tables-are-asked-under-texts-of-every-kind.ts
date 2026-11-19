@@ -1,0 +1,16 @@
+// Constant Maps and Sets, small, with slots and large, are asked under literals, texts of a parse, slices, joined, wide, atomized and absent texts and under what is no text; then written to, iterated and asked again.
+const hide = [(v: any): any => v][JSON.parse("0")]!;
+const SMALL = new Map<string, unknown>([["idle", 1], ["open", "o"], ["busy", 3.5], ["closed", true], ["", null], ["café", undefined], ["a-key-of-more-than-sixteen-letters", "long"]]);
+const WORDS = new Set<string>(["if", "in", "is", "do", "of", "or", "as", "at", "by", "else", "for", "from", "function", "return", "while", "with", "yield", "await", "async", "const", "let", "var", "new", "typeof", "instanceof", "switch", "case", "default", "break", "continue", "throw", "try", "catch", "finally", "class", "extends", "super", "this", "null", "true", "false", "void", "delete", "import", "export", "static", "get", "set", "enum", "package", "private", "protected", "public", "interface", "implements", "debugger", "中文", "café", "ÿ"]);
+const TYPES = new Map<string, string>([["html", "text/html"], ["htm", "text/html"], ["css", "text/css"], ["js", "text/javascript"], ["json", "application/json"], ["png", "image/png"], ["jpg", "image/jpeg"], ["svg", "image/svg+xml"], ["txt", "text/plain"], ["wasm", "application/wasm"]]);
+const out: string[] = []; const names = [...SMALL.keys(), ...WORDS, ...TYPES.keys()];
+function spellings(x: string): unknown[] { const padded = hide("<<" + x + ">>") as string, wide = hide("中" + x + "中") as string, o: Record<string, number> = {}; const atom = JSON.parse(JSON.stringify(x)) as string; o[atom] = 1; return [x, JSON.parse(JSON.stringify(x)), padded.slice(2, -2), padded.slice(1, -1).slice(1, -1), wide.slice(1, -1), hide(x.slice(0, 1)) + hide(x.slice(1)), Object.keys(o)[0], x.toUpperCase().toLowerCase(), x + "x", "x" + x, x.slice(1), x.toUpperCase(), x.split("").reverse().join(""), new String(x), [x]]; }
+function ask(m: Map<string, unknown>, s: Set<string>, k: any): string { let a = "", b = ""; for (let i = 0; i < 3; i++) { a = String(m.get(k)) + m.has(k); b = String(s.has(k)); } return a + b; }
+function all(m: Map<string, unknown>): void { let h = 7; for (const x of names) for (const k of spellings(x)) { const t = ask(m, WORDS, k); for (let i = 0; i < t.length; i++) h = (Math.imul(h, 31) + t.charCodeAt(i)) | 0; } for (const k of [0, -0, NaN, 1.5, null, undefined, true, 5n, Symbol.iterator, {}, "toString", "__proto__", "constructor"]) h = (Math.imul(h, 31) + ask(m, WORDS, k).length) | 0; out.push(String(h)); }
+for (let r = 0; r < 3; r++) { all(SMALL); all(TYPES); }
+(globalThis as any).Bun?.gc(true); all(SMALL);
+out.push([...SMALL].map(([k, v]) => k + String(v)).join(), [...WORDS].length + "", [...TYPES.values()].join().length + "");
+SMALL.set("new", 1); SMALL.delete("idle"); WORDS.add("later"); WORDS.delete("if"); TYPES.set("html", "x"); all(SMALL); all(TYPES);
+const kept: string[] = []; for (let i = 0; i < 200; i++) kept.push(hide("zz" + names[i % names.length] + i).slice(2, 2 + names[i % names.length]!.length)); (globalThis as any).Bun?.gc(true); out.push(kept.map(k => (TYPES.get(k) ?? "-").length + +WORDS.has(k)).join(""));
+console.log(out.join("|"));
+export {};

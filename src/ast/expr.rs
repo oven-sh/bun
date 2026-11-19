@@ -1822,9 +1822,7 @@ impl Data {
 
                 let item = bump.alloc(E::Class {
                     class_keyword: el.class_keyword,
-                    ts_decorators: el
-                        .ts_decorators
-                        .try_deep_clone_with(|e| e.deep_clone_no_detach(bump, stack_check))?,
+                    ts_decorators: G::deep_clone_decorators(&el.ts_decorators, bump, stack_check)?,
                     class_name: el.class_name,
                     extends: match &el.extends {
                         Some(e) => Some(e.deep_clone_no_detach(bump, stack_check)?),
@@ -1835,6 +1833,7 @@ impl Data {
                     properties,
                     has_decorators: el.has_decorators,
                     should_lower_standard_decorators: el.should_lower_standard_decorators,
+                    assigns_fields_in_constructor: el.assigns_fields_in_constructor,
                     inner_class_ref: el.inner_class_ref,
                 });
                 Ok(Data::EClass(StoreRef::from_bump(item)))

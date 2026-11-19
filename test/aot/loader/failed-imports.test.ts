@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { test } from "../supported";
+import { test } from "../with-compiler";
 import { describeTree } from "./describe";
 
 function installed(name: string, exports: object, files: string[] = ["index.js"]) {

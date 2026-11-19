@@ -1,1 +1,0 @@
-{ "skipInShell": "console.log prints lists and undefined the way Bun does" }

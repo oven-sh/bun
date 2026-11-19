@@ -1,3 +1,0 @@
-error: TS1359: Identifier expected. 'await' is a reserved word that cannot be used here.
-error: TS1359: Identifier expected. 'yield' is a reserved word that cannot be used here.
-error: TS1034: 'super' must be followed by an argument list or member access.

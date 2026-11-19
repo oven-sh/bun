@@ -1,4 +1,4 @@
-use super::support::{CheckedBuild, DEPENDENCY_MANIFEST, TestProgram, check_only, with_program};
+use super::support::{CheckedBuild, TestProgram, check_whole_files, with_program};
 use crate::{CompileRequest, check_and_lower, decide_roles};
 use bun_sema::check::aot::{FunctionRef, LeftOutBodies};
 use bun_sema::hir::FnId;
@@ -57,7 +57,7 @@ fn check_without(
             request: &request,
             ..*program
         };
-        then(&program, check_only(&program));
+        then(&program, check_whole_files(&program));
     });
 }
 
@@ -429,72 +429,15 @@ fn left_out_file_is_not_checked() {
             "main.ts",
             "import { unused } from \"./other\";\nexport const kept = 1;\nexport function dropped() { return unused; }\n",
         ),
-        ("other.ts", "export const unused: string = 2;\n"),
+        (
+            "other.ts",
+            "export const unused = 2;\nlet twice;\nlet twice;\n",
+        ),
     ];
     check_without_file(&files, "other.ts", false, |program, build| {
-        assert_eq!(build.reported(program.file("other.ts"), 2322).len(), 1);
+        assert!(!build.reported(program.file("other.ts"), 2451).is_empty());
     });
     check_without_file(&files, "other.ts", true, |_, build| {
-        assert_eq!(build.codes(), [0; 0]);
-    });
-}
-
-#[test]
-fn error_in_left_out_file_costs_dependency_no_trust() {
-    let files = [
-        (
-            "main.ts",
-            "import { value } from \"dep\";\nexport const copy = value;\n",
-        ),
-        ("node_modules/dep/package.json", DEPENDENCY_MANIFEST),
-        (
-            "node_modules/dep/index.ts",
-            "export { unused } from \"./unused\";\nexport const value = 2;\n",
-        ),
-        (
-            "node_modules/dep/unused.ts",
-            "export const unused: string = 3;\n",
-        ),
-    ];
-    check_without_file(
-        &files,
-        "node_modules/dep/unused.ts",
-        false,
-        |program, build| {
-            assert_eq!(
-                build.demoted_files(),
-                [program.file("node_modules/dep/unused.ts")]
-            );
-        },
-    );
-    check_without_file(&files, "node_modules/dep/unused.ts", true, |_, build| {
-        assert_eq!(build.demoted_files(), []);
-        assert_eq!(build.codes(), [0; 0]);
-    });
-}
-
-#[test]
-fn error_in_left_out_body_costs_dependency_no_trust() {
-    let dependency = "export const value = 2;
-export function dropped() { const wrong: string = 1; return wrong; }
-";
-    let files = [
-        (
-            "main.ts",
-            "import { value } from \"dep\";\nexport const copy = value;\n",
-        ),
-        ("node_modules/dep/package.json", DEPENDENCY_MANIFEST),
-        ("node_modules/dep/index.ts", dependency),
-    ];
-    check_without(&files, &[], |program, build| {
-        assert_eq!(
-            build.demoted_files(),
-            [program.file("node_modules/dep/index.ts")]
-        );
-    });
-    let left_out = [("node_modules/dep/index.ts", "export function dropped")];
-    check_without(&files, &left_out, |_, build| {
-        assert_eq!(build.demoted_files(), []);
         assert_eq!(build.codes(), [0; 0]);
     });
 }

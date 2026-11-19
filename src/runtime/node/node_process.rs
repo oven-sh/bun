@@ -30,6 +30,11 @@ extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
 
 #[unsafe(export_name = "Bun__Process__getExecPath")]
 extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
+    if let Some(file) = bun_resolver::compiled_program::FILE_IN_PLACE_OF_EXECUTABLE.get()
+        && file.can_be_started
+    {
+        return EncodedSlice::from_bytes(&file.path).to_js(global_object);
+    }
     let Ok(out) = bun_core::self_exe_path() else {
         // if for any reason we are unable to get the executable path, we just return argv[0]
         return create_argv0(global_object);
@@ -54,6 +59,14 @@ pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::St
 
 // ───────────────────────────── argv (C++ accessor wrappers) ─────────────────
 
+/// `process.stdout._handle.setBlocking(blocking)`. Like libuv's `uv_stream_set_blocking`, returns 0 or a negative errno.
+pub(crate) fn set_stdio_blocking(fd: i32, blocking: bool) -> i32 {
+    match bun_sys::update_nonblocking(bun_sys::Fd::from_uv(fd), !blocking) {
+        Ok(()) => 0,
+        Err(err) => -i32::from(err.errno),
+    }
+}
+
 pub(crate) fn get_argv(global: &JSGlobalObject) -> JsResult<JSValue> {
     bun_jsc::call_zero_is_throw(global, || Bun__Process__getArgv(global))
 }
@@ -67,8 +80,8 @@ pub(crate) fn get_exec_argv(global: &JSGlobalObject) -> JsResult<JSValue> {
 // @190n: this may need to be noreturn
 #[unsafe(export_name = "Bun__Process__exit")]
 pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
-    let vm = global_object.bun_vm().as_mut();
-    vm.exit_handler.exit_code = code;
+    let vm = global_object.bun_vm();
+    vm.exit_handler.exit_code.set(code);
     if let Some(worker) = vm.worker_ref() {
         // @190n: we may need to use requestTerminate or throwTerminationException
         // instead to terminate the worker sooner
@@ -87,7 +100,7 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
                 bun_core::reload_process(should_clear_terminal, false);
             });
         }
-        vm.exit_handler.requested = true;
+        vm.exit_handler.requested.set(true);
         vm.on_exit();
         vm.global_exit();
     }
@@ -106,6 +119,34 @@ pub(crate) extern "C" fn Bun__Node__getRedirectWarnings() -> bun_core::String {
     match crate::cli::Bun__Node__RedirectWarnings.get() {
         Some(path) => bun_core::String::clone_utf8(path),
         None => bun_core::String::DEAD,
+    }
+}
+
+/// Appends the bytes to the file at `path`, which it creates where there is none, as `fs.appendFileSync` does.
+/// False where a step fails.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__Node__appendToFile(
+    path: *const u8,
+    path_len: usize,
+    bytes: *const u8,
+    len: usize,
+) -> bool {
+    use bun_sys::{File, O};
+    // SAFETY: the caller passes two live spans, which nothing writes to during the call.
+    let (path, bytes) = unsafe {
+        (
+            core::slice::from_raw_parts(path, path_len),
+            core::slice::from_raw_parts(bytes, len),
+        )
+    };
+    match File::openat(
+        bun_sys::Fd::cwd(),
+        path,
+        O::APPEND | O::WRONLY | O::CREAT,
+        0o666,
+    ) {
+        Ok(file) => file.write_all(bytes).is_ok(),
+        Err(_) => false,
     }
 }
 
@@ -168,14 +209,6 @@ mod _impl {
     use bun_jsc::{
         EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker,
     };
-
-    #[cfg(windows)]
-    unsafe extern "C" {
-        // SAFETY precondition: `name` must point to a NUL-terminated wide string;
-        // `value` must be either null (delete) or a NUL-terminated wide string.
-        // Raw-pointer contract — cannot be `safe fn`.
-        fn SetEnvironmentVariableW(name: *const u16, value: *const u16) -> i32;
-    }
 
     // ───────────────────────────── title ─────────────────────────────
 
@@ -429,7 +462,7 @@ mod _impl {
                     .map(|&arg| super::worker_option_string(arg)),
             );
         } else {
-            for arg in &vm.argv {
+            for arg in vm.argv {
                 // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1
                 args_list.push(BunString::clone_utf8(arg));
             }
@@ -448,13 +481,13 @@ mod _impl {
         // `--interactive` boots the bootstrap through `eval_source`, so read
         // the user's real `-e` bytes from `interactive_eval_script` instead
         // (`undefined` when empty, matching `node -i` without `-e`).
-        if let Some(script) = vm.module_loader.interactive_eval_script.as_deref() {
+        if let Some(script) = vm.module_loader.interactive_eval_script.get() {
             if script.is_empty() {
                 return JSValue::UNDEFINED;
             }
             return EncodedSlice::from_bytes(script).to_js(global_object);
         }
-        if let Some(source) = vm.module_loader.eval_source.as_deref() {
+        if let Some(source) = vm.module_loader.eval_source.get() {
             return EncodedSlice::from_bytes(source.contents()).to_js(global_object);
         }
         JSValue::UNDEFINED
@@ -554,6 +587,12 @@ mod _impl {
         if bun_standalone_graph::is_bun_standalone_file_path(path.as_bytes()) {
             return ChdirTarget::InExecutable(graph.dir_key(path.as_bytes()));
         }
+        // `process.chdir(__dirname)` where the folder of the build is not on this machine: the executable holds what lay there.
+        if let Ok(directory) = graph.dir_key(path.as_bytes())
+            && bun_standalone_graph::is_bun_standalone_file_path(directory)
+        {
+            return ChdirTarget::InExecutable(Ok(directory));
+        }
         ChdirTarget::OnDisk(if current.is_some() { path } else { to })
     }
 
@@ -562,11 +601,7 @@ mod _impl {
             return Err(global_object
                 .throw_invalid_arguments(format_args!("Expected path to be a non-empty string")));
         }
-        // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
-        let vm = global_object.bun_vm().as_mut();
-        // `Transpiler::fs_mut()` is the audited safe `&mut FileSystem` accessor for
-        // the process-lifetime singleton (centralised single-unsafe deref).
-        let fs = vm.transpiler.fs_mut();
+        let vm = global_object.bun_vm();
 
         let mut buf = bun_paths::path_buffer_pool::get();
         let Ok(slice) = to.slice_z_buf(&mut buf) else {
@@ -577,7 +612,7 @@ mod _impl {
         // resulting Node SystemError carries `path: cwd`, `dest: target` and the
         // `chdir '<cwd>' -> '<target>'` message format (test-process-chdir-errormessage).
         let prev_cwd: Box<[u8]> = Box::from(
-            bun_core::working_directory_in_executable().unwrap_or_else(|| fs.top_level_dir()),
+            bun_core::working_directory_in_executable().unwrap_or_else(|| vm.top_level_dir()),
         );
         let mut resolved = bun_paths::path_buffer_pool::get();
         let on_disk = match resolve_chdir_target(slice, &mut resolved) {
@@ -595,10 +630,11 @@ mod _impl {
         match vm.set_process_cwd(on_disk) {
             bun_sys::Result::Ok(()) => {
                 bun_core::set_working_directory_in_executable(None);
-                vm.test_isolation_scope(|state| {
-                    state.saved_cwd.get_or_insert(prev_cwd);
-                });
-                let fs = vm.transpiler.fs_mut();
+                if vm.test_isolation_enabled.get() {
+                    vm.test_isolation_state.saved_cwd.with_mut(|saved| {
+                        saved.get_or_insert(prev_cwd);
+                    });
+                }
                 #[cfg(windows)]
                 let without_trailing_slash =
                     bun_paths::string_paths::without_trailing_slash_windows_path;
@@ -606,7 +642,7 @@ mod _impl {
                 let without_trailing_slash = strings::without_trailing_slash;
                 bun_string_jsc::create_utf8_for_js(
                     global_object,
-                    without_trailing_slash(fs.top_level_dir()),
+                    without_trailing_slash(vm.top_level_dir()),
                 )
             }
             bun_sys::Result::Err(e) => {
@@ -622,6 +658,7 @@ mod _impl {
     #[cfg(windows)]
     #[unsafe(export_name = "Bun__Process__editWindowsEnvVar")]
     extern "C" fn bun_process_edit_windows_env_var(k: &BunString, v: &BunString) {
+        use bun_core::WStr;
         const _: () = assert!(cfg!(windows));
         if k.tag() == bun_core::Tag::Empty {
             return;
@@ -639,11 +676,10 @@ mod _impl {
         };
         buf1[len1] = 0;
 
-        static EMPTY_W: [u16; 1] = [0];
-        let str2: Option<*const u16> = if v.tag() != bun_core::Tag::Dead {
+        let str2: Option<&WStr> = if v.tag() != bun_core::Tag::Dead {
             Some('str_: {
                 if v.tag() == bun_core::Tag::Empty {
-                    break 'str_ EMPTY_W.as_ptr();
+                    break 'str_ WStr::EMPTY;
                 }
                 let len2: usize = if v.is_8bit() {
                     strings::copy_latin1_into_utf16(&mut buf2, v.latin1()).written
@@ -652,14 +688,11 @@ mod _impl {
                     v.length()
                 };
                 buf2[len2] = 0;
-                buf2.as_ptr()
+                WStr::from_buf(&buf2, len2)
             })
         } else {
             None
         };
-        // SAFETY: buf1[len1] == 0; str2 is either null or NUL-terminated
-        unsafe {
-            let _ = SetEnvironmentVariableW(buf1.as_ptr(), str2.unwrap_or(core::ptr::null()));
-        }
+        let _ = bun_sys::windows::SetEnvironmentVariableW(WStr::from_buf(&buf1, len1), str2);
     }
 } // mod _impl

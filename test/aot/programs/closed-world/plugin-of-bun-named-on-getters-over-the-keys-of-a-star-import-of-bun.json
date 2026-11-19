@@ -1,4 +1,0 @@
-{
-  "skipInShell": "it imports bun, which the jsc shell does not have",
-  "alone": "whether an executable holds Bun.plugin goes by what all of its entry points name"
-}

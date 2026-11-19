@@ -40,10 +40,6 @@ struct CacheState {
     entries: HashMap<u64, Entry, IdentityContext<u64>>,
 }
 
-// SAFETY: `CacheState` is only reached through the global `STATE` mutex; the
-// `sys::Dir` fd is just an integer handle.
-unsafe impl Send for CacheState {}
-
 struct Entry {
     /// `path.text` of the module (absolute file path).
     filename: Box<[u8]>,
@@ -64,22 +60,19 @@ struct Entry {
 /// StandaloneModuleGraph.rs "Bytecode alignment" note). Either a heap buffer
 /// or a span inside a whole-file mapping.
 struct AlignedBlob {
-    ptr: core::ptr::NonNull<u8>,
-    len: usize,
     backing: Backing,
+    /// The blob runs from here to the end of `backing`.
+    start: usize,
 }
 
 enum Backing {
-    Heap,
-    /// `PROT_READ`/`MAP_PRIVATE` mapping of the whole cache file; `ptr` points
-    /// at [`blob_file_offset`] inside it, 128-aligned because the mapping base
+    Heap(Vec<u8>),
+    /// `PROT_READ`/`MAP_PRIVATE` mapping of the whole cache file; `start` is
+    /// [`blob_file_offset`] inside it, 128-aligned because the mapping base
     /// is page-aligned. Safe against entry rewrites: writers go through
     /// tmpfile + rename, so a replaced file's old inode stays live under the
     /// mapping.
-    Map {
-        base: core::ptr::NonNull<u8>,
-        map_len: usize,
-    },
+    Map(sys::Mmap),
 }
 
 // SAFETY: the buffer is plain bytes; ownership is unique to the entry map.
@@ -93,43 +86,25 @@ static RETIRED_BLOBS: Mutex<Vec<AlignedBlob>> = Mutex::new(Vec::new());
 const BLOB_ALIGN: usize = 128;
 
 impl AlignedBlob {
-    /// Uninitialized buffer; caller must fill all `len` bytes before reading.
-    fn new_uninit(len: usize) -> Option<Self> {
-        let layout = core::alloc::Layout::from_size_align(len.max(1), BLOB_ALIGN).ok()?;
-        // SAFETY: layout has non-zero size.
-        let raw = unsafe { std::alloc::alloc(layout) };
-        let ptr = core::ptr::NonNull::new(raw)?;
+    fn copy_of(blob: &[u8]) -> Option<Self> {
+        let mut bytes = Vec::<u8>::new();
+        bytes.try_reserve_exact(blob.len() + BLOB_ALIGN - 1).ok()?;
+        let start = bytes.as_ptr().align_offset(BLOB_ALIGN);
+        bytes.resize(start, 0);
+        bytes.extend_from_slice(blob);
         Some(Self {
-            ptr,
-            len,
-            backing: Backing::Heap,
+            backing: Backing::Heap(bytes),
+            start,
         })
     }
 
     fn as_slice(&self) -> &[u8] {
-        // SAFETY: `ptr` is valid for `len` bytes for the lifetime of `self`.
-        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
-    }
-
-    fn as_mut_slice(&mut self) -> &mut [u8] {
-        // SAFETY: `ptr` is valid for `len` bytes for the lifetime of `self`.
-        unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
-    }
-}
-
-impl Drop for AlignedBlob {
-    fn drop(&mut self) {
-        match self.backing {
-            Backing::Heap => {
-                let layout = core::alloc::Layout::from_size_align(self.len.max(1), BLOB_ALIGN)
-                    .expect("valid");
-                // SAFETY: allocated in `new_uninit` with the identical layout.
-                unsafe { std::alloc::dealloc(self.ptr.as_ptr(), layout) };
-            }
-            Backing::Map { base, map_len } => {
-                let _ = sys::munmap(base.as_ptr(), map_len);
-            }
-        }
+        let backing = match &self.backing {
+            Backing::Heap(bytes) => bytes,
+            // SAFETY: see `Backing::Map`.
+            Backing::Map(pages) => unsafe { pages.as_slice() },
+        };
+        &backing[self.start..]
     }
 }
 
@@ -201,8 +176,7 @@ fn type_name(is_cjs: bool) -> &'static str {
 
 fn sha256(bytes: &[u8]) -> [u8; HASH_SIZE] {
     let mut out = [0u8; HASH_SIZE];
-    // SAFETY: `out` is exactly the 32 bytes SHA256 writes.
-    unsafe { boring::SHA256(bytes.as_ptr(), bytes.len(), out.as_mut_ptr()) };
+    bun_sha_hmac::sha::hashers::SHA256::hash(bytes, &mut out);
     out
 }
 
@@ -663,24 +637,6 @@ fn blob_file_offset(code_size: u32) -> u64 {
     (HEADER_SIZE as u64 + u64::from(code_size)).next_multiple_of(BLOB_ALIGN as u64)
 }
 
-/// Unmaps on drop unless [`MapGuard::take`]n for a blob that keeps the
-/// mapping alive.
-struct MapGuard(Option<(core::ptr::NonNull<u8>, usize)>);
-
-impl MapGuard {
-    fn take(&mut self) -> Option<(core::ptr::NonNull<u8>, usize)> {
-        self.0.take()
-    }
-}
-
-impl Drop for MapGuard {
-    fn drop(&mut self) {
-        if let Some((base, map_len)) = self.0.take() {
-            let _ = sys::munmap(base.as_ptr(), map_len);
-        }
-    }
-}
-
 fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option<&[u8]>) {
     let basename = cache_basename(key);
     let mut line = String::new();
@@ -732,30 +688,21 @@ fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option
     let (prot, flags) = (libc::PROT_READ, libc::MAP_PRIVATE);
     #[cfg(not(unix))]
     let (prot, flags) = (0i32, 0i32);
-    let mut map_guard = MapGuard(
-        sys::mmap(core::ptr::null_mut(), total, prot, flags, file.fd(), 0)
-            .ok()
-            .and_then(core::ptr::NonNull::new)
-            .map(|base| (base, total)),
-    );
+    let mapped = sys::Mmap::new(total, prot, flags, file.fd(), 0).ok();
     let heap_contents;
-    let bytes: &[u8] = match &map_guard.0 {
-        // SAFETY: the mapping is `total` bytes and outlives this borrow.
-        Some((base, _)) => unsafe { core::slice::from_raw_parts(base.as_ptr(), total) },
+    let bytes: &[u8] = match &mapped {
+        // SAFETY: see `Backing::Map`.
+        Some(mapped) => unsafe { mapped.as_slice() },
         None => {
             let mut contents: Vec<u8> = Vec::new();
             if contents.try_reserve_exact(total).is_err() {
                 finish(line, &|| "allocation failed\n".into());
                 return;
             }
-            // SAFETY: `pread_all` only writes into the spare bytes and returns how many it filled.
-            let read = unsafe {
-                bun_core::vec::fill_spare(&mut contents, 0, |spare| {
-                    let read = file.pread_all(&mut spare[..total], 0).ok();
-                    (read.unwrap_or(0), read)
-                })
-            };
-            if read != Some(total) {
+            let read = bun_core::vec::append_with(&mut contents, total, |spare| {
+                file.pread_all_buf(spare, 0)
+            });
+            if read.ok() != Some(total) {
                 finish(line, &|| "reading header failed\n".into());
                 return;
             }
@@ -856,28 +803,19 @@ fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option
     // page-aligned (every supported page size is a multiple of 128) and
     // `blob_off` is a multiple of 128 by construction, but a miss here would
     // be a JSC assert or segfault, so verify instead of assuming.
-    let map_is_aligned = map_guard.0.as_ref().is_some_and(|(base, _)| {
-        (base.as_ptr() as usize + blob_off as usize).is_multiple_of(BLOB_ALIGN)
-    });
-    let blob = if map_is_aligned {
-        let (base, map_len) = map_guard.take().expect("checked above");
-        // SAFETY: `blob_off + cache_size == map_len` was just validated.
-        let ptr =
-            unsafe { core::ptr::NonNull::new_unchecked(base.as_ptr().add(blob_off as usize)) };
-        AlignedBlob {
-            ptr,
-            len: cache_size as usize,
-            backing: Backing::Map { base, map_len },
+    let is_aligned = blob_bytes.as_ptr().addr().is_multiple_of(BLOB_ALIGN);
+    let blob = match mapped {
+        Some(pages) if is_aligned => AlignedBlob {
+            backing: Backing::Map(pages),
+            start: blob_off as usize,
+        },
+        _ => {
+            let Some(blob) = AlignedBlob::copy_of(blob_bytes) else {
+                finish(line, &|| "allocation failed\n".into());
+                return;
+            };
+            blob
         }
-    } else {
-        // No mapping, or the blob would be misaligned in it: copy to an
-        // aligned heap buffer instead (map_guard unmaps on return).
-        let Some(mut blob) = AlignedBlob::new_uninit(cache_size as usize) else {
-            finish(line, &|| "allocation failed\n".into());
-            return;
-        };
-        blob.as_mut_slice().copy_from_slice(blob_bytes);
-        blob
     };
     finish(line, &|| format!(" success, size={cache_size}\n"));
     entry.blob = Some(blob);
@@ -1036,15 +974,13 @@ fn write_persist_job_locked(
     cclog!("[compile cache] Creating temporary file for cache of {name} ({tname})...");
 
     // 0600 like Node: entries contain the module's post-transpile source.
-    let mut tmpfile =
-        match sys::Tmpfile::create_with_mode(state.dir_handle.fd(), tmpname_zstr, 0o600) {
-            Ok(t) => t,
-            Err(e) => {
-                cclog!("failed. {}\n", errno_name(&e));
-                return Err(());
-            }
-        };
-    let _close = sys::CloseOnDrop::new(tmpfile.fd);
+    let tmpfile = match sys::Tmpfile::create_with_mode(state.dir_handle.fd(), tmpname_zstr, 0o600) {
+        Ok(t) => t,
+        Err(e) => {
+            cclog!("failed. {}\n", errno_name(&e));
+            return Err(());
+        }
+    };
 
     let tmp_display = if logging {
         format!(
@@ -1070,8 +1006,7 @@ fn write_persist_job_locked(
     header_bytes[8..12].copy_from_slice(&cache_size.to_le_bytes());
     header_bytes[12..12 + HASH_SIZE].copy_from_slice(&job.code_hash);
     header_bytes[12 + HASH_SIZE..HEADER_SIZE].copy_from_slice(&cache_hash);
-    // ManuallyDrop: the fd is owned by `_close` above.
-    let file = core::mem::ManuallyDrop::new(sys::File::from_fd(tmpfile.fd));
+    let file = &tmpfile.file;
     let write_all = || -> sys::Maybe<()> {
         file.pwrite_all(&header_bytes, 0)?;
         file.pwrite_all(&job.code, HEADER_SIZE as i64)?;
@@ -1081,14 +1016,13 @@ fn write_persist_job_locked(
     };
     if let Err(e) = write_all() {
         cclog!("failed: {}\n", errno_name(&e));
-        let _ = sys::unlinkat(state.dir_handle.fd(), tmpname_zstr);
         return Err(());
     }
     cclog!("success\n");
 
     let mut dest_z = [0u8; 17];
     dest_z[..16].copy_from_slice(&basename);
-    let dest_zstr = ZStr::from_buf(&dest_z, 16);
+    let dest_zstr = ZStr::from_slice_with_nul(&dest_z);
     let final_display = if logging {
         format!(
             "{}{}{}",
@@ -1100,9 +1034,8 @@ fn write_persist_job_locked(
         String::new()
     };
     cclog!("[compile cache] Renaming {tmp_display} to {final_display}...");
-    if let Err(e) = tmpfile.finish(dest_zstr) {
+    if let Err((e, _)) = tmpfile.finish(dest_zstr) {
         cclog!("failed: {}\n", errno_name(&e));
-        let _ = sys::unlinkat(state.dir_handle.fd(), tmpname_zstr);
         return Err(());
     }
     cclog!("success\n");
@@ -1213,17 +1146,14 @@ pub fn persist_now() {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-/// # Safety
-/// `dir` is null or a live `BunString`; both out-params are valid for write.
-pub unsafe extern "C" fn Bun__NodeCompileCache__enable(
-    dir: *const BunString,
+pub extern "C" fn Bun__NodeCompileCache__enable(
+    dir: Option<&BunString>,
     // -1 = not specified (fall back to NODE_COMPILE_CACHE_PORTABLE).
     portable: i32,
-    out_directory: *mut BunString,
-    out_message: *mut BunString,
+    out_directory: &mut core::mem::MaybeUninit<BunString>,
+    out_message: &mut core::mem::MaybeUninit<BunString>,
 ) -> i32 {
-    // SAFETY: C++ passes null or a live BunString plus valid out-params.
-    let dir_utf8 = unsafe { dir.as_ref() }.map(|d| d.to_utf8());
+    let dir_utf8 = dir.map(|d| d.to_utf8());
     let dir_slice = dir_utf8.as_ref().map(|d| d.slice());
     let result = enable(
         dir_slice,
@@ -1234,12 +1164,10 @@ pub unsafe extern "C" fn Bun__NodeCompileCache__enable(
         },
     );
     if let Some(directory) = result.directory {
-        // SAFETY: out-param is valid for write per fn contract.
-        unsafe { out_directory.write(BunString::clone_utf8(&directory)) };
+        out_directory.write(BunString::clone_utf8(&directory));
     }
     if let Some(message) = result.message {
-        // SAFETY: out-param is valid for write per fn contract.
-        unsafe { out_message.write(BunString::clone_utf8(message.as_bytes())) };
+        out_message.write(BunString::clone_utf8(message.as_bytes()));
     }
     result.status
 }

@@ -1,0 +1,18 @@
+const unseen = (0, eval)("(x) => x");
+const o = unseen({ p: {} }), a = unseen(1), k = unseen("q");
+const t = (f) => { try { f(); console.log("no error"); } catch (e) { console.log(JSON.stringify(e.message)); } };
+t(() => new o.x.q.R(a));
+t(() => new o.p.q.R(a));
+t(() => new o.p.R(a));
+t(() => new o.p[k].R(a));
+t(() => new o.x[k](a));
+t(() => new o.x[k]);
+t(() => new o.p.q.R);
+t(() => new o.p.q.R());
+t(() => new o.p.q.R(a).s.t);
+t(() => new o.p.q.R(a).s());
+t(() => new Date(0).s.t);
+t(() => new Date(0).s());
+t(() => new Date().s.t);
+t(() => new import.meta.a.b(a));
+t(() => new o.p.tag`x`);

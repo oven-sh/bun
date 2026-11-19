@@ -318,7 +318,7 @@ function initializersThatNobodyReads() {
           `function filler() {\n  return { a: 1 };\n}\n${bindings[binding](before, made, behind)}\n` +
           `function read() {\n  return held;\n}\nif (process.argv.length > 100) console.log(read());\n`;
       files[`${folder}/main.js`] =
-        `// Modules whose initializers nobody reads run them, or fail in them, as in plain Bun.\n// STATISTIC: InitializersDeferred >= 1\n` +
+        `// Modules whose initializers nobody reads run them, or fail in them, as in plain Bun.\n` +
         `async function attempt(name, load) {\n  try {\n    await load();\n    console.log(name, "ran to its end");\n  } catch (error) {\n    console.log(name, error?.constructor?.name);\n  }\n}\n` +
         part.map(({ name }) => `await attempt("${name}", () => import("./${name}.js"));\n`).join("");
     }

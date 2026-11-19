@@ -2,7 +2,9 @@
 //
 // A thread that joins a build touches megabytes of its own first. So the compiler's pool starts a thread only when a task waits
 // for one, and no more than four for what is part of every build (the libraries' declarations, Bun's own modules) plus one for
-// every 32 KB of the program's own source text, as that text is read. The bundler's pool has nothing to parse and starts none.
+// every 32 KB of the program's own source text, as that text is read. The engine then has one for every 256 KB of what it is
+// handed: ten lines and Bun's library are 1.8 MB, which it compiles fastest on six to eight threads. The bundler's pool has
+// nothing to parse and starts none.
 // With --aot-threads=<n> the compiler's pool starts no more than n.
 //
 // The threads of a pool live until the process ends, so the names under /proc/<pid>/task, read again and again while the
@@ -12,7 +14,7 @@ import { readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { availableParallelism } from "os";
 import { join } from "path";
-import { test } from "../supported";
+import { test } from "../measures";
 
 const tenLines = `const names: string[] = ["a", "b"];
 function greet(name: string): string {
@@ -23,9 +25,8 @@ for (const name of names) {
 }
 `;
 
-function largeProgram(): Record<string, string> {
+function largeProgram(modules = 64): Record<string, string> {
   const files: Record<string, string> = {};
-  const modules = 64;
   for (let i = 0; i < modules; i++) {
     const lines: string[] = [];
     for (let j = 0; j < 200; j++)
@@ -68,7 +69,8 @@ async function threadsOfBuild(files: Record<string, string>, flags: string[]): P
     stderr: "",
   });
   const counts: Record<string, number> = {};
-  for (const name of names.values()) {
+  // A thread bears the name of the thread that started it until it has named itself, so a name counts once.
+  for (const name of new Set(names.values())) {
     const pool = name.replace(/ \d+$/, "");
     counts[pool] = (counts[pool] ?? 0) + 1;
   }
@@ -80,14 +82,14 @@ test.skipIf(!isLinux)("a ten-line program is built by a few threads", async () =
   console.log(threads);
   expect(threads["Bun Pool"] ?? 0).toBe(0);
   expect(threads["Early Load"] ?? 0).toBe(0);
-  expect(threads["Bun Compile"]).toBeLessThanOrEqual(4);
+  expect(threads["Bun Compile"]).toBeLessThanOrEqual(8);
 });
 
-test.skipIf(!isLinux || availableParallelism() < 16)("a program of a megabyte is built by all threads", async () => {
-  const threads = await threadsOfBuild(largeProgram(), []);
+test.skipIf(!isLinux)("a program of six megabytes is built by all threads", async () => {
+  const threads = await threadsOfBuild(largeProgram(256), []);
   console.log(threads);
   expect(threads["Bun Pool"] ?? 0).toBe(0);
-  expect(threads["Bun Compile"]).toBeGreaterThanOrEqual(12);
+  expect(threads["Bun Compile"]).toBeGreaterThanOrEqual(Math.min(availableParallelism(), 12));
 });
 
 test.skipIf(!isLinux)("a chosen number of threads is kept", async () => {

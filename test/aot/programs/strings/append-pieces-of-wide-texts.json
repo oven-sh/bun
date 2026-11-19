@@ -1,3 +1,0 @@
-{
-  "skipInShell": "Bun.escapeHTML and Bun.gc are not in the shell"
-}

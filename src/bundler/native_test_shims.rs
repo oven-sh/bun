@@ -1,5 +1,6 @@
 //! Symbols that the rest of Bun provides to this crate and `bun_sema_standalone` does not stand in for, for this crate's
-//! `cargo test` binary. Never compiled into the real build.
+//! `cargo test` binary and for those that ask for `test_support`. Never compiled into the real build. Weak, so the real
+//! definitions win wherever they are linked.
 
 use core::ffi::{c_char, c_int, c_void};
 use std::time::Duration;
@@ -8,6 +9,7 @@ macro_rules! not_called_by_tests {
     ($($name:ident)*) => {
         $(
             #[unsafe(no_mangle)]
+            #[linkage = "weak"]
             extern "C" fn $name() -> ! {
                 panic!(concat!(stringify!($name), " has no stand-in in native_test_shims.rs"));
             }
@@ -18,8 +20,6 @@ macro_rules! not_called_by_tests {
 not_called_by_tests! {
     __bun_resolver_parse_dependency
     __bun_resolver_init_package_manager
-    __bun_macro_context_init
-    __bun_macro_context_deinit
     __bun_macro_context_call
     __bun_macro_collect_vm_garbage
     __bun_jsc_wtf_string_hash
@@ -30,14 +30,12 @@ not_called_by_tests! {
     __bun_jsc_encoder_string_table_take
     __bun_jsc_encoder_string_table_slot
     __bun_jsc_encoder_string_table_new
-    __bun_jsc_enable_hot_module_reloading_for_bundler
     __bun_jsc_bytecode_link_encoder_new
     __bun_jsc_bytecode_link_encoder_finish
     __bun_jsc_bytecode_link_encoder_destroy
     __bun_jsc_bytecode_link_encoder_add_module
     __bun_jsc_bytecode_link_encoder_add_internal_module_from_source
     __bun_jsc_bytecode_link_encoder_add_internal_module
-    __bun_dispatch__TranspilerCacheImpl__Jsc__get
     __bun_dispatch__JsEventLoop__Jsc__tick
     __bun_dispatch__JsEventLoop__Jsc__js_poster
     __bun_dispatch__JsEventLoop__Jsc__auto_tick
@@ -53,38 +51,67 @@ not_called_by_tests! {
     __bun_dispatch__DevServerHandle__Bake__barrel_needed_exports
     __bun_dispatch__DevServerHandle__Bake__asset_hash
     URL__getFileURLString
-    JSC__jsToNumber
     JSBundlerPlugin__hasOnBeforeParsePlugins
     JSBundlerPlugin__freezeFilters
     JSBundlerPlugin__callOnBeforeParsePlugins
     JSBundlerPlugin__anyMatches
-    Bun__JSC__operationMathPow
 }
 
 #[unsafe(no_mangle)]
+#[linkage = "weak"]
 extern "C" fn Bun__linux_trace_init() -> c_int {
     0
 }
 
 #[unsafe(no_mangle)]
+#[linkage = "weak"]
 extern "C" fn Bun__linux_trace_emit(_event_name: *const c_char, _duration_ns: i64) -> c_int {
     0
+}
+
+// `**` as the language defines it, where the C library answers 1 for a base of 1 or -1.
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+extern "C" fn Bun__JSC__operationMathPow(base: f64, exponent: f64) -> f64 {
+    if exponent.is_nan() || (base.abs() == 1.0 && exponent.is_infinite()) {
+        return f64::NAN;
+    }
+    base.powf(exponent)
+}
+
+// No text is a URL here: whoever asks goes on as behind a text that does not parse.
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+extern "C" fn URL__getHref(_text: &bun_core::String) -> bun_core::String {
+    bun_core::String::DEAD
+}
+
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+extern "C" fn URL__getHrefJoin(
+    _base: &bun_core::String,
+    _relative: &bun_core::String,
+) -> bun_core::String {
+    bun_core::String::DEAD
 }
 
 const SIZE_OF_LOOP: usize = 64 * 1024;
 
 #[unsafe(no_mangle)]
+#[linkage = "weak"]
 extern "C" fn uws_get_loop() -> *mut c_void {
     thread_local! {
-        static LOOP: *mut c_void = Box::leak(vec![0u64; SIZE_OF_LOOP / 8].into_boxed_slice()).as_mut_ptr().cast();
+        static LOOP: *mut c_void = Box::leak(vec![0u128; SIZE_OF_LOOP / 16].into_boxed_slice()).as_mut_ptr().cast();
     }
     LOOP.with(|event_loop| *event_loop)
 }
 
 #[unsafe(no_mangle)]
+#[linkage = "weak"]
 extern "C" fn us_wakeup_loop(_event_loop: *mut c_void) {}
 
 #[unsafe(no_mangle)]
+#[linkage = "weak"]
 extern "C" fn us_loop_run_bun_tick(
     _event_loop: *mut c_void,
     _timeout: *const c_void,

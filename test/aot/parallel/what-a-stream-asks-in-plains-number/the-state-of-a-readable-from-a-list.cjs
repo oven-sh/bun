@@ -1,0 +1,1 @@
+const { Readable } = require("node:stream"); const held = new WeakMap(); let reads = 0; Object.defineProperty(Readable.prototype, "_readableState", { configurable: true, get() { reads++; return held.get(this); }, set(v) { held.set(this, v); } }); Readable.from([1]); console.log(reads);

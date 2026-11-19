@@ -17,13 +17,19 @@ const queriesRows = {
   implementation: b.generic,
 } satisfies b.FunctionField;
 
-const classesWithBody = ["Blob", "Request", "Response"];
+// `new Bun.sql(url)` answers what `new SQL(url)` does: another function of the kind.
+const makesClient = {
+  args: queriesRows.args,
+  returns: b.any,
+  capability: "js",
+  throws: true,
+  uses: { strings: heldByQuery, values: heldByQuery },
+  implementation: b.generic,
+} satisfies b.FunctionField;
 
 export default b.declarations(
   b.fn("Bun.sql", queriesRows),
+  b.constructionOfFunction("Bun.sql", makesClient),
   // Both names answer the default export of bun:sql: defaultBunSQLObject in BunObject.cpp.
   b.same("Bun.postgres", "Bun.sql"),
-  classesWithBody.flatMap(name =>
-    b.extend(`${name}.prototype.json`, { bodyBytesForm: "%CompilerHelpers%.jsonSourceOfBody" }),
-  ),
 );

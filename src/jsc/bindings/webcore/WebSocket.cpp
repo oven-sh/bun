@@ -540,11 +540,11 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
     BunString extensions = Bun::toString(options.extensions);
 
     // The upgrade client takes ownership of sslConfig, even if connect() fails. It only borrows proxySSLConfig.
-    void* sslConfig = options.tls.sslConfig.release();
-    const void* proxySSLConfig = hasProxyTLS ? proxyConfig->tls->sslConfig.get() : nullptr;
+    auto* sslConfig = options.tls.sslConfig.release();
+    const auto* proxySSLConfig = hasProxyTLS ? proxyConfig->tls->sslConfig.get() : nullptr;
 
     // Set to an errno name when connect() returns null and the cause is known.
-    BunString connectErrorCode { BunStringTag::Empty };
+    Bun::OwnedString connectErrorCode;
 
     auto* connectUpgradeClient = usesTLSSocket() ? Bun__WebSocketHTTPSClient__connect : Bun__WebSocketHTTPClient__connect;
     this->m_upgradeClient = connectUpgradeClient(
@@ -719,7 +719,7 @@ void WebSocket::setRef(bool ref)
 
 std::optional<WebSocket::RemoteAddress> WebSocket::remoteAddress() const
 {
-    BunString address { BunStringTag::Empty };
+    Bun::OwnedString address;
     uint16_t port = 0;
     bool isIPv6 = false;
     if (callClient<Bun__WebSocketClient__remoteAddress, Bun__WebSocketClientTLS__remoteAddress>(&address, &port, &isIPv6))
@@ -1379,27 +1379,27 @@ extern "C" void WebSocket__didEndResponseBody(WebCore::WebSocket* webSocket, boo
     webSocket->didEndResponseBody(aborted, reset);
 }
 
-extern "C" void WebSocket__didFail(WebCore::WebSocket* webSocket, BunString text, size_t bufferedAmount, BunString code, BunString detail)
+extern "C" void WebSocket__didFail(WebCore::WebSocket* webSocket, Bun::OwnedString text, size_t bufferedAmount, Bun::OwnedString code, Bun::OwnedString detail)
 {
     webSocket->didFail(text.transferToWTFString(), bufferedAmount, code.transferToWTFString(), detail.transferToWTFString());
 }
 
-extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t code, BunString reason, bool wasClean, size_t bufferedAmount)
+extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t code, Bun::OwnedString reason, bool wasClean, size_t bufferedAmount)
 {
     webSocket->didClose(code, reason.transferToWTFString(), wasClean, bufferedAmount);
 }
 
-extern "C" void WebSocket__didStartClosingHandshake(WebCore::WebSocket* webSocket, uint16_t code, BunString reason)
+extern "C" void WebSocket__didStartClosingHandshake(WebCore::WebSocket* webSocket, uint16_t code, Bun::OwnedString reason)
 {
     webSocket->didStartClosingHandshake(code, reason.transferToWTFString());
 }
 
-extern "C" void WebSocket__didError(WebCore::WebSocket* webSocket, BunString text, BunString code, BunString detail)
+extern "C" void WebSocket__didError(WebCore::WebSocket* webSocket, Bun::OwnedString text, Bun::OwnedString code, Bun::OwnedString detail)
 {
     webSocket->didError(text.transferToWTFString(), code.transferToWTFString(), detail.transferToWTFString());
 }
 
-extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, BunString text)
+extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, Bun::OwnedString text)
 {
     webSocket->didReceiveMessage(text.transferToWTFString());
 }
@@ -1456,7 +1456,7 @@ extern "C" JSC::EncodedJSValue WebSocket__checkServerIdentity(WebCore::WebSocket
     return JSC::JSValue::encode(webSocket->checkServerIdentity(forProxy).getValue(JSC::jsUndefined()));
 }
 
-extern "C" void WebSocket__setProtocol(WebCore::WebSocket* webSocket, BunString protocol)
+extern "C" void WebSocket__setProtocol(WebCore::WebSocket* webSocket, Bun::OwnedString protocol)
 {
     webSocket->setProtocol(protocol.transferToWTFString());
 }

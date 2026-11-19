@@ -3,21 +3,23 @@
 // CHECK: [[castResult]] = Call {{*}}calleeName="f"
 // CHECK: [[castTest]] = TypeTest [[castResult]] testedType=undefined|null @
 // CHECK-NEXT: Branch [[castTest]] -> taken {{*}}(| 0), notTaken [[castPresent]](| 0)
-// CHECK: [[castPresent]]([[castValue]]):
-// CHECK: Return [[castValue]]
+// CHECK: [[castPresent]]([[castLeft]]):
+// CHECK-NEXT: [[castNamed]] = NarrowByTest [[castResult]], [[castLeft]]
+// CHECK: Return [[castNamed]]
 // CHECK-LABEL: function {{*}}name="loop"
 // CHECK: [[item]] = Call {{*}}calleeName="next"
 // CHECK: [[loopTest]] = TypeTest [[item]] testedType=undefined @
 // CHECK-NEXT: Branch [[loopTest]] -> taken {{*}}(| 0), notTaken [[body]](| 0)
-// CHECK: [[body]]([[defined]]):
-// CHECK: = Call {{*}}, [[defined]] calleeName="use"
+// CHECK: [[body]]([[itemLeft]]):
+// CHECK-NEXT: [[itemNamed]] = NarrowByTest [[item]], [[itemLeft]]
+// CHECK: = Call {{*}}, [[itemNamed]] calleeName="use"
 // CHECK-LABEL: function {{*}}name="match"
 // CHECK: [[result]] = Call {{*}}calleeName="re.exec"
 // CHECK: [[test]] = TypeTest [[result]] testedType=undefined|null @
 // CHECK-NEXT: Branch [[test]] -> taken {{*}}(| 0), notTaken [[present]](| 0)
-// CHECK: [[present]]([[m]]):
-// CHECK: [[convertedM]] = Convert [[m]] declared={type=undefined|null|string|Array flags=[IsExpected]}
-// CHECK: = ElemGet [[convertedM]],
+// CHECK: [[present]]([[left]]):
+// CHECK-NEXT: [[named]] = NarrowByTest [[result]], [[left]]
+// CHECK: = ElemGet [[named]],
 
 // RUN(TESTS): lower
 // TESTS-COUNT-3: = TypeTest

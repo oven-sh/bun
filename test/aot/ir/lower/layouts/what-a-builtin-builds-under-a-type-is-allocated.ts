@@ -1,20 +1,20 @@
 // JSON.parse may build its answer with the layouts of the type that it is written under: the compiler's typed parse does. No literal makes a Config or an Order here and no store
 // writes their names, yet they are layouts of objects, not mere descriptions, and so is what they lead to (Nested).
 // RUN(ANNOTATED): link
-// ANNOTATED: layout {{*}}name="Config" {{*}}fields=[{key="host" {{*}}flags=[IsRequired]}, {key="nested" {{*}}flags=[IsRequired]}]
+// ANNOTATED: layout {{*}}fields=[{key="host" {{*}}flags=[IsRequired]}, {key="nested" {{*}}flags=[IsRequired]}]
 // RUN(REACHED): link
-// REACHED: layout {{*}}name="Nested" {{*}}fields=[{key="depth" {{*}}flags=[IsRequired]}]
+// REACHED: layout {{*}}fields=[{key="depth" {{*}}flags=[IsRequired]}]
 // RUN(ASSERTED): link
-// ASSERTED: layout {{*}}name="Order" {{*}}fields=[{key="amount" {{*}}flags=[IsRequired]}]
+// ASSERTED: layout {{*}}fields=[{key="amount" {{*}}flags=[IsRequired]}]
 // RUN(NONE): link
 // NONE-NOT: layout {{*}}name="Config" {{*}}IsNever
 // NONE-NOT: layout {{*}}name="Nested" {{*}}IsNever
 // NONE-NOT: layout {{*}}name="Order" {{*}}IsNever
 // Beside them: what a function of the program that answers `any` is written under is built by nobody. Nor does every built-in that answers `any` build something: `f.call(..)`.
 // RUN(OWN): link
-// OWN: layout {{*}}name="Unbuilt" {{*}}flags=[IsNeverAllocated]
+// OWN: layout {{*}}fields=[{key="never"{{*}}flags=[IsNeverAllocated]
 // RUN(CALLED): link
-// CALLED: layout {{*}}name="Called" {{*}}flags=[IsNeverAllocated]
+// CALLED: layout {{*}}fields=[{key="status"{{*}}flags=[IsNeverAllocated]
 interface Nested {
   depth: number;
 }

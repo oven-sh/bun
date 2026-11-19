@@ -1,1 +1,0 @@
-error: TS2339: Property 'extra' does not exist on type 'Grown'.

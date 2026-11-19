@@ -5,8 +5,8 @@ use crate::ir::body::{BlockView, Body, StreamError, TargetView};
 use crate::ir::builder::Edge;
 use crate::ir::declared::{DeclaredType, Mapped, PositionFlags};
 use crate::ir::generated::{
-    BlockFrequency, BlockRole, FunctionReferenceKind, IllTypedCause, InternalErrorKind,
-    ModuleReferenceKind, Opcode, RuntimeErrorKind, TemplateString, TerminatorKind,
+    BlockRole, FunctionReferenceKind, IllTypedCause, InternalErrorKind, ModuleReferenceKind,
+    Opcode, RuntimeErrorKind, TemplateString, TerminatorKind,
 };
 use crate::ir::ids::{
     ABSENT_WORD, BlockId, DataId, EvalScopeId, ExpectedResultId, FunctionId, Id, LayoutId,
@@ -47,7 +47,6 @@ fn build_guarded_body() -> Body {
         let covered = builder.create_block(Some(handler));
         let [taken, not_taken] = create_blocks(builder);
         let narrowed = builder.add_edge_result(taken);
-        builder.set_frequency(covered, BlockFrequency::Unlikely);
         builder.jump(Edge::to(covered));
         builder.seal(covered);
 
@@ -107,12 +106,6 @@ fn views_decode_block_heads() {
     );
     let subjects = collect_from_blocks(&body, |view| view.subject);
     assert_eq!(subjects, [None, None, None, None, None, Some(value(0))]);
-    let (normal, unlikely) = (BlockFrequency::Normal, BlockFrequency::Unlikely);
-    let frequencies = collect_from_blocks(&body, |view| view.frequency);
-    assert_eq!(
-        frequencies,
-        [normal, unlikely, unlikely, normal, normal, normal]
-    );
 }
 
 #[test]
@@ -293,7 +286,6 @@ fn build_body_with_references(offset: usize) -> Body {
             expected_result,
             None,
             None,
-            true,
             true,
             false,
         );

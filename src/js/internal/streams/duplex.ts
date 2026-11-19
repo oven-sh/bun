@@ -10,56 +10,16 @@ const Readable = require("internal/streams/readable");
 const Writable = require("internal/streams/writable");
 const { addAbortSignal } = require("internal/streams/add-abort-signal");
 const destroyImpl = require("internal/streams/destroy");
-const streamState = require("internal/streams/state");
-const { ReadableState, WritableState, isReadableState, isWritableState, internals } = streamState;
-const kState: typeof streamState.kState = streamState.kState;
-const kOnConstructed: typeof streamState.kOnConstructed = streamState.kOnConstructed;
-type ReadableState = $Node.ReadableState;
-type WritableState = $Node.WritableState;
-
-const enum Flag {
-  Destroyed = 1 << 4,
-}
+const { kOnConstructed } = require("internal/streams/utils");
 
 const ObjectKeys = Object.keys;
 const ObjectDefineProperties = Object.defineProperties;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 
-declare global {
-  namespace $Node {
-    interface DuplexOptions extends ReadableOptions, WritableOptions {
-      allowHalfOpen?: boolean;
-      readable?: boolean;
-      writable?: boolean;
-      readableObjectMode?: boolean;
-      writableObjectMode?: boolean;
-      readableHighWaterMark?: number;
-      writableHighWaterMark?: number;
-    }
+function Duplex(options): void {
+  if (!(this instanceof Duplex)) return new Duplex(options);
 
-    /** Inherits from `Readable`; the members of `Writable.prototype` are copied into its prototype. */
-    interface Duplex extends Readable, Writable {
-      _readableState: ReadableState;
-      _writableState: WritableState;
-      allowHalfOpen: boolean;
-      get readable(): boolean;
-      set readable(value: boolean);
-      get writable(): boolean;
-      set writable(value: boolean);
-    }
-
-    interface DuplexConstructor {
-      new (options?: DuplexOptions): Duplex;
-      (this: Duplex, options?: DuplexOptions): void;
-      prototype: any;
-      from: typeof Duplex.from;
-      fromWeb: typeof Duplex.fromWeb;
-      toWeb: typeof Duplex.toWeb;
-    }
-  }
-}
-
-function preallocatedEvents(): $Node.Events {
-  return {
+  this._events ??= {
     close: undefined,
     error: undefined,
     prefinish: undefined,
@@ -76,30 +36,24 @@ function preallocatedEvents(): $Node.Events {
     // [destroyImpl.kConstruct]: undefined,
     // [destroyImpl.kDestroy]: undefined,
   };
-}
 
-function Duplex(this: $Node.Duplex, options?: $Node.DuplexOptions): void {
-  if (!(this instanceof Duplex)) return new Duplex(options) as any;
-
-  this._events ??= preallocatedEvents();
-
-  const readableState = (this._readableState = new ReadableState(options, this, true));
-  const writableState = (this._writableState = new WritableState(options, this, true));
+  this._readableState = new Readable.ReadableState(options, this, true);
+  this._writableState = new Writable.WritableState(options, this, true);
 
   if (options) {
     this.allowHalfOpen = options.allowHalfOpen !== false;
 
     if (options.readable === false) {
-      readableState.readable = false;
-      readableState.ended = true;
-      readableState.endEmitted = true;
+      this._readableState.readable = false;
+      this._readableState.ended = true;
+      this._readableState.endEmitted = true;
     }
 
     if (options.writable === false) {
-      writableState.writable = false;
-      writableState.ending = true;
-      writableState.ended = true;
-      writableState.finished = true;
+      this._writableState.writable = false;
+      this._writableState.ending = true;
+      this._writableState.ended = true;
+      this._writableState.finished = true;
     }
 
     const { read, write, writev, destroy, final, construct, signal } = options;
@@ -143,37 +97,33 @@ Duplex.prototype.destroy = Writable.prototype.destroy;
   }
 }
 
-const writableAccessors = internals.writableAccessors!;
 ObjectDefineProperties(Duplex.prototype, {
-  writable: writableAccessors.writable,
-  writableHighWaterMark: writableAccessors.writableHighWaterMark,
-  writableObjectMode: writableAccessors.writableObjectMode,
-  writableBuffer: writableAccessors.writableBuffer,
-  writableLength: writableAccessors.writableLength,
-  writableFinished: writableAccessors.writableFinished,
-  writableCorked: writableAccessors.writableCorked,
-  writableEnded: writableAccessors.writableEnded,
-  writableNeedDrain: writableAccessors.writableNeedDrain,
+  writable: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writable") },
+  writableHighWaterMark: {
+    __proto__: null,
+    ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableHighWaterMark"),
+  },
+  writableObjectMode: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableObjectMode") },
+  writableBuffer: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableBuffer") },
+  writableLength: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableLength") },
+  writableFinished: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableFinished") },
+  writableCorked: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableCorked") },
+  writableEnded: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableEnded") },
+  writableNeedDrain: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableNeedDrain") },
 
   destroyed: {
     __proto__: null,
-    get(this: $Node.Duplex) {
+    get() {
       if (this._readableState === undefined || this._writableState === undefined) {
         return false;
       }
-      const readableState = this._readableState as ReadableState | $Node.ForeignState;
-      const isReadableSideDestroyed = isReadableState(readableState)
-        ? (readableState[kState] & Flag.Destroyed) !== 0
-        : readableState.destroyed;
-      if (!isReadableSideDestroyed) return isReadableSideDestroyed;
-      const writableState = this._writableState as WritableState | $Node.ForeignState;
-      return isWritableState(writableState) ? (writableState[kState] & Flag.Destroyed) !== 0 : writableState.destroyed;
+      return this._readableState.destroyed && this._writableState.destroyed;
     },
-    set(this: $Node.Duplex, value) {
+    set(value) {
       // Backward compatibility, the user is explicitly
       // managing destroyed.
-      const readableState: ReadableState | undefined = this._readableState;
-      let writableState: WritableState | undefined;
+      const readableState = this._readableState;
+      let writableState;
       if (readableState && (writableState = this._writableState)) {
         readableState.destroyed = value;
         writableState.destroyed = value;
@@ -183,18 +133,34 @@ ObjectDefineProperties(Duplex.prototype, {
 });
 
 // Lazy to avoid circular references
-Duplex.fromWeb = function (pair, options?) {
-  return require("internal/webstreams_adapters").newStreamDuplexFromReadableWritablePair(pair, options);
+let webStreamsAdapters;
+function lazyWebStreams() {
+  if (webStreamsAdapters === undefined) webStreamsAdapters = require("internal/webstreams_adapters");
+  return webStreamsAdapters;
+}
+
+Duplex.fromWeb = function (pair, options) {
+  return lazyWebStreams().newStreamDuplexFromReadableWritablePair(pair, options);
 };
 
-Duplex.toWeb = function (duplex, options?) {
-  return require("internal/webstreams_adapters").newReadableWritablePairFromDuplex(duplex, options);
+Duplex.toWeb = function (duplex, options) {
+  return lazyWebStreams().newReadableWritablePairFromDuplex(duplex, options);
 };
 
-let duplexify: typeof import("internal/streams/duplexify").default | undefined;
+let duplexify;
 Duplex.from = function (body) {
   duplexify ??= require("internal/streams/duplexify");
   return duplexify(body, "body");
 };
 
-export default Duplex as $Node.DuplexConstructor;
+type NodeDuplex = import("node:stream").Duplex;
+type NodeDuplexOptions = import("node:stream").DuplexOptions;
+
+interface DuplexOptions extends NodeDuplexOptions {
+  readable?: boolean;
+  writable?: boolean;
+}
+
+export default Duplex as unknown as typeof import("node:stream").Duplex & {
+  new (options?: DuplexOptions): NodeDuplex;
+};

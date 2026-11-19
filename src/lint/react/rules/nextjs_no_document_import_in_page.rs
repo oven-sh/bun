@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Prevent importing `next/document` outside of `pages/_document.js`.
 pub struct NoDocumentImportInPage;
 
-const NO_DOCUMENT_IMPORT_IN_PAGE: Message = Message::new(
+const NO_DOCUMENT_IMPORT_IN_PAGE: &Message = &Message::new(
     "",
     "`<Document />` from `next/document` should not be imported outside of `pages/_document.js`. See: https://nextjs.org/docs/messages/no-document-import-in-page",
 );

@@ -3,6 +3,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { locksEnvironment } from "./hardened";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { beforeAll, describe, test } from "./supported";
 
@@ -25,7 +26,6 @@ const worker = `postMessage([process.env.BUN_JSC_logGC, process.env.MIMALLOC_VER
 
 let directory: ReturnType<typeof tempDir>;
 let executable: string;
-let starts = false;
 let runs = 0;
 
 beforeAll(async () => {
@@ -34,10 +34,9 @@ beforeAll(async () => {
   const sources = ["program.js", "worker.js"].map(name => join(String(directory), name));
   const built = await run([bunExe(), "build", "--compile", "--aot", ...sources, "--outfile", executable]);
   expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
-  const first = await run([executable, "--version", join(String(directory), "first")]);
-  starts = first.exitCode === 0;
-  asAlways.stdout = first.stdout.replace(/ \d+\n$/, "");
+  expect(await runWith({})).toMatchObject(asAlways);
 }, 120_000);
+afterAll(() => directory?.[Symbol.dispose]());
 
 /** `ran`: whether the program's first statement did. */
 async function start(command: (mark: string) => string[], environment: Record<string, string | undefined>) {
@@ -72,9 +71,9 @@ const optionsTaken = wordsOfTable(
   "};",
 );
 const wordsOfAllocatorTaken = wordsOfTable(
-  "patches/mimalloc/environment-sets-sizes-and-pace-only.patch",
-  "bool mi_is_read_from_environment(const char* name) {",
-  "};",
+  "scripts/build/deps/mimalloc.ts",
+  "const namesReadFromLockedEnvironment = [",
+  "];",
 );
 const namesNeverRead = wordsOfTable("src/bun_core/util.rs", "pub fn is_never_read(", "\n    ];");
 
@@ -132,8 +131,6 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
     ["BUN_DEBUG_ALL", "1"],
     ["BUN_DEBUGGER", "1"],
     ["BUN_AOT_CHECKED_NATIVE_CALLS", "checked.txt"],
-    ["BUN_AOT_TYPE_MISMATCH_LOG", "stderr"],
-    ["BUN_AOT_TYPE_MISMATCH_LOG_FORMAT", "json"],
     ["BUN_AOT_VERBOSE", "1"],
     ["BUN_AOT_THERE_IS_NO_SUCH_VARIABLE", "1"],
     ["BUN_AOT_", "1"],
@@ -143,12 +140,10 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
     ["BUN_TRACE", ""],
     ["BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING", ""],
   ])("does not start with %s=%s", async (name, value) => {
-    if (!starts) return;
     expect(await runWith({ [name]: value })).toMatchObject(refusalThatNames(name));
   });
 
   test.each(namesNeverRead)("does not start with %s", async name => {
-    if (!starts) return;
     expect(await runWith({ [name]: "1" })).toMatchObject(refusalThatNames(name));
   });
 
@@ -161,17 +156,14 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
   });
 
   test.each(optionsTaken)("starts with BUN_JSC_%s", async name => {
-    if (!starts) return;
     expect(await runWith({ [`BUN_JSC_${name}`]: harmlessValues[name] })).toMatchObject(asAlways);
   });
 
   test.each(wordsOfAllocatorTaken.flatMap(word => [word, word.toUpperCase()]))("starts with %s", async word => {
-    if (!starts) return;
     expect(await runWith({ [word]: "1" })).toMatchObject(asAlways);
   });
 
   test("starts with every one of them at once, and with variables that are in none of the three tables", async () => {
-    if (!starts) return;
     const words = {
       ...Object.fromEntries(optionsTaken.map(name => [`BUN_JSC_${name}`, harmlessValues[name]])),
       ...Object.fromEntries(wordsOfAllocatorTaken.map(word => [word.toUpperCase(), "1"])),
@@ -193,7 +185,6 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
   });
 
   test("names every variable that it does not start with, in the order of the environment", async () => {
-    if (!starts) return;
     const names = ["MIMALLOC_VERBOSE", "BUN_JSC_logGC", "BUN_TRACE"];
     for (const order of [names, names.toReversed(), names.slice(1)]) {
       const words = Object.fromEntries(order.flatMap(name => [name, `AFTER_${name}`]).map(name => [name, "1"]));
@@ -202,7 +193,6 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
   });
 
   test("prints no value", async () => {
-    if (!starts) return;
     const { stderr } = await runWith({
       BUN_INSPECT: "ws://127.0.0.1:0/hardened",
       BUN_JSC_aotMapFilePath: "/tmp/hardened",
@@ -211,12 +201,10 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
   });
 
   test("writes no file that the environment names", async () => {
-    if (!starts) return;
     const path = (name: string) => join(String(directory), name);
     const before = readdirSync(String(directory)).sort();
     const words = {
       BUN_AOT_CHECKED_NATIVE_CALLS: path("checked.txt"),
-      BUN_AOT_TYPE_MISMATCH_LOG: path("mismatches.jsonl"),
       BUN_BYTECODE_DIGEST_OUT: path("digest.txt"),
       BUN_BYTECODE_ORDER_OUT: path("order.txt"),
       BUN_TRACE: path("trace.jsonl"),
@@ -231,7 +219,6 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
   });
 
   test.skipIf(!Bun.which("python3"))('does not start with a name that no "=" follows', async () => {
-    if (!starts) return;
     const withEntries = (...entries: string[]) =>
       start(mark => ["python3", "-c", startWithRawEnvironment, "3", executable, "--version", mark, ...entries], bunEnv);
     expect(await withEntries("HOME=/", "ALONE")).toMatchObject(asAlways);
@@ -249,12 +236,10 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
   });
 
   test("still takes a switch that only takes something away", async () => {
-    if (!starts) return;
     expect(await runWith({ BUN_JSC_useWasm: "0" })).toMatchObject({ ...asAlways, stdout: "--version undefined" });
   });
 
   test("reads BUN_JSC_useConcurrentGC, so a value that is no boolean is refused", async () => {
-    if (!starts) return;
     expect(await runWith({ BUN_JSC_useConcurrentGC: "0" })).toMatchObject(asAlways);
     for (const value of ["neither", ""])
       expect(await runWith({ BUN_JSC_useConcurrentGC: value })).toMatchObject({
@@ -266,13 +251,11 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
   });
 
   test("names a variable that it never reads before it looks at the value of one that it does", async () => {
-    if (!starts) return;
     const words = { BUN_JSC_useConcurrentGC: "neither", BUN_JSC_logGC: "1" };
     expect(await runWith(words)).toMatchObject(refusalThatNames("BUN_JSC_logGC"));
   });
 
   test("starts a Worker whose process.env holds such names: they are no environment of a process", async () => {
-    if (!starts) return;
     expect(await runWith({}, "worker")).toMatchObject({
       stdout: "the worker sees 1 1 trace.jsonl\n",
       stderr: "",
@@ -282,7 +265,6 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
   });
 
   test("goes on when a copy of itself that it starts with such names does not start", async () => {
-    if (!starts) return;
     const { stdout, mark, ...parent } = await runWith({}, "child");
     expect(parent).toMatchObject({ stderr: "", exitCode: 0, ran: true });
     const { ran, ...refusal } = refusalThatNames("BUN_JSC_logGC", "MIMALLOC_VERBOSE", "BUN_TRACE");
@@ -290,12 +272,9 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
     expect(existsSync(`${mark}-of-child`)).toBe(ran);
   });
 
-  test.each(["BUN_AOT_CHECKED_NATIVE_CALLS", "BUN_AOT_TYPE_MISMATCH_LOG", "BUN_AOT_VERBOSE"])(
-    "has no code that asks for %s",
-    name => {
-      expect(Bun.spawnSync(["grep", "-q", "-a", name, bunExe()]).exitCode).toBe(1);
-    },
-  );
+  test.each(["BUN_AOT_CHECKED_NATIVE_CALLS", "BUN_AOT_VERBOSE"])("has no code that asks for %s", name => {
+    expect(Bun.spawnSync(["grep", "-q", "-a", name, bunExe()]).exitCode).toBe(1);
+  });
 
   test("is the only thing that does not start: bun itself does", async () => {
     const words = {
@@ -317,7 +296,6 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
 
 describe.skipIf(locksEnvironment)("an executable of any other build", () => {
   test("starts with variables that a hardened build never reads", async () => {
-    if (!starts) return;
     const words = {
       BUN_JSC_logGC: "0",
       MIMALLOC_SHOW_ERRORS: "0",

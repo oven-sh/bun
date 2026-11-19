@@ -241,9 +241,10 @@ export interface Config {
    */
   shadowRealm: boolean;
   /**
-   * Default true. Off builds a Bun whose `bun:ffi` calls no native function: dlopen(), linkSymbols(), CFunction(),
-   * JSCallback() and what cc() returns throw. A WebKit built from source (`webkit: "local"`) is also built with
-   * ENABLE_FFI=0, which leaves the engine's half of those calls out of the binary; a prebuilt one keeps it.
+   * Default true. Off builds a Bun whose `bun:ffi` calls no native function and loads no library: dlopen(),
+   * linkSymbols(), CFunction(), JSCallback(), cc() with a `library` and what cc() returns throw. A WebKit built from
+   * source (`webkit: "local"`) is also built with ENABLE_FFI=0, which leaves the engine's half of those calls out of
+   * the binary; a prebuilt one keeps it.
    */
   ffi: boolean;
   /** Bundle small .cpp files into unified TUs (WebKit-style). See unified.ts. */
@@ -398,7 +399,7 @@ export interface Config {
   msvcLinker: string | undefined;
   /** Windows: llvm-rc, compiles bun.exe's resources. */
   rc: string | undefined;
-  /** x64: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */
+  /** nasm for BoringSSL's win-x64 assembly. */
   nasm: string | undefined;
 
   // ─── macOS SDK (darwin only, undefined elsewhere) ───
@@ -610,7 +611,7 @@ export interface Toolchain extends JsToolchain {
   msvcLinker: string | undefined;
   /** Windows only: llvm-rc (resource compiler). */
   rc: string | undefined;
-  /** x64 targets: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */
+  /** nasm for BoringSSL's win-x64 assembly. */
   nasm: string | undefined;
 }
 

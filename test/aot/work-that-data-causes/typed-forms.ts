@@ -84,6 +84,8 @@ const forms: Record<string, (n: number) => () => unknown> = {
 const [name, count] = process.argv.slice(2);
 if (!name) {
   console.log(Object.keys(forms).join("\n"));
+} else if (name === "every form") {
+  for (const [name, form] of Object.entries(forms)) console.log(`${name}: ${form(Number(count))()}`);
 } else {
   const work = forms[name](Number(count));
   const began = performance.now();

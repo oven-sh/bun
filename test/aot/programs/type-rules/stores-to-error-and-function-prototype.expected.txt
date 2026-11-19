@@ -1,2 +1,0 @@
-Error.prototype.name: X X: m
-Function.prototype.mine: THROWS TypeError

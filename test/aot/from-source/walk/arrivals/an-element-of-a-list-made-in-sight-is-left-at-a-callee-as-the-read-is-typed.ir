@@ -1,0 +1,15 @@
+# f1 = turnsOf
+# -- source: main.ts
+# declare function print(value: any): void;
+# class Marker { x = 1; }
+# function turnsOf(v: unknown): number { const done = !v; let turns = 0; while (!done) { if (++turns > 2) break; } return turns; }
+# const values: unknown[] = ["ab", "", new Marker(), { x: 2 }, {}, 0, 1, NaN, -0, null, undefined];
+# let text = "";
+# for (let i = 0; i < values.length; i++) text += turnsOf(values[i]) + ";";
+# print(text);
+# -- end of source
+# The list is made in sight and stays as made, so the read is typed by the values that it was made with. A range of integers is named int32 there. What the call leaves at its callee says the same, and the checks of the finished code pass.
+# RUN: walk f0 mechanisms=all
+# CHECK-NOT: failed
+# CHECK: |i32|whole|{{*}} = GetArrayElement
+# CHECK: CallDirect

@@ -1,1 +1,0 @@
-{ "skipInShell": "it asks for Bun.spawnSync, which the jsc shell does not provide" }

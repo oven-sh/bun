@@ -21,21 +21,16 @@ const SPACE_CHARACTERS: &[u8] = &[0x20, 0x09];
 
 /// A CSS [syntax string](https://drafts.css-houdini.org/css-properties-values-api/#syntax-strings)
 /// used to define the grammar for a registered custom property.
-// Upstream lightningcss Rust threaded `'i`, but the port uses `&'static [u8]` /
-// `*const [u8]` placeholders for arena-borrowed slices (matching `Token` /
-// `ident.rs`); `'bump` threading would restore the lifetime.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SyntaxString {
+pub enum SyntaxString<'bump> {
     /// A list of syntax components.
-    // PERF: `Vec` until `'bump` is threaded into BumpVec.
-    Components(Vec<SyntaxComponent>),
+    Components(Vec<SyntaxComponent<'bump>>),
     /// The universal syntax definition.
     Universal,
 }
 
-impl SyntaxString {
+impl<'bump> SyntaxString<'bump> {
     pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        // `Clone` covers this — every payload owns its data.
         self.clone()
     }
 
@@ -55,7 +50,7 @@ impl SyntaxString {
         dest.write_char(b'"')
     }
 
-    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<SyntaxString> {
+    pub(crate) fn parse(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let string = input.expect_string()?;
         match SyntaxString::parse_string(string) {
             Ok(result) => Ok(result),
@@ -64,7 +59,7 @@ impl SyntaxString {
     }
 
     /// Parses a syntax string.
-    fn parse_string(input: &[u8]) -> Result<SyntaxString, ()> {
+    fn parse_string(input: &'bump [u8]) -> Result<Self, ()> {
         // https://drafts.css-houdini.org/css-properties-values-api/#parsing-syntax
         let mut trimmed_input = strings::trim(input, SPACE_CHARACTERS);
         if trimmed_input.is_empty() {
@@ -99,7 +94,10 @@ impl SyntaxString {
     }
 
     /// Parses a value as the first component that matches all of it, else as tokens.
-    pub(crate) fn parse_value(&self, input: &mut css::Parser) -> CssResult<ParsedComponent> {
+    pub(crate) fn parse_value(
+        &self,
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> CssResult<'bump, ParsedComponent<'bump>> {
         // A value of only white space is empty. `TokenList::parse` would keep it as one token.
         input.skip_whitespace();
 
@@ -152,19 +150,17 @@ impl SyntaxString {
                                 SyntaxComponentKind::CustomIdent => {
                                     ParsedComponent::CustomIdent(CustomIdentFns::parse(i)?)
                                 }
-                                SyntaxComponentKind::String => ParsedComponent::String(
-                                    std::ptr::from_ref::<[u8]>(i.expect_string()?),
-                                ),
+                                SyntaxComponentKind::String => {
+                                    ParsedComponent::String(i.expect_string()?)
+                                }
                                 SyntaxComponentKind::Literal(value) => {
                                     let location = i.current_source_location();
-                                    let ident = i.expect_ident_cloned()?;
+                                    let ident = i.expect_ident()?;
                                     if !strings::eql(ident, value) {
                                         return Err(location
                                             .new_unexpected_token_error(Token::Ident(ident)));
                                     }
-                                    ParsedComponent::Literal(Ident {
-                                        v: std::ptr::from_ref::<[u8]>(ident),
-                                    })
+                                    ParsedComponent::Literal(Ident { v: ident })
                                 }
                             };
                             Ok(value)
@@ -234,13 +230,13 @@ impl SyntaxString {
 /// A syntax component consists of a component kind an a multiplier, which indicates how the component
 /// may repeat during parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SyntaxComponent {
-    pub(crate) kind: SyntaxComponentKind,
+pub struct SyntaxComponent<'bump> {
+    pub(crate) kind: SyntaxComponentKind<'bump>,
     pub(crate) multiplier: Multiplier,
 }
 
-impl SyntaxComponent {
-    fn parse_string(input: &mut &[u8]) -> Result<SyntaxComponent, ()> {
+impl<'bump> SyntaxComponent<'bump> {
+    fn parse_string(input: &mut &'bump [u8]) -> Result<Self, ()> {
         let kind = SyntaxComponentKind::parse_string(input)?;
 
         // Pre-multiplied types cannot have multipliers.
@@ -275,7 +271,7 @@ impl SyntaxComponent {
 
 /// A [syntax component component name](https://drafts.css-houdini.org/css-properties-values-api/#supported-names).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SyntaxComponentKind {
+pub enum SyntaxComponentKind<'bump> {
     /// A `<length>` component.
     Length,
     /// A `<number>` component.
@@ -307,16 +303,11 @@ pub enum SyntaxComponentKind {
     /// A `<string>` component.
     String,
     /// A literal component.
-    // PORTING.md §Forbidden bans laundering a parser-borrowed slice to
-    // `&'static`; that would need a `'bump` lifetime threaded through
-    // `SyntaxString`. We own the bytes instead — `Box<[u8]>` per §Forbidden
-    // ("the field should be `Box<[T]>` … not `&'static [T]`"). May swap for
-    // `&'bump [u8]` later.
-    Literal(Box<[u8]>),
+    Literal(&'bump [u8]),
 }
 
-impl SyntaxComponentKind {
-    fn parse_string(input: &mut &[u8]) -> Result<SyntaxComponentKind, ()> {
+impl<'bump> SyntaxComponentKind<'bump> {
+    fn parse_string(input: &mut &'bump [u8]) -> Result<Self, ()> {
         // https://drafts.css-houdini.org/css-properties-values-api/#consume-syntax-component
         *input = strings::trim_left(*input, SPACE_CHARACTERS);
         if strings::starts_with_char(*input, b'<') {
@@ -358,7 +349,7 @@ impl SyntaxComponentKind {
                     + strings::utf8_byte_sequence_length(input[end_idx]).max(1) as usize)
                     .min(input.len());
             }
-            let literal: Box<[u8]> = Box::from(&input[0..end_idx]);
+            let literal = &input[0..end_idx];
             *input = &input[end_idx..];
             Ok(SyntaxComponentKind::Literal(literal))
         } else {
@@ -383,7 +374,7 @@ impl SyntaxComponentKind {
             SyntaxComponentKind::TransformList => dest.write_str("<transform-list>"),
             SyntaxComponentKind::CustomIdent => dest.write_str("<custom-ident>"),
             SyntaxComponentKind::String => dest.write_str("<string>"),
-            SyntaxComponentKind::Literal(l) => dest.write_str(&l[..]),
+            SyntaxComponentKind::Literal(l) => dest.write_str(l),
         }
     }
 }
@@ -402,9 +393,9 @@ fn is_name_code_point(c: u8) -> bool {
 // `ParsedComponent` is the materialized form of a `SyntaxComponentKind` and
 // carries `Image` / `CssColor` / `Transform{,List}` / `TokenList` payloads.
 // No `#[derive]` — payload types lack a common Debug/Clone/PartialEq
-// surface (Image: none; TokenList: Default-only; Ident/CustomIdent: no Eq;
+// surface (Image: none; TokenList: Default-only;
 // Transform: no Debug). Only `deep_clone` + `to_css` are provided below.
-pub enum ParsedComponent {
+pub enum ParsedComponent<'bump> {
     /// A `<length>` value.
     Length(Length),
     /// A `<number>` value.
@@ -416,9 +407,9 @@ pub enum ParsedComponent {
     /// A `<color>` value.
     Color(CssColor),
     /// An `<image>` value.
-    Image(Image),
+    Image(Image<'bump>),
     /// A `<url>` value.
-    Url(Url),
+    Url(Url<'bump>),
     /// An `<integer>` value.
     Integer(CSSInteger),
     /// An `<angle>` value.
@@ -430,33 +421,29 @@ pub enum ParsedComponent {
     /// A `<transform-function>` value.
     TransformFunction(Transform),
     /// A `<transform-list>` value.
-    // `TransformList<'bump>` borrows the parser arena. The port uses
-    // `'static` placeholders (matching `Token`/`Ident`); `'bump` threading
-    // through `ParsedComponent<'a>` would restore the lifetime.
     TransformList(TransformList),
     /// A `<custom-ident>` value.
-    CustomIdent(CustomIdent),
+    CustomIdent(CustomIdent<'bump>),
     /// A `<string>` value.
-    String(CssString),
+    String(CssString<'bump>),
     /// A literal value.
-    Literal(Ident),
+    Literal(Ident<'bump>),
     /// A repeated component value.
-    Repeated(Repeated),
+    Repeated(Repeated<'bump>),
     /// A raw token stream.
-    TokenList(TokenList),
+    TokenList(TokenList<'bump>),
 }
 
 /// A repeated component value.
-pub struct Repeated {
+pub struct Repeated<'bump> {
     /// The components to repeat.
-    // PERF: `Vec` until `'bump` is threaded into BumpVec.
-    pub(crate) components: Vec<ParsedComponent>,
+    pub(crate) components: Vec<ParsedComponent<'bump>>,
     /// A multiplier describing how the components repeat.
     pub(crate) multiplier: Multiplier,
 }
 
-impl Repeated {
-    fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+impl<'bump> Repeated<'bump> {
+    fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         // Hand-expanded `css.implementDeepClone` (field-wise reflection):
         // ArrayList → Vec deep-cloned per element; `Multiplier` is `Copy`.
         Repeated {
@@ -466,7 +453,7 @@ impl Repeated {
     }
 }
 
-impl ParsedComponent {
+impl<'bump> ParsedComponent<'bump> {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             ParsedComponent::Length(v) => v.to_css(dest),
@@ -484,7 +471,7 @@ impl ParsedComponent {
             ParsedComponent::TransformList(v) => v.to_css(dest),
             ParsedComponent::CustomIdent(v) => CustomIdentFns::to_css(v, dest),
             ParsedComponent::String(v) => CssStringFns::to_css(v, dest),
-            ParsedComponent::Literal(v) => dest.serialize_identifier(v.v()),
+            ParsedComponent::Literal(v) => dest.serialize_identifier(v.v),
             ParsedComponent::Repeated(r) => dest.write_separated(
                 r.components.iter(),
                 |d| match r.multiplier {
@@ -494,11 +481,11 @@ impl ParsedComponent {
                 },
                 |d, c| c.to_css(d),
             ),
-            ParsedComponent::TokenList(t) => t.to_css(dest, false),
+            ParsedComponent::TokenList(t) => t.to_css(dest),
         }
     }
 
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         // Payload signatures aren't yet uniform across the crate (some `deep_clone()`
         // take no arena, some take `&Arena`, some are `Copy`), so the `#[derive(DeepClone)]`
         // macro can't cover this enum until the signatures are unified.

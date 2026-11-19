@@ -96,6 +96,7 @@ impl RuntimeDescription {
     pub const ENGINE: [u8; 8] = *b"BUNAOTRT";
     pub const HOST: [u8; 8] = *b"BUNAOTHO";
     pub const BUILTIN_TABLE: [u8; 8] = *b"BUNAOTTB";
+    pub const LEFT_OUT: [u8; 8] = *b"BUNAOTLO";
 
     pub fn read(file: &mut builtins::Image<'_>) -> Result<RuntimeDescription, SectionError> {
         let location = find_known_section(file, KnownSection::RuntimeDescription)?;
@@ -158,6 +159,27 @@ impl HostDescription {
         let revision = revision.get(..40)?;
         let length = bun_core::strings::index_of_char_usize(revision, 0).unwrap_or(40);
         Some(&revision[..length])
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub struct LeftOutOfBuild(pub u32);
+
+impl LeftOutOfBuild {
+    pub const FOREIGN_CALLS: u32 = 1 << 0;
+    pub const CODE_FROM_STRINGS: u32 = 1 << 1;
+
+    pub fn read(record: &[u8]) -> Option<LeftOutOfBuild> {
+        let word = record.get(DESCRIPTION_RECORD_HEAD..DESCRIPTION_RECORD_HEAD + 4)?;
+        Some(LeftOutOfBuild(crate::builtins::u32_at(word, 0)))
+    }
+
+    pub fn has_foreign_calls(self) -> bool {
+        self.0 & LeftOutOfBuild::FOREIGN_CALLS == 0
+    }
+
+    pub fn has_code_from_strings(self) -> bool {
+        self.0 & LeftOutOfBuild::CODE_FROM_STRINGS == 0
     }
 }
 
@@ -393,14 +415,14 @@ mod process {
     unsafe extern "C" {
         /// The linker's name for the header of the executable it links. dyld's image 0 is not
         /// always that one: it puts the libraries of `DYLD_INSERT_LIBRARIES` in front.
+        /// It is mapped read-only for the life of the process, so reading it is safe.
         #[link_name = "_mh_execute_header"]
-        static MAIN_EXECUTABLE_HEADER: bun_sys::macho::mach_header_64;
+        safe static MAIN_EXECUTABLE_HEADER: bun_sys::macho::mach_header_64;
     }
 
     pub(super) fn find_identity() -> Result<[u8; 16], IdentityError> {
         let header_address = &raw const MAIN_EXECUTABLE_HEADER;
-        // SAFETY: the header of the main executable is mapped for the life of the process.
-        let header = unsafe { header_address.read() };
+        let header = MAIN_EXECUTABLE_HEADER;
         if header.magic != MH_MAGIC_64 {
             return Err(IdentityError::UnrecognizedExecutable);
         }
@@ -417,33 +439,13 @@ mod process {
 
 #[cfg(windows)]
 mod process {
-    use core::mem::size_of;
-    use core::{ptr, slice};
+    use core::slice;
 
-    use super::{
-        DOSHeader, IdentityError, OptionalHeader64, PEHeader, PeAddressing, builtins,
-        find_code_view_guid,
-    };
+    use super::{IdentityError, PeAddressing, builtins, find_code_view_guid};
 
     pub(super) fn find_identity() -> Result<[u8; 16], IdentityError> {
-        // SAFETY: a null name asks for the executable of the process, and nothing is dereferenced.
-        let base = unsafe { bun_sys::windows::kernel32::GetModuleHandleW(ptr::null()) }
-            .cast_const()
-            .cast::<u8>();
-        if base.is_null() {
-            return Err(IdentityError::Malformed);
-        }
-        // SAFETY: a module handle is the address of the mapped image, and the loader has checked
-        // that the headers lie inside it.
-        let size_of_image = unsafe {
-            let dos_header = base.cast::<DOSHeader>().read_unaligned();
-            let optional_header_offset = dos_header.e_lfanew as usize + size_of::<PEHeader>();
-            let optional_header = base
-                .add(optional_header_offset)
-                .cast::<OptionalHeader64>()
-                .read_unaligned();
-            optional_header.size_of_image as usize
-        };
+        let image = bun_sys::windows::exe_image_range();
+        let (base, size_of_image) = (image.start as *const u8, image.len());
         let mut read = |offset: usize, out: &mut [u8]| {
             let is_mapped = offset
                 .checked_add(out.len())
@@ -557,6 +559,21 @@ mod tests {
             section: [&RuntimeDescription::ENGINE[..], &4u32.to_le_bytes()].concat(),
         };
         assert_eq!(too_small.record(RuntimeDescription::ENGINE), None);
+    }
+
+    #[test]
+    fn what_a_build_leaves_out_is_the_word_behind_the_head_of_its_record() {
+        let record =
+            |word: u32| description_record(RuntimeDescription::LEFT_OUT, &word.to_le_bytes());
+        let read = |word: u32| LeftOutOfBuild::read(&record(word)).unwrap();
+        assert!(read(0).has_foreign_calls());
+        assert!(!read(LeftOutOfBuild::FOREIGN_CALLS).has_foreign_calls());
+        assert!(read(!LeftOutOfBuild::FOREIGN_CALLS).has_foreign_calls());
+        assert_eq!(LeftOutOfBuild::read(&record(0)[..14]), None);
+        assert!(LeftOutOfBuild::default().has_foreign_calls());
+        assert!(read(LeftOutOfBuild::FOREIGN_CALLS).has_code_from_strings());
+        assert!(!read(LeftOutOfBuild::CODE_FROM_STRINGS).has_code_from_strings());
+        assert!(read(LeftOutOfBuild::CODE_FROM_STRINGS).has_foreign_calls());
     }
 
     #[test]

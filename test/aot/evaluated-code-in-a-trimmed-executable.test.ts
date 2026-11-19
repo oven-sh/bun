@@ -1,7 +1,10 @@
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { describe, expect } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
-import { slot, unsupported } from "./run-programs";
+import { canTrim } from "../bundler/compile-trim-features";
+import { slot, unsupported } from "./harness/commands";
+import { test } from "./harness/default-timeout";
+import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const program = `const make = (async function () {}).constructor;
 try {
@@ -24,7 +27,12 @@ const snippets: [name: string, code: string, untrimmed: string, trimmed: string]
     "answer: 1,2",
     "answer: 1,2",
   ],
-  ["that imports a file: module not found", `return (await import("./late.ts")).default`, notFound, notFound],
+  [
+    "that imports a file: module not found",
+    `return (await import("./late.ts")).default`,
+    "caught: ResolveMessage ERR_MODULE_NOT_FOUND",
+    "caught: ResolveMessage ERR_MODULE_NOT_FOUND",
+  ],
   [
     "that imports a built-in module that the program also imports",
     `return typeof (await import("node:path")).join`,
@@ -65,15 +73,7 @@ async function run(cmd: string[], cwd: string) {
   return { stdout, stderr, exitCode };
 }
 
-using probe = tempDir("evaluated-code-probe", { "hello.ts": "console.log(1);" });
-const probed = Bun.spawnSync({
-  cmd: [bunExe(), "build", "--compile", "--trim", "hello.ts", "--outfile", "hello"],
-  cwd: String(probe),
-  env: bunEnv,
-  stderr: "pipe",
-});
-
-(probed.exitCode !== 0 || unsupported || isWindows ? describe.skip : describe)(
+(!canTrim || unsupported ? describe.skip : describe)(
   "code evaluated through the constructor of an async function",
   () => {
     const importsAModule = ([, code]: (typeof snippets)[number]) => code.includes("import(");
@@ -90,7 +90,18 @@ const probed = Bun.spawnSync({
           ["trimmed", ["--trim"]],
         ] as const) {
           const build = await run(
-            [bunExe(), "build", "--compile", "--aot", "--explain=trim", ...flags, "program.mjs", "--outfile", kind],
+            [
+              bunExe(),
+              "build",
+              "--compile",
+              ...withoutDebugInformation,
+              "--aot",
+              "--explain=trim",
+              ...flags,
+              "program.mjs",
+              "--outfile",
+              kind,
+            ],
             String(dir),
           );
           expect({ opens: /^aot: trim: blocked by eval\b/m.test(build.stderr), exitCode: build.exitCode }).toEqual({

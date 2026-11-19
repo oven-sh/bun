@@ -3,7 +3,7 @@ use crate::prelude::*;
 /// Disallow bare URLs
 pub struct NoBareUrls;
 
-const BARE_URL: Message = Message::new(
+const BARE_URL: &Message = &Message::new(
     "bareUrl",
     "Unexpected bare URL. Use autolink (<URL>) or link ([text](URL)) instead.",
 );

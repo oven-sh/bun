@@ -4,7 +4,6 @@ import { bunEnv, bunExe, isWindows } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { GeneratorError } from "../../../src/codegen/builtins/declarations";
-import type { TargetPlatform } from "../../../src/codegen/builtins/dump";
 import {
   formatAttributes,
   formatOwnProperties,
@@ -19,6 +18,9 @@ import { test } from "../supported";
 const dataFile = join(import.meta.dir, "../../../src/codegen/builtins/data/own-properties.txt");
 const text = readFileSync(dataFile, "utf8");
 const lines = parseOwnProperties(text);
+
+const table = aotBuiltinEntries();
+const entriesByPath = new Map(table.entries.map(entry => [entry.path, entry]));
 
 // No JavaScript reaches these objects. aotBuiltinMismatches() compares their lines with the realm in C++.
 const unreachableHolders: ReadonlySet<string> = new Set(["%AsyncFromSyncIterator%.prototype"]);
@@ -39,15 +41,32 @@ function parseSeenAttributes(seen: string): OwnProperty["attributes"] {
   return { isAccessor: seen.includes("a"), isWritable: seen.includes("w"), isConfigurable: seen.includes("c") };
 }
 
+// The engine defines these on the global object only under an option or in a build for its own developers.
+const isForDevelopers = (holder: string, name: string) =>
+  holder === "globalThis" && (name === "$vm" || name === "Loader" || name === "gc" || name.startsWith("__"));
+// Windows has no users and groups by number.
+const isForPosix = (holder: string, name: string) =>
+  isWindows && holder === "process" && /^(?:[gs]ete?[ug]id|[gs]etgroups|initgroups)$/.test(name);
+
+// A line gains the names that nothing declares, loses the names that are gone, and keeps what somebody wrote by hand.
 function updateLine(line: OwnPropertyLine, seen: Map<string, string>): OwnPropertyLine {
-  const listed = new Set(line.properties.map(property => property.name));
+  const listed = new Map(line.properties.map(property => [property.name, property]));
   const listable = [...seen.keys()].filter(isListableName);
-  const createdInSomeRuns = line.properties.filter(property => property.isCreatedInSomeRuns);
-  const isCreatedInSomeRuns = (name: string) => createdInSomeRuns.some(property => property.name === name);
-  const names = listable.filter(name => (!line.isOpen || listed.has(name)) && !isCreatedInSomeRuns(name));
+  const isDeclared = (name: string) => entriesByPath.has(textOfPath(parsePath(memberPathOf(line.holder, name))));
+  const kept = line.properties.filter(
+    ({ name, isCreatedInSomeRuns }) =>
+      isCreatedInSomeRuns || (!seen.has(name) && (isForDevelopers(line.holder, name) || isForPosix(line.holder, name))),
+  );
+  const names = listable.filter(
+    name => (listed.has(name) || (!line.isOpen && !isDeclared(name))) && !kept.some(property => property.name === name),
+  );
   const properties = [
-    ...names.map(name => ({ name, attributes: parseSeenAttributes(seen.get(name)!), isCreatedInSomeRuns: false })),
-    ...createdInSomeRuns,
+    ...names.map(name => ({
+      name,
+      attributes: listed.get(name)?.attributes === null ? null : parseSeenAttributes(seen.get(name)!),
+      isCreatedInSomeRuns: false,
+    })),
+    ...kept,
   ];
   return { ...line, isOpen: line.isOpen || listable.length < seen.size, properties };
 }
@@ -87,12 +106,6 @@ if (process.env.AOT_BUILTINS_UPDATE) {
   });
 
   test("every listed property exists", () => {
-    // The engine defines these on the global object only under an option or in a build for its own developers.
-    const isForDevelopers = (holder: string, name: string) =>
-      holder === "globalThis" && (name === "$vm" || name === "Loader" || name === "gc" || name.startsWith("__"));
-    // Windows has no users and groups by number.
-    const isForPosix = (holder: string, name: string) =>
-      isWindows && holder === "process" && /^(?:[gs]ete?[ug]id|[gs]etgroups|initgroups)$/.test(name);
     const failures = collectFailures((line, seen) =>
       line.properties
         .filter(
@@ -119,12 +132,13 @@ if (process.env.AOT_BUILTINS_UPDATE) {
     expect(failures).toEqual([]);
   });
 
-  test("a closed line lists every own property", () => {
+  // The table has the properties of the line and the members that Bun's sources declare.
+  test("the table has every own property of a holder whose line is closed", () => {
     const failures = collectFailures((line, seen) => {
       if (line.isOpen) return [];
-      const listed = new Set(line.properties.map(property => property.name));
-      const unlisted = [...seen.keys()].filter(name => !listed.has(name));
-      return unlisted.map(name => `${line.holder}.${name}: is not in the file`);
+      const pathOf = (name: string) => textOfPath(parsePath(memberPathOf(line.holder, name)));
+      const unlisted = [...seen.keys()].filter(name => !entriesByPath.has(pathOf(name)));
+      return unlisted.map(name => `${line.holder}.${name}: is neither declared nor in the file`);
     });
     expect(failures).toEqual([]);
   });
@@ -152,12 +166,17 @@ test("update mode marks a line open when a key cannot be listed", () => {
     ["@@@registered", "wc"],
     ["@@iterator", "wc"],
     ["added", "ac"],
+    ["changed", "wc"],
   ]);
-  const [closed, open] = parseOwnProperties("A : @@iterator/?\nB open : @@iterator/?\n");
-  expect(formatOwnProperties([updateLine(closed, seen)])).toBe("A open : @@@registered/wc @@iterator/wc added/ac\n");
-  expect(formatOwnProperties([updateLine(open, seen)])).toBe("B open : @@iterator/wc\n");
+  const [closed, open] = parseOwnProperties("A : @@iterator/? changed/w\nB open : @@iterator/? changed/w\n");
+  expect(formatOwnProperties([updateLine(closed, seen)])).toBe(
+    "A open : @@@registered/wc @@iterator/? added/ac changed/wc\n",
+  );
+  expect(formatOwnProperties([updateLine(open, seen)])).toBe("B open : @@iterator/? changed/wc\n");
   seen.delete("@@?unregistered");
-  expect(formatOwnProperties([updateLine(closed, seen)])).toBe("A : @@@registered/wc @@iterator/wc added/ac\n");
+  expect(formatOwnProperties([updateLine(closed, seen)])).toBe(
+    "A : @@@registered/wc @@iterator/? added/ac changed/wc\n",
+  );
 });
 
 test("update mode keeps the line of a holder that JavaScript does not reach, and drops the line of any other missing holder", () => {
@@ -186,8 +205,6 @@ test("formatOwnProperties sorts and parses back", () => {
   expect(formatOwnProperties(lines)).toBe(text);
 });
 
-const table = aotBuiltinEntries();
-const entriesByPath = new Map(table.entries.map(entry => [entry.path, entry]));
 const listedProperties = lines.flatMap(line =>
   line.properties.map(({ name, attributes }) => ({
     attributes,
@@ -216,22 +233,6 @@ test("the entry of a holder lists all members unless its line is open", () => {
 
 test("every listed property has an entry", () => {
   expect(pathsOf(listedProperties).filter(path => !entriesByPath.has(path))).toEqual([]);
-});
-
-test("a closed line lists every member that the table declares", () => {
-  const platformsWithoutList: readonly TargetPlatform[] = ["Windows", "FreeBSD", "Android"];
-  const listed = new Set(pathsOf(listedProperties));
-  const closedHolders = new Set(lines.filter(line => !line.isOpen).map(line => entriesByPath.get(line.holder)?.token));
-  const unlisted = table.entries.filter(
-    ({ holder, path, flags, platforms }) =>
-      holder !== null &&
-      closedHolders.has(holder) &&
-      !listed.has(path) &&
-      !flags.includes("IsOwnPropertyOfInstances") &&
-      !flags.includes("IsDefaultExport") &&
-      !platforms.every(platform => platformsWithoutList.includes(platform)),
-  );
-  expect(pathsOf(unlisted)).toEqual([]);
 });
 
 test("an entry is an accessor where the file says so, and nowhere else", () => {

@@ -1,13 +1,15 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux } from "harness";
+import { describeKill, heldTooMuchTogether } from "./harness/killed-for-memory";
 import { endAtMemoryLimitTogether } from "./harness/memory-limit";
-import { test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { testOneByOne as test } from "./supported";
 
 const MB = 2 ** 20;
 const holds96MB = `const held = Buffer.alloc(${96 * MB}, 1); setTimeout(() => console.log(held.length), Number(process.argv[1]));`;
 
 async function runAtOnce(count: number, milliseconds: number) {
-  const watch = endAtMemoryLimitTogether(320 * MB);
+  const { watch } = endAtMemoryLimitTogether(320 * MB);
   return Promise.all(
     Array.from({ length: count }, async () => {
       await using child = Bun.spawn({
@@ -30,6 +32,14 @@ test.skipIf(!isLinux)(
   },
   30_000,
 );
+
+test("the error says first whose doing it was, within what the runner keeps of an error", () => {
+  const held = "it held 9 MB of the 36 MB that 4 processes held together, which may hold 32 MB";
+  expect(describeKill(held, ["bun", "a.js"])).toBe(
+    `${heldTooMuchTogether}: ${held}. Run fewer of them at once: bun a.js`,
+  );
+  expect(`error: ${heldTooMuchTogether}`.length).toBeLessThan(97);
+});
 
 test.skipIf(!isLinux)(
   "a command that holds less than the limit runs to its end",

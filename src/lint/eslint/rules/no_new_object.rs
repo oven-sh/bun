@@ -3,8 +3,8 @@ use bun_lint::prelude::*;
 /// Disallow `Object` constructors.
 pub struct NoNewObject;
 
-const PREFER_LITERAL: Message =
-    Message::new("preferLiteral", "The object literal notation {} is preferable.");
+const PREFER_LITERAL: &Message =
+    &Message::new("preferLiteral", "The object literal notation {} is preferable.");
 
 impl Rule for NoNewObject {
     const META: Meta = Meta::eslint("no-new-object", Kind::Suggestion).deprecated();

@@ -1,3 +1,0 @@
-{
-  "skipInShell": "imports JavaScript modules that are not compiled, which the jsc shell cannot find"
-}

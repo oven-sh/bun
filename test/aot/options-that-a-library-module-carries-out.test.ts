@@ -1,13 +1,15 @@
 // A module of Bun's library, internal/process/pre_execution, carries out --stack-trace-limit and the --trace options. The image of a compiled program has the
 // modules that the program uses, so an executable does without that one: native code sets the limit as the module would, and the options that only print or write
 // something for whoever started the program are ignored with a warning. A server starts, whatever its environment holds.
-import { beforeAll, expect, setDefaultTimeout } from "bun:test";
+import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run as runCommand } from "./harness/run";
-import { describe, test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { beforeAll, describe, testOneByOne as test } from "./supported";
 
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 const countsFrames = `function depth(n) {
   if (n === 0) return (new Error("x").stack ?? "").split("\\n").length - 1;
@@ -18,10 +20,7 @@ const files = {
   "limit.js":
     countsFrames +
     `console.log(Error.stackTraceLimit, depth(30), JSON.stringify(process.execArgv), JSON.stringify(process.argv.slice(2)));\n`,
-  "worker.js":
-    `import { parentPort } from "node:worker_threads";\n` +
-    countsFrames +
-    `parentPort.postMessage(Error.stackTraceLimit + " " + depth(30));\n`,
+  "worker.js": countsFrames + `postMessage(Error.stackTraceLimit + " " + depth(30));\n`,
   "workers.js": `import { Worker } from "node:worker_threads";
 function start(execArgv) {
   return new Promise(resolve => {
@@ -56,18 +55,21 @@ async function build(...of: Parameters<typeof building>) {
 const ignored = (option: string) =>
   `warn: ${option} is ignored by this executable because it only runs code that was compiled into it. Rebuild it with --compile-inspector to load other code\n`;
 
-describe("--stack-trace-limit works like in bun run", () => {
-  const dir = tempDir("aot-options-of-the-library", files);
-  const cwd = String(dir);
-  let limit = "";
-  let workers = "";
-  beforeAll(async () => {
-    [limit, workers] = await Promise.all([
-      build(cwd, "limit", "limit.js"),
-      build(cwd, "workers", "workers.js", "worker.js"),
-    ]);
-  });
+const dir = tempDir("aot-options-of-the-library", files);
+afterAll(() => dir[Symbol.dispose]());
+const cwd = String(dir);
+let limit = "";
+let exits = "";
+let workers = "";
+beforeAll(async () => {
+  [limit, exits, workers] = await Promise.all([
+    build(cwd, "limit", "limit.js"),
+    build(cwd, "exits", "exits.js"),
+    build(cwd, "workers", "workers.js", "worker.js"),
+  ]);
+});
 
+describe("--stack-trace-limit works like in bun run", () => {
   test.each([
     "--stack-trace-limit=3",
     "--stack-trace-limit 3",
@@ -141,17 +143,6 @@ describe("--stack-trace-limit works like in bun run", () => {
 });
 
 describe("the options that print or write something for whoever started the program", () => {
-  const dir = tempDir("aot-options-of-the-library", files);
-  const cwd = String(dir);
-  let exits = "";
-  let workers = "";
-  beforeAll(async () => {
-    [exits, workers] = await Promise.all([
-      build(cwd, "exits", "exits.js"),
-      build(cwd, "workers", "workers.js", "worker.js"),
-    ]);
-  });
-
   test.each([
     ["--trace-exit", "--trace-exit"],
     ["--trace-env", "--trace-env"],

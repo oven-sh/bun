@@ -7,7 +7,7 @@ use std::sync::Arc;
 use bstr::BStr;
 use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::time::nano_timestamp;
-use bun_core::{Global, Output, ZStr, handle_oom, strings};
+use bun_core::{Global, Output, ZBox, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::SEP;
 use bun_paths::path_options::AssumeOk as _;
@@ -24,9 +24,9 @@ use crate::lockfile_real::LinkedMembers;
 use crate::lockfile_real::package::{Diff, DiffSummary, DroppedRow, Package};
 use crate::package_install::{StagingLock, StagingPath};
 use crate::package_manager::Options::{Enable, LogLevel};
+use crate::package_manager::WorkspaceFilter;
 use crate::package_manager::patch_package::{isolated_store_folders, package_for_folder};
 use crate::package_manager::workspace_selection::{self, RootSelection};
-use crate::package_manager::{ROOT_PACKAGE_JSON_PATH, WorkspaceFilter};
 use crate::{DependencyID, Features, PackageID, PackageManager, ResolutionTag, invalid_package_id};
 
 const STORE_DIR: &[u8] = b"node_modules/.bun";
@@ -243,13 +243,6 @@ fn split_store_key(key: &[u8]) -> (Box<[u8]>, Option<Box<[u8]>>) {
     (alias, Some(version.into()))
 }
 
-fn zname(name: &[u8]) -> Vec<u8> {
-    let mut z = Vec::with_capacity(name.len() + 1);
-    z.extend_from_slice(name);
-    z.push(0);
-    z
-}
-
 pub(crate) fn sort_names(names: &mut Vec<Box<[u8]>>) {
     index_sort::sort_vec_unstable_by(names, |a, b| a.cmp(b));
 }
@@ -274,27 +267,19 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
     let quiet = manager.options.log_level == LogLevel::Silent;
     let dry_run = manager.options.dry_run;
 
-    let configured_linker = manager.options.node_linker;
-    let loaded = {
-        let load = manager.load_lockfile_from_cwd::<false>();
-        match &load {
-            LoadResult::NotFound => Err(None),
-            LoadResult::Err(cause) => Err(Some(cause.value.name())),
-            LoadResult::Ok(_) => Ok(load.node_linker(configured_linker)),
-        }
-    };
-    let linker = match loaded {
-        Ok(linker) => linker,
-        Err(None) => {
+    let load = manager.load_lockfile_from_cwd::<false>();
+    let linker = match &load {
+        LoadResult::Ok(_) => load.node_linker(&manager.lockfile, manager.options.node_linker),
+        LoadResult::NotFound => {
             if !quiet {
                 Output::err_generic("missing lockfile, nothing to prune", ());
                 bun_core::note!("run 'bun install' first");
             }
             Global::exit(1);
         }
-        Err(Some(name)) => {
+        LoadResult::Err(cause) => {
             if !quiet {
-                Output::err_generic("failed to load lockfile: {s}", (name,));
+                Output::err_generic("failed to load lockfile: {s}", (cause.value.name(),));
                 print_log_errors(manager.log_mut());
             }
             Global::exit(1);
@@ -601,8 +586,7 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
     let quiet = manager.options.log_level == LogLevel::Silent;
 
     let log = manager.log_mut();
-    // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
-    let path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
+    let path: &[u8] = manager.root_package_json_path.as_bytes();
     let (source, json) = match manager
         .workspace_package_json_cache
         .get_with_path(log, path, Default::default())
@@ -622,7 +606,8 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
     let mut to_root = Package::default();
     let mut resolver: () = ();
     let pm: *mut PackageManager = manager;
-    // SAFETY: same split as `hoist_install_tree`; neither call reaches `lockfile` through `pm`.
+    // SAFETY: same split as `hoist_tree`. `from_lockfile` is only live for `Diff::generate`, which
+    // does not reach `lockfile` through `pm`.
     let summary = unsafe {
         let parsed = to_root.parse_with_json(
             &mut to_lockfile,
@@ -644,7 +629,7 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
                     &mut to_lockfile,
                     &root,
                     &to_root,
-                    None,
+                    false,
                     Some(&mut mapping[..]),
                 )
             }
@@ -1755,7 +1740,7 @@ pub(crate) fn remove_copies_of_the_older_layout(
         workspace_filters,
         tree::Layout::Older,
     ) {
-        remove_from_older_places(manager, &places, cache);
+        remove_from_older_places(manager, &places, cache.handle.fd());
         restore_tree(&mut manager.lockfile, saved);
     }
 }
@@ -1770,7 +1755,8 @@ fn tarball_may_contain(
 ) -> bool {
     let lockfile: &Lockfile = &manager.lockfile;
     let res = &lockfile.packages.items_resolution()[pkg_id as usize];
-    let entry: Box<[u8]> = match res.tag {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let entry = match res.tag {
         // Apart from bundled dependencies, Bun doesn't install the `node_modules` folder of a
         // workspace, a `file:` folder or a git checkout.
         ResolutionTag::Workspace | ResolutionTag::Folder | ResolutionTag::Git => return false,
@@ -1778,23 +1764,22 @@ fn tarball_may_contain(
             let name = lockfile.packages.items_name()[pkg_id as usize];
             crate::package_manager::cached_npm_package_folder_name(
                 manager,
+                &mut buf,
                 name.slice(&lockfile.buffers.string_bytes),
                 res.npm().version,
                 None,
             )
         }
         ResolutionTag::Github => {
-            crate::package_manager::cached_github_folder_name(manager, res.github(), None)
+            crate::package_manager::cached_github_folder_name(manager, &mut buf, res.github(), None)
         }
         // A tarball dependency can contain anything.
         _ => return true,
-    }
-    .as_bytes()
-    .into();
+    };
     // An installed package is never downloaded again, so a missing cache entry won't come back.
     // Treat it as not having the folder.
-    let folder = zname(&join(&join(&entry, b"node_modules"), alias));
-    sys::directory_exists_at(cache, ZStr::from_slice_with_nul(&folder)).unwrap_or(true)
+    let folder = ZBox::from_bytes(join(&join(entry.as_bytes(), b"node_modules"), alias));
+    sys::directory_exists_at(cache, &folder).unwrap_or(true)
 }
 
 /// The path of a tree's `node_modules`, relative to the project root.
@@ -1923,9 +1908,7 @@ fn links_package(
             )
         }
     };
-    let stat = |dir: &Dir, path: &[u8]| {
-        sys::fstatat(dir.fd(), ZStr::from_slice_with_nul(&zname(path))).ok()
-    };
+    let stat = |dir: &Dir, path: &[u8]| sys::fstatat(dir.fd(), &ZBox::from_bytes(path)).ok();
     let (Some(link), Some(target)) = (stat(entry.dir, entry.name), stat(&Dir::cwd(), &target))
     else {
         return false;
@@ -2108,7 +2091,7 @@ fn workspace_node_modules(lockfile: &Lockfile, pkg_id: PackageID) -> Option<Box<
 /// Anything that removes entries from the store or from a `node_modules` must open the folder with
 /// this function. It never follows a symlink, and adds it to `linked_folders` instead.
 fn open_workspace_folder(folder: &[u8], linked_folders: &mut Vec<Box<[u8]>>) -> Option<Dir> {
-    let st = sys::lstat(ZStr::from_slice_with_nul(&zname(folder))).ok()?;
+    let st = sys::lstat(&ZBox::from_bytes(folder)).ok()?;
     match sys::kind_from_mode(st.st_mode as sys::Mode) {
         EntryKind::Directory => Dir::cwd()
             .open_at_with(folder, O::RDONLY | O::CLOEXEC | O::NOFOLLOW)
@@ -2223,7 +2206,7 @@ fn open_real_subdir(dir: &Dir, name: &[u8]) -> Option<Dir> {
 
 #[cfg(not(windows))]
 fn lstat_kind(dir: &Dir, name: &[u8]) -> EntryKind {
-    match sys::lstatat(dir.fd(), ZStr::from_slice_with_nul(&zname(name))) {
+    match sys::lstatat(dir.fd(), &ZBox::from_bytes(name)) {
         Ok(st) => sys::kind_from_mode(st.st_mode as sys::Mode),
         Err(_) => EntryKind::Unknown,
     }
@@ -2376,7 +2359,7 @@ fn wanted_packages(manager: &PackageManager, selection: Option<&Selection>) -> D
             };
             let protected =
                 reachable::packages_from(lockfile, resolutions, &unselected, false, full);
-            wanted.unmanaged.set_union(&protected.unmanaged);
+            wanted.set_union(&protected);
         }
     }
     wanted
@@ -2636,9 +2619,9 @@ fn plan_store_entry_leftovers(store: &Dir, entry: &[u8], plan: &mut Plan) {
 }
 
 fn store_link_target(dir: &Dir, name: &[u8]) -> Option<Box<[u8]>> {
-    let z = zname(name);
+    let z = ZBox::from_bytes(name);
     let mut buf = bun_paths::path_buffer_pool::get();
-    let len = sys::readlinkat(dir.fd(), ZStr::from_slice_with_nul(&z), buf.as_mut_slice()).ok()?;
+    let len = sys::readlinkat(dir.fd(), &z, buf.as_mut_slice()).ok()?;
     let mut components = strings::tokenize_any(&buf.as_slice()[..len], b"/\\");
     while let Some(component) = components.next() {
         if component == b".bun" {
@@ -2652,8 +2635,7 @@ fn store_link_target(dir: &Dir, name: &[u8]) -> Option<Box<[u8]>> {
 }
 
 fn remove_link(dir: &Dir, name: &[u8]) -> sys::Maybe<()> {
-    let z = zname(name);
-    let z = ZStr::from_slice_with_nul(&z);
+    let z = &ZBox::from_bytes(name);
     let result = sys::unlinkat(dir.fd(), z);
     #[cfg(windows)]
     let result = result.or_else(|_| sys::rmdirat(dir.fd(), z));
@@ -2739,13 +2721,13 @@ fn execute(plan: &Plan, quiet: bool) -> usize {
 }
 
 fn rmdir(dir: &Dir, name: &[u8]) {
-    let z = zname(name);
-    let _ = sys::rmdirat(dir.fd(), ZStr::from_slice_with_nul(&z));
+    let z = ZBox::from_bytes(name);
+    let _ = sys::rmdirat(dir.fd(), &z);
 }
 
 fn is_dangling(dir: &Dir, name: &[u8]) -> bool {
-    let z = zname(name);
-    match sys::fstatat(dir.fd(), ZStr::from_slice_with_nul(&z)) {
+    let z = ZBox::from_bytes(name);
+    match sys::fstatat(dir.fd(), &z) {
         Ok(_) => false,
         Err(err) => matches!(err.get_errno(), E::ENOENT | E::ENOTDIR),
     }
@@ -2887,8 +2869,7 @@ fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>)
             continue;
         }
         if let Some((bin_path, global_node_modules)) = global {
-            let dest = zname(&join(bin_path, name));
-            let dest = ZStr::from_slice_with_nul(&dest);
+            let dest = &ZBox::from_bytes(join(bin_path, name));
             match sys::readlink(dest, link.as_mut_slice()) {
                 Ok(len)
                     if crate::bin_real::Linker::link_leads_into(
@@ -2899,9 +2880,7 @@ fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>)
                 _ => continue,
             }
         } else {
-            let z = zname(name);
-            let z = ZStr::from_slice_with_nul(&z);
-            if let Ok(len) = sys::readlinkat(bin.fd(), z, link.as_mut_slice())
+            if let Ok(len) = sys::readlinkat(bin.fd(), entry.name.as_zstr(), link.as_mut_slice())
                 && (link[..len].strip_prefix(b"../"))
                     .is_some_and(|path| leads_into_package(parent, path))
             {
@@ -2910,7 +2889,6 @@ fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>)
         }
         dangling.push(name.into());
     }
-    drop(iter);
     let mut removed = false;
     for name in &dangling {
         removed |= remove_link(bin, name).is_ok();

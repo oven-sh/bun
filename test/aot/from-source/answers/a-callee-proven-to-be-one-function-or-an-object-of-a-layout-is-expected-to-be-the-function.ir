@@ -1,0 +1,31 @@
+# -- source: main.cjs
+# "use strict";
+# function add(a, b) { return (a + b) | 0; }
+# function interop(value) { return value && value.marked ? value : { default: value }; }
+# function byVariable(t) { let s = 0; for (let i = 0; i < t + 3; i++) s = (s + lib(i, t)) | 0; return s; }
+# function byField(t) { let s = 0; for (let i = 0; i < t + 3; i++) s = (s + (0, wrapped.default)(i, t)) | 0; return s; }
+# function attempt(run, t) { try { return run(t); } catch (error) { return error.constructor.name; } }
+# const raw = { default: flag ? add : undefined }, lib = raw.default || raw;
+# const wrapped = interop({ marked: true, default: add });
+# print(attempt(byVariable, 1), attempt(byField, 1), typeof lib);
+# -- end of source
+# f1 = add, f2 = interop, f3 = byVariable, f4 = byField, f5 = attempt
+# `lib = raw.default || raw` and what Babel writes for every default import, `(0, _add.default)(..)` behind _interopRequireDefault(): Link PROVES the callee to be add or an object of a layout.
+# Nobody was listed at the call and nothing was expected: the question that takes the one function out of a proven type let built-ins stand beside it, and took a layout for something unknown.
+# An object of a layout says as little against the guess as a built-in does. The guess is asked at the run: the test of the callee stands in front of the loop, add is walked in line, the sums are of whole numbers.
+# RUN(VARIABLE): walk f3 mechanisms=all
+# VARIABLE: = TypeTest {{*}}testedType=f1
+# VARIABLE: = Add {{*}}form=Integers
+# RUN(FIELD): walk f4 mechanisms=all
+# FIELD: = TypeTest {{*}}testedType=f1
+# FIELD: = Add {{*}}form=Integers
+# The shell's flag decides which of the two the variable holds: the object is called as written, and that throws.
+# RUN(FUNCTION): run-in-shell flag = true;
+# FUNCTION: 10 10 function
+# FUNCTION-NEXT: exited with 0
+# RUN(OBJECT): run-in-shell flag = false;
+# OBJECT: TypeError 10 object
+# OBJECT-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime flag = false;
+# CHECKED: TypeError 10 object
+# CHECKED-NEXT: exited with 0

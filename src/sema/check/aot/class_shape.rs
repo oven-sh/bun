@@ -1,13 +1,14 @@
 use super::answers::{
     ClassDeclaration, ClassMember, ClassMemberSource, ClassRef, ClassShape, FunctionRef, GaveUp,
-    MemberName, ObjectMemberKind, PositionTypes,
+    MemberForm, MemberName, ObjectMemberKind, PositionTypes,
 };
 use super::class_stores::{
-    BindingStore, BindingStoreKind, StoreForm, StoreIndex, ThisOwner,
-    find_prototype_object_held_by, is_prototype_property,
+    BindingStore, BindingStoreKind, DefinedName, StoreForm, StoreIndex, ThisOwner, WrittenStores,
+    find_prototype_object_held_by, find_stored_function, is_prototype_property,
 };
 use super::queries::Queries;
 use crate::atom::{Atom, known};
+use crate::bind::decorator_metadata::is_legacy_decorated_member;
 use crate::bind::{Bound, Decl, FnOwner, Parent, SymbolId};
 use crate::hir::{
     self, ClassId, ExprId, ExprKind, Flags, FnId, FnKind, MemberId, MemberKind, ModifierKind,
@@ -15,9 +16,13 @@ use crate::hir::{
 };
 use crate::program::{FileId, Sym};
 use crate::types::TypeId;
-use crate::util::FxHashSet;
+use crate::util::{FxHashMap, FxHashSet, SharedSort};
+use std::cell::OnceCell;
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+/// A method that stores so many fields beside those of the constructor fills its objects: `init`, `reset`.
+const FEWEST_FIELDS_OF_INITIALIZER: usize = 4;
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum StorePlace {
     Instance,
     Prototype,
@@ -32,6 +37,9 @@ struct StoreCandidate {
     value: ExprId,
     form: StoreForm,
     is_in_every_construction: bool,
+    defined: MemberForm,
+    is_stored_by_callee: bool,
+    birth: u32,
 }
 
 impl StoreCandidate {
@@ -55,12 +63,13 @@ impl StoreCandidate {
 struct StoreCandidates {
     stores: Vec<StoreCandidate>,
     prototype_accessor_names: FxHashSet<Atom>,
+    /// What is defined under them is not seen: an accessor may stand in the place of the field.
+    names_defined_on_prototype: FxHashSet<Atom>,
 }
 
 #[derive(Default)]
 struct ComputedNames {
     has_instance_name: bool,
-    has_static_name: bool,
 }
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
@@ -74,14 +83,15 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let mut names_stored_in_prototype = Vec::new();
         if bound.runtime.is_computed() {
             let index = self.store_index(file);
-            let candidates = store_candidates(
+            let mut candidates = store_candidates(
                 hir,
                 bound,
-                index,
+                &index,
                 &[ThisOwner::Instance(class), ThisOwner::Static(class)],
                 bound.declared_symbol(Decl::Class(class)).some(),
                 bound.inner_class_symbol(class).some(),
             );
+            move_stores_of_setters(hir, class, &mut candidates.stores);
             names_stored_in_prototype = self.names_stored_in_prototype(&candidates);
             self.add_stores(file, &mut members, candidates);
         }
@@ -90,7 +100,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             members: self.list(&members),
             names_stored_in_prototype: self.list(&names_stored_in_prototype),
             has_computed_instance_name: computed.has_instance_name,
-            has_computed_static_name: computed.has_static_name,
         })
     }
 
@@ -104,24 +113,87 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if !can_be_constructor_function(&hir[function]) || !bound.runtime.is_computed() {
             return None;
         }
-        if is_written_as_method(hir, bound, function) {
+        let written = self.c.written_stores(file);
+        if is_written_as_method(hir, bound, written, function) {
             return None;
         }
         let index = self.store_index(file);
-        let candidates = store_candidates(
+        let mut candidates = store_candidates(
             hir,
             bound,
-            index,
+            &index,
             &[ThisOwner::Function(function)],
             bound.declared_symbol(Decl::Fn(function)).some(),
             None,
         );
-        if !candidates
+        let mut callees = self.initializers_at_path(FunctionRef { file, function });
+        // `function State() {}`: methods such as `init` fill its objects.
+        let own_names: FxHashSet<Atom> = candidates
             .stores
             .iter()
-            .any(StoreCandidate::is_of_constructor_function)
-        {
+            .filter(|store| store.place == StorePlace::Instance)
+            .map(|store| store.name)
+            .collect();
+        if callees.is_empty() {
+            let called_off_new_objects = match own_names.is_empty() {
+                true => &[],
+                false => self.methods_called_off_new_objects(file),
+            };
+            for method in &candidates.stores {
+                if method.place != StorePlace::Prototype {
+                    continue;
+                }
+                let Some(function) = find_stored_function(hir, bound, method.value) else {
+                    continue;
+                };
+                // `this.state = new State(); this.state.init(..)`
+                let stores = index.this_stores_of(ThisOwner::Function(function)).iter();
+                let is_initializer = own_names.is_empty()
+                    || called_off_new_objects.contains(&method.name)
+                        && stores
+                            .map(|store| store.name)
+                            .filter(|name| !own_names.contains(name))
+                            .collect::<FxHashSet<Atom>>()
+                            .len()
+                            >= FEWEST_FIELDS_OF_INITIALIZER;
+                if is_initializer {
+                    callees.push(function);
+                }
+            }
+        }
+        for callee in callees {
+            let stores = index.this_stores_of(ThisOwner::Function(callee)).iter();
+            candidates.stores.extend(stores.map(|store| StoreCandidate {
+                name: store.name,
+                kind: ObjectMemberKind::Field,
+                place: StorePlace::Instance,
+                store: store.assign,
+                value: store.value,
+                form: store.form,
+                is_in_every_construction: false,
+                defined: store.defined,
+                is_stored_by_callee: true,
+                birth: u32::MAX,
+            }));
+        }
+        let stores_like_constructor = candidates
+            .stores
+            .iter()
+            .any(StoreCandidate::is_of_constructor_function);
+        if !stores_like_constructor && !self.is_named_by_new(FunctionRef { file, function }) {
             return None;
+        }
+        let stores_by_itself = candidates
+            .stores
+            .iter()
+            .any(|store| store.is_of_constructor_function() && !store.is_stored_by_callee);
+        if !stores_by_itself {
+            let only_hands_on = FunctionRef { file, function };
+            if !self.is_held_by_name_or_returned(only_hands_on)
+                || !self.is_used_like_constructor(only_hands_on)
+            {
+                return None;
+            }
         }
         let mut members = Vec::new();
         let names_stored_in_prototype = self.names_stored_in_prototype(&candidates);
@@ -132,7 +204,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 ClassMemberSource::ThisStore(_) | ClassMemberSource::PrototypeStore(_)
             )
         });
-        if !is_constructor {
+        if !is_constructor && stores_like_constructor {
             return None;
         }
         let shape: &'c ClassShape<'c> = self.arena.alloc(ClassShape {
@@ -140,7 +212,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             members: self.list(&members),
             names_stored_in_prototype: self.list(&names_stored_in_prototype),
             has_computed_instance_name: false,
-            has_computed_static_name: false,
         });
         Some(shape)
     }
@@ -153,7 +224,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let mut names: Vec<Atom> = stored
             .chain(candidates.prototype_accessor_names.iter().copied())
             .collect();
-        names.sort_unstable_by_key(|&name| self.atom_bytes(name));
+        names.shared_sort_unstable_by_key(|&name| self.atom_bytes(name));
         names.dedup();
         names
             .into_iter()
@@ -191,9 +262,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 name: self.member_name(name),
                 kind: ObjectMemberKind::Field,
                 source: ClassMemberSource::ParameterProperty(parameter),
+                is_made_at_birth: true,
                 types,
                 is_static: false,
                 is_optional: flags.contains(Flags::OPTIONAL),
+                may_be_defined_above: false,
+                form: MemberForm::default(),
             });
         }
     }
@@ -210,9 +284,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let member = &hir[id];
             match hir.runtime_member_key(id) {
                 PropKey::None => {}
-                PropKey::Computed(_) if member.flags.contains(Flags::STATIC) => {
-                    computed.has_static_name = true;
-                }
+                PropKey::Computed(_) if member.flags.contains(Flags::STATIC) => {}
                 PropKey::Computed(key) => {
                     let is_field = member.kind == MemberKind::Property
                         && !member.flags.contains(Flags::ACCESSOR);
@@ -285,9 +357,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             name: self.member_name(name),
             kind,
             source: ClassMemberSource::Member(id),
+            is_made_at_birth: kind == ObjectMemberKind::Field
+                && !member.flags.intersects(Flags::AMBIENT | Flags::ABSTRACT),
             types,
             is_static,
             is_optional,
+            may_be_defined_above: false,
+            form: MemberForm::default(),
         })
     }
 
@@ -334,6 +410,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let StoreCandidates {
             stores,
             prototype_accessor_names,
+            names_defined_on_prototype,
         } = candidates;
         let mut declared: FxHashSet<(MemberName, bool)> = members
             .iter()
@@ -343,20 +420,52 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let in_every_construction = stores.iter().filter(|store| store.is_in_every_construction);
         let in_every_construction: FxHashSet<Atom> =
             in_every_construction.map(|store| store.name).collect();
+        let made_at_birth = stores.iter().filter(|store| store.birth != u32::MAX);
+        let made_at_birth: FxHashSet<Atom> = made_at_birth.map(|store| store.name).collect();
+        let forms = forms_of_instance_fields(&stores);
+        let methods_of_prototype = stores.iter().filter(|store| {
+            store.place == StorePlace::Prototype && store.kind == ObjectMemberKind::Method
+        });
+        let methods_of_prototype: FxHashSet<Atom> =
+            methods_of_prototype.map(|store| store.name).collect();
+        let hir = self.c.hir(file);
+        let mut only_declared: FxHashMap<MemberName, Vec<usize>> = FxHashMap::default();
+        for (place, member) in members.iter().enumerate().rev() {
+            let is_only_declared = match member.source {
+                ClassMemberSource::Member(id) => hir[id].flags.contains(Flags::AMBIENT),
+                _ => false,
+            };
+            if is_only_declared && !member.is_static && member.kind == ObjectMemberKind::Field {
+                only_declared.entry(member.name).or_default().push(place);
+            }
+        }
+        let values_stored = OnceCell::new();
         for candidate in &stores {
             let name = self.member_name(candidate.name);
             let is_static = candidate.place == StorePlace::Class;
+            if candidate.place == StorePlace::Instance && candidate.kind == ObjectMemberKind::Field
+            {
+                let place = only_declared.get_mut(&name).and_then(Vec::pop);
+                if let Some(member) = place.map(|place| &mut members[place]) {
+                    member.source = candidate.source();
+                    member.is_optional = !in_every_construction.contains(&candidate.name);
+                    member.is_made_at_birth = made_at_birth.contains(&candidate.name);
+                    continue;
+                }
+            }
             let is_new = if is_getter_or_setter(candidate.kind) {
                 !declared.contains(&(name, is_static))
                     && added_accessors.insert((name, candidate.kind))
             } else {
                 let is_accessor = !is_static && prototype_accessor_names.contains(&candidate.name);
-                !is_accessor && declared.insert((name, is_static))
+                let hides_method = candidate.place == StorePlace::Instance
+                    && methods_of_prototype.contains(&candidate.name);
+                !is_accessor && !hides_method && declared.insert((name, is_static))
             };
             if !is_new {
                 continue;
             }
-            let checked = match find_stored_value(&stores, candidate) {
+            let checked = match find_stored_value(&stores, &values_stored, candidate) {
                 Some(value) if file == self.file => self.ask(|queries| {
                     let ty = queries.c.type_of_expr(file, value);
                     let ty = queries.c.widen_literal(ty);
@@ -374,6 +483,14 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 types: PositionTypes::unwritten(checked),
                 is_static,
                 is_optional: !is_always_stored,
+                is_made_at_birth: candidate.place == StorePlace::Instance
+                    && made_at_birth.contains(&candidate.name),
+                may_be_defined_above: candidate.place == StorePlace::Instance
+                    && names_defined_on_prototype.contains(&candidate.name),
+                form: match candidate.place {
+                    StorePlace::Instance => forms.get(&candidate.name).copied().unwrap_or_default(),
+                    StorePlace::Prototype | StorePlace::Class => candidate.defined,
+                },
             });
         }
     }
@@ -386,8 +503,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             .all(|&(_, decl)| can_merge_with_class(decl));
         let (hir, bound) = (self.c.hir(class.file), self.c.bound(class.file));
         let mut modifiers = hir[class.class].modifiers.iter();
-        let is_decorated =
-            modifiers.any(|modifier| matches!(hir[modifier].kind, ModifierKind::Decorator(_)));
+        let has_decorated_constructor = hir[class.class].members.iter().any(|member| {
+            hir[member].kind == MemberKind::Constructor && is_legacy_decorated_member(hir, member)
+        });
+        let is_decorated = has_decorated_constructor
+            || modifiers.any(|modifier| matches!(hir[modifier].kind, ModifierKind::Decorator(_)));
         let is_stable = bound.is_stable_binding(bound.declared_symbol(Decl::Class(class.class)));
         (has_only_class_merges && !is_decorated && is_stable).then_some(class)
     }
@@ -428,7 +548,12 @@ fn is_stored_into(
     )
 }
 
-fn is_written_as_method(hir: &hir::File<'_>, bound: &Bound<'_>, function: FnId) -> bool {
+fn is_written_as_method(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    written: WrittenStores<'_>,
+    function: FnId,
+) -> bool {
     let FnOwner::Expr(expression) = bound.fns[function.idx()].owner else {
         return false;
     };
@@ -439,6 +564,7 @@ fn is_written_as_method(hir: &hir::File<'_>, bound: &Bound<'_>, function: FnId) 
         );
         let literal = bound.prop_owner[property.idx()];
         return is_accessor_of_descriptor
+            || written.is_named_prototype_literal(literal)
             || is_stored_into(hir, bound, literal, |place| {
                 is_prototype_property(hir, hir.skip_type_assertions(place))
             });
@@ -474,6 +600,9 @@ fn store_candidates(
             value: store.value,
             form: store.form,
             is_in_every_construction: store.is_in_every_construction,
+            defined: store.defined,
+            is_stored_by_callee: store.is_stored_by_callee,
+            birth: store.birth,
         }));
     }
     let inner = inner.filter(|&inner| outer != Some(inner));
@@ -481,6 +610,13 @@ fn store_candidates(
         .into_iter()
         .flatten()
         .flat_map(|symbol| index.binding_stores_of(symbol));
+    let defined_names =
+        (this_owners.iter()).flat_map(|&owner| index.names_defined_on_prototype_of(owner));
+    let defined_accessors = defined_names.clone().filter(|name| name.is_accessor);
+    let names_defined_on_prototype = defined_names
+        .filter(|name| !name.is_accessor)
+        .map(|name| name.name)
+        .collect();
     let prototype_accessor_names = binding_stores
         .clone()
         .filter(|store| match store.kind {
@@ -488,15 +624,101 @@ fn store_candidates(
             BindingStoreKind::Static => false,
         })
         .map(|store| store.name)
+        .chain(defined_accessors.clone().map(|accessor| accessor.name))
         .collect();
-    let is_binding_stable = outer.is_none_or(|outer| bound.is_stable_binding(outer));
+    let is_binding_stable = outer.is_none_or(|outer| bound.is_stable_beside_evals(outer));
     if is_binding_stable {
         stores.extend(binding_stores.map(binding_candidate));
     }
-    stores.sort_unstable_by_key(|candidate| (hir[candidate.store].pos, candidate.store));
+    stores.shared_sort_unstable_by_key(|candidate| {
+        (
+            candidate.is_stored_by_callee,
+            hir[candidate.store].pos,
+            candidate.store,
+        )
+    });
+    let stores = bound.move_inner_assignments_first(hir, stores, |candidate| {
+        let is_own = candidate.place == StorePlace::Instance && !candidate.is_stored_by_callee;
+        is_own.then_some(candidate.store)
+    });
+    let mut stores = stores;
+    for accessor in defined_accessors {
+        add_stores_of_setter(hir, index, accessor, &mut stores);
+    }
     StoreCandidates {
         stores,
         prototype_accessor_names,
+        names_defined_on_prototype,
+    }
+}
+
+/// The setter of a defined accessor runs in the place of the constructor's store under its name.
+fn add_stores_of_setter(
+    hir: &hir::File<'_>,
+    index: &StoreIndex<'_>,
+    accessor: &DefinedName,
+    stores: &mut Vec<StoreCandidate>,
+) {
+    let runs_setter = |store: &StoreCandidate| {
+        store.place == StorePlace::Instance
+            && store.name == accessor.name
+            && store.is_in_every_construction
+    };
+    let (Some(setter), Some(place)) = (accessor.setter, stores.iter().position(runs_setter)) else {
+        return;
+    };
+    let birth = hir[stores[place].store].pos;
+    let of_setter = index.this_stores_of(ThisOwner::Function(setter)).iter();
+    let of_setter: Vec<_> = of_setter
+        .filter(|store| !store.is_stored_by_callee)
+        .map(|store| StoreCandidate {
+            name: store.name,
+            kind: ObjectMemberKind::Field,
+            place: StorePlace::Instance,
+            store: store.assign,
+            value: store.value,
+            form: store.form,
+            is_in_every_construction: store.is_in_every_construction,
+            defined: store.defined,
+            is_stored_by_callee: false,
+            birth: match store.is_in_every_construction {
+                true => birth,
+                false => u32::MAX,
+            },
+        })
+        .collect();
+    stores.splice(place..place, of_setter);
+}
+
+/// `constructor(x) { this.x = x; this.y = 0; }` runs `set x(value) { this._x = value; }`: `_x` is created ahead of `y`.
+fn move_stores_of_setters(hir: &hir::File<'_>, class: ClassId, stores: &mut Vec<StoreCandidate>) {
+    for id in hir[class].members.iter() {
+        let member = &hir[id];
+        let PropKey::Name(name) = hir.runtime_member_key(id) else {
+            continue;
+        };
+        if member.kind != MemberKind::Setter || member.flags.contains(Flags::STATIC) {
+            continue;
+        }
+        let is_in_setter = |store: &StoreCandidate| {
+            let position = hir[store.store].pos;
+            store.place == StorePlace::Instance
+                && (member.start..member.loc.end).contains(&position)
+        };
+        let runs_setter = |store: &StoreCandidate| {
+            store.place == StorePlace::Instance
+                && store.name == name
+                && store.is_in_every_construction
+        };
+        if !stores.iter().any(runs_setter) {
+            continue;
+        }
+        let (of_setter, others): (Vec<_>, Vec<_>) =
+            core::mem::take(stores).into_iter().partition(is_in_setter);
+        let place = others.iter().position(runs_setter);
+        stores.extend(others);
+        let place = place.unwrap_or(stores.len());
+        stores.splice(place..place, of_setter);
     }
 }
 
@@ -513,18 +735,62 @@ fn binding_candidate(store: &BindingStore) -> StoreCandidate {
         value: store.value,
         form: store.form,
         is_in_every_construction: false,
+        defined: MemberForm::default(),
+        is_stored_by_callee: false,
+        birth: u32::MAX,
     }
 }
 
-fn find_stored_value(stores: &[StoreCandidate], candidate: &StoreCandidate) -> Option<ExprId> {
+fn forms_of_instance_fields(stores: &[StoreCandidate]) -> FxHashMap<Atom, MemberForm> {
+    let mut forms = FxHashMap::default();
+    if stores
+        .iter()
+        .all(|store| store.defined == MemberForm::default())
+    {
+        return forms;
+    }
+    let mut births: FxHashMap<Atom, u32> = FxHashMap::default();
+    for store in stores
+        .iter()
+        .filter(|store| store.place == StorePlace::Instance)
+    {
+        let earliest = births.entry(store.name).or_insert(u32::MAX);
+        if store.birth < *earliest {
+            *earliest = store.birth;
+            forms.insert(store.name, store.defined);
+        } else if *earliest == u32::MAX {
+            let form = forms.entry(store.name).or_insert(store.defined);
+            if *form != store.defined {
+                *form = MemberForm::default();
+            }
+        }
+    }
+    forms
+}
+
+fn find_stored_value(
+    stores: &[StoreCandidate],
+    values_stored: &OnceCell<FxHashMap<(Atom, StorePlace), ExprId>>,
+    candidate: &StoreCandidate,
+) -> Option<ExprId> {
     match candidate.form {
-        StoreForm::Plain | StoreForm::Logical => Some(candidate.value),
+        StoreForm::Plain | StoreForm::Logical => candidate.value.some(),
         StoreForm::Compound => {
-            let mut to_same_place = stores
-                .iter()
-                .filter(|other| other.name == candidate.name && other.place == candidate.place);
-            let other = to_same_place.find(|other| other.form != StoreForm::Compound)?;
-            Some(other.value)
+            let list_first_of_each = || {
+                let mut first_of_each = FxHashMap::default();
+                for other in stores {
+                    if other.form != StoreForm::Compound {
+                        first_of_each
+                            .entry((other.name, other.place))
+                            .or_insert(other.value);
+                    }
+                }
+                first_of_each
+            };
+            let first_of_each = values_stored.get_or_init(list_first_of_each);
+            first_of_each
+                .get(&(candidate.name, candidate.place))
+                .copied()
         }
     }
 }

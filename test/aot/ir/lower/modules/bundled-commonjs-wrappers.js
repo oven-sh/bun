@@ -8,10 +8,9 @@
 // NOWHERE-NOT: calleeName="__commonJS"
 // NOWHERE-NOT: calleeName="require_m0"
 
-// RUN(FILE): link
-// FILE: function {{*}}kind=Module
-// FILE-NOT: PropSet
-// FILE: function {{*}}role=Library
+// RUN(WHOLE): link
+// WHOLE: function {{*}}kind=Module
+// WHOLE-NOT: PropSet
 
 // Each `__commonJS(callback)` of a bundle is a module whose body is the callback, and each `require_x()` is a require of it. Nothing is left of the statements that define the wrappers.
 var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);

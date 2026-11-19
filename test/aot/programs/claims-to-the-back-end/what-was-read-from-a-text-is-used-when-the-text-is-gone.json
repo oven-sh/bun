@@ -1,3 +1,0 @@
-{
-  "runWithASAN": "what was read from a text is used behind a collection that takes the text away"
-}

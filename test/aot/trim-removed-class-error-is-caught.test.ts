@@ -3,29 +3,53 @@ import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { run } from "./harness/run";
-import { describe, eachRow } from "./supported";
+import { test } from "./supported";
 
 const handlers = `catch (error) { console.log("caught", error.code); } finally { console.log("finally"); }\nconsole.log("end");\n`;
-const joined = (name: string) => `const key = ${JSON.stringify([name.slice(0, 2), name.slice(2)])}.join("");\n`;
-const key = joined("Glob");
+// The build reads a name that is joined from written strings, so the names come from the command line.
+const names = ["Glob", "SHA256", "escapeHTML", "semver", "localeCompare", "toLocaleString", "toLocaleDateString"];
+const fromTheRun = (name: string) => `const key = process.argv[${2 + names.indexOf(name)}];\n`;
+const key = fromTheRun("Glob");
 const makeGlob = (Class: string) => `console.log("made", new ${Class}("*.js").match("a.js"));`;
 
 if (!canTrim)
   console.error("SKIPPED: trim-removed-class-error-is-caught.test.ts: this build of Bun doesn't support --trim");
 
-async function buildAndRun(files: Record<string, string>, build: (executable: string) => string[]) {
+async function buildAndRun(
+  files: Record<string, string>,
+  build: (executable: string) => string[],
+  words: string[] = [],
+) {
   using dir = tempDir("aot-trim-removed-class", files);
   const folder = String(dir);
   const executable = join(folder, isWindows ? "trimmed.exe" : "trimmed");
   const built = await run(build(executable), folder);
   expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  return await run([executable], folder);
+  return await run([executable, ...words], folder);
 }
 
-// Each program joins the name of an API from two strings and uses the API under that key inside a `try` block.
+/** One program: each part in a block of its own, behind a line with its name. */
+function programOf(parts: readonly (readonly [name: string, text: string])[]) {
+  const imports = /^import .*\n/gm;
+  return (
+    parts.flatMap(([, text]) => text.match(imports) ?? []).join("") +
+    parts
+      .map(([name, text]) => `console.log(${JSON.stringify("# " + name)});\n{\n${text.replace(imports, "")}}\n`)
+      .join("")
+  );
+}
+const partsOf = (stdout: string) =>
+  Object.fromEntries(
+    stdout
+      .split(/^# /m)
+      .slice(1)
+      .map(part => [part.slice(0, part.indexOf("\n")), part.slice(part.indexOf("\n") + 1)]),
+  );
+
+// Each part takes the name of an API from the command line and uses the API under that key inside a `try` block.
 // --trim may keep the API or remove it. If it removes the API, the use throws ERR_FEATURE_REMOVED, and the `catch` and `finally` blocks run.
-describe.skipIf(!canTrim)("a try block catches the error of an API that --trim removed", () => {
-  eachRow([
+{
+  const parts = [
     ["new in the try block", `${key}try { ${makeGlob("Bun[key]")} } ${handlers}`],
     [
       "new in the try block of a function",
@@ -61,43 +85,53 @@ describe.skipIf(!canTrim)("a try block catches the error of an API that --trim r
       "another module reads the class",
       `import { find } from "./find.mjs";\ntry { ${makeGlob("(find())")} } ${handlers}`,
     ],
-    ["a class without arguments", `${joined("SHA256")}try { console.log("made", typeof new Bun[key]()); } ${handlers}`],
-    ["a function", `${joined("escapeHTML")}try { console.log("made", Bun[key]("<a>")); } ${handlers}`],
+    [
+      "a class without arguments",
+      `${fromTheRun("SHA256")}try { console.log("made", typeof new Bun[key]()); } ${handlers}`,
+    ],
+    ["a function", `${fromTheRun("escapeHTML")}try { console.log("made", Bun[key]("<a>")); } ${handlers}`],
     [
       "a function of a namespace",
-      `${joined("semver")}try { console.log("made", Bun[key].satisfies("1.2.3", "^1")); } ${handlers}`,
+      `${fromTheRun("semver")}try { console.log("made", Bun[key].satisfies("1.2.3", "^1")); } ${handlers}`,
     ],
-    ["a method of a string", `${joined("localeCompare")}try { console.log("made", "a"[key]("b")); } ${handlers}`],
-    ["a method of a number", `${joined("toLocaleString")}try { console.log("made", (5)[key]()); } ${handlers}`],
-    ["a method of a bigint", `${joined("toLocaleString")}try { console.log("made", 5n[key]()); } ${handlers}`],
+    ["a method of a string", `${fromTheRun("localeCompare")}try { console.log("made", "a"[key]("b")); } ${handlers}`],
+    ["a method of a number", `${fromTheRun("toLocaleString")}try { console.log("made", (5)[key]()); } ${handlers}`],
+    ["a method of a bigint", `${fromTheRun("toLocaleString")}try { console.log("made", 5n[key]()); } ${handlers}`],
     [
       "a method of a date",
-      `${joined("toLocaleDateString")}try { console.log("made", typeof new Date(0)[key]()); } ${handlers}`,
+      `${fromTheRun("toLocaleDateString")}try { console.log("made", typeof new Date(0)[key]()); } ${handlers}`,
     ],
-  ] as const)(
-    "%s",
-    async (_, program) => {
-      const files = { "program.mjs": program, "find.mjs": `${key}export const find = () => Bun[key];\n` };
+  ] as const;
+  test.skipIf(!canTrim).concurrent(
+    "a try block catches the error of an API that --trim removed",
+    async () => {
+      const files = { "program.mjs": programOf(parts), "find.mjs": `${key}export const find = () => Bun[key];\n` };
       const flags = ["build", "--compile", "--aot", "--trim", "program.mjs", "--outfile"];
-      const result = await buildAndRun(files, executable => [bunExe(), ...flags, executable]);
-      expect(result).toEqual({
-        stdout: expect.stringMatching(/^(made .+|caught ERR_FEATURE_REMOVED)\nfinally\nend\n$/),
+      const { stdout, ...rest } = await buildAndRun(files, executable => [bunExe(), ...flags, executable], names);
+      expect({ ...rest, parts: partsOf(stdout) }).toEqual({
+        parts: Object.fromEntries(
+          parts.map(([name]) => [
+            name,
+            expect.stringMatching(/^(made .+|caught ERR_FEATURE_REMOVED)\nfinally\nend\n$/),
+          ]),
+        ),
         stderr: "",
         exitCode: 0,
       });
+      expect(stdout).toContain("caught ERR_FEATURE_REMOVED");
     },
     120_000,
   );
-});
+}
 
-const buildScript = `const [outfile, feature] = process.argv.slice(2);
-const result = await Bun.build({ entrypoints: ["./program.mjs"], compile: { outfile, aot: true, trim: { remove: [feature] } } });
+const buildScript = `const [outfile, ...remove] = process.argv.slice(2);
+const result = await Bun.build({ entrypoints: ["./program.mjs"], compile: { outfile, aot: true, trim: { remove } } });
 if (!result.success) throw new AggregateError(result.logs);
 `;
 
-// Each program names an API of a feature that `compile.trim.remove` takes out.
-describe.skipIf(!canTrim)("a try block catches the error of an API that compile.trim.remove removed", () => {
-  eachRow([
+// Each part names an API of a feature that `compile.trim.remove` takes out.
+{
+  const parts = [
     ["new Bun.Glob()", "glob", `try { ${makeGlob("Bun.Glob")} } ${handlers}`],
     [
       "new in the try block of a function",
@@ -105,11 +139,15 @@ describe.skipIf(!canTrim)("a try block catches the error of an API that compile.
       `function make() { try { ${makeGlob("Bun.Glob")} } ${handlers} }\nmake();\n`,
     ],
     ["a destructuring pattern", "glob", `const { Glob } = Bun;\ntry { ${makeGlob("Glob")} } ${handlers}`],
-    ["an import from bun", "glob", `import { Glob } from "bun";\ntry { ${makeGlob("Glob")} } ${handlers}`],
+    [
+      "an import from bun",
+      "glob",
+      `import { Glob as Imported } from "bun";\ntry { ${makeGlob("Imported")} } ${handlers}`,
+    ],
     [
       "an export of another module",
       "glob",
-      `import { Glob } from "./exports.mjs";\ntry { ${makeGlob("Glob")} } ${handlers}`,
+      `import { Exported } from "./exports.mjs";\ntry { ${makeGlob("Exported")} } ${handlers}`,
     ],
     [
       "Reflect.construct",
@@ -129,17 +167,28 @@ describe.skipIf(!canTrim)("a try block catches the error of an API that compile.
       "glob",
       `async function make() { ${makeGlob("Bun.Glob")} }\ntry { await make(); } ${handlers}`,
     ],
-  ] as const)(
-    "%s",
-    async (_, feature, program) => {
+  ] as const;
+  test.skipIf(!canTrim).concurrent(
+    "a try block catches the error of an API that compile.trim.remove removed",
+    async () => {
       const files = {
-        "program.mjs": program,
-        "exports.mjs": `export { Glob } from "bun";\n`,
+        "program.mjs": programOf(parts.map(([name, , text]) => [name, text])),
+        "exports.mjs": `export { Glob as Exported } from "bun";\n`,
         "build.mjs": buildScript,
       };
-      const result = await buildAndRun(files, executable => [bunExe(), "build.mjs", executable, feature]);
-      expect(result).toEqual({ stdout: "caught ERR_FEATURE_REMOVED\nfinally\nend\n", stderr: "", exitCode: 0 });
+      const features = [...new Set(parts.map(([, feature]) => feature))];
+      const { stdout, ...rest } = await buildAndRun(files, executable => [
+        bunExe(),
+        "build.mjs",
+        executable,
+        ...features,
+      ]);
+      expect({ ...rest, parts: partsOf(stdout) }).toEqual({
+        parts: Object.fromEntries(parts.map(([name]) => [name, "caught ERR_FEATURE_REMOVED\nfinally\nend\n"])),
+        stderr: "",
+        exitCode: 0,
+      });
     },
     120_000,
   );
-});
+}

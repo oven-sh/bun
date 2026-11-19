@@ -12,6 +12,7 @@ build.onLoad({ filter: /.*/, namespace: "virtual" }, (args: any) => modules[args
 
 buildBothWays("compile/aot/what the plugins of Bun.build answer", {
   "loaders for code: js, jsx, ts, tsx": {
+    alone: true,
     files: {
       "main.ts": `// @ts-nocheck
 import { js } from "virtual:js"; import { jsx } from "virtual:jsx"; import { ts } from "virtual:ts"; import { tsx } from "virtual:tsx";
@@ -162,9 +163,7 @@ let loads = 0;
 build.onLoad({ filter: /.*/, namespace: "one" }, (args: any) => ({ contents: "export const which = 'one " + ++loads + "';", loader: "js" }));
 build.onLoad({ filter: /.*/, namespace: "two" }, (args: any) => ({ contents: "export const which = 'two';", loader: "js" }));`,
     ],
-    prints: "one 1 one 1 one 1\n",
-    // Without `aot` a module is known by its path alone, and the second namespace gets the module of the first.
-    differs: { stdout: "one 1 two one 1\n" },
+    prints: "one 1 two one 1\n",
   },
   "onLoad for a package in node_modules": {
     files: {
@@ -195,6 +194,7 @@ build.onLoad({ filter: /.*/, namespace: "two" }, (args: any) => ({ contents: "ex
     ],
   },
   "relative imports from a module in a namespace": {
+    alone: true,
     files: {
       "main.ts": `// @ts-nocheck\nimport { value } from "virtual:top"; console.log(value);`,
       "beside.ts": `export const beside = "beside";`,

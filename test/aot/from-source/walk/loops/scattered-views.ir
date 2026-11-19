@@ -1,0 +1,16 @@
+# A view is stored into under an element of another view: an index outside the first one makes no integer key, so the loop is built for the iterations that run no other code.
+# LIBRARY: own
+# -- source: main.ts
+# function scatter(next: Float64Array, starts: Uint32Array, edges: Uint32Array): void { for (let v = 0; v + 1 < starts.length; v++) { const share = 1 / (v + 1); for (let e = starts[v]; e < starts[v + 1]; e++) next[edges[e]] += share; } }
+# const next = new Float64Array(4), starts = Uint32Array.from([0, 2, 3, 5]), edges = Uint32Array.from([0, 1, 1, 3, 9]);
+# publish(() => { scatter(next, starts, edges); return next.join(); });
+# declare function publish(run: () => string): void;
+# -- end of source
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: = GetTypedArrayElement {{*}}isInsideView
+# CHECK: PutTypedArrayElement {{*}}isInsideView
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run()); print(run()); };
+# SHELL: 1,1.5,0,0.3333333333333333
+# SHELL-NEXT: 2,3,0,0.6666666666666666

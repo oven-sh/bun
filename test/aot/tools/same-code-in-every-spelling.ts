@@ -5,6 +5,7 @@
 // A program is one file, or a folder with a `main.*`. ./respell-property-names.ts writes it in each spelling, each is built in a folder of the same name, and the machine code is compared function by function:
 // the n-th function of a name in a file with the n-th of that name, because the text moves and so do the positions. Tables of positions and the text of functions are data, and are not compared.
 // It prints one line for each program that differs, with the first functions that do, and exits with 1 if there is any.
+// A program that builds in no form is not compared. The closing line counts it all the same.
 // To find the place: `respell-property-names.ts computed --only=<form>` respells one form of name, `--names=` one name, `--in= --places=` one place.
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "fs";
 import { availableParallelism, tmpdir } from "os";
@@ -14,13 +15,14 @@ import { parseArgs } from "util";
 import { packedFiles, writeProgram } from "../generate";
 import { respellFiles, spellings, type Spelling } from "./respell-property-names";
 import { codeOfImage } from "./same-output";
+import { ownTemporaryFolder } from "../harness/temporary-folders";
 
 type Built = { functions: Map<string, { size: number; hash: string }>; output: string; failure?: string };
 /** One way to write a program: `rewrite` changes the files of a folder in place. */
 export type Form = { name: string; rewrite(folder: string): void };
 export type Difference = { program: string; form: string; what: string; functions: string[] };
-/** `entry`: the file to build, where the program is a folder without a `main.*`. `runs: false`: the code alone is compared, not what the program prints. */
-export type Comparison = { flags?: string[]; entry?: string; runs?: boolean };
+/** `entry`: the file to build, where the program is a folder without a `main.*`. `runs: false`: the code alone is compared, not what the program prints. `mustBuild`: a program that builds in no form is a difference. */
+export type Comparison = { flags?: string[]; entry?: string; runs?: boolean; mustBuild?: boolean };
 
 const hashOf = (bytes: Uint8Array | string) => new Bun.CryptoHasher("sha256").update(bytes).digest("hex").slice(0, 16);
 
@@ -42,7 +44,7 @@ export function functionsByOrder(map: string, code: Buffer) {
 
 /** Where the program `<topic>/<file or folder>` of ../programs lies. One that a `*.programs` file of its topic holds is written into `folder`. */
 export function storedProgram(program: string, folder: string) {
-  const stored = join(import.meta.dir, "..", "programs", program);
+  const stored = join(import.meta.dir, "..", "parallel", program);
   if (existsSync(stored)) return stored;
   const [topic, name] = [program.slice(0, program.indexOf("/")), program.slice(program.indexOf("/") + 1)];
   const packed = packedFiles(topic);
@@ -84,7 +86,8 @@ async function build(bun: string, program: string, form: Form, work: string, com
     const built = await run([bun, "build", "--compile", "--aot", ...flags, entry, "--outfile", executable], {
       BUN_JSC_aotMapFilePath: map,
     });
-    if (built.exitCode !== 0) return { functions: new Map(), output: "", failure: built.text.replaceAll(work, "") };
+    if (built.exitCode !== 0)
+      return { functions: new Map(), output: "", failure: built.text.replaceAll(work, "") || `exit ${built.exitCode}` };
     const ran = comparison.runs === false ? undefined : await run([executable]);
     return {
       functions: functionsByOrder(readFileSync(map, "latin1"), codeOfImage(readFileSync(executable))),
@@ -129,6 +132,13 @@ export async function compareForms(
       differs(`${functions.length} of ${other.functions.size} functions differ from ${forms[0].name}`, functions);
     else if (first.output !== other.output) differs(`prints something else than ${forms[0].name}`);
   }
+  if (comparison.mustBuild && first.failure && !differences.length)
+    differences.push({
+      program,
+      form: forms[0].name,
+      what: `builds in no form: ${first.failure.trim().split("\n")[0]}`,
+      functions: [],
+    });
   return differences;
 }
 
@@ -144,7 +154,7 @@ export const compareSpellings = (
     program,
     work,
     asked.map(spelling => ({ name: spelling, rewrite: folder => void respellFiles(folder, spelling) })),
-    { flags },
+    { flags, mustBuild: true },
   );
 
 function programsIn(path: string): string[] {
@@ -174,7 +184,7 @@ export async function compareFromCommandLine(tool: string, forms: readonly Form[
     process.exit(2);
   }
   const programs = positionals.flatMap(path => programsIn(resolve(path)));
-  const work = mkdtempSync(join(tmpdir(), "every-form-"));
+  const work = ownTemporaryFolder(mkdtempSync(join(tmpdir(), "every-form-")));
   const differences: Difference[] = [];
   const waiting = [...programs.entries()];
   await Promise.all(

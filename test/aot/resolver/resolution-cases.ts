@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, type DirectoryTree } from "harness";
 import { existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { run } from "../harness/run";
 import type { Answer, Site } from "./answers";
 
 /**
@@ -35,6 +34,12 @@ export function packageFiles(
   };
   for (const file of files) tree[`${directory}/${file}`] = "";
   return tree;
+}
+
+async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
+  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
 }
 
 function writeImporters(root: string, pins: Pin[]): string[] {
@@ -91,7 +96,9 @@ export function testResolution(cases: ResolutionCase[]): void {
         compiled(from, specifier, "import"),
         compiled(from, specifier, "require"),
       ]);
-      expect(answers).toEqual(pinned.map(([from, specifier, onImport, onRequire = onImport]) => [from, specifier, onImport, onRequire]));
+      expect(answers).toEqual(
+        pinned.map(([from, specifier, onImport, onRequire = onImport]) => [from, specifier, onImport, onRequire]),
+      );
     });
   }
 }

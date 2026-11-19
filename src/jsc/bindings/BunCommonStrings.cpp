@@ -58,16 +58,24 @@ void CommonStrings::initialize(JSString*& slot, Index index)
     slot = jsString(m_vm, AtomString(literal));
 }
 
+#define BUN_COMMON_STRINGS_SLOT_ENTRY(name, ...) &CommonStrings::m_##name,
+// clang-format off
+static constexpr JSString* CommonStrings::* commonStringSlots[] = {
+    BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_SLOT_ENTRY)
+    BUN_COMMON_STRINGS_EACH_VM_PROPERTY_NAME(BUN_COMMON_STRINGS_SLOT_ENTRY)
+    BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_SLOT_ENTRY)
+};
+// clang-format on
+#undef BUN_COMMON_STRINGS_SLOT_ENTRY
+static_assert(std::size(commonStringSlots) == static_cast<size_t>(CommonStrings::Index::Count));
+
 template<typename Visitor>
 void CommonStrings::visit(Visitor& visitor)
 {
-#define BUN_COMMON_STRINGS_VISIT(name, ...) \
-    if (m_##name)                           \
-        visitor.appendUnbarriered(m_##name);
-    BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_VISIT)
-    BUN_COMMON_STRINGS_EACH_VM_PROPERTY_NAME(BUN_COMMON_STRINGS_VISIT)
-    BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_VISIT)
-#undef BUN_COMMON_STRINGS_VISIT
+    for (auto slot : commonStringSlots) {
+        if (JSString* string = this->*slot)
+            visitor.appendUnbarriered(string);
+    }
 }
 
 template void CommonStrings::visit(JSC::AbstractSlotVisitor&);

@@ -34,7 +34,7 @@ inline bool collectOwnEnumerableProperties(JSC::VM& vm, JSC::JSObject* object, O
             properties.values.appendWithCrashOnOverflow(property.value);
             return IterationStatus::Continue;
         };
-        return PropertyWalk::forEachOwnProperty(vm, object, PropertyWalk::Filter::StringsAndSymbols, visit) == PropertyWalk::Result::Completed;
+        return PropertyWalk::forEachOwnPropertyAsCreated(vm, object, visit) == PropertyWalk::Result::Completed;
     }
     JSC::Structure* structure = object->structure();
     if (structure->hasNonReifiedStaticProperties() || !structure->canPerformFastPropertyEnumeration())
@@ -49,17 +49,68 @@ inline bool collectOwnEnumerableProperties(JSC::VM& vm, JSC::JSObject* object, O
     return true;
 }
 
+// The Structure of a compiled object doesn't say which properties it has.
+inline bool onlyOneCompiledObjectHasOwn(JSC::VM& vm, JSC::JSCell* first, JSC::JSCell* second, JSC::PropertyName name)
+{
+    namespace PropertyWalk = JSC::AOT::PropertyWalk;
+    if (PropertyWalk::structureGuaranteesAbsence(first->structure(), name.uid()))
+        return false;
+    return !PropertyWalk::getDirect(vm, JSC::asObject(first), name, nullptr) != !PropertyWalk::getDirect(vm, JSC::asObject(second), name, nullptr);
+}
+
+template<typename CompareValues>
+bool areCompiledValuesEqual(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue left, JSC::JSValue right, bool sameIsEqual, const CompareValues& compareValues)
+{
+    if (sameIsEqual) [[likely]] {
+        if (left == right)
+            return true;
+        bool isSame = JSC::sameValue(globalObject, left, right);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isSame)
+            return true;
+    }
+    bool isEqual = compareValues(left, right);
+    RETURN_IF_EXCEPTION(scope, false);
+    return isEqual;
+}
+
+// std::nullopt: an exception is pending.
+template<typename CompareValues>
+std::optional<bool> areCompiledPairsEqual(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const JSC::MarkedArgumentBuffer& pairs, bool sameIsEqual, const CompareValues& compareValues)
+{
+    for (size_t i = 0; i < pairs.size(); i += 2) {
+        bool isEqual = areCompiledValuesEqual(globalObject, scope, pairs.at(i), pairs.at(i + 1), sameIsEqual, compareValues);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        if (!isEqual)
+            return false;
+    }
+    return true;
+}
+
 // std::nullopt: the caller compares by its generic path, or an exception is pending.
 template<bool isStrict, typename CompareValues>
-std::optional<bool> compareCompiledObjectProperties(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2, const CompareValues& compareValues)
+std::optional<bool> compareCompiledObjectProperties(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2, bool sameIsEqual, const CompareValues& compareValues)
 {
     JSC::VM& vm = globalObject->vm();
+    JSC::MarkedArgumentBuffer pairs;
+    namespace PropertyWalk = JSC::AOT::PropertyWalk;
+    if (PropertyWalk::appendDifferingValues(o1, o2, sameIsEqual ? PropertyWalk::IdenticalValues::Skip : PropertyWalk::IdenticalValues::Append, pairs))
+        return areCompiledPairsEqual(globalObject, scope, pairs, sameIsEqual, compareValues);
+
     OwnEnumerableProperties properties1;
     OwnEnumerableProperties properties2;
     if (!collectOwnEnumerableProperties(vm, o1, properties1) || !collectOwnEnumerableProperties(vm, o2, properties2))
         return std::nullopt;
+    if (properties1.names == properties2.names) {
+        for (size_t i = 0; i < properties1.names.size(); i++) {
+            bool isEqual = areCompiledValuesEqual(globalObject, scope, properties1.values.at(i), properties2.values.at(i), sameIsEqual, compareValues);
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+            if (!isEqual)
+                return false;
+        }
+        return true;
+    }
 
-    JSC::MarkedArgumentBuffer pairs;
     for (size_t i = 0; i < properties1.names.size(); i++) {
         WTF::UniquedStringImpl* name = properties1.names[i];
         JSC::JSValue left = properties1.values.at(i);
@@ -89,21 +140,7 @@ std::optional<bool> compareCompiledObjectProperties(JSC::JSGlobalObject* globalO
             return false;
         remain--;
     }
-    for (size_t i = 0; i < pairs.size(); i += 2) {
-        JSC::JSValue left = pairs.at(i);
-        JSC::JSValue right = pairs.at(i + 1);
-        if (left == right)
-            continue;
-        bool isSame = JSC::sameValue(globalObject, left, right);
-        RETURN_IF_EXCEPTION(scope, std::nullopt);
-        if (isSame)
-            continue;
-        bool isEqual = compareValues(left, right);
-        RETURN_IF_EXCEPTION(scope, std::nullopt);
-        if (!isEqual)
-            return false;
-    }
-    return true;
+    return areCompiledPairsEqual(globalObject, scope, pairs, sameIsEqual, compareValues);
 }
 
 } // namespace Bun

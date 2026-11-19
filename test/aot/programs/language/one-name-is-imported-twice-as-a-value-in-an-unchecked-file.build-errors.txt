@@ -1,3 +1,0 @@
-error: TS2300: Duplicate identifier 'named'.
-error: TS2300: Duplicate identifier 'byDefault'.
-error: TS2300: Duplicate identifier 'star'.

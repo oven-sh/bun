@@ -1,6 +1,5 @@
 use crate::css_parser as css;
 use bun_alloc::Arena as Bump;
-use bun_alloc::ArenaVecExt as _;
 use css::{CssResult as Result, PrintErr, Printer};
 
 use crate::css_properties::align::AlignHandler;
@@ -20,7 +19,7 @@ use crate::css_properties::transform::TransformHandler;
 use crate::css_properties::transition::TransitionHandler;
 use crate::css_properties::ui::ColorSchemeHandler;
 
-pub type DeclarationList<'bump> = bun_alloc::ArenaVec<'bump, css::Property>;
+pub type DeclarationList<'bump> = bun_alloc::ArenaVec<'bump, css::Property<'bump>>;
 
 /// A CSS declaration block.
 ///
@@ -63,18 +62,16 @@ impl<'bump> DeclarationBlock<'bump> {
         &mut self,
         handler: &mut DeclarationHandler<'bump>,
         important_handler: &mut DeclarationHandler<'bump>,
-        context: &mut css::PropertyHandlerContext,
+        context: &mut css::PropertyHandlerContext<'_, 'bump>,
     ) {
-        // `PropertyHandlerContext` carries no arena field, so we recover the
-        // arena from the handler's own bump-backed accumulator instead.
-        let bump: &'bump Bump = handler.decls.bump();
+        let bump = context.arena;
 
         // Two calls over a shared inner fn; iterate via &mut, move prop out
         // and overwrite the slot.
         #[inline]
         fn handle<'bump>(
             decls: &mut DeclarationList<'bump>,
-            ctx: &mut css::PropertyHandlerContext,
+            ctx: &mut css::PropertyHandlerContext<'_, 'bump>,
             hndlr: &mut DeclarationHandler<'bump>,
             important: bool,
         ) {
@@ -116,7 +113,7 @@ impl<'bump> DeclarationBlock<'bump> {
 
 /// Non-allocating placeholder used by `minify()` to overwrite moved-out slots.
 #[inline(always)]
-fn placeholder_property() -> css::Property {
+fn placeholder_property<'bump>() -> css::Property<'bump> {
     css::Property::All(crate::css_properties::CSSWideKeyword::RevertLayer)
 }
 
@@ -149,24 +146,13 @@ impl<'bump> DeclarationBlock<'bump> {
 }
 
 // ─── parse ────────────────────────────────────────────────────────────────
-//
-// Every consumer (`StyleRule`, `Keyframe`, `PageRule`,
-// `StyleAttribute`, `NestedRuleParser`) stores `DeclarationBlock<'static>` —
-// the crate-wide `'bump`-erasure placeholder until `'bump` threads through
-// `CssRule`. `parse()` therefore lives on the `'static` instantiation and
-// erases the parser arena's lifetime at the boundary; this collapses together
-// with the lifetime cast in `rules/style.rs::minify` when `CssRule<'bump, R>`
-// lands.
 
-impl DeclarationBlock<'static> {
+impl<'bump> DeclarationBlock<'bump> {
     pub fn parse(
-        input: &mut css::Parser,
+        input: &mut css::Parser<'_, 'bump>,
         options: &css::ParserOptions,
-    ) -> Result<DeclarationBlock<'static>> {
-        // SAFETY: `Tokenizer<'a>` owns `arena: &'a Bump`; the arena outlives
-        // every `DeclarationBlock` produced from this parser. `'static` here is
-        // the crate-wide erasure (see note above), not a real static borrow.
-        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(input.arena()) };
+    ) -> Result<'bump, DeclarationBlock<'bump>> {
+        let bump = input.arena();
         let mut important_declarations = DeclarationList::new_in(bump);
         let mut declarations = DeclarationList::new_in(bump);
         let mut decl_parser = PropertyDeclarationParser {
@@ -224,24 +210,24 @@ pub(crate) struct PropertyDeclarationParser<'a, 'bump> {
     pub options: &'a css::ParserOptions<'a>,
 }
 
-impl<'a, 'bump> css::AtRuleParser for PropertyDeclarationParser<'a, 'bump> {
+impl<'a, 'bump> css::AtRuleParser<'bump> for PropertyDeclarationParser<'a, 'bump> {
     type Prelude = ();
     type AtRule = ();
 }
 
-impl<'a, 'bump> css::QualifiedRuleParser for PropertyDeclarationParser<'a, 'bump> {
+impl<'a, 'bump> css::QualifiedRuleParser<'bump> for PropertyDeclarationParser<'a, 'bump> {
     type Prelude = ();
     type QualifiedRule = ();
 }
 
-impl<'a, 'bump> css::DeclarationParser for PropertyDeclarationParser<'a, 'bump> {
+impl<'a, 'bump> css::DeclarationParser<'bump> for PropertyDeclarationParser<'a, 'bump> {
     type Declaration = ();
 
     fn parse_value(
         this: &mut Self,
-        name: &[u8],
-        input: &mut css::Parser,
-    ) -> Result<Self::Declaration> {
+        name: &'bump [u8],
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> Result<'bump, Self::Declaration> {
         parse_declaration(
             name,
             input,
@@ -252,7 +238,7 @@ impl<'a, 'bump> css::DeclarationParser for PropertyDeclarationParser<'a, 'bump> 
     }
 }
 
-impl<'a, 'bump> css::RuleBodyItemParser for PropertyDeclarationParser<'a, 'bump> {
+impl<'a, 'bump> css::RuleBodyItemParser<'bump> for PropertyDeclarationParser<'a, 'bump> {
     fn parse_qualified(_this: &Self) -> bool {
         false
     }
@@ -265,12 +251,12 @@ impl<'a, 'bump> css::RuleBodyItemParser for PropertyDeclarationParser<'a, 'bump>
 // ─── parse_declaration ────────────────────────────────────────────────────
 
 pub(crate) fn parse_declaration<'bump>(
-    name: &[u8],
-    input: &mut css::Parser,
+    name: &'bump [u8],
+    input: &mut css::Parser<'_, 'bump>,
     declarations: &mut DeclarationList<'bump>,
     important_declarations: &mut DeclarationList<'bump>,
     options: &css::ParserOptions,
-) -> Result<()> {
+) -> Result<'bump, ()> {
     parse_declaration_impl(
         name,
         input,
@@ -315,15 +301,15 @@ fn composing_class_or_warn(
 }
 
 pub(crate) fn parse_declaration_impl<'bump, C>(
-    name: &[u8],
-    input: &mut css::Parser,
+    name: &'bump [u8],
+    input: &mut css::Parser<'_, 'bump>,
     declarations: &mut DeclarationList<'bump>,
     important_declarations: &mut DeclarationList<'bump>,
     options: &css::ParserOptions,
     composes_ctx: &mut C,
-) -> Result<()>
+) -> Result<'bump, ()>
 where
-    C: css::ComposesCtx + ?Sized,
+    C: css::ComposesCtx<'bump> + ?Sized,
 {
     let property_id = css::PropertyId::from_string(name);
     let mut delimiters = css::Delimiters::BANG;
@@ -372,17 +358,17 @@ where
 
 /// Per-shorthand-group handler state used by `DeclarationBlock::minify`.
 pub struct DeclarationHandler<'bump> {
-    pub(crate) background: BackgroundHandler,
-    pub(crate) border: BorderHandler,
+    pub(crate) background: BackgroundHandler<'bump>,
+    pub(crate) border: BorderHandler<'bump>,
     pub(crate) flex: FlexHandler,
     pub(crate) align: AlignHandler,
     pub(crate) size: SizeHandler,
-    pub(crate) margin: MarginHandler,
-    pub(crate) padding: PaddingHandler,
-    pub(crate) scroll_margin: ScrollMarginHandler,
-    pub(crate) transition: TransitionHandler,
-    pub(crate) font: FontHandler,
-    pub(crate) inset: InsetHandler,
+    pub(crate) margin: MarginHandler<'bump>,
+    pub(crate) padding: PaddingHandler<'bump>,
+    pub(crate) scroll_margin: ScrollMarginHandler<'bump>,
+    pub(crate) transition: TransitionHandler<'bump>,
+    pub(crate) font: FontHandler<'bump>,
+    pub(crate) inset: InsetHandler<'bump>,
     pub(crate) transform: TransformHandler,
     pub(crate) box_shadow: BoxShadowHandler,
     pub(crate) color_scheme: ColorSchemeHandler,
@@ -392,7 +378,7 @@ pub struct DeclarationHandler<'bump> {
 }
 
 impl<'bump> DeclarationHandler<'bump> {
-    pub(crate) fn finalize(&mut self, context: &mut css::PropertyHandlerContext) {
+    pub(crate) fn finalize(&mut self, context: &mut css::PropertyHandlerContext<'_, 'bump>) {
         if let Some(direction) = self.direction.take() {
             self.decls.push(css::Property::Direction(direction));
         }
@@ -416,8 +402,8 @@ impl<'bump> DeclarationHandler<'bump> {
 
     pub(crate) fn handle_property(
         &mut self,
-        property: &css::Property,
-        context: &mut css::PropertyHandlerContext,
+        property: &css::Property<'bump>,
+        context: &mut css::PropertyHandlerContext<'_, 'bump>,
     ) -> bool {
         // return this.background.handleProperty(property, &this.decls, context);
         self.background

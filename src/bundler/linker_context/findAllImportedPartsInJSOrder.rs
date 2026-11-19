@@ -8,7 +8,7 @@ use crate::{Chunk, EntryPoint, Index, IndexInt, LinkerContext, PartRange, chunk,
 use bun_core::perf;
 
 pub(crate) fn find_all_imported_parts_in_js_order<'a>(
-    this: &mut LinkerContext<'a>,
+    this: &LinkerContext<'_, 'a>,
     chunks: &mut [Chunk<'a>],
 ) -> Result<(), crate::Error> {
     let _trace = perf::trace("Bundler.findAllImportedPartsInJSOrder");
@@ -42,7 +42,7 @@ pub(crate) fn find_all_imported_parts_in_js_order<'a>(
     let order = WalkOrder::collect(this, chunks.len(), walks);
 
     struct Ctx<'a, 'f> {
-        inner: crate::linker_context_mod::GenerateChunkCtx<'a>,
+        c: &'f LinkerContext<'f, 'a>,
         chunk_of_file: &'f [u32],
         order: &'f WalkOrder,
     }
@@ -51,30 +51,19 @@ pub(crate) fn find_all_imported_parts_in_js_order<'a>(
     // server-component files, that file's `entry_point_chunk_index` slot (a
     // file belongs to exactly one chunk), and reads the graph columns.
     let ctx = Ctx {
-        inner: crate::linker_context_mod::GenerateChunkCtx {
-            chunk: bun_ptr::BackRef::new_mut(&mut chunks[0]),
-            // SAFETY: `this` is the live `&mut LinkerContext` for the link step.
-            c: unsafe {
-                bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(this))
-            },
-            chunks: bun_ptr::BackRef::new(&*chunks),
-        },
+        c: this,
         chunk_of_file: &chunk_of_file,
         order: &order,
     };
     let chunks_len = chunks.len();
     this.worker_pool().each_ptr(
         ctx,
-        |ctx: &Ctx, chunk: *mut Chunk, index: usize| {
-            // SAFETY: `each_ptr` hands each task a distinct `*mut Chunk`.
-            let chunk = unsafe { &mut *chunk };
+        |ctx: &Ctx, chunk: &mut Chunk, index: usize| {
             if !matches!(chunk.content, chunk::Content::Javascript(_)) {
                 return; // CSS: `find_imported_css_files_in_js_order`; HTML: nothing
             }
-            // SAFETY: shared for reading; see the note above on the one column written.
-            let c: &LinkerContext = unsafe { &*ctx.inner.c.as_mut_ptr() };
             bun_core::handle_oom(find_imported_parts_in_js_order(
-                c,
+                ctx.c,
                 chunk,
                 u32::try_from(index).expect("int cast"),
                 ctx.chunk_of_file,
@@ -88,30 +77,25 @@ pub(crate) fn find_all_imported_parts_in_js_order<'a>(
 }
 
 fn run_walks<'a>(
-    this: &mut LinkerContext<'a>,
+    this: &LinkerContext<'_, 'a>,
     plan: &WalkPlan,
     chunks: &[Chunk<'a>],
     walks: &mut [EntryWalk],
 ) {
     struct WalkCtx<'a, 'f> {
-        c: bun_ptr::ParentRef<LinkerContext<'a>, bun_ptr::Mut>,
+        c: &'f LinkerContext<'f, 'a>,
         plan: &'f WalkPlan,
         chunks: &'f [Chunk<'a>],
     }
     let walk_ctx = WalkCtx {
-        // SAFETY: `this` is the live `&mut LinkerContext` for the link step.
-        c: unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(this)) },
+        c: this,
         plan,
         chunks,
     };
     this.worker_pool().each_ptr(
         walk_ctx,
-        |ctx: &WalkCtx, walk: *mut EntryWalk, _: usize| {
-            // SAFETY: `each_ptr` hands each task a distinct `*mut EntryWalk`.
-            let walk = unsafe { &mut *walk };
-            // SAFETY: the walks only read the graph.
-            let c: &LinkerContext = unsafe { &*ctx.c.as_mut_ptr() };
-            walk.run(c, ctx.plan, ctx.chunks);
+        |ctx: &WalkCtx, walk: &mut EntryWalk, _: usize| {
+            walk.run(ctx.c, ctx.plan, ctx.chunks);
         },
         walks,
     );
@@ -142,7 +126,7 @@ pub(crate) fn find_imported_parts_in_js_order(
         namespace_objects: Vec::new(),
         chunk_index,
         // The one column written through a shared `&LinkerContext` (see `place`).
-        entry_point_chunk_indices: this.graph.files.slice().split_raw().entry_point_chunk_index,
+        entry_point_chunk_indices: this.graph.files.split_raw().entry_point_chunk_index,
     };
 
     // The runtime goes first: every helper a file calls is declared above it.
@@ -257,7 +241,7 @@ impl WalkPlan {
         if code_splitting {
             // A file is in the chunk that has its entry bits as key, also when it prints nothing there.
             let file_entry_bits = c.graph.files.items_entry_bits();
-            let css = c.graph.ast.items_css();
+            let css = &c.parse_graph().css_asts;
             let mut chunk_of_key: StringHashMap<u32> = StringHashMap::default();
             for (chunk_index, chunk) in chunks.iter().enumerate() {
                 if matches!(chunk.content, chunk::Content::Javascript(_)) {
@@ -344,7 +328,7 @@ impl WalkPlan {
     /// walks of the first such entry point by rank, each with the chunks that it lays out in place of their owner.
     fn find_safe_walks<'a>(
         &mut self,
-        this: &mut LinkerContext<'a>,
+        this: &LinkerContext<'_, 'a>,
         chunks: &[Chunk<'a>],
         walks: &[EntryWalk],
     ) -> Vec<EntryWalk> {
@@ -430,7 +414,7 @@ impl LoadTimeReads {
     fn new(c: &LinkerContext) -> LoadTimeReads {
         let all_parts = c.graph.ast.items_parts();
         let flags = c.graph.meta.items_flags();
-        let css = c.graph.ast.items_css();
+        let css = &c.parse_graph().css_asts;
         let mut first_part_id: Vec<u32> = Vec::with_capacity(all_parts.len());
         let mut file_of_part: Vec<IndexInt> = Vec::new();
         for (file, parts) in all_parts.iter().enumerate() {
@@ -626,7 +610,7 @@ fn for_each_edge(
     mut each: impl FnMut(u32, Edge),
 ) {
     let records = c.graph.ast.items_import_records()[source_index as usize].as_slice();
-    let css = c.graph.ast.items_css();
+    let css = &c.parse_graph().css_asts;
     if css[source_index as usize].is_some()
         || c.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html
     {
@@ -858,7 +842,7 @@ impl EntryWalk {
         let files_live = &c.graph.files_live;
         let entry_bits = c.graph.files.items_entry_bits();
         let flags = c.graph.meta.items_flags();
-        let css = c.graph.ast.items_css();
+        let css = &c.parse_graph().css_asts;
         let loads = |source_index: IndexInt, loader: u32| {
             files_live.is_set(source_index as usize)
                 && entry_bits[source_index as usize].is_set(loader as usize)
@@ -1005,7 +989,7 @@ impl EntryWalk {
 }
 
 struct ChunkLayout<'a, 'ctx> {
-    c: &'a LinkerContext<'ctx>,
+    c: &'a LinkerContext<'a, 'ctx>,
     files: Vec<IndexInt>,
     part_ranges: Vec<PartRange>,
     parts_prefix: Vec<PartRange>,
@@ -1096,7 +1080,7 @@ impl ChunkLayout<'_, '_> {
             return;
         }
 
-        if self.c.graph.is_scb_bitset.bit_length > 0
+        if self.c.graph.is_scb_bitset.bit_length() > 0
             && self.c.graph.is_scb_bitset.is_set(source_index as usize)
         {
             // SAFETY: `entry_point_chunk_indices` is the raw column pointer
@@ -1104,7 +1088,7 @@ impl ChunkLayout<'_, '_> {
             // through `self.c`), valid for
             // `graph.files.len()` writes for the duration of the link step.
             // Chunks run in parallel and, without code splitting, several may
-            // contain this file: highest index wins (unset is `u32::MAX`), as
+            // contain this file: highest index wins, as
             // when this ran chunk by chunk.
             // Err = another chunk with a higher index already claimed it.
             let _ = unsafe {
@@ -1116,7 +1100,7 @@ impl ChunkLayout<'_, '_> {
                 .try_update(
                     core::sync::atomic::Ordering::Relaxed,
                     core::sync::atomic::Ordering::Relaxed,
-                    |cur| (cur == u32::MAX || cur < self.chunk_index).then_some(self.chunk_index),
+                    |cur| (cur < self.chunk_index).then_some(self.chunk_index),
                 )
             };
         }
@@ -1151,7 +1135,7 @@ fn reached_chunks_in_order(
 
     let entry_bits = chunk.entry_bits();
     let file_entry_bits = c.graph.files.items_entry_bits();
-    let css = c.graph.ast.items_css();
+    let css = &c.parse_graph().css_asts;
     let parts = c.graph.ast.items_parts();
     let import_records = c.graph.ast.items_import_records();
 

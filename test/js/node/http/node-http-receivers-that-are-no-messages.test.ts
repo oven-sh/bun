@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 async function expectOutput(program: string, expected: string) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "../../../aot/programs/node-http-probes", program)],
+    cmd: [bunExe(), join(import.meta.dir, "../../../aot/parallel/node-http", program)],
     env: bunEnv,
     stdout: "pipe",
     stderr: "ignore",
@@ -42,7 +42,7 @@ test("the accessors of a response answer for a plain object and for the prototyp
 
 test("what the members of outgoing messages answer, throw, store and read for receivers that are no messages", async () => {
   await expectOutput(
-    "members-of-outgoing-messages-for-receivers-that-are-no-messages.js",
+    "members-outgoing-messages-receivers.js",
     "node-http-members-of-outgoing-messages-for-receivers-that-are-no-messages.expected.txt",
   );
 }, 60_000);

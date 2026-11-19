@@ -1,1 +1,0 @@
-{ "skipInShell": "it uses Bun", "alone": "the output depends on which built-in modules were loaded earlier in the same executable" }

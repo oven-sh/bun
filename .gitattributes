@@ -22,11 +22,16 @@
 
 # Patch files are line-ending-sensitive — `git apply` rejects CRLF as corrupt.
 *.patch text eol=lf
+# Read line by line by the build and by shell steps of the workflows.
+scripts/build/deps/webkit.sha256 text eol=lf
 # Every byte of an input of the formatter, and of what is expected for it, is part of the test.
 test/cli/format/own/cases/** -text
+test/aot/parallel/function-source-signature-formatting/** -text
 # Compared line by line with what a runner prints, which ends a line with \n on every system.
 test/cli/format/*/expected.txt text eol=lf
 test/cli/lint/conformance/expected*.txt text eol=lf
+# Compared byte for byte with what the crate renders.
+src/cron/tests/* text eol=lf
 # Embedded in the executable, which splits them at \n.
 src/lint/linter/config/presets.txt text eol=lf
 src/lint/linter/deprecated.txt text eol=lf
@@ -62,7 +67,7 @@ test/**/* linguist-documentation
 bench/**/* linguist-documentation
 
 vendor/*.c linguist-vendored
-vendor/brotli/** linguist-vendored
+src/brotli/dictionary.bin binary linguist-vendored
 
 test/js/node/test/fixtures linguist-vendored
 test/js/node/test/common linguist-vendored
@@ -70,6 +75,7 @@ test/js/node/test/common linguist-vendored
 test/js/bun/css/files linguist-vendored
 
 test/cli/**/bundle.zst binary linguist-vendored linguist-generated
+test/cli/format/settled/corpus.zst binary linguist-generated
 
 .vscode/*.json linguist-language=JSON-with-Comments
 src/cli/init/tsconfig.default.json linguist-language=JSON-with-Comments

@@ -26,8 +26,6 @@ import { writeIfChanged } from "./fs.ts";
  * they are the fields of `Rule`, and of a build statement where a value per edge makes sense.
  */
 const ruleVars = {
-  // aot.ts
-  aot_check: ["cwd", "args", "desc"],
   // bun.ts
   binary_verify: ["spec"],
   copy_exe: [],
@@ -74,10 +72,9 @@ const ruleVars = {
   dep_check_undefined: ["name", "nm", "symbols"],
   dep_codegen: ["name", "cwd", "tool", "args"],
   dep_fetch: ["name", "repo", "commit", "dest", "cache", "patches"],
-  dep_fetch_prebuilt: ["name", "url", "dest", "identity", "rm_paths"],
+  dep_fetch_prebuilt: ["name", "url", "dest", "identity", "sha256sums", "rm_paths"],
   dep_gen: ["name", "desc", "opts", "cmd"],
   dep_host_cc: ["flags"],
-  dep_subst: ["pairs"],
 } as const satisfies Record<string, readonly string[]>;
 
 /** ninja's `Rule::IsReservedBinding` (src/eval_env.cc; `early_output_prefix` is oven-sh/ninja's). */

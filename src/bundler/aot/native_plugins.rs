@@ -5,13 +5,12 @@ use bun_ast::{Loader, Loc, Log};
 use bun_ptr::{ParentRef, detach_lifetime};
 use std::borrow::Cow;
 
-use super::services::BuildContext;
+use super::services::{BuildContext, with_ast_scope};
 use crate::ParseTask;
 use crate::bun_fs as Fs;
 use crate::options::Target;
 use crate::parse_task::ContentsOrFd;
 use crate::parse_task::parse_worker::get_code_for_parse_task;
-use crate::transpiler::Transpiler;
 
 pub(crate) fn has_before_parse_plugins(context: &BuildContext) -> bool {
     context
@@ -46,9 +45,9 @@ pub(crate) fn run_before_parse(
 
     // `get_code_for_parse_task` blames the plugin for every error that is already in its log.
     let mut plugin_log = Log::init();
-    let changed = context.with_worker(|transpiler, arena| {
+    let changed = with_ast_scope(|arena| {
         let mut task = create_task(context, module, contents, loader);
-        run_plugins(&mut task, loader, transpiler, arena, &mut plugin_log)
+        run_plugins(&mut task, loader, arena, &mut plugin_log)
     });
     plugin_log.append_to(log);
     Ok(changed?.unwrap_or(loaded))
@@ -83,29 +82,23 @@ fn create_task(
 fn run_plugins(
     task: &mut ParseTask<'static>,
     mut loader: Loader,
-    transpiler: &mut Transpiler<'static>,
     arena: &Arena,
     log: &mut Log,
 ) -> Result<Option<Loaded>, Failed> {
     let mut file_path = task.path;
     let mut from_plugin = false;
-    let transpiler = std::ptr::from_mut(transpiler);
-    // SAFETY: `transpiler` comes from a live exclusive reference.
-    let resolver = unsafe { &raw mut (*transpiler).resolver };
     let entry = get_code_for_parse_task(
         task,
         log,
-        transpiler,
-        resolver,
         arena,
         &mut file_path,
         &mut loader,
         &mut from_plugin,
     );
 
-    let changed = match entry {
+    match entry {
         Ok(entry) if from_plugin => Ok(Some(Loaded::Source {
-            contents: Cow::Owned(entry.contents.as_slice().to_vec()),
+            contents: Cow::Owned(entry.contents.to_vec()),
             loader,
             is_from_plugin: true,
         })),
@@ -121,9 +114,7 @@ fn run_plugins(
             }
             Err(Failed)
         }
-    };
-    task.external_free_function.call();
-    changed
+    }
 }
 
 #[cfg(test)]

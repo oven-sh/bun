@@ -7,6 +7,7 @@ import { Log } from "../differential/log";
 import type { Invocation, Realm } from "../differential/members";
 import { reasonNeverCalled } from "../differential/operands";
 import { claimsEveryUse, isObject, type CallMode, type DumpedEntry, type DumpedOverload, type OperandUse } from "../differential/table-description";
+import type { QuietTarget } from "./check-views";
 
 export type Target = {
   name: string;
@@ -28,6 +29,7 @@ export type Unreachable = { name: string; path: string; mode: CallMode; reason: 
 const neverCalledNatives: ReadonlyMap<RegExp, string> = new Map([
   // The differential test calls these with the operands that their entries name. Here they would get everything.
   [/^process\.(binding|_linkedBinding|chdir|_rawDebug|stdout|stderr)\b/, "it changes the state of the process or takes over a standard stream"],
+  [/^%NodeCryptoBindingCrypto%\.scrypt/, "whatever it is passed, it computes for a thirtieth of a second"],
   [/^(alert|confirm|prompt)$/, "it waits for input"],
   [/^Atomics\.(waitAsync|pause)$/, "it blocks the thread"],
   [/^(fetch|postMessage)$/, "it starts a thread or opens a connection"],
@@ -45,18 +47,23 @@ const neverCalledNatives: ReadonlyMap<RegExp, string> = new Map([
   [/doConnect|clusterRawBind|sendHelperPrimary|emitHandleIPCMessage/, "it opens a connection or writes to the channel of a parent process"],
   [/^%(Quic\w+|PostgresSQL\w+|MySQL\w+|PostgresBinding|MysqlBinding)%|node_quic_binding|postgres\.bind\.ts|mysql\.bind\.ts/, "it needs a server that the test does not have"],
   [
-    /isLiveCellAtRawAddress|createNoOpForTesting|parseRoutePattern|jsFunction_arrayBufferViewHasBuffer|setServerCustomOptions|^%AsyncFromSyncIterator%|^%LinkTimeConstant:|^%NodeCryptoBinding%\.Cipher$|^private global makeErrorWithCode ERR_INVALID_ARG_VALUE$/,
+    /isLiveCellAtRawAddress|createNoOpForTesting|parseRoutePattern|TestEnvironment\.?[Cc]pp|jsFunction_arrayBufferViewHasBuffer|setServerCustomOptions|^%AsyncFromSyncIterator%|^%LinkTimeConstant:|^%NodeCryptoBinding%\.Cipher$|^private global makeErrorWithCode ERR_INVALID_ARG_VALUE$/,
     "only the code of Bun and of the engine calls it, and it takes the kinds of its operands on trust",
   ],
   [
     /createNativeFrameForTesting|orderedRemoveProbe|noProxyMatches|createStatsForIno|describeCheckerQueries|createMemfdForTesting|jsFunction_readFreedStringUnderASAN/i,
     "a helper of Bun's own tests that takes the kinds of its operands on trust or reads freed memory on purpose",
   ],
+  [/jsFunction_(aotBuiltin(Entries|Mismatches)|builtinFeatureUses)|collectSyncWithoutSweep/, "a helper of Bun's own tests that takes no operand and a tenth of a second"],
   [
     /shellLex|shellParse|proxy_testing\.?bind\.?ts:?proxyFor|(operatingSystem|architecture)IsMatch|compareCodeResolution|describeCodeGraph/i,
     "a helper of Bun's own tests that does not come back for some operands",
   ],
 ]);
+
+// Behind such a call others do something else: no connection is secured with ciphers that do not exist, no request has a head of one byte, and what `process` lacks is looked for on an operand of the test.
+// It is among the last calls of its process.
+export const leavesProcessChanged = /setTLSDefaultCiphers|setMaxHTTPHeaderSize|MakeProcessInheritFrom/i;
 
 export function reasonTargetIsSkipped(path: string): string | undefined {
   for (const [pattern, reason] of neverCalledNatives) if (pattern.test(path)) return reason;
@@ -273,6 +280,45 @@ function collectClassMembers(realm: Realm, path: string, classConstructor: Funct
   }
 }
 
+const usesThatChangeOperand: readonly OperandUse[] = [
+  "WritesContents",
+  "MovesElements",
+  "StoresByKey",
+  "DeletesByKey",
+  "AssignsFrom",
+  "DefinesName",
+  "TakesDescriptor",
+  "ChangesIntegrity",
+  "ChangesPrototype",
+];
+
+// What a compiled loop may take for a call that leaves the length of a view and the place of its bytes alone: effectsOfRow() of the engine's
+// walk/AOTWalkBuiltins.cpp, as far as the row alone decides. What the kinds of the operands add there only takes calls away.
+export function isQuietForViews(overload: DumpedOverload): boolean {
+  const { capability, runsOnlyOperandCode, reads, writes } = overload;
+  if ((capability === "js" && !runsOnlyOperandCode) || writes.includes("TypedArrayStorage")) return false;
+  const operands = operandsOf(overload);
+  const uses = operands.flatMap(({ uses }) => uses);
+  // A row that names no heap for what it does, or nothing at all, counts as code that nobody knows.
+  if (writes.length === 0 && uses.some(use => usesThatChangeOperand.includes(use))) return false;
+  if (reads.length === 0 && uses.includes("ReadsContents")) return false;
+  return operands.length > 0 || reads.length > 0 || writes.length > 0;
+}
+
+// `toldQuiet`: the entries that are taken for quiet whatever their rows say, for a test of the test.
+export function collectTargetsQuietForViews(realm: Realm, filter: RegExp, toldQuiet: RegExp | undefined): (QuietTarget | Unreachable)[] {
+  return realm.table.dump.entries.flatMap(entry =>
+    filter.test(entry.path)
+      ? entry.overloads
+          .filter(overload => isQuietForViews(overload) || toldQuiet?.test(entry.path))
+          .map(overload => {
+            const target = targetOfOverload(realm, entry, overload.mode, overload.token);
+            return "reason" in target ? target : { ...target, overload, overloads: entry.overloads.filter(({ mode }) => mode === overload.mode) };
+          })
+      : [],
+  );
+}
+
 export function collectTargets(realm: Realm, filter: RegExp): (Target | Unreachable)[] {
   const targets: (Target | Unreachable)[] = [];
   const seen = new Set<object>();
@@ -309,5 +355,5 @@ export function collectTargets(realm: Realm, filter: RegExp): (Target | Unreacha
       argumentCount: Math.max(callee.length, 1),
     });
   }
-  return targets;
+  return targets.sort((left, right) => Number(leavesProcessChanged.test(left.path)) - Number(leavesProcessChanged.test(right.path)));
 }

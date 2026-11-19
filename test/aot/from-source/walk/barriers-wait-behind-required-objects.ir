@@ -1,0 +1,26 @@
+# -- source: main.cjs
+# class Entry { constructor(key, next) { this.key = key; this.next = next; } }
+# class Cursor { constructor() { this.current = null; this.future = null; this.steps = 0; } step(entry) { this.current = entry; this.future = entry.next; } stepBeside(entry, other) { this.current = entry; this.future = other.next; } }
+# function attempt(step) { try { step(); return "stepped"; } catch (error) { return error.constructor.name; } }
+# const cursor = new Cursor(), last = new Entry(2, null), first = new Entry(1, last);
+# for (const entry of [first, last, null, undefined]) { print(attempt(() => cursor.step(entry)), cursor.current === entry); print(attempt(() => cursor.stepBeside(first, entry)), cursor.current === first); }
+# -- end of source
+# Where step() throws, it has stored null or undefined. So the barrier of its last store covers the first store. stepBeside() has stored an entry where it throws. f4 = step, f5 = stepBeside
+# RUN: walk f4:Body mechanisms=all
+# CHECK-LABEL: code f4:Body
+# CHECK: key="current"{{*}}LaterBarrierCovers
+# CHECK: RequireObjectCoercible
+# CHECK: key="future"
+# RUN(BESIDE): walk f5:Body mechanisms=all
+# BESIDE-LABEL: code f5:Body
+# BESIDE-NOT: LaterBarrierCovers
+# BESIDE: Return
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: stepped true
+# ANSWERS-NEXT: stepped true
+# ANSWERS-NEXT: stepped true
+# ANSWERS-NEXT: stepped true
+# ANSWERS-NEXT: TypeError true
+# ANSWERS-NEXT: TypeError true
+# ANSWERS-NEXT: TypeError true
+# ANSWERS-NEXT: TypeError true

@@ -1,1 +1,0 @@
-{"mainThread": "how deep a recursion gets goes by the size of the stack, and a Worker has a smaller one"}

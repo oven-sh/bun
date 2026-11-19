@@ -4,7 +4,9 @@
 
 mod compile;
 
-pub use compile::{CompileParseOptions, parse_for_compile};
+pub use compile::{
+    CompileParseOptions, parse_appended_expressions, parse_for_compile, parse_for_compile_in,
+};
 
 use crate::{Options, Part, Rejection, Scratch};
 use bun_alloc::Arena;
@@ -55,6 +57,14 @@ fn return_scratch(scratch: Box<Scratch>) {
     });
 }
 
+/// For a parse that may begin while the thread is in another.
+pub(crate) fn with_scratch<R>(then: impl FnOnce(&mut Scratch) -> R) -> R {
+    let mut scratch = take_scratch();
+    let result = then(&mut scratch);
+    return_scratch(scratch);
+    result
+}
+
 /// How many parses succeeded, and how many texts the parser without recovery rejected, by reason.
 #[derive(Default)]
 pub struct Counts {
@@ -87,12 +97,18 @@ struct ParseSettings<'a> {
     attach_comments: bool,
     /// `Options::compiles`
     compiles: bool,
-    /// `Options::keeps_function_directives`
-    keeps_function_directives: bool,
+    /// `Options::reads_as_bun_run`
+    reads_as_bun_run: bool,
+    /// `Options::ignores_pure_comments`
+    ignores_pure_comments: bool,
     /// `Options::skips_function_blocks`
     skips_function_blocks: bool,
     /// `Options::reads_module_statements_alone`
     reads_module_statements_alone: bool,
+    /// `Options::drops_comments`
+    drops_comments: bool,
+    /// `Options::may_use_helpers`
+    may_use_helpers: bool,
 }
 
 /// True if `path` ends in `.json` and no `script_kind` overrides that.
@@ -139,6 +155,7 @@ fn parse_file(
 ) -> Box<FileBuilder> {
     // This is a different text than the last one, possibly at the same address.
     scratch.stops.forget();
+    bun_sema::util::prefault(scratch.stops.reserve(text));
     let is_named = |names: [&[u8]; 2]| names.iter().any(|it| how.path.ends_with(it));
     let as_script = ParseSettings {
         dialect: Dialect {
@@ -266,9 +283,16 @@ fn parse_file_as(
         part: None,
         attach_comments: how.attach_comments,
         compiles: how.compiles,
-        keeps_function_directives: how.keeps_function_directives,
+        reads_as_bun_run: how.reads_as_bun_run,
+        accepts_legacy_octal: how.compiles
+            && !is_js
+            && !is_json
+            && ScriptKind::from_file_name(path).is_none(),
+        ignores_pure_comments: how.ignores_pure_comments,
         skips_function_blocks: how.skips_function_blocks,
         reads_module_statements_alone: how.reads_module_statements_alone,
+        drops_comments: how.drops_comments,
+        may_use_helpers: how.may_use_helpers,
     };
     let once = |options, scratch: &mut Scratch| match atoms {
         Some(atoms) => crate::parse(text, options, atoms, scratch),
@@ -415,6 +439,9 @@ fn parse_into_arena<'s>(
     atoms: &dyn Intern,
 ) -> File<'s> {
     let mut file = parse_file(scratch, how, text, Some(atoms));
+    if how.drops_comments {
+        file.comments.clear();
+    }
     let mut in_arena = Summary::InPlace(&mut file).into_arena(memory);
     if in_arena.kind == FileKind::Json {
         bun_sema::json::validate_json(&mut in_arena, text);
@@ -437,6 +464,49 @@ pub fn summarize<'s>(
     atoms: &Interner<'s>,
     experimental_decorators: bool,
     every_file_is_a_module: bool,
+    reads_as_bun_run: bool,
+) -> File<'s> {
+    let flags = [
+        experimental_decorators,
+        every_file_is_a_module,
+        reads_as_bun_run,
+        false,
+    ];
+    summarize_for_checker(arena, path, script_kind, text, atoms, flags)
+}
+
+/// [`summarize`] without `hir::File::comments`.
+pub fn summarize_without_comments<'s>(
+    arena: &'s Arena,
+    path: &[u8],
+    script_kind: Option<ScriptKind>,
+    text: &[u8],
+    atoms: &Interner<'s>,
+    experimental_decorators: bool,
+    every_file_is_a_module: bool,
+    reads_as_bun_run: bool,
+) -> File<'s> {
+    let flags = [
+        experimental_decorators,
+        every_file_is_a_module,
+        reads_as_bun_run,
+        true,
+    ];
+    summarize_for_checker(arena, path, script_kind, text, atoms, flags)
+}
+
+fn summarize_for_checker<'s>(
+    arena: &'s Arena,
+    path: &[u8],
+    script_kind: Option<ScriptKind>,
+    text: &[u8],
+    atoms: &Interner<'s>,
+    [
+        experimental_decorators,
+        every_file_is_a_module,
+        reads_as_bun_run,
+        drops_comments,
+    ]: [bool; 4],
 ) -> File<'s> {
     let how = ParseSettings {
         dialect: Dialect::default(),
@@ -447,14 +517,14 @@ pub fn summarize<'s>(
         jsdoc: JsDoc::Read,
         attach_comments: false,
         compiles: false,
-        keeps_function_directives: false,
+        reads_as_bun_run,
+        ignores_pure_comments: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
+        drops_comments,
+        may_use_helpers: true,
     };
-    SCRATCH.with_borrow_mut(|all| {
-        let scratch = all[0].get_or_insert_default();
-        parse_into_arena(scratch, how, (arena, atoms.session()), text, atoms)
-    })
+    with_scratch(|scratch| parse_into_arena(scratch, how, (arena, atoms.session()), text, atoms))
 }
 
 /// [`summarize`] for a caller that reads of a TypeScript file only which files it names and whether it is a module: the tree holds the `import` and `export` statements in front alone, or else the functions have empty bodies wherever their blocks could be stepped over.
@@ -466,6 +536,7 @@ pub fn summarize_top_level<'s>(
     atoms: &Interner<'s>,
     experimental_decorators: bool,
     every_file_is_a_module: bool,
+    reads_as_bun_run: bool,
 ) -> Option<File<'s>> {
     let kind = script_kind.or_else(|| ScriptKind::from_file_name(path))?;
     if kind.is_javascript()
@@ -474,32 +545,29 @@ pub fn summarize_top_level<'s>(
     {
         return None;
     }
-    for reads_module_statements_alone in [true, false] {
-        let how = ParseSettings {
-            dialect: Dialect::default(),
-            path,
-            script_kind,
-            experimental_decorators,
-            every_file_is_a_module,
-            jsdoc: JsDoc::Read,
-            attach_comments: false,
-            compiles: false,
-            keeps_function_directives: false,
-            skips_function_blocks: true,
-            reads_module_statements_alone,
-        };
-        let file = SCRATCH.with_borrow_mut(|all| {
-            let scratch = all[0].get_or_insert_default();
-            parse_into_arena(scratch, how, (arena, atoms.session()), text, atoms)
-        });
-        if !file.has_errors
-            && !file.has_parse_diagnostics
-            && !file.has_parse_or_grammar_diagnostics()
-        {
-            return Some(file);
-        }
-    }
-    None
+    let how = ParseSettings {
+        dialect: Dialect::default(),
+        path,
+        script_kind,
+        experimental_decorators,
+        every_file_is_a_module,
+        jsdoc: JsDoc::Read,
+        attach_comments: false,
+        compiles: false,
+        reads_as_bun_run,
+        ignores_pure_comments: false,
+        skips_function_blocks: true,
+        reads_module_statements_alone: true,
+        drops_comments: false,
+        may_use_helpers: false,
+    };
+    let file = SCRATCH.with_borrow_mut(|all| {
+        let scratch = all[0].get_or_insert_default();
+        parse_into_arena(scratch, how, (arena, atoms.session()), text, atoms)
+    });
+    let is_sound =
+        !file.has_errors && !file.has_parse_diagnostics && !file.has_parse_or_grammar_diagnostics();
+    is_sound.then_some(file)
 }
 
 /// [`summarize`] for a tool that follows a parser other than `tsc`'s and doesn't read types from JSDoc comments.
@@ -546,9 +614,12 @@ pub fn summarize_in<'s>(
         jsdoc: JsDoc::Ignored,
         attach_comments: false,
         compiles: false,
-        keeps_function_directives: false,
+        reads_as_bun_run: false,
+        ignores_pure_comments: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
+        drops_comments: false,
+        may_use_helpers: false,
     };
     SCRATCH.with_borrow_mut(|all| {
         parse_into_arena(all[0].get_or_insert_default(), how, memory, text, atoms)
@@ -568,8 +639,7 @@ impl<'s> Summary<'_, 's> {
         match self {
             Summary::InArena(file) => *file,
             Summary::InPlace(file) => {
-                let (mut in_arena, emptied) = core::mem::take(file).into_arena(arena, session);
-                *file = emptied;
+                let mut in_arena = file.move_to_arena(arena, session);
                 in_arena.finish_nodes();
                 in_arena
             }
@@ -640,9 +710,12 @@ pub fn with_summary_in_place<'s, R>(
         jsdoc: JsDoc::Ignored,
         attach_comments,
         compiles: false,
-        keeps_function_directives: false,
+        reads_as_bun_run: false,
+        ignores_pure_comments: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
+        drops_comments: false,
+        may_use_helpers: false,
     };
     // `then` may parse another text.
     let mut scratch = take_scratch();

@@ -2,6 +2,7 @@ use bun_ast::Loader;
 use bun_bundler::options::{OutputFile, OutputFileValue, OutputKind};
 use bun_paths::platform::Auto;
 use bun_paths::resolve_path::{platform_to_posix_in_place, relative_platform};
+use bun_sema::util::SharedSort;
 use bun_sema_driver::declaration_imports::name_imported_files;
 
 use super::typed_files::is_typed_file;
@@ -49,7 +50,7 @@ pub(crate) fn add_declaration_files(
 ) -> Result<(), OutsideRootDirectory> {
     // Without bundling, only the entry points are written.
     let has_javascript =
-        |source: &[u8]| is_bundled || output_files.iter().any(|file| file.src_path.text == source);
+        |source: &[u8]| is_bundled || output_files.iter().any(|file| &*file.src_path == source);
     let mut placed: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
     for declaration in declarations {
         if !has_javascript(&declaration.source) {
@@ -64,7 +65,7 @@ pub(crate) fn add_declaration_files(
         placed.push((path, declaration.text));
     }
     let mut written: Vec<&[u8]> = placed.iter().map(|(path, _)| &path[..]).collect();
-    written.sort_unstable();
+    written.shared_sort_unstable();
     let is_written = |path: &[u8]| written.binary_search(&path).is_ok();
     let mut added: Vec<OutputFile> = (placed.iter())
         .map(|(path, text)| {

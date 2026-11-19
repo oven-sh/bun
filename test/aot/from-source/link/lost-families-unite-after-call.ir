@@ -1,0 +1,40 @@
+# -- source: lost-families-unite-after-call.js
+# class Box { constructor() { this.note = 0; } }
+# const shared = new Box();
+# function first0(x) { shared.note = "first0"; return 100; }
+# function first1(x) { shared.note = "first1"; return 101; }
+# function first2(x) { shared.note = "first2"; return 102; }
+# function first3(x) { shared.note = "first3"; return 103; }
+# function first4(x) { shared.note = "first4"; return 104; }
+# function first5(x) { shared.note = "first5"; return 105; }
+# function first6(x) { shared.note = "first6"; return 106; }
+# function first7(x) { shared.note = "first7"; return 107; }
+# function first8(x) { shared.note = "first8"; return 108; }
+# function second0(n) { return n + 0; }
+# function second1(n) { return n + 1; }
+# function second2(n) { return n + 2; }
+# function second3(n) { return n + 3; }
+# function second4(n) { return n + 4; }
+# function second5(n) { return n + 5; }
+# function second6(n) { return n + 6; }
+# function second7(n) { return n + 7; }
+# function second8(n) { storeLate(); return n + 8; }
+# function pickFirst(i) { if (i === 0) return first0; if (i === 1) return first1; if (i === 2) return first2; if (i === 3) return first3; if (i === 4) return first4; if (i === 5) return first5; if (i === 6) return first6; if (i === 7) return first7; return first8; }
+# function pickSecond(i) { if (i === 0) return second0; if (i === 1) return second1; if (i === 2) return second2; if (i === 3) return second3; if (i === 4) return second4; if (i === 5) return second5; if (i === 6) return second6; if (i === 7) return second7; return second8; }
+# let slot = pickSecond(0);
+# function callSlot(x) { return slot(x); }
+# function pickEither(i) { return i < 9 ? pickFirst(i) : pickSecond(i - 9); }
+# function storeLate() { slot = pickEither(hidden()); }
+# let sum = "";
+# for (let i = 0; i < 9; i++) { slot = pickSecond(i); sum += callSlot(i) + ","; }
+# sum += callSlot(7);
+# print(sum, shared.note, typeof shared.note);
+# -- end of source
+# L0 = Box. The second family is called through a variable. One of its members, reached only when the pool is tied, stores into that variable a function of either family. The variable held lost functions already, so the call is not noted again: the union itself must tie in the new members.
+# OPTIONS: check=Validate
+# RUN(FUNCTIONS): link functions mechanisms=all
+# FUNCTIONS-NOT: unreached
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS-NOT: "note" proven=i32 writers-known written-at-construction-alone
+# RUN(ANSWERS): run-in-shell globalThis.hidden = () => 3;
+# ANSWERS: 0,2,4,6,8,10,12,14,16,103 first3 string

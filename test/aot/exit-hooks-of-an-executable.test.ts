@@ -4,7 +4,7 @@ import { expect } from "bun:test";
 import { existsSync, readdirSync, realpathSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
-import { built, spawned } from "./run-programs";
+import { built, spawned } from "./harness/commands";
 import { test } from "./supported";
 
 test("an executable with an image writes no bytecode order and an empty compile cache", async () => {

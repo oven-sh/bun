@@ -1,14 +1,22 @@
 // An object that is given its names by key costs about the same whether the names come again or for the first time, and once it is built it serves like one whose names were written out.
 // Each row names a program of ./names-given-by-key, two of its loops, and how many times the instructions of the first the second may take. Nothing is pinned: both are measured in the same executable.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
 import { measureCommand } from "../analysis-scaling/measure-check";
-import { withSteadyCollections } from "../harness/counted-run";
-import { built, spawned, withoutDebugInformation } from "../run-programs";
+import { without } from "../harness/capabilities";
+import { built, spawned, withoutDebugInformation } from "../harness/commands";
 import { beforeAll, describe, test } from "../supported";
 
 const root = join(import.meta.dir, "names-given-by-key");
+// A collection starts only when enough has been allocated, never on a timer, and runs entirely on the program's thread. With the collector's helper threads on, the instruction count differs from run to run.
+const withSteadyCollections = {
+  BUN_GC_TIMER_DISABLE: "1",
+  BUN_JSC_percentCPUPerMBForEdenTimer: "0",
+  BUN_JSC_percentCPUPerMBForFullTimer: "0",
+  BUN_JSC_useConcurrentGC: "0",
+  BUN_JSC_numberOfGCMarkers: "1",
+};
 
 const rows: [program: string, baseline: string, other: string, times: number, few: number, many: number][] = [
   ["main.ts", "forty names that come again and again", "forty names that come once", 9, 2_000, 8_000],
@@ -57,15 +65,10 @@ const rows: [program: string, baseline: string, other: string, times: number, fe
 ];
 const programs = [...new Set(rows.map(([program]) => program))];
 
-const skipped =
-  isDebug || isASAN
-    ? "a debug or ASAN build counts other instructions"
-    : isWindows
-      ? "it counts with perf_event_open or /usr/bin/time -l"
-      : undefined;
-if (skipped) console.error(`SKIPPED: test/aot/perf/names-given-by-key.test.ts: ${skipped}`);
+// A debug or ASAN build counts other instructions.
+const isSlowBuild = isDebug || isASAN;
 
-describe.skipIf(!!skipped)("compile/aot/perf/names-given-by-key", () => {
+describe.skipIf(isSlowBuild || !!without("a counter of instructions"))("compile/aot/perf/names-given-by-key", () => {
   const folder = String(tempDir("aot-names-given-by-key", {}));
   const executableOf = (program: string) => join(folder, program.replace(/\.[a-z]+$/, ""));
   const env = { ...bunEnv, ...withSteadyCollections };

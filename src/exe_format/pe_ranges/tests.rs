@@ -1,4 +1,5 @@
 use super::*;
+use crate::cut_model::RemovableBytes;
 use crate::elf_program_headers::tests::toy_byte;
 
 const PE_HEADER_OFFSET: usize = size_of::<pe::DOSHeader>();
@@ -251,7 +252,9 @@ fn assert_section_table(original: &[u8], trimmed: &[u8], cuts: &[AddressRange]) 
     assert_eq!(last.virtual_address + last_size, size_of_image);
     assert_eq!({ new.optional.address_of_entry_point }, ENTRY_POINT);
 
-    let mut remaining_cuts = cuts.iter();
+    // Cuts that touch are one hole.
+    let holes = merge_ranges(cuts.to_vec());
+    let mut remaining_cuts = holes.iter();
     let mut raw_data_end = new.optional.size_of_headers;
     for section in &new.sections {
         let pointer = section.pointer_to_raw_data;
@@ -453,12 +456,18 @@ fn cut_of_all_raw_data_leaves_zero_filled_piece() {
 }
 
 #[test]
-fn twenty_cuts_grow_section_table() {
-    let text = (1..8).map(|page| page_cut(TEXT_ADDRESS + page * PAGE));
-    let rdata = (1..8).map(|page| page_cut(RDATA_ADDRESS + page * PAGE));
-    let builtins = (0..6).map(|page| page_cut(BUILTINS_ADDRESS + page * PAGE));
+fn twelve_cuts_grow_section_table() {
+    let text = (1..8)
+        .step_by(2)
+        .map(|page| page_cut(TEXT_ADDRESS + page * PAGE));
+    let rdata = (1..8)
+        .step_by(2)
+        .map(|page| page_cut(RDATA_ADDRESS + page * PAGE));
+    let builtins = (0..8)
+        .step_by(2)
+        .map(|page| page_cut(BUILTINS_ADDRESS + page * PAGE));
     let cuts: Vec<AddressRange> = text.chain(rdata).chain(builtins).collect();
-    assert_eq!(cuts.len(), 20);
+    assert_eq!(cuts.len(), 12);
     let trimmed = remove_and_verify(&toy(), &cuts);
     assert_eq!({ headers(&trimmed).optional.size_of_headers }, 0x600);
 }
@@ -561,6 +570,301 @@ fn full_section_table_allows_no_cuts() {
     assert_no_cuts(&full, NoCutReason::HeaderRoomExhausted);
     let almost_full = toy_with_sections(93, 0x1200);
     assert_eq!(cut_model(&almost_full).capacity, CutCapacity::Cuts(1));
+}
+
+#[test]
+fn payload_moves_data_where_the_file_has_no_room_for_its_header() {
+    let slots_in_file =
+        (TOY_SIZE_OF_HEADERS as usize - SECTION_TABLE_OFFSET) / size_of::<SectionHeader>();
+    let mut sections = headers(&toy()).sections;
+    let filler = toy_section(b".more", PAGE, FILE_ALIGNMENT, READ_ONLY);
+    sections.splice(6..6, vec![filler; slots_in_file - sections.len()]);
+    let mut original = assemble_pe(IMAGE_FILE_MACHINE_AMD64, &sections, TOY_SIZE_OF_HEADERS);
+    write_toy_debug_directory(&mut original);
+    edit_optional(&mut original, |optional| {
+        optional.data_directories[IMAGE_DIRECTORY_ENTRY_DEBUG] = DataDirectory {
+            virtual_address: DEBUG_DIRECTORY_ADDRESS,
+            size: DEBUG_DIRECTORY_ENTRY_SIZE as u32,
+        };
+    });
+    assert_eq!(headers(&original).sections.len(), slots_in_file);
+
+    let mut file = PEFile::init(&original).unwrap();
+    file.add_bun_section(b"payload", false).unwrap();
+    let with_payload = file.data;
+    let new = headers(&with_payload);
+    assert!(check(&with_payload, &new).is_ok());
+    assert_eq!(new.sections.len(), slots_in_file + 1);
+    assert_eq!(
+        { new.optional.size_of_headers },
+        TOY_SIZE_OF_HEADERS + FILE_ALIGNMENT
+    );
+    assert_eq!(
+        { new.sections[0].pointer_to_raw_data },
+        TOY_SIZE_OF_HEADERS + FILE_ALIGNMENT
+    );
+    assert_retained_bytes(&original, &with_payload, &[]);
+    let field = read_addresses(&with_payload, widen_address_range(DEBUG_POINTER_ADDRESS, 4));
+    let pointer = u32_at(field.unwrap(), 0) as usize;
+    assert_eq!(&with_payload[pointer..pointer + 4], b"RSDS");
+    let payload = new.sections.last().unwrap();
+    assert_eq!(payload.name, *b".bun\0\0\0\0");
+    let start = payload.pointer_to_raw_data as usize;
+    assert_eq!(&with_payload[start + 8..start + 15], b"payload");
+
+    // A table that reaches the address of the first section has no slot to give.
+    let full = toy_with_sections(94, PAGE);
+    let mut file = PEFile::init(&full).unwrap();
+    assert_eq!(
+        file.add_bun_section(b"payload", false).err(),
+        Some(pe::Error::InsufficientHeaderSpace)
+    );
+}
+
+#[test]
+fn file_that_was_cut_is_cut_again_beside_its_holes() {
+    let original = toy();
+    let once = remove_and_verify(&original, &[cut(0x3000, 0x5000), cut(0xb000, 0xc000)]);
+    assert_eq!(headers(&once).sections.len(), 7 + 4);
+
+    let model = cut_model(&once);
+    // In front of a hole, behind one, a whole piece between a hole and the next section, and a cut that stands alone.
+    assert_eq!(model.slots_for(cut(0x2000, 0x3000)), 0);
+    assert_eq!(model.slots_for(cut(0x5000, 0x6000)), 0);
+    assert_eq!(model.slots_for(cut(0x5000, RDATA_ADDRESS)), -1);
+    assert_eq!(model.slots_for(cut(0x6000, 0x7000)), 2);
+    assert_eq!(model.slots_for(cut(0x7000, RDATA_ADDRESS)), 1);
+
+    let again = [
+        cut(0x2000, 0x3000),
+        cut(0x5000, RDATA_ADDRESS),
+        cut(0xc000, 0xd000),
+    ];
+    let mut twice = once.clone();
+    remove_ranges(&mut twice, &again).unwrap();
+    let all = [cut(0x2000, RDATA_ADDRESS), cut(0xb000, 0xd000)];
+    assert_retained_bytes(&original, &twice, &all);
+    assert_section_table(&original, &twice, &all);
+    assert_relocations(&original, &twice, &all);
+    assert_eq!(headers(&twice).sections.len(), 7 + 3);
+
+    // A table without a free slot still takes what costs none.
+    let mut full = toy_with_sections(91, PAGE);
+    remove_ranges(&mut full, &[page_cut(5 * PAGE)]).unwrap();
+    let model = cut_model(&full);
+    assert_eq!(model.capacity, CutCapacity::Cuts(0));
+    let beside_the_hole = RemovableBytes {
+        range: page_cut(6 * PAGE),
+        is_code: false,
+        can_be_cut: true,
+        can_be_filled: true,
+    };
+    let alone = RemovableBytes {
+        range: page_cut(11 * PAGE),
+        ..beside_the_hole
+    };
+    assert_eq!(
+        model.choose(&[beside_the_hole, alone]).cuts,
+        [page_cut(6 * PAGE)]
+    );
+}
+
+#[test]
+fn executable_whose_table_is_full_is_cut_and_given_a_program_again() {
+    let removable = |range: AddressRange| RemovableBytes {
+        range,
+        is_code: false,
+        can_be_cut: true,
+        can_be_filled: true,
+    };
+    let second_pages = |count: u32| (0..count).map(|index| page_cut((5 * index + 2) * PAGE));
+    let with_program = |bytes: &[u8]| {
+        let mut file = PEFile::init(bytes).unwrap();
+        file.add_bun_section(b"payload", false).unwrap();
+        file.data
+    };
+
+    // As a template is made: as many cuts as the table takes, and then the section of its own program.
+    let sections = vec![toy_section(b".s", 5 * PAGE, 5 * PAGE, READ_ONLY); 41];
+    let mut template = assemble_pe(IMAGE_FILE_MACHINE_AMD64, &sections, PAGE);
+    let wanted: Vec<RemovableBytes> = second_pages(41).map(removable).collect();
+    let plan = cut_model(&template).choose(&wanted);
+    assert!(plan.uncut.is_some());
+    remove_ranges(&mut template, &plan.cuts).unwrap();
+    let template = with_program(&template);
+    let slots = (PAGE as usize - SECTION_TABLE_OFFSET) / size_of::<SectionHeader>();
+    assert_eq!(headers(&template).sections.len(), slots);
+
+    // As an executable is built on it: what touches a hole goes too, and its program takes the place of the template's.
+    let holes = plan.cuts.iter();
+    let beside: Vec<RemovableBytes> =
+        (holes.map(|hole| page_cut(hole.end as u32)).map(removable)).collect();
+    let again = cut_model(&template).choose(&beside);
+    assert_eq!(again.cuts.len(), beside.len());
+    let mut built = template.clone();
+    remove_ranges(&mut built, &again.cuts).unwrap();
+    let built = with_program(&built);
+    assert!(check(&built, &headers(&built)).is_ok());
+    assert!(headers(&built).sections.len() <= headers(&template).sections.len());
+}
+
+fn section_table(bytes: &[u8]) -> &[u8] {
+    let size = headers(bytes).sections.len() * size_of::<SectionHeader>();
+    &bytes[SECTION_TABLE_OFFSET..][..size]
+}
+
+fn hole_addresses(bytes: &[u8]) -> Vec<AddressRange> {
+    let sections = headers(bytes).sections;
+    let holes = sections.iter().filter(|section| is_hole(section));
+    holes
+        .map(|hole| widen_address_range(hole.virtual_address, hole.virtual_size))
+        .collect()
+}
+
+fn assert_same_bytes_outside(first: &[u8], second: &[u8], ranges: &[AddressRange]) {
+    for span in mapped_spans(first).unwrap() {
+        for piece in subtract_cuts(span.addresses, ranges) {
+            let expected = read_addresses(first, piece);
+            assert!(read_addresses(second, piece) == expected, "{piece:#x?}");
+        }
+    }
+}
+
+#[test]
+fn holes_go_back_to_the_sections_that_they_were_cut_out_of() {
+    // `.text` ends inside a page, where no cut begins: a hole behind it is the beginning of `.rdata`.
+    let sections = [
+        toy_section(b".text", 8 * PAGE - 0x10, 8 * PAGE, CODE),
+        toy_section(b".rdata", 8 * PAGE - 0x10, 8 * PAGE, READ_ONLY),
+        toy_section(b".data", 2 * PAGE + 0x800, PAGE, WRITABLE),
+        toy_section(b".bunblt", 8 * PAGE, 8 * PAGE, READ_ONLY),
+    ];
+    let original = assemble_pe(IMAGE_FILE_MACHINE_ARM64, &sections, TOY_SIZE_OF_HEADERS);
+    let cuts = [
+        cut(0x3000, 0x5000),
+        cut(0x6000, 0x7000),
+        cut(RDATA_ADDRESS, RDATA_ADDRESS + 2 * PAGE),
+        cut(0xd000, 0xe000),
+        cut(BUILTINS_ADDRESS + PAGE, BUILTINS_ADDRESS + 3 * PAGE),
+    ];
+    let mut filled = original.clone();
+    remove_ranges(&mut filled, &cuts).unwrap();
+    assert_eq!(hole_addresses(&filled), cuts);
+    assert!(filled.len() < original.len());
+
+    fill_holes(&mut filled, &[]).unwrap();
+    assert!(check(&filled, &headers(&filled)).is_ok());
+    assert!(section_table(&filled) == section_table(&original));
+    assert_eq!(filled.len(), original.len());
+    assert_eq!(cut_model(&filled), cut_model(&original));
+    assert_same_bytes_outside(&original, &filled, &cuts);
+    for cut in cuts {
+        let bytes = read_addresses(&filled, cut).unwrap();
+        assert!(bytes.iter().all(|byte| *byte == 0), "{cut:#x?}");
+    }
+
+    let mut file = PEFile::init(&filled).unwrap();
+    file.recompute_pe_checksum().unwrap();
+    assert!(file.data == filled);
+}
+
+#[test]
+fn hole_stays_where_the_table_does_not_say_whose_it_is() {
+    let original = toy();
+    // The end of `.text`, which ends where a cut can begin. The beginning of a section that is found by its name. What is not
+    // to be filled.
+    let cuts = [
+        cut(0x3000, 0x4000),
+        cut(0x7000, RDATA_ADDRESS),
+        cut(0xb000, 0xc000),
+        cut(BUILTINS_ADDRESS, BUILTINS_ADDRESS + PAGE),
+    ];
+    let mut filled = remove_and_verify(&original, &cuts);
+    fill_holes(&mut filled, &[cut(0xb800, 0xb810)]).unwrap();
+    assert_eq!(hole_addresses(&filled), cuts[1..]);
+    let never_cut_there = remove_and_verify(&original, &cuts[1..]);
+    assert!(section_table(&filled) == section_table(&never_cut_there));
+    assert_same_bytes_outside(&never_cut_there, &filled, &cuts[..1]);
+    let given_back = read_addresses(&filled, cuts[0]).unwrap();
+    assert!(given_back.iter().all(|byte| *byte == 0));
+
+    let untouched = filled.clone();
+    fill_holes(&mut filled, &[cut(0xb800, 0xb810)]).unwrap();
+    assert!(filled == untouched);
+    let mut without_holes = original.clone();
+    fill_holes(&mut without_holes, &[]).unwrap();
+    assert!(without_holes == original);
+}
+
+#[test]
+fn executable_on_a_full_template_is_cut_where_the_whole_file_is_cut() {
+    let removable = |range: AddressRange| RemovableBytes {
+        range,
+        is_code: false,
+        can_be_cut: true,
+        can_be_filled: true,
+    };
+    let with_program = |bytes: &[u8]| {
+        let mut file = PEFile::init(bytes).unwrap();
+        file.add_bun_section(b"payload", false).unwrap();
+        file.data
+    };
+    let cut_as_chosen = |bytes: &mut Vec<u8>, wanted: &[RemovableBytes]| {
+        let plan = cut_model(bytes).choose(wanted);
+        assert!(plan.uncut.is_some());
+        remove_ranges(bytes, &plan.cuts).unwrap();
+        plan.cuts
+    };
+    let sections = [
+        toy_section(b".text", 600 * PAGE - 0x10, 600 * PAGE, CODE),
+        toy_section(b".rdata", 600 * PAGE - 0x10, 600 * PAGE, READ_ONLY),
+    ];
+    let whole = assemble_pe(IMAGE_FILE_MACHINE_AMD64, &sections, PAGE);
+    // In every ten pages one or two that a template leaves out, and behind a page that stays three to six that a program leaves out.
+    let places = (1..119u32).map(|index| (index, (10 * index + 1) * PAGE));
+    let of_template: Vec<RemovableBytes> = places
+        .clone()
+        .map(|(index, start)| removable(cut(start, start + (1 + index % 2) * PAGE)))
+        .collect();
+    let of_program = places
+        .map(|(index, start)| removable(cut(start + 3 * PAGE, start + (6 + index % 4) * PAGE)));
+    let mut all: Vec<RemovableBytes> = of_template.iter().copied().chain(of_program).collect();
+    all.sort_by_key(|item| item.range.start);
+
+    let mut template = whole.clone();
+    cut_as_chosen(&mut template, &of_template);
+    let template = with_program(&template);
+    assert_eq!(cut_model(&template).free_slots(), 0);
+
+    let mut once = whole.clone();
+    let cuts = cut_as_chosen(&mut once, &all);
+    let once = with_program(&once);
+
+    let mut beside_the_holes = template.clone();
+    cut_as_chosen(
+        &mut beside_the_holes,
+        &all_that_is_in_the_file(&template, &all),
+    );
+    assert!(with_program(&beside_the_holes).len() > once.len() + 100 * PAGE as usize);
+
+    let mut twice = template.clone();
+    fill_holes(&mut twice, &[]).unwrap();
+    assert_eq!(cut_as_chosen(&mut twice, &all), cuts);
+    let twice = with_program(&twice);
+    assert_eq!(twice.len(), once.len());
+    assert!(section_table(&twice) == section_table(&once));
+    let removed: Vec<AddressRange> = all.iter().map(|item| item.range).collect();
+    assert_same_bytes_outside(&once, &twice, &removed);
+}
+
+fn all_that_is_in_the_file(bytes: &[u8], wanted: &[RemovableBytes]) -> Vec<RemovableBytes> {
+    let holes = hole_addresses(bytes);
+    let parts_of = |item: &RemovableBytes| {
+        let item = *item;
+        let parts = subtract_cuts(item.range, &holes).into_iter();
+        parts.map(move |range| RemovableBytes { range, ..item })
+    };
+    wanted.iter().flat_map(parts_of).collect()
 }
 
 #[test]

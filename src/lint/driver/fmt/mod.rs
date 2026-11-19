@@ -1501,8 +1501,7 @@ impl Run<'_> {
             && is_plugin_language
             && not_installed.is_empty()
         {
-            let config = configs.config_file_path(&scope);
-            return self.format_stdin_with_prettier((Some(&path), config), (name, &text));
+            return self.format_stdin_with_prettier(configs, &scope, Some(&path), (name, &text));
         }
         let mut options = match configs.options_for(&scope, &path) {
             Ok(options) => options,
@@ -1599,8 +1598,7 @@ impl Run<'_> {
             // The parser can only come from a plugin.
             let not_installed = self.not_installed(configs, &scope, None);
             if not_installed.is_empty() {
-                let config = configs.config_file_path(&scope);
-                return self.format_stdin_with_prettier((None, config), (b"stdin", &text));
+                return self.format_stdin_with_prettier(configs, &scope, None, (b"stdin", &text));
             }
             self.report_unsupported(&mut [(&parser, 1)], &not_installed);
             if self.options.allow_unsupported && !is_read_only {
@@ -1631,30 +1629,39 @@ impl Run<'_> {
         scope: &'s config::Scope,
         path: Option<&[u8]>,
     ) -> Vec<&'s [u8]> {
-        let mut missing: Vec<&[u8]> = Vec::new();
-        for package in [&b"prettier"[..]]
-            .into_iter()
-            .chain(configs.plugin_packages(scope, path))
-        {
-            if !prettier::is_installed(&self.environment.cwd, package)
-                && !missing.contains(&package)
-            {
-                missing.push(package);
+        let mut packages: Vec<&[u8]> = vec![&b"prettier"[..]];
+        for package in configs.plugin_view(scope, path).packages() {
+            if !packages.contains(&package) {
+                packages.push(package);
             }
         }
-        missing
+        packages.retain(|it| !prettier::is_installed(&self.environment.cwd, it));
+        packages
     }
 
-    /// Formats standard input in a plugin's language. See `prettier.rs`. `display_name` is its name in error messages.
+    /// Formats standard input in a plugin's language. See `prettier.rs`. `path` is `None` if it has no file name, and
+    /// `scope` is where its configuration applies. `display_name` is its name in error messages.
     fn format_stdin_with_prettier(
         mut self,
-        (path, config): (Option<&[u8]>, Option<&[u8]>),
+        configs: &Configs,
+        scope: &config::Scope,
+        path: Option<&[u8]>,
         (display_name, text): (&[u8], &[u8]),
     ) -> Outcome {
         let is_read_only = self.options.check || self.options.list_different;
         let size = (1, text.len() as u64);
         let bridge = prettier::Prettier::new(self.environment, self.options, size, 1);
-        match bridge.format(path, config, text) {
+        let config = configs.config_file_path(scope);
+        let view = configs.plugin_view(scope, path);
+        // No entry of `[[fmt.overrides]]` matches text without a file name.
+        let overrides = path.map_or_else(Vec::new, |it| configs.bunfig_overrides_for(it));
+        let passthrough = path.map_or_else(Vec::new, |it| configs.passthrough_for(it));
+        let for_file = prettier::ForFile {
+            overrides: &overrides,
+            passthrough: &passthrough,
+            plugins: view.flag_names(),
+        };
+        match bridge.format(path, config, &for_file, text) {
             // Prettier's `listDifferent` prints the `error.message` of what `check` throws and does nothing else.
             Err(Unformatted::Message(message)) if is_read_only => {
                 self.error(&message);
@@ -2208,9 +2215,18 @@ impl Run<'_> {
                 let began = Instant::now();
                 let display_name = paths::relative(cwd, &target.path);
                 let config = configs.config_file_path(&target.scope);
+                let view = configs.plugin_view(&target.scope, Some(&target.path));
+                let overrides = configs.bunfig_overrides_for(&target.path);
+                let passthrough = configs.passthrough_for(&target.path);
+                let for_file = prettier::ForFile {
+                    overrides: &overrides,
+                    passthrough: &passthrough,
+                    plugins: view.flag_names(),
+                };
                 let file = (&target.path[..], &display_name[..]);
                 let writes = !is_read_only && !is_partly_staged(target);
-                let formatted = bridge.format_file(file, config, writes, only.as_ref());
+                let formatted =
+                    bridge.format_file(file, (config, &for_file), writes, only.as_ref());
                 results.lock()[index] = Some(match formatted {
                     Ok(true) if !is_read_only && !writes => Done::PartlyStaged,
                     Ok(true) => Done::Different(began.elapsed()),

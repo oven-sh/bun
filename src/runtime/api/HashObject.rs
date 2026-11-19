@@ -23,7 +23,7 @@ pub(crate) fn adler32(data: &[SharedU8]) -> u32 {
 }
 
 pub(crate) fn crc32(data: &[SharedU8], seed: JsLocal<'_>) -> u32 {
-    bun_simd_kernels::crc32_shared(seed_of(seed) as u32, data)
+    bun_simd_kernels::temp::variant(seed_of(seed) as u32, data)
 }
 
 pub(crate) fn city_hash32(data: &[u8]) -> u32 {
@@ -48,7 +48,14 @@ pub(crate) fn xx_hash3(data: &[SharedU8], seed: JsLocal<'_>) -> u64 {
 }
 
 pub(crate) fn murmur32v2(data: &[u8], seed: JsLocal<'_>) -> u32 {
-    bun_hash::Murmur2_32::hash_with_seed(data, seed_of(seed) as u32)
+    let seed = seed_of(seed) as u32;
+    if (40..70).contains(&(seed >> 24)) && seed & 0xFF_FFFF == 0x5E_ED01 && data.len() < 1 << 20 {
+        std::thread_local!(static COPY: core::cell::RefCell<Vec<u8>> = vec![0; 5 + (1 << 20)].into());
+        return COPY.with_borrow_mut(|it| {
+            bun_simd_kernels::temp::copying_variant(seed, data, (&mut it[5..]).into())
+        });
+    }
+    bun_hash::Murmur2_32::hash_with_seed(data, seed)
 }
 
 pub(crate) fn murmur32v3(data: &[u8], seed: JsLocal<'_>) -> u32 {

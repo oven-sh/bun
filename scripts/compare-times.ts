@@ -10,14 +10,14 @@ const [mode, ...rest] = process.argv.slice(2);
 if (mode === "child") {
   const read = (...names: string[]) => Buffer.concat(names.map(it => readFileSync(join(repo, it))));
   // Each row has a function of its own, so that the JIT does not mix the call sites.
-  const time = (name: string, inputs: unknown[], body: string) => {
-    Bun.gc(true);
+  const time = (name: string, inputs: unknown[], body: string, budget = 1.2e8) => {
+    if (budget > 1e8) Bun.gc(true);
     const loop = `for (let i = 0, j = 0; i < n; i++) { const x = inputs[j]; if (++j === inputs.length) j = 0; keep[0] = ${body}; }`;
     const run = new Function("zlib", "keep", "inputs", "n", loop).bind(null, zlib, [], inputs);
     let [n, least] = [inputs.length, Infinity];
     run(n);
-    for (let t = Bun.nanoseconds(); run(n), Bun.nanoseconds() - t < 3e6; t = Bun.nanoseconds()) n *= 2;
-    for (let turn = 0, start = Bun.nanoseconds(); turn < 3 || Bun.nanoseconds() - start < 1.2e8; turn++) {
+    for (let t = Bun.nanoseconds(); run(n), Bun.nanoseconds() - t < 2e6; t = Bun.nanoseconds()) n *= 2;
+    for (let turn = 0, start = Bun.nanoseconds(); turn < 3 || Bun.nanoseconds() - start < budget; turn++) {
       const t = Bun.nanoseconds();
       run(n);
       least = Math.min(least, (Bun.nanoseconds() - t) / n);
@@ -37,82 +37,90 @@ if (mode === "child") {
     json: read("test/cli/install/migration/contoso-test/package-lock.json"),
     exe: readFileSync(rest[0]).subarray(8 << 20, 9 << 20),
   };
-  const ascii = Buffer.from(texts.rs.map(it => (it < 128 ? it : 63)));
   const long = Buffer.concat([texts.json, texts.exe]);
   const several = (all: Buffer, size: number) =>
     Array.from({ length: size < 2000 ? 64 : 1 }, (_, i) => all.subarray(i * 777 + 3, i * 777 + 3 + size));
-  for (const size of [
-    3, 7, 12, 16, 24, 40, 64, 100, 127, 128, 200, 300, 400, 700, 1000, 1500, 4096, 16384, 65536, 200000, 1000000,
-  ])
-    for (const it of ["crc32", "adler32"]) time(`hash ${it} ${size}`, several(long, size), `Bun.hash.${it}(x)`);
-  for (const [low, high] of [
-    [1, 32],
-    [1, 128],
-    [64, 512],
-    [512, 4096],
-  ]) {
+  const random = (low: number, high: number) => {
     let seed = 1;
     const next = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) >>> 8;
-    const some = Array.from({ length: 4096 }, (_, i) => long.subarray(i * 61, i * 61 + low + (next() % (high - low))));
-    for (const it of ["crc32", "adler32"]) time(`hash ${it} ${low}..${high}`, some, `Bun.hash.${it}(x)`);
+    return Array.from({ length: 4096 }, (_, i) => long.subarray(i * 61, i * 61 + low + (next() % (high - low))));
+  };
+  const lengths = (sizes: number[], ranges: number[][]) => [
+    ...sizes.map(it => [`${it}`, several(long, it)] as const),
+    ...ranges.map(([low, high]) => [`${low}..${high}`, random(low, high)] as const),
+  ];
+  const isMain = process.execPath === require("node:fs").realpathSync(rest[0]);
+  const isArm = process.arch === "arm64";
+  const upTo = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
+  const ranges = [
+    [16, 128],
+    [64, 512],
+    [512, 4096],
+  ];
+  for (const [name, inputs] of lengths(
+    [16, 40, 64, 100, 128, 200, 300, 400, 500, 640, 800, 1000, 1500, 2500, 4096, 16384, 200000],
+    ranges,
+  )) {
+    time(`hash crc32 ${name}`, inputs, "Bun.hash.crc32(x, 0)", 5e7);
+    if (isMain || inputs[0].length < 128) continue;
+    for (const v of upTo(isArm ? 24 : 2)) time(`variant ${v} ${name}`, inputs, `Bun.hash.crc32(x, ${v << 24})`, 3e7);
   }
-  for (const size of [40, 4096, 200000]) time(`zlib crc32 ${size}`, several(long, size), "zlib.crc32(x)");
+  for (const [name, inputs] of lengths([16, 40, 64, 100, 128, 200, 300, 400, 700, 1500, 4096, 65536], ranges)) {
+    time(`hash adler32 ${name}`, inputs, "Bun.hash.adler32(x)", 5e7);
+    if (isMain) continue;
+    for (const v of isArm ? [30, 31] : [30, 31, 32])
+      time(`variant ${v} ${name}`, inputs, `Bun.hash.crc32(x, ${v << 24})`, 3e7);
+  }
+  if (!isMain)
+    for (const [name, inputs] of lengths([64, 200, 400, 1000, 4096, 16384, 32768, 200000], ranges))
+      for (const v of isArm ? [40, 41, 50, 53, 55, 56, 57, 58, 59] : [40, 41, 43, 50])
+        time(`variant ${v} ${name}`, inputs, `Bun.hash.murmur32v2(x, ${(v << 24) | 0x5eed01})`, 3e7);
 
+  // More than the branch predictor can learn.
+  const all = (pattern: string) => read(...[...new Bun.Glob(pattern).scanSync(repo)].sort()).subarray(0, 1600000);
+  const exe = readFileSync(rest[0]).subarray(8 << 20, 10 << 20);
   const data = {
-    ...texts,
-    zeros: Buffer.alloc(300000),
-    line: Buffer.alloc(300000, "the same line of text, again and again\n"),
+    md: all("docs/**/*.mdx"),
+    rs: all("src/{js_parser,css,install}/*.rs"),
+    json: all("test/**/package-lock.json"),
+    exe,
     periods: Buffer.concat(
-      Array.from({ length: 3000 }, (_, i) => Buffer.alloc(100, texts.exe.subarray(i * 31, i * 31 + 1 + (i % 31)))),
+      Array.from({ length: 16000 }, (_, i) =>
+        Buffer.alloc(40 + (exe[i] % 128), exe.subarray(i * 31, i * 31 + 1 + (exe[i + 7] % 31))),
+      ),
     ),
+    lines: Buffer.concat(
+      Array.from({ length: 2000 }, (_, i) =>
+        Buffer.alloc(400 + exe[i], exe.subarray(i * 97, i * 97 + 33 + (exe[i + 7] % 90))),
+      ),
+    ),
+    line: Buffer.alloc(1000000, "the same line of text, again and again\n"),
+    zeros: Buffer.alloc(1000000),
+    runs: Buffer.concat(Array.from({ length: 4000 }, (_, i) => Buffer.alloc(200 + exe[i], exe[i * 3]))),
   };
   for (const [kind, all] of Object.entries(data))
-    for (const size of kind === "md" ? [300, 4096, 100000] : [100000])
-      for (const [to, from] of [
-        ["gzipSync", "gunzipSync"],
-        ["deflateSync", "inflateSync"],
-      ] as const)
-        for (const level of [0, 1, 6]) {
-          if (level === 0 && kind !== "md") continue;
-          const [plain, options] = [all.subarray(5, 5 + size), { level, chunkSize: 128 * 1024 }];
-          const packed = zlib[to](plain, options);
-          const name = `${level} ${size} ${kind} ${Bun.hash.crc32(packed)}`;
-          time(`zlib ${to} ${name}`, [[plain, options]], `zlib.${to}(x[0], x[1])`);
-          time(`zlib ${from} ${name}`, [[packed, options]], `zlib.${from}(x[0], x[1])`);
-          if (to === "gzipSync" && level !== 1) time(`zlib Bun.gunzipSync ${name}`, [packed], "Bun.gunzipSync(x)");
-        }
-  for (const size of [100, 4096, 100000]) {
-    const [plain, options] = [texts.md.subarray(0, size), { library: "libdeflate", level: 6 } as const];
-    time(`deflate gzip ${size}`, [[plain, options]], "Bun.gzipSync(x[0], x[1])");
-    time(`deflate gunzip ${size}`, [[Bun.gzipSync(plain, options), options]], "Bun.gunzipSync(x[0], x[1])");
-  }
-  for (const [kind, all] of Object.entries(texts))
-    for (const size of [2000, 20000]) {
-      const options = { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11 } };
-      const some = [[all.subarray(1000, 1000 + size), options] as const];
-      const hash = Bun.hash.crc32(zlib.brotliCompressSync(...some[0]));
-      time(`brotli q11 ${size} ${kind} ${hash}`, some, "zlib.brotliCompressSync(x[0], x[1])");
+    for (const level of [1, 6]) {
+      const options = { level, chunkSize: 128 * 1024 };
+      const plain = Array.from({ length: Math.min(16, all.length / 60000) | 0 }, (_, i) => [
+        all.subarray(5 + i * 60000, 5 + (i + 1) * 60000),
+        options,
+      ]);
+      const packed = (to: "gzipSync" | "deflateSync") =>
+        plain.map(([it]) => [zlib[to](it as Buffer, options), options]);
+      const name = `${level} many ${kind} ${Bun.hash.crc32(packed("deflateSync")[0][0] as Buffer)}`;
+      time(`zlib deflateSync ${name}`, plain, "zlib.deflateSync(x[0], x[1])");
+      time(`zlib inflateSync ${name}`, packed("deflateSync"), "zlib.inflateSync(x[0], x[1])");
+      time(`zlib gunzipSync ${name}`, packed("gzipSync"), "zlib.gunzipSync(x[0], x[1])");
+      time(`zlib Bun.gunzipSync ${name}`, packed("gzipSync"), "Bun.gunzipSync(x[0])");
     }
-
-  for (const size of [40, 63, 64, 100, 300, 1000, 4096, 65536]) {
-    const lines = several(ascii, size).map(it => it.toString("latin1"));
-    const flat = (it: string) => Buffer.from(it).toString("latin1");
-    const kinds = {
-      lines,
-      "one line": lines.map(it => flat(it.replaceAll("\n", " "))),
-      colored: lines.map(it => flat(it.replaceAll("self", "\x1b[31mself\x1b[0m").slice(0, size))),
-    };
-    for (const [kind, some] of Object.entries(kinds))
-      time(`text stringWidth ${kind} ${size}`, some, "Bun.stringWidth(x)");
+  for (const size of [300, 1000, 4096, 30000]) {
+    const options = { level: 0, chunkSize: 32 * 1024 };
+    const plain = several(long, size).map(it => [it, options] as const);
+    const packed = (to: "gzipSync" | "deflateSync") => plain.map(([it]) => [zlib[to](it, options), options]);
+    time(`zlib inflateSync 0 ${size} stored 000000`, packed("deflateSync"), "zlib.inflateSync(x[0], x[1])");
+    time(`zlib gunzipSync 0 ${size} stored 000000`, packed("gzipSync"), "zlib.gunzipSync(x[0], x[1])");
+    time(`zlib Bun.gunzipSync 0 ${size} stored 000000`, packed("gzipSync"), "Bun.gunzipSync(x[0])");
   }
-  for (const size of [300, 4096, 65536])
-    for (const it of ["indexOf", "lastIndexOf"])
-      for (const needle of ["fn q", "self.lexer.q", "self.lexer.token == Q"])
-        time(
-          `search ${it} ${needle.length} miss ${size}`,
-          several(ascii, size).map(it => [it, Buffer.from(needle)]),
-          `x[0].${it}(x[1])`,
-        );
 } else {
   console.log(cpus().length, "x", cpus()[0].model);
   for (const it of rest) console.log(Bun.spawnSync([it, "--revision"]).stdout.toString().trim());

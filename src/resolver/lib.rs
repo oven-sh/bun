@@ -1311,9 +1311,25 @@ pub mod fs {
                     FileSystem::set_max_fd(file.fd().native());
 
                     let file_stat = file.stat()?;
-                    symlink = bun_sys::get_fd_path(file.fd(), &mut outpath)?;
+                    // Set when `file` could not name the target, and `realpath` resolved the link by name.
+                    let mut resolved_by_name = false;
+                    symlink = match bun_sys::get_opened_path_with(file.fd(), &mut outpath, |buf| {
+                        resolved_by_name = true;
+                        join_abs_string_buf_z_checked::<platform::Auto>(
+                            self.cwd,
+                            &mut buf[..join_capacity],
+                            &combo,
+                        )
+                    }) {
+                        Ok(path) => path,
+                        Err(err) if resolved_by_name && is_dangling_link_error(err.get_errno()) => {
+                            cache.kind = EntryKind::Dangling;
+                            return Ok(cache);
+                        }
+                        Err(err) => return Err(err.into()),
+                    };
                     cache.fd = opened
-                        .filter(|_| store_fd && !self.need_to_close_files())
+                        .filter(|_| store_fd && !resolved_by_name && !self.need_to_close_files())
                         .map_or(existing_fd, bun_sys::CloseOnDrop::into_raw);
                     file_kind = kind_from_mode(file_stat.st_mode as bun_sys::Mode);
                 }

@@ -3614,6 +3614,113 @@ it.if(isLinux)("realpath.native throws ENOENT for a working directory that was r
   expect(exitCode).toBe(0);
 });
 
+it.if(isLinux)("realpath returns the path of a file that a rename replaces in another thread", async () => {
+  using dir = tempDir("fs-realpath-replaced", {
+    "a.txt": "old",
+    "writer.js": `
+      const { renameSync, writeFileSync } = require("node:fs");
+      const { file, temp, state } = require("node:worker_threads").workerData;
+      const view = new Int32Array(state);
+      while (Atomics.load(view, 0) === 0) {
+        writeFileSync(temp, "new");
+        renameSync(temp, file);
+        Atomics.add(view, 1, 1);
+      }
+    `,
+  });
+  const root = realpathSync(String(dir));
+  const file = join(root, "a.txt");
+  const state = new SharedArrayBuffer(8);
+  const view = new Int32Array(state);
+  const worker = new Worker(join(root, "writer.js"), { workerData: { file, temp: join(root, "a.tmp"), state } });
+  let writerError: string | undefined;
+  worker.onerror = event => (writerError = event.message);
+
+  const impls = [
+    realpathSync,
+    realpathSync.native,
+    promisify(fs.realpath),
+    promisify(fs.realpath.native),
+    promises.realpath,
+  ];
+  const results = new Set<string>();
+  const missing = new Set<string>();
+  try {
+    // The file exists at every instant, so each call has one right answer.
+    for (let calls = 0; !writerError && (calls < 2000 || Atomics.load(view, 1) < 100); calls++) {
+      for (const impl of impls) {
+        try {
+          results.add(await impl(file));
+        } catch (err: any) {
+          results.add(`${err.code} ${err.syscall}`);
+        }
+      }
+      try {
+        lstatSync(file);
+      } catch (err: any) {
+        missing.add(err.code);
+      }
+    }
+  } finally {
+    Atomics.store(view, 0, 1);
+    worker.terminate();
+  }
+  expect({ writerError, missing: [...missing], results: [...results] }).toEqual({
+    writerError: undefined,
+    missing: [],
+    results: [file],
+  });
+});
+
+it.if(isLinux)("realpath does not name a file that was replaced after a descriptor opened it", async () => {
+  using dir = tempDir("fs-realpath-stale-fd", { "a.txt": "old", "new.txt": "new", "b.txt": "old" });
+  const root = realpathSync(String(dir));
+  const impls = [
+    realpathSync,
+    realpathSync.native,
+    promisify(fs.realpath),
+    promisify(fs.realpath.native),
+    promises.realpath,
+  ];
+  async function run(path: string) {
+    const results: string[] = [];
+    for (const impl of impls) {
+      try {
+        results.push((await impl(path)).slice(root.length));
+      } catch (err: any) {
+        results.push(err.code);
+      }
+    }
+    return results;
+  }
+
+  // `a.txt` keeps a second name, and a rename puts another file at `a.txt`.
+  const replaced = openSync(join(root, "a.txt"), "r");
+  // Only `b.txt` loses its name.
+  const unlinked = openSync(join(root, "b.txt"), "r");
+  try {
+    fs.linkSync(join(root, "a.txt"), join(root, "a.bak"));
+    renameSync(join(root, "new.txt"), join(root, "a.txt"));
+    unlinkSync(join(root, "b.txt"));
+
+    expect({
+      // The descriptors lead to files that have no path any more, or not the path they had.
+      replaced: await run(`/dev/fd/${replaced}`),
+      unlinked: await run(`/proc/self/fd/${unlinked}`),
+      path: await run(join(root, "a.txt")),
+      backup: await run(join(root, "a.bak")),
+    }).toEqual({
+      replaced: Array(5).fill("ENOENT"),
+      unlinked: Array(5).fill("ENOENT"),
+      path: Array(5).fill("/a.txt"),
+      backup: Array(5).fill("/a.bak"),
+    });
+  } finally {
+    closeSync(replaced);
+    closeSync(unlinked);
+  }
+});
+
 it("promises.realpath is realpath.native", async () => {
   const { root } = path.parse(process.cwd());
   expect(await promises.realpath(root)).toBe(realpathSync.native(root));
@@ -6790,6 +6897,324 @@ console.log(fs.readdirSync(".").filter(name => /^eintr-(file|folder|link)/.test(
     stdout: "sync true he\ncallback true he\npromises true he\n[]\n",
     stderr: interrupted + interrupted + interrupted,
     exitCode: 0,
+  });
+});
+
+// Linux names a descriptor `<old path> (deleted)` when the path it was opened by no longer leads to its file.
+// `fs.realpath`, the resolver, `Bun.FileSystemRouter`, `fs.watch`, `bun <script>` and `Bun.main` open a path
+// and ask the descriptor for the canonical path. They must answer for the path.
+describe.if(isLinux)("the canonical path of a file that is not the file its descriptor has", () => {
+  const files = {
+    // Reports what each of them answers for the paths that `process.argv[2]` names.
+    "check.js": `
+      const fs = require("node:fs");
+      const { promisify } = require("node:util");
+      const config = JSON.parse(process.argv[2]);
+      const at = name => __dirname + "/" + name;
+      const attempt = async fn => {
+        try {
+          return await fn();
+        } catch (error) {
+          return error.code ?? String(error);
+        }
+      };
+      (async () => {
+        const out = { realpath: [] };
+        for (const impl of [
+          fs.realpathSync,
+          fs.realpathSync.native,
+          promisify(fs.realpath),
+          promisify(fs.realpath.native),
+          fs.promises.realpath,
+        ]) {
+          out.realpath.push(await attempt(() => impl(at(config.file))));
+        }
+        out.resolve = await attempt(() => require.resolve(at(config.link)));
+        out.require = await attempt(() => require(at(config.link)));
+        out.routes = await attempt(() => {
+          const { extensions: fileExtensions } = config;
+          return new Bun.FileSystemRouter({ dir: at(config.pages), style: "nextjs", fileExtensions }).routes;
+        });
+        if (config.worker) {
+          out.worker = await attempt(() => {
+            const { promise, resolve, reject } = Promise.withResolvers();
+            const worker = new Worker(at(config.worker));
+            worker.onmessage = event => resolve(event.data);
+            worker.onerror = event => reject(new Error(event.message));
+            return promise.finally(() => worker.terminate());
+          });
+        }
+        out.watch = await attempt(() => {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          const watcher = fs.watch(at(config.file), (event, name) => resolve(name));
+          watcher.on("error", reject);
+          fs.appendFileSync(at(config.file), "\\n");
+          return promise.finally(() => watcher.close());
+        });
+        console.log(JSON.stringify(out));
+      })();
+    `,
+  };
+  const main = `console.log(JSON.stringify({ main: Bun.main, argv1: process.argv[1], isMain: require.main === module }));`;
+  const stale = {
+    ...files,
+    "app/lib.js": `module.exports = "lib";`,
+    "app/pages/page.js": `export default "page";`,
+    "app/worker.js": `postMessage(Bun.main);`,
+    "app/main.js": main,
+  };
+  const staleConfig = JSON.stringify({
+    file: "app/lib.js",
+    link: "app/link.js",
+    pages: "app/pages",
+    extensions: [".js"],
+    worker: "app/worker.js",
+  });
+  const staleAnswers = {
+    check: {
+      realpath: Array(5).fill("/app/lib.js"),
+      resolve: "/app/lib.js",
+      require: "lib",
+      routes: { "/page": "/app/pages/page.js" },
+      worker: "/app/worker.js",
+      watch: "lib.js",
+    },
+    entry: { main: "/app/main.js", argv1: "/app/main.js", isMain: true },
+  };
+
+  // Each line of stdout as JSON, with paths relative to `root`.
+  async function run(cmd: string[], options: { cwd: string; root: string; env?: Record<string, string> }) {
+    await using proc = Bun.spawn({
+      cmd,
+      env: { ...bunEnv, ...options.env },
+      cwd: options.cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lines = stdout.replaceAll(options.root, "").trim().split("\n");
+    return {
+      stdout: lines.map(line => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return line;
+        }
+      }),
+      stderr,
+      exitCode,
+    };
+  }
+
+  // A concurrent writer is not deterministic, so a shim plays one from inside readlink(2): a copy of the file
+  // is renamed over it after bun opened it and before bun asks the descriptor for its name. glibc-only, as the
+  // statfs shim above.
+  const shimSource = `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+// Renames a copy of the file over it, or only removes it.
+static void replace(const char *name) {
+  char fresh[PATH_MAX + 8], bytes[4096];
+  ssize_t length;
+  snprintf(fresh, sizeof fresh, "%s.new", name);
+  int from = open(name, O_RDONLY | O_CLOEXEC);
+  int to = open(fresh, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+  while ((length = read(from, bytes, sizeof bytes)) > 0 && write(to, bytes, length) == length) {}
+  close(from);
+  close(to);
+  if ((getenv("REPLACE_WITH_NOTHING") ? unlink(fresh) + unlink(name) : rename(fresh, name)) == 0) {
+    int log = open(getenv("REPLACED_LOG"), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+    dprintf(log, "%s\\n", name);
+    close(log);
+  }
+}
+
+ssize_t readlink(const char *path, char *buffer, size_t size) {
+  ssize_t (*next)(const char *, char *, size_t) = dlsym(RTLD_NEXT, "readlink");
+  const char *below = getenv("REPLACE_BELOW");
+  char name[PATH_MAX];
+  struct stat status;
+  ssize_t length;
+  if (below && strncmp(path, "/proc/self/fd/", 14) == 0 && (length = next(path, name, sizeof name - 1)) > 0) {
+    name[length] = 0;
+    if (strncmp(name, below, strlen(below)) == 0 && stat(name, &status) == 0 && S_ISREG(status.st_mode)) replace(name);
+  }
+  return next(path, buffer, size);
+}
+`;
+  function buildShim(root: string) {
+    const shim = join(root, "shim.so");
+    writeFileSync(join(root, "shim.c"), shimSource);
+    const compile = Bun.spawnSync({
+      cmd: [cc!, "-shared", "-fPIC", "-o", shim, join(root, "shim.c"), "-ldl"],
+      env: bunEnv,
+    });
+    if (compile.exitCode !== 0) {
+      throw new Error(`Failed to build the readlink shim:\n${compile.stderr.toString()}`);
+    }
+    return {
+      LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim,
+      REPLACE_BELOW: join(root, "app") + "/",
+      REPLACED_LOG: join(root, "replaced.log"),
+    };
+  }
+
+  it.skipIf(!isGlibc || !cc)("when a rename replaces the file after the open", async () => {
+    using dir = tempDir("fs-opened-path-replaced", stale);
+    const root = realpathSync(String(dir));
+    symlinkSync("lib.js", join(root, "app", "link.js"));
+    const env = buildShim(root);
+
+    const check = await run([bunExe(), "check.js", staleConfig], { cwd: root, root, env });
+    const entry = await run([bunExe(), "app/main.js"], { cwd: root, root, env });
+    const replaced = new Set(readFileSync(env.REPLACED_LOG, "utf8").replaceAll(root, "").trim().split("\n"));
+
+    expect({ replaced: [...replaced].sort(), check, entry }).toEqual({
+      replaced: ["/app/lib.js", "/app/main.js", "/app/pages/page.js", "/app/worker.js"],
+      check: { stdout: [staleAnswers.check], stderr: "", exitCode: 0 },
+      entry: { stdout: [staleAnswers.entry], stderr: "", exitCode: 0 },
+    });
+  });
+
+  it.skipIf(!isGlibc || !cc)("FileSystemRouter names the route whose file was removed after the open", async () => {
+    using dir = tempDir("fs-opened-path-removed", {
+      "app/pages/page.js": `export default "page";`,
+      "routes.js": `
+        try {
+          new Bun.FileSystemRouter({ dir: process.argv[2], style: "nextjs" });
+        } catch (error) {
+          console.log(error.message);
+        }
+      `,
+    });
+    const root = realpathSync(String(dir));
+    // The canonical path is shorter than the path of the route, and then longer.
+    symlinkSync("app", join(root, "a-longer-name-than-the-directory-has"));
+    mkdirSync(join(root, "a"));
+    symlinkSync("../app/pages", join(root, "a", "p"));
+    const env = { ...buildShim(root), REPLACE_WITH_NOTHING: "1" };
+
+    const messages: string[] = [];
+    for (const pages of ["a-longer-name-than-the-directory-has/pages", "a/p"]) {
+      writeFileSync(join(root, "app", "pages", "page.js"), `export default "page";`);
+      const { stdout, stderr, exitCode } = await run([bunExe(), "routes.js", join(root, pages)], {
+        cwd: root,
+        root,
+        env,
+      });
+      messages.push(...stdout, stderr, String(exitCode));
+    }
+    expect(messages).toEqual([
+      "ENOENT resolving route: /a-longer-name-than-the-directory-has/pages/page.js",
+      "",
+      "0",
+      "ENOENT resolving route: /a/p/page.js",
+      "",
+      "0",
+    ]);
+  });
+
+  // The mounts are in a private mount namespace, either as root or in a user namespace.
+  function findUnshare(): string[] | undefined {
+    const unshare = isLinux ? Bun.which("unshare") : null;
+    if (!unshare) return undefined;
+    using probe = tempDir("fs-opened-path-unshare-probe", { a: "", b: "" });
+    for (const namespaces of ["-Urm", "-m"]) {
+      const cmd = [unshare, namespaces, "--propagation", "private"];
+      const { exitCode } = Bun.spawnSync({
+        cmd: [...cmd, "mount", "--bind", join(String(probe), "a"), join(String(probe), "b")],
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      if (exitCode === 0) return cmd;
+    }
+    return undefined;
+  }
+  const unshare = findUnshare();
+
+  // A bind mount of a file keeps the file that was there at the mount. When a rename replaces that file, as
+  // an editor that saves it does, every descriptor of the mount point has the name `<mount point> (deleted)`,
+  // and `st_nlink` is 0 unless the old file has another link.
+  it.skipIf(!unshare)("when the file is a bind mount of a file that a rename replaced", async () => {
+    using dir = tempDir("fs-opened-path-bind-mount", {
+      ...stale,
+      ...Object.fromEntries(
+        Object.entries(stale)
+          .filter(([name]) => name.startsWith("app/"))
+          .map(([name, content]) => [name.replace("app/", "host/"), content]),
+      ),
+      "mount.sh": `
+        set -e
+        ln host/lib.js host/lib.bak
+        for name in lib.js pages/page.js worker.js main.js; do
+          mount --bind "host/$name" "app/$name"
+          cp "host/$name" host/new
+          mv host/new "host/$name"
+        done
+        "$1" check.js "$2"
+        "$1" app/main.js
+      `,
+    });
+    const root = realpathSync(String(dir));
+    symlinkSync("lib.js", join(root, "app", "link.js"));
+
+    expect(await run([...unshare!, "sh", "mount.sh", bunExe(), staleConfig], { cwd: root, root })).toEqual({
+      stdout: [staleAnswers.check, staleAnswers.entry],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("when the name of the file ends in ' (deleted)'", async () => {
+    using dir = tempDir("fs-opened-path-named-deleted", {
+      ...files,
+      "named/lib.js (deleted)": `module.exports = "lib";`,
+      "named/pages/page.x (deleted)": `export default "page";`,
+      "named/main (deleted)": main,
+      "named/sub/.keep": "",
+    });
+    const root = realpathSync(String(dir));
+    symlinkSync("lib.js (deleted)", join(root, "named", "link.js"));
+    symlinkSync("main (deleted)", join(root, "named", "link (deleted)"));
+    const config = JSON.stringify({
+      file: "named/lib.js (deleted)",
+      link: "named/link.js",
+      pages: "named/pages",
+      extensions: [".x (deleted)"],
+    });
+
+    const check = await run([bunExe(), "check.js", config], { cwd: root, root });
+    // The path is joined to the working directory.
+    const entry = await run([bunExe(), "../link (deleted)"], { cwd: join(root, "named", "sub"), root });
+
+    expect({ check, entry }).toEqual({
+      check: {
+        stdout: [
+          {
+            realpath: Array(5).fill("/named/lib.js (deleted)"),
+            resolve: "/named/lib.js (deleted)",
+            require: "lib",
+            routes: { "/page": "/named/pages/page.x (deleted)" },
+            watch: "lib.js (deleted)",
+          },
+        ],
+        stderr: "",
+        exitCode: 0,
+      },
+      entry: {
+        stdout: [{ main: "/named/main (deleted)", argv1: "/named/main (deleted)", isMain: true }],
+        stderr: "",
+        exitCode: 0,
+      },
+    });
   });
 });
 

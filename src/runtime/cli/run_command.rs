@@ -2859,68 +2859,9 @@ impl RunCommand {
         // get_fd_path step matters: it resolves symlinks so module-relative
         // resolution sees the real location.
         let mut script_name_buf = bun_paths::path_buffer_pool::get();
-
-        // Build a NUL-terminated path to open (branching for
-        // absolute vs. simple-relative vs. `..`/`~`-prefixed).
-        let open_len: usize = if paths::is_absolute(target) {
-            // `PosixToWinNormalizer::resolve_cwd` prepends the cwd drive
-            // letter on Windows for `/abs` paths; then, on Windows only,
-            // `normalize_string_buf` canonicalizes
-            // separators. Both are no-ops on POSIX (`resolve_cwd` returns the
-            // input slice untouched).
-            let mut win_resolver = paths::resolve_path::PosixToWinNormalizer::default();
-            let Ok(resolved) = win_resolver.resolve_cwd(target) else {
-                return false;
-            };
-            #[cfg(windows)]
-            let len = {
-                // Normalizing a bare `\\server\share` adds a trailing separator, and the NUL needs one more byte.
-                if resolved.len() + 1 >= MAX_PATH_BYTES {
-                    return false;
-                }
-                paths::resolve_path::normalize_string_buf::<false, paths::platform::Windows, false>(
-                    resolved,
-                    script_name_buf.as_mut_slice(),
-                )
-                .len()
-            };
-            #[cfg(not(windows))]
-            let len = {
-                if resolved.len() >= MAX_PATH_BYTES {
-                    return false;
-                }
-                script_name_buf[..resolved.len()].copy_from_slice(resolved);
-                resolved.len()
-            };
-            len
-        } else if !target.starts_with(b"..") && target[0] != b'~' {
-            // open relative to cwd as-is
-            if target.len() >= MAX_PATH_BYTES {
-                return false;
-            }
-            script_name_buf[..target.len()].copy_from_slice(target);
-            target.len()
-        } else {
-            // `..foo` / `~foo` — resolve against cwd via joinAbsStringBuf.
-            let mut cwd_buf = bun_paths::path_buffer_pool::get();
-            let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else {
-                return false;
-            };
-            let cwd_len = cwd.as_bytes().len();
-            cwd_buf[cwd_len] = paths::SEP;
-            let Some(joined) = paths::resolve_path::join_abs_string_buf_z_checked::<
-                paths::platform::Auto,
-            >(
-                &cwd_buf[..cwd_len + 1], &mut script_name_buf.0, &[target]
-            ) else {
-                return false;
-            };
-            if joined.is_empty() {
-                return false;
-            }
-            joined.len()
+        let Some(open_z) = Self::script_path_to_open(target, &mut script_name_buf) else {
+            return false;
         };
-        let open_z = bun_core::ZStr::nul_terminate(&mut script_name_buf, open_len);
 
         let absolute_script_path: Box<[u8]> = {
             let Ok(file) = bun_sys::open(open_z, bun_sys::O::RDONLY, 0)
@@ -2941,13 +2882,79 @@ impl RunCommand {
             });
 
             // With symlinks resolved.
-            let Ok(resolved) = file.get_path(&mut script_name_buf) else {
+            let Ok(resolved) =
+                bun_sys::get_opened_path_with(file.handle(), &mut script_name_buf, |buf| {
+                    Self::script_path_to_open(target, buf)
+                })
+            else {
                 return false;
             };
-            resolved.into()
+            (&*resolved).into()
         };
 
         Self::boot_and_handle_error(ctx, &absolute_script_path, None)
+    }
+
+    /// Writes the path that [`Self::maybe_open_with_bun_js`] opens for `target` into `buf`:
+    /// absolute, relative to the working directory as it is, or joined to it for `..` and `~`.
+    fn script_path_to_open<'a>(target: &[u8], buf: &'a mut PathBuffer) -> Option<&'a ZStr> {
+        let open_len: usize = if paths::is_absolute(target) {
+            // `PosixToWinNormalizer::resolve_cwd` prepends the cwd drive
+            // letter on Windows for `/abs` paths; then, on Windows only,
+            // `normalize_string_buf` canonicalizes
+            // separators. Both are no-ops on POSIX (`resolve_cwd` returns the
+            // input slice untouched).
+            let mut win_resolver = paths::resolve_path::PosixToWinNormalizer::default();
+            let Ok(resolved) = win_resolver.resolve_cwd(target) else {
+                return None;
+            };
+            #[cfg(windows)]
+            let len = {
+                // Normalizing a bare `\\server\share` adds a trailing separator, and the NUL needs one more byte.
+                if resolved.len() + 1 >= MAX_PATH_BYTES {
+                    return None;
+                }
+                paths::resolve_path::normalize_string_buf::<false, paths::platform::Windows, false>(
+                    resolved,
+                    buf.as_mut_slice(),
+                )
+                .len()
+            };
+            #[cfg(not(windows))]
+            let len = {
+                if resolved.len() >= MAX_PATH_BYTES {
+                    return None;
+                }
+                buf[..resolved.len()].copy_from_slice(resolved);
+                resolved.len()
+            };
+            len
+        } else if !target.starts_with(b"..") && target[0] != b'~' {
+            // open relative to cwd as-is
+            if target.len() >= MAX_PATH_BYTES {
+                return None;
+            }
+            buf[..target.len()].copy_from_slice(target);
+            target.len()
+        } else {
+            // `..foo` / `~foo` — resolve against cwd via joinAbsStringBuf.
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
+            let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else {
+                return None;
+            };
+            let cwd_len = cwd.as_bytes().len();
+            cwd_buf[cwd_len] = paths::SEP;
+            let Some(joined) = paths::resolve_path::join_abs_string_buf_z_checked::<
+                paths::platform::Auto,
+            >(&cwd_buf[..cwd_len + 1], &mut buf.0, &[target]) else {
+                return None;
+            };
+            if joined.is_empty() {
+                return None;
+            }
+            joined.len()
+        };
+        Some(ZStr::nul_terminate(buf, open_len))
     }
 
     /// `bun run -` — read script from stdin into `ctx.runtime_options.eval`

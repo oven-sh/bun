@@ -1168,6 +1168,54 @@ describe.if(isWindows)("#30839 - imports entry pointing at a scoped package", ()
   });
 });
 
+// Linux names an open file that lost its path `<old path> (deleted)`. The resolver must not take
+// that name for the path of the file.
+it.skipIf(!isLinux)("a symlink resolves by its path when Linux calls the target deleted", async () => {
+  using dir = tempDir("resolver-symlink-deleted-name", {
+    "old.js": `module.exports = "old";`,
+    "new.js": `module.exports = "new";`,
+    "kept.js (deleted)": `module.exports = "kept";`,
+    "index.js": `
+      const fs = require("node:fs");
+      // The descriptor keeps the old file open. The old file keeps a name, and "old.js" leads to the new file.
+      const fd = fs.openSync("old.js", "r");
+      fs.linkSync("old.js", "old.bak.js");
+      fs.renameSync("new.js", "old.js");
+      fs.symlinkSync("/proc/self/fd/" + fd, "stale.js");
+      fs.symlinkSync("kept.js (deleted)", "kept.js");
+      fs.symlinkSync("old.js", "fresh.js");
+
+      const out = {};
+      for (const name of ["stale.js", "kept.js", "fresh.js"]) {
+        try {
+          out[name] = [require.resolve("./" + name).slice(__dirname.length), require("./" + name)];
+        } catch (e) {
+          out[name] = e.code;
+        }
+      }
+      console.log(JSON.stringify(out));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    // No path leads to the file that the descriptor has.
+    "stale.js": "MODULE_NOT_FOUND",
+    "kept.js": ["/kept.js (deleted)", "kept"],
+    "fresh.js": ["/old.js", "new"],
+  });
+  expect(exitCode).toBe(0);
+});
+
 // A symlink in node_modules whose target no longer exists (for example an
 // optional dependency that was removed after its install script failed) is
 // not a module. Like Node, the resolver treats it as if the entry did not

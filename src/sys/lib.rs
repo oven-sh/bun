@@ -7039,6 +7039,72 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
     }
 }
 
+/// Linux names a descriptor `<old path> (deleted)` when the path it was opened by no longer leads
+/// to its file. The name of a file can end like that too.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const UNLINKED_SUFFIX: &[u8] = b" (deleted)";
+
+/// The canonical path of `path`, which `fd` is an open descriptor of.
+///
+/// Use this and not [`get_fd_path`] when the answer is for the pathname. On Linux `fd` can have
+/// the name of an unlinked file while `path` exists, and then `realpath` resolves `path` by name:
+/// - Another process unlinked the file, or replaced it with a `rename`, after the open.
+/// - `path` is a bind mount of a file that was replaced or removed. Every open of it gives that
+///   name, and `st_nlink` is 0 although the file is there.
+#[inline]
+pub fn get_opened_path<'a>(
+    fd: Fd,
+    path: &ZStr,
+    out: &'a mut bun_paths::PathBuffer,
+) -> Maybe<&'a mut [u8]> {
+    let len = get_fd_path(fd, out)?.len();
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let len = if out.0[..len].ends_with(UNLINKED_SUFFIX) {
+        realpath(path, out)?.len()
+    } else {
+        len
+    };
+    let _ = path;
+    Ok(&mut out.0[..len])
+}
+
+/// [`get_opened_path`], NUL-terminated.
+#[inline]
+pub fn get_opened_path_z<'a>(
+    fd: Fd,
+    path: &ZStr,
+    out: &'a mut bun_paths::PathBuffer,
+) -> Maybe<&'a ZStr> {
+    let len = get_opened_path(fd, path, out)?.len();
+    Ok(ZStr::nul_terminate(out, len))
+}
+
+/// [`get_opened_path`] for a caller that no longer has the pathname, for example because `out` held it.
+///
+/// `write_path` runs only when `fd` does not tell where the pathname leads. It writes the
+/// pathname into the buffer it gets. `None` means that the pathname does not fit. An error
+/// leaves `out` with no path in it.
+pub fn get_opened_path_with<'a>(
+    fd: Fd,
+    out: &'a mut bun_paths::PathBuffer,
+    write_path: impl FnOnce(&mut bun_paths::PathBuffer) -> Option<&ZStr>,
+) -> Maybe<&'a mut [u8]> {
+    let len = get_fd_path(fd, out)?.len();
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let len = if out.0[..len].ends_with(UNLINKED_SUFFIX) {
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let Some(path) = write_path(&mut path_buf) else {
+            return Err(Error::from_code(E::ENAMETOOLONG, Tag::realpath));
+        };
+        realpath(path, out)?.len()
+    } else {
+        len
+    };
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let _ = write_path;
+    Ok(&mut out.0[..len])
+}
+
 /// fd → absolute wide path (Windows `GetFinalPathNameByHandleW`).
 /// `\\?\` prefix and `\\?\UNC\` are stripped. Higher-tier callers
 /// (`bun.getFdPathW`) re-export this. A libc/kernel32-only sibling lives at

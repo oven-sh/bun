@@ -171,20 +171,16 @@ impl CopyFile {
             PathOrFileDescriptor::Fd(fd) => JobFd::Borrowed(*fd),
             PathOrFileDescriptor::Path(path) => {
                 let mut buf = bun_paths::path_buffer_pool::get();
-                // Not `slice_z`, which makes "" of a path that does not fit.
-                let len = path.slice().len().min(buf.len() - 1);
-                buf[..len].copy_from_slice(&path.slice()[..len]);
-                let path_z = bun_core::ZStr::nul_terminate(&mut buf[..], len);
+                // `slice_z` makes "" of it.
+                if path.slice().len() >= buf.len() {
+                    let err =
+                        bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open);
+                    return Err(err.with_path(path.slice()).into());
+                }
+                let path_z = path.slice_z(&mut buf);
                 let mode = self.new_mode.unwrap_or(node_fs::DEFAULT_PERMISSION);
                 let open = || File::open(path_z, OPEN_DESTINATION_FLAGS, mode);
-                match creating_parents(&mut self.mkdirp, path_z.as_bytes(), open) {
-                    Ok(file) => JobFd::opened(file),
-                    // mkdir failed.
-                    Err(err) if self.mkdirp && err.get_errno() == bun_sys::E::ENOENT => {
-                        return Err(err.into());
-                    }
-                    Err(err) => return Err(err.with_path(path.slice()).into()),
-                }
+                JobFd::opened(creating_parents(&mut self.mkdirp, path_z.as_bytes(), open)?)
             }
         };
 

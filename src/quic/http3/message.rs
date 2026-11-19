@@ -2,7 +2,7 @@
 
 use super::control::PUSH_IS_NOT_ENABLED;
 use super::fields::{self, Expected, Fields, Pool, Section, Summary};
-use super::frame::{Cursor, kind};
+use super::frame::{Cursor, Header, kind};
 use super::{Http3, Priority};
 use crate::config::{Config, Http3Config};
 use crate::connection::streams::Ready;
@@ -95,8 +95,7 @@ impl Message {
     /// Whether it does not take more bytes at the moment.
     #[inline]
     fn is_paused(&self) -> bool {
-        self.is_blocked
-            || self.fields.is_some() && matches!(self.cursor.current(), Some((kind::HEADERS, _)))
+        self.is_blocked || self.fields.is_some() && self.cursor.current() == Some(kind::HEADERS)
     }
 
     pub(crate) fn awaits_head(&self) -> bool {
@@ -125,9 +124,9 @@ impl Message {
     ) -> Result<usize, Fault> {
         let mut rest = input;
         while !rest.is_empty() && !self.is_paused() {
-            let Some((kind, _)) = self.cursor.current() else {
-                if let Some((kind, len)) = self.cursor.read_header(&mut rest) {
-                    self.begin_frame(kind, len, reader)?;
+            let Some(kind) = self.cursor.current() else {
+                if let Some(header) = self.cursor.read_header(&mut rest) {
+                    self.begin_frame(header, reader)?;
                 }
                 continue;
             };
@@ -152,7 +151,7 @@ impl Message {
     }
 
     #[inline]
-    fn begin_frame(&mut self, kind: u64, len: u64, reader: &Reader) -> Result<(), Fault> {
+    fn begin_frame(&mut self, Header { kind, len }: Header, reader: &Reader) -> Result<(), Fault> {
         let is_expected = match kind {
             kind::DATA => self.part == Part::Body,
             kind::HEADERS => self.part != Part::AfterTrailers && !self.is_tunnel,

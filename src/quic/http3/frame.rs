@@ -43,6 +43,11 @@ pub(super) fn write(kind: u64, payload: &[u8], out: &mut Vec<u8>) {
     out.prefixed_bytes(payload);
 }
 
+pub(super) struct Header {
+    pub(super) kind: u64,
+    pub(super) len: u64,
+}
+
 /// Where a stream is in its sequence of frames.
 #[derive(Default)]
 pub(super) struct Cursor {
@@ -53,10 +58,10 @@ pub(super) struct Cursor {
 }
 
 impl Cursor {
-    /// The type of the frame whose payload is being read, and how much is left.
+    /// The type of the frame whose payload is being read.
     #[inline]
-    pub(super) fn current(&self) -> Option<(u64, u64)> {
-        self.kind.zip(self.left)
+    pub(super) fn current(&self) -> Option<u64> {
+        self.left.and(self.kind)
     }
 
     #[inline]
@@ -64,14 +69,15 @@ impl Cursor {
         self.kind.is_none() && !self.integer.is_started()
     }
 
-    /// Returns the type and the length, or takes all of `input`.
+    /// Takes all of `input` if it ends before the header does.
     #[inline]
-    pub(super) fn read_header(&mut self, input: &mut &[u8]) -> Option<(u64, u64)> {
-        if self.kind.is_none() {
-            self.kind = Some(self.integer.read(input)?);
-        }
-        self.left = Some(self.integer.read(input)?);
-        self.current()
+    pub(super) fn read_header(&mut self, input: &mut &[u8]) -> Option<Header> {
+        let kind = match self.kind {
+            Some(kind) => kind,
+            None => *self.kind.insert(self.integer.read(input)?),
+        };
+        let len = *self.left.insert(self.integer.read(input)?);
+        Some(Header { kind, len })
     }
 
     /// Returns what `input` has of the payload, and whether that is the end of it.

@@ -1,7 +1,7 @@
 //! RFC 9114 §6.2.1 and §7.2.
 
 use super::Priority;
-use super::frame::{self, Cursor, kind};
+use super::frame::{self, Cursor, Header, kind};
 use crate::coding::{Read, Write};
 use crate::config::Http3Config;
 use crate::error::{Error, Result, http3_code};
@@ -57,12 +57,12 @@ impl ControlReader {
     ) -> Result<Option<ControlFrame>> {
         loop {
             if self.cursor.current().is_none() {
-                let Some((kind, len)) = self.cursor.read_header(input) else {
+                let Some(header) = self.cursor.read_header(input) else {
                     return Ok(None);
                 };
-                self.is_skipping = !self.begin_frame(kind, len, side, has_priorities)?;
+                self.is_skipping = !self.begin_frame(header, side, has_priorities)?;
             }
-            let kind = self.cursor.current().map_or(0, |it| it.0);
+            let kind = self.cursor.current().unwrap_or(0);
             let (payload, is_end) = self.cursor.read_payload(input);
             if !self.is_skipping {
                 self.payload.extend_from_slice(payload);
@@ -82,8 +82,7 @@ impl ControlReader {
     /// Returns whether the frame is of interest.
     fn begin_frame(
         &mut self,
-        kind: u64,
-        len: u64,
+        Header { kind, len }: Header,
         side: Side,
         has_priorities: bool,
     ) -> Result<bool> {

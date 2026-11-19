@@ -19,6 +19,7 @@ pub struct PendingConnect {
 }
 
 // SAFETY: a DNS thread only moves it into `RESOLVED`. The HTTP thread uses and drops it.
+#[cfg_attr(mordant, allow(unsafe_send_covers_more_than_pointers))]
 unsafe impl Send for PendingConnect {}
 
 unsafe extern "Rust" {

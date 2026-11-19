@@ -6173,7 +6173,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     bool ranBesidePrevious = previous && !previous->isFromPreload && loaded.compiledModule && JSC::AOT::hasIntactOriginal(globalObject, *loaded.compiledModule) && !restoresCompiledFile(globalObject, previous, specifier);
     bool coversImportedActual = wasLoadedByImportActual || ranBesidePrevious || (previous && previous->coversImportedActual);
     bool coversFileOfPreload = previous && (previous->coversFileOfPreload || (ranBesidePrevious && !previous->coversImportedActual && !isInNodeModules(specifier) && !JSC::AOT::isESModule(*loaded.compiledModule) && !JSC::AOT::isDataFile(*loaded.compiledModule) && JSC::AOT::evaluatedBy(globalObject, *loaded.compiledModule) == JSC::AOT::LoadedBy::Preload));
-    bool isOverPatchOfPreloadModule = previous && !previous->isFromPreload && !previous->isOfVitest() && mock->isOfVitest() && loaded.compiledModule && !isInNodeModules(specifier) && JSC::AOT::isESModule(*loaded.compiledModule) && JSC::AOT::evaluatedBy(globalObject, *loaded.compiledModule) == JSC::AOT::LoadedBy::Preload;
+    bool isOverPatchOfPreloadModule = previous && !previous->isFromPreload && !previous->isOfVitest() && mock->isOfVitest() && loaded.compiledModule && !isInNodeModules(specifier) && JSC::AOT::isESModule(*loaded.compiledModule) && JSC::AOT::evaluatedBy(globalObject, *loaded.compiledModule) == JSC::AOT::LoadedBy::Preload && !displacedPreloadMock(globalObject, specifier);
     mock->hasOriginalOfItsOwn = isOverPatchOfPreloadModule || (previous && previous->hasOriginalOfItsOwn);
 #endif
     bool remainsOriginal = wasLoadedByImportActual || isInNodeModules(specifier) || (isDoMock && loadedByTestFile == globalObject->onLoadPlugins.testFile);

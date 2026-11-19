@@ -420,4 +420,63 @@ describe("Valkey: Command Arguments", () => {
     expect(() => run(server.client, ["smove", logged("d"), {}, logged("e")])).toThrow("Expected destination");
     expect(converted).toEqual(["a", "b", "c", "d"]);
   });
+
+  test("exists() sends one key and refuses a second key", async () => {
+    using server = await connect();
+    const client: any = server.client;
+    const handshake = server.lastReceived();
+    // toThrow() also passes for a returned promise that rejects. The refusal has to be synchronous.
+    const thrownBy = (call: () => unknown) => {
+      try {
+        Promise.resolve(call()).catch(() => {});
+      } catch (error) {
+        return error;
+      }
+    };
+    // EXISTS counts its keys, so the answer for the first key alone is the answer to another question.
+    for (const refused of [
+      () => client.exists("a", "b"),
+      () => client.exists("a", "b", "c"),
+      () => client.exists(...["a", "b"]),
+      () => client.exists("a", undefined, "c"),
+      () => client.exists("a", 0, "c"),
+      () => client.exists("a", "b", ["c"]),
+      () => client.exists("a", ["b"]),
+      () => client.exists("a", new String("b")),
+      () => client.exists("a", Buffer.from("b")),
+      () => client.exists("a", new Uint8Array([98])),
+      () => client.exists("a", new ArrayBuffer(1)),
+      () => client.exists("a", new Blob(["b"])),
+      () => client.exists(Buffer.from("a"), Buffer.from("b")),
+    ]) {
+      expect(thrownBy(refused)).toMatchObject({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'exists takes one key. Use send("EXISTS", keys) to count several keys',
+      });
+    }
+    // The key is checked first.
+    expect(thrownBy(() => client.exists(undefined, "b"))).toMatchObject({
+      message: "Expected key to be a string or buffer for 'exists'.",
+    });
+    expect(server.lastReceived()).toBe(handshake);
+
+    // Any other argument is not read: map() passes an index and then the array, Array.from() an index.
+    for (const call of [
+      ["b", undefined],
+      ["c", null, undefined],
+      ["d", 0],
+      ["e", () => {}],
+      ["f", 0, ["g"]],
+    ]) {
+      expect(await client.exists(...call)).toBe(true);
+      expect(server.lastReceived()).toEqual(["EXISTS", call[0]]);
+    }
+    expect(await Promise.all(["h", "i"].map(client.exists, client))).toEqual([true, true]);
+    expect(server.lastReceived()).toEqual(["EXISTS", "i"]);
+    expect(await Promise.all(new Proxy(["j", "k"], {}).map(client.exists, client))).toEqual([true, true]);
+    expect(server.lastReceived()).toEqual(["EXISTS", "k"]);
+    expect(await Promise.all(Array.from(["l", "m"], client.exists.bind(client)))).toEqual([true, true]);
+    expect(server.lastReceived()).toEqual(["EXISTS", "m"]);
+  });
 });

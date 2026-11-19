@@ -22,7 +22,6 @@ pub mod png;
 mod scanner;
 mod search;
 pub mod sourcemap;
-pub mod temp;
 pub mod webp;
 pub mod websocket;
 mod width;

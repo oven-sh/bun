@@ -37,6 +37,47 @@ use core::ptr::NonNull;
 // In the AST crate, ListManaged is arena-backed.
 type ListManaged<'bump, T> = BumpVec<'bump, T>;
 
+/// Visited JSX locations and the statements whose syntax can be discarded later.
+pub(crate) struct PreservedJsx<'a> {
+    // Keeping indices stable while nested visitors invalidate locations.
+    pub(crate) elements: BumpVec<'a, Option<bun_ast::Loc>>,
+    statements: HashMap<*const (), std::ops::Range<usize>>,
+}
+
+impl<'a> PreservedJsx<'a> {
+    pub(crate) fn new(arena: &'a bun_alloc::Arena) -> Self {
+        Self {
+            elements: BumpVec::new_in(arena),
+            statements: HashMap::default(),
+        }
+    }
+
+    fn statement_key(stmt: Stmt) -> Option<*const ()> {
+        match stmt.data {
+            StmtData::SLocal(local) => Some(local.as_ptr().cast()),
+            StmtData::SExpr(expr) => Some(expr.as_ptr().cast()),
+            _ => None,
+        }
+    }
+
+    fn record_statement(&mut self, stmt: Stmt, start: usize) {
+        if let Some(key) = Self::statement_key(stmt) {
+            self.statements.insert(key, start..self.elements.len());
+        }
+    }
+
+    fn discard_statement(&mut self, stmt: Stmt) {
+        if self.statements.is_empty() {
+            return;
+        }
+        if let Some(key) = Self::statement_key(stmt)
+            && let Some(range) = self.statements.remove(&key)
+        {
+            self.elements[range].fill(None);
+        }
+    }
+}
+
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // Thin alias of `current_scope_mut()` kept for local readability.
     #[inline(always)]
@@ -1500,6 +1541,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         shadow_ref
     }
 
+    pub(crate) fn keep_stmt_in_dead_control_flow(&mut self, stmt: Stmt) -> bool {
+        let mut on_strip_syntax = |stmt| self.preserved_jsx.discard_statement(stmt);
+        let keep = SideEffects::should_keep_stmt_in_dead_control_flow(stmt, &mut on_strip_syntax);
+        if !keep {
+            self.preserved_jsx.discard_statement(stmt);
+        }
+        keep
+    }
+
     // Try separating the list for appending, so that it's not a pointer.
     pub(crate) fn visit_stmts(
         &mut self,
@@ -1531,7 +1581,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Save the current control-flow liveness. This represents if we are
             // currently inside an "if (false) { ... }" block.
             let old_is_control_flow_dead = p.is_control_flow_dead;
-            let first_preserved_jsx = p.first_preserved_jsx;
+            let preserved_jsx_start = p.preserved_jsx.elements.len();
             // Restored manually at block end. The error
             // path (`?`) skips restore; acceptable because callers `.expect()` or
             // propagate fatally (parse abort) — no resumption after error.
@@ -1766,7 +1816,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut end: usize = 0;
                 for idx in 0..visited.len() {
                     let item = visited[idx];
-                    if !SideEffects::should_keep_stmt_in_dead_control_flow(item, p.arena) {
+                    if !p.keep_stmt_in_dead_control_flow(item) {
                         continue;
                     }
 
@@ -1784,7 +1834,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             stmts.extend_from_slice(&visited[..visited_count]);
             stmts.extend_from_slice(&after);
             if stmts.is_empty() {
-                p.first_preserved_jsx = first_preserved_jsx;
+                p.preserved_jsx.elements[preserved_jsx_start..].fill(None);
             }
 
             // manual restore for the block-level `defer`s
@@ -1853,9 +1903,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !p.options.features.minify_syntax {
             let mut is_control_flow_dead = false;
             stmts.retain(|stmt| {
-                if is_control_flow_dead
-                    && !SideEffects::should_keep_stmt_in_dead_control_flow(*stmt, p.arena)
-                {
+                if is_control_flow_dead && !p.keep_stmt_in_dead_control_flow(*stmt) {
                     return false;
                 }
                 match stmt.data {
@@ -1944,7 +1992,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         for stmt in stmts.iter().copied() {
             if is_control_flow_dead
                 && dead_code_elimination
-                && !SideEffects::should_keep_stmt_in_dead_control_flow(stmt, p.arena)
+                && !p.keep_stmt_in_dead_control_flow(stmt)
             {
                 // Strip unnecessary statements if the control flow is dead here
                 continue;

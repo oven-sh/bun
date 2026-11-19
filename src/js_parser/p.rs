@@ -505,7 +505,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // a runtime import. Record whether JSX was parsed; the scan result applies
     // the effective per-file runtime before adding synthetic imports.
     pub(crate) needs_jsx_import: NeedsJSXType,
-    pub(crate) first_preserved_jsx: Option<js_ast::Loc>,
+    pub(crate) preserved_jsx: crate::visit::PreservedJsx<'a>,
     /// Preserved tag bindings to name once all source references have been resolved.
     jsx_tag_temps_without_renamer: List<'a, Ref>,
 
@@ -9420,7 +9420,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             import_meta_ref: self.import_meta_ref,
             depends_on_more_than_source: self.depends_on_more_than_source(),
             has_deferred_requires: self.has_deferred_requires,
-            first_preserved_jsx: self.first_preserved_jsx,
+            first_preserved_jsx: self.preserved_jsx.elements.iter().find_map(|loc| *loc),
 
             symbols,
             parts: parts_list,
@@ -9698,7 +9698,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             module_scope: scope,
             scopes_in_order: scope_order,
             needs_jsx_import: false,
-            first_preserved_jsx: None,
+            preserved_jsx: crate::visit::PreservedJsx::new(arena),
             jsx_tag_temps_without_renamer: BumpVec::new_in(arena),
             lexer,
 

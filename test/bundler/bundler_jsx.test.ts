@@ -1049,6 +1049,19 @@ describe("bundler", () => {
         `,
         "1\n",
       ],
+      [
+        "a dead var initializer and binding pattern",
+        `
+          function render() {
+            if (false) {
+              var { [<Unused />]: binding = <Unused /> } = {};
+            }
+            return typeof binding;
+          }
+          console.log(render());
+        `,
+        "undefined\n",
+      ],
     ])("runs with preserve after removing JSX in %s", async (_, source, expected) => {
       using dir = tempDir("jsx-discarded-code", { "in.jsx": source });
       await using proc = Bun.spawn({
@@ -1060,6 +1073,29 @@ describe("bundler", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout, exitCode }, stderr).toEqual({ stdout: expected, exitCode: 0 });
+    });
+
+    test("preserve reports JSX in a return after pruning an earlier initializer", async () => {
+      using dir = tempDir("jsx-retained-return", {
+        "in.jsx": [
+          "function render() {",
+          "  if (false) { var binding = <Unused />; }",
+          "  return <Retained />;",
+          "}",
+          "console.log(render());",
+        ].join("\n"),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "--jsx-runtime=preserve", "in.jsx"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(exitCode, stderr).toBe(1);
+      expect(stderr).toContain("Cannot preserve JSX in a file that Bun runs");
+      expect(stderr).toMatch(/in\.jsx:3:10\b/);
     });
 
     describe.each([
@@ -1093,6 +1129,26 @@ describe("bundler", () => {
         skipOnEsbuild: true,
         jsx: { runtime: "preserve" },
         run: { stdout: "<div/>" },
+      });
+
+      itBundled(`jsx/PreserveCompilePrunedStatements-${backend}`, {
+        files: {
+          "/in.jsx": `
+            function render() {
+              return typeof binding;
+              var binding = [<Unused />];
+              console.log(<Unused />);
+            }
+            console.log(render());
+          `,
+        },
+        backend,
+        target: "bun",
+        compile: true,
+        minifySyntax: true,
+        skipOnEsbuild: true,
+        jsx: { runtime: "preserve" },
+        run: { stdout: "undefined" },
       });
     }
 

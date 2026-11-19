@@ -46,11 +46,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Visit an expression that its parent will discard, preserving parser bookkeeping.
     pub(crate) fn visit_discarded_expr(&mut self, e: &mut Expr) {
         let was_dead = self.is_control_flow_dead;
-        let first_preserved_jsx = self.first_preserved_jsx;
+        let preserved_jsx_start = self.preserved_jsx.elements.len();
         self.is_control_flow_dead = true;
         self.visit_expr(e);
         self.is_control_flow_dead = was_dead;
-        self.first_preserved_jsx = first_preserved_jsx;
+        self.preserved_jsx.elements[preserved_jsx_start..].fill(None);
     }
 
     pub(crate) fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
@@ -494,7 +494,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             runtime => runtime,
         };
         if runtime == options::JSX::Runtime::Preserve {
-            p.first_preserved_jsx.get_or_insert(expr.loc);
+            p.preserved_jsx.elements.push(Some(expr.loc));
         }
         if matches!(
             runtime,

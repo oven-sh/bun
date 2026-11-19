@@ -2,7 +2,7 @@
 //! `bun_lint_driver::fmt`. See `lint_command.rs` for what it needs from the process.
 
 use bun_core::{Global, ZStr};
-use bun_format_conformance::{Bundle, Flags, Format};
+use bun_format_conformance::{Bundle, Flags, Format, run_from_command_line, settled};
 use bun_lint_driver::fmt::cli::{Options, UsageError};
 
 use super::command::{ContextData, Tag};
@@ -81,22 +81,41 @@ impl FormatCommand {
             && let Some(run) = test_runner(first.as_bytes())
         {
             let rest: Vec<&[u8]> = rest.iter().map(|arg| arg.as_bytes()).collect();
-            let ran = bun_format_conformance::run_from_command_line(
-                &rest,
-                run,
-                &|path, text, options| {
-                    bun_lint_driver::fmt::format_for_tests(path, text, options).map_err(
-                        |rejection| match rejection {
-                            bun_lint_driver::fmt::FormatFailure::Syntax => {
-                                bun_format_conformance::Failure::SyntaxError
-                            }
-                            bun_lint_driver::fmt::FormatFailure::Bug => {
-                                bun_format_conformance::Failure::Other
-                            }
-                        },
-                    )
-                },
-            );
+            let format: Format<'_> = &|path, text, options| {
+                bun_lint_driver::fmt::format_for_tests(path, text, options).map_err(|rejection| {
+                    match rejection {
+                        bun_lint_driver::fmt::FormatFailure::Syntax => {
+                            bun_format_conformance::Failure::SyntaxError
+                        }
+                        bun_lint_driver::fmt::FormatFailure::Bug => {
+                            bun_format_conformance::Failure::Other
+                        }
+                    }
+                })
+            };
+            // The caller looks for failing tests in the output.
+            let ran = run_from_command_line(&rest, &mut |bundle, flags| {
+                run(bundle, flags, format);
+                true
+            });
+            Global::exit(u32::from(!ran));
+        }
+        if HAS_TEST_RUNNER
+            && let [flag, rest @ ..] = args
+            && flag.as_bytes() == b"--run-settled-tests"
+        {
+            let rest: Vec<&[u8]> = rest.iter().map(|arg| arg.as_bytes()).collect();
+            let mut both = bun_lint_driver::fmt::BothWaysForTests::default();
+            let ran = run_from_command_line(&rest, &mut |bundle, flags| {
+                settled::run(bundle, flags, &mut |path, text, options| {
+                    let (verdict, printed, formatted) = both.format(path, text, options);
+                    settled::Comparison {
+                        verdict,
+                        printed,
+                        formatted,
+                    }
+                })
+            });
             Global::exit(u32::from(!ran));
         }
         let args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();

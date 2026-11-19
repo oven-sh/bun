@@ -1187,6 +1187,7 @@ dependencies = [
  "bun_semver",
  "bun_sys",
  "bun_threading",
+ "bun_wyhash",
  "bun_zstd",
 ]
 

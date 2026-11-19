@@ -177,6 +177,22 @@ extern "C" void Bun__Lint__endFile(JSGlobalObject* globalObject)
     LintHost::from(globalObject)->endFile(globalObject->vm());
 }
 
+// In the middle of a file its tree is alive, so a collection has to mark it, and then keeps it until the next full one. `allocatedBefore`:
+// what this returned the last time.
+extern "C" uint64_t Bun__Lint__collectBetweenFiles(JSGlobalObject* globalObject, uint64_t allocatedBefore)
+{
+    auto& heap = globalObject->vm().heap;
+    uint64_t allocated = heap.totalBytesAllocated() - allocatedBefore;
+    size_t alive = heap.sizeAfterLastCollection();
+    if (allocated < std::max<uint64_t>(3 * MB, alive < 128 * MB ? alive / 2 : alive))
+        return allocatedBefore;
+    heap.collectSync();
+    // What a larger file has left
+    if (heap.blockBytesAllocated() > heap.sizeAfterLastCollection() + allocated * 3 / 2)
+        heap.sweepSynchronously();
+    return heap.totalBytesAllocated();
+}
+
 NEVER_INLINE void addLintFunction(JSGlobalObject* globalObject, JSObject* object, ASCIILiteral name, unsigned length, NativeFunction function)
 {
     VM& vm = globalObject->vm();

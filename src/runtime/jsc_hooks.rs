@@ -3429,7 +3429,7 @@ fn package_json_of<'a>(
     }
 }
 
-fn module_type_of(
+pub(crate) fn module_type_of(
     path: &Fs::Path<'_>,
     package_json: Option<&bun_resolver::package_json::PackageJSON>,
 ) -> ModuleType {
@@ -3822,6 +3822,32 @@ fn transpile_file<const DATA_ONLY: bool>(
     // import expressions. Node compile cache: lazily initialize from env on the first fetch.
     if !DATA_ONLY {
         bun_jsc::node_compile_cache::init_from_env_once();
+    }
+
+    if !DATA_ONLY
+        && crate::read_ahead::is_enabled(jsc_vm)
+        && let Some(loader) = lr.loader.filter(|it| it.is_java_script_like())
+        && lr.virtual_source.is_none()
+        && !lr.is_main
+        && lr.path.is_file()
+        && !lr.specifier.starts_with(node_fallbacks::IMPORT_PATH)
+        && !jsc_vm.macro_mode.get()
+        && !jsc_vm.has_any_macro_remappings.get()
+        && !bun_jsc::node_compile_cache::is_enabled()
+        && (jsc_vm.transpiler)
+            .with_mut(|t| t.find_aot_package_config(lr.path.text, loader))
+            .is_none()
+    {
+        let tag = match lr.package_json.map_or(module_type, |it| it.module_type) {
+            ModuleType::Esm => ResolvedSourceTag::PackageJsonTypeModule,
+            ModuleType::Cjs => ResolvedSourceTag::PackageJsonTypeCommonjs,
+            ModuleType::Unknown => ResolvedSourceTag::Javascript,
+        };
+        let loaded = crate::read_ahead::load(jsc_vm, specifier, &lr.path, loader, module_type, tag);
+        if let Some(loaded) = loaded {
+            *ret = ErrorableResolvedSource::ok(loaded);
+            return ptr::null_mut();
+        }
     }
 
     'transpile_async: {

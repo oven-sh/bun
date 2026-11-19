@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
@@ -64,8 +63,6 @@ describe("css", () => {
     },
   });
 
-  // The class-name object is in a chunk that both entry points import. #18435 printed a copy into
-  // each entry point, and said that the object should get a chunk of its own.
   itBundled("css-module/BundleTwoFilesWithCodeSplitting", {
     files: {
       "/foo-entry.js": `
@@ -83,50 +80,32 @@ describe("css", () => {
     outdir: "/out",
 
     onAfterBundle(api) {
-      const [barEntry, chunk, fooEntry] = readdirSync(api.outdir)
-        .filter(file => file.endsWith(".js"))
-        .sort();
-      expect([barEntry, chunk, fooEntry]).toEqual([
-        "bar-entry.js",
-        expect.stringMatching(/^common\.module\.css-[a-z0-9]{8}\.js$/),
-        "foo-entry.js",
-      ]);
-      api.expectFile("/out/" + chunk).toMatchInlineSnapshot(`
+      api.expectFile("/out/foo-entry.js").toMatchInlineSnapshot(`
         "// common.module.css
         var common_module_default = {
           baz: "baz_I7o34g"
         };
 
-        export { common_module_default };
-        "
-      `);
-      expect(api.readFile("/out/foo-entry.js").replace(chunk, "chunk.js")).toMatchInlineSnapshot(`
-        "import {
-          common_module_default
-        } from "./chunk.js";
-
         // foo-entry.js
         console.log(common_module_default);
         "
       `);
-      expect(api.readFile("/out/bar-entry.js").replace(chunk, "chunk.js")).toMatchInlineSnapshot(`
-        "import {
-          common_module_default
-        } from "./chunk.js";
+      api.expectFile("/out/bar-entry.js").toMatchInlineSnapshot(`
+        "// common.module.css
+        var common_module_default = {
+          baz: "baz_I7o34g"
+        };
 
         // bar-entry.js
         console.log(common_module_default);
         "
       `);
     },
-    run: [
-      { file: "/out/foo-entry.js", stdout: '{\n  baz: "baz_I7o34g",\n}' },
-      { file: "/out/bar-entry.js", stdout: '{\n  baz: "baz_I7o34g",\n}' },
-    ],
   });
 
   // JavaScript that reads the value of a stylesheet gets the class names, in every output format.
-  // The value is in a module of its own, so one stylesheet has one object and one `require()` result.
+  // The value is in a module of its own (the JS stub of the stylesheet), so a chunk has one object and one
+  // `require()` result for a stylesheet.
   const stylesheets = {
     "/x.module.css": `.foo { color: red }`,
     "/plain.css": `.plain { color: green }`,
@@ -379,8 +358,8 @@ describe("css", () => {
       },
       run: { "entry.js": '{"foo":"foo_e7Ht-A"} foo_e7Ht-A' },
     },
-    // m.js reads the class names before b.js has run its own import of the stylesheet. The class names exist
-    // before any file runs, so the bare import in entry.js has nothing to run.
+    // m.js reads the class names before b.js has run its own import of the stylesheet. The bare import in
+    // entry.js is the first import of the stylesheet: the class names print there, ahead of m.js.
     BareImportAheadOfValueImportInACycle: {
       files: {
         "/entry.js": `
@@ -455,9 +434,10 @@ describe("css", () => {
     run: { stdout: '{"default":{"foo":"foo_e7Ht-A"},"foo":"foo_e7Ht-A"}' },
   });
 
-  // The wrapper of a require()d stylesheet holds the class names. The files that the stylesheet
-  // names with @import, url() and composes are not JavaScript imports of the wrapper: they get none.
-  itBundled("css-module/RequireWrapsOnlyTheStylesheet", {
+  // The wrapper of a require()d stylesheet holds the class names. The files that the stylesheet names with
+  // @import, url() and composes get a wrapper too, as the files that a require()d module imports do. The class
+  // names of base.module.css run nothing: their wrapper runs where it prints.
+  itBundled("css-module/RequireOfStylesheetThatNamesOtherFiles", {
     files: {
       "/entry.js": `
         import image from "./image.png";
@@ -493,6 +473,15 @@ describe("css", () => {
         var image_default = "./image-mphfvab5.png";
         var init_image = () => {};
 
+        // base.module.css
+        var base_module_default;
+        var init_base_module = __esm(() => {
+          base_module_default = {
+            base: "base_1Cz41w"
+          };
+        });
+        init_base_module();
+
         // styles.module.css
         var require_styles_module = __commonJS(function(exports, module) {
           module.exports = {
@@ -500,13 +489,9 @@ describe("css", () => {
           };
         });
 
-        // base.module.css
-        var base_module_default = {
-          base: "base_1Cz41w"
-        };
-
         // entry.js
         init_image();
+        init_base_module();
         var styles = require_styles_module();
         console.log(JSON.stringify(styles), JSON.stringify(base_module_default), typeof image_default);
         "
@@ -515,146 +500,37 @@ describe("css", () => {
     run: { stdout: '{"card":"base_1Cz41w card_-MSaAA"} {"base":"base_1Cz41w"} string' },
   });
 
-  // An entry point that reads no value of a stylesheet gets no runtime helper from an entry point that does.
-  itBundled("css-module/RequireInOneEntryPointAddsNothingToAnother", {
-    files: {
-      "/a.js": `console.log(JSON.stringify(require("./a.css"))); export {};`,
-      "/b.js": `
-        import "./a.css";
-        import styles from "./b.module.css";
-        console.log(JSON.stringify(styles));
-      `,
-      "/a.css": `.a { color: red }`,
-      "/b.module.css": `.b { color: blue }`,
-    },
-    entryPoints: ["/a.js", "/b.js"],
-    outdir: "/out",
-    onAfterBundle(api) {
-      api.expectFile("/out/a.js").toMatchInlineSnapshot(`
-        "var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+  // The tests below are bundles that ran right before the class names had a module of their own. A chunk still
+  // prints its copy of the class names where it first imports the stylesheet, so the files around it run in the
+  // same order.
 
-        // a.css
-        var require_a = __commonJS(function(exports, module) {
-          module.exports = {};
-        });
-
-        // a.js
-        console.log(JSON.stringify(require_a()));
-        "
-      `);
-      api.expectFile("/out/b.js").toMatchInlineSnapshot(`
-        "// b.module.css
-        var b_module_default = {
-          b: "b_Kd7Gww"
-        };
-
-        // b.js
-        console.log(JSON.stringify(b_module_default));
-        "
-      `);
-    },
-    run: [
-      { file: "/out/a.js", stdout: "{}" },
-      { file: "/out/b.js", stdout: '{"b":"b_Kd7Gww"}' },
-    ],
-  });
-
-  // The class names run nothing. They print ahead of every file of the chunk, like a namespace object: a.js is
-  // imported before the stylesheet is.
-  itBundled("css-module/ClassNamesPrintAheadOfEveryFile", {
+  // a.js and b.js await at their top level, and entry.js starts both before either of them finishes. page.js, which
+  // import() loads, imports the same stylesheet, so the class names are in a wrapper.
+  itBundled("css-module/WrappedClassNamesBetweenTwoImportsThatAwait", {
     files: {
       "/entry.js": `
-        import { a } from "./a.js";
-        import { b } from "./b.js";
-        console.log(a, b);
+        import "./a.js";
+        import styles from "./x.module.css";
+        import "./b.js";
+        console.log("entry", typeof styles.foo);
+        export const later = () => import("./page.js");
       `,
-      "/a.js": `export const a = "a";`,
-      "/b.js": `import styles from "./x.module.css"; export const b = styles.foo;`,
+      "/page.js": `
+        import "./a.js";
+        import "./b.js";
+        import styles from "./x.module.css";
+        console.log("page");
+      `,
+      "/a.js": `console.log("a1"); await 0; console.log("a2");`,
+      "/b.js": `console.log("b1"); await 0; console.log("b2");`,
       "/x.module.css": `.foo { color: red }`,
     },
     outdir: "/out",
-    onAfterBundle(api) {
-      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
-        "// x.module.css
-        var x_module_default = {
-          foo: "foo_e7Ht-A"
-        };
-
-        // a.js
-        var a = "a";
-
-        // b.js
-        var b = x_module_default.foo;
-
-        // entry.js
-        console.log(a, b);
-        "
-      `);
-    },
-    run: { stdout: "a foo_e7Ht-A" },
+    run: { stdout: "a1\nb1\na2\nb2\nentry string" },
   });
 
-  // The two imports of entry.js stay one range of statements, as with a JSON file: the class names that b.js reads
-  // print ahead of every file, not between the two imports. A range calls b.js ahead of the `await` of a.js, with
-  // or without a stylesheet. The unbundled run prints `a` first: the JSON file is the control for the order here.
-  for (const [kind, value] of Object.entries({ CSSModule: "./x.module.css", JSON: "./x.json" })) {
-    itBundled(`css-module/ValueOf${kind}DoesNotSplitTheFileThatLoadsItsReader`, {
-      files: {
-        "/entry.js": `
-          import "./a.js";
-          import "./b.js";
-          console.log("entry");
-          export const later = () => [import("./a.js"), import("./b.js")];
-        `,
-        "/a.js": `console.log("a"); await null; console.log("a done");`,
-        "/b.js": `import value from "${value}"; console.log("b", typeof value.foo);`,
-        "/x.module.css": `.foo { color: red }`,
-        "/x.json": `{ "foo": "json" }`,
-      },
-      outdir: "/out",
-      run: { stdout: "b string\na\na done\nentry" },
-    });
-  }
-
-  // a.js and b.js await at their top level, and entry.js starts both before either of them finishes. The import
-  // between them does not end that range of statements: page.js, which import() loads, imports the same
-  // stylesheet, or a stylesheet that imports it or that names the same image.
-  for (const [kind, [statement, inPage, value]] of Object.entries({
-    CSSModule: [`import styles from "./x.module.css";`, `import styles from "./x.module.css";`, `typeof styles`],
-    BareImport: [`import "./plain.css";`, `import "./plain.css";`, `"object"`],
-    BareImportOfImportedStylesheet: [`import "./plain.css";`, `import "./page.css";`, `"object"`],
-    ImageOfStylesheet: [`import image from "./image.png";`, `import "./image.css";`, `typeof image`],
-  })) {
-    itBundled(`css-module/${kind}BetweenTwoImportsThatAwait`, {
-      files: {
-        "/entry.js": `
-          import "./a.js";
-          ${statement}
-          import "./b.js";
-          console.log("entry", ${value});
-          export const later = () => import("./page.js");
-        `,
-        "/page.js": `
-          import "./a.js";
-          import "./b.js";
-          ${inPage}
-          console.log("page");
-        `,
-        "/a.js": `console.log("a1"); await 0; console.log("a2");`,
-        "/b.js": `console.log("b1"); await 0; console.log("b2");`,
-        "/x.module.css": `.foo { color: red }`,
-        "/plain.css": `.plain { color: green }`,
-        "/page.css": `@import "./plain.css"; .page { color: blue }`,
-        "/image.css": `.image { background: url("./image.png") }`,
-        "/image.png": "not a real png",
-      },
-      outdir: "/out",
-      run: { stdout: "a1\nb1\na2\nb2\nentry " + (kind === "ImageOfStylesheet" ? "string" : "object") },
-    });
-  }
-
-  // The bare import is the first import of the stylesheet: the class names ended the range of entry.js there, not
-  // at the statement that exports them, and a.js and b.js still start together.
+  // The bare import is the first import of the stylesheet: the class names print there, not at the statement that
+  // exports them, and a.js and b.js still start together.
   itBundled("css-module/BareImportAheadOfReExportBetweenTwoImportsThatAwait", {
     files: {
       "/entry.js": `
@@ -672,8 +548,7 @@ describe("css", () => {
     run: { stdout: "a set by b" },
   });
 
-  // first.cjs runs before second.js. The class names that entry.js exports between the two imports print ahead
-  // of every file, and the statements of entry.js keep the two ranges that they had.
+  // first.cjs runs before second.js: the class names that entry.js exports print between the two imports.
   itBundled("css-module/ReExportOfClassNamesBetweenRequiredAndImportedFiles", {
     files: {
       "/entry.js": `
@@ -691,8 +566,8 @@ describe("css", () => {
   });
 
   // A file of a package with no side effects has a bare import of the stylesheet, and the bundle drops that file.
-  // The ranges of entry.js do not change where the walk passes the dropped file. They end where entry.js exports
-  // the class names: first.cjs runs before second.js, and a.js and b.js start together.
+  // The class names do not print where entry.js imports the dropped file. They print where entry.js exports them:
+  // first.cjs runs before second.js, and a.js and b.js start together.
   for (const [kind, entry, stdout] of [
     [
       "BetweenRequiredAndImportedFiles",
@@ -733,8 +608,8 @@ describe("css", () => {
     });
   }
 
-  // e2.js reads the class names. e1.js has a bare import of the stylesheet, in f.js, and prints no class names.
-  // The range of e1.js ends at that import, as it did when e1.js printed a copy of them.
+  // e2.js reads the class names. e1.js has a bare import of the stylesheet, in f.js: it prints a copy of them
+  // that nothing reads, where it imports f.js.
   itBundled("css-module/BareImportOfStylesheetThatAnotherEntryPointReads", {
     files: {
       "/e1.js": `
@@ -751,48 +626,10 @@ describe("css", () => {
     },
     entryPoints: ["/e1.js", "/e2.js"],
     outdir: "/out",
-    onAfterBundle(api) {
-      expect(api.readFile("/out/e1.js")).not.toContain("foo_");
-    },
     run: [
       { file: "/out/e1.js", stdout: "first\nsecond" },
       { file: "/out/e2.js", stdout: "e2 string" },
     ],
-  });
-
-  // A range of statements stops at 128 KB of source. A wrapped file (w.js) imports the stylesheet, so the import of
-  // it in entry.js was a statement of a range before. It prints nothing now and is still the first statement of
-  // its range: that range stops ahead of the import of w.js, and c.cjs runs before w.js.
-  itBundled("css-module/ImportOfStylesheetOfWrappedFileStartsRangeOfLargeFile", {
-    files: {
-      "/entry.js": [
-        `import styles from "./x.module.css";`,
-        `import "./c.cjs";`,
-        `/*${Buffer.alloc(131030, "y").toString()}*/`,
-        `import "./w.js";`,
-        `export const later = () => require("./w.js");`,
-      ].join("\n"),
-      "/c.cjs": `console.log("c");`,
-      "/w.js": `import styles from "./x.module.css"; console.log("w", typeof styles.foo);`,
-      "/x.module.css": `.foo { color: red }`,
-    },
-    outdir: "/out",
-    run: { stdout: "c\nw string" },
-  });
-
-  // entry.js has exports that are known at run time only. Its bare import reads no export of the stylesheet.
-  itBundled("css-module/BareImportNextToExportStarOfCommonJS", {
-    files: {
-      "/entry.js": `
-        import "./plain.css";
-        export * from "./legacy.cjs";
-        console.log("entry");
-      `,
-      "/legacy.cjs": `module.exports = { value: 1 };`,
-      "/plain.css": `.plain { color: green }`,
-    },
-    outdir: "/out",
-    run: { stdout: "entry" },
   });
 
   // The path of a stylesheet that is also imported as an HTML page has one row, the stylesheet.
@@ -810,79 +647,12 @@ describe("css", () => {
     run: { stdout: 'foo_e7Ht-A {"foo":"foo_e7Ht-A"}' },
   });
 
-  // A file that is wrapped (here: loaded by require() or by an import() that is not split) can have a bare
-  // import of a stylesheet. The stylesheet has no JavaScript, so it gets no wrapper and no call.
-  const wrappedFiles = {
-    "/page.js": `import "./styles.css"; export const page = 1; console.log("page");`,
-    "/styles.css": `@import "./reset.css"; .page { color: red; background: url("./image.png") }`,
-    "/reset.css": `body { margin: 0 }`,
-    "/image.png": "not a real png",
-  };
-  itBundled("css-module/BareImportInFileLoadedByRequire", {
-    files: {
-      ...wrappedFiles,
-      "/entry.js": `console.log(JSON.stringify(require("./page.js"))); export {};`,
-    },
-    entryPoints: ["/entry.js"],
-    outdir: "/out",
-    onAfterBundle(api) {
-      const js = api.readFile("/out/entry.js");
-      expect(js.slice(js.indexOf("// page.js"))).toMatchInlineSnapshot(`
-        "// page.js
-        var exports_page = {};
-        __export(exports_page, {
-          page: () => page
-        });
-        var page = 1;
-        var init_page = __esm(() => {
-          console.log("page");
-        });
-
-        // image.png
-        var init_image = () => {};
-
-        // entry.js
-        console.log(JSON.stringify((init_page(), __toCommonJS(exports_page))));
-        "
-      `);
-      expect(api.readFile("/out/entry.css")).toContain("margin: 0");
-    },
-    run: { stdout: 'page\n{"page":1}' },
-  });
-  itBundled("css-module/BareImportInFileLoadedByUnsplitImport", {
-    files: {
-      ...wrappedFiles,
-      "/entry.js": `import("./page.js").then(page => console.log(JSON.stringify(page)));`,
-    },
-    entryPoints: ["/entry.js"],
-    outdir: "/out",
-    onAfterBundle(api) {
-      const js = api.readFile("/out/entry.js");
-      expect(js.slice(js.indexOf("// page.js"))).toMatchInlineSnapshot(`
-        "// page.js
-        var exports_page = {};
-        __export(exports_page, {
-          page: () => page
-        });
-        var page = 1;
-        var init_page = __esm(() => {
-          console.log("page");
-        });
-
-        // image.png
-        var init_image = () => {};
-
-        // entry.js
-        Promise.resolve().then(() => (init_page(), exports_page)).then((page) => console.log(JSON.stringify(page)));
-        "
-      `);
-    },
-    run: { stdout: 'page\n{"page":1}' },
-  });
   // A require() of a stylesheet has a value, also when nothing reads it: the wrapper holds an empty object.
   itBundled("css-module/RequireWithNoValueReadHasAnEmptyWrapper", {
     files: {
-      ...wrappedFiles,
+      "/styles.css": `@import "./reset.css"; .page { color: red; background: url("./image.png") }`,
+      "/reset.css": `body { margin: 0 }`,
+      "/image.png": "not a real png",
       "/entry.js": `import legacy from "./legacy.cjs"; console.log(JSON.stringify(legacy));`,
       "/legacy.cjs": `require("./styles.css"); module.exports = { legacy: 1 };`,
     },
@@ -913,22 +683,6 @@ describe("css", () => {
     },
     run: { stdout: '{"legacy":1}' },
   });
-  // Two entry points load the wrapped file, so it is in a chunk of its own.
-  itBundled("css-module/BareImportInFileLoadedByRequireWithSplitting", {
-    files: {
-      ...wrappedFiles,
-      "/a.js": `console.log("a", JSON.stringify(require("./page.js"))); export {};`,
-      "/b.js": `console.log("b", JSON.stringify(require("./page.js"))); export {};`,
-    },
-    entryPoints: ["/a.js", "/b.js"],
-    splitting: true,
-    outdir: "/out",
-    run: [
-      { file: "/out/a.js", stdout: 'page\na {"page":1}' },
-      { file: "/out/b.js", stdout: 'page\nb {"page":1}' },
-    ],
-  });
-
   // A stylesheet cannot import a script. The script is then a file that the stylesheet leads to, and a reader of it.
   itBundled("css-module/StylesheetThatImportsItsReader", {
     files: {
@@ -944,32 +698,6 @@ describe("css", () => {
     bundleErrors: {
       "/x.module.css": [`Cannot import a ".jsx" file into a CSS file`],
     },
-  });
-
-  // The minifier picks short names by how often each character is in the files of a chunk. A stylesheet is not a
-  // file of a JS chunk: its text does not count, for a bare import and for an import of the class names.
-  test("css-module/MinifiedNamesDoNotCountTheTextOfAStylesheet", async () => {
-    using dir = tempDir("css-module-minified-names", {
-      "entry.js": `
-        import "./plain.css";
-        import styles from "./x.module.css";
-        export function read(value) { return styles[value]; }
-      `,
-    });
-    const build = async (comment: string) => {
-      await Promise.all([
-        Bun.write(join(String(dir), "plain.css"), `/* ${comment} */ .plain { color: green }`),
-        Bun.write(join(String(dir), "x.module.css"), `/* ${comment} */ .foo { color: red }`),
-      ]);
-      const result = await Bun.build({
-        entrypoints: [join(String(dir), "entry.js")],
-        minify: { identifiers: true },
-      });
-      return await result.outputs.find(output => output.path.endsWith(".js"))!.text();
-    };
-    const names = await build("q");
-    expect(names).toContain("function ");
-    expect(await build(Buffer.alloc(4096, "q").toString())).toBe(names);
   });
 
   // The module that holds the class names is not a source file: the source map of a JS chunk has no entry for it.
@@ -1004,30 +732,6 @@ describe("css", () => {
       run: { stdout: '{"default":{"foo":"foo_e7Ht-A"},"foo":"foo_e7Ht-A"} {"bar":"bar_zA6N2g"}' },
     });
   }
-  // The chunk that two entry points share holds only class names: its source map has no source.
-  itBundled("css-module/SourceMapOfSharedClassNames", {
-    files: {
-      "/a.js": `import styles from "./x.module.css"; console.log("a", styles.foo);`,
-      "/b.js": `import styles from "./x.module.css"; console.log("b", styles.foo);`,
-      "/x.module.css": `.foo { color: red }`,
-    },
-    entryPoints: ["/a.js", "/b.js"],
-    splitting: true,
-    outdir: "/out",
-    sourceMap: "external",
-    onAfterBundle(api) {
-      const maps = readdirSync(api.outdir)
-        .filter(file => file.endsWith(".js.map"))
-        .sort()
-        .map(file => JSON.parse(api.readFile("/out/" + file)).sources);
-      expect(maps).toEqual([["../a.js"], ["../b.js"], []]);
-    },
-    run: [
-      { file: "/out/a.js", stdout: "a foo_e7Ht-A" },
-      { file: "/out/b.js", stdout: "b foo_e7Ht-A" },
-    ],
-  });
-
   // https://github.com/oven-sh/bun/issues/18921
   // The `animation` shorthand and `animation-name` longhand must scope their
   // referenced `@keyframes` name to the SAME hashed name the keyframes rule

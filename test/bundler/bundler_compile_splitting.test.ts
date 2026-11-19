@@ -657,7 +657,7 @@ describe("bundler", () => {
     }
 
     // An import() of a stylesheet loads a chunk of the executable that holds the class names, with and without
-    // --bytecode.
+    // --bytecode. The entry point holds its own copy of them.
     for (const bytecode of [false, true]) {
       itBundled(`compile/splitting/DynamicImportOfCSSModule-${bytecode ? "bytecode" : "source"}`, {
         compile: true,
@@ -669,7 +669,7 @@ describe("bundler", () => {
           "/entry.ts": /* js */ `
             import styles from "./x.module.css";
             const lazy = await import("./x.module.css");
-            console.log(Object.keys(styles).join(), Object.keys(lazy).sort().join(), lazy.default === styles);
+            console.log(Object.keys(styles).join(), Object.keys(lazy).sort().join(), lazy.default.foo === styles.foo);
           `,
           "/x.module.css": `.foo { color: red }`,
         },
@@ -678,7 +678,7 @@ describe("bundler", () => {
     }
 
     // The chunk of shared.ts is a TypeScript chunk: PathLike is a type, so the module record of the chunk has no
-    // export of that name. The class names that shared.ts imports do not make it a JavaScript chunk.
+    // export of that name. The copy of the class names that the chunk holds does not make it a JavaScript chunk.
     itBundled("compile/splitting/SharedTypeScriptChunkThatImportsCSSModule", {
       compile: true,
       splitting: true,

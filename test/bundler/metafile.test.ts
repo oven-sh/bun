@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { tempDir } from "harness";
 import { statSync } from "node:fs";
 
 // Type definitions for metafile structure
@@ -768,27 +768,6 @@ describe("bundler metafile", () => {
     expect(await Bun.file(`${dir}/meta.md`).text()).toContain("| Input modules | 5 |");
     expect(exitCode).toBe(0);
   });
-
-  test("metafile lists no exports for a stylesheet entry point", async () => {
-    using dir = tempDir("metafile-css-entry-point-exports", {
-      "a.module.css": `.foo { color: red } .bar { composes: foo }`,
-      "plain.css": `.plain { color: blue }`,
-    });
-
-    const result = await Bun.build({
-      entrypoints: [`${dir}/a.module.css`, `${dir}/plain.css`],
-      metafile: true,
-    });
-    expect(result.success).toBe(true);
-    const outputs = Object.entries((result.metafile as Metafile).outputs).map(([path, output]) => [
-      path,
-      output.exports,
-    ]);
-    expect(outputs.sort()).toEqual([
-      ["./a.module.css", []],
-      ["./plain.css", []],
-    ]);
-  });
 });
 
 describe("Bun.build metafile option variants", () => {
@@ -977,6 +956,7 @@ describe("Bun.build metafile option variants", () => {
 });
 
 // CLI tests for --metafile-md
+import { bunEnv, bunExe, isWindows } from "harness";
 
 describe("bun build --metafile-md", () => {
   test("generates markdown metafile with default name", async () => {

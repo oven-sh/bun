@@ -645,20 +645,10 @@ pub mod parse_worker {
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`; `options`
         // is disjoint from any other field the caller may hold a pointer to.
         let define = unsafe { &mut (*transpiler).options.define };
-        Ok(JSAst::init(stylesheet_row_ast(
+        Ok(JSAst::init(
             js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?
                 .ok_or(AnyError::ParserError)?,
-        )))
-    }
-
-    /// The row of a stylesheet exports nothing to JavaScript: its JS stub does (`Graph::css_js_stubs`).
-    fn stylesheet_row_ast(mut ast: ast::Ast<'static>) -> ast::Ast<'static> {
-        ast.has_lazy_export = false;
-        ast.parts.as_mut_slice()[1] = Part {
-            can_be_removed_if_unused: true,
-            ..Default::default()
-        };
-        ast
+        ))
     }
 
     fn get_empty_ast<RootType: Default + bun_ast::expr::IntoExprData>(
@@ -1311,7 +1301,7 @@ pub mod parse_worker {
                 if css_ast.local_scope.count() > 0 {
                     let _ = has_any_css_locals.fetch_add(1, Ordering::Relaxed);
                 }
-                // The parser makes the refs and the parts that the linker reads of every row.
+                // If this is a css module, the final exports object wil be set in `generateCodeForLazyExport`.
                 let root = Expr::init(E::Object::default(), Loc { start: 0 });
                 // `StylesheetExtra.symbols` is
                 // `Vec<bun_ast::Symbol>`; `new_lazy_export_ast_impl` takes
@@ -1332,7 +1322,7 @@ pub mod parse_worker {
                     symbols,
                 );
                 temp_log.append_to(log);
-                let mut ast = JSAst::init(stylesheet_row_ast(lazy?.ok_or(AnyError::ParserError)?));
+                let mut ast = JSAst::init(lazy?.ok_or(AnyError::ParserError)?);
                 *stylesheet = Some(Box::new(css_ast));
                 ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
                 return Ok(ast);

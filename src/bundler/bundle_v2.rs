@@ -1938,6 +1938,8 @@ pub mod bv2_impl {
         walked: Vec<bool>,
         /// (importer, import record, stub): the records that import a stub once it has a row.
         records: Vec<(IndexInt, u32, IndexInt)>,
+        /// (importer, import record): the `import` statements of a stylesheet that read no value. They import the stub too when a record of that target reads one.
+        bare_records: Vec<(IndexInt, u32)>,
     }
 
     fn import_has_binding(import: &bun_ast::S::Import) -> bool {
@@ -2166,7 +2168,7 @@ pub mod bv2_impl {
                                         .insert(bun_ast::ImportRecordFlags::CROSS_CHUNK_REQUIRE);
                                 }
                             }
-                            // A record that reads a value imports the JS stub. A bare import keeps the stylesheet (not in esbuild).
+                            // A record that reads a value imports the JS stub (not in esbuild: a stylesheet has a stub there whoever imports it).
                             if let Some(allotment) = self.css_js_stubs.as_mut()
                                 && next_source.is_valid()
                                 && self.all_loaders[next_source.get() as usize].is_css()
@@ -2178,14 +2180,22 @@ pub mod bv2_impl {
                                     | ImportKind::Dynamic
                                     | ImportKind::HtmlManifest => true,
                                     ImportKind::Stmt => {
-                                        !import_record.flags.contains(
+                                        let reads_value = !import_record.flags.contains(
                                             bun_ast::ImportRecordFlags::WAS_ORIGINALLY_BARE_IMPORT,
-                                        ) || self.hmr_parts.is_some_and(|all_parts| {
-                                            import_statement_reads_value(
-                                                &all_parts[source_index.get() as usize],
-                                                ir_idx as u32,
-                                            )
-                                        })
+                                        ) || self.hmr_parts.is_some_and(
+                                            |all_parts| {
+                                                import_statement_reads_value(
+                                                    &all_parts[source_index.get() as usize],
+                                                    ir_idx as u32,
+                                                )
+                                            },
+                                        );
+                                        if !reads_value {
+                                            allotment
+                                                .bare_records
+                                                .push((source_index.get(), ir_idx as u32));
+                                        }
+                                        reads_value
                                     }
                                     _ => false,
                                 }
@@ -2296,6 +2306,7 @@ pub mod bv2_impl {
                     stubs: ArrayHashMap::new(),
                     walked: Vec::new(),
                     records: Vec::new(),
+                    bare_records: Vec::new(),
                 }),
                 hmr_parts: (self.transpiler.options.output_format
                     == options::Format::InternalBakeDev)
@@ -2389,6 +2400,7 @@ pub mod bv2_impl {
                 stubs,
                 walked: _,
                 records,
+                bare_records,
             } = allotment;
             if stubs.is_empty() {
                 return Ok(());
@@ -2417,20 +2429,39 @@ pub mod bv2_impl {
                 self.graph.input_files.append(input_file)?;
                 self.graph.ast.append(ast)?;
             }
-            let import_records = self.graph.ast.items_import_records_mut();
+            let ast = self.graph.ast.split_mut();
+            // The stubs have the class names of these stylesheets: the lazy export that the parser gave the row goes.
+            for &(stylesheet, _) in stubs.keys() {
+                ast.flags[stylesheet as usize].remove(crate::bundled_ast::Flags::HAS_LAZY_EXPORT);
+                ast.parts[stylesheet as usize].as_mut_slice()[1] = bun_ast::Part {
+                    can_be_removed_if_unused: true,
+                    ..Default::default()
+                };
+            }
+            let import_records = ast.import_records;
             for (importer, record, stub) in records {
                 import_records[importer as usize].as_mut_slice()[record as usize].source_index =
                     Index::init(stub);
+            }
+            // The stub stands for the stylesheet in every JS file of its target: a chunk prints the class names where it first imports the stylesheet, with a binding or without.
+            for (importer, record) in bare_records {
+                let record = &mut import_records[importer as usize].as_mut_slice()[record as usize];
+                let key = (record.source_index.get(), ast.target[importer as usize]);
+                if let Some(index) = stubs.get_index(&key) {
+                    record.source_index =
+                        Index::init(first + IndexInt::try_from(index).expect("int cast"));
+                }
             }
             self.graph.css_js_stubs = crate::Graph::CssJsStubs::new(first, stubs);
             Ok(())
         }
 
-        /// The linker relies on this: only a statement with no binding still has a record of a stylesheet.
+        /// The linker relies on this: only a statement with no binding still has a record of a stylesheet, and only when no file of that target reads a value of the stylesheet.
         fn assert_stylesheet_values_are_stubs(&self, reachable: &[Index]) {
             let loaders = self.graph.input_files.items_loader();
             let all_import_records = self.graph.ast.items_import_records();
             let all_parts = self.graph.ast.items_parts();
+            let targets = self.graph.ast.items_target();
             for source_index in reachable {
                 let file = source_index.get() as usize;
                 if loaders[file].is_css() || loaders[file] == Loader::Html {
@@ -2445,6 +2476,15 @@ pub mod bv2_impl {
                     debug_assert!(
                         !(matches!(record.kind, ImportKind::Require | ImportKind::Dynamic)
                             && is_stylesheet(record))
+                    );
+                    debug_assert!(
+                        !(record.kind == ImportKind::Stmt
+                            && is_stylesheet(record)
+                            && self
+                                .graph
+                                .css_js_stubs
+                                .stub_of(record.source_index.get(), targets[file])
+                                .is_some())
                     );
                 }
                 for stmt in all_parts[file].iter().flat_map(|part| part.stmts.slice()) {
@@ -2502,6 +2542,8 @@ pub mod bv2_impl {
             )?;
             ast.target = target;
             ast.module_type = module_type;
+            // A chunk that prints the class names counts the characters of the stylesheet when it picks minified names, as it did when the row of the stylesheet held them.
+            ast.char_freq = self.graph.ast.items_char_freq()[stylesheet as usize].clone();
 
             // The default loader, not `Loader::Css` as in esbuild: the linker takes a row with that loader for a stylesheet.
             let input_file = crate::Graph::InputFile {

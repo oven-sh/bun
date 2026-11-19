@@ -337,7 +337,12 @@ fn inits_provided(
     merged: [usize; 2],
 ) -> bool {
     needs.iter().all(|&x| {
-        let home = resolve(groups, group_of_file[x as usize]);
+        // The class names of a stylesheet are in no group: each chunk that holds a copy of them initializes it.
+        let group = group_of_file[x as usize];
+        if group == usize::MAX {
+            return true;
+        }
+        let home = resolve(groups, group);
         !merged.contains(&home) && groups[home].provides_init.binary_search(&x).is_ok()
     })
 }
@@ -765,6 +770,7 @@ pub(crate) fn merge_small_chunks(
         return Ok(());
     }
     let css_asts = &this.parse_graph().css_asts;
+    let css_js_stubs = &this.parse_graph().css_js_stubs;
     let ast_targets = this.graph.ast.items_target();
     let import_records = this.graph.ast.items_import_records();
     let parts = this.graph.ast.items_parts();
@@ -782,9 +788,11 @@ pub(crate) fn merge_small_chunks(
     let is_dynamic_entry = |entry_id: usize| {
         kinds[entry_source_indices[entry_id] as usize] == EntryPoint::Kind::DynamicImport
     };
+    // A stylesheet is in no JS chunk, and its JS stub has a copy in each chunk that holds its class names.
     let is_live_js = |source_index: u32| {
         this.graph.files_live.is_set(source_index as usize)
             && css_asts[source_index as usize].is_none()
+            && css_js_stubs.stylesheet_of(source_index).is_none()
     };
 
     // Which entries statically contain a live `import()` of each dynamic entry.

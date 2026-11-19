@@ -83,12 +83,18 @@ function generateGraph(seed: number): Graph {
 
   // Draws for shapes added after seeds were pinned come from a stream of their own, so old seeds keep their graphs.
   const later = rng(seed ^ 0x5bd1e995);
+  // A CSS module that some modules read a class name of. Each chunk that reads it holds a copy of the class names,
+  // so a fold that moves a reader has to move a copy with it.
+  const styled = rng(seed ^ 0x2545f491);
+  const readsStyles = new Set<number>();
+  if (styled() < 0.5) for (let i = 0; i < n; i++) if (styled() < 0.3) readsStyles.add(i);
 
   const files: Record<string, string> = {};
   for (let i = 0; i < n; i++) {
     let src = `import { note, read, attempt, later } from "./log.ts";\n`;
     const importsItself = later() < 0.1 && !pure.has(i);
     if (importsItself) src += `import * as self${i} from "./f${i}.ts";\n`;
+    if (readsStyles.has(i)) src += `import styles from "./styles.module.css";\n`;
     const uses: string[] = [];
     let base: number | undefined;
     for (const j of staticImports[i]) {
@@ -119,6 +125,7 @@ function generateGraph(seed: number): Graph {
     if (!isPure) {
       // An import nothing uses is dropped from a .ts file.
       if (importsItself) uses.push(`read("f${i}<self", () => typeof self${i}.get${i})`);
+      if (readsStyles.has(i)) uses.push(`read("f${i}<styles", () => styles.a)`);
       for (const j of staticImports[i]) {
         if (chance(0.5)) uses.push(`read("f${i}<f${j}", () => get${j}())`);
         if (chance(0.2)) uses.push(`read("f${i}<C${j}", () => new C${j}().tag())`);
@@ -163,6 +170,7 @@ export async function finish() {
   console.log(lines.join("\\n"));
 }
 `;
+  files["styles.module.css"] = `.a { color: red }\n`;
   const entries = ["entry.ts"];
   files["entry.ts"] = `import { finish } from "./log.ts";\nawait import("./f0.ts");\nawait finish();\n`;
   if (twoEntries) {

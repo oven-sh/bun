@@ -344,39 +344,6 @@ import("./lazy.module.css").then(lazy => console.log(JSON.stringify(styles), JSO
     },
   });
 
-  // With --splitting, the scripts of two pages import the class names of one stylesheet from a chunk that both
-  // pages preload.
-  itBundled("html/two-pages-read-one-stylesheet-value", {
-    outdir: "out/",
-    splitting: true,
-    files: {
-      "/a.html": `<!DOCTYPE html><html><head><script type="module" src="./a.js"></script></head></html>`,
-      "/b.html": `<!DOCTYPE html><html><head><script type="module" src="./b.js"></script></head></html>`,
-      "/a.js": `import styles from "./styles.module.css"; console.log("a", styles.title);`,
-      "/b.js": `import styles from "./styles.module.css"; console.log("b", styles.title);`,
-      "/styles.module.css": `.title { color: red }`,
-    },
-    entryPoints: ["/a.html", "/b.html"],
-    async onAfterBundle(api) {
-      const pages = ["a", "b"].map(name => api.readFile(`out/${name}.html`));
-      const preloaded = pages.map(html => html.match(/rel="modulepreload"[^>]*href="([^"]+\.js)"/)?.[1]);
-      expect(preloaded).toEqual([expect.any(String), preloaded[0]]);
-      expect(api.readFile(path.join("out", preloaded[0]!))).toContain(`title: "title_-MSaAA"`);
-
-      for (const [i, html] of pages.entries()) {
-        const script = html.match(/<script[^>]*src="(.*?\.js)"/)![1];
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), path.join(api.outdir, script)],
-          env: bunEnv,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ stdout, stderr, exitCode }).toEqual({ stdout: `${"ab"[i]} title_-MSaAA\n`, stderr: "", exitCode: 0 });
-      }
-    },
-  });
-
   // Test multiple HTML entry points
   itBundled("html/multiple-entries", {
     outdir: "out/",

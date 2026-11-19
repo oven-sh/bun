@@ -136,13 +136,17 @@ impl CssJsStubs {
         Self { first, stubs }
     }
 
+    /// The position of the stub at `source_index` among the stubs.
+    #[inline]
+    pub(crate) fn index_of(&self, source_index: IndexInt) -> Option<usize> {
+        let index = source_index.checked_sub(self.first)? as usize;
+        (index < self.stubs.count()).then_some(index)
+    }
+
     /// The stylesheet whose class names the stub at `source_index` exports.
     #[inline]
     pub(crate) fn stylesheet_of(&self, source_index: IndexInt) -> Option<IndexInt> {
-        self.stubs
-            .keys()
-            .get(source_index.checked_sub(self.first)? as usize)
-            .map(|&(stylesheet, _)| stylesheet)
+        Some(self.stubs.keys()[self.index_of(source_index)?].0)
     }
 
     /// The stub that JavaScript of `target` imports for the value of `stylesheet`.
@@ -158,13 +162,18 @@ impl CssJsStubs {
         Some(self.first + self.stubs.get_index(&(stylesheet, target))? as IndexInt)
     }
 
-    pub(crate) fn len(&self) -> usize {
-        self.stubs.count()
+    /// The stubs of `stylesheet`: one for each target whose JavaScript reads a value from it.
+    pub(crate) fn stubs_of(&self, stylesheet: IndexInt) -> impl Iterator<Item = IndexInt> + '_ {
+        (0..<options::Target as enum_map::Enum>::LENGTH).filter_map(move |target| {
+            self.stub_of(
+                stylesheet,
+                <options::Target as enum_map::Enum>::from_usize(target),
+            )
+        })
     }
 
-    /// The source indexes of the stubs.
-    pub(crate) fn rows(&self) -> core::ops::Range<IndexInt> {
-        self.first..self.first + self.stubs.count() as IndexInt
+    pub(crate) fn len(&self) -> usize {
+        self.stubs.count()
     }
 }
 

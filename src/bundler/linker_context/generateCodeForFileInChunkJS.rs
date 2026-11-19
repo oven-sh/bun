@@ -810,6 +810,33 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                             bun_ast::Loc::EMPTY,
                         ),
                     );
+
+                    // Each chunk that holds the class names of a stylesheet has its own copy of this wrapper, and a chunk can name them with no `init_foo()` call of its own (an `export ... from`). The class names run nothing: the copy is initialized where it prints.
+                    if c.parse_graph()
+                        .css_js_stubs
+                        .stylesheet_of(source_index as u32)
+                        .is_some()
+                    {
+                        stmts.append(
+                            StmtListWhich::OutsideWrapperPrefix,
+                            Stmt::alloc(
+                                S::SExpr {
+                                    value: Expr::init(
+                                        E::Call {
+                                            target: Expr::init_identifier(
+                                                ast.wrapper_ref,
+                                                bun_ast::Loc::EMPTY,
+                                            ),
+                                            ..Default::default()
+                                        },
+                                        bun_ast::Loc::EMPTY,
+                                    ),
+                                    ..Default::default()
+                                },
+                                bun_ast::Loc::EMPTY,
+                            ),
+                        );
+                    }
                 } else {
                     // // If this fails, then there will be places we reference
                     // // `init_foo` without it actually existing.

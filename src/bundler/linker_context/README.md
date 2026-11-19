@@ -179,7 +179,7 @@ _What happens_:
 - Recursively traverses export star chains to collect all re-exported names
 - Handles export star conflicts when multiple modules export the same name
 - Ignores export stars from CommonJS modules (since their exports aren't statically analyzable)
-- Generates code for expression-style loaders (JSON, the JS stub of a CSS module, etc.)
+- Generates code for expression-style loaders (JSON, CSS modules, etc.)
 
 _Export star resolution algorithm_:
 
@@ -229,7 +229,7 @@ export * from "./utils.js";
 ```
 
 _Expression-style loader code generation_:
-During this step, files loaded with expression-style loaders (JSON, text files) and the JS stubs of CSS modules have their lazy export statements converted to actual module exports:
+During this step, files loaded with expression-style loaders (JSON, CSS modules, text files) have their lazy export statements converted to actual module exports:
 
 ```javascript
 // styles.module.css → generates:
@@ -763,7 +763,7 @@ The renamed symbols are then used during final code generation to produce output
 - One walk per entry point, in parallel. A chunk has one owner: the entry point that loads first among the chunk's entry points (`load_rank`). `load_rank` and `EntryWalk` read the same edges (`for_each_edge`). The owner's walk places the files of the chunk, so no two walks write the same list. Without code splitting, each chunk is owned by its own entry point
 - On an import cycle, the owner's order can put a part that evaluates code at load ahead of a binding that it reads, itself or through the functions that it names (`LoadTimeReads`). A walk from the next entry point by rank whose order does not then lays out that chunk (`find_safe_walks`). The other chunks keep the layout of their owner. With no such entry point, so does this one. The read is judged by `part.dependencies`, per statement: `const f = () => x` is no read of `x` (`Expr::can_be_moved`), and `const o = { f: () => x }` is one
 - Places the parts of a file in runs: a part prints after the files it imports and before the files that the next part imports
-- Collects the live parts of each run into part ranges. The runtime and the wrapped files go first in the chunk, then the namespace objects and the class names of stylesheets (their JS stubs): both exist before any file runs
+- Collects the live parts of each run into part ranges. The runtime and the wrapped files go first in the chunk, then the namespace objects: a namespace object exists before any file runs
 - Records the other chunks in the order a walk from the chunk's files reaches their first file with side effects (`reached_chunks_in_order`), which orders the chunk's cross-chunk `import` statements
 
 #### `findImportedCSSFilesInJSOrder.rs`
@@ -844,7 +844,7 @@ The renamed symbols are then used during final code generation to produce output
 - Handles CSS `composes` property resolution across files
 - Converts lazy export statements to proper module exports (CJS or ESM)
 
-**What are expression-style loaders?**: These are file loaders (like JSON, text, NAPI, etc.) that generate a JavaScript expression to represent the file content rather than executing imperative code. The expression is wrapped in a lazy export statement during parsing, and actual code generation is deferred until linking when the final export format is known. A stylesheet has no lazy export of its own: its JS stub has one (see below).
+**What are expression-style loaders?**: These are file loaders (like JSON, CSS, text, NAPI, etc.) that generate a JavaScript expression to represent the file content rather than executing imperative code. The expression is wrapped in a lazy export statement during parsing, and actual code generation is deferred until linking when the final export format is known.
 
 **Example - JSON/Text files**: When you import `data.json` containing `{"name": "example"}`, the expression-style loader creates a lazy export with the expression `{name: "example"}`. During linking, `generateCodeForLazyExport` converts this to:
 
@@ -879,7 +879,9 @@ var styles_module_default = {
 
 The function resolves `composes` relationships by visiting the referenced classes and building template literals that combine the scoped class names.
 
-**The JS stub of a stylesheet**: JavaScript that reads a value from a stylesheet (`import styles from`, `import * as`, `require()`, `import()`) does not import the stylesheet. It imports the JS stub of the stylesheet, a second source index that `find_reachable_files` adds to the graph (`Graph.css_js_stubs`, as in esbuild). The stub is a lazy export like a JSON file, and this function fills it with the class names of its stylesheet (`css_module_exports`). So the row of a stylesheet has no JS parts, and the stub is in one chunk like any other module. These places go from a stub to its stylesheet: `mark_file_live_step` (a live stub keeps the stylesheet), `for_each_file_loaded_by` (the stylesheet gets the entry bits of the stub), `findImportedCSSFilesInJSOrder` (the stylesheet is in the CSS of the chunk), `chunk_input_loader` (the loader of the output file) and this function. A bare `import "./a.css"` reads no value and has no stub: its record stays on the row of the stylesheet. A wrapped file that imports a stylesheet gives no wrapper to the row or to the stub: `DependencyWrapper::wrap` marks the row and goes on to the files that the stylesheet names. Only a `require()` or an unsplit `import()` of the stylesheet wraps the stub, in `__commonJS`. A stub with no wrapper runs nothing: it prints with the namespace objects, ahead of every file of its chunk (`Section::ClassNames` in `findAllImportedPartsInJSOrder.rs`), so the class names exist before any file runs, in a wrapped file, in an import cycle and in a chunk that a split `require()` loads in the middle of another. The linker hoists the `init_x()` calls of a file for each range of its parts, so the ranges stay as they were when the row of a stylesheet held the class names. The `import` of a stylesheet that a wrapped file imports was a statement of its range: it prints nothing now and still counts as one (`is_import_of_stylesheet_that_had_a_wrapper`). For any other stylesheet whose class names a part of another file names, each chunk printed its own copy of them where one of its files first imported the stylesheet or named a class name. `EntryWalk` still puts a run of the stylesheet row there (`WalkFrame::PlaceCss`, `WalkPlan::printed_class_names`). That run prints nothing and ends the range of the file before it (`ends_range_of_files`). A chunk that holds only class names has the name of the stylesheet and `.css`, with `_` for a byte that an import path cannot hold (`class_names_chunk_name`).
+**The JS stub of a stylesheet**: JavaScript that reads a value from a stylesheet (`import styles from`, `import * as`, `require()`, `import()`) does not import the stylesheet. It imports the JS stub of the stylesheet: a second source index that `find_reachable_files` adds for the stylesheet and the target of the importer (`Graph.css_js_stubs`, the JavaScript stub of esbuild). Once a stylesheet has a stub, every `import` of it in JavaScript of that target points at the stub, a bare `import "./a.css"` too, and the row of the stylesheet loses its lazy export. The stub is a lazy export like a JSON file, and this function fills it with the class names of its stylesheet. A stylesheet that no JavaScript reads a value from has no stub: its row keeps the lazy export that nothing reads.
+
+A stub has no chunk of its own. `add_class_names_to_chunks` (`computeChunks.rs`) makes it a member of each chunk that needs the class names, and each of those chunks prints its own copy of them: the symbols of a stub are in no one chunk, so no chunk imports them from another (`computeCrossChunkDependencies.rs`). `EntryWalk` puts the copy where the chunk first leads to the stub (`WalkFrame::PlaceCss`), which is where the chunk printed the JS parts of the stylesheet row before. A copy in an `__esm` wrapper runs where it prints (`generateCodeForFileInChunkJS.rs`): a chunk can name the class names with no `init_x()` call of its own. These places go from a stub to its stylesheet: `mark_file_live_step` (a live stub keeps the stylesheet), `for_each_file_loaded_by` (the stylesheet gets the entry bits of the stub), `findImportedCSSFilesInJSOrder` (the stylesheet is in the CSS of the chunk), `DependencyWrapper::wrap` (a wrapper of one is a wrapper of both), `chunk_input_loader` (the loader of the output file) and this function.
 
 ### Statement Processing
 

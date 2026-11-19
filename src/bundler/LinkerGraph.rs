@@ -148,7 +148,6 @@ pub mod js_meta {
         pub(crate) needs_exports_variable: bool,
         pub(crate) force_include_exports_for_entry_point: bool,
         pub(crate) needs_export_symbol_from_runtime: bool,
-        /// `DependencyWrapper::wrap` is past this file. Set from the start for a stylesheet.
         pub(crate) did_wrap_dependencies: bool,
         pub(crate) needs_synthetic_default_export: bool,
         pub(crate) wrap: WrapKind,

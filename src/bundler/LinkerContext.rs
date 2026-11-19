@@ -303,39 +303,6 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         true
     }
 
-    /// A part that `should_include_part` drops: the `import` of a stylesheet (or of its JS stub) that had a wrapper before it had a stub, because a wrapped file imports it or a `require()` names it. The part prints nothing and stays in the range of its file.
-    pub(crate) fn is_import_of_stylesheet_that_had_a_wrapper(
-        &self,
-        source_index: crate::IndexInt,
-        part: &Part,
-    ) -> bool {
-        let stmts: &[Stmt] = part.stmts.slice();
-        if stmts.len() != 1 {
-            return false;
-        }
-        let Some(s_import) = stmts[0].data.s_import() else {
-            return false;
-        };
-        let record = &self.graph.ast.items_import_records()[source_index as usize]
-            [s_import.import_record_index as usize];
-        if !record.source_index.is_valid() {
-            return false;
-        }
-        let other = record.source_index.get();
-        let css_js_stubs = &self.parse_graph().css_js_stubs;
-        let (stylesheet, stub) = if self.parse_graph().css_asts[other as usize].is_some() {
-            let target = self.graph.ast.items_target()[source_index as usize];
-            (other, css_js_stubs.stub_of(other, target))
-        } else if let Some(stylesheet) = css_js_stubs.stylesheet_of(other) {
-            (stylesheet, Some(other))
-        } else {
-            return false;
-        };
-        let flags = self.graph.meta.items_flags();
-        flags[stylesheet as usize].did_wrap_dependencies
-            || stub.is_some_and(|stub| flags[stub as usize].wrap != WrapKind::None)
-    }
-
     pub(crate) fn load(
         bundle: &'l BundleV2<'a>,
         mut graph: LinkerGraph<'a>,
@@ -411,6 +378,10 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 // machinery.
                 if ast_flags.contains(AstFlags::HAS_LAZY_EXPORT) {
                     exports_kind[entry_point.get() as usize] = ExportsKind::Cjs;
+                }
+                // The lazy export of a stylesheet is on its JS stubs.
+                for stub in parse_graph.css_js_stubs.stubs_of(entry_point.get()) {
+                    exports_kind[stub as usize] = ExportsKind::Cjs;
                 }
 
                 // Entry points with ES6 exports must generate an exports object when
@@ -708,23 +679,6 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
 
             if self.module_preload() {
                 self.mark_preload_entries(&mut worklist)?;
-            }
-        }
-
-        // A stylesheet has no JS parts and no wrapper. Its JS stub has no `__esm` wrapper: its class names exist before any file runs.
-        if cfg!(debug_assertions) {
-            let flags = self.graph.meta.items_flags();
-            for (source_index, stylesheet) in self.parse_graph().css_asts.iter().enumerate() {
-                debug_assert!(
-                    stylesheet.is_none()
-                        || (self.graph.parts_live[source_index]
-                            .find_first_set()
-                            .is_none()
-                            && flags[source_index].wrap == WrapKind::None)
-                );
-            }
-            for stub in self.parse_graph().css_js_stubs.rows() {
-                debug_assert!(flags[stub as usize].wrap != WrapKind::Esm);
             }
         }
 
@@ -4309,10 +4263,12 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
     #[inline]
     pub(crate) fn generate_code_for_lazy_export(
         &mut self,
+        log: &mut Log,
         source_index: crate::IndexInt,
     ) -> Result<(), AllocError> {
         crate::linker_context::generate_code_for_lazy_export::generate_code_for_lazy_export(
             self,
+            log,
             source_index,
         )
     }

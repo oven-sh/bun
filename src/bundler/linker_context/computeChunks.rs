@@ -63,19 +63,136 @@ fn css_chunk_key<'a>(
     key
 }
 
-/// `[name]` of a chunk that holds only the class names of a stylesheet: the name of the stylesheet, then `.css`, which `[name]` of its `import()` chunk does not have. No path that JavaScript imports had that name before: a byte that such a path or a file name cannot hold is `_`, and a long name is cut.
-fn class_names_chunk_name(stylesheet_name: &[u8]) -> Box<[u8]> {
-    const NAME_BYTES_MAX: usize = 128;
-    let mut name: Vec<u8> = stylesheet_name
-        .iter()
-        .take(NAME_BYTES_MAX)
-        .map(|&byte| match byte {
-            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'.' | b'-' | b'_' => byte,
-            _ => b'_',
-        })
-        .collect();
-    name.extend_from_slice(b".css");
-    name.into_boxed_slice()
+/// The class names of a stylesheet (its JS stub) have no chunk of their own: each chunk that needs them holds a copy, as each chunk held a copy of the JS parts of a stylesheet row before. `EntryWalk` says where in the chunk the copy prints.
+fn add_class_names_to_chunks(
+    c: &LinkerContext,
+    js_chunks: &mut ArrayHashMap<&[u8], Chunk>,
+    entry_point_to_js_chunk_idx: &[u32],
+) {
+    let parse_graph = c.parse_graph();
+    let css_js_stubs = &parse_graph.css_js_stubs;
+    let files_live = &c.graph.files_live;
+    let entry_bits = c.graph.files.items_entry_bits();
+    let entry_points_len = c.graph.entry_points.len();
+    let entry_source_indices = c.graph.entry_points.items_source_index();
+    let entry_point_kinds = c.graph.files.items_entry_point_kind();
+    let all_parts = c.graph.ast.items_parts();
+    let all_import_records = c.graph.ast.items_import_records();
+    let hold = |chunk: &mut Chunk, stub: IndexInt| {
+        let entry = bun_core::handle_oom(chunk.files_with_parts_in_chunk.get_or_put(stub));
+        if !entry.found_existing {
+            *entry.value_ptr = AtomicUsize::new(0);
+        }
+    };
+    // The chunks of `file` hold a copy of `stub`. With `reads` false, only those that load the stylesheet, as before.
+    let mut lead = |file: IndexInt, stub: IndexInt, reads: bool| {
+        let Some(stylesheet) = css_js_stubs.stylesheet_of(stub) else {
+            return;
+        };
+        let loads = &entry_bits[stylesheet as usize];
+        if c.graph.code_splitting {
+            if (reads || loads.has_intersection(&entry_bits[file as usize]))
+                && let Some(chunk_index) =
+                    js_chunks.get_index(&entry_bits[file as usize].bytes(entry_points_len))
+            {
+                hold(&mut js_chunks.values_mut()[chunk_index], stub);
+            }
+            return;
+        }
+        let mut entry_ids = entry_bits[file as usize].iterator::<true, true>();
+        while let Some(entry_id) = entry_ids.next() {
+            let chunk_index = entry_point_to_js_chunk_idx[entry_id];
+            if (reads || loads.is_set(entry_id)) && chunk_index != u32::MAX {
+                hold(&mut js_chunks.values_mut()[chunk_index as usize], stub);
+            }
+        }
+    };
+
+    // (file, stub): an `import`, `require()` or unsplit `import()` of the class names. These and the dependencies below are the edges of `for_each_edge` that lead to a stub.
+    let mut imports: Vec<(IndexInt, IndexInt)> = Vec::new();
+    let mut is_read = vec![false; css_js_stubs.len()];
+    for source_index in c.graph.reachable_files.iter() {
+        let file = source_index.get();
+        if !files_live.is_set(file as usize)
+            || parse_graph.css_asts[file as usize].is_some()
+            || css_js_stubs.stylesheet_of(file).is_some()
+        {
+            continue;
+        }
+        let records = all_import_records[file as usize].as_slice();
+        let parts_live = &c.graph.parts_live[file as usize];
+        for (part_index, part) in all_parts[file as usize].as_slice().iter().enumerate() {
+            let is_live = parts_live.is_set(part_index);
+            for &record_id in part.import_record_indices.slice() {
+                let record = &records[record_id as usize];
+                if record.source_index.is_valid()
+                    && (record.kind == bun_ast::ImportKind::Stmt || is_live)
+                    && css_js_stubs
+                        .stylesheet_of(record.source_index.get())
+                        .is_some()
+                    && !c.is_external_dynamic_import(record, file)
+                {
+                    imports.push((file, record.source_index.get()));
+                }
+            }
+            if !is_live {
+                continue;
+            }
+            // A live part names a class name or calls the wrapper of the class names: its chunk needs them, also when a fold of small chunks moved the file to a chunk that does not load the stylesheet.
+            for dependency in part.dependencies.iter() {
+                let stub = dependency.source_index.get();
+                if let Some(index) = css_js_stubs.index_of(stub) {
+                    is_read[index] = true;
+                    lead(file, stub, true);
+                }
+            }
+        }
+    }
+    for (file, stub) in imports {
+        // The chunk printed a copy of the class names where it imports the stylesheet, whatever read them. With no reader but a split `import()`, nothing printed them: only the chunk of the `import()` holds them.
+        let index = css_js_stubs.index_of(stub).expect("unreachable");
+        if is_read[index]
+            || entry_point_kinds[stub as usize] != crate::EntryPoint::Kind::DynamicImport
+        {
+            lead(file, stub, false);
+        }
+    }
+
+    // No file leads to the class names in two chunks: the chunk of an `import()` of the stylesheet, and the chunk of an entry point that exports class names when its file is in another chunk.
+    let flags = c.graph.meta.items_flags();
+    let resolved_exports = c.graph.meta.items_resolved_exports();
+    let export_aliases = c.graph.meta.items_sorted_and_filtered_export_aliases();
+    let imports_to_bind = c.graph.meta.items_imports_to_bind();
+    for (entry_id, &entry_point) in entry_source_indices.iter().enumerate() {
+        let chunk_index = entry_point_to_js_chunk_idx[entry_id];
+        if chunk_index == u32::MAX || !files_live.is_set(entry_point as usize) {
+            continue;
+        }
+        let chunk = &mut js_chunks.values_mut()[chunk_index as usize];
+        if css_js_stubs.stylesheet_of(entry_point).is_some() {
+            hold(chunk, entry_point);
+            continue;
+        }
+        if chunk.files_with_parts_in_chunk.contains(&entry_point)
+            || flags[entry_point as usize].wrap == crate::WrapKind::Cjs
+        {
+            continue;
+        }
+        for alias in export_aliases[entry_point as usize].iter() {
+            let Some(export) = resolved_exports[entry_point as usize].get(alias) else {
+                continue;
+            };
+            let mut target = export.data.import_ref;
+            if let Some(import) =
+                imports_to_bind[export.data.source_index.get() as usize].get(&target)
+            {
+                target = import.data.import_ref;
+            }
+            if css_js_stubs.stylesheet_of(target.source_index()).is_some() {
+                hold(chunk, target.source_index());
+            }
+        }
+    }
 }
 
 #[inline(never)]
@@ -351,7 +468,10 @@ pub(crate) fn compute_chunks<'a>(
     if js_chunks.count() > 0 {
         for source_index in this.graph.reachable_files.slice() {
             if this.graph.files_live.is_set(source_index.get() as usize) {
-                if css_asts[source_index.get() as usize].is_none() {
+                // A stylesheet is in no JS chunk, and its JS stub is in the chunks that `add_class_names_to_chunks` finds.
+                if css_asts[source_index.get() as usize].is_none()
+                    && css_js_stubs.stylesheet_of(source_index.get()).is_none()
+                {
                     let entry_bits: &AutoBitSet = &file_entry_bits[source_index.get() as usize];
 
                     if this.graph.code_splitting {
@@ -397,16 +517,6 @@ pub(crate) fn compute_chunks<'a>(
                                 .insert(chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD);
                         }
 
-                        // The first file of a chunk stands for it (its name, its loader). The JS stub of a stylesheet does so only when the chunk has no other file.
-                        let first = js_chunk_entry.value_ptr.entry_point;
-                        if !first.is_entry_point()
-                            && css_js_stubs.stylesheet_of(first.source_index()).is_some()
-                            && css_js_stubs.stylesheet_of(source_index.get()).is_none()
-                        {
-                            js_chunk_entry.value_ptr.entry_point =
-                                chunk::EntryPoint::non_entry_point(source_index.get(), 0);
-                        }
-
                         let entry = js_chunk_entry
                             .value_ptr
                             .files_with_parts_in_chunk
@@ -447,6 +557,9 @@ pub(crate) fn compute_chunks<'a>(
                     }
                 }
             }
+        }
+        if css_js_stubs.len() > 0 {
+            add_class_names_to_chunks(this, &mut js_chunks, &*entry_point_to_js_chunk_idx);
         }
     }
 
@@ -661,21 +774,10 @@ pub(crate) fn compute_chunks<'a>(
             }
         }
 
-        // A chunk that holds only the class names of a stylesheet has a name of its own, from the name of the stylesheet.
-        let holds_only_class_names = !chunk.entry_point.is_entry_point()
-            && css_js_stubs
-                .stylesheet_of(chunk.entry_point.source_index())
-                .is_some();
-        let pathname = bun_fs::PathName::init(if holds_only_class_names {
-            sources[chunk.entry_point.source_index() as usize].path.text
-        } else {
-            output_paths[chunk.entry_point.entry_point_id() as usize].slice()
-        });
-        chunk.template.placeholder.name = if holds_only_class_names {
-            class_names_chunk_name(pathname.base)
-        } else {
-            pathname.base.to_vec().into_boxed_slice()
-        };
+        let pathname = bun_fs::PathName::init(
+            output_paths[chunk.entry_point.entry_point_id() as usize].slice(),
+        );
+        chunk.template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
         chunk.template.placeholder.ext = chunk.content.ext().to_vec().into_boxed_slice();
 
         if chunk.template.needs(PlaceholderField::Target) {

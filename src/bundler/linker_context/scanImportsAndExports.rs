@@ -436,11 +436,6 @@ pub(crate) fn scan_imports_and_exports(
         // are ignored for those modules.
         {
             let mut export_star_ctx: Option<ExportStarContext> = None;
-            let has_any_css_locals = this
-                .bundle
-                .has_any_css_locals
-                .load(core::sync::atomic::Ordering::Relaxed)
-                != 0;
             let _trace = perf::trace("Bundler.ResolveExportStarStatements");
             for source_index_ in &reachable {
                 let source_index = source_index_.get();
@@ -453,11 +448,7 @@ pub(crate) fn scan_imports_and_exports(
                 // generation is done here because at this point we know that the
                 // "ExportsKind" field has its final value and will not be changed.
                 if this.graph.ast.items_flags()[id].contains(AstFlags::HAS_LAZY_EXPORT) {
-                    this.generate_code_for_lazy_export(id as u32)?;
-                } else if has_any_css_locals {
-                    super::generate_code_for_lazy_export::report_composes_errors(
-                        this, log, id as u32,
-                    );
+                    this.generate_code_for_lazy_export(log, id as u32)?;
                 }
 
                 // Propagate exports for export star statements
@@ -663,7 +654,6 @@ pub(crate) fn scan_imports_and_exports(
         let (arena, code_splitting) = (this.graph.arena(), this.graph.code_splitting);
         this.entry_point_part_indices = vec![u32::MAX; this.graph.ast.len()];
 
-        let css_asts = &this.parse_graph().css_asts;
         let ast = this.graph.ast.split_mut();
         let meta = this.graph.meta.split_mut();
         let entry_point_kinds = this.graph.files.items_entry_point_kind();
@@ -1196,7 +1186,6 @@ pub(crate) fn scan_imports_and_exports(
                         }
                     } else if kind == ImportKind::Stmt
                         && export_kind == ExportsKind::EsmWithDynamicFallback
-                        && css_asts[other_id].is_none()
                     {
                         // This is an import of a module that has a dynamic export fallback
                         // object. In that case we need to depend on that object in case
@@ -1479,21 +1468,26 @@ impl DependencyWrapper<'_, '_> {
                 continue;
             }
 
-            // A stylesheet has no JS parts, and its JS stub runs nothing: neither gets a wrapper here. The flag of a stylesheet says that a wrapped file imports it or its stub.
-            if let Some(stylesheet) = self.css_js_stubs.stylesheet_of(source_index) {
-                if !self.flags[stylesheet as usize].did_wrap_dependencies {
-                    self.wrap_stack.push(stylesheet);
-                }
-                continue;
-            }
-
             // This module must be wrapped
-            let flag = &mut self.flags[source_index as usize];
-            if self.css_asts[source_index as usize].is_none() && flag.wrap == WrapKind::None {
+            if flag.wrap == WrapKind::None {
                 flag.wrap = match self.exports_kind[source_index as usize] {
                     ExportsKind::Cjs => WrapKind::Cjs,
                     _ => WrapKind::Esm,
                 };
+            }
+
+            // A stylesheet and its JS stubs were one file: a wrapper of one is a wrapper of all, and of the files that the stylesheet imports.
+            if let Some(stylesheet) = self.css_js_stubs.stylesheet_of(source_index) {
+                if !self.flags[stylesheet as usize].did_wrap_dependencies {
+                    self.wrap_stack.push(stylesheet);
+                }
+            } else if self.css_js_stubs.len() > 0 && self.css_asts[source_index as usize].is_some()
+            {
+                for stub in self.css_js_stubs.stubs_of(source_index) {
+                    if !self.flags[stub as usize].did_wrap_dependencies {
+                        self.wrap_stack.push(stub);
+                    }
+                }
             }
 
             for record in self.import_records[source_index as usize].as_slice() {

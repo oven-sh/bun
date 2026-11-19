@@ -71,6 +71,7 @@ impl Parser<'_> {
     pub(crate) fn process_table_block(
         &mut self,
         block_lines: &[VerbatimLine],
+        first_line: usize,
         col_count: u32,
     ) -> Result<(), ParserError> {
         if block_lines.len() < 2 {
@@ -90,11 +91,17 @@ impl Parser<'_> {
 
         if block_lines.len() > 2 {
             self.enter_block(BlockType::Tbody, 0, 0)?;
-            for vline in &block_lines[2..] {
+            for (index, vline) in block_lines.iter().enumerate().skip(2) {
+                if self.reuse.is_some() && self.reuse_row(first_line + index)? {
+                    continue;
+                }
                 self.tell_source(vline.beg, vline.end);
                 self.enter_block(BlockType::Tr, 0, 0)?;
                 self.process_table_row(*vline, false, col_count)?;
                 self.leave_block(BlockType::Tr, 0)?;
+                if self.reuse.is_some() {
+                    self.keep_row(first_line + index)?;
+                }
             }
             self.leave_block(BlockType::Tbody, 0)?;
         }
@@ -102,9 +109,32 @@ impl Parser<'_> {
     }
 
     fn tell_source(&mut self, beg: types::OFF, end: types::OFF) {
-        if self.track {
+        if self.tracks_document() {
             self.renderer.ptr.inline_source(beg, end);
         }
+    }
+
+    /// Where the `|` behind `start` is, or the end of the row.
+    #[inline]
+    pub(crate) fn table_cell_end(&self, row: &[u8], start: usize) -> usize {
+        let mut end = start;
+        while end < row.len() && row[end] != b'|' {
+            if row[end] == b'`' && self.flags.table_pipes_in_code {
+                let ticks = row[end..].iter().take_while(|&&c| c == b'`').count();
+                end += ticks;
+                if let Some(code_end) = self.find_code_span_end(row, end, ticks) {
+                    end = code_end + ticks;
+                }
+            } else if row[end] == b'\\'
+                && end + 1 < row.len()
+                && !(row[end + 1] == b'`' && self.flags.table_pipes_in_code)
+            {
+                end += 2;
+            } else {
+                end += 1;
+            }
+        }
+        end
     }
 
     pub(crate) fn process_table_row(
@@ -121,7 +151,12 @@ impl Parser<'_> {
             .count();
         let row_text = &row_text[..row_text.len() - blanks];
         // Who wants to know what is written gets the cells that are written.
-        let col_count = if self.track { u32::MAX } else { col_count };
+        let tracks_document = self.tracks_document();
+        let col_count = if tracks_document { u32::MAX } else { col_count };
+        let max_cells = match self.flags.table_extra_cells {
+            true => u32::MAX,
+            false => col_count,
+        };
         let mut start: usize = 0;
         let mut cell_index: u32 = 0;
 
@@ -130,16 +165,8 @@ impl Parser<'_> {
             start += 1;
         }
 
-        while start < row_text.len() && cell_index < col_count {
-            // Find cell end, skipping escaped chars and code spans
-            let mut end = start;
-            while end < row_text.len() && row_text[end] != b'|' {
-                if row_text[end] == b'\\' && end + 1 < row_text.len() {
-                    end += 2;
-                } else {
-                    end += 1;
-                }
-            }
+        while start < row_text.len() && cell_index < max_cells {
+            let end = self.table_cell_end(row_text, start);
 
             // Skip trailing pipe cell
             if end == row_text.len() && start == end {
@@ -161,7 +188,7 @@ impl Parser<'_> {
             } else {
                 BlockType::Td
             };
-            let align_data: u32 = if cell_index < types::TABLE_MAXCOLCOUNT {
+            let align_data: u32 = if cell_index < col_count.min(types::TABLE_MAXCOLCOUNT) {
                 self.table_alignments[cell_index as usize] as u32
             } else {
                 0
@@ -170,7 +197,7 @@ impl Parser<'_> {
             self.enter_block(cell_type, align_data, 0)?;
             if cell_beg < cell_end {
                 let cell_content = &row_text[cell_beg..cell_end];
-                if self.track {
+                if tracks_document {
                     self.inline_lines.clear();
                     self.inline_line = 0;
                     self.inline_lines.push((0, vline.beg + cell_beg as u32));
@@ -178,7 +205,7 @@ impl Parser<'_> {
                 // GFM: \| in table cells should be consumed at the table level,
                 // replacing \| with | before inline processing. This matters for
                 // code spans where backslash escapes don't apply.
-                if !self.track && bun_core::strings::index_of(cell_content, b"\\|").is_some() {
+                if !tracks_document && bun_core::strings::index_of(cell_content, b"\\|").is_some() {
                     let mut buf: Vec<u8> = Vec::new();
                     let unescaped: &[u8] = if buf.try_reserve(cell_content.len()).is_ok() {
                         let mut ci: usize = 0;
@@ -219,7 +246,7 @@ impl Parser<'_> {
         } else {
             BlockType::Td
         };
-        while !self.track && cell_index < col_count {
+        while !tracks_document && cell_index < col_count {
             let align_data: u32 = if cell_index < types::TABLE_MAXCOLCOUNT {
                 self.table_alignments[cell_index as usize] as u32
             } else {

@@ -26,6 +26,15 @@ for (const size of [4, 64, 4096]) {
         return stream.end();
       });
 
+      bench(`${label} - tokensStream write() + preview()`, () => {
+        const stream = Bun.markdown.tokensStream();
+        for (const chunk of chunks) {
+          stream.write(chunk);
+          stream.preview();
+        }
+        return stream.end();
+      });
+
       bench(`${label} - Bun.markdown.html of the text so far`, () => {
         let text = "";
         for (const chunk of chunks) Bun.markdown.html((text += chunk));

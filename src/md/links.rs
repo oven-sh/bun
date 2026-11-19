@@ -310,7 +310,7 @@ impl Parser<'_> {
         // Where the `[` is in the block's inline content.
         bracket: usize,
     ) -> Result<LabelLeave, parser::Error> {
-        if self.image_nesting_level > 0 {
+        if self.image_nesting_level > 0 && !self.tracks_content {
             // Inside image alt text: emit only text, no HTML tags
             Ok(LabelLeave::AltText)
         } else if is_image {

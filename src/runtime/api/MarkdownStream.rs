@@ -1,20 +1,18 @@
-//! `Bun.markdown.{html,ansi,render,react}Stream()`.
+//! `Bun.markdown.{html,ansi,render,react,tokens}Stream()`.
 
 use core::cell::Cell;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_core::strings;
 use bun_jsc::bindgen::{JsHeap, JsPayload as _, JsScope, JsWrapper, StringOrJsBytes};
-use bun_jsc::{
-    ErrorCode, JSGlobalObject, JSValue, JsError, JsResult, MarkedArgumentBuffer, bun_string_jsc,
-};
+use bun_jsc::{ErrorCode, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, bun_string_jsc};
 use bun_md::parser::ParserError;
 use bun_md::root as md;
 use bun_md::stream::{Part, Pass, Stream};
 
 use super::{
     Callbacks, Components, JsCallbackRenderer, ParseRenderer, ansi_theme, parser_err_to_js,
-    react_version,
+    react_version, token_options, tokens_to_js,
 };
 use crate::generated_bindgen::markdown_object::{
     AnsiTheme, Autolinks, ComponentOverrides, Headings, MarkdownOptions, ReactOptions,
@@ -48,6 +46,7 @@ enum Format {
     Ansi(md::ansi::AnsiStream<'static>),
     Callbacks,
     React { version: u8 },
+    Tokens,
 }
 
 pub(crate) fn html<'a>(
@@ -91,6 +90,14 @@ pub(crate) fn react<'a>(
     ))
 }
 
+pub(crate) fn tokens<'a>(
+    cx: &mut JsScope<'a>,
+    options: Option<&MarkdownOptions>,
+) -> JsResult<JSValue> {
+    let options = token_options(options);
+    Ok(create(cx.global(), options, Format::Tokens, None))
+}
+
 fn create(
     global: &JSGlobalObject,
     options: md::Options,
@@ -98,7 +105,7 @@ fn create(
     overrides: Option<JSValue>,
 ) -> JSValue {
     let this_value = MarkdownStream {
-        returns_arrays: matches!(format, Format::React { .. }),
+        returns_arrays: matches!(format, Format::React { .. } | Format::Tokens),
         status: Cell::new(Status::Open(Box::new(Document {
             stream: Stream::new(options),
             format,
@@ -171,9 +178,18 @@ impl MarkdownStream {
     }
 
     /// The transform is done, cancelled or has failed.
-    pub(crate) fn release(&self) {
+    pub(crate) fn release<'a>(&self, this_value: JsWrapper<'a, Self>, heap: &JsHeap<'a>) {
+        if !matches!(self.status.replace(Status::Closed), Status::Rendering) {
+            // SAFETY: emptying fields runs no JavaScript.
+            self.close(this_value, unsafe { heap.global() });
+        }
+    }
+
+    fn close(&self, this_value: JsWrapper<'_, Self>, global: &JSGlobalObject) {
         self.status.set(Status::Closed);
         self.size.store(0, Ordering::Relaxed);
+        js_MarkdownStream::overrides_set_cached(this_value.to_js(), global, JSValue::ZERO);
+        js_MarkdownStream::kept_set_cached(this_value.to_js(), global, JSValue::ZERO);
     }
 
     fn advance<'a>(
@@ -183,28 +199,32 @@ impl MarkdownStream {
         chunk: Option<StringOrJsBytes<'a>>,
         part: Part,
     ) -> JsResult<JSValue> {
-        if part != Part::Preview && !self.is_called_directly.get() {
-            let detached =
-                js_MarkdownStream::detach_unless_piping(this_value.to_js(), cx.global())?;
-            self.is_called_directly.set(detached == JSValue::TRUE);
-        }
-
         let mut document = match self.status.replace(Status::Rendering) {
             Status::Open(document) => document,
-            Status::Rendering => {
-                return Err(invalid_state(
-                    cx.global(),
-                    "A markdown stream cannot be used by its own callbacks",
-                ));
-            }
-            Status::Closed => {
-                self.status.set(Status::Closed);
-                return match part {
-                    Part::Preview => self.nothing(cx.global()),
-                    _ => Err(invalid_state(cx.global(), "The markdown stream has ended")),
+            unusable => {
+                let message = match unusable {
+                    Status::Rendering => "A markdown stream cannot be used by its own callbacks",
+                    _ => "The markdown stream has ended",
                 };
+                let is_closed = matches!(unusable, Status::Closed);
+                self.status.set(unusable);
+                if is_closed && part == Part::Preview {
+                    return self.nothing(cx.global());
+                }
+                let message = format_args!("{message}");
+                return Err(cx.global().err(ErrorCode::INVALID_STATE, message).throw());
             }
         };
+
+        if part != Part::Preview && !self.is_called_directly.get() {
+            match js_MarkdownStream::detach_unless_piping(this_value.to_js(), cx.global()) {
+                Ok(detached) => self.is_called_directly.set(detached == JSValue::TRUE),
+                Err(err) => {
+                    self.status.set(Status::Open(document));
+                    return Err(err);
+                }
+            }
+        }
 
         let pushed = document.push(&cx.heap, chunk, part);
         let global = cx.global();
@@ -217,9 +237,14 @@ impl MarkdownStream {
         let has_failed = part == Part::Finished && result.is_err();
         let was_released = matches!(self.status.replace(Status::Closed), Status::Closed);
         if part == Part::Rest || has_failed || was_released {
-            self.release();
-            js_MarkdownStream::overrides_set_cached(this_value.to_js(), global, JSValue::ZERO);
+            self.close(this_value, global);
         } else {
+            if result.is_err() {
+                document.stream.forget_kept();
+            }
+            if !document.stream.has_kept() {
+                js_MarkdownStream::kept_set_cached(this_value.to_js(), global, JSValue::ZERO);
+            }
             document.stream.release_rendered_text();
             let size = size_of::<Document>() + document.stream.memory_cost();
             self.status.set(Status::Open(document));
@@ -243,13 +268,6 @@ impl MarkdownStream {
             false => Ok(JSValue::js_empty_string(global)),
         }
     }
-}
-
-#[cold]
-fn invalid_state(global: &JSGlobalObject, message: &str) -> JsError {
-    global
-        .err(ErrorCode::INVALID_STATE, format_args!("{message}"))
-        .throw()
 }
 
 impl Document {
@@ -341,6 +359,13 @@ impl Format {
         let overrides = || {
             js_MarkdownStream::overrides_get_cached(this_value).expect("set until the stream ends")
         };
+        let uses_slots = pass.uses_slots();
+        let kept = || match js_MarkdownStream::kept_get_cached(this_value) {
+            Some(kept) => Ok(kept),
+            None if !uses_slots => Ok(JSValue::ZERO),
+            None => JSValue::create_empty_array(global, 0)
+                .inspect(|&kept| js_MarkdownStream::kept_set_cached(this_value, global, kept)),
+        };
         // The pass lends the renderer its own `HeadingIdTracker`.
         let heading_ids = false;
         match self {
@@ -363,9 +388,15 @@ impl Format {
                     ParseRenderer::init(global, text, marked_args, heading_ids, Some(*version))
                         .map_err(|_| global.throw_out_of_memory())?;
                 renderer.components = Components::from_array(global, overrides())?;
+                renderer.kept = Some(kept()?);
                 pass.render(&mut renderer).map_err(throw)?;
                 Ok(renderer.get_result())
             }),
+            Format::Tokens => {
+                let tokens = pass.render_to_tokens().map_err(throw)?;
+                // SAFETY: `text` is that of the pass.
+                unsafe { tokens_to_js(global, &tokens, text.as_ptr(), kept()?) }
+            }
         }
     }
 }

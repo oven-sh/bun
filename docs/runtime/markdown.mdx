@@ -7,11 +7,12 @@ description: Parse and render Markdown with Bun's built-in Markdown API, support
   **Unstable API** — This API is under active development and may change in future versions of Bun.
 </Callout>
 
-Bun includes a fast, built-in Markdown parser written in Rust. It supports GitHub Flavored Markdown (GFM) extensions and provides three APIs:
+Bun includes a fast, built-in Markdown parser written in Rust. It supports GitHub Flavored Markdown (GFM) extensions and provides these APIs:
 
 - `Bun.markdown.html()` — render Markdown to an HTML string
 - `Bun.markdown.render()` — render Markdown with custom callbacks for each element
 - `Bun.markdown.react()` — render Markdown to React JSX elements
+- `Bun.markdown.tokens()` — parse Markdown to a tree of plain objects
 
 To render a document that arrives in chunks, see [Streaming](#streaming).
 
@@ -54,23 +55,28 @@ const html = Bun.markdown.html("some markdown", {
 
 All available options:
 
-| Option                 | Default | Description                                                 |
-| ---------------------- | ------- | ----------------------------------------------------------- |
-| `tables`               | `true`  | GFM tables                                                  |
-| `strikethrough`        | `true`  | GFM strikethrough (`~~text~~`)                              |
-| `tasklists`            | `true`  | GFM task lists (`- [x] item`)                               |
-| `autolinks`            | `false` | Enable autolinks — see [Autolinks](#autolinks)              |
-| `headings`             | `false` | Heading IDs and autolinks — see [Heading IDs](#heading-ids) |
-| `hardSoftBreaks`       | `false` | Treat soft line breaks as hard breaks                       |
-| `wikiLinks`            | `false` | Enable `[[wiki links]]`                                     |
-| `underline`            | `false` | `__text__` renders as `<u>` instead of `<strong>`           |
-| `latexMath`            | `false` | Enable `$inline$` and `$$display$$` math                    |
-| `collapseWhitespace`   | `false` | Collapse whitespace in text                                 |
-| `permissiveAtxHeaders` | `false` | ATX headers without space after `#`                         |
-| `noIndentedCodeBlocks` | `false` | Disable indented code blocks                                |
-| `noHtmlBlocks`         | `false` | Disable HTML blocks                                         |
-| `noHtmlSpans`          | `false` | Disable inline HTML                                         |
-| `tagFilter`            | `false` | GFM tag filter for disallowed HTML tags                     |
+| Option                   | Default  | Description                                                          |
+| ------------------------ | -------- | -------------------------------------------------------------------- |
+| `tables`                 | `true`   | GFM tables                                                           |
+| `strikethrough`          | `true`   | GFM strikethrough (`~~text~~`)                                       |
+| `tasklists`              | `true`   | GFM task lists (`- [x] item`)                                        |
+| `autolinks`              | `false`  | Enable autolinks — see [Autolinks](#autolinks)                       |
+| `headings`               | `false`  | Heading IDs and autolinks — see [Heading IDs](#heading-ids)          |
+| `hardSoftBreaks`         | `false`  | Treat soft line breaks as hard breaks                                |
+| `wikiLinks`              | `false`  | Enable `[[wiki links]]`                                              |
+| `underline`              | `false`  | `__text__` renders as `<u>` instead of `<strong>`                    |
+| `latexMath`              | `false`  | Enable `$inline$` and `$$display$$` math                             |
+| `collapseWhitespace`     | `false`  | Collapse whitespace in text                                          |
+| `permissiveAtxHeaders`   | `false`  | ATX headers without space after `#`                                  |
+| `noIndentedCodeBlocks`   | `false`  | Disable indented code blocks                                         |
+| `noHtmlBlocks`           | `false`  | Disable HTML blocks                                                  |
+| `noSingleTilde`          | `false`  | Strikethrough needs two tildes                                       |
+| `noReferenceDefinitions` | `false`  | Treat `[label]: url` as plain text                                   |
+| `tablePipesInCode`       | `false`  | A pipe inside a code span does not end a table cell                  |
+| `tableExtraCells`        | `false`  | Keep cells beyond the number of header columns                       |
+| `maxNesting`             | no limit | Markers nested deeper than this are plain text. `100` for `tokens()` |
+| `noHtmlSpans`            | `false`  | Disable inline HTML                                                  |
+| `tagFilter`              | `false`  | GFM tag filter for disallowed HTML tags                              |
 
 #### Autolinks
 
@@ -384,6 +390,31 @@ const el = Bun.markdown.react("## Hello World", undefined, {
 
 ---
 
+## `Bun.markdown.tokens()`
+
+Parse Markdown to tokens in the format of `marked.lexer()` from [marked](https://marked.js.org) 15. The second argument takes the [parser options](#options).
+
+```ts
+Bun.markdown.tokens("# Hi *you*");
+// [
+//   {
+//     type: "heading", raw: "# Hi *you*", depth: 1, text: "Hi *you*",
+//     tokens: [
+//       { type: "text", raw: "Hi ", text: "Hi ", escaped: false },
+//       { type: "em", raw: "*you*", text: "you", tokens: [...] },
+//     ],
+//   },
+// ]
+```
+
+Bun follows CommonMark and GFM where marked does not. The other differences:
+
+- The `raw` strings of the top-level tokens add up to the input, including `\r\n` line endings.
+- A link reference definition is a `def` token. The array has no `links` property.
+- Bare URLs become links when you pass `autolinks: true`. Bun finds them with marked's rule, which accepts more URLs than `html()` does, such as `http://localhost:3000`.
+
+---
+
 ## Streaming
 
 Use a stream to render a document that arrives in chunks, such as the response of a language model or a large file. Each function takes the arguments of its non-streaming counterpart, without the input.
@@ -394,6 +425,7 @@ Use a stream to render a document that arrives in chunks, such as the response o
 | `Bun.markdown.ansiStream(theme?)`                 | `ansi()`    | `string`        |
 | `Bun.markdown.renderStream(callbacks?, options?)` | `render()`  | `string`        |
 | `Bun.markdown.reactStream(components?, options?)` | `react()`   | `JSX.Element[]` |
+| `Bun.markdown.tokensStream(options?)`             | `tokens()`  | `Token[]`       |
 
 ```ts
 const md = Bun.markdown.htmlStream();
@@ -431,7 +463,9 @@ finished.push(...md.end());
 root.render(<>{finished}</>);
 ```
 
-`preview()` renders the whole unfinished block on each call. With `renderStream()`, it also calls your callbacks.
+`reactStream()` and `tokensStream()` return the finished list items and table rows of an unfinished block as the same objects each time. React skips them, and you can use them as cache keys. The other streams render the whole unfinished block on each call, and `renderStream()` calls your callbacks for it.
+
+The `raw` of a token depends on the blank lines after it, so `tokensStream()` returns a token from `write()` when the next block starts.
 
 ### Pipe a `ReadableStream`
 

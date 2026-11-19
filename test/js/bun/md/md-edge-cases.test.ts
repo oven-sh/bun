@@ -2175,13 +2175,30 @@ test("a line does not look through the block quotes and list items that are open
 
 describe("permissive autolinks over emphasis markers", () => {
   test.each([
-    ["*a www.b.com/c*d e", "<p><em>a www.b.com/c</em>d e</p>\n"],
-    ["www.b.com/c*d e*", "<p>www.b.com/c<em>d e</em></p>\n"],
+    ["*a www.b.com/c*d e", '<p><em>a <a href="http://www.b.com/c">www.b.com/c</a></em>d e</p>\n'],
+    ["www.b.com/c*d e*", '<p><a href="http://www.b.com/c">www.b.com/c</a><em>d e</em></p>\n'],
+    ["**a https://b.com/c**", '<p><strong>a <a href="https://b.com/c">https://b.com/c</a></strong></p>\n'],
+    ["__https://b.com/c?d__", '<p><strong><a href="https://b.com/c?d">https://b.com/c?d</a></strong></p>\n'],
+    ["~~https://b.com/c~~", '<p><del><a href="https://b.com/c">https://b.com/c</a></del></p>\n'],
+    [
+      "*a www.b.c/d*www.x.y",
+      '<p><em>a <a href="http://www.b.c/d">www.b.c/d</a></em><a href="http://www.x.y">www.x.y</a></p>\n',
+    ],
     ["www.b.com/c*d*e", '<p><a href="http://www.b.com/c*d*e">www.b.com/c*d*e</a></p>\n'],
     ["www.b.com/c*d", '<p><a href="http://www.b.com/c*d">www.b.com/c*d</a></p>\n'],
   ])("%s", (input, expected) => {
     expect(Bun.markdown.html(input, { autolinks: true })).toBe(expected);
   });
+});
+
+test.each([
+  ["*a ", "www.a.b/c*", ""],
+  ["", "*www.a.b* ", ""],
+  ["www.a.b/c*", "a_a.", "a*"],
+])("permissive autolinks in %j%j… take linear time", (start, piece, end) => {
+  // Quadratic, this takes a release build seconds and a debug build minutes.
+  const input = start + Buffer.alloc(piece.length * 40_000, piece) + end;
+  expect(Bun.markdown.html(input, { autolinks: true }).length).toBeGreaterThan(input.length);
 });
 
 test("the language of fenced code behind a byte order mark", () => {
@@ -2190,4 +2207,68 @@ test("the language of fenced code behind a byte order mark", () => {
   expect(Bun.markdown.render(input, { code: (_, meta) => meta!.language! })).toBe("js");
   expect(Bun.markdown.react(input).props.children[0].props.language).toBe("js");
   expect(Bun.markdown.ansi(input)).toBe(Bun.markdown.ansi(input.slice(1)));
+});
+
+test("the first definition of a label wins over one in front of a setext heading", () => {
+  expect(Bun.markdown.html("[a]: /first\n\n[a]: /second\nHead\n===\n\n[a]\n")).toBe(
+    '<h1>Head</h1>\n<p><a href="/first">a</a></p>\n',
+  );
+});
+
+describe("options", () => {
+  const table = (head: string, row: string) =>
+    `<table>\n<thead>\n<tr>${head}</tr>\n</thead>\n<tbody>\n<tr>${row}</tr>\n</tbody>\n</table>\n`;
+  test.each([
+    [{ noSingleTilde: true }, "~a~ ~~b~~", "<p>~a~ <del>b</del></p>\n", "<p><del>a</del> <del>b</del></p>\n"],
+    [{ noReferenceDefinitions: true }, "[a]: /x\n\n[a]", "<p>[a]: /x</p>\n<p>[a]</p>\n", '<p><a href="/x">a</a></p>\n'],
+    [{ noReferenceDefinitions: true }, "[a]: /x\n===", "<h1>[a]: /x</h1>\n", "<p>===</p>\n"],
+    [
+      { tablePipesInCode: true },
+      "|a|b|\n|-|-|\n|`x|y`|`z|",
+      table("<th>a</th><th>b</th>", "<td><code>x|y</code></td><td>`z</td>"),
+      table("<th>a</th><th>b</th>", "<td>`x</td><td>y`</td>"),
+    ],
+    [
+      { tablePipesInCode: true },
+      "|`a|b`|\n|-|\n|c|",
+      table("<th><code>a|b</code></th>", "<td>c</td>"),
+      "<p>|<code>a|b</code>|\n|-|\n|c|</p>\n",
+    ],
+    [
+      { tableExtraCells: true },
+      "|a|\n|-:|\n|b|c|",
+      table('<th align="right">a</th>', '<td align="right">b</td><td>c</td>'),
+      table('<th align="right">a</th>', '<td align="right">b</td>'),
+    ],
+    [
+      { maxNesting: 1 },
+      "> - a",
+      "<blockquote>\n<p>- a</p>\n</blockquote>\n",
+      "<blockquote>\n<ul>\n<li>a</li>\n</ul>\n</blockquote>\n",
+    ],
+    [
+      { maxNesting: 1 },
+      "*a __b__ ~c~*",
+      "<p><em>a __b__ ~c~</em></p>\n",
+      "<p><em>a <strong>b</strong> <del>c</del></em></p>\n",
+    ],
+    [
+      { maxNesting: 1 },
+      "[![a](b)](c)",
+      '<p><a href="c">![a](b)</a></p>\n',
+      '<p><a href="c"><img src="b" alt="a" /></a></p>\n',
+    ],
+    [
+      { maxNesting: 0 },
+      "- *a* [b](c)",
+      "<p>- *a* [b](c)</p>\n",
+      '<ul>\n<li><em>a</em> <a href="c">b</a></li>\n</ul>\n',
+    ],
+  ])("%j: %j", (options, input, withOption, without) => {
+    expect([Bun.markdown.html(input, options), Bun.markdown.html(input)]).toEqual([withOption, without]);
+  });
+
+  test.each([-1, 1.5, "1"])("maxNesting: %p throws", maxNesting => {
+    expect(() => Bun.markdown.html("a", { maxNesting } as any)).toThrow(/maxNesting/);
+  });
 });

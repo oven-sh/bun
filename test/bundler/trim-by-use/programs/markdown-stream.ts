@@ -6,3 +6,5 @@ const writer = writable.getWriter();
 writer.write("a\n\nb");
 writer.close();
 for await (const part of readable) console.log(part);
+
+console.log(JSON.stringify([Bun.markdown.tokens("- *a*"), Bun.markdown.tokensStream().end("|a|\n|-|")]));

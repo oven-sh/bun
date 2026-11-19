@@ -85,7 +85,12 @@ macro_rules! parser_options {
             no_indented_code_blocks,
             no_html_blocks,
             no_html_spans,
-            tag_filter
+            tag_filter,
+            no_single_tilde,
+            no_reference_definitions,
+            table_pipes_in_code,
+            table_extra_cells,
+            max_nesting
         )
     };
     ($given:expr; $($flag:ident),*) => {{
@@ -244,6 +249,61 @@ pub(crate) fn html<'a>(
     let input_len = input.len();
     md::render_to_html_with_options(input, parser_options!(options))
         .map_err(|err| parser_err_to_js(cx.global(), err, input_len))
+}
+
+pub(crate) fn tokens<'a>(
+    cx: &mut JsScope<'a>,
+    input: JsBytes<'a>,
+    options: Option<&MarkdownOptions>,
+) -> JsResult<JSValue> {
+    let text = input.get(&cx.heap);
+    let (text_ptr, text_len) = (text.as_ptr(), text.len());
+    let tokens = bun_md::tokens::parse(text, token_options(options));
+    let global = cx.global();
+    let tokens = tokens.map_err(|err| parser_err_to_js(global, err, text_len))?;
+    // SAFETY: no JavaScript has run since `get`, and the frame keeps `input` alive.
+    unsafe { tokens_to_js(global, &tokens, text_ptr, JSValue::ZERO) }
+}
+
+fn token_options(given: Option<&MarkdownOptions>) -> md::Options {
+    // A token repeats the text of the tokens in it, so the depth multiplies the size.
+    const MAX_NESTING: u32 = 100;
+    let mut options = parser_options!(given);
+    options.max_nesting = given.and_then(|it| it.max_nesting).unwrap_or(MAX_NESTING);
+    options
+}
+
+/// # Safety
+/// `text` is what `tokens` have been parsed from.
+unsafe fn tokens_to_js(
+    global: &JSGlobalObject,
+    tokens: &bun_md::tokens::Tokens,
+    text: *const u8,
+    kept: JSValue,
+) -> JsResult<JSValue> {
+    unsafe extern "C" {
+        fn BunMarkdownTokens__create(
+            global: &JSGlobalObject,
+            ops: *const bun_md::tokens::Op,
+            n_ops: usize,
+            source: *const u8,
+            pool: *const u8,
+            kept: JSValue,
+        ) -> JSValue;
+    }
+    bun_jsc::from_js_host_call(global, || {
+        // SAFETY: the places in `ops` are in `text` and in `pool`. It runs no JavaScript.
+        unsafe {
+            BunMarkdownTokens__create(
+                global,
+                tokens.ops.as_ptr(),
+                tokens.ops.len(),
+                text,
+                tokens.pool.as_ptr(),
+                kept,
+            )
+        }
+    })
 }
 
 /// `Bun.markdown.render(text, callbacks, options?)` — render markdown with custom callbacks.
@@ -406,6 +466,9 @@ struct ParseRenderer<'a> {
     heading_tracker: md::helpers::HeadingIdTracker,
     components: Components,
     react_version: Option<u8>,
+    /// The array that has the slots of `keep` and `reuse`.
+    kept: Option<JSValue>,
+    last_block: JSValue,
 }
 
 unsafe extern "C" {
@@ -482,6 +545,24 @@ impl<'a> md::types::RendererImpl for ParseRenderer<'a> {
     fn heading_ids(&mut self) -> Option<&mut md::helpers::HeadingIdTracker> {
         Some(&mut self.heading_tracker)
     }
+    fn can_keep(&self) -> bool {
+        self.kept.is_some()
+    }
+    fn keep(&mut self, slot: u32) -> md::types::JsResult<()> {
+        let Some(kept) = self.kept else {
+            return Ok(());
+        };
+        kept.put_index(self.global_object, slot, self.last_block)
+            .map_err(js_to_parser_err)
+    }
+    fn reuse(&mut self, slot: u32) -> md::types::JsResult<()> {
+        let (Some(kept), Some(parent)) = (self.kept, self.stack.last()) else {
+            return Ok(());
+        };
+        kept.get_direct_index(self.global_object, slot)
+            .and_then(|block| js_array_push(parent.children, self.global_object, block))
+            .map_err(js_to_parser_err)
+    }
 }
 
 impl<'a> ParseRenderer<'a> {
@@ -501,6 +582,8 @@ impl<'a> ParseRenderer<'a> {
             heading_tracker: md::helpers::HeadingIdTracker::init(heading_ids),
             components: Components::default(),
             react_version,
+            kept: None,
+            last_block: JSValue::ZERO,
         };
         // Root entry — its children array becomes the return value
         let root_array =
@@ -738,6 +821,7 @@ impl<'a> ParseRenderer<'a> {
         if let Some(parent) = self.stack.last() {
             js_array_push(parent.children, g, obj)?;
         }
+        self.last_block = obj;
 
         if block_type == md::BlockType::H {
             self.heading_tracker.clear_after_heading();

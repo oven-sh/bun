@@ -49,6 +49,14 @@ pub struct Options {
     pub directives: bool,
     /// Strikethrough takes two tildes.
     pub no_single_tilde: bool,
+    /// `[label]: href` is text.
+    pub no_reference_definitions: bool,
+    /// A `|` in a code span does not end the cell of a table.
+    pub table_pipes_in_code: bool,
+    /// A row keeps the cells that the header has no column for.
+    pub table_extra_cells: bool,
+    /// How deep containers go, and how deep spans. What would be deeper is text.
+    pub max_nesting: u32,
     /// See `compat.rs`.
     pub micromark: bool,
     /// See `compat.rs`: what a parser that follows micromark need not do.
@@ -82,6 +90,10 @@ impl Default for Options {
             math_blocks: false,
             directives: false,
             no_single_tilde: false,
+            no_reference_definitions: false,
+            table_pipes_in_code: false,
+            table_extra_cells: false,
+            max_nesting: u32::MAX,
             micromark: false,
             micromark_to_the_letter: false,
             mdx: false,
@@ -115,6 +127,10 @@ impl Options {
         math_blocks: false,
         directives: false,
         no_single_tilde: false,
+        no_reference_definitions: false,
+        table_pipes_in_code: false,
+        table_extra_cells: false,
+        max_nesting: u32::MAX,
         micromark: false,
         micromark_to_the_letter: false,
         mdx: false,
@@ -153,6 +169,10 @@ impl Options {
             math_blocks: self.math_blocks,
             directives: self.directives,
             no_single_tilde: self.no_single_tilde,
+            no_reference_definitions: self.no_reference_definitions,
+            table_pipes_in_code: self.table_pipes_in_code,
+            table_extra_cells: self.table_extra_cells,
+            max_nesting: self.max_nesting,
             micromark: self.micromark,
             micromark_to_the_letter: self.micromark_to_the_letter,
             mdx: self.mdx,

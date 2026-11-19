@@ -18,6 +18,12 @@ expectType(Bun.markdown.reactStream(undefined, { reactVersion: 18 }).end()).is<
   ReturnType<typeof Bun.markdown.react>[]
 >();
 
+expectType(Bun.markdown.tokensStream({ maxNesting: 10 }).end()).is<Bun.markdown.Token[]>();
+for (const token of Bun.markdown.tokens("a", { noReferenceDefinitions: true })) {
+  if (token.type === "list") expectType(token.items[0]!.checked).is<boolean | undefined>();
+  if (token.type === "html" && token.block) expectType(token.pre).is<boolean>();
+}
+
 new Response(Bun.file("README.md").stream().pipeThrough(Bun.markdown.htmlStream()));
 for await (const text of Bun.stdin.stream().pipeThrough(Bun.markdown.ansiStream())) {
   expectType(text).is<string>();

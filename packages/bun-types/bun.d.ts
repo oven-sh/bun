@@ -1578,12 +1578,14 @@ declare module "bun" {
   /**
    * Markdown related APIs.
    *
-   * Parses and renders markdown with four output modes:
+   * Parses and renders markdown with these output modes:
    * - `html()` — render to an HTML string
    * - `ansi()` — render to an ANSI-colored string for terminals
    * - `render()` — render with custom callbacks for each element
    * - `react()` — parse to React-compatible JSX elements
-   * - `htmlStream()`, `ansiStream()`, `renderStream()`, `reactStream()` — the same for a document that arrives in chunks
+   * - `tokens()` — parse to a tree of plain objects
+   * - `htmlStream()`, `ansiStream()`, `renderStream()`, `reactStream()`, `tokensStream()` — the same for a document
+   *   that arrives in chunks
    *
    * Supports GFM extensions (tables, strikethrough, task lists, autolinks) and
    * component overrides to replace default HTML tags with custom components.
@@ -1639,6 +1641,19 @@ declare module "bun" {
       noIndentedCodeBlocks?: boolean;
       /** Disable HTML blocks. Default: `false`. */
       noHtmlBlocks?: boolean;
+      /** Strikethrough needs two tildes, so `~text~` stays plain text. Default: `false`. */
+      noSingleTilde?: boolean;
+      /** Treat `[label]: url` as plain text, and with it all reference links. Default: `false`. */
+      noReferenceDefinitions?: boolean;
+      /** A `|` inside a code span does not end a table cell. Default: `false`. */
+      tablePipesInCode?: boolean;
+      /** Keep the cells of a table row that has more cells than the header. GFM drops them. Default: `false`. */
+      tableExtraCells?: boolean;
+      /**
+       * How deep lists and block quotes nest, how deep emphasis nests, and how deep links and images nest. Markers
+       * beyond that depth are plain text. Default: `100` for `tokens()` and `tokensStream()`, otherwise no limit.
+       */
+      maxNesting?: number;
       /** Disable inline HTML spans. Default: `false`. */
       noHtmlSpans?: boolean;
       /**
@@ -2073,6 +2088,65 @@ declare module "bun" {
       options?: ReactOptions,
     ): import("./jsx.d.ts").JSX.Element;
 
+    /** A node of the tree that {@link tokens} returns. */
+    type Token =
+      | { type: "space" | "hr" | "br"; raw: string }
+      | { type: "code"; raw: string; text: string; lang?: string; codeBlockStyle?: "indented" }
+      | { type: "heading"; raw: string; depth: number; text: string; tokens: Token[]; id?: string }
+      | { type: "paragraph" | "blockquote" | "em" | "strong" | "del"; raw: string; text: string; tokens: Token[] }
+      | { type: "list"; raw: string; ordered: boolean; start: number | ""; loose: boolean; items: ListItemToken[] }
+      | ListItemToken
+      | { type: "html"; raw: string; text: string; block: true; pre: boolean }
+      | { type: "html"; raw: string; text: string; block: false; inLink: boolean; inRawBlock: boolean }
+      | { type: "def"; raw: string; tag: string; href: string; title: string | undefined }
+      | {
+          type: "table";
+          raw: string;
+          header: TableCellToken[];
+          align: Array<TableCellToken["align"]>;
+          rows: TableCellToken[][];
+        }
+      | { type: "text"; raw: string; text: string; tokens?: Token[]; escaped?: boolean }
+      | { type: "escape" | "codespan"; raw: string; text: string }
+      | { type: "link"; raw: string; href: string; title?: string | null; text: string; tokens: Token[] }
+      | { type: "image"; raw: string; href: string; title: string | null; text: string; tokens: Token[] }
+      | { type: "wikilink"; raw: string; target: string; text: string; tokens: Token[] };
+
+    interface ListItemToken {
+      type: "list_item";
+      raw: string;
+      task: boolean;
+      /** `undefined` unless `task` is `true`. */
+      checked: boolean | undefined;
+      loose: boolean;
+      text: string;
+      tokens: Token[];
+    }
+
+    interface TableCellToken {
+      text: string;
+      tokens: Token[];
+      header: boolean;
+      align: "left" | "center" | "right" | null;
+    }
+
+    /**
+     * Parse markdown to tokens in the format of `marked.lexer()` from marked 15.
+     *
+     * The `raw` strings of the top-level tokens add up to the input. Text is not escaped, and entities are not
+     * decoded. Pass `autolinks: true` to link bare URLs as marked does.
+     *
+     * @example
+     * ```ts
+     * Bun.markdown.tokens("# Hi");
+     * // [{ type: "heading", raw: "# Hi", depth: 1, text: "Hi", tokens: [{ type: "text", ... }] }]
+     * ```
+     */
+    export function tokens(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike,
+      options?: Options,
+    ): Token[];
+
     /**
      * Renders a markdown document that arrives in chunks.
      *
@@ -2101,7 +2175,10 @@ declare module "bun" {
        * Render the text that is still buffered as if the document ended here, without changing the stream. The next
        * chunk can change this output, so replace the previous preview with it instead of appending.
        *
-       * Each call takes time proportional to the size of the unfinished block. Empty after the stream has ended.
+       * `tokensStream()` and `reactStream()` return the finished list items and table rows of an unfinished block as
+       * the same objects each time, and do not parse them again. The other streams render the whole block on each call.
+       *
+       * Empty after the stream has ended.
        *
        * @throws `ERR_INVALID_STATE` when called from one of the stream's callbacks
        */
@@ -2177,6 +2254,13 @@ declare module "bun" {
       components?: ComponentOverrides,
       options?: ReactOptions,
     ): MarkdownStream<import("./jsx.d.ts").JSX.Element[]>;
+
+    /**
+     * Like {@link tokens}, for a document that arrives in chunks.
+     *
+     * The `raw` of a token depends on the blank lines after it, so `write()` returns a token when the next block starts.
+     */
+    export function tokensStream(options?: Options): MarkdownStream<Token[]>;
   }
 
   /**

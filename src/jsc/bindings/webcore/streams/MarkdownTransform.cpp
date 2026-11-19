@@ -53,7 +53,8 @@ NEVER_INLINE JSPromise* markdownStreamFlush(JSGlobalObject* globalObject, JSTran
 NEVER_INLINE void markdownStreamRelease(JSTransformStreamDefaultController* controller)
 {
     BUN_REMOVABLE_DEFINITION(Markdown, markdownStreamRelease);
-    markdownStreamOf(controller)->release();
+    auto* markdown = markdownStreamOf(controller);
+    markdown->release(markdown->globalObject());
 }
 
 // Errors both sides, and leaves the MarkdownStream open.

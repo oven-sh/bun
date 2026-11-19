@@ -62,6 +62,11 @@ const formats = {
     whole: (input: string) => JSON.stringify(markdown.react(input, { p: "section" } as any, options).props.children),
     join: (parts: unknown[][]) => JSON.stringify(parts.flat()),
   },
+  tokens: {
+    stream: () => markdown.tokensStream(options),
+    whole: (input: string) => JSON.stringify(markdown.tokens(input, options)),
+    join: (parts: unknown[][]) => JSON.stringify(parts.flat()),
+  },
 } as const;
 type Format = { stream(): Bun.markdown.MarkdownStream<any>; whole(input: string): string; join(parts: any[]): string };
 
@@ -114,7 +119,7 @@ describe.each(Object.entries(formats) as [string, Format][])("%s", (_, format) =
       },
     });
     const parts = await Array.fromAsync(source.pipeThrough(format.stream()));
-    expect(parts.map(part => part.length > 0)).toEqual([true, true, true, true]);
+    expect(parts.map(part => part.length > 0)).toEqual(Array(4).fill(true));
     expect(format.join(parts)).toBe(format.whole(input));
   });
 
@@ -509,6 +514,21 @@ describe("calls and pipes do not mix", () => {
     await expect(after.writable.getWriter().write("b")).rejects.toMatchObject(detached);
   });
 
+  test.each(["write", "end"] as const)("%s() in a callback of preview() leaves the sides alone", async method => {
+    const stream = markdown.renderStream({
+      paragraph(children) {
+        expect(() => stream[method]("x")).toThrow("A markdown stream cannot be used by its own callbacks");
+        return children;
+      },
+    });
+    const writer = stream.writable.getWriter();
+    await writer.write("a");
+    writer.releaseLock();
+    expect(stream.preview()).toBe("a");
+    stream.writable.close();
+    expect(await Array.fromAsync(stream.readable)).toEqual(["a"]);
+  });
+
   test("the calls go on working", () => {
     const stream = markdown.htmlStream();
     Bun.inspect(stream);
@@ -542,4 +562,106 @@ test("a callback cancels the readable", async () => {
   });
   await expect(stream.writable.getWriter().write("a\n\nb\n\nc")).rejects.toBeInstanceOf(TypeError);
   expect(stream.preview()).toBe("");
+});
+
+test("a cancelled stream lets go of its callbacks", async () => {
+  const streams = Array.from({ length: 100 }, () => markdown.renderStream({ paragraph: () => "", heading: () => "" }));
+  const functions = () => (Bun.gc(true), heapStats().objectTypeCounts.Function);
+  const before = functions();
+  await Promise.all(streams.map(stream => stream.readable.cancel()));
+  expect(before - functions()).toBeGreaterThan(150);
+  expect(streams).toHaveLength(100);
+});
+
+describe.each([
+  {
+    name: "tokensStream",
+    stream: (options?: Bun.markdown.Options) => markdown.tokensStream(options),
+    items: (list: any) => list.items,
+    rows: (table: any) => table.rows,
+    nested: (item: any) => item.tokens.at(-1),
+  },
+  {
+    name: "reactStream",
+    stream: (options?: Bun.markdown.Options) => markdown.reactStream(undefined, options),
+    items: (list: any) => list.props.children,
+    rows: (table: any) => table.props.children[1].props.children,
+    nested: (item: any) => item.props.children.at(-1),
+  },
+])("$name returns what is finished in an unfinished block as the same object", ({ stream, items, rows, nested }) => {
+  const same = (before: unknown[], after: unknown[]) => before.map((it, i) => it === after[i]);
+
+  test("list items", () => {
+    const md = stream();
+    md.write("- a\n- b\n- c");
+    const first = items(md.preview()[0]);
+    md.write("c\n- d");
+    const second = items(md.preview()[0]);
+    expect(same(first, second)).toEqual([true, false, false]);
+    Bun.gc(true);
+    expect(same(second, items(md.end("\n")[0]))).toEqual([true, true, false, false]);
+  });
+
+  test("nested list items", () => {
+    const md = stream();
+    md.write("> 1. a\n>    - b\n>    - c\n>    - d");
+    const inner = () => items(nested(items(nested(md.preview()[0]))[0]));
+    expect(same(inner(), inner())).toEqual([true, false, false]);
+  });
+
+  test("table rows", () => {
+    const md = stream();
+    md.write("|a|\n|-|\n|1|\n|2|\n|3");
+    const first = rows(md.preview()[0]);
+    expect(same(first, rows(md.write("|\n\nb")[0] ?? md.preview()[0]))).toEqual([true, true, false]);
+  });
+
+  test.each([
+    ["the list turns loose", "- a\n- b\n", "\n- c", undefined],
+    ["a definition follows", "- [x]\n- b\n", "- [x]: /y", undefined],
+    ["it has a heading with an id", "- # a\n- b\n", "- # a", { headings: true }],
+  ])("not when %s", (_, start, rest, options) => {
+    const md = stream(options);
+    md.write(start);
+    const [first] = items(md.preview()[0]);
+    md.write(rest);
+    expect(items(md.preview()[0])[0]).not.toBe(first);
+    expect(md.preview()).toEqual(stream(options).end(start + rest));
+  });
+
+  test("not in the next block", () => {
+    const md = stream();
+    md.write("- a\n- b\n");
+    md.preview();
+    md.write("* c\n* d\n");
+    expect(md.preview()).toEqual(stream().end("* c\n* d\n"));
+  });
+});
+
+test.each([
+  [
+    ["# a\n", "\n", " ", "b"],
+    [[], [], [], ["# a\n\n"], [" b"]],
+  ],
+  [
+    ["a\n\n", "\n", "b"],
+    [[], [], ["a", "\n\n\n"], ["b"]],
+  ],
+  [
+    ["a\n", "# b\n", "c"],
+    [[], ["a\n"], ["# b\n"], ["c"]],
+  ],
+  [
+    ["\n", "\n", "a"],
+    [[], [], [], ["\n\n", "a"]],
+  ],
+  [
+    ["> a\n\n", "\n"],
+    [[], [], ["> a", "\n\n\n"]],
+  ],
+])("a token waits for the end of the empty lines behind it: %j", (chunks, expected) => {
+  const stream = markdown.tokensStream();
+  expect([...chunks.map(chunk => stream.write(chunk)), stream.end()].map(it => it.map(token => token.raw))).toEqual(
+    expected,
+  );
 });

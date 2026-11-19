@@ -123,6 +123,11 @@ pub(crate) struct Parser<'a> {
 
     // `RendererImpl::wants_source`
     pub(crate) track: bool,
+    // `RendererImpl::wants_inline_content`
+    pub(crate) tracks_content: bool,
+    // How many emphasis and strikethrough spans are open
+    pub(crate) emph_depth: u32,
+    pub(crate) reuse: Option<Box<crate::stream::Reuse>>,
     // What `container_source` is told, for each container opener and closer
     // in `blocks`, in their order.
     pub(crate) container_sources: Vec<(OFF, OFF, u32)>,
@@ -270,6 +275,7 @@ impl<'a> Parser<'a> {
         rend: Renderer<'a>,
     ) -> Parser<'a> {
         let track = rend.ptr.wants_source();
+        let tracks_content = track && rend.ptr.wants_inline_content();
         let mut p = Parser {
             text,
             size,
@@ -278,11 +284,7 @@ impl<'a> Parser<'a> {
             renderer: rend,
             image_nesting_level: 0,
             link_nesting_level: 0,
-            code_indent_offset: if flags.no_indented_code_blocks {
-                u32::MAX
-            } else {
-                4
-            },
+            code_indent_offset: flags.code_indent_offset(),
             mark_char_map: [0; 256],
             marks: Vec::new(),
             marks_seen: 0,
@@ -316,6 +318,9 @@ impl<'a> Parser<'a> {
             max_ref_def_output: max_ref_def_output(u64::from(size)),
             stack_check: StackCheck::init(),
             track,
+            tracks_content,
+            emph_depth: 0,
+            reuse: None,
             container_sources: Vec::new(),
             line_beg: 0,
             is_directive_end: false,
@@ -331,6 +336,12 @@ impl<'a> Parser<'a> {
     }
 
     // All owned buffers are `Vec<_>`, so `Drop` is automatic — no explicit impl.
+
+    /// The consumer reads what is written in the document by itself.
+    #[inline]
+    pub(crate) fn tracks_document(&self) -> bool {
+        self.track && !self.tracks_content
+    }
 
     #[inline]
     pub(crate) fn ch(&self, off: OFF) -> u8 {
@@ -406,8 +417,7 @@ impl<'a> Parser<'a> {
     // blocks.rs — impl Parser:
     //   process_doc, first_line_beg, read_lines, n_finished_blocks, close_blocks, render_blocks,
     //   analyze_line, process_line, start_new_block,
-    //   add_line_to_current_block, end_current_block,
-    //   consume_ref_defs_from_current_block
+    //   add_line_to_current_block, end_current_block
     //
     // containers.rs — impl Parser:
     //   push_container, push_container_block, enter_child_containers,

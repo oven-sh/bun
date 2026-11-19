@@ -255,33 +255,45 @@ impl Parser<'_> {
         false
     }
 
+    /// Returns how many of `container_sources` are used up.
     pub(crate) fn process_blocks(
         &mut self,
         blocks: &[BlockHeader],
-        mut lines: &[VerbatimLine],
-    ) -> Result<(), parser::Error> {
+        lines: &[VerbatimLine],
+    ) -> Result<usize, parser::Error> {
         // One for each list and block quote that the block is in
         let mut is_loose = SmallVec::<[bool; 32]>::new();
-        let mut next_container_source: usize = 0;
+        let mut next = BlockPlace::default();
 
-        for &BlockHeader {
+        while let Some(&BlockHeader {
             block_type,
             flags,
             data,
             n_lines,
-        } in blocks
+        }) = blocks.get(next.block)
         {
-            let block_lines;
-            (block_lines, lines) = lines.split_at(n_lines as usize);
+            if block_type == BlockType::Li
+                && flags & types::BLOCK_CONTAINER_OPENER != 0
+                && self.reuse.is_some()
+                && let Some(behind) = self.reuse_item(next, is_loose.last() == Some(&true))?
+            {
+                next = behind;
+                continue;
+            }
+
+            let first_line = next.line;
+            next.block += 1;
+            next.line += n_lines as usize;
+            let block_lines = &lines[first_line..next.line];
 
             if self.track
                 && flags & (types::BLOCK_CONTAINER_OPENER | types::BLOCK_CONTAINER_CLOSER) != 0
             {
-                if let Some(&(beg, end, indent)) = self.container_sources.get(next_container_source)
+                if let Some(&(beg, end, indent)) = self.container_sources.get(next.container_source)
                 {
                     self.renderer.ptr.container_source(beg, end, indent);
                 }
-                next_container_source += 1;
+                next.container_source += 1;
             }
 
             // Handle container openers/closers
@@ -305,6 +317,9 @@ impl Parser<'_> {
                     is_loose.pop();
                 }
                 self.leave_block(block_type, data)?;
+                if block_type == BlockType::Li && self.reuse.is_some() {
+                    self.keep_item(next)?;
+                }
                 continue;
             }
 
@@ -327,15 +342,35 @@ impl Parser<'_> {
                 BlockType::Hr => {}
                 BlockType::Code => self.process_code_block(block_lines, data, flags)?,
                 BlockType::Html => self.process_html_block(block_lines)?,
-                BlockType::Table => self.process_table_block(block_lines, data)?,
+                BlockType::Table => self.process_table_block(block_lines, first_line, data)?,
+                BlockType::P if self.tracks_content => {
+                    self.process_paragraph_as_written(block_lines)?
+                }
                 BlockType::P => self.process_leaf_block(block_lines, true)?,
-                BlockType::H => self.process_leaf_block(block_lines, true)?,
+                BlockType::H => {
+                    if let Some(reuse) = &mut self.reuse {
+                        reuse.n_headings += 1;
+                    }
+                    if self.tracks_content && flags & types::BLOCK_SETEXT_HEADER != 0 {
+                        self.process_paragraph_as_written(block_lines)?
+                    } else {
+                        self.process_leaf_block(block_lines, true)?
+                    }
+                }
                 _ => self.process_leaf_block(block_lines, false)?,
             }
             if !is_in_tight_list || block_type != BlockType::P {
                 self.leave_block(block_type, data)?;
             }
         }
-        Ok(())
+        Ok(next.container_source)
     }
+}
+
+/// An index in `Parser::blocks`, and those in `block_lines` and `container_sources` that go with it.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct BlockPlace {
+    pub(crate) block: usize,
+    pub(crate) line: usize,
+    pub(crate) container_source: usize,
 }

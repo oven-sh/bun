@@ -31,6 +31,11 @@ const options = {
   noHtmlBlocks: { type: flag, altNames: ["no_html_blocks"] },
   noHtmlSpans: { type: flag, altNames: ["no_html_spans"] },
   tagFilter: { type: flag, altNames: ["tag_filter"] },
+  noSingleTilde: flag,
+  noReferenceDefinitions: flag,
+  tablePipesInCode: flag,
+  tableExtraCells: flag,
+  maxNesting: b.u32.optional,
 } as const;
 export const MarkdownOptions = b.dictionary(options, { allowArray: true });
 export const ReactOptions = b.dictionary({ reactVersion: b.f64.otherAsNull, ...options }, { allowArray: true });
@@ -123,6 +128,8 @@ export const MarkdownStream = b.class({
   internalFields: {
     /** The `RenderCallbacks` or `ComponentOverrides`, as an array. */
     overrides: b.any,
+    /** An array of the list items and table rows that a later call returns again. */
+    kept: b.any,
     transform: b.cell("WebCore::JSTransformStream", "streams/JSTransformStream.h"),
   },
   proto: {
@@ -133,7 +140,7 @@ export const MarkdownStream = b.class({
     writable: { getter: b.any.returning("WritableStream"), passThis: true, ...js },
   },
   calledFromCpp: {
-    release: {},
+    release: { passThis: true, capability: "heap" },
   },
   calledFromRust: {
     readableSide: { args: { isCalledDirectly: b.bool }, returns: b.any, throws: true },
@@ -163,6 +170,7 @@ export const markdown = b.namespace({
     length: 3,
     ...js,
   },
+  tokens: { args: { input, options: MarkdownOptions.otherAsNull }, returns: b.any.returning("Array"), expected, ...js },
   htmlStream: { args: { options: MarkdownOptions.otherAsNull }, ...streams("html") },
   ansiStream: { args: { theme: AnsiTheme.default({}) }, ...streams("ansi") },
   renderStream: {
@@ -173,4 +181,5 @@ export const markdown = b.namespace({
     args: { components: ComponentOverrides.otherAsNull, options: ReactOptions.otherAsNull },
     ...streams("react"),
   },
+  tokensStream: { args: { options: MarkdownOptions.otherAsNull }, ...streams("tokens") },
 });

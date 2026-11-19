@@ -85,8 +85,8 @@ describe("Buffer hex encoding — @Vector(16, u8) gated by enableSIMD", () => {
 
 describe("Buffer hex decoding — Highway runtime dispatch", () => {
   const units = Array.from({ length: 256 }, (_, unit) => unit);
-  // In a whole vector, in the narrower ones after it, and in what is left.
-  const places = [40, 41, 130, 161, 176, 177];
+  // In both halves of a whole block, in those of the narrower ones after it, and in what is left.
+  const places = [8, 9, 116, 117, 130, 151, 161, 170, 176, 177];
   const zeros = Buffer.alloc(180, "0").toString();
 
   test.each([0, 0x3000])("every lower byte, plus %i", upper => {
@@ -235,6 +235,16 @@ describe("String search — Highway memMem/indexOfChar", () => {
     const everywhere = (length: number) => Array.from({ length }, (_, at) => at);
     const found = lengths.map(length => everywhere(length).map(at => Buffer.alloc(length, 1).fill(0, at).indexOf(0)));
     expect(found).toEqual(lengths.map(everywhere));
+  });
+
+  test("a byte up to the last readable one", () => {
+    // What a buffer can still grow into is not readable.
+    const bytes = Buffer.from(new ArrayBuffer(65_536, { maxByteLength: 131_072 }));
+    bytes[65_535] = 1;
+    const lengths = Array.from({ length: 700 }, (_, length) => length + 1);
+    const found = lengths.map(length => [bytes.indexOf(1, -length), bytes.indexOf(2, -length)]);
+    expect(found).toEqual(lengths.map(() => [65_535, -1]));
+    expect(Bun.indexOfLine(bytes, bytes.length)).toBe(-1);
   });
 
   test("indexOf long string", () => {
@@ -499,9 +509,8 @@ describe("JPEG codec: Highway runtime dispatch", () => {
 });
 
 describe("PNG codec: Highway runtime dispatch", () => {
-  // src/jsc/bindings/highway_png.cpp is compiled several times over, on x64 for SSSE3, SSE4 and AVX2. A machine with
-  // AVX2 runs that one alone, and any file can reach the others on a machine without. An emulated Nehalem runs SSSE3:
-  // it lacks the AES that Highway wants for SSE4.
+  // src/jsc/bindings/highway_png.cpp is compiled several times over, on x64 for SSE4 and AVX2. A machine with AVX2 runs
+  // that one alone, and any file can reach the other on a machine without.
   // Rows 9 and 21 begin with 96 bytes that repeat a pixel, or are such bytes. Below them Paeth has a shorter way, which
   // it looks for 64 bytes in and leaves where they end.
   const someFilterTypes = [0, 1, 2, 3, 4, 4, 3, 2, 1, 0, 4, 4];

@@ -263,12 +263,20 @@ static HWY_INLINE size_t IndexOfCharInHalves(Half half, const uint8_t* HWY_RESTR
         return i;
     } else {
         if (len < N) return IndexOfCharInHalves(hn::Half<Half>(), haystack, len, needle);
-        const hn::Twice<Half> d;
-        const auto halves = hn::Combine(d, hn::LoadU(half, haystack + len - N), hn::LoadU(half, haystack));
-        const intptr_t found = hn::FindFirstTrue(d, hn::Eq(halves, hn::Set(d, needle)));
-        if (found < 0) return len;
-        const size_t lane = static_cast<size_t>(found);
-        return lane < N ? lane : len - (2 * N - lane);
+        const auto first = hn::LoadU(half, haystack), last = hn::LoadU(half, haystack + len - N);
+        if constexpr (N < 16) {
+            const hn::Twice<Half> d;
+            const intptr_t found = hn::FindFirstTrue(d, hn::Eq(hn::Combine(d, last, first), hn::Set(d, needle)));
+            if (found < 0) return len;
+            const size_t lane = static_cast<size_t>(found);
+            return lane < N ? lane : len - (2 * N - lane);
+        } else {
+            // Combined, this is a VINSERTI128 from memory, for which QEMU before 10.0.4 reads 32 bytes instead of 16.
+            intptr_t found = hn::FindFirstTrue(half, hn::Eq(first, hn::Set(half, needle)));
+            if (found >= 0) return static_cast<size_t>(found);
+            found = hn::FindFirstTrue(half, hn::Eq(last, hn::Set(half, needle)));
+            return found < 0 ? len : len - N + static_cast<size_t>(found);
+        }
     }
 }
 
@@ -293,6 +301,8 @@ size_t IndexOfCharImpl(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len
 #if HWY_MEM_OPS_MIGHT_FAULT
         return IndexOfCharInHalves(hn::Half<D8>(), haystack, haystack_len, needle);
 #else
+        // A masked load from an address that is not mapped takes hundreds of cycles.
+        if (haystack_len == 0) return 0;
         const auto matches = hn::Eq(broadcasted, hn::LoadN(d, haystack, haystack_len));
         const intptr_t pos = hn::FindFirstTrue(d, hn::And(matches, hn::FirstN(d, haystack_len)));
         return pos < 0 ? haystack_len : static_cast<size_t>(pos);

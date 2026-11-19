@@ -95,7 +95,8 @@ enum Phase {
     Hello,
     /// HELLO was accepted with this; the reply to SELECT is due. Boxed to keep the state small.
     Select(Box<RESPValue>),
-    Ready,
+    /// The replies to one SUBSCRIBE for each of these come first: a refusal costs only its own channel.
+    Ready { restoring: VecDeque<Name> },
     /// The socket is closing, or the dial gave none: [`Client::lost`] is due.
     Ending(End),
     /// A dial is due, from the retry timer or from `connect()`.
@@ -125,8 +126,6 @@ enum InFlight<P> {
     Plain(Expect, P),
     /// Its first acknowledgement answers it: a count would shift every later reply once a peer sent fewer.
     Ack(Box<Request<P>>),
-    /// So many SUBSCRIBEs that no script waits for, one for each channel: a refusal costs only its own.
-    Restore(usize),
 }
 
 const _: () = assert!(size_of::<InFlight<usize>>() == 2 * size_of::<usize>());
@@ -140,11 +139,10 @@ struct Request<P> {
 }
 
 impl<P> InFlight<P> {
-    fn into_promise(self) -> Option<P> {
+    fn into_promise(self) -> P {
         match self {
-            InFlight::Plain(_, promise) => Some(promise),
-            InFlight::Ack(request) => Some(request.promise),
-            InFlight::Restore(_) => None,
+            InFlight::Plain(_, promise) => promise,
+            InFlight::Ack(request) => request.promise,
         }
     }
 }
@@ -250,6 +248,11 @@ pub enum Event<P> {
     },
     /// The server cannot take the handshake now: for [`Client::abandon_handshake`], else as [`Event::Broken`].
     Busy(Box<[u8]>),
+    /// The server does not send to `channel` on this connection.
+    NotRestored {
+        channel: Name,
+        message: Box<[u8]>,
+    },
 }
 
 /// Whom an acknowledgement answers.
@@ -366,7 +369,7 @@ impl<P> Client<P> {
     }
 
     pub fn is_connected(&self) -> bool {
-        matches!(self.phase(), Some(Phase::Ready))
+        matches!(self.phase(), Some(Phase::Ready { .. }))
     }
 
     pub fn is_dialing(&self) -> bool {
@@ -424,7 +427,7 @@ impl<P> Client<P> {
     }
 
     pub fn has_pending_commands(&self) -> bool {
-        !self.in_flight.is_empty() || !self.queue.is_empty() || self.buffered_amount() > 0
+        !self.nothing_is_in_flight() || !self.queue.is_empty() || self.buffered_amount() > 0
     }
 
     pub fn buffered_amount(&self) -> usize {
@@ -469,7 +472,7 @@ impl<P> Client<P> {
             Phase::Dialing
             | Phase::Hello
             | Phase::Select(_)
-            | Phase::Ready
+            | Phase::Ready { .. }
             | Phase::Ending(End::Policy | End::Final) => {}
         }
     }
@@ -483,7 +486,7 @@ impl<P> Client<P> {
         let close = match active.phase {
             Phase::Ending(End::Final | End::Failed) => return Close::Nothing,
             Phase::Ending(End::Policy | End::Requested) => Close::Nothing,
-            Phase::Dialing | Phase::Hello | Phase::Select(_) | Phase::Ready => Close::Socket,
+            Phase::Dialing | Phase::Hello | Phase::Select(_) | Phase::Ready { .. } => Close::Socket,
             Phase::Backoff => Close::Retry(Attempt(())),
         };
         active.phase = Phase::Ending(End::Requested);
@@ -586,7 +589,7 @@ impl<P> Client<P> {
             Phase::Dialing
             | Phase::Hello
             | Phase::Select(_)
-            | Phase::Ready
+            | Phase::Ready { .. }
             | Phase::Ending(End::Policy | End::Requested | End::Final) => {
                 active.phase = Phase::Ending(End::Failed);
                 Some(self.take_pending())
@@ -612,7 +615,7 @@ impl<P> Client<P> {
     /// The TLS session broke. `Some` if that counts as a lost connection and not as a failed handshake.
     #[must_use]
     pub fn session_broke(&mut self) -> Option<Vec<P>> {
-        let said_hello = matches!(self.phase(), Some(Phase::Select(_) | Phase::Ready));
+        let said_hello = matches!(self.phase(), Some(Phase::Select(_) | Phase::Ready { .. }));
         (said_hello && self.config.enable_auto_reconnect).then(|| self.take_in_flight())
     }
 
@@ -637,7 +640,7 @@ impl<P> Client<P> {
                     } else {
                         let retries = retries + 1;
                         active.purpose = match (active.purpose, phase) {
-                            (Purpose::Reconnect { .. }, _) | (_, Phase::Ready) => {
+                            (Purpose::Reconnect { .. }, _) | (_, Phase::Ready { .. }) => {
                                 Purpose::Reconnect { retries }
                             }
                             _ => Purpose::Asked { retries },
@@ -664,7 +667,7 @@ impl<P> Client<P> {
     fn undo_unanswered(&mut self) -> Vec<Undo> {
         let queued = self.queue.iter().find_map(|it| match &it.request {
             InFlight::Ack(request) => request.ticket,
-            InFlight::Plain(..) | InFlight::Restore(_) => None,
+            InFlight::Plain(..) => None,
         });
         let undo = self.listeners.abandon(queued);
         self.leave_subscriber_mode_without_listeners();
@@ -679,13 +682,13 @@ impl<P> Client<P> {
         {
             active.selected = None;
         }
-        (in_flight.into_iter().filter_map(InFlight::into_promise)).collect()
+        in_flight.into_iter().map(InFlight::into_promise).collect()
     }
 
     fn take_pending(&mut self) -> Vec<P> {
         let mut pending = self.take_in_flight();
         let queue = core::mem::take(&mut self.queue);
-        pending.extend(queue.into_iter().filter_map(|it| it.request.into_promise()));
+        pending.extend(queue.into_iter().map(|it| it.request.into_promise()));
         pending
     }
 
@@ -755,7 +758,8 @@ impl<P> Client<P> {
         let batches = can_pipeline && self.config.enable_auto_pipelining;
         let connected = self.is_connected();
 
-        let goes_now = !batches && connected && self.queue.is_empty() && self.in_flight.is_empty();
+        let goes_now =
+            !batches && connected && self.queue.is_empty() && self.nothing_is_in_flight();
 
         let mut bytes = Vec::new();
         let out = if goes_now {
@@ -798,12 +802,20 @@ impl<P> Client<P> {
         if !self.output.is_empty() || !self.is_connected() {
             return false;
         }
-        if self.in_flight.is_empty()
+        if self.nothing_is_in_flight()
             && let Some(alone) = self.queue.pop_front_if(|it| !it.can_pipeline)
         {
             self.put_in_flight(alone);
         }
         self.queue.front().is_some_and(|it| it.can_pipeline)
+    }
+
+    fn nothing_is_in_flight(&self) -> bool {
+        self.in_flight.is_empty() && !self.is_restoring()
+    }
+
+    fn is_restoring(&self) -> bool {
+        matches!(self.phase(), Some(Phase::Ready { restoring }) if !restoring.is_empty())
     }
 
     /// Moves what may share a write to [`Self::output`]. Whether to come back.
@@ -898,7 +910,24 @@ impl<P> Client<P> {
         let out = &mut self.output.byte_list;
         let url_database = self.config.database;
         let event = match &mut active.phase {
-            Phase::Ready => return self.on_reply(value),
+            Phase::Ready { restoring } => {
+                let is_for_restore =
+                    !matches!(&value, RESPValue::Push(push) if *push.kind != *b"subscribe");
+                let Some(channel) = restoring.pop_front_if(|_| is_for_restore) else {
+                    return self.on_reply(value);
+                };
+                if restoring.is_empty() {
+                    active.purpose.succeed();
+                }
+                return match value {
+                    RESPValue::Error(message) => Event::NotRestored { channel, message },
+                    RESPValue::Push(_) => {
+                        self.mode = Mode::Subscriber;
+                        Event::Ignored
+                    }
+                    _ => Event::Ignored,
+                };
+            }
             Phase::Hello => Self::on_hello(active, value, url_database),
             Phase::Select(hello) => {
                 let hello = core::mem::replace(&mut **hello, RESPValue::Null);
@@ -907,20 +936,17 @@ impl<P> Client<P> {
             Phase::Dialing | Phase::Ending(_) | Phase::Backoff => Event::Ignored,
         };
         if let Event::Connected(_) = event {
-            active.phase = Phase::Ready;
-            let mut unanswered = 0;
-            for channel in self.listeners.confirmed_channels() {
+            let restoring: VecDeque<_> = self.listeners.confirmed_channels().cloned().collect();
+            for channel in &restoring {
                 // `encode` alone grows it by no more than one command.
                 out.reserve(channel.len() + 64);
                 command::encode(b"SUBSCRIBE", &[channel], out);
-                unanswered += 1;
             }
-            if unanswered > 0 {
-                // A peer that drops the connection on these uses up the retries.
-                self.in_flight.push_back(InFlight::Restore(unanswered));
-            } else {
+            // Else a peer that drops the connection on these uses up the retries.
+            if restoring.is_empty() {
                 active.purpose.succeed();
             }
+            active.phase = Phase::Ready { restoring };
         }
         event
     }
@@ -1000,18 +1026,12 @@ impl<P> Client<P> {
         match value {
             RESPValue::Push(push) => self.on_push(push),
             // The request it answers stays in flight: `fail` rejects it first.
-            RESPValue::Error(message) if self.is_subscriber() && !self.is_restoring() => {
-                Event::Broken {
-                    message,
-                    error: RedisError::ServerError,
-                }
-            }
+            RESPValue::Error(message) if self.is_subscriber() => Event::Broken {
+                message,
+                error: RedisError::ServerError,
+            },
             value => self.answer(value),
         }
-    }
-
-    fn is_restoring(&self) -> bool {
-        matches!(self.in_flight.front(), Some(InFlight::Restore(_)))
     }
 
     #[cold]
@@ -1027,14 +1047,6 @@ impl<P> Client<P> {
         let (expect, promise) = match self.in_flight.pop_front() {
             Some(InFlight::Plain(expect, promise)) => (expect, promise),
             Some(InFlight::Ack(request)) => return self.answer_without_ack(request, value),
-            Some(InFlight::Restore(unanswered)) => {
-                if unanswered > 1 {
-                    self.in_flight.push_front(InFlight::Restore(unanswered - 1));
-                } else if let State::Active(active) = &mut self.state {
-                    active.purpose.succeed();
-                }
-                return Event::Ignored;
-            }
             None => return Event::Ignored,
         };
         match (value, expect) {
@@ -1117,15 +1129,13 @@ impl<P> Client<P> {
         let Some(&kind) = kind else {
             return self.on_unknown_push(push);
         };
-        if kind == Ack::Subscribe && self.is_restoring() {
-            self.mode = Mode::Subscriber;
-            return self.answer(RESPValue::Null);
-        }
         if self.tail.take(kind, &push.data) {
             return Event::Ignored;
         }
         self.tail = Tail::None;
-        let request = (self.in_flight).pop_front_if(|it| matches!(it, InFlight::Ack(_)));
+        let is_behind = self.is_restoring();
+        let request =
+            (self.in_flight).pop_front_if(|it| !is_behind && matches!(it, InFlight::Ack(_)));
         let promise = match request {
             Some(InFlight::Ack(request)) => {
                 if let Some(ticket) = request.ticket {
@@ -1134,7 +1144,7 @@ impl<P> Client<P> {
                 self.tail = Tail::after(request.kind, request.names, &push.data);
                 Some(request.promise)
             }
-            other => other.and_then(InFlight::into_promise),
+            other => other.map(InFlight::into_promise),
         };
         let acked = match promise {
             None if !self.is_subscriber() => return Event::Ignored,
@@ -1160,7 +1170,7 @@ impl<P> Client<P> {
             return Event::Ignored;
         }
         match self.in_flight.front() {
-            None | Some(InFlight::Plain(..)) if !self.is_subscriber() => {
+            None | Some(InFlight::Plain(..)) if !self.is_subscriber() && !self.is_restoring() => {
                 self.answer(RESPValue::Push(push))
             }
             _ => broken(

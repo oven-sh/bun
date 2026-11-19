@@ -205,6 +205,10 @@ impl Driver {
                     self.fail();
                     return self.lost();
                 }
+                Event::NotRestored { channel, message } => {
+                    let (channel, message) = (channel.escape_ascii(), message.escape_ascii());
+                    format!("not restored {channel} {message}")
+                }
                 Event::Busy(message) => {
                     self.log
                         .push(format!("busy ConnectionClosed {}", message.escape_ascii()));
@@ -1783,7 +1787,14 @@ mod subscriptions {
             (
                 "all are refused",
                 &[Redial, Send("PING"), Read("-BUSY"), Read("-NOAUTH"), PONG],
-                PINGED,
+                &[
+                    CONNECTED,
+                    WRITE,
+                    "write PING",
+                    "not restored a BUSY",
+                    "not restored b NOAUTH",
+                    "resolve #2 PONG",
+                ],
             ),
             (
                 "pushes in between",
@@ -1807,7 +1818,32 @@ mod subscriptions {
             (
                 "one is refused, and tried again on the next connection",
                 &[Redial, A, Read("-NOPERM no"), Lost, Redial],
-                &[CONNECTED, WRITE, "retry in 50 []", CONNECTED, WRITE],
+                &[
+                    CONNECTED,
+                    WRITE,
+                    "not restored b NOPERM no",
+                    "retry in 50 []",
+                    CONNECTED,
+                    WRITE,
+                ],
+            ),
+            (
+                "a stray acknowledgement does not answer what is behind it",
+                &[
+                    Redial,
+                    Send("PUNSUBSCRIBE p"),
+                    Ack("unsubscribe", "z", 0),
+                    A,
+                    B,
+                    Ack("punsubscribe", "p", 2),
+                ],
+                &[
+                    CONNECTED,
+                    WRITE,
+                    "write PUNSUBSCRIBE p",
+                    "unsubscribed",
+                    "unsubscribed #2 >punsubscribe p",
+                ],
             ),
             (
                 "an error behind it",

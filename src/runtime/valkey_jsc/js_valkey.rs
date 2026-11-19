@@ -992,6 +992,13 @@ impl JSValkeyClient {
                 let error = RedisError::ConnectionClosed;
                 self.fail_for_now(valkey_error_to_js(global, &message, error))
             }
+            Event::NotRestored { channel, message } => {
+                let (channel, message) = (bstr::BStr::new(&channel), bstr::BStr::new(&message));
+                let text = format!("Redis refused to subscribe to {channel:?} again: {message:?}");
+                let text = create_utf8_for_js(global, text.as_bytes())?;
+                let code = create_utf8_for_js(global, b"ERR_REDIS_SERVER_ERROR")?;
+                global.emit_warning(text, JSValue::UNDEFINED, code, JSValue::UNDEFINED)
+            }
             Event::Connected(mut hello) => self.on_connected(object, &mut hello),
             Event::Resolved {
                 mut promise,

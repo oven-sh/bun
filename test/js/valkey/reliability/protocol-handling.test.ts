@@ -753,7 +753,11 @@ describe("Valkey: Pub/Sub", () => {
       ["NOPERM", NOPERM],
       ["BUSY", "-BUSY Redis is busy running a script\r\n"],
       ["OOM", "-OOM command not allowed when used memory > 'maxmemory'.\r\n"],
-    ])("%s costs only its channel, until the next connection", async (_, refusal) => {
+    ])("%s costs only its channel, until the next connection, and is a warning", async (_, refusal) => {
+      const warnings: string[] = [];
+      const warn = (warning: any) => void warnings.push(`${warning.code}: ${warning.message}`);
+      process.on("warning", warn);
+      using _off = { [Symbol.dispose]: () => void process.off("warning", warn) };
       using server = pubSubServer((command, connection) =>
         command === "SUBSCRIBE a" && connection === 2 ? refusal : undefined,
       );
@@ -765,7 +769,12 @@ describe("Valkey: Pub/Sub", () => {
         for (const channel of ["a", "b"]) server.publish(channel, message);
         await sub.delivered();
       }
-      expect(await sub.delivered()).toEqual(["l b second", "l a third", "l b third"]);
+      expect({ delivered: await sub.delivered(), warnings }).toEqual({
+        delivered: ["l b second", "l a third", "l b third"],
+        warnings: [
+          `ERR_REDIS_SERVER_ERROR: Redis refused to subscribe to "a" again: "${refusal.slice(1, -2).replaceAll("'", "\\'")}"`,
+        ],
+      });
     });
 
     test("onconnect may still send the AUTH that the channels need", async () => {

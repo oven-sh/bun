@@ -2,6 +2,7 @@
 //! decided on the canonical form (so `1 + 1` vs `2`, quote style or a reformat is not a change, and a branch that
 //! became dead is), what is shown is the author's text (comments, types, JSX and names intact).
 
+use crate::cli::pm_diff_command::Threads;
 use crate::cli::pm_diff_normalize::{Normalized, same_program};
 use bun_text_diff as text_diff;
 
@@ -106,16 +107,26 @@ pub(crate) fn line_ops<'a>(old: &'a [u8], new: &'a [u8]) -> Vec<Op<'a>> {
     ops
 }
 
+/// What the key says about the printed lines that an original line produced.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Image {
+    None,
+    Equal,
+    /// At least one of them changed.
+    Changed,
+}
+
 struct Side {
-    /// Per original line (0-based): the printed lines it produced.
-    images: Vec<Vec<u32>>,
-    /// Per original line: the original columns that carry a mapping (token starts that survived).
-    cols: Vec<Vec<u32>>,
-    /// Per printed line: did the key diff mark it changed.
-    key_changed: Vec<bool>,
+    /// Per original line (0-based).
+    images: Vec<Image>,
+    /// The original lines and columns that carry a mapping (token starts that survived), sorted.
+    mapped: Vec<(u32, u32)>,
+    /// Per original line and one more: where its part of `mapped` starts.
+    first_mapped: Vec<u32>,
 }
 
 impl Side {
+    /// `key_changed` says per printed line whether the key diff marked it changed.
     fn new(original: &[u8], norm: &Normalized, mut key_changed: Vec<bool>) -> Side {
         // Comments the printer kept (`/*!`, `@license`) are judged by the text skeleton, not the key: a changed
         // banner must not mark the statement mapped next to it.
@@ -131,48 +142,45 @@ impl Side {
             }
         }
         let lines = bun_core::strings::count_char(original, b'\n') + 1;
-        let mut images = vec![Vec::new(); lines];
-        let mut cols = vec![Vec::new(); lines];
+        let mut images = vec![Image::None; lines];
         for m in &norm.map {
-            let l = m.orig_line as usize;
-            if l < lines {
-                if images[l].last() != Some(&m.gen_line) {
-                    images[l].push(m.gen_line);
-                }
-                cols[l].push(m.orig_col);
+            if let Some(image) = images.get_mut(m.orig_line as usize) {
+                *image = (*image).max(match key_changed.get(m.gen_line as usize) {
+                    Some(false) => Image::Equal,
+                    _ => Image::Changed,
+                });
             }
         }
-        for c in &mut cols {
-            c.sort_unstable();
-            c.dedup();
-        }
-        for i in &mut images {
-            i.sort_unstable();
-            i.dedup();
-        }
+        let mut mapped: Vec<_> = (norm.map.iter())
+            .map(|m| (m.orig_line, m.orig_col))
+            .collect();
+        mapped.sort_unstable();
+        let mut at = 0;
+        let first_mapped = (0..=lines as u32).map(|line| {
+            at += mapped[at..].iter().take_while(|it| it.0 < line).count();
+            at as u32
+        });
         Side {
+            first_mapped: first_mapped.collect(),
             images,
-            cols,
-            key_changed,
+            mapped,
         }
     }
     /// The line produced canonical output and none of it changed.
     fn keyed_equal(&self, line0: usize) -> bool {
-        self.images.get(line0).is_some_and(|im| {
-            !im.is_empty()
-                && im
-                    .iter()
-                    .all(|&g| !self.key_changed.get(g as usize).copied().unwrap_or(true))
-        })
+        self.images.get(line0) == Some(&Image::Equal)
     }
     fn no_image(&self, line0: usize) -> bool {
-        self.images.get(line0).is_none_or(Vec::is_empty)
+        self.images.get(line0).is_none_or(|&it| it == Image::None)
     }
     /// Some surviving token starts inside `[lo, hi)` on that line: the differing text is code the key vouched for.
     fn mapped_within(&self, line0: usize, lo: usize, hi: usize) -> bool {
-        self.cols
-            .get(line0)
-            .is_some_and(|c| c.iter().any(|&col| (lo..hi).contains(&(col as usize))))
+        let Some(&[from, to]) = self.first_mapped.get(line0..line0 + 2) else {
+            return false;
+        };
+        let on_line = &self.mapped[from as usize..to as usize];
+        let first = on_line.partition_point(|it| (it.1 as usize) < lo);
+        on_line.get(first).is_some_and(|it| (it.1 as usize) < hi)
     }
 }
 
@@ -252,11 +260,16 @@ pub(crate) fn project<'a>(
     new: &'a [u8],
     key_old: &Normalized,
     key_new: &Normalized,
+    threads: Threads,
 ) -> (Projection<'a>, Vec<Op<'a>>) {
-    let (kco, kcn) = changed_lines(&key_old.text, &key_new.text);
-    let so = Side::new(old, key_old, kco);
-    let sn = Side::new(new, key_new, kcn);
-    let raw = line_ops(old, new);
+    let (raw, (so, sn)) = threads.join(
+        old.len() + new.len(),
+        || line_ops(old, new),
+        || {
+            let (kco, kcn) = changed_lines(&key_old.text, &key_new.text);
+            (Side::new(old, key_old, kco), Side::new(new, key_new, kcn))
+        },
+    );
     let mut ops: Vec<Op<'a>> = Vec::with_capacity(raw.len());
     let mut hidden = 0usize;
     let mut i = 0;

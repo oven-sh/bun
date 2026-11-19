@@ -1702,7 +1702,8 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style, threads:
                 Some((mut ko, mut kn)) if !ko.map.is_empty() && !kn.map.is_empty() => {
                     rebase_key_onto(&mut ko, &shown_o, disp_o);
                     rebase_key_onto(&mut kn, &shown_n, disp_n);
-                    let (projection, _) = semantic::project(&shown_o.text, &shown_n.text, &ko, &kn);
+                    let (projection, _) =
+                        semantic::project(&shown_o.text, &shown_n.text, &ko, &kn, threads);
                     let same_key = ko.text == kn.text;
                     if !same_key && shown_o.text == shown_n.text {
                         // The code differs but the re-prints are identical, so only the raw
@@ -1746,7 +1747,7 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style, threads:
             match (ko, kn) {
                 (ko, kn) if !ko.map.is_empty() && !kn.map.is_empty() => {
                     let (old_v, new_v) = (view_bytes(o), view_bytes(n));
-                    let (projection, unfolded) = semantic::project(&old_v, &new_v, ko, kn);
+                    let (projection, unfolded) = semantic::project(&old_v, &new_v, ko, kn, threads);
                     let shown = projection
                         .ops
                         .iter()

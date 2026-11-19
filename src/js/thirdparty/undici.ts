@@ -1361,7 +1361,9 @@ function fetchViaDispatcher(dispatcher, input, init) {
         headers.delete("content-type");
         headers.delete("content-length");
       } else if (body != null && !isReplayableBody(body)) {
-        throw new TypeError(`Cannot follow the ${statusCode} redirect to ${next.origin}: a stream body cannot be sent twice`);
+        throw new TypeError(
+          `Cannot follow the ${statusCode} redirect to ${next.origin}: a stream body cannot be sent twice`,
+        );
       }
       if (next.origin !== url.origin) {
         headers.delete("authorization");

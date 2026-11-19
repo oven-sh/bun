@@ -1248,10 +1248,6 @@ impl StreamBuffer {
         Ok(())
     }
 
-    pub fn write_type_as_bytes_assume_capacity<T: bun_core::NoUninit>(&mut self, data: T) {
-        self.list.extend_from_slice(bun_core::bytes_of(&data));
-    }
-
     pub fn slice(&self) -> &[u8] {
         &self.list[self.cursor..]
     }

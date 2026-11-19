@@ -47,6 +47,7 @@ const crates = [
   "bun_hpack",
   "bun_http1",
   "bun_http_types",
+  "bun_ipc",
   "bun_lint_react_compiler",
   "bun_md",
   "bun_options_types",

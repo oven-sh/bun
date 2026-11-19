@@ -50,12 +50,6 @@ SIMDUTFResult simdutf__convert_utf16le_to_utf8_with_errors(const char16_t* buf,
     return { res.error, res.count };
 }
 
-size_t simdutf__convert_valid_utf16le_to_utf8(const char16_t* buf, size_t len,
-    char* utf8_buffer)
-{
-    return simdutf::convert_valid_utf16le_to_utf8(buf, len, utf8_buffer);
-}
-
 size_t simdutf__utf8_length_from_utf16le(const char16_t* input, size_t length)
 {
     return simdutf::utf8_length_from_utf16le(input, length);
@@ -77,6 +71,11 @@ size_t simdutf__utf16_length_from_utf8(const char* input, size_t length)
 size_t simdutf__utf8_length_from_latin1(const char* input, size_t length)
 {
     return simdutf::utf8_length_from_latin1(input, length);
+}
+
+size_t simdutf__convert_latin1_to_utf8(const char* input, size_t length, char* utf8_buffer)
+{
+    return simdutf::convert_latin1_to_utf8(input, length, utf8_buffer);
 }
 
 size_t simdutf__base64_encode(const char* input, size_t length, char* output, int is_urlsafe)

@@ -1,0 +1,21 @@
+# -- source: main.cjs
+# function mixin(S) { if (S === undefined) S = Object; return class Mixed extends S { total(n) { var t = 0; for (var i = 0; i < n; i++) t += this.get(i, 1); return t; } }; } var mixed = mixin;
+# class Base extends mixed() { constructor(m) { super(); this.m = m; } put(v) { this.m = v; } }
+# class View extends Base { get(i, j) { return this.m.get(j, i); } }
+# class Never extends Base { get(i, j) { return this.m.get(i, j); } }
+# class M extends mixed(Array) { constructor(r) { super(r); for (var i = 0; i < r; i++) this[i] = [i, i / 2, i, i]; this.rows = r; } get(i, j) { return this[i][j]; } put(v) { this.rows = v; } }
+# function never(m) { return new Never(m); }
+# var m = new M(4), v = new View(m);
+# print(m.total(4), v.total(4));
+# -- end of source
+# Where the receiver is not of the subclass known by its structure, a loop asks for the other class that the program constructs.
+# RUN: walk f11 mechanisms=all
+# CHECK-LABEL: code f11:Body
+# CHECK: HasStructureOfClass {{*}}layout=L4
+# CHECK: ShapeTest {{*}}layouts=[L2]
+# RUN(ANSWER): run-in-shell
+# ANSWER: 3 3.5
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 3 3.5
+# CHECKED-NEXT: exited with 0

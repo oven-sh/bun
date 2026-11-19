@@ -1,0 +1,2 @@
+x = a   as   B // prettier-ignore
+? y : z;

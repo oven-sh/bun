@@ -1,0 +1,54 @@
+# The length of a view that may follow shared memory is read each time: another thread may grow the memory between two reads, and no effect of this thread says when.
+# function step(data, ctl, k) { const view = new Int32Array(data); const before = view.length; Atomics.store(ctl, 1, k); waitFor(ctl, k); return view.length - before; }
+# While the second read was answered by the first, `step` gave 0 however far a Worker had grown `data` meanwhile. In a loop that waits for the length the read stays in its turn.
+# A view over an ArrayBuffer loses nothing: this thread alone changes that memory, and whatever does writes the storage of views.
+# f1 = waitFor, f2 = step, f3 = stepOverOwnMemory, f4 = untilLonger, f5 = enlarge
+# -- source: grown.ts
+# declare function sink(...values: unknown[]): void;
+# function waitFor(ctl: Int32Array, k: number) {
+#   let turns = 0;
+#   while (Atomics.load(ctl, 0) !== k) turns = (turns + 1) | 0;
+#   let mixed = turns ^ (turns >>> 7);
+#   mixed = (mixed + (turns & 255)) | 0;
+#   mixed = (mixed ^ (mixed << 3)) | 0;
+#   mixed = (mixed + (mixed >>> 11)) | 0;
+#   return mixed & 1;
+# }
+# function step(data: SharedArrayBuffer, ctl: Int32Array, k: number) {
+#   const view = new Int32Array(data);
+#   const before = view.length;
+#   Atomics.store(ctl, 1, k);
+#   waitFor(ctl, k);
+#   return view.length - before;
+# }
+# function stepOverOwnMemory(data: ArrayBuffer, ctl: Int32Array, k: number) {
+#   const view = new Int32Array(data);
+#   const before = view.length;
+#   Atomics.store(ctl, 1, k);
+#   waitFor(ctl, k);
+#   return view.length - before;
+# }
+# function untilLonger(data: SharedArrayBuffer) {
+#   const view = new Int32Array(data);
+#   while (view.length === 1) {}
+#   return view.length;
+# }
+# function enlarge(data: SharedArrayBuffer) { data.grow(8); }
+# const data = new SharedArrayBuffer(4, { maxByteLength: 64 });
+# const ctl = new Int32Array(new SharedArrayBuffer(8));
+# enlarge(data);
+# sink(step(data, ctl, 0), stepOverOwnMemory(new ArrayBuffer(8), ctl, 0), untilLonger(data));
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = GetTypedArrayLength
+# CHECK: = CallDirect
+# CHECK: = GetTypedArrayLength
+# RUN(OWN): walk f3 mechanisms=all
+# OWN-LABEL: code f3:Body
+# OWN: = GetTypedArrayLength
+# OWN-NOT: = GetTypedArrayLength
+# RUN(LOOP): walk f4 mechanisms=all
+# LOOP-LABEL: code f4:Body
+# LOOP: isLoopHead=true
+# LOOP: = GetTypedArrayLength

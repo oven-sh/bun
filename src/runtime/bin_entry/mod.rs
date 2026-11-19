@@ -132,11 +132,6 @@ pub(crate) extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_ch
         "leak:bun_runtime::node::fs_events::init_core_foundation\n",
         "leak:bun_runtime::node::fs_events::init_core_services\n",
         "leak:bun_runtime::node::fs_events::FSEventsLoop\n",
-        // Process-lifetime inspector thread. The debugger handles SIGINT and
-        // serves the WebSocket protocol up to (and during) `process.exit()`;
-        // joining it from `global_exit` would deadlock when the user is
-        // mid-breakpoint. The thread's stack/Arc are reclaimed by the OS.
-        "leak:bun_jsc::debugger::Debugger>::start_js_debugger_thread\n",
         "\0",
     )
     .as_ptr()
@@ -159,11 +154,31 @@ pub(crate) extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_ch
 /// the entire process — guaranteed by the C runtime that calls this symbol.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
+    // Before the first allocation. With glibc that one comes before `main`, and so does this call.
+    #[cfg(any(
+        target_os = "android",
+        all(target_os = "linux", not(target_env = "gnu"))
+    ))]
+    {
+        unsafe extern "C" {
+            safe fn Bun__askForAddressSpaceToStart();
+        }
+        Bun__askForAddressSpaceToStart();
+    }
+
     // 0. Capture argv FIRST — before the crash handler, whose panic path
     //    dumps the command line via `bun_core::argv()`.
     //    SAFETY: `argc`/`argv` come from the C runtime; the argv block lives
     //    for the entire process.
     unsafe { bun_core::init_argv(argc, argv) };
+
+    // Everything below calls into simdutf, including the crash handler.
+    if !bun_simdutf_sys::simdutf::has_any_implementation() {
+        unsafe extern "C" {
+            safe fn bun_abort_missing_simd() -> !;
+        }
+        bun_abort_missing_simd();
+    }
 
     // 1. Crash handler first so anything below gets a usable trace.
     bun_crash_handler::init();
@@ -187,7 +202,8 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
         // `bun.handleOom(convertEnvToWTF8())` — converts the OS UTF-16 env
         // block to WTF-8 and publishes it via `bun_core::os::set_environ()`.
         // Without this, `Bun.env`/`process.env` see only `.env`-file vars.
-        bun_core::handle_oom(bun_sys::windows::env::convert_env_to_wtf8());
+        // SAFETY: no thread has been spawned yet.
+        bun_core::handle_oom(unsafe { bun_sys::windows::env::convert_env_to_wtf8() });
     }
 
     // 2/3. Allocator is static above; argv was captured at step 0; start_time
@@ -218,9 +234,7 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
 /// so grow it to 1024 now. Fails with EINVAL (and does nothing) past RLIMIT_NOFILE.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn pregrow_fd_table() {
-    if let Ok(fd) = bun_sys::dup_at_least(bun_sys::Fd::stdin(), 1023) {
-        let _ = bun_sys::close(fd);
-    }
+    let _ = bun_sys::dup_at_least(bun_sys::Fd::stdin(), 1023).map(bun_sys::CloseOnDrop::new);
 }
 
 /// Point the bundled C/C++ dependencies that have an allocator hook at

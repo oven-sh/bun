@@ -1,0 +1,14 @@
+# the body only hands its parameters on. A second body would cost its bytes and gain nothing, so the ramp tests nothing
+# f1 = pass
+# -- source: coroutine-whose-body-leans-on-no-parameter-keeps-one-body.ts
+# declare function sink(...values: unknown[]): void;
+# class Box { x = 1; y = 2; }
+# async function pass(box: Box, n: number) { await null; sink(box, n); return box; }
+# sink(pass, new Box());
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = CallDirect {{*}}role=CoroutineBody
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: role=SlowBody
+# NEVER-NOT: = TypeTest

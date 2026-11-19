@@ -1,0 +1,41 @@
+# let seen; print(Object.create(new Proxy({}, { get(target, key) { seen = key; return undefined; } })));
+# The trap returns nothing that the host could call, but it is handed the name that is asked for: Symbol.for("nodejs.util.inspect.custom"), which no row gave to the program.
+# With it the program can lay a method under that symbol on any object of its own, under a key that nobody knows. So the host loads what it prints objects with.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/UtilInspect.ts" displayPath="/$bun/js/builtins/UtilInspect.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 module=m0
+layout L1 module=m0 fields=[{key="get" declared={type=anything} flags=[IsRequired, IsMethod]}]
+variable g0 name="seen" module=m0 declared={type=anything}
+runtimefunction id=UtilInspectStylizeWithNoColor function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    v2 = NewClosure function=f1
+    v3 = NewObject -, v2 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    v5 = Builtin builtin=Proxy
+    v6 = Construct v5, -, v1, v4
+    v7 = Builtin builtin=ObjectCreate
+    v8 = Call v7, -, v6
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="print" [isFreeName]
+    v11 = Call v10, -, v8 calleeName="print"
+    v12 = Undefined
+    Return v12
+}
+function f1 name="get" module=m0 kind=Method flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PutModuleVariable v1 variable=g0
+    v3 = Undefined
+    Return v3
+}
+function f2 module=m1 kind=Method role=Library length=1 enclosingRuntimeFunction=UtilInspectStylizeWithNoColor thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

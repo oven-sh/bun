@@ -1,9 +1,25 @@
 import { crash_handler } from "bun:internal-for-testing";
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
-import { rmSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import {
+  bunEnv,
+  bunExe,
+  isArm64,
+  isASAN,
+  isDebug,
+  isGlibc,
+  isLinux,
+  isPosix,
+  isWindows,
+  mergeWindowEnvs,
+  tempDir,
+} from "harness";
+import { readFileSync, rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
+import { without } from "../../aot/harness/capabilities";
+import { withoutCoreDump } from "../../aot/harness/commands";
+import { unsupported } from "../../aot/harness/compiler";
+import { run } from "../../aot/harness/run";
 const { getMachOImageZeroOffset } = crash_handler;
 
 // CI sets BUN_CRASH_REPORT_URL so unexpected crashes are captured; these
@@ -32,9 +48,9 @@ test.if(isDebug && isLinux && hasSymbolizer)(
     expect(exitCode).not.toBe(0);
 
     // The innermost frame of the trace must be the code that crashed (the
-    // js_panic test hook)...
+    // `panic` test hook)...
     const firstFrame = stdout.split("\n").find(line => line.trim().length > 0);
-    expect(firstFrame ?? "<no frames printed>").toContain("js_panic");
+    expect(firstFrame ?? "<no frames printed>").toContain("crash_handler_jsc::panic");
 
     // ...not the capture machinery. A mismatched trim anchor used to leave
     // `capture_stack_trace` → `crash_handler` → `panic_impl` as the innermost
@@ -43,6 +59,87 @@ test.if(isDebug && isLinux && hasSymbolizer)(
   },
   60_000, // symbolizing the debug binary takes several seconds
 );
+
+// Read as it is, a return address that -mbranch-protection=pac-ret signed is the address of nothing.
+const hasPointerAuthentication = isLinux && isArm64 && /\bpaca\b/.test(readFileSync("/proc/cpuinfo", "utf8"));
+test.if(hasPointerAuthentication)("a stack trace takes the signature off a return address", () => {
+  expect(crash_handler.stackTraceStartsAtSignedReturnAddress()).toBe(true);
+});
+
+// The program finds the return addresses that `descend` has left on the stack and changes the bits where a signature goes.
+describe.if(hasPointerAuthentication && !isASAN && !unsupported)("signed return addresses of compiled code", () => {
+  const program = `import { read, toArrayBuffer } from "bun:ffi";
+import { readFileSync } from "node:fs";
+
+const mappings = readFileSync("/proc/self/maps", "utf8")
+  .trim()
+  .split("\\n")
+  .map(line => ({ line, range: line.split(/[- ]/, 2).map(digits => parseInt(digits, 16)) }));
+const [start, end] = mappings.find(({ line }) => line.endsWith("[stack]"))!.range;
+const code = mappings.filter(({ line }) => / ..x. /.test(line)).map(({ range }) => range);
+const halves = new Uint32Array(toArrayBuffer(start as never, 0, end - start));
+const before = halves.slice();
+
+function lowest(how: string): number {
+  const places = new Map<number, number[]>();
+  for (let at = 0; at < halves.length; at += 2) {
+    const address = (halves[at + 1] & 0xffff) * 2 ** 32 + halves[at];
+    if (halves[at] !== before[at] && code.some(([from, to]) => address >= from && address < to))
+      places.getOrInsert(address, []).push(at);
+  }
+  // What deeper calls have left behind lies below.
+  const row = [...places.values()].findLast(row => row.length >= 4)!;
+  for (let index = 0; index < row.length; index++) {
+    if (how === "wiped") halves[row[index]] = halves[row[index] + 1] = 0;
+    else if (how !== "plain") halves[row[index] + 1] ^= 0x500000;
+  }
+  return how === "returned to" ? 0 : read.u8(8 as never) + 1;
+}
+
+function descend(left: number): number {
+  return left ? descend(left - 1) + 1 : lowest(process.argv[2]);
+}
+
+console.log(descend(process.argv.length + 9));
+`;
+  const callers = [...Array(12).fill("at descend (./app.ts:30:17)"), "at ./app.ts:33:13"];
+  let dir: ReturnType<typeof tempDir>;
+
+  beforeAll(async () => {
+    dir = tempDir("signed-return-addresses", { "app.ts": program });
+    const cmd = [bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"];
+    const { stderr, exitCode } = await run(cmd, String(dir));
+    expect({ stderr, exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
+  }, 60_000);
+  afterAll(() => dir?.[Symbol.dispose]());
+
+  async function crashed(how: string) {
+    const cmd = withoutCoreDump([path.join(String(dir), "app"), how]);
+    const { stdout, stderr, exitCode } = await run(cmd, String(dir), noReportEnv, 20_000);
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 128 + osConstants.signals.SIGSEGV });
+    return { stderr, frames: stderr.match(/(?<=^ +)at .*/gm) };
+  }
+
+  test.each(["plain", "signed"])("every caller is named: %s", async how => {
+    expect((await crashed(how)).frames).toEqual(["at lowest (./app.ts:26:43)", ...callers]);
+  });
+
+  test("the report reads the words that the program finds", async () => {
+    const { frames } = await crashed("wiped");
+    expect(frames![0]).toBe("at lowest (./app.ts:26:43)");
+    expect(frames!.length).toBeLessThan(callers.length / 2);
+  });
+
+  // This is how a failed authentication ends without FEAT_FPAC. A hardened build authenticates here itself.
+  test.if(!!without("a hardened build"))(
+    "a return that faults names the place, and gives no address away",
+    async () => {
+      const { stderr, frames } = await crashed("returned to");
+      expect(frames).toEqual(callers);
+      expect(stderr).toMatch(/ x30=code\+0x\w+ sp=stack\+0x0 pc=code\+0x\w+$/m);
+    },
+  );
+});
 
 // `crash()` resets fatal-signal dispositions to SIG_DFL before re-raising so
 // that JS-registered listeners (`process.on("SIGABRT")` etc., installed by
@@ -130,6 +227,40 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
   });
 });
 
+// mimalloc provides `operator new` only on Linux without ASAN.
+describe.if(isLinux && !isASAN)("operator new that fails to allocate", () => {
+  test.concurrent("reports out of memory", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        path.join(import.meta.dir, "fixture-crash.js"),
+        "operatorNew",
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Bun has run out of memory");
+    expect(proc.signalCode).toBe("SIGABRT");
+    expect(exitCode).not.toBe(0);
+  });
+
+  // `std::stable_sort` retries with half the buffer when this form returns null.
+  test.concurrent("returns null from new (std::nothrow)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.log(require("bun:internal-for-testing").crash_handler.operatorNew(true))`],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout).toBe("true\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // The report header names the CPU features the crash handler detected. On
 // x86_64 that detection uses cpuid directly (CPUFeatures.cpp). Every supported
 // x64 CPU has SSE4.2 and POPCNT, since the baseline build targets Nehalem.
@@ -148,6 +279,19 @@ test("the crash report lists the CPU features", async () => {
   } else {
     expect(cpuLine).toMatch(/^CPU: neon fp( \w+)*$/);
   }
+  expect(exitCode).not.toBe(0);
+});
+
+test("the trace string ends with the panic message as a zlib stream", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic", "--debug-crash-handler-use-trace-string"],
+    env: noReportEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // "invoked crashByPanic() handler"
+  expect(stderr).toMatch(/A0eNrLzCvLz05NUUguSizOcKoMSMzLTNbQVMhIzEvJSS0CAK\/LCxc(\/view)?\s/);
   expect(exitCode).not.toBe(0);
 });
 
@@ -403,7 +547,7 @@ test("raise ignoring panic handler does not trigger the panic handler", async ()
   /// Wait two seconds for a slow http request, or continue immediately once the request is heard.
   await Promise.race([resolve_handler.promise, Bun.sleep(2000)]);
 
-  expect(proc.exited).resolves.not.toBe(0);
+  await expect(proc.exited).resolves.not.toBe(0);
   expect(sent).toBe(false);
 });
 
@@ -579,6 +723,64 @@ describe.if(isPosix)("process.kill() aimed at the process itself is not reported
     expect(stderr).toContain("abort() called");
     expect(stderr).toContain("oh no: Bun has crashed");
     expect({ exitCode, exited }).toEqual({ exitCode: null, exited: diedFrom("SIGABRT") });
+  });
+});
+
+// A preloaded shim fails the syscall. The `ulimit -n` value that makes the loop fail first differs between builds.
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+describe.skipIf(!isGlibc || !cc)("out of file descriptors while creating the event loop", () => {
+  const shim = /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+
+static int should_fail(const char *name) {
+  if (strcmp(getenv("FAIL_LOOP_SYSCALL"), name) != 0) return 0;
+  errno = strcmp(getenv("FAIL_LOOP_ERRNO"), "ENFILE") == 0 ? ENFILE : EMFILE;
+  return 1;
+}
+
+int epoll_create1(int flags) {
+  if (should_fail("epoll_create1")) return -1;
+  return ((int (*)(int)) dlsym(RTLD_NEXT, "epoll_create1"))(flags);
+}
+
+int eventfd(unsigned int initval, int flags) {
+  if (should_fail("eventfd")) return -1;
+  return ((int (*)(unsigned int, int)) dlsym(RTLD_NEXT, "eventfd"))(initval, flags);
+}
+`;
+
+  test.concurrent.each([
+    ["epoll_create1", "EMFILE", "bun ran out of file descriptors (ProcessFdQuotaExceeded)"],
+    ["eventfd", "EMFILE", "bun ran out of file descriptors (ProcessFdQuotaExceeded)"],
+    ["eventfd", "ENFILE", "Your computer ran out of file descriptors (SystemFdQuotaExceeded)"],
+  ])("%s failing with %s exits 1 with the file descriptor error", async (syscall, errno, message) => {
+    using dir = tempDir("loop-init-fd-limit", {
+      "shim.c": shim,
+      "app.js": "console.log('entry point ran');\n",
+    });
+    const shimPath = path.join(String(dir), "shim.so");
+    const compiled = Bun.spawnSync({
+      cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, "shim.c", "-ldl"],
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    expect(compiled.stderr.toString()).toBe("");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "app.js", "--debug-crash-handler-use-trace-string"],
+      cwd: String(dir),
+      env: { ...noReportEnv, LD_PRELOAD: shimPath, FAIL_LOOP_SYSCALL: syscall, FAIL_LOOP_ERRNO: errno },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr }).toEqual({ stdout: "", stderr: expect.stringContaining(message) });
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(1);
   });
 });
 

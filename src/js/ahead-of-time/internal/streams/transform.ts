@@ -1,0 +1,237 @@
+// What the compiler reads in place of src/js/internal/streams/transform.ts, which `bun run` evaluates. The two do the same.
+// Written against that file with the SHA-256 d0359e966f669c7ccab0d4cd3e19898f814dba537e355efa2b03a751f7965174.
+// When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
+
+// a transform stream is a readable/writable stream where you do
+// something with the data.  Sometimes it's called a "filter",
+// but that's not a great name for it, since that implies a thing where
+// some bits pass through, and others are simply ignored.  (That would
+// be a valid example of a transform, of course.)
+//
+// While the output is causally related to the input, it's not a
+// necessarily symmetric or synchronous transformation.  For example,
+// a zlib stream might take multiple plain-text writes(), and then
+// emit a single compressed chunk some time in the future.
+//
+// Here's how this works:
+//
+// The Transform stream has all the aspects of the readable and writable
+// stream classes.  When you write(chunk), that calls _write(chunk,cb)
+// internally, and returns false if there's a lot of pending writes
+// buffered up.  When you call read(), that calls _read(n) until
+// there's enough pending readable data buffered up.
+//
+// In a transform stream, the written data is placed in a buffer.  When
+// _read(n) is called, it transforms the queued up data, calling the
+// buffered _write cb's as it consumes chunks.  If consuming a single
+// written chunk would result in multiple output chunks, then the first
+// outputted bit calls the readcb, and subsequent chunks just go into
+// the read buffer, and will cause it to emit 'readable' if necessary.
+//
+// This way, back-pressure is actually determined by the reading side,
+// since _read has to be called to start processing a new chunk.  However,
+// a pathological inflate type of transform can cause excessive buffering
+// here.  For example, imagine a stream where every byte of input is
+// interpreted as an integer from 0-255, and then results in that many
+// bytes of output.  Writing the 4 bytes {ff,ff,ff,ff} would result in
+// 1kb of data being output.  In this case, you could write a very small
+// amount of input, and end up with a very large amount of output.  In
+// such a pathological inflating mechanism, there'd be no way to tell
+// the system to stop doing the transform.  A single 4MB write could
+// cause the system to run out of memory.
+//
+// However, even in such a pathological case, only a single written chunk
+// would be consumed, and then the rest would wait (un-transformed) until
+// the results of the previous transformed chunk were consumed.
+
+"use strict";
+
+const Duplex = require("internal/streams/duplex");
+const streamState = require("internal/streams/state");
+const { getHighWaterMark, internals, isReadableState, isWritableState } = streamState;
+const kState: typeof streamState.kState = streamState.kState;
+type ReadableState = $Node.ReadableState;
+type WritableState = $Node.WritableState;
+
+const enum ReadableFlag {
+  Ended = 1 << 9,
+  Sync = 1 << 12,
+}
+const enum WritableFlag {
+  Ended = 1 << 30,
+}
+
+const kCallback = Symbol("kCallback");
+
+declare global {
+  namespace $Node {
+    type TransformCallback = (error?: Error | null, data?: unknown) => void;
+
+    interface TransformOptions extends DuplexOptions {
+      transform?(this: Transform, chunk: unknown, encoding: string, callback: TransformCallback): void;
+      flush?(this: Transform, callback: TransformCallback): void;
+    }
+
+    interface Transform extends Duplex {
+      /** The callback of a write that waits until the readable side has room. */
+      [kCallback]: ErrorCallback | null;
+      _transform(chunk: unknown, encoding: string, callback: TransformCallback): void;
+      _flush?(callback: TransformCallback): void;
+    }
+
+    interface TransformConstructor {
+      new (options?: TransformOptions): Transform;
+      (this: Transform, options?: TransformOptions): void;
+      prototype: any;
+    }
+  }
+}
+
+function Transform(this: $Node.Transform, options?: $Node.TransformOptions): void {
+  if (!(this instanceof Transform)) return new Transform(options) as any;
+
+  // TODO (ronag): This should preferably always be
+  // applied but would be semver-major. Or even better;
+  // make Transform a Readable with the Writable interface.
+  const readableHighWaterMark = options ? getHighWaterMark(this, options, "readableHighWaterMark", true) : null;
+  if (readableHighWaterMark === 0) {
+    // A Duplex will buffer both on the writable and readable side while
+    // a Transform just wants to buffer hwm number of elements. To avoid
+    // buffering twice we disable buffering on the writable side.
+    options = {
+      ...options,
+      highWaterMark: null,
+      readableHighWaterMark,
+      writableHighWaterMark: options!.writableHighWaterMark || 0,
+    };
+  }
+
+  Duplex.$call(this, options);
+
+  // We have implemented the _read method, and done the other things
+  // that Readable wants before the first _read call, so unset the
+  // sync guard flag.
+  const rState: ReadableState = this._readableState;
+  if (isReadableState(rState as unknown)) rState[kState] &= ~ReadableFlag.Sync;
+  else rState.sync = false;
+
+  this[kCallback] = null;
+
+  if (options) {
+    const { transform, flush } = options;
+    if (typeof transform === "function") this._transform = transform;
+
+    if (typeof flush === "function") this._flush = flush;
+  }
+
+  // When the writable side finishes, then flush out anything remaining.
+  // Backwards compat. Some Transform streams incorrectly implement _final
+  // instead of or in addition to _flush. By using 'prefinish' instead of
+  // implementing _final we continue supporting this unfortunate use case.
+  this.on("prefinish", prefinish);
+}
+$toClass(Transform, "Transform", Duplex);
+
+function final(this: $Node.Transform, cb?: $Node.ErrorCallback) {
+  if (typeof this._flush === "function" && !this.destroyed) {
+    this._flush((er, data) => {
+      if (er) {
+        if (cb) {
+          cb(er);
+        } else {
+          this.destroy(er);
+        }
+        return;
+      }
+
+      if (data != null) {
+        this.push(data);
+      }
+      this.push(null);
+      if (cb) {
+        cb();
+      }
+    });
+  } else {
+    this.push(null);
+    if (cb) {
+      cb();
+    }
+  }
+}
+
+function prefinish(this: $Node.Transform) {
+  if (this._final !== final) {
+    final.$call(this);
+  }
+}
+
+Transform.prototype._final = final;
+
+Transform.prototype._transform = function (
+  this: $Node.Transform,
+  _chunk: unknown,
+  _encoding: string,
+  _callback: $Node.TransformCallback,
+) {
+  throw $ERR_METHOD_NOT_IMPLEMENTED("_transform()");
+};
+
+// As emitOfNoFunction() in ./readable.ts.
+function pushOfNoFunction(this: any, val: unknown): void {
+  this.push(val);
+}
+
+Transform.prototype._write = function (
+  this: $Node.Transform,
+  chunk: unknown,
+  encoding: string,
+  callback: $Node.ErrorCallback,
+) {
+  const rState: ReadableState = this._readableState;
+  const wState: WritableState = this._writableState;
+  const length = rState.length;
+
+  this._transform(chunk, encoding, (err, val) => {
+    if (err) {
+      callback(err);
+      return;
+    }
+
+    if (val != null) {
+      if (IS_COMPILED_AHEAD_OF_TIME) {
+        const push = this.push;
+        if (push === internals.pushingMethod) internals.pushToReadable!(this, this._readableState, val, undefined);
+        else if (typeof push === "function") push.$call(this, val);
+        else pushOfNoFunction.$call({ push }, val);
+      } else {
+        this.push(val);
+      }
+    }
+
+    if (isReadableState(rState as unknown) ? (rState[kState] & ReadableFlag.Ended) !== 0 : rState.ended) {
+      // If user has called this.push(null) we have to
+      // delay the callback to properly propagate the new
+      // state.
+      process.nextTick(callback);
+    } else if (
+      (isWritableState(wState as unknown) ? (wState[kState] & WritableFlag.Ended) !== 0 : wState.ended) || // Backwards compat.
+      length === rState.length || // Backwards compat.
+      rState.length < rState.highWaterMark
+    ) {
+      callback();
+    } else {
+      this[kCallback] = callback;
+    }
+  });
+};
+
+Transform.prototype._read = function (this: $Node.Transform) {
+  if (this[kCallback]) {
+    const callback = this[kCallback];
+    this[kCallback] = null;
+    callback();
+  }
+};
+
+export default Transform as $Node.TransformConstructor;

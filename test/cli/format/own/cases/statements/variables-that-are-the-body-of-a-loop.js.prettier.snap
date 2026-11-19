@@ -1,0 +1,33 @@
+------------------
+{ printWidth: 80 }
+------------------
+for (var p = 1, l = a; d < l; l -= d)
+  var v = 1,
+    q = 2;
+for (x in y)
+  var a = 1,
+    b = 2;
+for (x of y)
+  var c = 1,
+    d = 2;
+while (x)
+  var e = 1,
+    f = 2;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+for (var p = 1, l = a; d < l; l -= d)
+  var v = 1,
+    q = 2;
+for (x in y)
+  var a = 1,
+    b = 2;
+for (x of y)
+  var c = 1,
+    d = 2;
+while (x)
+  var e = 1,
+    f = 2;
+
+===================== End =====================

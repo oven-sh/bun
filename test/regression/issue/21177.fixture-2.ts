@@ -1,3 +1,4 @@
+// @ts-expect-error built into Bun
 import { describe, test, expect, beforeAll } from "@jest/globals";
 
 describe("Outer describe", () => {

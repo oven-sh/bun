@@ -154,15 +154,15 @@ this is almost certainly (A).
 source. Trace up to the caller — there should be a CPUID check, a dispatcher
 table, an HWCAP test. Known patterns:
 
-| Dependency                            | Gate                                                        | Where                                      |
-| ------------------------------------- | ----------------------------------------------------------- | ------------------------------------------ |
-| simdutf                               | `set_best()` — CPUID first call, cached atomic ptr          | `vendor/` or WebKit's bundled copy         |
-| Highway (Bun)                         | `BUN_HWY_DISPATCH` → `hwy::SupportedTargets()`              | `src/jsc/bindings/highway_dispatch.h`      |
-| BoringSSL                             | `OPENSSL_ia32cap_P` global, set at init                     | `vendor/boringssl/crypto/cpu_intel.c`      |
-| zstd                                  | `ZSTD_cpuid()`                                              | `vendor/zstd/lib/common/cpu.h`             |
-| libdeflate                            | `libdeflate_init_x86_cpu_features()` / `HWCAP_ASIMDDP`      | `vendor/libdeflate/lib/x86/cpu_features.c` |
-| Rust `memchr`                         | `is_x86_feature_detected!()`                                | (via lolhtml dep)                          |
-| compiler-rt outline-atomics (aarch64) | `__aarch64_have_lse_atomics` (= `AT_HWCAP & HWCAP_ATOMICS`) | compiler-rt builtin                        |
+| Dependency                            | Gate                                                        | Where                                 |
+| ------------------------------------- | ----------------------------------------------------------- | ------------------------------------- |
+| simdutf                               | `set_best()` — CPUID first call, cached atomic ptr          | `vendor/` or WebKit's bundled copy    |
+| Highway (Bun)                         | `BUN_HWY_DISPATCH` → `hwy::SupportedTargets()`              | `src/jsc/bindings/highway_dispatch.h` |
+| `with_bmi2!` (Bun)                    | `is_x86_feature_detected!("bmi2")`                          | `src/highway/lib.rs`                  |
+| BoringSSL                             | `OPENSSL_ia32cap_P` global, set at init                     | `vendor/boringssl/crypto/cpu_intel.c` |
+| zstd                                  | `ZSTD_cpuid()`                                              | `vendor/zstd/lib/common/cpu.h`        |
+| Rust `memchr`                         | `is_x86_feature_detected!()`                                | (via lolhtml dep)                     |
+| compiler-rt outline-atomics (aarch64) | `__aarch64_have_lse_atomics` (= `AT_HWCAP & HWCAP_ATOMICS`) | compiler-rt builtin                   |
 
 **If no gate exists:** (B). Usually a subbuild that picked up host
 `-march=native` instead of the pinned `-march=nehalem` / `-mcpu=cortex-a53`.
@@ -239,14 +239,18 @@ use `<rust-hash>` in place of the hash:
 Either form works (the tool canonicalizes both before comparing), but
 `<rust-hash>` survives toolchain bumps.
 
-**Windows `<lib:NAME.lib>`.** When PDB has no per-function record for a hit
-(stripped CRT objects, anonymized staticlib helpers), the tool falls back to
-section-contribution attribution: the linker-map "which `.lib` did this byte
-come from" data. These attributions are stable across link layout changes.
-Allowlist them literally:
+**Windows `<lib:NAME.lib>` / `<lib:NAME.obj>`.** When PDB has no per-function
+record for a hit (stripped CRT objects, anonymized staticlib helpers, an asm
+file's leading local routine with no PUBLIC record, the MSVC STL when its own
+PDB isn't in the sysroot), the tool falls back to section-contribution
+attribution: the linker-map "which `.lib`/`.obj` did this byte come from"
+data. A zero-size public's synthesized range is likewise cut at its own
+contribution, so it never absorbs the next object's unnamed code. These
+attributions are stable across link layout changes. Allowlist them literally:
 
 ```
 <lib:lolhtml.lib>  [AVX, AVX2]
+<lib:aesni-gcm-x86_64-win.asm.obj> [AES, AVX, MOVBE, PCLMULQDQ]
 ```
 
 **`<no-symbol@0x...>`** — the address fell in padding between functions or the

@@ -1,0 +1,21 @@
+# -- source: constant-list-sliced-in-a-loop-is-checked.ts
+# declare function print(value: unknown): void;
+# declare function id(value: any): any;
+# function change(list: any): void { list.reverse(); }
+# function run(): string { let text = ""; for (let turn = 0; turn < 2; turn++) { const list = [3, 4, 5]; id(change)(list); text += list.slice(1).join(); } return text; }
+# print(id(run)());
+# -- end of source
+# LIBRARY: own
+# f1 = change, f2 = run. In a loop, too, a slice writes out the constants that a list was made with, and no record of a read is left.
+# Fault injection, testing=IgnoreFreshArrayEscapes: no operation except an append counts as letting a fresh array escape or as writing to it.
+# So the walk still tracks 3, 4, 5 where memory holds 5, 4, 3.
+# With testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the slice checks the constants against memory. See Walker::checkWhatIsInSightOfList().
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: 4,34,3
+# RIGHT-NEXT: exited with 0
+# RUN(NAMED): run-in-shell mechanisms=all testing=IgnoreFreshArrayEscapes,CheckProofsAtRunTime
+# NAMED: bun: internal AOT error: redundancy elimination check failed at {{*}} (run)
+# NAMED-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# NAMED-NEXT: This is a bug in Bun, not in your code.
+# NAMED-NEXT: and please report it: https://github.com/oven-sh/bun/issues
+# NAMED-NEXT: crashed with

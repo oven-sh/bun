@@ -1,0 +1,10 @@
+# globalThis on one arm, self on the other
+# -- source: the-global-object-and-one-of-its-other-names-meet-in-a-join.ts
+# declare const self: any;
+# declare const input: boolean;
+# console.log(typeof (input ? globalThis : self).Uint8Array);
+# -- end of source
+# RUN: causes
+# CHECK: unseen-code cannot-run
+# RUN(NEVER): causes
+# NEVER-NOT: cause 

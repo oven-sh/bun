@@ -51,6 +51,14 @@ export function sourceStamp(sources: Iterable<string>): number {
   return hash.digest().readUInt32BE(0);
 }
 
+/**
+ * Hashes the WebKit version and private names that a bun must share to compile the builtins section.
+ * Never returns 0, which means the section has no stamp.
+ */
+export function engineStamp(webkitVersion: string, privateNames: Iterable<string>): number {
+  return sourceStamp([webkitVersion, ...[...privateNames].sort()].map(part => part + "\n")) || 1;
+}
+
 export function writeIfNotChanged(file: string, contents: string) {
   if (Array.isArray(contents)) contents = contents.join("");
   contents = contents.replaceAll("\r\n", "\n").trim() + "\n";

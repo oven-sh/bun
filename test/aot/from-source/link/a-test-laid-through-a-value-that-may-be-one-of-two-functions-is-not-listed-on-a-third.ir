@@ -1,0 +1,25 @@
+# One and Two get a test of their own through a value that may be either. What is laid that way goes to every function that nobody can tell apart, and the second loop makes Top, Mid and Low such functions.
+# No statement lays Symbol.hasInstance on one of the three: none of them is listed with it.
+# -- source: main.js
+# function Top() { this.t = 1; }
+# function Mid() { this.m = 1; }
+# function Low() { this.l = 1; }
+# function One() {}
+# function Two() {}
+# Object.setPrototypeOf(Mid.prototype, Top.prototype);
+# Object.setPrototypeOf(Low.prototype, Mid.prototype);
+# for (const each of [One, Two]) Object.defineProperties(each, { [Symbol.hasInstance]: { value: function () { return false; } } });
+# for (const each of [Top, Mid, Low]) each.tag = 1;
+# print(new Low() instanceof Top, new Low() instanceof Mid, new Top() instanceof Low, new One() instanceof One);
+# -- end of source
+# f1 = Top, f2 = Mid, f3 = Low
+# RUN: link members mechanisms=all
+# CHECK-NOT: on-function f1 @@hasInstance
+# CHECK-NOT: on-function f2 @@hasInstance
+# CHECK-NOT: on-function f3 @@hasInstance
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: true true false false
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: true true false false
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: true true false false

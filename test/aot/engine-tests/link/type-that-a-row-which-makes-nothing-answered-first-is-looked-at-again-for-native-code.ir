@@ -1,0 +1,51 @@
+# process.nextTick(() => {}); require("node:path").sep, and the function of the library that makes the queue of ticks calls Bun.argv.scan()
+# Two rows answer the same type of the table, `any`. A read of an export of a module that is compiled with the program makes nothing; the row of Bun.argv answers out of a cell of native code that the table does not describe,
+# so objects of any class may exist. The read stands in the program and is told first; the function of the library is entered a round later. If a type that has been looked at once were never looked at again, the row that makes nothing
+# would hide what the other says: whether `scan` is found on the prototype object of the class of Bun.Glob would hang on which other built-ins the program uses.
+# The control: row-of-native-code-that-answers-anything-lets-objects-of-any-class-exist.ir is this program without the read.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 unreached
+# CHECK-NOT: function f3 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/ProcessObjectInternals.ts" displayPath="/$bun/js/builtins/ProcessObjectInternals.ts" flags=[IsLibrary]
+module m2 path="/$bun/js/builtins/Glob.ts" displayPath="/$bun/js/builtins/Glob.ts" flags=[IsLibrary]
+module m3 path="node:path" displayPath="node:path" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodePath body=f4
+entry module=m0
+runtimefunction id=GlobScan function=f2
+runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="nextTick"
+    v2 = Convert v1 declared={type=builtin(ProcessNextTick) flags=[IsExpected]}
+    v3 = NewClosure function=f1
+    v4 = Call v2, v0, v3 calleeKey="nextTick" calleeName="process.nextTick"
+    v5 = RequireModule module=m3 referrer=m0 specifier="node:path"
+    v6 = Builtin builtin=NodePath
+    v7 = PropGet v6 key="sep"
+    Return v7
+}
+function f1 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="scan" module=m2 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=GlobScan thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="initializeNextTickQueue" module=m1 kind=Method role=Library flags=[HasExplicitName] length=3 enclosingRuntimeFunction=ProcessObjectInternalsInitializeNextTickQueue thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=Bun
+    v4 = PropGet v3 key="argv"
+    v5 = PropGet v4 key="scan"
+    v6 = Call v5, v4 calleeKey="scan"
+    Return v6
+}
+function f4 module=m3 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="/"
+    Return v0
+}

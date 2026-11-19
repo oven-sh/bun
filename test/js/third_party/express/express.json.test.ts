@@ -402,7 +402,7 @@ describe("express.json()", function () {
         verify: function (req, res, buf) {
           if (buf[0] !== 0x5b) return;
           var err = new Error("no arrays");
-          err.status = 400;
+          (err as any).status = 400;
           throw err;
         },
       });
@@ -419,7 +419,7 @@ describe("express.json()", function () {
         verify: function (req, res, buf) {
           if (buf[0] !== 0x5b) return;
           var err = new Error("no arrays");
-          err.type = "foo.bar";
+          (err as any).type = "foo.bar";
           throw err;
         },
       });
@@ -733,7 +733,7 @@ function parseError(str) {
   try {
     JSON.parse(str);
     throw new SyntaxError("strict violation");
-  } catch (e) {
+  } catch (e: any) {
     return e.message;
   }
 }

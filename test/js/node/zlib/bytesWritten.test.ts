@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
+import type { Transform } from "stream";
 import * as zlib from "zlib";
 
 const expectStr = "abcdefghijklmnopqrstuvwxyz".repeat(2);
 const expectBuf = Buffer.from(expectStr);
 
-function createWriter(target: zlib.Zlib, buffer: Buffer): Promise<void> {
+function createWriter(target: zlib.Zlib & Transform, buffer: Buffer): Promise<void> {
   return new Promise(resolve => {
     let size = 0;
     const write = () => {

@@ -1,0 +1,17 @@
+The mock of node:util comes ahead of the load and ends with its test file. A file that was linked under the mock reads the module's own names in the next test file: node:util hands out its names when somebody first asks, and they read as undefined.
+#### a.test.js
+import { test, mock } from "bun:test";
+mock.module("node:util", () => ({ default: { format: "mocked" }, format: "mocked" }));
+const { seen } = await import("./src/uses.js");
+test("a", () => console.log("| CASE a", seen()));
+#### b.test.js
+import { test } from "bun:test";
+import { seen } from "./src/uses.js";
+test("b", () => console.log("| CASE b", seen()));
+#### package.json
+{ "name": "mock-builtin-next-file", "type": "module" }
+#### src/uses.js
+import it from "node:util";
+import * as all from "node:util";
+import { format } from "node:util";
+export const seen = () => [typeof it.format, typeof all.format, typeof format, Object.keys(all).length, Object.keys(all).includes("default")].join(" ");

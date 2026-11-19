@@ -1,0 +1,16 @@
+# f1 = next
+# -- source: is-array-of-a-subclass-of-array-folds.ts
+# class Stack extends Array<number> {}
+# function next(stack: Stack, count: number): number {
+#   if (Array.isArray(stack)) return count + count;
+#   return String(stack).length;
+# }
+# declare const input: any;
+# (globalThis as any).answer = next(new Stack(), +input);
+# -- end of source
+# The compiler before this one: 2 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 20, patches 2, moves 1, unlikely or rare 18.
+# RUN(X64): steps most:21 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 21

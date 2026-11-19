@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 // Seccomp helper: installs a filter that makes one syscall (`BLOCK_SYSCALL`,
 // a `-D` define) fail with the errno given in argv[1], then execs argv[2..].
+// An errno of 0 makes the syscall raise SIGSYS (SECCOMP_RET_TRAP) instead.
 // With `-DBLOCK_ARG1=value` only calls whose second argument is `value` fail.
 // Shared by the describe blocks below.
 const helperSrc = `
@@ -34,6 +35,12 @@ const helperSrc = `
 #ifndef __NR_faccessat2
   #define __NR_faccessat2 439
 #endif
+#ifndef __NR_pidfd_open
+  #define __NR_pidfd_open 434
+#endif
+#ifndef __NR_close_range
+  #define __NR_close_range 436
+#endif
 
 /* instructions between the syscall-nr test and the errno return */
 #ifdef BLOCK_ARG1
@@ -47,6 +54,7 @@ int main(int argc, char **argv) {
   if (argc < 3) return 2;
   if (MY_AUDIT_ARCH == 0) return 77; /* unsupported arch, skip */
   unsigned int err = (unsigned int)atoi(argv[1]);
+  unsigned int action = err == 0 ? SECCOMP_RET_TRAP : SECCOMP_RET_ERRNO | (err & SECCOMP_RET_DATA);
 
   struct sock_filter filter[] = {
     /* arch check */
@@ -62,7 +70,7 @@ int main(int argc, char **argv) {
     BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[1])),
     BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, BLOCK_ARG1, 0, 1),
 #endif
-    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | (err & SECCOMP_RET_DATA)),
+    BPF_STMT(BPF_RET | BPF_K, action),
     /* else → allow */
     BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
   };
@@ -86,6 +94,7 @@ int main(int argc, char **argv) {
 }
 `;
 
+const TRAP = 0;
 // Linux errno values (identical on x86_64 and aarch64).
 const EPERM = 1;
 const EACCES = 13;
@@ -450,36 +459,117 @@ describe.skipIf(!isLinux || isASAN)("bun build when prlimit64 is blocked by secc
   }
 });
 
+// Linux kernels older than 3.17 don't have getrandom(2).
+describe.skipIf(!isLinux)("bun build when getrandom is blocked by seccomp", () => {
+  const helperBin = tryBuildHelper("__NR_getrandom");
+
+  for (const [name, errno] of [
+    ["ENOSYS", ENOSYS],
+    ["EPERM", EPERM],
+  ] as const) {
+    test.concurrent(`bundles a file (${name})`, async () => {
+      if (helperBin == null) {
+        console.warn("SKIP getrandom seccomp: cc or seccomp headers not available");
+        return;
+      }
+      using dir = tempDir("getrandom-seccomp-build", { "index.js": `console.log("bun ok");` });
+      const cwd = String(dir);
+      const out = await runBunUnderSeccomp(helperBin, errno, ["build", "index.js", "--outdir=out"], { cwd });
+      if (out == null) {
+        console.warn("SKIP getrandom seccomp: seccomp not permitted in this environment");
+        return;
+      }
+      expect({ built: existsSync(join(cwd, "out", "index.js")), exitCode: out.exitCode }).toEqual({
+        built: true,
+        exitCode: 0,
+      });
+    });
+  }
+});
+
+// Android's seccomp policy raises SIGSYS for a disallowed syscall instead of returning an errno.
+describe.skipIf(!isLinux)("a syscall trapped by seccomp fails with ENOSYS", () => {
+  const closeRange = tryBuildHelper("__NR_close_range");
+  const pidfdOpen = tryBuildHelper("__NR_pidfd_open");
+
+  async function run(helperBin: string | null, argv: string[], cwd?: string) {
+    if (helperBin == null) {
+      console.warn("SKIP seccomp trap: cc or seccomp headers not available");
+      return null;
+    }
+    const out = await runBunUnderSeccomp(helperBin, TRAP, argv, { cwd });
+    if (out == null) {
+      console.warn("SKIP seccomp trap: seccomp not permitted in this environment");
+      return null;
+    }
+    return { stdout: out.stdout, exitCode: out.exitCode };
+  }
+
+  test.concurrent("close_range at startup and in a spawned child", async () => {
+    const out = await run(closeRange, ["-e", `process.stdout.write(Bun.spawnSync(["echo", "hi"]).stdout)`]);
+    if (out == null) return;
+    expect(out).toEqual({ stdout: "hi\n", exitCode: 0 });
+  });
+
+  // The signal-exit package listens for SIGSYS, so most CLIs do too.
+  test.concurrent("pidfd_open while process.on('SIGSYS') has a listener, and after it's removed", async () => {
+    const snippet = `
+      const { promise, resolve } = Promise.withResolvers();
+      process.on("SIGSYS", resolve);
+      const during = Bun.spawnSync(["echo", "hi"]).stdout.toString();
+      process.kill(process.pid, "SIGSYS");
+      await promise;
+      process.removeAllListeners("SIGSYS");
+      const after = Bun.spawnSync(["echo", "hi"]).stdout.toString();
+      console.log(JSON.stringify({ during, after }));
+    `;
+    const out = await run(pidfdOpen, ["-e", snippet]);
+    if (out == null) return;
+    expect(out).toEqual({ stdout: JSON.stringify({ during: "hi\n", after: "hi\n" }) + "\n", exitCode: 0 });
+  });
+
+  test.concurrent("pidfd_open in bun run --no-orphans isn't forwarded to the script as a signal", async () => {
+    using dir = tempDir("seccomp-trap-run", {
+      "package.json": JSON.stringify({ name: "app", scripts: { hello: "echo hello-from-script" } }),
+    });
+    const out = await run(pidfdOpen, ["run", "--no-orphans", "--silent", "hello"], String(dir));
+    if (out == null) return;
+    expect(out).toEqual({ stdout: "hello-from-script\n", exitCode: 0 });
+  });
+});
+
 // The kernel is not bound to the errno table bun knows: FUSE filesystems and
-// some drivers return codes above EHWPOISON (133). fs.fsyncSync decodes the
-// errno through SystemErrno::from_raw; a code outside the table must report
-// as EUNKNOWN instead of becoming an invalid enum value (a debug build used
-// to die on an assertion there).
-describe.skipIf(!isLinux)("node:fs errno outside the SystemErrno table", () => {
-  const helperBin = tryBuildHelper("__NR_fsync");
+// some drivers return codes above EHWPOISON (133). A code outside the table
+// must report as EUNKNOWN instead of becoming an invalid enum value (a debug
+// build used to die on an assertion there).
+describe.skipIf(!isLinux).each([
+  ["fsync", "fs.fsyncSync(fd)"],
+  ["fchmod", "fs.fchmodSync(fd, 0o644)"],
+])("node:fs errno outside the SystemErrno table: %s", (syscall, call) => {
+  const helperBin = tryBuildHelper(`__NR_${syscall}`);
 
   const snippet = `
     const fs = require("node:fs");
     const fd = fs.openSync(process.argv[1], "r");
     try {
-      fs.fsyncSync(fd);
+      ${call};
       console.log(JSON.stringify({ threw: false }));
     } catch (e) {
       console.log(JSON.stringify({ threw: true, errno: e.errno, code: e.code, syscall: e.syscall, message: e.message }));
     }
   `;
 
-  // fs.fsyncSync in a bun subprocess whose fsync(2) fails with `errno`.
+  // `call` in a bun subprocess whose `syscall` fails with `errno`.
   // Returns the parsed result line, or null on an environment skip.
-  async function fsyncWithErrno(errno: number) {
+  async function callWithErrno(errno: number) {
     if (helperBin == null) {
-      console.warn("SKIP fsync seccomp: cc or seccomp headers not available");
+      console.warn(`SKIP ${syscall} seccomp: cc or seccomp headers not available`);
       return null;
     }
     using dir = tempDir("fsync-seccomp-target", { "file.txt": "hello" });
     const out = await runUnderSeccomp(helperBin, errno, snippet, [join(String(dir), "file.txt")]);
     if (out == null) {
-      console.warn("SKIP fsync seccomp: seccomp not permitted in this environment");
+      console.warn(`SKIP ${syscall} seccomp: seccomp not permitted in this environment`);
       return null;
     }
     // Don't assert empty stderr — ASAN builds emit a startup warning there.
@@ -491,27 +581,26 @@ describe.skipIf(!isLinux)("node:fs errno outside the SystemErrno table", () => {
   }
 
   test.concurrent("a code above the table reports EUNKNOWN", async () => {
-    const result = await fsyncWithErrno(ENOTSUPP);
+    const result = await callWithErrno(ENOTSUPP);
     if (result == null) return;
     expect(result).toEqual({
       threw: true,
-      errno: expect.any(Number),
+      errno: -ENOTSUPP,
       code: "EUNKNOWN",
-      syscall: "fsync",
-      message: "EUNKNOWN: unknown error, fsync",
+      syscall,
+      message: `EUNKNOWN: unknown error, ${syscall}`,
     });
-    expect(result.errno).toBeLessThan(0);
   });
 
   test.concurrent("a code in the table keeps its name", async () => {
-    const result = await fsyncWithErrno(EACCES);
+    const result = await callWithErrno(EACCES);
     if (result == null) return;
     expect(result).toEqual({
       threw: true,
       errno: -EACCES,
       code: "EACCES",
-      syscall: "fsync",
-      message: "EACCES: permission denied, fsync",
+      syscall,
+      message: `EACCES: permission denied, ${syscall}`,
     });
   });
 });

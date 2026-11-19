@@ -1,0 +1,4 @@
+type A = { [K in B] /* c */ };
+type C = { [K in B] // c
+};
+type D = { [K in keyof B]: B[K] /* c */ };

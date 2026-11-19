@@ -1,0 +1,19 @@
+------------------
+{ printWidth: 80 }
+------------------
+return1 = Customer.createCollection()
+  // Transactions execute in isolation
+  .then(() => Customer.findOne({ name: "Test" }))
+  // another
+  .then(() => session.commitTransaction());
+
+-------------------
+{ printWidth: 100 }
+-------------------
+return1 = Customer.createCollection()
+  // Transactions execute in isolation
+  .then(() => Customer.findOne({ name: "Test" }))
+  // another
+  .then(() => session.commitTransaction());
+
+===================== End =====================

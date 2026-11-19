@@ -1,5 +1,4 @@
 use bun_alloc::ArenaVecExt as _;
-use bun_collections::VecExt;
 
 use crate::js_lexer;
 use crate::js_lexer::T;
@@ -226,10 +225,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
 
-            let mut ts_decorators = bun_alloc::AstAlloc::vec();
+            let mut ts_decorators = js_ast::StoreSlice::EMPTY;
             if opts.allow_ts_decorators {
-                ts_decorators = p.parse_type_script_decorators()?;
-                if ts_decorators.len_u32() > 0 {
+                ts_decorators = p.parse_type_script_decorators()?.into();
+                if !ts_decorators.is_empty() {
                     arg_has_decorators = true;
                 }
             }
@@ -501,7 +500,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.lexer.expect(T::TOpenBrace)?;
-        let mut opts = ParseStatementOptions::default();
+        let mut opts = ParseStatementOptions {
+            allow_directive_prologue: true,
+            ..Default::default()
+        };
         let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut opts)?;
         p.lexer.next()?;
 
@@ -565,6 +567,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             });
         }
 
+        if let Some(starts) = &mut p.starts_for_parse_only {
+            starts
+                .arrow_expression_bodies
+                .insert(arrow_loc.start, p.lexer.loc().start);
+        }
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::FunctionBody, arrow_loc)?;
         // `pop_scope` is called explicitly before each return below.
 

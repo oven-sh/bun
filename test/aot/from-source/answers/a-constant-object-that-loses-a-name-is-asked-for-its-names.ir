@@ -1,0 +1,17 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# type Table = { p?: number; q?: number };
+# const table: Table = { p: 1, q: 2 };
+# function copy(extra: Table) { const made = { ...table, ...extra }; return made.p + ":" + made.q + ":" + Object.keys(made).join(); }
+# function change() { delete table.p; }
+# let text = "";
+# for (let i = 0; i < 3; i++) text = copy({ q: i });
+# print(text);
+# change();
+# print(copy({ q: 9 }));
+# -- end of source
+# The object of `table` is born with every name of its layout, but a function deletes one: Link says so of the layout, and the order of its names is not taken for known.
+# RUN: run-in-shell
+# CHECK: 1:2:p,q
+# CHECK-NEXT: undefined:9:q
+# CHECK-NEXT: exited with 0

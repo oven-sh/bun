@@ -1,3 +1,4 @@
+import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunExe, expectRssDeltaBelow } from "harness";
 import { MIMEParams, MIMEType } from "util";
@@ -456,4 +457,21 @@ test("MIMEType releases its type and subtype strings when garbage-collected", as
 
   // Unfixed: ~42 MiB (160 x 256 KiB). Fixed: 1 to 4 MiB of allocator slack.
   await expectRssDeltaBelow(["--smol", "-e", code], { release: 20, debug: 25 });
+});
+
+test("MIMEType and MIMEParams throw when the serialized string is too long", () => {
+  const half = Buffer.alloc(512 * 1024, "a").toString();
+  const mime = new MIMEType("text/plain");
+  // Serializing escapes each quote with a backslash, which doubles the length.
+  mime.params.set("a", Buffer.alloc(512 * 1024, '"').toString());
+  const long = new MIMEType(half + "/" + half);
+  const originalLimit = setSyntheticAllocationLimitForTesting(1024 * 1024);
+  try {
+    expect(() => String(mime.params).length).toThrow("Out of memory");
+    expect(() => String(mime).length).toThrow("Out of memory");
+    expect(() => String(long).length).toThrow("Out of memory");
+    expect(() => long.essence.length).toThrow("Out of memory");
+  } finally {
+    setSyntheticAllocationLimitForTesting(originalLimit);
+  }
 });

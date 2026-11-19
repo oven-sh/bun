@@ -4,7 +4,7 @@
 //!   • `bun_runtime` (node:http2 bindings)   — `pub use`d into its
 //!     `h2_frame_parser` module, which layers `WireWriter`-based `write()`
 //!     and `to_js()` on top as local extension traits.
-#![allow(non_camel_case_types, non_upper_case_globals)]
+#![allow(non_camel_case_types)]
 
 // ─── connection / sizing constants ──────────────
 
@@ -195,11 +195,7 @@ pub struct SettingsPayloadUnit {
     pub type_: u16,
     pub value: u32,
 }
-// SAFETY: `#[repr(C, packed)]` with `u16 + u32` fields — no padding, no
-// niches, every 6-byte pattern is a valid value.
-unsafe impl bytemuck::Zeroable for SettingsPayloadUnit {}
-// SAFETY: see `Zeroable` impl above; additionally `Copy + 'static`.
-unsafe impl bytemuck::Pod for SettingsPayloadUnit {}
+bun_core::impl_pod!(SettingsPayloadUnit);
 const _: () =
     assert!(core::mem::size_of::<SettingsPayloadUnit>() == SettingsPayloadUnit::BYTE_SIZE);
 
@@ -208,7 +204,7 @@ impl SettingsPayloadUnit {
 
     #[inline]
     pub fn from<const END: bool>(dst: &mut SettingsPayloadUnit, src: &[u8], offset: usize) {
-        let bytes = bytemuck::bytes_of_mut(dst);
+        let bytes = bun_core::bytes_of_mut(dst);
         bytes[offset..src.len() + offset].copy_from_slice(src);
         if END {
             // Byte-swap each field.

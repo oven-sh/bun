@@ -1,0 +1,21 @@
+------------------
+{ printWidth: 80 }
+------------------
+export { a
+// prettier-ignore
+as   b };
+import { c as
+// prettier-ignore
+d, e } from "f";
+
+-------------------
+{ printWidth: 100 }
+-------------------
+export { a
+// prettier-ignore
+as   b };
+import { c as
+// prettier-ignore
+d, e } from "f";
+
+===================== End =====================

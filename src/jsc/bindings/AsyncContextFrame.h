@@ -3,6 +3,7 @@
 #include "root.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/CallData.h>
+#include <wtf/Noncopyable.h>
 
 class AsyncContextFrame : public JSC::JSNonFinalObject {
 public:
@@ -51,4 +52,17 @@ public:
         , context(context_, JSC::WriteBarrierEarlyInit)
     {
     }
+};
+
+// Makes `snapshot` the current async context for the scope's lifetime. No-op if `snapshot` is empty, undefined or null.
+class AsyncContextScope {
+    WTF_MAKE_NONCOPYABLE(AsyncContextScope);
+
+public:
+    AsyncContextScope(JSC::JSGlobalObject*, JSC::JSValue snapshot);
+    ~AsyncContextScope();
+
+private:
+    JSC::JSGlobalObject* m_globalObject { nullptr };
+    JSC::JSValue m_previous;
 };

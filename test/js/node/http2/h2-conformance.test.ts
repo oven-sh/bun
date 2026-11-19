@@ -8,11 +8,13 @@
 // WINDOW_UPDATE, frame-size and stream-id rules. HPACK/HEADERS cases live in a sibling file.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
-import { once } from "node:events";
+import { bunEnv, bunExe, gcTick, normalizeBunSnapshot, tls as tlsCert } from "harness";
+import diagnostics from "node:diagnostics_channel";
+import { EventEmitter, once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
-import { Writable } from "node:stream";
+import { Duplex, Readable, Writable } from "node:stream";
+import tls from "node:tls";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
 
@@ -62,16 +64,18 @@ class RawH2 {
   closed = false;
   private waiters: Array<{ pred: (f: Frame) => boolean; resolve: (f: Frame) => void }> = [];
 
-  constructor(port: number) {
-    this.socket = net.connect(port, "127.0.0.1");
-    this.socket.on("data", d => this.onData(d));
+  constructor(port: number, secure = false) {
+    this.socket = secure
+      ? tls.connect({ port, host: "127.0.0.1", ca: tlsCert.cert, ALPNProtocols: ["h2"] })
+      : net.connect(port, "127.0.0.1");
+    this.socket.on("data", (d: Buffer) => this.onData(d));
     this.socket.on("close", () => (this.closed = true));
     this.socket.on("error", () => {});
   }
 
-  static async connect(port: number): Promise<RawH2> {
-    const c = new RawH2(port);
-    await once(c.socket, "connect");
+  static async connect(port: number, secure = false): Promise<RawH2> {
+    const c = new RawH2(port, secure);
+    await once(c.socket, secure ? "secureConnect" : "connect");
     return c;
   }
 
@@ -259,6 +263,155 @@ describe("PING (checklist §3.7)", () => {
   });
 });
 
+/** A socket for a session that is written in JS. */
+class Transport extends Duplex {
+  onNextWrite: (() => void) | undefined;
+
+  constructor(private send: (chunk: Buffer) => void = () => {}) {
+    super();
+  }
+
+  _read() {}
+
+  _write(chunk: Buffer, _: string, done: () => void) {
+    this.send(chunk);
+    const { onNextWrite } = this;
+    this.onNextWrite = undefined;
+    onNextWrite?.();
+    done();
+  }
+}
+
+test("a PING sent from the transport of another session goes out", async () => {
+  const url = `http://127.0.0.1:${port}`;
+  const socket = net.connect(port, "127.0.0.1");
+  const transport = new Transport(chunk => socket.write(chunk));
+  socket.on("data", chunk => transport.push(chunk));
+  const sessions = [http2.connect(url, { createConnection: () => transport }), http2.connect(url), http2.connect(url)];
+  const ping = (session: http2.ClientHttp2Session) =>
+    new Promise<void>((resolve, reject) => session.ping(error => (error ? reject(error) : resolve())));
+  try {
+    await Promise.all(sessions.map(session => once(session, "remoteSettings").then(() => ping(session))));
+    const [overTransport, next, third] = sessions;
+    for (const session of [next, third]) {
+      const pings: Promise<void>[] = [];
+      transport.onNextWrite = () => pings.push(ping(session));
+      pings.push(ping(overTransport));
+      expect(pings.length).toBe(1);
+      // Sessions share a buffer for what they write in one turn, so this has the first one send.
+      pings.push(ping(next));
+      expect(pings.length).toBe(3);
+      await Promise.all(pings);
+    }
+  } finally {
+    for (const session of sessions) session.destroy();
+    socket.destroy();
+  }
+});
+
+test.each<[string, string[]]>([
+  ["request()", ["HEADERS 1", "RST_STREAM 1"]],
+  ["a queued request", ["HEADERS 1", "HEADERS 3", "RST_STREAM 3"]],
+  ["write()", ["HEADERS 1", "RST_STREAM 1"]],
+  ["a queued write", ["HEADERS 1", "RST_STREAM 1"]],
+  ["end()", ["HEADERS 1", "RST_STREAM 1"]],
+  ["sendTrailers()", ["HEADERS 1", "DATA 1", "RST_STREAM 1"]],
+  ["sendTrailers({})", ["HEADERS 1", "DATA 1", "RST_STREAM 1"]],
+])("a signal is fired from the transport of another session during %s", async (during, expected) => {
+  const raw = await RawH2Server.listen();
+  const socket = net.connect(raw.port, "127.0.0.1");
+  const [toClient, toOther] = [new Transport(chunk => socket.write(chunk)), new Transport()];
+  const client = http2.connect("http://localhost", { createConnection: () => toClient });
+  const other = http2.connect("http://localhost", { createConnection: () => toOther });
+  const controller = new AbortController();
+  const { signal } = controller;
+  const failed = Promise.withResolvers<NodeJS.ErrnoException>();
+  let aborted = 0;
+  const request = () =>
+    client
+      .request({ ":method": "POST" }, { signal, waitForTrailers: during.startsWith("sendTrailers") })
+      .on("aborted", () => aborted++)
+      .on("error", failed.resolve);
+  const fireOnNextWrite = () => {
+    toOther.onNextWrite = () => controller.abort();
+    other.ping(() => {});
+  };
+  try {
+    // One stream at a time, and for a write to be queued, no window.
+    const settings = "000300000001" + (during === "a queued write" ? "000400000000" : "");
+    toClient.push(encodeFrame(FrameType.SETTINGS, 0, 0, Buffer.from(settings, "hex")));
+    await once(client, "remoteSettings");
+    const first = during === "a queued request" ? client.request().resume() : undefined;
+    const req = during === "request()" ? undefined : request();
+    if (during === "a queued write") req!.write("a");
+    if (during.startsWith("sendTrailers")) await Promise.all([once(req!, "wantTrailers"), req!.end("a")]);
+    // With all of that sent, and out of the read, so that the next push is read at once.
+    await new Promise(setImmediate);
+    if (first) {
+      first.prependListener("close", fireOnNextWrite);
+      toClient.push(encodeFrame(FrameType.HEADERS, 0x4 | 0x1, 1, Buffer.from([0x88])));
+      await once(first, "close");
+    } else {
+      fireOnNextWrite();
+      expect(signal.aborted).toBe(false);
+      if (during === "request()") request().end("a");
+      else if (during === "write()") req!.write("a");
+      else if (during === "end()") req!.end();
+      else if (during === "sendTrailers()") req!.sendTrailers({ "x-a": "b" });
+      else if (during === "sendTrailers({})") req!.sendTrailers({});
+      else toClient.push(encodeFrame(FrameType.WINDOW_UPDATE, 0, 1, Buffer.from("00000001", "hex")));
+    }
+    expect(signal.aborted).toBe(true);
+    expect((await failed.promise).code).toBe("ABORT_ERR");
+    // What destroying the stream has put off goes out ahead of the PING.
+    await new Promise(setImmediate);
+    client.ping(() => {});
+    await raw.waitFor(f => f.type === FrameType.PING);
+    const names = Object.keys(FrameType);
+    expect({
+      frames: raw.frames.filter(f => f.streamId !== 0).map(f => `${names[f.type]} ${f.streamId}`),
+      code: raw.frames.find(f => f.type === FrameType.RST_STREAM)?.payload.readUInt32BE(0),
+      queued: client.state.outboundQueueSize,
+    }).toEqual({ frames: expected, code: ErrorCode.CANCEL, queued: 0 });
+    if (/queued|write/.test(during)) expect(aborted).toBe(1);
+  } finally {
+    client.destroy();
+    other.destroy();
+    socket.destroy();
+    raw.close();
+  }
+});
+
+test.each(["reads", "writes"])("a queued write goes out when a session that may not send %s", async action => {
+  const [mine, other] = await Promise.all(
+    [new Transport(), new Transport()].map(async transport => {
+      const session = http2.connect("http://localhost", { createConnection: () => transport });
+      // No window.
+      transport.push(encodeFrame(FrameType.SETTINGS, 0, 0, Buffer.from("000400000000", "hex")));
+      await once(session, "remoteSettings");
+      const [first, second] = [1, 3].map(() => session.request({ ":method": "POST" }).on("error", () => {}));
+      first.write("a");
+      await new Promise(setImmediate);
+      return { transport, session, second };
+    }),
+  );
+  const windowUpdate = (id: number) => encodeFrame(FrameType.WINDOW_UPDATE, 0, id, Buffer.from("00000001", "hex"));
+  try {
+    mine.transport.push(windowUpdate(3));
+    await new Promise(setImmediate);
+    mine.session.ping(() => {});
+    const written = new Promise(resolve => mine.second.write("b", resolve));
+    expect(mine.session.state.outboundQueueSize).toBe(2);
+    if (action === "reads") other.transport.push(windowUpdate(0));
+    else other.second.write("c");
+    await written;
+    expect(mine.session.state.outboundQueueSize).toBe(1);
+  } finally {
+    mine.session.destroy();
+    other.session.destroy();
+  }
+});
+
 describe("WINDOW_UPDATE (checklist §6)", () => {
   test("a connection-level WINDOW_UPDATE with a 0 increment is a PROTOCOL_ERROR", async () => {
     const c = await RawH2.connect(port);
@@ -404,6 +557,364 @@ describe("CONTINUATION (checklist §3,§7)", () => {
     } finally {
       c.destroy();
       server.close();
+    }
+  });
+});
+
+describe("a stream that the server finishes before respond() (RFC 9113 §8.1)", () => {
+  const { NGHTTP2_INTERNAL_ERROR } = http2.constants;
+  // What Node 26 sends on the stream.
+  test.each<[string, (stream: http2.ServerHttp2Stream) => void, string[]]>([
+    ["close(code)", stream => stream.close(NGHTTP2_INTERNAL_ERROR), ["RST_STREAM 2"]],
+    ["close(NGHTTP2_CANCEL)", stream => stream.close(http2.constants.NGHTTP2_CANCEL), ["RST_STREAM 8"]],
+    ["close()", stream => stream.close(), ["RST_STREAM 0"]],
+    ["destroy()", stream => stream.destroy(), ["RST_STREAM 0"]],
+    ["end()", stream => stream.end(), []],
+    ["end(), close(code)", stream => (stream.end(), stream.close(NGHTTP2_INTERNAL_ERROR)), ["RST_STREAM 2"]],
+    ["end(), respond()", stream => (stream.end(), stream.respond({ ":status": 201 })), ["HEADERS with END_STREAM"]],
+    [
+      "end(), respond() on 'finish'",
+      stream => (stream.once("finish", () => stream.respond({ ":status": 201 })), stream.end()),
+      ["HEADERS with END_STREAM"],
+    ],
+  ])("%s sends no DATA frame ahead of the HEADERS frame", async (_, finish, expected) => {
+    const server = http2.createServer();
+    const { promise: finished, resolve } = Promise.withResolvers<void>();
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      finish(stream);
+      // The server forgets a closed stream when it next reads from the socket. Make that happen before _destroy() runs.
+      c.sendFrame(FrameType.WINDOW_UPDATE, 0, 0, Buffer.from([0, 0, 0, 1]));
+      // What _destroy() leaves for the next turn of the event loop is sent by then.
+      if (stream.closed || stream.destroyed) stream.once("close", () => setImmediate(resolve));
+      else resolve();
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5 /* END_STREAM | END_HEADERS */, 1, requestHeaderBlock("GET"));
+      await finished;
+      if (expected.length) await c.waitFor(f => f.streamId === 1 && f.type !== FrameType.DATA);
+      // Whatever else the server had to send comes before its answer to this.
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      const sent = c.frames
+        .filter(f => f.streamId === 1)
+        .map(f =>
+          f.type === FrameType.RST_STREAM
+            ? `RST_STREAM ${f.payload.readUInt32BE(0)}`
+            : `${f.type === FrameType.HEADERS ? "HEADERS" : f.type === FrameType.DATA ? "DATA" : f.type} ${f.flags & 0x1 ? "with" : "without"} END_STREAM`,
+        );
+      expect(sent).toEqual(expected);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  // What Node 26 emits on the stream.
+  test.each<[string, (stream: http2.ServerHttp2Stream) => void, string[]]>([
+    ["close(code)", stream => stream.close(NGHTTP2_INTERNAL_ERROR), ["aborted", "finish", "error", "close"]],
+    ["close(NGHTTP2_CANCEL)", stream => stream.close(http2.constants.NGHTTP2_CANCEL), ["aborted", "finish", "close"]],
+    ["close()", stream => stream.close(), ["aborted", "finish", "end", "close"]],
+    ["destroy()", stream => stream.destroy(), ["aborted", "close"]],
+  ])("the events of the stream after %s", async (_, finish, expected) => {
+    const server = http2.createServer();
+    const { promise: events, resolve } = Promise.withResolvers<string[]>();
+    server.on("stream", stream => {
+      const seen: string[] = [];
+      for (const event of ["aborted", "finish", "end", "error", "close"]) stream.on(event, () => seen.push(event));
+      stream.on("close", () => resolve(seen));
+      finish(stream);
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5 /* END_STREAM | END_HEADERS */, 1, requestHeaderBlock("GET"));
+      expect(await events).toEqual(expected);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  // What Node 26 emits on the stream.
+  test("the events of the stream after the client resets it", async () => {
+    const server = http2.createServer();
+    const { promise: opened, resolve: open } = Promise.withResolvers<void>();
+    const { promise: events, resolve } = Promise.withResolvers<{ seen: string[]; writableFinished: boolean }>();
+    server.on("stream", stream => {
+      const seen: string[] = [];
+      for (const event of ["aborted", "finish", "error", "close"]) stream.on(event, () => seen.push(event));
+      stream.on("close", () => resolve({ seen, writableFinished: stream.writableFinished }));
+      open();
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5 /* END_STREAM | END_HEADERS */, 1, requestHeaderBlock("GET"));
+      await opened;
+      const code = Buffer.alloc(4);
+      code.writeUInt32BE(ErrorCode.CANCEL, 0);
+      c.sendFrame(FrameType.RST_STREAM, 0, 1, code);
+      expect(await events).toEqual({ seen: ["aborted", "finish", "close"], writableFinished: true });
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+});
+
+describe("a response that the server resets after its headers", () => {
+  const { NGHTTP2_INTERNAL_ERROR, NGHTTP2_CANCEL } = http2.constants;
+  const begin = (response: http2.Http2ServerResponse) => (response.writeHead(200), response.flushHeaders());
+  const headers = "HEADERS without END_STREAM";
+  // What Node 26 sends on the stream. END_STREAM would tell the client that the body is complete.
+  test.each<[string, (stream: http2.ServerHttp2Stream, response: http2.Http2ServerResponse) => void, string[]]>([
+    ["close(code)", (stream, response) => (begin(response), stream.close(NGHTTP2_INTERNAL_ERROR)), ["RST_STREAM 2"]],
+    ["close(NGHTTP2_CANCEL)", (stream, response) => (begin(response), stream.close(NGHTTP2_CANCEL)), ["RST_STREAM 8"]],
+    ["close()", (stream, response) => (begin(response), stream.close()), ["RST_STREAM 0"]],
+    [
+      "close(code) on a later turn of the event loop",
+      (stream, response) => (begin(response), setImmediate(() => stream.close(NGHTTP2_INTERNAL_ERROR))),
+      ["RST_STREAM 2"],
+    ],
+    [
+      "write(), close(code)",
+      (stream, response) => (begin(response), response.write("~"), stream.close(NGHTTP2_INTERNAL_ERROR)),
+      ["DATA without END_STREAM", "RST_STREAM 2"],
+    ],
+    [
+      "respond() and write() of the stream itself, close(code)",
+      stream => (stream.respond({ ":status": 200 }), stream.write("~"), stream.close(NGHTTP2_INTERNAL_ERROR)),
+      ["DATA without END_STREAM", "RST_STREAM 2"],
+    ],
+    [
+      "respond() with waitForTrailers and a 'wantTrailers' listener, close(code)",
+      stream => {
+        stream.on("wantTrailers", () => stream.sendTrailers({ "x-trailer": "1" }));
+        stream.respond({ ":status": 200 }, { waitForTrailers: true });
+        stream.close(NGHTTP2_INTERNAL_ERROR);
+      },
+      ["RST_STREAM 2"],
+    ],
+  ])("%s sends RST_STREAM and no END_STREAM", async (_, reset, expected) => {
+    const server = http2.createServer();
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    server.on("request", (request, response) => {
+      for (const emitter of [request, response, request.stream]) emitter.on("error", () => {});
+      // What _destroy() leaves for the next turn of the event loop is sent by then.
+      request.stream.once("close", () => setImmediate(resolve));
+      reset(request.stream, response);
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5 /* END_STREAM | END_HEADERS */, 1, requestHeaderBlock("GET"));
+      await closed;
+      // Whatever else the server had to send comes before its answer to this.
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      const sent = c.frames
+        .filter(f => f.streamId === 1)
+        .map(f =>
+          f.type === FrameType.RST_STREAM
+            ? `RST_STREAM ${f.payload.readUInt32BE(0)}`
+            : `${f.type === FrameType.HEADERS ? "HEADERS" : f.type === FrameType.DATA ? "DATA" : f.type} ${f.flags & 0x1 ? "with" : "without"} END_STREAM`,
+        );
+      expect(sent).toEqual([headers, ...expected]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  test("the client gets the code and an error, not 'end'", async () => {
+    const server = http2.createServer((request, response) => {
+      for (const emitter of [request, response, request.stream]) emitter.on("error", () => {});
+      begin(response);
+      response.write("~");
+      setImmediate(() => request.stream.close(NGHTTP2_INTERNAL_ERROR));
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+    try {
+      const stream = client.request({ ":path": "/" });
+      const seen: string[] = [];
+      stream.on("error", error => seen.push(`error ${(error as NodeJS.ErrnoException).code}`));
+      for (const event of ["response", "data", "end"]) stream.on(event, () => seen.push(event));
+      stream.end();
+      // Not once(), which rejects on 'error'.
+      await new Promise(resolve => stream.on("close", resolve));
+      expect({ seen, rstCode: stream.rstCode }).toEqual({
+        seen: ["response", "data", "error ERR_HTTP2_STREAM_ERROR"],
+        rstCode: NGHTTP2_INTERNAL_ERROR,
+      });
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+});
+
+describe.each(["GET", "POST"] as const)("a response to %s whose headers are not sent", method => {
+  type Respond = (stream: http2.ServerHttp2Stream, headers: http2.OutgoingHttpHeaders) => void;
+  const ways: [string, Respond][] = [
+    ["respond()", (stream, headers) => stream.respond(headers)],
+    ["respond() with endStream", (stream, headers) => stream.respond(headers, { endStream: true })],
+    ["respond(), end(body)", (stream, headers) => (stream.respond(headers), stream.end("~"))],
+    [
+      "respond() with waitForTrailers",
+      (stream, headers) => (stream.respond(headers, { waitForTrailers: true }), stream.end()),
+    ],
+    [
+      "respond() with waitForTrailers and a 'wantTrailers' listener",
+      (stream, headers) => {
+        stream.on("wantTrailers", () => stream.sendTrailers({ "x-trailer": "1" }));
+        stream.respond(headers, { waitForTrailers: true });
+        stream.end("~");
+      },
+    ],
+    [
+      "additionalHeaders(), respond()",
+      (stream, headers) => (stream.additionalHeaders({ ":status": 103, ...headers }), stream.respond()),
+    ],
+  ];
+  const tooLong = { "x-long": Buffer.alloc(1000, "~").toString() };
+
+  const request = (id: number) =>
+    encodeFrame(FrameType.HEADERS, method === "GET" ? 0x5 : 0x4, id, requestHeaderBlock(method));
+  // Enough for a WINDOW_UPDATE.
+  const body = Array(method === "GET" ? 0 : 3).fill(encodeFrame(FrameType.DATA, 0, 1, Buffer.alloc(16000)));
+
+  /** The frames of all streams but 3, whose handler calls `respond`. */
+  async function framesOf(options: http2.ServerOptions, respond: (first: any, second: any, onClose: any) => void) {
+    const server = http2.createServer(options);
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    // What _destroy() leaves for the next turn of the event loop is sent by then.
+    const onClose = () => setImmediate(resolve);
+    let first: http2.ServerHttp2Stream;
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      if (stream.id === 1) first = stream.once("close", onClose);
+      else respond(first, stream, onClose);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.send(Buffer.concat([PREFACE, encodeFrame(FrameType.SETTINGS, 0, 0), request(1), request(3), ...body]));
+      await closed;
+      // Whatever else the server had to send comes before its answer to this.
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      return c.frames.filter(f => f.streamId !== 0 && f.streamId !== 3).map(describeFrame);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  }
+  const describeFrame = (f: Pick<Frame, "streamId" | "type" | "payload">) =>
+    `${f.streamId} ${Object.keys(FrameType)[f.type]}${f.type === FrameType.RST_STREAM ? " " + f.payload[3] : ""}`;
+
+  test.each(ways)("%s over maxSendHeaderBlockLength resets the stream", async (_, respond) => {
+    const sent = await framesOf({ maxSendHeaderBlockLength: 1000 }, first => respond(first, tooLong));
+    expect(sent).toEqual(["1 RST_STREAM 6"]);
+  });
+
+  test.each(ways)("%s over maxSessionMemory resets the stream", async (_, respond) => {
+    const sent = await framesOf({ maxSessionMemory: 1 }, (first, second) => {
+      second.respond();
+      second.write(Buffer.alloc(2 * 1024 * 1024));
+      respond(first, {});
+    });
+    expect(sent).toEqual(["1 RST_STREAM 11"]);
+  });
+
+  test("read() sends no WINDOW_UPDATE from then on", async () => {
+    const sent = await framesOf({ maxSendHeaderBlockLength: 1000 }, first => {
+      first._readableState.highWaterMark = 1;
+      setImmediate(() => (first.respond(tooLong), first.read(first.readableLength)));
+    });
+    expect(sent).toEqual(["1 RST_STREAM 6"]);
+  });
+
+  test("respond() on a pushed stream resets that one", async () => {
+    let id: number | undefined;
+    const sent = await framesOf({ maxSendHeaderBlockLength: 1000 }, (first, _, onClose) =>
+      first.pushStream({}, (_: any, pushed: any) => {
+        id = pushed.id;
+        pushed.on("error", () => {}).once("close", onClose);
+        pushed.respond(tooLong);
+      }),
+    );
+    expect(sent.filter(frame => frame !== "1 WINDOW_UPDATE")).toEqual(["1 PUSH_PROMISE", `${id} RST_STREAM 6`]);
+  });
+
+  test("pushStream() fails from then on", async () => {
+    let code: string | undefined;
+    const sent = await framesOf({ maxSendHeaderBlockLength: 1000 }, first => {
+      first.respond(tooLong);
+      first.pushStream({}, (error: any) => (code = error?.code));
+    });
+    expect({ sent, code }).toEqual({ sent: ["1 RST_STREAM 6"], code: "ERR_HTTP2_INVALID_STREAM" });
+  });
+
+  test("pushStream() releases the streams that it has reserved", async () => {
+    const refs: WeakRef<object>[] = [];
+    const onCreated = ({ stream }: any) => void (stream.id % 2 === 0 && refs.push(new WeakRef(stream)));
+    const transport = new Transport();
+    const server = http2.createServer({ maxSendHeaderBlockLength: 1000 });
+    server.emit("connection", transport);
+    diagnostics.subscribe("http2.server.stream.created", onCreated);
+    try {
+      transport.push(Buffer.concat([PREFACE, encodeFrame(FrameType.SETTINGS, 0, 0), request(1)]));
+      const [stream] = await once(server, "stream");
+      stream.on("error", () => {}).respond(tooLong);
+      for (let i = 0; i < 32; i++) stream.pushStream({}, () => {});
+      expect(refs.length).toBe(32);
+      expect(await liveCount(refs)).toBeLessThanOrEqual(GC_STRAGGLERS);
+    } finally {
+      diagnostics.unsubscribe("http2.server.stream.created", onCreated);
+      transport.destroy();
+    }
+  });
+
+  test("RST_STREAM is sent once, also if the server reads right after it", async () => {
+    const chunks: Buffer[] = [];
+    const transport = new Transport(chunk => chunks.push(Buffer.from(chunk)));
+    const server = http2.createServer({ maxSendHeaderBlockLength: 1000 });
+    server.emit("connection", transport);
+    try {
+      transport.push(Buffer.concat([PREFACE, encodeFrame(FrameType.SETTINGS, 0, 0), request(1)]));
+      const [stream] = await once(server, "stream");
+      // Out of that read, so that the next push is read at once.
+      await new Promise(setImmediate);
+      await new Promise(resolve => {
+        stream.on("error", () => {});
+        stream.on("close", () => {
+          transport.push(encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8)));
+          setImmediate(resolve);
+        });
+        stream.respond(tooLong);
+      });
+      await new Promise(setImmediate);
+      const reset = encodeFrame(FrameType.RST_STREAM, 0, 1, Buffer.from([0, 0, 0, ErrorCode.FRAME_SIZE_ERROR]));
+      expect(Buffer.concat(chunks).toString("hex").split(reset.toString("hex")).length - 1).toBe(1);
+    } finally {
+      transport.destroy();
     }
   });
 });
@@ -691,7 +1202,7 @@ class RawH2Server {
     const s = new RawH2Server(server);
     server.on("connection", socket => {
       s.socket = socket;
-      socket.on("data", d => s.onData(d));
+      socket.on("data", (d: Buffer) => s.onData(d));
       socket.on("error", () => {});
     });
     server.listen(0, "127.0.0.1");
@@ -810,7 +1321,7 @@ describe("inbound flow control after local end-stream (RFC 9113 §6.9)", () => {
     let received = 0;
     const finished = Promise.withResolvers<void>();
     const server = http2.createServer();
-    server.on("stream", stream => {
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
       // Slow consumer: tiny highWaterMark + async completion forces repeated pause/resume of the
       // request readable while the body is still arriving.
       const slow = new Writable({
@@ -937,6 +1448,381 @@ function requestHeaderBlock(method: "GET" | "POST", extra: Buffer = Buffer.alloc
   ]);
 }
 
+describe("SETTINGS_HEADER_TABLE_SIZE (RFC 9113 §4.3.1)", () => {
+  const headerTableSize = (value: number) => {
+    const entry = Buffer.alloc(6);
+    entry.writeUInt16BE(1);
+    entry.writeUInt32BE(value, 2);
+    return entry;
+  };
+  const isBlock = (id: number) => (f: Frame) => f.type === FrameType.HEADERS && f.streamId === id;
+  const isSettings = (ack: number) => (f: Frame) => f.type === FrameType.SETTINGS && (f.flags & 0x1) === ack;
+  const END = 0x4 | 0x1; // END_HEADERS | END_STREAM
+
+  async function listen(options: http2.ServerOptions, onStream: (stream: http2.ServerHttp2Stream) => void) {
+    const server = http2.createServer(options);
+    server.on("sessionError", () => {});
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      onStream(stream);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return { port: (server.address() as net.AddressInfo).port, [Symbol.dispose]: () => void server.close() };
+  }
+
+  // x-a: b as a literal that enters the table, as one that does not, and as a reference to the table.
+  const [enters, staysOut, indexed] = ["4083f2b0ff818f", "0083f2b0ff818f", "be"];
+  const fromThePeer: [sizes: number[], update: string, first: string, second: string][] = [
+    [[0], "20", staysOut, staysOut],
+    [[35], "3f04", staysOut, staysOut],
+    [[36], "3f05", enters, indexed],
+    [[0, 4096], "203fe11f", enters, indexed],
+    [[200, 100, 300], "3f453f8d02", enters, indexed],
+    [[4096], "3fe11f", enters, indexed],
+    [[65536], "3fe11f", enters, indexed],
+  ];
+
+  test.each(fromThePeer)("a server that is sent %j", async (sizes, update, first, second) => {
+    using server = await listen({}, stream => stream.respond({ "x-a": "b" }, { sendDate: false, endStream: true }));
+    const c = await RawH2.connect(server.port);
+    try {
+      c.sendPreface();
+      c.sendFrame(FrameType.SETTINGS, 0, 0, Buffer.concat(sizes.map(headerTableSize)));
+      const blocks: string[] = [];
+      for (const id of [1, 3]) {
+        c.sendFrame(FrameType.HEADERS, END, id, requestHeaderBlock("GET"));
+        blocks.push((await c.waitFor(isBlock(id))).payload.toString("hex"));
+      }
+      expect(blocks).toEqual([update + "88" + first, "88" + second]);
+    } finally {
+      c.destroy();
+    }
+  });
+
+  test.each(fromThePeer)("a client that is sent %j", async (sizes, update, first, second) => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      await raw.waitFor(isSettings(0));
+      for (const size of sizes) {
+        raw.sendFrame(FrameType.SETTINGS, 0, 0, headerTableSize(size));
+        await once(client, "remoteSettings");
+      }
+      const blocks: string[] = [];
+      for (const id of [1, 3]) {
+        const headers = { ":authority": "a", "x-a": "b", [http2.sensitiveHeaders]: [":authority"] };
+        client.request(headers).on("error", () => {});
+        blocks.push((await raw.waitFor(isBlock(id))).payload.toString("hex"));
+      }
+      expect(blocks).toEqual([update + "11811f828684" + first, "11811f828684" + second]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test.each(["pushStream", "additionalHeaders", "sendTrailers"])("%s() sends the size update", async method => {
+    const opened = Promise.withResolvers<void>();
+    using server = await listen({}, async stream => {
+      if (method === "sendTrailers") stream.respond({}, { waitForTrailers: true });
+      opened.resolve();
+      await once(stream.session!, "remoteSettings");
+      if (method === "pushStream") stream.pushStream({ ":path": "/" }, (_, push) => push.on("error", () => {}));
+      else if (method === "additionalHeaders") stream.additionalHeaders({ ":status": 103 });
+      else stream.on("wantTrailers", () => stream.sendTrailers({ "x-a": "b" })).end();
+    });
+    const c = await RawH2.connect(server.port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, END, 1, requestHeaderBlock("GET"));
+      await opened.promise;
+      c.sendFrame(FrameType.SETTINGS, 0, 0, headerTableSize(0));
+      const { payload } = await c.waitFor(
+        f =>
+          f.type === FrameType.PUSH_PROMISE ||
+          (f.type === FrameType.HEADERS && (method !== "sendTrailers" || (f.flags & 0x1) !== 0)),
+      );
+      expect(payload[method === "pushStream" ? 4 : 0]).toBe(0x20);
+    } finally {
+      c.destroy();
+    }
+  });
+
+  const update = { 0: "20", 1: "21", 4096: "3fe11f", 4097: "3fe21f", 8192: "3fe13f", 8193: "3fe23f" };
+  test.each([
+    [0, false, 4096, "response"],
+    [0, false, 4097, "GOAWAY 9"],
+    [0, true, 0, "response"],
+    [0, true, 1, "GOAWAY 9"],
+    [8192, false, 8192, "response"],
+    [8192, false, 8193, "GOAWAY 9"],
+    [8192, true, 8192, "response"],
+    [8192, true, 8193, "GOAWAY 9"],
+  ] as const)(
+    "ours is %d, acknowledged: %p, and the peer picks %d: %s",
+    async (ours, acknowledged, picked, expected) => {
+      for (const isInitial of [true, false]) {
+        using server = await listen(isInitial ? { settings: { headerTableSize: ours } } : {}, stream => {
+          if (!isInitial && stream.id === 1) stream.session!.settings({ headerTableSize: ours });
+          stream.respond({}, { endStream: true });
+        });
+        const c = await RawH2.connect(server.port);
+        try {
+          c.sendPreface();
+          c.sendEmptySettings();
+          if (!isInitial) c.sendSettingsAck();
+          c.sendFrame(FrameType.HEADERS, END, 1, requestHeaderBlock("GET"));
+          await c.waitFor(isBlock(1));
+          if (acknowledged) c.sendSettingsAck();
+          const block = Buffer.concat([Buffer.from(update[picked], "hex"), requestHeaderBlock("GET")]);
+          c.sendFrame(FrameType.HEADERS, END, 3, block);
+          const answer = await c.waitFor(f => isBlock(3)(f) || f.type === FrameType.GOAWAY);
+          expect(isBlock(3)(answer) ? "response" : `GOAWAY ${goawayErrorCode(answer)}`).toBe(expected);
+        } finally {
+          c.destroy();
+        }
+      }
+    },
+  );
+
+  // What the peer sends with none, one and both of them acknowledged.
+  test.each([
+    [[0, 8192], ["", update[8192] + enters, indexed], "response response response"],
+    [[0, 8192], [update[8192] + enters, indexed, indexed], "response response response"],
+    [[0, 8192], [enters, indexed], "response response"],
+    [[0, 1], [enters, indexed], "response GOAWAY 9"],
+    [[8192, 0], [update[8192] + enters, indexed, update[0]], "response response response"],
+    [[8192, 0], [update[8192] + enters, indexed, update[1]], "response response GOAWAY 9"],
+    [[8192, 0], [update[8192] + enters, indexed, indexed], "response response GOAWAY 9"],
+    [[100, 8192], [update[0], enters + indexed], "response response"],
+    [[100, 8192], [update[0] + enters + indexed], "GOAWAY 9"],
+  ] as const)("ours is %j, one right after the other (%#)", async (ours, blocks, expected) => {
+    using server = await listen({}, stream => {
+      if (stream.id === 1) for (const headerTableSize of ours) stream.session!.settings({ headerTableSize });
+      stream.respond({}, { endStream: true });
+    });
+    const c = await RawH2.connect(server.port);
+    const request = async (id: number, hex: string) => {
+      const [, sizeUpdate, field] = hex.match(/^(20|21|3fe13f|)(.*)$/)!.map(part => Buffer.from(part, "hex"));
+      c.sendFrame(FrameType.HEADERS, END, id, Buffer.concat([sizeUpdate, requestHeaderBlock("GET"), field]));
+      const answer = await c.waitFor(f => isBlock(id)(f) || f.type === FrameType.GOAWAY);
+      return isBlock(id)(answer) ? "response" : `GOAWAY ${goawayErrorCode(answer)}`;
+    };
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      expect(await request(1, "")).toBe("response");
+      const answers: string[] = [];
+      for (const block of blocks) {
+        answers.push(await request(3 + 2 * answers.length, block));
+        c.sendSettingsAck();
+      }
+      expect(answers.join(" ")).toBe(expected);
+    } finally {
+      c.destroy();
+    }
+  });
+
+  test("ours is acknowledged from within the write that sends it", async () => {
+    const server = http2.createServer({ settings: { headerTableSize: 0 } });
+    const second = Promise.withResolvers<number>();
+    server.on("sessionError", second.reject);
+    server.on("stream", stream => {
+      if (stream.id === 3) second.resolve(stream.session!.localSettings.headerTableSize!);
+      else stream.session!.settings({ headerTableSize: 4096 });
+      stream.respond();
+      stream.end();
+    });
+    const request = (id: number, size: 0 | 4096) =>
+      encodeFrame(
+        FrameType.HEADERS,
+        END,
+        id,
+        Buffer.concat([Buffer.from(update[size], "hex"), requestHeaderBlock("GET")]),
+      );
+    let acks = 0;
+    const transport = new Duplex({
+      read() {},
+      write(chunk, _, done) {
+        for (let at = 0; at < chunk.length; at += 9 + chunk.readUIntBE(at, 3)) {
+          if (chunk[at + 3] !== FrameType.SETTINGS || chunk[at + 4] !== 0) continue;
+          this.push(encodeFrame(FrameType.SETTINGS, 0x1, 0));
+          this.push(++acks === 1 ? request(1, 0) : request(3, 4096));
+        }
+        done();
+      },
+    });
+    try {
+      transport.push(Buffer.concat([PREFACE, encodeFrame(FrameType.SETTINGS, 0, 0)]));
+      server.emit("connection", transport);
+      expect(await second.promise).toBe(4096);
+    } finally {
+      transport.destroy();
+    }
+  });
+
+  async function withTwoClients(
+    run: (clients: {
+      client: http2.ClientHttp2Session;
+      other: http2.ClientHttp2Session;
+      onOtherWrite: (once: () => void) => void;
+      change: (settings: http2.Settings) => Promise<void>;
+      get: () => Promise<http2.IncomingHttpHeaders>;
+    }) => Promise<void>,
+  ) {
+    using server = await listen({}, stream => {
+      const { headerTableSize, initialWindowSize } = stream.session!.remoteSettings;
+      stream.respond({ "x-sizes": `${headerTableSize} ${initialWindowSize}` }, { endStream: true });
+    });
+    const transport = new Transport();
+    const client = http2.connect(`http://127.0.0.1:${server.port}`);
+    const other = http2.connect("http://localhost", { createConnection: () => transport });
+    const get = () => once(client.request().resume(), "response").then(([headers]) => headers);
+    try {
+      expect((await get())["x-sizes"]).toBe("4096 65535");
+      await run({
+        client,
+        other,
+        onOtherWrite: once => (transport.onNextWrite = once),
+        change: settings =>
+          new Promise((resolve, reject) => client.settings(settings, error => (error ? reject(error) : resolve()))),
+        get,
+      });
+    } finally {
+      client.destroy();
+      other.destroy();
+    }
+  }
+
+  test("ours is changed from the transport of another session while it is being changed", () =>
+    withTwoClients(async ({ client, other, onOtherWrite, change, get }) => {
+      const changes: Promise<void>[] = [];
+      onOtherWrite(() => changes.push(change({ headerTableSize: 0, initialWindowSize: 70000 })));
+      other.ping(() => {});
+      expect(changes.length).toBe(0);
+      changes.push(change({ headerTableSize: 2048 }));
+      expect(changes.length).toBe(2);
+      await Promise.all(changes);
+      for (const _ of ["right away", "after an unrelated change"]) {
+        expect(client.localSettings).toMatchObject({ headerTableSize: 2048, initialWindowSize: 70000 });
+        expect((await get())["x-sizes"]).toBe("2048 70000");
+        await change({ maxConcurrentStreams: 10 });
+      }
+    }));
+
+  test("ours is changed from the transport of another session that a getter of the settings writes to", () =>
+    withTwoClients(async ({ other, onOtherWrite, change, get }) => {
+      const changes: Promise<void>[] = [];
+      const customSettings = {
+        get 100() {
+          onOtherWrite(() => changes.push(change({ headerTableSize: 0 })));
+          other.ping(() => {});
+          return 1;
+        },
+      };
+      changes.push(change({ headerTableSize: 2048, customSettings }));
+      // Once after the values are validated, and once after they are read.
+      expect(changes.length).toBe(3);
+      await Promise.all(changes);
+      for (const _ of ["right away", "after an unrelated change", "with the table in use"]) {
+        expect((await get())["x-sizes"]).toBe("2048 65535");
+        await change({ maxConcurrentStreams: 10 });
+      }
+    }));
+
+  test("a client is destroyed from the transport of another session while it reads one", async () => {
+    const [toClient, toOther] = [new Transport(), new Transport()];
+    const client = http2.connect("http://localhost", { createConnection: () => toClient });
+    const other = http2.connect("http://localhost", { createConnection: () => toOther });
+    try {
+      toClient.push(encodeFrame(FrameType.SETTINGS, 0, 0));
+      await once(client, "remoteSettings");
+      // Out of that read, so that the next push is read at once.
+      await new Promise(setImmediate);
+      toOther.onNextWrite = () => client.destroy();
+      other.ping(() => {});
+      expect(client.destroyed).toBe(false);
+      toClient.push(encodeFrame(FrameType.SETTINGS, 0, 0, headerTableSize(0)));
+      expect(client.destroyed).toBe(true);
+    } finally {
+      client.destroy();
+      other.destroy();
+    }
+  });
+
+  test.each([
+    [0, 65536],
+    [65536, 0],
+    [65536, 4096],
+    [100, 200],
+  ])("%d on the server and %d on the client", async (onServer, onClient) => {
+    const value = (n: number) => Buffer.alloc(n * 7, String(n)).toString();
+    using server = await listen({ settings: { headerTableSize: onServer } }, stream =>
+      stream.respond({ "x-id": value(stream.id! % 40), "x-same": "same" }, { endStream: true }),
+    );
+    const client = http2.connect(`http://127.0.0.1:${server.port}`, { settings: { headerTableSize: onClient } });
+    try {
+      for (let i = 0; i < 45; i++) {
+        const req = client.request({ "x-i": value(i % 40), "x-same": "same" });
+        const [headers] = await once(req.resume(), "response");
+        expect([headers["x-id"], headers["x-same"]]).toEqual([value(req.id! % 40), "same"]);
+      }
+    } finally {
+      client.destroy();
+    }
+  });
+});
+
+test.each([
+  ["respond", 0],
+  ["pushStream", 0],
+  ["sendTrailers", 1],
+])("%s() sends nothing once a header value has destroyed the session", async (method, blocks) => {
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    const headers = { "x-a": { toString: () => (stream.session!.destroy(), "b") } as unknown as string };
+    if (method === "respond") return stream.respond(headers);
+    if (method === "pushStream") return stream.pushStream({ ":path": "/", ...headers }, () => {});
+    stream.respond({}, { waitForTrailers: true });
+    stream.on("wantTrailers", () => stream.sendTrailers(headers)).end();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+  try {
+    c.sendPreface();
+    c.sendEmptySettings();
+    c.sendFrame(FrameType.HEADERS, 0x4 | 0x1, 1, requestHeaderBlock("GET"));
+    await c.waitClosed();
+    const sent = c.frames.filter(f => f.type === FrameType.HEADERS || f.type === FrameType.PUSH_PROMISE);
+    expect(sent.length).toBe(blocks);
+  } finally {
+    c.destroy();
+    server.close();
+  }
+});
+
+test.each([
+  [-1, "ERR_HTTP2_STREAM_ERROR"],
+  [0, 200],
+])("maxSendHeaderBlockLength is measured as in Node (%d)", async (spare, expected) => {
+  const headers = { ":method": "GET", ":path": "/", ":scheme": "http", ":authority": "a", "x-a": "b" };
+  const estimate = Object.entries(headers).reduce((sum, [name, value]) => sum + 12 + name.length + value.length, 17);
+  const client = http2.connect(`http://127.0.0.1:${port}`, { maxSendHeaderBlockLength: estimate + spare });
+  try {
+    const req = client.request(headers).resume();
+    const result = await once(req, "response").then(
+      ([response]) => response[":status"],
+      error => error.code,
+    );
+    expect(result).toBe(expected);
+  } finally {
+    client.destroy();
+  }
+});
+
 const CONTENT_LENGTH_5 = Buffer.concat([Buffer.from([0x0f, 0x0d]), hpackLiteral("5")]);
 
 describe("request header and body framing (RFC 9113 §8.1)", () => {
@@ -1050,18 +1936,18 @@ describe("request header and body framing (RFC 9113 §8.1)", () => {
 describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
   // HPACK "literal never indexed, new name" (0x10) so the wire shape is exactly what is written
   // and no client library normalizes it away.
-  function hpackBlock(pairs: [string, string][]): Buffer {
+  function hpackBlock(pairs: readonly (readonly [string, string])[]): Buffer {
     return Buffer.concat(pairs.flatMap(([n, v]) => [Buffer.from([0x10]), hpackLiteral(n), hpackLiteral(v)]));
   }
 
   async function probe(
-    headers: [string, string][],
+    headers: readonly (readonly [string, string])[],
     opts?: http2.ServerOptions,
   ): Promise<{ dispatched: boolean; frames: Frame[] }> {
     const srv = http2.createServer(opts ?? {});
     srv.on("sessionError", () => {});
     let dispatched = false;
-    srv.on("stream", stream => {
+    srv.on("stream", (stream: http2.ServerHttp2Stream) => {
       dispatched = true;
       stream.on("error", () => {});
       try {
@@ -1185,7 +2071,7 @@ describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
     ],
     ["CONNECT without :authority", [[":method", "CONNECT"]]],
   ] as const)("a request with %s is RST with PROTOCOL_ERROR and never dispatched", async (_, headers) => {
-    expectStreamProtocolError(await probe(headers as [string, string][]));
+    expectStreamProtocolError(await probe(headers));
   });
 
   test.each([
@@ -1237,9 +2123,7 @@ describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
       ],
     ],
   ] as const)("with enableConnectProtocol: %s is RST with PROTOCOL_ERROR and never dispatched", async (_, headers) => {
-    expectStreamProtocolError(
-      await probe(headers as [string, string][], { settings: { enableConnectProtocol: true } }),
-    );
+    expectStreamProtocolError(await probe(headers, { settings: { enableConnectProtocol: true } }));
   });
 
   test("a valid request block is dispatched", async () => {
@@ -1356,7 +2240,7 @@ describe("inbound stream lifecycle", () => {
     }
   });
 
-  // A header-value `toString` runs user JS while sendTrailers holds the native `&mut Stream`;
+  // A header-value `toString` runs user JS while sendTrailers holds the native `&Stream`;
   // feeding the stream's own RST_STREAM (then another read) back into the parser from that
   // callback must not free the Stream out from under the caller (use-after-free under ASAN).
   test("re-entrant read() from a trailer-value toString does not free the in-use stream", async () => {
@@ -1771,7 +2655,7 @@ describe("stream release after a queued END_STREAM", () => {
     const refs: WeakRef<object>[] = [];
     const queuedAfterEnd: number[] = [];
     const server = http2.createServer();
-    server.on("stream", stream => {
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
       refs.push(new WeakRef(stream));
       stream.respond({ ":status": 200 });
       stream.end(BODY);
@@ -1838,7 +2722,7 @@ describe("stream release after a queued END_STREAM", () => {
     const refs: WeakRef<object>[] = [];
     let stalledFinished = false;
     const server = http2.createServer();
-    server.on("stream", (stream, headers) => {
+    server.on("stream", (stream: http2.ServerHttp2Stream, headers: http2.IncomingHttpHeaders) => {
       if (headers[":path"] === "/stalled") {
         stream.once("finish", () => {
           stalledFinished = true;
@@ -1887,7 +2771,7 @@ describe("stream release after a queued END_STREAM", () => {
     const refs: WeakRef<object>[] = [];
     const uploaded: Promise<number>[] = [];
     const server = http2.createServer({ settings: { initialWindowSize: WINDOW } });
-    server.on("stream", stream => {
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
       // Answer as soon as the headers arrive, so the server's END_STREAM reaches the client while
       // the client still has the body's tail queued, and keep reading the body so that tail really
       // is flushed from the queue (an upload nobody reads gets reset instead, and a reset releases
@@ -1925,6 +2809,865 @@ describe("stream release after a queued END_STREAM", () => {
     } finally {
       client.close();
       server.close();
+    }
+  });
+});
+
+// Stream resets are rate-limited per connection like nghttp2's stream_reset_ratelim (burst 1000,
+// refill 33/s): past the bucket the session dies with GOAWAY, surfaced as ERR_HTTP2_ERROR.
+describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYouReset)", () => {
+  const CANCEL = Buffer.alloc(4);
+  CANCEL.writeUInt32BE(ErrorCode.CANCEL, 0);
+  const rstStream = (sid: number) => encodeFrame(FrameType.RST_STREAM, 0, sid, CANCEL);
+  const request = (sid: number) => encodeFrame(FrameType.HEADERS, 0x5, sid, requestHeaderBlock("GET"));
+  // END_HEADERS without END_STREAM: the stream stays open until one side resets it.
+  const upload = (sid: number) => encodeFrame(FrameType.HEADERS, 0x4, sid, requestHeaderBlock("POST"));
+  const pairs = (count: number, firstSid: number, kill: (sid: number) => Buffer) =>
+    Buffer.concat(Array.from({ length: count }, (_, i) => [request(firstSid + 2 * i), kill(firstSid + 2 * i)]).flat());
+  const calm = (f: Frame) => f.type === FrameType.GOAWAY && goawayErrorCode(f) === ErrorCode.ENHANCE_YOUR_CALM;
+
+  function respondingServer(options: Record<string, unknown> = {}, rejectUploads = false) {
+    const state = { handlers: 0, sessionErrorCode: undefined as string | undefined };
+    const server = http2.createServer(options);
+    server.on("sessionError", (e: any) => (state.sessionErrorCode = e.code));
+    server.on("session", s => s.on("error", () => {}));
+    server.on("stream", (stream: any, headers: any) => {
+      state.handlers++;
+      stream.on("error", () => {});
+      if (rejectUploads && headers[":method"] === "POST") return stream.close();
+      stream.respond({ ":status": 200 });
+      stream.end("x");
+    });
+    return { server, state };
+  }
+
+  async function withClient<T>(server: http2.Http2Server, body: (c: RawH2) => Promise<T>): Promise<T> {
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      return await body(c);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  }
+
+  async function flood(opts: { options?: Record<string, unknown>; count: number; kill?: (sid: number) => Buffer }) {
+    const { server, state } = respondingServer(opts.options);
+    return withClient(server, async c => {
+      c.send(pairs(opts.count, 1, opts.kill ?? rstStream));
+      const goaway = await c.waitForGoaway(10_000);
+      return { c, goaway, ...state };
+    });
+  }
+
+  // True when stream `sid` is answered and no GOAWAY came first.
+  async function servedBeforeGoaway(c: RawH2, sid: number) {
+    const served = (f: Frame) => f.type === FrameType.HEADERS && f.streamId === sid;
+    return served(await c.waitFor(f => served(f) || f.type === FrameType.GOAWAY, 10_000));
+  }
+
+  test("a RST_STREAM flood is answered with GOAWAY(ENHANCE_YOUR_CALM) and a session error", async () => {
+    const { goaway, handlers, sessionErrorCode } = await flood({ count: 1200 });
+    expect(goawayErrorCode(goaway)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
+    expect(goaway.payload.subarray(8).toString()).toBe("too many stream resets");
+    // Like node, every request up to the bucket's edge still reaches the handler.
+    expect(handlers).toBeGreaterThan(900);
+    expect(sessionErrorCode).toBe("ERR_HTTP2_ERROR");
+  });
+
+  test("streamResetBurst sets where the flood is detected", async () => {
+    const { goaway } = await flood({ options: { streamResetBurst: 50, streamResetRate: 1 }, count: 200 });
+    expect(goawayErrorCode(goaway)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
+    // Burst 50 empties on the 51st reset (stream 101); the default burst would need stream 2001.
+    expect(goaway.payload.readUInt32BE(0)).toBeGreaterThanOrEqual(101);
+    expect(goaway.payload.readUInt32BE(0)).toBeLessThan(200);
+  });
+
+  test("a flood under the burst keeps the session serving requests", async () => {
+    const { server, state } = respondingServer();
+    await withClient(server, async c => {
+      c.send(Buffer.concat([pairs(500, 1, rstStream), request(1001)]));
+      await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1001, 10_000);
+      expect(c.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+      expect(state.handlers).toBe(501);
+    });
+  });
+
+  test("the bucket refills at streamResetRate per second", async () => {
+    // Burst 0 is floored to 1 like node, so the bucket holds exactly one token.
+    const { server } = respondingServer({ streamResetBurst: 0, streamResetRate: 1 });
+    await withClient(server, async c => {
+      c.send(pairs(1, 1, rstStream)); // drains the only token
+      await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      await Bun.sleep(1500); // the refill under test is per whole second of wall clock
+      // The refilled token covers stream 3, stream 5 is served, and the later resets find the
+      // bucket empty again because the refill clock advanced.
+      c.send(Buffer.concat([pairs(1, 3, rstStream), request(5), pairs(3, 7, rstStream)]));
+      const goaway = await c.waitForGoaway(10_000);
+      expect(goawayErrorCode(goaway)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
+      expect(c.frames.some(f => f.type === FrameType.HEADERS && f.streamId === 5)).toBe(true);
+    });
+  });
+
+  // MadeYouReset: the client never sends RST_STREAM; each stream is killed by a frame this engine
+  // answers with its own RST_STREAM (nghttp2 escalates these shapes to connection errors instead).
+  // Those resets drain a separate fixed bucket, so streamResetBurst does not apply to them.
+  const madeYouReset = {
+    "WINDOW_UPDATE with a 0 increment": (sid: number) => encodeFrame(FrameType.WINDOW_UPDATE, 0, sid, Buffer.alloc(4)),
+    "WINDOW_UPDATE past 2^31-1": (sid: number) =>
+      encodeFrame(FrameType.WINDOW_UPDATE, 0, sid, Buffer.from([0x7f, 0xff, 0xff, 0xff])),
+    "DATA after END_STREAM": (sid: number) => encodeFrame(FrameType.DATA, 0, sid, Buffer.from("x")),
+  };
+
+  for (const [name, kill] of Object.entries(madeYouReset)) {
+    test(`a flood of server-sent resets via ${name} is answered with GOAWAY(ENHANCE_YOUR_CALM)`, async () => {
+      const { c, goaway, handlers, sessionErrorCode } = await flood({
+        options: { streamResetBurst: 5, streamResetRate: 1 },
+        count: 1200,
+        kill,
+      });
+      expect(goawayErrorCode(goaway)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
+      expect(c.frames.filter(f => f.type === FrameType.RST_STREAM).length).toBeGreaterThanOrEqual(1000);
+      expect(handlers).toBeGreaterThanOrEqual(1000);
+      expect(sessionErrorCode).toBe("ERR_HTTP2_ERROR");
+    });
+  }
+
+  // A reset is charged only when it cancels a live stream. nghttp2 charges every RST_STREAM, but
+  // Bun's own client answers each late DATA frame on a cancelled stream with one.
+  test("RST_STREAM frames for a stream that is already closed are not charged", async () => {
+    const { server } = respondingServer();
+    await withClient(server, async c => {
+      const again = Buffer.concat(Array.from({ length: 1100 }, () => rstStream(1)));
+      c.send(Buffer.concat([upload(1), rstStream(1), again])); // one write: the closed stream is still in the map
+      await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      c.send(Buffer.concat([again, request(3)])); // a later read: the stream is evicted
+      expect(await servedBeforeGoaway(c, 3)).toBe(true);
+    });
+  });
+
+  // A server-sent reset is charged only when it cancels a request the handler was given. The
+  // late DATA frames below are dropped.
+  const lateData = Buffer.concat(
+    Array.from({ length: 1200 }, () => encodeFrame(FrameType.DATA, 0, 1, Buffer.from("x"))),
+  );
+
+  test("late DATA for a stream the server already closed is not charged", async () => {
+    // A client can have a window of upload DATA in flight when the server rejects the request.
+    const { server } = respondingServer({}, true);
+    await withClient(server, async c => {
+      c.send(upload(1));
+      await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      c.send(Buffer.concat([lateData, request(3)]));
+      expect(await servedBeforeGoaway(c, 3)).toBe(true);
+    });
+  });
+
+  test("a stream error is charged once, not once per frame queued behind it", async () => {
+    const { server } = respondingServer();
+    await withClient(server, async c => {
+      // One write: the DATA frames arrive while the reset stream is still in the engine's map.
+      const streamError = madeYouReset["WINDOW_UPDATE with a 0 increment"](1);
+      c.send(Buffer.concat([upload(1), streamError, lateData, request(3)]));
+      expect(await servedBeforeGoaway(c, 3)).toBe(true);
+    });
+  });
+
+  test("a header block refused before dispatch is not charged", async () => {
+    // maxSessionInvalidFrames and maxSessionRejectedStreams already bound these resets.
+    const { server, state } = respondingServer({ maxSessionInvalidFrames: 5000, maxSessionRejectedStreams: 5000 });
+    await withClient(server, async c => {
+      // A literal "connection: close" field makes the block malformed (RFC 9113 8.2.2).
+      const field = Buffer.concat([Buffer.from([0x00]), hpackLiteral("connection"), hpackLiteral("close")]);
+      const malformed = (sid: number) => encodeFrame(FrameType.HEADERS, 0x5, sid, requestHeaderBlock("GET", field));
+      c.send(Buffer.concat([...Array.from({ length: 1200 }, (_, i) => malformed(1 + 2 * i)), request(2401)]));
+      expect(await servedBeforeGoaway(c, 2401)).toBe(true);
+      expect(state.handlers).toBe(1);
+    });
+  });
+
+  test("resets are not charged once the server has sent its own GOAWAY", async () => {
+    // nghttp2 stops charging as soon as a local GOAWAY is submitted. The requests and their
+    // cancellations arrive in one read and close() is called from the last request's handler, so
+    // the cancellations behind it in the same read must already go uncharged: one GOAWAY
+    // (NO_ERROR) and 'close', not a second GOAWAY and a session error.
+    const open = 20;
+    let sessionError: Error | undefined;
+    const closed = Promise.withResolvers<void>();
+    const server = http2.createServer({ streamResetBurst: 2, streamResetRate: 1 });
+    server.on("sessionError", e => (sessionError = e));
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      if (stream.id !== 2 * open - 1) return;
+      stream.session!.once("close", () => closed.resolve());
+      stream.session!.close();
+    });
+    await withClient(server, async c => {
+      const ids = Array.from({ length: open }, (_, i) => 1 + 2 * i);
+      c.send(Buffer.concat([...ids.map(request), ...ids.map(rstStream)]));
+      await closed.promise;
+      await c.waitClosed(10_000); // everything the server wrote before closing has been parsed
+      expect(c.frames.filter(f => f.type === FrameType.GOAWAY).map(goawayErrorCode)).toEqual([ErrorCode.NO_ERROR]);
+      expect(sessionError).toBeUndefined();
+    });
+  });
+
+  // The client's GOAWAY(NO_ERROR) makes the server close() the session, which sends the server's
+  // own GOAWAY. A stream the client holds open keeps the session alive after that.
+  async function serverGoaway(c: RawH2) {
+    c.sendFrame(FrameType.GOAWAY, 0, 0, Buffer.alloc(8));
+    expect(goawayErrorCode(await c.waitForGoaway(10_000))).toBe(ErrorCode.NO_ERROR);
+  }
+
+  test("resets of streams opened after the server's GOAWAY are charged", async () => {
+    // nghttp2 can exempt every reset after its GOAWAY because it ignores the streams a client
+    // opens after that frame. This engine still opens them, so only the earlier streams are exempt.
+    // It also accepts ids below the held stream's, so the GOAWAY's last stream id is no criterion.
+    const { server, state } = respondingServer();
+    await withClient(server, async c => {
+      c.send(upload(4001));
+      await serverGoaway(c);
+      c.send(pairs(1200, 1, rstStream));
+      const goaway = await c.waitFor(calm, 10_000);
+      expect(goaway.payload.subarray(8).toString()).toBe("too many stream resets");
+      expect(state.sessionErrorCode).toBe("ERR_HTTP2_ERROR");
+    });
+  });
+
+  test("server-sent resets stay charged after the server has sent its GOAWAY", async () => {
+    // Every stream here is older than the GOAWAY. The exemption is for the peer's own resets only.
+    const { server, state } = respondingServer();
+    await withClient(server, async c => {
+      const ids = Array.from({ length: 1300 }, (_, i) => 1 + 2 * i);
+      c.send(Buffer.concat(ids.map(upload)));
+      await serverGoaway(c);
+      c.send(Buffer.concat(ids.map(madeYouReset["WINDOW_UPDATE with a 0 increment"])));
+      const goaway = await c.waitFor(calm, 10_000);
+      expect(goaway.payload.subarray(8).toString()).toBe("too many stream resets");
+      expect(state.sessionErrorCode).toBe("ERR_HTTP2_ERROR");
+    });
+  });
+});
+
+describe("DATA past the declared content-length (RFC 9113 §8.1.1)", () => {
+  type Probe = {
+    c: RawH2;
+    /** What 'data' delivered, by stream id. */
+    bodies: Map<number, string>;
+    /** The streams that emitted 'close'. */
+    closed: Set<number>;
+    /** Resolves once `condition` holds for `bodies` and `closed`. */
+    until(condition: () => boolean): Promise<void>;
+  };
+
+  async function withBodyServer(
+    { secure = false, compat = false }: { secure?: boolean; compat?: boolean },
+    run: (probe: Probe) => Promise<void>,
+  ) {
+    const bodies = new Map<number, string>();
+    const closed = new Set<number>();
+    const changes = new EventEmitter();
+    function track(id: number, body: Readable, respond: () => void) {
+      bodies.set(id, "");
+      body.on("error", () => {});
+      body.on("data", (chunk: Buffer) => {
+        bodies.set(id, bodies.get(id) + chunk.toString("latin1"));
+        changes.emit("change");
+      });
+      body.on("end", () => {
+        if (!body.destroyed) respond();
+      });
+      body.on("close", () => {
+        closed.add(id);
+        changes.emit("change");
+      });
+    }
+    const srv = secure ? http2.createSecureServer(tlsCert) : http2.createServer();
+    if (compat) {
+      srv.on("request", (req, res) => track(req.stream.id!, req, () => res.end("ok")));
+    } else {
+      srv.on("stream", stream =>
+        track(stream.id!, stream, () => {
+          stream.respond({ ":status": 200 });
+          stream.end("ok");
+        }),
+      );
+    }
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port, secure);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      await run({
+        c,
+        bodies,
+        closed,
+        async until(condition) {
+          while (!condition()) await once(changes, "change");
+        },
+      });
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  }
+
+  function openRequest(c: RawH2, streamId: number, contentLength: number) {
+    const field = Buffer.concat([Buffer.from([0x0f, 0x0d]), hpackLiteral(String(contentLength))]);
+    c.sendFrame(FrameType.HEADERS, 0x4, streamId, requestHeaderBlock("POST", field));
+  }
+
+  async function expectReset(c: RawH2, streamId: number) {
+    const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === streamId);
+    expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.PROTOCOL_ERROR);
+  }
+
+  // Each entry sends a request on stream 1 that declares 5 bytes. `delivered` is what 'data' may see.
+  const framings: Record<string, { delivered: string; send(probe: Probe): void | Promise<void> }> = {
+    "in one frame that ends the stream": {
+      delivered: "",
+      send: ({ c }) => c.sendFrame(FrameType.DATA, 0x1, 1, Buffer.from("hello, world")),
+    },
+    "in one frame that leaves the stream open": {
+      delivered: "",
+      send: ({ c }) => c.sendFrame(FrameType.DATA, 0, 1, Buffer.from("hello, world")),
+    },
+    "in a second frame": {
+      delivered: "hello",
+      send: ({ c }) =>
+        c.send(
+          Buffer.concat([
+            encodeFrame(FrameType.DATA, 0, 1, Buffer.from("hello")),
+            encodeFrame(FrameType.DATA, 0x1, 1, Buffer.from(", world")),
+          ]),
+        ),
+    },
+    "in a frame that follows a body already read": {
+      delivered: "hello",
+      send: async ({ c, bodies, until }) => {
+        c.sendFrame(FrameType.DATA, 0, 1, Buffer.from("hello"));
+        await until(() => bodies.get(1) === "hello");
+        c.sendFrame(FrameType.DATA, 0, 1, Buffer.from(", world"));
+      },
+    },
+    "in a frame that arrives in pieces": {
+      delivered: "",
+      send: async ({ c }) => {
+        const frame = encodeFrame(FrameType.DATA, 0x1, 1, Buffer.from("hello, world"));
+        c.send(frame.subarray(0, 12));
+        await expectReset(c, 1);
+        c.send(frame.subarray(12));
+      },
+    },
+    "in a padded frame": {
+      delivered: "",
+      send: ({ c }) =>
+        c.sendFrame(FrameType.DATA, 0x9, 1, Buffer.concat([Buffer.from([3]), Buffer.from("hello!"), Buffer.alloc(3)])),
+    },
+  };
+
+  describe.each(["h2c", "tls"])("%s", transport => {
+    test.each(Object.keys(framings))("is not delivered %s", async name => {
+      await withBodyServer({ secure: transport === "tls" }, async probe => {
+        const { c, bodies, closed, until } = probe;
+        openRequest(c, 1, 5);
+        await framings[name].send(probe);
+        await expectReset(c, 1);
+        // The session goes on, and padding does not count toward the next request's length.
+        openRequest(c, 3, 5);
+        c.sendFrame(FrameType.DATA, 0x9, 3, Buffer.concat([Buffer.from([4]), Buffer.from("again"), Buffer.alloc(4)]));
+        await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 3);
+        await until(() => closed.has(1));
+        expect(Object.fromEntries(bodies)).toEqual({ 1: framings[name].delivered, 3: "again" });
+        expect(c.frames.filter(f => f.type === FrameType.GOAWAY)).toEqual([]);
+      });
+    });
+  });
+
+  test("is not delivered to a request of the compatibility API", async () => {
+    await withBodyServer({ compat: true }, async ({ c, bodies, closed, until }) => {
+      openRequest(c, 1, 5);
+      c.sendFrame(FrameType.DATA, 0, 1, Buffer.from("hel"));
+      c.sendFrame(FrameType.DATA, 0x1, 1, Buffer.from("lo, world"));
+      await expectReset(c, 1);
+      await until(() => closed.has(1));
+      expect(bodies.get(1)).toBe("hel");
+    });
+  });
+
+  test("goes back to the connection window", async () => {
+    await withBodyServer({}, async ({ c, bodies, closed, until }) => {
+      for (const streamId of [1, 3, 5]) {
+        openRequest(c, streamId, 5);
+        c.sendFrame(FrameType.DATA, 0x1, streamId, Buffer.alloc(16000, "x"));
+        await expectReset(c, streamId);
+      }
+      const returned = () =>
+        c.frames
+          .filter(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 0)
+          .reduce((sum, f) => sum + f.payload.readUInt32BE(0), 0);
+      await c.waitFor(() => returned() >= 48000);
+      expect(returned()).toBe(48000);
+      openRequest(c, 7, 64000);
+      for (let i = 0; i < 4; i++) c.sendFrame(FrameType.DATA, i === 3 ? 0x1 : 0, 7, Buffer.alloc(16000, "y"));
+      await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 7);
+      await until(() => closed.has(1) && closed.has(3) && closed.has(5));
+      expect([1, 3, 5, 7].map(streamId => bodies.get(streamId)!.length)).toEqual([0, 0, 0, 64000]);
+    });
+  });
+});
+
+describe("received field values (RFC 9113 §8.2.1, §8.3)", () => {
+  type Fields = readonly (readonly [string, string])[];
+
+  // Literal never indexed with a new name, so that the bytes on the wire are the bytes written here.
+  function fieldBlock(fields: Fields): Buffer {
+    return Buffer.concat(fields.flatMap(([n, v]) => [Buffer.from([0x10]), hpackLiteral(n), hpackLiteral(v)]));
+  }
+
+  // Without the symbol key that lists the never-indexed fields.
+  const named = (headers: http2.IncomingHttpHeaders) => Object.fromEntries(Object.entries(headers));
+
+  /** Sends one request to a fresh server. `headers` and `trailers` are what the stream's events got, if they fired. */
+  async function sendRequest(fields: Fields, options: http2.ServerOptions = {}, trailerFields?: Fields) {
+    let headers: http2.IncomingHttpHeaders | undefined;
+    let trailers: http2.IncomingHttpHeaders | undefined;
+    const srv = http2.createServer(options);
+    srv.on("stream", (stream, received) => {
+      headers = named(received);
+      stream.on("error", () => {});
+      stream.on("trailers", received => (trailers = named(received)));
+      stream.on("end", () => {
+        stream.respond({ ":status": 200 });
+        stream.end();
+      });
+      stream.resume();
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, trailerFields ? 0x4 : 0x5, 1, fieldBlock(fields));
+      if (trailerFields) c.sendFrame(FrameType.HEADERS, 0x5, 1, fieldBlock(trailerFields));
+      const answer = await c.waitFor(
+        f => f.streamId === 1 && (f.type === FrameType.RST_STREAM || f.type === FrameType.HEADERS),
+      );
+      const reset = answer.type === FrameType.RST_STREAM ? answer.payload.readUInt32BE(0) : undefined;
+      return { headers, trailers, reset };
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  }
+
+  const refused = { headers: undefined, reset: ErrorCode.PROTOCOL_ERROR };
+  const request = { ":method": "GET", ":scheme": "http", ":path": "/", ":authority": "localhost" };
+
+  test.each([":method", ":scheme", ":path", ":authority", "host"])(
+    "a request whose %s has whitespace at an edge is a stream PROTOCOL_ERROR",
+    async name => {
+      const { ":authority": authority, ...rest } = request;
+      const valid: Record<string, string> = name === "host" ? { ...rest, host: authority } : request;
+      for (const strictFieldWhitespaceValidation of [true, false]) {
+        for (const value of [` ${valid[name]}`, `${valid[name]} `, `\t${valid[name]}`, `${valid[name]}\t`]) {
+          const fields = Object.entries({ ...valid, [name]: value });
+          expect(await sendRequest(fields, { strictFieldWhitespaceValidation })).toEqual(refused);
+        }
+      }
+    },
+  );
+
+  test("a :protocol with whitespace at an edge is valid without strictFieldWhitespaceValidation", async () => {
+    const settings = { enableConnectProtocol: true };
+    const connect = { ...request, ":method": "CONNECT" };
+    for (const value of [" websocket", "websocket ", "\twebsocket", "websocket\t"]) {
+      const fields = Object.entries({ ...connect, ":protocol": value });
+      expect([value, await sendRequest(fields, { settings })]).toEqual([value, refused]);
+      const loose = await sendRequest(fields, { settings, strictFieldWhitespaceValidation: false });
+      expect(loose.headers?.[":protocol"]).toBe(value);
+    }
+    const blank = Object.entries({ ...connect, ":protocol": " \t" });
+    expect(await sendRequest(blank, { settings, strictFieldWhitespaceValidation: false })).toEqual(refused);
+  });
+
+  test.each([
+    [":method", ["GE T", "G\tT", "G@T", "G(T", "G:T", "G\x01T", "G\x7fT", "G\xe9T"], ["get", "A-B", "!#$%&'*+.^_`|~"]],
+    [
+      ":path",
+      ["x", "../x", "?x", "http://localhost/", "*", "/a b", "/a\tb", "/a\x01b", "/a\x7fb"],
+      ["//x", "/\xe9", '/#\\"<>^`{|}'],
+    ],
+    [":scheme", ["ht tp", "1http", "+http", "http:", "http/", "htt\x01p", "htt\xe9p"], ["HTTPS", "ftp", "a+b-c.1"]],
+    [
+      ":authority",
+      ["a b", "a@b", "a/b", "a\\b", "a?b", "a#b", 'a"b', "a<b", "a^b", "a`b", "a{b", "a\x01b", "a\x7fb", "a\xe9b"],
+      ["[::1]:80", "a_b-c.d:1", "!$%&'()*+,;=~"],
+    ],
+  ])("a request with an invalid %s is a stream PROTOCOL_ERROR", async (name, invalid, valid) => {
+    for (const value of invalid) {
+      expect([value, await sendRequest(Object.entries({ ...request, [name]: value }))]).toEqual([value, refused]);
+    }
+    for (const value of valid) {
+      expect((await sendRequest(Object.entries({ ...request, [name]: value }))).headers?.[name]).toBe(value);
+    }
+  });
+
+  test("a :path without a leading slash is valid as OPTIONS * and outside http and https", async () => {
+    expect(await sendRequest(Object.entries({ ...request, ":method": "options", ":path": "*" }))).toEqual(refused);
+    expect(await sendRequest(Object.entries({ ...request, ":method": "OPTIONS", ":path": "x" }))).toEqual(refused);
+    for (const fields of [
+      { ...request, ":method": "OPTIONS", ":path": "*" },
+      { ...request, ":scheme": "ftp", ":path": "x" },
+    ]) {
+      expect((await sendRequest(Object.entries(fields))).headers).toEqual({ ...fields });
+    }
+  });
+
+  test("an invalid host in a request is ignored", async () => {
+    const { ":authority": authority, ...rest } = request;
+    for (const host of ["a b", "a/b", "a@b", "a\x7fb"]) {
+      expect([host, await sendRequest(Object.entries({ ...rest, host }))]).toEqual([host, refused]);
+      expect((await sendRequest(Object.entries({ ...request, host }))).headers).toEqual({ ...request });
+    }
+    expect((await sendRequest(Object.entries({ ...rest, host: authority }))).headers?.host).toBe(authority);
+  });
+
+  /** Answers one request of a fresh client with `frames`. Resolves once the client has answered `until`. */
+  async function answerRequest(
+    frames: (raw: RawH2Server) => void,
+    until: (f: Frame) => boolean,
+    options: http2.ClientSessionOptions = {},
+  ) {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`, options);
+    const events: [string, http2.IncomingHttpHeaders][] = [];
+    try {
+      client.on("error", () => {});
+      client.on("stream", (pushed, headers) => {
+        events.push(["stream", named(headers)]);
+        pushed.on("error", () => {});
+        pushed.on("push", headers => events.push(["push", named(headers)]));
+        pushed.resume();
+      });
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      for (const name of ["headers", "response", "trailers"]) {
+        req.on(name, (headers: http2.IncomingHttpHeaders) => events.push([name, named(headers)]));
+      }
+      req.resume();
+      const closed = new Promise(resolve => req.on("close", resolve));
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      frames(raw);
+      await closed;
+      const answer = await raw.waitFor(until);
+      return { events, answer };
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  }
+
+  const promise = (fields: Fields) => Buffer.concat([Buffer.from([0, 0, 0, 2]), fieldBlock(fields)]);
+
+  test("a promised request with an invalid pseudo-header is refused", async () => {
+    for (const [name, value] of [
+      [":path", "x"],
+      [":path", "/a b"],
+      [":method", "GE T"],
+      [":scheme", "ht:tp"],
+      [":authority", "a b"],
+    ]) {
+      const { events, answer } = await answerRequest(
+        raw => {
+          raw.sendFrame(FrameType.PUSH_PROMISE, 0x4, 1, promise(Object.entries({ ...request, [name]: value })));
+          raw.sendFrame(FrameType.HEADERS, 0x5, 1, fieldBlock([[":status", "200"]]));
+        },
+        f => f.type === FrameType.RST_STREAM && f.streamId === 2,
+      );
+      expect([value, answer.payload.readUInt32BE(0)]).toEqual([value, ErrorCode.PROTOCOL_ERROR]);
+      expect(events.map(([event]) => event)).toEqual(["response"]);
+    }
+  });
+
+  // Every control byte but HTAB, and NUL, LF and CR, which make the whole block malformed.
+  const controlBytes = Array.from({ length: 0x20 }, (_, code) => code)
+    .filter(code => ![0x00, 0x09, 0x0a, 0x0d].includes(code))
+    .concat(0x7f)
+    .map(code => String.fromCharCode(code));
+  const withControlBytes: Fields = controlBytes.flatMap((c, i) => [
+    [`x-first-${i}`, `${c}b`],
+    [`x-inside-${i}`, `a${c}b`],
+    [`x-last-${i}`, `a${c}`],
+  ]);
+  const kept = { "x-tab": "a\tb", "x-high": "\x80a\xff" };
+  const mixed: Fields = [
+    ["cookie", "a=\x01"],
+    ...withControlBytes.slice(0, 45),
+    ...Object.entries(kept),
+    ...withControlBytes.slice(45),
+  ];
+
+  test("a field whose value has a control byte is left out of a request and its trailers", async () => {
+    const post = { ...request, ":method": "POST" };
+    expect(await sendRequest([...Object.entries(post), ...mixed], {}, mixed)).toEqual({
+      headers: { ...post, ...kept },
+      trailers: kept,
+      reset: undefined,
+    });
+  });
+
+  test("a field whose value has a control byte is left out of a response, its trailers and a push", async () => {
+    const status = { ":status": 200 };
+    const { events } = await answerRequest(
+      raw => {
+        raw.sendFrame(FrameType.PUSH_PROMISE, 0x4, 1, promise([...Object.entries(request), ...mixed]));
+        raw.sendFrame(FrameType.HEADERS, 0x4, 1, fieldBlock([[":status", "103"], ...mixed]));
+        raw.sendFrame(FrameType.HEADERS, 0x4, 1, fieldBlock([[":status", "200"], ...mixed]));
+        raw.sendFrame(FrameType.HEADERS, 0x5, 2, fieldBlock([[":status", "200"], ...mixed]));
+        raw.sendFrame(FrameType.HEADERS, 0x5, 1, fieldBlock(mixed));
+      },
+      f => f.type === FrameType.SETTINGS && (f.flags & 1) !== 0,
+    );
+    expect(events).toEqual([
+      ["stream", { ...request, ...kept }],
+      ["headers", { ":status": 103, ...kept }],
+      ["response", { ...status, ...kept }],
+      ["push", { ...status, ...kept }],
+      ["trailers", kept],
+    ]);
+  });
+
+  test("a :status with a control byte is a stream PROTOCOL_ERROR", async () => {
+    const { events, answer } = await answerRequest(
+      raw => raw.sendFrame(FrameType.HEADERS, 0x5, 1, fieldBlock([[":status", "20\x01"]])),
+      f => f.type === FrameType.RST_STREAM && f.streamId === 1,
+    );
+    expect(answer.payload.readUInt32BE(0)).toBe(ErrorCode.PROTOCOL_ERROR);
+    expect(events).toEqual([]);
+  });
+
+  test("a response with a request pseudo-header is a stream PROTOCOL_ERROR", async () => {
+    for (const field of [...Object.entries(request), [":protocol", "websocket"]] as Fields) {
+      for (const fields of [[[":status", "200"], field], [field, [":status", "200"]], [field]] as Fields[]) {
+        const { events, answer } = await answerRequest(
+          raw => raw.sendFrame(FrameType.HEADERS, 0x5, 1, fieldBlock(fields)),
+          f => f.type === FrameType.RST_STREAM && f.streamId === 1,
+        );
+        expect([fields, answer.payload.readUInt32BE(0), events]).toEqual([fields, ErrorCode.PROTOCOL_ERROR, []]);
+      }
+    }
+  });
+
+  test("a pushed response with a request pseudo-header and a promised request with :status are refused", async () => {
+    const response = fieldBlock([[":status", "200"]]);
+    for (const [promised, pushed, expected] of [
+      [
+        Object.entries(request),
+        [
+          [":status", "200"],
+          [":path", "/"],
+        ],
+        ["stream", "response"],
+      ],
+      [Object.entries({ ...request, ":status": "200" }), [[":status", "200"]], ["response"]],
+    ] as [Fields, Fields, string[]][]) {
+      const { events, answer } = await answerRequest(
+        raw => {
+          raw.sendFrame(FrameType.PUSH_PROMISE, 0x4, 1, promise(promised));
+          raw.sendFrame(FrameType.HEADERS, 0x5, 2, fieldBlock(pushed));
+          raw.sendFrame(FrameType.HEADERS, 0x5, 1, response);
+        },
+        f => f.type === FrameType.RST_STREAM && f.streamId === 2,
+      );
+      expect(answer.payload.readUInt32BE(0)).toBe(ErrorCode.PROTOCOL_ERROR);
+      expect(events.map(([event]) => event)).toEqual(expected);
+    }
+  });
+
+  test("an empty or a second host in a request is a stream PROTOCOL_ERROR", async () => {
+    const { ":authority": authority, ...rest } = request;
+    for (const base of [Object.entries(rest), Object.entries(request)]) {
+      for (const hosts of [[""], ["a", "a"], ["a", "b"], ["a", ""]]) {
+        const fields: Fields = [...base, ...hosts.map(host => ["host", host] as const)];
+        expect([hosts, await sendRequest(fields)]).toEqual([hosts, refused]);
+      }
+      // An invalid host is ignored, so it is not the first of two.
+      expect((await sendRequest([...base, ["host", "a b"], ["host", "a"], ["host", "a/b"]])).headers?.host).toBe("a");
+    }
+    const post = Object.entries({ ...request, ":method": "POST" });
+    for (const [extra, trailers] of [
+      [[["host", "a"]], [["host", "a"]]],
+      [[["host", "a"]], [["host", "b"]]],
+      [[], [["host", ""]]],
+      [
+        [],
+        [
+          ["host", "a"],
+          ["host", "a"],
+        ],
+      ],
+    ] as [Fields, Fields][]) {
+      const result = await sendRequest([...post, ...extra], {}, trailers);
+      expect([trailers, result.trailers, result.reset]).toEqual([trailers, undefined, ErrorCode.PROTOCOL_ERROR]);
+    }
+    expect((await sendRequest([...post, ["host", "a b"]], {}, [["host", "a"]])).trailers).toEqual({ host: "a" });
+  });
+
+  test("a :status with whitespace at an edge is a stream PROTOCOL_ERROR", async () => {
+    for (const strictFieldWhitespaceValidation of [true, false]) {
+      for (const value of [" 200", "200 ", "\t200", "200\t"]) {
+        const { events, answer } = await answerRequest(
+          raw => raw.sendFrame(FrameType.HEADERS, 0x5, 1, fieldBlock([[":status", value]])),
+          f => f.type === FrameType.RST_STREAM && f.streamId === 1,
+          { strictFieldWhitespaceValidation },
+        );
+        expect([value, answer.payload.readUInt32BE(0), events]).toEqual([value, ErrorCode.PROTOCOL_ERROR, []]);
+      }
+    }
+  });
+
+  test("a :status that is not a status code of HTTP/2 is a stream PROTOCOL_ERROR", async () => {
+    const status = (value: string) => fieldBlock([[":status", value]]);
+    for (const value of [
+      "2x0",
+      "2000",
+      "20",
+      "+20",
+      "-20",
+      "1e2",
+      "2.0",
+      "0200",
+      "0xc8",
+      "200 OK",
+      "099",
+      "000",
+      "101",
+    ]) {
+      const { events, answer } = await answerRequest(
+        raw => raw.sendFrame(FrameType.HEADERS, 0x5, 1, status(value)),
+        f => f.type === FrameType.RST_STREAM && f.streamId === 1,
+      );
+      expect([value, answer.payload.readUInt32BE(0), events]).toEqual([value, ErrorCode.PROTOCOL_ERROR, []]);
+    }
+    const { events } = await answerRequest(
+      raw => {
+        raw.sendFrame(FrameType.HEADERS, 0x4, 1, status("100"));
+        raw.sendFrame(FrameType.HEADERS, 0x4, 1, status("199"));
+        raw.sendFrame(FrameType.HEADERS, 0x5, 1, status("999"));
+      },
+      f => f.type === FrameType.SETTINGS && (f.flags & 1) !== 0,
+    );
+    expect(events).toEqual([
+      ["headers", { ":status": 100 }],
+      ["headers", { ":status": 199 }],
+      ["response", { ":status": 999 }],
+    ]);
+  });
+});
+
+describe("DATA on a closed stream (RFC 9113 §5.1)", () => {
+  const resets = (frames: Frame[]) =>
+    frames.filter(f => f.type === FrameType.RST_STREAM).map(f => [f.streamId, f.payload.readUInt32BE(0)]);
+  const isPingAck = (f: Frame) => f.type === FrameType.PING && (f.flags & 0x1) !== 0;
+  const credit = (frames: Frame[]) =>
+    frames
+      .filter(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 0)
+      .reduce((sum, f) => sum + f.payload.readUInt32BE(0), 0);
+  const small = encodeFrame(FrameType.DATA, 0, 1, Buffer.from("x"));
+  const large = encodeFrame(FrameType.DATA, 0, 1, Buffer.alloc(16_384));
+
+  // Each entry closes stream 1 of a server and resolves to the resets that this takes.
+  const closings: Record<string, (c: RawH2) => Promise<number[][]>> = {
+    "the server reset": async c => {
+      // The DATA behind the one that draws the reset arrives in the same read.
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST", CONTENT_LENGTH_5)),
+          encodeFrame(FrameType.DATA, 0, 1, Buffer.from("hello!")),
+          small,
+          small,
+        ]),
+      );
+      await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      return [[1, ErrorCode.PROTOCOL_ERROR]];
+    },
+    "the server answered": async c => {
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0);
+      return [];
+    },
+  };
+
+  test.each(Object.keys(closings))("that %s is dropped and goes back to the connection window", async name => {
+    const srv = http2.createServer();
+    srv.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.on("end", () => {
+        if (stream.destroyed) return;
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      });
+      stream.resume();
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      const expected = await closings[name](c);
+      // More than the whole window, so it only fits if what is dropped comes back. The window is
+      // credited once half of it is used, so less than that can be outstanding after any read.
+      let sent = expected.length ? 8 : 0;
+      for (const frames of [
+        [small, large, large],
+        [large, large],
+        [large, large],
+      ]) {
+        c.send(Buffer.concat(frames));
+        sent += frames.reduce((sum, frame) => sum + frame.length - 9, 0);
+        await c.waitFor(() => credit(c.frames) > sent - 32_767);
+      }
+      // A stream that nobody opened is not a closed one.
+      c.sendFrame(FrameType.DATA, 0, 99, Buffer.from("x"));
+      c.sendFrame(FrameType.HEADERS, 0x5, 101, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 101);
+      expect(resets(c.frames)).toEqual([...expected, [99, ErrorCode.STREAM_CLOSED]]);
+      expect(c.frames.filter(f => f.type === FrameType.GOAWAY)).toEqual([]);
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+
+  test("that the client canceled is dropped", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    try {
+      client.on("error", () => {});
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      req.on("response", () => req.close(http2.constants.NGHTTP2_CANCEL));
+      const closed = new Promise(resolve => req.on("close", resolve));
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.HEADERS, 0x4, 1, Buffer.from([0x88]));
+      await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      await closed;
+      raw.socket!.write(Buffer.concat([...Array(50).fill(small), encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8))]));
+      await raw.waitFor(isPingAck);
+      expect(resets(raw.frames).filter(([, code]) => code !== ErrorCode.CANCEL)).toEqual([]);
+    } finally {
+      client.destroy();
+      raw.close();
     }
   });
 });

@@ -1,4 +1,3 @@
-#![allow(clippy::single_match)]
 #![warn(unused_must_use)]
 use crate::Error;
 
@@ -103,6 +102,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let name = E::Str::new(p.lexer.identifier);
             let name_loc = p.lexer.loc();
             p.lexer.next()?;
+            if matches!(target.data, ExprData::EImportMeta(_)) {
+                p.did_parse_import_meta_property(name.slice());
+            }
 
             let loc = left.loc;
             *left = p.new_expr(
@@ -879,7 +881,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // TypeScript allows type arguments to be specified with angle brackets
         // inside an expression. Unlike in other languages, this unfortunately
         // appears to require backtracking to parse.
-        if Self::IS_TYPESCRIPT_ENABLED && p.try_skip_type_script_type_arguments_with_backtracking()
+        if Self::IS_TYPESCRIPT_ENABLED
+            && p.try_skip_type_script_type_arguments_with_backtracking()?
         {
             *optional_chain = old_optional_chain;
             return Ok(Continuation::Next);
@@ -970,7 +973,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // TypeScript allows type arguments to be specified with angle brackets
         // inside an expression. Unlike in other languages, this unfortunately
         // appears to require backtracking to parse.
-        if Self::IS_TYPESCRIPT_ENABLED && p.try_skip_type_script_type_arguments_with_backtracking()
+        if Self::IS_TYPESCRIPT_ENABLED
+            && p.try_skip_type_script_type_arguments_with_backtracking()?
         {
             *optional_chain = old_optional_chain;
             return Ok(Continuation::Next);

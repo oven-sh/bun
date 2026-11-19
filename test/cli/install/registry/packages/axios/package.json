@@ -1,0 +1,39 @@
+{
+  "_id": "axios",
+  "name": "axios",
+  "dist-tags": {
+    "latest": "1.7.2"
+  },
+  "versions": {
+    "1.7.2": {
+      "name": "axios",
+      "version": "1.7.2",
+      "type": "module",
+      "main": "index.js",
+      "types": "index.d.ts",
+      "exports": {
+        ".": {
+          "types": {
+            "require": "./index.d.cts",
+            "default": "./index.d.ts"
+          },
+          "browser": {
+            "require": "./dist/browser/axios.cjs",
+            "default": "./index.js"
+          },
+          "default": {
+            "require": "./dist/node/axios.cjs",
+            "default": "./index.js"
+          }
+        },
+        "./package.json": "./package.json"
+      },
+      "_id": "axios@1.7.2",
+      "dist": {
+        "integrity": "sha512-pichuWyUy4rtbSWYiHr/nQJp7m0DHvH66xtI1nGFXwYiaBqH7tVXbvZ6XOgmhG7GtgAwZ1AEvIACa7RLC07dfg==",
+        "shasum": "6334f5a6168d31655783258f12af5acb3afbe92e",
+        "tarball": "http://localhost:4873/axios/-/axios-1.7.2.tgz"
+      }
+    }
+  }
+}

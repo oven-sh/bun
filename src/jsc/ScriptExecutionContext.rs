@@ -10,8 +10,10 @@
 
 use core::ptr;
 
+use bun_event_loop::EventLoopTimer::{Clock, EventLoopTimer, OwnedTimer, Tag};
+
 use crate::virtual_machine::SweepResult;
-use crate::{AbortSignal, AbortSignalRef, JSValue, JsCell};
+use crate::{AbortSignal, AbortSignalRef, JSValue, JsCell, VirtualMachineRef};
 
 pub use bun_event_loop::ContextId;
 
@@ -40,7 +42,6 @@ pub enum AbortCause {
 /// [`AbortCause::ContextStopped`].
 type AbortFn = unsafe fn(handle: *mut AbortHandle, cause: AbortCause);
 
-/// Zero-valid.
 pub struct ScriptExecutionContext {
     id: JsCell<ContextId>,
     /// Armed handles, oldest first.
@@ -51,24 +52,80 @@ pub struct ScriptExecutionContext {
     stopped: JsCell<bool>,
     /// The client sockets script of a graph's context opened (`Bun.connect`,
     /// WebSocket, SQL, Valkey). A VM's own contexts use `RareData`'s.
-    socket_groups: JsCell<Option<Box<crate::rare_data::SocketGroups>>>,
+    socket_groups: core::cell::OnceCell<Box<crate::rare_data::SocketGroups>>,
     stop_again_queued: JsCell<bool>,
     /// A graph's context: its `WebCore::ScriptExecutionContext`, which owns this
     /// one and the ActiveDOMObjects (workers, WebSockets) the graph's script made.
     dom_context: core::cell::Cell<*mut core::ffi::c_void>,
-    /// The timers script of a graph's context set that have not been freed
-    /// (`TimerObjectInternals` / `AbortSignal` `Timeout`), so stopping it
-    /// cancels exactly those. A VM's own contexts walk the timer heap.
-    timers: JsCell<bun_collections::ArrayHashMap<*mut core::ffi::c_void, ContextTimer>>,
+    /// A graph's context: its [`ScriptTimer`]s that have not been freed. A VM's own contexts walk the timer heap.
+    timers: JsCell<bun_collections::ArrayHashMap<*const EventLoopTimer, ()>>,
 }
 
-/// What a pointer in a graph context's timer set points at.
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum ContextTimer {
-    /// `bun_runtime::timer::TimerObjectInternals` (setTimeout / setInterval / setImmediate).
-    Object,
-    /// [`crate::abort_signal::Timeout`] (`AbortSignal.timeout`).
-    AbortSignal,
+/// The node of a timer that script set: `setTimeout`, `setInterval`, `setImmediate`, `AbortSignal.timeout`.
+#[repr(C)]
+pub struct ScriptTimer {
+    node: OwnedTimer,
+    context: ContextId,
+    /// `VirtualMachine::test_isolation_generation` when it was set.
+    generation: u32,
+}
+
+impl ScriptTimer {
+    #[inline]
+    pub fn new(
+        tag: Tag,
+        clock: Clock,
+        vm: &VirtualMachineRef,
+        context: &ScriptExecutionContext,
+    ) -> Self {
+        let node = OwnedTimer::init_paused(tag);
+        node.clock.set(clock);
+        Self {
+            node,
+            context: context.id(),
+            generation: vm.test_isolation_generation.get(),
+        }
+    }
+
+    /// The pointer to link, with the provenance of `this`.
+    pub const fn node(this: *const Self) -> *const EventLoopTimer {
+        this.cast()
+    }
+
+    /// Once `this`, made for `context`, has its final address: stopping a graph's context cancels it.
+    #[inline]
+    pub fn track(this: *const Self, vm: &VirtualMachineRef, context: &ScriptExecutionContext) {
+        if let Some(context) = vm.as_graph_context(context) {
+            context.track_timer(Self::node(this));
+        }
+    }
+
+    pub fn context(&self) -> ContextId {
+        self.context
+    }
+
+    /// Its context has stopped, or `bun test --isolate` has moved on to another file.
+    #[inline]
+    pub fn has_outlived_its_script(&self, vm: &VirtualMachineRef) -> bool {
+        self.generation != vm.test_isolation_generation.get() || !vm.is_context_live(self.context)
+    }
+}
+
+impl core::ops::Deref for ScriptTimer {
+    type Target = EventLoopTimer;
+
+    fn deref(&self) -> &EventLoopTimer {
+        &self.node
+    }
+}
+
+impl Drop for ScriptTimer {
+    fn drop(&mut self) {
+        if let Some(context) = VirtualMachineRef::get().timer_context(self.context) {
+            let node = Self::node(self);
+            context.timers.with_mut(|timers| timers.swap_remove(&node));
+        }
+    }
 }
 
 impl Default for ScriptExecutionContext {
@@ -78,7 +135,7 @@ impl Default for ScriptExecutionContext {
             head: JsCell::new(ptr::null_mut()),
             tail: JsCell::new(ptr::null_mut()),
             stopped: JsCell::new(false),
-            socket_groups: JsCell::new(None),
+            socket_groups: core::cell::OnceCell::new(),
             stop_again_queued: JsCell::new(false),
             dom_context: core::cell::Cell::new(ptr::null_mut()),
             timers: JsCell::new(Default::default()),
@@ -161,13 +218,8 @@ impl ScriptExecutionContext {
 
     /// Close every client socket of a graph's context (its script is told nothing).
     fn close_sockets(&self) {
-        if let Some(groups) = self
-            .socket_groups
-            .with_mut(|groups| groups.as_deref_mut().map(ptr::from_mut))
-        {
-            // SAFETY: the box is dropped only with `self`; closing dispatches
-            // close handlers, so no borrow of the cell is held across it.
-            unsafe { crate::rare_data::SocketGroups::close_all(groups) };
+        if let Some(groups) = self.socket_groups.get() {
+            groups.close_all();
         }
     }
 
@@ -176,28 +228,16 @@ impl ScriptExecutionContext {
         self.stop_again_queued.replace(true)
     }
 
-    /// A timer script of this (graph's) context set exists from here.
-    pub fn track_timer(&self, timer: *mut core::ffi::c_void, kind: ContextTimer) {
+    fn track_timer(&self, timer: *const EventLoopTimer) {
         self.timers
-            .with_mut(|timers| bun_core::handle_oom(timers.put(timer, kind)));
+            .with_mut(|timers| bun_core::handle_oom(timers.put(timer, ())));
         if self.is_stopped() {
-            crate::VirtualMachineRef::get()
-                .as_mut()
-                .stop_graph_context_again(self.id());
+            VirtualMachineRef::get().stop_graph_context_again(self.id());
         }
     }
 
-    /// It is being freed.
-    pub fn untrack_timer(&self, timer: *mut core::ffi::c_void) {
-        self.timers.with_mut(|timers| {
-            timers.swap_remove(&timer);
-        });
-    }
-
     /// The context stopped: its live timers, for the caller to cancel.
-    pub fn take_timers(
-        &self,
-    ) -> bun_collections::ArrayHashMap<*mut core::ffi::c_void, ContextTimer> {
+    pub fn take_timers(&self) -> bun_collections::ArrayHashMap<*const EventLoopTimer, ()> {
         self.timers.take()
     }
 
@@ -206,13 +246,28 @@ impl ScriptExecutionContext {
         self.tail.get().is_null()
             && self
                 .socket_groups
-                .with_mut(|groups| groups.as_deref_mut().is_none_or(|groups| groups.is_empty()))
+                .get()
+                .is_none_or(|groups| groups.is_empty())
+    }
+
+    /// As [`owns_nothing`](Self::owns_nothing), but for what only waits to be closed with the context.
+    pub(crate) fn owns_nothing_that_runs_script(&self) -> bool {
+        let mut handle = self.tail.get();
+        // SAFETY: a linked handle is live until it is unlinked.
+        while let Some(armed) = unsafe { handle.as_ref() } {
+            if !armed.only_waits_to_be_closed.get() {
+                return false;
+            }
+            handle = armed.prev.get();
+        }
+        self.socket_groups
+            .get()
+            .is_none_or(|groups| groups.is_empty())
     }
 
     /// The groups client sockets opened by a graph context's script join.
-    pub(crate) fn socket_groups(&self) -> *mut crate::rare_data::SocketGroups {
-        self.socket_groups
-            .with_mut(|groups| ptr::from_mut(&mut **groups.get_or_insert_with(Default::default)))
+    pub(crate) fn socket_groups(&self) -> &crate::rare_data::SocketGroups {
+        self.socket_groups.get_or_init(Default::default)
     }
 
     /// # Safety
@@ -290,6 +345,8 @@ pub struct AbortHandle {
     signal: JsCell<Option<AbortSignalRef>>,
     /// Its context stopped it, or had already stopped when it was armed.
     context_stopped: core::cell::Cell<bool>,
+    /// The owner never runs script by itself, like the sink of an idle `process.stdout`.
+    only_waits_to_be_closed: core::cell::Cell<bool>,
 }
 
 impl AbortHandle {
@@ -302,7 +359,12 @@ impl AbortHandle {
             on_abort: Self::owner_aborted::<O>,
             signal: JsCell::new(None),
             context_stopped: core::cell::Cell::new(false),
+            only_waits_to_be_closed: core::cell::Cell::new(false),
         }
+    }
+
+    pub fn set_only_waits_to_be_closed(&self) {
+        self.only_waits_to_be_closed.set(true);
     }
 
     #[inline]
@@ -351,9 +413,7 @@ impl AbortHandle {
             if context.is_stopped() {
                 // Script of a disposed graph is still opening things: they go on
                 // the next turn of the loop, not under the caller that is arming.
-                crate::VirtualMachineRef::get()
-                    .as_mut()
-                    .stop_graph_context_again(context.id());
+                crate::VirtualMachineRef::get().stop_graph_context_again(context.id());
             }
         }
     }
@@ -412,9 +472,15 @@ impl Drop for AbortHandle {
 /// [`arm_owner`](AbortHandle::arm_owner) / [`follow_owner`](AbortHandle::follow_owner)
 /// with the container-of recovery written once. Use [`impl_abort_handle_owner!`].
 pub trait AbortHandleOwner: Sized {
+    /// What keeps the owner alive while [`on_abort`](Self::on_abort) runs.
+    type KeepAlive;
+
     /// # Safety
     /// `this` is live.
     unsafe fn abort_handle(this: *mut Self) -> *mut AbortHandle;
+
+    /// SAFETY: `this` is live. Taken before anything else runs.
+    unsafe fn keep_alive(this: *mut Self) -> Self::KeepAlive;
 
     /// # Safety
     /// `handle` came from [`abort_handle`](Self::abort_handle) of a live `Self`.
@@ -430,7 +496,11 @@ pub trait AbortHandleOwner: Sized {
 impl AbortHandle {
     unsafe fn owner_aborted<O: AbortHandleOwner>(handle: *mut AbortHandle, cause: AbortCause) {
         // SAFETY: armed/followed through `*_owner::<O>`, so `handle` is `O`'s field.
-        unsafe { O::on_abort(O::from_abort_handle(handle), cause) }
+        unsafe {
+            let owner = O::from_abort_handle(handle);
+            let _keep_alive = O::keep_alive(owner);
+            O::on_abort(owner, cause)
+        }
     }
 
     /// Join `context` (JS thread): from here until the handle is disarmed,
@@ -459,8 +529,9 @@ impl AbortHandle {
 /// Generic owners: `impl_abort_handle_owner!([const N: bool] Owner<N>, field, ..)`.
 #[macro_export]
 macro_rules! impl_abort_handle_owner {
-    ([$($generics:tt)*] $Owner:ty, $field:ident, |$this:ident, $cause:ident| $body:expr) => {
+    ([$($generics:tt)*] $Owner:ty, $field:ident, keep_alive = |$pinned:ident| -> $KeepAlive:ty $pin:block, |$this:ident, $cause:ident| $body:expr) => {
         impl<$($generics)*> $crate::script_execution_context::AbortHandleOwner for $Owner {
+            type KeepAlive = $KeepAlive;
             #[inline]
             unsafe fn abort_handle(
                 this: *mut Self,
@@ -468,6 +539,8 @@ macro_rules! impl_abort_handle_owner {
                 // SAFETY: caller contract — `this` is live.
                 unsafe { ::core::ptr::addr_of_mut!((*this).$field) }
             }
+            #[inline]
+            unsafe fn keep_alive($pinned: *mut Self) -> $KeepAlive $pin
             #[inline]
             unsafe fn from_abort_handle(
                 handle: *mut $crate::script_execution_context::AbortHandle,
@@ -483,6 +556,12 @@ macro_rules! impl_abort_handle_owner {
             }
         }
     };
+    ([$($generics:tt)*] $Owner:ty, $field:ident, |$this:ident, $cause:ident| $body:expr) => {
+        $crate::impl_abort_handle_owner!([$($generics)*] $Owner, $field, keep_alive = |_this| -> () {}, |$this, $cause| $body);
+    };
+    ($Owner:ty, $field:ident, keep_alive = |$pinned:ident| -> $KeepAlive:ty $pin:block, |$this:ident, $cause:ident| $body:expr) => {
+        $crate::impl_abort_handle_owner!([] $Owner, $field, keep_alive = |$pinned| -> $KeepAlive $pin, |$this, $cause| $body);
+    };
     ($Owner:ty, $field:ident, |$this:ident, $cause:ident| $body:expr) => {
         $crate::impl_abort_handle_owner!([] $Owner, $field, |$this, $cause| $body);
     };
@@ -491,45 +570,33 @@ macro_rules! impl_abort_handle_owner {
 // `WebCore::ScriptExecutionContext` owns the context of a `Bun.ModuleGraph`.
 
 /// A global's `WebCore::ScriptExecutionContext` is made with this as its Rust half.
-///
-/// # Safety
-/// `vm` is this thread's VM, whose `root_context` is written (the first global is made while
-/// the rest of the VM is still being initialised).
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__VirtualMachine__rootContext(
-    vm: *mut crate::VirtualMachineRef,
+extern "C" fn Bun__VirtualMachine__rootContext(
+    vm: &crate::VirtualMachineRef,
 ) -> *const ScriptExecutionContext {
-    // SAFETY: fn contract; no reference to the VM is formed.
-    unsafe { ptr::addr_of!((*vm).root_context) }
+    &raw const vm.root_context
 }
 
 /// ModuleGraph.cpp's `ErrorHandlerContextScope`: the context native code entered becomes
 /// `context` ([`ContextId::NONE`]: none). Returns the one to put back.
-///
-/// # Safety
-/// `vm` is this thread's live VM.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__VirtualMachine__replaceEnteredContext(
-    vm: *mut crate::VirtualMachineRef,
+extern "C" fn Bun__VirtualMachine__replaceEnteredContext(
+    vm: &crate::VirtualMachineRef,
     context: ContextId,
 ) -> ContextId {
-    // SAFETY: fn contract.
-    let vm = unsafe { &*vm };
     vm.entered_context
         .replace((context != ContextId::NONE).then_some(context))
         .unwrap_or(ContextId::NONE)
 }
 
-/// # Safety
-/// `vm` is this thread's live VM.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__ScriptExecutionContext__create(
-    vm: *mut crate::VirtualMachineRef,
+extern "C" fn Bun__ScriptExecutionContext__create(
+    vm: &crate::VirtualMachineRef,
     dom_context: *mut core::ffi::c_void,
     identifier: u32,
 ) -> *mut ScriptExecutionContext {
-    // SAFETY: fn contract.
-    unsafe { (*vm).create_graph_context(dom_context, ContextId::from_raw(identifier)) }.as_ptr()
+    vm.create_graph_context(dom_context, ContextId::from_raw(identifier))
+        .as_ptr()
 }
 
 /// # Safety

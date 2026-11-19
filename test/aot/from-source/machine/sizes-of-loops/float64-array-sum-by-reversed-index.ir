@@ -1,0 +1,18 @@
+# f1 = sumFromEnd
+# -- source: float64-array-sum-by-reversed-index.ts
+# function sumFromEnd(list: Float64Array): number {
+#   let sum = 0;
+#   const length = list.length;
+#   for (let k = 0; k < length; k++) sum += list[length - 1 - k]!;
+#   return sum;
+# }
+# declare const input: any;
+# (globalThis as any).answer = sumFromEnd(new Float64Array(input));
+# -- end of source
+# The compiler before this one: 11 instructions, 8 of them patches, a turn of the written loop steps by 8.
+# When the bound was taken: loop: operations 88, patches 0, moves 10, unlikely 8 ; loop: operations 12, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:98,12 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 98
+# X64-NEXT: loop: at most 12

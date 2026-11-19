@@ -1,5 +1,5 @@
 import { spawnSync } from "bun";
-import { cc, dlopen } from "bun:ffi";
+import { cc, dlopen, type FFIFunction } from "bun:ffi";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
 import { bunEnv, bunExe, canBuildNodeAddons, isASAN, isWindows, tempDir } from "harness";
@@ -11,7 +11,7 @@ import source from "./napi-app/ffi_addon_1.c" with { type: "file" };
 // Node headers.
 const isFFIUnavailable = !canBuildNodeAddons();
 
-const symbols = {
+const symbols: Record<string, FFIFunction> = {
   set_instance_data: {
     args: ["napi_env", "int"],
     returns: "void",

@@ -1,8 +1,11 @@
+use core::cell::{Cell, OnceCell, RefCell};
+
 use bun_io::Write as _;
 
 use crate::cli::Command;
+use crate::cli::run_compiled;
 use crate::cli::test::changed_files_filter as ChangedFilesFilter;
-use crate::cli::test::parallel_runner as ParallelRunner;
+use crate::cli::test::parallel::runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
 use crate::cli::test::timings::Timings;
 use bun_collections::BoundedArray;
@@ -10,13 +13,16 @@ use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{EncodedSlice, strings};
 use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
+use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc};
+use bun_options_types::aot_options::ReplacedByTests;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
+use bun_options_types::context::{JunitSuites, ReactCompilerScope, TestEnvironment, TestGlobals};
 use bun_paths as bun_path;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;
-use bun_ptr::Interned;
+use bun_ptr::{CellExt as _, Interned};
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd, File};
 
@@ -38,20 +44,708 @@ mod coverage {
     }
 
     pub(super) fn is_ignored(
-        opts: &bun_options_types::code_coverage_options::CodeCoverageOptions,
+        ignore_patterns: &[bun_glob::Prepared<&[u8]>],
         relative_dir: &[u8],
         source_url: &[u8],
     ) -> bool {
-        if opts.ignore_patterns.is_empty() {
+        if ignore_patterns.is_empty() {
             return false;
         }
         let relative_path = bun_paths::resolve_path::relative(relative_dir, source_url);
-        opts.ignore_patterns
+        ignore_patterns
             .iter()
-            .any(|pattern| bun_glob::r#match(pattern, relative_path).matches())
+            .any(|pattern| pattern.r#match(relative_path).matches())
     }
 }
 use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
+
+fn end_of_string(text: &[u8], mut at: usize, quote: u8) -> usize {
+    while at < text.len()
+        && let Some(found) = strings::index_of_any(&text[at..], &[quote, b'\\', b'\n'])
+    {
+        at += found;
+        match text[at] {
+            b'\\' => at += 2,
+            _ => return at + 1,
+        }
+    }
+    text.len()
+}
+
+fn end_of_template_part(text: &[u8], mut at: usize, open_braces: &mut Vec<u32>) -> usize {
+    while at < text.len()
+        && let Some(found) = strings::index_of_any(&text[at..], b"`\\$")
+    {
+        at += found;
+        match text[at] {
+            b'\\' => at += 2,
+            b'`' => return at + 1,
+            _ if text.get(at + 1) == Some(&b'{') => {
+                open_braces.push(0);
+                return at + 2;
+            }
+            _ => at += 1,
+        }
+    }
+    text.len()
+}
+
+fn end_of_regular_expression(text: &[u8], mut at: usize) -> usize {
+    let mut is_in_class = false;
+    while at < text.len() {
+        match text[at] {
+            b'\\' => at += 1,
+            b'[' => is_in_class = true,
+            b']' => is_in_class = false,
+            b'/' if !is_in_class => return at + 1,
+            b'\n' => return at,
+            _ => {}
+        }
+        at += 1;
+    }
+    text.len()
+}
+
+fn begins_regular_expression(before_slash: &[u8]) -> bool {
+    const WORDS: [&[u8]; 14] = [
+        b"return",
+        b"typeof",
+        b"case",
+        b"do",
+        b"else",
+        b"in",
+        b"of",
+        b"void",
+        b"delete",
+        b"throw",
+        b"new",
+        b"instanceof",
+        b"yield",
+        b"await",
+    ];
+    let before = before_slash.trim_ascii_end();
+    let Some(&last) = before.last() else {
+        return true;
+    };
+    if is_identifier_byte(last) {
+        let start = before.iter().rposition(|&byte| !is_identifier_byte(byte));
+        return WORDS.contains(&&before[start.map_or(0, |at| at + 1)..]);
+    }
+    !matches!(last, b')' | b']' | b'}' | b'"' | b'\'' | b'`')
+}
+
+// What reads like an import in a comment names no file. Every other byte stays where it is.
+fn blank_comments(text: &mut [u8]) {
+    let mut open_braces: Vec<u32> = Vec::new();
+    let mut at = 0;
+    while at < text.len()
+        && let Some(found) = strings::index_of_any(&text[at..], b"\"'`/{}")
+    {
+        at += found;
+        match text[at] {
+            quote @ (b'"' | b'\'') => at = end_of_string(text, at + 1, quote),
+            b'`' => at = end_of_template_part(text, at + 1, &mut open_braces),
+            b'{' => {
+                if let Some(open) = open_braces.last_mut() {
+                    *open += 1;
+                }
+                at += 1;
+            }
+            b'}' => match open_braces.last_mut() {
+                Some(0) => {
+                    open_braces.pop();
+                    at = end_of_template_part(text, at + 1, &mut open_braces);
+                }
+                Some(open) => {
+                    *open -= 1;
+                    at += 1;
+                }
+                None => at += 1,
+            },
+            _ => match text.get(at + 1) {
+                Some(b'/') => {
+                    let length = strings::index_of_char_usize(&text[at..], b'\n');
+                    let end = length.map_or(text.len(), |length| at + length);
+                    text[at..end].fill(b' ');
+                    at = end;
+                }
+                Some(b'*') => {
+                    let length = strings::index_of(&text[at + 2..], b"*/");
+                    let end = length.map_or(text.len(), |length| at + length + 4);
+                    for byte in text[at..end].iter_mut().filter(|byte| **byte != b'\n') {
+                        *byte = b' ';
+                    }
+                    at = end;
+                }
+                _ if begins_regular_expression(&text[..at]) => {
+                    at = end_of_regular_expression(text, at + 1);
+                }
+                _ => at += 1,
+            },
+        }
+    }
+}
+
+fn read_code(path: &[u8]) -> Option<Vec<u8>> {
+    let mut text = File::read_from(Fd::cwd(), path).ok()?;
+    blank_comments(&mut text);
+    Some(text)
+}
+
+// What `for_each_name` finds in each file, and how many bytes the file holds. 0: it could not be read.
+fn find_names_and_sizes_in<Path: core::ops::Deref<Target = [u8]> + Sync>(
+    files: &[Path],
+    for_each_name: fn(&[u8], &mut dyn FnMut(&[u8])),
+) -> (Vec<Vec<Box<[u8]>>>, Vec<u64>) {
+    const MAX_READERS: usize = 64;
+    const MIN_FILES_OF_READER: usize = 16;
+    let mut names: Vec<Vec<Box<[u8]>>> = Vec::new();
+    names.resize_with(files.len(), Vec::new);
+    let mut sizes = vec![0; files.len()];
+    let share = files.len().div_ceil(MAX_READERS).max(MIN_FILES_OF_READER);
+    let shares = (files.chunks(share).zip(names.chunks_mut(share))).zip(sizes.chunks_mut(share));
+    run_compiled::for_each_on_threads(shares.collect(), |((files, names), sizes)| {
+        for ((file, names), size) in files.iter().zip(names).zip(sizes) {
+            if let Some(text) = read_code(file) {
+                *size = text.len() as u64;
+                for_each_name(&text, &mut |name| names.push(Box::from(name)));
+            }
+        }
+    });
+    (names, sizes)
+}
+
+// The specifiers that `for_each_name_in_statement` finds, and the string literals passed to `import()` and `require()`.
+fn for_each_name_that_loads(text: &[u8], visit: &mut dyn FnMut(&[u8])) {
+    for_each_name_in_statement(text, &mut *visit);
+    let mut at = 0;
+    while let Some(found) = strings::index_of_char_usize(&text[at..], b'(') {
+        let before = text[..at + found].trim_ascii_end();
+        at += found + 1;
+        if !before.ends_with(b"import") && !before.ends_with(b"require") {
+            continue;
+        }
+        if let Some((name, _)) = read_string(text, skip_space(text, at), b"\"'`")
+            && !strings::contains(name, b"${")
+        {
+            visit(name);
+        }
+    }
+}
+
+// And what the build of a program follows beside them: `for_each_pattern_that_loads`, and the file that a Worker starts from,
+// `new Worker("./a.ts")` or `new Worker(new URL("./a.ts", import.meta.url))`. A URL that goes elsewhere loads nothing.
+fn for_each_name_that_build_follows(text: &[u8], visit: &mut dyn FnMut(&[u8])) {
+    const URL: &[u8] = b"new URL(";
+    for_each_name_that_loads(text, &mut *visit);
+    for_each_pattern_that_loads(text, &mut *visit);
+    let mut at = 0;
+    while let Some(found) = strings::index_of(&text[at..], b"Worker(") {
+        at += found + b"Worker(".len();
+        let mut start = skip_space(text, at);
+        if text[start..].starts_with(URL) {
+            start = skip_space(text, start + URL.len());
+        }
+        if let Some((name, _)) = read_string(text, start, b"\"'`")
+            && !strings::contains(name, b"${")
+        {
+            visit(name);
+        }
+    }
+}
+
+// `import(`a/b/${name}.js`)`, and `require()` alike: what stands in front of the first `${`, a zero byte, and what stands behind the last `}`.
+fn for_each_pattern_that_loads(text: &[u8], visit: &mut dyn FnMut(&[u8])) {
+    let mut at = 0;
+    while let Some(found) = strings::index_of_char_usize(&text[at..], b'(') {
+        let before = text[..at + found].trim_ascii_end();
+        at += found + 1;
+        if !before.ends_with(b"import") && !before.ends_with(b"require") {
+            continue;
+        }
+        let Some((template, _)) = read_string(text, skip_space(text, at), b"`") else {
+            continue;
+        };
+        let first = strings::index_of(template, b"${");
+        let last = strings::last_index_of_char(template, b'}');
+        if let (Some(first), Some(last)) = (first, last)
+            && first < last
+        {
+            visit(&[&template[..first], b"\0", &template[last + 1..]].concat());
+        }
+    }
+}
+
+// The folder of the package that `name` names for a file in `folder`.
+fn find_folder_of_package(folder: &[u8], name: &[u8]) -> Option<Vec<u8>> {
+    let mut ancestor = folder;
+    loop {
+        let installed = bun_core::ZBox::from_bytes([ancestor, b"/node_modules/", name].concat());
+        if bun_sys::directory_exists_at(Fd::cwd(), &installed).unwrap_or(false) {
+            let mut real = bun_paths::path_buffer_pool::get();
+            return Some(match bun_sys::realpath(&installed, &mut real) {
+                Ok(real) => real.to_vec(),
+                Err(_) => installed.as_bytes().to_vec(),
+            });
+        }
+        let parent = resolve_path::dirname::<bun_path::platform::Auto>(ancestor);
+        if parent.len() >= ancestor.len() || parent.is_empty() {
+            return None;
+        }
+        ancestor = strings::without_trailing_slash(parent);
+    }
+}
+
+// Whether the folder is a package: it has a package.json with a name.
+fn holds_named_manifest(folder: &[u8]) -> bool {
+    let manifest = [folder, b"/package.json"].concat();
+    File::read_from(Fd::cwd(), &manifest).is_ok_and(|text| strings::contains(&text, b"\"name\""))
+}
+
+// The files with code below `root` whose paths from there begin with `start` and end with `end`. As the build walks: not what is
+// installed below it, no folder whose name begins with a dot, no package below it.
+fn add_files_below(root: &[u8], start: &[u8], end: &[u8], found: &mut Vec<Box<[u8]>>) {
+    const EXTENSIONS: [&[u8]; 8] = [
+        b".ts", b".tsx", b".js", b".jsx", b".mjs", b".cjs", b".mts", b".cts",
+    ];
+    let mut folders: Vec<Vec<u8>> = vec![Vec::new()];
+    while let Some(relative) = folders.pop() {
+        let Ok(folder) = bun_sys::Dir::open(&[root, &relative[..]].concat()) else {
+            continue;
+        };
+        let mut entries = bun_sys::dir_iterator::iterate(folder.fd());
+        while let Ok(Some(entry)) = entries.next() {
+            let name = entry.name.slice_u8();
+            let below = [&relative[..], b"/", name].concat();
+            // Without the slash in front.
+            let written = &below[1..];
+            let may_match = written.starts_with(start) || start.starts_with(written);
+            match entry.kind {
+                bun_sys::EntryKind::Directory
+                    if name != b"node_modules"
+                        && !name.starts_with(b".")
+                        && may_match
+                        && !holds_named_manifest(&[root, &below[..]].concat()) =>
+                {
+                    folders.push(below);
+                }
+                bun_sys::EntryKind::File
+                    if written.starts_with(start)
+                        && written.len() >= start.len() + end.len()
+                        && written.ends_with(end)
+                        && EXTENSIONS.iter().any(|it| name.ends_with(it))
+                        && !name.ends_with(b".d.ts") =>
+                {
+                    found.push([root, &below[..]].concat().into_boxed_slice());
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+// The files that `import(`<prefix>${..}<suffix>`)` in a file of `folder` may stand for.
+fn add_files_behind_pattern(
+    folder: &[u8],
+    prefix: &[u8],
+    suffix: &[u8],
+    found: &mut Vec<Box<[u8]>>,
+) {
+    let folder = strings::without_trailing_slash(folder);
+    let Some(slash) = strings::last_index_of_char(prefix, b'/') else {
+        return;
+    };
+    let (written_folder, start) = (&prefix[..slash], &prefix[slash + 1..]);
+    let root = match prefix {
+        // `/` alone means nothing: a name that is made when the program runs.
+        [b'/', ..] => (!written_folder.is_empty()).then(|| written_folder.to_vec()),
+        // As long as it stays in the package of the file.
+        [b'.', ..] => {
+            let joined = resolve_path::join_abs_string::<bun_path::platform::Auto>(
+                folder,
+                &[written_folder],
+            )
+            .to_vec();
+            let mut package = folder;
+            while !holds_named_manifest(package) {
+                let parent = resolve_path::dirname::<bun_path::platform::Auto>(package);
+                let parent = strings::without_trailing_slash(parent);
+                if parent.len() >= package.len() || parent.is_empty() {
+                    break;
+                }
+                package = parent;
+            }
+            joined.starts_with(package).then_some(joined)
+        }
+        _ => {
+            let parts_of_name = if prefix.starts_with(b"@") { 2 } else { 1 };
+            let mut slashes = (0..written_folder.len())
+                .filter(|&at| written_folder[at] == b'/')
+                .chain([written_folder.len()]);
+            slashes.nth(parts_of_name - 1).and_then(|end_of_name| {
+                let package = find_folder_of_package(folder, &written_folder[..end_of_name])?;
+                Some([&package[..], &written_folder[end_of_name..]].concat())
+            })
+        }
+    };
+    if let Some(root) = root {
+        add_files_below(strings::without_trailing_slash(&root), start, suffix, found);
+    }
+}
+
+// `roots` and all that they reach, packages too, `roots` first: the paths, what each imports, and its bytes of source.
+fn find_all_that_is_reached_from(
+    vm: &VirtualMachine,
+    roots: Vec<Box<[u8]>>,
+) -> (Vec<Box<[u8]>>, Vec<Vec<u32>>, Vec<u64>) {
+    const EXTENSIONS: [&[u8]; 8] = [
+        b".ts", b".tsx", b".js", b".jsx", b".mjs", b".cjs", b".mts", b".cts",
+    ];
+    let mut unread_log = bun_ast::Log::init();
+    // SAFETY: the resolver and `unread_log` outlive the guard.
+    let _log_scope = unsafe {
+        bun_resolver::Resolver::scoped_log(
+            &raw mut (*vm.transpiler.as_ptr()).resolver,
+            core::ptr::NonNull::from(&mut unread_log),
+        )
+    };
+    let mut position_of = bun_collections::StringHashMap::<u32>::default();
+    let mut paths = roots;
+    for (position, path) in paths.iter().enumerate() {
+        let _ = position_of.put(path, position as u32);
+    }
+    let mut imports: Vec<Vec<u32>> = Vec::new();
+    let mut sizes: Vec<u64> = Vec::new();
+    // Files of one folder name the same files over and over. The folder, a zero byte, the name.
+    let mut resolved = bun_collections::StringHashMap::<Option<u32>>::default();
+    let mut asked: Vec<u8> = Vec::new();
+    while imports.len() < paths.len() {
+        let first = imports.len();
+        let (names_of_level, mut sizes_of_level) = find_names_and_sizes_in(
+            &paths[first..],
+            match first {
+                0 => for_each_name_that_loads,
+                _ => for_each_name_that_build_follows,
+            },
+        );
+        sizes.append(&mut sizes_of_level);
+        for (file, names) in (first..).zip(names_of_level) {
+            let folder = resolve_path::dirname::<bun_path::platform::Auto>(&paths[file]).to_vec();
+            let mut place = |path: Box<[u8]>| match position_of.get(&*path) {
+                Some(&position) => position,
+                None => {
+                    let position = paths.len() as u32;
+                    let _ = position_of.put(&path, position);
+                    paths.push(path);
+                    position
+                }
+            };
+            let mut loaded: Vec<u32> = Vec::new();
+            let mut behind_pattern: Vec<Box<[u8]>> = Vec::new();
+            for name in &names {
+                let name = &name[..];
+                if let Some((prefix, suffix)) = strings::split_once_char(name, 0) {
+                    add_files_behind_pattern(&folder, prefix, suffix, &mut behind_pattern);
+                    loaded.extend(behind_pattern.drain(..).map(&mut place));
+                    continue;
+                }
+                asked.clear();
+                asked.extend_from_slice(&folder);
+                asked.push(0);
+                asked.extend_from_slice(name);
+                if let Some(&position) = resolved.get(&asked[..]) {
+                    loaded.extend(position);
+                    continue;
+                }
+                let kind = bun_ast::ImportKind::Stmt;
+                let result = vm
+                    .transpiler
+                    .with_mut(|t| t.resolver.resolve(&folder, name, kind))
+                    .ok();
+                let path = result.as_ref().map(|it| it.path_pair.primary.text());
+                let is_code = |path: &&[u8]| {
+                    bun_path::is_absolute(path)
+                        && EXTENSIONS.iter().any(|extension| path.ends_with(extension))
+                };
+                let position = path.filter(is_code).map(|path| place(Box::from(path)));
+                let _ = resolved.put(&asked, position);
+                loaded.extend(position);
+            }
+            let mut imported: Vec<u32> = Vec::new();
+            for position in loaded {
+                if position as usize != file && !imported.contains(&position) {
+                    imported.push(position);
+                }
+            }
+            imports.push(imported);
+        }
+    }
+    (paths, imports, sizes)
+}
+
+/// By how much a thousand bytes of source to build hold a shard up, in microseconds of the recorded times of test files, where as many
+/// test files run at once as there are processors: both the build and the run take all of them. On a large application (16
+/// processors, 24 workers): the first test comes 0.44 s later for a million bytes, and the run takes 0.0352 s for a second of recorded time.
+/// Too low, a shard with much to build keeps some files too many, and still builds no more than where the files are dealt otherwise.
+const MICROSECONDS_OF_TEST_FILES_FOR_THOUSAND_BYTES_TO_BUILD: u64 = 8300;
+
+// `bun test --aot --shard`. Keeps the files of the shard, compacted to the front of `test_files`, and returns how many they are.
+fn select_shard_by_reach(
+    vm: &VirtualMachine,
+    ctx: &crate::cli::command::ContextData,
+    test_files: &mut [Interned],
+    shard: bun_options_types::context::Shard,
+    timings: Option<&Timings>,
+) -> usize {
+    use crate::cli::test::shards_by_reach::{Costs, Reach, deal};
+    index_sort::sort_slice_by(test_files, |a, b| {
+        strings::order(a.as_bytes(), b.as_bytes())
+    });
+    let (tests, shards) = (test_files.len(), shard.count as usize);
+    // As without `--aot`.
+    let otherwise: Vec<u32> = match timings {
+        Some(timings) => {
+            let ranges = timings.partition(test_files, shard.count);
+            let shard_of = |test: u32| ranges.iter().position(|it| it.contains(&(test as usize)));
+            (0..tests as u32)
+                .map(|test| shard_of(test).unwrap_or(0) as u32)
+                .collect()
+        }
+        None => (0..tests).map(|test| (test % shards) as u32).collect(),
+    };
+    let mut roots: Vec<Box<[u8]>> = (test_files.iter())
+        .map(|path| Box::from(path.as_bytes()))
+        .collect();
+    let mut preloads: Vec<u32> = Vec::new();
+    for path in find_files_of_preloads(vm, &ctx.preloads) {
+        let position = roots.iter().position(|other| **other == *path);
+        preloads.push(position.unwrap_or(roots.len()) as u32);
+        if position.is_none() {
+            roots.push(path);
+        }
+    }
+    let (paths, imports, sizes) = find_all_that_is_reached_from(vm, roots);
+    run_compiled::log_step_of_test_run(format_args!(
+        "what the test files of all {shards} shards reach is found: {} files",
+        paths.len() - tests
+    ));
+    // Every machine deals for itself, so nothing that may differ between them has a say: not this one's processors, and not its
+    // `--parallel`, which may be written as their number. How many test files run at once is what the table of times says, which all
+    // shards read. Where it says nothing, nobody knows how a build compares with a run, and the shards are made equal by their times.
+    let at_once = timings.map_or(0, |timings| u64::from(timings.workers()));
+    let of_run: Vec<u64> = match timings {
+        Some(timings) => (timings.costs(test_files).into_iter())
+            .map(|milliseconds| (milliseconds * 1000).max(1))
+            .collect(),
+        None => vec![1; tests],
+    };
+    let of_heavy: Vec<u32> = (test_files.iter())
+        .map(|file| {
+            let heavy = timings.filter(|timings| timings.is_heavy(file.as_bytes()));
+            heavy.and_then(|timings| timings.growth_of(file.as_bytes()))
+        })
+        .map(|megabytes| megabytes.unwrap_or(0))
+        .collect();
+    let costs = Costs {
+        of_run: &of_run,
+        of_thousand_bytes: match at_once {
+            0 => 0,
+            _ => MICROSECONDS_OF_TEST_FILES_FOR_THOUSAND_BYTES_TO_BUILD,
+        },
+        at_once,
+        of_heavy: &of_heavy,
+    };
+    let reach = Reach {
+        test_count: tests,
+        imports: &imports,
+        sizes: &sizes,
+        preloads: &preloads,
+    };
+    let dealt = deal(&reach, &costs, shards, otherwise);
+    let mine = shard.index - 1;
+    run_compiled::log_step_of_test_run(format_args!(
+        "the shards are dealt by what the test files reach: this one builds {} KB, the others {:?} | the longest takes {}",
+        dealt.bytes_of[mine as usize] / 1000,
+        (dealt.bytes_of.iter().enumerate())
+            .filter(|&(other, _)| other != mine as usize)
+            .map(|(_, bytes)| bytes / 1000)
+            .collect::<Vec<u64>>(),
+        dealt.longest,
+    ));
+    // Shards that were dealt otherwise leave files out, or run them twice, and none of them can tell by itself.
+    if !run_compiled::is_second_process() {
+        let mix = |hash: u64, &shard: &u32| (hash ^ u64::from(shard)).wrapping_mul(0x100_0000_01b3);
+        pretty_error!(
+            "<r><d>--shard: dealt by what the test files reach, the same on every shard: {:016x}<r>\n",
+            dealt.shard_of.iter().fold(0xcbf2_9ce4_8422_2325, mix)
+        );
+    }
+    let mut write = 0;
+    for test in 0..tests {
+        if dealt.shard_of[test] == mine {
+            test_files[write] = test_files[test];
+            write += 1;
+        }
+    }
+    write
+}
+
+// A preload is named as it was written: "./test/preload.ts", "dotenv/config". Whoever looks for what it imports needs its file.
+fn find_files_of_preloads(vm: &VirtualMachine, preloads: &[Box<[u8]>]) -> Vec<Box<[u8]>> {
+    let mut unread_log = bun_ast::Log::init();
+    // SAFETY: the resolver and `unread_log` outlive the guard.
+    let _log_scope = unsafe {
+        bun_resolver::Resolver::scoped_log(
+            &raw mut (*vm.transpiler.as_ptr()).resolver,
+            core::ptr::NonNull::from(&mut unread_log),
+        )
+    };
+    let top = FileSystem::get().top_level_dir();
+    let file_of = |name: &[u8]| -> Box<[u8]> {
+        let kind = bun_ast::ImportKind::Stmt;
+        match vm
+            .transpiler
+            .with_mut(|t| t.resolver.resolve(top, name, kind))
+        {
+            Ok(found) if bun_path::is_absolute(found.path_pair.primary.text()) => {
+                Box::from(found.path_pair.primary.text())
+            }
+            // Whoever loads it says what is wrong with it.
+            _ => Box::from(name),
+        }
+    };
+    preloads.iter().map(|name| file_of(name)).collect()
+}
+
+// Only what the runner itself replaces, which no file of the run spells. The build finds what the files replace.
+fn find_what_tests_replace(has_file_with_window: bool) -> ReplacedByTests {
+    ReplacedByTests {
+        // It stores the globals of a window for a test file that asks for a DOM.
+        builtins: match has_file_with_window {
+            true => bun_aot::builtins::globals_that_a_window_replaces(),
+            false => Vec::new(),
+        },
+        ..ReplacedByTests::default()
+    }
+}
+
+fn is_identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
+}
+
+fn skip_space(text: &[u8], at: usize) -> usize {
+    text.len() - text[at..].trim_ascii_start().len()
+}
+
+fn read_identifier(text: &[u8], at: usize) -> Option<(&[u8], usize)> {
+    let bytes = text[at..].iter();
+    let length = bytes.take_while(|&&byte| is_identifier_byte(byte)).count();
+    (length > 0).then(|| (&text[at..at + length], at + length))
+}
+
+// What stands between two of `quotes` on one line, and where the text goes on.
+fn read_string<'a>(text: &'a [u8], at: usize, quotes: &[u8]) -> Option<(&'a [u8], usize)> {
+    let (quote, rest) = text[at..].split_first()?;
+    if !quotes.contains(quote) {
+        return None;
+    }
+    let end = strings::index_of_any(rest, &[*quote, b'\n'])?;
+    (end > 0 && rest[end] == *quote).then(|| (&rest[..end], at + end + 2))
+}
+
+// `a, { b, c as d } from "x"`, `* as n from "x"`, `* from "x"`, `"x"`: what follows `import` or `export`. The "x". Nothing of a declaration that takes types alone.
+fn read_specifier_of_declaration(text: &[u8], at: usize) -> Option<&[u8]> {
+    let mut at = skip_space(text, at);
+    if let Some((specifier, _)) = read_string(text, at, b"\"'") {
+        return Some(specifier);
+    }
+    let mut takes_a_value = false;
+    if let Some((word, next)) = read_identifier(text, at) {
+        at = skip_space(text, next);
+        let is_name = text[at..].starts_with(b",") || text[at..].starts_with(b"from");
+        if word == b"type" && !is_name {
+            return None;
+        }
+        takes_a_value = true;
+        if text[at..].starts_with(b",") {
+            at = skip_space(text, at + 1);
+        }
+    }
+    match text.get(at) {
+        Some(b'{') => {
+            let end = at + strings::index_of_char_usize(&text[at..], b'}')?;
+            for part in strings::split(&text[at + 1..end], b",") {
+                let part = part.trim_ascii();
+                let name = read_identifier(part, 0).or_else(|| read_string(part, 0, b"\"'"));
+                let Some((name, next)) = name else {
+                    continue;
+                };
+                let rest = part[next..].trim_ascii_start();
+                takes_a_value |= name != b"type" || rest.is_empty() || rest.starts_with(b"as ");
+            }
+            at = end + 1;
+        }
+        Some(b'*') => {
+            at = skip_space(text, at + 1);
+            takes_a_value = true;
+            if text[at..].starts_with(b"as") {
+                at = read_identifier(text, skip_space(text, at + 2))?.1;
+            }
+        }
+        _ => {}
+    }
+    at = skip_space(text, at);
+    if !text[at..].starts_with(b"from") {
+        return None;
+    }
+    let (specifier, _) = read_string(text, skip_space(text, at + 4), b"\"'")?;
+    takes_a_value.then_some(specifier)
+}
+
+// `import .. from "x"`, `import "x"`, `export .. from "x"`: the names without which the file does not load. Reads words, not syntax: the word has to
+// begin its line. A sentence in a comment or a string, ` * import { a } from "./gone.js"`, is no statement.
+fn for_each_name_in_statement<'a>(text: &'a [u8], mut visit: impl FnMut(&'a [u8])) {
+    let mut at = 0;
+    while let Some(found) = strings::index_of_any(&text[at..], b"ie") {
+        at += found;
+        let blanks = text[..at].trim_ascii_end().len();
+        let begins_line = blanks == 0 || strings::contains_char(&text[blanks..at], b'\n');
+        let is_word = text[at..].starts_with(b"import") || text[at..].starts_with(b"export");
+        at += 1;
+        if !begins_line || !is_word {
+            continue;
+        }
+        if let Some(specifier) = read_specifier_of_declaration(text, at + 5) {
+            visit(specifier);
+        }
+    }
+}
+
+fn has_file_with_window<'a>(
+    mut test_files: impl Iterator<Item = &'a [u8]>,
+    environment_of_project: Option<TestEnvironment>,
+) -> bool {
+    // Preloads run in the environment of the project, whatever the test files ask for.
+    environment_of_project.is_some_and(|kind| kind != TestEnvironment::Node)
+        || test_files.any(|path| Environment::of_file(path, None).has_window())
+}
+
+// No file of the run spells what the runner does for a test file that asks for a DOM: it loads a module of Bun's own code from its text and the package that makes the window from
+// disk, and defines the names of the window on `globalThis`. This file stands in for that: it stores what a module under a name that nothing says answers, under such a name. So the
+// image admits that code, and a name which nothing else stores isn't taken for absent. The built-in objects among the names: `globals_that_a_window_replaces`.
+fn make_stand_in_for_window() -> Box<[u8]> {
+    let text = b"const name = process.argv.at(-1)!;
+if (name === \"\\0never\") (globalThis as any)[name] = require(name);
+";
+    // The name of the module. No file is there.
+    let path = resolve_path::join_abs_string::<bun_path::platform::Auto>(
+        FileSystem::get().top_level_dir(),
+        &[b"node_modules/.cache/bun-test-window.ts"],
+    )
+    .to_vec();
+    run_compiled::set_stand_in(&path, text);
+    path.into_boxed_slice()
+}
 
 // ─── compat shim: map legacy paths onto the test_runner crate ────────────────
 // The body was originally written against `bun_jsc::jest::{bun_test, Snapshots,
@@ -59,11 +753,11 @@ use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
 // `crate::test_runner::*`; the façade below adapts the body's nested-path
 // usage (`bun_test::Execution::Result`, `bun_test::BasicResult`, …) without a
 // 2k-line body rewrite.
-use crate::test_runner::jest::{self, FileColumns as _, Summary, TestRunner};
+use crate::test_runner::environment::Environment;
+use crate::test_runner::jest::{self, Summary, TestRunner};
 use crate::test_runner::snapshot::Snapshots;
 use bun_collections::index_sort;
 
-#[allow(non_snake_case)]
 mod bun_test {
     //! Façade over `crate::test_runner` that preserves the legacy paths
     //! the body uses (`bun_test::Execution::Result`, `bun_test::BasicResult`,
@@ -112,6 +806,14 @@ pub(crate) fn escape_xml(str_: &[u8], writer: &mut impl bun_io::Write) -> crate:
                 }
                 last = i + 1;
             }
+            0xEF if matches!(str_[i..], [_, 0xBF, 0xBE | 0xBF, ..]) => {
+                // U+FFFE and U+FFFF aren't valid XML 1.0 Chars either.
+                if i > last {
+                    writer.write_all(&str_[last..i])?;
+                }
+                i += 2;
+                last = i + 1;
+            }
             _ => {}
         }
         i += 1;
@@ -147,10 +849,6 @@ fn fmt_status_text_line(
     }
 }
 
-// `Output::error_writer()` / `Output::writer()` already return an unbounded
-// `&mut io::Writer`; the previous local `err_w`/`out_w` wrappers were no-op
-// reborrows. Call sites use the `Output` accessors directly.
-
 /// Name, message and stack of the error(s) thrown by the test that is
 /// currently failing, captured as they are printed so structured reporters
 /// get them without re-running the exception formatter.
@@ -159,12 +857,14 @@ pub(crate) struct TestFailure {
     pub name: Vec<u8>,
     pub(crate) message: Vec<u8>,
     pub(crate) body: Vec<u8>,
+    /// An uncaught exception or unhandled rejection while the test was running, not an error from the test function's own call.
+    pub(crate) uncaught: bool,
 }
 
 /// How a test file is named in the JUnit document: relative to the project
 /// root when inside it, else as given.
 pub(crate) fn junit_file_name(path: &[u8]) -> &[u8] {
-    let top = FileSystem::instance().top_level_dir;
+    let top = FileSystem::get().top_level_dir();
     if strings::has_prefix(path, top) {
         without_leading_path_separator(&path[top.len()..])
     } else {
@@ -184,6 +884,8 @@ pub(crate) struct TestCaseReport<'a> {
     pub elapsed_ns: u64,
     pub line_number: u32,
     pub failure: Option<TestFailure>,
+    /// Failures from earlier attempts of a retried test, oldest first.
+    pub earlier_failures: Vec<TestFailure>,
 }
 
 /// Append `input` to `out`, dropping CSI sequences (`ESC '[' ... final`), so a
@@ -206,9 +908,40 @@ fn push_stripping_ansi(out: &mut Vec<u8>, input: &[u8]) {
     }
 }
 
+/// Writes a Unix time in milliseconds the way `Date.prototype.toISOString` does.
+fn write_iso_8601(out: &mut Vec<u8>, unix_ms: i64) {
+    let days = unix_ms.div_euclid(86_400_000);
+    let ms = unix_ms.rem_euclid(86_400_000);
+    // Days to a civil date: https://howardhinnant.github.io/date_algorithms.html#civil_from_days
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let day_of_era = z.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted_month = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
+    let month = if shifted_month < 10 {
+        shifted_month + 3
+    } else {
+        shifted_month - 9
+    };
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    let _ = write!(
+        out,
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        year,
+        month,
+        day,
+        ms / 3_600_000,
+        ms / 60_000 % 60,
+        ms / 1000 % 60,
+        ms % 1000,
+    );
+}
+
 // Remaining TODOs:
 // - Add stdout/stderr to the JUnit report
-// - Add timestamp field to the JUnit report
 #[derive(Default)]
 pub(crate) struct JunitReporter {
     pub(crate) contents: Vec<u8>,
@@ -216,10 +949,13 @@ pub(crate) struct JunitReporter {
     pub(crate) offset_of_testsuites_value: usize,
     pub(crate) current_file: Box<[u8]>,
     pub(crate) file_start_ns: u64,
+    /// Unix time in milliseconds. The `timestamp` of every suite in the file.
+    pub(crate) file_start_unix_ms: i64,
     pub(crate) properties_list_to_repeat_in_every_test_suite: Option<Box<[u8]>>,
 
     pub(crate) suite_stack: Vec<SuiteInfo>,
     pub(crate) current_depth: u32,
+    pub(crate) suites: JunitSuites,
 
     pub(crate) hostname_value: Option<Box<[u8]>>,
 }
@@ -289,16 +1025,51 @@ impl JunitReporter {
         None
     }
 
-    pub(crate) fn init() -> Box<JunitReporter> {
-        Box::new(JunitReporter::default())
+    pub(crate) fn init(suites: JunitSuites) -> Box<JunitReporter> {
+        Box::new(JunitReporter {
+            suites,
+            ..Default::default()
+        })
     }
 }
 
 impl TestFailure {
+    /// Returns the failure to report for a result that has no thrown error, like a timeout.
+    pub(crate) fn from_result(
+        result: bun_test::Execution::Result,
+        assertions: u32,
+    ) -> Option<TestFailure> {
+        use bun_test::Execution::Result as R;
+        let message: Vec<u8> = match result {
+            _ if result.is_timeout() => b"test timed out".to_vec(),
+            R::FailBecauseFailingTestPassed => {
+                b"test marked with .failing() did not throw".to_vec()
+            }
+            R::FailBecauseFailsTestPassed => b"test marked with .fails() did not fail".to_vec(),
+            R::FailBecauseExpectedAssertionCount => {
+                format!("Expected more assertions, but only received {assertions}").into_bytes()
+            }
+            R::FailBecauseTodoPassed => b"TODO passed".to_vec(),
+            R::FailBecauseExpectedHasAssertions => {
+                b"Expected to have assertions, but none were run".to_vec()
+            }
+            _ => return None,
+        };
+        Some(TestFailure {
+            name: if result.is_timeout() {
+                b"TimeoutError".to_vec()
+            } else {
+                b"AssertionError".to_vec()
+            },
+            message,
+            ..Default::default()
+        })
+    }
+
     /// Fold in a `ZigException` that `print_error_instance_body` has already
     /// populated. A test can throw more than once (body, then `afterEach`);
     /// the first name/message win and every stack is appended.
-    pub(crate) fn record(slot: &mut Option<TestFailure>, exception: &jsc::ZigException) {
+    pub(crate) fn record(slot: &mut Option<TestFailure>, exception: &jsc::ZigException<'_>) {
         let failure = slot.get_or_insert_default();
         let name = exception.name.to_utf8();
         let raw_message = exception.message.to_utf8();
@@ -339,7 +1110,7 @@ impl TestFailure {
             }
         }
         body.push(b'\n');
-        let dir = FileSystem::instance().top_level_dir;
+        let dir = FileSystem::get().top_level_dir();
         for frame in exception.stack.frames() {
             let source_url = frame.source_url.to_utf8();
             let file = jsc::ZigStackFrame::relative_source_url(dir, source_url.slice());
@@ -373,13 +1144,35 @@ impl TestFailure {
         }
     }
 
-    /// VirtualMachine::on_print_error_zig_exception thunk.
-    pub(crate) fn record_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException) {
-        // SAFETY: `ctx` was set to `&mut CommandLineReporter.test_failure` by
-        // `on_uncaught_exception` for the duration of a single
-        // `run_error_handler` call; single-threaded, no other borrow live.
-        let slot = unsafe { &mut *ctx.cast::<Option<TestFailure>>() };
-        TestFailure::record(slot, exception);
+    /// A module that can't be found or parsed throws one of these two. They are printed as log messages, with no `ZigException`.
+    #[optimize(size)]
+    pub(crate) fn record_log_message(slot: &mut Option<TestFailure>, thrown: jsc::JSValue) {
+        let (name, msg): (&[u8], _) =
+            if let Some(error) = thrown.as_class_ref::<jsc::ResolveMessage>() {
+                (
+                    b"ResolveMessage",
+                    jsc::WrapperGuard::map(error, |error| &error.msg),
+                )
+            } else if let Some(error) = thrown.as_class_ref::<jsc::BuildMessage>() {
+                (
+                    b"BuildMessage",
+                    jsc::WrapperGuard::map(error, |error| &error.msg),
+                )
+            } else {
+                return;
+            };
+        let failure = slot.get_or_insert_default();
+        if failure.name.is_empty() {
+            failure.name.extend_from_slice(name);
+        }
+        if failure.message.is_empty() {
+            failure.message.extend_from_slice(&msg.data.text);
+        }
+        if !failure.body.is_empty() {
+            failure.body.push(b'\n');
+        }
+        let _ = msg.write_format::<false>(&mut bun_io::AsFmt::new(&mut failure.body));
+        failure.body.push(b'\n');
     }
 }
 
@@ -498,6 +1291,7 @@ impl JunitReporter {
         self.begin_test_suite_with_line(name, 0, true)
     }
 
+    #[optimize(size)]
     pub(crate) fn begin_test_suite_with_line(
         &mut self,
         name: &[u8],
@@ -563,7 +1357,18 @@ impl JunitReporter {
     /// Close every suite still open for the current file. The file suite's
     /// `time` is `elapsed_ns` when the caller measured it (the `--parallel`
     /// coordinator replaying a worker's file), else now − `file_start_ns`.
-    pub(crate) fn end_file(&mut self, elapsed_ns: Option<u64>) -> crate::Result<()> {
+    /// A `file` with no test cases gets an empty suite, so the report lists every file that ran.
+    pub(crate) fn end_file(
+        &mut self,
+        file: Option<&[u8]>,
+        elapsed_ns: Option<u64>,
+    ) -> crate::Result<()> {
+        if let Some(file) = file
+            && !strings::eql(&self.current_file, file)
+        {
+            self.end_file(None, None)?;
+            self.begin_test_suite(file)?;
+        }
         while !self.suite_stack.is_empty() {
             self.end_test_suite(elapsed_ns)?;
         }
@@ -571,6 +1376,7 @@ impl JunitReporter {
         Ok(())
     }
 
+    #[optimize(size)]
     fn end_test_suite(&mut self, file_elapsed_ns: Option<u64>) -> crate::Result<()> {
         if self.suite_stack.is_empty() {
             return Ok(());
@@ -601,7 +1407,7 @@ impl JunitReporter {
             // Std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
             let _ = write!(
                 &mut summary,
-                "tests=\"{}\" assertions=\"{}\" failures=\"{}\" skipped=\"{}\" time=\"{}\" hostname=\"{}\"",
+                "tests=\"{}\" assertions=\"{}\" failures=\"{}\" skipped=\"{}\" time=\"{}\" hostname=\"{}\" timestamp=\"",
                 suite_info.metrics.test_cases,
                 suite_info.metrics.assertions,
                 suite_info.metrics.failures,
@@ -609,6 +1415,8 @@ impl JunitReporter {
                 elapsed_time_seconds,
                 bstr::BStr::new(&hostname),
             );
+            write_iso_8601(&mut summary, self.file_start_unix_ms);
+            summary.push(b'"');
         }
 
         self.contents.splice(
@@ -631,6 +1439,7 @@ impl JunitReporter {
 
     /// Open/close `<testsuite>` elements so the stack matches `t.file` and
     /// `t.scopes`, then write the `<testcase>`.
+    #[optimize(size)]
     pub(crate) fn record_test_case(&mut self, t: &TestCaseReport<'_>) -> crate::Result<()> {
         if !strings::eql(&self.current_file, t.file) {
             while let Some(top) = self.suite_stack.last()
@@ -644,37 +1453,97 @@ impl JunitReporter {
             self.begin_test_suite(t.file)?;
         }
 
+        if self.suites == JunitSuites::Flat {
+            let mut name: Vec<u8> = Vec::new();
+            for &(scope, _) in &t.scopes {
+                name.extend_from_slice(scope);
+                name.extend_from_slice(b" > ");
+            }
+            name.extend_from_slice(t.name);
+            return self.write_test_case(t, &name, t.file);
+        }
+
+        // Only the flat form includes describe blocks with an empty title, like Vitest.
+        let mut scopes = t.scopes.clone();
+        scopes.retain(|(name, _)| !name.is_empty());
+
         // Keep the longest prefix of open describe suites that matches
-        // `t.scopes`; close the rest, then open what is missing.
+        // `scopes`; close the rest, then open what is missing.
         let open = &self.suite_stack[1..];
         let keep = open
             .iter()
-            .zip(&t.scopes)
+            .zip(&scopes)
             .take_while(|(suite, (name, _))| strings::eql(&suite.name, name))
             .count();
         for _ in keep..open.len() {
             self.end_test_suite(None)?;
         }
-        for &(name, line) in &t.scopes[keep..] {
+        for &(name, line) in &scopes[keep..] {
             self.begin_test_suite_with_line(name, line, false)?;
         }
 
         // Innermost scope first, matching what the serial reporter always did.
         let mut class_name: Vec<u8> = Vec::new();
-        for (i, &(name, _)) in t.scopes.iter().rev().enumerate() {
+        for (i, &(name, _)) in scopes.iter().rev().enumerate() {
             if i > 0 {
                 class_name.extend_from_slice(b" > ");
             }
             class_name.extend_from_slice(name);
         }
 
-        self.write_test_case(t, &class_name)
+        self.write_test_case(t, t.name, &class_name)
     }
 
-    fn write_test_case(&mut self, t: &TestCaseReport<'_>, class_name: &[u8]) -> crate::Result<()> {
+    /// Writes `<failure>`, or Surefire's `<flakyFailure>` / `<rerunFailure>` for a retried test.
+    #[optimize(size)]
+    fn write_failure(
+        &mut self,
+        indent: &[u8],
+        element: &[u8],
+        failure: Option<&TestFailure>,
+    ) -> crate::Result<()> {
+        let type_name: &[u8] = failure
+            .map(|f| f.name.as_slice())
+            .filter(|n| !n.is_empty())
+            .unwrap_or(b"Error");
+        self.contents.extend_from_slice(indent);
+        self.contents.extend_from_slice(b"  <");
+        self.contents.extend_from_slice(element);
+        self.contents.extend_from_slice(b" type=\"");
+        escape_xml(type_name, &mut self.contents)?;
+        self.contents.extend_from_slice(b"\"");
+        if let Some(f) = failure.filter(|f| !f.message.is_empty()) {
+            self.contents.extend_from_slice(b" message=\"");
+            escape_xml(&f.message, &mut self.contents)?;
+            self.contents.extend_from_slice(b"\"");
+        }
+        if failure.is_some_and(|f| f.uncaught) {
+            self.contents.extend_from_slice(b" uncaught=\"true\"");
+        }
+        match failure.filter(|f| !f.body.is_empty()) {
+            Some(f) => {
+                self.contents.extend_from_slice(b">");
+                escape_xml(&f.body, &mut self.contents)?;
+                self.contents.extend_from_slice(b"</");
+                self.contents.extend_from_slice(element);
+                self.contents.extend_from_slice(b">\n");
+            }
+            None => {
+                self.contents.extend_from_slice(b" />\n");
+            }
+        }
+        Ok(())
+    }
+
+    #[optimize(size)]
+    fn write_test_case(
+        &mut self,
+        t: &TestCaseReport<'_>,
+        name: &[u8],
+        class_name: &[u8],
+    ) -> crate::Result<()> {
         let TestCaseReport {
             file,
-            name,
             status,
             assertions,
             elapsed_ns,
@@ -725,98 +1594,28 @@ impl JunitReporter {
 
         use bun_test::Execution::Result as R;
         match status {
-            R::Pass => {
+            R::Pass if t.earlier_failures.is_empty() => {
                 self.contents.extend_from_slice(b" />\n");
             }
-            R::Fail => {
-                if !self.suite_stack.is_empty() {
-                    let last = self.suite_stack.len() - 1;
-                    self.suite_stack[last].metrics.failures += 1;
-                }
+            R::Pass => {
                 self.contents.extend_from_slice(b">\n");
-                self.contents.extend_from_slice(indent);
-                let type_name: &[u8] = failure
-                    .as_ref()
-                    .map(|f| f.name.as_slice())
-                    .filter(|n| !n.is_empty())
-                    .unwrap_or(b"Error");
-                self.contents.extend_from_slice(b"  <failure type=\"");
-                escape_xml(type_name, &mut self.contents)?;
-                self.contents.extend_from_slice(b"\"");
-                if let Some(f) = failure.as_ref() {
-                    if !f.message.is_empty() {
-                        self.contents.extend_from_slice(b" message=\"");
-                        escape_xml(&f.message, &mut self.contents)?;
-                        self.contents.extend_from_slice(b"\"");
-                    }
-                }
-                match failure.as_ref().filter(|f| !f.body.is_empty()) {
-                    Some(f) => {
-                        self.contents.extend_from_slice(b">");
-                        escape_xml(&f.body, &mut self.contents)?;
-                        self.contents.extend_from_slice(b"</failure>\n");
-                    }
-                    None => {
-                        self.contents.extend_from_slice(b" />\n");
-                    }
+                for earlier in &t.earlier_failures {
+                    self.write_failure(indent, b"flakyFailure", Some(earlier))?;
                 }
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
-            R::FailBecauseFailingTestPassed => {
+            _ if status.is_fail() => {
                 if !self.suite_stack.is_empty() {
                     let last = self.suite_stack.len() - 1;
                     self.suite_stack[last].metrics.failures += 1;
                 }
                 self.contents.extend_from_slice(b">\n");
-                self.contents.extend_from_slice(indent);
-                let _ = writeln!(
-                    &mut self.contents,
-                    "  <failure message=\"test marked with .failing() did not throw\" type=\"AssertionError\"/>"
-                );
-                self.contents.extend_from_slice(indent);
-                self.contents.extend_from_slice(b"</testcase>\n");
-            }
-            R::FailBecauseExpectedAssertionCount => {
-                if !self.suite_stack.is_empty() {
-                    let last = self.suite_stack.len() - 1;
-                    self.suite_stack[last].metrics.failures += 1;
+                let described = TestFailure::from_result(status, assertions);
+                self.write_failure(indent, b"failure", described.as_ref().or(failure))?;
+                for earlier in &t.earlier_failures {
+                    self.write_failure(indent, b"rerunFailure", Some(earlier))?;
                 }
-                self.contents.extend_from_slice(b">\n");
-                self.contents.extend_from_slice(indent);
-                let _ = writeln!(
-                    &mut self.contents,
-                    "  <failure message=\"Expected more assertions, but only received {}\" type=\"AssertionError\"/>",
-                    assertions
-                );
-                self.contents.extend_from_slice(indent);
-                self.contents.extend_from_slice(b"</testcase>\n");
-            }
-            R::FailBecauseTodoPassed => {
-                if !self.suite_stack.is_empty() {
-                    let last = self.suite_stack.len() - 1;
-                    self.suite_stack[last].metrics.failures += 1;
-                }
-                self.contents.extend_from_slice(b">\n");
-                self.contents.extend_from_slice(indent);
-                let _ = writeln!(
-                    &mut self.contents,
-                    "  <failure message=\"TODO passed\" type=\"AssertionError\"/>"
-                );
-                self.contents.extend_from_slice(indent);
-                self.contents.extend_from_slice(b"</testcase>\n");
-            }
-            R::FailBecauseExpectedHasAssertions => {
-                if !self.suite_stack.is_empty() {
-                    let last = self.suite_stack.len() - 1;
-                    self.suite_stack[last].metrics.failures += 1;
-                }
-                self.contents.extend_from_slice(b">\n");
-                self.contents.extend_from_slice(indent);
-                let _ = writeln!(
-                    &mut self.contents,
-                    "  <failure message=\"Expected to have assertions, but none were run\" type=\"AssertionError\"/>"
-                );
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
@@ -843,23 +1642,7 @@ impl JunitReporter {
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
-            R::FailBecauseTimeout
-            | R::FailBecauseTimeoutWithDoneCallback
-            | R::FailBecauseHookTimeout
-            | R::FailBecauseHookTimeoutWithDoneCallback => {
-                if !self.suite_stack.is_empty() {
-                    let last = self.suite_stack.len() - 1;
-                    self.suite_stack[last].metrics.failures += 1;
-                }
-                self.contents.extend_from_slice(b">\n");
-                self.contents.extend_from_slice(indent);
-                self.contents.extend_from_slice(
-                    b"  <failure type=\"TimeoutError\" message=\"test timed out\" />\n",
-                );
-                self.contents.extend_from_slice(indent);
-                self.contents.extend_from_slice(b"</testcase>\n");
-            }
-            R::Pending => unreachable!(),
+            _ => unreachable!(),
         }
         Ok(())
     }
@@ -869,7 +1652,7 @@ impl JunitReporter {
             return Ok(());
         }
 
-        self.end_file(None)?;
+        self.end_file(None, None)?;
 
         {
             let metrics = self.total_metrics;
@@ -895,16 +1678,8 @@ impl JunitReporter {
             self.contents.extend_from_slice(b"</testsuites>\n");
         }
 
-        let mut junit_path_buf = bun_paths::path_buffer_pool::get();
-
-        junit_path_buf[..path.len()].copy_from_slice(path);
-        junit_path_buf[path.len()] = 0;
-
-        // SAFETY: junit_path_buf[path.len()] == 0 written above
-        let zpath = bun_core::ZStr::from_buf(&junit_path_buf[..], path.len());
-        match File::openat(
-            Fd::cwd(),
-            zpath,
+        match File::make_open(
+            path,
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o664,
         ) {
@@ -930,6 +1705,74 @@ impl JunitReporter {
     }
 }
 
+/// An entry of `include` or `exclude`.
+struct ReactCompilerEntry {
+    /// As written. A pattern like "**/*.stories.tsx" is matched against the file's path relative to the run directory.
+    written: Box<[u8]>,
+    /// Resolved against the run directory, so that ".", "../../apps/web" and "../.." mean the folders they point to.
+    absolute: Box<[u8]>,
+}
+
+fn with_forward_slashes(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    use std::borrow::Cow;
+    if cfg!(windows) {
+        let replaced = path.iter().map(|&b| if b == b'\\' { b'/' } else { b });
+        Cow::Owned(replaced.collect())
+    } else {
+        Cow::Borrowed(path)
+    }
+}
+
+/// Leaked on purpose: every thread's transpiler calls it until the process exits.
+pub(crate) fn react_compiler_filter(
+    scope: &ReactCompilerScope,
+    root: &'static [u8],
+) -> &'static (dyn Fn(&[u8]) -> bool + Sync) {
+    let entries = |written: &[Box<[u8]>]| -> Vec<ReactCompilerEntry> {
+        written
+            .iter()
+            .map(|written| {
+                let written: &[u8] = written;
+                let absolute =
+                    resolve_path::join_abs_string::<bun_path::platform::Auto>(root, &[written]);
+                let absolute = with_forward_slashes(absolute);
+                let written = written.strip_prefix(b"./").unwrap_or(written);
+                ReactCompilerEntry {
+                    written: Box::from(written),
+                    absolute: Box::from(absolute.strip_suffix(b"/").unwrap_or(&absolute)),
+                }
+            })
+            .collect()
+    };
+    let (include, exclude) = (entries(&scope.include), entries(&scope.exclude));
+    Box::leak(Box::new(move |path: &[u8]| {
+        // A `data:` URL is in no folder, and can be longer than the buffers `relative()` uses.
+        if !bun_paths::is_absolute(path) {
+            return false;
+        }
+        // The original of a mocked module is loaded as "file.ts?actual".
+        let path = &path[..strings::index_of_char(path, b'?').map_or(path.len(), |at| at as usize)];
+        let name = bun_paths::basename(path);
+        let stem = &name[..name.len() - bun_paths::extension(name).len()];
+        if scanner::TEST_NAME_SUFFIXES
+            .iter()
+            .any(|suffix| stem.ends_with(suffix))
+        {
+            return false;
+        }
+        let relative = with_forward_slashes(resolve_path::relative(root, path));
+        let path = with_forward_slashes(path);
+        let matches = |entry: &ReactCompilerEntry| {
+            // A folder matches everything inside it.
+            path.strip_prefix(&*entry.absolute)
+                .is_some_and(|rest| rest.is_empty() || rest[0] == b'/')
+                || bun_glob::r#match(&entry.written, &relative).matches()
+                || bun_glob::r#match(&entry.absolute, &path).matches()
+        };
+        (include.is_empty() || include.iter().any(matches)) && !exclude.iter().any(matches)
+    }))
+}
+
 /// Drain the event loop after a file's tests finish, like a node process
 /// would before exiting; the vendored-node-test runner opts in via
 /// `BUN_TEST_DRAIN_EVENT_LOOP=1` so mustCall()-style exit checks see
@@ -940,7 +1783,7 @@ fn should_drain_event_loop() -> bool {
 
 /// jest and vitest never run a test file's `process.on('exit')` listeners; node's test harness asserts from them.
 pub(crate) fn skip_exit_listeners(reporter: &CommandLineReporter) -> bool {
-    !(reporter.jest.node_test_used || should_drain_event_loop())
+    !(reporter.jest.node_test_used.get() || should_drain_event_loop())
 }
 
 /// `ExitHandler::requested` at the end of a run, which does not wait for the event loop to run dry.
@@ -949,68 +1792,54 @@ pub(crate) fn exit_is_requested() -> bool {
 }
 
 pub(crate) struct CommandLineReporter {
-    // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
-    // reporter is held in a `Box` local to `TestCommand::exec` which never
-    // returns before process exit, so `'static` is sound here. Revisit if the
-    // reporter ever becomes scoped.
-    pub(crate) jest: TestRunner<'static>,
+    pub(crate) jest: TestRunner,
     pub(crate) repeat_count: u32,
-    /// Interior-mut: written from `BunTestRoot::on_before_print` via `&CommandLineReporter`
-    pub(crate) last_printed_dot: core::cell::Cell<bool>,
+    pub(crate) last_printed_dot: Cell<bool>,
 
-    /// When running as a `--parallel` worker, this is the coordinator-assigned
-    /// index of the file currently being executed. While set, per-test output
-    /// is sent over the IPC pipe instead of to stderr; the coordinator owns
-    /// the terminal.
-    pub(crate) worker_ipc_file_idx: Option<u32>,
-    /// Errors thrown by the test now running, captured while a reporter
-    /// that attaches them to the test case (JUnit) is on. Taken by
-    /// `handle_test_completed`.
-    pub(crate) test_failure: Option<TestFailure>,
+    /// Set in a `--parallel` worker, which sends per-test output to the coordinator instead of to stderr.
+    pub(crate) worker: OnceCell<ParallelRunner::CoordinatorLink>,
 
-    pub(crate) failures_to_repeat_buf: Vec<u8>,
-    pub(crate) skips_to_repeat_buf: Vec<u8>,
-    pub(crate) todos_to_repeat_buf: Vec<u8>,
+    pub(crate) failures_to_repeat_buf: Cell<Vec<u8>>,
+    pub(crate) skips_to_repeat_buf: Cell<Vec<u8>>,
+    pub(crate) todos_to_repeat_buf: Cell<Vec<u8>>,
 
     pub(crate) reporters: ReportersConfig,
+    reporter_outfile: Option<Box<[u8]>>,
 
     /// `--timings`: loaded before the run, updated per file, written back under `--update-timings`.
-    pub(crate) timings: Option<Timings>,
+    pub(crate) timings: Cell<Option<Box<Timings>>>,
+    update_timings: bool,
+    is_shard: bool,
 }
 
-#[derive(Default)]
 pub(crate) struct ReportersConfig {
     pub(crate) dots: bool,
     pub(crate) only_failures: bool,
-    pub(crate) junit: Option<Box<JunitReporter>>,
+    junit: Cell<Option<Box<JunitReporter>>>,
 }
 
 impl CommandLineReporter {
     fn print_test_line<const DIM: bool>(
         status: bun_test::Execution::Result,
-        sequence: &mut bun_test::Execution::ExecutionSequence,
-        test_entry: &mut bun_test::ExecutionEntry,
+        buntest: &bun_test::BunTest,
+        sequence: &bun_test::Execution::ExecutionSequence,
+        test_entry: &bun_test::ExecutionEntry,
         elapsed_ns: u64,
         writer: &mut impl bun_io::Write,
     ) {
         let initial_retry_count = test_entry.retry_count;
-        let attempts = (initial_retry_count - sequence.remaining_retry_count) + 1;
+        let attempts = (initial_retry_count - sequence.remaining_retry_count.get()) + 1;
         let initial_repeat_count = test_entry.repeat_count;
-        let repeats = (initial_repeat_count - sequence.remaining_repeat_count) + 1;
-        let mut scopes_stack: BoundedArray<*const bun_test::DescribeScope, 64> =
-            BoundedArray::default();
-        let mut parent_: Option<*const bun_test::DescribeScope> =
-            test_entry.base.parent.map(|p| p.cast_const());
+        let repeats = (initial_repeat_count - sequence.remaining_repeat_count.get()) + 1;
+        let mut scopes_stack: BoundedArray<&bun_test::DescribeScope, 64> = BoundedArray::default();
 
-        while let Some(scope) = parent_ {
+        for scope in buntest.scopes_from(test_entry.base.parent) {
             if scopes_stack.push(scope).is_err() {
                 break;
             }
-            // SAFETY: scope is a live DescribeScope pointer kept alive for the test run
-            parent_ = unsafe { (*scope).base.parent.map(|p| p.cast_const()) };
         }
 
-        let scopes: &[*const bun_test::DescribeScope] = scopes_stack.as_slice();
+        let scopes: &[&bun_test::DescribeScope] = scopes_stack.as_slice();
         let display_label: &[u8] = test_entry.base.name.as_deref().unwrap_or(b"(unnamed)");
 
         // Quieter output when claude code is in use.
@@ -1023,20 +1852,21 @@ impl CommandLineReporter {
             match status {
                 bun_test::Execution::Result::FailBecauseExpectedAssertionCount => {
                     // not sent to writer so it doesn't get printed twice
-                    let expected_count =
-                        if let bun_test::ExpectAssertions::Exact(n) = sequence.expect_assertions {
-                            n
-                        } else {
-                            12345
-                        };
+                    let expected_count = if let bun_test::ExpectAssertions::Exact(n) =
+                        sequence.expect_assertions.get()
+                    {
+                        n
+                    } else {
+                        12345
+                    };
                     Output::err(
                         crate::Error::AssertionError,
                         "expected <green>{} assertion{}<r>, but test ended with <red>{} assertion{}<r>\n",
                         (
                             expected_count,
                             if expected_count == 1 { "" } else { "s" },
-                            sequence.expect_call_count,
-                            if sequence.expect_call_count == 1 {
+                            sequence.expect_call_count.get(),
+                            if sequence.expect_call_count.get() == 1 {
                                 ""
                             } else {
                                 "s"
@@ -1072,9 +1902,7 @@ impl CommandLineReporter {
             if Output::enable_ansi_colors_stderr() {
                 for i in 0..scopes.len() {
                     let index = (scopes.len() - 1) - i;
-                    let scope = scopes[index];
-                    // SAFETY: scope is alive for duration of test run
-                    let name: &[u8] = unsafe { (*scope).base.name.as_deref() }.unwrap_or(b"");
+                    let name: &[u8] = scopes[index].base.name.as_deref().unwrap_or(b"");
                     if name.is_empty() {
                         continue;
                     }
@@ -1093,9 +1921,7 @@ impl CommandLineReporter {
             } else {
                 for i in 0..scopes.len() {
                     let index = (scopes.len() - 1) - i;
-                    let scope = scopes[index];
-                    // SAFETY: scope is alive for duration of test run
-                    let name: &[u8] = unsafe { (*scope).base.name.as_deref() }.unwrap_or(b"");
+                    let name: &[u8] = scopes[index].base.name.as_deref().unwrap_or(b"");
                     if name.is_empty() {
                         continue;
                     }
@@ -1157,11 +1983,12 @@ impl CommandLineReporter {
             match status {
                 R::Pending | R::Pass | R::Skip | R::SkippedBecauseLabel | R::Todo | R::Fail => {}
 
-                R::FailBecauseFailingTestPassed => {
+                R::FailBecauseFailingTestPassed | R::FailBecauseFailsTestPassed => {
                     let _ = bun_core::write_pretty!(
                         writer,
                         colors,
-                        "  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works<r>\n"
+                        "  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.{s}` if tested behavior now works<r>\n",
+                        test_entry.base.mode.tag_name()
                     );
                 }
                 R::FailBecauseTodoPassed => {
@@ -1212,36 +2039,24 @@ impl CommandLineReporter {
     /// on its `TestDone` frame and the coordinator replays it.
     fn test_case_report<'a>(
         status: bun_test::Execution::Result,
-        buntest: &bun_test::BunTest,
+        buntest: &'a bun_test::BunTest,
         sequence: &bun_test::Execution::ExecutionSequence,
         test_entry: &'a bun_test::ExecutionEntry,
         elapsed_ns: u64,
         failure: Option<TestFailure>,
+        earlier_failures: Vec<TestFailure>,
     ) -> TestCaseReport<'a> {
-        let file: &[u8] = if let Some(runner) = jest::Jest::runner() {
-            runner.files.items_source()[buntest.file_id as usize]
-                .path
-                .text
-        } else {
-            b""
-        };
-        let file = junit_file_name(file);
+        let file = junit_file_name(buntest.file.path);
 
         // Innermost first while walking up; reversed below.
         let mut scopes: Vec<(&'a [u8], u32)> = Vec::new();
-        let mut parent = test_entry.base.parent.map(|p| p.cast_const());
-        while let Some(scope) = parent {
+        for scope in buntest.scopes_from(test_entry.base.parent) {
             if scopes.len() == 64 {
                 break;
             }
-            // SAFETY: describe scopes outlive the file's test run.
-            let scope: &'a bun_test::DescribeScope = unsafe { &*scope };
-            if let Some(name) = scope.base.name.as_deref()
-                && !name.is_empty()
-            {
+            if let Some(name) = scope.base.name.as_deref() {
                 scopes.push((name, scope.base.line_no));
             }
-            parent = scope.base.parent.map(|p| p.cast_const());
         }
         scopes.reverse();
 
@@ -1250,40 +2065,78 @@ impl CommandLineReporter {
             scopes,
             name: test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"),
             status,
-            assertions: sequence.expect_call_count,
+            assertions: sequence.expect_call_count.get(),
             elapsed_ns,
             line_number: test_entry.base.line_no,
             failure,
+            earlier_failures,
+        }
+    }
+
+    /// An error outside of any test fails the run, so structured reporters get it as a failed test case of its file.
+    pub(crate) fn record_unhandled_error(&self, file_path: &[u8], failure: TestFailure) {
+        let report = TestCaseReport {
+            file: junit_file_name(file_path),
+            scopes: Vec::new(),
+            name: b"(unhandled error)",
+            status: bun_test::Execution::Result::Fail,
+            assertions: 0,
+            elapsed_ns: 0,
+            line_number: 0,
+            failure: Some(failure),
+            earlier_failures: Vec::new(),
+        };
+        if let Some(worker) = self.worker.get() {
+            ParallelRunner::worker_emit_test_done(worker, b"", Some(&report));
+        } else {
+            self.with_junit(|junit| junit.record_test_case(&report).expect("oom"));
         }
     }
 
     #[inline]
-    pub(crate) fn summary(&mut self) -> &mut Summary {
-        &mut self.jest.summary
+    pub(crate) fn summary(&self) -> Summary {
+        self.jest.summary.get()
+    }
+
+    pub(crate) fn update_summary(&self, update: impl FnOnce(&mut Summary)) {
+        self.jest.summary.with_taken(update);
+    }
+
+    pub(crate) fn count_failed_file(&self) {
+        self.update_summary(|summary| {
+            summary.fail += 1;
+            summary.files += 1;
+        });
+    }
+
+    pub(crate) fn with_junit(&self, f: impl FnOnce(&mut JunitReporter)) {
+        (self.reporters.junit).with_taken(|junit| junit.as_deref_mut().map(f));
+    }
+
+    fn record_timing(&self, file: &[u8], started_ms: i64) {
+        self.timings.with_taken(|timings| {
+            if let Some(timings) = timings {
+                timings.record_since(file, started_ms);
+            }
+        });
     }
 
     pub(crate) fn handle_test_completed(
-        buntest: &mut bun_test::BunTest,
-        sequence: &mut bun_test::Execution::ExecutionSequence,
-        test_entry: &mut bun_test::ExecutionEntry,
+        buntest: &bun_test::BunTest,
+        sequence: &bun_test::Execution::ExecutionSequence,
+        test_entry: &bun_test::ExecutionEntry,
         elapsed_ns: u64,
     ) {
+        let this = buntest.reporter;
         let mut output_buf: Vec<u8> = Vec::new();
 
         let initial_length = output_buf.len();
         let writer = &mut output_buf;
 
-        let result = sequence.result;
+        let result = sequence.result.get();
         if result != bun_test::Execution::Result::SkippedBecauseLabel {
-            // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
-            // provenance from `enter_file`'s `&mut`; single-threaded; reporter outlives
-            // every BunTest. Scoped to this block so the SharedReadOnly tag is dead
-            // before the `&mut` derived from the same `NonNull` below
-            // (stacked-borrows hygiene).
-            let reporter_ref: Option<&CommandLineReporter> =
-                buntest.reporter.map(|p| unsafe { &*p.as_ptr() });
             let basic = result.basic_result();
-            let dots_branch = reporter_ref.is_some_and(|r| r.reporters.dots)
+            let dots_branch = this.reporters.dots
                 && matches!(
                     basic,
                     bun_test::BasicResult::Pass
@@ -1310,13 +2163,11 @@ impl CommandLineReporter {
                         let _ = bun_core::write_pretty!(writer, colors, "<r><red>.<r>");
                     }
                 }
-                reporter_ref.unwrap().last_printed_dot.set(true);
-            } else if basic != bun_test::BasicResult::Fail
-                && reporter_ref.is_some_and(|r| r.reporters.only_failures)
-            {
+                this.last_printed_dot.set(true);
+            } else if basic != bun_test::BasicResult::Fail && this.reporters.only_failures {
                 // when using --only-failures, only print failures
             } else {
-                buntest.bun_test_root.on_before_print();
+                this.jest.bun_test_root.on_before_print();
 
                 if Output::enable_ansi_colors_stderr() {
                     let _ = writer.write_all(&fmt_status_text_line(result, true));
@@ -1324,77 +2175,67 @@ impl CommandLineReporter {
                     let _ = writer.write_all(&fmt_status_text_line(result, false));
                 }
                 let dim = match basic {
-                    bun_test::BasicResult::Todo => {
-                        if let Some(runner) = jest::Jest::runner() {
-                            !runner.run_todo
-                        } else {
-                            true
-                        }
-                    }
+                    bun_test::BasicResult::Todo => !this.jest.run_todo,
                     bun_test::BasicResult::Skip | bun_test::BasicResult::Pending => true,
                     bun_test::BasicResult::Pass | bun_test::BasicResult::Fail => false,
                 };
                 if dim {
-                    Self::print_test_line::<true>(result, sequence, test_entry, elapsed_ns, writer);
+                    Self::print_test_line::<true>(
+                        result, buntest, sequence, test_entry, elapsed_ns, writer,
+                    );
                 } else {
                     Self::print_test_line::<false>(
-                        result, sequence, test_entry, elapsed_ns, writer,
+                        result, buntest, sequence, test_entry, elapsed_ns, writer,
                     );
+                }
+                if basic == bun_test::BasicResult::Fail {
+                    run_compiled::write_note_on_refusal(writer);
                 }
             }
         }
         let formatted_line = &output_buf[initial_length..];
 
-        let Some(this) = buntest.reporter else {
-            let _ = Output::error_writer().write_all(formatted_line);
-            return;
-        };
-        // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
-        // provenance from `enter_file`'s `&mut`; single-threaded test runner,
-        // sole writer for the duration of this completion callback, and the
-        // shared borrow above is dead.
-        let this: &mut CommandLineReporter = unsafe { &mut *this.as_ptr() };
-
-        // Under `--parallel` the flag is forwarded to workers, whose records
-        // the coordinator replays into its own `JunitReporter`.
-        let report = this.jest.test_options.reporters.junit.then(|| {
-            let failure = this.test_failure.take();
-            Self::test_case_report(result, buntest, sequence, test_entry, elapsed_ns, failure)
+        let report = this.jest.reports_to_junit.then(|| {
+            let failure = sequence.failure.take();
+            let earlier = sequence.earlier_failures.take();
+            Self::test_case_report(
+                result, buntest, sequence, test_entry, elapsed_ns, failure, earlier,
+            )
         });
-        if let Some(idx) = this.worker_ipc_file_idx {
-            ParallelRunner::worker_emit_test_done(idx, formatted_line, report.as_ref());
+        if let Some(worker) = this.worker.get() {
+            ParallelRunner::worker_emit_test_done(worker, formatted_line, report.as_ref());
         } else {
             let _ = Output::error_writer().write_all(formatted_line);
-            if let (Some(junit), Some(report)) = (this.reporters.junit.as_mut(), &report) {
-                junit.record_test_case(report).expect("oom");
+            if let Some(report) = &report {
+                this.with_junit(|junit| junit.record_test_case(report).expect("oom"));
             }
         }
 
         if !this.reporters.dots && !this.reporters.only_failures {
-            match sequence.result.basic_result() {
-                bun_test::BasicResult::Skip => this
-                    .skips_to_repeat_buf
-                    .extend_from_slice(&output_buf[initial_length..]),
-                bun_test::BasicResult::Todo => this
-                    .todos_to_repeat_buf
-                    .extend_from_slice(&output_buf[initial_length..]),
-                bun_test::BasicResult::Fail => this
-                    .failures_to_repeat_buf
-                    .extend_from_slice(&output_buf[initial_length..]),
-                bun_test::BasicResult::Pass | bun_test::BasicResult::Pending => {}
+            let to_repeat = match result.basic_result() {
+                bun_test::BasicResult::Skip => Some(&this.skips_to_repeat_buf),
+                bun_test::BasicResult::Todo => Some(&this.todos_to_repeat_buf),
+                bun_test::BasicResult::Fail => Some(&this.failures_to_repeat_buf),
+                bun_test::BasicResult::Pass | bun_test::BasicResult::Pending => None,
+            };
+            if let Some(to_repeat) = to_repeat {
+                to_repeat.with_taken(|buf| buf.extend_from_slice(formatted_line));
             }
         }
 
         use bun_test::Execution::Result as R;
-        match sequence.result {
+        match result {
             R::Pending => {}
-            R::Pass => this.summary().pass += 1,
-            R::Skip => this.summary().skip += 1,
-            R::Todo => this.summary().todo += 1,
-            R::SkippedBecauseLabel => this.summary().skipped_because_label += 1,
+            R::Pass => this.update_summary(|summary| summary.pass += 1),
+            R::Skip => this.update_summary(|summary| summary.skip += 1),
+            R::Todo => this.update_summary(|summary| summary.todo += 1),
+            R::SkippedBecauseLabel => {
+                this.update_summary(|summary| summary.skipped_because_label += 1)
+            }
 
             R::Fail
             | R::FailBecauseFailingTestPassed
+            | R::FailBecauseFailsTestPassed
             | R::FailBecauseTodoPassed
             | R::FailBecauseExpectedHasAssertions
             | R::FailBecauseExpectedAssertionCount
@@ -1402,29 +2243,20 @@ impl CommandLineReporter {
             | R::FailBecauseTimeoutWithDoneCallback
             | R::FailBecauseHookTimeout
             | R::FailBecauseHookTimeoutWithDoneCallback => {
-                this.summary().fail += 1;
+                this.update_summary(|summary| summary.fail += 1);
 
                 if this.summary().fail == this.jest.bail {
-                    this.print_summary();
-                    pretty_error!(
-                        "\nBailed out after {} failure{}<r>\n",
-                        this.jest.bail,
-                        if this.jest.bail == 1 { "" } else { "s" }
-                    );
-                    Output::flush();
-                    this.write_junit_report_if_needed();
-                    this.write_timings_if_needed();
-                    Global::exit(1);
+                    this.bail_out(VirtualMachine::get());
                 }
             }
         }
-        this.summary().expectations = this
-            .summary()
-            .expectations
-            .saturating_add(sequence.expect_call_count);
+        this.update_summary(|summary| {
+            summary.expectations =
+                (summary.expectations).saturating_add(sequence.expect_call_count.get());
+        });
     }
 
-    pub(crate) fn print_summary(&mut self) {
+    pub(crate) fn print_summary(&self) {
         let summary_ = self.summary();
         let tests = summary_.fail + summary_.pass + summary_.skip + summary_.todo;
         let files = summary_.files;
@@ -1440,31 +2272,91 @@ impl CommandLineReporter {
         Output::print_start_end(bun::start_time(), bun::time::nano_timestamp());
     }
 
+    /// Prints that `--bail` hit its failure count, then exits with code 1. Tears down the VM the same way `exec` does.
+    /// A `--parallel` worker never gets here: its `jest.bail` is 0, and the coordinator counts the failures.
+    pub(crate) fn bail_out(&self, vm: &VirtualMachine) -> ! {
+        self.print_summary();
+        pretty_error!(
+            "\nBailed out after {} failure{}<r>\n",
+            self.jest.bail,
+            if self.jest.bail == 1 { "" } else { "s" }
+        );
+        Output::flush();
+        self.write_junit_report_if_needed();
+        self.write_timings_if_needed();
+
+        vm.exit_handler.exit_code.set(1);
+        vm.exit_handler
+            .skip_exit_listeners
+            .set(skip_exit_listeners(self));
+        vm.exit_handler.requested.set(true);
+        vm.run_with_api_lock(|| vm.on_exit());
+        // Exit listeners need the runner, so release the `bun:test` GC roots after they run.
+        self.jest.bun_test_root.deinit_for_exit();
+        vm.run_with_api_lock(|| vm.global_exit())
+    }
+
     /// Like the JUnit report, called before every exit path (including bail) so measured durations aren't lost.
-    pub(crate) fn write_timings_if_needed(&mut self) {
-        if self.jest.test_options.update_timings
-            && self.worker_ipc_file_idx.is_none()
-            && let Some(timings) = self.timings.as_mut()
+    #[optimize(size)]
+    pub(crate) fn write_timings_if_needed(&self) {
+        if self.update_timings
+            && let Some(mut timings) = self.timings.take()
         {
-            timings.write(self.jest.test_options.shard.is_some());
+            timings.write(self.is_shard);
         }
     }
 
     /// Writes the JUnit reporter output file if a JUnit reporter is active and
     /// an outfile path was configured. This must be called before any early exit
     /// (e.g. bail) so that the report is not lost.
-    pub(crate) fn write_junit_report_if_needed(&mut self) {
-        if let Some(junit) = self.reporters.junit.as_mut() {
-            if let Some(outfile) = self.jest.test_options.reporter_outfile.as_deref() {
+    #[optimize(size)]
+    pub(crate) fn write_junit_report_if_needed(&self) {
+        if let Some(outfile) = self.reporter_outfile.as_deref() {
+            self.with_junit(|junit| {
                 let _ = junit.write_to_file(outfile);
+            });
+        }
+    }
+
+    /// `bun test --aot --coverage`: the files that ran as compiled code join those that JSC has counted.
+    pub(crate) fn add_compiled_files_to_coverage(vm: &VirtualMachine) {
+        let mut files: Vec<(Vec<u8>, Vec<u64>)> = Vec::new();
+        bun_jsc::compiled_program::for_each_counted_file(
+            vm.global(),
+            &mut |description, counts| {
+                files.push((description.to_vec(), counts.to_vec()));
+            },
+        );
+        for (description, counts) in &files {
+            let Some(end_of_path) = strings::index_of_char_usize(description, b'\n') else {
+                continue;
+            };
+            let (path, ranges) = (&description[..end_of_path], &description[end_of_path + 1..]);
+            if !BunTest__shouldGenerateCodeCoverage(&bun_core::StringView::from_bytes(path)) {
+                continue;
             }
+            let Ok(text) = File::read_from(Fd::cwd(), path) else {
+                continue;
+            };
+            let Some(transpiled) = crate::jsc_hooks::transpile_as_loaded(vm.global(), path, &text)
+            else {
+                continue;
+            };
+            ByteRangeMapping::add_compiled_file(
+                path,
+                &text,
+                &transpiled.source_code,
+                transpiled.already_bundled,
+                ranges,
+                counts,
+            );
         }
     }
 
     /// This process's coverage, one `Report` per instrumented file, sorted by
     /// path, with `coveragePathIgnorePatterns` applied.
     pub(crate) fn for_each_coverage_report(
-        vm: &mut VirtualMachine,
+        vm: &VirtualMachine,
         opts: &CodeCoverageOptions,
         mut each: impl FnMut(CodeCoverageReport<'_>),
     ) {
@@ -1474,10 +2366,15 @@ impl CommandLineReporter {
         // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
         // collection loop below (single-threaded CLI report path).
         let map = unsafe { &mut *map.as_ptr() };
-        let relative_dir = FileSystem::get().top_level_dir;
+        let relative_dir = FileSystem::get().top_level_dir();
+        let ignore_patterns: Vec<bun_glob::Prepared<&[u8]>> = (opts
+            .ignore_patterns
+            .iter()
+            .map(|it| bun_glob::Prepared::new(&**it)))
+        .collect();
         let mut byte_ranges: Vec<&mut ByteRangeMapping> = Vec::with_capacity(map.len());
         for entry in map.values_mut() {
-            if !coverage::is_ignored(opts, relative_dir, entry.source_url.slice()) {
+            if !coverage::is_ignored(&ignore_patterns, relative_dir, entry.source_url.slice()) {
                 byte_ranges.push(entry);
             }
         }
@@ -1492,24 +2389,27 @@ impl CommandLineReporter {
         }
     }
 
+    /// Returns false if `lcov.info` could not be written.
     pub(crate) fn generate_code_coverage(
-        &mut self,
-        vm: &mut VirtualMachine,
+        &self,
+        vm: &VirtualMachine,
         opts: &mut CodeCoverageOptions,
-    ) {
+    ) -> bool {
         let _trace = bun::perf::trace("TestCommand.printCodeCoverage");
+        Self::add_compiled_files_to_coverage(vm);
         if ByteRangeMapping::map().is_none_or(|m| {
             // SAFETY: see `for_each_coverage_report`.
             unsafe { m.as_ref() }.is_empty()
         }) {
-            return;
+            return true;
         }
         let mut reports: Vec<CodeCoverageReport<'static>> = Vec::new();
         Self::for_each_coverage_report(vm, opts, |report| reports.push(report.into_owned()));
         if let Err(err) = print_coverage_reports(opts, &reports) {
             Output::err(err, "Failed to write lcov.info", ());
-            Global::exit(1);
+            return false;
         }
+        true
     }
 }
 
@@ -1517,6 +2417,7 @@ impl CommandLineReporter {
 /// `reports` (sorted by path), and set `opts.fractions.failing`. The serial
 /// runner passes this process's reports; the `--parallel` coordinator passes
 /// reports merged from every worker. Errors only from writing `lcov.info`.
+#[optimize(size)]
 pub(crate) fn print_coverage_reports(
     opts: &mut CodeCoverageOptions,
     reports: &[CodeCoverageReport<'_>],
@@ -1532,7 +2433,7 @@ fn print_coverage_reports_<const COLORS: bool>(
     opts: &mut CodeCoverageOptions,
     reports: &[CodeCoverageReport<'_>],
 ) -> bun_sys::Result<()> {
-    let relative_dir = FileSystem::get().top_level_dir;
+    let relative_dir = FileSystem::get().top_level_dir();
     let thresholds = opts.fractions;
 
     let fractions: Vec<Fraction> = reports.iter().map(|r| r.fraction(&thresholds)).collect();
@@ -1631,6 +2532,7 @@ fn print_coverage_table<const COLORS: bool>(
 
 /// Render to `<reports_directory>/.lcov.info.<hex>.tmp` and rename it over
 /// `lcov.info`, so an interrupted run never leaves a truncated report.
+#[optimize(size)]
 fn write_lcov_report(
     opts: &CodeCoverageOptions,
     relative_dir: &[u8],
@@ -1642,14 +2544,6 @@ fn write_lcov_report(
         let _ = coverage::lcov::write_format(report, relative_dir, &mut contents);
     }
 
-    let mut fs = crate::node::fs::NodeFS::default();
-    let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
-        path: crate::node::PathLike::borrowed(&opts.reports_directory),
-        always_return_none: true,
-        recursive: true,
-        ..Default::default()
-    });
-
     let mut rand = [0u8; 8];
     bun_boringssl_sys::rand_bytes(&mut rand);
     let mut tmpname: Vec<u8> = Vec::new();
@@ -1658,12 +2552,34 @@ fn write_lcov_report(
         ".lcov.info.{}.tmp",
         bun_core::fmt::hex_lower(&rand)
     );
+    let too_long = || {
+        bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
+            .with_path(&opts.reports_directory)
+    };
+    let mut tmp_buf = bun_paths::path_buffer_pool::get();
+    let tmp_path = resolve_path::join_abs_string_buf_z_checked::<bun_path::platform::Auto>(
+        relative_dir,
+        &mut tmp_buf,
+        &[&opts.reports_directory, &tmpname],
+    )
+    .ok_or_else(too_long)?;
     let mut buf = bun_paths::path_buffer_pool::get();
-    let tmp_path = resolve_path::join_abs_string_buf_z::<bun_path::platform::Auto>(
+    let path = resolve_path::join_abs_string_buf_z_checked::<bun_path::platform::Auto>(
         relative_dir,
         &mut buf,
-        &[&opts.reports_directory, &tmpname],
-    );
+        &[&opts.reports_directory, b"lcov.info"],
+    )
+    .ok_or_else(too_long)?;
+    if let Some(dir) = bun_path::dirname(path.as_bytes()) {
+        let mut fs = crate::node::fs::NodeFS::default();
+        let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
+            path: crate::node::PathLike::borrowed(dir),
+            always_return_none: true,
+            recursive: true,
+            ..Default::default()
+        });
+    }
+
     let file = File::openat(
         Fd::cwd(),
         tmp_path,
@@ -1673,15 +2589,7 @@ fn write_lcov_report(
     let written = file.write_all(&contents);
     drop(file);
     let moved = match written {
-        Ok(()) => bun_sys::move_file_z(
-            Fd::cwd(),
-            tmp_path,
-            Fd::cwd(),
-            resolve_path::join_abs_string_z::<bun_path::platform::Auto>(
-                relative_dir,
-                &[&opts.reports_directory, b"lcov.info"],
-            ),
-        ),
+        Ok(()) => bun_sys::move_file_z(Fd::cwd(), tmp_path, Fd::cwd(), path),
         err => err,
     };
     if moved.is_err() {
@@ -1703,14 +2611,22 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
         return false;
     }
 
+    let options = &VirtualMachine::get().transpiler.get().options;
+
+    // Skip the wrapper modules Bun generates for these suffixes. Other queries (a plugin's `./a.vue?x`) are user code.
+    if let Some(query) = strings::index_of_char_usize(slice, b'?') {
+        use bun_bundler::options::ImportSuffix;
+        let by_extension = options.loader(bun_path::extension(&slice[..query]));
+        if matches!(
+            ImportSuffix::find(&slice[query..], Some(by_extension)),
+            Some(ImportSuffix::Inline | ImportSuffix::Init | ImportSuffix::Worker(_))
+        ) {
+            return false;
+        }
+    }
+
     let ext = bun_path::extension(slice);
-    // SAFETY: `VirtualMachine::get()` returns the process-lifetime VM pointer; only
-    // called from the JS thread once a VM exists.
-    let loader_by_ext = VirtualMachine::get()
-        .as_mut()
-        .transpiler
-        .options
-        .loader(ext);
+    let loader_by_ext = options.loader(ext);
 
     // allow file loader just incase they use a custom loader with a non-standard extension
     if !(loader_by_ext.is_javascript_like() || loader_by_ext == bun_ast::Loader::File) {
@@ -1718,7 +2634,7 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
     }
 
     if let Some(runner) = jest::Jest::runner() {
-        if runner.test_options.coverage.skip_test_files {
+        if runner.coverage_skips_test_files {
             let name_without_extension = &slice[0..slice.len() - ext.len()];
             for suffix in scanner::TEST_NAME_SUFFIXES {
                 if strings::ends_with(name_without_extension, suffix) {
@@ -1737,13 +2653,14 @@ impl TestCommand {
     // pub use bun_options_types::code_coverage_options::{CodeCoverageOptions, Reporter, Reporters};
     // Re-exports moved to top-level `use` per crate map.
 
+    #[optimize(size)]
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
         Output::IS_GITHUB_ACTION.store(
             Output::is_github_action(),
             core::sync::atomic::Ordering::Relaxed,
         );
 
-        if !ctx.test_options.test_worker {
+        if !ctx.test_options.test_worker && !run_compiled::is_second_process() {
             // print the version so you know its doing stuff if it takes a sec
             let w = Output::writer();
             let colors = Output::enable_ansi_colors_stdout();
@@ -1778,26 +2695,28 @@ impl TestCommand {
         // `exec()` never returns before process exit, so the heap allocation
         // outlives all observers.
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
+        crate::cli::startup_options::refuse_code_the_compiler_did_not_see();
         jsc::initialize(jsc::InitializeOptions {
-            short_lived_globals: ctx.test_options.isolate,
+            short_lived_globals: ctx.test_options.isolate
+                && !run_compiled::test_files_share_global(ctx),
+            runs_compiled_code: run_compiled::runs_compiled_code(),
+            locks_builtins: run_compiled::is_checked(),
             ..Default::default()
         });
+        run_compiled::list_refused_changes();
         bun_http::http_thread::init(&Default::default());
 
         let enable_random = ctx.test_options.randomize;
-        let seed: u32 = if enable_random {
-            ctx.test_options
-                .seed
-                .unwrap_or_else(|| bun::fast_random() as u32) // @truncate
-        } else {
-            0
-        }; // seed is limited to u32 so storing it in js doesn't lose precision
+        // `describe.shuffle` needs a seed even without --randomize.
+        let seed: u32 = ctx
+            .test_options
+            .seed
+            .unwrap_or_else(|| bun::fast_random() as u32); // @truncate
+        // seed is limited to u32 so storing it in js doesn't lose precision
         // Persist the chosen seed so --parallel forwards it to every worker;
         // otherwise each worker would draw its own and the printed --seed=N
         // would not reproduce the run.
-        if enable_random {
-            ctx.test_options.seed = Some(seed);
-        }
+        ctx.test_options.seed = Some(seed);
         // `DefaultPrng` is `Copy`, so pass the prng by value to TestRunner
         // and keep a local copy for shuffling.
         let random_instance: Option<bun::rand::DefaultPrng> = if enable_random {
@@ -1807,138 +2726,126 @@ impl TestCommand {
         };
 
         jsc::virtual_machine::isBunTest.store(true, core::sync::atomic::Ordering::Relaxed);
+        run_compiled::TEST_FILES_RUN_AGAIN.store(
+            ctx.test_options.repeat_count > 1,
+            core::sync::atomic::Ordering::Relaxed,
+        );
 
-        // Borrowed-slice views (`&[&[u8]]`) over owned `Vec<Box<[u8]>>` config so the
-        // TestRunner / Scanner field types (`Option<&[&[u8]]>`) line up. The owned
-        // backing `Vec`s live in `ctx` for the process lifetime, so each element
-        // is detached to `&'static [u8]` up front (lets the outer view detach to
-        // `&'static [&'static [u8]]` below without a nested-lifetime bitcast).
-        let concurrent_test_glob_view: Option<Vec<&'static [u8]>> =
-            ctx.test_options.concurrent_test_glob.as_ref().map(|v| {
-                v.iter()
-                    .map(|b| {
-                        // SAFETY: backing bytes are owned by `ctx.test_options`
-                        // (process-lifetime) and `exec()` never returns.
-                        unsafe { bun_ptr::detach_lifetime::<u8>(b) }
-                    })
-                    .collect()
-            });
-        // SAFETY: backing bytes are owned by `ctx.test_options` (process-lifetime)
-        // and `exec()` never returns, so detaching to `'static` is sound.
-        let path_ignore_patterns_view: Vec<&'static [u8]> = ctx
-            .test_options
-            .path_ignore_patterns
-            .iter()
-            .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
-            .collect();
-
-        // Keep an owned `Box` local — `exec()` never returns before process
-        // exit, so the heap allocation outlives all raw-pointer observers
-        // (e.g. `Jest::RUNNER` below).
-        let mut reporter: Box<CommandLineReporter> = Box::new(CommandLineReporter {
+        let reporter: &'static CommandLineReporter = Box::leak(Box::new(CommandLineReporter {
             jest: TestRunner {
                 default_timeout_ms: ctx.test_options.default_timeout_ms,
                 concurrent: ctx.test_options.concurrent,
-                randomize_seed: if enable_random { Some(seed) } else { None },
-                // SAFETY: lifetime-erase to `'static`; backing storage lives in `ctx`
-                // (process-lifetime singleton) and `concurrent_test_glob_view` is held
-                // in this never-returning frame.
-                concurrent_test_glob: concurrent_test_glob_view
-                    .as_deref()
-                    .map(|s| unsafe { bun_ptr::detach_lifetime(s) }),
+                concurrent_test_glob: ctx
+                    .test_options
+                    .concurrent_test_glob
+                    .take()
+                    .map(|globs| globs.into_iter().map(bun_glob::Prepared::new).collect()),
                 run_todo: ctx.test_options.run_todo,
                 only: ctx.test_options.only,
-                bail: ctx.test_options.bail,
+                // The coordinator counts the failures for `--bail`.
+                bail: if ctx.test_options.test_worker {
+                    0
+                } else {
+                    ctx.test_options.bail
+                },
                 max_concurrency: ctx.test_options.max_concurrency,
+                randomize: enable_random,
+                seed,
+                retry: ctx.test_options.retry,
+                resets_before_each_test: ctx.test_options.resets_before_each_test,
+                environment: ctx.test_options.environment,
+                coverage_skips_test_files: ctx.test_options.coverage.skip_test_files,
+                reports_to_junit: ctx.test_options.reporters.junit,
                 // `test_filter_regex` is an erased `*mut RegularExpression` (see
-                // options_types::context); cast back to a typed `NonNull` —
-                // kept raw so `matches()` can write through it without
-                // laundering shared-ref provenance.
+                // options_types::context).
                 filter_regex: ctx
                     .test_options
                     .test_filter_regex()
-                    .map(|p| p.cast::<jsc::RegularExpression>()),
-                snapshots: Snapshots::init(ctx.test_options.update_snapshots),
+                    .map(|p| jsc::RegularExpression::opaque_ref(p.as_ptr().cast())),
+                snapshots: RefCell::new(Snapshots::init(ctx.test_options.update_snapshots)),
                 bun_test_root: bun_test::BunTestRoot::init(),
-                // `TestRunner` cannot derive `Default` because of the
-                // `&'a TestOptions` field, so spell the remaining fields out
-                // explicitly.
                 current_file: jest::CurrentFile::default(),
-                files: jest::FileList::default(),
-                index: jest::FileMap::default(),
-                default_timeout_override: u32::MAX,
-                // SAFETY: lifetime-erase to `'static`; `ctx` is the
-                // process-lifetime CLI context and `exec()` never returns.
-                test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
-                unhandled_errors_between_tests: 0,
-                summary: Summary::default(),
-                node_test_used: false,
+                file_ids: Cell::default(),
+                default_timeout_override: Cell::new(u32::MAX),
+                vi_config: Cell::default(),
+                vi_config_of_preload: Cell::default(),
+                unhandled_errors_between_tests: Cell::new(0),
+                summary: Cell::default(),
+                node_test_used: Cell::new(false),
+                environment_is_left: Cell::new(false),
             },
-            repeat_count: 1,
-            last_printed_dot: core::cell::Cell::new(false),
-            worker_ipc_file_idx: None,
-            test_failure: None,
-            failures_to_repeat_buf: Vec::new(),
-            skips_to_repeat_buf: Vec::new(),
-            todos_to_repeat_buf: Vec::new(),
-            reporters: ReportersConfig::default(),
-            timings: if ctx.test_options.test_worker || ctx.test_options.timings_files.is_empty() {
-                None
-            } else {
-                Some(Timings::load(&ctx.test_options.timings_files))
+            repeat_count: ctx.test_options.repeat_count.max(1),
+            last_printed_dot: Cell::new(false),
+            worker: OnceCell::new(),
+            failures_to_repeat_buf: Cell::default(),
+            skips_to_repeat_buf: Cell::default(),
+            todos_to_repeat_buf: Cell::default(),
+            reporters: ReportersConfig {
+                dots: ctx.test_options.reporters.dots,
+                // only-failures defaults to true for ai agents
+                only_failures: ctx.test_options.reporters.only_failures || Output::is_ai_agent(),
+                junit: Cell::new(
+                    (ctx.test_options.reporters.junit && !ctx.test_options.test_worker).then(
+                        || {
+                            JunitReporter::init(
+                                ctx.test_options.reporters.junit_suites.unwrap_or_default(),
+                            )
+                        },
+                    ),
+                ),
             },
-        });
-        // `defer { if (reporter.reporters.junit) |fr| fr.deinit() }` — handled by Drop.
-        reporter.repeat_count = ctx.test_options.repeat_count.max(1);
-        // SAFETY: single-threaded CLI startup; `reporter` is a `Box` that lives
-        // until `exec()` exits the process, so `&mut reporter.jest` remains
-        // valid for the process lifetime.
-        unsafe {
-            jest::Jest::RUNNER.write(Some(core::ptr::NonNull::from(&mut reporter.jest)));
-        }
-        // `reporter.jest.test_options` is initialised in the struct
-        // literal above (lifetime-erased); the post-init assignment is dropped.
-
-        if ctx.test_options.reporters.junit && !ctx.test_options.test_worker {
-            reporter.reporters.junit = Some(JunitReporter::init());
-        }
-        if ctx.test_options.reporters.dots {
-            reporter.reporters.dots = true;
-        }
-        if ctx.test_options.reporters.only_failures {
-            reporter.reporters.only_failures = true;
-        } else if Output::is_ai_agent() {
-            reporter.reporters.only_failures = true; // only-failures defaults to true for ai agents
-        }
+            reporter_outfile: ctx.test_options.reporter_outfile.take(),
+            timings: Cell::new(
+                if ctx.test_options.test_worker || ctx.test_options.timings_files.is_empty() {
+                    None
+                } else {
+                    Some(Box::new(Timings::load(&ctx.test_options.timings_files)))
+                },
+            ),
+            update_timings: ctx.test_options.update_timings,
+            is_shard: ctx.test_options.shard.is_some(),
+        }));
 
         // The worker's environment already holds the coordinator's env file values, and `BUN_OPTIONS` in it can carry `--env-file`.
-        if ctx.test_options.test_worker {
+        if ctx.test_options.test_worker || run_compiled::has_environment_of_first_process() {
             ctx.args.env_files.clear();
             ctx.args.disable_default_env_files = true;
         }
 
         bun_ast::initialize_store();
-        // SAFETY: `init` returns the heap-allocated process-lifetime VM; deref once.
-        let vm: &mut VirtualMachine = unsafe {
-            &mut *VirtualMachine::init(jsc::virtual_machine::InitOptions {
-                // Clone (not take): ParallelRunner::run_as_coordinator → build_worker_argv
-                // reads ctx.args.{conditions,define,loaders,tsconfig_override,drop,
-                // main_fields,extension_order,feature_flags,preserve_symlinks,
-                // allow_addons,allow_ffi_cc,jsx} after this point to forward them
-                // to workers.
-                transform_options: ctx.args.clone(),
-                debugger: core::mem::take(&mut ctx.runtime_options.debugger),
-                log: core::ptr::NonNull::new(ctx.log),
-                env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
-                smol: ctx.runtime_options.smol,
-                is_main_thread: true,
-                ..Default::default()
-            })?
+        let options = jsc::virtual_machine::InitOptions {
+            // Clone (not take): build_worker_argv reads ctx.args to forward them to workers.
+            transform_options: ctx.args.clone(),
+            argv: core::mem::take(&mut ctx.passthrough).leak(),
+            debugger: core::mem::take(&mut ctx.runtime_options.debugger),
+            env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
+            smol: ctx.runtime_options.smol,
+            is_main_thread: true,
+            graph: run_compiled::graph(),
+            ..Default::default()
         };
-        vm.argv = core::mem::take(&mut ctx.passthrough);
+        let vm = VirtualMachine::init(ctx.log, options)?;
+        crate::jsc_hooks::runtime_state_of(vm)
+            .test_runner
+            .set(Some(&reporter.jest));
         // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
-        vm.preload = ctx.preloads.clone();
-        vm.transpiler.options.rewrite_jest_for_tests = true;
+        vm.preload.set(ctx.preloads.clone());
+        if reporter.jest.reports_to_junit {
+            vm.on_print_error_zig_exception
+                .set(Some(bun_test::BunTest::record_printed_error));
+        }
+        vm.transpiler.with_mut(|t| {
+            t.options.rewrite_jest_for_tests = true;
+            t.options.vitest_globals = ctx.test_options.globals == Some(TestGlobals::Vitest);
+            if let Some(scope) = &ctx.test_options.react_compiler {
+                t.options.react_compiler = bun_ast::runtime::ReactCompilerMode::Client;
+                t.options.react_compiler_filter = Some(react_compiler_filter(
+                    scope,
+                    FileSystem::instance().top_level_dir(),
+                ));
+            }
+            t.options.env.behavior = bun_bundler::options::EnvBehavior::LoadAllWithoutInlining;
+        });
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
             ctx.runtime_options.experimental_http2_fetch,
             core::sync::atomic::Ordering::Relaxed,
@@ -1947,8 +2854,6 @@ impl TestCommand {
             ctx.runtime_options.experimental_http3_fetch,
             core::sync::atomic::Ordering::Relaxed,
         );
-        vm.transpiler.options.env.behavior =
-            bun_bundler::options::EnvBehavior::LoadAllWithoutInlining;
 
         let node_env_entry = env_loader.map.get_or_put_without_value(b"NODE_ENV")?;
         if !node_env_entry.found_existing {
@@ -1958,23 +2863,33 @@ impl TestCommand {
             };
         }
 
-        vm.transpiler.configure_defines()?;
+        vm.transpiler.with_mut(|t| t.configure_defines())?;
+        if run_compiled::is_requested(ctx) {
+            run_compiled::hand_on_environment(&env_loader.map);
+        }
 
-        vm.load_extra_env_and_source_code_printer();
-        vm.is_main_thread = true;
+        vm.load_extra_env();
         VirtualMachine::set_is_main_thread_vm(true);
 
         if ctx.test_options.isolate {
-            vm.test_isolation_enabled = true;
-            vm.auto_killer.enabled = true;
+            vm.test_isolation_enabled.set(true);
+            vm.auto_killer.enabled.set(true);
         }
+        vm.test_isolation_state
+            .shares_global
+            .set(run_compiled::test_files_share_global(ctx));
+        crate::jsc_hooks::timer_all()
+            .zero_delay_is_due_when_idle
+            .set(true);
 
         if ctx.test_options.coverage.enabled {
-            vm.transpiler.options.code_coverage = true;
-            vm.transpiler.options.minify_syntax = false;
-            vm.transpiler.options.minify_identifiers = false;
-            vm.transpiler.options.minify_whitespace = false;
-            vm.transpiler.options.dead_code_elimination = false;
+            vm.transpiler.with_mut(|t| {
+                t.options.code_coverage = true;
+                t.options.minify_syntax = false;
+                t.options.minify_identifiers = false;
+                t.options.minify_whitespace = false;
+                t.options.dead_code_elimination = false;
+            });
             vm.global().vm().enable_control_flow_profiler();
         }
 
@@ -1985,7 +2900,7 @@ impl TestCommand {
             b"Etc/UTC";
 
         // SAFETY: `vm.transpiler.env` is the process-lifetime DotEnv loader pointer.
-        if let Some(tz) = unsafe { (*vm.transpiler.env).get(b"TZ") } {
+        if let Some(tz) = unsafe { (*vm.transpiler.get().env).get(b"TZ") } {
             tz_name = tz;
         }
 
@@ -1994,32 +2909,39 @@ impl TestCommand {
                 .global()
                 .set_time_zone(&EncodedSlice::from_bytes(tz_name));
         }
-        if vm.test_isolation_enabled {
-            vm.test_isolation_state.time_zone = Some(Box::from(tz_name));
-            vm.test_isolation_state.proxy_env = Some(
+        let _ = vm.test_isolation_state.time_zone.set(Box::from(tz_name));
+        if vm.test_isolation_enabled.get() {
+            let _ = vm.test_isolation_state.proxy_env.set(
                 bun_jsc::rare_data::ProxyEnvSnapshot::capture(&vm.env_loader().map),
             );
-            vm.test_isolation_state.synthetic_allocation_limit =
-                Some(bun_jsc::virtual_machine::synthetic_allocation_limit());
+            vm.test_isolation_state
+                .synthetic_allocation_limit
+                .set(Some(bun_jsc::virtual_machine::synthetic_allocation_limit()));
         }
 
         if ctx.test_options.test_worker {
             // Worker mode: skip discovery; files arrive over stdin and
             // results go out over fd 3. Never returns.
-            // SAFETY: `vm` is the live per-thread VM; `reporter`/`ctx` outlive
-            // this never-returning call.
-            ParallelRunner::run_as_worker(&mut reporter, vm, ctx);
+            crate::run_command::start_profilers(vm, ctx);
+            ParallelRunner::run_as_worker(reporter, vm, ctx);
         }
 
         // Start the debugger before we scan for files
         // But, don't block the main thread waiting if they used --inspect-wait.
         vm.ensure_debugger(false)?;
 
-        let mut scanner = Scanner::init(&vm.transpiler, ctx.positionals.len()).expect("oom");
-        // SAFETY: lifetime-erase; `path_ignore_patterns_view` lives in this never-returning
-        // frame, underlying bytes live in `ctx` (process-lifetime).
-        scanner.path_ignore_patterns =
-            unsafe { bun_ptr::detach_lifetime(&path_ignore_patterns_view[..]) };
+        // `scanner` borrows these, so they are declared before it.
+        let path_ignore_patterns: Vec<bun_glob::Prepared<&[u8]>> = ctx
+            .test_options
+            .path_ignore_patterns
+            .iter()
+            .map(|b| bun_glob::Prepared::new(&**b))
+            .collect();
+        #[cfg(windows)]
+        let filter_names_normalized: Vec<Box<[u8]>>;
+
+        let mut scanner = Scanner::init(vm.transpiler.get(), ctx.positionals.len()).expect("oom");
+        scanner.path_ignore_patterns = &path_ignore_patterns;
         let has_relative_path = 'hr: {
             for arg in &ctx.positionals {
                 if bun_paths::is_absolute(arg)
@@ -2050,7 +2972,7 @@ impl TestCommand {
                                 pretty_errorln!(
                                     "Test filter <b>{}<r> had no matches in --cwd={}",
                                     bun_fmt::quote(arg),
-                                    bun_fmt::quote(FileSystem::instance().top_level_dir)
+                                    bun_fmt::quote(FileSystem::get().top_level_dir())
                                 );
                             } else {
                                 pretty_errorln!(
@@ -2058,88 +2980,58 @@ impl TestCommand {
                                     bun_fmt::quote(arg)
                                 );
                             }
-                            vm.exit_handler.exit_code = 1;
-                            vm.is_shutting_down = true;
-                            let vm_ptr: *mut VirtualMachine = vm;
-                            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-                            // `run_with_api_lock` takes `&self` only and `global_exit()`
-                            // diverges, so the closure is the sole mutator.
-                            vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
+                            vm.exit_handler.exit_code.set(1);
+                            vm.is_shutting_down.set(true);
+                            vm.run_with_api_lock(|| vm.global_exit());
                         }
                     }
                 }
             }
         } else {
             // Treat arguments as filters and scan the codebase
-            // SAFETY: bytes live in `ctx` (process-lifetime) and this frame
-            // never returns; detach the inner lifetime once at construction so
-            // POSIX can borrow this Vec directly without a second allocation.
-            let filter_names_owned: Vec<&'static [u8]> = if ctx.positionals.is_empty() {
-                Vec::new()
-            } else {
-                ctx.positionals[1..]
+            let filters: &[Box<[u8]>] = ctx.positionals.get(1..).unwrap_or_default();
+            #[cfg(windows)]
+            let filters: &[Box<[u8]>] = {
+                filter_names_normalized = filters
                     .iter()
-                    .map(|b| {
-                        // SAFETY: bytes live in `ctx.positionals` (process-lifetime)
-                        // and this frame never returns.
-                        unsafe { bun_ptr::detach_lifetime::<u8>(&**b) }
+                    .map(|filter| {
+                        let mut normalized = filter.clone();
+                        bun_path::resolve_path::posix_to_platform_in_place::<u8>(&mut normalized);
+                        normalized
                     })
-                    .collect()
+                    .collect();
+                &filter_names_normalized
             };
-            #[cfg(windows)]
-            let filter_names: &[&[u8]] = &filter_names_owned;
-
-            // Both platforms use a `Vec<&[u8]>` view (already built above as
-            // `filter_names_owned`); the Windows branch additionally needs an
-            // owned backing `Vec<Box<[u8]>>` for the `/`→`\`-rewritten bytes
-            // plus a second view vec over those boxes.
-            #[cfg(windows)]
-            let filter_names_normalized_storage: Vec<Box<[u8]>> = {
-                let mut normalized = Vec::with_capacity(filter_names.len());
-                for in_ in filter_names {
-                    let mut to_normalize = in_.to_vec();
-                    bun_path::resolve_path::posix_to_platform_in_place::<u8>(&mut to_normalize);
-                    normalized.push(to_normalize.into_boxed_slice());
-                }
-                normalized
-            };
-            #[cfg(windows)]
-            let filter_names_normalized: Vec<&'static [u8]> = filter_names_normalized_storage
-                .iter()
-                // SAFETY: the rewritten bytes are NOT `'static` — they live in
-                // `filter_names_normalized_storage`, a local `Vec<Box<[u8]>>`
-                // in this frame. Sound only because this frame never returns
-                // (every exit path is `global_exit()`), so the storage Vec is
-                // never dropped while `scanner.filter_names` is observed.
-                .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
-                .collect();
-            #[cfg(not(windows))]
-            let filter_names_normalized: &Vec<&'static [u8]> = &filter_names_owned;
-            // Drop of the `Vec<Box<[u8]>>` storage above never actually runs
-            // (frame never returns); the storage simply outlives use.
-            // SAFETY: lifetime-erase the outer borrow; the view vec and (on
-            // Windows) its backing storage live in this never-returning frame,
-            // and the underlying bytes are either in `ctx` (process-lifetime)
-            // or in `filter_names_normalized_storage` above.
-            scanner.filter_names =
-                unsafe { bun_ptr::detach_lifetime(&filter_names_normalized[..]) };
+            scanner.filter_names = filters;
 
             // Own the joined path in a hoisted buffer and borrow from it.
             let dir_to_scan_owned: Vec<u8>;
-            let dir_to_scan: &[u8] = 'brk: {
+            let (dir_to_scan, fits): (&[u8], bool) = 'brk: {
                 if !ctx.debug.test_directory.is_empty() {
-                    dir_to_scan_owned = resolve_path::join_abs::<bun_path::platform::Auto>(
-                        scanner.fs().top_level_dir,
-                        &ctx.debug.test_directory,
-                    )
-                    .into();
-                    break 'brk &dir_to_scan_owned;
+                    let mut buf = bun_path::path_buffer_pool::get();
+                    let Some(joined) =
+                        resolve_path::join_abs_string_buf_z_checked::<bun_path::platform::Auto>(
+                            scanner.fs().top_level_dir(),
+                            &mut buf,
+                            &[&ctx.debug.test_directory],
+                        )
+                    else {
+                        break 'brk (&ctx.debug.test_directory[..], false);
+                    };
+                    dir_to_scan_owned = joined.as_bytes().into();
+                    break 'brk (&dir_to_scan_owned[..], true);
                 }
 
-                break 'brk scanner.fs().top_level_dir;
+                break 'brk (scanner.fs().top_level_dir(), true);
             };
 
-            match scanner.scan(dir_to_scan) {
+            // A root that's too long for a path buffer can't be opened either.
+            let scanned = if fits {
+                scanner.scan(dir_to_scan)
+            } else {
+                Err(scanner::ScanError::DoesNotExist)
+            };
+            match scanned {
                 Ok(()) => {}
                 Err(scanner::ScanError::OutOfMemory) => bun::out_of_memory(),
                 Err(scanner::ScanError::DoesNotExist) => {
@@ -2147,7 +3039,7 @@ impl TestCommand {
                         pretty_errorln!(
                             "<red>Failed to scan non-existent root directory for tests:<r> {} in --cwd={}",
                             bun_fmt::quote(dir_to_scan),
-                            bun_fmt::quote(FileSystem::instance().top_level_dir)
+                            bun_fmt::quote(FileSystem::get().top_level_dir())
                         );
                     } else {
                         pretty_errorln!(
@@ -2155,18 +3047,18 @@ impl TestCommand {
                             bun_fmt::quote(dir_to_scan)
                         );
                     }
-                    vm.exit_handler.exit_code = 1;
-                    vm.is_shutting_down = true;
-                    let vm_ptr: *mut VirtualMachine = vm;
-                    // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-                    // `run_with_api_lock` takes `&self` only and `global_exit()`
-                    // diverges, so the closure is the sole mutator.
-                    vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
+                    vm.exit_handler.exit_code.set(1);
+                    vm.is_shutting_down.set(true);
+                    vm.run_with_api_lock(|| vm.global_exit());
                 }
             }
         }
 
         let mut all_test_files = scanner.take_found_test_files().expect("oom");
+        run_compiled::log_step_of_test_run(format_args!(
+            "{} test files are found",
+            all_test_files.len()
+        ));
         // Snapshot the count before `test_files` mutably borrows `all_test_files`
         // so the watcher-enable check below can read it without reborrowing.
         let all_test_files_count = all_test_files.len();
@@ -2212,7 +3104,7 @@ impl TestCommand {
                         if result.changed_count == 1 { "" } else { "s" }
                     );
                     pass_with_no_tests_from_filter = true;
-                } else {
+                } else if !run_compiled::is_second_process() {
                     pretty_error!(
                         "<r><d>--changed:<r> {} changed file{}, running {}/{} test file{}\n",
                         result.changed_count,
@@ -2241,7 +3133,14 @@ impl TestCommand {
         if let Some(shard) = &ctx.test_options.shard {
             if !test_files.is_empty() {
                 let mut write: usize = 0;
-                if let Some(timings) = reporter.timings.as_ref().filter(|t| !t.is_empty()) {
+                let loaded_timings = reporter.timings.take();
+                let timings = loaded_timings.as_deref().filter(|t| !t.is_empty());
+                // The process that runs what another has compiled finds the same files.
+                let is_compiled =
+                    run_compiled::is_requested(ctx) || run_compiled::runs_compiled_code();
+                if is_compiled && shard.count > 1 {
+                    write = select_shard_by_reach(vm, ctx, test_files, *shard, timings);
+                } else if let Some(timings) = timings {
                     write = timings.select_shard(test_files, *shard);
                 } else {
                     index_sort::sort_slice_by(test_files, |a, b| {
@@ -2255,15 +3154,18 @@ impl TestCommand {
                         }
                     }
                 }
+                reporter.timings.set(loaded_timings);
 
-                pretty_error!(
-                    "<r><d>--shard={}/{}:<r> running {}/{} test file{}\n",
-                    shard.index,
-                    shard.count,
-                    write,
-                    test_files.len(),
-                    if test_files.len() == 1 { "" } else { "s" }
-                );
+                if !run_compiled::is_second_process() {
+                    pretty_error!(
+                        "<r><d>--shard={}/{}:<r> running {}/{} test file{}\n",
+                        shard.index,
+                        shard.count,
+                        write,
+                        test_files.len(),
+                        if test_files.len() == 1 { "" } else { "s" }
+                    );
+                }
                 Output::flush();
 
                 if write == 0 {
@@ -2284,42 +3186,55 @@ impl TestCommand {
         if !test_files.is_empty()
             || (ctx.test_options.changed.is_some() && all_test_files_count != 0)
         {
-            vm.hot_reload = ctx.debug.hot_reload;
+            vm.hot_reload.set(ctx.debug.hot_reload);
 
-            // Install the --changed trigger collector BEFORE the watcher
-            // thread starts so a file edit during runAllTests is still
-            // recorded. The addFileByPathSlow seeding stays after
-            // runAllTests (separate concern; see O_EVTONLY comment
-            // below).
-            if ctx.test_options.changed.is_some()
-                && vm.hot_reload == jsc::virtual_machine::HotReload::Watch
-            {
-                ChangedFilesFilter::init_watch_trigger();
-            }
-
-            match vm.hot_reload {
+            match vm.hot_reload.get() {
                 jsc::virtual_machine::HotReload::Hot => {
-                    // SAFETY: `vm` is the process-lifetime main-thread VM; it
-                    // outlives the leaked reloader.
-                    unsafe {
-                        jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
-                            std::ptr::from_mut::<VirtualMachine>(vm),
-                            None,
-                        );
-                    }
+                    jsc::hot_reloader::enable_hot_module_reloading(vm, None, None);
                 }
                 jsc::virtual_machine::HotReload::Watch => {
-                    // SAFETY: `vm` is the process-lifetime main-thread VM; it
-                    // outlives the leaked reloader.
-                    unsafe {
-                        jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
-                            std::ptr::from_mut::<VirtualMachine>(vm),
-                            None,
-                        );
-                    }
+                    let trigger_file = (ctx.test_options.changed.as_ref())
+                        .and_then(|_| ChangedFilesFilter::init_watch_trigger());
+                    jsc::hot_reloader::enable_hot_module_reloading(vm, None, trigger_file);
+                    run_compiled::watch_files_of_check(vm);
                 }
                 _ => {}
             }
+        }
+
+        if run_compiled::is_requested(ctx) && !test_files.is_empty() {
+            let mut entry_points: Vec<Box<[u8]>> =
+                test_files.iter().map(|path| Box::from(&**path)).collect();
+            let file_count = entry_points.len();
+            entry_points.extend(ctx.preloads.iter().cloned());
+            let files = test_files.iter().map(|path| &**path);
+            let has_window = has_file_with_window(files, ctx.test_options.environment);
+            if has_window {
+                entry_points.push(make_stand_in_for_window());
+            }
+            let preloads = find_files_of_preloads(vm, &ctx.preloads);
+            if let Some(aot) = (ctx.bundler_options.aot.as_mut()).filter(|aot| !aot.checks_only) {
+                aot.replaced_by_tests = find_what_tests_replace(has_window);
+                aot.replaced_by_tests.test_files =
+                    test_files.iter().map(|path| (**path).to_vec()).collect();
+                aot.replaced_by_tests.preloads =
+                    preloads.iter().map(|path| path.to_vec()).collect();
+            }
+            run_compiled::start(ctx, entry_points, file_count);
+        }
+
+        // After the file watcher is enabled: see `watching`.
+        let has_type_errors = ctx.runtime_options.check && {
+            use crate::cli::check_command::{EntryPoint, check_before, watching};
+            let paths = test_files.iter().map(|path| EntryPoint::file(path));
+            !check_before(&paths.collect::<Vec<_>>(), watching(vm))
+        };
+        if has_type_errors {
+            // No test is run.
+            if !vm.is_watcher_enabled() {
+                Global::exit(1);
+            }
+            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(vm));
         }
 
         let mut coverage_options: CodeCoverageOptions = ctx.test_options.coverage.clone();
@@ -2342,15 +3257,24 @@ impl TestCommand {
             }
 
             if ctx.test_options.parallel > 0 {
+                run_compiled::log_step_of_test_run(format_args!(
+                    "{} test files are to run",
+                    test_files.len()
+                ));
                 ran_parallel = ParallelRunner::run_as_coordinator(
-                    &mut reporter,
+                    reporter,
                     vm,
                     test_files,
                     &mut *ctx,
                     &mut coverage_options,
                 )?;
             } else {
-                Self::run_all_tests(&mut reporter, vm, test_files);
+                // SAFETY: `vm.transpiler.env` is the process-lifetime DotEnv loader pointer.
+                ParallelRunner::set_ids_without_workers(unsafe { &mut *vm.transpiler.get().env });
+            }
+            if !ran_parallel {
+                crate::run_command::start_profilers(vm, ctx);
+                Self::run_all_tests(reporter, vm, test_files);
             }
         }
 
@@ -2371,24 +3295,15 @@ impl TestCommand {
         // "Ran N tests" summary (printed after this), so seeding completes
         // before the next file edit.
         if ctx.test_options.changed.is_some() && vm.is_watcher_enabled() {
-            // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
-            // `enable_hot_module_reloading`; non-null because
-            // `is_watcher_enabled()` checked it.
-            let watcher =
-                unsafe { &mut *vm.bun_watcher.cast::<jsc::hot_reloader::ImportWatcher>() };
             for path in &changed_module_graph_files {
-                let _ = watcher.add_file_by_path_slow(path);
+                vm.add_to_watcher_if_needed(path);
             }
         }
 
-        let write_snapshots_success = jest::Jest::runner()
-            .unwrap()
-            .snapshots
-            .write_inline_snapshots()?;
-        jest::Jest::runner()
-            .unwrap()
-            .snapshots
-            .write_snapshot_file()?;
+        let runner = &reporter.jest;
+        let write_snapshots_success = runner.with_snapshots(Snapshots::write_inline_snapshots)?;
+        runner.with_snapshots(Snapshots::write_snapshot_file)?;
+        let mut write_coverage_success = true;
         if reporter.summary().pass > 20
             && !Output::is_ai_agent()
             && !reporter.reporters.dots
@@ -2399,7 +3314,7 @@ impl TestCommand {
                 Output::flush();
 
                 let error_writer = Output::error_writer();
-                let _ = error_writer.write_all(&reporter.skips_to_repeat_buf);
+                let _ = error_writer.write_all(&reporter.skips_to_repeat_buf.take());
             }
 
             if reporter.summary().todo > 0 {
@@ -2411,7 +3326,7 @@ impl TestCommand {
                 Output::flush();
 
                 let error_writer = Output::error_writer();
-                let _ = error_writer.write_all(&reporter.todos_to_repeat_buf);
+                let _ = error_writer.write_all(&reporter.todos_to_repeat_buf.take());
             }
 
             if reporter.summary().fail > 0 {
@@ -2423,7 +3338,7 @@ impl TestCommand {
                 Output::flush();
 
                 let error_writer = Output::error_writer();
-                let _ = error_writer.write_all(&reporter.failures_to_repeat_buf);
+                let _ = error_writer.write_all(&reporter.failures_to_repeat_buf.take());
             }
         }
 
@@ -2441,7 +3356,7 @@ impl TestCommand {
                     // Be very clear to ai.
                     Output::err_generic(
                         "0 test files matching **{{.test,.spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} in --cwd={}",
-                        (bun_fmt::quote(FileSystem::instance().top_level_dir),),
+                        (bun_fmt::quote(FileSystem::get().top_level_dir()),),
                     );
                 } else {
                     // Be friendlier to humans.
@@ -2453,7 +3368,7 @@ impl TestCommand {
                 if Output::is_ai_agent() {
                     pretty_errorln!(
                         "<yellow>The following filters did not match any test files in --cwd={}:<r>",
-                        bun_fmt::quote(FileSystem::instance().top_level_dir)
+                        bun_fmt::quote(FileSystem::get().top_level_dir())
                     );
                 } else {
                     pretty_errorln!(
@@ -2504,15 +3419,13 @@ impl TestCommand {
             pretty_error!("\n");
 
             if coverage_options.enabled && !ran_parallel {
-                reporter.generate_code_coverage(vm, &mut coverage_options);
+                write_coverage_success = reporter.generate_code_coverage(vm, &mut coverage_options);
             }
 
-            // `Summary` is `Copy`; take a value snapshot so the `&mut` from
-            // `reporter.summary()` doesn't span the whole printing block and
-            // conflict with the `reporter.jest.*` reads below.
-            let summary: Summary = *reporter.summary();
-            let did_label_filter_out_all_tests = summary.did_label_filter_out_all_tests()
-                && reporter.jest.unhandled_errors_between_tests == 0;
+            let summary: Summary = reporter.summary();
+            let unhandled_errors = reporter.jest.unhandled_errors_between_tests.get();
+            let did_label_filter_out_all_tests =
+                summary.did_label_filter_out_all_tests() && unhandled_errors == 0;
 
             if !did_label_filter_out_all_tests {
                 struct DotIndenter {
@@ -2536,7 +3449,7 @@ impl TestCommand {
                 }
 
                 // Display the random seed if tests were randomized
-                if random_instance.is_some() {
+                if random_instance.is_some() || summary.shuffled > 0 {
                     pretty_error!("{}<r>--seed={}<r>\n", &indenter, seed);
                 }
 
@@ -2567,32 +3480,26 @@ impl TestCommand {
                 }
 
                 pretty_error!("{}{:5>} fail<r>\n", &indenter, summary.fail);
-                if reporter.jest.unhandled_errors_between_tests > 0 {
+                if unhandled_errors > 0 {
                     pretty_error!(
                         "{}<r><red>{:5>} error{}<r>\n",
                         &indenter,
-                        reporter.jest.unhandled_errors_between_tests,
-                        if reporter.jest.unhandled_errors_between_tests > 1 {
-                            "s"
-                        } else {
-                            ""
-                        }
+                        unhandled_errors,
+                        if unhandled_errors > 1 { "s" } else { "" }
                     );
                 }
 
                 let mut print_expect_calls = summary.expectations > 0;
-                if reporter.jest.snapshots.total > 0 {
-                    let passed = reporter.jest.snapshots.passed;
-                    let failed = reporter.jest.snapshots.failed;
-                    let added = reporter.jest.snapshots.added;
-
+                let (total, passed, failed, added) =
+                    runner.with_snapshots(|it| (it.total, it.passed, it.failed, it.added));
+                if total > 0 {
                     let mut first = true;
                     if print_expect_calls && added == 0 && failed == 0 {
                         print_expect_calls = false;
                         pretty_error!(
                             "{}{:5>} snapshots, {:5>} expect() calls",
                             &indenter,
-                            reporter.jest.snapshots.total,
+                            total,
                             summary.expectations
                         );
                     } else {
@@ -2647,6 +3554,123 @@ impl TestCommand {
         }
 
         pretty_error!("\n");
+        let (refused_loads, refused): (Vec<Vec<u8>>, Vec<Vec<u8>>) =
+            (run_compiled::refused_changes().into_iter())
+                .partition(|refusal| refusal.starts_with(run_compiled::REFUSED_LOAD));
+        if !refused_loads.is_empty() {
+            pretty_error!(
+                "<yellow>{} load{} of code that wasn't compiled<r> failed during this run, caught or not. An executable refuses them too, unless the file is built into it. Import the file by a constant path, or add --aot-allow-code-from-disk:\n",
+                refused_loads.len(),
+                if refused_loads.len() == 1 { "" } else { "s" }
+            );
+            for refusal in &refused_loads {
+                pretty_error!("  {}\n", bstr::BStr::new(refusal));
+            }
+            for (asker, importer) in run_compiled::find_why_askers_are_of_product(&refused_loads) {
+                pretty_error!(
+                    "  <d>{} is part of your program: {} imports it, and that's no file of your tests.<r>\n",
+                    bstr::BStr::new(&asker),
+                    bstr::BStr::new(&importer)
+                );
+            }
+        }
+        let (unreached, refused): (Vec<Vec<u8>>, Vec<Vec<u8>>) =
+            (refused.into_iter()).partition(|line| line.starts_with(run_compiled::UNREACHED_FILE));
+        if !unreached.is_empty() {
+            pretty_error!(
+                "<yellow>{} load{} of a compiled file by a computed path<r> failed during this run, caught or not. The build saw no import() or require() of a computed path that can reach the file, and it can't see code from a string, as in eval() or new Function(). An executable refuses them too, unless you build it with the file as another entry point. Import the file by a constant path, or add --aot-allow-code-from-disk:\n",
+                unreached.len(),
+                if unreached.len() == 1 { "" } else { "s" }
+            );
+            for refusal in &unreached {
+                pretty_error!("  {}\n", bstr::BStr::new(refusal));
+            }
+        }
+        let (from_source, refused): (Vec<Vec<u8>>, Vec<Vec<u8>>) =
+            (refused.into_iter()).partition(|line| line.starts_with(run_compiled::RAN_FROM_SOURCE));
+        if !from_source.is_empty() {
+            pretty_error!(
+                "<yellow>{} compiled file{} ran from source<r> in the interpreter during this run. Tests that used them didn't test the code your executable runs:\n",
+                from_source.len(),
+                if from_source.len() == 1 { "" } else { "s" }
+            );
+            for line in &from_source {
+                pretty_error!(
+                    "  {}\n",
+                    bstr::BStr::new(&line[run_compiled::RAN_FROM_SOURCE.len()..])
+                );
+            }
+        }
+        let (kept_runs, refused): (Vec<Vec<u8>>, Vec<Vec<u8>>) =
+            (refused.into_iter()).partition(|line| line.starts_with(run_compiled::KEPT_RUN));
+        if !kept_runs.is_empty() {
+            pretty_error!(
+                "<yellow>{} compiled file{} didn't run again<r> during this run where `bun test` runs a file again: a module mock below it was laid or has ended. What its top-level code computed stays as it was:\n",
+                kept_runs.len(),
+                if kept_runs.len() == 1 { "" } else { "s" }
+            );
+            for line in &kept_runs {
+                pretty_error!(
+                    "  {}\n",
+                    bstr::BStr::new(&line[run_compiled::KEPT_RUN.len()..])
+                );
+            }
+        }
+        let (more_often, refused): (Vec<Vec<u8>>, Vec<Vec<u8>>) =
+            (refused.into_iter()).partition(|line| line.starts_with(run_compiled::RAN_MORE_OFTEN));
+        if !more_often.is_empty() {
+            pretty_error!(
+                "<yellow>{} mocked file{} may have run more often, or shown other values,<r> during this run than under `bun test`:\n",
+                more_often.len(),
+                if more_often.len() == 1 { "" } else { "s" }
+            );
+            for line in &more_often {
+                pretty_error!(
+                    "  {}\n",
+                    bstr::BStr::new(&line[run_compiled::RAN_MORE_OFTEN.len()..])
+                );
+            }
+        }
+        let (addons, refused): (Vec<Vec<u8>>, Vec<Vec<u8>>) =
+            (refused.into_iter()).partition(|line| line.starts_with(run_compiled::LOADED_ADDON));
+        if !addons.is_empty() {
+            pretty_error!(
+                "<yellow>{} native addon{} that the build didn't find<r> loaded from disk during this run. An executable holds one only if it's given the file as an entry point:\n",
+                addons.len(),
+                if addons.len() == 1 { "" } else { "s" }
+            );
+            for addon in &addons {
+                pretty_error!("  {}\n", bstr::BStr::new(addon));
+            }
+        }
+        let (missing_exports, refused): (Vec<Vec<u8>>, Vec<Vec<u8>>) =
+            (refused.into_iter()).partition(|line| line.starts_with(run_compiled::MISSING_EXPORT));
+        if !missing_exports.is_empty() {
+            pretty_error!(
+                "<yellow>{} import{} of a name that the build left out<r> failed during this run, caught or not. Code that was loaded from disk asked a compiled module for it. Unless the name is misspelled, this is a bug in Bun:\n",
+                missing_exports.len(),
+                if missing_exports.len() == 1 { "" } else { "s" }
+            );
+            for line in &missing_exports {
+                pretty_error!(
+                    "  {}\n",
+                    bstr::BStr::new(&line[run_compiled::MISSING_EXPORT.len()..])
+                );
+            }
+        }
+        if !refused.is_empty() {
+            pretty_error!(
+                "<yellow>{} write{} to read-only built-ins<r> failed during this run, caught or not. Code that continued after one may have left its work half done:\n",
+                refused.len(),
+                if refused.len() == 1 { "" } else { "s" }
+            );
+            for refusal in &refused {
+                pretty_error!("  {}\n", bstr::BStr::new(refusal));
+            }
+            pretty_error!(
+                "<d>Only the files of your tests can replace a built-in: test files, preloads, and what nothing else imports. To make a helper that your program imports too one of them, import from \"bun:test\" in it or name it as a preload.<r>\n",
+            );
+        }
         Output::flush();
 
         reporter.write_junit_report_if_needed();
@@ -2654,12 +3678,8 @@ impl TestCommand {
             reporter.write_timings_if_needed();
         }
 
-        if vm.hot_reload == jsc::virtual_machine::HotReload::Watch {
-            let vm_ptr: *mut VirtualMachine = vm;
-            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-            // `run_with_api_lock` takes `&self` only, so the closure holds the
-            // unique mutable access on this single-threaded path.
-            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
+        if vm.hot_reload.get() == jsc::virtual_machine::HotReload::Watch {
+            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(vm));
         }
         let summary = reporter.summary();
 
@@ -2671,74 +3691,59 @@ impl TestCommand {
                 && coverage_options.fractions.failing
                 && coverage_options.fail_on_low_coverage)
             || !write_snapshots_success
-            || reporter.jest.unhandled_errors_between_tests > 0
+            || !write_coverage_success
+            || reporter.jest.unhandled_errors_between_tests.get() > 0
         {
-            vm.exit_handler.exit_code = 1;
+            vm.exit_handler.exit_code.set(1);
         }
-        vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
-        vm.exit_handler.requested = exit_is_requested();
+        vm.exit_handler
+            .skip_exit_listeners
+            .set(skip_exit_listeners(reporter));
+        vm.exit_handler.requested.set(exit_is_requested());
         // Must precede the GC-root release below: exit listeners are user JS and may touch still-live state.
-        {
-            let vm_ptr: *mut VirtualMachine = vm;
-            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-            // `run_with_api_lock` takes `&self` only, so the closure holds the
-            // unique mutable access on this single-threaded path.
-            vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
-        }
+        vm.run_with_api_lock(|| vm.on_exit());
         // on_exit() already set is_shutting_down; global_exit() asserts it.
         // Release `bun:test` GC roots before `global_exit()` so
         // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reach the closures they pin
-        // (preload hooks, per-file describe/test callbacks). Clear `RUNNER`
-        // before dropping `reporter` so finalizers running inside the GC can't
-        // observe a dangling `TestRunner`.
+        // (preload hooks, per-file describe/test callbacks).
         reporter.jest.bun_test_root.deinit_for_exit();
-        // SAFETY: `RUNNER` is a `RacyCell` touched only from the single JS thread;
-        // no concurrent reader exists on this shutdown path.
-        unsafe {
-            jest::Jest::RUNNER.write(None);
-        }
-        drop(reporter);
-        {
-            let vm_ptr: *mut VirtualMachine = vm;
-            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-            // `run_with_api_lock` takes `&self` only and `global_exit()`
-            // diverges, so the closure is the sole mutator.
-            vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
-        }
+        // `global_exit()` does not return, so nothing is dropped after it.
+        drop(all_test_files);
+        vm.run_with_api_lock(|| vm.global_exit());
         Ok(())
     }
 
-    fn run_event_loop_for_watch(vm: &mut VirtualMachine) {
-        vm.event_loop_ref().tick_possibly_forever();
+    fn run_event_loop_for_watch(vm: &VirtualMachine) {
+        vm.event_loop().tick_possibly_forever();
 
         loop {
             while vm.is_event_loop_alive() {
                 vm.tick();
-                vm.event_loop_ref().auto_tick_active();
+                vm.event_loop().auto_tick_active();
             }
 
-            vm.event_loop_ref().tick_possibly_forever();
+            vm.event_loop().tick_possibly_forever();
         }
     }
 
     pub(crate) fn run_all_tests(
-        reporter_: &mut CommandLineReporter,
-        vm_: &mut VirtualMachine,
+        reporter_: &'static CommandLineReporter,
+        vm_: &VirtualMachine,
         files_: &[Interned],
     ) {
         struct Context<'a> {
-            reporter: &'a mut CommandLineReporter,
-            vm: &'a mut VirtualMachine,
+            reporter: &'static CommandLineReporter,
+            vm: &'a VirtualMachine,
             files: &'a [Interned],
         }
         impl<'a> Context<'a> {
-            fn begin(&mut self) {
-                let reporter = &mut *self.reporter;
-                let vm = &mut *self.vm;
+            fn begin(&self) {
+                let reporter = self.reporter;
+                let vm = self.vm;
                 let files = self.files;
                 debug_assert!(!files.is_empty());
 
-                let isolate = vm.test_isolation_enabled;
+                let isolate = vm.test_isolation_enabled.get();
 
                 if files.len() > 1 {
                     for (i, file_name) in files[0..files.len() - 1].iter().enumerate() {
@@ -2754,10 +3759,8 @@ impl TestCommand {
                         ) {
                             handle_top_level_test_error_before_javascript_start(&err);
                         }
-                        if let Some(t) = reporter.timings.as_mut() {
-                            t.record_since(file_name.as_bytes(), started);
-                        }
-                        reporter.jest.default_timeout_override = u32::MAX;
+                        reporter.record_timing(file_name.as_bytes(), started);
+                        reporter.jest.default_timeout_override.set(u32::MAX);
                         Global::mimalloc_cleanup(false);
                         if isolate {
                             crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
@@ -2765,7 +3768,8 @@ impl TestCommand {
                             reporter
                                 .jest
                                 .bun_test_root
-                                .reset_hook_scope_for_test_isolation();
+                                .reset_preload_for_test_isolation();
+                            crate::test_runner::Expect::reset_for_test_isolation(vm.global());
                         }
                     }
                 }
@@ -2783,81 +3787,135 @@ impl TestCommand {
                 ) {
                     handle_top_level_test_error_before_javascript_start(&err);
                 }
-                if let Some(t) = reporter.timings.as_mut() {
-                    t.record_since(last.as_bytes(), started);
-                }
+                reporter.record_timing(last.as_bytes(), started);
             }
         }
 
-        // No MimallocArena is wired through `vm.arena` on this serial run
-        // path; the parallel worker path in runner.rs does wire one.
-        // Reintroduce here if it shows up in profiles.
-        vm_.event_loop_ref().ensure_waker();
-        // SAFETY: run_with_api_lock(&self) only acquires the JSC API lock around the
-        // closure; ctx holds the unique &mut to the same VM and is the sole mutator.
-        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm_);
-        let mut ctx = Context {
-            reporter: reporter_,
-            vm: vm_,
-            files: files_,
-        };
-        // SAFETY: `vm_ptr` was derived from `vm_` above; `ctx` holds the unique
-        // `&mut VirtualMachine` and `run_with_api_lock(&self)` only acquires the JSC lock.
-        unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
+        vm_.event_loop().ensure_waker();
+        vm_.run_with_api_lock(|| {
+            Context {
+                reporter: reporter_,
+                vm: vm_,
+                files: files_,
+            }
+            .begin()
+        });
     }
 
+    // Not inlined: the bytes of the resolver's result that nothing wrote are old stack, and the GC scans `run`'s frame while the file runs.
+    #[inline(never)]
+    fn resolve_test_file(vm: &VirtualMachine, file_name: &[u8]) -> crate::Result<&'static [u8]> {
+        let dot_slash = core::cell::OnceCell::new();
+        let resolution = vm
+            .transpiler
+            .with_mut(|t| t.resolve_entry_point(file_name, &dot_slash))?;
+        // `append_slice` interns into the process-static `FilenameStore` and
+        // returns `&'static [u8]`.
+        Ok(FileSystem::get()
+            .filename_store
+            .append_slice(resolution.path_pair.primary.text)
+            .expect("oom"))
+    }
+
+    fn never_settled(
+        global: &jsc::JSGlobalObject,
+        what: &str,
+        file_path: &[u8],
+    ) -> *mut jsc::JSInternalPromise {
+        let rejected = jsc::JSPromise::rejected_promise(
+            global,
+            global.create_error_instance(format_args!(
+                "{what} never settled in {}\nnote: {}",
+                bun_fmt::quote(file_path),
+                TopLevelWaitError::NothingLeft,
+            )),
+        );
+        rejected.set_handled();
+        std::ptr::from_mut(rejected)
+    }
+
+    fn undo_module_mocks(
+        vm: &VirtualMachine,
+        global: &jsc::JSGlobalObject,
+        file_path: &[u8],
+        next_load_shares_global: bool,
+        runs_again: bool,
+    ) {
+        unsafe extern "C" {
+            safe fn JSMock__replaceModuleOfTestFile(
+                global: &jsc::JSGlobalObject,
+                path: &bun::String,
+            );
+            safe fn JSMock__willRunTestFileAgain(global: &jsc::JSGlobalObject, path: &bun::String);
+        }
+        bun_jsc::cpp::JSMock__forgetPendingModulePatches(global);
+        bun_jsc::cpp::JSMock__undoModuleMocksOfTestFile(global, next_load_shares_global);
+        if !next_load_shares_global {
+            return;
+        }
+        if runs_again {
+            JSMock__willRunTestFileAgain(global, &bun::StringView::from_bytes(file_path));
+        }
+        // Wait for in-flight modules to load and be evicted, or the next file would get them with this file's mocks.
+        // Uses the hook timeout. A leaked timer or server keeps the loop alive, so a load that never settles would
+        // block here forever.
+        let timeout = jest::Jest::runner().map_or(0, |runner| runner.default_timeout_ms);
+        let real_time = bun::TimespecMockMode::ForceRealTime;
+        let deadline = bun::Timespec::ms_from_now(real_time, timeout.into());
+        let waited = vm.event_loop().wait_at_top_level(|| {
+            !bun_jsc::cpp::JSMock__hasModulesToEvict(global)
+                || (timeout != 0 && bun::Timespec::now(real_time).greater(&deadline))
+        });
+        if waited != Err(TopLevelWaitError::Stopped)
+            && bun_jsc::cpp::JSMock__hasModulesToEvict(global)
+        {
+            // The next file would hang on them and take the blame.
+            drop(bun_jsc::cpp::Bun__evictUnfinishedModules(global));
+        }
+        // Also evict the test file: it holds its own copies of the mock's importers.
+        JSMock__replaceModuleOfTestFile(global, &bun::StringView::from_bytes(file_path));
+    }
+
+    /// Returns a description for the error, and the step's identity so the caller can tell if the runner moved on.
+    fn what_runner_waits_for(
+        buntest: &bun_test::BunTest,
+    ) -> (&'static str, Option<bun_test::RefDataValue>) {
+        match buntest.get_current_state_data() {
+            step @ bun_test::RefDataValue::Collection { .. } => {
+                ("A describe() callback", Some(step))
+            }
+            step @ bun_test::RefDataValue::Execution {
+                entry_data: Some(_),
+                ..
+            } => ("A test or hook with no timeout", Some(step)),
+            bun_test::RefDataValue::Done => ("An un-awaited matcher's promise", None),
+            _ => ("A test or hook with no timeout", None),
+        }
+    }
+
+    #[optimize(size)]
     pub(crate) fn run(
-        reporter: &mut CommandLineReporter,
-        vm: &mut VirtualMachine,
+        reporter: &'static CommandLineReporter,
+        vm: &VirtualMachine,
         file_name: &[u8],
         first_last: bun_test::FirstLast,
     ) -> crate::Result<()> {
-        // Capture the raw log pointer (Copy) so the guard does not borrow `vm`.
-        let vm_log = vm.log;
-        scopeguard::defer! {
-            bun_ast::Expr::data_store_reset();
-            bun_ast::Stmt::data_store_reset();
+        let _print_log = PrintLogAfterFile(vm.log.get());
 
-            if let Some(log_ptr) = vm_log {
-                // SAFETY: vm.log points at the VM-owned Log for the lifetime of the run.
-                let log = unsafe { &mut *log_ptr.as_ptr() };
-                if log.errors > 0 {
-                    let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
-                    log.msgs.clear();
-                    log.errors = 0;
-                }
-            }
-
-            Output::flush();
-        }
-
-        // Restore test.only state after each module.
-        let prev_only = reporter.jest.only;
-        let reporter_ptr: *mut CommandLineReporter = reporter;
-        // SAFETY: `reporter` is caller-owned and outlives this guard; raw-ptr
-        // escape so the closure does not hold a borrowck
-        // lock on `reporter` for the entire function body.
-        scopeguard::defer! { unsafe { (*reporter_ptr).jest.only = prev_only; } }
-
-        let resolution = vm.transpiler.resolve_entry_point(file_name)?;
+        let file_path = Self::resolve_test_file(vm, file_name)?;
         vm.clear_entry_point()?;
+        vm.enter_module_graph_for_test_isolation()?;
 
-        // `append_slice` interns into the process-static `FilenameStore` and
-        // returns `&'static [u8]`.
-        let file_path: &'static [u8] = FileSystem::instance()
-            .filename_store
-            .append_slice(resolution.path_pair.primary.text)
-            .expect("oom");
-        let file_title = resolve_path::relative(FileSystem::instance().top_level_dir, file_path);
-        let file_id = jest::Jest::runner()
-            .unwrap()
-            .get_or_put_file(file_path)
-            .file_id;
+        run_compiled::will_run_test_file(resolve_path::relative(
+            FileSystem::get().top_level_dir(),
+            file_path,
+        ));
+        let file = reporter.jest.get_or_put_file(file_path);
 
         // In Github Actions, append a special prefix that will group
         // subsequent log lines into a collapsable group.
         // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#grouping-log-lines
-        let file_prefix: &[u8] = if Output::is_github_action() {
+        let file_prefix: &'static [u8] = if Output::is_github_action() {
             b"::group::"
         } else {
             b""
@@ -2865,49 +3923,52 @@ impl TestCommand {
 
         let repeat_count = reporter.repeat_count;
         let mut repeat_index: u32 = 0;
-        vm.on_unhandled_rejection_ctx = None;
-        vm.on_unhandled_rejection = jest::on_unhandled_rejection::on_unhandled_rejection;
+        vm.on_unhandled_rejection_ctx.set(None);
+        vm.on_unhandled_rejection
+            .set(jest::on_unhandled_rejection::on_unhandled_rejection);
+        vm.is_running_vitest_entry.set(false);
+        let mut environment = Environment::of_file(file_path, reporter.jest.environment);
 
         while repeat_index < repeat_count {
             // Clear the module cache before re-running (except for the first run)
             if repeat_index > 0 {
                 vm.clear_entry_point()?;
-                let entry = EncodedSlice::from_bytes(file_path);
-                vm.global().delete_module_registry_entry(&entry)?;
+                let key = jsc::compiled_program::entry_module_key(file_path);
+                vm.global()
+                    .delete_module_registry_entry(&EncodedSlice::from_bytes(key))?;
+                jsc::compiled_program::will_run_entry_point_again(vm.global(), key);
+            }
+            if repeat_index > 0 {
                 // Reset per-test snapshot counters so rerun N matches the same
                 // snapshot keys as run 1 instead of looking for "test name 2", etc.
-                reporter.jest.snapshots.reset_counts();
+                reporter.jest.with_snapshots(Snapshots::reset_counts);
             }
 
-            let bun_test_root = &mut jest::Jest::runner().unwrap().bun_test_root;
+            let bun_test_root = &reporter.jest.bun_test_root;
             // Determine if this file should run tests concurrently based on glob pattern
-            let should_run_concurrent = reporter.jest.should_file_run_concurrently(file_id);
-            bun_test_root.enter_file(file_id, reporter, should_run_concurrent, first_last);
-            let bun_test_root_ptr: *mut bun_test::BunTestRoot = bun_test_root;
+            let should_run_concurrent = reporter.jest.should_file_run_concurrently(file_path);
+            bun_test_root.enter_file(file, reporter, should_run_concurrent, first_last);
             let global = vm.global();
-            scopeguard::defer! {
-                // SAFETY: `bun_test_root` is `&'static mut` from `Jest::runner()`;
-                // raw-ptr escape so the closure does not hold a borrowck lock on
-                // it for the loop body.
-                unsafe { (*bun_test_root_ptr).exit_file(); }
-                // A mock.module() patch still pending must not hold up the next file.
-                bun_jsc::cpp::JSMock__forgetPendingModulePatches(global);
-            }
+            // `--isolate` swaps the global after the last repeat.
+            let next_load_shares_global = !vm.test_isolation_enabled.get()
+                || vm.test_isolation_state.shares_global.get()
+                || repeat_index + 1 < repeat_count;
+            let _entered_file = EnteredFile {
+                bun_test_root,
+                global,
+                next_load_shares_global,
+            };
 
-            // SAFETY: `set()` reads only `reporter.{worker_ipc_file_idx, reporters}`
-            // and writes only `current_file` — disjoint fields. Fresh raw-ptr
-            // split (not the defer-captured `reporter_ptr`) keeps the borrows
-            // disjoint without tripping borrowck.
-            unsafe {
-                let rp: *mut CommandLineReporter = reporter;
-                (*rp).jest.current_file.set(
-                    file_title,
-                    file_prefix,
-                    repeat_count,
-                    repeat_index,
-                    &mut *rp,
-                );
-            }
+            // Recompute on every repeat because the reporters overwrite `relative`'s buffer while the file runs.
+            let file_title = resolve_path::relative(FileSystem::get().top_level_dir(), file_path);
+            reporter.jest.current_file.set(
+                file_title,
+                file_prefix,
+                repeat_count,
+                repeat_index,
+                reporter.worker.get().is_some(),
+                &reporter.reporters,
+            );
 
             bun_output::scoped_log!(
                 bun_test,
@@ -2916,112 +3977,125 @@ impl TestCommand {
             );
             // Bun.jsc.Jest.bun_test.debug.group.log → local declare_scope!(bun_test).
 
-            if let Some(junit) = reporter.reporters.junit.as_mut() {
+            reporter.with_junit(|junit| {
                 junit.file_start_ns = bun::Timespec::now(bun::TimespecMockMode::ForceRealTime).ns();
-            }
+                junit.file_start_unix_ms = bun::time::milli_timestamp();
+            });
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            let promise = vm.load_entry_point_for_test_runner(file_path)?;
+            let mut promise = environment.load_entry_point(vm, file_path)?;
             // Only count the file once, not once per repeat
             if repeat_index == 0 {
-                reporter.summary().files += 1;
+                reporter.update_summary(|summary| summary.files += 1);
+            }
+
+            if jsc::JSInternalPromise::opaque_mut(promise).status()
+                != jsc::js_promise::Status::Rejected
+            {
+                vm.event_loop().tick();
+
+                // Tests start after top-level mock.module() calls with a pending factory have patched their module.
+                let patched = vm
+                    .event_loop()
+                    .wait_at_top_level(|| !bun_jsc::cpp::JSMock__hasPendingModulePatches(global));
+                if patched == Err(TopLevelWaitError::NothingLeft) {
+                    // As in Vitest, a vi.mock() or vi.doMock() factory may wait for something a test does.
+                    bun_jsc::cpp::JSMock__clearPendingVitestPatches(global);
+                    if bun_jsc::cpp::JSMock__hasPendingModulePatches(global) {
+                        promise = Self::never_settled(global, "A mock.module() factory", file_path);
+                    }
+                }
             }
 
             // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-            match jsc::JSInternalPromise::opaque_mut(promise).status() {
-                jsc::js_promise::Status::Rejected => {
-                    // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
-                    // `unhandled_rejection(&mut self, ...)` can reborrow.
-                    let global = vm.global();
-                    let p = jsc::JSInternalPromise::opaque_mut(promise);
-                    let (result, promise_js) = (p.result(global.vm()), p.to_js());
-                    vm.unhandled_rejection(global, result, promise_js);
-                    reporter.summary().fail += 1;
-
-                    if reporter.jest.bail == reporter.summary().fail {
-                        reporter.print_summary();
-                        pretty_error!(
-                            "\nBailed out after {} failure{}<r>\n",
-                            reporter.jest.bail,
-                            if reporter.jest.bail == 1 { "" } else { "s" }
-                        );
-                        reporter.write_junit_report_if_needed();
-                        reporter.write_timings_if_needed();
-
-                        vm.exit_handler.exit_code = 1;
-                        vm.is_shutting_down = true;
-                        // `global_exit()` diverges, so the `exit_file()` defer
-                        // above never fires. Release the active file's
-                        // `Strong`s and the preload-hook scope here so
-                        // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim them,
-                        // then clear `RUNNER` so finalizers can't observe a
-                        // partially-torn-down `TestRunner`.
-                        // SAFETY: single-threaded; raw-ptr reborrow mirrors the
-                        // defer's escape.
-                        unsafe {
-                            (*bun_test_root_ptr).deinit_for_exit();
-                            jest::Jest::RUNNER.write(None);
-                        }
-                        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
-                        // SAFETY: global_exit diverges; `vm_ptr` is a fresh
-                        // raw-ptr reborrow of the exclusive `vm` borrow.
-                        unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
-                    }
-
-                    return Ok(());
-                }
-                _ => {}
-            }
-
-            vm.event_loop_ref().tick();
-
-            // Tests start after top-level mock.module() calls with a pending factory have patched their module.
-            while bun_jsc::cpp::JSMock__hasPendingModulePatches(global) {
-                vm.event_loop_ref().auto_tick();
-                vm.event_loop_ref().tick();
+            let failed_to_load = jsc::JSInternalPromise::opaque_mut(promise).status()
+                == jsc::js_promise::Status::Rejected;
+            if failed_to_load {
+                // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
+                // `unhandled_rejection(&mut self, ...)` can reborrow.
+                let global = vm.global();
+                let p = jsc::JSInternalPromise::opaque_mut(promise);
+                let (result, promise_js) = (p.result(global.vm()), p.to_js());
+                vm.unhandled_rejection(global, result, promise_js);
             }
 
             'blk: {
                 // Check if bun_test is available and has tests to run
-                let Some(buntest_strong) = bun_test_root.clone_active_file() else {
+                let Some(buntest) = bun_test_root.clone_active_file() else {
                     debug_assert!(false);
                     break 'blk;
                 };
-                let buntest = buntest_strong.get();
+                buntest.is_loading.set(false);
+                // Skips this file's tests, but preload hooks due with this file still run.
+                if failed_to_load {
+                    buntest.scope(bun_test::ScopeId::ROOT).failed.set(true);
+                }
 
                 // Automatically execute bun_test tests
-                if buntest.result_queue.readable_length() == 0 {
+                if !buntest.has_queued_results() {
                     buntest.add_result(bun_test::ResultMsg::Start);
                 }
-                // `BunTestPtr` is `Rc<BunTestCell>`; clone (refcount++) so the
-                // local `buntest_strong` survives for the post-run drain loop and
-                // the explicit `drop` below.
-                bun_test::BunTest::run(&buntest_strong, vm.global())?;
+                bun_test::BunTest::run(&buntest, vm.global())?;
 
                 // Process event loop while bun_test tests are running
-                vm.event_loop_ref().tick();
+                vm.event_loop().tick();
 
-                let mut prev_unhandled_count = vm.unhandled_error_counter;
-                while buntest.phase != bun_test::Phase::Done {
-                    if buntest.wants_wakeup {
-                        buntest.wants_wakeup = false;
+                let mut prev_unhandled_count = vm.unhandled_error_counter.get();
+                while buntest.phase.get() != bun_test::Phase::Done {
+                    // `RunTestsTask` leaves results queued when it fires in an event loop nested under JS.
+                    if buntest.has_queued_results() {
+                        bun_test::BunTest::run_next_tick(
+                            &std::rc::Rc::downgrade(&buntest),
+                            global,
+                            bun_test::ResultMsg::Start,
+                        );
+                    }
+                    if buntest.wants_wakeup.take() {
                         vm.wakeup();
                     }
-                    vm.event_loop_ref().auto_tick();
-                    if buntest.phase == bun_test::Phase::Done {
+                    if buntest.timer.state.get() != crate::timer::EventLoopTimerState::ACTIVE
+                        && !vm.has_work_left()
+                    {
+                        let (what, waits_for) = Self::what_runner_waits_for(&buntest);
+                        let p = jsc::JSPromise::opaque_mut(Self::never_settled(
+                            global, what, file_path,
+                        ));
+                        vm.unhandled_rejection(global, p.result(global.vm()), p.to_js());
+                        vm.event_loop().tick();
+                        // The error ends a describe() or a test. Anything else stays stuck, so abandon the file.
+                        if waits_for.is_none()
+                            || waits_for == Self::what_runner_waits_for(&buntest).1
+                        {
+                            break;
+                        }
+                        continue;
+                    }
+                    vm.event_loop().auto_tick_asleep();
+                    if buntest.phase.get() == bun_test::Phase::Done {
                         break;
                     }
-                    vm.event_loop_ref().tick();
+                    vm.event_loop().tick();
 
-                    while prev_unhandled_count < vm.unhandled_error_counter {
+                    while prev_unhandled_count < vm.unhandled_error_counter.get() {
                         let _ = vm.global().handle_rejected_promises();
-                        prev_unhandled_count = vm.unhandled_error_counter;
+                        prev_unhandled_count = vm.unhandled_error_counter.get();
                     }
                 }
 
-                let el = vm.event_loop();
-                // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
-                unsafe { (*el).tick_immediate_tasks(vm) };
+                // Under --aot a call of import() that asks for a mocked file waits in the run time for its text, by a task that would be lost here.
+                // `bun test` has a read under way in its place. A plain run holds no such call, so it does nothing here.
+                if bun_jsc::cpp::JSMock__hasHeldImports(global) {
+                    bun_jsc::cpp::JSMock__releaseHeldImports(global);
+                    let _ = vm
+                        .event_loop()
+                        .wait_at_top_level(|| !bun_jsc::cpp::JSMock__hasHeldImports(global));
+                    while prev_unhandled_count < vm.unhandled_error_counter.get() {
+                        let _ = vm.global().handle_rejected_promises();
+                        prev_unhandled_count = vm.unhandled_error_counter.get();
+                    }
+                }
+
+                vm.event_loop().tick_immediate_tasks();
 
                 // Node parity: a node test file exits only when its loop drains.
                 // on_before_exit() drains and dispatches 'beforeExit' like `bun run`;
@@ -3030,17 +4104,50 @@ impl TestCommand {
                 if should_drain_event_loop() {
                     vm.on_before_exit();
                 }
-                drop(buntest_strong);
+                (reporter.jest).with_snapshots(|snapshots| snapshots.remove_obsolete(&buntest));
             }
 
+            if failed_to_load {
+                reporter.update_summary(|summary| summary.fail += 1);
+                // It has no test to list under "N tests failed:".
+                if !reporter.reporters.dots && !reporter.reporters.only_failures {
+                    let mut failures = reporter.failures_to_repeat_buf.take();
+                    failures.extend_from_slice(&fmt_status_text_line(
+                        bun_test::Execution::Result::Fail,
+                        Output::enable_ansi_colors_stderr(),
+                    ));
+                    let top_level_dir = FileSystem::instance().top_level_dir();
+                    let title = resolve_path::relative(top_level_dir, file_path);
+                    let _ = writeln!(failures, " {}", bstr::BStr::new(title));
+                    reporter.failures_to_repeat_buf.set(failures);
+                }
+
+                if reporter.jest.bail == reporter.summary().fail {
+                    // This never returns, so `EnteredFile`'s `Drop` doesn't run.
+                    reporter.bail_out(vm);
+                }
+            }
+
+            crate::test_runner::vi_utils::on_test_file_end(vm.global(), next_load_shares_global);
+            if next_load_shares_global {
+                crate::test_runner::timers::fake_timers::on_test_file_end(vm.global());
+            }
+            Self::undo_module_mocks(
+                vm,
+                global,
+                file_path,
+                next_load_shares_global,
+                !failed_to_load && repeat_index + 1 < repeat_count,
+            );
+            // Must run after the cleanup above, so rejections from JS it runs are reported in this file.
             let _ = vm.global().handle_rejected_promises();
 
-            if Output::is_github_action() && reporter.worker_ipc_file_idx.is_none() {
+            if Output::is_github_action() && reporter.worker.get().is_none() {
                 pretty_errorln!("<r>\n::endgroup::\n");
                 Output::flush();
             }
 
-            if !vm.test_isolation_enabled {
+            if !vm.test_isolation_enabled.get() {
                 // Ensure these never linger across files. Under --isolate this
                 // is done by swapGlobalForTestIsolation() (kill+clear) and we
                 // need tracking to remain enabled and populated until then.
@@ -3048,12 +4155,56 @@ impl TestCommand {
                 vm.auto_killer.disable();
             }
 
-            repeat_index += 1;
+            repeat_index = if failed_to_load {
+                repeat_count
+            } else {
+                repeat_index + 1
+            };
+            // Tear down before `EnteredFile` drops, so an error it throws is reported in this file.
+            if repeat_index == repeat_count {
+                environment.teardown(vm);
+            }
         }
-        if let Some(junit) = reporter.reporters.junit.as_mut() {
-            let _ = junit.end_file(None);
-        }
+        reporter.with_junit(|junit| {
+            let _ = junit.end_file(Some(junit_file_name(file_path)), None);
+        });
         Ok(())
+    }
+}
+
+struct PrintLogAfterFile(Option<core::ptr::NonNull<bun_ast::Log>>);
+
+impl Drop for PrintLogAfterFile {
+    fn drop(&mut self) {
+        bun_ast::Expr::data_store_reset();
+        bun_ast::Stmt::data_store_reset();
+
+        if let Some(log) = self.0 {
+            // SAFETY: the VM owns the Log and outlives `TestCommand::run`.
+            let log = unsafe { &mut *log.as_ptr() };
+            if log.errors > 0 {
+                let _ = log.print(Output::error_writer());
+                log.msgs.clear();
+                log.errors = 0;
+            }
+        }
+
+        Output::flush();
+    }
+}
+
+struct EnteredFile<'a> {
+    bun_test_root: &'a bun_test::BunTestRoot,
+    global: &'a jsc::JSGlobalObject,
+    next_load_shares_global: bool,
+}
+
+impl Drop for EnteredFile<'_> {
+    fn drop(&mut self) {
+        self.bun_test_root.exit_file();
+        // A mock.module() patch still pending must not hold up the next file.
+        bun_jsc::cpp::JSMock__forgetPendingModulePatches(self.global);
+        bun_jsc::cpp::JSMock__undoModuleMocksOfTestFile(self.global, self.next_load_shares_global);
     }
 }
 

@@ -1,0 +1,11 @@
+# `for (;;) { try { s += ..; if (..) break; } catch { hits++; } } boom(s);`: the text is taken out of its builder on the edge that leaves the loop, under the handler of the block that is left. What stands behind the loop does not stand under that handler.
+# f1 = boom, f2 = build
+# -- source: break-out-of-a-try-in-a-loop-where-a-text-grows-leaves-the-catch-behind.js
+# let armed = 1; let turns = 40;
+# function boom(t) { if (armed-- > 0) throw new Error("behind the loop " + t.length); }
+# function build(n) { let s = ""; let i = 0; let hits = 0; for (;;) { try { s += "k" + i + ","; i++; if (i >= n) break; } catch (e) { hits++; } } boom(s); return s.length + "|" + hits; }
+# let said; try { said = "returned " + build(turns); } catch (e) { said = "outer caught: " + e.message; }
+# print(said);
+# -- end of source
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: outer caught: behind the loop 150

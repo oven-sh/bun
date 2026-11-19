@@ -385,6 +385,40 @@ describe("bundler metafile", () => {
     expect(jsonImport!.with!.type).toBe("json");
   });
 
+  // Like esbuild: only a file that is in the build under two loaders gets the
+  // attribute in its name. A lone `with { type }` import keeps the plain name.
+  test("metafile names one file under two import attributes apart", async () => {
+    using dir = tempDir("metafile-two-import-attributes", {
+      "entry.js": `
+        import obj from "./data.json";
+        import text from "./data.json" with { type: "text" };
+        import readme from "./README.md" with { type: "text" };
+        console.log(obj, text, readme);
+      `,
+      "data.json": `{"key": "value"}`,
+      "README.md": `# hi`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      metafile: true,
+    });
+    expect(result.success).toBe(true);
+
+    const { inputs, outputs } = result.metafile as Metafile;
+    const name = (key: string) => key.split(/[\\/]/).pop()!;
+    const names = ["README.md", "data.json", "data.json with { type: 'text' }", "entry.js"];
+    expect(Object.keys(inputs).map(name).sort()).toEqual(names);
+    expect(Object.keys(Object.values(outputs)[0].inputs).map(name).sort()).toEqual(names);
+
+    const entry = Object.entries(inputs).find(([key]) => name(key) === "entry.js")![1];
+    expect(entry.imports.map(imp => [name(imp.path), imp.with?.type, imp.path in inputs])).toEqual([
+      ["data.json", "json", true],
+      ["data.json with { type: 'text' }", "text", true],
+      ["README.md", "text", true],
+    ]);
+  });
+
   test("metafile tracks require-call imports", async () => {
     using dir = tempDir("metafile-require-test", {
       "entry.js": `const foo = require("./foo.js"); console.log(foo);`,
@@ -686,7 +720,7 @@ describe("Bun.build metafile option variants", () => {
     const result = await Bun.build({
       entrypoints: [`${dir}/entry.js`],
       outdir: `${dir}/dist`,
-      metafile: "output-meta.json",
+      metafile: "output-meta.json" as any,
     });
 
     expect(result.success).toBe(true);
@@ -717,7 +751,7 @@ describe("Bun.build metafile option variants", () => {
     const result = await Bun.build({
       entrypoints: [`${dir}/main.js`],
       outdir: `${dir}/dist`,
-      metafile: { json: "custom-meta.json" },
+      metafile: { json: "custom-meta.json" } as any,
     });
 
     expect(result.success).toBe(true);
@@ -741,7 +775,7 @@ describe("Bun.build metafile option variants", () => {
     const result = await Bun.build({
       entrypoints: [`${dir}/app.js`],
       outdir: `${dir}/dist`,
-      metafile: { markdown: "analysis.md" },
+      metafile: { markdown: "analysis.md" } as any,
     });
 
     expect(result.success).toBe(true);
@@ -773,7 +807,7 @@ describe("Bun.build metafile option variants", () => {
       metafile: {
         json: "meta.json",
         markdown: "meta.md",
-      },
+      } as any,
     });
 
     expect(result.success).toBe(true);
@@ -849,7 +883,7 @@ describe("Bun.build metafile option variants", () => {
     const result = await Bun.build({
       entrypoints: [`${dir}/test.js`],
       outdir: `${dir}/dist`,
-      metafile: { markdown: "meta.md" },
+      metafile: { markdown: "meta.md" } as any,
     });
 
     expect(result.success).toBe(true);
@@ -1469,7 +1503,7 @@ describe("metafile outputs[..].bytes is the size of the emitted file", () => {
 
   /** `bytes` of every metafile output, next to the size of the file the build produced for it. */
   function outputSizes(result: Bun.BuildOutput, outdir: string | undefined) {
-    const reported: Record<string, number> = {};
+    const reported: Record<string, number | undefined> = {};
     const actual: Record<string, number | undefined> = {};
     for (const [key, output] of Object.entries((result.metafile as Metafile).outputs)) {
       reported[key] = output.bytes;

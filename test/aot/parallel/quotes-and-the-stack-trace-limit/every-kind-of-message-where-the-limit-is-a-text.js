@@ -1,0 +1,81 @@
+const unseen = (0, eval)("(x) => x");
+const nothing = unseen(undefined), none = unseen(null), empty = unseen({}), five = unseen(5), key = unseen("k"), mark = unseen(Symbol("s"));
+class Vault { #p = 1; static read(o) { return o.#p; } static store(o) { o.#p = 2; } static has(o) { return #p in o; } static call(o) { return o.#m(); } #m() {} }
+const orphan = { __proto__: null, up() { return super.x; }, upCall() { return super.x(); } };
+const steps = (next, close) => ({ [Symbol.iterator]() { return { next, return: close }; } });
+const once = () => ({ done: false, value: 1 });
+const attempts = [
+  ["read by name", () => nothing.name],
+  ["read by key", () => nothing[key]],
+  ["read by index", () => nothing[0]],
+  ["read by symbol", () => nothing[mark]],
+  ["read of null", () => none.name],
+  ["read one deeper", () => empty.a.b],
+  ["store by name", () => { nothing.name = 1; }],
+  ["store by key", () => { nothing[key] = 1; }],
+  ["delete by name", () => delete nothing.name],
+  ["delete by key", () => delete nothing[key]],
+  ["update", () => nothing.count++],
+  ["compound", () => { nothing.count += 1; }],
+  ["method", () => empty.run()],
+  ["method by key", () => empty[key]()],
+  ["call of a name", () => nothing()],
+  ["call of a number", () => five()],
+  ["call of a result", () => unseen(5)()],
+  ["call of a choice", () => (empty.a || five)()],
+  ["optional call of a number", () => five?.()],
+  ["method of nothing", () => empty.a.b()],
+  ["spread call", () => empty.run(...[1, 2])],
+  ["call through call", () => empty.run.call(empty)],
+  ["call through apply", () => five.apply.apply(five, [])],
+  ["apply of no function", () => unseen({ apply: Function.prototype.apply }).apply(null, [])],
+  ["call of no function", () => unseen({ call: Function.prototype.call }).call(null)],
+  ["tagged", () => empty.tag`x`],
+  ["tagged by a name", () => nothing`x`],
+  ["new of a member", () => new empty.Maker()],
+  ["new of a name", () => new nothing()],
+  ["new without arguments", () => new five],
+  ["new with spread", () => new empty.Maker(...[1])],
+  ["new of an arrow", () => new unseen()],
+  ["new of a choice", () => new (empty.a || five)()],
+  ["new of a result", () => new (unseen(5))()],
+  ["new of a native function", () => new Math.max()],
+  ["new of nothing's member", () => new nothing.Maker()],
+  ["for of a number", () => { for (const x of five) unseen(x); }],
+  ["for of nothing", () => { for (const x of nothing) unseen(x); }],
+  ["for of: the method is no function", () => { for (const x of { [Symbol.iterator]: 5 }) unseen(x); }],
+  ["for of: next is no function", () => { for (const x of steps(5)) unseen(x); }],
+  ["for of: return is no function", () => { for (const x of steps(once, 5)) break; }],
+  ["array pattern of a number", () => { const [a] = five; return a; }],
+  ["array pattern of nothing", () => { const [a] = nothing; return a; }],
+  ["array pattern: next is no function", () => { const [a] = steps(5); return a; }],
+  ["array pattern: return is no function", () => { const [a] = steps(once, 5); return a; }],
+  ["array pattern in a parameter", () => (([a]) => a)(nothing)],
+  ["object pattern of nothing", () => { const { a } = nothing; return a; }],
+  ["object pattern in a parameter", () => (({ a }) => a)(nothing)],
+  ["spread of a number", () => [...five]],
+  ["spread of nothing", () => [...nothing]],
+  ["arguments spread of a number", () => Math.max(...five)],
+  ["yield star", () => [...(function* () { yield* five; })()]],
+  ["yield star: next is no function", () => [...(function* () { yield* steps(5); })()]],
+  ["in a number", () => "k" in five],
+  ["in nothing", () => key in nothing],
+  ["instanceof a number", () => empty instanceof five],
+  ["instanceof an object", () => empty instanceof empty],
+  ["extends a number", () => class extends five {}],
+  ["private read", () => Vault.read(nothing)],
+  ["private read of an object", () => Vault.read(empty)],
+  ["private store", () => Vault.store(nothing)],
+  ["private in", () => Vault.has(five)],
+  ["private method", () => Vault.call(nothing)],
+  ["super read", () => orphan.up()],
+  ["super call", () => orphan.upCall()],
+  ["own error", () => { throw new TypeError("mine"); }],
+];
+const show = (label) => {
+  for (const [name, attempt] of attempts) {
+    try { attempt(); console.log(label, name, "no error"); } catch (error) { console.log(label, name, JSON.stringify(error.message)); }
+  }
+};
+Error.stackTraceLimit = "10";
+show("text");

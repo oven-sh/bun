@@ -139,6 +139,22 @@ declare module "bun:jsc" {
   function memoryUsage(): MemoryUsage;
 
   /**
+   * For an executable built with `bun build --compile --bytecode
+   * --bytecode-order`: how many functions this thread has loaded from each part
+   * of the bytecode the order file arranged. Returns `null` in any other
+   * process. See {@link BytecodeOrderStats}.
+   *
+   * @example
+   * ```ts
+   * import { bytecodeOrderStats } from "bun:jsc";
+   *
+   * const stats = bytecodeOrderStats();
+   * if (stats) console.log(stats.cold / (stats.hot + stats.unknown + stats.cold));
+   * ```
+   */
+  function bytecodeOrderStats(): BytecodeOrderStats | null;
+
+  /**
    * Returns the seed of the pseudo-random number generator behind
    * `Math.random()`. The seed is chosen at random when Bun starts; see
    * {@link setRandomSeed}.
@@ -439,6 +455,32 @@ declare module "bun:jsc" {
   }
 
   /**
+   * Returned by {@link bytecodeOrderStats}. Counts are per thread: a `Worker`
+   * has its own. A function whose bytecode was discarded and loaded again
+   * counts again. Sizes are in bytes.
+   */
+  interface BytecodeOrderStats {
+    /** Functions loaded that the order file's run had used. */
+    hot: number;
+    /** Functions loaded that the build the order file was recorded from did not have. */
+    unknown: number;
+    /** Functions loaded that the order file's run had not used. */
+    cold: number;
+    hotBytes: number;
+    unknownBytes: number;
+    coldBytes: number;
+    /** The size of each part of the bytecode, in the order they are stored. */
+    regions: {
+      moduleHeads: number;
+      hot: number;
+      unknown: number;
+      lateModuleHeads: number;
+      cold: number;
+      expressionInfo: number;
+    };
+  }
+
+  /**
    * Memory statistics for the whole process, returned by {@link memoryUsage}.
    * Sizes are in bytes.
    */
@@ -513,9 +555,10 @@ declare module "bun:jsc" {
     column: number;
     /**
      * The tier the function was running in when sampled: `"LLInt"`,
-     * `"Baseline"`, `"DFG"`, or `"FTL"` for JavaScript functions, or one of the
-     * other names from the tier breakdown in {@link SamplingProfile.bytecodes}
-     * (native functions show up as `"Unknown Executable"`).
+     * `"Baseline"`, `"DFG"`, or `"FTL"` for JavaScript functions, `"AOT"` for a
+     * function compiled ahead of time, or one of the other names from the tier
+     * breakdown in {@link SamplingProfile.bytecodes} (native functions show up
+     * as `"Unknown Executable"`).
      */
     category: string;
     /**
@@ -706,6 +749,7 @@ declare module "bun:jsc" {
    * - Baseline is the first JIT compilation tier: the least optimized, but the fastest to compile
    * - DFG ("Data Flow Graph") is the second JIT compilation tier: some optimizations, but slower to compile
    * - FTL ("Faster Than Light") is the third JIT compilation tier: the most optimizations, but the slowest to compile
+   * - AOT ("Ahead Of Time") is code that `bun build --compile --aot` compiled to machine code when the executable was built
    *
    * @param callback The function to profile. It is called immediately, with `args`.
    * @param sampleInterval How often to sample the stack, in microseconds. Defaults to 1000 (once a millisecond).
@@ -760,7 +804,8 @@ declare module "bun:jsc" {
    * value, use {@link profile} instead.
    *
    * @param optionalDirectory A directory to write a text report of the hottest
-   * functions and bytecodes into when the process exits. Created if it does not exist.
+   * functions and bytecodes to when the process (or the calling worker) exits.
+   * The directory is created if it doesn't exist.
    * @param sampleInterval How often to sample the stack, in microseconds. Defaults to 1000 (once a millisecond).
    */
   function startSamplingProfiler(optionalDirectory?: string, sampleInterval?: number): void;

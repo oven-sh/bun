@@ -61,9 +61,6 @@ UCA Global G2 Root
 UCA Extended Validation Root
 Certigna Root CA
 emSign Root CA - G1
-emSign ECC Root CA - G3
-emSign Root CA - C1
-emSign ECC Root CA - C3
 Hongkong Post Root CA 3
 Microsoft ECC Root Certificate Authority 2017
 Microsoft RSA Root Certificate Authority 2017

@@ -23,5 +23,5 @@ await promise;
 // Once the response (the flushed headers) has arrived, the request is still
 // attached to its socket.
 const { socket } = req;
-expect(socket._httpMessage).toBe(req);
-socket.destroy();
+expect((socket as any)._httpMessage).toBe(req);
+socket!.destroy();

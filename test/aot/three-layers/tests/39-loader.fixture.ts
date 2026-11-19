@@ -1,0 +1,12 @@
+import { check } from "../src/show";
+const F = "39";
+export const ownExport = "exported by the test file";
+export default function ownDefault() { return "default of the test file"; }
+const brief = (m: any) => [Object.keys(m).sort(), m.default];
+check(F, "data files, dynamic, by extension", async () => [brief(await import("../src/five.json5")), brief(await import("../src/yam.yaml")), brief(await import("../src/tom.toml")), brief(await import("../src/data.json")), brief(await import("../src/note.txt"))]);
+check(F, "data files, dynamic, by attribute", async () => [brief(await import("../src/five.json5", { with: { type: "json5" } })), brief(await import("../src/yam.yaml", { with: { type: "yaml" } })), brief(await import("../src/tom.toml", { with: { type: "toml" } })), brief(await import("../src/data.json", { with: { type: "json" } })), brief(await import("../src/note.txt", { with: { type: "text" } })), brief(await import("../src/data.json", { with: { type: "text" } }))]);
+check(F, "data files by a computed path", async () => { const at = (name: string) => "../src/" + name; return [brief(await import(at("five.json5"))), brief(await import(at("yam.yaml"), { with: { type: "yaml" } })), require(at("tom.toml")), require(at("data.json")).name]; });
+check(F, "the test file imports itself", async () => { const a = await import(import.meta.path), b = await import("./39-loader.test.ts"), c = await import(import.meta.url); return [Object.keys(a).sort(), a.ownExport, a.default === ownDefault, a === b, a === c]; });
+check(F, "resolution that must fail", async () => [() => import.meta.resolve("no-such-package-at-all"), () => import.meta.resolve("./no-such-file.ts"), () => require.resolve("no-such-package-at-all"), () => require("no-such-package-at-all"), () => Bun.resolveSync("no-such-package-at-all", import.meta.dir), () => import.meta.resolve("fake-shapes/not-exported")].map(f => { try { return String(f()).split("/").slice(-2).join("/"); } catch (e) { return "throws " + (e as Error).name; } }));
+check(F, "an import that must reject", async () => [await import("no-such-package-at-all" as string).catch(e => "rejects " + e.name), await import("../src/no-such-file" as string).catch(e => "rejects " + e.name)]);
+check(F, "queries and fragments", async () => { const a = await import("../src/cycle-b.ts?one" as string), b = await import("../src/cycle-b.ts?two" as string), c = await import("../src/cycle-b"); return [a === b, a === c, a.late, b.seenFromB()]; });

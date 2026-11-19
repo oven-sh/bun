@@ -1,0 +1,22 @@
+# -- source: main.mjs
+# function Meter() { this.step = 0; this.ticks = 0; this.total = 0; this.rate = 0; this.load = 0; this.rest = 0; this.cost = 0; this.spent = 0; this.scaled = 0; this.wide = 0; this.table = new Uint8Array(8); this.levels = new Float32Array(8); this.words = new Uint32Array(8); }
+# Meter.prototype.tune = function (n) { this.step = (n & 7) << 2; this.rate = this.rate / 2; this.rate++; };
+# Meter.prototype.restore = function (values) { this.step = values[0]; this.ticks = values[1]; this.total = values[2]; this.rate = values[3]; this.load = values[4]; this.rest = values[5]; this.cost = values[6]; this.spent = values[7]; this.scaled = values[8]; this.wide = values[9]; };
+# Meter.prototype.run = function (turns) {
+#   for (let turn = 0; turn < turns; turn++) { this.ticks += this.step; this.total -= this.ticks; this.load += this.rate; this.load++; this.rest += this.unseen; this.rest++; this.cost += this.table[turn & 7]; this.spent += this.levels[turn & 7]; this.spent++; this.scaled += this.step * this.ticks; this.scaled++; this.wide += this.words[turn & 7]; this.wide++; }
+# };
+# const meter = new Meter(); globalThis.unseen = meter; meter.restore((0, eval)(String(Math.random()))); meter.tune(3); meter.run(3);
+# print(meter.ticks, meter.total, meter.load, meter.rest, meter.cost, meter.spent, meter.scaled, meter.wide);
+# -- end of source
+# A sum with a field that integer operators fill is such an integer again, and so is one with an element of a view of integers. A field that may hold a fraction, a name that nobody stores, a product and an element of a view of other numbers say no such thing.
+# RUN: link held fields
+# CHECK: "step" proven=i32
+# CHECK: "ticks" proven=i32
+# CHECK: "total" proven=i32
+# CHECK: "rate" proven=number
+# CHECK: "load" proven=number
+# CHECK: "rest" proven=number
+# CHECK: "cost" proven=i32
+# CHECK: "spent" proven=number
+# CHECK: "scaled" proven=number
+# CHECK: "wide" proven=number

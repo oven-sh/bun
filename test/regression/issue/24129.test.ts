@@ -7,11 +7,11 @@ import fs from "node:fs";
 // was being checked in isFIFO(), and Unknown also maps to 0.
 
 test("Dirent with unknown type should return false for all type checks", () => {
-  const UV_DIRENT_UNKNOWN = fs.constants.UV_DIRENT_UNKNOWN;
+  const UV_DIRENT_UNKNOWN = (fs.constants as any).UV_DIRENT_UNKNOWN;
   expect(UV_DIRENT_UNKNOWN).toBe(0);
 
   // Create a Dirent with unknown type (simulates what happens on sshfs/NFS mounts)
-  const dirent = new fs.Dirent("test-file", UV_DIRENT_UNKNOWN);
+  const dirent: fs.Dirent = new (fs.Dirent as any)("test-file", UV_DIRENT_UNKNOWN);
 
   // All type checks should return false for unknown type
   expect(dirent.isFile()).toBe(false);
@@ -27,11 +27,11 @@ test("Dirent with unknown type should return false for all type checks", () => {
 });
 
 test("Dirent.isFIFO() should only return true for actual FIFO/named pipe", () => {
-  const UV_DIRENT_FIFO = fs.constants.UV_DIRENT_FIFO;
+  const UV_DIRENT_FIFO = (fs.constants as any).UV_DIRENT_FIFO;
   expect(UV_DIRENT_FIFO).toBe(4);
 
   // Create a Dirent with FIFO type
-  const fifoDirent = new fs.Dirent("test-fifo", UV_DIRENT_FIFO);
+  const fifoDirent: fs.Dirent = new (fs.Dirent as any)("test-fifo", UV_DIRENT_FIFO);
   expect(fifoDirent.isFIFO()).toBe(true);
 
   // Verify other type checks return false

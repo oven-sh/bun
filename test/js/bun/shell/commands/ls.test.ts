@@ -1,6 +1,8 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { isPosix, tempDir, tempDirWithFiles } from "harness";
+import { isLinux, isPosix, isRoot, tempDir, tempDirWithFiles } from "harness";
+import { chmodSync } from "node:fs";
+import { join } from "node:path";
 import { createTestBuilder } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -261,6 +263,23 @@ describe.concurrent("bunshell ls", () => {
     });
   });
 
+  // BSD systems refuse the sticky bit on a file.
+  test.if(isLinux)("-l shows the setuid, setgid and sticky bits", async () => {
+    const expected = {
+      "4755": "-rwsr-xr-x",
+      "2755": "-rwxr-sr-x",
+      "1755": "-rwxr-xr-t",
+      "7644": "-rwSr-Sr-T",
+    };
+    using dir = tempDir("ls-modes", Object.fromEntries(Object.keys(expected).map(mode => [mode, ""])));
+    const seen = {};
+    for (const mode in expected) {
+      chmodSync(join(String(dir), mode), parseInt(mode, 8));
+      seen[mode] = (await $`ls -l ${mode}`.cwd(String(dir)).text()).slice(0, 10);
+    }
+    expect(seen).toEqual(expected);
+  });
+
   describe("errors", () => {
     TestBuilder.command`ls lskdjflksdjf`
       .stderr("ls: lskdjflksdjf: No such file or directory\n")
@@ -301,7 +320,7 @@ describe.concurrent("bunshell ls", () => {
         .run();
     });
 
-    test.if(isPosix)("permission denied directory", async () => {
+    test.if(isPosix && !isRoot)("permission denied directory", async () => {
       await using tempdir = tempDir("ls-permission", {});
       await $`mkdir restricted; chmod 000 restricted; ln -s restricted link-to-restricted`
         .quiet()
@@ -323,7 +342,7 @@ describe.concurrent("bunshell ls", () => {
       await $`chmod 755 restricted`.quiet().throws(true).cwd(tempdir); // cleanup
     });
 
-    test.if(isPosix)("permission denied directory recursive", async () => {
+    test.if(isPosix && !isRoot)("permission denied directory recursive", async () => {
       await using tempdir = tempDir("ls-permission-recursive", {});
       // Create 3-level deep directory structure with 3+ items per level
       await $`mkdir -p level1/level2/level3; 

@@ -1,0 +1,11 @@
+# `for (const key of ["x", "y"]) peg[key]`: nobody but the loop has the list, so the key is one of its texts, and the read is `peg.x` or `peg.y`: no method is read, and the class stays closed.
+# The control stands beside this file: a-class-read-under-the-texts-of-a-list-that-has-a-name-opens.ir
+# -- source: main.js
+# class Peg { constructor(x, y) { this.x = x; this.y = y; } sum() { return this.x + this.y; } }
+# const peg = new Peg(1, 2);
+# let total = 0;
+# for (const key of ["x", "y"]) total += peg[key];
+# print(total + peg.sum());
+# -- end of source
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 changes=[]

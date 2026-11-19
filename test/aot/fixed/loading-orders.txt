@@ -1,0 +1,106 @@
+#### ring-entered-a-turn-later/main.mjs
+const first = import("./a.mjs");
+await null;
+try {
+  await Promise.all([first, import("./b.mjs")]);
+  console.log("loaded");
+} catch (e) {
+  console.log("threw " + e.name);
+}
+#### ring-entered-a-turn-later/a.mjs
+import { b } from "./b.mjs";
+console.log("a sees " + b);
+export const a = "A";
+#### ring-entered-a-turn-later/b.mjs
+import "./a.mjs";
+console.log("b runs");
+export const b = "B";
+#### ring-entered-a-turn-later prints
+b runs
+a sees B
+loaded
+#### ring-run-in-order-a-turn-later/main.mjs
+const first = import("./a.mjs");
+await null;
+await Promise.all([first, import("./b.mjs")]);
+console.log("loaded");
+#### ring-run-in-order-a-turn-later/a.mjs
+import "./b.mjs";
+console.log("a runs");
+#### ring-run-in-order-a-turn-later/b.mjs
+import "./a.mjs";
+console.log("b runs");
+#### ring-run-in-order-a-turn-later prints
+b runs
+a runs
+loaded
+#### ring-run-in-order-by-awaited-import/main.mjs
+await Promise.all([import("./a.mjs"), import("./b.mjs")]);
+console.log("loaded");
+#### ring-run-in-order-by-awaited-import/a.mjs
+import "./c.mjs";
+console.log("a runs");
+#### ring-run-in-order-by-awaited-import/b.mjs
+console.log("b starts");
+await import("./c.mjs");
+console.log("b ends");
+#### ring-run-in-order-by-awaited-import/c.mjs
+import "./a.mjs";
+console.log("c runs");
+#### ring-run-in-order-by-awaited-import prints
+b starts
+c runs
+a runs
+b ends
+loaded
+#### ring-whose-first-file-throws/main.mjs
+try {
+  await Promise.all([import("./a.mjs"), import("./b.mjs")]);
+  console.log("loaded");
+} catch (e) {
+  console.log("threw " + e.message);
+}
+#### ring-whose-first-file-throws/a.mjs
+import "./c.mjs";
+console.log("a runs");
+#### ring-whose-first-file-throws/b.mjs
+console.log("b starts");
+await import("./c.mjs");
+console.log("b ends");
+#### ring-whose-first-file-throws/c.mjs
+import "./a.mjs";
+console.log("c starts");
+if (process.argv.length < 99) throw new Error("c fails");
+console.log("c ends");
+#### ring-whose-first-file-throws prints
+b starts
+c starts
+threw c fails
+#### deferred-file-imports-its-reader/main.cjs
+require("./mid.mjs");
+#### deferred-file-imports-its-reader/deferred.mjs
+export const loaded = import("./reader.mjs").then(() => "loaded", error => "rejected " + error.name);
+#### deferred-file-imports-its-reader/mid.mjs
+import { loaded } from "./reader.mjs";
+loaded.then(console.log);
+#### deferred-file-imports-its-reader/reader.mjs
+import defer * as deferred from "./deferred.mjs";
+export const loaded = deferred.loaded;
+#### deferred-file-imports-its-reader prints
+loaded
+#### deferred-file-import-is-rejected/main.cjs
+require("./a.mjs");
+#### deferred-file-import-is-rejected/a.mjs
+import defer * as c from "./c.mjs";
+console.log("a sees " + c.value);
+export const value = "A".toLowerCase();
+#### deferred-file-import-is-rejected/b.mjs
+import defer * as a from "./a.mjs";
+console.log("b sees " + a.value);
+#### deferred-file-import-is-rejected/c.mjs
+import("./b.mjs").then(() => console.log("b is in"), error => console.log("rejected: " + error.name));
+export const value = "C".toLowerCase();
+#### deferred-file-import-is-rejected prints
+a sees c
+b sees a
+b is in

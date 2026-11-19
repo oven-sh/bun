@@ -18,26 +18,59 @@
 #ifndef UWS_WEBSOCKETPROTOCOL_H
 #define UWS_WEBSOCKETPROTOCOL_H
 
-#include <libusockets.h>
-
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
 #include <string_view>
 
 // bun-specific
+#include "wtf/Assertions.h"
 #include "wtf/SIMDUTF.h"
 
 namespace uWS {
 
-/* We should not overcomplicate these */
-inline constexpr std::string_view ERR_TOO_BIG_MESSAGE("Received too big message");
 inline constexpr std::string_view ERR_WEBSOCKET_TIMEOUT("WebSocket timed out from inactivity");
-inline constexpr std::string_view ERR_INVALID_TEXT("Received invalid UTF-8");
-inline constexpr std::string_view ERR_TOO_BIG_MESSAGE_INFLATION("Received too big message, or other inflation error");
-inline constexpr std::string_view ERR_INVALID_CLOSE_PAYLOAD("Received invalid close payload");
-inline constexpr std::string_view ERR_INVALID_MASKING("Received an incorrectly masked frame");
-inline constexpr std::string_view ERR_INVALID_RSV1("Received unexpected RSV1 bit");
+
+/* Passed (negated) to a wsPackage context's close handler. Keep in sync with serverFailures in src/js/thirdparty/ws.ts. */
+enum class WebSocketFailureKind : int {
+    ExpectedMask = 1,
+    UnexpectedRsv1,
+    UnexpectedRsv2Or3,
+    InvalidOpcode, /* detail: the opcode */
+    ExpectedFin,
+    InvalidControlPayloadLength, /* detail: the length */
+    InvalidCloseCode, /* detail: the code */
+    InvalidUtf8,
+    MessageTooBig,
+    UnsupportedPayloadLength,
+    InvalidCompressedData,
+    OutOfMemory
+};
+
+/* Reason for failing a connection (RFC 6455 7.1.7) */
+struct WebSocketFailure {
+    WebSocketFailureKind kind;
+    /* Status code sent to the peer (RFC 6455 7.4.1) */
+    uint16_t closeCode;
+    std::string_view diagnostic;
+};
+
+inline constexpr WebSocketFailure FAIL_INVALID_MASKING{WebSocketFailureKind::ExpectedMask, 1002, "Received an incorrectly masked frame"};
+inline constexpr WebSocketFailure FAIL_INVALID_RSV1{WebSocketFailureKind::UnexpectedRsv1, 1002, "Received unexpected RSV1 bit"};
+inline constexpr WebSocketFailure FAIL_INVALID_RSV23{WebSocketFailureKind::UnexpectedRsv2Or3, 1002, "Received unexpected RSV2 or RSV3 bit"};
+inline constexpr WebSocketFailure FAIL_INVALID_OPCODE{WebSocketFailureKind::InvalidOpcode, 1002, "Received invalid opcode"};
+inline constexpr WebSocketFailure FAIL_INVALID_CONTINUATION{WebSocketFailureKind::InvalidOpcode, 1002, "Received continuation frame outside a fragmented message"};
+inline constexpr WebSocketFailure FAIL_INTERLEAVED_MESSAGE{WebSocketFailureKind::InvalidOpcode, 1002, "Received new message inside a fragmented message"};
+inline constexpr WebSocketFailure FAIL_FRAGMENTED_CONTROL_FRAME{WebSocketFailureKind::ExpectedFin, 1002, "Received fragmented control frame"};
+inline constexpr WebSocketFailure FAIL_TOO_BIG_CONTROL_FRAME{WebSocketFailureKind::InvalidControlPayloadLength, 1002, "Received too big control frame"};
+inline constexpr WebSocketFailure FAIL_INVALID_CLOSE_PAYLOAD{WebSocketFailureKind::InvalidControlPayloadLength, 1002, "Received invalid close payload"};
+inline constexpr WebSocketFailure FAIL_INVALID_CLOSE_CODE{WebSocketFailureKind::InvalidCloseCode, 1002, "Received invalid close code"};
+inline constexpr WebSocketFailure FAIL_INVALID_TEXT{WebSocketFailureKind::InvalidUtf8, 1007, "Received invalid UTF-8"};
+inline constexpr WebSocketFailure FAIL_INVALID_COMPRESSED_DATA{WebSocketFailureKind::InvalidCompressedData, 1007, "Received invalid compressed data"};
+inline constexpr WebSocketFailure FAIL_TOO_BIG_MESSAGE{WebSocketFailureKind::MessageTooBig, 1009, "Received too big message"};
+inline constexpr WebSocketFailure FAIL_UNSUPPORTED_LENGTH{WebSocketFailureKind::UnsupportedPayloadLength, 1009, "Received too big message"};
+/* Allocating a buffer for the peer's message failed. See WebSocket::failOutOfMemory(). */
+inline constexpr WebSocketFailure FAIL_OUT_OF_MEMORY{WebSocketFailureKind::OutOfMemory, 1011, "Received message that does not fit in memory"};
 
 enum OpCode : unsigned char {
     CONTINUATION = 0,
@@ -121,27 +154,33 @@ static bool isValidUtf8(unsigned char *s, size_t length)
 
 struct CloseFrame {
     uint16_t code;
-    char *message;
-    size_t length;
+    std::string_view message;
+    /* Non-null if the frame is invalid. code then holds the detail for failConnection(). */
+    const WebSocketFailure *failure;
 };
 
-static inline CloseFrame parseClosePayload(char *src, size_t length) {
+static inline CloseFrame parseClosePayload(char *src, size_t length, bool skipUTF8Validation) {
     /* If we get no code or message, default to reporting 1005 no status code present */
-    CloseFrame cf = {1005, nullptr, 0};
-    if (length >= 2) {
-        memcpy(&cf.code, src, 2);
-        cf = {cond_byte_swap<uint16_t>(cf.code), src + 2, length - 2};
-        // RFC 6455 §7.4: 1000-1015 defined, 1016-2999 reserved (MUST NOT be
-        // used), 3000-3999 IANA-registered for libraries/frameworks, 4000-4999
-        // private use. 1004/1005/1006/1015 are not valid on the wire.
-        if (cf.code < 1000 || cf.code > 4999 || (cf.code > 1015 && cf.code < 3000) ||
-            (cf.code >= 1004 && cf.code <= 1006) || cf.code == 1015 ||
-            !isValidUtf8((unsigned char *) cf.message, cf.length)) {
-            /* Even though we got a WebSocket close frame, it in itself is abnormal */
-            return {1006, nullptr, 0};
-        }
+    if (!length) {
+        return {1005, {}, nullptr};
     }
-    return cf;
+    if (length < 2) {
+        return {1, {}, &FAIL_INVALID_CLOSE_PAYLOAD};
+    }
+    uint16_t code;
+    memcpy(&code, src, 2);
+    code = cond_byte_swap<uint16_t>(code);
+    // RFC 6455 §7.4: 1000-1015 defined, 1016-2999 reserved (MUST NOT be
+    // used), 3000-3999 IANA-registered for libraries/frameworks, 4000-4999
+    // private use. 1004/1005/1006/1015 are not valid on the wire.
+    if (code < 1000 || code > 4999 || (code > 1015 && code < 3000) ||
+        (code >= 1004 && code <= 1006) || code == 1015) {
+        return {code, {}, &FAIL_INVALID_CLOSE_CODE};
+    }
+    if (!skipUTF8Validation && !isValidUtf8((unsigned char *) src + 2, length - 2)) {
+        return {code, {}, &FAIL_INVALID_TEXT};
+    }
+    return {code, {src + 2, length - 2}, nullptr};
 }
 
 static inline size_t formatClosePayload(char *dst, uint16_t code, const char *message, size_t length) {
@@ -242,21 +281,42 @@ protected:
     static inline bool rsv1(char *frame) {return *((unsigned char *) frame) & 64;}
     static inline bool isMasked(char *frame) {return ((unsigned char *) frame)[1] & 128;}
 
-    template <int N>
-    static inline void UnrolledXor(char * __restrict data, char * __restrict mask) {
-        if constexpr (N != 1) {
-            UnrolledXor<N - 1>(data, mask);
+    /* Reads all N bytes of src before it writes any of dst, so the two may overlap. */
+    template <unsigned int N>
+    static inline void unmaskBlock(char *dst, const char *src, uint32_t mask) {
+        uint32_t words[N / sizeof(uint32_t)];
+        memcpy(words, src, N);
+        for (uint32_t &word : words) {
+            word ^= mask;
         }
-        data[N - 1] ^= mask[(N - 1) % 4];
+        memcpy(dst, words, N);
+    }
+
+    template <unsigned int N>
+    static inline void unmaskTail(char *dst, const char *src, uint32_t mask, size_t length) {
+        if (length & N) {
+            unmaskBlock<N>(dst, src, mask);
+            dst += N;
+            src += N;
+        }
+        if constexpr (N > sizeof(uint32_t)) {
+            unmaskTail<N / 2>(dst, src, mask, length);
+        }
+    }
+
+    /* Block by block: clang compiles the equivalent loop over bytes to code that is many times slower on x64. */
+    static inline void unmaskWords(char *dst, const char *src, const char *mask, size_t length) {
+        ASSERT(dst <= src && length % sizeof(uint32_t) == 0);
+        uint32_t mask32;
+        memcpy(&mask32, mask, sizeof(mask32));
+        for (; length >= 64; length -= 64, dst += 64, src += 64) {
+            unmaskBlock<64>(dst, src, mask32);
+        }
+        unmaskTail<32>(dst, src, mask32, length);
     }
 
     static inline void unmaskImprecise(char *dst, char *src, char *mask, unsigned int length) {
-        for (unsigned int n = (length >> 2) + 1; n; n--) {
-            *(dst++) = *(src++) ^ mask[0];
-            *(dst++) = *(src++) ^ mask[1];
-            *(dst++) = *(src++) ^ mask[2];
-            *(dst++) = *(src++) ^ mask[3];
-        }
+        unmaskWords(dst, src, mask, ((size_t) (length >> 2) + 1) * 4);
     }
 
     static inline void unmaskImpreciseCopyMask(char *src, unsigned int length) {
@@ -273,30 +333,26 @@ protected:
     }
 
     static inline void unmaskInplace(char *data, char *stop, char *mask) {
-        while (data < stop) {
-            *(data++) ^= mask[0];
-            *(data++) ^= mask[1];
-            *(data++) ^= mask[2];
-            *(data++) ^= mask[3];
-        }
+        unmaskWords(data, data, mask, (size_t) (stop - data));
     }
 
     template <unsigned int MESSAGE_HEADER, typename T>
     static inline bool consumeMessage(T payLength, char *&src, unsigned int &length, WebSocketState<isServer> *wState, void *user) {
         if (getOpCode(src)) {
-            if (wState->state.opStack == 1 || (!wState->state.lastFin && getOpCode(src) < 2)) {
-                Impl::forceClose(wState, user);
+            if (wState->state.opStack == 1 || (getOpCode(src) < 3 && wState->state.opStack != -1)) {
+                Impl::failConnection(wState, user, FAIL_INTERLEAVED_MESSAGE, getOpCode(src));
                 return true;
             }
             wState->state.opCode[++wState->state.opStack] = (OpCode) getOpCode(src);
         } else if (wState->state.opStack == -1) {
-            Impl::forceClose(wState, user);
+            Impl::failConnection(wState, user, FAIL_INVALID_CONTINUATION, 0);
             return true;
         }
         wState->state.lastFin = isFin(src);
 
-        if (Impl::refusePayloadLength(payLength, wState, user)) {
-            Impl::forceClose(wState, user, ERR_TOO_BIG_MESSAGE);
+        /* maxPayloadLength doesn't apply to control frames. Their 125 byte limit is checked in consume(). */
+        if (Impl::refusePayloadLength(payLength, wState, user) && getOpCode(src) < 8) {
+            Impl::failConnection(wState, user, (uint64_t) payLength >> 53 ? FAIL_UNSUPPORTED_LENGTH : FAIL_TOO_BIG_MESSAGE);
             return true;
         }
 
@@ -337,13 +393,6 @@ protected:
         }
     }
 
-    /* This one is nicely vectorized on both ARM64 and X64 - especially with -mavx */
-    static inline void unmaskAll(char * __restrict data, char * __restrict mask) {
-        for (int i = 0; i < LIBUS_RECV_BUFFER_LENGTH; i += 16) {
-            UnrolledXor<16>(data + i, mask);
-        }
-    }
-
     static inline bool consumeContinuation(char *&src, unsigned int &length, WebSocketState<isServer> *wState, void *user) {
         if (wState->remainingBytes <= length) {
             if (isServer) {
@@ -371,12 +420,7 @@ protected:
                 /* No need to unmask if mask is 0 */
                 uint32_t nullmask = 0;
                 if (memcmp(wState->mask, &nullmask, sizeof(uint32_t))) {
-                    if /*constexpr*/ (LIBUS_RECV_BUFFER_LENGTH == length) {
-                        unmaskAll(src, wState->mask);
-                    } else {
-                        // Slow path
-                        unmaskInplace(src, src + ((length >> 2) + 1) * 4, wState->mask);
-                    }
+                    unmaskInplace(src, src + ((length + 3) & ~3u), wState->mask);
                 }
             }
 
@@ -411,7 +455,7 @@ public:
                  * The MESSAGE_HEADER constants assume the mask bit matches our role, so a
                  * mismatched frame would otherwise desync the parser. */
                 if (isMasked(src) != isServer) {
-                    Impl::forceClose(wState, user, ERR_INVALID_MASKING);
+                    Impl::failConnection(wState, user, FAIL_INVALID_MASKING);
                     return;
                 }
 
@@ -419,14 +463,22 @@ public:
                  * only if negotiated (RFC 7692 6.1). A control frame or continuation must never
                  * reach setCompressed(): the armed flag would inflate the next data frame. */
                 if (rsv1(src) && (getOpCode(src) == 0 || getOpCode(src) > 2 || !Impl::setCompressed(wState, user))) {
-                    Impl::forceClose(wState, user, ERR_INVALID_RSV1);
+                    Impl::failConnection(wState, user, FAIL_INVALID_RSV1);
                     return;
                 }
 
                 // invalid reserved bits / invalid opcodes / invalid control frames
                 if (rsv23(src) || (getOpCode(src) > 2 && getOpCode(src) < 8) ||
                     getOpCode(src) > 10 || (getOpCode(src) > 2 && (!isFin(src) || payloadLength(src) > 125))) {
-                    Impl::forceClose(wState, user);
+                    if (rsv23(src)) {
+                        Impl::failConnection(wState, user, FAIL_INVALID_RSV23);
+                    } else if (getOpCode(src) < 8 || getOpCode(src) > 10) {
+                        Impl::failConnection(wState, user, FAIL_INVALID_OPCODE, getOpCode(src));
+                    } else if (!isFin(src)) {
+                        Impl::failConnection(wState, user, FAIL_FRAGMENTED_CONTROL_FRAME);
+                    } else {
+                        Impl::failConnection(wState, user, FAIL_TOO_BIG_CONTROL_FRAME, payloadLength(src));
+                    }
                     return;
                 }
 
@@ -450,7 +502,7 @@ public:
              * bit is already visible once the 2-byte base header is in: an unmasked frame
              * must be refused now, not spilled until enough of a masked header arrives. */
             if (isServer && length >= 2 && !isMasked(src)) {
-                Impl::forceClose(wState, user, ERR_INVALID_MASKING);
+                Impl::failConnection(wState, user, FAIL_INVALID_MASKING);
                 return;
             }
             if (length) {

@@ -133,5 +133,6 @@ test("TextDecoder - ISO-8859-5 encoding", () => {
 test("TextDecoder - replacement encoding is rejected", () => {
   // https://encoding.spec.whatwg.org/#dom-textdecoder: the constructor must
   // throw a RangeError for the `replacement` encoding and all of its labels.
+  // @ts-expect-error
   expect(() => new TextDecoder("replacement")).toThrow(RangeError);
 });

@@ -90,12 +90,13 @@ Then `bun run ci:watch` and fix anything that turns up.
 - **`EVP_PBE_validate_scrypt_params`** — `crypto/evp/scrypt.cc`, `include/openssl/evp.h`
 - **Electron `SSL_want` / `EVP_CIPHER_do_all_sorted`** — `ssl/ssl_lib.cc` (return `rwstate` directly), `ssl/ssl_test.cc` (drops the corresponding test block), `decrepit/evp/evp_do_all.cc`, `crypto/cipher/get_cipher.cc`, `include/openssl/cipher.h`
 - **MLDSA stack-frame pragma** — `crypto/fipsmodule/mldsa/mldsa.cc.inc`
+- **PKCS#1 v1.5 signature prefixes for the digests above** — `crypto/fipsmodule/rsa/rsa.cc.inc` (`kPKCS1SigPrefixes` rows for SHA-512/224, SHA-512/256, SHA3-\* and RIPEMD-160), `crypto/rsa/rsa_test.cc`
 
 If upstream upstreams any of these (check `git grep` on `upstream/main` before re-applying), drop the fork's copy.
 
 ## Things that have broken before
 
-- **`SSL_CTX` / `SSL_ECH_KEYS` / `SSL_CREDENTIAL` made opaque** — Bun's Rust FFI (`src/boringssl_sys/boringssl.rs`) treats them as opaque already, so this is fine, but check `packages/bun-usockets/src/crypto/openssl.c` for any direct field access.
+- **`SSL_CTX` / `SSL_ECH_KEYS` / `SSL_CREDENTIAL` made opaque** — Bun's Rust FFI (`src/boringssl_sys/boringssl.rs`) treats them as opaque already, so this is fine, but check `packages/bun-usockets/src/crypto/openssl.cpp` for any direct field access.
 - **`BIO_read`/`BIO_write` error-value narrowing** — can change `SSL_read` error paths over memory BIOs (`SSLWrapper` for TLS-over-duplex). If `node-tls-connect.test.ts` crashes in `flush_pending_events`, see `src/runtime/socket/UpgradedDuplex.rs::teardown` and `WindowsNamedPipe.rs`'s `WRAPPER_BUSY` for the re-entrant-drop guard.
 - **Per-handshake allocation churn (PQ key shares)** grows under ASAN quarantine; RSS-delta tests like `tls-connect-socket-churn.test.ts` may need their `isASAN` bound raised. The `sslCtxLiveCount` check is the real regression guard there — if that passes and LSAN is clean, raise the RSS bound.
 - **`asn1_string_st` / `GENERAL_NAME_st` layout** — Bun mirrors these in `src/boringssl_sys/boringssl.rs`; diff `include/openssl/{asn1,x509v3}.h` for field changes.

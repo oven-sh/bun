@@ -3,6 +3,10 @@ import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { totalmem } from "node:os";
+import { createContext, runInContext } from "node:vm";
+import storesThatEndInADefinition from "../../bun/jsc/stores-that-end-in-a-definition-fixture.js";
+
+const storesFixture = join(import.meta.dir, "..", "..", "bun", "jsc", "stores-that-end-in-a-definition-fixture.js");
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -1390,6 +1394,42 @@ test("captureStackTrace does not crash when stackTraceLimit is non-numeric", () 
   }
 });
 
+test.concurrent.each([
+  ["NaN", `Error.stackTraceLimit = NaN;`],
+  ["a string", `Error.stackTraceLimit = "foo";`],
+  ["an accessor", `Object.defineProperty(Error, "stackTraceLimit", { get: () => 10 });`],
+  ["deleted", `delete Error.stackTraceLimit;`],
+])("Error.appendStackTrace does not crash when stackTraceLimit is %s", async (_, setup) => {
+  // An error made under such a limit has no frames, so appendStackTrace captures them first.
+  const src = `${setup}
+    const source = new Error("source"), destination = new Error("destination");
+    Error.appendStackTrace(source, destination);
+    console.log(typeof destination.stack);`;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({ stdout: "undefined", signalCode: null });
+  expect(exitCode).toBe(0);
+});
+
+test("Error.appendStackTrace keeps the stack trace when the source and destination are the same error", () => {
+  function f(n) {
+    if (n > 0) return f(n - 1) + 1;
+    try {
+      null();
+    } catch (e) {
+      Error.appendStackTrace(e, e);
+      expect(e.stack).toContain("at f ");
+    }
+    return 0;
+  }
+  f(64);
+});
+
 test("Error.stackTraceLimit default matches the limit captureStackTrace applies", async () => {
   // Run in a fresh process so nothing has written to Error.stackTraceLimit yet.
   const src = `
@@ -1414,6 +1454,48 @@ test("Error.stackTraceLimit default matches the limit captureStackTrace applies"
   const { reported, before, after } = JSON.parse(stdout);
   // Node.js defaults to 10 and the reported value must match the applied limit.
   expect({ reported, before, after, exitCode }).toEqual({ reported: 10, before: 10, after: 10, exitCode: 0 });
+});
+
+test.concurrent("Error.stackTraceLimit assignments keep applying after the assignment site gets hot", async () => {
+  // Runs in a fresh process so that the JIT state of each assignment site starts cold.
+  const src = `
+    // try/finally keeps each call out of tail position, so every helper stays on the stack.
+    function f3() { return new Error("L").stack.split("\\n").length - 1; }
+    function f2() { try { return f3(); } finally {} }
+    function f1() { try { return f2(); } finally {} }
+    function f0() { try { return f1(); } finally {} }
+
+    function store(n) { Error.stackTraceLimit = n; }
+    const key = "stackTraceLimit";
+    function storeByVal(n) { Error[key] = n; }
+    // The load gives the optimizing JIT a proven structure for the base of the store.
+    function loadThenStore(n) { const previous = Error.stackTraceLimit; Error.stackTraceLimit = n; return previous; }
+
+    const failures = [];
+    for (const site of [store, storeByVal, loadThenStore]) {
+      for (let i = 0; i < 3000; i++) {
+        const want = 1 + (i % 3);
+        site(want);
+        // Creating an Error is slow in debug builds. Check the first iterations, then a sample.
+        if (i >= 64 && i % 199 !== 0) continue;
+        const got = f0();
+        if (got !== want) {
+          failures.push({ site: site.name, iteration: i, assigned: want, readback: Error.stackTraceLimit, frames: got });
+          break;
+        }
+      }
+    }
+    process.stdout.write(JSON.stringify(failures));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    // Without compiler threads each site reaches the optimizing JIT at a fixed iteration.
+    env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("[]");
+  expect(exitCode).toBe(0);
 });
 
 test("call sites inside a WebSocket message listener only contain script frames when the message arrives with the upgrade response", async () => {
@@ -2066,3 +2148,168 @@ test.skipIf(totalmem() < 10 * 1024 ** 3)(
   },
   30_000,
 );
+
+test.each([
+  ["a Proxy", () => new Proxy({}, {})],
+  ["a Proxy of an Error", () => new Proxy(new Error("target"), {})],
+  [
+    "a revoked Proxy",
+    () => {
+      const { proxy, revoke } = Proxy.revocable({}, {});
+      revoke();
+      return proxy;
+    },
+  ],
+  ["import.meta.env", () => import.meta.env],
+])("Error.captureStackTrace throws for %s, as V8 does for a Proxy", (_, object) => {
+  expect(() => Error.captureStackTrace(object())).toThrow(
+    expect.objectContaining({ name: "TypeError", message: "invalid_argument" }),
+  );
+});
+
+test("Error.captureStackTrace accepts objects that aren't themselves a Proxy", () => {
+  const context = createContext({});
+  const inherits = Object.create(new Proxy({}, {}));
+  Error.captureStackTrace(inherits);
+  function fn() {}
+  Error.captureStackTrace(fn);
+  expect({
+    // Like Node, neither call throws and neither leaves a `stack` property behind.
+    globalOfContextFromInside: runInContext("Error.captureStackTrace(globalThis); typeof globalThis.stack", context),
+    globalOfContextFromOutside: Error.captureStackTrace(runInContext("this", context)),
+    inherits: typeof inherits.stack,
+    fn: typeof fn.stack,
+  }).toEqual({
+    globalOfContextFromInside: "undefined",
+    globalOfContextFromOutside: undefined,
+    inherits: "string",
+    fn: "string",
+  });
+});
+
+test("Error.captureStackTrace rejects a WebAssembly GC object", () => {
+  // (type $s (struct (field (mut i32))))
+  // (func (export "mk") (result (ref null $s)) struct.new_default $s)
+  // prettier-ignore
+  const bytes = new Uint8Array([
+    0, 0x61, 0x73, 0x6d, 1, 0, 0, 0,
+    1, 10, 2, 0x5f, 1, 0x7f, 1, 0x60, 0, 1, 0x63, 0,
+    3, 2, 1, 1,
+    7, 6, 1, 2, 0x6d, 0x6b, 0, 0,
+    10, 7, 1, 5, 0, 0xfb, 1, 0, 0x0b,
+  ]);
+  const struct = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
+  expect(() => Error.captureStackTrace(struct)).toThrow(new TypeError("invalid_argument"));
+});
+
+// Error.prepareStackTrace is a data property to a script, and native code keeps the function it calls. Each store of
+// the fixture ends in a definition of the value on Error, and that definition has to reach the native side: a
+// definition that puts a plain value in the property's place leaves every later store without effect.
+// A class field is left out. It says that the property is enumerable, and Error.prepareStackTrace is not: a definition
+// that changes an attribute puts a plain value in the property's place.
+const storesOnError = Object.keys(storesThatEndInADefinition).filter(what => !what.startsWith("a class field"));
+
+test.concurrent(
+  "Error.prepareStackTrace: every store that ends in a definition on Error installs the function",
+  async () => {
+    const src = `
+    const fixture = require(${JSON.stringify(storesFixture)});
+    const stores = Object.fromEntries(${JSON.stringify(storesOnError)}.map(what => [what, fixture[what]]));
+    const { getCallSites } = require("node:util");
+    // Code of a node:vm context reaches the property of this realm's Error too.
+    const inContext = require("node:vm").runInNewContext;
+    Object.assign(stores, {
+      "a proxy made in a node:vm context": (target, name, value) => {
+        inContext("target => new Proxy(target, {})")(target)[name] = value;
+      },
+      "a proxy, by code of a node:vm context": inContext(
+        "(target, name, value) => { new Proxy(target, {})[name] = value; }",
+      ),
+      "Object.defineProperty with a value, by code of a node:vm context": inContext(
+        "(target, name, value) => { Object.defineProperty(target, name, { value }); }",
+      ),
+    });
+    const formatter = who => (error, callSites) =>
+      who + " formats " + error.message + " from " + (Array.isArray(callSites) ? "call sites" : typeof callSites);
+    function callSitesHere() {
+      return getCallSites();
+    }
+    const results = {};
+    for (const [what, store] of Object.entries(stores)) {
+      const first = formatter("the first");
+      store(Error, "prepareStackTrace", first);
+      const readBack = Error.prepareStackTrace === first;
+      const stored = new Error("one").stack;
+      Error.prepareStackTrace = formatter("the second");
+      const storedDirectly = new Error("two").stack;
+      // util.getCallSites() stores a function of its own for one capture, and the previous one again.
+      const callSites = callSitesHere();
+      const afterGetCallSites = new Error("three").stack;
+      new Proxy(Error, {}).prepareStackTrace = undefined;
+      const cleared = new Error("four").stack.split("\\n")[0];
+      results[what] = [
+        readBack,
+        stored,
+        storedDirectly,
+        Array.isArray(callSites) ? callSites[0].functionName : typeof callSites,
+        afterGetCallSites,
+        cleared,
+        JSON.stringify(Object.getOwnPropertyDescriptor(Error, "prepareStackTrace")),
+      ];
+    }
+    console.log(JSON.stringify(results));
+  `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const names = [
+      ...storesOnError,
+      "a proxy made in a node:vm context",
+      "a proxy, by code of a node:vm context",
+      "Object.defineProperty with a value, by code of a node:vm context",
+    ];
+    expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+      stdout: Object.fromEntries(
+        names.map(what => [
+          what,
+          [
+            true,
+            "the first formats one from call sites",
+            "the second formats two from call sites",
+            "callSitesHere",
+            "the second formats three from call sites",
+            "Error: four",
+            `{"writable":true,"enumerable":false,"configurable":true}`,
+          ],
+        ]),
+      ),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent("a stack taken while a CommonJS module loads names the frame of require() anonymous", async () => {
+  using dir = tempDir("stack-while-commonjs-loads", {
+    "main.cjs": `require("./child.cjs");`,
+    "child.cjs": [
+      `const line = new Error().stack.split("\\n")[2];`,
+      `Error.prepareStackTrace = (_error, callSites) => callSites[1];`,
+      `const callSite = new Error().stack;`,
+      `console.log(JSON.stringify({ line, name: callSite.getFunctionName(), text: String(callSite) }));`,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.cjs"],
+    cwd: String(dir),
+    // Debug builds show the frames of builtin JavaScript unless this is off.
+    env: { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+    stdout: { line: "    at anonymous (unknown)", name: "anonymous", text: "anonymous (native)" },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});

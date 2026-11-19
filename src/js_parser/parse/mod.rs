@@ -101,33 +101,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn parse_yield_expr(&mut self, loc: bun_ast::Loc) -> Result<Expr, Error> {
         let p = self;
-        // Parse a yield-from expression, which yields from an iterator
-        let is_star = p.lexer.token == T::TAsterisk;
-
-        if is_star {
-            if p.lexer.has_newline_before {
-                p.lexer.unexpected()?;
-                return Err(crate::Error::SyntaxError);
-            }
-            p.lexer.next()?;
-        }
-
+        let mut is_star = false;
         let mut value: Option<ExprNodeIndex> = None;
-        match p.lexer.token {
-            T::TCloseBrace
-            | T::TCloseParen
-            | T::TCloseBracket
-            | T::TColon
-            | T::TComma
-            | T::TSemicolon => {}
-            _ => {
-                if is_star || !p.lexer.has_newline_before {
-                    value = Some(p.parse_expr(Level::Yield)?);
-                }
+        // Nothing after a line break belongs to the "yield".
+        if !p.lexer.has_newline_before {
+            // Parse a yield-from expression, which yields from an iterator
+            is_star = p.lexer.token == T::TAsterisk;
+            if is_star {
+                p.lexer.next()?;
+            }
+            // After "*" the operand is parsed whatever follows.
+            if is_star || p.is_start_of_expression_or_shift_assign() {
+                value = Some(p.parse_expr(Level::Yield)?);
             }
         }
 
+        // `parseAssignmentExpressionOrHigher` returns it as it is: like the body of an arrow
+        // function it ends the assignment expression.
+        p.after_arrow_body_loc = p.lexer.loc();
         Ok(p.new_expr(E::Yield { value, is_star }, loc))
+    }
+
+    /// `isStartOfExpression`. TypeScript's scanner always produces `>` first and only rescans on request, so until then `>>=` and `>>>=`
+    /// count as binary operators, and a binary operator counts as the start of an expression with a missing left operand.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn is_start_of_expression_or_shift_assign(&mut self) -> bool {
+        self.is_start_of_expression()
+            || matches!(
+                self.lexer.token,
+                T::TGreaterThanGreaterThanEquals | T::TGreaterThanGreaterThanGreaterThanEquals
+            )
     }
 
     // By the time we call this, the identifier and type parameters have already
@@ -209,7 +213,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let first_decorator_loc = p.lexer.loc();
             let property_scope_index = p.scopes_in_order.len();
             if opts.allow_ts_decorators {
-                opts.ts_decorators = p.parse_type_script_decorators()?;
+                opts.ts_decorators = p.parse_type_script_decorators()?.into();
                 opts.has_class_decorators = class_opts.ts_decorators.len() > 0;
                 has_decorators = has_decorators || opts.ts_decorators.len() > 0;
             }
@@ -218,16 +222,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if let Some(property) =
                 p.parse_property(js_ast::g::PropertyKind::Normal, &mut opts, None)?
             {
-                // read fields before move (G::Property is not Copy).
-                let prop_kind = property.kind;
-                let prop_key = property.key;
+                if let Some(starts) = &mut p.starts_for_parse_only {
+                    let named_at = match property.class_static_block_ref() {
+                        Some(block) => Some(block.loc),
+                        None => property.key.map(|key| key.loc),
+                    };
+                    if let Some(named_at) = named_at {
+                        starts
+                            .class_elements
+                            .insert(named_at.start, first_decorator_loc.start);
+                    }
+                }
                 properties.push(property);
                 has_auto_accessor =
-                    has_auto_accessor || prop_kind == js_ast::g::PropertyKind::AutoAccessor;
+                    has_auto_accessor || property.kind == js_ast::g::PropertyKind::AutoAccessor;
 
                 // Forbid decorators on class constructors
                 if opts.ts_decorators.len() > 0 {
-                    if let Some(key) = prop_key {
+                    if let Some(key) = property.key {
                         if let js_ast::expr::Data::EString(str_) = &key.data {
                             if str_.eql_comptime(b"constructor") {
                                 p.log().add_error(
@@ -262,19 +274,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.expect(T::TCloseBrace)?;
 
         let has_any_decorators = has_decorators || class_opts.ts_decorators.len() > 0;
-        // `Expr: Copy` — safe arena-slice → owned Vec (one memcpy, no double-drop).
-        let ts_decorators = ExprNodeList::from_arena_slice(class_opts.ts_decorators);
         Ok(G::Class {
             class_name: name,
             extends,
             close_brace_loc,
-            ts_decorators,
+            // `class_opts` holds a shared slice; the visit pass writes to this one.
+            ts_decorators: ExprNodeList::from_arena_slice(class_opts.ts_decorators)
+                .leak()
+                .into(),
             class_keyword,
             body_loc,
             properties: bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut()),
             has_decorators: has_any_decorators,
             should_lower_standard_decorators: p.options.features.standard_decorators
                 && (has_any_decorators || has_auto_accessor),
+            assigns_fields_in_constructor: false,
+            inner_class_ref: js_ast::Ref::NONE,
         })
     }
 
@@ -570,7 +585,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 } else {
                     // Otherwise, do the less expensive check
-                    is_arrow_fn = p.try_skip_type_script_arrow_return_type_with_backtracking();
+                    is_arrow_fn = p.try_skip_type_script_arrow_return_type_with_backtracking()?;
                 }
             }
 
@@ -1138,6 +1153,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if p.lexer.has_newline_before {
                         is_single_line = false;
                     }
+                    let close_brace_loc = p.lexer.loc();
                     p.lexer.expect(T::TCloseBrace)?;
 
                     return Ok(p.b(
@@ -1146,6 +1162,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 properties.into_bump_slice_mut(),
                             ),
                             is_single_line,
+                            close_brace_loc,
                         },
                         loc,
                     ));
@@ -1452,6 +1469,56 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(path)
     }
 
+    /// What the string literal statement at `loc`, a member of a directive prologue, becomes:
+    /// an `S::Directive`, or an `S::Empty` when it is dropped. `None` leaves it as it is.
+    /// `is_prologue` is false for the string that `keep_directives` keeps at the start of a
+    /// list that has no prologue: it does not make the code strict.
+    #[cold]
+    #[inline(never)]
+    fn directive_data(
+        &mut self,
+        loc: bun_ast::Loc,
+        string: &E::String,
+        is_prologue: bool,
+    ) -> Option<js_ast::stmt::Data> {
+        let p = self;
+        let source: &'a bun_ast::Source<'a> = p.source;
+        let dropped = Some(js_ast::stmt::Data::SEmpty(S::Empty {}));
+        let is_use_strict = is_prologue && is_use_strict_token(source.contents(), loc);
+
+        if is_use_strict {
+            mark_use_strict(p.current_scope);
+        }
+
+        let value: &'a [u8] = if p.options.keep_directives {
+            // The text is kept as written because an escape makes it a different directive.
+            string_token_text(source.contents(), loc)
+        } else if !is_use_strict && string.eql_comptime(b"use strict") {
+            // `"use\x20strict"` has the value of a Use Strict Directive but is not one, and
+            // the printer writes the value. As the last statement of a REPL line it stays a
+            // string expression, which is the result of the line.
+            return if p.options.repl_mode
+                && p.current_scope == p.module_scope
+                && p.lexer.token == T::TEndOfFile
+            {
+                None
+            } else {
+                dropped
+            };
+        } else if string.eql_comptime(b"use asm") && !p.options.repl_mode {
+            // In the REPL the directive stays a string
+            // statement so it evaluates as the result,
+            // like node ('use asm' prints 'use asm').
+            return dropped;
+        } else {
+            string.string(p.arena).expect("OOM")
+        };
+        let directive = S::Directive {
+            value: bun_ast::StoreStr::new(value),
+        };
+        Some(Stmt::alloc(directive, loc).data)
+    }
+
     pub(crate) fn parse_stmts_up_to(
         &mut self,
         eend: T,
@@ -1463,7 +1530,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut return_without_semicolon_start: i32 = -1;
         opts.lexical_decl = LexicalDecl::AllowAll;
-        let mut is_directive_prologue = true;
+        let is_prologue = core::mem::take(&mut opts.allow_directive_prologue);
+        // `keep_directives` keeps the string that starts any list of statements, as it is written.
+        let mut is_directive_prologue = is_prologue || p.options.keep_directives;
 
         loop {
             for comment in p.lexer.comments_to_preserve_before.iter() {
@@ -1490,35 +1559,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Parse one or more directives at the beginning
             if is_directive_prologue {
                 is_directive_prologue = false;
-                if let js_ast::stmt::Data::SExpr(expr) = &stmt.data {
-                    if let js_ast::expr::Data::EString(str_) = &expr.value.data {
-                        if !str_.prefer_template {
-                            is_directive_prologue = true;
-
-                            if str_.eql_comptime(b"use strict") {
-                                skip = true;
-                                // Track "use strict" directives
-                                p.current_scope_mut().strict_mode =
-                                    StrictModeKind::ExplicitStrictMode;
-                                if p.current_scope == p.module_scope {
-                                    p.module_scope_directive_loc = stmt.loc;
-                                }
-                            } else if str_.eql_comptime(b"use asm") && !p.options.repl_mode {
-                                // In the REPL the directive stays a string
-                                // statement so it evaluates as the result,
-                                // like node ('use asm' prints 'use asm').
-                                skip = true;
-                                stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
-                            } else {
-                                let bytes = str_.string(p.arena).expect("OOM");
-                                stmt = Stmt::alloc(
-                                    S::Directive {
-                                        value: bun_ast::StoreStr::new(bytes),
-                                    },
-                                    stmt.loc,
-                                );
-                            }
-                        }
+                if let js_ast::stmt::Data::SExpr(expr) = &stmt.data
+                    && let js_ast::expr::Data::EString(str_) = &expr.value.data
+                    // A directive is a string literal token that starts the statement:
+                    // `("use strict")` and a template literal end the prologue.
+                    && !str_.prefer_template
+                    && expr.value.loc.start == stmt.loc.start
+                {
+                    is_directive_prologue = true;
+                    let string = *str_;
+                    if let Some(data) = p.directive_data(stmt.loc, &string, is_prologue) {
+                        skip = matches!(data, js_ast::stmt::Data::SEmpty(_));
+                        stmt.data = data;
                     }
                 }
             }
@@ -1580,6 +1632,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         flags: EFlags,
     ) -> Result<Expr, Error> {
         let p = self;
+        if let Some(starts) = &mut p.starts_for_parse_only {
+            starts
+                .async_arrow_parameters
+                .insert(async_range.loc.start, p.lexer.loc().start);
+        }
         // "async function() {}"
         if !p.lexer.has_newline_before && p.lexer.token == T::TFunction {
             return p.parse_fn_expr(async_range.loc, true);
@@ -1685,7 +1742,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     {
                         match p
                             .try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
-                            ) {
+                            )? {
                             SkipTypeParameterResult::DidNotSkipAnything => {}
                             result => {
                                 p.lexer.next()?;
@@ -1719,4 +1776,38 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             async_range.loc,
         ))
     }
+}
+
+/// A Use Strict Directive is the token `"use strict"` or `'use strict'`. An escape or a line
+/// continuation gives the same string value but no directive.
+fn is_use_strict_token(contents: &[u8], loc: bun_ast::Loc) -> bool {
+    const RAW: &[u8] = b"use strict";
+    let start = loc.i() + 1;
+    let end = start + RAW.len();
+    contents.get(start..end) == Some(RAW) && contents.get(end) == contents.get(loc.i())
+}
+
+/// What a Use Strict Directive does to the scope of the body it starts.
+fn mark_use_strict(mut scope: js_ast::StoreRef<js_ast::Scope>) {
+    scope.strict_mode = StrictModeKind::ExplicitStrictMode;
+    // The directive of a function body also makes its parameters strict:
+    // `function f(arguments) { "use strict" }` is a syntax error.
+    if scope.kind == js_ast::scope::Kind::FunctionBody
+        && let Some(mut parent) = scope.parent
+        && parent.kind == js_ast::scope::Kind::FunctionArgs
+        && parent.strict_mode == StrictModeKind::SloppyMode
+    {
+        // The scopes that they already hold follow in `hoist_symbols`: this attempt at a function can still be abandoned.
+        parent.strict_mode = StrictModeKind::ExplicitStrictMode;
+    }
+}
+
+/// The text between the quotes of the string literal token at `loc`, as it is written.
+fn string_token_text(contents: &[u8], loc: bun_ast::Loc) -> &[u8] {
+    let text = &contents[loc.i()..];
+    let mut end = 1;
+    while text.get(end).is_some_and(|c| *c != text[0]) {
+        end += 1 + usize::from(text[end] == b'\\');
+    }
+    &text[1..end.min(text.len())]
 }

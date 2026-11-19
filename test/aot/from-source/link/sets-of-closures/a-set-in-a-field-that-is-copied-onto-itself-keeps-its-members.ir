@@ -1,0 +1,17 @@
+# -- source: main.js
+# function First(text) { this.text = text; }
+# function Second(text) { this.text = text; }
+# function record(make, count) { return { make, count }; }
+# function build(held, text) { const make = held.make; return new make(text); }
+# function one() { let held = record(First, 1); held = { ...held }; return build(held, "x").text + held.count; }
+# function two() { const held = record(Second, 2); return build(held, "y").text + held.count; }
+# print(one(), two(), new First("a").text, new Second("b").text);
+# -- end of source
+# Two constructor functions meet in the field `make` of one layout of records and are only constructed. The spread copies the field onto itself: it asks whether the field is asked and looks at nothing. If it lost the set, whether the two are known would hang on whether somebody had asked the field before, and on a large program the flow rested where its rules still added something.
+# OPTIONS: check=FlowFixpoint
+# RUN: link functions mechanisms=all
+# CHECK: function f1 callers-known
+# CHECK: function f2 callers-known
+# RUN(ANSWER): run-in-shell
+# ANSWER: x1 y2 a b
+# ANSWER-NEXT: exited with 0

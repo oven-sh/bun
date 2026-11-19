@@ -3,9 +3,10 @@
 // disposition with `bun.sys.sigaction(sig, …)`. `SIGKILL`/`SIGSTOP` can't
 // have their disposition changed, so libc returns `EINVAL` there — that
 // must not reach `std.posix.sigaction`'s `else => unreachable`.
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isPosix, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isGlibc, isLinux, isPosix, tempDir } from "harness";
 import { constants } from "os";
+import { join } from "path";
 
 test.skipIf(!isPosix)("bun run propagates SIGKILL from a child without hitting unreachable", async () => {
   using dir = tempDir("run-sigkill", {
@@ -66,4 +67,58 @@ test.skipIf(!isPosix).each(signaled)("bun run reports and re-raises signal %d", 
   expect(lines[1]).toContain(message);
   expect(stdout).toBe("");
   expect(exitCode).toBe(128 + signal);
+});
+
+// The kernel discards a default-action signal that PID 1 of a pid namespace sends to itself.
+// A preloaded no-op raise() simulates that.
+const cc = Bun.which("cc") || Bun.which("clang") || Bun.which("gcc");
+describe.concurrent.skipIf(!cc || !isGlibc)("exits 128 + signo when the re-raise is discarded", () => {
+  function project() {
+    const dir = tempDir("run-discarded-raise", {
+      "package.json": JSON.stringify({ name: "t", scripts: { go: "kill -TERM $$" } }),
+      "raise.c": "int raise(int sig) { (void)sig; return 0; }\n",
+    });
+    const preload = join(String(dir), "libraise.so");
+    const { exitCode } = Bun.spawnSync({ cmd: [cc!, "-shared", "-fPIC", "-o", preload, "raise.c"], cwd: String(dir) });
+    expect(exitCode).toBe(0);
+    return { dir, env: { ...bunEnv, LD_PRELOAD: preload } };
+  }
+
+  test("bun run <script>", async () => {
+    const { dir, env } = project();
+    using _ = dir;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "go"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("terminated by signal SIGTERM");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(128 + constants.signals.SIGTERM);
+  });
+
+  // The `yes` builtin runs inside bun, so the Ctrl+C handler has no child to forward the signal to.
+  test("Ctrl+C without a live child", async () => {
+    const { dir, env } = project();
+    using _ = dir;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "exec", "yes"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const reader = proc.stdout.getReader();
+    const { value } = await reader.read();
+    expect(new TextDecoder().decode(value)).toStartWith("y\n");
+    reader.releaseLock();
+    proc.kill("SIGINT");
+
+    expect(await proc.exited).toBe(128 + constants.signals.SIGINT);
+    expect(proc.signalCode).toBeNull();
+  });
 });

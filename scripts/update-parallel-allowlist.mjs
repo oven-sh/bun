@@ -99,11 +99,13 @@ async function collectFlakes(builds) {
       }
       const seen = new Set();
       for (const a of annotations) {
-        if (a.context !== "flaky" && a.style !== "error") continue;
+        // "flaky-new": the same, of a file that test/flaky-tests.txt does not list.
+        const flaky = a.context === "flaky" || a.context === "flaky-new";
+        if (!flaky && a.style !== "error") continue;
         for (const m of (a.body_html || "").matchAll(/<code>test\/([^<]+)<\/code><\/a> - /g)) {
           seen.add(m[1]);
         }
-        if (a.context === "flaky") {
+        if (flaky) {
           // "<code>test/x</code></a> - reason <i>(in the parallel batch on ..."
           for (const m of (a.body_html || "").matchAll(
             /<code>test\/([^<]+)<\/code><\/a> - [^<]*<i>\(in the parallel batch/g,

@@ -1,7 +1,8 @@
 // Taken from Node - lib/internal/util/colors.js
 "use strict";
 
-type WriteStream = import("node:tty").WriteStream;
+/** Any stream is taken: only a terminal has the two members. */
+type Terminal = { isTTY?: boolean; getColorDepth?: $Node.TTYWriteStream["getColorDepth"] } | null | undefined;
 
 let exports = {
   blue: "",
@@ -9,12 +10,15 @@ let exports = {
   white: "",
   red: "",
   hasColors: false,
-  shouldColorize(stream: WriteStream) {
+  shouldColorize(stream: object | null | undefined) {
     if (process.env.FORCE_COLOR !== undefined) {
       return require("internal/tty").getColorDepth(process.env) > 2;
     }
 
-    return stream?.isTTY && (typeof stream.getColorDepth === "function" ? stream.getColorDepth() > 2 : true);
+    return (
+      (stream as Terminal)?.isTTY &&
+      (typeof (stream as Terminal)!.getColorDepth === "function" ? (stream as Terminal)!.getColorDepth!() > 2 : true)
+    );
   },
   refresh(): void {
     if (exports.shouldColorize(process.stderr)) {

@@ -181,9 +181,10 @@ impl State {
     }
 
     /// The value for DATA_BLOCKED, if it still holds.
-    pub(crate) fn blocked_at(&self) -> Option<u64> {
+    pub(crate) fn blocked_at(&mut self) -> Option<u64> {
         let is_awaited = !self.writable.is_empty() || !self.stalled.is_empty();
-        (self.blocked_at).filter(|&limit| limit == self.send_limit && is_awaited)
+        (self.blocked_at).take_if(|&mut limit| limit != self.send_limit || !is_awaited);
+        self.blocked_at
     }
 
     /// Less goes first.

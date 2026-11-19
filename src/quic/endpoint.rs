@@ -22,7 +22,7 @@ use crate::packet::{
     FIXED_BIT, Invariants, LONG_HEADER, LongFields, LongHeader, LongKind, MIN_DATAGRAM_LEN,
     MIN_RESET_LEN, Sealed, Unsealed,
 };
-use crate::path::{Addresses, is_reserved_port};
+use crate::path::{Addresses, is_reserved_port, without_zone};
 use crate::stream_id::{Side, StreamId};
 use crate::time::Instant;
 use crate::tls;
@@ -458,7 +458,7 @@ impl Endpoint {
                 self.track_handshake(now, index);
             }
         } else if let Some(remains) = &mut slot.remains
-            && from.peer == remains.addresses.peer
+            && without_zone(from.peer) == without_zone(remains.addresses.peer)
         {
             // RFC 9000 §10.2.1.
             remains.datagrams_received = remains.datagrams_received.saturating_add(1);
@@ -475,7 +475,7 @@ impl Endpoint {
     /// RFC 9000 §10.3.1. Returns false if it is something else.
     fn receive_reset(&mut self, from: &Addresses, datagram: &[u8]) -> bool {
         let token = (datagram.last_chunk()).filter(|_| datagram.len() >= MIN_RESET_LEN);
-        let key = token.map(|&it| (from.peer, ResetToken(it)));
+        let key = token.map(|&it| (without_zone(from.peer), ResetToken(it)));
         let Some(&slot) = key.and_then(|it| self.shared.routes.by_reset_token.get(&it)) else {
             return false;
         };
@@ -702,9 +702,15 @@ impl Endpoint {
         !self.to_transmit.is_empty() || !self.replies.is_empty()
     }
 
+    /// For [`Self::handle_timeouts`] to answer.
+    #[inline]
+    pub fn has_waiting_clients(&self) -> bool {
+        self.awaiting_turn.len > 0
+    }
+
     /// When to call [`Self::handle_timeouts`].
     pub fn timeout(&mut self) -> Option<Instant> {
-        if self.awaiting_turn.len > 0 {
+        if self.has_waiting_clients() {
             return Some(Instant::default());
         }
         for &index in &self.to_transmit {

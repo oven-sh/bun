@@ -139,7 +139,7 @@ impl Connection {
             self.rtt.update(now - sent_at, delay);
         }
         self.detect_lost(now, id);
-        if has_news {
+        if has_news || !self.spaces.open(id).sent.has_in_flight() {
             self.timers.stop(Timer::Loss);
             if !self.has_to_unblock_server() {
                 self.pto_count = 0;
@@ -285,8 +285,11 @@ impl Connection {
             let before = *packet;
             if before.is_in_flight() {
                 packet.fate = Fate::Lost;
-                report(&mut self.congestion, &before.flight);
-                self.requeue(id, &before, Fate::Lost);
+                if self.requeue(id, &before, Fate::Lost) {
+                    self.congestion.discard(&before.flight);
+                } else {
+                    report(&mut self.congestion, &before.flight);
+                }
             }
         }
         let space = self.spaces.open(id);

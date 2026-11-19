@@ -6,6 +6,12 @@ pub struct Addresses {
     pub peer: SocketAddr,
 }
 
+/// What an application names can lack it.
+#[inline]
+pub(crate) fn without_zone(address: SocketAddr) -> SocketAddr {
+    SocketAddr::new(address.ip(), address.port())
+}
+
 /// For UDP services that answer whatever they get (RFC 9308 §8.1).
 pub(crate) fn is_reserved_port(port: u16) -> bool {
     matches!(

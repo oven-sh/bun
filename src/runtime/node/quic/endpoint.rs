@@ -353,10 +353,11 @@ extern "C" fn on_data(
     };
     // SAFETY: they are our arguments.
     unsafe { binding.for_each_datagram(buf, packets, receive) };
-    match packets {
-        // There is probably more, and the more is acknowledged, the more can be sent together.
-        DATAGRAMS_PER_READ => this.mark_driver_pending(),
-        _ => this.process(),
+    // There is probably more, and the more is acknowledged, the more can be sent together.
+    if packets == DATAGRAMS_PER_READ && !this.quic().has_waiting_clients() {
+        this.mark_driver_pending();
+    } else {
+        this.process();
     }
 }
 

@@ -135,8 +135,9 @@ pub(crate) struct QuicStream {
     inbound: JsCell<Inbound>,
     wakeup: JsCell<Option<Strong>>,
     is_known_to_peer: Cell<bool>,
-    /// The peer has opened it, it can be answered, and the session does not wait for a reader yet.
+    /// The peer has opened it, and it can be answered.
     is_request: Cell<bool>,
+    awaits_reader: Cell<bool>,
     priority: Cell<Priority>,
     pending_headers: JsCell<VecDeque<PendingHeaders>>,
     trailers_requested: Cell<bool>,
@@ -166,6 +167,7 @@ impl QuicStream {
             wakeup: JsCell::new(None),
             is_known_to_peer: Cell::new(false),
             is_request: Cell::new(false),
+            awaits_reader: Cell::new(false),
             priority: Cell::default(),
             pending_headers: JsCell::new(VecDeque::new()),
             trailers_requested: Cell::new(false),
@@ -401,19 +403,29 @@ impl QuicStream {
         if self.inbound.get().abandoned {
             self.drop_inbound();
             self.update(|conn, id| conn.consume(id, usize::MAX));
-        } else if self.is_request.get()
-            && !self.inbound.get().ended
-            && self.with_state(|s| s.has_reader == 0 && (s.fin_sent != 0 || s.write_ended != 0))
-            && (self.get(Connection::stream_info)).is_some_and(|it| it.is_short_of_credit)
+        } else if !self.awaits_reader.get()
+            && self.holds_up_peer()
             && let Some(session) = self.session_ref()
         {
-            self.is_request.set(false);
-            session.await_reader(self.key);
+            session.await_readers();
         }
     }
 
+    fn holds_up_peer(&self) -> bool {
+        self.is_request.get()
+            && !self.inbound.get().ended
+            && self.with_state(|s| s.has_reader == 0 && (s.fin_sent != 0 || s.write_ended != 0))
+            && (self.get(Connection::stream_info)).is_some_and(|it| it.is_short_of_credit)
+    }
+
+    /// Returns whether it starts to.
+    pub(super) fn await_reader(&self) -> bool {
+        self.holds_up_peer() && !self.awaits_reader.replace(true)
+    }
+
     pub(super) fn stop_if_unclaimed(&self, code: u64) {
-        if !self.inbound.get().ended && self.with_state(|s| s.has_reader == 0) {
+        self.awaits_reader.set(false);
+        if self.holds_up_peer() {
             self.drop_inbound();
             self.inbound.with_mut(|i| i.ended = true);
             self.update(|conn, id| conn.stop(id, code));

@@ -414,7 +414,11 @@ impl Connection {
             if self.streams.state.has_urgent_frames() {
                 self.streams.write_stream_frames(out, end, sent);
             }
-            let overhead = draft.packet.payload_start - draft.packet.start + TAG_LEN;
+            let overhead = match space.write_keys {
+                Some(_) => draft.packet.payload_start - draft.packet.start + TAG_LEN,
+                // There is going to be more room in 1-RTT packets.
+                None => 0,
+            };
             let room = u64::from(self.path.mtu.current).saturating_sub(overhead as u64);
             let max_len = match &self.http3 {
                 Some(http3) if http3.peer_accepts_datagrams == Some(false) => 0,

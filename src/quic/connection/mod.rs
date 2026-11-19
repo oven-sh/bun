@@ -129,7 +129,6 @@ pub struct Connection {
     previous_peer: Option<SocketAddr>,
     /// The ID that the client chose for us.
     initial_route: Option<ConnectionId>,
-    last_destination: LocalId,
     local_ids: LocalIds,
     remote_ids: RemoteIds,
 
@@ -193,7 +192,7 @@ impl Connection {
         slot: u32,
         side: Side,
         config: Rc<Config>,
-        path: Path,
+        mut path: Path,
         setup: Setup,
         tls: Box<dyn tls::Session>,
         shared: &mut Shared,
@@ -212,6 +211,7 @@ impl Connection {
             ..config.parameters.clone()
         });
         let random = u32::from_ne_bytes([a, b, c, d]);
+        path.local_id = Some(id);
         let mut this = Box::new(Self {
             context: core::ptr::null_mut(),
             crypto,
@@ -246,7 +246,6 @@ impl Connection {
             new_paths: TokenBucket::new(1.0, 16.0),
             previous_peer: None,
             initial_route: None,
-            last_destination: id,
             local_ids,
             remote_ids: RemoteIds::default(),
             rtt: Rtt::default(),
@@ -334,7 +333,8 @@ impl Connection {
         let (local, original) = (&mut this.local, client.original_destination);
         local.original_destination_connection_id = original.or(Some(client.destination));
         local.retry_source_connection_id = original.map(|_| client.destination);
-        local.stateless_reset_token = Some(shared.tokens.reset_token(&this.last_destination.0));
+        local.stateless_reset_token =
+            (local.initial_source_connection_id).map(|it| shared.tokens.reset_token(&it));
         if let Some(preferred) = &mut local.preferred_address {
             let id = this.local_ids.issue(slot, shared);
             preferred.id = id.into();

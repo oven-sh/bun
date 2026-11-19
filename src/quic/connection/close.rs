@@ -260,6 +260,14 @@ impl Connection {
         }
     }
 
+    #[cold]
+    pub(super) fn disallow_silence(&mut self, now: Instant) {
+        self.progress_timeout = self.config.progress_timeout;
+        self.restart_progress_timer(now);
+        self.keep_alive = self.config.keep_alive;
+        self.start_keep_alive(now);
+    }
+
     /// Whether the peer may have dropped the connection by the time something new arrives.
     pub fn is_stale(&self, now: Instant) -> bool {
         let margin = self.settling_period().max(self.idle_timeout / 16);

@@ -10,7 +10,7 @@ use super::mtu::Mtu;
 use super::recovery::INITIAL_PACKET_THRESHOLD;
 use super::sent::Control;
 use super::timers::Timer;
-use crate::cid::ResetToken;
+use crate::cid::{LocalId, ResetToken};
 use crate::congestion::Rtt;
 use crate::crypto::Crypto;
 use crate::endpoint::Shared;
@@ -18,7 +18,7 @@ use crate::error::Result;
 use crate::event::Event;
 use crate::frame::kind;
 use crate::packet::MIN_DATAGRAM_LEN;
-use crate::path::{Addresses, is_reserved_port};
+use crate::path::{Addresses, is_reserved_port, without_zone};
 use crate::stream_id::Side;
 use crate::time::{Duration, Instant};
 
@@ -39,6 +39,8 @@ struct Challenge {
 pub(super) struct Path {
     pub(super) addresses: Addresses,
     pub(super) remote: RemoteId,
+    /// The one that the peer has used last.
+    pub(super) local_id: Option<LocalId>,
     pub(super) mtu: Mtu,
     pub(super) is_validated: bool,
     received: u64,
@@ -61,6 +63,7 @@ impl Path {
         Self {
             addresses,
             remote,
+            local_id: None,
             mtu: Mtu::new(unmapped(addresses.peer)),
             is_validated,
             received: 0,
@@ -177,7 +180,7 @@ impl Path {
     }
 
     pub(super) fn reset_key(&self) -> Option<(SocketAddr, ResetToken)> {
-        Some((self.addresses.peer, self.remote.reset_token?))
+        Some((without_zone(self.addresses.peer), self.remote.reset_token?))
     }
 
     fn is_challenged(&self) -> bool {
@@ -233,10 +236,9 @@ impl Connection {
     pub(super) fn accepts_from(&self, from: &Addresses) -> bool {
         match self.side.is_server() {
             true => self.is_confirmed(),
-            false => {
-                Some(from.peer) == self.previous_peer
-                    || (self.candidates.iter()).any(|it| it.addresses.peer == from.peer)
-            }
+            false => (self.candidates.iter().map(|it| it.addresses.peer))
+                .chain(self.previous_peer)
+                .any(|it| it == from.peer),
         }
     }
 
@@ -253,12 +255,16 @@ impl Connection {
             return Ok(self.candidates.get_mut(at));
         }
         // RFC 9000 §9.5.
-        let keeps_id = self.path.remote.id.is_empty()
-            || destination == self.last_destination.0 && from.local == self.path.addresses.local;
-        let remote = match keeps_id {
+        let local_id = LocalId::new(destination);
+        let is_continued = |path: &&Path| {
+            path.remote.id.is_empty()
+                || (path.local_id, path.addresses.local) == (local_id, from.local)
+        };
+        let kept = self.paths().find(is_continued).map(|it| it.remote);
+        let remote = match kept {
             _ if !may_move(self.first_peer, from.peer) || !self.new_paths.take(now, 1) => None,
-            true => Some(self.path.remote),
-            false => self.remote_ids.take_spare(),
+            None => self.remote_ids.take_spare(),
+            Some(_) => kept,
         };
         let Some(remote) = remote else {
             return Ok(None);
@@ -274,7 +280,7 @@ impl Connection {
             Side::Server => from.peer == self.path.addresses.peer,
         };
         let mut path = Path::new(*from, remote, is_validated);
-        path.is_preferred = is_preferred;
+        (path.local_id, path.is_preferred) = (local_id, is_preferred);
         path.mtu.set_peer_limit(self.peer.max_udp_payload_size);
         path.challenge(now);
         path.owes_challenge = validates;
@@ -399,14 +405,18 @@ impl Connection {
     }
 
     fn switch_path(&mut self, now: Instant, at: usize, shared: &mut Shared) -> Result {
-        self.lose_all(now);
-        let old = core::mem::replace(&mut self.path, self.candidates.remove(at));
+        let new = self.candidates.remove(at);
+        let (from, to) = (self.path.addresses, new.addresses);
+        let is_other_port = from.local == to.local && from.peer.ip() == to.peer.ip();
+        if self.side.is_server() || !is_other_port {
+            self.lose_all(now);
+        }
+        let old = core::mem::replace(&mut self.path, new);
         self.abandon_path(&old, shared)?;
-        let (from, to) = (old.addresses, self.path.addresses);
         self.path.is_wanted = false;
         self.previous_peer = Some(from.peer);
         self.spin = false;
-        if from.local == to.local && from.peer.ip() == to.peer.ip() {
+        if is_other_port {
             self.path.mtu = old.mtu;
         } else {
             // RFC 9000 §9.4.

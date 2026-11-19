@@ -297,9 +297,10 @@ impl Connection {
                 return Some(event);
             }
             if let Some(event) = self.streams.poll_closed() {
-                if !self.streams.table.has_application_streams() {
-                    self.progress_timeout = self.config.progress_timeout;
-                    self.streams.state.made_progress = true;
+                if self.keep_alive != self.config.keep_alive
+                    && !self.streams.table.has_application_streams()
+                {
+                    self.disallow_silence(now);
                 }
                 return Some(event);
             }

@@ -1,7 +1,5 @@
 //! RFC 9000 §12 and §13.1.
 
-use core::net::SocketAddr;
-
 use super::ids::RemoteId;
 use super::key_update::Generation;
 use super::received::Order;
@@ -20,7 +18,7 @@ use crate::packet::{
     FIXED_BIT, Invariants, KEY_PHASE, LONG_HEADER, LongHeader, LongKind, MIN_DATAGRAM_LEN,
     MIN_RESET_LEN, SPIN_BIT, Sealed, has_reserved_bits,
 };
-use crate::path::Addresses;
+use crate::path::{Addresses, without_zone};
 use crate::stream_id::Side;
 use crate::time::{Duration, Instant};
 
@@ -61,11 +59,6 @@ struct Origin<'a> {
     destination: &'a [u8],
 }
 
-#[inline]
-fn is_same(a: SocketAddr, b: SocketAddr) -> bool {
-    (a.ip(), a.port()) == (b.ip(), b.port())
-}
-
 impl Connection {
     pub(crate) fn receive(
         &mut self,
@@ -80,7 +73,7 @@ impl Connection {
         // A client may not know its address, or the zone of that of the server.
         let from = &match self.side {
             Side::Server => *from,
-            Side::Client if is_same(from.peer, current.peer) => current,
+            Side::Client if without_zone(from.peer) == without_zone(current.peer) => current,
             Side::Client => Addresses {
                 local: current.local,
                 peer: from.peer,
@@ -370,7 +363,7 @@ impl Connection {
         };
         let destination = LocalId(destination);
         if first & FIXED_BIT == 0
-            || destination != self.last_destination
+            || Some(destination) != self.path.local_id
                 && !self.local_ids.iter().any(|it| it == destination)
         {
             return Ok(false);
@@ -416,6 +409,7 @@ impl Connection {
             if generation == Generation::Next {
                 self.streams.state.add_load(Load::Heavy);
             }
+            self.early_keys = None;
             (self.timers).set(Timer::KeyDiscard, now + self.settling_period());
         }
         let is_current_path = *from == self.path.addresses;
@@ -433,14 +427,14 @@ impl Connection {
         };
         let is_new = self.process(&origin, &packet, shared)?;
         if is_new && *from == self.path.addresses {
-            self.last_destination = destination;
+            self.path.local_id = Some(destination);
         }
         Ok(is_new)
     }
 
     /// RFC 9000 §10.3.1.
     fn is_reset(&self, from: &Addresses, token: ResetToken) -> bool {
-        (self.paths()).any(|it| it.reset_key() == Some((from.peer, token)))
+        (self.paths()).any(|it| it.reset_key() == Some((without_zone(from.peer), token)))
     }
 
     /// RFC 9001 §6.6.

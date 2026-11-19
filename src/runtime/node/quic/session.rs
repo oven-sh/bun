@@ -769,8 +769,13 @@ impl QuicSession {
         }
     }
 
-    pub(super) fn await_reader(&self, stream: super::stream::Key) {
-        (self.unclaimed_streams).with_mut(|q| q.push_back((now() + READER_DELAY, stream)));
+    pub(super) fn await_readers(&self) {
+        let deadline = now() + READER_DELAY;
+        for &(key, _) in self.streams.get() {
+            if self.live_stream(key).is_some_and(QuicStream::await_reader) {
+                (self.unclaimed_streams).with_mut(|q| q.push_back((deadline, key)));
+            }
+        }
         self.mark();
         self.mark_pending();
     }

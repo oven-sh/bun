@@ -47,7 +47,6 @@ const _: () = assert!(size_of::<Flight>() == 32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Permit {
     Now,
-    /// To keep the pace.
     At(Instant),
     /// The window is full.
     Blocked,
@@ -78,8 +77,8 @@ pub(crate) struct Controller {
     model: Model,
     pacer: Pacer,
     in_flight: u64,
-    /// There has not been enough room in the window since.
-    is_full: bool,
+    /// Until when to wait for more room in a window that has been full.
+    refill_at: Instant,
     /// As of the last packet, however many ACK frames have come in since.
     prior_in_flight: u64,
     last_sent: u64,
@@ -102,7 +101,7 @@ impl Controller {
             },
             pacer: Pacer::default(),
             in_flight: 0,
-            is_full: false,
+            refill_at: Instant::default(),
             prior_in_flight: 0,
             last_sent: 0,
             last_foreign: 0,
@@ -153,14 +152,19 @@ impl Controller {
             return Permit::Now;
         }
         let window = self.window();
-        let needed = match self.is_full {
-            true => unsent.min(self.pacer.bonus()).min(window / 3),
-            false => 0,
-        };
-        self.is_full = self.in_flight + needed >= window;
-        if self.is_full {
+        if self.in_flight >= window {
+            self.refill_at = Instant::NEVER;
             self.pacer.on_limited_otherwise();
             return Permit::Blocked;
+        }
+        if now < self.refill_at {
+            let wanted = unsent.min(self.pacer.bonus()).min(window / 3);
+            if self.in_flight + wanted >= window && !self.is_recovering() {
+                self.refill_at = self.refill_at.min(now + GRANULARITY);
+                self.pacer.on_limited_otherwise();
+                return Permit::At(self.refill_at);
+            }
+            self.refill_at = Instant::default();
         }
         self.pacer.delay(now).map_or(Permit::Now, Permit::At)
     }
@@ -189,18 +193,19 @@ impl Controller {
 
     #[inline(never)]
     fn on_idle_restart(&mut self, now: Instant, rtt: &Rtt) {
-        let is_recovering = match &mut self.model {
-            Model::Cubic(cubic) => {
-                cubic.on_idle_restart(now);
-                cubic.is_recovering
-            }
-            Model::Bbr(bbr) => {
-                bbr.on_idle_restart(now);
-                bbr.is_recovering()
-            }
-        };
-        self.pacer.on_idle_restart(now, is_recovering);
+        match &mut self.model {
+            Model::Cubic(cubic) => cubic.on_idle_restart(now),
+            Model::Bbr(bbr) => bbr.on_idle_restart(now),
+        }
+        self.pacer.on_idle_restart(now, self.is_recovering());
         self.update_pacing_rate(rtt);
+    }
+
+    fn is_recovering(&self) -> bool {
+        match &self.model {
+            Model::Cubic(cubic) => cubic.is_recovering,
+            Model::Bbr(bbr) => bbr.is_recovering(),
+        }
     }
 
     /// There is nothing more to send, or no credit for it.

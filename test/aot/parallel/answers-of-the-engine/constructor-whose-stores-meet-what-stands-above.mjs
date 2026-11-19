@@ -1,5 +1,5 @@
 // A store that creates a property asks what stands above the object: a setter or a property that is read only on a prototype object, put there and taken away again, another prototype object, and what a callee does to the object half made.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 let log = "";
 function attempt(run) { log = ""; try { return show(run()); } catch (e) { return (e instanceof TypeError ? "TypeError" : "other") + log; } }

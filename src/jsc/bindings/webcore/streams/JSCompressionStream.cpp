@@ -7,6 +7,7 @@
 #include "JSCompressionStreamShared.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
+#include "JSDOMPrototype.h"
 #include "JSDOMWrapperCache.h"
 #include "JSReadableStream.h"
 #include "JSStreamsRuntime.h"
@@ -18,7 +19,6 @@
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/Error.h>
-#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SubspaceInlines.h>
@@ -30,50 +30,19 @@ using namespace Bun::WebStreams;
 
 // ─── JSCompressionStreamPrototype ───────────────────────────────────────────
 
-static JSC_DECLARE_CUSTOM_GETTER(jsCompressionStreamPrototypeGetter_constructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsCompressionStreamPrototypeGetter_readable);
 static JSC_DECLARE_CUSTOM_GETTER(jsCompressionStreamPrototypeGetter_writable);
 static JSC_DECLARE_HOST_FUNCTION(jsCompressionStreamPrototype_inspectCustom);
 
-class JSCompressionStreamPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSCompressionStreamPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSCompressionStreamPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSCompressionStreamPrototype))) JSCompressionStreamPrototype(vm, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCompressionStreamPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSCompressionStreamPrototype(JSC::VM& vm, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCompressionStreamPrototype, JSCompressionStreamPrototype::Base);
+using JSCompressionStreamPrototype = JSDOMPrototype<JSCompressionStream>;
 
 static const HashTableValue JSCompressionStreamPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsCompressionStreamPrototypeGetter_constructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSCompressionStreamPrototype::constructorGetter, 0 } },
     { "readable"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsCompressionStreamPrototypeGetter_readable, 0 } },
     { "writable"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsCompressionStreamPrototypeGetter_writable, 0 } },
 };
 
-const ClassInfo JSCompressionStreamPrototype::s_info = { "CompressionStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCompressionStreamPrototype) };
+template<> const ClassInfo JSCompressionStreamPrototype::s_info = { "CompressionStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCompressionStreamPrototype) };
 
 JSC_DEFINE_HOST_FUNCTION(jsCompressionStreamPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -89,7 +58,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCompressionStreamPrototype_inspectCustom, (JSGlobalOb
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "CompressionStream"_s, data));
 }
 
-void JSCompressionStreamPrototype::finishCreation(VM& vm)
+template<> void JSCompressionStreamPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSCompressionStream::info(), JSCompressionStreamPrototypeTableValues, *this);
@@ -100,32 +69,10 @@ void JSCompressionStreamPrototype::finishCreation(VM& vm)
 // JSCompressionStreamConstructor = JSStreamConstructor<JSCompressionStream>.
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCompressionStreamConstructor::construct(JSGlobalObject*, CallFrame*);
-template<> JSValue JSCompressionStreamConstructor::prototypeForStructure(JSC::VM&, const JSDOMGlobalObject&);
 template<> void JSCompressionStreamConstructor::finishCreation(JSC::VM&, JSDOMGlobalObject&);
 template<> GCClient::IsoSubspace* JSCompressionStreamConstructor::subspaceForImpl(JSC::VM&);
-template<> void JSCompressionStreamConstructor::visitChildren(JSCell*, JSC::AbstractSlotVisitor&);
-template<> void JSCompressionStreamConstructor::visitChildren(JSCell*, JSC::SlotVisitor&);
-template<>
-template<typename Visitor>
-void JSCompressionStreamConstructor::visitChildrenImpl(JSCell*, Visitor&);
 
 template<> const ClassInfo JSCompressionStreamConstructor::s_info = { "CompressionStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCompressionStreamConstructor) };
-
-template<> JSValue JSCompressionStreamConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    return globalObject.functionPrototype();
-}
-
-template<>
-template<typename Visitor>
-void JSCompressionStreamConstructor::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSCompressionStreamConstructor>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_instanceStructure);
-}
-DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSCompressionStreamConstructor);
 
 template<> GCClient::IsoSubspace* JSCompressionStreamConstructor::subspaceForImpl(JSC::VM& vm)
 {
@@ -156,22 +103,16 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCompressionStreamConst
     if (*format == CompressionFormat::Brotli && JSC::isFeatureRemoved(Bun::Feature::BrotliEncoder)) [[unlikely]]
         RELEASE_AND_RETURN(scope, Bun__throwForRemovedFeature(lexicalGlobalObject, static_cast<uint16_t>(Bun::Feature::BrotliEncoder)));
 
-    void* coder = CompressionStreamCoder__create(static_cast<uint8_t>(*format), false, options.highWaterMark, options.level.has_value(), options.level.value_or(0));
+    std::unique_ptr<CompressionStreamCoder> coder { CompressionStreamCoder__create(static_cast<uint8_t>(*format), false, options.highWaterMark, options.level.has_value(), options.level.value_or(0)) };
     if (!coder) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, scope, "failed to initialize compressor"_s);
         return {};
     }
 
     auto* structure = structureForNewTarget(vm, constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
-    if (scope.exception()) [[unlikely]] {
-        CompressionStreamCoder__destroy(coder);
-        return {};
-    }
+    RETURN_IF_EXCEPTION(scope, {});
     auto* stream = JSCompressionStream::create(vm, structure);
-    stream->m_coder = coder;
-    vm.heap.addFinalizer(stream, static_cast<JSC::Heap::CFinalizer>([](JSCell* cell) {
-        CompressionStreamCoder__destroy(std::exchange(static_cast<JSCompressionStream*>(cell)->m_coder, nullptr));
-    }));
+    stream->m_coder = WTF::move(coder);
 
     setUpNativeTransformStream(lexicalGlobalObject, stream, TransformerKind::Compression);
     RETURN_IF_EXCEPTION(scope, {});
@@ -203,9 +144,7 @@ Structure* JSCompressionStream::createStructure(VM& vm, JSGlobalObject* globalOb
 
 JSObject* JSCompressionStream::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSCompressionStreamPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
-    structure->setMayBePrototype(true);
-    return JSCompressionStreamPrototype::create(vm, &globalObject, structure);
+    return JSCompressionStreamPrototype::create(vm, globalObject, globalObject.objectPrototype());
 }
 
 JSObject* JSCompressionStream::prototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -220,17 +159,7 @@ JSValue JSCompressionStream::getConstructor(VM& vm, const JSGlobalObject* global
 
 GCClient::IsoSubspace* JSCompressionStream::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSCompressionStream, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForCompressionStream, m_subspaceForCompressionStream));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsCompressionStreamPrototypeGetter_constructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSCompressionStreamPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, scope);
-    return JSValue::encode(JSCompressionStream::getConstructor(vm, prototype->globalObject()));
+    return WebCore::subspaceForImpl<JSCompressionStream, UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForCompressionStream, m_subspaceForCompressionStream));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsCompressionStreamPrototypeGetter_readable, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))

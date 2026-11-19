@@ -4,6 +4,7 @@ import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
+import { constants as zlibConstants } from "node:zlib";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 import { Worker } from "worker_threads";
@@ -366,11 +367,11 @@ it("process.hrtime()", async () => {
   const end = process.hrtime(start);
   expect(end[0]).toBe(0);
 
-  // Flaky on Ubuntu & Windows.
   await Bun.sleep(16);
   const end2 = process.hrtime();
 
-  expect(end2[1] > start[1]).toBe(true);
+  // A second may begin in between.
+  expect(end2[0] * 1e9 + end2[1]).toBeGreaterThan(start[0] * 1e9 + start[1]);
 });
 
 it("process.hrtime.bigint()", () => {
@@ -771,20 +772,16 @@ it("process.versions", async () => {
   const deps = {
     boringssl: "boringssl",
     mimalloc: "mimalloc",
-    picohttpparser: "picohttpparser",
-    zlib: "zlib",
     tinycc: "tinycc",
     lolhtml: "lolhtml",
     ares: "cares",
-    libdeflate: "libdeflate",
     zstd: "zstd",
-    lshpack: "lshpack",
   };
 
   const expectedVersions = {};
   for (const [key, file] of Object.entries(deps)) {
     const src = await Bun.file(join(depsDir, `${file}.ts`)).text();
-    // No $ anchor: some pins carry a trailing comment (zlib.ts: `"; // 2.3.3`)
+    // No $ anchor: a pin can carry a trailing comment
     const match = src.match(/^const [A-Z_]+_COMMIT = "([0-9a-f]{40})";/m);
     expect(match, `failed to extract commit from ${file}.ts`).not.toBeNull();
     expectedVersions[key] = match[1];
@@ -794,6 +791,10 @@ it("process.versions", async () => {
     expect(process.versions).toHaveProperty(name);
     expect(process.versions[name]).toBe(expectedHash);
   }
+
+  // One hexadecimal digit for each part of the version.
+  const { ZLIB_VERNUM } = zlibConstants;
+  expect(process.versions.zlib).toStartWith([...ZLIB_VERNUM.toString(16)].slice(0, 3).join("."));
 
   expect(process.versions).toHaveProperty("usockets");
   expect(process.versions).toHaveProperty("uwebsockets");
@@ -2909,6 +2910,12 @@ describe.concurrent("'beforeExit' and 'exit' go through process.emit", () => {
     process.on("beforeExit", code => console.log("listener beforeExit", code));
     process.on("exit", code => console.log("listener exit", code));`;
 
+  const throwingExitFunction = `
+    require("bun:internal-for-testing").runWhenProcessExits(() => {
+      throw new Error("made up");
+    });
+    process.on("uncaughtException", error => console.log("reported", error.message));`;
+
   const cases = [
     {
       name: "a replaced emit, with no listener",
@@ -3198,6 +3205,29 @@ describe.concurrent("'beforeExit' and 'exit' go through process.emit", () => {
           console.log("caught", error.name + ":", error.message);
         }`,
       stdout: ["caught TypeError: process.emit is not a function"],
+      exitCode: 3,
+    },
+    {
+      // Bun only: what the function that runs when the process exits throws is reported behind 'exit'.
+      name: "a replaced emit gets 'exit' before the throw of the exit function is reported",
+      script: throwingExitFunction + logEmit,
+      stdout: ["emit beforeExit 0", "emit exit 0", "reported made up"],
+    },
+    {
+      name: "a throw from emit in process.exit() goes to the caller when the exit function threw too",
+      script:
+        throwingExitFunction +
+        `const builtInEmit = process.emit;
+         process.emit = function (event, ...args) {
+           if (event === "exit") throw new Error("boom");
+           return builtInEmit.call(this, event, ...args);
+         };
+         try {
+           process.exit(3);
+         } catch (error) {
+           console.log("caught", error.message);
+         }`,
+      stdout: ["reported made up", "caught boom"],
       exitCode: 3,
     },
   ];
@@ -3694,6 +3724,36 @@ describe("default 'warning' listener is registered at startup", () => {
       /^\(node:\d+\) Warning: shown\n\(Use `.*--trace-warnings \.\.\.` to show where the warning was created\)\nuser-listener\n$/,
     );
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+  });
+
+  it.concurrent("the first warning does not call a replaced path.basename", async () => {
+    const { stdout, exitCode } = await run([
+      "-e",
+      `const path = require("node:path");
+       const original = path.basename;
+       let calls = 0;
+       path.basename = function (...args) {
+         calls++;
+         return original.apply(this, args);
+       };
+       process.emitWarning("made up");
+       setImmediate(() => console.log(calls));`,
+    ]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "0\n", exitCode: 0 });
+  });
+
+  it.concurrent("the first warning passes an argv0 that is not a string to path.basename", async () => {
+    const { stderr, exitCode } = await run([
+      "-e",
+      `const path = require("node:path");
+       path.basename = function (name) {
+         return this === path && name === 5 ? "REPLACED" : "WRONG";
+       };
+       process.argv0 = 5;
+       process.emitWarning("made up");`,
+    ]);
+    expect(stderr).toMatch(/^\(node:\d+\) Warning: made up\n\(Use `REPLACED --trace-warnings/);
+    expect(exitCode).toBe(0);
   });
 
   it.concurrent("a bare process.emit('warning') with no prior emitWarning() still prints", async () => {

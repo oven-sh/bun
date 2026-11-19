@@ -1,0 +1,20 @@
+# `const flag = flags[i]; sum = sum + flag * 2` over a list of booleans and null out of a text. In a turn of a typed copy a guess has no closed arm of its own: where it fails the turn begins again in
+# the closed copy and every further turn runs there. So what is made in the turn itself is asked for a number only where a failing test keeps its arm in place: no copy for lists of any values is
+# built whose first flag would end it.
+# f1 = count
+# -- source: main.js
+# const flags = JSON.parse("[true,false,true,null]");
+# function count(turn) { let sum = turn & 1; for (let i = 0; i < flags.length; i++) { const flag = flags[i]; sum = sum + flag * 2; } return sum; }
+# print(count(0), count(1));
+# flags[1] = 1.5;
+# print(count(0));
+# flags[2] = "4";
+# print(count(0));
+# -- end of source
+# RUN(WALK): walk f1:Body mechanisms=all
+# WALK-NOT: arrayStorage=Contiguous level=Proven
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 4 5
+# ANSWERS-NEXT: 7
+# ANSWERS-NEXT: 13
+# ANSWERS-NEXT: exited with 0

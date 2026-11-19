@@ -37,7 +37,7 @@ type Case = {
 const timeout = 600_000;
 
 // docs/compiler/compatibility.mdx: such a file has globals, built-in modules, what lies on disk and what the program hands it.
-const refusal = "code that this executable loads from disk can't load the files that were compiled into it";
+const refusal = "code that is loaded from disk can't import files that were compiled into this executable";
 
 const tsconfig = JSON.stringify({
   compilerOptions: {

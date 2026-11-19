@@ -7,9 +7,9 @@
 // RUN(TEXT): link
 // TEXT: module {{*}}note.txt" kind=Data body=
 // RUN(IMPORTED): link
-// IMPORTED: module {{*}}imported.json" kind=Data requireResult=DefaultExport {{*}}exports=[{name="default"
+// IMPORTED: module {{*}}imported.json" kind=Data requireResult=DefaultExport {{*}}exports=[{name="a" variable=[[whole]] isOmitted=true}, {name="default" variable=[[whole]]}]
 // RUN(REQUIRED): link
-// REQUIRED: module {{*}}required.json" kind=Data requireResult=DefaultExport {{*}}exports=[{name="default"
+// REQUIRED: module {{*}}required.json" kind=Data requireResult=DefaultExport {{*}}exports=[{name="a" variable=[[whole]] isOmitted=true}, {name="default" variable=[[whole]]}]
 
 // FILE: main.mjs
 import both from "./both.json";

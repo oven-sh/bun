@@ -18,7 +18,7 @@
  * the engine did not see fails. Without it such a test leaves that part out.
  *
  * BUN_UNDER_TEST=<bun>: beside the crates it builds and runs the programs of test/aot/library-sweeps, which compile all of
- * Bun's library, some in a checking mode. This step has the processors for them, and no shard of the tests waits for it.
+ * Bun's library or much of it. This step has the processors for them, and no shard of the tests waits for it.
  */
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
@@ -33,14 +33,19 @@ const repo = resolve(import.meta.dirname, "..");
 const crates = [
   "bun_aot",
   "bun_base64",
+  "bun_brotli",
   "bun_builtin_sources",
   "bun_bundler",
   "bun_collections",
   "bun_crash_handler",
+  "bun_cron",
+  "bun_deflate",
   "bun_dispatch",
   "bun_errno",
   "bun_exe_format",
   "bun_hash",
+  "bun_hpack",
+  "bun_http1",
   "bun_http_types",
   "bun_lint_react_compiler",
   "bun_md",
@@ -50,17 +55,25 @@ const crates = [
   "bun_removable_features",
   "bun_resolve_builtins",
   "bun_resolver",
+  "bun_s3_signing",
   "bun_sema",
   "bun_sema_driver",
   "bun_sema_parser",
   "bun_sema_standalone",
   "bun_shell_parser",
+  "bun_shim_impl",
   "bun_sort_by_number",
+  "bun_sql",
   "bun_sql_jsc",
   "bun_standalone_graph",
+  "bun_sys",
   "bun_threading",
+  "bun_test_schedule",
   "bun_trim",
+  "bun_valkey",
+  "bun_webp",
   "bun_wyhash",
+  "bun_zlib",
 ];
 
 // Not `spawnSync`: what runs beside it writes into pipes that this process empties.
@@ -167,7 +180,7 @@ if (extraArgs.length) {
 }
 
 // The crates of the list whose documentation has examples that run. `--no-run` builds none of them.
-const cratesWithExamples = ["bun_pod"];
+const cratesWithExamples = ["bun_collections", "bun_pod"];
 
 // It asks for a path below `/` that a test cannot create.
 const programArgs = ["--skip", "realpath_under_the_marked_root_stays_under_it"];

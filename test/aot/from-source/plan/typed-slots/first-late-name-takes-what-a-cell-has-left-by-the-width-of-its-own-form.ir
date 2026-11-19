@@ -1,7 +1,7 @@
 # five references written as the class or null, and one name that the class does not list: an interface that it implements writes it, optional, as the class or null, and a function stores it through that interface.
-# the first late name of a layout takes part in the choice of forms like any slot under its name, but counts in neither sum of "does the cell get smaller": the five narrow slots end at 44 in a cell of 48 (64 with boxed slots).
+# the first late name of a layout takes part in the choice of forms like any slot under its name, but counts in neither sum of "does the cell get smaller": one slot beside the hidden word, one boxed and three narrow ones end at 44 in a cell of 48 (64 with boxed slots).
 # behind the laying it is handed what is left by the width of its own form: four bytes are left, it is held to references, four bytes wide, and lies at 44. Boxed it would need a whole word and every object would get an Extension for it.
-# with typed slots withheld the five boxed slots fill a cell of 64 and the late name lies out of line.
+# with typed slots withheld the five boxed slots fill a cell of 64 and the late name makes it 80.
 # -- source: first-late-name-takes-what-a-cell-has-left-by-the-width-of-its-own-form.ts
 # declare function sink(...values: unknown[]): void;
 # interface Tied { owner?: Knot | null; } // @ts-expect-error
@@ -32,13 +32,13 @@
 # -- end of source
 # RUN: plan layouts mechanisms=all
 # CHECK: CompiledObject size=48
-# CHECK-NEXT: slot 0 "a" OptionalCell32 Inline offset=24
-# CHECK-NEXT: slot 1 "b" OptionalCell32 Inline offset=28
+# CHECK-NEXT: slot 0 "a" JSValue Inline offset=24
+# CHECK-NEXT: slot 1 "b" OptionalCell32 Inline offset=20
 # CHECK-NEXT: slot 2 "c" OptionalCell32 Inline offset=32
 # CHECK-NEXT: slot 3 "d" OptionalCell32 Inline offset=36
 # CHECK-NEXT: slot 4 "e" OptionalCell32 Inline offset=40
 # CHECK-NEXT: slot 5 "owner" appended OptionalCell32 Inline offset=44
 # CHECK-NEXT: extra-properties Cell32 Inline offset=16
 # RUN(WITHHELD): plan layouts mechanisms=-TypedSlots
-# WITHHELD: CompiledObject size=64
-# WITHHELD: slot 5 "owner" appended JSValue OutOfLine offset=8
+# WITHHELD: CompiledObject size=80
+# WITHHELD: slot 5 "owner" appended JSValue Inline offset=64

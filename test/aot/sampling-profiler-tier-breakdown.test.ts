@@ -46,6 +46,7 @@ function parseReport(run: Awaited<ReturnType<typeof spawned>>) {
   };
 }
 
+// Both cases call profile() of bun:jsc, and Bun's own cases on it are declared `todo` on the Windows machines of CI: test/js/bun/jsc/bun-jsc.test.ts. So are these.
 testCompiled.todoIf(isBuildKite && isWindows)(
   "samples of a compiled function count as AOT",
   async () => {

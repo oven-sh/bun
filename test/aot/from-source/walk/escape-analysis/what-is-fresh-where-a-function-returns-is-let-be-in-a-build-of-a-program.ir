@@ -4,5 +4,5 @@
 # sink(dead);
 # -- end of source
 # RUN: walk f1 mechanisms=-Inlining
-# CHECK-NOT: EndLifeOfCell
+# CHECK-NOT: EndCellLifetime
 # CHECK-NOT: NewObject

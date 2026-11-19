@@ -24,6 +24,61 @@ const takesEachRoad = `for (const [name, run] of roads) {
 // Two programs: text that is evaluated in a program that also loads by a computed name may ask for any module of Bun's own, so one program with all the roads holds them all,
 // and its build takes six times what these two take together.
 const programs = ["texts", "files"] as const;
+// A data: URL that is written in an import is part of the executable. One that the program makes is a string.
+const asUrl = (text: string) => "data:text/javascript," + text;
+const urlsOfImports = `import written from "${asUrl("export default 1")}";
+import * as star from "./star.mjs";
+export async function takeEachRoad(say) {
+  const held = "${asUrl("export default 2")}";
+  const head = "data:text/javascript,";
+  const heldText = "${asUrl("module.exports = 3")}";
+  const roads = {
+    "import statement": () => written,
+    "export star": () => star.listed,
+    "import() of a literal": async () => (await import("${asUrl("export default 4")}")).default,
+    "import() of a template": async () => (await import(\`${asUrl("export default 5")}\`)).default,
+    "import() of a sum of literals": async () => (await import("data:text/javascript," + "export default 6")).default,
+    "import() of base64": async () => (await import("data:text/javascript;base64,ZXhwb3J0IGRlZmF1bHQgNw==")).default,
+    "import() of an escaped literal": async () => (await import("${asUrl("export%20default%208")}")).default,
+    "import() of a literal that imports another": async () =>
+      (await import("${asUrl("export { default } from 'data:text/javascript,export default 9'")}")).default,
+    "import() of a literal that throws": async () => (await import("${asUrl("throw new RangeError('thrown')")}")).default,
+    "require() of a literal": () => require("${asUrl("module.exports = 10")}"),
+    "import() of JSON": async () => (await import("data:application/json,[11]")).default,
+    "import() of JSON by its type": async () => (await import("data:application/json,[12]", { with: { type: "json" } })).default,
+    "the same literal twice": async () =>
+      (await import("${asUrl("export default {}")}")).default === (await import("${asUrl("export default {}")}")).default,
+    "import() of one of two literals": async () =>
+      (await import(process.env.OTHER_URL ? "${asUrl("export default 16")}" : "${asUrl("export default 17")}")).default,
+    "require() of one of two literals": () =>
+      require(process.env.OTHER_URL ? "${asUrl("module.exports = 18")}" : "${asUrl("module.exports = 19")}"),
+    "import() of a const": async () => (await import(held)).default,
+    "import() of a sum with a const": async () => (await import(head + "export default 13")).default,
+    "import() of joined literals": async () => (await import(["data:text/javascript", "export default 14"].join(","))).default,
+    "import() of a name of the run": async () => (await import(process.env.OTHER_URL)).default,
+    "import() of a literal's text as a name of the run": async () => (await import(process.env.LITERAL_URL)).default,
+    "import() of a const's text as a name of the run": async () => (await import(process.env.CONST_URL)).default,
+    "require() of a const": () => require(heldText),
+    "require() of a name of the run": () => require(process.env.OTHER_URL),
+    "require() of a const's text as a name of the run": () => require(process.env.REQUIRED_URL),
+    "import() of a URL object": async () => (await import(new URL("${asUrl("export default 15")}"))).default,
+  };
+  for (const [name, run] of Object.entries(roads)) {
+    try {
+      say(name + " => " + (await run()));
+    } catch (error) {
+      say(name + " => " + error.name + ": " + error.message.split("\\n")[0]);
+    }
+  }
+}
+`.replaceAll("\\`", "`");
+const urlPrograms = { "urls": ["urls.mjs"], "urls-beside-worker": ["urls-beside-worker.mjs", "./url-worker.mjs"] };
+const madeUrls = {
+  OTHER_URL: asUrl("export default 'other'"),
+  LITERAL_URL: asUrl("export default 4"),
+  CONST_URL: asUrl("export default 2"),
+  REQUIRED_URL: asUrl("module.exports = 3"),
+};
 const files = {
   "texts.ts": `import * as vm from "node:vm";
 // A constant text is compiled when the executable is built. This one is made when the program runs.
@@ -47,6 +102,25 @@ const roads: [string, () => unknown][] = [
   ["require of a file that is not there", () => createRequire(import.meta.url)(onDisk + ".absent.js")],
 ];
 ${takesEachRoad}`,
+  "roads.mjs": urlsOfImports,
+  "star.mjs": `export * from "${asUrl("export const listed = 16")}";\n`,
+  "urls.mjs": `import { takeEachRoad } from "./roads.mjs";\nawait takeEachRoad(line => console.log(line));\n`,
+  "urls-beside-worker.mjs": `import { takeEachRoad } from "./roads.mjs";
+await takeEachRoad(line => console.log("main: " + line));
+const worker = new Worker(new URL("./url-worker.mjs", import.meta.url));
+await new Promise(done => {
+  worker.onmessage = ({ data }) => (data === null ? done() : console.log("worker: " + data));
+  worker.onerror = ({ message }) => done(console.log("worker failed: " + message));
+});
+worker.terminate();
+try {
+  new Worker("${asUrl("postMessage(1)")}").terminate();
+  console.log("a Worker of a literal => started");
+} catch (error) {
+  console.log("a Worker of a literal => " + error.name);
+}
+`,
+  "url-worker.mjs": `import { takeEachRoad } from "./roads.mjs";\nawait takeEachRoad(line => postMessage(line));\npostMessage(null);\n`,
   "disk.js": `console.log("disk.js ran");\nmodule.exports = 5;\n`,
   "data.json": `{ "kind": "data" }\n`,
   "before.js": `console.log("before.js ran");\n`,
@@ -81,8 +155,32 @@ const folderBuiltWith = (buildFlags: string[]) =>
         expect(built.stderr).not.toMatch(/^error\b/m);
         expect(built.exitCode).toBe(0);
       }
+    for (const [program, entryPoints] of Object.entries(urlPrograms))
+      for (const [how, flags] of [
+        ["without", []],
+        ["with", ["--aot"]],
+      ] as const) {
+        const outfile = named(`${program}-${how}`);
+        const built = await run(
+          [bunExe(), "build", "--compile", ...flags, ...buildFlags, ...entryPoints, "--outfile", outfile],
+          cwd,
+        );
+        expect(built.stderr).not.toMatch(/^error\b/m);
+        expect(built.exitCode).toBe(0);
+      }
     return cwd;
   });
+
+test("data: URLs under the flag without a value", async () => {
+  const cwd = await folderBuiltWith(["--compile-exec-argv=--disallow-code-generation-from-strings"]);
+  for (const how of ["without", "with"]) {
+    const { stdout, exitCode } = await run([join(cwd, named("urls-" + how))], cwd, madeUrls);
+    const lines = stdout.split("\n");
+    for (const line of ["import statement => 1", "import() of a literal => 4", "import() of a const => 2"])
+      expect(lines).toContain(line);
+    expect(exitCode).toBe(0);
+  }
+});
 
 describe.each([
   ["in the executable's own arguments", ["--compile-exec-argv=" + strict], ""],
@@ -90,7 +188,10 @@ describe.each([
 ])("the flag %s", (_, buildFlags, options) => {
   let cwd: string;
   beforeAll(async () => void (cwd = await folderBuiltWith(buildFlags)));
-  const both = async (env: Record<string, string>, program: (typeof programs)[number] = "files") => ({
+  const both = async (
+    env: Record<string, string>,
+    program: (typeof programs)[number] | keyof typeof urlPrograms = "files",
+  ) => ({
     without: await run([join(cwd, named(program + "-without"))], cwd, env),
     with: await run([join(cwd, named(program + "-with"))], cwd, env),
   });
@@ -107,6 +208,24 @@ describe.each([
       expect(lines).toContain(`${road} of code on the disk => ${refusal} undefined`);
     expect(lines).toContain("require of data on the disk => data");
     expect(ran.with.stdout).not.toContain("disk.js ran");
+  });
+
+  test.each(["urls", "urls-beside-worker"] as const)("data: URLs: %s", async program => {
+    const ran = await both({ ...madeUrls, ...(options ? { BUN_OPTIONS: options.trim() } : {}) }, program);
+    expect(ran.with).toEqual(ran.without);
+    const lines = ran.with.stdout.split("\n");
+    for (const where of program === "urls" ? [""] : ["main: ", "worker: "]) {
+      expect(lines).toContain(where + "import statement => 1");
+      expect(lines).toContain(where + "import() of a literal => 4");
+      expect(lines).toContain(where + "require() of a literal => 10");
+      for (const name of [
+        "import() of a const",
+        "import() of joined literals",
+        "import() of a literal's text as a name of the run",
+      ])
+        expect(lines).toContain(`${where}${name} => ${refusal}`);
+    }
+    if (program === "urls-beside-worker") expect(lines).toContain("a Worker of a literal => EvalError");
   });
 
   test.each([

@@ -445,6 +445,7 @@ pub(crate) const UNHANDLED_REJECTIONS_PARAM: usize =
     startup_options::index_of_long(AUTO_PARAMS, b"unhandled-rejections");
 pub(crate) const CODE_GENERATION_PARAM: usize =
     startup_options::index_of_long(AUTO_PARAMS, b"disallow-code-generation-from-strings");
+pub(crate) const INSTALL_PARAM: usize = startup_options::index_of_long(AUTO_PARAMS, b"install");
 /// These need `Feature::HotReload` besides what their rows say.
 pub(crate) const HOT_RELOAD_PARAMS: [usize; 2] = [
     startup_options::index_of_long(AUTO_PARAMS, b"watch"),
@@ -471,11 +472,8 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         (Long(b"watch-kill-signal"), Nothing),
         (Long(b"hot"), RuntimeCode),
         (Long(b"no-clear-screen"), Nothing),
-        (Long(b"check"), RuntimeRequirement::Feature(Feature::Check)),
-        (
-            Long(b"aot"),
-            RuntimeRequirement::Feature(Feature::AotCompiler),
-        ),
+        (Long(b"check"), Nothing),
+        (Long(b"aot"), Nothing),
         (
             Long(b"aot-allow-code-from-disk"),
             RuntimeRequirement::Feature(Feature::AotCompiler),
@@ -718,7 +716,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--aot-huge-heap                  With --aot: remove the 32 GB heap limit per thread. Uses more memory and runs slower"
         ),
         parse_param!(
-            "--no-compile-function-source     With --aot: don't embed function source code. fn.toString() returns [native code], and an eval() or new Function() call the compiler didn't find at build time throws"
+            "--no-compile-function-source     With --aot: don't embed function source code. fn.toString() returns [native code]"
         ),
         parse_param!(
             "--compile-in-place               With --aot: keep modules at their paths on disk and load anything that wasn't compiled from there. The executable only runs on the machine that built it"
@@ -752,7 +750,14 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!("--aot-erase-types"),
         parse_param!("--aot-refuse-code-from-disk"),
         parse_param!("--aot-out <STR>"),
+        parse_param!(
+            "--aot-order <STR>...             With --aot: lay code and data out by order file(s) that runs of an executable built by --aot-record-order wrote; comma-separated or repeated, most important first"
+        ),
+        parse_param!(
+            "--aot-record-order               With --aot: build an executable that writes an order file when it runs (BUN_AOT_ORDER_OUT)"
+        ),
         parse_param!("--aot-stored-strings <STR>"),
+        parse_param!("--aot-stored-strings-json <STR>"),
         parse_param!("--aot-symbols"),
         parse_param!("--no-builtin-modules"),
         parse_param!("--trim-without <STR>..."),
@@ -1003,6 +1008,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     ),
     parse_param!(
         "--react-compiler                 Compile components and hooks with the React Compiler. Test files, preloads and node_modules are left alone"
+    ),
+    parse_param!(
+        "--no-compile-function-source     With --aot: don't embed function source code. fn.toString() returns [native code]"
     ),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(
@@ -2509,6 +2517,16 @@ fn parse_build_command_options(
             .is_some_and(|format| format != b"esm" && format != b"cjs")
         {
             Output::err_generic("--library only supports --format=esm and --format=cjs", ());
+            Global::exit(1);
+        }
+        if args
+            .option(b"--target")
+            .is_some_and(|target| !matches!(target, b"bun" | b"node" | b"browser"))
+        {
+            Output::err_generic(
+                "--library only supports --target=bun, --target=node and --target=browser",
+                (),
+            );
             Global::exit(1);
         }
         ctx.bundler_options.outdir = cli::compile_command::DEFAULT_LIBRARY_OUTDIR.into();

@@ -47,6 +47,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
 
         self.builder.switch_to(resume_next.block);
+        self.builder.loop_hint();
         emit_resume(self, ResumeMode::Next, exit.block);
 
         self.builder.switch_to(suspend.block);

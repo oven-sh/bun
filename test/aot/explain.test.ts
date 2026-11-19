@@ -42,15 +42,17 @@ interface Cause extends Place, Wording {
   rank: number;
   inDependency: boolean;
   source: string;
+  why: string;
+  /** Where the operations are, if the entry is at another place. */
+  uses: string[];
   accesses: number;
   dependencyAccesses: number;
   calls: number;
   operators: number;
   inLoops: number;
+  withOtherCauses: number;
   function: string;
   types: string[];
-  family: "unproven-type" | "unknown-code";
-  why: Wording | null;
 }
 
 interface Report {
@@ -66,8 +68,8 @@ const buildTimeout = 300_000;
 const maxShownCauses = 20;
 const textAndJSON = ["--explain", "--explain=json"];
 const membersOfCause =
-  "rank reason file line column inDependency source message fix url accesses dependencyAccesses calls operators " +
-  "inLoops function types family why";
+  "rank reason file line column inDependency source message fix url why uses accesses dependencyAccesses calls " +
+  "operators inLoops withOtherCauses function types";
 
 const pagePath = join(import.meta.dir, "..", "..", "docs", "compiler", "explain.mdx");
 const page = readFileSync(pagePath, "utf8").replaceAll("\r\n", "\n");
@@ -101,11 +103,47 @@ export function title(from: any) {
 const readsOutsideLoops = 12;
 const fewReadsInLoop: Files = {
   "main.ts": `const cold = JSON.parse('{ "field0": 1 }');
-const hot = JSON.parse('{ "x": 1, "y": 2 }');
+const hot = JSON.parse('[{ "x": 1, "y": 2 }]');
 ${Array.from({ length: readsOutsideLoops }, (_, index) => `console.log(cold.field${index});\n`).join("")}
 let total = 0;
-for (let i = 0; i < 1000; i++) total += hot.x + hot.y;
+for (const point of hot) total += point.x + point.y;
 console.log(total);
+`,
+};
+
+const lookedUpBehindChecks: Files = {
+  "main.ts": `class Point {
+  constructor(
+    public x: number,
+    public y: number,
+  ) {}
+}
+class Config {
+  static limit: number = 3;
+}
+function viaIndex(points: Point[]) {
+  let sum = 0;
+  for (let i = 0; i < points.length; i++) sum += points[i]!.x;
+  return sum;
+}
+function viaFind(points: Point[]) {
+  let sum = 0;
+  for (let i = 0; i < 4; i++) sum += points.find(point => point.x === i)!.y;
+  return sum;
+}
+function viaStaticField() {
+  let sum = 0;
+  for (let i = 0; i < 9; i++) sum += Config.limit;
+  return sum;
+}
+function viaPop(points: Point[]) {
+  let sum = 0;
+  while (points.length > 0) sum += points.pop()!.x;
+  return sum;
+}
+const points: Point[] = [];
+for (let i = 0; i < 4; i++) points.push(new Point(i, i + 1));
+console.log(viaIndex(points), viaFind(points), viaStaticField(), viaPop(points));
 `,
 };
 
@@ -141,6 +179,174 @@ const withDependency: Files = {
   }),
   "node_modules/reads-config/index.js": `export function portOf(text) {\n  return JSON.parse(text).port;\n}\n`,
   "node_modules/reads-config/index.d.ts": `export declare function portOf(text: string): number;\n`,
+};
+
+// Each program has one thing that costs something: why, and the line to change. The accesses are at the lines of `uses`.
+interface Origin {
+  source: string;
+  why: string;
+  line: number;
+  /** A use that the compiler learns to make free may go. */
+  uses: number[];
+}
+const origins: Record<string, Origin> = {
+  "the argument of new Array() may not be a number": {
+    source: `class Block {
+  constructor(public link: Block | null, public size: number) {}
+}
+class Store {
+  blocks: Block[] = new Array(capacity);
+  last: Block | null = null;
+  add(index: number) {
+    this.last = new Block(this.last, index);
+    this.blocks[index] = this.last;
+  }
+  sum() {
+    let total = 0;
+    for (let i = 0; i < count; i++) {
+      const block = this.blocks[i];
+      if (block == null) continue;
+      total += block.size;
+    }
+    return total;
+  }
+}
+const count = process.argv.length + 4;
+const capacity: any = count > 99 ? "none" : 6;
+const store = new Store();
+for (let i = 0; i < count; i++) store.add(i);
+console.log(store.sum());
+`,
+    why: "array-argument",
+    line: 22,
+    uses: [16],
+  },
+  "a parsed object gets into a list of objects of a known shape": {
+    source: `interface Item {
+  price: number;
+}
+const items: Item[] = [{ price: 1 }];
+items.push(JSON.parse('{ "price": 2 }'));
+let total = 0;
+for (const item of items) total += item.price;
+console.log(total);
+`,
+    why: "builtin-result",
+    line: 5,
+    uses: [7],
+  },
+  "an object is given to a function that isn't known": {
+    source: `class Account {
+  balance = 1;
+}
+function total(accounts: Account[]) {
+  let sum = 0;
+  for (const account of accounts) sum += account.balance;
+  return sum;
+}
+const accounts = [new Account(), new Account()];
+const handler = JSON.parse("{}").onAccount;
+if (handler) handler(accounts[0]);
+console.log(total(accounts));
+`,
+    why: "exposed-object",
+    line: 11,
+    uses: [2, 6],
+  },
+  "a property is redefined": {
+    source: `class Box {
+  value: number = 1;
+  other: number = 2;
+}
+function sum(boxes: Box[]) {
+  let total = 0;
+  for (const box of boxes) total += box.value + box.other;
+  return total;
+}
+const boxes = [new Box(), new Box()];
+Object.defineProperty(boxes[0], "value", {
+  get() {
+    return 3;
+  },
+});
+console.log(sum(boxes));
+`,
+    why: "changed-shape",
+    line: 11,
+    uses: [7],
+  },
+  "a field holds a number at first": {
+    source: `class Item {
+  next: Item | number = 0;
+  weight = 1;
+}
+function sum(items: Item[]) {
+  let total = 0;
+  for (const item of items) total += (item.next as Item).weight;
+  return total;
+}
+const items: Item[] = [];
+for (let i = 0; i < 10; i++) {
+  const item = new Item();
+  item.next = new Item();
+  items.push(item);
+}
+console.log(sum(items));
+`,
+    why: "other-value",
+    line: 2,
+    uses: [7],
+  },
+  "a caught exception is read": {
+    source: `function failures() {
+  let sum = 0;
+  for (let i = 0; i < 5; i++) {
+    try {
+      if (i) throw { code: i };
+    } catch (error: any) {
+      sum += error.code;
+    }
+  }
+  return sum;
+}
+console.log(failures());
+`,
+    why: "caught-exception",
+    line: 6,
+    uses: [7],
+  },
+  "what pop() returns is checked": {
+    source: `class Point {
+  constructor(public x: number) {}
+}
+function sum(points: Point[]) {
+  let total = 0;
+  while (points.length > 0) total += points.pop()!.x;
+  return total;
+}
+const points: Point[] = [];
+for (let i = 0; i < 100; i++) points.push(new Point(i));
+console.log(sum(points));
+`,
+    why: "checked-result",
+    line: 6,
+    uses: [6],
+  },
+  "a static field is defined": {
+    source: `class Config {
+  static limit: number = 3;
+}
+function sum() {
+  let total = 0;
+  for (let i = 0; i < 9; i++) total += Config.limit;
+  return total;
+}
+console.log(sum());
+`,
+    why: "static-field",
+    line: 2,
+    uses: [],
+  },
 };
 
 const buildScript = `const result = await Bun.build({
@@ -229,7 +435,6 @@ function linesDecidedBy(causes: Cause[]) {
         ...(cause.inLoops > 0
           ? [`note: ${counted(cause.inLoops, "of these runs in a loop", "of these run in a loop")}`]
           : []),
-        ...(cause.why ? [`note: why (${cause.why.reason}): ${cause.why.message}`] : []),
         `note: fix: ${cause.fix}`,
         `note: ${cause.url}`,
       ]),
@@ -247,10 +452,8 @@ function expectCountsToAgree({ lines, numbers, causes }: Report) {
     expect(operations).toBeGreaterThan(0);
     expect(cause.inLoops).toBeLessThanOrEqual(operations);
     if (cause.accesses > 0) expect(cause.inDependency).toBe(false);
-    for (const { reason, url } of cause.why ? [cause, cause.why] : [cause]) {
-      expect(url).toBe(`https://bun.com/docs/compiler/explain#${reason}`);
-      expect(page).toContain(`\n### ${reason}\n`);
-    }
+    expect(cause.url).toBe(`https://bun.com/docs/compiler/explain#${cause.reason}`);
+    expect(page).toContain(`\n### ${cause.reason}\n`);
   }
   const decided = linesDecidedBy(causes);
   expect(lines.filter(line => decided.includes(line))).toEqual(decided);
@@ -314,16 +517,29 @@ describe.concurrent("--explain", () => {
         const { causes } = await explain(fewReadsInLoop);
         const ofAccesses = causes.filter(cause => cause.accesses > 0);
         expect(
-          ofAccesses.map(cause => ({ line: lineOf(cause), accesses: cause.accesses, isInLoop: cause.inLoops > 0 })),
+          ofAccesses.map(({ line, accesses, inLoops, why }) => ({ line, accesses, isInLoop: inLoops > 0, why })),
         ).toEqual([
-          { line: "main.ts:17", accesses: 1, isInLoop: true },
-          { line: "main.ts:17", accesses: 1, isInLoop: true },
-          ...Array.from({ length: readsOutsideLoops }, (_, index) => ({
-            line: `main.ts:${index + 3}`,
-            accesses: 1,
-            isInLoop: false,
-          })),
+          { line: 2, accesses: ofAccesses[0]!.accesses, isInLoop: true, why: "builtin-result" },
+          { line: 1, accesses: readsOutsideLoops, isInLoop: false, why: "builtin-result" },
         ]);
+        expect(ofAccesses[0]!.accesses).toBeLessThan(readsOutsideLoops);
+      }),
+    buildTimeout,
+  );
+
+  // pop() and find() can return undefined, and a class object can change. Only the failing side of a check looks a name up.
+  test(
+    "a lookup that usually doesn't run is not counted",
+    () =>
+      slot(async () => {
+        const { numbers, causes } = await explain(lookedUpBehindChecks);
+        const reasonsAt = (line: number) => causes.filter(cause => cause.line === line).map(cause => cause.reason);
+        expect({
+          // The definition of the static field.
+          lookups: numbers.accesses.byName,
+          readOfStaticField: reasonsAt(22),
+          operatorOnPop: reasonsAt(27).includes("lost-track"),
+        }).toEqual({ lookups: 1, readOfStaticField: [], operatorOnPop: false });
       }),
     buildTimeout,
   );
@@ -336,6 +552,18 @@ describe.concurrent("--explain", () => {
         expect(causes).toEqual([]);
         expect(numbers.accesses.free).toBeGreaterThan(0);
         expect(lines.at(-1)).toStartWith("100% of property accesses are one load: ");
+      }),
+    buildTimeout,
+  );
+
+  test.each(Object.entries(origins))(
+    "why, and where to change it: %s",
+    (_, { source, why, line, uses }) =>
+      slot(async () => {
+        const { causes } = await explain({ "main.ts": source });
+        const cause = causes.find(cause => cause.accesses > 0);
+        expect({ why: cause?.why, line: cause?.line }).toEqual({ why, line });
+        for (const use of cause!.uses) expect(uses).toContain(Number(use.split(":")[1]));
       }),
     buildTimeout,
   );

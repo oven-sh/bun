@@ -1,5 +1,5 @@
 // A loop is separated from its unlikely paths: those run in a copy, and at the end of a turn the copy goes back into the loop where what it carries passes the loop's tests. Here a carried value changes its kind in such a turn (a text for a number, a fraction for a whole number, another list, another layout) and changes back, or does not.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function mixed(list) { let last = 0; let sum = 0; for (let i = 0; i < list.length; i++) { const value = list[i]; if (typeof value === "string") { last = value; continue; } sum += value; last = value; } return sum + ":" + last; }
 report(mixed([1, 2, 3]));

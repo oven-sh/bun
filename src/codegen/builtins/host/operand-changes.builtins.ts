@@ -2,12 +2,12 @@
 import * as b from "bun-builtins-table";
 import { bindingsChangingNothing, membersChangingNothing } from "./members-changing-nothing.ts";
 import { keptHandlerCell, responseHandlerCell, socketDataCell } from "./native-cells.ts";
-import { handedOver, mayAnswerWrapperKeptIn, objectHandedOver } from "./native-code.ts";
+import { mayAnswerWrapperKeptIn, retainedByNativeCode } from "./native-code.ts";
 
 const ttyFunctions = "%BunTTYFunctions%";
 
 // The bytes of a view or of the views in a list, or the elements of an array, before the call returns or once the operation has ended.
-const filledWithBytes = [...handedOver, b.writesContents()];
+const filledWithBytes = [...retainedByNativeCode, b.writesContents()];
 
 const method = (path: b.BuiltinPath, uses: readonly b.UseSpec[], returns: b.TableType = b.any) =>
   b.method(path, {
@@ -15,7 +15,7 @@ const method = (path: b.BuiltinPath, uses: readonly b.UseSpec[], returns: b.Tabl
     returns,
     capability: "js",
     throws: true,
-    uses: { this: objectHandedOver, operands: uses },
+    uses: { this: retainedByNativeCode, operands: uses },
     implementation: b.hostCall,
   });
 
@@ -32,7 +32,7 @@ const takingObjects = (taken: readonly number[], returns: b.TableType = b.any) =
     returns,
     capability: "js",
     throws: true,
-    uses: Object.fromEntries(taken.map(position => [`operand${position}`, handedOver])),
+    uses: Object.fromEntries(taken.map(position => [`operand${position}`, retainedByNativeCode])),
     implementation: b.hostCall,
   } satisfies b.FunctionField;
 };
@@ -57,7 +57,10 @@ const resultsOfMembersChangingNothing: Readonly<Record<b.BuiltinPath, b.TableTyp
 const methodTakingObjects = (path: b.BuiltinPath, taken: readonly number[]) => {
   const returns = resultsOfMembersChangingNothing[path];
   const field = takingObjects(taken, returns);
-  return b.method(path, [{ ...field, uses: { this: objectHandedOver, ...field.uses } }, otherwiseAnswering(returns)]);
+  return b.method(path, [
+    { ...field, uses: { this: retainedByNativeCode, ...field.uses } },
+    otherwiseAnswering(returns),
+  ]);
 };
 // What the code of the function answers.
 const resultsOfBindingsChangingNothing: Readonly<Record<b.BuiltinPath, b.TableType>> = {
@@ -87,9 +90,9 @@ const getter = (path: b.BuiltinPath, hasSetter: boolean) =>
   b.method(path, {
     ...accessorColumns,
     getter: b.any,
-    uses: { this: objectHandedOver },
+    uses: { this: retainedByNativeCode },
     ...(hasSetter && {
-      setter: { ...accessorColumns, value: b.any, uses: { this: objectHandedOver, value: handedOver } },
+      setter: { ...accessorColumns, value: b.any, uses: { this: retainedByNativeCode, value: retainedByNativeCode } },
     }),
   });
 
@@ -177,11 +180,11 @@ const keptValue = (path: b.BuiltinPath) =>
   b.method(path, {
     ...accessorColumns,
     getter: b.any,
-    uses: { this: [...objectHandedOver, b.returnedFrom(path)] },
+    uses: { this: [...retainedByNativeCode, b.returnedFrom(path)] },
     setter: {
       ...accessorColumns,
       value: b.any,
-      uses: { this: objectHandedOver, value: [b.retained, b.storedIn(b.nativeCell(path))] },
+      uses: { this: retainedByNativeCode, value: [b.retained, b.storedIn(b.nativeCell(path))] },
     },
   });
 
@@ -214,7 +217,7 @@ const keptHandler = (path: b.BuiltinPath, cell: string, call: HandlerCall) =>
       value: b.any,
       capability: "js",
       uses: {
-        this: handedOver,
+        this: retainedByNativeCode,
         value: [
           b.storedIn(b.nativeCell(cell)),
           b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "PerEvent", ...call, result: "Ignored" }),
@@ -270,12 +273,15 @@ export default b.declarations(
     filledWithBytes,
   ),
   // markAsUncloneable and markAsUntransferable put a mark on the object under a private name.
-  binding("native:Cpp:Worker.cpp:createNodeWorkerThreadsBinding", [...handedOver, b.definesName(b.anyKey, b.bool)]),
+  binding("native:Cpp:Worker.cpp:createNodeWorkerThreadsBinding", [
+    ...retainedByNativeCode,
+    b.definesName(b.anyKey, b.bool),
+  ]),
   // An error that is reported gets its stack, and with it the position before the source map: a string or what Error.prepareStackTrace of the program has answered, and two numbers.
   // No test holds those kinds, so the row says only that native code makes no object for them.
   binding(
     "native:NewCppFunction:BunProcess.cpp:jsFunctionReportUncaughtException",
-    [...handedOver, b.definesName(["stack", "originalLine", "originalColumn"], b.nativeMemory)],
+    [...retainedByNativeCode, b.definesName(["stack", "originalLine", "originalColumn"], b.nativeMemory)],
     b.undefined,
   ),
   Object.entries(bindingsChangingNothing).flatMap(([path, { taken, refused }]) =>
@@ -293,12 +299,12 @@ export default b.declarations(
     throws: true,
     uses: {
       source: [
-        ...handedOver,
+        ...retainedByNativeCode,
         ...["ReadableStreamDefaultController", "ReadableByteStreamController"].map(controller =>
           b.createdIn(b.instance(controller), b.nativeMemory),
         ),
       ],
-      strategy: handedOver,
+      strategy: retainedByNativeCode,
     },
     implementation: b.hostCall,
   }),
@@ -316,7 +322,11 @@ export default b.declarations(
       returns: b.any,
       capability: "js",
       throws: true,
-      uses: { this: handedOver, options: [...handedOver, keepsDataOfSocket], others: handedOver },
+      uses: {
+        this: retainedByNativeCode,
+        options: [...retainedByNativeCode, keepsDataOfSocket],
+        others: retainedByNativeCode,
+      },
       implementation: b.hostCall,
     }),
   ),
@@ -343,7 +353,7 @@ export default b.declarations(
     capability: "js",
     throws: true,
     uses: {
-      this: handedOver,
+      this: retainedByNativeCode,
       callback: [
         b.called({
           afterwards: "TouchesOnlyWhatRowNames",

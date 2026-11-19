@@ -1,5 +1,5 @@
 // Each kind of declared parameter, and this, is handed what is declared, what is not, undefined, null, nothing and too much, in turns: the guard at the entry lets the one kind into the fast version and sends the other to the slow one. An object is changed by a callee in the middle of the fast version, a parameter is assigned to, and a recursion turns wrong halfway down.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 (globalThis as any).report = (value: unknown) => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 class Point { x: number; y: number; constructor(x: number, y: number) { this.x = x; this.y = y; } sum(): number { return this.x + this.y; } scaled(by: number): number { return this.x * by + this.y * by; } }
 class Point3 extends Point { z: number; constructor(x: number, y: number, z: number) { super(x, y); this.z = z; } sum(): number { return this.x + this.y + this.z; } }

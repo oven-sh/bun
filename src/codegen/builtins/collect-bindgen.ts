@@ -296,7 +296,7 @@ const saysResult = (type: Type): boolean => !(type instanceof AnyType) || type.i
 function computeBodyUses(type: Type, capability: Capability, isRead: boolean): readonly UseSpec[] {
   const sharesNativeObject = () => [...collectParts([type])].some(part => part instanceof RefType);
   if (type.holdsJSValue || type.passesValue || sharesNativeObject()) {
-    if (isRead) return b.handedOver;
+    if (isRead) return b.retainedByNativeCode;
     return capability === "js" ? [b.everything] : usesWithoutJavaScript;
   }
   return type.borrowsHeap ? [b.readsContents()] : [];
@@ -324,7 +324,7 @@ function computeReceiverUses(signature: Signature, className: string | null): re
   if (signature instanceof Method && saysResult(signature.returns) && !changesReceiver) {
     const mayAnswerReceiver =
       signature.passThis && className !== null && mayHoldInstanceOf(signature.returns.resultType, className);
-    return mayAnswerReceiver ? [...b.handedOver, b.returned] : b.handedOver;
+    return mayAnswerReceiver ? [...b.retainedByNativeCode, b.returned] : b.retainedByNativeCode;
   }
   if (signature.capability === "js") return [b.everything];
   // A function that is no member of a class has a receiver only if its body is handed `this`.
@@ -398,7 +398,10 @@ function createField(
     ];
   }
   if (receiver !== null) uses.this ??= receiver.uses;
-  else if (isRead && signature.receiver !== "static") uses.this ??= b.handedOver;
+  else if (isRead && signature.receiver !== "static") uses.this ??= b.retainedByNativeCode;
+  const writes = columns.writes ?? (isOfClass && capability === "js" ? undefined : externalState);
+  // `held: "pinned"`, the one conversion that throws on its way into Rust: a small view gets a buffer, and its bytes move there.
+  const pinsBytes = args.some(({ type }) => type.rustFromExternThrows);
   return {
     ...columns,
     this: receiver === null ? undefined : new b.TableType(receiver.type),
@@ -427,7 +430,7 @@ function createField(
       args.some(({ type }) => type.canRefuse),
     uses,
     reads: columns.reads ?? (isOfClass && capability === "js" ? undefined : externalState),
-    writes: columns.writes ?? (isOfClass && capability === "js" ? undefined : externalState),
+    writes: pinsBytes && writes && !writes.includes("TypedArrayStorage") ? [...writes, "TypedArrayStorage"] : writes,
     implementation: columns.implementation ?? b.hostCall,
   };
 }
@@ -742,7 +745,7 @@ const setterTakingAnything = (isRead: boolean, isStatic: boolean): b.SetterOptio
   value: b.any,
   capability: "js",
   throws: true,
-  uses: isRead ? { ...(isStatic ? {} : { this: b.handedOver }), value: b.handedOver } : undefined,
+  uses: isRead ? { ...(isStatic ? {} : { this: b.retainedByNativeCode }), value: b.retainedByNativeCode } : undefined,
 });
 
 // The field that a read of the property finds the answer in, once it is there. A property that can be redefined may be something else.

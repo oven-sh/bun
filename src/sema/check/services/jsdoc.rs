@@ -210,8 +210,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     /// `read_library`.
     fn with_text<R>(&self, file: FileId, then: impl FnOnce(&[u8]) -> R) -> Option<R> {
         let module = self.c.files().module(file);
-        if !module.hir.text.is_empty() {
-            return Some(then(&module.hir.text));
+        let text = &self.c.hir(file).text;
+        if !text.is_empty() {
+            return Some(then(text));
         }
         let (mut then, mut result) = (Some(then), None);
         (self.read_library?)(module.file_name(), &mut |text| {
@@ -481,10 +482,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         let name = self
             .valid(declaration)
             .map_or(Atom::NONE, |(hir, at)| hir.text(hir.name(at)));
-        let name: &[u8] = match name {
-            Atom::NONE => b"",
-            name => self.c.atoms().bytes(name),
-        };
+        let name = self.c.atoms().bytes(name);
         let reason = self
             .js_doc_tags_of_declarations(&[declaration], name, 0)
             .deprecated?;

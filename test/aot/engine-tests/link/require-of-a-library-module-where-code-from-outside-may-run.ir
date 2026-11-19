@@ -1,0 +1,6 @@
+# Where code from outside the image may run, the host runs the modules of its library that the image lacks from their text, and that text requires those that the image has. What the body of an internal file returns is handed to that text frozen: the record stays in sight and keeps the writers of its fields; what lies in it is in the hands of code that nobody has read.
+# PROGRAM-OF: require-of-a-library-module-gives-what-its-body-returns.ir
+# LIBRARY: own
+# RUN: link modules functions mechanisms=all
+# CHECK: record-is-handed-out-frozen
+# CHECK: function f2 {{*}}result=L1

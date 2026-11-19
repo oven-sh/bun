@@ -3,6 +3,7 @@
 // `Bun.build({ compile })` get `--aot`. A letter in the file AOT_CHILDREN_STARTED counts each: r | e | b | B.
 // The warnings of the build, which all bear a code (`warn: TS100064: ..`), go out of what the child writes to a pipe on stderr: a test that expects nothing there asks about the program.
 // A warning that the program itself gives at run time bears none and stays.
+import { isASAN } from "harness";
 import { appendFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import "./children-under-aot";
@@ -111,8 +112,8 @@ function runCompiled<Start extends (...args: any[]) => any>(start: Start): Start
     if (!found) return start.call(this, first, second);
     const [cmd, letter] = found;
     appendFileSync(process.env.AOT_CHILDREN_STARTED!, letter);
-    // A program may loop or wait for ever behind an import that an executable refuses.
-    const timeout = Math.max(options.timeout ?? 0, 60_000);
+    // A program may loop or wait for ever behind an import that an executable refuses. A build ends by itself, and with a sanitizer it takes over a minute where the processors are busy.
+    const timeout = Math.max(options.timeout ?? 0, letter === "b" && isASAN ? 240_000 : 60_000);
     const child = start.call(this, { ...options, cmd, timeout });
     const note = (exitCode: number | null, signalCode: string | null | undefined) => {
       if (process.env.AOT_CHILDREN_STOPPED && (signalCode || (exitCode ?? 0) >= 128))

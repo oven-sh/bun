@@ -1,6 +1,8 @@
-// A helper defines four properties on what a constructor function makes. The layout keeps each field with its attributes, so no definition calls the run time.
+// A helper defines four properties on what a constructor function makes. The layout keeps each field with its attributes, so no definition is left to the run time.
+// The pair of an accessor is a cell of its own, made in line: the helper is called in a loop. The run time is asked for room alone.
 // COUNT: operation:operationAOTDefineOwnProperty = 0
-// COUNT: operations <= 40
+// COUNT: operation:operationAOTNewGetterSetter <= 20
+// COUNT: operations <= 60
 function describe(made, turn) {
   Object.defineProperty(made, "b", { value: turn, enumerable: true });
   Object.defineProperty(made, "c", { get() { return 2; }, configurable: true });

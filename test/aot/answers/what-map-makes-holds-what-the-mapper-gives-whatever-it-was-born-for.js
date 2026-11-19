@@ -3,7 +3,6 @@
 // # a text, a boolean, null, undefined, an object; in every order of two of them; over lists of objects, texts, integers, fractions, and one with a hole.
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
-// # REQUIRES: entries-of-bun
 // # CHECK: 733 of 733 of 733
 // # CHECK-NEXT: exited with 0
 function tell(deed) { try { report(deed()); } catch (error) { report(error.constructor.name); } }

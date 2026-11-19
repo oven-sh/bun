@@ -41,7 +41,7 @@ function from<T extends $Node.Readable>(
     !CAN_REPLACE_BUILT_INS &&
     opts === undefined &&
     (Readable as unknown) === require("internal/streams/readable")
-      ? (require("internal/streams/state").internals.makeObjectReadable!(1) as T)
+      ? (require("internal/streams/state").internals.makeObjectReadable!() as T)
       : new Readable({
           objectMode: true,
           highWaterMark: 1,

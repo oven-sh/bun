@@ -10,7 +10,7 @@ bun_core::declare_scope!(uws, visible);
 bun_opaque::opaque_ffi! { pub struct Timer; }
 
 impl Timer {
-    pub fn create<T>(loop_: &Loop, _ptr: T) -> NonNull<Timer> {
+    pub fn create<T>(loop_: &'static Loop, _ptr: T) -> NonNull<Timer> {
         let t = us_create_timer(
             loop_,
             0,

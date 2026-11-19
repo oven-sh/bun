@@ -1,0 +1,16 @@
+# -- source: main.cjs
+# function Point(x, y) { this.x = x; this.y = y; }
+# function Early(v) { this.seen = typeof this.late; this.late = v; }
+# function sum(p) { var s = 0; for (var i = 0; i < 4; i++) s += p.x + p.y; return s; }
+# var p = new Point(0.5, 1.5), e = new Early(7);
+# print(sum(p), e.seen, e.late);
+# -- end of source
+# The `this` of a sloppy function is converted first; the conversion of an object is that object: it has not left, and what is stored on it is filled.
+# What is read in front of its store in the same body is read as it lies there.
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS: "x" proven={{*}}filled
+# FIELDS: "y" proven={{*}}filled
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 8 undefined 7
+# RUN(CLOSED): run-in-shell mechanisms=all-Guesses
+# CLOSED: 8 undefined 7

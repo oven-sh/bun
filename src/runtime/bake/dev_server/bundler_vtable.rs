@@ -16,10 +16,10 @@ bun_bundler::link_impl_DevServerHandle! {
             }
         },
         finalize_bundle(bv2, result) => {
-            // `bv2` borrows the three `Transpiler`s stored inline in `DevServer`
+            // `bv2` borrows the `Transpiler`s stored inline in `DevServer`
             // (stable heap address); the `'static` is a stand-in for the
             // DevServer-self lifetime — see the comment on `CurrentBundle.bv2`.
-            super::finalize::finalize_bundle(&mut *this, &mut *bv2.cast(), &mut *result)
+            super::finalize::finalize_bundle(&mut *this, &mut *bv2.cast(), result)
                 .map_err(|e| bun_bundler::Error::from(crate::Error::from(e)))
         },
         handle_parse_task_failure(err, graph, abs_path, log, bv2) => {
@@ -37,7 +37,6 @@ bun_bundler::link_impl_DevServerHandle! {
         },
         track_resolution_failure(import_source, specifier, renderer, loader) => {
             (*this)
-                .directory_watchers
                 .track_resolution_failure(import_source, specifier, renderer, loader)
                 .map_err(Into::into)
         },
@@ -54,7 +53,7 @@ bun_bundler::link_impl_DevServerHandle! {
                 }
             })
         },
-        asset_hash(abs_path) => (*this).assets.get_hash(abs_path),
+        asset_hash(abs_path) => (*this).graphs.assets.get_hash(abs_path),
         current_bundle_start_data() => {
             (*this)
                 .current_bundle
@@ -84,7 +83,7 @@ impl DevServer {
     pub(crate) const CONFIGURATION_HASH_KEY_LEN: usize = 16;
 
     /// Construct the erased handle the bundler stores in
-    /// `Transpiler.options.dev_server` / `LinkerContext.dev_server`.
+    /// `Transpiler.options.dev_server` / `BundleV2.dev_server`.
     #[inline]
     pub(crate) fn bundler_handle(&mut self) -> bun_bundler::dispatch::DevServerHandle {
         // SAFETY: `self` is the single per-process DevServer; outlives all dispatch.

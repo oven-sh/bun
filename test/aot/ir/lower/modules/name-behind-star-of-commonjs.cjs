@@ -3,13 +3,13 @@
 // Nothing is taken of unused.mjs, which goes.
 // RUN: link
 // CHECK: module [[inner]] path="{{*}}inner.cjs"
-// CHECK: module [[innerFace]] path="#{{*}}requests=[{target=[[inner]] kind=Require completes=true}] syntheticExports=[{name="c"
-// CHECK: module [[middle]] path="{{*}}middle.mjs" {{*}}requests=[{target=[[innerFace]] isDynamicStarExport=true completes=true}]
+// CHECK: module [[innerFacade]] path="#{{*}}requests=[{target=[[inner]] kind=Require completes=true}] syntheticExports=[{name="c"
+// CHECK: module [[middle]] path="{{*}}middle.mjs" {{*}}requests=[{target=[[innerFacade]] isDynamicStarExport=true completes=true}]
 // CHECK: module [[other]] path="{{*}}other.cjs"
-// CHECK: module [[otherFace]] path="#{{*}}requests=[{target=[[other]] kind=Require completes=true}]
-// CHECK: module [[stars]] path="{{*}}stars.mjs" {{*}}requests=[{target=[[innerFace]] isDynamicStarExport=true completes=true}, {target=[[otherFace]] isDynamicStarExport=true completes=true}]
+// CHECK: module [[otherFacade]] path="#{{*}}requests=[{target=[[other]] kind=Require completes=true}]
+// CHECK: module [[stars]] path="{{*}}stars.mjs" {{*}}requests=[{target=[[innerFacade]] isDynamicStarExport=true completes=true}, {target=[[otherFacade]] isDynamicStarExport=true completes=true}]
 // CHECK: module [[index]] path="{{*}}index.mjs" {{*}}requests=[{target=[[middle]] completes=true}, {target=[[stars]] completes=true}] requiredNames=
-// CHECK: module {{*}}barrel.mjs" {{*}}requests=[{target=[[innerFace]] completes=true isHoisted=true}, {target=[[otherFace]] completes=true isHoisted=true}, {target=[[index]] completes=true}] exports=
+// CHECK: module {{*}}barrel.mjs" {{*}}requests=[{target=[[innerFacade]] completes=true isHoisted=true}, {target=[[otherFacade]] completes=true isHoisted=true}, {target=[[index]] completes=true}] exports=
 
 // FILE: main.cjs
 const required = require("./barrel.mjs");

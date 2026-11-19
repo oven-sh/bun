@@ -32,6 +32,6 @@
 # CHECK: frequency=Rare isLoopHead=true:
 # CHECK: = GetEnvironmentField {{*}}field=2
 # CHECK: = TypeTest {{*}}testedType=i32
-# CHECK: : i32 @Int32) isInLoop=true isLoopHead=true:
+# CHECK: : i32 @Int32, {{*}}: int[0, 9007199254740992] @Int64) isInLoop=true isLoopHead=true:
 # CHECK-NOT: testedType=i32
 # CHECK: = PutEnvironmentField {{*}}field=1

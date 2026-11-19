@@ -88,7 +88,7 @@ function cargoProfile(cfg: Config): string {
  * triple per os/arch/abi; test/internal/source-lints/build-rust.test.ts keeps
  * the two in sync). Drives `rust:check-all` and the generated
  * `.cargo/config.toml` (cargo-config.ts). `rust-toolchain.toml`'s `targets`
- * is this list minus the Tier 3 triples.
+ * is this list.
  */
 export const allRustTargets = [
   "x86_64-unknown-linux-gnu",
@@ -106,23 +106,12 @@ export const allRustTargets = [
 ] as const;
 
 /**
- * Tier 3 targets — rustup ships no prebuilt `rust-std` for these, so
- * `rustup target add` would fail and cargo needs `-Zbuild-std` (which in turn
- * needs the `rust-src` component). As of nightly-2026-05, the only Tier 3
- * triple in CI's matrix is aarch64-freebsd.
- */
-export function rustTargetIsTier3(triple: string): boolean {
-  return triple === "aarch64-unknown-freebsd";
-}
-
-/**
  * Build std/core/alloc from source instead of linking the rustup prebuilt.
  * The workspace is `panic = "abort"` (see Cargo.toml). `proc_macro` is
  * needed because `cargo build --target` still resolves proc-macro crates for
  * the host through the same `-Zbuild-std` flag set. Requires the `rust-src`
  * component, which `rust-toolchain.toml` requests and CI images preinstall
- * (the `rust` tool of ci-images/spec.ts). Shared with
- * `rust:check-all`, which needs it for the Tier 3 triples.
+ * (the `rust` tool of ci-images/spec.ts).
  */
 export const cargoBuildStdArg = "-Zbuild-std=core,alloc,std,proc_macro,panic_abort";
 
@@ -147,7 +136,8 @@ export const cargoBuildStdArg = "-Zbuild-std=core,alloc,std,proc_macro,panic_abo
  * real CPU instead (cortex-a72), which also assumed aes, sha2 and pmuv3
  * (`rustc --print cfg`), none of which the C++ side does.
  *
- * clang-cl (windows) spells the same flags `/clang:-march=...`.
+ * clang-cl (windows) spells the same flags `/clang:-march=...`. For apple-m1,
+ * that is not enough: see `ccidx` in flags.ts.
  */
 function rustCpuTargetFlags(cfg: Config): string[] {
   const rustflags: string[] = [];
@@ -329,7 +319,6 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // std is compiled from source (cargoBuildStdArg) in every build: the link is bun's own and takes each crate's rlib
   // as the output of an edge (rust/units.ts linkedRlibs), so std's crates have to be units of the graph like the
   // rest; the toolchain's prebuilt std is not. It also gives:
-  // tier3:   a std at all; no prebuilt `rust-std` exists.
   // release: prebuilt std is native code built for generic x86-64 with no
   //          `.llvm_addrsig`. Rebuilding with our RUSTFLAGS gets it
   //          `-Ctarget-cpu=` (AVX2/BMI in core::str / hashbrown), and under

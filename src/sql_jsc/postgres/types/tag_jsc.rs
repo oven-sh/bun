@@ -56,7 +56,7 @@ pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Tag> 
         }
 
         // It's something internal
-        if !tag.is_indexable() && bun_jsc::DOMURL::cast(value).is_none() {
+        if !tag.is_indexable() && bun_jsc::DOMURL::cast(&value).is_none() {
             return Err(global.throw_value(global.ERR_INVALID_ARG_TYPE(format_args!(
                 "Unknown object is not a valid PostgreSQL type"
             ))));

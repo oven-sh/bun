@@ -1,7 +1,7 @@
 // An async function without an await runs to its end inside the call. Its caller gets a promise all the same, and whoever awaits the call waits for as many turns of the job queue as in plain Bun,
 // whatever the function returns (a number, an object, a thenable, a promise in any state) or throws, in its body or in the head that evaluates its parameters. The calls are awaited at once, in a
 // try, later, never, and as elements of Promise.all. A rejection that nobody handles is reported once, one that is handled is not, and the stack of an error names the same functions and positions.
-// STATISTIC: AsyncWorkersMade >= 20
+// STATISTIC: NonSuspendingAsyncFunctions >= 20
 declare const setUnhandledRejectionCallback: undefined | ((callback: (promise: Promise<unknown>, reason: unknown) => void) => void);
 Error.stackTraceLimit = 12;
 const settled = Promise.resolve();

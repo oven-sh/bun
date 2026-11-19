@@ -5,7 +5,7 @@
 //! (S3 I/O, streaming, JS host-fns, async readers) on top via the `BlobExt` /
 //! `StoreExt` / … extension traits in that crate. Defining the data shapes here
 //! lets lower-tier crates (`bun_http_jsc`, `bun_sql_jsc`) downcast a `JSValue`
-//! to `*mut Blob` and read its bytes without a `bun_runtime` forward-dep.
+//! to `Blob` and read its bytes without a `bun_runtime` forward-dep.
 //!
 //! Everything that touches the
 //! event loop / fs / network stays in `bun_runtime`.
@@ -23,13 +23,14 @@ use bun_ptr::RefPtr;
 
 use crate::JsCell;
 use crate::node_path::{PathLike, PathOrFileDescriptor};
-use crate::{JSGlobalObject, JSValue, JsClass};
+use crate::{JSGlobalObject, JSValue, JsClass, WrapperGuard};
 
 /// Blob size type. Values are masked to 52 bits at the boundary.
 pub type SizeType = u64;
 /// Maximum blob size (52 bits).
 pub const MAX_SIZE: SizeType = (1u64 << 52) - 1;
 
+#[cfg(not(windows))]
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum ClosingState {
@@ -208,55 +209,57 @@ const _: () = {
     // The class is generated into `bun_runtime`, which has its members (`BlobExt`).
     unsafe extern "C" {
         safe fn Bun__Bindgen__Blob__fromJS(value: JSValue) -> *mut c_void;
-        safe fn Bun__Bindgen__Blob__fromJSDirect(value: JSValue) -> *mut c_void;
-        fn Bun__Bindgen__Blob__create(global: *mut JSGlobalObject, wrapped: *mut c_void)
-        -> JSValue;
+        fn Bun__Bindgen__Blob__fromJSDirect(value: JSValue) -> *mut c_void;
+        #[allow(improper_ctypes)]
+        safe fn Bun__Bindgen__Blob__create(
+            global: &JSGlobalObject,
+            wrapped: RefPtr<Blob>,
+        ) -> JSValue;
     }
 
     // `JSValue::as(Blob)` special-case: a `BuildArtifact`
     // wraps a `Blob`, so downcasting to `Blob` must also match it. The struct
     // lives in `bun_runtime`, so resolve the fallback at link time.
     //
-    // safe: by-value `JSValue` (tagged i64); the Rust-ABI body in `bun_runtime`
-    // only type-checks the encoded value and returns the stored payload pointer
-    // (or `None`) — no precondition beyond the link succeeding.
+    // safe: the Rust-ABI body in `bun_runtime` is a safe function.
     unsafe extern "Rust" {
-        safe fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob>;
+        safe fn __bun_blob_from_build_artifact(value: JSValue) -> *mut Blob;
     }
 
     impl JsClass for Blob {
-        fn from_js(value: JSValue) -> Option<*mut Self> {
-            let blob = match Bun__Bindgen__Blob__fromJS(value) {
-                blob if blob.is_null() => __bun_blob_from_build_artifact(value),
-                blob => Some(blob.cast()),
+        fn from_js(value: &JSValue) -> Option<WrapperGuard<'_, Self>> {
+            let blob = match Bun__Bindgen__Blob__fromJS(*value) {
+                blob if blob.is_null() => __bun_blob_from_build_artifact(*value),
+                blob => blob.cast(),
             };
             // C++ `mayHoldBlob` (blob.h) answers for a cell of any other type without this call.
-            debug_assert!(blob.is_none() || value.js_type() == crate::JSType::DOMWrapper);
-            blob
+            debug_assert!(blob.is_null() || value.js_type() == crate::JSType::DOMWrapper);
+            // SAFETY: a `JSBlob` holds a ref on what it wraps, and so does a `JSBuildArtifact`, of which the `Blob` is a field.
+            unsafe { WrapperGuard::new(value, blob) }
         }
-        fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-            let blob = Bun__Bindgen__Blob__fromJSDirect(value);
-            (!blob.is_null()).then(|| blob.cast())
+        fn from_js_direct(value: &JSValue) -> Option<WrapperGuard<'_, Self>> {
+            if !value.is_cell() {
+                return None;
+            }
+            // SAFETY: `value` is a cell, and a `JSBlob` holds a ref on what it wraps.
+            unsafe { WrapperGuard::new(value, Bun__Bindgen__Blob__fromJSDirect(*value).cast()) }
         }
         fn to_js(self, global: &JSGlobalObject) -> JSValue {
             // Heap-promote and hand
             // ownership to the codegen wrapper. The S3File fast-path (different
             // JS wrapper) is layered on by `bun_runtime`'s `BlobExt::into_js` for
             // S3-backed blobs; lower-tier callers never construct S3 blobs.
-            let ptr = Blob::new(self);
-            // SAFETY: the new object takes the one ref `Blob::new` made.
-            unsafe { Bun__Bindgen__Blob__create(global.as_mut_ptr(), ptr.cast()) }
+            Bun__Bindgen__Blob__create(global, Blob::new(self))
         }
     }
 };
 
 impl Blob {
-    /// Heap-promote and mark as
-    /// heap-allocated so `deinit` knows to free the heap box.
+    /// Heap-promote.
     #[inline]
-    pub fn new(mut blob: Blob) -> *mut Blob {
+    pub fn new(mut blob: Blob) -> RefPtr<Blob> {
         blob.ref_count = bun_ptr::RawRefCount::init(1);
-        bun_core::heap::into_raw(Box::new(blob))
+        RefPtr::new(blob)
     }
 
     #[inline]
@@ -470,21 +473,6 @@ impl Blob {
             store::Data::S3(s3) => Some(s3.path()),
         }
     }
-
-    /// Tear down owned resources; if
-    /// heap-allocated, also frees the heap box.
-    pub fn deinit(&mut self) {
-        self.detach();
-        self.name.set(bun_core::String::DEAD);
-
-        self.content_type.set(BlobContentType::default());
-
-        if self.is_heap_allocated() {
-            // SAFETY: `self` is the `*mut Blob` originally produced by
-            // `Blob::new` (`heap::alloc`).
-            unsafe { drop(bun_core::heap::take(std::ptr::from_mut::<Blob>(self))) };
-        }
-    }
 }
 
 // SAFETY: `Blob__ref`/`Blob__deref` operate on the intrusive `ref_count` and
@@ -525,9 +513,7 @@ impl bun_ptr::AnyRefCounted for Blob {
 ///
 /// # Safety
 /// `this` must point to a live `Blob` produced by [`Blob::new`], and the call
-/// must happen on the thread that owns it (the count is not atomic). A
-/// by-value `Blob` has a count of zero; bumping it would make a later
-/// [`Blob::deinit`] free an address that was never heap-allocated.
+/// must happen on the thread that owns it (the count is not atomic).
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Blob__ref(this: *mut Blob) {
     // SAFETY: caller contract above.
@@ -551,18 +537,14 @@ unsafe extern "C" fn Blob__ref(this: *mut Blob) {
 /// last count frees the `Blob`, so `this` is dangling once this returns.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Blob__deref(this: *mut Blob) {
-    // SAFETY: caller contract above. `deinit` frees the allocation, so `this`
-    // is not touched after it.
+    // SAFETY: caller contract above.
     unsafe {
         debug_assert!(
             (*this).is_heap_allocated(),
             "cannot deref: this Blob is not heap-allocated"
         );
         if (*this).ref_count.decrement() == bun_ptr::raw_ref_count::DecrementResult::ShouldDestroy {
-            // `deinit` has its own `is_heap_allocated()` guard around the
-            // `drop(heap::take)`, so re-arm so it returns true.
-            (*this).ref_count.increment();
-            (*this).deinit();
+            drop(bun_core::heap::take(this));
         }
     }
 }
@@ -580,7 +562,7 @@ pub mod store {
     pub struct Store {
         pub data: Data,
         pub mime_type: MimeType,
-        pub ref_count: bun_ptr::ThreadSafeRefCount<Store>,
+        ref_count: bun_ptr::ThreadSafeRefCount<Store>,
         pub is_all_ascii: IsAllAscii,
     }
 
@@ -652,171 +634,97 @@ pub mod store {
     // Bytes
     // ────────────────────────────────────────────────────────────────────
 
-    /// Kept as `(ptr,len,cap,allocator)`
-    /// rather than `Vec<u8>` so the memfd-backed path
-    /// (`LinuxMemFdAllocator::create` → `mmap`'d region freed via `munmap`)
-    /// can carry its allocator vtable with the buffer.
     pub struct Bytes {
-        pub ptr: Option<NonNull<u8>>,
-        pub len: SizeType,
-        pub cap: SizeType,
-        pub allocator: bun_alloc::StdAllocator,
+        storage: Storage,
+        /// What `Storage::Mapped` maps, if it can be mapped again for a copy-on-write clone.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        memfd: Option<bun_sys::File>,
         /// Used by standalone module graph and the `File` constructor.
-        /// Heap-owned (or empty); freed by `Bytes`'s `Drop`.
         pub stored_name: Box<[u8]>,
     }
 
-    // SAFETY: `Bytes` is morally `Vec<u8>`-with-custom-free. The raw
-    // `NonNull<u8>` is uniquely owned (`ptr` is the sole alias) and
-    // `StdAllocator` is `Send + Sync`.
-    unsafe impl Send for Bytes {}
-    // SAFETY: `&Bytes` only reads the uniquely-owned slice via `slice()`; no
-    // interior mutability, so sharing references across threads is sound.
-    unsafe impl Sync for Bytes {}
-
-    impl Default for Bytes {
-        fn default() -> Self {
-            Self {
-                ptr: None,
-                len: 0,
-                cap: 0,
-                allocator: bun_alloc::basic::C_ALLOCATOR,
-                stored_name: Box::default(),
-            }
-        }
+    enum Storage {
+        Heap(Vec<u8>),
+        Static(&'static [u8]),
+        #[cfg(unix)]
+        Mapped(bun_sys::Mmap),
     }
 
     impl Bytes {
-        /// Takes ownership of `bytes` (allocated by the global mimalloc allocator).
+        fn new(storage: Storage) -> Bytes {
+            Bytes {
+                storage,
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                memfd: None,
+                stored_name: Box::default(),
+            }
+        }
+
         pub fn init(bytes: Vec<u8>) -> Bytes {
-            let mut v = core::mem::ManuallyDrop::new(bytes);
-            let len = v.len();
-            let cap = v.capacity();
-            Bytes {
-                ptr: NonNull::new(v.as_mut_ptr()),
-                // We keep
-                // the real `cap` so `to_internal_blob` can soundly
-                // `Vec::from_raw_parts`.
-                len: len as SizeType,
-                cap: cap as SizeType,
-                allocator: bun_alloc::basic::C_ALLOCATOR,
-                stored_name: Box::default(),
-            }
+            Self::new(Storage::Heap(bytes))
         }
 
-        /// Takes ownership of a `Box<[u8]>` (global allocator, `cap == len`).
-        /// Paired with [`Bytes::into_boxed_slice`] for round-tripping the
-        /// `is_temporary` handoff in `read_file`.
-        pub fn init_owned(bytes: Box<[u8]>) -> Bytes {
-            let len = bytes.len();
-            let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();
-            Bytes {
-                ptr: NonNull::new(ptr),
-                len: len as SizeType,
-                cap: len as SizeType,
-                allocator: bun_alloc::basic::C_ALLOCATOR,
-                stored_name: Box::default(),
-            }
+        pub fn init_static(bytes: &'static [u8]) -> Bytes {
+            Self::new(Storage::Static(bytes))
         }
 
-        /// Reclaim the buffer as a `Box<[u8]>`, shrinking if `cap > len`.
-        ///
-        /// Only valid for global-allocator-backed storage (the `init`/
-        /// `init_owned` paths) — asserts on a custom allocator (mmap/memfd).
-        pub fn into_boxed_slice(self) -> Box<[u8]> {
-            let mut this = core::mem::ManuallyDrop::new(self);
-            // `ManuallyDrop` suppresses the `Drop` impl, so free `stored_name`
-            // here explicitly (the buffer itself is reclaimed below).
-            drop(core::mem::take(&mut this.stored_name));
-            let Some(ptr) = this.ptr else {
-                return Box::new([]);
-            };
-            debug_assert!(
-                core::ptr::eq(this.allocator.vtable, bun_alloc::basic::C_ALLOCATOR.vtable),
-                "Bytes::into_boxed_slice on non-global allocator",
-            );
-            // SAFETY: `ptr[..cap]` is the live global-allocator allocation
-            // recorded by `init`/`init_owned`; `len <= cap`. `Vec::from_raw_parts`
-            // reconstitutes ownership, `into_boxed_slice` reallocates iff
-            // `cap > len` so the result has the canonical `Box<[u8]>` layout.
-            unsafe { Vec::from_raw_parts(ptr.as_ptr(), this.len as usize, this.cap as usize) }
-                .into_boxed_slice()
-        }
-
-        /// Construct from a raw `(ptr, len, cap)` triple owned by `allocator`.
-        ///
         /// # Safety
-        /// `ptr[..cap]` must be a live allocation owned by `allocator`'s vtable
-        /// and `len <= cap`. Ownership transfers to the returned `Bytes`.
-        pub unsafe fn from_raw_parts(
-            ptr: *mut u8,
-            len: SizeType,
-            cap: SizeType,
-            allocator: bun_alloc::StdAllocator,
-        ) -> Bytes {
+        /// As [`bun_sys::Mmap::as_mut_slice`], until `mapping` is dropped.
+        #[cfg(unix)]
+        pub unsafe fn from_mapping(mapping: bun_sys::Mmap) -> Bytes {
+            Self::new(Storage::Mapped(mapping))
+        }
+
+        /// # Safety
+        /// As [`Self::from_mapping`], and `mapping` maps `memfd` from its start.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        pub unsafe fn from_memfd_mapping(mapping: bun_sys::Mmap, memfd: bun_sys::File) -> Bytes {
             Bytes {
-                ptr: NonNull::new(ptr),
-                len,
-                cap,
-                allocator,
-                stored_name: Box::default(),
+                memfd: Some(memfd),
+                ..Self::new(Storage::Mapped(mapping))
             }
         }
 
-        #[inline]
-        pub fn allocator(&self) -> bun_alloc::StdAllocator {
-            self.allocator
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        pub fn memfd(&self) -> Option<bun_sys::Fd> {
+            self.memfd.as_ref().map(|file| file.handle)
         }
 
         #[inline]
         pub fn len(&self) -> SizeType {
-            self.len
+            self.slice().len() as SizeType
         }
 
         pub fn slice(&self) -> &[u8] {
-            match self.ptr {
-                // SAFETY: `ptr[..len]` is a live initialized region
-                // (init/from_raw_parts contract).
-                Some(p) => unsafe { core::slice::from_raw_parts(p.as_ptr(), self.len as usize) },
-                None => &[],
+            match &self.storage {
+                Storage::Heap(bytes) => bytes,
+                Storage::Static(bytes) => bytes,
+                // SAFETY: the contract of `from_mapping`.
+                #[cfg(unix)]
+                Storage::Mapped(mapping) => unsafe { mapping.as_slice() },
             }
         }
 
-        pub fn allocated_slice(&self) -> &[u8] {
-            match self.ptr {
-                // SAFETY: `ptr[..cap]` is the full allocation; bytes in
-                // `[len..cap]` may be uninitialized.
-                Some(p) => unsafe { core::slice::from_raw_parts(p.as_ptr(), self.cap as usize) },
-                None => &[],
+        /// The bytes of [`Self::init_static`] must not be written to.
+        pub fn slice_raw(&mut self) -> *mut [u8] {
+            match &mut self.storage {
+                Storage::Heap(bytes) => {
+                    core::ptr::slice_from_raw_parts_mut(bytes.as_mut_ptr(), bytes.len())
+                }
+                Storage::Static(bytes) => core::ptr::from_ref(*bytes).cast_mut(),
+                #[cfg(unix)]
+                Storage::Mapped(mapping) => {
+                    core::ptr::slice_from_raw_parts_mut(mapping.as_ptr(), mapping.size())
+                }
             }
         }
 
-        pub fn as_array_list(&mut self) -> &mut [u8] {
-            self.as_array_list_leak()
-        }
-
-        pub fn as_array_list_leak(&mut self) -> &mut [u8] {
-            match self.ptr {
-                // SAFETY: `ptr[..len]` is live and uniquely owned by `*self`.
-                Some(p) => unsafe {
-                    core::slice::from_raw_parts_mut(p.as_ptr(), self.len as usize)
-                },
-                None => &mut [],
+        /// Moves the bytes out if they are on the heap, and copies them otherwise.
+        pub fn take_vec(&mut self) -> Vec<u8> {
+            match &mut self.storage {
+                Storage::Heap(bytes) => core::mem::take(bytes),
+                _ => self.slice().to_vec(),
             }
-        }
-    }
-
-    impl Drop for Bytes {
-        fn drop(&mut self) {
-            // `stored_name` is a `Box<[u8]>`, so its field `Drop` frees it;
-            // only the custom-allocator buffer needs an explicit free here.
-            // Route through the existing accessor instead of re-deriving the
-            // slice from raw parts here: `allocated_slice` already encapsulates
-            // the `(ptr, cap)` → `&[u8]` invariant (and the `None` ⇒ `&[]`
-            // case), and `StdAllocator::free` is `raw_free` with byte alignment
-            // plus an empty-slice early-out — identical to the previous
-            // open-coded `raw_free(.., Alignment::of::<u8>(), 0)`.
-            self.allocator.free(self.allocated_slice());
         }
     }
 
@@ -938,15 +846,23 @@ pub mod store {
     // ────────────────────────────────────────────────────────────────────
 
     impl Store {
+        #[inline]
+        pub fn new(data: Data, mime_type: MimeType) -> Store {
+            Store {
+                data,
+                mime_type,
+                ref_count: bun_ptr::ThreadSafeRefCount::init(),
+                is_all_ascii: IsAllAscii::default(),
+            }
+        }
+
         /// Takes ownership of
         /// `bytes`. Returns a +1-ref heap `Store`.
         pub fn init(bytes: Vec<u8>) -> RefPtr<Store> {
-            RefPtr::new(Store {
-                data: Data::Bytes(Bytes::init(bytes)),
-                mime_type: bun_http_types::MimeType::NONE,
-                ref_count: bun_ptr::ThreadSafeRefCount::init(),
-                is_all_ascii: IsAllAscii::default(),
-            })
+            RefPtr::new(Store::new(
+                Data::Bytes(Bytes::init(bytes)),
+                bun_http_types::MimeType::NONE,
+            ))
         }
 
         pub fn get_path(&self) -> Option<&[u8]> {
@@ -1005,7 +921,7 @@ pub mod store {
         ///
         /// # Safety
         /// `this` must point to a live `Store` originally allocated via
-        /// `Store::new` / `Box::new`, and the caller must own one outstanding
+        /// `RefPtr::new`, and the caller must own one outstanding
         /// reference being released.
         #[inline]
         pub unsafe fn deref(this: NonNull<Store>) {

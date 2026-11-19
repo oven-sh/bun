@@ -3,7 +3,6 @@ use core::cell::Cell;
 use bun_alloc::AllocError;
 use bun_core::strings;
 use bun_jsc::{JSGlobalObject, JSUint8Array, JSValue, JsResult};
-use bun_ptr::RawSlice;
 use bun_simdutf_sys::simdutf;
 
 use crate::webcore::sink::ReadableSinkController;
@@ -164,10 +163,10 @@ impl TextEncoderStreamEncoder {
             break 'prepend None;
         };
 
-        let length = simdutf::length::utf8::from::utf16::le(remain);
+        let measured = simdutf::WithUtf8Len::utf16(remain);
 
         buf.try_reserve(
-            length
+            measured.utf8_len()
                 + match prepend {
                     Some(pre) => pre.len as usize,
                     None => 0,
@@ -179,21 +178,9 @@ impl TextEncoderStreamEncoder {
             buf.extend_from_slice(&pre.bytes[0..pre.len as usize]);
         }
 
-        // SAFETY: simdutf writes initialized bytes into the spare capacity and returns the
-        // count; on non-SUCCESS we commit 0 and fall through to the slow path.
-        let result = unsafe {
-            bun_core::vec::fill_spare(buf, 0, |spare| {
-                let r = simdutf::convert::utf16::to::utf8::with_errors::le(remain, spare);
-                (
-                    if r.status == simdutf::Status::SUCCESS {
-                        r.count
-                    } else {
-                        0
-                    },
-                    r,
-                )
-            })
-        };
+        let result = bun_core::vec::append_with(buf, usize::MAX, |spare| {
+            simdutf::convert::utf16::to::utf8::with_errors::le(measured, spare)
+        });
 
         if result.status != simdutf::Status::SUCCESS {
             // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
@@ -220,9 +207,9 @@ impl TextEncoderStreamEncoder {
 // `runNativeArm` (C++) defers a release that user JS triggers during a call until the call has returned.
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn TextEncoderStreamEncoder__createForStream() -> *mut TextEncoderStreamEncoder
+pub(crate) extern "C" fn TextEncoderStreamEncoder__createForStream() -> Box<TextEncoderStreamEncoder>
 {
-    Box::into_raw(Box::new(TextEncoderStreamEncoder::default()))
+    Box::default()
 }
 
 #[unsafe(no_mangle)]
@@ -304,7 +291,7 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
         return JSValue::UNDEFINED;
     }
     let wrote = handle
-        .write(&streams::Result::Temporary(RawSlice::new(&buf)))
+        .write(&streams::Result::Temporary(&buf))
         .to_js(&global.js_thread_of_caller());
     if buf.capacity() <= SCRATCH_CAP {
         this.scratch.replace(buf);
@@ -328,6 +315,6 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__flushIntoSink(
         return JSValue::UNDEFINED;
     }
     handle
-        .write(&streams::Result::Temporary(RawSlice::new(&REPLACEMENT)))
+        .write(&streams::Result::Temporary(&REPLACEMENT))
         .to_js(&global.js_thread_of_caller())
 }

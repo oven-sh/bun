@@ -1,5 +1,5 @@
 // an empty slot says that the object has no such property, so the read goes on above it: to a value, a method, an accessor or a read-only property of the prototype, one that is there from the start or laid there later. `in` and hasOwnProperty in front of the store, behind it and behind a deletion
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 (globalThis as any).report = (value: unknown) => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 declare function report(value: unknown): void;
 function F(this: any, n: number) { this.n = n; }

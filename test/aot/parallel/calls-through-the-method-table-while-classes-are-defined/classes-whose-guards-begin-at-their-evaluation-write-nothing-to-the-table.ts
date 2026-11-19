@@ -1,5 +1,5 @@
 // The guards of One begin when the class is evaluated (a static member under a computed key). The words of the method table hold the compiled methods from the start, so nothing is written when the guards begin.
-// COUNT: counter:MethodTableMadeWritable = 0
+// COUNT: counter:MethodTablePagesMadeWritable = 0
 class Shape {
   edge = 2;
   area(k: number): number { return this.edge * k; }

@@ -103,7 +103,10 @@ const bundledEntryPoints: string[] = [];
 for (let i = 0; i < nativeStartIndex; i++) {
   try {
     const file = path.join(BASE, moduleList[i]);
-    let input = fs.readFileSync(file, "utf8");
+    // A module of compiled programs alone: nothing that `bun run` evaluates asks for it.
+    let input = fs.existsSync(file)
+      ? fs.readFileSync(file, "utf8")
+      : `throw new Error(${JSON.stringify(moduleList[i] + " is a module of compiled programs alone")});\nexport default undefined;\n`;
 
     if (!/\bexport\s+(?:function|class|const|default|{)/.test(input)) {
       if (input.includes("module.exports")) {
@@ -271,8 +274,8 @@ for (const [i, entrypoint] of bundledEntryPoints.entries()) {
   const output = fs.readFileSync(path.join(TMP_DIR, "modules_out", file_path), "utf8");
   // Checks the input, since --minify-syntax turns `var a = globalThis.a; var b = globalThis.b;` into a destructuring.
   assertNoDestructuredGlobalThis(fs.readFileSync(entrypoint, "utf8"), file_path);
-  const written = fs.readFileSync(path.join(BASE, moduleList[i]), "utf8");
-  assertNoStoredFunctionBehindComma(written, moduleList[i]);
+  const written = path.join(BASE, moduleList[i]);
+  if (fs.existsSync(written)) assertNoStoredFunctionBehindComma(fs.readFileSync(written, "utf8"), moduleList[i]);
   let captured = `(function (){${output.replace("// @bun\n", "").trim()}})`;
   let usesDebug = output.includes("$debug_log");
   let usesAssert = output.includes("$assert");

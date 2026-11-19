@@ -1,0 +1,19 @@
+# Beside the-elements-of-a-list-made-here-are-expected-to-be-what-the-text-puts-into-it.ir: one element is stored under an index and is written with constant values alone: it is one constant of the
+# program and no allocation with operands. It is the function's own literal all the same: both layouts are expected of the elements, and both say a number of either field.
+# f0 = the module
+# -- source: main.js
+# const items = [];
+# for (let i = 0; i < 8; i++) items.push({ price: i, count: i & 3 });
+# items[5] = { extra: 1, count: 0, price: 5 };
+# globalThis.items = items;
+# (0, eval)("1");
+# let total = 0;
+# for (let round = 0; round < 10; round++) for (let i = 0; i < items.length; i++) total += items[i].price * items[i].count;
+# print(total);
+# -- end of source
+# RUN(WALK): walk f0:Body mechanisms=all
+# WALK: ShapeTest {{*}} layouts=[L0, L1]
+# WALK: Mul {{*}} form=Numbers
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 470
+# ANSWERS-NEXT: exited with 0

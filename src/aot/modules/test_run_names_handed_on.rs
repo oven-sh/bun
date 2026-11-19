@@ -63,6 +63,59 @@ impl<'a> NamesHandedOn<'a> {
             .collect()
     }
 
+    pub(super) fn names_of_unlisted_stars(
+        &self,
+        file: FileId,
+        is_compiled: bool,
+    ) -> Vec<(Atom, FileId)> {
+        let leads_to_mock = |file: &FileId| self.leads_to_mock.contains(file);
+        if !is_compiled || self.mocks_any_module || !leads_to_mock(&file) {
+            return Vec::new();
+        }
+        let stars = self.tables.files_named_by_stars(file);
+        let unlisted: Vec<FileId> = stars.filter(|next| !leads_to_mock(next)).collect();
+        if unlisted.is_empty() {
+            return Vec::new();
+        }
+        let own_count = self.tables.own_names(file).len();
+        let from_stars = self.tables.names(file)[own_count..].iter();
+        let from_stars: FxHashSet<Atom> = from_stars.map(|&(name, _)| name).collect();
+        let requested = self.scans.of(file).sites.iter();
+        let listed = requested.filter_map(|site| match site {
+            ScannedSite::Module(ModuleRef::File(target)) if leads_to_mock(target) => Some(*target),
+            _ => None,
+        });
+        let names = listed.flat_map(|target| self.tables.names(target));
+        let names = names.map(|&(name, _)| name);
+        let listed_too: FxHashSet<Atom> = names.filter(|name| from_stars.contains(name)).collect();
+        let mut found: Vec<(Atom, FileId)> = Vec::new();
+        for &star in &unlisted {
+            let names = self.tables.names(star).iter().map(|&(name, _)| name);
+            let names = names.filter(|name| listed_too.contains(name));
+            found.extend(names.map(|name| (name, star)));
+        }
+        found.shared_sort_unstable_by_key(|&(name, star)| (name.0, star));
+        found
+    }
+
+    /// The files whose star exports bring names to `file`, by name and then in written order.
+    pub(super) fn name_stars(&self, file: FileId) -> Vec<(Atom, FileId)> {
+        let own_count = self.tables.own_names(file).len();
+        let names = self.tables.names(file).iter().skip(own_count);
+        let from_stars: FxHashSet<Atom> = names.map(|&(name, _)| name).collect();
+        if from_stars.is_empty() {
+            return Vec::new();
+        }
+        let stars = self.tables.files_named_by_stars(file).flat_map(|star| {
+            let names = self.tables.names(star).iter();
+            names.map(move |&(name, _)| (name, star))
+        });
+        let stars = stars.filter(|(name, _)| from_stars.contains(name));
+        let mut stars: Vec<(Atom, FileId)> = stars.collect();
+        stars.shared_sort_by_key(|&(name, _)| name.0);
+        stars
+    }
+
     pub(super) fn names_from_stars(&self, file: FileId, is_compiled: bool) -> Vec<Atom> {
         if self.files_named_by_stars(file, is_compiled).is_empty() {
             return Vec::new();

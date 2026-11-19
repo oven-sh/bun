@@ -195,7 +195,7 @@ fn statement_with_a_type_stands_for_its_own_file() {
         let mut scans = scan_files(input);
         let found_sites = scans.of(main).sites.clone();
         assert_ne!(found_sites[0], found_sites[1]);
-        leave_imports_of_test_files_to_loader(input, &mut scans, &|_| true);
+        leave_imports_of_test_files_to_loader(input, &mut scans, &|_, _| true);
         let modules = collect_modules(input, &scans);
         let left_sites = &scans.of(main).sites;
         for (found, left) in found_sites.iter().zip(left_sites).take(2) {

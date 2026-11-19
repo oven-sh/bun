@@ -10,5 +10,6 @@
 exports.a = 1;
 {
   function exports() {}
+  exports();
 }
 console.log(typeof exports);

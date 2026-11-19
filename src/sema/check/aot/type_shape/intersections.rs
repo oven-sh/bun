@@ -59,6 +59,7 @@ impl<'c> IntersectionSummary<'c> {
             | ShapeKind::Function(_)
             | ShapeKind::ClassConstructor(_)
             | ShapeKind::Class(_)
+            | ShapeKind::ConstructorFunctionInstance(_)
             | ShapeKind::Object => self.add_object(shape),
             _ => {
                 self.wide_primitive.get_or_insert(shape);
@@ -98,7 +99,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             TypeData::Anon {
                 origin: Origin::TypeLiteral(file, node),
                 ..
-            } => self.c.p.aot_symbols().is_int32_tag(file, node),
+            } => self.c.p.aot_symbols.is_int32_tag(file, node),
             _ => false,
         }
     }

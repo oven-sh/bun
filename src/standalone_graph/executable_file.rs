@@ -295,35 +295,18 @@ fn fill_behind_end<'a>(
     if bytes.len() < FEWEST_BYTES {
         return Err(bytes);
     }
-    let first_page = position - position % MappedFile::page_size() as u64;
-    let skipped = (position - first_page) as usize;
     // With its blocks reserved, a page that is touched cannot find the disk full.
-    // SAFETY: fallocate has no precondition but a valid file descriptor.
-    let reserved = unsafe {
-        libc::fallocate(
-            file.handle().native(),
-            0,
-            position as i64,
-            bytes.len() as i64,
-        )
-    };
-    if reserved != 0 {
+    if !bun_sys::linux::fallocate(file.handle().native(), position as i64, bytes.len() as i64) {
         return Err(bytes);
     }
     let (access, flags) = (libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED);
-    let length = skipped + bytes.len();
-    let Ok(pointer) = bun_sys::mmap(
-        core::ptr::null_mut(),
-        length,
-        access,
-        flags,
-        file.handle(),
-        first_page as i64,
-    ) else {
+    let Ok(mut mapped) =
+        bun_sys::Mmap::new(bytes.len(), access, flags, file.handle(), position as i64)
+    else {
         return Err(bytes);
     };
-    // SAFETY: the mapping holds `length` writable bytes until `munmap`, and nothing else refers to them.
-    let target = unsafe { core::slice::from_raw_parts_mut(pointer.add(skipped), bytes.len()) };
+    // SAFETY: the mapping may be written, and nothing else has these bytes of the file.
+    let target = unsafe { mapped.as_mut_slice() };
     let threads = usize::from(bun_core::get_thread_count()).clamp(1, MOST_THREADS);
     let share = bytes
         .len()
@@ -336,7 +319,6 @@ fn fill_behind_end<'a>(
             let_go_of_written_pages(target);
         }
     });
-    let _ = bun_sys::munmap(pointer, length);
     Ok(())
 }
 
@@ -512,7 +494,10 @@ pub fn with_executable_image<R>(
     path: &ZStr,
     use_image: impl FnOnce(&mut Image<'_>) -> R,
 ) -> bun_sys::Maybe<R> {
-    let file = bun_sys::File::open(path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?;
+    // Otherwise opening a named pipe waits for a writer.
+    let without_waiting = if cfg!(unix) { bun_sys::O::NONBLOCK } else { 0 };
+    let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | without_waiting;
+    let file = bun_sys::File::open(path, flags, 0)?;
     let len = file.get_end_pos()?;
     let mut read = |offset: usize, out: &mut [u8]| matches!(file.pread_all(out, offset as u64), Ok(count) if count == out.len());
     let read = &mut read;

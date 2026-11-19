@@ -7,5 +7,5 @@
 # class D extends C { d = 4; }
 # console.log(new A().a, new B().b, new C().c, new D().d);
 # -- end of source
-# RUN: compile CellsOfInheritedFieldsWrittenOneByOne mechanisms=all
-# CHECK: statistic CellsOfInheritedFieldsWrittenOneByOne 0
+# RUN: compile InheritedFieldEntriesWrittenIndividually mechanisms=all
+# CHECK: statistic InheritedFieldEntriesWrittenIndividually 0

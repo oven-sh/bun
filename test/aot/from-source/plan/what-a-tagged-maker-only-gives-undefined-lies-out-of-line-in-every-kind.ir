@@ -15,7 +15,6 @@
 # console.log(Object.keys(one).join() + " " + Object.keys(both).join() + (one.original === undefined ? " left " : " filled ") + String(from(two, one)) + (two.original === one ? " filled" : " left") + (one.parent === both ? " below" : " alone"));
 # -- end of source
 # RUN: plan layouts mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: layout L0 CompiledObject
 # CHECK: "parent" {{*}}Inline offset=[[parent]]
 # CHECK-NEXT: "original" JSValue OutOfLine offset=8 {{*}}may-exist-without-storage

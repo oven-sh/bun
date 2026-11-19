@@ -245,8 +245,6 @@ fn project_for_build(
     }
     let mut project = project_from_raw(host, session, path, base, raw, errors);
     project.options.imports_need_no_extension = true;
-    project.options.defines_class_fields_for_build_alone =
-        !assigns_class_fields && !project.options.use_define_for_class_fields;
     project.options.use_define_for_class_fields = !assigns_class_fields;
     project.options.emit_standard_class_fields = !assigns_class_fields;
     project.options.keeps_type_errors_to_itself = keeps_type_errors_to_itself;

@@ -12,7 +12,6 @@
 # Seventy optional names that no maker gives wait for the 64 granules of an Extension, and fill() stores under every one. What is stored under a name without a slot is an extra property, and of this layout Link has ruled out
 # that its objects gain properties: it finds the declared field at each store. So the six names that find no granule, the last six of the layout, lie in the cell. Made no fields, as names are that nobody stores under, they ended the process at the first store.
 # RUN: plan layouts mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: layout L0 CompiledObject
 # CHECK-NOT: None
 # CHECK: slot 63 "a66" {{*}}OutOfLine

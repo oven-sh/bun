@@ -13,6 +13,7 @@
 // No world prints a path, a stack or the text of a function, and none makes the order in which sibling files run its observer.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { deedsOfMocks } from "./write-loads-mocks.ts";
 
 export type World = { name: string; extension: ".cjs" | ".mjs"; text: string };
 
@@ -20,7 +21,15 @@ export type World = { name: string; extension: ".cjs" | ".mjs"; text: string };
 const say = `const say = (tag, value) => {
   const short = each => (each === null || (typeof each !== "object" && typeof each !== "function") ? String(each) : typeof each === "function" ? "function" : "{" + Object.keys(each).join() + "}");
   if (value === null || (typeof value !== "object" && typeof value !== "function")) return console.log(tag, typeof value, String(value));
-  console.log(tag, typeof value, "keys", Object.keys(value).join(), "a", short(value.a), "default", short(value.default), "has", "a" in value, "default" in value, "__esModule" in value, Object.prototype.toString.call(value));
+  // A mock of vitest's kind throws where a name is read that its factory did not give.
+  const member = name => {
+    try {
+      return short(value[name]);
+    } catch (error) {
+      return "threw " + error?.name;
+    }
+  };
+  console.log(tag, typeof value, "keys", Object.keys(value).join(), "a", member("a"), "default", member("default"), "has", "a" in value, "default" in value, "__esModule" in value, Object.prototype.toString.call(value));
 };
 const undo = [];
 const attempt = async (tag, deed) => {
@@ -83,6 +92,12 @@ export type Deed = {
   head?: (file: string, at: number) => string;
   body: (file: string, at: number) => string;
   fits?: (main: World["extension"], beside: Beside) => boolean;
+  /** An executable has no such deed. */
+  inTestRunsAlone?: true;
+  /** Lines for the one preload of the project, once for each world, which names its file by a path from the root. */
+  preload?: (path: string, at: number) => string;
+  /** More files in the folder of the world. */
+  files?: (file: string, at: number) => Record<string, string>;
 };
 /** `require.cache` of an executable lists no compiled module, and the page on compatibility says so. In a test run it lists them. */
 const asksForAnEntryOfTheCache = /-the-cache$|-in-the-cache$|^plants-an-entry$/;
@@ -152,17 +167,31 @@ function writeTestFile(extension: World["extension"], beside: Beside, row: Deed[
     )
     .join("\n");
   const runner =
-    extension === ".mjs" ? `import { test } from "bun:test";\n` : `const { test } = require("bun:test");\n`;
-  return `${runner}${heads ? heads + "\n" : ""}${say}test(${JSON.stringify(name)}, async () => {\n${steps}\n  for (const each of undo) each();\n  console.log("== END ${name}");\n});\n`;
+    extension === ".mjs"
+      ? `import { jest, mock, test, vi } from "bun:test";\n`
+      : `const { jest, mock, test, vi } = require("bun:test");\n`;
+  return `${runner}${heads ? heads + "\n" : ""}${say}test(${JSON.stringify(name)}, async () => {\n  console.log("== BEGIN ${name}");\n${steps}\n  for (const each of undo) each();\n  console.log("== END ${name}");\n});\n`;
 }
 
 const loads = (deed: Deed) => /^(?:requires|imports)/.test(deed.name);
 /** Two deeds of which one loads, or a load, any deed, and a load again. */
+/** A row that is named, of any length: for a fault whose shape is known. */
+export function rowOfDeeds(names: string[]): Deed[] {
+  return names.map(name => {
+    const deed = [...deeds, ...deedsOfMocks].find(each => each.name === name);
+    if (!deed) throw new Error(`no deed is called ${name}`);
+    return deed;
+  });
+}
+
 export function* rowsOfDeeds(count: 2 | 3): Generator<Deed[]> {
-  for (const first of deeds)
-    for (const second of deeds) {
+  const all = [...deeds, ...deedsOfMocks];
+  for (const first of all)
+    for (const second of all) {
       if (count === 2 && (loads(first) || loads(second))) yield [first, second];
-      if (count === 3 && loads(first)) for (const third of deeds) if (loads(third)) yield [first, second, third];
+      // A mock under a mock, and then a load.
+      if (count === 3 && (loads(first) || (first.inTestRunsAlone && second.inTestRunsAlone)))
+        for (const third of all) if (loads(third)) yield [first, second, third];
     }
 }
 
@@ -173,15 +202,22 @@ export type Project = { name: string; files: Record<string, string> };
  */
 export function writeProject(row: Deed[], inCompany: boolean): Project | undefined {
   const files: Record<string, string> = { "package.json": `{ "name": "loads" }\n` };
+  const preload: string[] = [];
   for (const extension of [".cjs", ".mjs"] as const)
     for (const beside of besides) {
       if (!row.every(deed => deed.fits?.(extension, beside) ?? true)) continue;
       const name = `${extension.slice(1)}--${beside.name}`;
       files[`p/${name}/main.test${extension}`] = writeTestFile(extension, beside, row, name);
-      for (const [path, text] of Object.entries({ [beside.file]: beside.text, ...beside.more }))
+      const more = row.map((deed, index) => deed.files?.(beside.file, index + 1));
+      for (const [path, text] of Object.entries(Object.assign({ [beside.file]: beside.text, ...beside.more }, ...more)))
         files[`p/${name}/${path}`] = text;
+      row.forEach((deed, index) => deed.preload && preload.push(deed.preload(`./p/${name}/${beside.file}`, index + 1)));
     }
   if (Object.keys(files).length === 1) return;
+  if (preload.length) {
+    files["preload.mjs"] = `import { mock, vi } from "bun:test";\n${preload.join("\n")}\n`;
+    files["bunfig.toml"] = `[test]\npreload = ["./preload.mjs"]\n`;
+  }
   if (inCompany)
     files["p/zz-company/main.test.cjs"] =
       `for (const name in require.cache) void name;\nrequire("bun:test").test("company", () => console.log("== END zz-company"));\n`;

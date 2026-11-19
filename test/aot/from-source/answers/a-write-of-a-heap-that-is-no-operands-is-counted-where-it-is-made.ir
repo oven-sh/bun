@@ -27,8 +27,8 @@
 # for (let i = 0; i < 3; i++) print(new InOrder().both() + " " + new NoOrder().both() + " " + new Ordered().both());
 # print("went on");
 # -- end of source
-# testing=CheckEffectsAtRunTime (ir/AOTEffectsNet.h): the guards of members are the words of no operand, so no digest sees them: whoever writes them counts it, and a call that runs no other code
-# and is said not to write them leaves the counts as they stood.
+# testing=CheckEffectsAtRunTime (ir/AOTEffectsNet.h): member guards are not part of any operand's memory, so no digest covers them. Instead, whatever writes a member guard counts the write.
+# A call that runs no unknown code, and whose effects claim that it does not write member guards, must leave the counts unchanged.
 # RUN(NET): run-in-shell testing=CheckEffectsAtRunTime mechanisms=all globalThis.pick = 0;
 # NET: 14
 # NET-NEXT: 20
@@ -36,16 +36,19 @@
 # NET-NEXT: ordered plain ordered
 # NET-NEXT: ordered plain ordered
 # NET-NEXT: went on
-# The lie, testing=RowSaysLess: the row of an operation of the run time is taken not to write them. What lays a new object below its prototype arms the guards over what is made below `shelf`.
-# RUN(ARMED): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:RuntimeOperation/SetLiteralPrototype/MemberGuards mechanisms=all globalThis.pick = 0;
-# ARMED: AOT: f{{*}} at {{*}}: the rows of effects of operation:SetLiteralPrototype and of runtime:operationAOTSetLiteralPrototype say that the call will not write MemberGuards, and under it guards were armed or have begun. This is a bug in Bun.
+# Fault injection, testing=UnderstateEffects: the effects entry of one runtime operation is treated as if it did not write member guards.
+# The operation that links a new object to its prototype arms the guards for the objects that are created with `shelf` on their prototype chain.
+# RUN(ARMED): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:RuntimeOperation/SetLiteralPrototype/MemberGuards mechanisms=all globalThis.pick = 0;
+# ARMED: bun: internal AOT error: effects check failed
+# ARMED-NEXT: the declared effects of operation:SetLiteralPrototype and of runtime:operationAOTSetLiteralPrototype say that the call does not write MemberGuards, but guards were armed or started
 # ARMED-NOT: went on
 # ARMED: crashed
 # ARMED: with
-# What defines a class below another parent than the one that was expected ends them.
-# RUN(ENDED): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:RuntimeOperation/NewClass/MemberGuards mechanisms=all globalThis.pick = 0;
+# The operation that defines a class whose parent is not the speculated one invalidates the guards.
+# RUN(ENDED): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:RuntimeOperation/NewClass/MemberGuards mechanisms=all globalThis.pick = 0;
 # ENDED: 20
-# ENDED: AOT: f{{*}} at {{*}}: the rows of effects of operation:NewClass and of runtime:operationAOTNewClass say that the call will not write MemberGuards, and under it guards that held have ended. This is a bug in Bun.
+# ENDED: bun: internal AOT error: effects check failed
+# ENDED-NEXT: the declared effects of operation:NewClass and of runtime:operationAOTNewClass say that the call does not write MemberGuards, but guards were invalidated
 # ENDED-NOT: went on
 # ENDED: crashed
 # ENDED: with

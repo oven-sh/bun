@@ -13,8 +13,6 @@ use bun_crash_handler::handle_oom::handle_oom;
 #[derive(Default)]
 pub(crate) struct ImportScanner<'a> {
     pub stmts: &'a mut [Stmt],
-    pub kept_import_equals: bool,
-    pub removed_import_equals: bool,
 }
 
 // `StoreStr` literal helper — keeps `Some(raw_str(b"…"))` ergonomic at the
@@ -677,14 +675,8 @@ impl<'a> ImportScanner<'a> {
                                         == 0
                                     {
                                         p.ignore_usage(id.ref_);
-
-                                        scanner.removed_import_equals = true;
                                         continue;
-                                    } else {
-                                        scanner.kept_import_equals = true;
                                     }
-                                } else {
-                                    scanner.kept_import_equals = true;
                                 }
                             }
                         }

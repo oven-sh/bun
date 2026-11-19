@@ -1,7 +1,7 @@
 import * as b from "bun-builtins-table";
 
 const startedAsServer = { read: "PassedTo", builtin: "Bun.serve", argument: 0 } satisfies b.HostReadUse;
-const namesOfServer = ["fetch", "app"];
+const namesOfServer = ["fetch", "app", "stop"];
 const awaitedAsThenable = { read: "Called" } satisfies b.HostReadUse;
 
 export default b.declarations(

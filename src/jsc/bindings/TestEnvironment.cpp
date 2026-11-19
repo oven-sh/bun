@@ -3,10 +3,12 @@
 #include "TestEnvironment.h"
 
 #include "BunClientData.h"
-#include "ConsoleObject.h"
 #include "InternalModuleRegistry.h"
 #include "ScriptExecutionContext.h"
 #include "ZigGlobalObject.h"
+#include <JavaScriptCore/AOTRealmStartup.h>
+
+const JSC::GlobalObjectMethodTable& methodTableOfProgram(int32_t executionContextId);
 
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__TestEnvironment__setupFunction(Zig::GlobalObject* globalObject)
 {
@@ -31,8 +33,13 @@ static Zig::GlobalObject* lastingRealm(JSC::VM& vm)
     if (!clientData->testEnvironmentRealm) {
         // As in Zig__GlobalObject__createForTestIsolation(): the concurrent marker must not see a global that is half initialized.
         JSC::DeferGC deferGC(vm);
-        auto* realm = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm), WebCore::ScriptExecutionContext::generateIdentifier());
-        realm->setConsole(static_cast<Bun::ConsoleObject&>(*defaultGlobalObject(vm)->consoleClient()).m_client);
+        auto identifier = WebCore::ScriptExecutionContext::generateIdentifier();
+        auto& methodTable = vm.hasCompiledCode() ? methodTableOfProgram(identifier) : Zig::GlobalObject::globalObjectMethodTable();
+        auto* realm = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm), identifier, &methodTable);
+#if ENABLE(AOT)
+        if (vm.hasCompiledCode())
+            JSC::AOT::acceptForeignBinaryData(realm);
+#endif
         JSC::gcProtect(realm);
         clientData->testEnvironmentRealm = realm;
     }

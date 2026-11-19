@@ -1,0 +1,16 @@
+# -- source: text-handed-to-key-parameter.ts
+# declare function print(value: unknown): void;
+# class Graph {
+#   nodes: Record<string, number> = {}; seen = new Map<string, number>();
+#   add(from: string, to: string): void { if (from !== to) this.nodes[from] = (this.nodes[from] ?? 0) + to.length; }
+#   mark(name: string): number { return this.seen.get(name) ?? 0; }
+# }
+# function fill(graph: Graph, size: number): number { let sum = 0; for (let i = 0; i < size; i++) { graph.add("v" + i, "w" + i); sum += graph.mark("m" + i); } return sum; }
+# const graph = new Graph();
+# print(fill(graph, 3) + Object.keys(graph.nodes).join());
+# -- end of source
+# A joined text that is handed to a function which reads that parameter as a key is made as one; one whose parameter is no key is not.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = Strcat {{*}}[isLikelyKey, isLikelyName]
+# CHECK: = Add {{*}}form=StringAndPrimitive
+# CHECK: = Strcat {{*}}[isLikelyKey]

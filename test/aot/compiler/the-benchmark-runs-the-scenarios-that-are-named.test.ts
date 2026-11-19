@@ -1,7 +1,8 @@
 // bench/compiler/run.ts takes `--scenarios=<name>,<name>`. Seven of its names held a comma themselves ("typed, one thread"), so none of them could be chosen, and a name that it
 // does not have was passed over in silence: `--scenarios="typed, one thread"` ran "typed", on every thread, and printed its numbers.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { chmodSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "../harness/run";
 import { test } from "../supported";
@@ -38,6 +39,35 @@ test("Go is told the name under which its executable is looked for", async () =>
   const name = isWindows ? "app.exe" : "app";
   expect(stdout.split("\n").map(line => / -o (\S+) /.exec(line)?.[1])).toEqual([name, name, undefined]);
 });
+
+// A formatter that is not there, and a step in front of a build that fails, ended the whole benchmark: what it had measured until then was printed nowhere.
+test.skipIf(isWindows)(
+  "a scenario without its formatter is left out, one whose preparation fails has a row, and what was measured is printed",
+  async () => {
+    using tools = tempDir("tools-of-the-benchmark", {
+      cargo: "#!/bin/sh\nexit 0\n",
+      go: "#!/bin/sh\necho there is no standard library >&2\nexit 1\n",
+      gofmt: "#!/bin/sh\nexit 0\n",
+    });
+    for (const tool of ["cargo", "go", "gofmt"]) chmodSync(join(String(tools), tool), 0o755);
+    const words = ["--scenarios=typed,go-std-warm,cargo build", "--sizes=300", "--runs=1"];
+    const env = { ...bunEnv, PATH: String(tools) };
+    const { stdout, stderr, exitCode } = await run([bunExe(), script, ...words], import.meta.dir, env);
+    const told = stderr.split("\n").filter(line => /^300 |left out$/.test(line));
+    expect({ told, exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
+      told: [
+        expect.stringMatching(/^300 typed: /),
+        "300 go-std-warm: FAILED: there is no standard library",
+        "cargo build: no rustfmt on this machine: left out",
+      ],
+      exitCode: 0,
+      stderr: "",
+    });
+    expect(stdout).toMatch(/\ntyped +\d/);
+    expect(stdout).toContain("\ngo-std-warm  FAILED: there is no standard library\n");
+  },
+  whileTheMachineIsBusy,
+);
 
 test(
   "what is chosen is built and measured, and nothing else",

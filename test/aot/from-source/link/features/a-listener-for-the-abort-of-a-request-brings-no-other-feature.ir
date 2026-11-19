@@ -1,0 +1,10 @@
+# addEventListener is found by its name; what its listener is handed is made of Event alone
+# -- source: a-listener-for-the-abort-of-a-request-brings-no-other-feature.ts
+# Bun.serve({ port: 0, fetch(request) { request.signal.addEventListener("abort", () => {}); return new Response("x"); } });
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by AbortSignal
+# RUN(NEVER): features
+# NEVER-NOT: feature Interpreter
+# NEVER-NOT: by BunTranspiler

@@ -1,7 +1,7 @@
 # Every way round the loop calls: a front would be entered on every turn and buy nothing. The walk sees it and lays none: the reads stay in the turn
 # -- source: main.ts
 # type Grid = { wide: number; marks: Int32Array };
-# function touch(grid: Grid, at: number, depth: number): number { if (depth > 0) return touch(grid, at, depth - 1); grid.wide = at; return 1; }
+# function touch(grid: Grid, at: number, depth: number): number { if (depth > 0) return touch(grid, at, -depth); grid.wide = at; grid.marks = grid.marks; return 1; }
 # function count(grid: Grid, last: number): number { let found = 0; for (let x = 0; x < last; x++) { const mark = grid.marks[grid.wide + x]!; found += touch(grid, mark, 2); } return found; }
 # console.log(count({ wide: 2, marks: new Int32Array(16) }, 8));
 # -- end of source

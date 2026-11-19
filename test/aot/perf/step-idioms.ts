@@ -1,5 +1,5 @@
 // The instructions that a turn of an idiom of ./idioms or ./everyday takes, built the way a user builds it, without a counter of the processor: ./count-steps.ts.
-// Those in the code that the compiler made are the same on every run, but for what goes by an address, by chance or by what else the executable holds: 31 of 4,210 rows (./stepped-idioms.ts).
+// Those in the code that the compiler made are the same on every run, but for what goes by an address, by chance or by what else the executable holds: 31 of 4,210 rows.
 // Those in native code waver by some tens, with where the lists of free cells stand: they are printed and not judged.
 //
 //   bun test/aot/perf/step-idioms.ts <the Bun that builds> <where the numbers go, as JSON> [a pattern for the names] [called-once | in-a-very-large-program]

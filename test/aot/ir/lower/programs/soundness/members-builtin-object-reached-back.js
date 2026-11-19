@@ -38,7 +38,7 @@ for (const type of ["values", "entries", "spread", "assign"]) target.dispatchEve
 
 // GENERATED: callAll
 // CHECK-LABEL: function {{*}}name="callAll"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|Array<undefined|null|function> flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|Array<undefined|null|function> flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|Array<undefined|null|function>):
 // CHECK-NEXT: v2 = Data data=[[d_1]]
 // CHECK-NEXT: v3 = IteratorOpen v1

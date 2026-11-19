@@ -41,7 +41,9 @@ async function shownInTerminal(cmd: string[], cwd: string) {
   return { shown: withoutPlaces(shown), exitCode, signal: child.signalCode };
 }
 
-const programs: Record<string, { source: string; shown: string; exitCode?: number }> = {
+// `underBunRun`: what `bun run` shows where a compiled program is declared to differ (docs/compiler/compatibility.mdx).
+type Shown = { shown: string; exitCode?: number };
+const programs: Record<string, Shown & { source: string; underBunRun?: Shown }> = {
   "a function that the program has put under process.on is called": {
     source: `const notes: string[] = [];
 const original = process.on;
@@ -64,14 +66,16 @@ process.stdout.write("written\\n");
 `,
     shown: "SIGWINCH function\nwritten",
   },
-  "so does a function that is laid above `process`": {
+  "no function is laid above `process` in the place of the native one, whose members are read-only": {
     source: `(process as never as { __proto__: NodeJS.Process }).__proto__.on = function (this: NodeJS.Process, event: string) {
   console.log(event, typeof this.finalization.register);
   return this;
 };
 process.stderr.write("written\\n");
 `,
-    shown: "SIGWINCH function\nwritten",
+    shown: "TypeError",
+    exitCode: 1,
+    underBunRun: { shown: "SIGWINCH function\nwritten" },
   },
   "a getter that the program has put under process.on is read": {
     source: `const notes: string[] = [];
@@ -147,7 +151,7 @@ console.log("ready");
 };
 
 describe.skipIf(isWindows)("the listener that a standard stream over a terminal lays for SIGWINCH", () => {
-  for (const [name, { source, shown, exitCode = 0 }] of Object.entries(programs)) {
+  for (const [name, { source, shown, exitCode = 0, underBunRun = { shown, exitCode } }] of Object.entries(programs)) {
     test(
       name,
       () =>
@@ -157,7 +161,11 @@ describe.skipIf(isWindows)("the listener that a standard stream over a terminal 
           built(await spawned([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], folder, env));
           const compiled = await shownInTerminal([join(folder, "app")], folder);
           expect(compiled).toEqual({ shown, exitCode, signal: null });
-          expect(compiled).toEqual(await shownInTerminal([bunExe(), "app.ts"], folder));
+          expect(await shownInTerminal([bunExe(), "app.ts"], folder)).toEqual({
+            exitCode: 0,
+            ...underBunRun,
+            signal: null,
+          });
         }),
       300_000,
     );

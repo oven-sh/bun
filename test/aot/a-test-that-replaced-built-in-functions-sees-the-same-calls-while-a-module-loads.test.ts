@@ -4,7 +4,7 @@ import { Glob } from "bun";
 import { expect } from "bun:test";
 import { join } from "path";
 import { casesOfOneRun, sayOf } from "./harness/cases-of-one-run";
-import { test } from "./supported";
+import { eachRow, gap, test } from "./supported";
 
 const project = casesOfOneRun("a-test-that-replaced-built-in-functions-sees-the-same-calls-while-a-module-loads", {
   "package.json": `{ "name": "p", "type": "module" }`,
@@ -34,8 +34,12 @@ for (const [holder, object] of Object.entries(holders)) {
   }
 }
 
-function makesTheCallsOfPlainBun(module: string, makesSome = true) {
-  const name = project.add(
+// The modules whose second text does not make the calls of the first today. Each is asked all the same, and is red once it makes them:
+// its name goes out of this list with the change that brings that about. No name comes in.
+const owed: Record<string, string> = {};
+
+function addCase(module: string) {
+  return project.add(
     name => `
       import { test } from "bun:test";
       ${sayOf(name)}
@@ -68,11 +72,19 @@ function makesTheCallsOfPlainBun(module: string, makesSome = true) {
         for (const call of calls) say(call);
       });`,
   );
-  test(module, async () => {
+}
+
+function makeTheCallsOfPlainBun(modules: string[]) {
+  const rows = modules.map(module => [module, addCase(module)] as const);
+  eachRow(rows.map(row => (row[0] in owed ? gap(owed[row[0]], row) : row)))("%s", async (module, name) => {
     const plain = (await project.ran()).get(name)!;
-    expect(plain.result).toBe("pass");
-    expect(plain.printed !== "").toBe(makesSome);
-    expect((await project.ran(["--debug-aot"])).get(name)).toEqual(plain);
+    const compiled = (await project.ran(["--debug-aot"])).get(name);
+    const comesToItsCalls =
+      plain.result === "pass" && (plain.printed !== "") === !makeNone.includes(module) && compiled?.result === "pass";
+    // Only other calls are owed: a case that does not come that far ends well, which is red.
+    if (module in owed && !comesToItsCalls) return;
+    expect(comesToItsCalls).toBe(true);
+    expect(compiled).toEqual(plain);
   });
 }
 
@@ -81,7 +93,7 @@ const secondTexts = [...new Glob("**/*.{js,ts}").scanSync({ cwd: join(import.met
   .sort();
 const named = secondTexts
   .filter(file => file.startsWith("node/"))
-  .map(file => "node:" + file.slice("node/".length, -".ts".length));
+  .map(file => "node:" + file.slice("node/".length, -".ts".length).replaceAll(".", "/"));
 
 // A text that a program cannot name loads while one of these does.
 const loadedWith: Record<string, string> = {
@@ -89,21 +101,47 @@ const loadedWith: Record<string, string> = {
   "internal/http/FakeSocket.ts": "node:_http_outgoing",
   "internal/http1_server_fallback.ts": "node:http2",
   "internal/net/isIP.ts": "node:net",
+  "internal/net/symbols.ts": "node:net",
   "internal/primordials.js": "node:util",
+  "internal/process/next_tick_queue.ts": "node:stream",
+  "internal/stream.ts": "node:stream",
+  "internal/streams/destroy.ts": "node:stream",
+  "internal/streams/duplex.ts": "node:stream",
+  "internal/streams/end-of-stream.ts": "node:stream",
+  "internal/streams/load_all.ts": "node:stream",
+  "internal/streams/pipeline.ts": "node:stream",
+  "internal/streams/readable.ts": "node:stream",
+  "internal/streams/state.ts": "node:stream",
+  "internal/streams/transform.ts": "node:stream",
+  "internal/streams/utils.ts": "node:stream",
+  "internal/streams/writable.ts": "node:stream",
+  "internal/timers.ts": "node:net",
 };
-// It loads at the first read of WriteStream of node:tty, with no module: an-accessor-under-get-color-depth-hears-one-store.test.ts asks it.
-const loadedLater = ["internal/tty.ts"];
+// Each loads at a first use, while no module loads.
+const loadedLater = [
+  "internal/fs/streams.ts",
+  "internal/process/tick_ring.ts",
+  // At the first read of WriteStream of node:tty: an-accessor-under-get-color-depth-hears-one-store.test.ts asks it.
+  "internal/tty.ts",
+  "internal/validate_function.ts",
+];
+// They make no call while they load.
+const makeNone = ["bun:ffi", "node:path", "node:trace_events"];
 
 test("node:http has a second text", () => {
   expect(named).toContain("node:http");
 });
 
 test("every second text is asked", () => {
-  const others = secondTexts.filter(file => !file.startsWith("node/"));
+  // A file of builtins/ holds functions that native code calls: nothing loads it.
+  const others = secondTexts.filter(file => !file.startsWith("node/") && !file.startsWith("builtins/"));
   expect(others).toEqual(["bun/ffi.ts", ...Object.keys(loadedWith), ...loadedLater].sort());
 });
 
 // node:test loads a stream with events of its own.
-for (const module of [...new Set([...named, ...Object.values(loadedWith), "node:test"])])
-  makesTheCallsOfPlainBun(module);
-makesTheCallsOfPlainBun("bun:ffi", false);
+const asked = [...new Set([...named, ...Object.values(loadedWith), "node:test", "bun:ffi"])];
+makeTheCallsOfPlainBun(asked);
+
+test("what is owed is asked", () => {
+  expect(Object.keys(owed).filter(module => !asked.includes(module))).toEqual([]);
+});

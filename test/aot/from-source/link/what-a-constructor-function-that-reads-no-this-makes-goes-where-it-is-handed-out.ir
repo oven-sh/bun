@@ -1,0 +1,14 @@
+# The control of what-a-constructor-function-that-reads-no-this-makes-stays-in-sight-with-what-stands-above.ir: the object is handed to code that nobody sees: its layout goes. L1 = Plain.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L1 family=F0 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# -- source: what-a-constructor-function-that-reads-no-this-makes-goes-where-it-is-handed-out.js
+# function Base() { this.a = 1; }
+# Base.prototype.read = function () { return this.a; };
+# function Plain() {}
+# Object.setPrototypeOf(Plain.prototype, Base.prototype);
+# Object.setPrototypeOf(Plain, Base);
+# const plain = new Plain();
+# const made = new Base();
+# globalThis.kept = plain;
+# console.log(made.read(), plain.read(), plain instanceof Base);
+# -- end of source

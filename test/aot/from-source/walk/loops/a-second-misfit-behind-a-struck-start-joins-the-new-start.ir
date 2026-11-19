@@ -10,8 +10,8 @@
 # and climbed a rung for nothing. It is noted to the end of the struck walk, and each misfit of that walk makes the new start of all of it.
 # f1 = mix
 # OPTIONS: check=Validate
-# RUN(COUNT): compile WalksOfLoops
-# COUNT: statistic WalksOfLoops 3
+# RUN(COUNT): compile LoopVisits
+# COUNT: statistic LoopVisits 3
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: null|i32 {{*}}isLoopHead=true

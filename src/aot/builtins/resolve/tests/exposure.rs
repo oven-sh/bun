@@ -473,10 +473,32 @@ fn what_a_program_lays_under_a_name_that_some_runs_give_process_answers_native_c
         "class Descriptors { constructor(public noDeprecation: PropertyDescriptor) {} }",
         "Object.defineProperty(x, 'no\\x44eprecation', y);",
         "Object.defineProperties(x, { no\\u0044eprecation: y });",
+        "Object.defineProperty(x, 'no\\Deprecation', y);",
+        "Object.defineProperty(x, 'no\\\nDeprecation', y);",
+        "Object.defineProperties(x, { 'no\\Deprecation': y });",
+        "class Above { get 'no\\Deprecation'() {} }",
+        "Object.defineProperty(x, `no\\Deprecation`, y);",
+        "Object.defineProperty(x, `no\\Deprecation${z}`, y);",
+        "Object.defineProperty(x, `no\\x44eprecation${z}`, y);",
+        "Object.defineProperty(x, tag`no\\Deprecation`, y);",
+        "x.no\\u0044eprecation = y;",
+        "x = { no\\u0044eprecation };",
+    ] {
+        with_case(PROGRAM, source, |case| {
+            assert!(
+                case.can_lay_key_that_native_code_asks_of_process(),
+                "{source}"
+            );
+            assert!(!case.exposes(BuiltinId::Process), "{source}");
+        });
+    }
+    for source in [
         "new Proxy(x, y);",
         "Proxy.revocable(x, y);",
         "Reflect.construct(Proxy, [x, y]);",
-        "const Made = Proxy;",
+        "const Made = Proxy; new Made(x, y);",
+        "Proxy instanceof x;",
+        "const Made = Proxy; Made instanceof x;",
     ] {
         with_case(PROGRAM, source, |case| {
             assert!(
@@ -500,11 +522,16 @@ fn what_a_program_lays_under_a_name_that_some_runs_give_process_answers_native_c
         "Object.defineProperties(x, { default: y, AbortController: y });",
         "class Above { get madeUp() {} }",
         "typeof Proxy === 'function';",
+        "const Made = Proxy;",
         "Proxy !== undefined;",
     ] {
         with_case(PROGRAM, source, |case| {
             assert!(
                 !case.resolved.process_reaches_code_on_its_prototypes(),
+                "{source}"
+            );
+            assert!(
+                !case.can_lay_key_that_native_code_asks_of_process(),
                 "{source}"
             );
         });
@@ -641,6 +668,20 @@ fn left_of_instanceof_is_handed_to_the_method_of_the_right_where_the_program_can
             assert!(!case.resolved.hands_builtins_to_hooks_of_instanceof());
         });
     }
+    let test_script = Setup {
+        runs_tests: true,
+        ..SCRIPT
+    };
+    for (source, is_exposed) in [
+        ("process instanceof exports;", true),
+        ("process instanceof module.exports;", true),
+        ("const e = exports; process instanceof e;", true),
+        ("process instanceof Object;", false),
+    ] {
+        with_case(test_script, source, |case| {
+            assert_eq!(case.exposes(BuiltinId::Process), is_exposed, "{source}");
+        });
+    }
 }
 
 #[test]
@@ -689,6 +730,102 @@ fn a_file_says_whether_it_can_come_by_the_hook_of_instanceof() {
 }
 
 #[test]
+fn in_a_test_run_a_file_notes_the_names_that_a_named_object_is_asked_for_and_does_not_list() {
+    let noted = |case: &Case<'_, '_>| -> Vec<BuiltinId> {
+        let names = case.resolved.names_asked_for_that_are_not_listed();
+        names.iter().map(|asked| asked.0).collect()
+    };
+    for (source, id) in [
+        ("Bun.madeUp;", BuiltinId::Bun),
+        ("f(process.madeUp);", BuiltinId::Process),
+        ("const a = console.madeUp;", BuiltinId::Console),
+        (
+            "var kept; (kept = Bun).madeUp ?? (kept.madeUp = {});",
+            BuiltinId::Bun,
+        ),
+        ("const { madeUp } = Bun;", BuiltinId::Bun),
+        ("process.madeUp = 1;", BuiltinId::Process),
+    ] {
+        with_case(TEST_RUN, source, |case| {
+            assert!(noted(case).iter().all(|&asked| asked == id), "{source}");
+            assert!(!noted(case).is_empty(), "{source}");
+            assert!(!case.exposes(id), "{source}");
+        });
+        with_case(PROGRAM, source, |case| {
+            assert!(noted(case).is_empty(), "{source}")
+        });
+    }
+    for source in [
+        "Bun[\"made\" + \"Up\"];",
+        "const key = \"madeUp\"; Bun[key];",
+        "Bun[\"made\" + \"Up\"] = 1;",
+    ] {
+        with_case(TEST_RUN, source, |case| {
+            assert_eq!(noted(case), [BuiltinId::Bun], "{source}");
+        });
+        with_case(PROGRAM, source, |case| {
+            assert!(noted(case).is_empty(), "{source}")
+        });
+    }
+    for source in [
+        "process.title;",
+        "Bun.version;",
+        "Bun.madeUp();",
+        "Bun[\"ver\" + \"sion\"];",
+        "Bun[key];",
+    ] {
+        with_case(TEST_RUN, source, |case| {
+            assert!(noted(case).is_empty(), "{source}")
+        });
+    }
+}
+
+#[test]
+fn replaced_member_receivers_are_exposed() {
+    const IMPORTS: &str = "import { jest, mock, spyOn, vi } from 'bun:test'; ";
+    for source in [
+        "Object.defineProperty(process, 'exit', { value() { return super.valueOf(); } });",
+        "Object.defineProperty(process, 'exit', { value() { return (() => this)(); } });",
+        "Object.defineProperty(process, 'exit', { get() { return this; } });",
+        "const g = function () { return this; }; Object.defineProperty(process, 'exit', { value: g });",
+        "Reflect.defineProperty(process, 'exit', { value() { return super.valueOf(); } });",
+        "Object.defineProperties(process, { exit: { value() { return this; } } });",
+        "Object.assign(process, { exit() { return super.valueOf(); } });",
+        "Reflect.set(process, 'exit', function () { return this; });",
+        "spyOn(process, 'exit').mockImplementation(function () { return this; });",
+        "const spy = spyOn(process, 'exit'); spy.mockImplementationOnce(function () { f(this); });",
+        "jest.spyOn(process, 'exit').mockReturnThis();",
+        "const spy = vi.spyOn(process, 'exit'); f(spy.mock.contexts[0]);",
+        "let spy; spy = spyOn(process, 'exit'); f(spy.mock.instances);",
+    ] {
+        let source = format!("{IMPORTS}{source}");
+        with_case(TEST_RUN, &source, |case| {
+            assert!(case.exposes(BuiltinId::Process), "{source}");
+        });
+    }
+    for source in [
+        "Object.defineProperty(process, 'exit', { value: 1 });",
+        "Object.defineProperty(process, 'exit', { value: () => {}, get: () => 1 });",
+        "Object.defineProperty(process, 'exit', { value() {} });",
+        "Object.defineProperty(process, 'exit', f);",
+        "Object.assign(process, { exit: 1, title() {} });",
+        "Reflect.set(process, 'exit', f);",
+        "spyOn(process, 'exit').mockImplementation(() => {});",
+        "spyOn(process, 'exit').mockImplementation(function () {});",
+        "spyOn(process, 'exit'); spyOn(f, 'exit').mockImplementation(function () { return this; });",
+        "spyOn(process, 'exit'); const spy = spyOn(f, 'exit').mockName('a'); spy.mockReturnThis();",
+        "spyOn(process, 'exit'); mock().mockImplementation(function () { return this; });",
+        "spyOn(process, 'exit'); jest.fn().mockName('a').mockImplementation(function () { return this; });",
+        "const spy = spyOn(process, 'exit'); f(spy.mock.calls, spy.mock.results, g.instances);",
+    ] {
+        let source = format!("{IMPORTS}{source}");
+        with_case(TEST_RUN, &source, |case| {
+            assert!(!case.exposes(BuiltinId::Process), "{source}");
+        });
+    }
+}
+
+#[test]
 fn object_that_goes_out_of_sight_is_exposed() {
     for &source in HANDED_OVER {
         with_case(PROGRAM, source, |case| {
@@ -715,6 +852,12 @@ const THIS_OF_SLOPPY_FUNCTIONS: &[(&str, BuiltinId)] = &[
     ("function f() { var self = this; }", BuiltinId::GlobalThis),
     ("function f() { g.call(this); }", BuiltinId::GlobalThis),
     ("function f() { this.own(); }", BuiltinId::GlobalThis),
+    ("({ m() { super.own(); } });", BuiltinId::GlobalThis),
+    (
+        "({ m() { return () => super.own; } });",
+        BuiltinId::GlobalThis,
+    ),
+    ("({ m() { super.own = g; } });", BuiltinId::GlobalThis),
     ("function f() { this[k]; }", BuiltinId::GlobalThis),
     ("function f() { this.constructor; }", BuiltinId::GlobalThis),
     (
@@ -738,6 +881,9 @@ const THIS_OF_OTHER_CODE: &[&str] = &[
     "x = this; const f = () => this;",
     "class A { m() { return this; } static { f(this); } }",
     "class A { m = this; n = () => this; }",
+    "class A extends B { m() { super.own(); super.own = 1; } }",
+    "'use strict'; ({ m() { super.own(); } });",
+    "({ m() { 'use strict'; super.own(); } });",
     "function f() { this.process = 1; this.own; this.own = this.other; }",
     "function f() { typeof this; this instanceof f; if (!this) {} this; }",
 ];

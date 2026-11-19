@@ -17,6 +17,35 @@ const starts = `
 `;
 const warnings = (text: string) => [...text.matchAll(/^warn: (TS\d+)/gm)].map(match => match[1]).sort();
 
+test("a file in a test run starts itself as a Worker", async () => {
+  using dir = tempDir("worker-of-own-file", {
+    "own.mjs": `import { Worker, isMainThread, parentPort } from "node:worker_threads";
+import { fileURLToPath } from "node:url";
+const own = fileURLToPath(import.meta.url);
+export const start = () => new Promise(resolve => new Worker(own).on("message", resolve).on("error", resolve));
+if (!isMainThread) parentPort.postMessage("itself");`,
+    "a.test.mjs": `import { expect, test } from "bun:test";
+import { start } from "./own.mjs";
+test("t", async () => expect(await start()).toBe("itself"));`,
+  });
+  const tested = await run([bunExe(), "test", "--aot", "./a.test.mjs"], String(dir));
+  expect({ warnings: warnings(tested.stderr), exitCode: tested.exitCode }).toEqual({ warnings: [], exitCode: 0 });
+});
+
+test("a run that only checks warns of no Worker with a known file", async () => {
+  using dir = tempDir("checked-workers", {
+    "main.js": `import { join } from "node:path";
+import { Worker as Thread } from "node:worker_threads";
+console.log(typeof import.meta);
+if (process.argv.length > 99) new Worker(join(import.meta.dir, "job.js"));
+if (process.argv.length > 98) new Worker(new URL("./job.js", import.meta.url));
+if (process.argv.length > 97) new Thread(new URL("./job.js", import.meta.url));`,
+    "job.js": "",
+  });
+  const checked = await run([bunExe(), "--aot", "main.js"], String(dir));
+  expect({ warnings: warnings(checked.stderr), exitCode: checked.exitCode }).toEqual({ warnings: [], exitCode: 0 });
+});
+
 test("the same starts of Workers: five warnings for an executable, none for a test run", async () => {
   using dir = tempDir("workers-nobody-follows", {
     "main.js": `import { Worker as Thread } from "node:worker_threads";${starts}console.log("none started");`,

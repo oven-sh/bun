@@ -1,4 +1,4 @@
-// compatibility.mdx, "Smaller differences". The transpiler of `bun run` drops the class: "undefined".
+// The transpiler of `bun run` drops the class: "undefined".
 function probe() {
   return typeof Later;
   class Later {}

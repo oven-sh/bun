@@ -344,11 +344,15 @@ pub(super) fn collect_static_members(files: &Files<'_>) -> FxHashMap<Atom, Small
             };
             let symbol = files.canonical(files.sym(file, symbol));
             for name in static_member_names(hir, class.members) {
-                let declaring = classes.entry(name).or_default();
-                if !declaring.contains(&symbol) {
-                    declaring.push(symbol);
-                }
+                classes.entry(name).or_default().push(symbol);
             }
+        }
+    }
+    let mut seen = FxHashSet::default();
+    for declaring in classes.values_mut() {
+        if declaring.len() > 1 {
+            seen.clear();
+            declaring.retain(|symbol| seen.insert(*symbol));
         }
     }
     classes

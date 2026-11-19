@@ -264,10 +264,10 @@ define_rect_shorthand! {
 // Handlers
 // ──────────────────────────────────────────────────────────────────────────
 
-pub type MarginHandler = SizeHandler<MarginSpec>;
-pub type PaddingHandler = SizeHandler<PaddingSpec>;
-pub type ScrollMarginHandler = SizeHandler<ScrollMarginSpec>;
-pub type InsetHandler = SizeHandler<InsetSpec>;
+pub type MarginHandler<'bump> = SizeHandler<'bump, MarginSpec>;
+pub type PaddingHandler<'bump> = SizeHandler<'bump, PaddingSpec>;
+pub type ScrollMarginHandler<'bump> = SizeHandler<'bump, ScrollMarginSpec>;
+pub type InsetHandler<'bump> = SizeHandler<'bump, InsetSpec>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // SizeHandler
@@ -297,14 +297,14 @@ enum LogicalSlot {
 
 /// Configuration for one `SizeHandler` instantiation. The handler body is
 /// compiled once and reads everything property-specific from `SPEC`.
-pub trait SizeHandlerSpec {
-    const SPEC: &'static SizeSpec;
+pub trait SizeHandlerSpec<'bump> {
+    const SPEC: &'bump SizeSpec<'bump>;
 }
 
-type Extract = fn(&Property) -> &LengthPercentageOrAuto;
-type Make = fn(LengthPercentageOrAuto) -> Property;
+type Extract<'bump> = for<'p> fn(&'p Property<'bump>) -> &'p LengthPercentageOrAuto;
+type Make<'bump> = fn(LengthPercentageOrAuto) -> Property<'bump>;
 
-pub struct SizeSpec {
+pub struct SizeSpec<'bump> {
     top: PropertyIdTag,
     bottom: PropertyIdTag,
     left: PropertyIdTag,
@@ -318,55 +318,55 @@ pub struct SizeSpec {
     inline_shorthand: PropertyIdTag,
     // `PropertyId` mirrors of top/bottom/left/right for
     // `UnparsedProperty::with_property_id`.
-    top_id: PropertyId,
-    bottom_id: PropertyId,
-    left_id: PropertyId,
-    right_id: PropertyId,
+    top_id: PropertyId<'bump>,
+    bottom_id: PropertyId<'bump>,
+    left_id: PropertyId<'bump>,
+    right_id: PropertyId<'bump>,
     shorthand_category: PropertyCategory,
     /// Optional prefix feature for the shorthand.
     feature: Option<Feature>,
     shorthand_feature: Option<Feature>,
 
-    extract_top: Extract,
-    extract_bottom: Extract,
-    extract_left: Extract,
-    extract_right: Extract,
-    extract_block_start: Extract,
-    extract_block_end: Extract,
-    extract_inline_start: Extract,
-    extract_inline_end: Extract,
+    extract_top: Extract<'bump>,
+    extract_bottom: Extract<'bump>,
+    extract_left: Extract<'bump>,
+    extract_right: Extract<'bump>,
+    extract_block_start: Extract<'bump>,
+    extract_block_end: Extract<'bump>,
+    extract_inline_start: Extract<'bump>,
+    extract_inline_end: Extract<'bump>,
     /// `[top, right, bottom, left]` of the 4-field shorthand.
-    extract_shorthand: fn(&Property) -> [&LengthPercentageOrAuto; 4],
+    extract_shorthand: for<'p> fn(&'p Property<'bump>) -> [&'p LengthPercentageOrAuto; 4],
     /// `[start, end]`.
-    extract_block_shorthand: fn(&Property) -> [&LengthPercentageOrAuto; 2],
-    extract_inline_shorthand: fn(&Property) -> [&LengthPercentageOrAuto; 2],
+    extract_block_shorthand: for<'p> fn(&'p Property<'bump>) -> [&'p LengthPercentageOrAuto; 2],
+    extract_inline_shorthand: for<'p> fn(&'p Property<'bump>) -> [&'p LengthPercentageOrAuto; 2],
 
-    make_top: Make,
-    make_bottom: Make,
-    make_left: Make,
-    make_right: Make,
-    make_block_start: Make,
-    make_block_end: Make,
-    make_inline_start: Make,
-    make_inline_end: Make,
+    make_top: Make<'bump>,
+    make_bottom: Make<'bump>,
+    make_left: Make<'bump>,
+    make_right: Make<'bump>,
+    make_block_start: Make<'bump>,
+    make_block_end: Make<'bump>,
+    make_inline_start: Make<'bump>,
+    make_inline_end: Make<'bump>,
     /// `(top, bottom, left, right)`.
     make_shorthand: fn(
         LengthPercentageOrAuto,
         LengthPercentageOrAuto,
         LengthPercentageOrAuto,
         LengthPercentageOrAuto,
-    ) -> Property,
-    make_block_shorthand: fn(LengthPercentageOrAuto, LengthPercentageOrAuto) -> Property,
-    make_inline_shorthand: fn(LengthPercentageOrAuto, LengthPercentageOrAuto) -> Property,
+    ) -> Property<'bump>,
+    make_block_shorthand: fn(LengthPercentageOrAuto, LengthPercentageOrAuto) -> Property<'bump>,
+    make_inline_shorthand: fn(LengthPercentageOrAuto, LengthPercentageOrAuto) -> Property<'bump>,
 }
 
 /// Generic margin/padding/inset/scroll-* handler.
-pub struct SizeHandler<S: SizeHandlerSpec> {
-    inner: SizeHandlerImpl,
+pub struct SizeHandler<'bump, S: SizeHandlerSpec<'bump>> {
+    inner: SizeHandlerImpl<'bump>,
     _spec: core::marker::PhantomData<S>,
 }
 
-impl<S: SizeHandlerSpec> Default for SizeHandler<S> {
+impl<'bump, S: SizeHandlerSpec<'bump>> Default for SizeHandler<'bump, S> {
     fn default() -> Self {
         Self {
             inner: SizeHandlerImpl::default(),
@@ -375,13 +375,13 @@ impl<S: SizeHandlerSpec> Default for SizeHandler<S> {
     }
 }
 
-impl<S: SizeHandlerSpec> SizeHandler<S> {
+impl<'bump, S: SizeHandlerSpec<'bump>> SizeHandler<'bump, S> {
     #[inline]
     pub(crate) fn handle_property(
         &mut self,
-        property: &Property,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
+        property: &Property<'bump>,
+        dest: &mut DeclarationList<'bump>,
+        context: &mut PropertyHandlerContext<'_, 'bump>,
     ) -> bool {
         self.inner.handle_property(S::SPEC, property, dest, context)
     }
@@ -389,30 +389,30 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
     #[inline]
     pub(crate) fn finalize(
         &mut self,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
+        dest: &mut DeclarationList<'bump>,
+        context: &mut PropertyHandlerContext<'_, 'bump>,
     ) {
         self.inner.flush(S::SPEC, dest, context);
     }
 }
 
 #[derive(Default)]
-struct SizeHandlerImpl {
+struct SizeHandlerImpl<'bump> {
     top: Option<LengthPercentageOrAuto>,
     bottom: Option<LengthPercentageOrAuto>,
     left: Option<LengthPercentageOrAuto>,
     right: Option<LengthPercentageOrAuto>,
-    block_start: Option<Property>,
-    block_end: Option<Property>,
-    inline_start: Option<Property>,
-    inline_end: Option<Property>,
+    block_start: Option<Property<'bump>>,
+    block_end: Option<Property<'bump>>,
+    inline_start: Option<Property<'bump>>,
+    inline_end: Option<Property<'bump>>,
     has_any: bool,
     category: PropertyCategory,
 }
 
 // `context.arena` was dropped from PropertyHandlerContext; the
 // arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
-impl SizeHandlerImpl {
+impl<'bump> SizeHandlerImpl<'bump> {
     // ---- @field(this, field) replacements ----
     fn physical_slot(&mut self, slot: PhysicalSlot) -> &mut Option<LengthPercentageOrAuto> {
         match slot {
@@ -430,7 +430,7 @@ impl SizeHandlerImpl {
             PhysicalSlot::Right => self.right.is_some(),
         }
     }
-    fn logical_slot(&mut self, slot: LogicalSlot) -> &mut Option<Property> {
+    fn logical_slot(&mut self, slot: LogicalSlot) -> &mut Option<Property<'bump>> {
         match slot {
             LogicalSlot::BlockStart => &mut self.block_start,
             LogicalSlot::BlockEnd => &mut self.block_end,
@@ -449,10 +449,10 @@ impl SizeHandlerImpl {
 
     fn handle_property(
         &mut self,
-        spec: &'static SizeSpec,
-        property: &Property,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
+        spec: &SizeSpec<'bump>,
+        property: &Property<'bump>,
+        dest: &mut DeclarationList<'bump>,
+        context: &mut PropertyHandlerContext<'_, 'bump>,
     ) -> bool {
         // Match on the *raw* union discriminant (`Property::variant_tag()`).
         // The `Unparsed` arm needs the inner `property_id` to decide whether
@@ -740,12 +740,12 @@ impl SizeHandlerImpl {
     /// Flush helper for the four physical slots (`top`/`bottom`/`left`/`right`).
     fn flush_helper_physical(
         &mut self,
-        spec: &'static SizeSpec,
+        spec: &SizeSpec<'bump>,
         field: PhysicalSlot,
         val: &LengthPercentageOrAuto,
         category: PropertyCategory,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
+        dest: &mut DeclarationList<'bump>,
+        context: &mut PropertyHandlerContext<'_, 'bump>,
     ) {
         // If the category changes betweet logical and physical,
         // or if the value contains syntax that isn't supported across all targets,
@@ -762,12 +762,12 @@ impl SizeHandlerImpl {
     /// Flush helper for the four logical slots (`block_start`/.../`inline_end`).
     fn flush_helper_logical(
         &mut self,
-        spec: &'static SizeSpec,
+        spec: &SizeSpec<'bump>,
         field: LogicalSlot,
         val: &LengthPercentageOrAuto,
         category: PropertyCategory,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
+        dest: &mut DeclarationList<'bump>,
+        context: &mut PropertyHandlerContext<'_, 'bump>,
     ) {
         // If the category changes betweet logical and physical,
         // or if the value contains syntax that isn't supported across all targets,
@@ -783,12 +783,12 @@ impl SizeHandlerImpl {
 
     fn property_helper(
         &mut self,
-        spec: &'static SizeSpec,
+        spec: &SizeSpec<'bump>,
         field: PhysicalSlot,
         val: &LengthPercentageOrAuto,
         category: PropertyCategory,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
+        dest: &mut DeclarationList<'bump>,
+        context: &mut PropertyHandlerContext<'_, 'bump>,
     ) {
         self.flush_helper_physical(spec, field, val, category, dest, context);
         *self.physical_slot(field) = Some(val.clone());
@@ -798,11 +798,11 @@ impl SizeHandlerImpl {
 
     fn logical_property_helper(
         &mut self,
-        spec: &'static SizeSpec,
+        spec: &SizeSpec<'bump>,
         field: LogicalSlot,
-        val: Property,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
+        val: Property<'bump>,
+        dest: &mut DeclarationList<'bump>,
+        context: &mut PropertyHandlerContext<'_, 'bump>,
     ) {
         // Assume unparsed properties might contain unsupported syntax that we must preserve as a fallback.
         if self.category != PropertyCategory::Logical
@@ -819,9 +819,9 @@ impl SizeHandlerImpl {
 
     fn flush(
         &mut self,
-        spec: &'static SizeSpec,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
+        spec: &SizeSpec<'bump>,
+        dest: &mut DeclarationList<'bump>,
+        context: &mut PropertyHandlerContext<'_, 'bump>,
     ) {
         if !self.has_any {
             return;
@@ -972,15 +972,15 @@ impl SizeHandlerImpl {
     #[inline]
     #[allow(clippy::too_many_arguments)]
     fn logical_prop_helper(
-        val: &mut Option<Property>,
+        val: &mut Option<Property<'bump>>,
         logical: PropertyIdTag,
-        extract_logical: fn(&Property) -> &LengthPercentageOrAuto,
-        make_ltr: fn(LengthPercentageOrAuto) -> Property,
-        ltr: PropertyId,
-        make_rtl: fn(LengthPercentageOrAuto) -> Property,
-        rtl: PropertyId,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
+        extract_logical: Extract<'bump>,
+        make_ltr: fn(LengthPercentageOrAuto) -> Property<'bump>,
+        ltr: PropertyId<'bump>,
+        make_rtl: fn(LengthPercentageOrAuto) -> Property<'bump>,
+        rtl: PropertyId<'bump>,
+        dest: &mut DeclarationList<'bump>,
+        context: &mut PropertyHandlerContext<'_, 'bump>,
     ) {
         // _ = this; // autofix
         let bump = dest.bump();
@@ -1000,13 +1000,13 @@ impl SizeHandlerImpl {
 
     #[inline]
     fn logical_side_helper(
-        spec: &'static SizeSpec,
-        start: &mut Option<Property>,
-        end: &mut Option<Property>,
+        spec: &SizeSpec<'bump>,
+        start: &mut Option<Property<'bump>>,
+        end: &mut Option<Property<'bump>>,
         pair: LogicalSidePair,
         logical_supported: bool,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
+        dest: &mut DeclarationList<'bump>,
+        context: &mut PropertyHandlerContext<'_, 'bump>,
     ) {
         // _ = this; // autofix
         let shorthand_supported = logical_supported
@@ -1063,13 +1063,13 @@ impl SizeHandlerImpl {
 
     #[inline]
     fn prop(
-        val: &mut Option<Property>,
+        val: &mut Option<Property<'bump>>,
         logical: PropertyIdTag,
-        extract_logical: fn(&Property) -> &LengthPercentageOrAuto,
-        make_physical: fn(LengthPercentageOrAuto) -> Property,
-        physical: PropertyId,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
+        extract_logical: Extract<'bump>,
+        make_physical: fn(LengthPercentageOrAuto) -> Property<'bump>,
+        physical: PropertyId<'bump>,
+        dest: &mut DeclarationList<'bump>,
+        context: &mut PropertyHandlerContext<'_, 'bump>,
     ) {
         // _ = this; // autofix
         let _ = context;
@@ -1108,7 +1108,7 @@ macro_rules! size_handler_spec {
         $Shorthand:ident, $BlockShorthand:ident, $InlineShorthand:ident,
         category: $category:expr, feature: $feature:expr, shorthand_feature: $shorthand_feature:expr
     ) => {
-        const SPEC: &'static SizeSpec = &SizeSpec {
+        const SPEC: &'bump SizeSpec<'bump> = &SizeSpec {
             top: PropertyIdTag::$Top,
             bottom: PropertyIdTag::$Bottom,
             left: PropertyIdTag::$Left,
@@ -1204,7 +1204,7 @@ macro_rules! size_handler_spec {
 }
 
 pub struct MarginSpec;
-impl SizeHandlerSpec for MarginSpec {
+impl<'bump> SizeHandlerSpec<'bump> for MarginSpec {
     size_handler_spec!(
         MarginTop, MarginBottom, MarginLeft, MarginRight,
         MarginBlockStart, MarginBlockEnd, MarginInlineStart, MarginInlineEnd,
@@ -1214,7 +1214,7 @@ impl SizeHandlerSpec for MarginSpec {
 }
 
 pub struct PaddingSpec;
-impl SizeHandlerSpec for PaddingSpec {
+impl<'bump> SizeHandlerSpec<'bump> for PaddingSpec {
     size_handler_spec!(
         PaddingTop, PaddingBottom, PaddingLeft, PaddingRight,
         PaddingBlockStart, PaddingBlockEnd, PaddingInlineStart, PaddingInlineEnd,
@@ -1224,7 +1224,7 @@ impl SizeHandlerSpec for PaddingSpec {
 }
 
 pub struct ScrollMarginSpec;
-impl SizeHandlerSpec for ScrollMarginSpec {
+impl<'bump> SizeHandlerSpec<'bump> for ScrollMarginSpec {
     size_handler_spec!(
         ScrollMarginTop, ScrollMarginBottom, ScrollMarginLeft, ScrollMarginRight,
         ScrollMarginBlockStart, ScrollMarginBlockEnd, ScrollMarginInlineStart, ScrollMarginInlineEnd,
@@ -1234,7 +1234,7 @@ impl SizeHandlerSpec for ScrollMarginSpec {
 }
 
 pub struct InsetSpec;
-impl SizeHandlerSpec for InsetSpec {
+impl<'bump> SizeHandlerSpec<'bump> for InsetSpec {
     size_handler_spec!(
         Top, Bottom, Left, Right,
         InsetBlockStart, InsetBlockEnd, InsetInlineStart, InsetInlineEnd,

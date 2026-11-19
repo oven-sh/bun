@@ -14,8 +14,8 @@
 # One name climbed a walk before: a walk a name. The number is the whole program's walks of loops: whoever lowers the walks of a loop lowers it here; it must not grow with the names.
 # f1 = shift
 # OPTIONS: check=Validate
-# RUN: compile WalksOfLoops
-# CHECK: statistic WalksOfLoops 3
+# RUN: compile LoopVisits
+# CHECK: statistic LoopVisits 3
 # RUN(SHELL): run-in-shell globalThis.sink = print;
 # SHELL: 192
 # SHELL: exited with 0

@@ -98,7 +98,7 @@ fn first_field(scope: ScopeId, is_immutable: bool) -> Placement {
 fn is_field(storage: Storage) -> bool {
     match storage {
         Storage::Field { .. } => true,
-        Storage::Local | Storage::Variable(_) => false,
+        Storage::Local | Storage::Variable(_) | Storage::Instance { .. } => false,
     }
 }
 

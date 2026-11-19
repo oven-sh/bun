@@ -6,4 +6,4 @@ export type * from "../../../vendor/WebKit/Source/JavaScriptCore/aot/builtins/ge
 const engineModule: typeof import("../../../vendor/WebKit/Source/JavaScriptCore/aot/builtins/generator/emit-rust-table.ts") =
   await import(engineFile("builtins/generator/emit-rust-table.ts"));
 
-export const { emitRustTable } = engineModule;
+export const { emitRustTable, listQuietCalls } = engineModule;

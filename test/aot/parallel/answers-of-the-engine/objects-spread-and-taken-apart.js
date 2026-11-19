@@ -1,5 +1,5 @@
 // `{ ...source }` and `const { a, ...rest } = source` over objects with getters, symbols, properties that are not enumerable, inherited properties, indices, proxies, primitives, null and undefined.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 const show = o => JSON.stringify(o) + ";" + Object.keys(o).join("|");
 let log = "";

@@ -2,11 +2,15 @@ mod freeze;
 #[cfg(test)]
 mod tests;
 
+use std::borrow::Cow;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use bun_ast::Loader;
+use bun_ast::{Loader, Location};
 use bun_builtin_sources::{Manifest, VIRTUAL_ROOT};
+use bun_paths::is_absolute;
+use bun_sema::atom::{Atom, known};
+use bun_sema::hir::{CallId, ExprId, ExprKind, File, PropKey, UnOp};
 use bun_sema::program::{CodeView, FileId, Files};
 use bun_sema::resolve::HostPayload;
 
@@ -14,8 +18,9 @@ pub(crate) use self::freeze::{
     FreezeInput, FrozenSources, check_unique_paths_across_projects, count_levels_above_root,
     freeze_sources,
 };
-use crate::builtins::{ResolvedBuiltins, RuntimeFunction, RuntimeModule, table};
-use crate::diagnostics::FileDiagnostic;
+use crate::builtins::id::BuiltinId;
+use crate::builtins::{Resolved, ResolvedBuiltins, RuntimeFunction, RuntimeModule, table};
+use crate::diagnostics::{FileDiagnostic, LoadMessages};
 use crate::load::contents::FileContents;
 use crate::load::contents::load_names::NamedModule;
 use crate::load::module_paths::{compute_display_path, with_separators_of_host};
@@ -78,6 +83,8 @@ pub(crate) struct FileWithQuery {
     pub query: Box<[u8]>,
 }
 
+pub(crate) const JSON_PARSE_ERROR_FOR_BLANK_TEXT: &[u8] = b"JSON Parse error: Unexpected EOF";
+
 pub(crate) struct ParsedSource {
     pub kind: SourceKind,
     pub loader: Loader,
@@ -85,8 +92,10 @@ pub(crate) struct ParsedSource {
     pub file_with_query: Option<FileWithQuery>,
     pub web_assembly: Option<Vec<u8>>,
     pub has_compiled_components: bool,
+    pub depends_on_more_than_source: bool,
     pub parse_failure: Option<Vec<u8>>,
-    pub refused_json: Option<Vec<u8>>,
+    pub refused_at: Option<(Loader, Location)>,
+    pub said_where_type_is_written: Option<LoadMessages>,
     pub is_language_assumed: bool,
     pub builtins: ResolvedBuiltins,
     pub library_modules_named_in_text_left_to_run_time: Vec<RuntimeModule>,
@@ -106,8 +115,10 @@ impl ParsedSource {
             file_with_query: None,
             web_assembly: None,
             has_compiled_components: false,
+            depends_on_more_than_source: false,
             parse_failure: None,
-            refused_json: None,
+            refused_at: None,
+            said_where_type_is_written: None,
             is_language_assumed: false,
             builtins: ResolvedBuiltins::default(),
             library_modules_named_in_text_left_to_run_time: Vec::new(),
@@ -126,6 +137,83 @@ impl ParsedSource {
 
 pub(crate) fn parsed_source<'s>(files: &Files<'s>, file: FileId) -> Option<&'s ParsedSource> {
     files.host_payload(file)?.downcast_ref::<ParsedSource>()
+}
+
+/// `f.constructor(text)` evaluates too, where a file names an evaluator only to test it.
+pub(crate) fn may_evaluate_text(files: &Files<'_>) -> bool {
+    let sources = || {
+        let compiled = files.compiled_files().iter();
+        compiled.filter_map(|&file| Some((file, parsed_source(files, file)?)))
+    };
+    sources().any(|(_, source)| source.builtins.evaluator_comes_out())
+        || (sources().any(|(_, source)| source.builtins.mentions_evaluator())
+            && sources()
+                .any(|(file, source)| source.builtins.may_call_unnamed_evaluator(files.hir(file))))
+}
+
+fn is_name_of_evaluator(name: Atom) -> bool {
+    matches!(name, known::eval | known::Function)
+}
+
+fn writes_evaluator(hir: &File<'_>, source: &ParsedSource) -> bool {
+    let is_global_object = |expression: ExprId| {
+        let found = source
+            .builtins
+            .of_expr(hir.skip_type_assertions(expression));
+        matches!(found, Some(Resolved::Builtin(path)) if table::has_flag(path.id, table::BuiltinFlags::IS_GLOBAL_OBJECT))
+    };
+    let is_key_of_evaluator = |key: ExprId| {
+        let key = hir.skip_type_assertions(key);
+        matches!(hir[key].kind, ExprKind::String(name) if is_name_of_evaluator(name))
+    };
+    let has_key_of_evaluator = |object: ExprId| {
+        let ExprKind::Object(properties) = hir[hir.skip_type_assertions(object)].kind else {
+            return false;
+        };
+        properties.iter().any(|property| {
+            matches!(hir[property].key, PropKey::Name(name) if is_name_of_evaluator(name))
+        })
+    };
+    let is_write = |call: CallId| {
+        let mut operands = hir.ids(hir[call].args);
+        let callee = hir.skip_type_assertions(hir[call].callee);
+        operands.next().is_some_and(is_global_object)
+            && match source.builtins.builtin_of_expression(callee) {
+                Some(BuiltinId::ReflectSet) => operands.next().is_some_and(is_key_of_evaluator),
+                Some(BuiltinId::ObjectAssign) => operands.any(has_key_of_evaluator),
+                _ => false,
+            }
+    };
+    hir.exprs.iter().any(|expression| {
+        let target = match expression.kind {
+            ExprKind::Assign { target, .. } => target,
+            ExprKind::Unary {
+                op: UnOp::Delete,
+                operand,
+            } => operand,
+            ExprKind::Call(call) => return is_write(call),
+            _ => return false,
+        };
+        match hir[hir.skip_type_assertions(target)].kind {
+            ExprKind::Ident(name) => is_name_of_evaluator(name),
+            ExprKind::Dot { obj, name, .. } => is_name_of_evaluator(name) && is_global_object(obj),
+            ExprKind::Index { obj, index, .. } => {
+                is_key_of_evaluator(index) && is_global_object(obj)
+            }
+            _ => false,
+        }
+    })
+}
+
+pub(crate) fn may_replace_evaluators(files: &Files<'_>, can_load_code_at_run_time: bool) -> bool {
+    let compiled = || files.compiled_files().iter().copied();
+    compiled().any(|file| !files.hir(file).replaced_evaluations.is_empty())
+        && (can_load_code_at_run_time
+            || may_evaluate_text(files)
+            || compiled().any(|file| {
+                parsed_source(files, file)
+                    .is_some_and(|source| writes_evaluator(files.hir(file), source))
+            }))
 }
 
 pub(crate) fn parsed_source_in<'f>(
@@ -167,6 +255,7 @@ struct SourceEntry {
     kind: SourceKind,
     loader: Loader,
     byte_count: u64,
+    depends_on_more_than_source: bool,
     public_path: Box<[u8]>,
     display_path: OnceLock<Box<[u8]>>,
     diagnostic_path: Box<[u8]>,
@@ -199,6 +288,10 @@ impl Sources {
         self.entries[file.idx()].kind
     }
 
+    pub fn depends_on_more_than_source(&self, file: FileId) -> bool {
+        self.entries[file.idx()].depends_on_more_than_source
+    }
+
     pub fn is_data(&self, file: FileId) -> bool {
         self.kind(file) == SourceKind::Data
     }
@@ -222,6 +315,23 @@ impl Sources {
 
     pub fn public_path(&self, file: FileId) -> &[u8] {
         &self.entries[file.idx()].public_path
+    }
+
+    /// In an executable this is relative to the folder of the build and never an absolute path of the build machine.
+    pub fn path_in_stack_traces(&self, file: FileId) -> Cow<'_, [u8]> {
+        let ModulePaths {
+            public_path,
+            display_path,
+        } = self.module_paths(file);
+        let path_on_disk = self.diagnostic_path(file);
+        match self.root_of_executable() {
+            None if is_absolute(path_on_disk) => {
+                with_separators_of_host(path_on_disk, cfg!(windows)).into()
+            }
+            // Windows: on another drive.
+            Some(_) if is_absolute(display_path) => public_path.into(),
+            None | Some(_) => display_path.into(),
+        }
     }
 
     pub fn root_of_executable(&self) -> Option<&[u8]> {

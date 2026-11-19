@@ -1,3 +1,7 @@
+// DIAGNOSTIC: TS100096 require-made-another-file-gets-constant.mjs:4
+// DIAGNOSTIC: TS100096 require-made-another-file-gets-constant.mjs:10
+// DIAGNOSTIC: TS100096 require-made-another-file-gets-constant.mjs:11
+// DIAGNOSTIC: TS100096 require-made-another-file-gets-constant.mjs:21
 // RUN: lower
 // OPTIONS: builtin-modules
 // CHECK-LABEL: function {{*}}name="stored"

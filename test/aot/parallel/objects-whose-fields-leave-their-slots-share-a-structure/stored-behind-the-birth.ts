@@ -1,4 +1,4 @@
-// COUNTER: CompiledStructuresMade <= 8
+// COUNTER: CompiledStructuresCreated <= 8
 // COUNTER: operationAOTGetByIdAndCache <= 8
 // The object is born with a text. A function that is no maker stores the number.
 class Holder { text: string; turn: number; constructor(turn: number) { this.text = "t"; this.turn = turn; } }

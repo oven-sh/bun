@@ -1,0 +1,84 @@
+# What a fresh literal holds is what the state knows of it: the order word lists its members, each slot its value. So a value that is computed on two ways between two members splits nothing.
+# function chosen(body, headers, fine) { return new Response(body, { headers, status: fine ? 200 : 500 }); }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: NewObject
+# CHECK: ([[status]]: int[200, 500]
+# CHECK: [[boxed]]: int[200, 500]{{*}} = Box [[status]]
+# CHECK: = CallBuiltin -, v0, [[boxed]], {{*}}, v1 overload=CompilerHelpersNewResponseFromParts
+# One way adds a member and the other does not: nobody knows what the literal holds where they meet.
+# function grown(body, headers, fine) { const init = { status: 200 }; if (fine) init.headers = headers; return new Response(body, init); }
+# RUN(GROWN): walk f2 mechanisms=all
+# GROWN-LABEL: code f2:Body
+# GROWN: = NewObject
+# GROWN-NOT: CompilerHelpersNewResponseFromParts
+# GROWN: = CallBuiltin {{*}}overload=Response/
+# The allocation takes another object above the literal, which has the status that the literal lacks.
+# RUN(BELOW): walk f3 mechanisms=all
+# BELOW-LABEL: code f3:Body
+# BELOW: = NewObject
+# BELOW-NOT: CompilerHelpersNewResponseFromParts
+# BELOW: = CallBuiltin {{*}}overload=Response/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="headers" declared={type=anything flags=[IsExpected]}}, {key="status" declared={type=undefined|number}}, {key="statusText" declared={type=undefined|null|string flags=[IsExpected, OmitsNull]}}] declaredOrder=[1, 2, 0] ownFieldCount=3
+layout L1 fields=[{key="status" declared={type=anything}}] ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="chosen" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=Response
+    v4 = Convert v1 declared={type=anything flags=[IsExpected]}
+    v5 = NewObject layout=L0
+    PropDefine v5, v4 key="headers"
+    v7 = ToBoolean v2
+    Branch v7 -> taken b1(), notTaken b2()
+  b1():
+    v8 = Integer integer=200
+    Jump -> next b3(v8)
+  b2():
+    v9 = Integer integer=500
+    Jump -> next b3(v9)
+  b3(v10: number):
+    v11 = Convert v10 declared={type=undefined|number}
+    PropDefine v5, v11 key="status"
+    v13 = FinishObject v5
+    v14 = Construct v3, -, v0, v13 calleeName="Response"
+    Return v14
+}
+function f2 name="grown" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=Response
+    v4 = Integer integer=200
+    v5 = Convert v4 declared={type=undefined|number}
+    v6 = NewObject -, v5 layout=L0 fields=[1]
+    v7 = FinishObject v6
+    v8 = ToBoolean v2
+    Branch v8 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v7, v1 key="headers"
+    Jump -> next b2()
+  b2():
+    v10 = Construct v3, -, v0, v7 calleeName="Response"
+    Return v10
+}
+function f3 name="allocatedBelow" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=Response
+    v4 = NewObject -, v1 layout=L1 fields=[0]
+    v5 = FinishObject v4
+    v6 = Convert v2 declared={type=anything flags=[IsExpected]}
+    v7 = NewObject v5, v6 layout=L0 fields=[0]
+    v8 = FinishObject v7
+    v9 = Construct v3, -, v0, v8 calleeName="Response"
+    Return v9
+}

@@ -5,7 +5,6 @@
 # console.log(code("abc", "abcd", 1, true), code("abc", "abcd", 3, true), code("abc", "a", 1, false));
 # -- end of source
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK-COUNT-2: = Less v
 # CHECK: = GetStringCodeUnit

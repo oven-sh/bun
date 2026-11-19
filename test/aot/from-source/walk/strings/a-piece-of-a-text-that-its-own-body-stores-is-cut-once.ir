@@ -1,0 +1,20 @@
+# -- source: a-piece-of-a-text-that-its-own-body-stores-is-cut-once.cjs
+# "use strict";
+# const held = new Map();
+# function stored(input) { const text = String(input); let n = 0; for (let from = 0; from + 3 <= text.length; from += 3) { const key = text.slice(from, from + 3); const seen = held.get(key); if (seen === undefined) held.set(key, { key, hits: 1 }); else held.set(key, seen); n++; } return n; }
+# function neverStored(input) { const text = String(input); let n = 0; for (let from = 0; from + 3 <= text.length; from += 3) { const key = text.slice(from, from + 3); const seen = held.get(key); if (seen === undefined) held.set(key, { hits: 1 }); else held.set(key, seen); n++; } return n; }
+# globalThis.sink(stored, neverStored);
+# -- end of source
+# f1 = stored, f2 = neverStored
+# A lookup or a store in a map under a piece of a text that cannot be answered at the place falls back on the call as written. It cuts the piece afresh there, so that the first cut is swept away where nobody else needs it: on the usual way no text is made.
+# Where the body that cut the piece also stores it, here as a field of a birth, the first cut stays whatever happens: a second cut is one more cell, and a rope that no stub of a map takes. The three arms take the first cut.
+# RUN(STORED): walk f1 mechanisms=all
+# STORED: = Substring
+# STORED: = FindStringRangeInMap
+# STORED-NOT: = Substring
+# The twin stores it nowhere: its first cut is swept away, and each of the three arms cuts its own.
+# RUN(TWIN): walk f2 mechanisms=all
+# TWIN: = FindStringRangeInMap
+# TWIN: = Substring
+# TWIN: = Substring
+# TWIN: = Substring

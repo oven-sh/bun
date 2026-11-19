@@ -1,0 +1,14 @@
+{
+  "why": "the file is read on another thread: on a busy machine `bun test` now and then has its text before the next immediate runs, and says same for LATER",
+  "printed": [
+    "SAID first over late LATER",
+    "SAID again over late same",
+    "SAID first over late same",
+    "SAID again over late same"
+  ],
+  "tests": [
+    "(pass) it",
+    "(pass) it"
+  ],
+  "exitCode": 0
+}

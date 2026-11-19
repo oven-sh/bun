@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, type DirectoryTree } from "harness";
+import { bunEnv, bunExe, autoInstallTempDir as tempDir, type DirectoryTree } from "harness";
 
 const WORKERS = 16;
 const ROUNDS = 12;

@@ -1,0 +1,16 @@
+# -- source: main.ts
+# interface Links { target?: Holder; count?: number; }
+# interface Holder { flags: number; }
+# interface HolderWithLinks extends Holder { links: Links; }
+# const LinksObject = class implements Links { declare target?: Holder; declare count?: number; };
+# class Other { target?: Holder; count?: number; other = 1; }
+# function HolderObject(this: Holder, flags: number) { this.flags = flags; (this as any).links = undefined; }
+# function make(flags: number): HolderWithLinks { const made = new (HolderObject as any)(flags) as HolderWithLinks; made.links = new LinksObject(); return made; }
+# function store(holder: HolderWithLinks, target: Holder): void { holder.links.target = target; holder.links.count = 1; }
+# (globalThis as any).kept = [make, store, Other];
+# -- end of source
+# The constructor writes `any` for the field `links`; the interface under which `store` takes its holder writes `Links`, and one class is written to implement it.
+# What is read out of the field is expected to be of that class by the receiver's written type alone: two classes of the file have the names that are stored.
+# RUN: walk f3 mechanisms=all
+# CHECK: = PutSlot{{*}} key="target"
+# CHECK: = PutSlot{{*}} key="count"

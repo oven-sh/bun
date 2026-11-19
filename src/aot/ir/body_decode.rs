@@ -99,11 +99,12 @@ pub(super) fn read_value(
     let length = visit_value_fields(opcode, rest, 0, &mut |_, _| {});
     let (fields, rest) = split_fields(rest, length)?;
     let written_length = usize::from(head.opcode & WRITTEN_POSITION_FOLLOWS != 0);
-    let (_, rest) = split_fields(rest, Some(written_length))?;
+    let (second_position, rest) = split_fields(rest, Some(written_length))?;
     let value = ValueView {
         id,
         opcode,
         position: head.position,
+        second_position: second_position.first().copied(),
         fields,
     };
     Ok((value, rest))

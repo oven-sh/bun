@@ -37,10 +37,6 @@ static ScriptExecutionContextIdentifier initialIdentifier()
 }
 #endif
 
-#if ENABLE(MALLOC_BREAKDOWN)
-DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
-#endif
-
 // A context is made with its Rust half (`bun_jsc::ScriptExecutionContext`): a global's is its
 // VM's root context, a Bun.ModuleGraph's is its own.
 extern "C" void* Bun__VirtualMachine__rootContext(void* bunVM);

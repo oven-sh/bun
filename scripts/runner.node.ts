@@ -4264,7 +4264,7 @@ async function main(): Promise<void> {
       return join(folder, name, isWindows ? "bun.exe" : "bun");
     };
     try {
-      const main = await fetchBuild("01a1ed83-d1d9-4061-a559-627cb1028f19");
+      const main = await fetchBuild("01a1f004-98b3-41ee-9e1f-314f32f29884");
       process.env.BUN_SIMD_COMPARE = JSON.stringify([main, await fetchBuild(options["build-id"])]);
     } catch (error) {
       console.warn(error);

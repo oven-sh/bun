@@ -238,9 +238,10 @@ async function request(
       // This function has its own error for the option, below.
       throwOnError: false,
     });
-    if (throwOnError && result.statusCode >= 400 && result.statusCode < 600) {
+    const { statusCode } = result;
+    if (throwOnError && statusCode >= 400 && statusCode < 600) {
       result.body.destroy();
-      throw new Error(`Request failed with status code ${result.statusCode}`);
+      throw new Error(`Request failed with status code ${statusCode}`);
     }
     return result;
   }
@@ -463,7 +464,7 @@ function fetchDispatch(origin: URL, opts: any, handler: any, pending?: Set<Pendi
       }
       url.search = searchFromQuery(query);
     }
-    // The dispatch layer preserves method case, like undici.
+    // Not uppercased, like undici. Transport gap: native fetch sends a name it does not know, or one in mixed case, as GET.
     const method = opts.method ? String(opts.method) : "GET";
 
     if (isControllerStyle) handler.onRequestStart?.(controller, { __proto__: null });
@@ -851,6 +852,16 @@ const kFetch = Symbol("kFetch");
 
 type PendingEntry = { abort: (reason?: Error) => void; done: Promise<void> };
 
+// The caller chose the route. Native fetch ranks a request's proxy above a session's proxy and unix socket, and a
+// session does not show which of them it has, so any session keeps the agent's proxy out.
+function routesItself(options): boolean {
+  return (
+    typeof options === "object" &&
+    options !== null &&
+    (options.proxy !== undefined || options.unix != null || options.session != null)
+  );
+}
+
 class DispatcherBase extends Dispatcher {
   #closed = false;
   #destroyed = false;
@@ -937,10 +948,9 @@ class DispatcherBase extends Dispatcher {
     const proxy = this[kNativeInit]()?.proxy;
     // The caller's own init object, so nothing about the call changes. close() and destroy() do not track it.
     if (proxy === undefined) return nativeFetch(input, init);
-    if (init == null) return nativeFetch(input, { proxy });
-    // The caller's own proxy wins, and a unix socket request cannot go through a proxy.
-    if (init.proxy !== undefined || init.unix != null) return nativeFetch(input, init);
     try {
+      if (routesItself(init) || routesItself(input)) return nativeFetch(input, init);
+      if (init == null) return nativeFetch(input, { proxy });
       // Bun accepts a Request as init. Its fields are internal, so it becomes part of the input.
       if (init instanceof Request) return nativeFetch(new Request(input, init as any), { proxy });
       // Not a copy: native fetch reads each option with a property get, and a copy would lose the inherited ones.
@@ -1449,10 +1459,11 @@ class InflateStream extends Transform {
 function contentDecoders(contentEncoding: string) {
   const codings = contentEncoding.toLowerCase().split(",");
   // undici's limit: each coding is one more decoder that a small body can be made to inflate through.
-  if (codings.length > 5) {
-    throw new TypeError(`too many content-encodings in response: ${codings.length}, maximum allowed is 5`);
+  const { length } = codings;
+  if (length > 5) {
+    throw new TypeError(`too many content-encodings in response: ${length}, maximum allowed is 5`);
   }
-  for (let i = 0; i < codings.length; i++) {
+  for (let i = 0; i < length; i++) {
     const coding = (codings[i] = codings[i].trim());
     // One unknown coding leaves the whole body as it came, like undici.
     if (coding !== "gzip" && coding !== "x-gzip" && coding !== "deflate" && coding !== "br" && coding !== "zstd") {
@@ -1466,7 +1477,7 @@ function contentDecoders(contentEncoding: string) {
   const brotli = { flush: constants.BROTLI_OPERATION_FLUSH, finishFlush: constants.BROTLI_OPERATION_FLUSH };
   const zstd = { flush: constants.ZSTD_e_continue, finishFlush: constants.ZSTD_e_end };
   const decoders: any[] = [];
-  for (let i = codings.length - 1; i >= 0; i--) {
+  for (let i = length - 1; i >= 0; i--) {
     const coding = codings[i];
     if (coding === "deflate") decoders.push(new InflateStream(deflate));
     else if (coding === "br") decoders.push(zlib.createBrotliDecompress(brotli));

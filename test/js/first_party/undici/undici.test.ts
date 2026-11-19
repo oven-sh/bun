@@ -2763,6 +2763,72 @@ describe("undici ProxyAgent", () => {
     expect({ text: await res.text(), proxy: proxy.seen }).toEqual({ text: "UNIX /over-unix", proxy: [] });
   });
 
+  it("fetch through a ProxyAgent keeps the options that the caller's init inherits", async () => {
+    await using origin = recordingOrigin();
+    await using proxy = await recordingProxy();
+    class Init {
+      get method() {
+        return "POST";
+      }
+      get body() {
+        return "payload";
+      }
+      get headers() {
+        return { "x-test": "getters" };
+      }
+    }
+    const inherited = Object.create({ method: "PUT", body: "payload", headers: { "x-test": "inherited" } });
+    const dispatcher = new ProxyAgent(proxy.url);
+    // Native fetch reads each option with a property get. A copy of the own properties would send a bare GET.
+    await (await undiciFetch(`${origin.url}/getters`, { __proto__: new Init(), dispatcher } as any)).text();
+    await (await undiciFetch(`${origin.url}/inherited`, { __proto__: inherited, dispatcher } as any)).text();
+    expect({ proxy: proxy.seen, test: proxy.seenHeaders.map(h => h["x-test"]), origin: origin.seen }).toEqual({
+      proxy: [`POST ${origin.url}/getters HTTP/1.1`, `PUT ${origin.url}/inherited HTTP/1.1`],
+      test: ["getters", "inherited"],
+      origin: [],
+    });
+  });
+
+  it("a route that the caller chose outranks the ProxyAgent", async () => {
+    await using origin = recordingOrigin();
+    await using agentProxy = await recordingProxy();
+    await using callerProxy = await recordingProxy();
+    const dispatcher = new ProxyAgent(agentProxy.url);
+    using proxied = new Bun.FetchSession({ proxy: callerProxy.url });
+    using plain = new Bun.FetchSession();
+    const texts = [
+      await (await undiciFetch(`${origin.url}/session-proxy`, { session: proxied, dispatcher } as any)).text(),
+      await (await undiciFetch(`${origin.url}/session`, { session: plain, dispatcher } as any)).text(),
+      await (await undiciFetch(`${origin.url}/init-proxy`, { proxy: callerProxy.url, dispatcher } as any)).text(),
+      await (
+        await undiciFetch({ url: `${origin.url}/input-proxy`, proxy: callerProxy.url } as any, { dispatcher } as any)
+      ).text(),
+    ];
+    expect({ texts, agentProxy: agentProxy.seen, callerProxy: callerProxy.seen, origin: origin.seen }).toEqual({
+      texts: ["PROXIED", "ORIGIN", "PROXIED", "PROXIED"],
+      agentProxy: [],
+      callerProxy: [
+        `GET ${origin.url}/session-proxy HTTP/1.1`,
+        `GET ${origin.url}/init-proxy HTTP/1.1`,
+        `GET ${origin.url}/input-proxy HTTP/1.1`,
+      ],
+      origin: ["/session"],
+    });
+  });
+
+  it.skipIf(isWindows)("a session with a unix socket ignores the ProxyAgent", async () => {
+    await using proxy = await recordingProxy();
+    using dir = tempDir("undici-session-unix", {});
+    const unix = join(String(dir), "s.sock");
+    await using origin = Bun.serve({ unix, fetch: req => new Response("UNIX " + new URL(req.url).pathname) });
+    using session = new Bun.FetchSession({ unix });
+    const res = await undiciFetch("http://localhost/session-unix", {
+      session,
+      dispatcher: new ProxyAgent(proxy.url),
+    } as any);
+    expect({ text: await res.text(), proxy: proxy.seen }).toEqual({ text: "UNIX /session-unix", proxy: [] });
+  });
+
   it("a global ProxyAgent proxies fetch and request, and ignores NO_PROXY", async () => {
     await using origin = recordingOrigin();
     await using proxy = await recordingProxy();

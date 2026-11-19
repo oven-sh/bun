@@ -25,7 +25,8 @@ export function bench(script: string, ...args: string[]) {
       }
       console.log("old", old, "new", now);
       await Bun.spawn([old, join(import.meta.dir, script), old, now, ...args], {
-        env: { ...bunEnv, STRESS_TLS: process.env.STRESS_TLS, BUN_GARBAGE_COLLECTOR_LEVEL: undefined, BUN_JSC_randomIntegrityAuditRate: undefined },
+        env: { ...bunEnv, STRESS_TLS: process.env.STRESS_TLS,
+          PROFILE_EXE: bunExe(), BUN_GARBAGE_COLLECTOR_LEVEL: undefined, BUN_JSC_randomIntegrityAuditRate: undefined },
         stdio: ["ignore", "inherit", "inherit"],
         timeout: 270_000,
       }).exited;

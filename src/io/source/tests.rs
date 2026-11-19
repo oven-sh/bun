@@ -1,7 +1,7 @@
 //! Temporary: run on the Windows machines, and removed before the PR is ready.
 
 #[path = "../../iocp/faults.rs"]
-#[allow(dead_code)]
+#[expect(unused)]
 mod faults;
 
 use core::cell::{Cell, RefCell};

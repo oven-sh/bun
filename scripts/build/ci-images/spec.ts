@@ -605,7 +605,7 @@ const llvmPrograms = [
   ...["llvm-ar", "llvm-ranlib", "llvm-lib", "llvm-dlltool"],
   ...["llvm-objcopy", "llvm-strip", "llvm-install-name-tool", "llvm-bitcode-strip"],
   ...["llvm-nm", "llvm-readobj", "llvm-readelf", "llvm-objdump", "llvm-otool", "llvm-size", "llvm-strings"],
-  ...["llvm-cxxfilt", "llvm-symbolizer", "llvm-addr2line", "llvm-dwarfdump", "llvm-config"],
+  ...["llvm-cxxfilt", "llvm-undname", "llvm-symbolizer", "llvm-addr2line", "llvm-dwarfdump", "llvm-config"],
   ...["llvm-cov", "llvm-profdata"],
   // For macOS and Windows targets.
   ...["dsymutil", "llvm-lipo", "llvm-rc", "llvm-windres", "llvm-mt", "llvm-ml", "llvm-cvtres", "llvm-pdbutil"],

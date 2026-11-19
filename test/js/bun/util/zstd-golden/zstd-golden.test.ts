@@ -19,7 +19,7 @@ describe("zstd compresses and decompresses the way it was recorded to", () => {
     const kinds = Object.entries(Object.groupBy([...cases.encode, ...cases.decode], c => c.name.split("/")[0]));
     expect(Object.fromEntries(kinds.map(([kind, some]) => [kind, some!.length]))).toEqual({
       mixed: 152,
-      small: 99,
+      small: 100,
       workers: 38,
       encoded: 32,
       stored: 136,

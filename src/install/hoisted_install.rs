@@ -384,6 +384,7 @@ pub(crate) fn install_hoisted_packages(
                 folder_path_buf: bun_paths::PathBuffer::ZEROED,
                 current_tree_id: tree::INVALID_ID,
                 pending_lifecycle_scripts: Vec::new(),
+                waits_for_fetch: Default::default(),
                 unfinished_scripts: Default::default(),
                 direct_packages: bun_ptr::BackRef::new(&direct_packages),
                 copy_trees: {

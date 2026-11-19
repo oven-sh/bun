@@ -2310,11 +2310,9 @@ fn clean_lockfile(
         }
     };
     let mut before_clean = core::mem::replace(&mut manager.lockfile, new_lockfile);
-    // A clean has no mapping for rows, and a linker must not join a task that nobody started.
-    manager.task_queue.retain(|task_id, rows| {
-        rows.clear();
-        manager.network_dedupe_map.contains_key(task_id)
-    });
+    // A clean has no mapping for rows.
+    manager.manifest_requests.forget_rows();
+    manager.fetches.forget_rows();
     // `reresolve_rows_outside_overrides` needs these, and the copy only has what's saved in the
     // lockfile.
     manager.lockfile.package_extensions.rules =
@@ -2340,14 +2338,7 @@ fn rebind_to_cleaned_lockfile(manager: &mut PackageManager, before_first_clean: 
         })
     };
 
-    (manager.appended_task_packages).retain(|task_id, package_id| {
-        let is_kept = moved(package_id);
-        if !is_kept {
-            // The next dependency on the dropped package starts the task again.
-            let _ = manager.network_dedupe_map.remove(task_id);
-        }
-        is_kept
-    });
+    manager.fetches.renumber_packages(moved);
     manager
         .folders
         .retain(|_, entry| match &mut entry.resolution {
@@ -2361,12 +2352,9 @@ fn rebind_to_cleaned_lockfile(manager: &mut PackageManager, before_first_clean: 
             && package_after_clean(before_first_clean, cleaned, id as PackageID).is_none()
         {
             let name = before_first_clean.packages.items_name()[id];
-            let _ = manager
-                .network_dedupe_map
-                .remove(&Task::Id::for_npm_package(
-                    before_first_clean.str(&name),
-                    resolution.npm().version,
-                ));
+            let name = before_first_clean.str(&name);
+            let task_id = Task::TarballId::for_npm_package(name, resolution.npm().version);
+            manager.fetches.forget(task_id);
         }
     }
 

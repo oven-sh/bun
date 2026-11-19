@@ -1761,8 +1761,7 @@ impl Lockfile {
             return Ok(());
         }
         // Otherwise the command loading this lockfile would dedupe its own fetch of a manifest this pass failed to get.
-        manager.network_dedupe_map.clear();
-        manager.manifest_failures.clear();
+        manager.manifest_requests.clear();
 
         let cache_ctx = manager.manifest_disk_cache_ctx();
         // Lockfile fields are taken from `self` (== `manager.lockfile`), never via `manager`.
@@ -2836,7 +2835,7 @@ pub(crate) struct DependencyQueue {
     /// The dependencies of the packages that were resolved.
     found: Lane,
     /// The task that fetches the manifest of the dependency at the front, once it was tried.
-    pub(crate) waits_for: Option<crate::package_manager_task::Id>,
+    pub(crate) waits_for: Option<crate::package_manager_task::ManifestId>,
 }
 
 impl DependencyQueue {

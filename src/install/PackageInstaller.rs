@@ -27,14 +27,15 @@ use crate::lockfile_real::{self as lockfile, Tree};
 use crate::network_task::ForTarballError;
 use crate::package_install::{self, PackageInstall};
 use crate::package_manager::{self, Options, PackageManager};
+use crate::package_manager_real::fetch_table::{Asker, Waiters};
 use crate::package_manager_real::progress_strings::ProgressStrings;
-use crate::package_manager_task as task;
+use crate::package_manager_task::PackageFetchId;
 use crate::patch_install::{self, PatchTask};
 use crate::postinstall_optimizer::{self, PostinstallOptimizer};
 use crate::resolution::{self, Resolution};
 use crate::{
     DependencyID, DependencyInstallContext, ExtractData, PackageID, PackageNameHash,
-    TaskCallbackContext, TruncatedPackageNameHash, invalid_package_id,
+    TruncatedPackageNameHash, invalid_package_id,
 };
 
 bun_output::declare_scope!(PackageInstaller, hidden);
@@ -96,6 +97,7 @@ pub struct PackageInstaller<'a> {
     /// the tree ids a tree depends on before it can run the lifecycle scripts of it's immediate dependencies
     pub(crate) tree_ids_to_trees_the_id_depends_on: bun_collections::DynamicBitSetList,
     pub(crate) pending_lifecycle_scripts: Vec<PendingLifecycleScript>,
+    pub(crate) waits_for_fetch: Waiters<DependencyInstallContext>,
     pub(crate) unfinished_scripts: UnfinishedScripts,
     pub(crate) direct_packages: bun_ptr::BackRef<DynamicBitSet>,
 
@@ -1513,7 +1515,7 @@ impl<'a> PackageInstaller<'a> {
     /// Install versions of a package which are waiting on a network request
     pub(crate) fn install_enqueued_packages_after_extraction(
         &mut self,
-        task_id: task::Id,
+        fetch: PackageFetchId,
         dependency_id: DependencyID,
         data: &ExtractData,
         log_level: Options::LogLevel,
@@ -1536,66 +1538,31 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
-        if let Some(removed) = self.manager_mut().task_queue.fetch_remove(&task_id) {
-            let callbacks = removed.value;
-            // Manual save/restore of self.node_modules / self.current_tree_id
-            // (see install_available_packages). Infallible body — both exit
-            // paths below restore the saved values.
-            let prev_node_modules = core::mem::take(&mut self.node_modules);
-            let prev_tree_id = self.current_tree_id;
-
-            if callbacks.is_empty() {
-                bun_output::scoped_log!(
-                    PackageInstaller,
-                    "Unexpected state: no callbacks for async task."
-                );
-                self.node_modules = prev_node_modules;
-                self.current_tree_id = prev_tree_id;
-                return;
-            }
-
-            // `self.resolutions` is `RawSlice<Resolution>` (Copy); copy out
-            // so the `&Resolution` argument borrows the local, not `*self`.
-            let resolutions = self.resolutions;
-            for cb in callbacks.iter() {
-                let TaskCallbackContext::DependencyInstallContext(context) = cb else {
-                    debug_assert!(false, "expected DependencyInstallContext");
-                    continue;
-                };
-                let callback_package_id =
-                    self.lockfile().buffers.resolutions.as_slice()[context.dependency_id as usize];
-                self.node_modules.tree_id = context.tree_id;
-                // `DependencyInstallContext.path: Vec<u8>` — clone since `cb` is `&`.
-                self.node_modules.path.clone_from(&context.path);
-                self.current_tree_id = context.tree_id;
-                let needs_verify = false;
-                let is_pending_package_install = false;
-                self.install_package_with_name_and_resolution(
-                    // This id might be different from the id used to enqueue the task. Important
-                    // to use the correct one because the package might be aliased with a different
-                    // name
-                    context.dependency_id,
-                    callback_package_id,
-                    log_level,
-                    name,
-                    &resolutions[callback_package_id as usize],
-                    needs_verify,
-                    is_pending_package_install,
-                );
-            }
-            self.node_modules = prev_node_modules;
-            self.current_tree_id = prev_tree_id;
-            return;
+        let prev_node_modules = core::mem::take(&mut self.node_modules);
+        let prev_tree_id = self.current_tree_id;
+        // Copied out, so that the `&Resolution` argument borrows the local, not `*self`.
+        let resolutions = self.resolutions;
+        for context in self.waits_for_fetch.take(fetch) {
+            let callback_package_id =
+                self.lockfile().buffers.resolutions.as_slice()[context.dependency_id as usize];
+            self.node_modules.tree_id = context.tree_id;
+            self.node_modules.path = context.path;
+            self.current_tree_id = context.tree_id;
+            let needs_verify = false;
+            let is_pending_package_install = false;
+            self.install_package_with_name_and_resolution(
+                // Not the one that enqueued the task, which may have another alias.
+                context.dependency_id,
+                callback_package_id,
+                log_level,
+                name,
+                &resolutions[callback_package_id as usize],
+                needs_verify,
+                is_pending_package_install,
+            );
         }
-
-        if cfg!(debug_assertions) {
-            Output::panic(format_args!(
-                "Ran callback to install enqueued packages, but there was no task associated with it. {}:{} (dependency_id: {})",
-                bun_core::fmt::quote(name.slice(self.lockfile().buffers.string_bytes.as_slice())),
-                bun_core::fmt::quote(&data.url),
-                dependency_id,
-            ));
-        }
+        self.node_modules = prev_node_modules;
+        self.current_tree_id = prev_tree_id;
     }
 
     /// The absolute path of `alias` in the current tree's `node_modules`.
@@ -2027,7 +1994,7 @@ impl<'a> PackageInstaller<'a> {
                     resolution.tag,
                 )
             {
-                // Re-enqueueing would dedupe against the finished download and never call back.
+                // It was downloaded just now, so another download would end here again.
                 if !needs_verify {
                     if log_level != Options::LogLevel::Silent {
                         bun_core::pretty_errorln!(
@@ -2038,20 +2005,21 @@ impl<'a> PackageInstaller<'a> {
                     return self.fail(is_pending_package_install, log_level);
                 }
 
-                let context =
-                    TaskCallbackContext::DependencyInstallContext(DependencyInstallContext {
-                        tree_id: self.current_tree_id,
-                        path: self.node_modules.path.clone(),
-                        dependency_id,
-                    });
                 match package_manager::enqueue_install_task(
                     self.manager_mut(),
                     dependency_id,
                     package_id,
-                    context,
+                    Asker::HoistedLinker,
                     patch_name_and_version_hash,
                 ) {
-                    Ok(()) => {}
+                    Ok(fetch) => {
+                        let context = DependencyInstallContext {
+                            tree_id: self.current_tree_id,
+                            path: self.node_modules.path.clone(),
+                            dependency_id,
+                        };
+                        self.waits_for_fetch.push(fetch, context);
+                    }
                     Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
                     Err(ForTarballError::InvalidURL) => {
                         self.fail(is_pending_package_install, log_level)

@@ -19,9 +19,13 @@ use bun_install::resolution::{Resolution, Tag as ResolutionTag};
 use bun_resolver::fs::FileSystem;
 
 use crate::cache_publish::{self, StagedEntry};
+use crate::package_manager_real::fetch_table::Started;
+use crate::package_manager_task::TarballId;
 type Error = crate::Error;
 
+#[derive(Clone, Copy)]
 pub struct ExtractTarball {
+    pub(crate) started: Started<TarballId>,
     pub(crate) name: StringOrTinyString,
     pub(crate) resolution: Resolution,
     pub(crate) temp_dir: &'static TemporaryDirectory,

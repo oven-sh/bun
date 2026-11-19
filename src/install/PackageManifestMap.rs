@@ -19,10 +19,6 @@ pub enum Value {
     NotFound,
 }
 
-impl Value {
-    bun_core::enum_unwrap!(pub Value, Manifest => fn manifest / manifest_mut -> npm::PackageManifest);
-}
-
 type ManifestHashMap =
     HashMap<PackageNameHash, Value, bun_collections::IdentityContext<PackageNameHash>>;
 
@@ -55,29 +51,8 @@ pub struct DiskCacheCtx {
 }
 
 impl PackageManifestMap {
-    pub(crate) fn by_name(
-        &mut self,
-        ctx: DiskCacheCtx,
-        scope: &npm::registry::Scope,
-        name: &[u8],
-        needs_extended_manifest: bool,
-    ) -> Option<&mut npm::PackageManifest> {
-        self.by_name_hash(
-            ctx,
-            scope,
-            name,
-            StringBuilder::string_hash(name),
-            needs_extended_manifest,
-        )
-    }
-
-    pub(crate) fn insert(
-        &mut self,
-        name_hash: PackageNameHash,
-        manifest: npm::PackageManifest,
-    ) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn insert(&mut self, name_hash: PackageNameHash, manifest: npm::PackageManifest) {
         self.hash_map.insert(name_hash, Value::Manifest(manifest));
-        Ok(())
     }
 
     pub(crate) fn by_name_hash(

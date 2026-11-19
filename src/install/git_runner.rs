@@ -32,12 +32,13 @@ use crate::{Error, PackageManager};
 
 impl PackageManager {
     /// Queues a git task; it counts as pending from now on.
-    pub(crate) fn enqueue_git_task(&mut self, task: NonNull<Task::Task>) {
+    pub(crate) fn enqueue_git_task(&mut self, job: Job) {
         debug_assert!(
             !self.options.runtime_auto_install,
             "a git child exits through this thread's event loop"
         );
         self.increment_pending_tasks(1);
+        let task = Task::Task::create(self, job);
         self.git_tasks.push_back(task);
     }
 
@@ -115,32 +116,28 @@ impl Finalize {
             .take()
             .expect("a clone or checkout task carries its finalize step");
         let log = &mut task.log;
-        let result = match (finalize, &mut task.job) {
-            (Finalize::Repo(fd), Job::GitClone { repo, .. }) => {
-                *repo = fd;
-                Ok(())
-            }
+        match (finalize, &mut task.job) {
+            (Finalize::Repo(fd), Job::GitClone { repo, .. }) => *repo = Ok(fd),
             (Finalize::PublishRepo(staging, url, replaces), Job::GitClone { request, repo }) => {
-                finish_clone(task.id, request, log, staging, &url, replaces)
-                    .map(|dir| *repo = dir.into_raw())
+                *repo =
+                    finish_clone(request, log, staging, &url, replaces).map(|dir| dir.into_raw());
             }
             (Finalize::CachedCheckout(dir, json), Job::GitCheckout { request, data }) => {
-                read_package_json(request, log, &dir, json).map(|read| *data = Some(read))
+                *data = read_package_json(request, log, &dir, json);
             }
             (Finalize::PublishCheckout(staging, tree), Job::GitCheckout { request, data }) => {
-                finish_checkout(request, log, staging, &tree).map(|read| *data = Some(read))
+                *data = finish_checkout(request, log, staging, &tree);
             }
-            (Finalize::Failed { staging, err }, _) => {
+            (Finalize::Failed { staging, err }, Job::GitClone { repo, .. }) => {
                 drop(staging);
-                Err(err)
+                *repo = Err(err);
+            }
+            (Finalize::Failed { staging, err }, Job::GitCheckout { data, .. }) => {
+                drop(staging);
+                *data = Err(err);
             }
             _ => unreachable!("the finalize step is for another kind of task"),
-        };
-        task.status = match result {
-            Ok(()) => Task::Status::Success,
-            Err(_) => Task::Status::Fail,
-        };
-        task.err = result.err();
+        }
     }
 }
 
@@ -718,7 +715,6 @@ fn has_no_links(dir: &bun_sys::Dir) -> bool {
 /// Moves the clone of `url` from `staging` into the cache. A usable clone that is already in the
 /// cache is kept instead, unless `replaces` is set.
 fn finish_clone(
-    id: Task::Id,
     req: &Task::GitCloneRequest,
     log: &mut bun_ast::Log,
     staging: CacheStaging,
@@ -726,7 +722,7 @@ fn finish_clone(
     replaces: bool,
 ) -> Result<bun_sys::Dir, Error> {
     let name = req.name.slice();
-    let repo = staging.publish(log, name, &bare_repo_folder_name(id), &|repo| {
+    let repo = staging.publish(log, name, &req.started.id().folder_name(), &|repo| {
         !replaces && is_own_clone(repo)
     })?;
     if let Err(err) = write_clone_config(&repo, url) {
@@ -742,11 +738,6 @@ fn finish_clone(
         return Err(Error::InstallFailed);
     }
     Ok(repo)
-}
-
-/// `<hex(clone task id)>.git`: the cache folder of a bare clone.
-pub(crate) fn bare_repo_folder_name(clone_id: Task::Id) -> Vec<u8> {
-    format!("{}.git", bun_core::fmt::hex_int_lower::<16>(clone_id.get())).into_bytes()
 }
 
 // `finish_*` release the owning ref (freeing `this`), so everything on a path to
@@ -863,9 +854,12 @@ impl GitSubprocess {
 
     /// A clone or commit lookup that only optional dependencies wait for fails with warnings.
     fn is_required(&self) -> bool {
-        let task = self.task();
-        matches!(task.job, Job::GitCheckout { .. })
-            || self.manager().is_network_task_required(task.id)
+        let fetches = &self.manager().fetches;
+        match &self.task().job {
+            Job::GitClone { request, .. } => !fetches.clone_is_optional(request.started),
+            Job::GitCommit { request, .. } => !fetches.commit_is_optional(request.started),
+            Job::GitCheckout { .. } | Job::PackageManifest { .. } | Job::Extract { .. } => true,
+        }
     }
 
     fn log_failure(&self, args: core::fmt::Arguments<'_>) {
@@ -895,7 +889,7 @@ impl GitSubprocess {
 
         let offline = this.manager().options.offline
             == crate::package_manager_real::options::OfflineMode::Offline;
-        let folder_name = bare_repo_folder_name(this.task().id);
+        let folder_name = this.task().request_git_clone().started.id().folder_name();
         // If anything other than a usable clone has this name, clone again. `publish` replaces it.
         match (this.cache_dir.handle)
             .open_at_with(&folder_name, O::RDONLY | O::CLOEXEC | O::NOFOLLOW)
@@ -963,12 +957,12 @@ impl GitSubprocess {
 
     /// Builds `--git-dir=<bare clone>`. With `-C` instead, git would search the parent folders for
     /// a repository if this folder turned out not to be one.
-    fn git_dir_arg(&self, clone_id: Task::Id) -> Vec<u8> {
+    fn git_dir_arg(&self, clone_id: Task::CloneId) -> Vec<u8> {
         [
             b"--git-dir=".as_slice(),
             Path::resolve_path::join_abs_string::<Path::platform::Auto>(
                 &self.cache_dir.path,
-                &[&bare_repo_folder_name(clone_id)],
+                &[&clone_id.folder_name()],
             ),
         ]
         .concat()
@@ -981,7 +975,7 @@ impl GitSubprocess {
         url: &[u8],
         is_retry: bool,
     ) -> Result<(), Error> {
-        let git_dir = this.git_dir_arg(this.task().id);
+        let git_dir = this.git_dir_arg(this.task().request_git_clone().started.id());
         this.step.set(Step::Fetch {
             repo,
             url: url.to_vec(),
@@ -1375,7 +1369,10 @@ impl GitSubprocess {
                 // git exits with 128 when it cannot reach the remote. Any other code, or an error
                 // message that names the clone's own folder, means the cached clone is damaged.
                 let is_damaged = matches!(status, Status::Exited(exit) if !matches!(exit.code, 0 | 128))
-                    || strings::contains(stderr, &bare_repo_folder_name(this.task().id));
+                    || strings::contains(
+                        stderr,
+                        &this.task().request_git_clone().started.id().folder_name(),
+                    );
                 let next = if lost_a_ref {
                     Self::spawn_fetch(this, repo, &url, true)
                 } else if is_damaged {
@@ -1523,13 +1520,7 @@ impl GitSubprocess {
             let Job::GitCommit { sha, .. } = &mut task.job else {
                 unreachable!("not a commit task");
             };
-            match found {
-                Some(found) => {
-                    *sha = found;
-                    task.status = Task::Status::Success;
-                }
-                None => task.status = Task::Status::Fail,
-            }
+            *sha = found;
         }
         Self::release(this);
         INBOX.resolve_tasks.push(task_ptr);

@@ -91,8 +91,6 @@ pub struct ApplyPatch {
     pub(crate) cache_dir_subpath: ZBox,
     pub(crate) cache_dir_subpath_without_patch_hash: ZBox,
 
-    /// this is non-null if this was called before a Task, for example extracting
-    pub(crate) task_id: Option<TaskId>,
     pub(crate) install_context: Option<InstallContext>,
     // dependency_id: ?struct = null,
     pub(crate) logger: Log,
@@ -324,7 +322,6 @@ impl PatchTask {
 
             let pkg: Package = *manager.lockfile.packages.get(pkg_id as usize);
             let pkg_meta_id = pkg.meta.id;
-            let pkg_name = pkg.name;
             let name_and_version_hash = calc_hash.name_and_version_hash;
             let dep_behavior = manager.lockfile.buffers.dependencies[dep_id as usize].behavior;
 
@@ -343,29 +340,15 @@ impl PatchTask {
                         crate::package_manager_real::options::Do::PREFETCH_RESOLVED_TARBALLS,
                     ) => {}
                 PreinstallState::Extract => {
-                    let task_id = TaskId::for_npm_package(
-                        manager.lockfile.str(&pkg_name),
-                        pkg.resolution.npm().version,
-                    );
-                    debug_assert!(!manager.network_dedupe_map.contains_key(&task_id));
-
-                    let is_required = dep_behavior.is_required();
-                    let network_task: *mut crate::NetworkTask =
-                        match package_manager::generate_network_task_for_tarball(
-                            manager,
-                            task_id,
-                            None,
-                            is_required,
-                            dep_id,
-                            &pkg,
-                        ) {
-                            // --offline and not cached: already reported / skipped; nothing to patch
-                            Err(crate::network_task::ForTarballError::Offline) => return Ok(()),
-                            other => other?.unwrap_or_else(|| unreachable!()),
-                        };
-                    if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::Extract {
-                        manager.set_preinstall_state(pkg_meta_id, PreinstallState::Extracting);
-                        package_manager::enqueue_network_task(manager, network_task);
+                    match package_manager::prefetch_npm_tarball(manager, dep_behavior, dep_id, &pkg)
+                    {
+                        Ok(Some(task)) => {
+                            manager.set_preinstall_state(pkg_meta_id, PreinstallState::Extracting);
+                            package_manager::enqueue_network_task(manager, task);
+                        }
+                        // It is fetched already, or `--offline` has reported or skipped it.
+                        Ok(None) | Err(crate::network_task::ForTarballError::Offline) => {}
+                        Err(err) => return Err(err.into()),
                     }
                 }
                 PreinstallState::ApplyPatch => {
@@ -375,10 +358,8 @@ impl PatchTask {
                         out_patchfile_hash.unwrap(),
                         name_and_version_hash,
                     );
-                    if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::ApplyPatch {
-                        manager.set_preinstall_state(pkg_meta_id, PreinstallState::ApplyingPatch);
-                        package_manager::enqueue_patch_task(manager, patch_task);
-                    }
+                    manager.set_preinstall_state(pkg_meta_id, PreinstallState::ApplyingPatch);
+                    package_manager::enqueue_patch_task(manager, patch_task);
                 }
                 _ => {}
             }
@@ -700,7 +681,6 @@ impl PatchTask {
                 logger: Log::init(),
                 cache_dir_subpath,
                 cache_dir_subpath_without_patch_hash,
-                task_id: None,
                 install_context: None,
             }),
             project_dir: FileSystem::get().top_level_dir(),
@@ -714,4 +694,3 @@ impl PatchTask {
 use crate::PreinstallState;
 use crate::package_install::{InstallResult, Method as InstallMethod, PackageFiles};
 use crate::package_manager::Options::LogLevel;
-use crate::package_manager_task::Id as TaskId;

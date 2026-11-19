@@ -1219,10 +1219,9 @@ describe.concurrent.each(
 
 describe.concurrent.each(["hoisted", "isolated"] as const)("tarball integrity mismatch (%s)", linker => {
   // Regression test for #29646 — with the isolated linker, a SHA-512 mismatch
-  // during the resolve-phase tarball extract left `task_queue` /
-  // `network_dedupe_map` populated, so the install phase's later
-  // `enqueuePackageForDownload` returned early on `found_existing` and the
-  // installer waited forever for a callback that was never dispatched.
+  // during the resolve-phase tarball extract left the task on record, so the
+  // install phase's later request for it returned early and the installer
+  // waited forever for a callback that was never dispatched.
   //
   // We trigger the mismatch by advertising one tarball's SHA-512 in the
   // manifest while serving a different tarball's bytes. No existing lockfile

@@ -2,6 +2,8 @@
 //! formatting-only releases collapse to nothing and minified bundles become line-diffable.
 
 use bun_alloc::Arena;
+use core::cmp::Ordering;
+use std::collections::BTreeSet;
 
 /// One source-map point: printed (line, col) came from original (line, col); all 0-based.
 #[derive(Clone, Copy)]
@@ -105,7 +107,7 @@ pub(crate) fn normalize(path: &[u8], bytes: &[u8], options: Options) -> Option<N
     Some(out)
 }
 
-/// Both sides of a minified JS file, re-printed with mangled locals renamed in lockstep (see [`plan_names`]).
+/// Both sides of a minified JS file, re-printed with mangled locals renamed in lockstep (see [`Namer`]).
 pub(crate) fn normalize_minified_pair(
     path: &[u8],
     old: &[u8],
@@ -131,14 +133,15 @@ pub(crate) fn normalize_minified_pair(
         super::pm_diff_profile::profiles(&ast_n, ast_n.symbols.len()),
     ];
     {
+        let all_names = false;
         let mut namer = Namer::new(
-            &arena_o,
-            &arena_n,
-            ast_o.symbols.as_mut_slice(),
-            ast_n.symbols.as_mut_slice(),
-        )
-        .with_profiles(profiles);
-        namer.plan(Some(&ast_o.module_scope), Some(&ast_n.module_scope), 0, 0);
+            [&arena_o, &arena_n],
+            [&ast_o.module_scope, &ast_n.module_scope],
+            [ast_o.symbols.as_mut_slice(), ast_n.symbols.as_mut_slice()],
+            profiles,
+            all_names,
+        );
+        namer.plan(Some(0), Some(0), 0, 0);
         if namer.too_deep {
             return None;
         }
@@ -189,14 +192,15 @@ fn key_pair(
         super::pm_diff_profile::profiles(&ast_n, ast_n.symbols.len()),
     ];
     let as_written = {
+        let all_names = true;
         let mut namer = Namer::new(
-            &arena_o,
-            &arena_n,
-            ast_o.symbols.as_mut_slice(),
-            ast_n.symbols.as_mut_slice(),
-        )
-        .for_key(profiles);
-        namer.plan(Some(&ast_o.module_scope), Some(&ast_n.module_scope), 0, 0);
+            [&arena_o, &arena_n],
+            [&ast_o.module_scope, &ast_n.module_scope],
+            [ast_o.symbols.as_mut_slice(), ast_n.symbols.as_mut_slice()],
+            profiles,
+            all_names,
+        );
+        namer.plan(Some(0), Some(0), 0, 0);
         if namer.too_deep {
             return None;
         }
@@ -485,8 +489,10 @@ fn print_js<'a>(
 /// count) and matched symbols share an index, so inserting a function does not renumber everything after it.
 struct Namer<'s> {
     arenas: [&'s Arena; 2],
+    scopes: [Vec<FlatScope<'s>>; 2],
     symbols: [&'s mut [bun_ast::Symbol]; 2],
-    renamed: [Vec<bool>; 2],
+    /// Per side, per symbol: `candidates` has returned it, so no other scope names it too.
+    listed: [Vec<bool>; 2],
     /// Every name that is not renamed, such as a global or a long local, sorted. A renamed local is
     /// never given one of these names.
     taken: Vec<Vec<u8>>,
@@ -494,8 +500,6 @@ struct Namer<'s> {
     /// new names given to the scopes around it, so the renaming cannot be used.
     too_deep: bool,
     scratch: Vec<u8>,
-    /// Subtree member counts, computed once per scope.
-    weights: WeightMemo,
     /// Rename every local (the comparison key), not only mangled-looking ones (the un-minified display).
     all_names: bool,
     /// Per side, per symbol: name-free use-site profile hash (0 = unused / not computed).
@@ -524,55 +528,35 @@ fn count_bucket(n: u32) -> u64 {
 
 impl<'s> Namer<'s> {
     fn new(
-        arena_o: &'s Arena,
-        arena_n: &'s Arena,
-        old: &'s mut [bun_ast::Symbol],
-        new: &'s mut [bun_ast::Symbol],
+        arenas: [&'s Arena; 2],
+        scopes: [&'s bun_ast::Scope; 2],
+        symbols: [&'s mut [bun_ast::Symbol]; 2],
+        profiles: [Vec<u64>; 2],
+        all_names: bool,
     ) -> Namer<'s> {
-        let mut taken = Vec::new();
-        for sym in old.iter().chain(new.iter()) {
-            if sym.slot_namespace() == bun_ast::symbol::SlotNamespace::MustNotBeRenamed
-                || sym.original_name.len() > 2
-            {
-                taken.push(sym.original_name.slice().to_vec());
-            }
-        }
+        // Locals the parser pinned (direct eval, `with`) keep their names, as globals do.
+        let mut taken: Vec<&[u8]> = symbols
+            .iter()
+            .flat_map(|symbols| symbols.iter())
+            .filter(|sym| {
+                sym.slot_namespace() == bun_ast::symbol::SlotNamespace::MustNotBeRenamed
+                    || (!all_names && sym.original_name.len() > 2)
+            })
+            .map(|sym| sym.original_name.slice())
+            .collect();
         taken.sort_unstable();
         taken.dedup();
         Namer {
-            arenas: [arena_o, arena_n],
-            weights: Default::default(),
+            arenas,
+            scopes: scopes.map(flatten),
             too_deep: false,
-            all_names: false,
-            profiles: [Vec::new(), Vec::new()],
-            renamed: [vec![false; old.len()], vec![false; new.len()]],
-            symbols: [old, new],
-            taken,
+            all_names,
+            profiles,
+            listed: [vec![false; symbols[0].len()], vec![false; symbols[1].len()]],
+            taken: taken.into_iter().map(<[u8]>::to_vec).collect(),
+            symbols,
             scratch: Vec::new(),
         }
-    }
-
-    /// Key mode: every local is renamed, symbols are matched by how they are used, and any global's name is off limits.
-    fn with_profiles(mut self, profiles: [Vec<u64>; 2]) -> Self {
-        self.profiles = profiles;
-        self
-    }
-
-    fn for_key(mut self, profiles: [Vec<u64>; 2]) -> Self {
-        self.all_names = true;
-        self.profiles = profiles;
-        self.taken.clear();
-        for side in 0..2 {
-            for sym in self.symbols[side].iter() {
-                // Everything that keeps its name — globals and locals the parser pinned (direct eval, `with`) — is taken.
-                if sym.slot_namespace() == bun_ast::symbol::SlotNamespace::MustNotBeRenamed {
-                    self.taken.push(sym.original_name.slice().to_vec());
-                }
-            }
-        }
-        self.taken.sort_unstable();
-        self.taken.dedup();
-        self
     }
 
     fn root(symbols: &[bun_ast::Symbol], mut i: usize) -> usize {
@@ -587,7 +571,8 @@ impl<'s> Namer<'s> {
     }
 
     /// Members of `scope` on `side` that should get positional names, in source order.
-    fn candidates(&self, side: usize, scope: &bun_ast::Scope) -> Vec<Candidate> {
+    fn candidates(&mut self, side: usize, scope: u32) -> Vec<Candidate> {
+        let scope = self.scopes[side][scope as usize].scope;
         let symbols = &*self.symbols[side];
         let mut members: Vec<(i32, u32)> = scope
             .members
@@ -600,15 +585,13 @@ impl<'s> Namer<'s> {
         for (_, inner) in members {
             let i = Self::root(symbols, inner as usize);
             let sym = &symbols[i];
-            if self.renamed[side][i]
+            if self.listed[side][i]
                 || (!self.all_names && sym.original_name.len() > 2)
                 || sym.slot_namespace() != bun_ast::symbol::SlotNamespace::Default
             {
                 continue;
             }
-            if out.iter().any(|c: &Candidate| c.symbol == i) {
-                continue;
-            }
+            self.listed[side][i] = true;
             let profile = self.profiles[side]
                 .get(inner as usize)
                 .copied()
@@ -648,17 +631,10 @@ impl<'s> Namer<'s> {
         }
         self.symbols[side][symbol].original_name =
             bun_ast::StoreStr::new(self.arenas[side].alloc_slice_copy(out));
-        self.renamed[side][symbol] = true;
     }
 
     /// `depth` is the naming digit (only scopes that named something bump it); `level` is the real nesting.
-    fn plan(
-        &mut self,
-        old: Option<&bun_ast::Scope>,
-        new: Option<&bun_ast::Scope>,
-        depth: usize,
-        level: usize,
-    ) {
+    fn plan(&mut self, old: Option<u32>, new: Option<u32>, depth: usize, level: usize) {
         // `plan` recurses once per nesting level. Input nested deeper than this is pathological, so
         // the callers give up on renaming it.
         if level > 256 {
@@ -678,14 +654,10 @@ impl<'s> Namer<'s> {
             }
         };
         let mut aligned = align(&co, &cn, key);
-        rematch_runs(&mut aligned, |i, j| {
-            co[i].fingerprint == cn[j].fingerprint && co[i].name_hash == cn[j].name_hash
-        });
-        rematch_runs(&mut aligned, |i, j| co[i].fingerprint == cn[j].fingerprint);
-        rematch_runs(&mut aligned, |i, j| {
-            co[i].kind == cn[j].kind && co[i].name_hash == cn[j].name_hash
-        });
-        rematch_runs(&mut aligned, |i, j| co[i].kind == cn[j].kind);
+        rematch_runs(&mut aligned, &co, &cn, |c| (c.fingerprint, c.name_hash));
+        rematch_runs(&mut aligned, &co, &cn, |c| c.fingerprint);
+        rematch_runs(&mut aligned, &co, &cn, |c| (c.kind, c.name_hash));
+        rematch_runs(&mut aligned, &co, &cn, |c| c.kind);
         for pair in aligned {
             if let (Some(i), _) = pair {
                 self.assign(0, co[i].symbol, index, depth);
@@ -697,148 +669,176 @@ impl<'s> Namer<'s> {
         }
         // Scopes that declare nothing (arg lists, plain blocks) do not use up a depth digit.
         let child_depth = depth + usize::from(index > 0);
-        let ko: Vec<&bun_ast::Scope> =
-            old.map_or(Vec::new(), |s| s.children.iter().map(|c| &**c).collect());
-        let kn: Vec<&bun_ast::Scope> =
-            new.map_or(Vec::new(), |s| s.children.iter().map(|c| &**c).collect());
-        for (o, n) in pair_scopes(&ko, &kn, &mut self.weights) {
+        for (o, n) in pair_scopes(
+            children(&self.scopes[0], old),
+            children(&self.scopes[1], new),
+        ) {
             self.plan(o, n, child_depth, level + 1);
         }
     }
 }
 
-/// Which child scope on the old side is "the same" scope on the new side. Only scopes that declare a lot need a
-/// good answer (small ones name positionally either way), so those are matched by kind and closest member count
-/// first; the rest fall to an in-order alignment on kind.
-type WeightMemo = bun_collections::HashMap<*const bun_ast::Scope, usize>;
+/// A scope in a list of a file's scopes, in which the scopes inside it come directly after it.
+struct FlatScope<'a> {
+    scope: &'a bun_ast::Scope,
+    kind: bun_ast::scope::Kind,
+    /// Its index in the list.
+    at: u32,
+    /// The index of the scope around it. 0 for the root.
+    parent: u32,
+    /// The number of scopes in its subtree, itself included.
+    scopes: u32,
+    /// The number of members in its subtree.
+    weight: u32,
+}
 
-fn pair_scopes<'a>(
-    old: &[&'a bun_ast::Scope],
-    new: &[&'a bun_ast::Scope],
-    memo: &mut WeightMemo,
-) -> Vec<(Option<&'a bun_ast::Scope>, Option<&'a bun_ast::Scope>)> {
-    const BIG: usize = 24;
-    // Post-order fill: every scope's subtree count lands in `memo` the first time any ancestor asks.
-    fn weight(root: &bun_ast::Scope, memo: &mut WeightMemo) -> usize {
-        if let Some(&w) = memo.get(&std::ptr::from_ref(root)) {
-            return w;
-        }
-        let mut order: Vec<&bun_ast::Scope> = Vec::new();
-        let mut stack = vec![root];
-        while let Some(s) = stack.pop() {
-            if memo.contains_key(&std::ptr::from_ref(s)) {
-                continue;
-            }
-            order.push(s);
-            stack.extend(s.children.iter().map(|c| &**c));
-        }
-        for s in order.into_iter().rev() {
-            let w = s.members.len()
-                + s.children
-                    .iter()
-                    .map(|c| memo.get(&std::ptr::from_ref(&**c)).copied().unwrap_or(0))
-                    .sum::<usize>();
-            memo.insert(std::ptr::from_ref(s), w);
-        }
-        memo.get(&std::ptr::from_ref(root)).copied().unwrap_or(0)
+fn flatten(root: &bun_ast::Scope) -> Vec<FlatScope<'_>> {
+    let mut out: Vec<FlatScope> = Vec::new();
+    let mut stack = vec![(root, 0)];
+    while let Some((scope, parent)) = stack.pop() {
+        let at = out.len() as u32;
+        out.push(FlatScope {
+            scope,
+            kind: scope.kind,
+            at,
+            parent,
+            scopes: 1,
+            weight: scope.members.len() as u32,
+        });
+        stack.extend(scope.children.iter().rev().map(|c| (&**c, at)));
     }
-    let wo: Vec<usize> = old.iter().map(|s| weight(s, memo)).collect();
-    let wn: Vec<usize> = new.iter().map(|s| weight(s, memo)).collect();
-    let mut out = Vec::with_capacity(old.len().max(new.len()));
-    let mut old_used = vec![false; old.len()];
-    let mut new_used = vec![false; new.len()];
-    // Heaviest first, so the one scope that matters most gets first pick.
-    let mut order: Vec<usize> = (0..new.len()).filter(|&j| wn[j] >= BIG).collect();
-    order.sort_by_key(|&j| core::cmp::Reverse(wn[j]));
-    for j in order {
-        let best = (0..old.len())
-            .filter(|&i| !old_used[i] && old[i].kind == new[j].kind && wo[i] >= BIG / 2)
-            .min_by_key(|&i| wo[i].abs_diff(wn[j]));
-        if let Some(i) = best {
-            if wo[i].abs_diff(wn[j]) * 2 <= wn[j] {
-                old_used[i] = true;
-                new_used[j] = true;
-                out.push((Some(old[i]), Some(new[j])));
-            }
-        }
-    }
-    let ro: Vec<usize> = (0..old.len()).filter(|&i| !old_used[i]).collect();
-    let rn: Vec<usize> = (0..new.len()).filter(|&j| !new_used[j]).collect();
-    let mut rest = align_by(
-        &ro,
-        &rn,
-        |&i| (old[i].kind as u64) << 32 | wo[i] as u64,
-        |&j| (new[j].kind as u64) << 32 | wn[j] as u64,
-    );
-    rematch_runs(&mut rest, |a, b| old[ro[a]].kind == new[rn[b]].kind);
-    for (a, b) in rest {
-        out.push((a.map(|a| old[ro[a]]), b.map(|b| new[rn[b]])));
+    for at in (1..out.len()).rev() {
+        let (scopes, weight) = (out[at].scopes, out[at].weight);
+        let parent = out[at].parent as usize;
+        out[parent].scopes += scopes;
+        out[parent].weight += weight;
     }
     out
 }
 
-/// Between two matched anchors, leftovers whose fingerprint drifted (a use count crossed a bucket) are still
-/// almost certainly the same symbols; pair them off in order when `compatible` agrees.
-fn rematch_runs(
-    aligned: &mut Vec<(Option<usize>, Option<usize>)>,
-    compatible: impl Fn(usize, usize) -> bool,
-) {
-    let mut out = Vec::with_capacity(aligned.len());
-    let mut k = 0;
-    while k < aligned.len() {
-        if aligned[k].0.is_some() && aligned[k].1.is_some() {
-            out.push(aligned[k]);
-            k += 1;
-            continue;
+fn children<'f, 'a>(scopes: &'f [FlatScope<'a>], of: Option<u32>) -> Vec<&'f FlatScope<'a>> {
+    let mut out = Vec::new();
+    if let Some(of) = of {
+        let mut at = of + 1;
+        while at < of + scopes[of as usize].scopes {
+            let child = &scopes[at as usize];
+            out.push(child);
+            at += child.scopes;
         }
-        let run_start = k;
-        while k < aligned.len() && !(aligned[k].0.is_some() && aligned[k].1.is_some()) {
-            k += 1;
-        }
-        let olds: Vec<usize> = aligned[run_start..k].iter().filter_map(|p| p.0).collect();
-        let mut news: Vec<Option<usize>> = aligned[run_start..k]
-            .iter()
-            .filter_map(|p| p.1)
-            .map(Some)
+    }
+    out
+}
+
+/// Which child scope on the old side is "the same" scope on the new side. Only scopes that declare a lot need a
+/// good answer (small ones name positionally either way), so those are matched by kind and closest member count
+/// first; the rest are aligned in order by kind and member count, and what that leaves by kind alone.
+fn pair_scopes<'a>(
+    mut old: Vec<&'a FlatScope<'a>>,
+    mut new: Vec<&'a FlatScope<'a>>,
+) -> Vec<(Option<u32>, Option<u32>)> {
+    const BIG: u32 = 24;
+    let mut out = Vec::new();
+    let mut order: Vec<usize> = (0..new.len()).filter(|&j| new[j].weight >= BIG).collect();
+    if !order.is_empty() {
+        // (kind, weight, index) of each old scope that has no pair yet.
+        let mut unpaired: BTreeSet<(u8, u32, usize)> = (0..old.len())
+            .filter(|&i| old[i].weight >= BIG / 2)
+            .map(|i| (old[i].kind as u8, old[i].weight, i))
             .collect();
-        for i in olds {
-            match news
-                .iter_mut()
-                .find(|j| j.is_some_and(|j| compatible(i, j)))
+        let mut old_used = vec![false; old.len()];
+        let mut new_used = vec![false; new.len()];
+        // Heaviest first, so the one scope that matters most gets first pick.
+        order.sort_by_key(|&j| core::cmp::Reverse(new[j].weight));
+        for j in order {
+            let (kind, weight) = (new[j].kind as u8, new[j].weight);
+            let first = |from, to| unpaired.range((kind, from, 0)..(kind, to, 0)).next();
+            let lighter = unpaired.range((kind, 0, 0)..(kind, weight, 0)).next_back();
+            // The closest weight is the next lower or the next higher one. Ties go to the earlier scope.
+            let best = [
+                lighter.and_then(|&(_, lighter, _)| first(lighter, weight)),
+                first(weight, u32::MAX),
+            ]
+            .into_iter()
+            .flatten()
+            .min_by_key(|&&(_, other, i)| (other.abs_diff(weight), i));
+            if let Some(&best @ (_, other, i)) = best
+                && other.abs_diff(weight) * 2 <= weight
             {
-                Some(slot) => out.push((Some(i), slot.take())),
-                None => out.push((Some(i), None)),
+                unpaired.remove(&best);
+                old_used[i] = true;
+                new_used[j] = true;
+                out.push((Some(old[i].at), Some(new[j].at)));
             }
         }
-        out.extend(news.into_iter().flatten().map(|j| (None, Some(j))));
+        for (scopes, used) in [(&mut old, old_used), (&mut new, new_used)] {
+            let mut used = used.into_iter();
+            scopes.retain(|_| used.next() == Some(false));
+        }
+    }
+    let mut rest = align(&old, &new, |s| (s.kind as u64) << 32 | u64::from(s.weight));
+    rematch_runs(&mut rest, &old, &new, |s| s.kind as u8);
+    out.extend(
+        rest.into_iter()
+            .map(|(i, j)| (i.map(|i| old[i].at), j.map(|j| new[j].at))),
+    );
+    out
+}
+
+/// Between two matched anchors, leftovers whose fingerprint drifted (a use count crossed a bucket) are still
+/// almost certainly the same symbols; pair off those with the same `key` in order.
+fn rematch_runs<T, K: Ord>(
+    aligned: &mut Vec<(Option<usize>, Option<usize>)>,
+    a: &[T],
+    b: &[T],
+    key: impl Fn(&T) -> K,
+) {
+    let is_pair = |p: &(Option<usize>, Option<usize>)| p.0.is_some() && p.1.is_some();
+    if aligned.iter().all(is_pair) {
+        return;
+    }
+    let mut out = Vec::with_capacity(aligned.len());
+    for run in aligned.chunk_by(|x, y| is_pair(x) == is_pair(y)) {
+        if run.iter().all(|p| p.0.is_some()) || run.iter().all(|p| p.1.is_some()) {
+            out.extend_from_slice(run);
+            continue;
+        }
+        let mut olds: Vec<usize> = run.iter().filter_map(|p| p.0).collect();
+        let mut news: Vec<usize> = run.iter().filter_map(|p| p.1).collect();
+        olds.sort_by_key(|&i| key(&a[i]));
+        news.sort_by_key(|&j| key(&b[j]));
+        let (run_start, mut o, mut n) = (out.len(), 0, 0);
+        while o < olds.len() || n < news.len() {
+            let order = match (olds.get(o), news.get(n)) {
+                (Some(&i), Some(&j)) => key(&a[i]).cmp(&key(&b[j])),
+                (Some(_), None) => Ordering::Less,
+                (None, _) => Ordering::Greater,
+            };
+            let (take_old, take_new) = (order.is_le(), order.is_ge());
+            out.push((take_old.then(|| olds[o]), take_new.then(|| news[n])));
+            o += usize::from(take_old);
+            n += usize::from(take_new);
+        }
+        // The old side's order, then the new side's for what is only there.
+        out[run_start..].sort_unstable_by_key(|&(i, j)| (i.is_none(), i, j));
     }
     *aligned = out;
 }
 
 /// LCS alignment of two keyed sequences: yields every element of both, matched ones together, in merged order.
-fn align<T>(
-    a: &[T],
-    b: &[T],
-    key: impl Fn(&T) -> u64 + Copy,
-) -> Vec<(Option<usize>, Option<usize>)> {
-    align_by(a, b, key, key)
-}
-
-fn align_by<A, B>(
-    a: &[A],
-    b: &[B],
-    ka: impl Fn(&A) -> u64,
-    kb: impl Fn(&B) -> u64,
-) -> Vec<(Option<usize>, Option<usize>)> {
+fn align<T>(a: &[T], b: &[T], key: impl Fn(&T) -> u64) -> Vec<(Option<usize>, Option<usize>)> {
     let (n, m) = (a.len(), b.len());
     let mut out = Vec::with_capacity(n.max(m));
     // Trim the common head and tail so the quadratic part only sees the churn.
-    let head = a.iter().zip(b).take_while(|(x, y)| ka(x) == kb(y)).count();
+    let head = a
+        .iter()
+        .zip(b)
+        .take_while(|(x, y)| key(x) == key(y))
+        .count();
     let tail = a[head..]
         .iter()
         .rev()
         .zip(b[head..].iter().rev())
-        .take_while(|(x, y)| ka(x) == kb(y))
+        .take_while(|(x, y)| key(x) == key(y))
         .count();
     out.extend((0..head).map(|i| (Some(i), Some(i))));
     let (a2, b2) = (&a[head..n - tail], &b[head..m - tail]);
@@ -852,14 +852,14 @@ fn align_by<A, B>(
         const WINDOW: usize = 96;
         let (mut i, mut j) = (0, 0);
         while i < n2 && j < m2 {
-            if ka(&a2[i]) == kb(&b2[j]) {
+            if key(&a2[i]) == key(&b2[j]) {
                 out.push((Some(head + i), Some(head + j)));
                 i += 1;
                 j += 1;
                 continue;
             }
-            let da = (1..WINDOW).find(|&d| i + d < n2 && ka(&a2[i + d]) == kb(&b2[j]));
-            let db = (1..WINDOW).find(|&d| j + d < m2 && kb(&b2[j + d]) == ka(&a2[i]));
+            let da = (1..WINDOW).find(|&d| i + d < n2 && key(&a2[i + d]) == key(&b2[j]));
+            let db = (1..WINDOW).find(|&d| j + d < m2 && key(&b2[j + d]) == key(&a2[i]));
             match (da, db) {
                 (Some(da), db) if db.is_none_or(|db| da <= db) => {
                     out.extend((i..i + da).map(|k| (Some(head + k), None)));
@@ -880,24 +880,39 @@ fn align_by<A, B>(
         out.extend((i..n2).map(|k| (Some(head + k), None)));
         out.extend((j..m2).map(|k| (None, Some(head + k))));
     } else {
-        let w = m2 + 1;
-        let mut dp = vec![0u32; (n2 + 1) * w];
-        for i in (0..n2).rev() {
-            for j in (0..m2).rev() {
-                dp[i * w + j] = if ka(&a2[i]) == kb(&b2[j]) {
-                    dp[(i + 1) * w + j + 1] + 1
-                } else {
-                    dp[(i + 1) * w + j].max(dp[i * w + j + 1])
-                };
+        // Bit-parallel LCS (Crochemore et al., 2001): in row `i`, bit `m2 - 1 - j` is set if `b2[j]` adds nothing to
+        // the LCS of `a2[i..]` and `b2[j..]`.
+        let words = m2.div_ceil(64);
+        let mut keys: Vec<u64> = a2.iter().map(&key).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        let mut places = vec![0u64; keys.len() * words];
+        for (j, y) in b2.iter().rev().enumerate() {
+            if let Ok(k) = keys.binary_search(&key(y)) {
+                places[k * words + j / 64] |= 1 << (j % 64);
             }
         }
+        let mut same = vec![!0u64; (n2 + 1) * words];
+        for i in (0..n2).rev() {
+            let at = keys.partition_point(|&k| k < key(&a2[i])) * words;
+            let (row, below) = same[i * words..].split_at_mut(words);
+            let mut carry = false;
+            for w in 0..words {
+                let (sum, c) = below[w].carrying_add(below[w] & places[at + w], carry);
+                row[w] = sum | (below[w] & !places[at + w]);
+                carry = c;
+            }
+        }
+        let is_same = |i: usize, j: usize| {
+            same[i * words + (m2 - 1 - j) / 64] >> ((m2 - 1 - j) % 64) & 1 != 0
+        };
         let (mut i, mut j) = (0, 0);
         while i < n2 || j < m2 {
-            if i < n2 && j < m2 && ka(&a2[i]) == kb(&b2[j]) {
+            if i < n2 && j < m2 && key(&a2[i]) == key(&b2[j]) {
                 out.push((Some(head + i), Some(head + j)));
                 i += 1;
                 j += 1;
-            } else if j < m2 && (i == n2 || dp[i * w + j + 1] >= dp[(i + 1) * w + j]) {
+            } else if j < m2 && is_same(i, j) {
                 out.push((None, Some(head + j)));
                 j += 1;
             } else {

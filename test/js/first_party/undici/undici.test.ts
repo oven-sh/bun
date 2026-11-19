@@ -2167,6 +2167,55 @@ describe("undici", () => {
       await pool.close();
     });
 
+    it("fetch through a dispatcher sends the content-type that native fetch sends for the body", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          // The client sends the body again to the new path.
+          if (new URL(req.url).pathname === "/redirect") {
+            return new Response(null, { status: 307, headers: { location: "/" } });
+          }
+          await req.arrayBuffer();
+          // A form gets a new boundary for each request.
+          return new Response(String(req.headers.get("content-type")).replace(/boundary=.*/, "boundary"));
+        },
+      });
+      const dispatcher = new Pool(`http://localhost:${server.port}`);
+      const form = new FormData();
+      form.set("field", "value");
+      const bodies: Record<string, () => any> = {
+        string: () => "text",
+        bytes: () => new Uint8Array(7),
+        buffer: () => new ArrayBuffer(7),
+        view: () => new DataView(new ArrayBuffer(7)),
+        blob: () => new Blob(["abc"]),
+        typed: () => new Blob(["abc"], { type: "x/y" }),
+        search: () => new URLSearchParams("a=b"),
+        form: () => form,
+      };
+      const redirect = `${server.url}redirect`;
+      const text = async (response: Promise<Response>) => (await response).text();
+      const native: Record<string, string[]> = {};
+      const dispatched: Record<string, string[]> = {};
+      for (const [name, body] of Object.entries(bodies)) {
+        const init = () => ({ method: "PUT", body: body() });
+        native[name] = [
+          await text(fetch(server.url, init())),
+          await text(fetch(redirect, init())),
+          await text(fetch(new Request(redirect, init()))),
+        ];
+        dispatched[name] = [
+          await text(undiciFetch(server.url, { ...init(), dispatcher } as any)),
+          await text(undiciFetch(redirect, { ...init(), dispatcher } as any)),
+          await text(undiciFetch(new Request(redirect, init()), { dispatcher } as any)),
+        ];
+      }
+      expect(dispatched).toEqual(native);
+      // The dispatcher gets a stream of the body, and that stream must not give bytes a type.
+      expect(dispatched.bytes).toEqual(["null", "null", "null"]);
+      await dispatcher.close();
+    });
+
     it("fetch through a stock Agent adds no abort signal of its own", async () => {
       await using proc = Bun.spawn({
         cmd: [

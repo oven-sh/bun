@@ -1412,10 +1412,10 @@ function isInMemoryBodyStream(stream) {
   );
 }
 
-// The Blob of a body that Bun has in memory. For such a body, blob() settles before it returns.
-function settledBlob(source: Request | Response): Blob | undefined {
-  const blob = source.blob();
-  return $peekPromiseStatus(blob) === 1 ? $peekPromiseSettledValue(blob) : undefined;
+// The byte length of a body that Bun has in memory: a clone shares the bytes, and blob() of it settles before it returns.
+function inMemoryBodySize(source: Request | Response): number | undefined {
+  const blob = source.clone().blob();
+  return $peekPromiseStatus(blob) === 1 ? ($peekPromiseSettledValue(blob) as Blob).size : undefined;
 }
 
 // Like native fetch: a username or password that does not decode sends no credentials, and does not fail the request.
@@ -1527,8 +1527,9 @@ let abandonedBodies: FinalizationRegistry<() => void> | undefined;
 // fetch through a dispatcher that is not route-only: every hop goes through dispatcher.dispatch(), as in undici.
 function fetchViaDispatcher(dispatcher, input, init) {
   let url: URL, method: string, headers: Headers, body: any, signal: any, redirect: any;
-  // A body that Bun has in memory, or a file. It has the byte length, and each stream() of it is one more sendable body.
-  let replay: Blob | undefined;
+  // Holds a body that Bun has in memory, or a file, and is never read itself: each clone of it is one more sendable body.
+  let replay: Request | Response | undefined;
+  let size: number | undefined;
   // Input parsing failures reject the returned promise like WHATWG fetch, never throw synchronously.
   try {
     let request = input instanceof Request ? input : undefined;
@@ -1566,23 +1567,28 @@ function fetchViaDispatcher(dispatcher, input, init) {
         const spare = request.clone();
         body = request.body;
         // undici does not send a stream twice, and the unread half of a tee would hold the whole upload.
-        if (isInMemoryBodyStream(body)) replay = settledBlob(spare);
-        else spare.body?.cancel();
+        if (isInMemoryBodyStream(body)) {
+          replay = spare;
+          size = inMemoryBodySize(spare);
+        } else {
+          spare.body?.cancel();
+        }
       }
     } else if (isReplayableBody(initBody)) {
       // Bun's own body extraction copies the bytes once and derives the content-type, the form boundary included.
-      const extracted = new Response(initBody);
-      const type = extracted.headers.get("content-type");
+      replay = new Response(initBody);
+      const type = replay.headers.get("content-type");
       if (type !== null && !headers.has("content-type")) headers.set("content-type", type);
-      // A Blob is its own copy, and its size comes from a stat: blob() of a file that is not regular would read it.
-      replay = initBody instanceof Blob ? initBody : settledBlob(extracted);
-      body = replay === undefined ? initBody : replay.stream();
+      body = replay.clone().body;
+      // blob() would convert a string once more, and would read a file that is not regular. The size of a file is a stat.
+      if (typeof initBody === "string") size = Buffer.byteLength(initBody);
+      else if (initBody instanceof Blob) size = initBody.size;
+      else size = inMemoryBodySize(replay);
     } else {
       body = initBody;
     }
     // Like undici: without the length, a dispatcher can only send the stream it gets with chunked encoding.
-    if (replay !== undefined) {
-      const { size } = replay;
+    if (size !== undefined) {
       if (size < Infinity) headers.set("content-length", String(size));
     } else if (body == null && (method === "POST" || method === "PUT")) {
       headers.set("content-length", "0");
@@ -1661,7 +1667,7 @@ function fetchViaDispatcher(dispatcher, input, init) {
       headers.delete("content-type");
       headers.delete("content-length");
     } else if (replay) {
-      body = replay.stream();
+      body = replay.clone().body;
     }
     if (next.origin !== url.origin) {
       headers.delete("authorization");

@@ -914,14 +914,16 @@ fn ignored_statement_has_semicolon(statement: Stmt<'_>, span: Span) -> bool {
     }
 }
 
-/// True if `statement`, which is ignored, is printed as a copy of the source and a `;`.
-pub(crate) fn is_copy_before_semicolon<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool {
-    f.options().semicolons.is_always()
-        && !ignored_node_terminator_follows_semi(f)
-        && ignored_statement_has_semicolon(
-            statement,
-            span_for_comments(statement.as_ast_nodes(), f),
-        )
+/// True if `statement`, which is ignored, is printed as a copy of the source with a `;` after it or before it.
+pub(crate) fn is_copy_with_semicolon<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool {
+    if ignored_node_terminator_follows_semi(f) {
+        return false;
+    }
+    let span = span_for_comments(statement.as_ast_nodes(), f);
+    match f.options().semicolons.is_always() {
+        true => ignored_statement_has_semicolon(statement, span),
+        false => print::statements::ignored_statement_needs_semicolon(statement, span.start, f),
+    }
 }
 
 /// For oxfmt the `;` at the end of a statement or class member isn't covered by a `prettier-ignore` comment. It's

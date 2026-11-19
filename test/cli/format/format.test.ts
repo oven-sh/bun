@@ -3567,6 +3567,12 @@ describe.concurrent("bun fmt", () => {
           button("@click", "a();", "/** @type {T} */ (b).c();"),
         ],
         // The one that is a statement where one is needed.
+        // The one before or after a copy of the source.
+        [
+          button("@click", "a( 1 ); /* prettier-ignore */ [b].map( f )"),
+          button("@click", "a(1)", "/* prettier-ignore */ ;[b].map( f )"),
+          button("@click", "a(1);", "/* prettier-ignore */ [b].map( f )"),
+        ],
         [button("@click", "while (a);"), button("@click", "while (a);"), button("@click", "while (a);")],
         [
           button("@click", "while (a); b(); c()"),

@@ -6,7 +6,7 @@ use super::statements::{
 };
 use crate::ir::element::TextWidth;
 use crate::js::ast_nodes::node_as_ast_nodes;
-use crate::js::format::{ends_with_terminator, is_copy_before_semicolon};
+use crate::js::format::{ends_with_terminator, is_copy_with_semicolon};
 use crate::js::sort_imports::ImportRun;
 use crate::js::trivia::comment_before_semicolon_keeps_its_line;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
@@ -221,7 +221,7 @@ pub(crate) fn surely_prints_semicolon<'a>(
     let mut inner = SmallVec::<[Stmt<'a>; 8]>::new();
     for statement in statements.iter() {
         if has_copies && f.comments().is_ignored(statement.as_ast_nodes()) {
-            if is_copy_before_semicolon(statement, f) {
+            if is_copy_with_semicolon(statement, f) {
                 return true;
             }
             continue;

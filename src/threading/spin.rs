@@ -55,15 +55,14 @@ impl Spin {
             self.began_at_ns = to_ns;
         }
         self.waits += 1;
-        let is_missed = self.is_awake && ns > AWAKE_NS;
-        if self.waits <= self.len && !is_missed {
+        if self.waits <= self.len {
             return;
         }
         let pace_ns = to_ns.saturating_sub(self.began_at_ns) / u64::from(self.len);
         if !self.is_awake {
             self.pace_asleep_ns = pace_ns;
             self.begin(true, TRIAL);
-        } else if is_missed || pace_ns * 8 > self.pace_asleep_ns * 7 {
+        } else if pace_ns * 8 > self.pace_asleep_ns * 7 {
             self.begin(false, self.next_len_asleep);
             self.next_len_asleep = (self.len * 2).min(MAX_ASLEEP);
         } else if self.len < MAX_AWAKE {
@@ -108,7 +107,17 @@ mod tests {
         for pace_ns in [30_000, 40_000, 80_000] {
             assert!(awake(|now| now.next_multiple_of(pace_ns)) < 6);
         }
-        assert!(awake(|now| now + 60_000) < 2);
+        assert!(awake(|now| now + 60_000) < 6);
+        let is_long = core::cell::Cell::new(false);
+        assert!(
+            awake(|now| now
+                + if is_long.replace(!is_long.get()) {
+                    60_000
+                } else {
+                    9_000
+                })
+                > 90
+        );
         assert_eq!(awake(|now| now + 200_000), 0);
     }
 }

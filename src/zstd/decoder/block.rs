@@ -1,5 +1,7 @@
 //! Blocks, and what one leaves for the next.
 
+use std::cell::Cell;
+
 use crate::array::{At, get_or_allocate, grow};
 use crate::bits::BackwardBits;
 use crate::destination::Destination;
@@ -40,6 +42,19 @@ pub(crate) struct BlockDecoder {
     /// By [`CodeKind`].
     sequence_sources: [Source; 3],
     sequence_state: SequenceState,
+}
+
+thread_local! {
+    /// Clearing new ones takes long compared to decoding a short frame. A frame reads only the rows that it has set.
+    static SPARE_TABLES: Cell<Option<Box<SequenceTables>>> = const { Cell::new(None) };
+}
+
+impl Drop for BlockDecoder {
+    fn drop(&mut self) {
+        if let tables @ Some(_) = self.sequence_tables.take() {
+            let _ = SPARE_TABLES.try_with(|spare| spare.set(tables));
+        }
+    }
 }
 
 /// The number of sequences, and how many bytes it takes.
@@ -213,6 +228,9 @@ fn select_tables<'t, 's>(
         return Ok(([a, b, c], src));
     }
 
+    if own.is_none() {
+        *own = SPARE_TABLES.try_with(Cell::take).unwrap_or_default();
+    }
     let own = get_or_allocate(own, || SequenceTables::EMPTY)?;
     for &kind in &CodeKind::ALL {
         let len = match encodings.at(kind as usize) {

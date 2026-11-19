@@ -22,6 +22,9 @@ pub(super) struct States {
 impl States {
     #[inline(always)]
     pub(super) fn rows(self, tables: [&SequenceTables; 3]) -> (&LengthRow, &OffsetRow, &LengthRow) {
+        debug_assert!(self.literal_len >> tables[0].log(CodeKind::LiteralLength) == 0);
+        debug_assert!(self.offset >> tables[1].log(CodeKind::Offset) == 0);
+        debug_assert!(self.match_len >> tables[2].log(CodeKind::MatchLength) == 0);
         (
             tables[0].literal_lengths.at(self.literal_len),
             tables[1].offsets.at(self.offset),

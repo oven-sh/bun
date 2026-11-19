@@ -37,6 +37,16 @@ unsafe impl GlobalAlloc for Refusing {
 #[global_allocator]
 static ALLOCATOR: Refusing = Refusing;
 
+/// Whether all was granted, on a thread that has kept no memory from earlier calls.
+fn with_grants<T: Send>(grants: usize, run: impl FnOnce() -> T + Send) -> (bool, T) {
+    let run = || {
+        GRANTS.set(Some(grants));
+        let result = run();
+        (GRANTS.take().is_some(), result)
+    };
+    std::thread::scope(|scope| scope.spawn(run).join().unwrap())
+}
+
 const DICTIONARY: &[u8] = include_bytes!("fixtures/dictionary");
 
 struct Fixture {
@@ -177,18 +187,18 @@ fn refused_memory_is_an_error() {
         for in_pieces in [false, true] {
             for grants in 0.. {
                 let mut out = Vec::with_capacity(fixture.len);
-                GRANTS.set(Some(grants));
-                let result = if in_pieces {
-                    let mut decoder = Decoder::new();
-                    (decoder.load_dictionary(fixture.dictionary))
-                        .and_then(|()| stream(&mut decoder, fixture.frames, [100, 100], &mut out))
-                } else {
-                    Dictionary::new(fixture.dictionary).and_then(|dictionary| {
+                let (was_granted, result) = with_grants(grants, || {
+                    if in_pieces {
+                        let mut decoder = Decoder::new();
+                        decoder.load_dictionary(fixture.dictionary)?;
+                        stream(&mut decoder, fixture.frames, [100, 100], &mut out)
+                    } else {
+                        let dictionary = Dictionary::new(fixture.dictionary)?;
                         let mut out = Output::spare_capacity(&mut out, usize::MAX);
                         decompress(fixture.frames, &mut out, Some(&dictionary))
-                    })
-                };
-                if GRANTS.take().is_some() {
+                    }
+                });
+                if was_granted {
                     assert_eq!((result, out.len()), (Ok(()), fixture.len));
                     break;
                 }
@@ -219,15 +229,38 @@ fn raw_literals_take_no_memory() {
 }
 
 #[test]
+fn the_memory_of_tables_passes_to_the_next_decoder() {
+    let frame = hex("28b52ffd 0000 200000 61626364 3d0000 00 01 54 000200 07");
+    for grants in [None, Some(0)] {
+        let mut out = [0; 7];
+        GRANTS.set(grants);
+        let result = decompress(&frame, &mut Output::slice(&mut out), None);
+        GRANTS.set(None);
+        assert_eq!((result, &out), (Ok(()), b"abcdabc"));
+    }
+    // One kind of table after the other is repeated, then all.
+    for block in [
+        "350000 00 01 d4 0200 07",
+        "350000 00 01 74 0000 07",
+        "350000 00 01 5c 0002 07",
+        "250000 00 01 fc 07",
+    ] {
+        let frame = hex(&format!("28b52ffd 0000 200000 61626364 {block}"));
+        assert_eq!(at_once(&frame, 7), Err(Error::CorruptionDetected));
+        assert_eq!(byte_by_byte(&frame), Err(Error::CorruptionDetected));
+    }
+}
+
+#[test]
 fn refused_memory_is_an_error_for_a_growing_output() {
     let [_, fixture, ..] = FIXTURES;
     for step in [fixture.frames.len(), fixture.frames.len() - 1] {
         for grants in 0.. {
             let mut out = Vec::new();
-            GRANTS.set(Some(grants));
-            let (_, status) =
-                Decoder::new().step_growing(&fixture.frames[..step], &mut out, usize::MAX);
-            if GRANTS.take().is_some() {
+            let (was_granted, (_, status)) = with_grants(grants, || {
+                Decoder::new().step_growing(&fixture.frames[..step], &mut out, usize::MAX)
+            });
+            if was_granted {
                 assert_eq!((status.is_ok(), XxHash64::hash(&out)), (true, fixture.hash));
                 break;
             }

@@ -1,6 +1,7 @@
 //! RFC 9221.
 
 use bun_quic::Direction::Unidirectional;
+use bun_quic::{Side, StreamId};
 
 use crate::harness::raw::{RTT, Raw};
 use crate::harness::wire::filler;
@@ -122,6 +123,17 @@ fn share_packets_with_other_frames() {
 }
 
 #[test]
+fn what_is_lost_goes_first() {
+    let [mut raw, _] = both();
+    raw.request_packets("abcd");
+    raw.advance(RTT);
+    raw.waits = false;
+    raw.send("ack 4");
+    raw.connection().send_datagram(1, b"e".to_vec());
+    assert_eq!(raw.frames(), "stream 3 0 a, datagram e");
+}
+
+#[test]
 fn acknowledgment_that_leaves_no_room_goes_first() {
     let [mut raw, _] = both();
     raw.send("ping");
@@ -141,4 +153,34 @@ fn wait_for_congestion_control() {
     while raw.connection().drop_oldest_datagram().is_some() {}
     raw.advance(10);
     assert_eq!(raw.packets(), "");
+}
+
+/// RFC 9297 §2.1.1.
+#[test]
+fn wait_for_the_settings_of_http3() {
+    for (settings, frames, events) in [
+        ("0x33=1", "datagram a", ""),
+        ("0x33=0", "", "datagram 1 abandoned"),
+        ("", "", "datagram 1 abandoned"),
+    ] {
+        for side in [Side::Client, Side::Server] {
+            let mut raw = (Raw::http3(side).with("max_datagram_frame_size=100")).connected();
+            raw.connection().send_datagram(1, b"a".to_vec());
+            assert_eq!((raw.frames(), raw.events()), Default::default());
+            raw.write(raw.unidirectional(0), &[0], false);
+            raw.write_control(&format!("settings {settings}"));
+            assert_eq!((raw.frames(), raw.events()), (frames.into(), events.into()));
+        }
+    }
+}
+
+#[test]
+fn control_frames_of_http3_go_first() {
+    let raw = Raw::http3(Side::Client).with("max_datagram_frame_size=100");
+    let mut raw = raw.connected_with("0x33=1");
+    raw.send("stream 0 0 -, ack");
+    raw.connection().send_datagram(1, b"a".to_vec());
+    raw.connection().set_paused(StreamId(0), true);
+    raw.connection().go_away();
+    assert!(raw.outline().ends_with("stream, datagram]"));
 }

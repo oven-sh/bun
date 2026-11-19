@@ -205,9 +205,6 @@ impl Connection {
         is_unblocked: bool,
         shared: &mut Shared,
     ) -> Result {
-        let Some((stream, state)) = self.streams.get_mut(id) else {
-            return Ok(());
-        };
         let reader = (self.http3.as_mut().zip(self.config.http3.as_ref())).map(|it| Reader {
             id,
             side: self.side,
@@ -216,7 +213,9 @@ impl Connection {
             pool: &mut shared.pool,
             has_priorities: self.config.has_priorities,
         });
-        read(id, stream, state, &[], reader, is_unblocked)
+        (self.streams.get_mut(id)).map_or(Ok(()), |(stream, state)| {
+            read(id, stream, state, &[], reader, is_unblocked)
+        })
     }
 
     pub(super) fn on_reset_stream(&mut self, id: StreamId, code: u64, final_size: u64) -> Result {

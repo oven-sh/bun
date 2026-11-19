@@ -243,3 +243,30 @@ fn a_client_resumes_with_the_version_of_the_ticket() {
     let information = raw.peer_parameter("version_information");
     assert_eq!(information.unwrap(), "#6b3343cf6b3343cf");
 }
+
+/// RFC 9001 §4.1.2.
+#[test]
+fn acknowledgment_of_early_data_does_not_confirm_the_handshake() {
+    let mut raw = Raw::server().with_ticket();
+    raw.resume();
+    raw.request_packets("a");
+    raw.shake_hands();
+    raw.forget();
+    raw.send("ack 0");
+    assert_eq!(raw.events(), "");
+    raw.send("ack 0-1");
+    assert_eq!(raw.events(), "confirmed");
+}
+
+/// RFC 9000 §10.1.
+#[test]
+fn idle_timeout_that_was_remembered_does_not_last() {
+    let raw = Raw::server().config(|it| it.parameters.max_idle_timeout_millis = 0);
+    let mut raw = raw.with("max_idle_timeout=5000").with_ticket();
+    raw.set("max_idle_timeout=");
+    raw.resume();
+    raw.shake_hands();
+    raw.confirm();
+    raw.advance(1000);
+    assert_eq!(raw.peer.endpoint.timeout(), None);
+}

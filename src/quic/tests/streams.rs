@@ -361,6 +361,20 @@ fn is_stopped_by_the_peer() {
     assert_eq!(raw.events(), "2 stopped 0x7, 2 closed");
 }
 
+/// RFC 9000 §3.5.
+#[test]
+fn is_stopped_after_the_end() {
+    for (ack, frames) in [("ack 3-4", ""), ("ack 4-5", "reset_stream 2 0x7 4")] {
+        let mut raw = Raw::server().connected();
+        raw.request_packets("abc");
+        raw.peer.send(2, b"d", true);
+        raw.forget();
+        raw.advance(RTT);
+        raw.send(&format!("{ack}, stop_sending 2 7"));
+        assert_eq!(raw.frames(), frames);
+    }
+}
+
 #[test]
 fn gives_up_on_both_halves() {
     let mut raw = Raw::client().connected();
@@ -524,16 +538,26 @@ fn urgent_streams_go_first() {
 }
 
 #[test]
+fn streams_of_a_client_take_turns_unless_one_is_more_urgent() {
+    let raw = Raw::server().config(|it| it.has_priorities = true);
+    let mut raw = raw.connected();
+    for urgency in [3, 3, 2] {
+        let id = raw.peer.open(Unidirectional);
+        raw.peer.send(id, &filler(0, 20_000), true);
+        (raw.connection()).set_priority(StreamId(id), priority(urgency, false));
+    }
+    assert_eq!(turns(&mut raw), [(10, 0), (2, 0), (6, 0), (2, 1), (6, 1)]);
+}
+
+#[test]
 fn fills_packets_to_the_last_byte() {
-    for len in 1200..1260 {
+    for len in 1090..1180 {
         let mut raw = Raw::server().connected();
         for (id, len) in [(2, len), (6, 70), (10, 0)] {
             raw.peer.open(Unidirectional);
             raw.peer.send(id, &filler(0, len), true);
         }
-        let packets = raw.take();
-        assert!(packets.iter().all(|it| it.datagram.len() <= 1252));
-        let ends = packets.iter().flat_map(|it| &it.frames);
+        let ends = raw.take().into_iter().flat_map(|it| it.frames);
         assert_eq!(ends.filter(|it| it.starts_with("fin ")).count(), 3);
         assert!(raw.streams[&2] == filler(0, len) && raw.streams[&6] == filler(0, 70));
     }

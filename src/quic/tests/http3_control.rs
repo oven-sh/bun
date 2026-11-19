@@ -379,6 +379,36 @@ fn a_server_that_goes_away_rejects_requests_that_it_has_not_seen() {
 }
 
 #[test]
+fn a_server_that_goes_away_allows_no_more_requests() {
+    let raw = Raw::http3(Client).config(|it| it.parameters.initial_max_streams_bidi = 2);
+    let mut raw = raw.connected_with("");
+    raw.write_http3(0, &format!("headers {GET}"), true);
+    raw.write_http3(4, &format!("headers {GET}"), true);
+    raw.forget();
+    raw.peer.polls = false;
+    raw.connection().reset(StreamId(0), 1);
+    while raw.peer.poll(raw.now) {}
+    raw.connection().go_away();
+    assert!(raw.frames().starts_with("max_streams_bidi 2, "));
+}
+
+/// RFC 9114 §4.1.1.
+#[test]
+fn request_that_is_rejected_is_cancelled() {
+    for (stop, reset) in [(0x10b, 0x10c), (0x100, 0x100)] {
+        let mut raw = Raw::http3(Server).connected_with("");
+        let id = raw.peer.open(Bidirectional);
+        raw.send(&format!("stop_sending {id} {stop}"));
+        assert_eq!(raw.events(), format!("0 stopped {stop:#x}"));
+        assert_eq!(raw.frames(), format!("reset_stream 0 {reset:#x} 0"));
+    }
+    let mut raw = Raw::server().connected();
+    raw.peer.open(Bidirectional);
+    raw.send("stop_sending 0 0x10b");
+    assert_eq!(raw.frames(), "reset_stream 0 0x10b 0");
+}
+
+#[test]
 fn a_client_that_goes_away_keeps_the_connection() {
     let mut raw = Raw::http3(Server).connected_with("");
     raw.read_control();

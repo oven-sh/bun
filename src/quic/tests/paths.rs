@@ -22,6 +22,14 @@ fn answers_a_challenge_once() {
 }
 
 #[test]
+fn answers_the_last_two_challenges() {
+    let mut raw = Raw::server().connected();
+    raw.send("path_challenge 11111111, path_challenge 22222222, path_challenge 33333333");
+    let frames = "path_response 22222222, path_response 33333333";
+    assert_eq!(raw.frames(), frames);
+}
+
+#[test]
 fn follows_a_client_that_probes_first() {
     let mut raw = Raw::client().connected_with_spare_id();
     raw.use_id(1);
@@ -265,4 +273,20 @@ fn a_client_only_listens_to_its_server() {
         raw.advance(1000);
         assert_eq!((raw.packets(), raw.events()), Default::default());
     }
+}
+
+#[test]
+fn a_client_does_without_the_zone_of_its_server() {
+    let mut raw = Raw::server();
+    raw.peer.address = "[fe80::2]:1".parse().unwrap();
+    raw.addresses.local = raw.peer.address;
+    raw.move_to("[fe80::1]:443");
+    raw.start(&[]);
+    raw.move_to("[fe80::1%7]:443");
+    raw.shake_hands();
+    assert_eq!(raw.events(), "ready");
+    assert_eq!(
+        raw.connection().addresses().peer.to_string(),
+        "[fe80::1]:443"
+    );
 }

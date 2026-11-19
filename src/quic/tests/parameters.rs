@@ -301,3 +301,12 @@ fn where_the_error_is_sent() {
     assert_eq!(server.packets(), packets);
     assert_eq!(server.error(), Some((Transport, TRANSPORT_PARAMETER_ERROR)));
 }
+
+#[test]
+fn reset_token_is_not_shown() {
+    let [first, second] = ["*16", "sixteen-bytes-xy"].map(|token| {
+        let raw = Raw::server().with(&format!("stateless_reset_token={token}"));
+        format!("{:?}", raw.connected().connection().peer_parameters())
+    });
+    assert_eq!(first, second);
+}

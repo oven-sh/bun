@@ -40,6 +40,22 @@ fn packet_threshold() {
     assert_eq!((stats.packets_lost, stats.packets_retransmitted), (2, 2));
 }
 
+#[test]
+fn packet_threshold_leaves_out_numbers_that_were_skipped() {
+    let mut raw = Raw::client();
+    raw.start(&[]);
+    raw.peer.crypto.planned.borrow_mut().push(vec![0, 0, 0, 2]);
+    raw.shake_hands();
+    raw.confirm();
+    raw.request_packets("abcd");
+    assert!(raw.received[2].iter().eq(&[0, 1, 2, 4, 5]));
+    raw.advance(RTT);
+    for (ack, frames) in [("ack 4", ""), ("ack 4-5", "stream 3 0 a")] {
+        raw.send(ack);
+        assert_eq!(raw.frames(), frames);
+    }
+}
+
 /// RFC 9002 §6.1.2.
 #[test]
 fn time_threshold() {
@@ -283,6 +299,23 @@ fn acknowledgment_ends_the_backoff() {
 }
 
 #[test]
+fn acknowledgment_of_acknowledgments_does_not_end_the_backoff() {
+    let mut raw = Raw::client().connected();
+    raw.request_packets("a");
+    assert_eq!(raw.wait(), 67);
+    raw.send("ping");
+    raw.send("ping");
+    let last = raw.take().pop().unwrap();
+    assert_eq!(last.frames, ["ack 0-2"]);
+    raw.send(&format!("ack {}", last.number));
+    let lost = raw.connection().stats().packets_lost;
+    raw.request_packets("b");
+    raw.advance(30);
+    raw.forget();
+    assert_eq!((lost, raw.wait()), (1, 22 + 135 - 30));
+}
+
+#[test]
 fn acknowledgment_without_news_does_not_postpone_the_probe() {
     let mut raw = Raw::client().connected();
     raw.request_packets("a");
@@ -438,6 +471,22 @@ fn persistent_congestion() {
     }
 }
 
+/// RFC 9002 §5.2 and §7.6.2.
+#[test]
+fn persistent_congestion_is_a_new_start() {
+    for (timeouts, min) in [(3, 20), (4, 50)] {
+        let mut raw = Raw::client().connected();
+        raw.request_packets("a");
+        for _ in 0..timeouts {
+            raw.wait();
+            raw.forget();
+        }
+        raw.advance(50);
+        raw.send(&format!("ack {}", 1 + 2 * timeouts));
+        assert_eq!(raw.connection().stats().min_rtt, Duration::from_millis(min));
+    }
+}
+
 /// RFC 9002 §7.6.1.
 #[test]
 fn persistent_congestion_takes_three_probe_timeouts() {
@@ -529,4 +578,23 @@ fn nothing_is_in_flight_on_a_new_path() {
     assert!(raw.peer.has_logged("datagram 1 lost"));
     raw.advance(1000);
     assert_eq!(raw.frames(), "");
+}
+
+#[test]
+fn packet_threshold_starts_over_on_another_network() {
+    for (address, frames) in [("192.0.2.1:2000", ""), (NEW, "stream 7 0 g")] {
+        let mut raw = Raw::client().connected();
+        raw.request_packets("abcdef");
+        raw.advance(RTT);
+        raw.send("ack 3-6");
+        raw.send("ack");
+        raw.move_to(address);
+        raw.send_expanded("ack, ping");
+        raw.send("respond");
+        raw.advance(RTT);
+        raw.request_packets("ghij");
+        raw.advance(RTT);
+        raw.send(&format!("ack {}", raw.received[2].last().unwrap()));
+        assert_eq!(raw.frames(), frames);
+    }
 }

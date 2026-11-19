@@ -6,6 +6,7 @@ use bun_quic::Duration;
 use bun_quic::Layer::Transport;
 use bun_quic::transport_code::PROTOCOL_VIOLATION;
 
+use crate::harness::paths::NEW;
 use crate::harness::raw::Kind::{Handshake, Initial};
 use crate::harness::raw::{RTT, Raw};
 use crate::harness::wire::groups;
@@ -144,4 +145,18 @@ fn what_is_lost_is_asked_again_under_a_new_number() {
     );
     raw.wait();
     assert_eq!(raw.frames(), "ack_frequency 1 2 25000 1, ping");
+}
+
+#[test]
+fn starts_over_on_another_network() {
+    for (address, frames) in [("192.0.2.1:2000", ""), (NEW, "ack_frequency 3 2 25000 1")] {
+        let mut raw = Raw::client().with("min_ack_delay=1000").connected();
+        let asked = acknowledge(&mut raw, 8, 8, RTT);
+        assert!(asked.ends_with("ack_frequency 2 59 25000 1"));
+        raw.move_to(address);
+        raw.send_expanded("ack, ping");
+        raw.forget();
+        raw.send("respond");
+        assert_eq!(raw.frames(), frames);
+    }
 }

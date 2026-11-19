@@ -185,6 +185,7 @@ fn client_that_has_answered_gets_more_time_for_the_handshake() {
             it.handshake_timeout = Duration::from_millis(handshake);
             it.parameters.max_idle_timeout_millis = idle;
         });
+        raw.set("max_idle_timeout=40000");
         raw.start(&[]);
         raw.advance(1000);
         raw.send_in(Handshake, "ack");
@@ -250,6 +251,16 @@ fn keep_alive_is_due_sooner_after_data() {
 }
 
 #[test]
+fn a_server_does_not_expect_more_data() {
+    let raw = Raw::client().config(|it| it.keep_alive = KeepAlive::WhileStreamsAreOpen);
+    let mut raw = raw.connected();
+    raw.send("stream 0 0 a");
+    raw.advance(RTT);
+    raw.forget();
+    assert_eq!((RTT + raw.wait(), raw.frames()), (15_000, "ping".into()));
+}
+
+#[test]
 fn a_client_waits_for_the_confirmation_as_long_as_for_the_handshake() {
     let mut raw = Raw::server();
     raw.start(&[]);
@@ -300,4 +311,73 @@ fn progress_at_the_last_moment() {
     raw.peer.send(3, b"b", false);
     raw.now = raw.now + Duration::from_millis(1);
     assert_eq!(raw.wait_for_the_end(), 5000);
+}
+
+#[test]
+fn application_that_may_be_silent() {
+    const LIMIT: u64 = 300;
+    for (progress, allowed, is_kept_alive, end) in [
+        (60, 30, false, 30),
+        (60, 31, true, 60),
+        (60, 90, true, 90),
+        (60, 0, true, LIMIT),
+        (0, 90, true, LIMIT),
+    ] {
+        let raw = Raw::client().config(|it| it.progress_timeout = Duration::from_secs(progress));
+        let mut raw = raw.connected();
+        (raw.waits, raw.peer.polls) = (false, false);
+        raw.send("stream 0 0 a");
+        while raw.peer.poll(raw.now) {}
+        let start = raw.now;
+        (raw.connection()).allow_silence(start, Duration::from_secs(allowed));
+        raw.peer.polls = true;
+        raw.advance(RTT);
+        let mut has_pinged = false;
+        while raw.peer.closed.is_none() && raw.now < start + Duration::from_secs(LIMIT) {
+            raw.forget();
+            raw.wait();
+            if raw.frames() == "ping" {
+                has_pinged = true;
+                raw.send("ack");
+            }
+        }
+        let secs = (raw.now - start).as_millis() / 1000;
+        assert_eq!((has_pinged, secs), (is_kept_alive, end), "{allowed}");
+    }
+}
+
+#[test]
+fn silence_cannot_be_allowed_after_the_end() {
+    let mut raw = Raw::client().connected();
+    raw.peer.polls = false;
+    raw.send("stream 0 0 a, close 0 0 -");
+    let now = raw.now;
+    raw.connection().allow_silence(now, Duration::ZERO);
+    raw.advance(40_000);
+    assert_eq!(raw.peer.endpoint.timeout(), None);
+}
+
+#[test]
+fn connection_that_the_peer_may_have_given_up() {
+    for (idle, fresh_for) in [(32_000, 30_000), (1600, 1600 - 202)] {
+        let raw = Raw::server().config(|it| it.parameters.max_idle_timeout_millis = idle);
+        let mut raw = raw.connected();
+        raw.send("padding 3");
+        for (after, is_stale) in [(fresh_for - 1, false), (fresh_for, true)] {
+            let now = raw.now + Duration::from_millis(after);
+            assert_eq!(raw.connection().is_stale(now), is_stale, "{idle}");
+        }
+    }
+
+    let mut raw = Raw::server().connected();
+    raw.request_packets("a");
+    for is_stale in [false, false, true] {
+        raw.wait();
+        raw.forget();
+        let now = raw.now;
+        assert_eq!(raw.connection().is_stale(now), is_stale);
+    }
+    raw.send("ack");
+    let now = raw.now;
+    assert!(!raw.connection().is_stale(now));
 }

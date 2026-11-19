@@ -154,7 +154,7 @@ impl<'a> HTMLScanner<'a> {
     /// The file that an optional `url` names, as written and then without its `?query#fragment`: relative to the page or, with a leading `/`, to the project root.
     fn file_on_disk(&self, url: &[u8]) -> Option<Vec<u8>> {
         let (dir, rooted) = match url {
-            [b'/', ..] => (fs::FileSystem::instance().top_level_dir, 1),
+            [b'/', ..] => (fs::FileSystem::get().top_level_dir(), 1),
             _ => (
                 resolve_path::dirname::<platform::Auto>(self.source.path.text()),
                 0,

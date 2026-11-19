@@ -20,6 +20,7 @@ pub(super) struct KeyUpdate {
     pub(super) phase: bool,
     /// Of the current key.
     write_secret: Option<Secret>,
+    confidentiality_limit: Option<u64>,
     /// Of `next_read`.
     read_secret: Option<Secret>,
     next_read: Option<PayloadKey>,
@@ -30,8 +31,9 @@ pub(super) struct KeyUpdate {
 }
 
 impl KeyUpdate {
-    pub(super) fn set_write_secret(&mut self, secret: Secret) {
+    pub(super) fn set_write_secret(&mut self, secret: Secret, confidentiality_limit: u64) {
         self.write_secret = Some(secret);
+        self.confidentiality_limit = Some(confidentiality_limit);
     }
 
     pub(super) fn set_read_secret(&mut self, secret: &Secret, version: Version) {
@@ -94,17 +96,14 @@ impl KeyUpdate {
     #[inline]
     pub(super) fn renew(&mut self, space: &mut Space, version: Version) -> Result {
         let used = space.next_number - self.first_sent;
-        let Some(limit) = (self.write_secret.as_ref())
-            .map(|secret| secret.cipher.confidentiality_limit())
-            .filter(|limit| used >= limit / 2)
-        else {
+        let Some(limit) = (self.confidentiality_limit).filter(|limit| used >= limit / 2) else {
             return Ok(());
         };
         if space.sent.largest_acked >= Some(self.first_sent) && self.first_received.is_some() {
             self.rotate(space, version);
             return Ok(());
         }
-        match used < limit - MARGIN {
+        match used + MARGIN < limit {
             true => Ok(()),
             false => Err(Error::transport(
                 transport_code::AEAD_LIMIT_REACHED,

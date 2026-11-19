@@ -2,6 +2,7 @@
 name = "bun_quic"
 version.workspace = true
 edition.workspace = true
+autotests = false
 
 [lib]
 path = "lib.rs"
@@ -17,5 +18,5 @@ hashbrown.workspace = true
 smallvec.workspace = true
 
 [[test]]
-name = "transport"
-path = "tests/transport.rs"
+name = "quic"
+path = "tests/main.rs"

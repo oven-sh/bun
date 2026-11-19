@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use bun_quic::crypto::{Cipher, Crypto, HeaderKey, NONCE_LEN, PacketKey, SAMPLE_LEN, TAG_LEN};
 
@@ -41,11 +41,35 @@ fn stream(seed: u64) -> impl Iterator<Item = u8> {
 }
 
 /// Depends on all of its inputs like the real thing, and is no more than that.
-pub(crate) struct Toy(pub(crate) Random);
+pub(crate) struct Toy {
+    random: Random,
+    /// Each is the answer to the next call that asks for as many bytes.
+    pub(crate) planned: RefCell<Vec<Vec<u8>>>,
+    /// For calls that ask for as many bytes, all bits are set.
+    pub(crate) steady: &'static [usize],
+    /// On confidentiality and on integrity.
+    pub(crate) limits: Cell<[u64; 2]>,
+}
+
+impl Toy {
+    pub(crate) fn new(seed: u64, steady: &'static [usize]) -> &'static Self {
+        Box::leak(Box::new(Self {
+            random: Random::new(seed),
+            planned: RefCell::default(),
+            steady,
+            limits: Cell::new([1 << 23, 1 << 52]),
+        }))
+    }
+}
 
 impl Crypto for Toy {
     fn fill_random(&self, out: &mut [u8]) {
-        out.iter_mut().for_each(|it| *it = self.0.next() as u8);
+        let mut planned = self.planned.borrow_mut();
+        match planned.iter().position(|it| it.len() == out.len()) {
+            Some(at) => out.copy_from_slice(&planned.remove(at)),
+            None if self.steady.contains(&out.len()) => out.fill(0xff),
+            None => out.fill_with(|| self.random.next() as u8),
+        }
     }
 
     fn extract(&self, salt: &[u8], key_material: &[u8]) -> [u8; 32] {
@@ -59,15 +83,16 @@ impl Crypto for Toy {
     }
 
     fn packet_key(&self, _: Cipher, key: &[u8]) -> Box<dyn PacketKey> {
-        Box::new(Key(key.to_vec()))
+        Box::new(Key(key.to_vec(), self.limits.get(), Cell::new(0)))
     }
 
     fn header_key(&self, _: Cipher, key: &[u8]) -> Box<dyn HeaderKey> {
-        Box::new(Key(key.to_vec()))
+        Box::new(Key(key.to_vec(), self.limits.get(), Cell::new(0)))
     }
 }
 
-struct Key(Vec<u8>);
+/// With the limits, and the number of packets that it has sealed.
+struct Key(Vec<u8>, [u64; 2], Cell<u64>);
 
 impl Key {
     fn tag(&self, nonce: &[u8], header: &[u8], payload: &[u8]) -> [u8; TAG_LEN] {
@@ -83,6 +108,7 @@ impl Key {
 
 impl PacketKey for Key {
     fn seal(&self, nonce: &[u8; NONCE_LEN], header: &[u8], payload: &mut [u8]) -> [u8; TAG_LEN] {
+        assert!(self.2.replace(self.2.get() + 1) < self.1[0]);
         self.scramble(nonce, payload);
         self.tag(nonce, header, payload)
     }
@@ -97,6 +123,14 @@ impl PacketKey for Key {
         let is_authentic = self.tag(nonce, header, payload) == *tag;
         self.scramble(nonce, payload);
         is_authentic
+    }
+
+    fn confidentiality_limit(&self) -> u64 {
+        self.1[0]
+    }
+
+    fn integrity_limit(&self) -> u64 {
+        self.1[1]
     }
 }
 

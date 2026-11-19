@@ -26,6 +26,7 @@ unsafe extern "C" {
         tag_len: usize,
     ) -> Option<Box<EVP_AEAD_CTX>>;
     fn EVP_AEAD_CTX_free(ctx: *mut EVP_AEAD_CTX);
+    safe fn EVP_AEAD_CTX_aead(ctx: &EVP_AEAD_CTX) -> *const EVP_AEAD;
     fn EVP_AEAD_CTX_seal_scatter(
         ctx: &EVP_AEAD_CTX,
         out: *mut u8,
@@ -163,6 +164,12 @@ impl Drop for EVP_AEAD_CTX {
     }
 }
 
+impl EVP_AEAD_CTX {
+    fn is_chacha20(&self) -> bool {
+        core::ptr::eq(EVP_AEAD_CTX_aead(self), EVP_aead_chacha20_poly1305())
+    }
+}
+
 impl PacketKey for EVP_AEAD_CTX {
     fn seal(&self, nonce: &[u8; NONCE_LEN], header: &[u8], payload: &mut [u8]) -> [u8; TAG_LEN] {
         let (mut tag, mut tag_len) = ([0; TAG_LEN], 0);
@@ -216,6 +223,14 @@ impl PacketKey for EVP_AEAD_CTX {
             bun_boringssl_sys::ERR_clear_error();
         }
         result == 1
+    }
+
+    fn confidentiality_limit(&self) -> u64 {
+        if self.is_chacha20() { 1 << 62 } else { 1 << 23 }
+    }
+
+    fn integrity_limit(&self) -> u64 {
+        if self.is_chacha20() { 1 << 36 } else { 1 << 52 }
     }
 }
 

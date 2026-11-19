@@ -157,18 +157,18 @@ impl Handshake<'_> {
     pub fn read_secret(&mut self, level: Level, cipher: Cipher, secret: &[u8]) {
         let connection = &mut *self.connection;
         let secret = Secret::new(connection.crypto, cipher, secret);
-        let keys = Some(secret.keys(connection.version));
+        let keys = secret.keys(connection.version);
         if let Some(setup) = &mut connection.setup {
             setup.can_read_more = true;
         }
         match level {
             Level::Initial => {}
-            Level::EarlyData => connection.early_keys = keys,
-            Level::Handshake => connection.handshake_space().read_keys = keys,
+            Level::EarlyData => connection.early_keys = Some(keys),
+            Level::Handshake => connection.handshake_space().read_keys = Some(keys),
             Level::Application => {
-                connection.spaces.data.read_keys = keys;
+                connection.integrity_limit = keys.payload.key.integrity_limit();
+                connection.spaces.data.read_keys = Some(keys);
                 (connection.key_update).set_read_secret(&secret, connection.version);
-                connection.integrity_limit = cipher.integrity_limit();
             }
         }
     }
@@ -176,14 +176,15 @@ impl Handshake<'_> {
     pub fn write_secret(&mut self, level: Level, cipher: Cipher, secret: &[u8]) {
         let connection = &mut *self.connection;
         let secret = Secret::new(connection.crypto, cipher, secret);
-        let keys = Some(secret.keys(connection.version));
+        let keys = secret.keys(connection.version);
         match level {
             Level::Initial => {}
-            Level::EarlyData => connection.early_keys = keys,
-            Level::Handshake => connection.handshake_space().write_keys = keys,
+            Level::EarlyData => connection.early_keys = Some(keys),
+            Level::Handshake => connection.handshake_space().write_keys = Some(keys),
             Level::Application => {
-                connection.spaces.data.write_keys = keys;
-                connection.key_update.set_write_secret(secret);
+                let limit = keys.payload.key.confidentiality_limit();
+                connection.spaces.data.write_keys = Some(keys);
+                connection.key_update.set_write_secret(secret, limit);
                 if connection.side.is_client() {
                     connection.early_keys = None;
                 }

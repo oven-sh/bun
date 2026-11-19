@@ -1,0 +1,144 @@
+//! RFC 9221.
+
+use bun_quic::Direction::Unidirectional;
+
+use crate::harness::raw::{RTT, Raw};
+use crate::harness::wire::filler;
+
+fn both() -> [Raw; 2] {
+    Raw::both().map(|raw| {
+        let raw = raw.config(|it| it.parameters.max_datagram_frame_size = 100);
+        raw.with("max_datagram_frame_size=65535").connected()
+    })
+}
+
+#[test]
+fn receives() {
+    for mut raw in both() {
+        for (frames, events) in [
+            ("datagram a", "datagram a"),
+            ("datagram -", "datagram -"),
+            ("datagram a, ping, datagram b", "datagram a, datagram b"),
+            ("ping, #30616263", "datagram abc"),
+            ("padding 3, #30", "datagram -"),
+            ("datagram *97", "datagram *97"),
+        ] {
+            raw.send(frames);
+            assert_eq!(raw.events(), events);
+        }
+        raw.send(&format!("#30{}", "61".repeat(99)));
+        assert_eq!(raw.events(), "datagram ~99");
+    }
+}
+
+/// RFC 9221 §5.2.
+#[test]
+fn acknowledges() {
+    for mut raw in both() {
+        raw.send("datagram a");
+        raw.events();
+        assert_eq!((raw.wait(), raw.packets()), (5, "1[ack 0-1 +625]".into()));
+    }
+}
+
+#[test]
+fn tells_what_became_of_them() {
+    for mut raw in both() {
+        for (id, data) in [(7, "a"), (8, "b")] {
+            raw.connection().send_datagram(id, data.into());
+        }
+        assert_eq!(raw.lose(), "datagram a, datagram b");
+        raw.connection().send_datagram(9, Vec::new());
+        assert_eq!(raw.frames(), "datagram -");
+        raw.advance(RTT);
+        raw.send("ack");
+        assert_eq!(raw.events(), "datagram 9 acked");
+        raw.wait();
+        assert_eq!(raw.events(), "datagram 7 lost, datagram 8 lost");
+        assert_eq!(raw.frames(), "");
+        assert_eq!(raw.connection().stats().datagrams_sent, 3);
+    }
+}
+
+#[test]
+fn probes_do_not_repeat_them() {
+    for (is_lost, events) in [(true, "datagram 1 lost"), (false, "datagram 1 acked")] {
+        for mut raw in both() {
+            raw.connection().send_datagram(1, "a".into());
+            match is_lost {
+                true => raw.lose(),
+                false => raw.frames(),
+            };
+            raw.wait();
+            assert_eq!(raw.frames(), "ping, ping");
+            assert_eq!(raw.events(), "");
+            raw.send("ack");
+            assert_eq!(raw.events(), events);
+        }
+    }
+}
+
+/// RFC 9221 §3 and §5.
+#[test]
+fn what_is_too_long_is_given_up() {
+    const ROOM: usize = 1252 - (1 + 8 + 2) - 16;
+    for (limit, len, fits) in [
+        ("", 0, false),
+        ("0", 0, false),
+        ("1", 0, false),
+        ("2", 0, true),
+        ("65", 63, true),
+        ("65", 64, false),
+        ("67", 64, true),
+        ("66", 64, false),
+        ("65535", ROOM - 3, true),
+        ("65535", ROOM - 2, false),
+    ] {
+        let raw = Raw::client().with(&format!("max_datagram_frame_size={limit}"));
+        let mut raw = raw.connected();
+        raw.connection().send_datagram(1, filler(0, len));
+        assert_eq!(raw.take().len(), usize::from(fits), "{limit} {len}");
+        let events = if fits { "" } else { "datagram 1 abandoned" };
+        assert_eq!(raw.events(), events);
+        assert_eq!(raw.connection().stats().datagrams_sent, u64::from(fits));
+    }
+}
+
+#[test]
+fn share_packets_with_other_frames() {
+    let [mut raw, _] = both();
+    raw.send("ping");
+    let id = raw.peer.open(Unidirectional);
+    raw.peer.send(id, &filler(0, 600), false);
+    for (id, len) in [(1, 600), (2, 2000), (3, 97), (4, 1222), (5, 700)] {
+        raw.connection().send_datagram(id, filler(0, len));
+    }
+    assert_eq!(
+        raw.packets(),
+        "1[ack 0-1, datagram *600, datagram *97, stream 3 0 *515]; 1[datagram *1222]; \
+         1[datagram *700, stream 3 515 *85]"
+    );
+    assert_eq!(raw.events(), "datagram 2 abandoned");
+}
+
+#[test]
+fn acknowledgment_that_leaves_no_room_goes_first() {
+    let [mut raw, _] = both();
+    raw.send("ping");
+    raw.connection().send_datagram(1, filler(0, 1222));
+    assert_eq!(raw.packets(), "1[ack 0-1]; 1[datagram *1222]");
+}
+
+/// RFC 9221 §5.4.
+#[test]
+fn wait_for_congestion_control() {
+    let [mut raw, _] = both();
+    (0..100).for_each(|id| raw.connection().send_datagram(id, filler(0, 1200)));
+    let sent = raw.take().len();
+    assert_eq!(raw.connection().unsent_datagrams(), 100 - sent);
+    assert_eq!(raw.connection().drop_oldest_datagram(), Some(sent as u64));
+    assert_eq!(raw.connection().unsent_datagrams(), 99 - sent);
+    while raw.connection().drop_oldest_datagram().is_some() {}
+    raw.advance(10);
+    assert_eq!(raw.packets(), "");
+}

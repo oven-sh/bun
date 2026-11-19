@@ -22,22 +22,6 @@ impl Cipher {
             Self::Aes256GcmSha384 | Self::ChaCha20Poly1305Sha256 => 32,
         }
     }
-
-    /// How many packets one key may protect (RFC 9001 §6.6).
-    pub(crate) const fn confidentiality_limit(self) -> u64 {
-        match self {
-            Self::Aes128GcmSha256 | Self::Aes256GcmSha384 => 1 << 23,
-            Self::ChaCha20Poly1305Sha256 => 1 << 62,
-        }
-    }
-
-    /// How many forged packets a connection may be shown (RFC 9001 §6.6).
-    pub(crate) const fn integrity_limit(self) -> u64 {
-        match self {
-            Self::Aes128GcmSha256 | Self::Aes256GcmSha384 => 1 << 52,
-            Self::ChaCha20Poly1305Sha256 => 1 << 36,
-        }
-    }
 }
 
 pub trait Crypto {
@@ -62,6 +46,10 @@ pub trait PacketKey {
         payload: &mut [u8],
         tag: &[u8; TAG_LEN],
     ) -> bool;
+    /// How many packets one key may protect (RFC 9001 §6.6).
+    fn confidentiality_limit(&self) -> u64;
+    /// How many forged packets a connection may be shown (RFC 9001 §6.6).
+    fn integrity_limit(&self) -> u64;
 }
 
 pub trait HeaderKey {
@@ -115,7 +103,7 @@ impl Drop for Key {
 /// What the keys of one direction derive from.
 pub(crate) struct Secret {
     crypto: &'static dyn Crypto,
-    pub(crate) cipher: Cipher,
+    cipher: Cipher,
     key: Key,
 }
 
@@ -184,7 +172,7 @@ impl Secret {
 }
 
 pub(crate) struct PayloadKey {
-    key: Box<dyn PacketKey>,
+    pub(crate) key: Box<dyn PacketKey>,
     iv: [u8; NONCE_LEN],
 }
 

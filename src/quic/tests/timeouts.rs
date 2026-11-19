@@ -1,0 +1,277 @@
+use bun_quic::Direction::{Bidirectional, Unidirectional};
+use bun_quic::Layer::Transport;
+use bun_quic::transport_code::APPLICATION_ERROR;
+use bun_quic::{Duration, KeepAlive, StreamId};
+
+use crate::harness::raw::Kind::{Handshake, Initial};
+use crate::harness::raw::{RTT, Raw};
+
+impl Raw {
+    /// Returns how many milliseconds that took.
+    fn wait_for_the_end(&mut self) -> u64 {
+        let start = self.now;
+        while self.peer.closed.is_none() {
+            self.forget();
+            self.wait();
+        }
+        (self.now - start).as_millis()
+    }
+}
+
+/// RFC 9000 §10.1.
+#[test]
+fn idle_timeout_is_the_shorter_one() {
+    for (new, local, remote, timeout) in [
+        (Raw::client as fn() -> Raw, 5000, "", 5000),
+        (Raw::client, 5000, "0", 5000),
+        (Raw::client, 5000, "7000", 5000),
+        (Raw::server, 5000, "7000", 5000),
+        (Raw::server, 7000, "5000", 5000),
+        (Raw::server, 0, "5000", 5000),
+        (Raw::server, 449, "", 450),
+        (Raw::server, 451, "", 451),
+    ] {
+        let raw = new().config(|it| it.parameters.max_idle_timeout_millis = local);
+        let mut raw = (raw.with(&format!("max_idle_timeout={remote}"))).connected();
+        raw.send("padding 3");
+        assert_eq!(raw.wait(), timeout);
+        assert_eq!(raw.events(), "closed: IdleTimeout");
+        assert_eq!(raw.packets(), "");
+        raw.send("ping");
+        assert_eq!(raw.events(), "stray");
+    }
+}
+
+#[test]
+fn idle_timeout_is_at_least_three_probe_timeouts() {
+    let raw = Raw::server().config(|it| it.parameters.max_idle_timeout_millis = 1000);
+    let mut raw = raw.with("max_ack_delay=500").connected();
+    raw.send("padding 3");
+    assert_eq!(raw.wait(), 1627);
+
+    let mut raw = Raw::client().config(|it| it.parameters.max_idle_timeout_millis = 1000);
+    raw.start(&[]);
+    raw.send_in(Handshake, "flight");
+    assert_eq!(raw.wait_for_the_end(), 3000);
+    assert_eq!(raw.events(), "closed: IdleTimeout");
+}
+
+#[test]
+fn no_idle_timeout() {
+    let raw = Raw::server().config(|it| it.parameters.max_idle_timeout_millis = 0);
+    let mut raw = raw.connected();
+    raw.peer.open(Bidirectional);
+    raw.advance(1000);
+    assert_eq!(raw.peer.endpoint.timeout(), None);
+}
+
+#[test]
+fn idle_timer_restarts_with_every_packet_that_is_received() {
+    for raw in Raw::both() {
+        let mut raw = raw.config(|it| it.progress_timeout = Duration::ZERO);
+        raw = raw.connected();
+        for frames in ["ping", "ack", "padding 3", "max_data 1"] {
+            raw.advance(29_000);
+            raw.send(frames);
+        }
+        assert_eq!(raw.wait_for_the_end(), 30_000);
+    }
+}
+
+#[test]
+fn idle_timer_restarts_with_the_first_packet_that_is_sent() {
+    let mut raw = Raw::client().connected();
+    raw.advance(10_000);
+    raw.request_packets("a");
+    raw.advance(10_000);
+    raw.request_packets("b");
+    assert_eq!(raw.wait_for_the_end(), 20_000);
+    assert_eq!(raw.events(), "3 closed, 7 closed, closed: IdleTimeout");
+}
+
+#[test]
+fn idle_timer_runs_before_the_first_packet_is_sent() {
+    let mut raw = Raw::server().config(|it| it.handshake_timeout = Duration::ZERO);
+    (raw.peer).connect(raw.now, raw.addresses.peer, raw.random, &[]);
+    let timeout = raw.peer.endpoint.timeout().unwrap();
+    assert_eq!(timeout - raw.now, Duration::from_secs(30));
+    raw.now = raw.now + Duration::from_secs(1);
+    assert_eq!(raw.wait_for_the_end(), 30_000);
+}
+
+#[test]
+fn acknowledgments_that_are_sent_do_not_restart_the_idle_timer() {
+    let mut raw = Raw::client().connected();
+    raw.send("ping");
+    assert_eq!(raw.wait_for_the_end(), 30_000);
+}
+
+#[test]
+fn timeouts_can_be_announced() {
+    type Step = fn(&mut Raw);
+    let cases: [(fn() -> Raw, Step, &str, &str); 6] = [
+        (Raw::client, Raw::shake_hands, "1[close 0x0]", "Idle"),
+        (
+            Raw::server,
+            Raw::shake_hands,
+            "H[close 0x0] 1[close 0x0]",
+            "Idle",
+        ),
+        (
+            Raw::client,
+            |it| it.send_in(Handshake, "ack"),
+            "H[close 0x0] 1[close 0x0]",
+            "Handshake",
+        ),
+        (
+            Raw::server,
+            |it| it.send_in(Initial, "ack, hello"),
+            "H[close 0x0]",
+            "Handshake",
+        ),
+        (Raw::client, |_| {}, "", "Handshake"),
+        (Raw::server, |_| {}, "", "Handshake"),
+    ];
+    for (new, step, packets, timeout) in cases {
+        let mut raw = new().config(|it| it.closes_silently = false);
+        raw.start(&[]);
+        step(&mut raw);
+        raw.wait_for_the_end();
+        assert_eq!(raw.packets(), packets);
+        assert_eq!(raw.events(), format!("closed: {timeout}Timeout"));
+        assert_eq!(raw.peer.endpoint.timeout(), None);
+    }
+}
+
+#[test]
+fn what_has_arrived_is_delivered_after_a_timeout() {
+    let mut raw = Raw::client().connected();
+    raw.send("stream 0 0 a");
+    raw.connection().set_paused(StreamId(0), true);
+    raw.send("stream 0 1 b");
+    raw.wait_for_the_end();
+    assert_eq!(raw.events(), "0 data b, 0 closed, closed: IdleTimeout");
+}
+
+#[test]
+fn handshake_timeout() {
+    for (handshake, idle, timeout) in [
+        (10_000, 30_000, 10_000),
+        (10_000, 0, 10_000),
+        (10_000, 5000, 5000),
+        (10_000, 1000, 3000),
+        (0, 30_000, 30_000),
+    ] {
+        for raw in Raw::both() {
+            let mut raw = raw.config(|it| {
+                it.handshake_timeout = Duration::from_millis(handshake);
+                it.parameters.max_idle_timeout_millis = idle;
+            });
+            raw.start(&[]);
+            assert_eq!(raw.wait_for_the_end(), timeout);
+            assert_eq!(raw.events(), "closed: HandshakeTimeout");
+        }
+    }
+}
+
+#[test]
+fn client_that_has_answered_gets_more_time_for_the_handshake() {
+    for (handshake, idle, timeout) in [
+        (10_000, 30_000, 30_000),
+        (10_000, 0, 10_000),
+        (0, 30_000, 31_000),
+    ] {
+        let mut raw = Raw::client().config(|it| {
+            it.handshake_timeout = Duration::from_millis(handshake);
+            it.parameters.max_idle_timeout_millis = idle;
+        });
+        raw.start(&[]);
+        raw.advance(1000);
+        raw.send_in(Handshake, "ack");
+        assert_eq!(1000 + raw.wait_for_the_end(), timeout);
+        assert_eq!(raw.events(), "closed: HandshakeTimeout");
+    }
+}
+
+/// RFC 9000 §10.1.2.
+#[test]
+fn keep_alive() {
+    let every = |millis| KeepAlive::Every(Duration::from_millis(millis));
+    for (mode, idle, has_stream, period) in [
+        (KeepAlive::WhileStreamsAreOpen, 30_000, true, Some(15_000)),
+        (KeepAlive::WhileStreamsAreOpen, 2000, true, Some(1000)),
+        (KeepAlive::WhileStreamsAreOpen, 1999, true, None),
+        (KeepAlive::WhileStreamsAreOpen, 30_000, false, None),
+        (every(700), 30_000, false, Some(700)),
+        (every(0), 30_000, true, None),
+        (KeepAlive::Never, 30_000, true, None),
+    ] {
+        for raw in Raw::both() {
+            let raw = raw.config(|it| {
+                (it.keep_alive, it.progress_timeout) = (mode, Duration::ZERO);
+                it.parameters.max_idle_timeout_millis = idle;
+            });
+            let mut raw = raw.connected();
+            if has_stream {
+                let id = raw.peer.open(Unidirectional);
+                raw.peer.send(id, b"a", false);
+            }
+            raw.forget();
+            raw.send("ack");
+            let Some(period) = period else {
+                assert_eq!(raw.wait(), idle);
+                assert_eq!(raw.packets(), "");
+                continue;
+            };
+            raw.wait();
+            for _ in 0..3 {
+                assert_eq!(raw.packets(), "1[ping]");
+                raw.advance(RTT);
+                raw.send("ack");
+                assert_eq!(RTT + raw.wait(), period);
+            }
+        }
+    }
+}
+
+#[test]
+fn keep_alive_counts_from_the_last_packet() {
+    for delay in [10_000, 20_000] {
+        let mut raw = Raw::server().connected();
+        raw.advance(delay);
+        raw.request_packets("a");
+        raw.send("ack");
+        assert_eq!((raw.wait(), raw.frames()), (15_000, "ping".into()));
+    }
+}
+
+#[test]
+fn application_that_neither_reads_nor_writes() {
+    type Step = fn(&mut Raw);
+    let cases: [(Step, u64); 4] = [
+        (|_| {}, 5000 - 2 * RTT - 1000),
+        (|it| it.send("stream 0 0 a"), 5000),
+        (|it| it.send("fin 0 0 -"), 5000),
+        (|it| it.request_packets("a"), 5000),
+    ];
+    for (step, timeout) in cases {
+        let mut raw = Raw::client().config(|it| it.progress_timeout = Duration::from_secs(5));
+        raw = raw.connected();
+        raw.advance(1000);
+        step(&mut raw);
+        assert_eq!(raw.wait_for_the_end(), timeout);
+        assert_eq!(raw.error(), Some((Transport, APPLICATION_ERROR)));
+    }
+}
+
+#[test]
+fn progress_at_the_last_moment() {
+    let mut raw = Raw::client().config(|it| it.progress_timeout = Duration::from_secs(5));
+    raw = raw.connected();
+    raw.request_packets("a");
+    raw.send("ack");
+    raw.advance(4999);
+    raw.peer.send(3, b"b", false);
+    raw.now = raw.now + Duration::from_millis(1);
+    assert_eq!(raw.wait_for_the_end(), 5000);
+}

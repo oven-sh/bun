@@ -20,7 +20,11 @@ const prelude = `const fs = require("node:fs");
 const read = name => console.log(name, fs.readFileSync(name, "utf8").trim());
 `;
 
-type Case = { main: string; text: (at: (name: string) => string) => string; prints: (at: (name: string) => string) => string };
+type Case = {
+  main: string;
+  text: (at: (name: string) => string) => string;
+  prints: (at: (name: string) => string) => string;
+};
 const reads = (name: keyof typeof files, written: string = name): Case => ({
   main: "main.cjs",
   text: at => `${prelude}read(require.resolve(${at(written)}));\n`,
@@ -36,7 +40,8 @@ const cases: Record<string, Case> = {
   "from a folder below": { ...reads("part.cjs"), main: "below/main.cjs" },
   "the free require of an ES module": {
     main: "main.mjs",
-    text: at => `import fs from "node:fs";\nconsole.log(fs.readFileSync(require.resolve(${at("note.txt")}), "utf8").trim());\n`,
+    text: at =>
+      `import fs from "node:fs";\nconsole.log(fs.readFileSync(require.resolve(${at("note.txt")}), "utf8").trim());\n`,
     prints: () => "note\n",
   },
   "a constant": {
@@ -46,7 +51,8 @@ const cases: Record<string, Case> = {
   },
   "one of two": {
     main: "main.cjs",
-    text: at => `${prelude}const pick = other => require.resolve(other ? ${at("note.txt")} : ${at("part.cjs")});\nread(pick(true));\nread(pick(false));\n`,
+    text: at =>
+      `${prelude}const pick = other => require.resolve(other ? ${at("note.txt")} : ${at("part.cjs")});\nread(pick(true));\nread(pick(false));\n`,
     prints: at => `${JSON.parse(at("note.txt"))} note\n${JSON.parse(at("part.cjs"))} ${files["part.cjs"].trim()}\n`,
   },
   "inside a wrapped module of a bundle": {
@@ -57,12 +63,14 @@ const cases: Record<string, Case> = {
   },
   "what it answers is loaded": {
     main: "main.cjs",
-    text: at => `console.log(require(require.resolve(${at("part.cjs")})).value, require(require.resolve(${at("data.json")})).value);\n`,
+    text: at =>
+      `console.log(require(require.resolve(${at("part.cjs")})).value, require(require.resolve(${at("data.json")})).value);\n`,
     prints: () => "part data\n",
   },
   "a variable that holds what it answers is loaded": {
     main: "main.cjs",
-    text: at => `${prelude}const where = require.resolve(${at("part.cjs")});\nread(where);\nconsole.log(require(where).value, require(where) === require(${at("part.cjs")}));\n`,
+    text: at =>
+      `${prelude}const where = require.resolve(${at("part.cjs")});\nread(where);\nconsole.log(require(where).value, require(where) === require(${at("part.cjs")}));\n`,
     prints: at => `${JSON.parse(at("part.cjs"))} ${files["part.cjs"].trim()}\npart true\n`,
   },
   "the file is loaded by its name too": {
@@ -72,7 +80,8 @@ const cases: Record<string, Case> = {
   },
   "a worker starts what it answers": {
     main: "main.cjs",
-    text: at => `const worker = new Worker(require.resolve(${at("worker.js")}));\nworker.onmessage = event => {\n  console.log(event.data);\n  worker.terminate();\n};\n`,
+    text: at =>
+      `const worker = new Worker(require.resolve(${at("worker.js")}));\nworker.onmessage = event => {\n  console.log(event.data);\n  worker.terminate();\n};\n`,
     prints: () => "worker\n",
   },
   ...(!isWindows && { "a link": reads("part.cjs", "link/part.cjs") }),

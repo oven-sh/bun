@@ -94,6 +94,13 @@ fn copy_then<'a>(
     copy
 }
 
+/// The checksums count vectors from the end, so no load from the first part crosses a cache line.
+#[inline(always)]
+fn split_after_last_line<B: Byte>(bytes: &[B]) -> (&[B], &[B]) {
+    let rest = bytes.as_ptr_range().end.addr() % 64;
+    bytes.split_at(bytes.len().saturating_sub(rest))
+}
+
 /// Starts a cache line.
 #[repr(align(64))]
 struct Aligned<T>(T);

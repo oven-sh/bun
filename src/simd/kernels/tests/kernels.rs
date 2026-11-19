@@ -1583,7 +1583,7 @@ fn checksums() {
         false => (0..2600)
             // At 4097 and 4112, the last correction of the upper sum crosses 2^31.
             .chain([4096, 4097, 4112, 5503, 5504, 5505, 5552, 5553, 5900, 11_100])
-            .chain([65_535, 65_536, 65_537, 65_600, 70_001, 131_072, 140_001])
+            .chain([32_767, 32_768, 32_769, 32_832, 65_536, 70_001, 140_001])
             .collect(),
     };
     let mut below = random();
@@ -1593,7 +1593,7 @@ fn checksums() {
             let start = below(64);
             from_shared(&all, |shared| {
                 // Up to each place in a cache line.
-                for end in start + len - if len == 65_600 { 63 } else { 0 }..=start + len {
+                for end in start + len - if len == 32_832 { 63 } else { 0 }..=start + len {
                     let (bytes, shared) = (&all[start..end], &shared[start..end]);
                     let (len, spare) = (bytes.len(), below(2) * below(300));
                     let crc = [0, below(1 << 31) as u32 * 2 + 1][len % 2];
@@ -1624,7 +1624,7 @@ fn adler32_with_weights_of_one_sign() {
         .into_iter()
         .flat_map(|it| [(it, 0), (it, 255)])
     {
-        let bytes: Vec<u8> = (0..65536).map(|i| [first, !first][i / run % 2]).collect();
+        let bytes: Vec<u8> = (0..32768).map(|i| [first, !first][i / run % 2]).collect();
         check(adler32_by_bytes(1, &bytes), || kernels::adler32(1, &bytes));
     }
 }

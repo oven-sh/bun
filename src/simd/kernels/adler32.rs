@@ -1,5 +1,5 @@
 //! The Adler-32 of zlib, derived from libdeflate (LICENSE.md).
-use crate::{Byte, Copies, copy_then};
+use crate::{Byte, Copies, copy_then, split_after_last_line};
 use bun_simd::{Isa, Out, SharedU8};
 
 const MODULUS: u32 = 65521;
@@ -11,7 +11,7 @@ const _: () = {
 };
 const SHORT: usize = 16;
 /// The most bytes for one call of `simd`.
-const PIECE: usize = 65536;
+const PIECE: usize = 32768;
 
 /// Continues `adler`, which is 1 for no bytes.
 #[inline]
@@ -57,10 +57,9 @@ fn by_bytes(adler: u32, bytes: &[impl Byte]) -> u32 {
     reduced(high, low)
 }
 
-/// It is worth a call to have no load cross a cache line. Where a piece ends decides that.
 #[inline(never)]
-fn in_aligned_pieces<B>(adler: u32, bytes: &[B], update: impl Fn(u32, &[B]) -> u32) -> u32 {
-    let (lines, rest) = bytes.split_at(bytes.len() - bytes.as_ptr_range().end.addr() % 64);
+fn in_aligned_pieces<B: Byte>(adler: u32, bytes: &[B], update: impl Fn(u32, &[B]) -> u32) -> u32 {
+    let (lines, rest) = split_after_last_line(bytes);
     update(lines.rchunks(PIECE).rfold(adler, &update), rest)
 }
 

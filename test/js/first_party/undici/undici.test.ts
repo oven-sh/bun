@@ -2213,7 +2213,12 @@ describe("undici", () => {
           handler.onConnect(() => {
             aborted = true;
           });
-          handler.onHeaders(200, [Buffer.from("content-encoding"), Buffer.from("gzip,gzip,gzip,gzip,gzip,gzip")], () => {}, "");
+          handler.onHeaders(
+            200,
+            [Buffer.from("content-encoding"), Buffer.from("gzip,gzip,gzip,gzip,gzip,gzip")],
+            () => {},
+            "",
+          );
           return true;
         },
       };
@@ -2223,35 +2228,38 @@ describe("undici", () => {
       expect(aborted).toBe(true);
     });
 
-    it.each(["identity", "gzip"])("a %s fetch() body that is being read survives garbage collection", async encoding => {
-      const text = "chunk1chunk2chunk3chunk4";
-      const bytes = encoding === "gzip" ? zlib.gzipSync(text) : Buffer.from(text);
-      let aborted = false;
-      const dispatcher = {
-        dispatch(_opts: any, handler: any) {
-          handler.onConnect(() => {
-            aborted = true;
-          });
-          handler.onHeaders(200, [Buffer.from("content-encoding"), Buffer.from(encoding)], () => {}, "OK");
-          let sent = 0;
-          // A collection before every chunk, while the caller's read waits for it.
-          const next = () => {
-            Bun.gc(true);
-            if (sent < bytes.length) {
-              handler.onData(bytes.subarray(sent, (sent += 6)));
-              setImmediate(next);
-            } else {
-              handler.onComplete([]);
-            }
-          };
-          setImmediate(next);
-          return true;
-        },
-      };
-      // The Response is not kept: only the pending read holds the body.
-      expect(await (await undiciFetch("http://localhost:1/", { dispatcher } as any)).text()).toBe(text);
-      expect(aborted).toBe(false);
-    });
+    it.each(["identity", "gzip"])(
+      "a %s fetch() body that is being read survives garbage collection",
+      async encoding => {
+        const text = "chunk1chunk2chunk3chunk4";
+        const bytes = encoding === "gzip" ? zlib.gzipSync(text) : Buffer.from(text);
+        let aborted = false;
+        const dispatcher = {
+          dispatch(_opts: any, handler: any) {
+            handler.onConnect(() => {
+              aborted = true;
+            });
+            handler.onHeaders(200, [Buffer.from("content-encoding"), Buffer.from(encoding)], () => {}, "OK");
+            let sent = 0;
+            // A collection before every chunk, while the caller's read waits for it.
+            const next = () => {
+              Bun.gc(true);
+              if (sent < bytes.length) {
+                handler.onData(bytes.subarray(sent, (sent += 6)));
+                setImmediate(next);
+              } else {
+                handler.onComplete([]);
+              }
+            };
+            setImmediate(next);
+            return true;
+          },
+        };
+        // The Response is not kept: only the pending read holds the body.
+        expect(await (await undiciFetch("http://localhost:1/", { dispatcher } as any)).text()).toBe(text);
+        expect(aborted).toBe(false);
+      },
+    );
 
     it("a fetch() body read through a Pool survives garbage collection", async () => {
       const chunk = Buffer.alloc(65536, "a");
@@ -2271,7 +2279,8 @@ describe("undici", () => {
         },
       });
       const pool = new Pool(`http://localhost:${server.port}`);
-      const reading = (async () => (await (await undiciFetch(server.url, { dispatcher: pool } as any)).bytes()).length)();
+      const reading = (async () =>
+        (await (await undiciFetch(server.url, { dispatcher: pool } as any)).bytes()).length)();
       let read: number | undefined;
       reading.then(length => {
         read = length;

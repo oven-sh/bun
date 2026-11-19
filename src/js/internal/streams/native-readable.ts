@@ -95,17 +95,6 @@ function constructNativeReadable(readableStream: ReadableStream, options: $Node.
   return stream;
 }
 
-function ensureConstructed(this: NativeReadable, cb: null | (() => void)) {
-  $debug(`[${this.debugId}] ensureConstructed`);
-  if (this[kConstructed]) return;
-  this[kConstructed] = true;
-  const ptr = this.$bunNativePtr;
-  if (!ptr) return;
-  $assert(typeof ptr.start === "function", "NativeReadable.start is not a function");
-  ptr.start(this[kHighWaterMark]);
-  if (cb) cb();
-}
-
 // maxToRead can be the highWaterMark (by default) or the remaining amount of the stream to read
 // This is so the consumer of the stream can terminate the stream early if they know
 // how many bytes they want to read (ie. when reading only part of a file)

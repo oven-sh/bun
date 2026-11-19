@@ -10,14 +10,14 @@ use bun_sys::windows_format::wide;
 use bun_sys::{self as sys, E, Mode, O, Tag, Win32ErrorExt as _};
 
 use super::blocking::{Blocking, BlockingPart};
-use super::job_file::{JobFile, Target, bare, is_device, make_folder_for};
+use super::job_file::{JobFile, Target, bare, is_device, make_folder_for, pathlike};
 use crate::io_order::Turn;
 use crate::webcore::blob::{MAX_SIZE, SizeType, Store, sys_error_with_path_like};
 use crate::webcore::node_types::PathOrFileDescriptor;
 
 pub(crate) struct CopyFile {
-    from: PathOrFileDescriptor<'static>,
-    to: PathOrFileDescriptor<'static>,
+    from: RefPtr<Store>,
+    to: RefPtr<Store>,
     source: Target,
     destination: Target,
     turn: Option<Turn>,
@@ -27,9 +27,6 @@ pub(crate) struct CopyFile {
     result: sys::Result<SizeType>,
     blocking_part: BlockingPart<SizeType>,
 }
-
-// SAFETY: the paths of a store are isolated from the thread that made them.
-unsafe impl Send for CopyFile {}
 
 impl JobContext for CopyFile {
     const CANCELLABLE: bool = true;
@@ -74,7 +71,7 @@ impl JobContext for CopyFile {
         let (promise, global) = (promise.swap(), cx.global());
         match this.blocking_part.take_result().unwrap_or(this.result) {
             Ok(copied) => {
-                if let PathOrFileDescriptor::Path(path) = &this.to {
+                if let PathOrFileDescriptor::Path(path) = pathlike(&this.to) {
                     crate::node::fs::note_opened_for_write(path.slice(), true);
                 }
                 promise.resolve(global, JSValue::js_number_from_uint64(copied))
@@ -96,19 +93,18 @@ impl JobContext for CopyFile {
 impl CopyFile {
     /// Returns the promise of the copy.
     pub(crate) fn create(
-        store: RefPtr<Store>,
-        source_store: RefPtr<Store>,
+        to: RefPtr<Store>,
+        from: RefPtr<Store>,
         max_length: SizeType,
         cx: &JsThread<'_>,
         mkdirp_if_not_exists: bool,
         destination_mode: Option<Mode>,
     ) -> JSValue {
-        let [from, to] = [source_store, store].map(|it| it.data.as_file().clone().pathlike);
-        let (source, destination) = (Target::new(&from), Target::new(&to));
-        let can_block = is_device(&from) || is_device(&to);
+        let (source, destination) = (Target::new(pathlike(&from)), Target::new(pathlike(&to)));
+        let can_block = is_device(pathlike(&from)) || is_device(pathlike(&to));
         let promise = JSPromiseStrong::init(cx.global());
         let value = promise.value();
-        Turn::after_earlier(cx, destination.key(&to), true, |turn| {
+        Turn::after_earlier(cx, destination.key(pathlike(&to)), true, |turn| {
             let copy = CopyFile {
                 from,
                 to,
@@ -127,8 +123,8 @@ impl CopyFile {
     }
 
     fn copy_path(&self, from: &ZStr, to: &ZStr) -> sys::Result<SizeType> {
-        let shown_from = self.from.path().slice();
-        let shown_to = self.to.path().slice();
+        let shown_from = pathlike(&self.from).path().slice();
+        let shown_to = pathlike(&self.to).path().slice();
         let error = |errno: E, path| sys::Error::from_code(errno, Tag::copyfile).with_path(path);
         let refused = |path| move |err| error(Win32Error::from(err).to_node_e(), path);
         let mut from_buf = bun_paths::w_path_buffer_pool::get();
@@ -174,7 +170,7 @@ impl CopyFile {
     }
 
     fn open(&self, source: Target, mut destination: Target) -> sys::Result<Transfer> {
-        let to = &self.to;
+        let to = pathlike(&self.to);
         let mut open_destination = |flags| {
             let target = core::mem::take(&mut destination);
             let file = JobFile::destination(target, to, flags, self.mkdirp_if_not_exists)?;
@@ -182,7 +178,7 @@ impl CopyFile {
         };
         let lent = to.is_fd().then(|| open_destination(0)).transpose()?;
 
-        let source = JobFile::source(source, &self.from)?;
+        let source = JobFile::source(source, pathlike(&self.from))?;
         let source_can_block = source.can_block()?;
         // A volume has no `stat`.
         let source_stat = (!source_can_block).then(|| source.stat().ok()).flatten();

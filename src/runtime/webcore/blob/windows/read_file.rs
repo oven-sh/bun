@@ -1,10 +1,10 @@
 use bun_core::vec::append_with;
-use bun_jsc::{Completion, JSTimeType, Job, JobContext, JsResult, JsThread, SystemError};
+use bun_jsc::{Completion, JSTimeType, Job, JobContext, JsResult, JsThread};
 use bun_ptr::RefPtr;
-use bun_sys::{self as sys, Stat};
+use bun_sys::{self as sys, E, Stat, Tag};
 
 use super::blocking::{Blocking, BlockingPart};
-use super::job_file::{JobFile, Target, bare, is_device};
+use super::job_file::{JobFile, Target, bare, is_device, pathlike};
 use crate::io_order::{Key, Turn};
 use crate::webcore::blob::read_file::{
     PendingReadFileCompletion, ReadFileCompletion, ReadFileRead, ReadFileResultType,
@@ -18,19 +18,15 @@ const MAX_BUFFER: usize = bun_jsc::ArrayBuffer::MAX_SIZE as usize;
 
 pub(crate) struct ReadFile {
     store: RefPtr<Store>,
-    pathlike: PathOrFileDescriptor<'static>,
     target: Target,
     turn: Option<Turn>,
     offset: SizeType,
     max_length: SizeType,
-    result: Result<Vec<u8>, Box<SystemError>>,
+    result: sys::Result<Vec<u8>>,
     /// For the store, which `then` updates.
     last_modified: Option<JSTimeType>,
     blocking_part: BlockingPart<Vec<u8>>,
 }
-
-// SAFETY: the count of the store is atomic, and only `then` looks into it.
-unsafe impl Send for ReadFile {}
 
 impl JobContext for ReadFile {
     const CANCELLABLE: bool = true;
@@ -51,11 +47,10 @@ impl JobContext for ReadFile {
             let max_length = this.max_length as usize;
             return (this.blocking_part).run(done, move |blocking| {
                 let _turn = turn;
-                read_stream(&file, max_length, blocking)
+                read_stream(&file, max_length, blocking).map_err(|err| bare(&err))
             });
         }
-        this.result =
-            (this.read_regular_file(&file, stat.st_size)).map_err(|err| shown(&bare(&err)));
+        this.result = (this.read_regular_file(&file, stat.st_size)).map_err(|err| bare(&err));
         Some(done)
     }
 
@@ -65,14 +60,14 @@ impl JobContext for ReadFile {
         {
             file.last_modified = last_modified;
         }
-        let blocking = this.blocking_part.take_result();
-        let result = blocking.map_or(this.result, |result| {
-            result.map_err(|err| shown(&bare(&err)))
-        });
-        completion.complete(match result {
+        let result = match this.blocking_part.take_result().unwrap_or(this.result) {
             Ok(bytes) => ReadFileResultType::Result(ReadFileRead { buf: bytes.into() }),
-            Err(err) => ReadFileResultType::Err(*err),
-        })
+            Err(err) if err.get_errno() == E::EISDIR => {
+                ReadFileResultType::Err(directory_error(pathlike(&this.store)))
+            }
+            Err(err) => ReadFileResultType::Err(err.to_system_error().into()),
+        };
+        completion.complete(result)
     }
 
     unsafe fn cancel(this: *mut Self) {
@@ -81,19 +76,13 @@ impl JobContext for ReadFile {
     }
 }
 
-fn shown(err: &sys::Error) -> Box<SystemError> {
-    Box::new(err.to_system_error().into())
-}
-
 impl ReadFile {
     pub(crate) fn create(blob: &Blob) -> ReadFile {
         let store = blob.store().expect("infallible: store present").clone();
-        let pathlike = store.data.as_file().clone().pathlike;
         ReadFile {
-            target: Target::new(&pathlike),
+            target: Target::new(pathlike(&store)),
             turn: None,
             store,
-            pathlike,
             offset: blob.offset.get(),
             max_length: blob.size.get(),
             result: Ok(Vec::new()),
@@ -104,10 +93,10 @@ impl ReadFile {
 
     pub(crate) fn schedule(mut self, completion: Box<dyn ReadFileCompletion>, cx: &JsThread<'_>) {
         let completion = PendingReadFileCompletion::new(completion);
-        let PathOrFileDescriptor::Fd(fd) = self.pathlike else {
+        let &PathOrFileDescriptor::Fd(fd) = pathlike(&self.store) else {
             return Job::<Self>::schedule(cx, self, completion);
         };
-        let can_block = is_device(&self.pathlike);
+        let can_block = is_device(pathlike(&self.store));
         let key = match can_block {
             true => Key::device_input(fd),
             false => Key::descriptor(fd),
@@ -118,13 +107,12 @@ impl ReadFile {
         });
     }
 
-    fn open(&mut self) -> Result<(JobFile, Stat), Box<SystemError>> {
-        let file = JobFile::source(core::mem::take(&mut self.target), &self.pathlike);
-        let file = file.map_err(|err| shown(&err))?;
-        let stat = file.stat().map_err(|err| shown(&bare(&err)))?;
+    fn open(&mut self) -> sys::Result<(JobFile, Stat)> {
+        let file = JobFile::source(core::mem::take(&mut self.target), pathlike(&self.store))?;
+        let stat = file.stat().map_err(|err| bare(&err))?;
         self.last_modified = Some(stat_to_js_mtime(&stat));
         if sys::S::ISDIR(stat.st_mode as _) {
-            return Err(Box::new(directory_error(&self.pathlike)));
+            return Err(sys::Error::from_code(E::EISDIR, Tag::read));
         }
         Ok((file, stat))
     }

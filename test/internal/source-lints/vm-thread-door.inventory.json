@@ -205,16 +205,6 @@
   "src/runtime/webcore/blob/windows/blocking.rs": {
     "FilePool, DEVICE_POOL": 1
   },
-  "src/runtime/webcore/blob/windows/copy_file.rs": {
-    "unsafe impl Send": [
-      "CopyFile"
-    ]
-  },
-  "src/runtime/webcore/blob/windows/read_file.rs": {
-    "unsafe impl Send": [
-      "ReadFile"
-    ]
-  },
   "src/runtime/webcore/blob/write_file.rs": {
     "WorkPool::schedule*": 2,
     "intrusive_work_task!": [

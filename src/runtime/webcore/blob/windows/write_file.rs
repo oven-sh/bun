@@ -4,7 +4,7 @@ use bun_sys::windows_format::open_flags::SEQUENTIAL;
 use bun_sys::{self as sys, O};
 
 use super::blocking::BlockingPart;
-use super::job_file::{JobFile, Target, is_device};
+use super::job_file::{JobFile, Target, is_device, pathlike};
 use crate::io_order::Turn;
 use crate::webcore::blob::write_file::{WriteFileResultType, note_written, settle};
 use crate::webcore::blob::{Blob, SizeType};
@@ -104,7 +104,6 @@ impl WriteFile {
     }
 
     fn destination(&self) -> &PathOrFileDescriptor<'static> {
-        let store = self.file_blob.store().expect("infallible: store present");
-        &store.data.as_file().pathlike
+        pathlike(self.file_blob.store().expect("infallible: store present"))
     }
 }

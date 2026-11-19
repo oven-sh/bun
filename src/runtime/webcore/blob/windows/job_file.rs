@@ -8,8 +8,12 @@ use super::blocking::Blocking;
 use crate::io_order::{KeptOpen, Key};
 use crate::node::fs::DEFAULT_PERMISSION;
 use crate::node::types::PathLikeExt as _;
-use crate::webcore::blob::{mkdirp, sys_error_with_path_like};
+use crate::webcore::blob::{Store, mkdirp, sys_error_with_path_like};
 use crate::webcore::node_types::PathOrFileDescriptor;
+
+pub(super) fn pathlike(store: &Store) -> &PathOrFileDescriptor<'static> {
+    &store.data.as_file().pathlike
+}
 
 /// What the script named.
 pub(super) enum Target {

@@ -10,7 +10,6 @@ import {
   Agent,
   Client,
   Dispatcher,
-  EnvHttpProxyAgent,
   errors,
   getGlobalDispatcher,
   ping,

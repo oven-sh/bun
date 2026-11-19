@@ -504,6 +504,24 @@ test.concurrent("pause() and resume() churn while data is in flight never destro
   expect(exitCode).toBe(0);
 });
 
+// Not concurrent, which also keeps the feeds of 40 MB below from holding up the tests above.
+test("process.stdin over an anonymous pipe delivers each byte exactly once", async () => {
+  const total = 10 * 1024 * 1024;
+  using dir = tempDir("stdin-pipe-exactly-once", {
+    "writer.js": `const chunk = Buffer.alloc(65536); let left = ${total}; (function pump() { while (left > 0) { left -= chunk.length; if (!process.stdout.write(chunk)) return process.stdout.once("drain", pump); } })();`,
+    "reader.js": `const h = new Bun.CryptoHasher("sha1"); let n = 0; process.stdin.on("data", d => { n += d.length; h.update(d); }); process.stdin.on("close", () => process.stdout.write(n + " " + h.digest("hex")));`,
+  });
+  const { promise, resolve } = Promise.withResolvers<{ err: Error | null; stdout: string; stderr: string }>();
+  exec(`"${bunExe()}" writer.js | "${bunExe()}" reader.js`, { cwd: String(dir), env: bunEnv }, (err, stdout, stderr) =>
+    resolve({ err, stdout, stderr }),
+  );
+  const { err, stdout, stderr } = await promise;
+  expect(stderr).toBe("");
+  const expected = new Bun.CryptoHasher("sha1").update(Buffer.alloc(total)).digest("hex");
+  expect(stdout).toBe(`${total} ${expected}`);
+  expect(err).toBeNull();
+});
+
 // The native FileReader source over a pollable pipe used to drain the fd to
 // EAGAIN regardless of JS demand, so an idle consumer still ingested the whole
 // pipe into an internal buffer. The kernel pipe buffer filling up is the
@@ -679,23 +697,6 @@ describe("pipe backpressure", () => {
     expect(stdout).toBe(String(n * chunk.length));
     expect(exitCode).toBe(0);
   });
-});
-
-test("process.stdin over an anonymous pipe delivers each byte exactly once", async () => {
-  const total = 10 * 1024 * 1024;
-  using dir = tempDir("stdin-pipe-exactly-once", {
-    "writer.js": `const chunk = Buffer.alloc(65536); let left = ${total}; (function pump() { while (left > 0) { left -= chunk.length; if (!process.stdout.write(chunk)) return process.stdout.once("drain", pump); } })();`,
-    "reader.js": `const h = new Bun.CryptoHasher("sha1"); let n = 0; process.stdin.on("data", d => { n += d.length; h.update(d); }); process.stdin.on("close", () => process.stdout.write(n + " " + h.digest("hex")));`,
-  });
-  const { promise, resolve } = Promise.withResolvers<{ err: Error | null; stdout: string; stderr: string }>();
-  exec(`"${bunExe()}" writer.js | "${bunExe()}" reader.js`, { cwd: String(dir), env: bunEnv }, (err, stdout, stderr) =>
-    resolve({ err, stdout, stderr }),
-  );
-  const { err, stdout, stderr } = await promise;
-  expect(stderr).toBe("");
-  const expected = new Bun.CryptoHasher("sha1").update(Buffer.alloc(total)).digest("hex");
-  expect(stdout).toBe(`${total} ${expected}`);
-  expect(err).toBeNull();
 });
 
 // What fd 0 is depends on who made the pipe. On Windows: a synchronous end of a named pipe, an end from

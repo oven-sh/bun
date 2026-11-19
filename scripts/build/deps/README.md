@@ -66,7 +66,7 @@ Any `github-archive` dep the graph compiles or includes can be redirected
 (so not lolhtml or rust-argon2, which cargo reads from `vendor/` via the workspace
 `Cargo.toml` — point that path at your checkout instead); several at once
 with `name=path,name=path`. Cross-dep references (`depSourceDir()`, e.g.
-lsquic's `-I` into boringssl) follow the redirect. The checkout is compiled
+WebKit's `-I` into mimalloc) follow the redirect. The checkout is compiled
 as-is — no fetch, no `.ref` stamp, and the dep's `patches` are **not**
 applied (they target the pinned tarball), so start the clone from the pinned
 commit if you want an identical baseline. Switching a dep between pinned and
@@ -104,8 +104,8 @@ export const mydep: Dependency = {
   patches: ["patches/mydep/fix-something.patch"],
 
   // Optional: deps whose SOURCE must be ready before this one builds
-  // (for -I cross-dep headers). See lsquic for an example.
-  fetchDeps: ["boringssl"],
+  // (for -I cross-dep headers). See WebKit for an example.
+  fetchDeps: ["mimalloc"],
 
   // How to build. `direct` lists sources explicitly; emitDirect compiles
   // each as a first-class cc/cxx edge and the resulting .o's go straight

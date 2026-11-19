@@ -408,12 +408,16 @@ Each order is a table of the known keys with what to do with the value of each (
 
 ## Languages that only a plugin of Prettier reads
 
-`.astro`, `.php` and the like: languages that Bun can't parse. In Prettier's flavor, a file whose language comes from a plugin in the config is handed to the project's Prettier. A file that Bun can parse never is, and that includes `.svelte` and `package.json`.
+`.astro`, `.php` and the like: languages that Bun can't parse. A file whose language comes from a listed plugin is handed to the project's Prettier. Nothing is loaded to find that out. The name of the file and the names of the plugins decide.
 
-- **Where**: `src/lint/driver/fmt/prettier.rs`, which talks to the host of the JS plugins of `bun lint`: `src/lint/js_plugin/prettier.rs` and `worker/prettier.js`.
-- **When**: `prettier` and every package that the configuration names as a plugin are installed. Prettier loads all of them, also those that are built in here. Else the files are named and left as they are.
-- **Options**: Prettier resolves them, from the configuration file that the driver has found. The flags are merged as `--config-precedence` says.
-- **Tests**: "a language that only a plugin of Prettier reads" in `test/cli/format/format.test.ts`, with a plugin of a few lines.
+- **The list** is one per file: `Configs::plugin_view` in `src/lint/driver/fmt/config.rs`. It has two sides. One is `plugins` of the Prettier config, or of its last override that matches and has a list. The other is `--plugin` with `plugins` of `[fmt]`, or `plugins` of the last `[[fmt.overrides]]` that matches and has a list. With `--config-precedence prefer-file` and a config, the second side is dropped. Every question about a plugin is asked of this view, which is made once per file.
+- **A name that Bun can't parse** goes to Prettier in two cases (`language_with` in `src/lint/driver/fmt/mod.rs`, `Language::Plugin`). A listed plugin of `LANGUAGE_PLUGINS` has its ending. Or an override that matches lists, in its own list, a plugin that is neither built in nor in that table. Then its `files` say what the plugin owns.
+- **A name that Bun can parse** leaves the native path in one case only: a `parser` that isn't Bun's is set for it, and its list has a plugin that isn't built in. So `a.go.html` with `parser: "go-template"` goes to Prettier. No ending does that, and no `files` does, so a list of plugins alone never takes `a.html`, a `.svelte` file or a `package.json`.
+- **A plugin that Bun doesn't include**, where it owns no file: the files that Bun formats are skipped, with exit code 2 (`report_skipped_for_plugins`), whichever side the name is on. That includes `a.js` in an override that has such a plugin in its list. `--allow-unsupported` formats them without the plugin.
+- **Where**: `src/lint/driver/fmt/prettier.rs`, which talks to the host of the JS plugins of `bun lint`: `src/lint/js_plugin/prettier.rs` and `worker/prettier.js`. The host is started only when a file goes to it.
+- **When**: `prettier` and every package that the file's list names are installed. Prettier loads all of them, also those that are built in here. The worker joins the list of the config and the list that the driver sends. Else the files are named and left as they are.
+- **Options**: Prettier resolves them, from the configuration file that the driver has found. The flags are merged as `--config-precedence` says. They are made for each file: the options of `[fmt]`, those of the `[[fmt.overrides]]` that match (`Configs::bunfig_overrides_for`), and the keys that only a plugin knows. `bunfig.rs` takes such a key only in an override that lists a plugin that isn't built in, or that sets a parser that isn't Bun's. The worker refuses one that no loaded plugin declares.
+- **Tests**: "a language that only a Prettier plugin supports" in `test/cli/format/format.test.ts`, with a plugin of a few lines.
 
 ## Pitfalls
 

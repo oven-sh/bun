@@ -814,6 +814,26 @@ test.concurrent.each([
   60_000,
 );
 
+test.concurrent.each(["Operators", "Literals"])(
+  "bytecode is used with the BUN_JSC_useDecimal%s it was made with",
+  async option => {
+    using dir = tempDir("decimal-bytecode", {
+      "write.js": `require("fs").writeFileSync(process.argv[2], new (require("vm").Script)("1 + 1").createCachedData());`,
+      "read.js": `
+      const isRejected = file => new (require("vm").Script)("1 + 1", { cachedData: require("fs").readFileSync(file) }).cachedDataRejected;
+      console.write(isRejected("0") + " " + isRejected("1"));
+    `,
+    });
+    const runWith = (value: string, ...args: string[]) =>
+      spawn([bunExe(), ...args], String(dir), { ...env, ["BUN_JSC_useDecimal" + option]: value });
+    await Promise.all([runWith("0", "write.js", "0"), runWith("1", "write.js", "1")]);
+    expect(await Promise.all([runWith("0", "read.js"), runWith("1", "read.js")])).toEqual([
+      { stdout: "false true", stderr: "", exitCode: 0 },
+      { stdout: "true false", stderr: "", exitCode: 0 },
+    ]);
+  },
+);
+
 // Compiled code has no operators, so == would compare identity where bun run compares values.
 test.skipIf(!!unsupported).concurrent.each([
   ["--aot", ["build", "--compile", "--aot", "main.js"]],
@@ -1017,6 +1037,19 @@ describe.concurrent("literals", () => {
       });
     },
   );
+
+  // The bytecode has the code of a function for calls only, so `new` would be the first to meet the syntax.
+  test("--bytecode does not start without the variable", async () => {
+    using dir = tempDir("decimal-literal", {
+      "main.js": `function Money() { this.value = 0m; } console.log("started"); new Money();`,
+    });
+    const flags = ["--target=bun", "--outdir=out", "--format=cjs", "--bytecode"];
+    expect((await spawn([bunExe(), "build", ...flags, "main.js"], String(dir), literals)).stderr).toBe("");
+    const { stdout, stderr, exitCode } = await spawn([bunExe(), "out/main.js"], String(dir), env);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("SyntaxError");
+    expect(exitCode).toBe(1);
+  });
 
   test("an executable has them without the variables", async () => {
     const result = await compileAndRun(["--bytecode", "--format=esm"], files, literals);

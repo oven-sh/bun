@@ -2498,9 +2498,10 @@ class QuicStream {
       });
     }
     inner.stats?.[kFinishClose]();
-    inner.earlySnapshot = inner.state?.early;
-    if (inner.state?.reset) inner.resetCodeSnapshot = inner.state.resetCode;
-    inner.state?.[kFinishClose]();
+    const { state } = inner;
+    inner.earlySnapshot = state?.early;
+    if (state?.reset) inner.resetCodeSnapshot = state.resetCode;
+    state?.[kFinishClose]();
     inner.session![kRemoveStream](this);
     inner.writer?.fail(error);
     inner.reader ??= this.#handle?.getReader();

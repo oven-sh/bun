@@ -68,8 +68,6 @@ const LISTENER_FLAG_ORIGIN: u32 = 0x20;
 /// the ASCII origin.
 const ORIGIN_LEN_PREFIX: usize = 2;
 
-/// Stream-id bit 1 selects the direction (RFC 9000 §2.1).
-
 /// Mirrors node's `Session::Application::Type` (node/src/quic/application.h).
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]

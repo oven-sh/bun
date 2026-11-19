@@ -146,10 +146,15 @@ extern "C" fn us_quic_loop_process(loop_: &Loop) {
     };
     (loop_.internal_loop_data.quic_next_tick_us).set(micros.map_or(-1, |it| it as i64));
     #[cfg(windows)]
-    if let Some(micros) = micros {
+    {
         unsafe extern "C" {
             safe fn us_quic_loop_set_timer(loop_: &Loop, ms: core::ffi::c_int);
         }
-        us_quic_loop_set_timer(loop_, micros.div_ceil(1000).max(1) as i32);
+        match micros {
+            None => {}
+            // The shortest timer can take 15 milliseconds.
+            Some(0) => loop_.wakeup(),
+            Some(micros) => us_quic_loop_set_timer(loop_, micros.div_ceil(1000) as i32),
+        }
     }
 }

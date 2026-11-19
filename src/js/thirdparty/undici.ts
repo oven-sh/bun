@@ -1412,6 +1412,12 @@ function isInMemoryBodyStream(stream) {
   );
 }
 
+// The Blob of a body that Bun has in memory. For such a body, blob() settles before it returns.
+function settledBlob(source: Request | Response): Blob | undefined {
+  const blob = source.blob();
+  return $peekPromiseStatus(blob) === 1 ? $peekPromiseSettledValue(blob) : undefined;
+}
+
 // Like native fetch: a username or password that does not decode sends no credentials, and does not fail the request.
 function basicAuthorization(url: URL) {
   try {
@@ -1521,14 +1527,17 @@ let abandonedBodies: FinalizationRegistry<() => void> | undefined;
 // fetch through a dispatcher that is not route-only: every hop goes through dispatcher.dispatch(), as in undici.
 function fetchViaDispatcher(dispatcher, input, init) {
   let url: URL, method: string, headers: Headers, body: any, signal: any, redirect: any;
-  // Holds a body that Bun has in memory and is never read itself: each clone of it is one more sendable body.
-  let replay: Request | Response | undefined;
+  // A body that Bun has in memory, or a file. It has the byte length, and each stream() of it is one more sendable body.
+  let replay: Blob | undefined;
   // Input parsing failures reject the returned promise like WHATWG fetch, never throw synchronously.
   try {
     let request = input instanceof Request ? input : undefined;
-    // Bun's fetch({ url, ...options }): native fetch reads the options of an input that is no string, URL or Request.
-    const options = request === undefined && typeof input === "object" && !(input instanceof URL) ? input : undefined;
-    const target = request ? request.url : options ? options.url : input;
+    let target = request ? request.url : input;
+    let options;
+    if (!request && typeof input === "object" && input !== null && !(input instanceof URL)) {
+      // The order of native fetch: an object whose string is a URL is that URL, and any other is Bun's { url, ...options }.
+      target = URL.parse(String(input)) ?? (options = input).url;
+    }
     url = target instanceof URL ? target : new URL(String(target));
     // Only http(s) is dispatched, like undici's scheme fetch; data:, blob:, file: and s3: URLs stay with native fetch.
     if (url.protocol !== "http:" && url.protocol !== "https:") return nativeFetch(input, init);
@@ -1557,17 +1566,26 @@ function fetchViaDispatcher(dispatcher, input, init) {
         const spare = request.clone();
         body = request.body;
         // undici does not send a stream twice, and the unread half of a tee would hold the whole upload.
-        if (isInMemoryBodyStream(body)) replay = spare;
+        if (isInMemoryBodyStream(body)) replay = settledBlob(spare);
         else spare.body?.cancel();
       }
     } else if (isReplayableBody(initBody)) {
       // Bun's own body extraction copies the bytes once and derives the content-type, the form boundary included.
-      replay = new Response(initBody);
-      const type = replay.headers.get("content-type");
+      const extracted = new Response(initBody);
+      const type = extracted.headers.get("content-type");
       if (type !== null && !headers.has("content-type")) headers.set("content-type", type);
-      body = replay.clone().body;
+      // A Blob is its own copy, and its size comes from a stat: blob() of a file that is not regular would read it.
+      replay = initBody instanceof Blob ? initBody : settledBlob(extracted);
+      body = replay === undefined ? initBody : replay.stream();
     } else {
       body = initBody;
+    }
+    // Like undici: without the length, a dispatcher can only send the stream it gets with chunked encoding.
+    if (replay !== undefined) {
+      const { size } = replay;
+      if (size < Infinity) headers.set("content-length", String(size));
+    } else if (body == null && (method === "POST" || method === "PUT")) {
+      headers.set("content-length", "0");
     }
     // The dispatch options carry only origin and path, so URL userinfo becomes Basic auth here, as native fetch does.
     if ((url.username || url.password) && !headers.has("authorization")) {
@@ -1643,7 +1661,7 @@ function fetchViaDispatcher(dispatcher, input, init) {
       headers.delete("content-type");
       headers.delete("content-length");
     } else if (replay) {
-      body = replay.clone().body;
+      body = replay.stream();
     }
     if (next.origin !== url.origin) {
       headers.delete("authorization");

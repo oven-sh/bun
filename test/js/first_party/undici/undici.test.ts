@@ -2083,6 +2083,90 @@ describe("undici", () => {
       await dispatcher.close();
     });
 
+    it("fetch through a Pool takes an object whose string is a URL, in the order of native fetch", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        fetch: req => new Response(`${req.method} ${new URL(req.url).pathname}`),
+      });
+      const dispatcher = new Pool(`http://localhost:${server.port}`);
+      // Such an object is the URL. Native fetch reads no options from it.
+      const urlLike = { method: "POST", toString: () => `${server.url}url-like` };
+      expect({
+        native: await (await fetch(urlLike as any)).text(),
+        pool: await (await undiciFetch(urlLike as any, { dispatcher } as any)).text(),
+      }).toEqual({ native: "GET /url-like", pool: "GET /url-like" });
+      await dispatcher.close();
+    });
+
+    it("fetch through a dispatcher sends the content-length of a body that has one", async () => {
+      using dir = tempDir("undici-content-length", { "upload.bin": Buffer.alloc(70000, "x").toString() });
+      await using server = Bun.serve({
+        port: 0,
+        fetch: async req =>
+          Response.json({
+            length: req.headers.get("content-length"),
+            encoding: req.headers.get("transfer-encoding"),
+            received: (await req.arrayBuffer()).byteLength,
+          }),
+      });
+      const pool = new Pool(`http://localhost:${server.port}`);
+      // What a dispatcher over another transport gets: a stream, so the header is its only source for the length.
+      let dispatched: unknown;
+      const dispatcher = {
+        dispatch(opts, handler) {
+          dispatched = opts.headers["content-length"];
+          return pool.dispatch(opts, handler);
+        },
+      };
+      const form = new FormData();
+      form.set("field", "value");
+      const bodies: Record<string, () => any> = {
+        string: () => "h\u00e9llo",
+        bytes: () => new Uint8Array(7),
+        blob: () => new Blob(["abc"]),
+        file: () => Bun.file(join(String(dir), "upload.bin")),
+        search: () => new URLSearchParams("a=b"),
+        form: () => form,
+        stream: () => new Blob(["streamed"]).stream(),
+      };
+      const results: Record<string, unknown> = {};
+      for (const [name, body] of Object.entries(bodies)) {
+        const init = { method: "PUT", body: body(), dispatcher, duplex: "half" };
+        const seen: any = await (await undiciFetch(server.url, init as any)).json();
+        results[name] = {
+          dispatched,
+          sent: seen.length,
+          encoding: seen.encoding,
+          whole: seen.received === +seen.length,
+        };
+      }
+      const known = (length: string) => ({ dispatched: length, sent: length, encoding: null, whole: true });
+      const formLength = String((await new Response(form).arrayBuffer()).byteLength);
+      expect(results).toEqual({
+        string: known("6"),
+        bytes: known("7"),
+        blob: known("3"),
+        file: known("70000"),
+        search: known("3"),
+        form: known(formLength),
+        // Native fetch still holds this stream in memory, so it sends the length that the dispatcher did not get.
+        stream: { dispatched: undefined, sent: "8", encoding: null, whole: true },
+      });
+
+      const request = new Request(server.url, { method: "POST", body: "from a request" });
+      await (await undiciFetch(request, { dispatcher } as any)).json();
+      const fromRequest = dispatched;
+      await (await undiciFetch(server.url, { method: "POST", dispatcher } as any)).json();
+      const bodilessPost = dispatched;
+      await (await undiciFetch(server.url, { dispatcher } as any)).json();
+      expect({ fromRequest, bodilessPost, bodilessGet: dispatched }).toEqual({
+        fromRequest: "14",
+        bodilessPost: "0",
+        bodilessGet: undefined,
+      });
+      await pool.close();
+    });
+
     it("fetch through a stock Agent adds no abort signal of its own", async () => {
       await using proc = Bun.spawn({
         cmd: [

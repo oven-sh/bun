@@ -843,4 +843,31 @@ describe.concurrent.skipIf(!isLinux)("a message handler that runs the event loop
     // m1 is last, because restoring it waits for the rest.
     expect(result).toEqual({ stdout: ["m0", "m2", "m3", "m1"], stderr: "", exitCode: 0 });
   });
+
+  it.each(["json", "advanced"])("until nothing else keeps the Subprocess: %s", async serialization => {
+    const result = await runPair(
+      `
+        const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+        spawnChild({
+          serialization: "${serialization}",
+          onDisconnect,
+          ipc(message, child) {
+            console.log(Array.isArray(message) ? message.length + " objects" : message);
+            if (message !== "first") return;
+            child.disconnect();
+            runEventLoopUntil(Promise.all([disconnected, child.exited]));
+          },
+        });
+        until("written");
+      `,
+      `
+        const frame = "${serialization}" === "json" ? it => Buffer.from(JSON.stringify(it) + "\\n") : advancedFrame;
+        // The receiver collects garbage while it decodes the second one.
+        write(Buffer.concat(["first", Array.from({ length: 5000 }, (_, i) => ({ i })), "last"].map(frame)));
+        fs.writeFileSync("written", "");
+      `,
+      { BUN_JSC_gcMaxHeapSize: "196608", BUN_JSC_useGenerationalGC: "0", BUN_JSC_useConcurrentGC: "0" },
+    );
+    expect(result).toEqual({ stdout: ["first", "5000 objects", "last"], stderr: "", exitCode: 0 });
+  });
 });

@@ -1027,6 +1027,11 @@ impl SendQueue {
         self.owner.get()
     }
 
+    /// Script can run the event loop until the close is reported. This keeps a `Subprocess`, and so `self`, past that.
+    fn hold_owner(&self) -> Option<jsc::EnsureStillAlive> {
+        Some(jsc::EnsureStillAlive(self.owner_ref()?.this_jsvalue()))
+    }
+
     pub(crate) fn detach(&self) {
         log!("SendQueue#detach");
         self.close_event_sent.set(true);
@@ -2320,6 +2325,7 @@ pub(crate) mod IPCHandlers {
         }
 
         pub(crate) fn on_data(send_queue: &SendQueue, _: Socket, all_data: &[u8]) {
+            let _alive = send_queue.hold_owner();
             let global_this = send_queue.get_global_this();
             let _scope = global_this.bun_vm().enter_event_loop_scope();
             on_data2(send_queue, all_data);
@@ -2383,6 +2389,7 @@ pub(crate) mod IPCHandlers {
         /// current `len`).
         pub(crate) fn on_read(send_queue: &SendQueue, nread: usize) {
             log!("NewNamedPipeIPCHandler#onRead {}", nread);
+            let _alive = send_queue.hold_owner();
             let global_this = send_queue.get_global_this();
             let _scope = global_this.bun_vm().enter_event_loop_scope();
 

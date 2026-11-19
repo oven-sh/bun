@@ -405,6 +405,17 @@ test("Bun.JSONC.parse rejects raw control characters and unterminated strings", 
   expect(() => Bun.JSONC.parse("[1, 2")).toThrow();
 });
 
+function expectSyntaxErrorWithMessage(doc: string, message: string, label: string) {
+  let thrown: unknown;
+  try {
+    Bun.JSONC.parse(doc);
+  } catch (e) {
+    thrown = e;
+  }
+  expect(thrown, label).toBeInstanceOf(SyntaxError);
+  expect((thrown as Error).message, label).toBe(message);
+}
+
 test("Bun.JSONC.parse rejects content after the root value", () => {
   const unexpected = (token: string) => `JSONC Parse error: Unexpected ${token}`;
   const cases: Array<[doc: string, message: string]> = [
@@ -435,26 +446,12 @@ test("Bun.JSONC.parse rejects content after the root value", () => {
     ['{"a":1} \u65E5\u672C', unexpected("\u65E5\u672C")],
     ['{"a":1}\uD800', unexpected("\uFFFD")],
     ['{"a":1}\u200B', unexpected("\u200B")],
+    // Whitespace that is not ASCII and content in one run of bytes: the message names the whole run.
+    ['{"a":1}\u00A0x', unexpected("\u00A0x")],
+    ['{"a":1}\uFEFFx', unexpected("\uFEFFx")],
   ];
   for (const [doc, message] of cases) {
-    let thrown: unknown;
-    try {
-      Bun.JSONC.parse(doc);
-    } catch (e) {
-      thrown = e;
-    }
-    const label = `input: ${JSON.stringify(doc)}`;
-    expect(thrown, label).toBeInstanceOf(SyntaxError);
-    expect((thrown as Error).message, label).toBe(message);
-  }
-  // The whitespace and the content are one run of bytes here, and the message names the whole run.
-  for (const doc of ['{"a":1}\u00A0x', '{"a":1}\uFEFFx']) {
-    expect(() => Bun.JSONC.parse(doc), `input: ${JSON.stringify(doc)}`).toThrow(
-      expect.objectContaining({
-        name: "SyntaxError",
-        message: expect.stringMatching(/^JSONC Parse error: Unexpected .*x$/),
-      }),
-    );
+    expectSyntaxErrorWithMessage(doc, message, `input: ${JSON.stringify(doc)}`);
   }
 });
 
@@ -501,19 +498,17 @@ test("Bun.JSONC.parse reads the whole tail after the root value, however long it
     expect(Bun.JSONC.parse('{"a":1}' + blank + "/* c */"), `${n} spaces, closed comment`).toEqual({ a: 1 });
     expect(Bun.JSONC.parse('{"a":1}' + blank + "// c"), `${n} spaces, line comment`).toEqual({ a: 1 });
     for (const [tail, message] of rejected) {
-      const label = `${n} spaces, ${tail}`;
-      expect(() => Bun.JSONC.parse('{"a":1}' + blank + tail), label).toThrow(SyntaxError);
-      expect(() => Bun.JSONC.parse('{"a":1}' + blank + tail), label).toThrow(message);
+      expectSyntaxErrorWithMessage('{"a":1}' + blank + tail, message, `${n} spaces, ${tail}`);
     }
   }
   // Each unit of these tails is one entry of the index, so the check walks entries across a refill.
   for (const n of [5000, 9000]) {
     for (const unit of ["\u00A0 ", "/**/\u2028"]) {
-      const tail = unit.repeat(n);
+      const tail = Buffer.alloc(n * Buffer.byteLength(unit), unit).toString();
       const label = `${n} x ${JSON.stringify(unit)}`;
+      expect(tail.length, label).toBe(n * unit.length);
       expect(Bun.JSONC.parse('{"a":1}' + tail), label).toEqual({ a: 1 });
-      expect(() => Bun.JSONC.parse('{"a":1}' + tail + "{}"), label).toThrow(SyntaxError);
-      expect(() => Bun.JSONC.parse('{"a":1}' + tail + "{}"), label).toThrow("JSONC Parse error: Unexpected {");
+      expectSyntaxErrorWithMessage('{"a":1}' + tail + "{}", "JSONC Parse error: Unexpected {", label);
     }
   }
 });
@@ -734,9 +729,8 @@ describe("structural index window seams", () => {
       ]) {
         const doc = docAt(offset, '{"k":1', "", "}", tail);
         expect(() => JSON.parse(doc)).toThrow(SyntaxError);
-        expect(() => Bun.JSONC.parse(doc)).toThrow(SyntaxError);
-        expect(() => Bun.JSONC.parse(doc)).toThrow(message);
-        expect(() => Bun.JSONC.parse('{"k":1}' + tail)).toThrow(message);
+        expectSyntaxErrorWithMessage(doc, message, `offset ${offset}, tail ${JSON.stringify(tail)}`);
+        expectSyntaxErrorWithMessage('{"k":1}' + tail, message, `short document, tail ${JSON.stringify(tail)}`);
       }
       expectAgree(docAt(offset, '{"k":1', "", "}", ""));
       expectAgree(docAt(offset, '{"k":1', "", "}", " \n"));

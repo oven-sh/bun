@@ -1,6 +1,6 @@
 // Sub-modules
 
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::collections::VecDeque;
 
@@ -80,6 +80,7 @@ pub(crate) struct Parser<'a> {
     // Cell because find_html_tag is a &self query reached from both &self and
     // &mut self scanners.
     pub(crate) html_scan_memo: Cell<HtmlScanMemo>,
+    pub(crate) code_span_ends: RefCell<crate::inlines::CodeSpanEnds>,
     // No thematic break starts between these two places. See `is_hr_line`.
     pub(crate) not_hr: Cell<(OFF, OFF)>,
 
@@ -299,6 +300,7 @@ impl<'a> Parser<'a> {
             bracket_pairs: Vec::new(),
             label_frames: Vec::new(),
             html_scan_memo: Cell::new(HtmlScanMemo::EMPTY),
+            code_span_ends: RefCell::default(),
             not_hr: Cell::new((0, 0)),
             n_containers: 0,
             directives: Vec::new(),
@@ -426,7 +428,7 @@ impl<'a> Parser<'a> {
     // inlines.rs — impl Parser:
     //   process_leaf_block, process_inline_content, enter_span, leave_span,
     //   emit_text, emit_emph_open_tags, emit_emph_close_tags,
-    //   find_code_span_end, normalize_code_span_content, flanking,
+    //   normalize_code_span_content, flanking,
     //   collect_emphasis_delimiters, resolve_emphasis_delimiters, find_entity,
     //   find_html_tag
     //

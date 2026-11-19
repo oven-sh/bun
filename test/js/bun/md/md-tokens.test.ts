@@ -55,6 +55,27 @@ test("noIndentedCodeBlocks", () => {
   ]);
 });
 
+test("a marker takes one column of a tab", () => {
+  expect(tokens(">\ta\n>\tb\n\n-\t\tc")).toMatchObject([
+    { raw: ">\ta\n>\tb", text: "  a\n  b", tokens: [{ raw: "  a\n  b" }] },
+    { type: "space" },
+    { raw: "-\t\tc", items: [{ text: "  \tc", tokens: [{ type: "code" }] }] },
+  ]);
+});
+
+test("a URL that emphasis ends keeps its closed parentheses", () => {
+  expect(tokens("*http://a.test/a(b)c*d(", { autolinks: true })).toMatchObject([
+    { tokens: [{ type: "em", tokens: [{ type: "link", href: "http://a.test/a(b)c" }] }, { text: "d(" }] },
+  ]);
+});
+
+test.each([
+  [1, "text"],
+  [2, "link"],
+])("an autolink in an image with maxNesting: %d is %s", (maxNesting, type) => {
+  expect(tokens("![<https://a.b>](c)", { maxNesting })).toMatchObject([{ tokens: [{ tokens: [{ type }] }] }]);
+});
+
 test("a byte order mark is in the raw of the first token", () => {
   expect(tokens("﻿# a")).toMatchObject([{ type: "heading", raw: "﻿# a", text: "a" }]);
 });

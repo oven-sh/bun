@@ -1,3 +1,5 @@
+use bun_core::strings;
+
 use crate::helpers;
 use crate::inlines::EmphDelim;
 
@@ -45,11 +47,12 @@ pub(crate) fn is_emph_boundary_resolved(
 
 /// The URL whose `:` or whose `.` behind `www` is at `pos`, by the rules `url` and `_backpedal` of
 /// https://github.com/markedjs/marked/blob/v15.0.12/src/rules.ts, but not in the middle of a word.
-/// `no_paren_before`: no `(` before this place is closed.
+/// No `(` in `unclosed_parens` is closed. It has places in the text that `content` starts at `base` of.
 pub(crate) fn find_url_like_marked(
     content: &[u8],
     pos: usize,
-    no_paren_before: &mut usize,
+    base: usize,
+    unclosed_parens: &mut core::ops::Range<usize>,
 ) -> AutolinkResult {
     let (names, host): (&[&[u8]], usize) = match content[pos..] {
         [b':', b'/', b'/', ..] => (&[b"http", b"https", b"ftp"], pos + 3),
@@ -71,13 +74,14 @@ pub(crate) fn find_url_like_marked(
     let (mut end, mut kept) = (host, host + 1);
     while end < content.len() && !ends_url(content[end]) {
         if content[end] == b'(' {
-            if end < *no_paren_before {
+            if unclosed_parens.contains(&(base + end)) {
                 break;
             }
-            let inside = content[end..].iter();
-            let close = end + inside.take_while(|&&c| c != b')' && !ends_url(c)).count();
+            let inside = &content[end..];
+            let len = strings::index_of_any(inside, b")< \t\n\r\x0B\x0C");
+            let close = end + len.unwrap_or(inside.len());
             if content.get(close) != Some(&b')') {
-                *no_paren_before = close;
+                *unclosed_parens = base + end..base + close;
                 break;
             }
             (end, kept) = (close, close + 1);
@@ -87,7 +91,7 @@ pub(crate) fn find_url_like_marked(
 
     while end > kept {
         let last = content[end - 1];
-        if !bun_core::strings::contains_char(b"?!.,:;*_'\"~)", last) {
+        if !strings::contains_char(b"?!.,:;*_'\"~)", last) {
             break;
         }
         end -= 1;

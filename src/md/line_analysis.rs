@@ -762,9 +762,10 @@ impl Parser<'_> {
             pos += 1;
         }
 
+        let mut code_span_ends = crate::inlines::CodeSpanEnds::default();
         while pos < row.len() {
             col_count += 1;
-            pos = self.table_cell_end(row, pos) + 1;
+            pos = self.table_cell_end(row, pos, &mut code_span_ends) + 1;
         }
         col_count
     }

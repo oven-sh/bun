@@ -138,11 +138,31 @@ pub fn parse(text: &[u8], options: Options) -> Result<Tokens, ParserError> {
     builder.finish()
 }
 
-/// A place in the text. `is_line_start`: the markers of the containers are still ahead.
 #[derive(Clone, Copy)]
 struct Place {
     off: OFF,
+    /// The markers of the containers are still ahead.
     is_line_start: bool,
+    /// The columns of a tab before `off` that no marker has taken.
+    tab_left: u32,
+}
+
+impl Place {
+    fn line_start(off: OFF) -> Place {
+        Place {
+            off,
+            is_line_start: true,
+            tab_left: 0,
+        }
+    }
+
+    fn in_line(off: OFF) -> Place {
+        Place {
+            off,
+            is_line_start: false,
+            tab_left: 0,
+        }
+    }
 }
 
 /// The document, a block quote, a list or a list item.
@@ -151,7 +171,7 @@ struct Container {
     /// In the container around it.
     start: Place,
     mark_beg: OFF,
-    content_beg: OFF,
+    content: Place,
     /// The columns that a line is indented by in a list item.
     indent: u32,
     /// What is before this place belongs to the tokens in it.
@@ -233,12 +253,9 @@ impl<'a> TokenBuilder<'a> {
     pub(crate) fn new(text: &'a [u8], beg: OFF, options: Options) -> Self {
         let document = Container {
             op: Op::new(Kind::Space),
-            start: Place {
-                off: beg,
-                is_line_start: true,
-            },
+            start: Place::line_start(beg),
             mark_beg: beg,
-            content_beg: beg,
+            content: Place::in_line(beg),
             indent: 0,
             cursor: beg,
             last_child: None,
@@ -336,8 +353,7 @@ impl<'a> TokenBuilder<'a> {
 
     fn line_start(&self, off: OFF) -> OFF {
         let before = &self.text[..off as usize];
-        let is_in_line = |c: &&u8| !helpers::is_newline(**c);
-        off - before.iter().rev().take_while(is_in_line).count() as OFF
+        strings::last_index_of_any(before, b"\r\n").map_or(0, |it| it as OFF + 1)
     }
 
     fn line_end(&self, off: OFF) -> OFF {
@@ -405,7 +421,9 @@ impl<'a> TokenBuilder<'a> {
         if end <= start.off {
             return Str::EMPTY;
         }
-        if depth <= 1 || (!start.is_line_start && self.line_end(start.off) >= end) {
+        if depth <= 1
+            || (!start.is_line_start && start.tab_left == 0 && self.line_end(start.off) >= end)
+        {
             return Str {
                 from: From::Source,
                 beg: start.off,
@@ -416,7 +434,9 @@ impl<'a> TokenBuilder<'a> {
         let Place {
             mut off,
             mut is_line_start,
+            tab_left,
         } = start;
+        self.pool_spaces(tab_left);
         loop {
             if is_line_start {
                 let left;
@@ -467,10 +487,7 @@ impl<'a> TokenBuilder<'a> {
             let raw = self.source(child.start, space_beg, depth);
             self.set_raw(&child, raw);
         }
-        let start = Place {
-            off: space_beg,
-            is_line_start: false,
-        };
+        let start = Place::in_line(space_beg);
         let raw = self.source(start, end, depth);
         if raw.from != From::Empty {
             self.ops.push(Op {
@@ -504,20 +521,14 @@ impl<'a> TokenBuilder<'a> {
     fn start_child_behind_definitions(&mut self, beg: OFF) -> Place {
         let container = self.innermost();
         let cursor = container.cursor;
-        let is_first = container.op.n_children == 0;
+        let (is_first, content) = (container.op.n_children == 0, container.content);
         let between = &self.text[cursor.min(beg) as usize..beg as usize];
         match strings::last_index_of_any(between, b"\r\n") {
-            None if is_first => Place {
-                off: cursor,
-                is_line_start: false,
-            },
+            None if is_first => content,
             line_break => {
                 let off = cursor + line_break.map_or(0, |it| it as OFF + 1);
                 self.end_last_child(off);
-                Place {
-                    off,
-                    is_line_start: true,
-                }
+                Place::line_start(off)
             }
         }
     }
@@ -564,32 +575,29 @@ impl<'a> TokenBuilder<'a> {
             Kind::ListItem if self.containers[around].mark_beg == mark_beg => {
                 self.containers[around].start
             }
-            Kind::ListItem => Place {
-                off: self.line_start(mark_beg),
-                is_line_start: true,
-            },
+            Kind::ListItem => Place::line_start(self.line_start(mark_beg)),
             _ => self.start_child(mark_beg),
         };
 
-        let (mut content_beg, mut indent) = (mark_end, 0);
+        let (mut content, mut indent) = (Place::in_line(mark_end), 0);
         match op.kind {
-            Kind::Blockquote if self.text.get(mark_end as usize) == Some(&b' ') => content_beg += 1,
+            Kind::Blockquote => content = self.behind_one_column(mark_end),
             Kind::ListItem => {
                 let column = self.column(mark_end);
                 let white = helpers::line_indentation(self.text, column, mark_end);
                 let next = self.text.get(white.off as usize).copied();
                 let padding;
-                (content_beg, padding) = if next.is_none_or(helpers::is_newline) {
-                    (white.off, 1)
+                (content, padding) = if next.is_none_or(helpers::is_newline) {
+                    (Place::in_line(white.off), 1)
                 } else if white.indent > self.code_indent {
-                    (mark_end + 1, 1)
+                    (self.behind_one_column(mark_end), 1)
                 } else {
-                    (white.off, white.indent)
+                    (Place::in_line(white.off), white.indent)
                 };
                 indent = mark_indent + (mark_end - mark_beg) + padding;
                 if op.flag_a {
-                    let mark = helpers::line_indentation(self.text, 0, content_beg).off;
-                    content_beg = helpers::line_indentation(self.text, 0, mark + 3).off;
+                    let mark = helpers::line_indentation(self.text, 0, content.off).off;
+                    content = Place::in_line(helpers::line_indentation(self.text, 0, mark + 3).off);
                 }
             }
             _ => {}
@@ -598,12 +606,24 @@ impl<'a> TokenBuilder<'a> {
             op,
             start,
             mark_beg,
-            content_beg,
+            content,
             indent,
-            cursor: content_beg,
+            cursor: content.off,
             last_child: None,
             left_at: None,
         });
+    }
+
+    /// Of white space at `off`, if there is any.
+    fn behind_one_column(&self, off: OFF) -> Place {
+        match self.text.get(off as usize) {
+            Some(b' ') => Place::in_line(off + 1),
+            Some(b'\t') => Place {
+                tab_left: 3 - self.column(off) % 4,
+                ..Place::in_line(off + 1)
+            },
+            _ => Place::in_line(off),
+        }
     }
 
     fn column(&self, off: OFF) -> u32 {
@@ -617,14 +637,10 @@ impl<'a> TokenBuilder<'a> {
     /// Takes the innermost container, whose content ends at `end`.
     fn leave_container(&mut self, end: OFF) -> Option<Container> {
         let depth = self.containers.len();
-        let content_beg = self.innermost().content_beg;
-        let end = end.max(content_beg);
+        let content = self.innermost().content;
+        let end = end.max(content.off);
         self.end_last_child(end);
-        let start = Place {
-            off: content_beg,
-            is_line_start: false,
-        };
-        let text = self.source(start, end, depth);
+        let text = self.source(content, end, depth);
         let mut container = self.containers.pop()?;
         container.op.text = text;
         Some(container)
@@ -635,7 +651,7 @@ impl<'a> TokenBuilder<'a> {
         let Some((next_line, last_line_end)) = item.left_at else {
             return;
         };
-        let (mark_beg, content_beg) = (item.mark_beg, item.content_beg);
+        let (mark_beg, content_beg) = (item.mark_beg, item.content.off);
         let (content_end, raw_end) = if is_last {
             let end = self.trimmed_end(mark_beg, last_line_end);
             (end, end)
@@ -715,10 +731,7 @@ impl<'a> TokenBuilder<'a> {
                 && self.text.get(line.end as usize) != Some(&b'\r')
         });
         if is_as_written {
-            let start = Place {
-                off: text_beg,
-                is_line_start: true,
-            };
+            let start = Place::line_start(text_beg);
             return self.source(start, last.end, 0);
         }
         let beg = self.pool.list.len();

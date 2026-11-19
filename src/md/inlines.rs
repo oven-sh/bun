@@ -158,6 +158,65 @@ fn all_match_sizes(delims: &[EmphDelim], d: &EmphDelim, is_open: bool) -> Vec<u8
     parts.concat()
 }
 
+/// Finds what closes the code spans of one text, which is asked about from its start to its end.
+#[derive(Default)]
+pub(crate) struct CodeSpanEnds {
+    n_failed: u32,
+    /// From the second failure on: the length of each run of backticks that is ahead, and where the last one of that
+    /// length starts, sorted.
+    last_runs: Vec<(usize, usize)>,
+}
+
+impl CodeSpanEnds {
+    #[inline]
+    fn reset(&mut self) {
+        self.n_failed = 0;
+    }
+
+    /// Where the first run of `count` backticks from `start` on starts.
+    #[inline]
+    pub(crate) fn find(&mut self, text: &[u8], start: usize, count: usize) -> Option<usize> {
+        if self.n_failed >= 2 {
+            let index = self
+                .last_runs
+                .binary_search_by_key(&count, |it| it.0)
+                .ok()?;
+            if self.last_runs[index].1 < start {
+                return None;
+            }
+        }
+        let found = backtick_runs(text, start).find(|it| it.0 == count);
+        if found.is_none() {
+            self.n_failed += 1;
+            if self.n_failed == 2 {
+                self.note_last_runs(text, start);
+            }
+        }
+        found.map(|it| it.1)
+    }
+
+    #[cold]
+    fn note_last_runs(&mut self, text: &[u8], start: usize) {
+        self.last_runs.clear();
+        for run in backtick_runs(text, start) {
+            match self.last_runs.binary_search_by_key(&run.0, |it| it.0) {
+                Ok(index) => self.last_runs[index] = run,
+                Err(index) => self.last_runs.insert(index, run),
+            }
+        }
+    }
+}
+
+/// Their lengths and starts.
+fn backtick_runs(text: &[u8], mut from: usize) -> impl Iterator<Item = (usize, usize)> {
+    core::iter::from_fn(move || {
+        let beg = bun_core::strings::index_of_char_pos(text, b'`', from)?;
+        let len = count_backticks(text, beg);
+        from = beg + len;
+        Some((len, beg))
+    })
+}
+
 /// First with strict boundaries, then with relaxed ones.
 fn find_autolink_between_emphasis(
     content: &[u8],
@@ -345,6 +404,7 @@ impl Parser<'_> {
         // Label frames below are subslices of `content`, so the memo stays
         // valid for them via `offset_within`.
         self.html_scan_memo.set(HtmlScanMemo::EMPTY);
+        self.code_span_ends.get_mut().reset();
 
         self.inline_serial = self.inline_serial.wrapping_add(1);
         if self.tracks_content {
@@ -403,7 +463,7 @@ impl Parser<'_> {
         let mut scanned_word_end: usize = 0;
         // Not behind the first of `resolved[delim_cursor..]` that opens or closes something.
         let mut matched_cursor: usize = 0;
-        let mut no_closed_paren_before: usize = 0;
+        let mut unclosed_parens = 0..0;
 
         // Enter the label of a just-parsed link/image/wikilink: snapshot the
         // current walk state and restart the walk on the label slice.
@@ -532,6 +592,12 @@ impl Parser<'_> {
                         HiddenKind::Html => {
                             self.at(base + beg, base + end);
                             self.emit_text(TextType::Html, &content[beg..end])?;
+                        }
+                        HiddenKind::Autolink { .. }
+                            if frames.len() >= self.flags.max_nesting as usize =>
+                        {
+                            self.at(base + beg, base + end);
+                            self.emit_text(TextType::Normal, &content[beg..end])?;
                         }
                         HiddenKind::Autolink { is_email } => {
                             self.render_autolink(&content[beg + 1..end - 1], is_email, base + beg)?;
@@ -689,6 +755,7 @@ impl Parser<'_> {
                 // Suppress inside explicit links to avoid double-wrapping (md4c issue #152)
                 if self.link_nesting_level == 0
                     && !(self.tracks_content && self.image_nesting_level > 0)
+                    && frames.len() < self.flags.max_nesting as usize
                     && ((c == b':' && self.flags.permissive_url_autolinks)
                         || (c == b'@' && self.flags.permissive_email_autolinks)
                         || (c == b'.' && self.flags.permissive_www_autolinks))
@@ -708,10 +775,7 @@ impl Parser<'_> {
                         if !self.tracks_content || c == b'@' {
                             return find_autolink_between_emphasis(&content[..limit], i, &resolved);
                         }
-                        let mut no_paren_before = no_closed_paren_before.saturating_sub(base);
-                        let url = find_url_like_marked(&content[..limit], i, &mut no_paren_before);
-                        no_closed_paren_before = base + no_paren_before;
-                        url
+                        find_url_like_marked(&content[..limit], i, base, &mut unclosed_parens)
                     };
                     // A word is only scanned to its end once.
                     let is_word_scanned = base + i < scanned_word_end;
@@ -725,9 +789,9 @@ impl Parser<'_> {
                     {
                         al = find(next_matched);
                         if al.is_some() && !is_word_scanned {
-                            let word = content[i..].iter();
-                            let len = word.take_while(|&&c| !helpers::is_whitespace(c)).count();
-                            scanned_word_end = base + i + len;
+                            let rest = &content[i..];
+                            let len = bun_core::strings::index_of_any(rest, b" \t\n\r\x0B\x0C");
+                            scanned_word_end = base + i + len.unwrap_or(rest.len());
                         }
                     } else if is_word_scanned {
                         al = find(content.len());
@@ -971,7 +1035,11 @@ impl Parser<'_> {
         let (end, kind) = match c {
             b'`' => {
                 let ticks = count_backticks(content, pos);
-                match self.find_code_span_end(content, pos + ticks, ticks) {
+                match self
+                    .code_span_ends
+                    .borrow_mut()
+                    .find(content, pos + ticks, ticks)
+                {
                     Some(close) => (close + ticks, HiddenKind::Code { ticks }),
                     None => (pos + ticks, HiddenKind::Backticks),
                 }
@@ -1036,27 +1104,6 @@ impl Parser<'_> {
             }
         }
         Ok(())
-    }
-
-    /// Find the matching closing backtick run. Returns end position of content (before closing ticks),
-    /// or null if no matching closer found.
-    pub(crate) fn find_code_span_end(
-        &self,
-        content: &[u8],
-        start: usize,
-        count: usize,
-    ) -> Option<usize> {
-        let mut pos = start;
-        while let Some(backtick_pos) = bun_core::strings::index_of_char_pos(content, b'`', pos) {
-            pos = backtick_pos + 1;
-            while pos < content.len() && content[pos] == b'`' {
-                pos += 1;
-            }
-            if pos - backtick_pos == count {
-                return Some(backtick_pos);
-            }
-        }
-        None
     }
 
     pub(crate) fn normalize_code_span_content<'a>(&self, content: &'a [u8]) -> &'a [u8] {

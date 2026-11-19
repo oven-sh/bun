@@ -1,4 +1,5 @@
 use super::helpers;
+use super::inlines::{CodeSpanEnds, count_backticks};
 use super::parser::{Error as ParserError, Parser};
 use super::types::{self, BlockType, JsResult, TextType, VerbatimLine};
 
@@ -116,25 +117,32 @@ impl Parser<'_> {
 
     /// Where the `|` behind `start` is, or the end of the row.
     #[inline]
-    pub(crate) fn table_cell_end(&self, row: &[u8], start: usize) -> usize {
+    pub(crate) fn table_cell_end(
+        &self,
+        row: &[u8],
+        start: usize,
+        code_span_ends: &mut CodeSpanEnds,
+    ) -> usize {
+        let special: &[u8] = match self.flags.table_pipes_in_code {
+            true => b"|\\`",
+            false => b"|\\",
+        };
         let mut end = start;
-        while end < row.len() && row[end] != b'|' {
-            if row[end] == b'`' && self.flags.table_pipes_in_code {
-                let ticks = row[end..].iter().take_while(|&&c| c == b'`').count();
-                end += ticks;
-                if let Some(code_end) = self.find_code_span_end(row, end, ticks) {
-                    end = code_end + ticks;
+        while let Some(len) = bun_core::strings::index_of_any(&row[end..], special) {
+            end += len;
+            match row[end] {
+                b'|' => return end,
+                b'\\' => end = (end + 2).min(row.len()),
+                _ => {
+                    let ticks = count_backticks(row, end);
+                    end += ticks;
+                    if let Some(code_end) = code_span_ends.find(row, end, ticks) {
+                        end = code_end + ticks;
+                    }
                 }
-            } else if row[end] == b'\\'
-                && end + 1 < row.len()
-                && !(row[end + 1] == b'`' && self.flags.table_pipes_in_code)
-            {
-                end += 2;
-            } else {
-                end += 1;
             }
         }
-        end
+        row.len()
     }
 
     pub(crate) fn process_table_row(
@@ -159,6 +167,7 @@ impl Parser<'_> {
         };
         let mut start: usize = 0;
         let mut cell_index: u32 = 0;
+        let mut code_span_ends = CodeSpanEnds::default();
 
         // Skip leading pipe
         if start < row_text.len() && row_text[start] == b'|' {
@@ -166,7 +175,7 @@ impl Parser<'_> {
         }
 
         while start < row_text.len() && cell_index < max_cells {
-            let end = self.table_cell_end(row_text, start);
+            let end = self.table_cell_end(row_text, start, &mut code_span_ends);
 
             // Skip trailing pipe cell
             if end == row_text.len() && start == end {

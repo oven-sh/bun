@@ -2201,6 +2201,26 @@ test.each([
   expect(Bun.markdown.html(input, { autolinks: true }).length).toBeGreaterThan(input.length);
 });
 
+test.each([
+  ["a paragraph", "a ", " "],
+  ["a table row", "|a|\n|-|\n|", "|"],
+])("runs of backticks that nothing closes are not each followed to the end of %s", (_, start, between) => {
+  const render = (runs: string[]) => {
+    const input = start + runs.join(between) + between + "`x` ``y``";
+    let [html, best] = ["", Infinity];
+    for (let i = 0; i < 3; i++) {
+      const before = performance.now();
+      html = Bun.markdown.html(input, { tablePipesInCode: true, tableExtraCells: true });
+      best = Math.min(best, performance.now() - before);
+    }
+    expect(html.match(/<code>\w<\/code>/g)).toEqual(["<code>x</code>", "<code>y</code>"]);
+    return best;
+  };
+  const runs = Array.from({ length: 1000 }, (_, i) => Buffer.alloc(i + 3, "`").toString());
+  // About 1 when both are linear, over 50 otherwise.
+  expect(render(runs) / render(runs.map((_, i) => runs[i & ~1]))).toBeLessThan(15);
+});
+
 test("the language of fenced code behind a byte order mark", () => {
   const input = "\ufeff```js\nx\n```\n";
   expect(Bun.markdown.html(input)).toBe('<pre><code class="language-js">x\n</code></pre>\n');
@@ -2233,6 +2253,18 @@ describe("options", () => {
       "|`a|b`|\n|-|\n|c|",
       table("<th><code>a|b</code></th>", "<td>c</td>"),
       "<p>|<code>a|b</code>|\n|-|\n|c|</p>\n",
+    ],
+    [
+      { tablePipesInCode: true },
+      "|a|b|\n|-|-|\n|\\`x|y`|",
+      table("<th>a</th><th>b</th>", "<td>`x</td><td>y`</td>"),
+      table("<th>a</th><th>b</th>", "<td>`x</td><td>y`</td>"),
+    ],
+    [
+      { maxNesting: 0 },
+      "<https://a.b>",
+      "<p>&lt;https://a.b&gt;</p>\n",
+      '<p><a href="https://a.b">https://a.b</a></p>\n',
     ],
     [
       { tableExtraCells: true },

@@ -542,8 +542,7 @@ impl Parser<'_> {
         match self.block_lines.first() {
             // The header of a table that interrupts a paragraph is on the line before.
             Some(header) if header.beg < self.line_beg => {
-                let before = self.text[..header.beg as usize].iter().rev();
-                header.beg - before.take_while(|&&c| helpers::is_blank(c)).count() as OFF
+                helpers::trim_blank_end(&self.text[..header.beg as usize]).len() as OFF
             }
             _ => self.line_beg,
         }

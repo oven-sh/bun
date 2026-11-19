@@ -56,7 +56,7 @@ pub(crate) fn on_internal_message_child<'a>(
     singleton.worker = StrongOptional::create(worker.to_js(), global);
     singleton.cb = StrongOptional::create(callback.to_js(), global);
     for message in core::mem::take(&mut singleton.messages) {
-        if !child_singleton().is_ready() {
+        if !is_child_listening() {
             break; // the channel closed
         }
         if let Some(message) = message.get() {
@@ -64,6 +64,10 @@ pub(crate) fn on_internal_message_child<'a>(
         }
     }
     Ok(())
+}
+
+pub(crate) fn is_child_listening() -> bool {
+    child_singleton().is_ready()
 }
 
 pub(crate) fn handle_internal_message_child(

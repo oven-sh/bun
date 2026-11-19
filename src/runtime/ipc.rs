@@ -929,6 +929,13 @@ impl SendQueueOwner {
         }
     }
 
+    fn takes_cluster_handle(self) -> bool {
+        match self {
+            SendQueueOwner::Subprocess(_) => false,
+            SendQueueOwner::Instance => crate::node::node_cluster_binding::is_child_listening(),
+        }
+    }
+
     fn this_jsvalue(self) -> JSValue {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
@@ -2063,8 +2070,9 @@ fn handle_ipc_message(
             }
         }
         if let Some(owner) = send_queue.owner.get() {
-            let handle_js =
-                received.map_or(JSValue::UNDEFINED, |fd| received_fd_to_js(fd.into_raw()));
+            let handle_js = received
+                .filter(|_| owner.takes_cluster_handle())
+                .map_or(JSValue::UNDEFINED, |fd| received_fd_to_js(fd.into_raw()));
             owner.handle_ipc_message(&message, handle_js)?;
         }
     }

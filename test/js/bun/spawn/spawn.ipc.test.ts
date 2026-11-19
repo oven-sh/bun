@@ -910,4 +910,46 @@ describe.concurrent.skipIf(!isLinux)("a received descriptor", () => {
       exitCode: 0,
     });
   });
+
+  it("is closed by a parent, which has no use for one in a cluster message", async () => {
+    const result = await runPair(
+      `
+        const before = openFds();
+        await spawnChild().exited;
+        await turn();
+        console.log("leaked", openFds() - before);
+      `,
+      sendDescriptorWith('\x02{"$hasHandle":true}'),
+    );
+    expect(result).toEqual({ stdout: ["leaked 0"], stderr: "", exitCode: 0 });
+  });
+
+  it("is closed by a child that queues a cluster message, because node:cluster is not loaded", async () => {
+    const result = await runPair(
+      `
+        // Both ends of the channel are children.
+        const spawnEnd = (role, channel) =>
+          spawnChild({
+            cmd: [process.execPath, "child.js", role],
+            env: { ...process.env, NODE_CHANNEL_FD: "3", NODE_CHANNEL_SERIALIZATION_MODE: "json" },
+            stdio: ["ignore", "inherit", "inherit", channel],
+            ipc: undefined,
+          });
+        const receiver = spawnEnd("receive", "pipe");
+        await Promise.all([receiver.exited, spawnEnd("send", receiver.stdio[3]).exited]);
+      `,
+      `
+        if (process.argv[2] === "send") {
+          ${sendDescriptorWith('\x02{"$hasHandle":true}')}
+        } else {
+          process.on("message", () => {
+            console.log("leaked", openFds() - before);
+            process.disconnect();
+          });
+          const before = openFds();
+        }
+      `,
+    );
+    expect(result).toEqual({ stdout: ["leaked 0"], stderr: "", exitCode: 0 });
+  });
 });

@@ -183,7 +183,7 @@ error: 3 files were not formatted because the Prettier config uses plugins that 
 
 You don't have to keep `.prettierrc`. Move the options to [`bunfig.toml`](/format#options), under the same names, and delete the file. `overrides` become [`[[fmt.overrides]]`](/runtime/bunfig#format-overrides).
 
-`plugins` moves too, to [`plugins` in `[fmt]`](/runtime/bunfig#format-plugins) or in an override. A path is then relative to `bunfig.toml`. Everything above about the three kinds applies there as well.
+`plugins` moves too, to [`plugins` in `[fmt]`](/runtime/bunfig#format-plugins) or in an override. A path is then relative to `bunfig.toml`. The three kinds are treated the same there, with one difference: the options of a built-in plugin, like `importOrder`, `tailwindFunctions`, `svelteSortOrder`, or `packageSortOrder`, aren't keys of `[fmt]`. If your config sets them, keep `.prettierrc`, or use Bun's own keys instead: [`sortImports`](/runtime/bunfig#format-sortimports), [`sortTailwindcss`](/runtime/bunfig#format-sorttailwindcss), [`svelte`](/runtime/bunfig#format-svelte), and [`sortPackageJson`](/runtime/bunfig#format-sortpackagejson).
 
 ```toml bunfig.toml icon="settings"
 [fmt]

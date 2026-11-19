@@ -1234,21 +1234,27 @@ struct Run<'r> {
 
 /// Classifies the file at `path`, in `scope`, the way the tool this run emulates would.
 fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Language {
-    language_with(configs.parser_for(scope, path), configs, scope, path)
+    let view = configs.plugin_view(scope, Some(path));
+    language_with(configs.parser_for(scope, path), &view, configs, scope, path)
 }
 
+/// Like [`language_of`], for a file whose `parser` option and plugin lists are already known.
 fn language_with(
     parser: Option<Box<[u8]>>,
+    view: &config::PluginView,
     configs: &Configs,
     scope: &config::Scope,
     path: &[u8],
 ) -> Language {
-    // The `parser` option decides. A parser that Prettier doesn't have belongs to a plugin.
+    // The `parser` option decides. A parser that Prettier doesn't have belongs to a plugin, whatever the file is named.
     match parser {
         Some(parser) if &*parser == b"svelte" && !configs.formats_svelte(scope, Some(path)) => {
             Language::Other
         }
-        Some(parser) if Kind::from_parser(&parser).is_none() => Language::Other,
+        Some(parser) if Kind::from_parser(&parser).is_none() => match view.lists_unknown() {
+            true => Language::Plugin,
+            false => Language::Other,
+        },
         Some(_) => Language::Supported,
         None if configs.is_oxfmt_for(scope) => {
             files::language_for_oxfmt(path, configs.formats_svelte(scope, Some(path)))
@@ -1259,7 +1265,10 @@ fn language_with(
             {
                 Language::Supported
             }
-            Language::Unknown if configs.is_formatted_by_plugin(scope, path) => Language::Other,
+            // The `files` of an override that lists a plugin say which files that plugin formats.
+            Language::Unknown if view.has_ending_of(path) || view.is_scoped_to_plugin() => {
+                Language::Plugin
+            }
             Language::Unknown if files::is_toml(path) && configs.is_native_in(scope) => {
                 Language::Supported
             }
@@ -1491,16 +1500,11 @@ impl Run<'_> {
         };
         let language = language_of(configs, &scope, &path);
         let is_ignored = ignored.ignores_file(&path, configs.config_ignores(&scope));
-        let is_plugin_language = configs.is_formatted_by_plugin(&scope, &path);
-        let not_installed = match language == Language::Other && is_plugin_language {
+        let not_installed = match language == Language::Plugin {
             true => self.not_installed(configs, &scope, Some(&path)),
             false => Vec::new(),
         };
-        if language == Language::Other
-            && !is_ignored
-            && is_plugin_language
-            && not_installed.is_empty()
-        {
+        if language == Language::Plugin && !is_ignored && not_installed.is_empty() {
             return self.format_stdin_with_prettier(configs, &scope, Some(&path), (name, &text));
         }
         let mut options = match configs.options_for(&scope, &path) {
@@ -1517,16 +1521,16 @@ impl Run<'_> {
         }
         // Same as for a file. A caller that gets the text back with exit code 0 would assume it's formatted.
         let allows = self.options.allow_unsupported;
-        if language == Language::Other {
+        if matches!(language, Language::Plugin | Language::Other) {
             self.report_unsupported(&mut [(extension_or_name(&path), 1)], &not_installed);
             if allows && !is_read_only {
                 self.out.stdout = text;
             }
             return self.out;
         }
-        let missing_plugins = configs.missing_plugins(&scope, Some(&path));
-        if language == Language::Supported && !allows && !missing_plugins.is_empty() {
-            let names: Vec<&[u8]> = missing_plugins.iter().map(|it| &it[..]).collect();
+        let view = configs.plugin_view(&scope, Some(&path));
+        if language == Language::Supported && !allows && view.has_missing() {
+            let names: Vec<&[u8]> = view.missing().collect();
             self.report_skipped_for_plugins(1, &names);
             return self.out;
         }
@@ -1583,10 +1587,11 @@ impl Run<'_> {
             }
             return self.out;
         };
+        let view = configs.plugin_view(&scope, None);
         let is_formatted = |kind: &Kind| *kind != Kind::Svelte || options.options.svelte.is_on;
         let Some(kind) = Kind::from_parser(&parser).filter(is_formatted) else {
             // Without the plugin, Prettier has no `svelte` parser either.
-            if &*parser == b"svelte" || !configs.lists_unknown_plugins(&scope, None) {
+            if &*parser == b"svelte" || !view.lists_unknown() {
                 self.error(&cannot_resolve_parser(&parser));
                 self.out.exit_code = match (self.is_native, exits_zero_on_error) {
                     (true, _) => 2,
@@ -1606,9 +1611,8 @@ impl Run<'_> {
             }
             return self.out;
         };
-        let missing_plugins = configs.missing_plugins(&scope, None);
-        if !self.options.allow_unsupported && !missing_plugins.is_empty() {
-            let names: Vec<&[u8]> = missing_plugins.iter().map(|it| &it[..]).collect();
+        if !self.options.allow_unsupported && view.has_missing() {
+            let names: Vec<&[u8]> = view.missing().collect();
             self.report_skipped_for_plugins(1, &names);
             return self.out;
         }
@@ -1910,10 +1914,6 @@ impl Run<'_> {
             // Without a Prettier or oxfmt config, minified code and lock files are only formatted when they're named.
             false => !(files::is_generated(&target.path) && configs.is_native_in(&target.scope)),
         };
-        let missing_plugins = |target: &'_ Target| match options.allow_unsupported {
-            true => false,
-            false => !(configs.missing_plugins(&target.scope, Some(&target.path))).is_empty(),
-        };
         let size_meanwhile = AtomicU64::new(0);
         let meanwhile = files::Meanwhile {
             when: &|target| {
@@ -1921,22 +1921,24 @@ impl Run<'_> {
                     return When::Never;
                 }
                 let (scope, path) = (&*target.scope, &target.path[..]);
+                let view = configs.plugin_view(scope, Some(path));
                 let language = match configs.may_set_parser(scope) {
                     true => (configs.sound_options_for(scope, path, May::Nothing))
                         .map_or(Language::Other, |it| {
-                            language_with(it.options.parser, configs, scope, path)
+                            language_with(it.options.parser, &view, configs, scope, path)
                         }),
-                    false => language_with(None, configs, scope, path),
+                    false => language_with(None, &view, configs, scope, path),
                 };
+                let lacks_plugins = || !options.allow_unsupported && view.has_missing();
                 match language {
-                    Language::Supported if target.linked.is_some() || missing_plugins(target) => {
+                    Language::Supported if target.linked.is_some() || lacks_plugins() => {
                         When::AfterSearch
                     }
                     Language::Supported => When::Now,
                     Language::Unknown if target.ignores_unknown || options.ignore_unknown => {
                         When::Never
                     }
-                    Language::Unknown | Language::Other => When::AfterSearch,
+                    Language::Unknown | Language::Plugin | Language::Other => When::AfterSearch,
                 }
             },
             start: &|| {
@@ -2050,35 +2052,25 @@ impl Run<'_> {
             let (Expanded::File(target), Some(language)) = it else {
                 continue;
             };
-            let missing_plugins = match options.allow_unsupported {
-                true => &[][..],
-                false => configs.missing_plugins(&target.scope, Some(&target.path)),
-            };
+            let view = configs.plugin_view(&target.scope, Some(&target.path));
+            // What must be installed before the project's own Prettier can format the file.
+            let needed = || [&b"prettier"[..]].into_iter().chain(view.packages());
             match language {
-                Language::Supported if !missing_plugins.is_empty() => {
+                Language::Supported if !options.allow_unsupported && view.has_missing() => {
                     left_for_plugins.0 += 1;
-                    for name in missing_plugins {
-                        if !left_for_plugins.1.contains(&&name[..]) {
+                    for name in view.missing() {
+                        if !left_for_plugins.1.contains(&name) {
                             left_for_plugins.1.push(name);
                         }
                     }
                 }
                 Language::Supported => work.push((index, target)),
-                Language::Other
-                    if configs.is_formatted_by_plugin(&target.scope, &target.path)
-                        && [&b"prettier"[..]]
-                            .into_iter()
-                            .chain(configs.plugin_packages(&target.scope, Some(&target.path)))
-                            .all(&mut has_package) =>
-                {
+                Language::Plugin if needed().all(&mut has_package) => {
                     handed_over.push((index, target));
                 }
-                Language::Other => {
-                    if configs.is_formatted_by_plugin(&target.scope, &target.path) {
-                        for package in [&b"prettier"[..]]
-                            .into_iter()
-                            .chain(configs.plugin_packages(&target.scope, Some(&target.path)))
-                        {
+                Language::Plugin | Language::Other => {
+                    if language == Language::Plugin {
+                        for package in needed() {
                             if !has_package(package) && !not_installed.contains(&package) {
                                 not_installed.push(package);
                             }

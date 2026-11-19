@@ -324,13 +324,20 @@ describe.skipIf(!cc)("native addon", () => {
 // A `Bun.file()` / `Bun.stdin` read of a pipe or tty that has no data yet
 // parks on the io loop instead of blocking a pool thread, so terminate() can
 // and does cancel it: the worker goes away promptly and the read never settles.
-describe.skipIf(isWindows)("terminate() cancels a read parked on the io loop", () => {
+describe.skipIf(isWindows)("terminate() cancels a read or write parked on the io loop", () => {
+  const moreThanFits = `new Uint8Array(4 << 20)`;
+  // `.size` makes the file find out that it is not a regular one.
+  const knownPipe = `(file => (file.size, file))(Bun.file(fs.openSync(workerData, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK)))`;
   test.concurrent.each([
     ["Bun.stdin.text()", [`Bun.stdin.text()`]],
     ["Bun.file(fifo).text()", [`Bun.file(workerData).text()`]],
     ["Bun.file(fifo).bytes() twice", [`Bun.file(workerData).bytes()`, `Bun.file(workerData).bytes()`]],
-  ])("%s", async (_, reads) => {
+    ["Bun.write(Bun.file(fd))", [`Bun.write(${knownPipe}, ${moreThanFits})`]],
+    // This one does not park: it calls write() again and again.
+    ["Bun.write(fifo)", [`Bun.write(workerData, ${moreThanFits})`]],
+  ])("%s", async (name, reads) => {
     const worker = `
+      const fs = require("node:fs");
       const { parentPort, workerData } = require("node:worker_threads");
       const settled = w => v => parentPort.postMessage(w);
       for (const p of [${reads.join(",")}]) p.then(settled("resolved"), settled("rejected"));
@@ -356,6 +363,8 @@ describe.skipIf(isWindows)("terminate() cancels a read parked on the io loop", (
         w.on("message", async m => {
           seen.push(m);
           if (m !== "reading") return;
+          // Blocks until the write has begun.
+          if (${name.startsWith("Bun.write")}) require("node:fs").readSync(writer, Buffer.alloc(1));
           const code = await w.terminate();
           console.log(JSON.stringify({ code, seen }));
           require("node:fs").closeSync(writer);

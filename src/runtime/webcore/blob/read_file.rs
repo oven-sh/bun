@@ -178,6 +178,11 @@ impl ReadFile {
         }
     }
 
+    /// The descriptor of stdin, for one, blocks in read().
+    fn must_wait(&self, fd: Fd) -> bool {
+        self.could_block && bun_core::is_readable(fd) == bun_core::Pollable::NotReady
+    }
+
     /// One read of up to `max` bytes, appended to `buffer`.
     fn read_some(
         &mut self,
@@ -215,7 +220,7 @@ impl FdOp for ReadFile {
     const INTEREST: Interest = Interest::Readable;
     type Js = PendingReadFileCompletion;
 
-    fn open(&mut self) -> Result<JobFd, Box<SystemError>> {
+    fn open(&mut self) -> Result<(JobFd, Step), Box<SystemError>> {
         let fd = fd_job::open(&self.file.get(), bun_sys::O::RDONLY, false)?;
         let stat = bun_sys::fstat(fd.get())?;
 
@@ -248,36 +253,31 @@ impl FdOp for ReadFile {
 
         // procfs reports 0 for files that have content, so fstat() alone does not make it empty.
         if expected == 0 && bun_sys::is_regular_file(self.cached_mode) {
-            self.max_length = 0;
-        } else if !self.could_block || expected > 0 {
+            return Ok((fd, Step::Done));
+        }
+        // Opening a FIFO lets its writer go on, and closing it at once would break that pipe.
+        if self.max_length == 0 && !matches!(self.file, Target::Fd(_)) && self.must_wait(fd.get()) {
+            return Ok((fd, Step::Wait));
+        }
+        if !self.could_block || expected > 0 {
             // The extra bytes avoid a resize for a little trailing data.
             self.buffer
                 .try_reserve_exact((expected as usize).saturating_add(16))
                 .map_err(|_| bun_sys::Error::from_code(bun_sys::E::ENOMEM, bun_sys::Tag::read))?;
         }
-        Ok(fd)
+        let step = self.step(fd.get(), false)?;
+        Ok((fd, step))
     }
 
     fn step(&mut self, fd: Fd, ready: bool) -> Result<Step, Box<SystemError>> {
         let mut stack_buffer = [const { MaybeUninit::uninit() }; 64 * 1024];
         loop {
             let max = (self.max_length as usize).saturating_sub(self.buffer.len());
-            // Opening a FIFO lets its writer go on, and closing it at once would break that pipe.
-            let waits_for_writer = self.max_length == 0
-                && !matches!(self.file, Target::Fd(_))
-                && !bun_sys::is_regular_file(self.cached_mode);
-            if max == 0 && !waits_for_writer {
-                break;
-            }
-            // The descriptor of stdin, for one, blocks in read().
-            if self.could_block
-                && !ready
-                && bun_core::is_readable(fd) == bun_core::Pollable::NotReady
-            {
-                return Ok(Step::Wait);
-            }
             if max == 0 {
                 break;
+            }
+            if !ready && self.must_wait(fd) {
+                return Ok(Step::Wait);
             }
             match self.read_some(fd, max, &mut stack_buffer) {
                 Ok(0) => break,

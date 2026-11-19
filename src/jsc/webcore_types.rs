@@ -727,7 +727,7 @@ pub mod store {
     /// A blob store referencing a file on disk.
     #[derive(Clone)]
     pub struct File {
-        /// Never written again: jobs on the work pool read it through the store.
+        /// Never written again. Pool jobs read it, `mode` and `seekable`, and write `last_modified`, without a lock.
         pub pathlike: PathOrFileDescriptor<'static>,
         pub mime_type: MimeType,
         pub is_atty: Option<bool>,

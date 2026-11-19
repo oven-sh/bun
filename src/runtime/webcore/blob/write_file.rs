@@ -62,7 +62,7 @@ impl FdOp for WriteFile {
     /// With the global that the promise was made in.
     type Js = (jsc::JSPromiseStrong, bun_ptr::BackRef<JSGlobalObject>);
 
-    fn open(&mut self) -> Result<JobFd, Box<SystemError>> {
+    fn open(&mut self) -> Result<(JobFd, Step), Box<SystemError>> {
         let file = self.destination.data.as_file();
         let pathlike = &file.pathlike;
         let fd = fd_job::open(
@@ -85,12 +85,12 @@ impl FdOp for WriteFile {
                 let _ = sys::preallocate_file(fd.get().native(), 0, self.range.len() as i64);
             }
         }
-        Ok(fd)
+        let step = self.step(fd.get(), false)?;
+        Ok((fd, step))
     }
 
     fn step(&mut self, fd: Fd, mut ready: bool) -> Result<Step, Box<SystemError>> {
-        let bytes = self.source.shared_view().get(self.range.clone());
-        let bytes = bytes.unwrap_or_default();
+        let bytes = &self.source.shared_view()[self.range.clone()];
         let mut eof = false;
         loop {
             // After the last write too: scripts count on room in the pipe when the promise resolves.
@@ -112,7 +112,7 @@ impl FdOp for WriteFile {
                 Err(err) if err.get_errno() != sys::E::EAGAIN => return Err(err.into()),
                 Err(_) if self.could_block => return Ok(Step::Wait),
                 // Spins: https://github.com/oven-sh/bun/pull/35953
-                Err(_) => {}
+                Err(_) => return Ok(Step::Again),
             }
         }
     }

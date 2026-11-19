@@ -1818,13 +1818,16 @@ it.skipIf(isWindows).each([
   expect({ size: written.length, firstNul: written.indexOf(0) }).toEqual({ size: 6 + size, firstNul: -1 });
 });
 
-it.skipIf(!isLinux)("a copy to a path of 4096 bytes names that path in its error", async () => {
-  using dir = tempDir("bun-write-long-path", { from: "hello" });
-  const to = (String(dir) + Buffer.alloc(3800, "/" + "a".repeat(99)).toString() + "/").padEnd(4096, "b");
-  const destination = await (await fetch("file://" + to)).blob();
-  const error = await Bun.write(destination, Bun.file(join(String(dir), "from")), { createPath: false }).catch(e => e);
-  expect({ code: error.code, path: error.path }).toEqual({ code: "ENOENT", path: to });
-});
+it.skipIf(!isLinux).each([true, false])(
+  "a copy to a path of 4096 bytes is ENAMETOOLONG, createPath: %p",
+  async createPath => {
+    using dir = tempDir("bun-write-long-path", { from: "hello" });
+    const to = (String(dir) + Buffer.alloc(3800, "/" + "a".repeat(99)).toString() + "/").padEnd(4096, "b");
+    const destination = await (await fetch("file://" + to)).blob();
+    const error = await Bun.write(destination, Bun.file(join(String(dir), "from")), { createPath }).catch(e => e);
+    expect({ code: error.code, path: error.path }).toEqual({ code: "ENAMETOOLONG", path: to });
+  },
+);
 
 describe.skipIf(!isLinux).concurrent("Bun.write() to a pipe that is full", () => {
   const data = new Blob([Buffer.alloc(1 << 20, "a")]);

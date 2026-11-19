@@ -24,8 +24,8 @@ pub(crate) trait FdOp: Send + Sized + 'static {
     const INTEREST: Interest;
     type Js: JsAffine;
 
-    /// Pool thread, once.
-    fn open(&mut self) -> Result<JobFd, Box<SystemError>>;
+    /// Pool thread, once. Takes the first step too.
+    fn open(&mut self) -> Result<(JobFd, Step), Box<SystemError>>;
     /// Pool thread. `ready`: the wait has just ended.
     fn step(&mut self, fd: Fd, ready: bool) -> Result<Step, Box<SystemError>>;
     /// JS thread.
@@ -46,8 +46,8 @@ impl<Op: FdOp> JobContext for FdJob<Op> {
 
     fn run(this: &mut Self, done: Completion<Self>) -> Option<Completion<Self>> {
         this.done = Some(done);
-        let fd = this.op.open();
-        this.advance(fd, false);
+        let opened = this.op.open();
+        this.advance(opened);
         None
     }
 
@@ -77,14 +77,17 @@ impl<Op: FdOp> FdJob<Op> {
         // SAFETY: the task of the `wait` that `step_until_parked` parked: the job is back.
         unsafe {
             let this = bun_core::from_field_ptr!(Self, wait, FdWait::from_task_ptr(task));
-            let fd = (*this).wait.unpark().map_err(Into::into);
-            (*this).advance(fd, true);
+            let stepped = (*this).wait.unpark().map_err(Into::into).and_then(|fd| {
+                let step = (*this).op.step(fd.get(), true)?;
+                Ok((fd, step))
+            });
+            (*this).advance(stepped);
         }
     }
 
     /// The job is another thread's when this returns.
-    fn advance(&mut self, fd: Result<JobFd, Box<SystemError>>, ready: bool) {
-        self.result = match fd.and_then(|fd| self.step_until_parked(fd, ready)) {
+    fn advance(&mut self, stepped: Result<(JobFd, Step), Box<SystemError>>) {
+        self.result = match stepped.and_then(|(fd, step)| self.step_until_parked(fd, step)) {
             Ok(true) => return,
             Ok(false) => Ok(()),
             Err(err) => Err(err),
@@ -95,11 +98,14 @@ impl<Op: FdOp> FdJob<Op> {
     }
 
     /// `false`: done.
-    fn step_until_parked(&mut self, fd: JobFd, mut ready: bool) -> Result<bool, Box<SystemError>> {
+    fn step_until_parked(&mut self, fd: JobFd, mut step: Step) -> Result<bool, Box<SystemError>> {
         loop {
-            match self.op.step(fd.get(), core::mem::take(&mut ready))? {
+            match step {
                 Step::Done => return Ok(false),
-                Step::Again => self.wait.check_cancelled()?,
+                Step::Again => {
+                    self.wait.check_cancelled()?;
+                    step = self.op.step(fd.get(), false)?;
+                }
                 Step::Wait => {
                     // SAFETY: this thread has the boxed job, and every frame returns without touching it.
                     unsafe { FdWait::park(&raw mut self.wait, fd)? };
@@ -110,7 +116,7 @@ impl<Op: FdOp> FdJob<Op> {
     }
 }
 
-/// What a job opens. A copy: the JS thread writes to the store while the job runs.
+/// What a job opens. A copy, so that no borrow of the store is held across `Store::data_mut`.
 pub(super) enum Target {
     Fd(Fd),
     Path(Box<[u8]>),

@@ -171,15 +171,16 @@ impl CopyFile {
             PathOrFileDescriptor::Fd(fd) => JobFd::borrowed(*fd),
             PathOrFileDescriptor::Path(path) => {
                 let mut buf = bun_paths::path_buffer_pool::get();
+                // `slice_z` makes "" of it.
+                if path.slice().len() >= buf.len() {
+                    let err =
+                        bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open);
+                    return Err(err.with_path(path.slice()).into());
+                }
                 let path_z = path.slice_z(&mut buf);
                 let mode = self.new_mode.unwrap_or(node_fs::DEFAULT_PERMISSION);
                 let open = || File::open(path_z, OPEN_DESTINATION_FLAGS, mode);
-                let opened = creating_parents(&mut self.mkdirp, path_z.as_bytes(), open);
-                // `path_z` is empty if the path does not fit, and `then` names the source in an error without a path.
-                JobFd::opened(opened.map_err(|err| match path_z.is_empty() {
-                    true => err.with_path(path.slice()),
-                    false => err,
-                })?)
+                JobFd::opened(creating_parents(&mut self.mkdirp, path_z.as_bytes(), open)?)
             }
         };
 

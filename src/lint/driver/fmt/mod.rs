@@ -1275,10 +1275,13 @@ fn language_with(
         Some(parser) if &*parser == b"svelte" && !configs.formats_svelte(scope, Some(path)) => {
             Language::Other
         }
-        Some(parser) if Kind::from_parser(&parser).is_none() => match view.lists_unknown() {
-            true => Language::Plugin,
-            false => Language::Other,
-        },
+        // oxfmt loads no plugin, so there the parser is nobody's.
+        Some(parser) if Kind::from_parser(&parser).is_none() => {
+            match view.lists_unknown() && !configs.is_oxfmt_for(scope) {
+                true => Language::Plugin,
+                false => Language::Other,
+            }
+        }
         Some(_) => Language::Supported,
         None if configs.is_oxfmt_for(scope) => {
             files::language_for_oxfmt(path, configs.formats_svelte(scope, Some(path)))
@@ -1289,16 +1292,16 @@ fn language_with(
             {
                 Language::Supported
             }
-            // The `files` of an override that lists a plugin say which files that plugin formats.
-            Language::Unknown if view.has_ending_of(path) || view.is_scoped_to_plugin() => {
-                Language::Plugin
-            }
+            Language::Unknown if view.has_ending_of(path) => Language::Plugin,
             Language::Unknown if files::is_toml(path) && configs.is_native_in(scope) => {
                 Language::Supported
             }
             Language::Unknown if files::parser_by_interpreter(path).is_some() => {
                 Language::Supported
             }
+            // The `files` of an override that lists a plugin say which files that plugin formats, among those that
+            // Bun can't format itself.
+            Language::Unknown if view.is_scoped_to_plugin() => Language::Plugin,
             language => language,
         },
     }

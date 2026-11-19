@@ -1,5 +1,5 @@
-import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { heapStats } from "bun:jsc";
+import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, expectMaxObjectTypeCount } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 

@@ -1,0 +1,448 @@
+use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
+use core::ptr::{NonNull, null, null_mut};
+
+use bun_boringssl_sys::{self as ssl, SSL, SSL_CTX, SSL_SESSION};
+use bun_quic::crypto::Cipher;
+use bun_quic::tls::{self, Alert, Handshake, Level, Status};
+use bun_quic::{Side, Version};
+
+bun_opaque::opaque_ffi! {
+    struct SSL_CIPHER;
+}
+
+type SetSecret = unsafe extern "C" fn(&SSL, c_uint, &SSL_CIPHER, *const u8, usize) -> c_int;
+
+/// `struct ssl_quic_method_st`.
+#[repr(C)]
+struct SSL_QUIC_METHOD {
+    set_read_secret: SetSecret,
+    set_write_secret: SetSecret,
+    add_handshake_data: unsafe extern "C" fn(&SSL, c_uint, *const u8, usize) -> c_int,
+    flush_flight: extern "C" fn(&SSL) -> c_int,
+    send_alert: extern "C" fn(&SSL, c_uint, u8) -> c_int,
+}
+
+const SSL_ERROR_EARLY_DATA_REJECTED: c_int = 15;
+const SSL_SESS_CACHE_CLIENT: c_int = 1;
+const SSL_VERIFY_OK: c_uint = 0;
+const SSL_VERIFY_INVALID: c_uint = 1;
+/// The one that `SSL_set_app_data` uses.
+const EX_INDEX: c_int = 0;
+
+unsafe extern "C" {
+    safe fn SSL_set_quic_method(ssl: &SSL, method: &'static SSL_QUIC_METHOD) -> c_int;
+    safe fn SSL_set_quic_use_legacy_codepoint(ssl: &SSL, use_legacy: c_int);
+    fn SSL_set_quic_transport_params(ssl: &SSL, params: *const u8, len: usize) -> c_int;
+    safe fn SSL_get_peer_quic_transport_params(ssl: &SSL, params: &mut *const u8, len: &mut usize);
+    fn SSL_set_quic_early_data_context(ssl: &SSL, context: *const u8, len: usize) -> c_int;
+    fn SSL_provide_quic_data(ssl: &SSL, level: c_uint, data: *const u8, len: usize) -> c_int;
+    fn SSL_process_quic_post_handshake(ssl: &SSL) -> c_int;
+    safe fn SSL_in_early_data(ssl: &SSL) -> c_int;
+    safe fn SSL_early_data_accepted(ssl: &SSL) -> c_int;
+    fn SSL_reset_early_data_reject(ssl: &SSL);
+    safe fn SSL_CIPHER_get_protocol_id(cipher: &SSL_CIPHER) -> u16;
+    safe fn SSL_get_current_cipher(ssl: &SSL) -> Option<&SSL_CIPHER>;
+    safe fn SSL_CIPHER_get_name(cipher: &SSL_CIPHER) -> *const c_char;
+    fn SSL_set_cert_cb(ssl: &SSL, cb: extern "C" fn(&SSL, *mut c_void) -> c_int, arg: *mut c_void);
+    safe fn SSL_set_custom_verify(
+        ssl: &SSL,
+        mode: c_int,
+        cb: extern "C" fn(&SSL, &mut u8) -> c_uint,
+    );
+    fn SSL_set_SSL_CTX(ssl: &SSL, ctx: &SSL_CTX) -> *mut SSL_CTX;
+    safe fn SSL_set_verify_depth(ssl: &SSL, depth: c_int);
+    safe fn SSL_CTX_get_verify_depth(ctx: &SSL_CTX) -> c_int;
+    safe fn SSL_get_options(ssl: &SSL) -> u32;
+    safe fn SSL_CTX_get_options(ctx: &SSL_CTX) -> u32;
+    fn SSL_CTX_set_session_cache_mode(ctx: &SSL_CTX, mode: c_int) -> c_int;
+    fn SSL_CTX_sess_set_new_cb(ctx: &SSL_CTX, cb: extern "C" fn(&SSL, &SSL_SESSION) -> c_int);
+    safe fn SSL_SESSION_to_bytes(
+        session: &SSL_SESSION,
+        data: &mut *mut u8,
+        len: &mut usize,
+    ) -> c_int;
+    fn SSL_SESSION_from_bytes(
+        data: *const u8,
+        len: usize,
+        ctx: *const SSL_CTX,
+    ) -> Option<ssl::OwnedSslSession>;
+}
+
+type SelectContext = dyn Fn(Option<&[u8]>) -> Option<ssl::OwnedSslCtx>;
+type Verify = dyn Fn(&SSL) -> bool;
+
+pub struct Session {
+    ssl: NonNull<SSL>,
+    select_context: Option<Box<SelectContext>>,
+    verify: Option<Box<Verify>>,
+    has_local_parameters: bool,
+    has_peer_parameters: bool,
+    is_complete: bool,
+}
+
+/// What the callbacks of BoringSSL work with.
+struct Call<'a, 'b> {
+    session: &'a mut Session,
+    handshake: &'a mut Handshake<'b>,
+    alert: Option<Alert>,
+}
+
+impl Session {
+    pub fn new(ctx: &SSL_CTX, side: Side) -> Option<Self> {
+        static METHOD: SSL_QUIC_METHOD = SSL_QUIC_METHOD {
+            set_read_secret,
+            set_write_secret,
+            add_handshake_data,
+            flush_flight,
+            send_alert,
+        };
+        // SAFETY: `ctx` is live, and the `SSL` takes its own reference.
+        let ssl = NonNull::new(unsafe { ssl::SSL_new(ctx.as_mut_ptr()) })?;
+        let this = Self {
+            ssl,
+            select_context: None,
+            verify: None,
+            has_local_parameters: false,
+            has_peer_parameters: false,
+            is_complete: false,
+        };
+        // SAFETY: `ssl` is live.
+        unsafe {
+            match side {
+                Side::Client => ssl::SSL_set_connect_state(ssl.as_ptr()),
+                Side::Server => ssl::SSL_set_accept_state(ssl.as_ptr()),
+            }
+        }
+        (SSL_set_quic_method(this.ssl(), &METHOD) == 1).then_some(this)
+    }
+
+    pub fn of(connection: &bun_quic::Connection) -> Option<&Self> {
+        let session: &dyn core::any::Any = connection.tls()?;
+        session.downcast_ref()
+    }
+
+    pub fn ssl(&self) -> &SSL {
+        SSL::opaque_ref(self.ssl.as_ptr())
+    }
+
+    pub fn ssl_mut(&mut self) -> &mut SSL {
+        SSL::opaque_mut(self.ssl.as_ptr())
+    }
+
+    pub fn cipher_name(&self) -> Option<&'static CStr> {
+        let name = SSL_CIPHER_get_name(SSL_get_current_cipher(self.ssl())?);
+        // SAFETY: the names of ciphers are static strings.
+        Some(unsafe { CStr::from_ptr(name) })
+    }
+
+    /// For a server, to go on with the context for the name that the client asks for.
+    pub fn select_context_with(&mut self, select: Box<SelectContext>) {
+        self.select_context = Some(select);
+        // SAFETY: the callback does not use its argument.
+        unsafe { SSL_set_cert_cb(self.ssl(), select_context, null_mut()) };
+    }
+
+    /// In place of the verification that the context is set up for.
+    pub fn verify_with(&mut self, verify: Box<Verify>) {
+        self.verify = Some(verify);
+        SSL_set_custom_verify(self.ssl(), ssl::SSL_VERIFY_PEER, verify_peer);
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        // SAFETY: we own it.
+        unsafe { ssl::SSL_free(self.ssl.as_ptr()) }
+    }
+}
+
+impl tls::Session for Session {
+    fn resume(&mut self, ticket: &[u8]) -> bool {
+        let ssl = self.ssl.as_ptr();
+        // SAFETY: `ticket` is valid for its length, and the `SSL` takes its own reference.
+        let is_set = unsafe {
+            SSL_SESSION_from_bytes(ticket.as_ptr(), ticket.len(), ssl::SSL_get_SSL_CTX(ssl))
+                .is_some_and(|session| ssl::SSL_set_session(ssl, session.as_ptr()) == 1)
+        };
+        ssl::ERR_clear_error();
+        is_set
+    }
+
+    fn set_early_data_context(&mut self, context: &[u8]) {
+        // SAFETY: BoringSSL copies `context`.
+        unsafe { SSL_set_quic_early_data_context(self.ssl(), context.as_ptr(), context.len()) };
+    }
+
+    fn advance(
+        &mut self,
+        input: Option<(Level, &[u8])>,
+        handshake: &mut Handshake<'_>,
+    ) -> Result<Status, Alert> {
+        let ssl = SSL::opaque_ref(self.ssl.as_ptr());
+        let is_draft = handshake.version() == Version::Draft29;
+        SSL_set_quic_use_legacy_codepoint(ssl, is_draft.into());
+        let mut call = Call {
+            session: self,
+            handshake,
+            alert: None,
+        };
+        let call = &raw mut call;
+        // SAFETY: `call` outlives the time it is registered, and is only used through this pointer.
+        unsafe {
+            if ssl::SSL_set_ex_data(ssl.as_mut_ptr(), EX_INDEX, call.cast()) != 1 {
+                return Err(Alert::INTERNAL_ERROR);
+            }
+            let status = advance(ssl, input, call);
+            ssl::SSL_set_ex_data(ssl.as_mut_ptr(), EX_INDEX, null_mut());
+            ssl::ERR_clear_error();
+            status.ok_or_else(|| (*call).alert.unwrap_or(Alert::INTERNAL_ERROR))
+        }
+    }
+}
+
+/// # Safety
+/// `call` is the one that is registered with `ssl`.
+unsafe fn advance(ssl: &SSL, input: Option<(Level, &[u8])>, call: *mut Call) -> Option<Status> {
+    // SAFETY: references into `call` end before BoringSSL is entered.
+    unsafe {
+        match input {
+            Some((level, data)) => {
+                let (at, len) = (data.as_ptr(), data.len());
+                (SSL_provide_quic_data(ssl, level as c_uint, at, len) == 1).then_some(())?;
+            }
+            None => (*call).set_local_parameters(ssl)?,
+        }
+        while !(*call).session.is_complete {
+            let result = ssl::SSL_do_handshake(ssl.as_mut_ptr());
+            if result == 1 && SSL_in_early_data(ssl) == 0 {
+                (*call).session.is_complete = true;
+            } else if result != 1 {
+                match ssl::SSL_get_error(ssl.as_mut_ptr(), result) {
+                    ssl::SSL_ERROR_WANT_READ => return Some(Status::InProgress),
+                    SSL_ERROR_EARLY_DATA_REJECTED => {
+                        SSL_reset_early_data_reject(ssl);
+                        (*call).handshake.early_data_rejected();
+                    }
+                    _ => return None,
+                }
+            }
+        }
+        (*call).get_peer_parameters(ssl)?;
+        (SSL_process_quic_post_handshake(ssl) == 1).then_some(Status::Complete)
+    }
+}
+
+impl Call<'_, '_> {
+    fn with<T>(ssl: &SSL, f: impl FnOnce(&mut Call) -> Option<T>) -> Option<T> {
+        // SAFETY: it is null or the `Call` of the `advance` that is on the stack, which holds no reference into it.
+        f(unsafe { ssl::SSL_get_ex_data(ssl, EX_INDEX).cast::<Call>().as_mut() }?)
+    }
+
+    fn set_local_parameters(&mut self, ssl: &SSL) -> Option<()> {
+        if !core::mem::replace(&mut self.session.has_local_parameters, true) {
+            let parameters = self.handshake.local_parameters();
+            // SAFETY: BoringSSL copies `parameters`.
+            let result = unsafe {
+                SSL_set_quic_transport_params(ssl, parameters.as_ptr(), parameters.len())
+            };
+            (result == 1).then_some(())?;
+        }
+        Some(())
+    }
+
+    fn get_peer_parameters(&mut self, ssl: &SSL) -> Option<()> {
+        if !core::mem::replace(&mut self.session.has_peer_parameters, true) {
+            let (mut at, mut len) = (null(), 0);
+            SSL_get_peer_quic_transport_params(ssl, &mut at, &mut len);
+            // SAFETY: they are valid for as long as `ssl` is left alone.
+            let parameters = unsafe { bytes(at, len) };
+            let accepts_early_data = SSL_early_data_accepted(ssl) == 1;
+            (self
+                .handshake
+                .peer_parameters(parameters, accepts_early_data))
+            .then_some(())?;
+        }
+        Some(())
+    }
+}
+
+/// # Safety
+/// `at` is valid for `len` bytes.
+unsafe fn bytes<'a>(at: *const u8, len: usize) -> &'a [u8] {
+    match len {
+        0 => &[],
+        // SAFETY: the caller's.
+        _ => unsafe { core::slice::from_raw_parts(at, len) },
+    }
+}
+
+fn level_from(level: c_uint) -> Option<Level> {
+    use Level::{Application, EarlyData, Handshake, Initial};
+    [Initial, EarlyData, Handshake, Application]
+        .get(level as usize)
+        .copied()
+}
+
+fn cipher_from(cipher: &SSL_CIPHER) -> Option<Cipher> {
+    match SSL_CIPHER_get_protocol_id(cipher) {
+        0x1301 => Some(Cipher::Aes128GcmSha256),
+        0x1302 => Some(Cipher::Aes256GcmSha384),
+        0x1303 => Some(Cipher::ChaCha20Poly1305Sha256),
+        _ => None,
+    }
+}
+
+unsafe extern "C" fn set_read_secret(
+    ssl: &SSL,
+    level: c_uint,
+    cipher: &SSL_CIPHER,
+    secret: *const u8,
+    len: usize,
+) -> c_int {
+    let result = Call::with(ssl, |call| {
+        // SAFETY: BoringSSL passes a secret of this length.
+        let secret = unsafe { bytes(secret, len) };
+        (call.handshake).read_secret(level_from(level)?, cipher_from(cipher)?, secret);
+        Some(1)
+    });
+    result.unwrap_or(0)
+}
+
+unsafe extern "C" fn set_write_secret(
+    ssl: &SSL,
+    level: c_uint,
+    cipher: &SSL_CIPHER,
+    secret: *const u8,
+    len: usize,
+) -> c_int {
+    let result = Call::with(ssl, |call| {
+        // SAFETY: BoringSSL passes a secret of this length.
+        let secret = unsafe { bytes(secret, len) };
+        (call.handshake).write_secret(level_from(level)?, cipher_from(cipher)?, secret);
+        Some(1)
+    });
+    result.unwrap_or(0)
+}
+
+unsafe extern "C" fn add_handshake_data(
+    ssl: &SSL,
+    level: c_uint,
+    data: *const u8,
+    len: usize,
+) -> c_int {
+    let result = Call::with(ssl, |call| {
+        // What a server writes first comes before its keys and parameters, which depend on those of the client.
+        if !call.session.has_local_parameters {
+            call.get_peer_parameters(ssl)?;
+            call.set_local_parameters(ssl)?;
+        }
+        // SAFETY: BoringSSL passes data of this length.
+        (call.handshake).send(level_from(level)?, unsafe { bytes(data, len) });
+        Some(1)
+    });
+    result.unwrap_or(0)
+}
+
+extern "C" fn flush_flight(_: &SSL) -> c_int {
+    1
+}
+
+extern "C" fn send_alert(ssl: &SSL, _level: c_uint, alert: u8) -> c_int {
+    Call::with(ssl, |call| call.alert.replace(Alert(alert)));
+    1
+}
+
+extern "C" fn select_context(ssl: &SSL, _: *mut c_void) -> c_int {
+    let result = Call::with(ssl, |call| {
+        let ctx = call.session.select_context.as_ref()?(ssl.servername())?;
+        let at = ssl.as_mut_ptr();
+        // SAFETY: both are live, and `ssl` takes its own reference.
+        unsafe {
+            NonNull::new(SSL_set_SSL_CTX(ssl, &ctx))?;
+            ssl::SSL_set_verify(at, ssl::SSL_CTX_get_verify_mode(ctx.as_ptr()), None);
+            SSL_set_verify_depth(ssl, SSL_CTX_get_verify_depth(&ctx));
+            ssl::SSL_clear_options(at, SSL_get_options(ssl));
+            ssl::SSL_set_options(at, SSL_CTX_get_options(&ctx));
+        }
+        Some(1)
+    });
+    result.unwrap_or(0)
+}
+
+extern "C" fn verify_peer(ssl: &SSL, _alert: &mut u8) -> c_uint {
+    match Call::with(ssl, |call| Some(call.session.verify.as_ref()?(ssl))) {
+        Some(true) => SSL_VERIFY_OK,
+        _ => SSL_VERIFY_INVALID,
+    }
+}
+
+/// # Safety
+/// `ctx` is not shared yet.
+pub unsafe fn enable_tickets(ctx: &SSL_CTX) {
+    extern "C" fn new_session(ssl: &SSL, session: &SSL_SESSION) -> c_int {
+        let (mut at, mut len) = (null_mut(), 0);
+        if SSL_SESSION_to_bytes(session, &mut at, &mut len) == 1 {
+            // SAFETY: BoringSSL allocated `len` bytes there for us.
+            let ticket = unsafe { ssl::OpensslBytes::from_raw(at, len) };
+            Call::with(ssl, |call| ticket.map(|it| call.handshake.ticket(&it)));
+        }
+        0
+    }
+    // SAFETY: the caller's.
+    unsafe {
+        SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_CLIENT);
+        SSL_CTX_sess_set_new_cb(ctx, new_session);
+    }
+}
+
+/// # Safety
+/// `ctx` is not shared yet.
+pub unsafe fn enable_key_log(ctx: &SSL_CTX) {
+    unsafe extern "C" fn key_log(ssl: *const SSL, line: *const c_char) {
+        Call::with(SSL::opaque_ref(ssl), |call| {
+            // SAFETY: BoringSSL passes a string.
+            (call.handshake).key_log(unsafe { CStr::from_ptr(line) }.to_bytes());
+            Some(())
+        });
+    }
+    // SAFETY: the caller's.
+    unsafe { ssl::SSL_CTX_set_keylog_callback(ctx.as_mut_ptr(), Some(key_log)) };
+}
+
+/// Makes a server select the name that HTTP/3 has in the version of the connection.
+///
+/// # Safety
+/// `ctx` is not shared yet.
+pub unsafe fn select_http3(ctx: &SSL_CTX) {
+    unsafe extern "C" fn select(
+        ssl: *mut SSL,
+        out: *mut *const u8,
+        out_len: *mut u8,
+        offered: *const u8,
+        offered_len: c_uint,
+        _: *mut c_void,
+    ) -> c_int {
+        let ours = Call::with(SSL::opaque_ref(ssl), |call| {
+            Some(call.handshake.version().http3_alpn())
+        });
+        let ours = ours.unwrap_or_default();
+        // SAFETY: the pointers are those of BoringSSL, and `ours` is static.
+        let result = unsafe {
+            let len = ours.len() as c_uint;
+            ssl::SSL_select_next_proto(
+                out.cast(),
+                out_len,
+                ours.as_ptr(),
+                len,
+                offered,
+                offered_len,
+            )
+        };
+        match result {
+            ssl::OPENSSL_NPN_NEGOTIATED => ssl::SSL_TLSEXT_ERR_OK,
+            _ => ssl::SSL_TLSEXT_ERR_ALERT_FATAL,
+        }
+    }
+    // SAFETY: the caller's.
+    unsafe { ssl::SSL_CTX_set_alpn_select_cb(ctx.as_mut_ptr(), Some(select), null_mut()) };
+}

@@ -1,0 +1,136 @@
+use core::ops::Range;
+use std::collections::VecDeque;
+
+use crate::coding::{Write, varint_len};
+use crate::frame::{Ack, kind};
+use crate::range_set::RangeSet;
+use crate::time::Instant;
+
+/// All but the first are counted in one byte.
+const MAX_RANGES: usize = 64;
+const MAX_TRACKED_ACKS: usize = 16;
+pub(crate) const ACK_DELAY_EXPONENT: u64 = 3;
+
+struct SentAck {
+    packet: u64,
+    at: Instant,
+    largest: u64,
+}
+
+/// Of an ack-eliciting packet among the others (RFC 9000 §13.2.1).
+#[derive(PartialEq, Eq)]
+pub(super) enum Order {
+    Expected,
+    AfterGap,
+    Late,
+}
+
+/// The packet numbers that have to be acknowledged (RFC 9000 §13.2).
+#[derive(Default)]
+pub(super) struct Received {
+    ranges: RangeSet,
+    /// What is below counts as a duplicate.
+    floor: u64,
+    /// Follows the largest packet number.
+    pub(super) expected: u64,
+    largest_at: Instant,
+    /// Follows the largest number of an ack-eliciting packet.
+    expected_eliciting: u64,
+    /// Since the last ACK frame.
+    pub(super) unacked_eliciting: u64,
+    pub(super) is_ack_due: bool,
+    sent_acks: VecDeque<SentAck>,
+}
+
+impl Received {
+    #[inline]
+    pub(super) fn is_duplicate(&self, number: u64) -> bool {
+        number < self.expected && (number < self.floor || self.ranges.contains(number))
+    }
+
+    #[inline]
+    pub(super) fn insert(&mut self, now: Instant, number: u64, is_eliciting: bool) -> Order {
+        self.ranges.insert(number..number + 1);
+        if self.ranges.len() > MAX_RANGES {
+            self.floor = self.ranges.pop_first().map_or(self.floor, |it| it.end);
+        }
+        if number >= self.expected {
+            self.expected = number + 1;
+            self.largest_at = now;
+        }
+        if !is_eliciting {
+            return Order::Expected;
+        }
+        self.unacked_eliciting += 1;
+        let expected = self.expected_eliciting.max(self.floor);
+        self.expected_eliciting = expected.max(number + 1);
+        if number < expected {
+            Order::Late
+        } else if self.ranges.last().is_some_and(|top| top.start > expected) {
+            Order::AfterGap
+        } else {
+            Order::Expected
+        }
+    }
+
+    /// Writes as many ranges as end before `out` has the length `end`.
+    pub(super) fn write_ack(&mut self, now: Instant, packet: u64, out: &mut Vec<u8>, end: usize) {
+        let mut ranges = self.ranges.iter().rev();
+        let Some(Range { start, end: top }) = ranges.next() else {
+            self.is_ack_due = false;
+            return;
+        };
+        let (largest, first_range) = (top - 1, top - 1 - start);
+        let delay = (now - self.largest_at).as_micros() >> ACK_DELAY_EXPONENT;
+        if out.len() + 2 + varint_len(largest) + varint_len(delay) + varint_len(first_range) > end {
+            return;
+        }
+        out.push(kind::ACK as u8);
+        out.varint(largest);
+        out.varint(delay);
+        let count_at = out.len();
+        out.push(0);
+        out.varint(first_range);
+        let (mut count, mut above) = (0, start);
+        for range in ranges {
+            let (gap, len) = (above - range.end - 1, range.end - range.start - 1);
+            if out.len() + varint_len(gap) + varint_len(len) > end {
+                break;
+            }
+            out.varint(gap);
+            out.varint(len);
+            (count, above) = (count + 1, range.start);
+        }
+        if let Some(byte) = out.get_mut(count_at) {
+            *byte = count;
+        }
+        self.unacked_eliciting = 0;
+        self.is_ack_due = false;
+        if self.sent_acks.len() < MAX_TRACKED_ACKS {
+            self.sent_acks.push_back(SentAck {
+                packet,
+                at: now,
+                largest,
+            });
+        }
+    }
+
+    pub(super) fn forget_sent_acks(&mut self) {
+        self.sent_acks.clear();
+    }
+
+    /// Forgets what the peer knows to be acknowledged (RFC 9000 §13.2.4). Returns when the largest packet that `ack`
+    /// names was sent, if it had an ACK frame.
+    #[inline]
+    pub(super) fn on_ack(&mut self, ack: &Ack) -> Option<Instant> {
+        let mut largest_sent_at = None;
+        while let Some(sent) = self.sent_acks.pop_front_if(|it| it.packet <= ack.largest) {
+            if sent.packet >= ack.first_range().start {
+                self.floor = self.floor.max(sent.largest + 1);
+                self.ranges.remove_below(self.floor);
+            }
+            largest_sent_at = (sent.packet == ack.largest).then_some(sent.at);
+        }
+        largest_sent_at
+    }
+}

@@ -1,0 +1,232 @@
+use super::stream::UNKNOWN_SIZE;
+use super::{Flags, State, Stream};
+use crate::coding::MAX_VARINT;
+use crate::connection::sent::Control;
+use crate::error::{Error, Result, transport_code};
+use crate::event::StreamEvent;
+use crate::stream_id::StreamId;
+
+const MAX_READY_HINT: usize = 256 * 1024;
+
+impl Stream {
+    #[inline]
+    pub(crate) fn is_read_to_end(&self) -> bool {
+        self.read == self.final_size
+    }
+
+    /// For bytes at `offset` that cannot be used yet.
+    pub(crate) fn keep(&mut self, offset: u64, data: &[u8]) -> Result {
+        self.early.insert(offset, data).map_err(|_| {
+            Error::transport(transport_code::INTERNAL_ERROR, "too many gaps in a stream")
+        })
+    }
+
+    /// Takes bytes that were kept, and returns how many of them have been read.
+    #[inline]
+    pub(crate) fn take_kept(&mut self) -> Option<(usize, Vec<u8>)> {
+        let (offset, chunk) = self.early.pop(self.read)?;
+        Some(((self.read - offset) as usize, chunk))
+    }
+
+    #[inline]
+    pub(crate) fn has_kept(&self) -> bool {
+        !self.early.is_empty()
+    }
+
+    pub(crate) fn has_received(&self) -> bool {
+        self.received > 0 || self.flags.contains(Flags::READ_DONE)
+    }
+
+    #[inline]
+    pub(crate) fn read_offset(&self) -> u64 {
+        self.read
+    }
+
+    #[inline]
+    pub(crate) fn advance(&mut self, len: usize) {
+        self.read += len as u64;
+    }
+
+    /// The role, and where bytes for the application go.
+    #[inline]
+    pub(crate) fn reader(&mut self, len: usize) -> (&mut super::Role, Ready<'_>) {
+        let ready = Ready {
+            bytes: &mut self.ready,
+            hint: self.ready_hint.max(len),
+        };
+        (&mut self.role, ready)
+    }
+
+    #[inline]
+    pub(crate) fn has_ready(&self) -> bool {
+        !self.ready.is_empty()
+    }
+
+    #[inline]
+    pub(crate) fn take_ready(&mut self) -> Vec<u8> {
+        self.ready_hint = self.ready.len().min(MAX_READY_HINT);
+        core::mem::take(&mut self.ready)
+    }
+}
+
+pub(crate) struct Ready<'a> {
+    bytes: &'a mut Vec<u8>,
+    hint: usize,
+}
+
+impl Ready<'_> {
+    #[inline]
+    pub(crate) fn push(&mut self, data: &[u8]) {
+        if self.bytes.capacity() == 0 && !data.is_empty() {
+            self.bytes.reserve_exact(self.hint);
+        }
+        self.bytes.extend_from_slice(data);
+    }
+
+    #[inline]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+}
+
+impl State {
+    /// RFC 9000 §4.1 and §4.5.
+    #[inline]
+    fn account(&mut self, stream: &mut Stream, end: u64, is_final: bool) -> Result {
+        if end > stream.final_size || is_final && end < stream.received {
+            return Err(Error::transport(
+                transport_code::FINAL_SIZE_ERROR,
+                "final size of a stream changed",
+            ));
+        }
+        if end > stream.received {
+            self.received += end - stream.received;
+            stream.received = end;
+            if end > stream.receive_limit || self.received > self.receive_limit {
+                return Err(Error::transport(
+                    transport_code::FLOW_CONTROL_ERROR,
+                    "flow control violation",
+                ));
+            }
+        }
+        if is_final {
+            stream.final_size = end;
+        }
+        Ok(())
+    }
+
+    /// Returns what can be read now, which may be just the end.
+    #[inline]
+    pub(crate) fn on_stream<'a>(
+        &mut self,
+        id: StreamId,
+        stream: &mut Stream,
+        offset: u64,
+        data: &'a [u8],
+        fin: bool,
+    ) -> Result<Option<&'a [u8]>> {
+        self.account(stream, offset + data.len() as u64, fin)?;
+        if stream.flags.contains(Flags::READ_DONE) {
+            self.credit(id, stream);
+            return Ok(None);
+        }
+        let Some(known) = stream.read.checked_sub(offset) else {
+            return stream.keep(offset, data).map(|()| None);
+        };
+        let new = data.get(known as usize..);
+        Ok(new.filter(|new| fin || !new.is_empty()))
+    }
+
+    pub(crate) fn on_reset_stream(
+        &mut self,
+        id: StreamId,
+        stream: &mut Stream,
+        code: u64,
+        final_size: u64,
+    ) -> Result {
+        self.account(stream, final_size, true)?;
+        if !stream.flags.contains(Flags::READ_DONE) {
+            self.notify(id, stream, StreamEvent::Reset(code));
+        }
+        self.finish_reading(id, stream);
+        Ok(())
+    }
+
+    /// Asks the peer to stop sending, unless it has.
+    pub(crate) fn stop(&mut self, id: StreamId, stream: &mut Stream, code: u64) {
+        if !stream.flags.contains(Flags::READ_DONE) && stream.final_size == UNKNOWN_SIZE {
+            stream.stop_code = code.min(MAX_VARINT);
+            self.owe(id, stream, Flags::OWES_STOP_SENDING);
+        }
+        self.finish_reading(id, stream);
+    }
+
+    #[inline]
+    pub(crate) fn finish_reading(&mut self, id: StreamId, stream: &mut Stream) {
+        if stream.mark(Flags::READ_DONE) {
+            stream.early = Default::default();
+            stream.ready = Vec::new();
+        }
+        self.credit(id, stream);
+        self.close_if_done(id, stream);
+    }
+
+    /// Lets the peer send as much as has been consumed (RFC 9000 §4.2).
+    #[inline]
+    pub(crate) fn credit(&mut self, id: StreamId, stream: &mut Stream) {
+        let is_discarding = stream.flags.contains(Flags::READ_DONE);
+        let consumed = match is_discarding {
+            true => stream.received,
+            false => stream.read - stream.ready.len() as u64,
+        };
+        self.consumed += consumed - stream.consumed;
+        stream.consumed = consumed;
+        if !is_discarding
+            && stream.final_size == UNKNOWN_SIZE
+            && raise(&mut stream.receive_limit, consumed, stream.receive_window)
+        {
+            self.owe(id, stream, Flags::OWES_MAX_STREAM_DATA);
+        }
+        if raise(&mut self.receive_limit, self.consumed, self.receive_window) {
+            self.owed |= Control::MAX_DATA;
+        }
+    }
+
+    /// The value for MAX_DATA.
+    pub(crate) fn receive_limit(&self) -> u64 {
+        self.receive_limit
+    }
+
+    #[inline]
+    pub(crate) fn mark_readable(&mut self, id: StreamId, stream: &mut Stream) {
+        if !stream.flags.contains(Flags::PAUSED) && stream.mark(Flags::IN_READABLE) {
+            self.readable.push_back(id);
+        }
+    }
+
+    #[inline]
+    pub(crate) fn first_readable(&self) -> Option<StreamId> {
+        self.readable.front().copied()
+    }
+
+    #[inline]
+    pub(crate) fn pop_readable(&mut self, stream: Option<&mut Stream>) {
+        self.readable.pop_front();
+        stream.map(|stream| stream.take(Flags::IN_READABLE));
+    }
+
+    pub(crate) fn forget_events(&mut self) {
+        self.events.clear();
+        self.readable.clear();
+    }
+}
+
+/// When less than half of the window is left.
+#[inline]
+fn raise(limit: &mut u64, consumed: u64, window: u64) -> bool {
+    let is_due = 2 * (*limit - consumed) < window && *limit < MAX_VARINT;
+    if is_due {
+        *limit = (consumed + window).min(MAX_VARINT);
+    }
+    is_due
+}

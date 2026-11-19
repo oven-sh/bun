@@ -1,0 +1,124 @@
+use core::ops::Range;
+use std::collections::VecDeque;
+
+/// Ranges that neither overlap nor touch, in ascending order.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct RangeSet(VecDeque<Range<u64>>);
+
+impl RangeSet {
+    #[inline]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The number of ranges.
+    #[inline]
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    #[inline]
+    pub(crate) fn first(&self) -> Option<Range<u64>> {
+        self.0.front().cloned()
+    }
+
+    #[inline]
+    pub(crate) fn last(&self) -> Option<Range<u64>> {
+        self.0.back().cloned()
+    }
+
+    #[inline]
+    pub(crate) fn pop_first(&mut self) -> Option<Range<u64>> {
+        self.0.pop_front()
+    }
+
+    pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item = Range<u64>> + '_ {
+        self.0.iter().cloned()
+    }
+
+    pub(crate) fn contains(&self, value: u64) -> bool {
+        let at = self.0.partition_point(|range| range.end <= value);
+        self.0.get(at).is_some_and(|range| range.start <= value)
+    }
+
+    #[inline]
+    pub(crate) fn insert(&mut self, new: Range<u64>) {
+        if new.is_empty() {
+            return;
+        }
+        match self.0.back_mut() {
+            Some(last) if last.end == new.start => last.end = new.end,
+            Some(last) if last.end > new.start => self.merge(new),
+            _ => self.0.push_back(new),
+        }
+    }
+
+    fn merge(&mut self, new: Range<u64>) {
+        let first = self.0.partition_point(|range| range.end < new.start);
+        let after = self.0.partition_point(|range| range.start <= new.end);
+        if first == after {
+            return self.0.insert(first, new);
+        }
+        let end = (self.0.drain(first + 1..after).next_back()).map_or(new.end, |last| last.end);
+        if let Some(range) = self.0.get_mut(first) {
+            *range = range.start.min(new.start)..range.end.max(new.end).max(end);
+        }
+    }
+
+    pub(crate) fn remove(&mut self, gone: Range<u64>) {
+        if gone.is_empty() {
+            return;
+        }
+        let mut first = self.0.partition_point(|range| range.end <= gone.start);
+        let mut after = self.0.partition_point(|range| range.start < gone.end);
+        if let Some(range) = self.0.get_mut(first)
+            && range.start < gone.start
+        {
+            let end = core::mem::replace(&mut range.end, gone.start);
+            first += 1;
+            if end > gone.end {
+                return self.0.insert(first, gone.end..end);
+            }
+        }
+        if first < after
+            && let Some(range) = self.0.get_mut(after - 1)
+            && range.end > gone.end
+        {
+            range.start = gone.end;
+            after -= 1;
+        }
+        if first < after {
+            self.0.drain(first..after);
+        }
+    }
+
+    /// Removes what is less than `end`.
+    #[inline]
+    pub(crate) fn remove_below(&mut self, end: u64) {
+        while let Some(first) = self.0.front_mut()
+            && first.start < end
+        {
+            if first.end > end {
+                first.start = end;
+                return;
+            }
+            self.0.pop_front();
+        }
+    }
+
+    /// The parts of `within` that are not in the set.
+    pub(crate) fn gaps(&self, within: Range<u64>) -> impl Iterator<Item = Range<u64>> + '_ {
+        let first = self.0.partition_point(|range| range.end <= within.start);
+        let end = within.end;
+        (self
+            .0
+            .range(first..)
+            .take_while(move |range| range.start < end))
+        .cloned()
+        .chain(core::iter::once(end..end))
+        .scan(within.start, |at, range| {
+            Some(core::mem::replace(at, range.end)..range.start)
+        })
+        .filter(|gap| !gap.is_empty())
+    }
+}

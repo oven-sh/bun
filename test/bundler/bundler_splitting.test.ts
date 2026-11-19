@@ -5078,6 +5078,8 @@ describe("bundler", () => {
     [762, false, ""],
     [993, false, ""],
     [496, true, "f5 runs after f1 once folded"],
+    // Three chunks hold a copy of the class names of a CSS module, and two of them fold into one.
+    [276, true, ""],
   ] as const) {
     test.todoIf(!!todo).concurrent(`splitting/FoldingNeverMakesABundleWorse: graph ${seed}`, async () => {
       expect(await checkGraph(bunExe(), seed)).toEqual({ seed, status: "ok", folded, problems: [] });

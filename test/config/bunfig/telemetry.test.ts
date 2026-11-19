@@ -205,7 +205,7 @@ describe.concurrent.skipIf(!uploadsReports)("the crash handler", () => {
       stderr: "pipe",
     });
     const stderr = proc.stderr.text();
-    for (const deadline = Date.now() + 30_000; !existsSync(waiting) && Date.now() < deadline; ) await Bun.sleep(5);
+    for (const deadline = Date.now() + 30_000; !existsSync(waiting) && Date.now() < deadline;) await Bun.sleep(5);
     const script = Number(readFileSync(waiting, "utf8"));
     // Zero and what is below it name more than one process.
     expect(script).toBeGreaterThan(0);

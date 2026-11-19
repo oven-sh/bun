@@ -324,18 +324,18 @@ The plist uses `StartCalendarInterval` to define the schedule. Complex patterns 
 launchctl list | grep bun.cron
 ```
 
-**Logs:** stdout and stderr are written to:
+**Logs:** stdout and stderr are written to your temporary directory:
 
 ```
-/tmp/bun.cron.<title>.stdout.log
-/tmp/bun.cron.<title>.stderr.log
+$(getconf DARWIN_USER_TEMP_DIR)bun.cron.<title>.stdout.log
+$(getconf DARWIN_USER_TEMP_DIR)bun.cron.<title>.stderr.log
 ```
 
 For example, a job titled `weekly-report`:
 
 ```sh
-cat /tmp/bun.cron.weekly-report.stdout.log
-tail -f /tmp/bun.cron.weekly-report.stderr.log
+cat $(getconf DARWIN_USER_TEMP_DIR)bun.cron.weekly-report.stdout.log
+tail -f $(getconf DARWIN_USER_TEMP_DIR)bun.cron.weekly-report.stderr.log
 ```
 
 **Manually uninstalling without code:**

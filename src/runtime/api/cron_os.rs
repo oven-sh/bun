@@ -50,9 +50,9 @@ pub(crate) fn register(
         return Err(global.throw(format_args!("Failed to get bun executable path")));
     };
     let exe = exe.as_bytes();
-    if strings::contains_any(exe, b"'%") {
+    if strings::contains_any(exe, b"'%\n\r") {
         return Err(global.throw_invalid_arguments(format_args!(
-            "Bun executable path '{}' contains characters (' or %) that cannot be safely embedded in a crontab entry",
+            "Bun executable path '{}' contains characters (', % or a line break) that cannot be safely embedded in a crontab entry",
             BStr::new(exe)
         )));
     }
@@ -490,10 +490,13 @@ mod backend {
         let dir = format!("{}/Library/LaunchAgents", BStr::new(home));
         (Fd::cwd().make_path(dir.as_bytes()))
             .map_err(|_| "Failed to create ~/Library/LaunchAgents directory")?;
+        let mut logs = bun_paths::path_buffer_pool::get();
+        let logs = sys::darwin_user_temp_dir(&mut logs)
+            .ok_or("Failed to find a private temporary directory for the logs")?;
         let plist = write_file(
             plist_path(home, &job.title).as_bytes(),
             (sys::O::TRUNC, 0o644),
-            bun_cron::launchd::plist(job).as_bytes(),
+            bun_cron::launchd::plist(job, logs).as_bytes(),
             ["Failed to create plist file", "Failed to write plist"],
         )?;
         Ok(bootout(&job.title, Step::BootoutOld(plist)))

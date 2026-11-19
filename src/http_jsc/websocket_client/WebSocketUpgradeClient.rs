@@ -611,7 +611,7 @@ where
     /// `handle_close` from the socket userdata pointer, and the trailing
     /// `deref` may free `this`.
     pub(crate) fn cancel(this: ThisPtr<Self>) {
-        this.fail_span(ErrorCode::Cancel);
+        this.span.take().end();
         this.clear_data();
 
         // Either of the below two operations - closing the TCP socket or clearing the C++ reference could trigger a deref

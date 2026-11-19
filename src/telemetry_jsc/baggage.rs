@@ -15,16 +15,40 @@ struct Entry {
 #[derive(Default)]
 pub(crate) struct Baggage(Vec<Entry>);
 
-fn append_member(header: &mut Vec<u8>, key: &[u8], value: &[u8], metadata: Option<&[u8]>) {
-    if !header.is_empty() {
-        header.push(b',');
-    }
-    strings::percent_encode_uri_component(key, header);
-    header.push(b'=');
-    strings::percent_encode_uri_component(value, header);
-    if let Some(metadata) = metadata {
-        header.push(b';');
-        header.extend_from_slice(metadata);
+// https://www.w3.org/TR/baggage/#limits, as @opentelemetry/core has them.
+const MAX_MEMBERS: usize = 180;
+const MAX_MEMBER_LEN: usize = 4096;
+const MAX_HEADER_LEN: usize = 8192;
+
+#[derive(Default)]
+struct Header {
+    text: Vec<u8>,
+    members: usize,
+}
+
+impl Header {
+    /// A member that does not fit is left out.
+    fn append(&mut self, key: &[u8], value: &[u8], metadata: Option<&[u8]>) {
+        let before = self.text.len();
+        if before != 0 {
+            self.text.push(b',');
+        }
+        let start = self.text.len();
+        strings::percent_encode_uri_component(key, &mut self.text);
+        self.text.push(b'=');
+        strings::percent_encode_uri_component(value, &mut self.text);
+        if let Some(metadata) = metadata {
+            self.text.push(b';');
+            self.text.extend_from_slice(metadata);
+        }
+        if self.members < MAX_MEMBERS
+            && self.text.len() - start <= MAX_MEMBER_LEN
+            && self.text.len() <= MAX_HEADER_LEN
+        {
+            self.members += 1;
+        } else {
+            self.text.truncate(before);
+        }
     }
 }
 
@@ -36,7 +60,7 @@ impl Baggage {
         }
         let trim = |s| strings::trim(s, b" \t");
         let mut baggage = Baggage::default();
-        for member in strings::split(header, b",") {
+        for member in strings::split(header, b",").take(MAX_MEMBERS) {
             let (pair, metadata) = match strings::split_once_char(member, b';') {
                 Some((pair, metadata)) => (pair, Some(trim(metadata).into())),
                 None => (member, None),
@@ -56,10 +80,10 @@ impl Baggage {
 
     /// The header of any api `Baggage`. Runs the `getAllEntries()` of one that is not ours.
     pub(crate) fn header_of(global: &JSGlobalObject, baggage: JSValue) -> JsResult<Vec<u8>> {
-        let mut header = Vec::new();
+        let mut header = Header::default();
         if let Some(own) = baggage.as_class_ref::<Baggage>() {
             for e in &own.0 {
-                append_member(&mut header, &e.key, &e.value, e.metadata.as_deref());
+                header.append(&e.key, &e.value, e.metadata.as_deref());
             }
         } else if baggage.is_object()
             && let Some(get_all_entries) = baggage.get(global, "getAllEntries")?
@@ -69,11 +93,11 @@ impl Baggage {
             entries.try_for_each(global, |pair| {
                 let key = pair.get_index(global, 0)?.to_utf8(global)?;
                 let entry = BaggageEntryInit::from_js(global, pair.get_index(global, 1)?)?;
-                append_member(&mut header, &key, &entry.value, entry.metadata.as_deref());
+                header.append(&key, &entry.value, entry.metadata.as_deref());
                 Ok(())
             })?;
         }
-        Ok(header)
+        Ok(header.text)
     }
 
     fn insert(&mut self, entry: Entry) {

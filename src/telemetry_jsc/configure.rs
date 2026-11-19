@@ -30,8 +30,8 @@ unsafe extern "Rust" {
     safe fn __bun_os_hostname_and_release() -> (BunString, BunString);
 }
 
-/// Of the threads that start at once, one adds the exporters.
-static CONFIGURE_LOCK: bun_threading::Guarded<()> = bun_threading::Guarded::new(());
+/// Whether the exporters of the environment are in place. Of the threads that start at once, one adds them.
+static IS_SET_UP: bun_threading::Guarded<bool> = bun_threading::Guarded::new(false);
 
 fn lossy(bytes: &[u8]) -> String {
     bstr::ByteSlice::to_str_lossy(bytes).into_owned()
@@ -58,8 +58,8 @@ pub fn before_entry_point() {
 #[optimize(size)]
 fn configure_from_environment(vm: &'static VirtualMachine) {
     let global = vm.global();
-    let configuring = CONFIGURE_LOCK.lock();
-    if !bun_telemetry::configured() {
+    let mut is_set_up = IS_SET_UP.lock();
+    if !*is_set_up {
         let loader = vm.env_loader();
         let env = config::from_env(&|name| loader.get(name.as_bytes()).map(<[u8]>::to_vec));
         if env.activation != Activation::On {
@@ -72,17 +72,29 @@ fn configure_from_environment(vm: &'static VirtualMachine) {
             return;
         };
         match exporter::build(vm, &env.config.exporters) {
-            Ok(exporters) => apply(state, &env.config, exporters, Exporters::Add),
+            Ok(exporters) => {
+                apply(state, &env.config, exporters, Exporters::Add);
+                *is_set_up = true;
+            }
             Err(invalid) => warn(format_args!("{invalid}")),
         }
     }
-    drop(configuring);
+    drop(is_set_up);
     if bun_telemetry::any_enabled()
         && let Some(state) = VmState::get(global)
         && let Err(thrown) = state.register_with_api()
     {
         let _ = bun_jsc::task::report_error_or_terminate(global, thrown);
     }
+}
+
+/// `bun test --isolate`: the next file starts from the environment.
+pub(crate) fn undo_start(state: &VmState) {
+    let mut is_set_up = IS_SET_UP.lock();
+    bun_telemetry::shut_down();
+    processor::global().export_all();
+    processor::global().install_exporters(Some(state.owner_key()), Vec::new());
+    *is_set_up = false;
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -179,8 +191,8 @@ pub(crate) fn start<'a>(cx: &mut JsScope<'a>, options: Option<&StartOptions<'a>>
         }
     }
 
-    let configuring = CONFIGURE_LOCK.lock();
-    let is_first = !bun_telemetry::configured();
+    let mut is_set_up = IS_SET_UP.lock();
+    let is_first = !*is_set_up;
     if is_first {
         for warning in &env.warnings {
             warn(format_args!("{warning}"));
@@ -192,7 +204,7 @@ pub(crate) fn start<'a>(cx: &mut JsScope<'a>, options: Option<&StartOptions<'a>>
     let mut exporters = match exporter::build(global.bun_vm(), &config.exporters) {
         Ok(exporters) => exporters,
         Err(invalid) => {
-            drop(configuring);
+            drop(is_set_up);
             return Err(global.throw_invalid_arguments(format_args!("{invalid}")));
         }
     };
@@ -204,9 +216,10 @@ pub(crate) fn start<'a>(cx: &mut JsScope<'a>, options: Option<&StartOptions<'a>>
         JsExporter::retire_all(state);
     }
     exporters.extend((functions.iter()).map(|f| Arc::clone(&f.shared) as Arc<dyn Exporter>));
-    state.add_js_exporters(functions);
+    state.did_call_start(functions);
     apply(state, &config, exporters, how);
-    drop(configuring);
+    *is_set_up = true;
+    drop(is_set_up);
     state.register_with_api()
 }
 
@@ -224,7 +237,7 @@ fn read_options(
                 Value::Int(i) => ResourceValue::Int(i),
                 Value::Double(d) => ResourceValue::Double(d),
                 Value::Bool(b) => ResourceValue::Bool(b),
-                Value::Array(_) => return,
+                Value::Array(_) | Value::Empty => return,
             };
             if key == b"service.name" {
                 config.service_name = Some(value.to_string());
@@ -477,38 +490,51 @@ fn read_instrumentations(
     })
 }
 
+fn version_in(global: &JSGlobalObject, package_json: &[u8]) -> JsResult<Option<BunString>> {
+    let Ok(text) = bun_sys::File::read_from(bun_sys::Fd::cwd(), package_json) else {
+        return Ok(None);
+    };
+    let version = (BunString::clone_utf8(&text).to_js_by_parse_json(global))
+        .and_then(|package| match package.is_object() {
+            true => package.get_own(global, &BunString::static_("version")),
+            false => Ok(None),
+        })
+        .and_then(|version| {
+            let version = version.filter(|version| version.is_string_literal());
+            version
+                .map(|version| version.to_bun_string(global))
+                .transpose()
+        });
+    match version {
+        Err(_) if global.clear_exception_except_termination() => Ok(None),
+        version => version,
+    }
+}
+
 /// `registerGlobal()` of @opentelemetry/api refuses a registry of any version but its own. `getGlobal()` takes one
-/// whose minor version is not older. Beside an executable there is no package: the latest release is the guess.
+/// whose minor version is not older. `package` is the folder of the copy that asks, or empty.
 #[unsafe(no_mangle)]
 #[optimize(size)]
-extern "C" fn Bun__Telemetry__installedApiVersion(global: &JSGlobalObject) -> BunString {
+extern "C" fn Bun__Telemetry__installedApiVersion(
+    global: &JSGlobalObject,
+    package: &BunString,
+) -> BunString {
     use bun_paths::resolve_path::{join, platform};
     let vm = global.bun_vm();
+    let package = package.to_utf8();
     let main_dir = vm.main().and_then(bun_paths::dirname);
     // Not through the resolver, which may install the package.
-    for start in main_dir.into_iter().chain([vm.top_level_dir()]) {
-        for dir in core::iter::successors(Some(start), |dir| bun_paths::dirname(dir)) {
-            let path =
-                join::<platform::Auto>(&[dir, b"node_modules/@opentelemetry/api/package.json"]);
-            let Ok(text) = bun_sys::File::read_from(bun_sys::Fd::cwd(), path) else {
-                continue;
-            };
-            let version = (BunString::clone_utf8(&text).to_js_by_parse_json(global))
-                .and_then(|package| match package.is_object() {
-                    true => package.get_own(global, &BunString::static_("version")),
-                    false => Ok(None),
-                })
-                .and_then(|version| match version {
-                    Some(version) if version.is_string_literal() => version.to_bun_string(global),
-                    _ => Ok(BunString::EMPTY),
-                });
-            match version {
-                Ok(version) if !version.is_empty() => return version,
-                Ok(_) => {}
-                Err(_) if global.clear_exception_except_termination() => {}
-                Err(_terminated) => return BunString::EMPTY,
-            }
+    let above = (main_dir.into_iter().chain([vm.top_level_dir()]))
+        .flat_map(|start| core::iter::successors(Some(start), |dir| bun_paths::dirname(dir)))
+        .map(|dir| [dir, b"node_modules/@opentelemetry/api/package.json"]);
+    let asking = (!package.is_empty()).then_some([&*package, b"package.json"]);
+    for path in asking.into_iter().chain(above) {
+        match version_in(global, join::<platform::Auto>(&path)) {
+            Ok(Some(version)) => return version,
+            Ok(None) => {}
+            Err(_terminated) => return BunString::EMPTY,
         }
     }
+    // A bundle or an executable. The latest release is the guess.
     BunString::static_("1.10.0")
 }

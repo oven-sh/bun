@@ -3565,15 +3565,16 @@ impl AnyServer {
         AnsweredRequest::begin(self.global_this(), req, resp, https, || {
             let url = req.url();
             let path = bun_core::strings::split(url, b"?").next().unwrap_or(url);
-            let patterns = || {
-                (self.config().static_routes.iter())
-                    .filter(|entry| entry.route.answers_with(route))
-                    .map(|entry| &*entry.path)
-            };
+            let mut patterns = (self.config().static_routes.iter())
+                .filter(|entry| entry.route.answers_with(route))
+                .map(|entry| &*entry.path);
+            let first = patterns.next().unwrap_or_default();
             // One HTML bundle can be the route of several paths.
-            (patterns().find(|pattern| *pattern == path))
-                .or_else(|| patterns().next())
-                .unwrap_or_default()
+            if first != path && patterns.any(|other| other == path) {
+                path
+            } else {
+                first
+            }
         })
     }
 

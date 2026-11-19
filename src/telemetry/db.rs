@@ -239,6 +239,9 @@ pub fn describe_redis_command(record: &mut Record, name: &[u8], first: &[u8], ha
     let mut text = Vec::new();
     if !matches!(&*name, b"AUTH" | b"HELLO" | b"MIGRATE" | b"ACL" | b"CONFIG") {
         text.extend_from_slice(&name);
+        if matches!(&*name, b"ECHO" | b"PING") {
+            return describe_statement(record, Some(&name), &text);
+        }
         if !first.is_empty() {
             text.push(b' ');
             text.extend_from_slice(crate::otlp::truncate_utf8(first, 256));
@@ -250,7 +253,18 @@ pub fn describe_redis_command(record: &mut Record, name: &[u8], first: &[u8], ha
     describe_statement(record, Some(&name), &text);
 }
 
-impl DbError<'_> {
+impl<'a> DbError<'a> {
+    pub fn of_redis(reply: &'a [u8]) -> DbError<'a> {
+        use bun_core::strings;
+        // The reply to an unknown command quotes its arguments.
+        let end = strings::index_of(reply, b", with args beginning with").unwrap_or(reply.len());
+        DbError {
+            ty: strings::split(reply, b" ").next().unwrap_or_default(),
+            message: &reply[..end],
+            from_server: true,
+        }
+    }
+
     pub fn record(&self, record: &mut Record) {
         if self.from_server {
             record.attr_opt("db.response.status_code", self.ty);

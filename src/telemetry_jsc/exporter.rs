@@ -168,6 +168,12 @@ impl OtlpHttpExporter {
         if config.compression == Compression::Gzip {
             headers.push((b"content-encoding", b"gzip"));
         }
+        let credentials = bun_http::async_http::basic_authorization(&url);
+        if let Some(credentials) = &credentials
+            && !(config.headers.iter()).any(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+        {
+            headers.push((b"authorization", credentials));
+        }
         for (name, value) in &config.headers {
             let pair = (name.as_bytes(), value.as_bytes());
             if [pair.0, pair.1]
@@ -181,7 +187,10 @@ impl OtlpHttpExporter {
         Ok(OtlpHttpExporter {
             headers: bun_core::handle_oom(HeaderBuilder::from_pairs(&headers)),
             compression: config.compression,
-            timeout: Duration::from_millis(config.timeout_ms.into()),
+            timeout: Duration::from_millis(match config.timeout_ms {
+                0 => u32::MAX.into(),
+                ms => ms.into(),
+            }),
             has_warned: AtomicBool::new(false),
             in_flight: Guarded::new(Vec::new()),
             proxy: (vm.env_loader().get_http_proxy_for(&url))
@@ -517,13 +526,6 @@ impl JsExporter {
         state.js_exporters.borrow_mut().retain(|e| {
             !e.shared.is_retired.load(Ordering::Relaxed) || !e.shared.attempts.lock().is_empty()
         });
-    }
-
-    /// The processor does not list them any more.
-    pub(crate) fn finish_retired_for_exit(state: &VmState) {
-        (Self::all_of(state).iter())
-            .filter(|exporter| exporter.is_retired.load(Ordering::Relaxed))
-            .for_each(|exporter| exporter.finish_for_exit());
     }
 
     pub(crate) fn detach_all(state: &VmState) {

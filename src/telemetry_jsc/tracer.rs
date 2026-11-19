@@ -2,7 +2,7 @@ use bun_jsc::bindgen::{JsLocal, JsPayload, JsScope};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, bun_string_jsc};
 use bun_telemetry::{Carried, Instrument, ScopeId, SpanData, SpanKind, SpanStub, clock, processor};
 
-use crate::context::{self, Binding, Context, native_span_for};
+use crate::context::{self, Binding, Bound, Context, native_span_for};
 use crate::engine::Entered;
 use crate::generated_bindgen::telemetry::{SpanKindInput, SpanOptions, js_Tracer as js};
 use crate::span::Span;
@@ -81,21 +81,21 @@ impl Tracer {
         } else {
             processor::global().register_scope(name, &version)
         };
-        let name = bun_string_jsc::create_utf8_for_js(global, name)?;
-        let version = match version.is_empty() {
-            true => JSValue::UNDEFINED,
-            false => bun_string_jsc::create_utf8_for_js(global, &version)?,
-        };
         let create = || {
+            let name = bun_string_jsc::create_utf8_for_js(global, name)?;
+            let version = match version.is_empty() {
+                true => JSValue::UNDEFINED,
+                false => bun_string_jsc::create_utf8_for_js(global, &version)?,
+            };
             let tracer = Tracer(scope).into_js_wrapper(global).to_js();
             js::name_set_cached(tracer, global, name);
             js::version_set_cached(tracer, global, version);
-            tracer
+            Ok(tracer)
         };
-        Ok(match VmState::get(global) {
+        match VmState::get(global) {
             Some(state) => state.tracer(global, scope, create),
             None => create(),
-        })
+        }
     }
 
     /// The span, and the binding whose other values stay active beside it.
@@ -139,7 +139,10 @@ impl Tracer {
             let mut starts_under = under;
             if context.is_none() && !options.parent.is_undefined() {
                 match native_span_for(global, options.parent.to_js())? {
-                    Some(parent) => starts_under = Some(Context::bind_span(global, parent, under)),
+                    Some(parent) => {
+                        starts_under =
+                            Some(Context::bind_span(global, parent, under, Bound::ForScope))
+                    }
                     None => how.is_root = true,
                 }
             }
@@ -192,7 +195,10 @@ impl Tracer {
             Span::enter_under(global, span, under);
             return Ok(span);
         }
-        let _entered = Entered::new(global, Context::bind_new_span(global, span, under));
+        let _entered = Entered::new(
+            global,
+            Context::bind_new_span(global, span, under, Bound::ForScope),
+        );
         callback.call_for_running_script(global, NONE, &[span])
     }
 }

@@ -16,8 +16,6 @@ const endsSpan = { args: { value: b.any, span: Span.withValue }, feature: "Telem
 export const onResolve = b.fn({ ...endsSpan, export: "Bun__Telemetry__onResolve" });
 export const onReject = b.fn({ ...endsSpan, export: "Bun__Telemetry__onReject" });
 
-export const onFlushedForShutdown = b.fn({ feature: "Telemetry", export: "Bun__Telemetry__onFlushedForShutdown" });
-
 const settlesExport = { args: { value: b.any, ticket: b.f64 }, feature: "Telemetry" } as const;
 export const onExportResolve = b.fn({ ...settlesExport, export: "Bun__Telemetry__onExportResolve" });
 export const onExportReject = b.fn({ ...settlesExport, capability: "heap", export: "Bun__Telemetry__onExportReject" });

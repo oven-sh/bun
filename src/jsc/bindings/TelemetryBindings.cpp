@@ -8,6 +8,7 @@
 #include "BunClientData.h"
 #include "BunModuleRegistry.h"
 #include "BunProcess.h"
+#include "FormatStackTraceForJS.h"
 #include "GeneratedTelemetry.h"
 #include "JSCommonJSModule.h"
 #include "JSDOMException.h"
@@ -17,6 +18,7 @@
 #include "ZigGlobalObject.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/AsyncContextSwapScope.h>
+#include <JavaScriptCore/DeferGCInlines.h>
 #include <JavaScriptCore/DeferTermination.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/FrameTracers.h>
@@ -27,6 +29,7 @@
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/StackVisitor.h>
 #if ENABLE(AOT)
 #include <JavaScriptCore/AOTHost.h>
 #include <JavaScriptCore/AOTPropertyWalk.h>
@@ -37,7 +40,7 @@ extern "C" JSC::EncodedJSValue Bun__Telemetry__createRootContext(JSC::JSGlobalOb
 extern "C" JSC::EncodedJSValue Bun__Telemetry__createTracerProvider(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue Bun__Telemetry__createContextManager(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue Bun__Telemetry__createPropagator(JSC::JSGlobalObject*);
-extern "C" BunString Bun__Telemetry__installedApiVersion(JSC::JSGlobalObject*);
+extern "C" BunString Bun__Telemetry__installedApiVersion(JSC::JSGlobalObject*, const BunString* package);
 
 namespace Bun::Telemetry {
 
@@ -68,6 +71,20 @@ public:
     {
         JSObject* frame = findBinding(head);
         return frame ? read(frame, FrameStorage) : JSValue();
+    }
+
+    JSValue valueBeside(JSValue head, JSValue binding) const
+    {
+        JSObject* frame = findBinding(head);
+        return frame && read(frame, FrameStorage) == binding ? read(frame, FrameValue) : jsUndefined();
+    }
+
+    // Not in a copy that async_hooks.ts has made, whose fields compiled code takes for its own.
+    void setValueBeside(JSValue head, JSValue binding, JSValue value) const
+    {
+        JSObject* frame = findBinding(head);
+        if (frame && frame->structureID() == m_nativeStructure && read(frame, FrameStorage) == binding)
+            frame->putDirectOffset(m_vm, FrameValue, value);
     }
 
     // What `head` shows of every storage, with `binding` (empty: none) in the place of its own.
@@ -166,6 +183,18 @@ extern "C" void Bun__Telemetry__setActiveBinding(JSGlobalObject* lexicalGlobalOb
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     setCurrentFrame(globalObject, Frames(globalObject).withBinding(currentFrame(globalObject), JSValue::decode(binding)));
+}
+
+extern "C" EncodedJSValue Bun__Telemetry__contextKeptFor(JSGlobalObject* lexicalGlobalObject, EncodedJSValue span)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    return JSValue::encode(Frames(globalObject).valueBeside(currentFrame(globalObject), JSValue::decode(span)));
+}
+
+extern "C" void Bun__Telemetry__keepContextFor(JSGlobalObject* lexicalGlobalObject, EncodedJSValue span, EncodedJSValue context)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    Frames(globalObject).setValueBeside(currentFrame(globalObject), JSValue::decode(span), JSValue::decode(context));
 }
 
 // As the two halves of AsyncLocalStorage.prototype.run().
@@ -316,18 +345,28 @@ static String readString(JSGlobalObject* globalObject, JSObject* object, const I
     RELEASE_AND_RETURN(scope, asString(value)->value(globalObject));
 }
 
-// The first read of an Error's `stack` calls Error.prepareStackTrace.
+// The first read of an Error's `stack` calls Error.prepareStackTrace, fixes the text and drops the frames.
 static String readStackWithoutRunningScript(JSGlobalObject* globalObject, JSObject* object)
 {
     auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* error = dynamicDowncast<ErrorInstance>(object);
     if (!error)
-        return readString(globalObject, object, vm.propertyNames->stack, false);
-    auto* realm = dynamicDowncast<Zig::GlobalObject>(error->globalObject());
-    if (realm && !realm->m_errorConstructorPrepareStackTraceValue)
-        return readString(globalObject, object, vm.propertyNames->stack, false);
-    JSValue stack = error->getDirect(vm, vm.propertyNames->stack);
-    return stack && stack.isString() ? asString(stack)->value(globalObject).data : String();
+        RELEASE_AND_RETURN(scope, readString(globalObject, object, vm.propertyNames->stack, false));
+    if (JSValue stack = error->getDirect(vm, vm.propertyNames->stack))
+        RELEASE_AND_RETURN(scope, stack.isString() ? asString(stack)->value(globalObject).data : String());
+    // A collection that finds a frame dead frees them all.
+    DeferGCForAWhile deferGC(vm);
+    auto* frames = error->stackTrace();
+    if (!frames)
+        return {};
+    String name = error->sanitizedNameString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    String message = error->sanitizedMessageString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    OrdinalNumber line, column;
+    String sourceURL;
+    RELEASE_AND_RETURN(scope, formatStackTrace(vm, defaultGlobalObject(error->globalObject()), error->globalObject(), name, message, line, column, sourceURL, *frames, nullptr));
 }
 
 // The type is the `code`, or else the `name`. A primitive has none: it is the message.
@@ -418,18 +457,31 @@ extern "C" EncodedJSValue Bun__Telemetry__processEnv(JSGlobalObject* lexicalGlob
 
 // ─── Functions and promises ──────────────────────────────────────────────────────────
 
-extern "C" bool Bun__Telemetry__isGeneratorFunction(EncodedJSValue encodedFunction)
+// engine.rs has the numbers.
+enum class FunctionKind : uint8_t { Other,
+    Generator,
+    Class };
+
+extern "C" FunctionKind Bun__Telemetry__kindOfFunction(EncodedJSValue encodedFunction)
 {
     JSValue value = JSValue::decode(encodedFunction);
+    if (!value.isCell())
+        return FunctionKind::Other;
 #if ENABLE(AOT)
     if (value.asCell()->vm().hasCompiledCode()) {
         auto declaredAs = AOT::declaredAs(value.asCell());
+        if (declaredAs == AOT::DeclaredAs::GeneratorFunction || declaredAs == AOT::DeclaredAs::AsyncGeneratorFunction)
+            return FunctionKind::Generator;
         if (declaredAs != AOT::DeclaredAs::NotCompiled)
-            return declaredAs == AOT::DeclaredAs::GeneratorFunction || declaredAs == AOT::DeclaredAs::AsyncGeneratorFunction;
+            return declaredAs == AOT::DeclaredAs::Class ? FunctionKind::Class : FunctionKind::Other;
     }
 #endif
     auto* function = dynamicDowncast<JSFunction>(value);
-    return function && !function->isHostFunction() && isGeneratorOrAsyncGeneratorWrapperParseMode(function->jsExecutable()->parseMode());
+    if (!function || function->isHostFunction())
+        return FunctionKind::Other;
+    if (isGeneratorOrAsyncGeneratorWrapperParseMode(function->jsExecutable()->parseMode()))
+        return FunctionKind::Generator;
+    return function->jsExecutable()->isClassConstructorFunction() ? FunctionKind::Class : FunctionKind::Other;
 }
 
 static constexpr auto targetField = static_cast<JSFunctionWithFields::Field>(0);
@@ -455,15 +507,6 @@ extern "C" bool Bun__Telemetry__isForwarder(EncodedJSValue value, Zig::FFIFuncti
 {
     auto* function = dynamicDowncast<JSFunctionWithFields>(JSValue::decode(value));
     return function && function->nativeFunction() == toTagged(body);
-}
-
-extern "C" EncodedJSValue Bun__Telemetry__then(JSGlobalObject* globalObject, JSPromise* promise, Zig::FFIFunction onSettled)
-{
-    auto& vm = getVM(globalObject);
-    auto* derived = JSPromise::create(vm, globalObject->promiseStructure());
-    JSFunction* reaction = defaultGlobalObject(globalObject)->thenable(onSettled);
-    promise->performPromiseThenExported(vm, globalObject, reaction, reaction, derived);
-    return JSValue::encode(derived);
 }
 
 // The reactions get `span` behind the value. A rejection that nothing else handles is still reported.
@@ -567,23 +610,28 @@ extern "C" EncodedJSValue Bun__Telemetry__rootContext(JSGlobalObject* lexicalGlo
 //
 // https://github.com/open-telemetry/opentelemetry-js/blob/api/v1.10.0/api/src/internal/global-utils.ts
 
-// The folder is …/@opentelemetry/api, or …/@opentelemetry/api@1.9.0@@@1 in the install cache.
-static bool isEntryPointOfApi(const String& key)
+// …/@opentelemetry/api, or …/@opentelemetry/api@1.9.0@@@1 in the install cache. 0 if `path` does not lie in it.
+static size_t lengthOfFolderOfApi(const String& path)
 {
-    if (!key.contains("@opentelemetry"_s))
+    static constexpr auto scope = "@opentelemetry"_s;
+    size_t at = path.reverseFind(scope);
+    if (at == notFound)
+        return 0;
+    size_t name = at + scope.length() + 1;
+    size_t end = path.find([](char16_t c) { return c == '/' || c == '\\'; }, name);
+    if (end == notFound)
+        return 0;
+    StringView folder = StringView(path).substring(name, end - name);
+    return folder == "api"_s || folder.startsWith("api@"_s) ? end : 0;
+}
+
+static bool isEntryPointOfApi(const String& path)
+{
+    size_t folder = lengthOfFolderOfApi(path);
+    if (!folder)
         return false;
-    String path = makeStringByReplacingAll(key, '\\', '/');
-    for (ASCIILiteral entryPoint : { "/dist/index.cjs"_s, "/dist/index.mjs"_s, "/build/src/index.js"_s, "/build/esm/index.js"_s, "/build/esnext/index.js"_s }) {
-        if (!path.endsWith(entryPoint))
-            continue;
-        StringView folder = StringView(path).left(path.length() - entryPoint.length());
-        size_t slash = folder.reverseFind('/');
-        if (slash == notFound || !folder.left(slash).endsWith("/@opentelemetry"_s))
-            return false;
-        StringView name = folder.substring(slash + 1);
-        return name == "api"_s || name.startsWith("api@"_s);
-    }
-    return false;
+    String file = makeStringByReplacingAll(path.substring(folder), '\\', '/');
+    return file == "/dist/index.cjs"_s || file == "/dist/index.mjs"_s || file == "/build/src/index.js"_s || file == "/build/esm/index.js"_s || file == "/build/esnext/index.js"_s;
 }
 
 static void collectLoadedCopiesOfApi(Zig::GlobalObject* globalObject, MarkedArgumentBuffer& copies)
@@ -731,7 +779,14 @@ JSC_DEFINE_CUSTOM_GETTER(jsApiRegistry, (JSGlobalObject * lexicalGlobalObject, E
     auto& vm = getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* registry = constructEmptyObject(globalObject);
-    registry->putDirect(vm, Identifier::fromString(vm, "version"_s), jsString(vm, OwnedString::adopt(Bun__Telemetry__installedApiVersion(globalObject)).transferToWTFString()));
+    String reader;
+    StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
+        reader = visitor->sourceURL();
+        return IterationStatus::Done;
+    });
+    String folder = reader.left(lengthOfFolderOfApi(reader));
+    BunString package = Bun::toString(folder);
+    registry->putDirect(vm, Identifier::fromString(vm, "version"_s), jsString(vm, OwnedString::adopt(Bun__Telemetry__installedApiVersion(globalObject, &package)).transferToWTFString()));
     RETURN_IF_EXCEPTION(scope, {});
     fillRegistry(globalObject, registry);
     RETURN_IF_EXCEPTION(scope, {});

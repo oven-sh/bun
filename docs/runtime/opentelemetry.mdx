@@ -39,7 +39,7 @@ Bun.otel.start({
 
 An option that you leave out comes from [the environment](#environment-variables), as `process.env` is at the call. The entries of `exporters` don't get `OTEL_EXPORTER_OTLP_HEADERS`, because a list can name several vendors. A second call reconfigures the process. It keeps the exporters unless you pass `exporters` or `endpoint`.
 
-Bun exports what is left when the process exits, also after `process.exit()` and an uncaught exception. A signal without a handler ends the process at once. A function exporter that needs the network has no event loop at exit, so `await Bun.otel.shutdown()` first.
+Bun exports what is left when the process exits, also after `process.exit()` and an uncaught exception. A signal from another process that has no handler ends the process at once. A function exporter that needs the network has no event loop at exit, so `await Bun.otel.shutdown()` first.
 
 ## What Bun traces
 
@@ -60,7 +60,7 @@ Bun exports what is left when the process exits, also after `process.exit()` and
 
 `instrumentations` takes a list of names to turn on, or an object whose values are `true`, `false`, `"always"` or `"nested"`.
 
-Bun doesn't trace these yet: `node:http2`, S3, `Bun.$`, streams of `Bun.file()`, a recursive asynchronous `readdir`, and messages of the `ws` package.
+Bun doesn't trace these yet: `node:http2`, S3, `Bun.$`, streams of `Bun.file()`, a recursive asynchronous `readdir`, messages of the `ws` package, HTML routes in development mode, and connections that you hand to a `node:http` server with `emit("connection")`.
 
 Attributes follow the [HTTP](https://opentelemetry.io/docs/specs/semconv/http/http-spans/) and [database](https://opentelemetry.io/docs/specs/semconv/database/database-spans/) semantic conventions. A failure sets the status, `error.type` and an `exception` event.
 
@@ -68,7 +68,7 @@ Attributes follow the [HTTP](https://opentelemetry.io/docs/specs/semconv/http/ht
 
 - Bun replaces the credentials in a URL, and signatures such as `sig=` and `X-Amz-Signature=`, with `REDACTED`. Other query parameters are recorded.
 - `db.query.text` has placeholders for a tagged template. It is the text you passed for `sql.unsafe()`, `sql.file()` and `db.exec()`. Turn it off with `captureDbStatement: false`. The error message of a server can still quote a value.
-- A Redis span has the command and its first argument. It has neither for `AUTH`, `HELLO`, `ACL`, `CONFIG` and `MIGRATE`.
+- A Redis span has the command and its first argument. It has only the command for `ECHO` and `PING`, and neither for `AUTH`, `HELLO`, `ACL`, `CONFIG` and `MIGRATE`.
 - A `spawn` span has the name of the executable and the number of arguments.
 - Bun forwards `tracestate` and `baggage` to every host that you call under a request that carried them. Set `propagators` to `["tracecontext"]` to keep baggage back.
 
@@ -157,7 +157,7 @@ A variable with `OTLP_` in its name also has a form with `OTLP_TRACES_`, which w
 | `OTEL_EXPORTER_OTLP_ENDPOINT`                                               | Bun appends `/v1/traces`. The `TRACES_` form is used as it is. Default `http://localhost:4318`                    |
 | `OTEL_EXPORTER_OTLP_HEADERS`                                                | `key=value,key2=value2`                                                                                           |
 | `OTEL_EXPORTER_OTLP_COMPRESSION`                                            | `gzip` or `none`                                                                                                  |
-| `OTEL_EXPORTER_OTLP_TIMEOUT`                                                | Milliseconds for one request. Default `10000`                                                                     |
+| `OTEL_EXPORTER_OTLP_TIMEOUT`                                                | Milliseconds for one request, `0` for no limit. Default `10000`                                                   |
 | `OTEL_EXPORTER_OTLP_PROTOCOL`                                               | `http/protobuf`. Bun warns about any other value and uses this one                                                |
 | `OTEL_TRACES_EXPORTER`                                                      | `otlp`, `console` (OTLP/JSON on stderr) or `none`                                                                 |
 | `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`                            | `always_on`, `always_off`, `traceidratio`, and each with `parentbased_` in front. Default `parentbased_always_on` |

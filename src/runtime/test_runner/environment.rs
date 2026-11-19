@@ -185,6 +185,7 @@ impl Environment {
             vm.set_main(Some(path));
             let _ = vm.ensure_debugger(true);
             let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+            (hooks.start_telemetry)();
             let rejected_preload = (hooks.load_preloads)(vm)?;
             if let Some(project) = project {
                 teardown(vm, &project);

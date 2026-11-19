@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { basename } from "node:path";
 import { gunzipSync } from "node:zlib";
 
@@ -1016,14 +1016,19 @@ describe.concurrent("OTLP/HTTP exporter", () => {
   const neverTimesOut = { OTEL_BSP_EXPORT_TIMEOUT: "600000" };
 
   test("process.exit() hands every batch to a function exporter", async () => {
-    const result = await run(
-      `let n = 0;
-       Bun.otel.start({ exporters: [{ export(spans) { console.log((n += spans.length)); } }], batch: { maxExportBatchSize: 50 } });
+    const { stdout, stderr, exitCode } = await run(
+      `Bun.otel.start({ exporters: [{ export(spans) { console.log(spans.length); } }], batch: { maxExportBatchSize: 50 } });
        for (let i = 0; i < 150; i++) Bun.otel.span("s", () => {});
        process.exit(0);`,
       neverTimesOut,
     );
-    expect(result).toEqual({ stdout: "50\n100\n150\n", stderr: "", exitCode: 0 });
+    const sizes = stdout.trim().split("\n").map(Number);
+    expect({ total: sizes.reduce((a, b) => a + b), largest: Math.max(...sizes), stderr, exitCode }).toEqual({
+      total: 150,
+      largest: 50,
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("a function exporter may call process.exit()", async () => {
@@ -1090,7 +1095,7 @@ describe.concurrent("OTLP/HTTP exporter", () => {
            const worker = new Worker(import.meta.path);
            await new Promise(resolve => (worker.onmessage = resolve));
            ${ending};
-           process.kill(process.pid, "SIGKILL");
+           Bun.spawnSync([process.execPath, "-e", "process.kill(" + process.pid + ", 'SIGKILL')"], { env: { ...process.env, BUN_OTEL: "0" } });
          } else {
            Bun.otel.span("in the worker", () => {});
            postMessage("");
@@ -1148,5 +1153,136 @@ describe.concurrent("OTLP/HTTP exporter", () => {
       { BUN_OTEL: "1", OTEL_EXPORTER_OTLP_ENDPOINT: c.url, OTEL_BSP_MAX_EXPORT_BATCH_SIZE: "4" },
     );
     expect({ stdout, exitCode }).toEqual({ stdout: "0\n", exitCode: 0 });
+  });
+
+  test("an export of a replaced exporter that never settles times out, and the next exporter goes on", async () => {
+    const { stdout, exitCode } = await run(
+      `const batch = { delayMs: 50, timeoutMs: 100 };
+       const started = Promise.withResolvers(), second = Promise.withResolvers();
+       Bun.otel.start({ batch, exporters: [{ export: () => (started.resolve(), new Promise(() => {})) }] });
+       Bun.otel.span("a", () => {});
+       const flushed = Bun.otel.forceFlush();
+       await started.promise;
+       Bun.otel.start({ batch, exporters: [{ export: spans => second.resolve(spans[0].name) }] });
+       Bun.otel.span("b", () => {});
+       const alive = setInterval(() => {}, 1000);
+       console.log(await second.promise, await flushed, Bun.otel.stats().exportsFailed);
+       clearInterval(alive);`,
+      {},
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "b undefined 1\n", exitCode: 0 });
+  });
+
+  test("exit does not chase the spans that busy workers keep recording", async () => {
+    // Slower than the worker.
+    using slow = Bun.serve({ port: 0, fetch: async req => (await req.bytes(), await Bun.sleep(5), new Response()) });
+    const result = await run(
+      `if (Bun.isMainThread) {
+         const worker = new Worker(import.meta.path);
+         await new Promise(resolve => (worker.onmessage = resolve));
+         process.exit(0);
+       } else {
+         for (let i = 0; ; i++) Bun.otel.span("busy", () => i === 10 && postMessage(""));
+       }`,
+      { ...neverTimesOut, BUN_OTEL: "1", OTEL_EXPORTER_OTLP_ENDPOINT: slow.url.href },
+    );
+    expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+
+  test("an export that is in flight at exit and fails gets one more try", async () => {
+    using c = collector(n => (n === 0 ? new Response(null, { status: 503 }) : undefined));
+    const result = await run(`Bun.otel.span("s", () => {}); Bun.otel.forceFlush(); process.exit(0);`, {
+      BUN_OTEL: "1",
+      OTEL_EXPORTER_OTLP_ENDPOINT: c.url,
+    });
+    expect([result.exitCode, c.received.length]).toEqual([0, 2]);
+  });
+
+  test("a queue of many batches, of requests and of several scopes, leaves whole", async () => {
+    const { stdout, exitCode } = await run(
+      `const seen = [], sizes = new Set(), release = Promise.withResolvers();
+       Bun.otel.start({
+         instrumentations: ["http"],
+         batch: { maxExportBatchSize: 7 },
+         exporters: [{ export: spans => (sizes.add(spans.length <= 7), seen.push(...spans.map(s => s.attributes["url.path"] ?? s.name)), release.promise) }],
+       });
+       const server = Bun.serve({ port: 0, routes: { "/*": new Response() } });
+       for (let i = 0; i < 40; i++) {
+         await fetch(server.url + "r" + i);
+         Bun.otel.tracer("t" + (i % 3)).startSpan("s" + i).end();
+       }
+       release.resolve();
+       await Bun.otel.forceFlush();
+       server.stop(true);
+       console.log(seen.length, new Set(seen).size, [...sizes].join());`,
+      {},
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "80 80 true\n", exitCode: 0 });
+  });
+
+  test("a span waits one delay at most", async () => {
+    const { stdout, exitCode } = await run(
+      `let exported = Promise.withResolvers();
+       Bun.otel.start({ batch: { delayMs: 400 }, exporters: [{ export: () => exported.resolve() }] });
+       Bun.otel.span("a", () => {});
+       const alive = setInterval(() => {}, 1000);
+       await exported.promise;
+       exported = Promise.withResolvers();
+       await Bun.sleep(50); // well inside the next interval
+       const begun = performance.now();
+       Bun.otel.span("b", () => {});
+       await exported.promise;
+       clearInterval(alive);
+       console.log(performance.now() - begun < 600);`,
+      {},
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
+  });
+
+  test("credentials in the endpoint are sent, and a timeout of 0 is no limit", async () => {
+    using c = collector();
+    const result = await run(`Bun.otel.span("s", () => {});`, {
+      BUN_OTEL: "1",
+      OTEL_EXPORTER_OTLP_ENDPOINT: c.url.replace("//", "//user:p%40ss@"),
+      OTEL_EXPORTER_OTLP_TIMEOUT: "0",
+      OTEL_BSP_EXPORT_TIMEOUT: "0",
+    });
+    expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    expect(c.received.map(r => r.headers.authorization)).toEqual(["Basic " + btoa("user:p@ss")]);
+  });
+
+  test.skipIf(isWindows)("a process that kills itself exports first", async () => {
+    using c = collector();
+    await run(`Bun.otel.span("s", () => {}); process.kill(process.pid, "SIGTERM"); setInterval(() => {}, 1000);`, {
+      BUN_OTEL: "1",
+      OTEL_EXPORTER_OTLP_ENDPOINT: c.url,
+    });
+    expect(c.spans().map(s => s.name)).toEqual(["s"]);
+  });
+
+  test.each([
+    [{}, "false"],
+    [{ BUN_OTEL: "1", OTEL_TRACES_EXPORTER: "none" }, "true"],
+  ])("bun test --isolate: start() ends with its file (%j)", async (env, records) => {
+    using dir = tempDir("otel-isolate-start", {
+      "a.test.js": `import { test } from "bun:test"; test("a", () => Bun.otel.start({ exporters: [], sampler: "always_off" }));`,
+      "b.test.js": `import { test } from "bun:test"; test("b", () => console.log(Bun.otel.enabled, Bun.otel.span("s", s => s.isRecording())));`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./a.test.js", "./b.test.js"],
+      cwd: String(dir),
+      env: { ...cleanEnv, ...env },
+      stderr: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toEndWith(`${records} ${records}\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  test("an uncaught error is printed the same with tracing on", async () => {
+    const script = `function boom() { throw new TypeError("x"); }\nBun.otel.span("a", boom);`;
+    const printed = async (env: Record<string, string>) =>
+      (await run(script, env)).stderr.replace(/\S*otel-exporter\S*?index/g, "index");
+    expect(await printed({ BUN_OTEL: "1", OTEL_TRACES_EXPORTER: "none" })).toBe(await printed({}));
   });
 });

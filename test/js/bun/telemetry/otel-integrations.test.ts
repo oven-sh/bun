@@ -241,6 +241,18 @@ describe("Bun.spawn", () => {
   });
 });
 
+test("Bun.spawn of a command that is not found has a failed span", async () => {
+  expect(() => Bun.otel.span("parent", () => Bun.spawn(["made-up-command"]))).toThrow("not found");
+  const [span] = await collect("bun.child_process");
+  expect([span.name, span.attributes["error.type"]]).toEqual(["spawn made-up-command", "ENOENT"]);
+});
+
+test("a WebSocket that is closed before it opens has not failed", async () => {
+  new WebSocket("ws://[::1]:1/").close();
+  const [span] = await collect("bun.websocket");
+  expect([span.status.code, span.attributes["server.address"]]).toEqual([0, "::1"]);
+});
+
 describe("net", () => {
   test("tls.connect: the span's verdict is the socket's (kept-but-unauthorized is not an error; a rejected handshake is)", async () => {
     const tls = require("node:tls");

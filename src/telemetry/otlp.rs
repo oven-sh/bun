@@ -94,6 +94,8 @@ pub enum Value<'a> {
     Bool(bool),
     Double(f64),
     Array(&'a [Value<'a>]),
+    /// A `null` in an array.
+    Empty,
 }
 
 impl<'a> From<&'a [u8]> for Value<'a> {
@@ -136,6 +138,7 @@ fn any_value_body_len(v: &Value<'_>) -> usize {
         Value::Int(i) => tag_len(f::AV_INT) + varint_len(i as u64),
         Value::Double(_) => tag_len(f::AV_DOUBLE) + 8,
         Value::Array(items) => len_field_len(f::AV_ARRAY, array_body_len(items)),
+        Value::Empty => 0,
     }
 }
 
@@ -158,6 +161,7 @@ fn write_any_value_body(out: &mut Vec<u8>, v: &Value<'_>) {
             write_varint(out, i as u64);
         }
         Value::Double(d) => proto::write_double(out, f::AV_DOUBLE, d),
+        Value::Empty => {}
         Value::Array(items) => {
             write_len_prefix(out, f::AV_ARRAY, array_body_len(items));
             for v in items {
@@ -179,7 +183,7 @@ pub fn write_key_value_limited(
 ) {
     match *v {
         Value::Str(s) if s.len() > max => {
-            write_key_value(out, field, key, &Value::Str(truncate_utf8(s, max)))
+            write_key_value(out, field, key, &Value::Str(truncate_chars(s, max)))
         }
         Value::Array(items)
             if items
@@ -189,7 +193,7 @@ pub fn write_key_value_limited(
             let limited: Vec<Value<'_>> = items
                 .iter()
                 .map(|i| match *i {
-                    Value::Str(s) => Value::Str(truncate_utf8(s, max)),
+                    Value::Str(s) => Value::Str(truncate_chars(s, max)),
                     other => other,
                 })
                 .collect();
@@ -376,6 +380,15 @@ pub fn utf8_lossy_len(s: &[u8]) -> usize {
     s.utf8_chunks()
         .map(|c| c.valid().len() + if c.invalid().is_empty() { 0 } else { 3 })
         .sum()
+}
+
+/// The first `max` characters of `s`. What is no UTF-8 counts as the U+FFFD that replaces it.
+fn truncate_chars(s: &[u8], max: usize) -> &[u8] {
+    let lengths = s.utf8_chunks().flat_map(|chunk| {
+        let invalid = Some(chunk.invalid().len()).filter(|&len| len != 0);
+        chunk.valid().chars().map(char::len_utf8).chain(invalid)
+    });
+    &s[..lengths.take(max).sum()]
 }
 
 /// Longest prefix of `s` that is at most `max` bytes and does not split a

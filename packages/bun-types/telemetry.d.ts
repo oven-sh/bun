@@ -252,7 +252,7 @@ declare module "bun" {
       kind: SpanKind;
       startTime: number;
       endTime: number;
-      attributes: Record<string, string | number | boolean | Array<string | number | boolean>>;
+      attributes: Record<string, string | number | boolean | Array<string | number | boolean | undefined>>;
       events: { name: string; time: number; attributes: ExportedSpan["attributes"] }[];
       links: {
         traceId: string;
@@ -385,7 +385,7 @@ declare module "bun" {
             eventCountLimit?: number | undefined;
             /** @default 128 */
             linkCountLimit?: number | undefined;
-            /** Longer string attribute values are truncated. @default unlimited */
+            /** Strings of more characters are truncated. @default unlimited */
             attributeValueLengthLimit?: number | undefined;
           }
         | undefined;
@@ -535,7 +535,7 @@ declare module "bun" {
      */
     forceFlush(): Promise<void>;
 
-    /** {@link forceFlush}, then disable all instrumentation. */
+    /** Turn tracing off, then {@link forceFlush}. */
     shutdown(): Promise<void>;
 
     stats(): otel.Stats;

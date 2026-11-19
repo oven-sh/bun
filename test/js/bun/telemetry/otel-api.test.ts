@@ -634,9 +634,109 @@ describe("Bun.otel", () => {
     const span = tracer.startSpan("values").setAttribute("list", list);
     list.push("b");
     span.setAttributes({ object: {}, fn() {}, symbol: Symbol(), huge: 2n ** 64n, nan: NaN, "": 1, 0: "index" } as any);
+    span.setAttribute("mixed", [1, {}] as any);
     span.setAttribute("holes", [1, , null, 2] as any).setAttribute(1 as any, "no string key");
     span.end();
-    expect((await collect())[0].attributes).toEqual({ list: ["a"], nan: NaN, 0: "index", holes: [1, 2] });
+    expect((await collect())[0].attributes).toEqual({
+      list: ["a"],
+      nan: NaN,
+      0: "index",
+      holes: [1, undefined, undefined, 2],
+    });
+  });
+
+  test("the stack is recorded, and left to be read for the first time", async () => {
+    let first: string | undefined;
+    try {
+      Bun.otel.span("throws", function thrower() {
+        throw new Error("thrown");
+      });
+    } catch (e: any) {
+      e.message = "changed";
+      first = e.stack.split("\n")[0];
+    }
+    expect(first).toBe("Error: changed");
+    expect((await collect())[0].events[0].attributes["exception.stacktrace"]).toMatch(/^Error: thrown\n +at thrower /);
+  });
+
+  test("a Context made under an entered span, and with(span), outlive its end()", () =>
+    scoped(async () => {
+      const { contextManager } = Bun.otel;
+      const key = Symbol.for("key");
+      const span = Bun.otel.span("entered");
+      const value = contextManager.with(contextManager.active().setValue(key, 1), () => {
+        span.end();
+        return contextManager.active().getValue(key);
+      });
+      const names = [Bun.otel.with(span, () => Bun.otel.activeSpan()?.name), Bun.otel.activeSpan()?.name];
+      expect([value, ...names]).toEqual([1, "entered", undefined]);
+      await collect();
+    }));
+
+  test("active() answers with one Context for as long as a span is active", async () => {
+    const { contextManager } = Bun.otel;
+    const same = await Bun.otel.span("s", async () => {
+      const first = contextManager.active();
+      await 1;
+      return new AsyncLocalStorage().run(1, () => contextManager.active() === first);
+    });
+    expect(same).toBe(true);
+    await collect();
+  });
+
+  test("a function exporter runs under suppressTracing()", async () => {
+    let suppressed: unknown;
+    const key = Symbol.for("OpenTelemetry SDK Context Key SUPPRESS_TRACING");
+    Bun.otel.start({
+      exporters: [{ export: () => void (suppressed = Bun.otel.contextManager.active().getValue(key)) }],
+    });
+    Bun.otel.span("s", () => {});
+    await Bun.otel.forceFlush();
+    expect(suppressed).toBe(true);
+  });
+
+  test("start() right behind shutdown() leaves tracing on", async () => {
+    const stopped = Bun.otel.shutdown();
+    expect(Bun.otel.enabled).toBe(false);
+    restore();
+    await stopped;
+    expect(Bun.otel.enabled).toBe(true);
+  });
+
+  test("wrap() takes a Proxy of a function", async () => {
+    expect(Bun.otel.wrap("p", new Proxy(function () {}, { apply: (_, self) => self }))()).toBeUndefined();
+    await collect();
+  });
+
+  test("events and links count the attributes that they drop", async () => {
+    let json: any;
+    Bun.otel.start({
+      exporters: [{ exportJSON: s => void (json = JSON.parse(s)) }],
+      limits: { attributeCountLimit: 1 },
+    });
+    const span = tracer.startSpan("s");
+    span
+      .addEvent("e", { a: 1, b: 2, c: 3 })
+      .addLink({ context: span.spanContext(), attributes: { a: 1, b: 2 } })
+      .end();
+    await Bun.otel.forceFlush();
+    const [{ events, links }] = json.resourceSpans[0].scopeSpans[0].spans;
+    expect([events[0].droppedAttributesCount, links[0].droppedAttributesCount]).toEqual([2, 1]);
+  });
+
+  test("baggage keeps to 180 members, and leaves out one that is too long", () => {
+    const { propagator, ROOT_CONTEXT } = Bun.otel;
+    const key = Symbol.for("OpenTelemetry Baggage Key");
+    const many = Array.from({ length: 200 }, (_, i) => `k${i}=v`).join();
+    const baggage: any = propagator.extract(ROOT_CONTEXT, { baggage: many }).getValue(key);
+    expect(baggage.getAllEntries()).toHaveLength(180);
+    const long = baggage
+      .clear()
+      .setEntry("a", { value: "1" })
+      .setEntry("b", { value: Buffer.alloc(9000, "x").toString() });
+    const carrier = {};
+    propagator.inject(ROOT_CONTEXT.setValue(key, long.setEntry("c", { value: "3" })), carrier);
+    expect(carrier).toEqual({ baggage: "a=1,c=3" });
   });
 
   test("every form of TimeInput", async () => {
@@ -1137,6 +1237,13 @@ describe("memory", () => {
       await expectMaxObjectTypeCount(expect, "Span", before + 10);
       await collect();
     }));
+
+  test("the collector is told what abandoned spans hold", () => {
+    const big = Buffer.alloc(1 << 20, "a").toString();
+    const before = heapStats().objectTypeCounts.Span ?? 0;
+    for (let i = 0; i < 300; i++) tracer.startSpan("abandoned").setAttribute("k", big);
+    expect(heapStats().objectTypeCounts.Span - before).toBeLessThan(200);
+  });
 
   test("nested activations do not keep the spans they replaced", async () => {
     Bun.otel.start({ exporters: [], instrumentations: [] });

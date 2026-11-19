@@ -11,11 +11,11 @@ use bun_jsc::{
 use bun_telemetry::{Carried, Instrument, ScopeId, SpanData, SpanStub, processor, propagation};
 
 use crate::baggage::Baggage;
-use crate::context::{self, Binding, Context, native_span_for};
-use crate::engine::{self, Entered};
+use crate::context::{self, Binding, Bound, Context, native_span_for};
+use crate::engine::{self, Entered, FunctionKind};
 use crate::generated_bindgen::telemetry::{TelemetryStats, js_ContextToken};
 use crate::generated_bindgen::telemetry_internals::{
-    Bun__Telemetry__callBound, Bun__Telemetry__callWrapped, Bun__Telemetry__onFlushedForShutdown,
+    Bun__Telemetry__callBound, Bun__Telemetry__callWrapped,
 };
 use crate::promise;
 use crate::span::{Span, global_of};
@@ -35,7 +35,10 @@ fn call_traced(
     this: JSValue,
     args: &[JSValue],
 ) -> JsResult<JSValue> {
-    let entered = Entered::new(global, Context::bind_new_span(global, span, under));
+    let entered = Entered::new(
+        global,
+        Context::bind_new_span(global, span, under, Bound::ForScope),
+    );
     let result = function
         .call_for_running_script(global, this, args)
         .and_then(|result| engine::adopt_thenable(global, result));
@@ -44,7 +47,7 @@ fn call_traced(
 }
 
 fn refuse_generator(global: &JSGlobalObject, caller: &str, function: JSValue) -> JsResult<()> {
-    if engine::is_generator_function(function) {
+    if engine::kind_of_function(function) == FunctionKind::GENERATOR {
         return Err(global.throw_invalid_arguments(format_args!(
             "{caller} cannot trace a generator function, which returns before its body runs\nnote: call Bun.otel.span() inside the generator"
         )));
@@ -109,7 +112,7 @@ pub(crate) fn wrap<'a>(
     if !function.is_callable() {
         return Err(global.throw_invalid_argument_type_value("fn", "function", function));
     }
-    if function.is_class(global) {
+    if engine::kind_of_function(function) == FunctionKind::CLASS {
         return Err(global.throw_invalid_arguments(format_args!(
             "Bun.otel.wrap() cannot wrap a class\nnote: wrap its methods"
         )));
@@ -233,8 +236,14 @@ pub(crate) fn with<'a>(
     let binding = if !given.is::<Span>() && Context::is_api_context(global, given)? {
         Some(Context::from_api(global, given)?)
     } else {
-        native_span_for(global, given)?
-            .map(|span| Context::bind_span(global, span, context::active_binding(global)))
+        native_span_for(global, given)?.map(|span| {
+            Context::bind_span(
+                global,
+                span,
+                context::active_binding(global),
+                Bound::ForScope,
+            )
+        })
     };
     call_with_binding(global, binding, callback.to_js(), this_arg.to_js(), args)
 }
@@ -251,16 +260,8 @@ pub(crate) fn force_flush(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
 }
 
 pub(crate) fn shutdown(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-    let flushed = force_flush(cx)?;
-    Ok(engine::then(
-        cx.global(),
-        JSPromise::opaque_ref(flushed.as_promise().expect("a promise")),
-        Bun__Telemetry__onFlushedForShutdown,
-    ))
-}
-
-pub(crate) fn on_flushed_for_shutdown() {
     bun_telemetry::shut_down();
+    force_flush(cx)
 }
 
 pub(crate) fn stats() -> TelemetryStats {

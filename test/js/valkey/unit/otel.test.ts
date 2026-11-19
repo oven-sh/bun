@@ -50,6 +50,14 @@ describe.skipIf(!isEnabled)("Valkey: OpenTelemetry", () => {
     });
   });
 
+  test("neither ECHO nor the reply to an unknown command reveals a value", async () => {
+    await ctx.redis.send("ECHO", ["secret"]);
+    await ctx.redis.send("MADEUP", ["key", "secret"]).catch(() => {});
+    const got = await collect();
+    expect(got.map(s => s.attributes["db.query.text"])).toEqual(["ECHO", "MADEUP key ..."]);
+    expect(JSON.stringify(got)).not.toContain("secret");
+  });
+
   test("commands issued inside an active span are its children", async () => {
     const redis = ctx.redis;
     const tracer = Bun.otel.tracer("test");

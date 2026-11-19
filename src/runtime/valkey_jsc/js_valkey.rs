@@ -192,11 +192,7 @@ impl PendingCommand {
     }
 
     fn refused(self, message: &[u8]) -> JSPromiseStrong {
-        self.span.settle(traced::DbError {
-            ty: strings::split(message, b" ").next().unwrap_or_default(),
-            message,
-            from_server: true,
-        });
+        (self.span).end_with(|r| traced::DbError::of_redis(message).record(r));
         self.promise
     }
 

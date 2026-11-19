@@ -10,8 +10,8 @@ use bun_jsc::virtual_machine::{TelemetryFlush as Flush, VirtualMachine};
 use bun_jsc::{JSGlobalObject, JSPromiseStrong, JSValue, JsResult, LoopKind, Strong, VmHandle};
 use bun_telemetry::{FlushTarget, Local, OwnerKey, Record, ScopeId, processor};
 
-use crate::engine;
 use crate::exporter::{JsExporter, OwnedJsExporter, QueuedExport};
+use crate::{configure, engine};
 
 /// The `createContextKey()` symbols that mean something to tracing.
 pub(crate) struct ContextKeys {
@@ -26,6 +26,7 @@ struct Realm {
     root_context: Option<Strong>,
     tracers: Vec<(ScopeId, Strong)>,
     is_registered_with_api: bool,
+    has_called_start: bool,
 }
 
 pub struct VmState {
@@ -136,7 +137,13 @@ impl VmState {
             realm.get_or_insert_with(|| {
                 if self.vm.test_isolation_enabled.get() {
                     self.vm.release_at_retirement(Box::new(|| {
-                        self.realm.take();
+                        if self
+                            .realm
+                            .take()
+                            .is_some_and(|realm| realm.has_called_start)
+                        {
+                            configure::undo_start(self);
+                        }
                         JsExporter::detach_all(self);
                     }));
                 }
@@ -165,23 +172,22 @@ impl VmState {
         &'static self,
         global: &JSGlobalObject,
         scope: ScopeId,
-        create: impl FnOnce() -> JSValue,
-    ) -> JSValue {
+        create: impl FnOnce() -> JsResult<JSValue>,
+    ) -> JsResult<JSValue> {
         if !self.is_of_realm(global) {
             return create();
         }
         let tracers = &mut self.realm().tracers;
         if let Some((_, tracer)) = tracers.iter().find(|(known, _)| *known == scope) {
-            return tracer.get();
+            return Ok(tracer.get());
         }
-        let tracer = create();
+        let tracer = create()?;
         tracers.push((scope, Strong::create(tracer, global)));
-        tracer
+        Ok(tracer)
     }
 
-    pub(crate) fn add_js_exporters(&'static self, exporters: Vec<OwnedJsExporter>) {
-        // They leave with the realm.
-        drop(self.realm());
+    pub(crate) fn did_call_start(&'static self, exporters: Vec<OwnedJsExporter>) {
+        self.realm().has_called_start = true;
         self.js_exporters.borrow_mut().extend(exporters);
     }
 
@@ -281,9 +287,8 @@ impl VmState {
             return;
         }
         let processor = processor::global();
-        JsExporter::finish_retired_for_exit(self);
         if self.vm.is_main_thread.get() {
-            processor.shutdown_blocking();
+            processor.close();
         } else {
             processor.flush_for_owner(self.owner_key());
         }
@@ -351,8 +356,8 @@ fn flush_configured(when: Flush) {
     let vm = VirtualMachine::get_or_null();
     let state = vm.and_then(VmState::existing);
     match (when, state) {
-        (Flush::BeforeRestart, _) => {
-            processor::global().shutdown_blocking_bounded(Duration::from_secs(1));
+        (Flush::WithoutExit, _) => {
+            processor::global().flush_blocking(Duration::from_secs(1));
         }
         (Flush::AtExit, Some(state)) => state.exit(),
         // Only workers have traced.
@@ -360,7 +365,7 @@ fn flush_configured(when: Flush) {
             if vm.is_some_and(|vm| vm.is_main_thread.get())
                 && !HAS_MAIN_THREAD_EXITED.swap(true, Ordering::Relaxed)
             {
-                processor::global().shutdown_blocking();
+                processor::global().close();
             }
         }
     }

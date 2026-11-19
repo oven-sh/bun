@@ -2,7 +2,7 @@
 
 use bun_core::Utf8Bytes;
 use bun_jsc::{JSBigInt, JSGlobalObject, JSValue, JsResult};
-use bun_telemetry::otlp::EntryWriter;
+use bun_telemetry::otlp::{EntryWriter, field as f, write_key_value_limited};
 use bun_telemetry::propagation::tracestate_bounded;
 use bun_telemetry::{Exception, Flags, SpanContext, SpanId, TraceId, Value, clock};
 
@@ -52,12 +52,16 @@ pub(crate) fn with_attribute_value(
         }
         let len = array.len().min(MAX_ARRAY_ELEMENTS);
         let mut elements = Vec::with_capacity(len as usize);
-        for element in (0..len).filter_map(|i| array.get(i)) {
-            if element.is_string_literal() {
-                elements.push(Element::Str(element.to_utf8(global)?));
+        for element in (0..len).map(|i| array.get(i).unwrap_or(JSValue::UNDEFINED)) {
+            elements.push(if element.is_string_literal() {
+                Element::Str(element.to_utf8(global)?)
+            } else if element.is_undefined_or_null() {
+                Element::Other(Value::Empty)
             } else if let Some(scalar) = non_string_scalar(element) {
-                elements.push(Element::Other(scalar));
-            }
+                Element::Other(scalar)
+            } else {
+                return Ok(());
+            });
         }
         let values: Vec<Value<'_>> = elements
             .iter()
@@ -90,28 +94,39 @@ pub(crate) fn for_each_attribute(
 pub(crate) struct EntryAttributes(Vec<u8>);
 
 impl EntryAttributes {
+    pub(crate) fn of_event(global: &JSGlobalObject, given: Option<JSValue>) -> JsResult<Self> {
+        Self::read(global, given, f::EV_ATTRIBUTES, f::EV_DROPPED_ATTRIBUTES)
+    }
+
+    pub(crate) fn of_link(global: &JSGlobalObject, given: Option<JSValue>) -> JsResult<Self> {
+        Self::read(
+            global,
+            given,
+            f::LINK_ATTRIBUTES,
+            f::LINK_DROPPED_ATTRIBUTES,
+        )
+    }
+
     /// Runs getters.
-    pub(crate) fn read(
+    fn read(
         global: &JSGlobalObject,
+        given: Option<JSValue>,
         field: u32,
-        attributes: Option<JSValue>,
-    ) -> JsResult<EntryAttributes> {
+        dropped_field: u32,
+    ) -> JsResult<Self> {
         let mut encoded = Vec::new();
-        if let Some(attributes) = attributes {
+        if let Some(given) = given {
             let limits = &bun_telemetry::state().limits;
-            let mut room = limits.attributes;
-            for_each_attribute(global, attributes, |key, value| {
-                if let Some(left) = room.checked_sub(1) {
-                    room = left;
-                    bun_telemetry::otlp::write_key_value_limited(
-                        &mut encoded,
-                        field,
-                        key,
-                        value,
-                        limits.attribute_value_length as usize,
-                    );
+            let max_len = limits.attribute_value_length as usize;
+            let mut count = 0u64;
+            for_each_attribute(global, given, |key, value| {
+                if count < limits.attributes.into() {
+                    write_key_value_limited(&mut encoded, field, key, value, max_len);
                 }
+                count += 1;
             })?;
+            let dropped = count.saturating_sub(limits.attributes.into());
+            bun_telemetry::proto::write_uint_opt(&mut encoded, dropped_field, dropped);
         }
         Ok(EntryAttributes(encoded))
     }

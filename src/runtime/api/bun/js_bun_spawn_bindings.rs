@@ -1057,13 +1057,8 @@ fn spawn_maybe_sync(
     };
 
     crate::node::fs::note_process_start();
-    let instrument = Instrument::ChildProcess;
-    let mut span = NativeSpan::start(cx.global(), instrument, SpanKind::Internal, |r| {
-        // Not the arguments, which carry secrets.
-        let executable = bun_paths::basename(argv.argv0.as_bytes());
-        r.set_name(executable);
-        r.prefix_name(b"spawn");
-        r.attr("process.executable.name", executable);
+    let mut span = begin_span(cx.global(), argv.argv0.as_bytes());
+    span.describe(|r| {
         r.attr("process.args_count", argv.args.len() as i64);
     });
     let spawned = spawn::spawn_process(
@@ -1806,6 +1801,17 @@ fn throw_spawn_sync_loop_init_failed(global_this: &JSGlobalObject) -> JsError {
     global_this.throw_value(err.to_error_instance(global_this))
 }
 
+/// Without the arguments, which carry secrets.
+#[inline]
+fn begin_span(global: &JSGlobalObject, executable: &[u8]) -> NativeSpan {
+    NativeSpan::start(global, Instrument::ChildProcess, SpanKind::Internal, |r| {
+        let name = bun_paths::basename(executable);
+        r.set_name(name);
+        r.prefix_name(b"spawn");
+        r.attr("process.executable.name", name);
+    })
+}
+
 fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsError {
     let err = SystemError {
         message: BunString::create_format(format_args!(
@@ -1817,6 +1823,7 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
         path: BunString::clone_utf8(command),
         ..Default::default()
     };
+    begin_span(global_this, command).settle(&err);
     global_this.throw_value(err.to_error_instance(global_this))
 }
 

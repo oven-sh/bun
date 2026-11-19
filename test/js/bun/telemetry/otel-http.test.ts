@@ -1543,14 +1543,13 @@ describe("limits", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("attributeValueLengthLimit never splits a UTF-8 sequence and never over-runs on non-UTF-8 input", async () => {
+  test("attributeValueLengthLimit counts characters, also of input that is not UTF-8", async () => {
     Bun.otel.start({
       exporters: [{ export: (b: any[]) => spans.push(...b) }],
       limits: { attributeValueLengthLimit: 4 },
     });
     const s = Bun.otel.tracer("t").startSpan("lim");
-    // 4-byte, 2-byte and 3-byte code points straddling the 4-byte limit, and a JS-owned span too
-    s.setAttributes({ a: "a\u{1F600}b", b: "aaaé", c: "aa値", d: "abcd", e: "abcde" });
+    s.setAttributes({ a: "a\u{1F600}bcd", b: "aaaéé", c: "値値値値値", d: "値値値値", e: "abcde" });
     s.end();
     const fs = require("node:fs");
     Bun.otel.span("native", () => {
@@ -1562,14 +1561,13 @@ describe("limits", () => {
     const got = await collect();
     const lim = got.find(x => x.name === "lim");
     expect([lim.attributes.a, lim.attributes.b, lim.attributes.c, lim.attributes.d, lim.attributes.e]).toEqual([
-      "a",
-      "aaa",
-      "aa",
-      "abcd",
+      "a\u{1F600}bc",
+      "aaaé",
+      "値値値値",
+      "値値値値",
       "abcd",
     ]);
     const stat = got.find(x => x.name === "fs.statSync");
-    // cut at 4 bytes, then each stray continuation byte becomes U+FFFD: never empty, never longer than the input cut
     expect(stat.attributes["file.path"]).toBe("/\uFFFD\uFFFD\uFFFD");
   });
 
@@ -1685,6 +1683,31 @@ describe("attribute count limit", () => {
       expect(srv.droppedAttributesCount).toBe(N - kept + (ownTotal - (keys.length - kept)));
     }
   });
+});
+
+test("the message of a failed fetch() has no signature", async () => {
+  using listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: { data: socket => void socket.write("HTTP/1.1 200 OK\r\nContent-Length: x\r\n\r\n") },
+  });
+  await expect(fetch(`http://127.0.0.1:${listener.port}/?sig=secret`)).rejects.toThrow("sig=secret");
+  const [span] = await collect(1);
+  expect(span.status.message).toContain("sig=REDACTED");
+  expect(JSON.stringify(span)).not.toContain("secret");
+});
+
+test("client.address has no port, and a bound", async () => {
+  asExternalClient();
+  using server = Bun.serve({ port: 0, fetch: () => new Response() });
+  const given = ["1.2.3.4:55, 9.9.9.9", "[::1]:55", "::1", Buffer.alloc(5000, "a").toString()];
+  for (const value of given) await (await fetch(server.url, { headers: { "x-forwarded-for": value } })).text();
+  expect((await collect(4)).map(s => s.attributes["client.address"])).toEqual([
+    "1.2.3.4",
+    "::1",
+    "::1",
+    given[3].slice(0, 256),
+  ]);
 });
 
 test("a TraceState with a line break is not sent", async () => {

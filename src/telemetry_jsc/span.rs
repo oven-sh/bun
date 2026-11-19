@@ -1,13 +1,13 @@
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload, JsScope, JsWrapper, StrongWrapper};
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     EncodedSliceJsc, JSArray, JSArrayIterator, JSGlobalObject, JSObject, JSString, JSValue,
     JsResult, WrapperGuard,
 };
 use bun_ptr::JsCell;
-use bun_telemetry::otlp::field;
 use bun_telemetry::{Record, SpanData, StatusCode};
 
-use crate::context::{self, Binding, Context};
+use crate::context::{self, Binding, Bound, Context};
 use crate::engine;
 use crate::generated_bindgen::telemetry::{LinkInit, StatusInit, StatusInput, js_Span as js};
 use crate::native;
@@ -61,11 +61,19 @@ impl Span {
     /// Does nothing unless the span is recording. `f` runs no JavaScript.
     #[inline]
     pub(crate) fn record(&self, f: impl FnOnce(&mut Record)) {
-        self.0.with_mut(|data| {
-            if let Some(record) = data.record_mut(VmState::take_record) {
+        let grown = self.0.with_mut(|data| {
+            data.record_mut(VmState::take_record).map_or(0, |record| {
+                let before = record.capacity();
                 f(record);
-            }
+                record.capacity() - before
+            })
         });
+        // A span that is never ended holds it until it is collected.
+        if grown >= 1024 {
+            VirtualMachine::get()
+                .jsc_vm()
+                .deprecated_report_extra_memory(grown);
+        }
     }
 
     #[inline]
@@ -113,7 +121,7 @@ impl Span {
         }
         let trace_state = values::trace_state_header(global, context.trace_state.to_js())?;
         let attributes = link.attributes.map(JsLocal::to_js);
-        let attributes = EntryAttributes::read(global, field::LINK_ATTRIBUTES, attributes)?;
+        let attributes = EntryAttributes::of_link(global, attributes)?;
         self.record(|r| {
             attributes.write(r.begin_link(&linked, &trace_state));
         });
@@ -188,8 +196,13 @@ impl Span {
         }
         let displaced = context::active_binding(global);
         js::displaced_set_cached(span, global, displaced.unwrap_or(JSValue::NULL));
-        let binding = Context::bind_new_span(global, span, under.or(displaced));
+        let binding = Context::bind_new_span(global, span, under.or(displaced), Bound::UntilEnded);
         engine::set_active_binding(global, binding);
+    }
+
+    #[inline]
+    pub(crate) fn has_entered(span: JSValue) -> bool {
+        js::displaced_get_cached(span).is_some()
     }
 
     #[inline]
@@ -270,7 +283,7 @@ impl Span {
         } else {
             (Some(second).filter(|a| a.is_object()), time.to_js())
         };
-        let attributes = EntryAttributes::read(global, field::EV_ATTRIBUTES, attributes)?;
+        let attributes = EntryAttributes::of_event(global, attributes)?;
         let time = values::time_input(global, time);
         self.record(|r| attributes.write(r.begin_event(name, time)));
         Ok(this_value)

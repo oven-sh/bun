@@ -209,7 +209,7 @@ impl HotReloader {
         if self.reload_immediately && !crate::posix_signal_handle::watch_kill_signal_has_listeners()
         {
             crate::node_compile_cache::persist_now();
-            flush_telemetry(TelemetryFlush::BeforeRestart);
+            flush_telemetry(TelemetryFlush::WithoutExit);
             Output::flush();
             self.changed_paths.write_trigger_file();
             bun_removable_features::removable_body!(HotReload, Abort, {
@@ -247,7 +247,7 @@ fn arm_watch_reload_grace_timer(clear_screen: bool) {
         // flush the compile cache first (safe off the JS thread; generation
         // runs on its own worker VM).
         crate::node_compile_cache::persist_now();
-        flush_telemetry(TelemetryFlush::BeforeRestart);
+        flush_telemetry(TelemetryFlush::WithoutExit);
         Output::flush();
         bun_removable_features::removable_body!(HotReload, Abort, {
             bun_core::reload_process(clear_screen, false);

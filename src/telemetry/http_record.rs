@@ -317,6 +317,7 @@ impl Facts {
         let (path, query) = target.split_at(path_len.min(target.len()));
         let path = &path[origin_len(path)..];
         let query = query.get(1..).unwrap_or_default();
+        let client = otlp::truncate_utf8(client, 256);
         let texts = [peer.address(), path, query, client, user_agent, host]
             .map(|text| otlp::truncate_utf8(text, u16::MAX as usize));
         self.texts
@@ -361,6 +362,7 @@ pub(crate) struct SpanParts<'a> {
     pub(crate) status_message: &'a [u8],
 }
 
+#[derive(Clone, Copy)]
 struct Queued {
     stub: SpanStub,
     end_ns: u64,
@@ -380,6 +382,12 @@ impl Queued {
     fn byte_len(&self) -> usize {
         self.lens.iter().map(|&len| len as usize).sum()
     }
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct Cursor {
+    span: usize,
+    byte: usize,
 }
 
 #[derive(Default)]
@@ -424,13 +432,23 @@ impl Queue {
         self.bytes.clear();
     }
 
-    /// Moves all but the first `kept` spans to `rest`.
-    pub(crate) fn split_off_into(&mut self, kept: usize, rest: &mut Queue) {
-        let kept = kept.min(self.spans.len());
-        let kept_bytes = self.spans[..kept].iter().map(Queued::byte_len).sum();
-        rest.spans.extend(self.spans.drain(kept..));
-        rest.bytes.extend_from_slice(&self.bytes[kept_bytes..]);
-        self.bytes.truncate(kept_bytes);
+    /// Goes on from `at` by `n` spans at most, and copies them to `out`. Returns by how many.
+    pub(crate) fn advance(&self, at: &mut Cursor, n: usize, out: Option<&mut Queue>) -> usize {
+        let spans = &self.spans[at.span..];
+        let spans = &spans[..n.min(spans.len())];
+        let bytes = &self.bytes[at.byte..][..spans.iter().map(Queued::byte_len).sum()];
+        if let Some(out) = out {
+            out.spans.extend_from_slice(spans);
+            out.bytes.extend_from_slice(bytes);
+        }
+        at.span += spans.len();
+        at.byte += bytes.len();
+        spans.len()
+    }
+
+    pub(crate) fn truncate(&mut self, at: &Cursor) {
+        self.spans.truncate(at.span);
+        self.bytes.truncate(at.byte);
     }
 
     pub(crate) fn encoded_len_hint(&self) -> usize {
@@ -460,6 +478,10 @@ fn origin_len(target: &[u8]) -> usize {
     })
 }
 
+fn without_port(address: &[u8]) -> &[u8] {
+    bun_core::ip_address::strip_ipv6_brackets(split_host_port(address).0)
+}
+
 /// The originating client per RFC 7239 `Forwarded: for=` (first element) or,
 /// failing that, the first `X-Forwarded-For` entry; empty if neither.
 pub fn forwarded_client<'a>(
@@ -473,21 +495,13 @@ pub fn forwarded_client<'a>(
         for param in strings::split(first, b";") {
             let param = strings::trim(param, b" \t");
             if param.len() > 4 && param[..4].eq_ignore_ascii_case(b"for=") {
-                let mut v = strings::trim(&param[4..], b"\"");
-                if v.first() == Some(&b'[') {
-                    if let Some(end) = strings::index_of_char_usize(v, b']') {
-                        return &v[1..end];
-                    }
-                } else if strings::count_char(v, b':') == 1 {
-                    v = &v[..strings::index_of_char_usize(v, b':').unwrap_or(v.len())];
-                }
-                return v;
+                return without_port(strings::trim(&param[4..], b"\""));
             }
         }
     }
     if let Some(x) = x_forwarded_for {
         let first = strings::split(x, b",").next().unwrap_or(x);
-        return strings::trim(first, b" \t");
+        return without_port(strings::trim(first, b" \t"));
     }
     b""
 }

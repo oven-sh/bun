@@ -21,6 +21,12 @@ type AttributeCallback = unsafe extern "C" fn(*mut c_void, &StringView<'_>, JSVa
 unsafe extern "C" {
     safe fn Bun__Telemetry__activeBinding(global: &JSGlobalObject) -> JSValue;
     safe fn Bun__Telemetry__setActiveBinding(global: &JSGlobalObject, binding: JSValue);
+    safe fn Bun__Telemetry__contextKeptFor(global: &JSGlobalObject, span: JSValue) -> JSValue;
+    safe fn Bun__Telemetry__keepContextFor(
+        global: &JSGlobalObject,
+        span: JSValue,
+        context: JSValue,
+    );
     safe fn Bun__Telemetry__enter(
         global: &JSGlobalObject,
         binding: JSValue,
@@ -58,7 +64,7 @@ unsafe extern "C" {
         value: JSValue,
     );
     safe fn Bun__Telemetry__processEnv(global: &JSGlobalObject) -> JSValue;
-    fn Bun__Telemetry__isGeneratorFunction(function: JSValue) -> bool;
+    safe fn Bun__Telemetry__kindOfFunction(function: JSValue) -> FunctionKind;
     safe fn Bun__Telemetry__createForwarder(
         global: &JSGlobalObject,
         body: JSHostFn,
@@ -69,11 +75,6 @@ unsafe extern "C" {
     ) -> JSValue;
     fn Bun__Telemetry__forwarderTarget(forwarder: JSValue, data: &mut JSValue) -> JSValue;
     safe fn Bun__Telemetry__isForwarder(value: JSValue, body: JSHostFn) -> bool;
-    safe fn Bun__Telemetry__then(
-        global: &JSGlobalObject,
-        promise: &JSPromise,
-        on_settled: JSHostFn,
-    ) -> JSValue;
     safe fn Bun__Telemetry__observe(
         global: &JSGlobalObject,
         promise: &JSPromise,
@@ -95,6 +96,15 @@ pub(crate) fn binding_in_place(global: &JSGlobalObject) -> Option<JSValue> {
 
 pub(crate) fn set_active_binding(global: &JSGlobalObject, binding: Option<JSValue>) {
     Bun__Telemetry__setActiveBinding(global, binding.unwrap_or_default());
+}
+
+/// What [`keep_context_for`] has left in the frame that binds `span`.
+pub(crate) fn context_kept_for(global: &JSGlobalObject, span: JSValue) -> Option<JSValue> {
+    Some(Bun__Telemetry__contextKeptFor(global, span)).filter(|context| context.is_cell())
+}
+
+pub(crate) fn keep_context_for(global: &JSGlobalObject, span: JSValue, context: JSValue) {
+    Bun__Telemetry__keepContextFor(global, span, context);
 }
 
 /// Keeps a span active until it drops. It lives on the stack, where the GC finds what it puts back.
@@ -234,9 +244,17 @@ pub(crate) fn process_env(global: &JSGlobalObject) -> JsResult<JSValue> {
     from_js_host_call(global, || Bun__Telemetry__processEnv(global))
 }
 
-pub(crate) fn is_generator_function(function: JSValue) -> bool {
-    // SAFETY: a cell is all it asks for.
-    function.is_cell() && unsafe { Bun__Telemetry__isGeneratorFunction(function) }
+#[repr(transparent)]
+#[derive(PartialEq, Eq)]
+pub(crate) struct FunctionKind(u8);
+
+impl FunctionKind {
+    pub(crate) const GENERATOR: FunctionKind = FunctionKind(1);
+    pub(crate) const CLASS: FunctionKind = FunctionKind(2);
+}
+
+pub(crate) fn kind_of_function(function: JSValue) -> FunctionKind {
+    Bun__Telemetry__kindOfFunction(function)
 }
 
 /// A function that runs `body`, which gets `target` and `data` back from [`forwarder_parts`].
@@ -262,11 +280,6 @@ pub(crate) unsafe fn forwarder_parts(forwarder: JSValue) -> (JSValue, JSValue) {
 
 pub(crate) fn is_forwarder(value: JSValue, body: JSHostFn) -> bool {
     Bun__Telemetry__isForwarder(value, body)
-}
-
-/// `promise.then(on_settled, on_settled)`
-pub(crate) fn then(global: &JSGlobalObject, promise: &JSPromise, on_settled: JSHostFn) -> JSValue {
-    Bun__Telemetry__then(global, promise, on_settled)
 }
 
 /// Calls one of the two with `(value, span)`, and leaves `promise`, which is pending, as unhandled as it is.

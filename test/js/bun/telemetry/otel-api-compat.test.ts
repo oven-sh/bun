@@ -505,6 +505,24 @@ describe("@opentelemetry/api", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[true,[true,1],null,true]\n", stderr: "", exitCode: 0 });
   });
 
+  test("the version is that of the copy that asks, where only a dependency has the package", async () => {
+    using dir = tempDir("otel-api-transitive", {
+      "node_modules/lib/index.js": `module.exports = require("@opentelemetry/api");`,
+      "index.js": `console.log(require("lib").metrics.setGlobalMeterProvider({ getMeter() {} }));`,
+    });
+    cpSync(apiPackageDir, path.join(String(dir), "node_modules/lib/node_modules/@opentelemetry/api"), {
+      recursive: true,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: { ...bunEnv, BUN_OTEL: "1", OTEL_TRACES_EXPORTER: "none" },
+      cwd: String(dir),
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
+  });
+
   test("context.active() is the Context that was given, and getSpan() the Span", () => {
     const foreign = trace.wrapSpanContext({ traceId: "1".repeat(32), spanId: "2".repeat(16), traceFlags: 1 });
     const given = trace.setSpan(ROOT_CONTEXT, foreign);

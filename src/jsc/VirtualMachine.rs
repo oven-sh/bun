@@ -747,6 +747,9 @@ impl VMHolder {
         crate::node_compile_cache::persist_now();
         // Written once, and writing it ends the recording: only before a signal that is sure to end the process, not
         // one a program sends itself along the way (SIGTSTP on Ctrl-Z, SIGWINCH, one that is being ignored, ...).
+        if signal_ends_process {
+            flush_telemetry(TelemetryFlush::WithoutExit);
+        }
         if signal_ends_process && vm.is_main_thread() {
             crate::bytecode_order_recorder::write_at_exit(vm, standalone_module_graph());
         }
@@ -2673,8 +2676,8 @@ pub struct TimersLeft {
 pub enum TelemetryFlush {
     /// The VM of this thread runs no more script.
     AtExit,
-    /// `--watch` replaces the process, from any thread. A collector that is down must not hold it up.
-    BeforeRestart,
+    /// The process is replaced or kills itself, from any thread. A collector that is down must not hold it up.
+    WithoutExit,
 }
 
 /// Exports the OpenTelemetry spans that have ended.
@@ -4334,7 +4337,7 @@ impl VirtualMachine {
         // execve will not reach on_exit; flush the compile cache here like
         // node's child does via AtExit(FlushCompileCache) on every restart.
         crate::node_compile_cache::persist_now();
-        flush_telemetry(TelemetryFlush::BeforeRestart);
+        flush_telemetry(TelemetryFlush::WithoutExit);
         bun_core::Output::flush();
         bun_removable_features::removable_body!(HotReload, Abort, {
             bun_core::reload_process(should_clear_terminal, may_return);

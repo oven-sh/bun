@@ -92,7 +92,7 @@ impl Record {
         }
     }
 
-    fn capacity(&self) -> usize {
+    pub fn capacity(&self) -> usize {
         let http = self.http.as_ref().map_or(0, |facts| facts.capacity());
         self.fields.capacity() + self.text.capacity() + http
     }
@@ -222,7 +222,10 @@ impl Record {
         if host.is_empty() {
             return self;
         }
-        self.attr("server.address", host);
+        self.attr(
+            "server.address",
+            bun_core::ip_address::strip_ipv6_brackets(host),
+        );
         if port == 0 {
             self
         } else {

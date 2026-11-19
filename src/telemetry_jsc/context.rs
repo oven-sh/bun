@@ -31,6 +31,15 @@ pub(crate) struct Context {
     suppresses_tracing: bool,
     /// Script knows this context as `foreign`.
     is_stand_in: bool,
+    /// See [`active_binding`].
+    is_left_when_ended: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Bound {
+    ForScope,
+    /// By `enter()`.
+    UntilEnded,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -120,6 +129,7 @@ impl Context {
     fn derive(&self) -> Context {
         Context {
             is_stand_in: false,
+            is_left_when_ended: false,
             ..self.clone()
         }
     }
@@ -167,6 +177,7 @@ impl Context {
             suppresses_tracing: get_foreign_value(global, value, keys.suppress_tracing.get())?
                 == JSValue::TRUE,
             is_stand_in: true,
+            is_left_when_ended: false,
         };
         let fields = Fields {
             span: Some(span).filter(|span| !span.is_undefined()),
@@ -191,13 +202,18 @@ impl Context {
             }
             Some(_) => Ok(binding),
             None => {
+                if let Some(context) = engine::context_kept_for(global, binding) {
+                    return Ok(context);
+                }
                 Span::hand_to_script(binding);
                 let fields = Fields {
                     span: Some(binding),
                     native_span: Some(binding),
                     ..Fields::default()
                 };
-                Ok(Context::default().create(global, fields))
+                let context = Context::default().create(global, fields);
+                engine::keep_context_for(global, binding, context);
+                Ok(context)
             }
         }
     }
@@ -208,9 +224,10 @@ impl Context {
         global: &JSGlobalObject,
         span: JSValue,
         under: Option<JSValue>,
+        how: Bound,
     ) -> Option<JSValue> {
         (under.is_some() || Span::of(&span).data().stub.ctx.is_valid())
-            .then(|| Context::bind_span(global, span, under))
+            .then(|| Context::bind_span(global, span, under, how))
     }
 
     /// The binding that makes `span` active and keeps the other values of `under`.
@@ -219,23 +236,25 @@ impl Context {
         global: &JSGlobalObject,
         span: JSValue,
         under: Option<JSValue>,
+        how: Bound,
     ) -> JSValue {
-        let Some(under) = under else { return span };
-        let (context, fields, replaced) = match under.as_class_ref::<Context>() {
+        let (context, fields, replaced) = match under.as_ref().and_then(js::from_js) {
             Some(context) => {
-                let fields = Fields::of(under);
+                let fields = Fields::of(context.to_js());
                 (context.derive(), fields, fields.native_span)
             }
-            None => (Context::default(), Fields::default(), Some(under)),
+            None => (Context::default(), Fields::default(), under),
         };
         // A child has the baggage of its parent.
         let replaced = replaced
             .filter(|old| Span::of(old).data().baggage() != Span::of(&span).data().baggage());
-        let context = context.keeping_baggage_of(replaced);
+        let mut context = context.keeping_baggage_of(replaced);
+        context.is_left_when_ended = how == Bound::UntilEnded;
         if fields.foreign.is_none()
             && fields.entries.is_none()
             && !context.suppresses_tracing
             && matches!(context.baggage, BaggageRule::Carried)
+            && (how == Bound::UntilEnded || !Span::has_entered(span))
         {
             return span;
         }
@@ -261,6 +280,9 @@ impl Context {
         }
         if let Some(value) = fields.entry(key) {
             return Ok(value);
+        }
+        if self.suppresses_tracing && keys.is_some_and(|keys| key == keys.suppress_tracing.get()) {
+            return Ok(JSValue::TRUE);
         }
         if keys.is_some_and(|keys| key == keys.baggage.get()) {
             let arrived = match &self.baggage {
@@ -364,10 +386,7 @@ pub(crate) fn native_span_for(
 #[inline]
 pub(crate) fn active_binding(global: &JSGlobalObject) -> Option<JSValue> {
     let mut binding = engine::binding_in_place(global);
-    while let Some(displaced) = Binding::of(&binding)
-        .span()
-        .and_then(Span::displaced_if_ended)
-    {
+    while let Some(displaced) = Binding::of(&binding).displaced_if_left() {
         binding = Some(displaced).filter(|b| !b.is_null());
     }
     binding
@@ -393,6 +412,14 @@ impl<'a> Binding<'a> {
     #[inline]
     pub(crate) fn span(&self) -> Option<JSValue> {
         self.span
+    }
+
+    #[inline]
+    fn displaced_if_left(&self) -> Option<JSValue> {
+        let displaced = Span::displaced_if_ended(self.span?)?;
+        (self.context.as_ref())
+            .is_none_or(|c| c.is_left_when_ended)
+            .then_some(displaced)
     }
 
     #[inline]

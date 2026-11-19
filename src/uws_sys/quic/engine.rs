@@ -144,7 +144,8 @@ impl Engine {
     #[inline]
     fn timeout(&self) -> Option<Instant> {
         let (mut endpoint, outbox) = (self.endpoint(), self.outbox.borrow());
-        let can_send = !outbox.is_blocked() && (outbox.has_unsent() || endpoint.wants_to_transmit());
+        let can_send =
+            !outbox.is_blocked() && (outbox.has_unsent() || endpoint.wants_to_transmit());
         match (can_send || endpoint.has_events()) && !self.is_processing() {
             true => Some(Instant::default()),
             false => endpoint.timeout(),
@@ -155,7 +156,8 @@ impl Engine {
         let sockets = self.sockets.borrow();
         let find = |local: &SocketAddr| {
             let mut open = sockets.iter().filter(|it| it.is_open());
-            (open.find(|it| it.local.get() == *local)).map_or(core::ptr::null_mut(), |it| it.udp.get())
+            (open.find(|it| it.local.get() == *local))
+                .map_or(core::ptr::null_mut(), |it| it.udp.get())
         };
         (self.outbox.borrow_mut()).flush(&mut self.endpoint(), find, |_| {});
     }

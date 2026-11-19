@@ -6,7 +6,7 @@ use super::sent::{Control, Fate, SentFrame, SentPacket};
 use super::space::{Space, SpaceId};
 use super::streams::WRITE_CHUNK;
 use super::timers::Timer;
-use super::{Connection, Ending, Phase, ack_frequency, paths};
+use super::{Connection, Ending, Phase, ack_frequency};
 use crate::batch::Batch;
 use crate::coding::{Write, two_byte_varint, varint_len};
 use crate::congestion::Permit;
@@ -20,14 +20,15 @@ use crate::stream_id::Direction;
 use crate::time::{Duration, Instant};
 use crate::token::Scope;
 
-/// For frames, or the packet is not worth starting.
+/// For frames, or the packet is not worth starting. PATH_CHALLENGE and PATH_RESPONSE fit.
 const MIN_ROOM: usize = 32;
 const MAX_TRACKED_PACKETS: usize = 32 * 1024;
 /// After how many packets that only have ACK frames to ask for an acknowledgment (RFC 9000 §13.2.4).
 const MAX_ACK_ONLY_PACKETS: u32 = 20;
 const PACKETS_BEFORE_MTU_PROBE: u64 = 30;
 const MAX_INTEGER_FRAME_LEN: usize = 1 + 8;
-const MAX_NEW_TOKEN_FRAME_LEN: usize = 48;
+const MAX_NEW_TOKEN_FRAME_LEN: usize = 64;
+const MIN_RETAINED: u64 = 1024 * 1024;
 
 /// A packet that is not sealed yet.
 struct Draft {
@@ -66,7 +67,7 @@ impl Connection {
         if self.is_receiving() {
             let len_before = batch.len();
             let max_len = len_before + max_datagrams;
-            if !self.candidates.is_empty() {
+            if !self.candidates.is_empty() || self.path.owes_frames() {
                 self.probe_paths(now, batch);
             }
             self.probe_mtu(now, batch);
@@ -104,6 +105,10 @@ impl Connection {
             self.restart_progress_timer(now);
         }
         self.timers.stop(Timer::Pacing);
+        // RFC 9002 §6.2.2.1.
+        if self.phase == Phase::Handshake && self.timers.get(Timer::Loss) <= now {
+            self.on_loss_timeout(now);
+        }
         self.send_qpack_instructions()?;
         self.key_update.renew(&mut self.spaces.data, self.version)
     }
@@ -119,8 +124,10 @@ impl Connection {
 
     #[inline]
     pub(super) fn update_unsent_target(&mut self) {
-        let available = (self.congestion.window()).saturating_sub(self.congestion.in_flight());
+        let window = self.congestion.window();
+        let available = window.saturating_sub(self.congestion.in_flight());
         self.streams.state.unsent_target = available + 2 * WRITE_CHUNK;
+        self.streams.state.max_retained = MIN_RETAINED.max(3 * window);
     }
 
     /// Returns false if there is nothing to send.
@@ -137,10 +144,7 @@ impl Connection {
         let end = start + self.path.allowance();
         if self.phase != Phase::Confirmed || content != Content::Anything {
             self.write_coalesced(now, content, out, end, shared);
-        } else if let Some(mut draft) = self.draft_data(now, out, end, shared) {
-            if draft.is_expanded {
-                draft.expand(out, end.min(start + MIN_DATAGRAM_LEN));
-            }
+        } else if let Some(draft) = self.draft_data(now, out, end, shared) {
             self.send(now, &draft, out);
         }
         let len = out.len() - start;
@@ -244,11 +248,10 @@ impl Connection {
         let Some(space) = self.spaces.get_mut(draft.space) else {
             return;
         };
-        if let Some(keys) = space.write_keys.as_ref().or(self.early_keys.as_ref())
-            && let Some(out) = out.get_mut(..draft.end)
-        {
-            draft.packet.seal(out, keys);
-        }
+        let keys = space.write_keys.as_ref().or(self.early_keys.as_ref());
+        draft
+            .packet
+            .seal(out.get_mut(..draft.end).unwrap_or_default(), keys);
         let len = draft.end - draft.packet.start;
         space.next_number += 1;
         self.stats.packets_sent += 1;
@@ -289,9 +292,7 @@ impl Connection {
         let may_elicit = !is_initial || datagram.len() >= MIN_DATAGRAM_LEN;
         let has_frames = may_elicit
             && (space.has_crypto_to_send() || space.probes > 0 && content == Content::Anything);
-        // The first packet of a server is in the version that it chooses.
-        let has_ack = space.received.is_ack_due
-            && (self.side.is_client() || self.peer.initial_source_connection_id.is_some());
+        let has_ack = space.received.is_ack_due;
         if !has_frames && !(has_ack && content == Content::Anything) {
             return None;
         }
@@ -317,7 +318,6 @@ impl Connection {
             || !self.streams.state.owed.is_empty()
             || !self.datagrams.unsent.is_empty()
             || self.spaces.data.has_crypto_to_send()
-            || self.path.owes_frames()
             || self.local_ids.has_frames()
             || self.remote_ids.has_frames()
     }
@@ -325,7 +325,9 @@ impl Connection {
     #[inline]
     fn may_send(&mut self, now: Instant) -> bool {
         match self.congestion.permit(now) {
-            Permit::Now => self.spaces.data.sent.packets.len() < MAX_TRACKED_PACKETS,
+            Permit::Now => {
+                self.spaces.data.sent.packets.len() < MAX_TRACKED_PACKETS && !self.has_peer_moved()
+            }
             Permit::Blocked => false,
             Permit::At(time) => {
                 self.timers.set(Timer::Pacing, time);
@@ -384,11 +386,6 @@ impl Connection {
         end: usize,
         shared: &mut Shared,
     ) {
-        if self.path.owes_frames() && out.len() + paths::MAX_FRAMES_LEN <= end {
-            self.path.write_frames(now, self.crypto, out);
-            self.set_path_timer();
-            draft.is_expanded = true;
-        }
         if !self.streams.state.owed.is_empty() {
             draft.control = self.write_control_frames(now, out, end, shared);
         }
@@ -423,7 +420,7 @@ impl Connection {
         now: Instant,
         out: &mut Vec<u8>,
         end: usize,
-        shared: &Shared,
+        shared: &mut Shared,
     ) -> Control {
         let mut sent = Control::empty();
         for frame in self.streams.state.owed {
@@ -448,11 +445,11 @@ impl Connection {
                 Control::MAX_DATA => integer(kind::MAX_DATA, streams.state.receive_limit()),
                 Control::MAX_STREAMS_BIDI => integer(
                     kind::MAX_STREAMS_BIDI,
-                    streams.remote_limit(Direction::Bidirectional),
+                    streams.raise_remote_limit(Direction::Bidirectional),
                 ),
                 Control::MAX_STREAMS_UNI => integer(
                     kind::MAX_STREAMS_UNI,
-                    streams.remote_limit(Direction::Unidirectional),
+                    streams.raise_remote_limit(Direction::Unidirectional),
                 ),
                 Control::DATA_BLOCKED => {
                     if let Some(limit) = streams.state.blocked_at() {
@@ -528,25 +525,36 @@ impl Connection {
     /// These packets are not sent again, and have no part in congestion control (RFC 9000 §8.2.1 and §9.4).
     #[cold]
     fn probe_paths(&mut self, now: Instant, batch: &mut Batch) {
+        self.probe_path(now, batch);
         let mut candidates = core::mem::take(&mut self.candidates);
-        for path in candidates.iter_mut().filter(|it| it.owes_frames()) {
-            let out = &mut batch.bytes;
-            let start = out.len();
-            let end = start + path.allowance().min(MIN_DATAGRAM_LEN);
+        for path in &mut candidates {
             core::mem::swap(&mut self.path, path);
-            let begun = self.begin(SpaceId::Data, out, end);
+            self.probe_path(now, batch);
             core::mem::swap(&mut self.path, path);
-            if let Some((draft, frames_end)) = begun {
-                path.write_frames(now, self.crypto, out);
-                out.resize(frames_end, 0);
-                if let Some(draft) = draft.finish(out) {
-                    self.send(now, &draft, out);
-                    path.on_sent(end - start);
-                    batch.commit(&path.addresses, start);
-                }
-            }
         }
         self.candidates = candidates;
+        self.set_path_timer();
+    }
+
+    fn probe_path(&mut self, now: Instant, batch: &mut Batch) {
+        let out = &mut batch.bytes;
+        let start = out.len();
+        let end = start + self.path.allowance().min(MIN_DATAGRAM_LEN);
+        if self.path.owes_frames()
+            && let Some((draft, frames_end)) = self.begin(SpaceId::Data, out, end)
+        {
+            self.path.write_frames(now, self.crypto, out);
+            if self.path.is_wanted {
+                let number = draft.packet.number;
+                (self.spaces.data.received).write_ack(now, number, out, frames_end);
+            }
+            out.resize(frames_end, 0);
+            if let Some(draft) = draft.finish(out) {
+                self.send(now, &draft, out);
+                self.path.on_sent(end - start);
+                batch.commit(&self.path.addresses, start);
+            }
+        }
     }
 
     /// Does not wait for more packets to acknowledge.

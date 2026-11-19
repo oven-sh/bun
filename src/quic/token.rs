@@ -13,9 +13,11 @@ const NEW_TOKEN: u8 = 1;
 const RETRY_LIFETIME: Duration = Duration::from_secs(10);
 const NEW_TOKEN_LIFETIME: Duration = Duration::from_secs(24 * 3600);
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Validation {
     /// With the ID that the packet had which was answered with a Retry packet.
     Retry(ConnectionId),
+    InvalidRetry,
     NewToken,
     /// As if there were no token.
     Unknown,
@@ -24,6 +26,8 @@ pub(crate) enum Validation {
 pub(crate) struct Tokens {
     crypto: &'static dyn Crypto,
     key: Box<dyn PacketKey>,
+    /// A key is good for 2^32 random nonces.
+    issued: u32,
     reset_secret: [u8; 32],
 }
 
@@ -36,27 +40,36 @@ pub(crate) struct Scope<'a> {
 }
 
 impl Scope<'_> {
-    fn encode(&self, kind: u8) -> Vec<u8> {
+    fn associated_data(&self, kind: u8) -> Vec<u8> {
+        let destination = if kind == RETRY { self.destination } else { &[] };
+        [
+            &[kind][..],
+            &self.version.number().to_be_bytes(),
+            destination,
+        ]
+        .concat()
+    }
+
+    fn address(&self, kind: u8) -> ([u8; 16], [u8; 2]) {
         let ip = match self.peer.ip() {
             IpAddr::V4(ip) => ip.to_ipv6_mapped(),
             IpAddr::V6(ip) => ip,
         };
-        let mut out = vec![kind];
-        out.extend_from_slice(&self.version.number().to_be_bytes());
-        out.extend_from_slice(&ip.octets());
-        if kind == RETRY {
-            out.extend_from_slice(&self.peer.port().to_be_bytes());
-            out.extend_from_slice(self.destination);
-        }
-        out
+        let port = if kind == RETRY { self.peer.port() } else { 0 };
+        (ip.octets(), port.to_be_bytes())
     }
+}
+
+fn new_key(crypto: &dyn Crypto) -> Box<dyn PacketKey> {
+    crypto.packet_key(Cipher::Aes128GcmSha256, &crypto.random::<16>())
 }
 
 impl Tokens {
     pub(crate) fn new(crypto: &'static dyn Crypto) -> Self {
         Self {
             crypto,
-            key: crypto.packet_key(Cipher::Aes128GcmSha256, &crypto.random::<16>()),
+            key: new_key(crypto),
+            issued: 0,
             reset_secret: crypto.random(),
         }
     }
@@ -67,50 +80,48 @@ impl Tokens {
         ResetToken(token)
     }
 
-    pub(crate) fn retry(&self, now: Instant, scope: &Scope, original: &ConnectionId) -> Vec<u8> {
+    pub(crate) fn retry(&mut self, now: Instant, scope: &Scope, original: &[u8]) -> Vec<u8> {
         self.seal(RETRY, now, scope, original)
     }
 
-    pub(crate) fn new_token(&self, now: Instant, scope: &Scope) -> Vec<u8> {
+    pub(crate) fn new_token(&mut self, now: Instant, scope: &Scope) -> Vec<u8> {
         self.seal(NEW_TOKEN, now, scope, &[])
     }
 
-    fn seal(&self, kind: u8, now: Instant, scope: &Scope, id: &[u8]) -> Vec<u8> {
+    fn seal(&mut self, kind: u8, now: Instant, scope: &Scope, id: &[u8]) -> Vec<u8> {
+        self.issued = self.issued.wrapping_add(1);
+        if self.issued == 0 {
+            self.key = new_key(self.crypto);
+        }
         let nonce: [u8; NONCE_LEN] = self.crypto.random();
-        let mut secret = [&now.as_micros().to_be_bytes(), id].concat();
-        let tag = self.key.seal(&nonce, &scope.encode(kind), &mut secret);
+        let (ip, port) = scope.address(kind);
+        let mut secret = [&now.as_micros().to_be_bytes()[..], &ip, &port, id].concat();
+        let tag = (self.key).seal(&nonce, &scope.associated_data(kind), &mut secret);
         [&[kind][..], &nonce, &tag, &secret].concat()
     }
 
     pub(crate) fn validate(&self, now: Instant, scope: &Scope, token: &[u8]) -> Validation {
-        match token {
-            [RETRY, sealed @ ..] => self
-                .open(RETRY, now, scope, sealed, RETRY_LIFETIME)
-                .map_or(Validation::Unknown, Validation::Retry),
-            [NEW_TOKEN, sealed @ ..] => self
-                .open(NEW_TOKEN, now, scope, sealed, NEW_TOKEN_LIFETIME)
-                .map_or(Validation::Unknown, |_| Validation::NewToken),
-            _ => Validation::Unknown,
-        }
+        self.open(now, scope, token).unwrap_or(Validation::Unknown)
     }
 
-    fn open(
-        &self,
-        kind: u8,
-        now: Instant,
-        scope: &Scope,
-        mut sealed: &[u8],
-        lifetime: Duration,
-    ) -> Option<ConnectionId> {
-        let (nonce, tag) = (sealed.array()?, sealed.array()?);
-        let mut buffer = [0; 8 + ConnectionId::MAX_LEN];
-        let secret = buffer.get_mut(..sealed.len())?;
-        secret.copy_from_slice(sealed);
-        if !self.key.open(&nonce, &scope.encode(kind), secret, &tag) {
+    fn open(&self, now: Instant, scope: &Scope, mut token: &[u8]) -> Option<Validation> {
+        let (kind, nonce, tag) = (token.u8()?, token.array()?, token.array()?);
+        let mut buffer = [0; 8 + 16 + 2 + ConnectionId::MAX_LEN];
+        let secret = buffer.get_mut(..token.len())?;
+        secret.copy_from_slice(token);
+        if !(self.key).open(&nonce, &scope.associated_data(kind), secret, &tag) {
             return None;
         }
-        let (&issued, id) = secret.split_first_chunk()?;
-        let issued = Instant::from_micros(u64::from_be_bytes(issued));
-        ConnectionId::new(id).filter(|_| (issued..=issued + lifetime).contains(&now))
+        let mut secret = &*secret;
+        let age = now - Instant::from_micros(u64::from_be_bytes(secret.array()?));
+        let is_owner = (secret.array()?, secret.array()?) == scope.address(kind);
+        Some(match kind {
+            RETRY if is_owner && age <= RETRY_LIFETIME => {
+                Validation::Retry(ConnectionId::new(secret)?)
+            }
+            RETRY => Validation::InvalidRetry,
+            _ if is_owner && age <= NEW_TOKEN_LIFETIME => Validation::NewToken,
+            _ => Validation::Unknown,
+        })
     }
 }

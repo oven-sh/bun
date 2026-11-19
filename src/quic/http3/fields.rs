@@ -4,6 +4,7 @@ use bun_core::strings::{self, ByteSet};
 use bun_qpack::{Field, Indexing};
 
 use super::Priority;
+use crate::coding::MAX_VARINT;
 use crate::config::Http3Config;
 
 /// RFC 9114 §4.2.2.
@@ -22,7 +23,7 @@ static NAME: ByteSet = ByteSet::new(&[
     b'|'..=b'|',
     b'~'..=b'~',
 ]);
-static VALUE: ByteSet = ByteSet::new(&[1..=9, 11..=12, 14..=0xff]);
+static VALUE: ByteSet = ByteSet::new(&[b'\t'..=b'\t', b' '..=0xff]);
 static PATH: ByteSet = ByteSet::new(core::slice::from_ref(&(b'!'..=0xff)));
 
 /// To be sent.
@@ -186,8 +187,11 @@ impl Summary {
         match *name {
             Name::Pseudo(bit) => return self.add_pseudo(bit, value, expected),
             Name::ContentLength => {
-                let len = parse_decimal(value)?;
-                (*self.content_length.get_or_insert(len) == len).then_some(())?;
+                let len = parse_decimal(value).filter(|&len| len <= MAX_VARINT)?;
+                let before = self.content_length.replace(len);
+                before
+                    .is_none_or(|it| it == len && expected == Expected::Response)
+                    .then_some(())?;
             }
             Name::Host if expected == Expected::Request => {
                 (!value.is_empty() && !self.seen.contains(Seen::HOST)).then_some(())?;

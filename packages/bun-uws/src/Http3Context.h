@@ -29,6 +29,10 @@ struct Http3Context {
                 }
                 Http3ContextData *cd = res->context->getContextData();
                 Http3Request req(headers, count);
+                if (!isKnownMethod(req.getCaseSensitiveMethod())) {
+                    res->writeStatus("501 Not Implemented")->end();
+                    return;
+                }
                 if (req.getHeader("expect") == "100-continue") res->writeContinue();
                 cd->router.getUserData() = {res, &req};
                 if (!cd->router.route(req.getMethod(), req.getUrl())) {

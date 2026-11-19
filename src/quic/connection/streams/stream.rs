@@ -40,6 +40,9 @@ bitflags::bitflags! {
 
         /// The application knows of the stream.
         const ANNOUNCED = 1 << 24;
+        /// We have given up on reading.
+        const STOPPED = 1 << 25;
+        const RESET_BY_PEER = 1 << 26;
     }
 }
 

@@ -2,6 +2,7 @@
 
 use super::ack_frequency::{self, MIN_ACK_DELAY};
 use super::space::{Space, SpaceId};
+use super::streams::Load;
 use super::timers::Timer;
 use super::{Connection, Phase};
 use crate::cid::ConnectionId;
@@ -43,7 +44,7 @@ pub(super) struct Setup {
     /// That of the peer.
     pub(super) initial_source: Option<ConnectionId>,
     pub(super) token: Vec<u8>,
-    /// To read Initial packets of another version than ours.
+    /// To read Initial packets of the version that a server left, or that a client may move to.
     pub(super) other_keys: Option<(Version, Keys)>,
     pub(super) is_version_settled: bool,
     /// The server has validated the address of the client (RFC 9002 §6.2.2.1).
@@ -52,6 +53,8 @@ pub(super) struct Setup {
     remembered: Option<TransportParameters>,
     /// Packets for which there are no keys yet.
     pub(super) undecryptable: Vec<Vec<u8>>,
+    /// They are worth another try.
+    pub(super) can_read_more: bool,
 }
 
 impl Setup {
@@ -68,8 +71,16 @@ impl Setup {
             is_validated_by_peer: false,
             remembered: None,
             undecryptable: Vec::new(),
+            can_read_more: false,
         }
     }
+}
+
+/// What a server has yet to get.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Awaited {
+    Hello,
+    Finished,
 }
 
 /// What [`Event::Ticket`] has.
@@ -109,6 +120,16 @@ impl Handshake<'_> {
         self.connection.local.encode()
     }
 
+    /// For a server, what has to be as it was when a ticket was issued for early data to be accepted
+    /// (RFC 9001 §4.6.3 and RFC 9114 §7.2.4.2).
+    pub fn early_data_context(&self) -> Vec<u8> {
+        let mut context = self.connection.local.remembered().encode();
+        if let Some(config) = &self.connection.config.http3 {
+            write_settings(config, &mut context);
+        }
+        context
+    }
+
     /// A server has to get these before anything else. Returns false if the handshake must not go on.
     pub fn peer_parameters(&mut self, encoded: &[u8], accepts_early_data: bool) -> bool {
         let result = (self.connection).on_peer_parameters(encoded, accepts_early_data);
@@ -120,6 +141,9 @@ impl Handshake<'_> {
         let connection = &mut *self.connection;
         let secret = Secret::new(connection.crypto, cipher, secret);
         let keys = Some(secret.keys(connection.version));
+        if let Some(setup) = &mut connection.setup {
+            setup.can_read_more = true;
+        }
         match level {
             Level::Initial => {}
             Level::EarlyData => connection.early_keys = keys,
@@ -197,6 +221,14 @@ fn alert_error(alert: Alert) -> Error {
 }
 
 impl Connection {
+    pub(crate) fn awaited(&self) -> Option<Awaited> {
+        match (self.side, self.phase, &self.spaces.handshake) {
+            (Side::Server, Phase::Handshake, None) => Some(Awaited::Hello),
+            (Side::Server, Phase::Handshake, Some(_)) => Some(Awaited::Finished),
+            _ => None,
+        }
+    }
+
     fn handshake_space(&mut self) -> &mut Space {
         self.spaces.handshake.get_or_insert_default()
     }
@@ -257,26 +289,16 @@ impl Connection {
         Ok(())
     }
 
-    /// RFC 9001 §4.6.3 and RFC 9114 §7.2.4.2.
-    pub(super) fn set_early_data_context(&mut self) {
-        let mut context = self.local.remembered().encode();
-        if let Some(config) = &self.config.http3 {
-            write_settings(config, &mut context);
-        }
-        if let Some(tls) = &mut self.tls {
-            tls.set_early_data_context(&context);
-        }
-    }
-
     /// For when there are no events left that it is needed for.
     #[inline]
     pub(super) fn release_tls(&mut self) {
-        if self.tls.is_some()
-            && self.is_confirmed()
-            && (self.side.is_server() || !self.config.wants_tickets)
-        {
+        if self.tls.is_some() && self.is_confirmed() && !self.wants_tickets() {
             self.tls = None;
         }
+    }
+
+    fn wants_tickets(&self) -> bool {
+        self.side.is_client() && self.config.wants_tickets && self.tickets < MAX_TICKETS
     }
 
     fn advance_tls(&mut self, now: Instant, input: Option<(Level, &[u8])>) -> Result<Status> {
@@ -306,6 +328,7 @@ impl Connection {
             true => CRYPTO_WINDOW,
             false => UNVALIDATED_CRYPTO_WINDOW,
         };
+        let wants_tickets = self.wants_tickets();
         let Some(space) = self.spaces.get_mut(id) else {
             return Ok(());
         };
@@ -313,11 +336,14 @@ impl Connection {
         if end <= space.crypto_read {
             return Ok(());
         }
-        if id == SpaceId::Data && self.side.is_server() {
-            return Err(alert_error(UNEXPECTED_MESSAGE));
-        }
-        if id == SpaceId::Data && self.tls.is_none() {
-            return Ok(());
+        if id == SpaceId::Data {
+            if self.side.is_server() {
+                return Err(alert_error(UNEXPECTED_MESSAGE));
+            }
+            if !wants_tickets {
+                return Ok(());
+            }
+            self.streams.state.add_load(Load::Heavy);
         }
         let exceeded = Error::transport(
             transport_code::CRYPTO_BUFFER_EXCEEDED,
@@ -371,11 +397,9 @@ impl Connection {
         }
         if let Some(setup) = &mut self.setup {
             setup.is_version_settled = true;
+            setup.other_keys.take_if(|_| self.side.is_client());
         }
         let status = self.advance_tls(now, Some((level, data)))?;
-        if self.tickets >= MAX_TICKETS {
-            self.tls = None;
-        }
         match (status, self.phase) {
             (Status::Complete, Phase::Handshake) => self.on_handshake_complete(now, shared),
             (Status::InProgress, _) if self.side.is_server() && self.early_keys.is_some() => {
@@ -402,6 +426,11 @@ impl Connection {
         {
             return Err(invalid);
         }
+        let versions = peer.version_information.as_ref();
+        // RFC 9368 §4.
+        if self.side.is_server() && versions.is_some_and(|it| !it.available.contains(&it.chosen)) {
+            return Err(invalid);
+        }
         if (setup.remembered.take()).is_some_and(|it| peer.reduces(&it)) {
             return Err(Error::violation(
                 "limits are less than those for early data",
@@ -416,7 +445,7 @@ impl Connection {
         {
             return Err(invalid);
         }
-        self.negotiate_version(peer.version_information.as_ref(), accepts_early_data)?;
+        self.negotiate_version(versions, accepts_early_data)?;
         *self.peer = peer;
         self.apply_peer_parameters();
         Ok(())
@@ -430,14 +459,7 @@ impl Connection {
     ) -> Result {
         let has_changed =
             (self.setup.as_ref()).is_some_and(|it| it.original_version != self.version);
-        let is_consistent = match peer {
-            Some(peer) => {
-                peer.chosen == self.version.number()
-                    && (self.side.is_client() || peer.available.contains(&peer.chosen))
-            }
-            None => !has_changed,
-        };
-        if !is_consistent {
+        if peer.map_or(has_changed, |it| it.chosen != self.version.number()) {
             return Err(Error::transport(
                 transport_code::VERSION_NEGOTIATION_ERROR,
                 "chosen version mismatch",
@@ -460,7 +482,7 @@ impl Connection {
         let old = core::mem::replace(&mut self.version, version);
         let keys = (self.spaces.initial.as_mut()).and_then(|it| it.read_keys.take());
         if let Some(setup) = &mut self.setup {
-            setup.other_keys = keys.map(|keys| (old, keys));
+            setup.other_keys = (keys.map(|keys| (old, keys))).filter(|_| self.side.is_server());
             setup.is_version_settled = true;
         }
         self.set_initial_keys();
@@ -519,8 +541,13 @@ impl Connection {
     fn on_handshake_complete(&mut self, now: Instant, shared: &mut Shared) -> Result {
         self.phase = Phase::Established;
         self.timers.stop(Timer::Handshake);
-        self.path.remote.reset_token = self.peer.stateless_reset_token;
-        self.track_reset_token(&self.path.remote, shared);
+        if let Some(setup) = &mut self.setup {
+            setup.can_read_more = true;
+        }
+        if self.side.is_client() {
+            self.path.remote.reset_token = self.peer.stateless_reset_token;
+            self.track_reset_token(&self.path.remote, shared);
+        }
         (self.local_ids).set_peer_limit(self.peer.active_connection_id_limit);
         if self.config.adapts_ack_frequency
             && self.config.congestion == crate::congestion::Algorithm::Bbr
@@ -550,7 +577,7 @@ impl Connection {
         match self.side {
             Side::Client => self.try_preferred_address(now, shared),
             Side::Server => {
-                (self.timers).set(Timer::KeyDiscard, now + self.probe_timeout() * 3);
+                self.plan_key_discard(now);
                 Ok(())
             }
         }

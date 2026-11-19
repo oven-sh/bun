@@ -139,7 +139,6 @@ impl Cubic {
         self.window = MIN_SEGMENTS * self.segment;
         self.start_epoch(self.slow_start_threshold);
         self.max_in_flight = 0;
-        self.is_recovering = false;
     }
 
     /// The curve leads from the threshold to `plateau`.

@@ -46,6 +46,7 @@ use crate::path::Addresses;
 use crate::stream_id::Side;
 use crate::time::{Duration, Instant};
 use crate::tls;
+use crate::token_bucket::TokenBucket;
 use crate::transport_parameters::TransportParameters;
 use crate::version::Version;
 
@@ -138,7 +139,9 @@ pub struct Connection {
     ack_controller: Option<ack_frequency::Controller>,
     ack_only_packets: u32,
 
+    tolerated_load: TokenBucket,
     idle_timeout: Duration,
+    last_received_at: Instant,
     has_sent_since_receiving: bool,
     keep_alive_period: Duration,
 
@@ -241,7 +244,9 @@ impl Connection {
             ack_policy: Default::default(),
             ack_controller: None,
             ack_only_packets: 0,
+            tolerated_load: TokenBucket::new(330.0, 10_000.0),
             idle_timeout: Duration::from_millis(local.max_idle_timeout_millis),
+            last_received_at: now,
             has_sent_since_receiving: false,
             keep_alive_period: Duration::MAX,
             streams: Streams::new(side, &local, &config, u64::from_ne_bytes(seed)),
@@ -319,7 +324,6 @@ impl Connection {
             preferred.id = id.into();
             preferred.reset_token = shared.tokens.reset_token(&id.0);
         }
-        this.set_early_data_context();
         this
     }
 
@@ -342,7 +346,7 @@ impl Connection {
             addresses: self.path.addresses,
             farewell: core::mem::take(&mut self.farewell),
             lingers_for: match self.lingers {
-                true => self.closing_period(),
+                true => self.settling_period(),
                 false => Duration::ZERO,
             },
         }
@@ -431,9 +435,8 @@ impl Connection {
         &self.path.addresses
     }
 
-    #[inline]
-    pub(crate) fn is_handshaking(&self) -> bool {
-        self.phase == Phase::Handshake
+    pub(crate) fn is_validated(&self) -> bool {
+        self.path.is_validated
     }
 
     /// See [`Event::Ready`].

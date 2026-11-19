@@ -4,14 +4,14 @@ use super::ids::RemoteId;
 use super::key_update::Generation;
 use super::received::Order;
 use super::space::SpaceId;
-use super::streams::Half;
+use super::streams::{Half, Load};
 use super::timers::Timer;
 use super::{Connection, Phase};
 use crate::cid::{LocalId, ResetToken};
 use crate::congestion::GRANULARITY;
 use crate::crypto::InitialSecret;
 use crate::endpoint::Shared;
-use crate::error::{Error, Result, transport_code};
+use crate::error::{Error, Result, http3_code, transport_code};
 use crate::event::CloseReason;
 use crate::frame::Frame;
 use crate::packet::{
@@ -24,6 +24,7 @@ use crate::time::{Duration, Instant};
 const MAX_COALESCED: usize = 8;
 const MAX_UNDECRYPTABLE: usize = 32;
 const MAX_UNDECRYPTABLE_LEN: usize = 48 * 1024;
+const UNVALIDATED_MAX_UNDECRYPTABLE_LEN: usize = 16 * 1024;
 
 /// An authentic packet.
 pub(crate) struct Opened<'a> {
@@ -32,9 +33,24 @@ pub(crate) struct Opened<'a> {
     pub(crate) payload: &'a [u8],
 }
 
+impl Opened<'_> {
+    /// For an Initial packet, which is dropped if there is something wrong with it (RFC 9000 §11.1). The frames also
+    /// have to pass `check`.
+    pub(crate) fn is_valid_initial(&self, mut check: impl FnMut(&Frame) -> bool) -> bool {
+        let mut rest = self.payload;
+        let mut is_valid = !has_reserved_bits(self.first) && !rest.is_empty();
+        while is_valid && !rest.is_empty() {
+            is_valid = Frame::read(&mut rest)
+                .is_ok_and(|frame| frame.is_allowed_in_handshake() && check(&frame));
+        }
+        is_valid
+    }
+}
+
 struct Origin<'a> {
     now: Instant,
     from: &'a Addresses,
+    /// As of before the frames.
     is_current_path: bool,
     space: SpaceId,
     is_early: bool,
@@ -101,6 +117,10 @@ impl Connection {
             }
             result => result,
         };
+        let result = match self.streams.state.load {
+            0 => result,
+            _ => result.and_then(|is_useful| self.bear_load(now).map(|()| is_useful)),
+        };
         match result {
             Err(error) => self.fail(now, error),
             Ok(_) if !self.is_receiving() => {}
@@ -111,12 +131,23 @@ impl Connection {
                         path.on_received(len);
                     }
                     self.restart_idle_timer(now);
+                    self.last_received_at = now;
                     self.has_sent_since_receiving = false;
                     self.update_unsent_target();
                     self.streams.state.start_write_round();
                 }
                 self.set_loss_timer(now);
             }
+        }
+    }
+
+    #[cold]
+    fn bear_load(&mut self, now: Instant) -> Result {
+        let load = core::mem::take(&mut self.streams.state.load);
+        match (self.tolerated_load.take(now, load), &self.http3) {
+            (true, _) => Ok(()),
+            (false, Some(_)) => Err(Error::http3(http3_code::EXCESSIVE_LOAD, "excessive load")),
+            (false, None) => Err(Error::violation("excessive load")),
         }
     }
 
@@ -224,6 +255,18 @@ impl Connection {
         let Some(payload) = sealed.open(&keys.payload) else {
             return self.on_forgery();
         };
+        let packet = Opened {
+            first,
+            number,
+            payload,
+        };
+        if id == SpaceId::Initial
+            && !packet.is_valid_initial(
+                |frame| !matches!(frame, Frame::Ack(ack) if ack.largest >= space.next_number),
+            )
+        {
+            return Ok(false);
+        }
         if is_other_version && self.side.is_client() {
             self.switch_version(header.version);
         }
@@ -249,11 +292,6 @@ impl Connection {
             space: id,
             is_early,
             destination: &header.destination,
-        };
-        let packet = Opened {
-            first,
-            number,
-            payload,
         };
         self.process(&origin, &packet, shared)
     }
@@ -332,7 +370,10 @@ impl Connection {
         if !space.received.is_duplicate(packet.number)
             && (self.key_update).on_opened(generation, packet.number, space, version)?
         {
-            (self.timers).set(Timer::KeyDiscard, now + self.probe_timeout() * 3);
+            if generation == Generation::Next {
+                self.streams.state.add_load(Load::Heavy);
+            }
+            self.plan_key_discard(now);
         }
         let is_current_path = *from == self.path.addresses;
         if is_current_path && packet.number >= expected && self.spins {
@@ -352,6 +393,12 @@ impl Connection {
             self.last_destination = destination;
         }
         Ok(is_new)
+    }
+
+    pub(super) fn plan_key_discard(&mut self, now: Instant) {
+        if !self.timers.is_set(Timer::KeyDiscard) {
+            (self.timers).set(Timer::KeyDiscard, now + self.settling_period());
+        }
     }
 
     /// RFC 9000 §10.3.1.
@@ -375,9 +422,11 @@ impl Connection {
     fn postpone(&mut self, packet: &[u8]) {
         if let Some(setup) = &mut self.setup {
             let len: usize = setup.undecryptable.iter().map(Vec::len).sum();
-            if setup.undecryptable.len() < MAX_UNDECRYPTABLE
-                && len + packet.len() <= MAX_UNDECRYPTABLE_LEN
-            {
+            let max_len = match self.path.is_validated {
+                true => MAX_UNDECRYPTABLE_LEN,
+                false => UNVALIDATED_MAX_UNDECRYPTABLE_LEN,
+            };
+            if setup.undecryptable.len() < MAX_UNDECRYPTABLE && len + packet.len() <= max_len {
                 setup.undecryptable.push(packet.to_vec());
             }
         }
@@ -386,14 +435,12 @@ impl Connection {
     #[cold]
     fn retry_undecryptable(&mut self, now: Instant, shared: &mut Shared) -> Result {
         let from = self.path.addresses;
-        while let Some(setup) = &mut self.setup {
-            let mut has_progressed = false;
+        while let Some(setup) = &mut self.setup
+            && core::mem::take(&mut setup.can_read_more)
+        {
             for mut packet in core::mem::take(&mut setup.undecryptable) {
                 self.stats.packets_received -= 1;
-                has_progressed |= self.receive_packets(now, &from, &mut packet, 0, shared)?;
-            }
-            if !has_progressed {
-                break;
+                self.receive_packets(now, &from, &mut packet, 0, shared)?;
             }
         }
         if self.is_confirmed() {
@@ -418,7 +465,7 @@ impl Connection {
             return Err(Error::violation("packet has no frames"));
         }
         let is_largest = packet.number >= space.received.expected;
-        let (mut is_eliciting, mut is_probing) = (false, true);
+        let (mut is_eliciting, mut is_probing, mut has_ack) = (false, true, false);
         let mut rest = packet.payload;
         while !rest.is_empty() && self.is_receiving() {
             let frame = Frame::read(&mut rest)?;
@@ -433,6 +480,9 @@ impl Connection {
             }
             is_eliciting |= frame.is_ack_eliciting();
             is_probing &= frame.is_probing();
+            if matches!(frame, Frame::Ack(_)) && core::mem::replace(&mut has_ack, true) {
+                self.streams.state.add_load(Load::Light);
+            }
             self.on_frame(origin, frame, shared)?;
         }
         if let Some(space) = self.spaces.get_mut(origin.space) {
@@ -442,7 +492,7 @@ impl Connection {
             }
         }
         if !(origin.is_current_path && self.candidates.is_empty()) && is_largest && !is_probing {
-            if !origin.is_current_path && self.side.is_server() {
+            if *origin.from != self.path.addresses && self.side.is_server() {
                 self.candidate(origin.now, origin.from, origin.destination, shared)?;
             }
             self.on_peer_moved(origin.now, origin.from, shared)?;
@@ -516,6 +566,7 @@ impl Connection {
                 if self.path.remote.id.is_empty() {
                     return Err(Error::violation("peer does not use connection IDs"));
                 }
+                self.streams.state.add_load(Load::Heavy);
                 let new = RemoteId {
                     sequence,
                     id,
@@ -524,10 +575,12 @@ impl Connection {
                 return self.on_new_connection_id(new, retire_prior_to, shared);
             }
             Frame::RetireConnectionId(sequence) => {
+                self.streams.state.add_load(Load::Heavy);
                 return (self.local_ids).on_retired(sequence, origin.destination, shared);
             }
             Frame::PathChallenge(data) => {
-                let path = match origin.is_current_path {
+                self.streams.state.add_load(Load::Light);
+                let path = match *origin.from == self.path.addresses {
                     true => Some(&mut self.path),
                     false => self.candidate(now, origin.from, origin.destination, shared)?,
                 };
@@ -535,7 +588,9 @@ impl Connection {
                     path.owed_response = Some(data);
                 }
             }
-            Frame::PathResponse(data) => return self.on_path_response(now, data, shared),
+            Frame::PathResponse(data) => {
+                return self.on_path_response(now, origin.from, data, shared);
+            }
             Frame::Close {
                 layer,
                 code,

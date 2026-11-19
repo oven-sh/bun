@@ -1,17 +1,19 @@
 //! RFC 9000 §5.2.
 
+use core::ops::Range;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
 use crate::batch::Batch;
 use crate::cid::{ConnectionId, LocalId, ResetToken};
 use crate::config::Config;
+use crate::connection::handshake::Awaited;
 use crate::connection::{Connection, Introduction, Opened, Remains};
 use crate::crypto::{Crypto, InitialSecret, retry_tag};
 use crate::deadlines::Deadlines;
 use crate::error::transport_code;
 use crate::event::{CloseReason, Context, Event};
-use crate::frame::kind;
+use crate::frame::{Frame, kind};
 use crate::hash::{IdMap, KeyedMap, Seeded};
 use crate::http3::{Fields, Header, Pool};
 use crate::packet::{
@@ -23,13 +25,12 @@ use crate::stream_id::{Side, StreamId};
 use crate::time::Instant;
 use crate::tls;
 use crate::token::{Scope, Tokens, Validation};
+use crate::token_bucket::TokenBucket;
 use crate::version::Version;
 
-/// With more handshakes going on, clients have to prove their address first.
-const RETRY_THRESHOLD: usize = 512;
-const MAX_HANDSHAKES: usize = 8192;
 const MAX_REPLIES: usize = 256;
-const MAX_RESET_LEN: usize = 61;
+/// RFC 9000 §10.3.
+const USUAL_RESET_LENS: Range<usize> = 43..62;
 const DATAGRAMS_PER_TURN: usize = 16;
 /// RFC 9000 §7.2.
 const MIN_INITIAL_ID_LEN: usize = 8;
@@ -82,9 +83,29 @@ enum Tenant {
 struct Slot {
     tenant: Tenant,
     generation: u32,
-    is_handshaking: bool,
+    awaited: Option<Awaited>,
+    /// From [`Endpoint::unvalidated_clients`].
+    has_token: bool,
     may_have_events: bool,
     may_transmit: bool,
+}
+
+/// The connections that wait for the same. The oldest has to make room for a new one.
+struct Queue {
+    /// Also some that have left.
+    handles: VecDeque<Handle>,
+    len: usize,
+    max_len: usize,
+}
+
+impl Queue {
+    fn new(max_len: usize) -> Self {
+        Self {
+            handles: VecDeque::new(),
+            len: 0,
+            max_len,
+        }
+    }
 }
 
 /// A datagram that is not for any of the connections.
@@ -100,12 +121,7 @@ pub struct Incoming<'a> {
     packet: Opened<'a>,
     rest: &'a mut [u8],
     len: usize,
-}
-
-impl Incoming<'_> {
-    pub fn addresses(&self) -> &Addresses {
-        &self.client.0
-    }
+    has_token: bool,
 }
 
 pub struct Endpoint {
@@ -113,7 +129,11 @@ pub struct Endpoint {
     slots: Vec<Slot>,
     free: Vec<u32>,
     connections: usize,
-    handshakes: usize,
+    awaiting_hello: Queue,
+    awaiting_finished: Queue,
+    /// A client gives its token back when its address is validated. Without one it has to see to that first.
+    unvalidated_clients: TokenBucket,
+    version_negotiations: TokenBucket,
     /// They can be earlier than what the connections say.
     deadlines: Deadlines,
     with_events: VecDeque<u32>,
@@ -138,7 +158,10 @@ impl Endpoint {
             slots: Vec::new(),
             free: Vec::new(),
             connections: 0,
-            handshakes: 0,
+            awaiting_hello: Queue::new(1024),
+            awaiting_finished: Queue::new(8192),
+            unvalidated_clients: TokenBucket::new(100.0, 512.0),
+            version_negotiations: TokenBucket::new(100.0, 200.0),
             deadlines: Deadlines::default(),
             with_events: VecDeque::new(),
             to_transmit: VecDeque::new(),
@@ -210,8 +233,6 @@ impl Endpoint {
         });
         let connection = new(slot, &mut self.shared);
         if let Some(it) = self.slots.get_mut(slot as usize) {
-            it.is_handshaking = connection.side().is_server();
-            self.handshakes += usize::from(it.is_handshaking);
             it.tenant = Tenant::Live(connection);
         }
         self.connections += 1;
@@ -242,17 +263,75 @@ impl Endpoint {
         tls: Box<dyn tls::Session>,
     ) -> Handle {
         let (addresses, client) = *incoming.client;
-        self.insert(|slot, shared| {
+        let handle = self.insert(|slot, shared| {
             (shared.routes.by_initial_id).insert(client.destination, slot);
             let mut connection =
                 Connection::accept(now, slot, config, addresses, tls, client, shared);
             connection.receive_first(now, &incoming.packet, incoming.rest, incoming.len, shared);
             connection
-        })
+        });
+        if let Some(slot) = self.slots.get_mut(handle.slot as usize) {
+            slot.has_token = incoming.has_token;
+        }
+        self.track_handshake(handle.slot);
+        handle
+    }
+
+    fn queue(&mut self, awaited: Awaited) -> (&mut Queue, &mut [Slot]) {
+        match awaited {
+            Awaited::Hello => (&mut self.awaiting_hello, &mut self.slots),
+            Awaited::Finished => (&mut self.awaiting_finished, &mut self.slots),
+        }
+    }
+
+    #[cold]
+    fn track_handshake(&mut self, index: u32) {
+        let handle = self.handle(index);
+        let Some(slot) = self.slots.get_mut(index as usize) else {
+            return;
+        };
+        let (awaited, is_validated) = match &slot.tenant {
+            Tenant::Live(it) if !it.is_over() => (it.awaited(), it.is_validated()),
+            _ => (None, false),
+        };
+        if is_validated && core::mem::take(&mut slot.has_token) {
+            self.unvalidated_clients.put_back();
+        }
+        let before = core::mem::replace(&mut slot.awaited, awaited);
+        if before == awaited {
+            return;
+        }
+        if let Some(before) = before {
+            self.queue(before).0.len -= 1;
+        }
+        let Some(awaited) = awaited else {
+            return;
+        };
+        let (queue, slots) = self.queue(awaited);
+        let is_waiting = |it: &Handle| {
+            (slots.get(it.slot as usize)).is_some_and(|slot| {
+                (slot.generation, slot.awaited) == (it.generation, Some(awaited))
+            })
+        };
+        queue.len += 1;
+        queue.handles.push_back(handle);
+        if queue.handles.len() > 2 * queue.len {
+            queue.handles.retain(is_waiting);
+        }
+        if queue.len > queue.max_len
+            && let Some(oldest) = core::iter::from_fn(|| queue.handles.pop_front()).find(is_waiting)
+        {
+            self.get_mut(oldest).map(Connection::abort_silently);
+            self.track_handshake(oldest.slot);
+        }
     }
 
     /// RFC 9000 §5.2.2.
     pub fn refuse(&mut self, incoming: Incoming) {
+        self.close(incoming, transport_code::CONNECTION_REFUSED);
+    }
+
+    fn close(&mut self, incoming: Incoming, code: u64) {
         let (addresses, client) = *incoming.client;
         let fields = LongFields {
             version: client.version,
@@ -263,24 +342,22 @@ impl Endpoint {
         };
         let mut out = Vec::new();
         let packet = Unsealed::long(&mut out, &fields, 0, 1);
-        let code = transport_code::CONNECTION_REFUSED as u8;
-        out.extend_from_slice(&[kind::TRANSPORT_CLOSE as u8, code, 0, 0]);
+        out.extend_from_slice(&[kind::TRANSPORT_CLOSE as u8, code as u8, 0, 0]);
         packet.end(&mut out);
-        packet.seal(&mut out, &client.write_keys);
+        packet.seal(&mut out, Some(&client.write_keys));
         self.reply(&addresses, out);
     }
 
     /// RFC 9000 §10.3. Returns whether it is going to be sent.
     pub fn reset(&mut self, from: &Addresses, stray: &[u8]) -> bool {
-        let max_len = MAX_RESET_LEN.min(stray.len().saturating_sub(1));
-        let (Some(range), Some(id)) = (
-            max_len.checked_sub(MIN_RESET_LEN),
-            stray.get(1..1 + LocalId::LEN),
-        ) else {
+        let Some(id) = (stray.get(1..1 + LocalId::LEN))
+            .filter(|_| stray.len() > MIN_RESET_LEN && stray.first() >= Some(&FIXED_BIT))
+        else {
             return false;
         };
-        let [first, len, rest @ ..] = self.shared.crypto.random::<MAX_RESET_LEN>();
-        let len = MIN_RESET_LEN + usize::from(len) % (range + 1);
+        let [first, len, rest @ ..] = self.shared.crypto.random::<{ USUAL_RESET_LENS.end }>();
+        let len = USUAL_RESET_LENS.start + usize::from(len) % USUAL_RESET_LENS.len();
+        let len = len.min(stray.len() - 1);
         let mut out = vec![first & !LONG_HEADER | FIXED_BIT];
         out.extend(rest.iter().take(len - 1 - ResetToken::LEN));
         out.extend_from_slice(&self.shared.tokens.reset_token(id).0);
@@ -304,7 +381,7 @@ impl Endpoint {
         datagram: &'a mut [u8],
         accepted: &[Version],
     ) -> Option<Unrouted<'a>> {
-        let (&first, rest) = datagram.split_first()?;
+        let (&first, rest) = datagram.split_first().filter(|_| from.peer.port() != 0)?;
         let is_long = first & LONG_HEADER != 0;
         let routes = &self.shared.routes;
         let route = if is_long {
@@ -316,8 +393,9 @@ impl Endpoint {
         };
         let Some(&index) = route else {
             return match is_long {
+                _ if self.receive_reset(from, datagram) => None,
                 true => (self.admit(now, from, datagram, accepted)).map(Unrouted::Incoming),
-                false => (!self.receive_reset(from, datagram)).then_some(Unrouted::Stray(datagram)),
+                false => Some(Unrouted::Stray(datagram)),
             };
         };
         let slot = self.slots.get_mut(index as usize)?;
@@ -325,13 +403,13 @@ impl Endpoint {
             Tenant::None => {}
             Tenant::Live(connection) => {
                 connection.receive(now, from, datagram, &mut self.shared);
-                if slot.is_handshaking && !connection.is_handshaking() {
-                    slot.is_handshaking = false;
-                    self.handshakes -= 1;
-                }
                 enqueue(&mut self.with_events, &mut slot.may_have_events, index);
                 enqueue(&mut self.to_transmit, &mut slot.may_transmit, index);
+                if slot.awaited.is_some() {
+                    self.track_handshake(index);
+                }
             }
+            Tenant::Gone { remains, .. } if *from != remains.addresses => {}
             Tenant::Gone {
                 remains,
                 datagrams_received,
@@ -339,7 +417,6 @@ impl Endpoint {
                 // RFC 9000 §10.2.1.
                 *datagrams_received = datagrams_received.saturating_add(1);
                 if datagrams_received.is_power_of_two()
-                    && *from == remains.addresses
                     && (1..=3 * datagram.len()).contains(&remains.farewell.len())
                 {
                     let farewell = remains.farewell.clone();
@@ -379,53 +456,70 @@ impl Endpoint {
         }
         let invariants = Invariants::read(datagram).filter(|it| it.version != 0)?;
         if !accepted.iter().any(|it| it.number() == invariants.version) {
-            self.negotiate_version(from, &invariants, accepted);
+            if self.version_negotiations.take(now, 1) {
+                self.negotiate_version(from, &invariants, accepted);
+            }
             return None;
         }
         let header = LongHeader::read(datagram).filter(|header| {
             header.kind == LongKind::Initial
                 && header.destination.len() >= MIN_INITIAL_ID_LEN
                 && invariants.first & FIXED_BIT != 0
-                && self.handshakes < MAX_HANDSHAKES
         })?;
         let scope = Scope {
             version: header.version,
             peer: from.peer,
             destination: &header.destination,
         };
-        let original_destination = match self.shared.tokens.validate(now, &scope, header.token) {
-            Validation::Retry(original_destination) => Some(original_destination),
-            Validation::Unknown if self.handshakes >= RETRY_THRESHOLD => {
-                self.retry(now, from, &header);
-                return None;
-            }
-            Validation::Unknown | Validation::NewToken => None,
-        };
+        let validation = self.shared.tokens.validate(now, &scope, header.token);
+        let has_token = validation == Validation::Unknown;
+        if has_token && !self.unvalidated_clients.take(now, 1) {
+            self.retry(now, from, &header);
+            return None;
+        }
         let header = header.without_token();
         let secret = InitialSecret::new(self.shared.crypto, header.version, &header.destination);
         let read_keys = secret.keys(Side::Client);
         let (packet, rest) = datagram.split_at_mut_checked(header.len)?;
         let sealed = Sealed::new(packet, header.number_offset, &*read_keys.header, 0)?;
         let (first, number) = (sealed.first, sealed.number);
-        let payload = sealed.open(&read_keys.payload)?;
+        let packet = Opened {
+            first,
+            number,
+            payload: sealed.open(&read_keys.payload)?,
+        };
+        let mut has_hello = false;
+        let is_valid = packet.is_valid_initial(|frame| {
+            has_hello |= matches!(frame, Frame::Crypto { .. });
+            !matches!(frame, Frame::Ack(_) | Frame::Close { .. })
+        });
+        if !is_valid || !has_hello {
+            return None;
+        }
         let client = Introduction {
             version: header.version,
             source: header.source,
             destination: header.destination,
-            original_destination,
+            original_destination: match validation {
+                Validation::Retry(id) => Some(id),
+                _ => None,
+            },
             read_keys,
             write_keys: secret.keys(Side::Server),
         };
-        Some(Incoming {
+        let incoming = Incoming {
             client: Box::new((*from, client)),
-            packet: Opened {
-                first,
-                number,
-                payload,
-            },
+            packet,
             rest,
             len,
-        })
+            has_token,
+        };
+        // RFC 9000 §8.1.2.
+        if validation == Validation::InvalidRetry {
+            self.close(incoming, transport_code::INVALID_TOKEN);
+            return None;
+        }
+        Some(incoming)
     }
 
     /// RFC 9000 §6.1.
@@ -504,13 +598,13 @@ impl Endpoint {
         };
         slot.generation = slot.generation.wrapping_add(1);
         self.connections -= 1;
-        self.handshakes -= usize::from(core::mem::take(&mut slot.is_handshaking));
         let remains = Box::new(connection.remains(&mut self.shared));
         let lingers_for = remains.lingers_for;
         slot.tenant = Tenant::Gone {
             remains,
             datagrams_received: 0,
         };
+        self.track_handshake(index);
         match lingers_for.is_zero() {
             true => self.vacate(index),
             false => self.deadlines.set(index, now + lingers_for),

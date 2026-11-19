@@ -8,6 +8,7 @@ use crate::stream_id::StreamId;
 use crate::time::Instant;
 
 const MAX_LOST_RANGES: usize = 32;
+const MAX_IDLE_CAPACITY: usize = 256;
 
 bitflags::bitflags! {
     /// The frames of which only the latest counts.
@@ -143,6 +144,12 @@ impl Sent {
         while let Some(packet) = self.packets.pop_front_if(|it| !it.is_in_flight()) {
             self.frames.list.drain(..usize::from(packet.frame_count));
             self.frames.removed = self.frames.removed.wrapping_add(packet.frame_count.into());
+        }
+        if self.packets.is_empty()
+            && (self.packets.capacity()).max(self.frames.list.capacity()) > MAX_IDLE_CAPACITY
+        {
+            self.packets.shrink_to_fit();
+            self.frames.list.shrink_to_fit();
         }
     }
 

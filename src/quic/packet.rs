@@ -151,7 +151,8 @@ impl<'a> Sealed<'a> {
         let (header, payload) = packet.split_at_mut_checked(number_offset + len)?;
         Some(Self {
             first,
-            number: expand_number(word >> unused_bits, len, expected),
+            number: Some(expand_number(word >> unused_bits, len, expected))
+                .filter(|&number| number <= MAX_VARINT)?,
             header,
             payload,
         })
@@ -192,12 +193,11 @@ fn expand_number(truncated: u32, len: usize, expected: u64) -> u64 {
     }
 }
 
-/// RFC 9000 §A.2.
+/// RFC 9000 §A.2. One byte is not enough for a packet that arrives late.
 #[inline]
 pub(crate) fn number_len(number: u64, largest_acked: Option<u64>) -> usize {
     match largest_acked.map_or(number + 1, |acked| number - acked) {
-        ..0x80 => 1,
-        0x80..0x8000 => 2,
+        ..0x8000 => 2,
         0x8000..0x80_0000 => 3,
         _ => 4,
     }
@@ -277,9 +277,16 @@ impl Unsealed {
         out.extend_from_slice(&[0; TAG_LEN]);
     }
 
-    /// `out` ends where [`Self::end`] left it.
+    /// `out` ends where [`Self::end`] left it. Nothing is left of the packet if there are no keys.
     #[inline]
-    pub(crate) fn seal(&self, out: &mut [u8], keys: &Keys) -> Option<()> {
+    pub(crate) fn seal(&self, out: &mut [u8], keys: Option<&Keys>) {
+        if keys.and_then(|keys| self.try_seal(out, keys)).is_none() {
+            out.get_mut(self.start..).unwrap_or_default().fill(0);
+        }
+    }
+
+    #[inline]
+    fn try_seal(&self, out: &mut [u8], keys: &Keys) -> Option<()> {
         if out.get(self.start)? & LONG_HEADER != 0 {
             let length = two_byte_varint(out.len() - self.number_offset);
             *out.get_mut(..self.number_offset)?.last_chunk_mut()? = length;

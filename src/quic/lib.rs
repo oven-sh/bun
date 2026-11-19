@@ -31,6 +31,7 @@ mod stream_id;
 mod time;
 pub mod tls;
 mod token;
+mod token_bucket;
 mod transport_parameters;
 mod version;
 
@@ -46,5 +47,6 @@ pub use event::{CloseReason, Context, Event, StreamEvent};
 pub use path::Addresses;
 pub use stream_id::{Direction, Side, StreamId};
 pub use time::{Duration, Instant};
+pub use token_bucket::TokenBucket;
 pub use transport_parameters::{PreferredAddress, TransportParameters};
 pub use version::Version;

@@ -81,7 +81,7 @@ struct Http3Response {
             us_quic_stream_want_write(&stream);
             return false;
         }
-        size_t w = us_quic_stream_write(&stream, data.data(), (unsigned) data.length());
+        size_t w = us_quic_stream_write(&stream, data.data(), data.length());
         d->offset += w;
         if (writtenPtr) *writtenPtr = w;
         if (w < data.length()) {
@@ -180,7 +180,7 @@ struct Http3Response {
     bool drain() {
         Http3ResponseData *d = getHttpResponseData();
         while (d->backpressure.length() != 0) {
-            unsigned w = us_quic_stream_write(&stream, d->backpressure.data(), (unsigned) d->backpressure.length());
+            size_t w = us_quic_stream_write(&stream, d->backpressure.data(), d->backpressure.length());
             if (w == 0) return false;
             d->offset += w;
             d->backpressure.erase(w);
@@ -241,7 +241,7 @@ private:
             return false;
         }
 
-        size_t w = data.empty() ? 0 : us_quic_stream_write(&stream, data.data(), (unsigned) data.length());
+        size_t w = data.empty() ? 0 : us_quic_stream_write(&stream, data.data(), data.length());
         d->offset += w;
         if (w < data.length()) {
             if (optional) return false;

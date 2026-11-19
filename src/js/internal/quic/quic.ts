@@ -49,7 +49,6 @@ function wrapCertificate(der: Uint8Array | undefined) {
 
 // Stand-ins for the Node.js primordials used by the original source.
 const ArrayIsArray = Array.isArray;
-const StringPrototypeStartsWith = uncurryThis(String.prototype.startsWith);
 const StringPrototypeIncludes = uncurryThis(String.prototype.includes);
 const NumberIsInteger = Number.isInteger;
 const NumberIsNaN = Number.isNaN;
@@ -147,9 +146,6 @@ function ERR_QUIC_STREAM_RESET(code) {
 function ERR_QUIC_VERSION_NEGOTIATION_ERROR() {
   return $ERR_QUIC_VERSION_NEGOTIATION_ERROR("The QUIC session requires version negotiation");
 }
-
-const kClientHttp = Symbol("kClientHttp");
-const kNoteClientHttp = Symbol("kNoteClientHttp");
 
 const kSocketAddressHandle = Symbol("kSocketAddressHandle");
 Object.defineProperty(SocketAddress.prototype, kSocketAddressHandle, {
@@ -4216,7 +4212,6 @@ interface QuicEndpointInner {
   busy: boolean;
   isPendingClose: boolean;
   listening: boolean;
-  clientHttp: boolean | undefined;
   pendingClose: PendingPromise;
   pendingError: unknown;
   sessions: Set<QuicSession>;
@@ -4236,7 +4231,6 @@ class QuicEndpoint {
     busy: false,
     isPendingClose: false,
     listening: false,
-    clientHttp: undefined,
     pendingClose: PromiseWithResolvers(),
     pendingError: undefined,
     sessions: new SafeSet(),
@@ -4712,14 +4706,6 @@ class QuicEndpoint {
     return this.#inner.listening;
   }
 
-  get [kClientHttp]() {
-    return this.#inner.clientHttp;
-  }
-
-  [kNoteClientHttp](wantHttp) {
-    this.#inner.clientHttp ??= wantHttp;
-  }
-
   /** @type {boolean} */
   get destroyed() {
     assertIsQuicEndpoint(this);
@@ -4912,28 +4898,9 @@ class QuicEndpoint {
   }
 }
 
-/**
- * MUST match `alpn_cstr_is_http` in `src/runtime/node/quic/endpoint.rs`
- * (which cross-references this fn). `alpn` is the RAW, not-yet-validated
- * `options.alpn`: never throw here -- a non-string is treated as the HTTP/3
- * default and rejected with the proper error by `processTlsOptions` later.
- * @param {string|string[]|undefined} alpn
- */
-function alpnWantsHttp(alpn) {
-  const first = ArrayIsArray(alpn) ? alpn[0] : alpn;
-  return typeof first !== "string" || first === "h3" || StringPrototypeStartsWith(first, "h3-");
-}
-
-function findSuitableEndpoint(wantHttp) {
+function findSuitableEndpoint() {
   for (const endpoint of endpointRegistry) {
-    if (!endpoint.destroyed && !endpoint.closing && !endpoint.busy) {
-      const mode = endpoint[kClientHttp];
-      if (mode !== undefined && mode !== wantHttp) {
-        continue;
-      }
-      if (endpoint.listening) {
-        continue;
-      }
+    if (!endpoint.destroyed && !endpoint.closing && !endpoint.busy && !endpoint.listening) {
       return endpoint;
     }
   }
@@ -4946,7 +4913,7 @@ function findSuitableEndpoint(wantHttp) {
  * @param {boolean} forServer
  * @returns {QuicEndpoint}
  */
-function processEndpointOption(endpoint, reuseEndpoint = true, forServer = false, wantHttp = true): QuicEndpoint {
+function processEndpointOption(endpoint, reuseEndpoint = true, forServer = false): QuicEndpoint {
   if (isQuicEndpoint(endpoint)) {
     return endpoint;
   }
@@ -4954,7 +4921,7 @@ function processEndpointOption(endpoint, reuseEndpoint = true, forServer = false
     return new QuicEndpoint(endpoint);
   }
   if (reuseEndpoint && !forServer) {
-    const existing = findSuitableEndpoint(wantHttp);
+    const existing = findSuitableEndpoint();
     if (existing !== undefined) return existing;
   }
   return new QuicEndpoint();
@@ -5370,8 +5337,7 @@ function processSessionOptions(options, config: ProcessSessionOptions = kEmptyOb
     }
   }
 
-  const wantHttp = forServer || alpnWantsHttp(options.alpn);
-  const actualEndpoint = processEndpointOption(endpoint, reuseEndpoint, forServer, wantHttp);
+  const actualEndpoint = processEndpointOption(endpoint, reuseEndpoint, forServer);
 
   // Normalize into the shape Node stores and returns from `session.applicationOptions`.
   const {
@@ -5519,8 +5485,6 @@ async function connect(address, options: SessionOptions = kEmptyObject) {
   }
 
   const session = endpoint[kConnect](address[kSocketAddressHandle], rest);
-
-  endpoint[kNoteClientHttp](alpnWantsHttp(options.alpn));
 
   if (onEndpointClientSessionChannel.hasSubscribers) {
     onEndpointClientSessionChannel.publish({

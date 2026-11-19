@@ -152,13 +152,6 @@ static inline bool validFieldName(const char *p, unsigned n) {
     return true;
 }
 
-/* The methods Bun.serve can represent: the HTTP/1 parser's strict set, in
- * their RFC 9110 case-sensitive wire form. */
-static inline bool isKnownMethod(std::string_view method) {
-    for (unsigned char c : method) if (!((c >= 'A' && c <= 'Z') || c == '-')) return false;
-    return Bun__HTTPMethod__from(method.data(), method.size()) != -1;
-}
-
 /* The request fields validation cares about. The decoder reports the HPACK
  * static-table index (RFC 7541 Appendix A) when the peer used one for the name
  * (nearly always); literal names fall back to a compare. */
@@ -1566,7 +1559,7 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
     stream->declaredContentLength = contentLength;
     stream->remoteClosed = endStream;
     progressed = true;
-    if (!http2::isKnownMethod(method)) {
+    if (!isKnownMethod(method)) {
         /* RFC 9110 §15.6.2. The router would dispatch it to the "any" handler,
          * which cannot represent the method and would report GET. */
         stream->writeStatus("501 Not Implemented")->end();

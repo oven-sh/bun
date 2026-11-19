@@ -74,7 +74,6 @@ pub(super) struct Bbr {
     /// Zero until there is a sample.
     min_rtt: Duration,
     min_rtt_at: Instant,
-    /// The clock of the filters. It stands still while the application is the limit (§4.1.1.4).
     round: u64,
     /// The last packet of the round.
     round_end: u64,
@@ -200,7 +199,7 @@ impl Bbr {
         if let Some(newest) = &feedback.newest_acked {
             is_round_start = newest.sequence > self.round_end;
             if is_round_start {
-                self.round += u64::from(!newest.is_application_limited);
+                self.round += 1;
                 self.round_end = feedback.last_sent;
             }
             self.update_bandwidth(now, feedback.acked, newest);
@@ -251,7 +250,10 @@ impl Bbr {
     fn update_bandwidth(&mut self, now: Instant, acked: u64, newest: &Flight) {
         if let Some(sample) = self.sampler.on_delivered(now, acked, newest) {
             self.is_last_sample_limited = newest.is_application_limited;
-            self.bandwidth.update(self.round, sample);
+            match newest.is_application_limited && sample < self.bandwidth.get() {
+                true => self.bandwidth.extend(self.round),
+                false => self.bandwidth.update(self.round, sample),
+            }
         }
     }
 
@@ -261,8 +263,11 @@ impl Bbr {
             return false;
         }
         let is_unknown = self.min_rtt.is_zero();
-        // After a pause there is no queue to drain, so the new sample comes for free.
-        let expiry = MIN_RTT_EXPIRY / (1 + u64::from(self.is_restarting));
+        let expiry = match self.is_restarting {
+            // There is no queue to drain, so the new sample comes for free.
+            true => MIN_RTT_EXPIRY / 2,
+            false => MIN_RTT_EXPIRY,
+        };
         let has_expired = !is_unknown && now > self.min_rtt_at + expiry;
         if is_unknown || has_expired || sample < self.min_rtt {
             (self.min_rtt, self.min_rtt_at) = (sample, now);

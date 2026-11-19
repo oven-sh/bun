@@ -37,8 +37,8 @@ pub(crate) struct Table {
     /// The streams that the peer opens are turned down.
     pub(crate) is_going_away: bool,
     map: IdMap<StreamId, Box<Stream>>,
-    /// How many of them are those of HTTP/3 itself.
-    internal: usize,
+    /// How many of them the application is not done with.
+    unreleased: usize,
     bidirectional: Counts,
     unidirectional: Counts,
 }
@@ -53,6 +53,7 @@ struct Counts {
     /// What the peer has not used yet below `remote_next`.
     remote_skipped: RangeSet,
     remote_closed: u64,
+    /// What the peer has been told.
     remote_limit: u64,
     remote_window: u64,
     /// The initial limits on data.
@@ -75,6 +76,8 @@ pub(crate) struct State {
     pub(super) owed: Control,
     /// The application has read or written.
     pub(super) made_progress: bool,
+    /// See [`Self::add_load`].
+    pub(super) load: u32,
 
     received: u64,
     consumed: u64,
@@ -83,6 +86,9 @@ pub(crate) struct State {
 
     sent: u64,
     unsent: u64,
+    /// How many bytes are kept until they are acknowledged.
+    retained: u64,
+    pub(super) max_retained: u64,
     send_limit: u64,
     blocked_at: Option<u64>,
     pub(super) has_reported_blocked: bool,
@@ -100,6 +106,12 @@ pub(crate) struct State {
     readable: VecDeque<StreamId>,
     writable: VecDeque<StreamId>,
     closing: VecDeque<StreamId>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum Load {
+    Light = 1,
+    Heavy = 10,
 }
 
 /// The half of a stream of ours that a frame is about.
@@ -125,7 +137,7 @@ impl Streams {
                 is_http3,
                 is_going_away: false,
                 map: IdMap::with_hasher(Seeded(seed)),
-                internal: 0,
+                unreleased: 0,
                 bidirectional: counts(
                     local.initial_max_streams_bidi,
                     local.initial_max_stream_data_bidi_local,
@@ -177,9 +189,11 @@ impl Streams {
         }
     }
 
-    /// The value for MAX_STREAMS.
-    pub(super) fn remote_limit(&self, direction: Direction) -> u64 {
-        self.table.counts(direction).remote_limit
+    /// Returns the value for MAX_STREAMS.
+    pub(super) fn raise_remote_limit(&mut self, direction: Direction) -> u64 {
+        let counts = self.table.counts_mut(direction);
+        counts.remote_limit = counts.next_remote_limit();
+        counts.remote_limit
     }
 
     /// Looks up the stream that a frame names, and opens it if need be. `None` if it is closed.
@@ -225,10 +239,10 @@ impl Streams {
         if !entry.get().is_finished() {
             return;
         }
-        let stream = entry.remove();
-        table.internal -= usize::from(stream.is_internal());
+        entry.remove();
         if id.initiator() != table.side && table.counts_mut(id.direction()).close_remote() {
             state.owed |= match id.direction() {
+                Direction::Bidirectional if table.is_going_away => Control::empty(),
                 Direction::Bidirectional => Control::MAX_STREAMS_BIDI,
                 Direction::Unidirectional => Control::MAX_STREAMS_UNI,
             };
@@ -247,8 +261,17 @@ impl Streams {
         self.state.events.extend(open.iter().map(closed));
         self.state.removed.extend(open);
         self.state.writable.clear();
-        self.table.internal = 0;
+        self.table.unreleased = 0;
         !is_empty
+    }
+
+    /// So that what has arrived is delivered before the end.
+    pub(super) fn unpause_all(&mut self) {
+        for (id, stream) in self.table.iter_mut() {
+            if stream.take(Flags::PAUSED) {
+                self.state.mark_readable(id, stream);
+            }
+        }
     }
 
     #[inline]
@@ -279,6 +302,7 @@ impl Streams {
             if let Some(stream) = self.table.get_mut(id) {
                 stream.flags.insert(Flags::RELEASED);
                 let (context, is_known) = (stream.context, stream.flags.contains(Flags::ANNOUNCED));
+                self.table.unreleased -= 1;
                 self.remove_if_finished(id);
                 if is_known {
                     return Some(Event::Stream(id, context, StreamEvent::Closed));
@@ -327,10 +351,9 @@ impl Table {
         self.map.iter_mut().map(|(&id, stream)| (id, &mut **stream))
     }
 
-    /// Whether there are streams other than those of HTTP/3 itself.
     #[inline]
     pub(super) fn has_application_streams(&self) -> bool {
-        self.map.len() > self.internal
+        self.unreleased > 0
     }
 
     pub(super) fn has_unacked_data(&self) -> bool {
@@ -386,7 +409,7 @@ impl Table {
     }
 
     fn open_remote(&mut self, id: StreamId, state: &mut State) -> Result {
-        let (role, flags) = match id.direction() {
+        let (role, mut flags) = match id.direction() {
             Direction::Bidirectional if self.is_http3 && self.side.is_client() => {
                 return Err(Error::http3(
                     http3_code::STREAM_CREATION_ERROR,
@@ -402,31 +425,29 @@ impl Table {
                 Flags::WRITE_DONE | Flags::SEND_DONE,
             ),
         };
-        let rejection = self.is_going_away.then_some(match self.is_http3 {
-            true => http3_code::REQUEST_REJECTED,
-            false => 0,
-        });
+        let is_unwanted = self.is_going_away;
+        flags.set(Flags::RELEASED, is_unwanted);
         let counts = self.counts(id.direction());
         let stream = Stream::new(role, flags, counts.remote_send, counts.remote_receive);
         let stream = self.insert(id, stream);
-        if stream.is_internal() {
-            return Ok(());
-        }
-        match rejection {
-            Some(code) => {
-                stream.flags.insert(Flags::RELEASED);
-                state.abort(id, stream, code);
+        match stream.role {
+            Role::Message(_) if is_unwanted => {
+                state.abort(id, stream, http3_code::REQUEST_REJECTED);
             }
-            None => state.notify(id, stream, StreamEvent::Opened),
+            Role::Raw if is_unwanted => {
+                state.finish(id, stream);
+                state.stop(id, stream, 0);
+            }
+            _ => state.notify(id, stream, StreamEvent::Opened),
         }
         Ok(())
     }
 
     fn insert(&mut self, id: StreamId, mut stream: Stream) -> &mut Stream {
         if stream.is_internal() {
-            self.internal += 1;
             stream.flags.insert(Flags::RELEASED);
         }
+        self.unreleased += usize::from(!stream.flags.contains(Flags::RELEASED));
         self.map.entry(id).insert(Box::new(stream)).into_mut()
     }
 }
@@ -453,19 +474,23 @@ impl Counts {
         Ok(true)
     }
 
-    /// Returns whether the limit was raised.
+    fn next_remote_limit(&self) -> u64 {
+        (self.remote_closed + self.remote_window).min(MAX_STREAM_COUNT)
+    }
+
+    /// Returns whether the limit should be raised.
     fn close_remote(&mut self) -> bool {
         self.remote_closed += 1;
-        let limit = (self.remote_closed + self.remote_window).min(MAX_STREAM_COUNT);
-        let is_due = limit - self.remote_limit >= (self.remote_window / 8).max(1);
-        if is_due {
-            self.remote_limit = limit;
-        }
-        is_due
+        self.next_remote_limit() - self.remote_limit >= (self.remote_window / 8).max(1)
     }
 }
 
 impl State {
+    /// For what takes the peer less than it takes us, and does not get the application ahead (RFC 9000 §21.9).
+    pub(crate) fn add_load(&mut self, load: Load) {
+        self.load = self.load.saturating_add(load as u32);
+    }
+
     /// The context is looked up when the event is delivered.
     #[inline]
     pub(super) fn notify(&mut self, id: StreamId, stream: &Stream, event: StreamEvent) {

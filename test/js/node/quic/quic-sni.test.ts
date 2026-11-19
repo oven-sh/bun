@@ -109,8 +109,8 @@ test("an identity with several cert/key pairs installs a matching pair", async (
 });
 
 // The client destroys itself as soon as it has 1-RTT keys. The listener reads its Finished and
-// CONNECTION_CLOSE together, so lsquic frees the connection before the session reports the handshake.
-test("session.certificate returns the servername's identity after lsquic frees the connection", async () => {
+// CONNECTION_CLOSE together, so the connection is gone before the session reports the handshake.
+test("session.certificate returns the servername's identity after the connection is gone", async () => {
   const reported = Promise.withResolvers<unknown>();
   await using server = await listen(
     session => {
@@ -266,7 +266,7 @@ test("verifyPeer 'strict' and 'auto' refuse a certificate with a blocked public 
   );
   try {
     expect([await open("strict"), await open("auto")]).toEqual([
-      "Invalid state: Session was destroyed before it opened",
+      "QUIC transport error 300: TLS alert",
       "QUIC transport error 0: Peer certificate validation failed: certificate revoked [CERT_REVOKED]",
     ]);
   } finally {

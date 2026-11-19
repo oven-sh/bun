@@ -35,6 +35,7 @@ pub(crate) struct Message {
     expected_len: Option<u64>,
     /// From the `priority` field of a request.
     pub(crate) priority: Option<Priority>,
+    is_tunnel: bool,
     pub(crate) has_sent_headers: bool,
     pub(crate) is_head_request: bool,
     pub(crate) is_connect_request: bool,
@@ -129,7 +130,7 @@ impl Message {
     fn begin_frame(&mut self, kind: u64, len: u64, reader: &Reader) -> Result<(), Fault> {
         let is_expected = match kind {
             kind::DATA => self.part == Part::Body,
-            kind::HEADERS => self.part != Part::AfterTrailers,
+            kind::HEADERS => self.part != Part::AfterTrailers && !self.is_tunnel,
             kind::PUSH_PROMISE if reader.side.is_client() => {
                 return Err(Error::http3(http3_code::ID_ERROR, "push is not enabled").into());
             }
@@ -250,10 +251,12 @@ impl Message {
                     ..300 if self.is_connect_request => None,
                     _ => summary.content_length,
                 };
+                self.is_tunnel = self.is_connect_request && summary.status < 300;
             }
             Expected::Request => {
                 self.expected_len = summary.content_length.filter(|_| !summary.is_connect);
                 self.priority = summary.priority;
+                self.is_tunnel = summary.is_connect;
             }
         }
         self.part = Part::Body;
@@ -270,12 +273,13 @@ impl Message {
             return Ok(());
         }
         match self.part {
-            Part::Head if reader.side.is_server() => {
-                Err(Fault::Stream(http3_code::REQUEST_INCOMPLETE))
-            }
+            Part::Head => Err(Fault::Stream(match reader.side {
+                Side::Client => http3_code::REQUEST_CANCELLED,
+                Side::Server => http3_code::REQUEST_INCOMPLETE,
+            })),
             Part::Body if self.expected_len.is_none_or(|len| len == 0) => Ok(()),
+            Part::Body => Err(reader.malformed()),
             Part::AfterTrailers => Ok(()),
-            _ => Err(reader.malformed()),
         }
     }
 

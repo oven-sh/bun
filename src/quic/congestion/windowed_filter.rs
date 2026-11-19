@@ -2,6 +2,7 @@
 
 /// In round trips.
 const WINDOW: u64 = 10;
+const EXTENSION: u64 = 3;
 
 #[derive(Default, Clone, Copy)]
 struct Sample {
@@ -18,6 +19,13 @@ impl WindowedMax {
     pub(super) fn get(&self) -> u64 {
         let [best, ..] = self.0;
         best.value
+    }
+
+    /// In place of an update, so that the first value after a gap is not the only one left.
+    pub(super) fn extend(&mut self, round: u64) {
+        for sample in &mut self.0 {
+            sample.round = (sample.round).max(round.saturating_sub(WINDOW - EXTENSION));
+        }
     }
 
     /// `round` does not decrease.

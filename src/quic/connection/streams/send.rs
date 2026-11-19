@@ -23,10 +23,12 @@ impl State {
     pub(crate) fn capacity(&self, stream: &Stream) -> u64 {
         let wanted = (self.unsent_target.saturating_sub(self.unsent))
             .max(MIN_UNSENT.saturating_sub(stream.send.unsent_len()));
-        wanted.min(stream.send_credit()).min(self.send_credit())
+        let room = self.max_retained.saturating_sub(self.retained);
+        wanted.min(room).min(self.credit_for(stream))
     }
 
     /// How many bytes flow control would let through.
+    #[inline]
     pub(crate) fn credit_for(&self, stream: &Stream) -> u64 {
         stream.send_credit().min(self.send_credit())
     }
@@ -38,7 +40,9 @@ impl State {
 
     #[inline]
     fn invites_writes(&self) -> bool {
-        self.unsent + WRITE_CHUNK <= self.unsent_target && self.send_credit() >= self.min_credit
+        self.unsent + WRITE_CHUNK <= self.unsent_target
+            && self.retained + WRITE_CHUNK <= self.max_retained
+            && self.send_credit() >= self.min_credit
     }
 
     #[inline]
@@ -58,6 +62,7 @@ impl State {
         for part in parts {
             stream.send.write(part);
             self.unsent += part.len() as u64;
+            self.retained += part.len() as u64;
         }
         self.mark_sendable(id, stream);
     }
@@ -73,8 +78,7 @@ impl State {
     /// Unless the peer has got everything.
     pub(crate) fn reset(&mut self, id: StreamId, stream: &mut Stream, code: u64) {
         if !stream.flags.intersects(Flags::RESET | Flags::SEND_DONE) {
-            self.unsent -= stream.send.unsent_len();
-            stream.send.discard();
+            self.discard(stream);
             stream.reset_code = code.min(MAX_VARINT);
             stream.flags.insert(Flags::RESET);
             self.owe(id, stream, Flags::OWES_RESET_STREAM);
@@ -83,10 +87,15 @@ impl State {
         self.close_if_done(id, stream);
     }
 
+    fn discard(&mut self, stream: &mut Stream) {
+        self.unsent -= stream.send.unsent_len();
+        self.retained -= stream.send.len();
+        stream.send.discard();
+    }
+
     /// For a stream that the peer does not know of.
     pub(crate) fn forget(&mut self, id: StreamId, stream: &mut Stream) {
-        self.unsent -= stream.send.unsent_len();
-        stream.send.discard();
+        self.discard(stream);
         (stream.flags).insert(Flags::WRITE_DONE | Flags::RESET | Flags::SEND_DONE);
         stream.final_size = stream.received;
         self.finish_reading(id, stream);
@@ -321,7 +330,7 @@ impl Streams {
         let Some(stream) = stream.filter(|it| !it.flags.contains(Flags::RESET)) else {
             return;
         };
-        stream.send.on_acked(range);
+        self.state.retained -= stream.send.on_acked(range);
         if fin {
             stream.flags.insert(Flags::FIN_ACKED);
         }

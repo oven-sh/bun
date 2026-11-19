@@ -64,7 +64,7 @@ int us_quic_listen_socket_port(us_quic_listen_socket_t *ls);
 int us_quic_listen_socket_local_address(us_quic_listen_socket_t *ls, char (*ip)[16]);
 
 /* Returns how many bytes it took. If not all, on_writable follows. */
-unsigned int us_quic_stream_write(const us_quic_stream_t *s, const char *data, unsigned int len);
+size_t us_quic_stream_write(const us_quic_stream_t *s, const char *data, size_t len);
 void us_quic_stream_want_read(const us_quic_stream_t *s, bool want);
 void us_quic_stream_want_write(const us_quic_stream_t *s);
 void us_quic_stream_send_headers(const us_quic_stream_t *s,

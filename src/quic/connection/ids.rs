@@ -164,16 +164,16 @@ impl RemoteIds {
             is_known |= is_same;
         }
         self.retire_prior_to = self.retire_prior_to.max(retire_prior_to);
+        while let Some(at) = (self.spare.iter()).position(|it| it.sequence < self.retire_prior_to) {
+            let sequence = self.spare.swap_remove(at).sequence;
+            self.retire(sequence)?;
+        }
         if new.sequence < self.retire_prior_to || self.retired.contains(new.sequence) {
             return if is_known {
                 Ok(())
             } else {
                 self.retire(new.sequence)
             };
-        }
-        while let Some(at) = (self.spare.iter()).position(|it| it.sequence < self.retire_prior_to) {
-            let sequence = self.spare.swap_remove(at).sequence;
-            self.retire(sequence)?;
         }
         if !is_known {
             self.spare.push(new);

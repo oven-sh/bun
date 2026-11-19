@@ -19,6 +19,7 @@ const MAX_HANDSHAKE_REASON_LEN: usize = 128;
 const GRACE_PERIOD: Duration = Duration::from_secs(30);
 const MIN_IDLE_PROBE_TIMEOUT: Duration = Duration::from_millis(150);
 const INITIAL_IDLE_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
+const MAX_SETTLING_PERIOD: Duration = Duration::from_secs(15);
 
 pub(super) struct CloseFrame {
     layer: Layer,
@@ -153,7 +154,7 @@ impl Connection {
     pub(super) fn send_close(&mut self, now: Instant) {
         self.ending = Ending::Closing;
         self.timers = Timers::default();
-        self.timers.set(Timer::Close, now + self.closing_period());
+        self.timers.set(Timer::Close, now + self.settling_period());
     }
 
     /// RFC 9000 §10.2.2.
@@ -161,6 +162,7 @@ impl Connection {
         if self.is_receiving() {
             self.close_reason = reason;
             self.end();
+            self.streams.unpause_all();
         }
     }
 
@@ -190,12 +192,13 @@ impl Connection {
         if !self.is_ready || !state.has_frames() && !table.has_unacked_data() {
             self.send_close(now);
         } else if !self.timers.is_set(Timer::Close) {
-            self.timers.set(Timer::Close, now + self.closing_period());
+            self.timers.set(Timer::Close, now + self.settling_period());
         }
     }
 
-    pub(crate) fn closing_period(&self) -> Duration {
-        self.probe_timeout() * 3
+    /// After which what is on the way has arrived, or is not going to.
+    pub(super) fn settling_period(&self) -> Duration {
+        (self.probe_timeout() * 3).min(MAX_SETTLING_PERIOD)
     }
 
     /// RFC 9000 §10.1.
@@ -206,7 +209,7 @@ impl Connection {
                 true => self.probe_timeout().max(MIN_IDLE_PROBE_TIMEOUT),
                 false => INITIAL_IDLE_PROBE_TIMEOUT,
             };
-            let timeout = self.idle_timeout.max(probe_timeout * 3);
+            let timeout = (self.idle_timeout).max((probe_timeout * 3).min(MAX_SETTLING_PERIOD));
             self.timers.set(Timer::Idle, now + timeout);
         }
     }

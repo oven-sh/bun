@@ -16,7 +16,6 @@ pub mod transport_code {
     pub const CRYPTO_BUFFER_EXCEEDED: u64 = 0xd;
     pub const KEY_UPDATE_ERROR: u64 = 0xe;
     pub const AEAD_LIMIT_REACHED: u64 = 0xf;
-    pub const NO_VIABLE_PATH: u64 = 0x10;
     /// RFC 9368 §4.
     pub const VERSION_NEGOTIATION_ERROR: u64 = 0x11;
     /// The number of a TLS alert is added to this.
@@ -40,9 +39,6 @@ pub mod http3_code {
     pub const REQUEST_CANCELLED: u64 = 0x10c;
     pub const REQUEST_INCOMPLETE: u64 = 0x10d;
     pub const MESSAGE_ERROR: u64 = 0x10e;
-    pub const QPACK_DECOMPRESSION_FAILED: u64 = 0x200;
-    pub const QPACK_ENCODER_STREAM_ERROR: u64 = 0x201;
-    pub const QPACK_DECODER_STREAM_ERROR: u64 = 0x202;
 }
 
 /// Which kind of CONNECTION_CLOSE frame a code belongs in.

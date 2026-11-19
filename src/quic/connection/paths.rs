@@ -1,6 +1,6 @@
 //! RFC 9000 §8 and §9.
 
-use core::net::{IpAddr, SocketAddr};
+use core::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use smallvec::SmallVec;
 
@@ -21,9 +21,8 @@ use crate::time::{Duration, Instant};
 
 const MAX_CANDIDATES: usize = 3;
 const MAX_CHALLENGES: usize = 5;
-pub(super) const MAX_FRAMES_LEN: usize = 2 * (1 + 8);
 const FIRST_CHALLENGE_TIMEOUT: Duration = Duration::from_millis(250);
-/// For a path on which no challenge can be sent, or has to be.
+/// For a path on which no challenge can be sent, or has to be, or that is not moved to.
 const UNUSED_TIMEOUT: Duration = Duration::from_secs(8);
 /// RFC 9000 §8.1.
 const AMPLIFICATION_FACTOR: u64 = 3;
@@ -48,7 +47,7 @@ pub(super) struct Path {
     /// The peer has answered a challenge.
     is_confirmed: bool,
     /// The peer has moved here.
-    is_wanted: bool,
+    pub(super) is_wanted: bool,
 }
 
 impl Path {
@@ -95,7 +94,6 @@ impl Path {
         self.owes_challenge || self.owed_response.is_some()
     }
 
-    /// The caller has to see to it that there is room for [`MAX_FRAMES_LEN`] bytes.
     pub(super) fn write_frames(&mut self, now: Instant, crypto: &dyn Crypto, out: &mut Vec<u8>) {
         if let Some(data) = self.owed_response.take() {
             out.push(kind::PATH_RESPONSE as u8);
@@ -125,7 +123,7 @@ impl Path {
         (self.is_validated, self.is_confirmed) = (true, true);
         if challenge.is_expanded {
             self.challenges = Vec::new();
-            (self.owes_challenge, self.challenge_deadline) = (false, Instant::NEVER);
+            (self.owes_challenge, self.challenge_deadline) = (false, now + UNUSED_TIMEOUT);
         } else {
             self.challenge(now);
         }
@@ -139,11 +137,20 @@ impl Path {
         }
         self.owes_challenge =
             !self.owes_challenge && (1..MAX_CHALLENGES).contains(&self.challenges.len());
-        self.challenge_deadline = match self.owes_challenge {
+        // It starts over with the next packet.
+        let is_kept = self.owes_challenge || core::mem::take(&mut self.is_wanted);
+        if !self.owes_challenge {
+            self.challenges = Vec::new();
+        }
+        self.challenge_deadline = match is_kept {
             true => now + UNUSED_TIMEOUT,
             false => Instant::NEVER,
         };
-        self.owes_challenge
+        is_kept
+    }
+
+    fn is_challenged(&self) -> bool {
+        self.owes_challenge || !self.challenges.is_empty()
     }
 }
 
@@ -151,23 +158,43 @@ fn unmapped(address: SocketAddr) -> SocketAddr {
     SocketAddr::new(address.ip().to_canonical(), address.port())
 }
 
-/// RFC 9000 §21.5.3.
-fn is_internal(ip: IpAddr) -> bool {
-    match ip.to_canonical() {
-        IpAddr::V4(ip) => {
-            ip.is_loopback()
-                || ip.is_private()
-                || ip.is_link_local()
-                || ip.is_multicast()
-                || ip.is_broadcast()
-        }
-        IpAddr::V6(ip) => {
-            ip.is_loopback()
-                || ip.is_unique_local()
-                || ip.is_unicast_link_local()
-                || ip.is_multicast()
+/// From where an address can be reached.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum Reach {
+    Nowhere,
+    Host,
+    Link,
+    Site,
+    Internet,
+}
+
+impl Reach {
+    fn of(ip: IpAddr) -> Self {
+        match ip.to_canonical() {
+            IpAddr::V4(ip) => match ip.octets() {
+                [0 | 224.., ..] => Self::Nowhere,
+                [127, ..] => Self::Host,
+                [169, 254, ..] => Self::Link,
+                [10, ..] | [100, 64..128, ..] | [172, 16..32, ..] | [192, 168, ..] => Self::Site,
+                _ => Self::Internet,
+            },
+            IpAddr::V6(ip) => match ip.segments() {
+                [0, 0, 0, 0, 0, 0, 0, 1] => Self::Host,
+                [0 | 0xff00.., ..] => Self::Nowhere,
+                [0x64, 0xff9b, 0, 0, 0, 0, ..] => {
+                    Self::of(Ipv4Addr::from_bits(ip.to_bits() as u32).into())
+                }
+                [0xfe80..0xfec0, ..] => Self::Link,
+                [0xfc00..0xfe00 | 0xfec0.., ..] => Self::Site,
+                _ => Self::Internet,
+            },
         }
     }
+}
+
+/// RFC 9000 §21.5.6.
+fn may_move(from: SocketAddr, to: SocketAddr) -> bool {
+    to.port() != 0 && Reach::of(to.ip()) >= Reach::of(from.ip()).max(Reach::Host)
 }
 
 impl Connection {
@@ -196,14 +223,18 @@ impl Connection {
         }
         // RFC 9000 §9.5.
         let keeps_id = self.path.remote.id.is_empty() || destination == self.last_destination.0;
-        let remote = match self.remote_ids.take_spare() {
-            Some(spare) => spare,
-            None if keeps_id => self.path.remote,
-            None => return Ok(None),
+        let remote = match keeps_id {
+            _ if !may_move(self.path.addresses.peer, from.peer) => None,
+            true => Some(self.path.remote),
+            false => self.remote_ids.take_spare(),
+        };
+        let Some(remote) = remote else {
+            return Ok(None);
         };
         if self.candidates.len() == MAX_CANDIDATES {
-            let oldest = self.candidates.remove(0);
-            self.abandon_path(&oldest, shared)?;
+            let idle = (self.candidates.iter()).position(|it| !it.is_wanted && !it.is_confirmed);
+            let path = self.candidates.remove(idle.unwrap_or(0));
+            self.abandon_path(&path, shared)?;
         }
         let is_validated = self.side.is_client() || from.peer == self.path.addresses.peer;
         let mut path = Path::new(*from, remote, is_validated);
@@ -285,31 +316,38 @@ impl Connection {
         if self.side.is_client() {
             return Ok(());
         }
-        let Some(at) = self.candidates.iter().position(|it| it.addresses == *to) else {
-            self.candidates
-                .iter_mut()
-                .for_each(|it| it.is_wanted = false);
-            return Ok(());
-        };
-        let Some(candidate) = self.candidates.get_mut(at) else {
+        for other in self.candidates.iter_mut().filter(|it| it.addresses != *to) {
+            other.is_wanted = false;
+        }
+        let mut candidates = self.candidates.iter_mut().enumerate();
+        let Some((at, candidate)) = candidates.find(|it| it.1.addresses == *to) else {
             return Ok(());
         };
         if candidate.is_confirmed {
             return self.switch_path(at, shared);
         }
-        if !core::mem::replace(&mut candidate.is_wanted, true)
-            && self.path.challenges.is_empty()
-            && self.path.addresses.peer != to.peer
-        {
+        if !core::mem::replace(&mut candidate.is_wanted, true) {
+            if !candidate.is_challenged() {
+                candidate.challenge(now);
+            }
             // RFC 9000 §9.3.3.
-            self.path.challenge(now);
+            if !self.path.is_challenged() && self.path.addresses.peer != to.peer {
+                self.path.challenge(now);
+            }
         }
         Ok(())
+    }
+
+    /// There is no point in sending more on the current path.
+    #[inline]
+    pub(super) fn has_peer_moved(&self) -> bool {
+        self.candidates.iter().any(|it| it.is_wanted)
     }
 
     pub(super) fn on_path_response(
         &mut self,
         now: Instant,
+        from: &Addresses,
         data: [u8; 8],
         shared: &mut Shared,
     ) -> Result {
@@ -317,9 +355,9 @@ impl Connection {
             return Ok(());
         }
         let is_client = self.side.is_client();
-        match (self.candidates.iter_mut())
-            .position(|it| it.on_response(now, data) && (is_client || it.is_wanted))
-        {
+        match (self.candidates.iter_mut()).position(|it| {
+            it.on_response(now, data) && (is_client || it.is_wanted && it.addresses == *from)
+        }) {
             Some(at) => self.switch_path(at, shared),
             None => Ok(()),
         }
@@ -329,6 +367,7 @@ impl Connection {
         let old = core::mem::replace(&mut self.path, self.candidates.remove(at));
         self.abandon_path(&old, shared)?;
         let (from, to) = (old.addresses, self.path.addresses);
+        self.path.is_wanted = false;
         self.previous_peer = Some(from.peer);
         self.spin = false;
         if from.local == to.local && from.peer.ip() == to.peer.ip() {
@@ -394,11 +433,7 @@ impl Connection {
             SocketAddr::V4(_) => preferred.ipv4.map(SocketAddr::V4),
             SocketAddr::V6(_) => preferred.ipv6.map(SocketAddr::V6),
         };
-        let peer = peer.filter(|peer| {
-            self.config.uses_preferred_address
-                && *peer != current
-                && (is_internal(current.ip()) || !is_internal(peer.ip()))
-        });
+        let peer = peer.filter(|&peer| self.config.uses_preferred_address && peer != current);
         self.on_new_connection_id(remote, 0, shared)?;
         if let Some(peer) = peer
             && let Some(path) = self.candidate(now, &Addresses { local, peer }, &[], shared)?

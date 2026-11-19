@@ -7,7 +7,7 @@ use super::streams::Flags;
 use super::timers::Timer;
 use super::{Connection, Phase};
 use crate::error::{Error, Result};
-use crate::event::Event;
+use crate::event::{CloseReason, Event};
 use crate::frame::Ack;
 use crate::packet::MIN_DATAGRAM_LEN;
 use crate::time::{Duration, Instant};
@@ -15,9 +15,10 @@ use crate::time::{Duration, Instant};
 pub(super) const INITIAL_PACKET_THRESHOLD: u64 = 3;
 const MAX_PACKET_THRESHOLD: u64 = 256;
 const PERSISTENT_CONGESTION_THRESHOLD: u64 = 3;
-const MAX_ACK_RANGES: usize = 256;
 const MIN_HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(10);
 const MAX_PROBE_TIMEOUT: Duration = Duration::from_secs(60);
+/// For how long a peer that is there can leave a packet unacknowledged.
+const MAX_SILENCE: Duration = Duration::from_secs(30);
 const PROBES: u8 = 2;
 /// After how many timeouts in a row the size of the packets is suspected.
 const BLACK_HOLE_THRESHOLD: u32 = 3;
@@ -42,7 +43,7 @@ impl Connection {
         let previous_largest = space.sent.largest_acked;
         space.sent.largest_acked = previous_largest.max(Some(ack.largest));
         let mut largest_sent_at = space.received.on_ack(ack);
-        if let Some(late) = space.sent.find_late(ack.ranges().take(MAX_ACK_RANGES)) {
+        if let Some(late) = space.sent.find_late(ack.ranges()) {
             let distance = previous_largest.unwrap_or(0).saturating_sub(late) + 1;
             self.packet_threshold = (self.packet_threshold.max(distance)).min(MAX_PACKET_THRESHOLD);
         }
@@ -51,7 +52,7 @@ impl Connection {
         let Sent {
             packets, frames, ..
         } = &mut space.sent;
-        for range in ack.ranges().take(MAX_ACK_RANGES) {
+        for range in ack.ranges() {
             let positions = Sent::find(packets, &range);
             if positions.end == 0 {
                 break;
@@ -63,6 +64,7 @@ impl Connection {
                     largest_sent_at = Some(packet.flight.at);
                 }
                 self.congestion.on_acked(&packet.flight);
+                self.path.mtu.on_acked(&packet.flight);
                 for frame in frames.of(packet) {
                     match frame {
                         SentFrame::Stream {
@@ -180,6 +182,9 @@ impl Connection {
         if let Some(space) = self.spaces.get_mut(id) {
             space.sent.remove_settled();
         }
+        if self.path.mtu.end_ack() {
+            self.congestion.set_datagram_len(self.path.mtu.current);
+        }
         self.congestion.end_ack(now, &self.rtt);
     }
 
@@ -191,6 +196,7 @@ impl Connection {
         }
         self.stats.packets_lost += 1;
         self.congestion.on_lost(&packet.flight);
+        self.path.mtu.on_lost(&packet.flight);
         if let Some(space) = self.spaces.get_mut(id) {
             space.sent.remember_lost(packet.number);
         }
@@ -341,6 +347,10 @@ impl Connection {
         if loss_time != Instant::NEVER {
             self.detect_lost(now, id);
             return self.set_loss_timer(now);
+        }
+        let oldest = self.spaces.data.sent.packets.front();
+        if oldest.is_some_and(|it| self.last_received_at > it.flight.at + MAX_SILENCE) {
+            return self.time_out(now, CloseReason::IdleTimeout);
         }
         match self.earliest(|id, space| self.probe_time(id, space)) {
             (Instant::NEVER, _) => {

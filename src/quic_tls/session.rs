@@ -38,7 +38,8 @@ unsafe extern "C" {
     fn SSL_set_quic_early_data_context(ssl: &SSL, context: *const u8, len: usize) -> c_int;
     fn SSL_provide_quic_data(ssl: &SSL, level: c_uint, data: *const u8, len: usize) -> c_int;
     fn SSL_process_quic_post_handshake(ssl: &SSL) -> c_int;
-    safe fn SSL_in_early_data(ssl: &SSL) -> c_int;
+    safe fn SSL_in_init(ssl: &SSL) -> c_int;
+    safe fn SSL_is_quic(ssl: &SSL) -> c_int;
     safe fn SSL_early_data_accepted(ssl: &SSL) -> c_int;
     fn SSL_reset_early_data_reject(ssl: &SSL);
     safe fn SSL_CIPHER_get_protocol_id(cipher: &SSL_CIPHER) -> u16;
@@ -51,6 +52,7 @@ unsafe extern "C" {
         cb: extern "C" fn(&SSL, &mut u8) -> c_uint,
     );
     fn SSL_set_SSL_CTX(ssl: &SSL, ctx: &SSL_CTX) -> *mut SSL_CTX;
+    safe fn SSL_CTX_get_verify_callback(ctx: &SSL_CTX) -> ssl::SSL_verify_cb;
     safe fn SSL_set_verify_depth(ssl: &SSL, depth: c_int);
     safe fn SSL_CTX_get_verify_depth(ctx: &SSL_CTX) -> c_int;
     safe fn SSL_get_options(ssl: &SSL) -> u32;
@@ -77,6 +79,7 @@ pub struct Session {
     select_context: Option<Box<SelectContext>>,
     verify: Option<Box<Verify>>,
     protocols: Option<Rc<[u8]>>,
+    has_started: bool,
     has_local_parameters: bool,
     has_peer_parameters: bool,
     is_complete: bool,
@@ -105,6 +108,7 @@ impl Session {
             select_context: None,
             verify: None,
             protocols: None,
+            has_started: false,
             has_local_parameters: false,
             has_peer_parameters: false,
             is_complete: false,
@@ -183,19 +187,21 @@ impl tls::Session for Session {
         is_set
     }
 
-    fn set_early_data_context(&mut self, context: &[u8]) {
-        // SAFETY: BoringSSL copies `context`.
-        unsafe { SSL_set_quic_early_data_context(self.ssl(), context.as_ptr(), context.len()) };
-    }
-
     fn advance(
         &mut self,
         input: Option<(Level, &[u8])>,
         handshake: &mut Handshake<'_>,
     ) -> Result<Status, Alert> {
         let ssl = SSL::opaque_ref(self.ssl.as_ptr());
-        let is_draft = handshake.version() == Version::Draft29;
-        SSL_set_quic_use_legacy_codepoint(ssl, is_draft.into());
+        if !core::mem::replace(&mut self.has_started, true) {
+            let is_draft = handshake.version() == Version::Draft29;
+            SSL_set_quic_use_legacy_codepoint(ssl, is_draft.into());
+            if input.is_some() {
+                let context = handshake.early_data_context();
+                // SAFETY: BoringSSL copies `context`.
+                unsafe { SSL_set_quic_early_data_context(ssl, context.as_ptr(), context.len()) };
+            }
+        }
         let mut call = Call {
             session: self,
             handshake,
@@ -229,7 +235,7 @@ unsafe fn advance(ssl: &SSL, input: Option<(Level, &[u8])>, call: *mut Call) -> 
         }
         while !(*call).session.is_complete {
             let result = ssl::SSL_do_handshake(ssl.as_mut_ptr());
-            if result == 1 && SSL_in_early_data(ssl) == 0 {
+            if result == 1 && SSL_in_init(ssl) == 0 {
                 (*call).session.is_complete = true;
             } else if result != 1 {
                 match ssl::SSL_get_error(ssl.as_mut_ptr(), result) {
@@ -249,6 +255,7 @@ unsafe fn advance(ssl: &SSL, input: Option<(Level, &[u8])>, call: *mut Call) -> 
 
 impl Call<'_, '_> {
     fn with<T>(ssl: &SSL, f: impl FnOnce(&mut Call) -> Option<T>) -> Option<T> {
+        (SSL_is_quic(ssl) == 1).then_some(())?;
         // SAFETY: it is null or the `Call` of the `advance` that is on the stack, which holds no reference into it.
         f(unsafe { ssl::SSL_get_ex_data(ssl, EX_INDEX).cast::<Call>().as_mut() }?)
     }
@@ -376,7 +383,8 @@ extern "C" fn select_context(ssl: &SSL, _: *mut c_void) -> c_int {
         // SAFETY: both are live, and `ssl` takes its own reference.
         unsafe {
             NonNull::new(SSL_set_SSL_CTX(ssl, &ctx))?;
-            ssl::SSL_set_verify(at, ssl::SSL_CTX_get_verify_mode(ctx.as_ptr()), None);
+            let mode = ssl::SSL_CTX_get_verify_mode(ctx.as_ptr());
+            ssl::SSL_set_verify(at, mode, SSL_CTX_get_verify_callback(&ctx));
             SSL_set_verify_depth(ssl, SSL_CTX_get_verify_depth(&ctx));
             ssl::SSL_clear_options(at, SSL_get_options(ssl));
             ssl::SSL_set_options(at, SSL_CTX_get_options(&ctx));

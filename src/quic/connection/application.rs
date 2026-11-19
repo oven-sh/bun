@@ -1,6 +1,6 @@
 //! What the application does with streams, and what it is told.
 
-use super::streams::{Flags, Half, Role, State, Stream};
+use super::streams::{Flags, Half, Load, Role, State, Stream};
 use super::{Connection, Ending};
 use crate::endpoint::Shared;
 use crate::error::{Error, Result, http3_code};
@@ -114,7 +114,9 @@ impl Connection {
     /// Gives up on reading.
     pub fn stop(&mut self, id: StreamId, code: u64) {
         self.abandon_message(id);
-        if let Some((stream, state)) = self.stream(id) {
+        if let Some((stream, state)) = self.streams.get_mut(id)
+            && !stream.flags.contains(Flags::RELEASED)
+        {
             state.stop(id, stream, code);
         }
     }
@@ -222,14 +224,16 @@ impl Connection {
         let Some((stream, state)) = self.streams.accept(id, Half::Receive)? else {
             return Ok(());
         };
-        if stream.is_read_to_end() && stream.read_offset() == final_size {
-            return Ok(());
+        let is_complete = stream.is_read_to_end() && stream.read_offset() == final_size;
+        if self.side.is_server() && is_unanswered(stream) {
+            state.add_load(Load::Heavy);
         }
         match (&mut stream.role, &mut self.http3) {
+            (Role::Message(_), _) if is_complete && self.side.is_client() => return Ok(()),
             (Role::Typed(StreamType::Unknown(_) | StreamType::Ignored), _) => {}
             (Role::Typed(_), _) => return Err(CRITICAL_STREAM_CLOSED),
             (Role::Message(message), Some(http3)) if !stream.flags.contains(Flags::READ_DONE) => {
-                message.abandon(id, false, http3);
+                message.abandon(id, is_complete, http3);
             }
             _ => {}
         }
@@ -241,7 +245,12 @@ impl Connection {
     pub(super) fn on_stop_sending(&mut self, id: StreamId, code: u64) -> Result {
         match self.streams.accept(id, Half::Send)? {
             Some((stream, _)) if stream.is_internal() => return Err(CRITICAL_STREAM_CLOSED),
-            Some((stream, state)) => state.on_stop_sending(id, stream, code),
+            Some((stream, state)) => {
+                if self.side.is_server() && is_unanswered(stream) {
+                    state.add_load(Load::Heavy);
+                }
+                state.on_stop_sending(id, stream, code);
+            }
             None => {}
         }
         Ok(())
@@ -356,6 +365,11 @@ impl Connection {
     }
 }
 
+fn is_unanswered(stream: &Stream) -> bool {
+    matches!(stream.role, Role::Message(_))
+        && !(stream.flags).intersects(Flags::WRITE_DONE | Flags::RESET_BY_PEER)
+}
+
 /// `data` is what comes next on the stream.
 #[inline]
 fn read(
@@ -376,6 +390,7 @@ fn read(
             if let (Role::Message(message), Some(reader)) = (&mut stream.role, reader) {
                 message.abandon(id, false, reader.http3);
             }
+            state.add_load(Load::Heavy);
             state.abort(id, stream, code);
         }
     }

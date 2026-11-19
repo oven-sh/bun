@@ -2,7 +2,7 @@
 
 use super::Connection;
 use super::application::CRITICAL_STREAM_CLOSED;
-use super::streams::{Flags, Role, Streams};
+use super::streams::{Flags, Load, Role, Streams};
 use crate::config::Http3Config;
 use crate::endpoint::Shared;
 use crate::error::{Error, Result, http3_code};
@@ -13,8 +13,9 @@ use crate::http3::{
 };
 use crate::stream_id::{Direction, Side, StreamId};
 
-const MAX_UNSENT_INSTRUCTIONS_LEN: u64 = 16 * 1024;
+const MAX_UNACKED_INSTRUCTIONS_LEN: u64 = 64 * 1024;
 const MAX_ORIGIN_FRAMES: u8 = 16;
+const MAX_EARLY_PRIORITIES: usize = 128;
 
 impl Streams {
     pub(super) fn start_http3(&mut self, config: &Http3Config, side: Side) -> Option<Box<Http3>> {
@@ -27,11 +28,11 @@ impl Streams {
         Some(Box::new(Http3::new(config, ids)))
     }
 
-    /// Returns how much of the stream is waiting to be sent.
+    /// Returns how much of the stream is waiting to be acknowledged.
     fn write_internal(&mut self, id: StreamId, data: &[u8]) -> u64 {
         self.get_mut(id).map_or(0, |(stream, state)| {
             state.write(id, stream, &[data]);
-            stream.send.unsent_len()
+            stream.send.len()
         })
     }
 }
@@ -86,9 +87,9 @@ impl Connection {
             && let instructions = http3.decoder.instructions()
             && !instructions.is_empty()
         {
-            let unsent = (self.streams).write_internal(http3.decoder_stream, instructions);
+            let unacked = (self.streams).write_internal(http3.decoder_stream, instructions);
             instructions.clear();
-            if unsent > MAX_UNSENT_INSTRUCTIONS_LEN {
+            if unacked > MAX_UNACKED_INSTRUCTIONS_LEN {
                 let reason = "peer does not read the decoder stream";
                 return Err(Error::http3(http3_code::EXCESSIVE_LOAD, reason));
             }
@@ -167,10 +168,10 @@ impl Connection {
                 return Err(Error::http3(http3_code::ID_ERROR, reason));
             }
             (Some(true), Some(http3)) => {
-                (http3.early_priorities).retain(|&(other, _)| {
-                    other != id
-                        && (table.is_unused(other) == Some(true) || table.get(other).is_some())
-                });
+                http3.early_priorities.retain(|it| it.0 != id);
+                if http3.early_priorities.len() == MAX_EARLY_PRIORITIES {
+                    http3.early_priorities.remove(0);
+                }
                 http3.early_priorities.push((id, priority));
             }
             _ => {
@@ -196,7 +197,7 @@ impl Connection {
         }
         match http3.peer_go_away.replace(first) {
             Some(previous) if previous == first => return Ok(()),
-            Some(_) => {}
+            Some(_) => self.streams.state.add_load(Load::Heavy),
             None => self.emit(Event::GoAway),
         }
         let mut rejected: Vec<_> = (self.streams.table.iter_mut())
@@ -259,7 +260,10 @@ impl Connection {
         };
         stream.role = Role::Typed(kind);
         match kind {
-            StreamType::Ignored => state.stop(id, stream, http3_code::STREAM_CREATION_ERROR),
+            StreamType::Ignored => {
+                state.add_load(Load::Heavy);
+                state.stop(id, stream, http3_code::STREAM_CREATION_ERROR);
+            }
             _ if !stream.is_read_to_end() => state.credit(id, stream),
             StreamType::Unknown(_) => state.finish_reading(id, stream),
             _ => return Err(CRITICAL_STREAM_CLOSED),

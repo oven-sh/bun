@@ -3,6 +3,8 @@ use std::collections::VecDeque;
 
 use crate::range_set::RangeSet;
 
+const MAX_IDLE_CAPACITY: usize = 64 * 1024;
+
 /// The bytes of a stream from the first one that is not acknowledged.
 #[derive(Default)]
 pub(crate) struct SendBuffer {
@@ -21,10 +23,15 @@ impl SendBuffer {
         self.bytes.extend(data);
     }
 
+    #[inline]
+    pub(crate) fn len(&self) -> u64 {
+        self.bytes.len() as u64
+    }
+
     /// The offset after the last byte written.
     #[inline]
     pub(crate) fn end(&self) -> u64 {
-        self.start + self.bytes.len() as u64
+        self.start + self.len()
     }
 
     /// The offset after the last byte sent.
@@ -66,13 +73,15 @@ impl SendBuffer {
         self.sent = self.sent.max(range.end);
     }
 
+    /// Returns how many bytes it lets go of.
     #[inline]
-    pub(crate) fn on_acked(&mut self, range: Range<u64>) {
+    pub(crate) fn on_acked(&mut self, range: Range<u64>) -> u64 {
         if !self.lost.is_empty() {
             self.lost.remove(range.clone());
         }
         if range.start > self.start {
-            return self.acked.insert(range);
+            self.acked.insert(range);
+            return 0;
         }
         let mut start = self.start.max(range.end);
         while let Some(first) = self.acked.first()
@@ -84,6 +93,10 @@ impl SendBuffer {
         let len = ((start - self.start) as usize).min(self.bytes.len());
         self.bytes.drain(..len);
         self.start += len as u64;
+        if self.bytes.is_empty() && self.bytes.capacity() > MAX_IDLE_CAPACITY {
+            self.bytes = VecDeque::new();
+        }
+        len as u64
     }
 
     pub(crate) fn on_lost(&mut self, range: Range<u64>) {

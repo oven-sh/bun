@@ -9,8 +9,8 @@ use bun_boringssl_sys::{OwnedSslCtx, SSL, SSL_CTX};
 use bun_core::ZStr;
 use bun_quic::http3::{Fields, Section};
 use bun_quic::{
-    Config, Context, Event, FieldLimits, Http3Config, Incoming, Instant, Layer, Side, StreamEvent,
-    Version, http3_code, transport_code,
+    Config, Context, Duration, Event, FieldLimits, Http3Config, Incoming, Instant, Layer, Side,
+    StreamEvent, Version, http3_code, transport_code,
 };
 use bun_quic_tls::Session;
 
@@ -159,7 +159,10 @@ impl Server {
                 }
                 stream.connection.recycle(fields);
             }
-            StreamEvent::Reset(_) => stream.reset_unfinished(http3_code::REQUEST_CANCELLED),
+            StreamEvent::Reset(_) | StreamEvent::Stopped(_) => {
+                stream.reset_unfinished(http3_code::REQUEST_CANCELLED);
+                stream.stop(http3_code::REQUEST_CANCELLED);
+            }
             _ if response.is_null() => {}
             // SAFETY: `response` is from `on_open`, and `data` is as long as it says.
             StreamEvent::Data { data, is_last } => unsafe {
@@ -169,7 +172,7 @@ impl Server {
             StreamEvent::Writable => unsafe { (callbacks.on_writable)(response) },
             // SAFETY: `response` is from `on_open`, and this is the last event.
             StreamEvent::Closed => unsafe { (callbacks.on_close)(response) },
-            StreamEvent::Opened | StreamEvent::Stopped(_) => {}
+            StreamEvent::Opened => {}
         }
     }
 
@@ -228,14 +231,16 @@ extern "C" fn us_create_quic_socket_context(
             field_overhead: 32,
             advertises_max_field_section_size: true,
             malformed_message_closes_connection: true,
-            datagrams: true,
             ..Http3Config::default()
         }),
         ..Config::server()
     };
-    if idle_timeout_secs > 0 {
-        let secs = idle_timeout_secs.min(MAX_IDLE_TIMEOUT_SECS);
-        config.parameters.max_idle_timeout_millis = u64::from(secs) * 1000;
+    match Duration::from_secs(idle_timeout_secs.min(MAX_IDLE_TIMEOUT_SECS).into()) {
+        Duration::ZERO => config.progress_timeout = Duration::ZERO,
+        timeout => {
+            config.parameters.max_idle_timeout_millis = timeout.as_millis();
+            config.progress_timeout = config.progress_timeout.max(timeout);
+        }
     }
     let server = Rc::new(Server {
         engine: Engine::new(loop_, VERSIONS),
@@ -354,9 +359,9 @@ extern "C" fn us_quic_listen_socket_local_address(socket: &Socket, ip: &mut [u8;
 /// # Safety
 /// `data` is valid for `len` bytes.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn us_quic_stream_write(stream: &Stream, data: *const u8, len: c_uint) -> c_uint {
+unsafe extern "C" fn us_quic_stream_write(stream: &Stream, data: *const u8, len: usize) -> usize {
     // SAFETY: the caller's.
-    stream.write(unsafe { bun_core::ffi::slice(data, len as usize) }) as c_uint
+    stream.write(unsafe { bun_core::ffi::slice(data, len) })
 }
 
 #[unsafe(no_mangle)]

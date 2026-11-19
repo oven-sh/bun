@@ -108,8 +108,7 @@ impl Client {
                 field_overhead: 32,
                 advertises_max_field_section_size: true,
                 encodes_with_dynamic_table: true,
-                datagrams: true,
-                ..Http3Config::default()
+                    ..Http3Config::default()
             }),
             ..Config::client()
         };
@@ -186,7 +185,10 @@ impl Client {
             _ => {}
         }
         let mut tls = Session::new(&self.tls, Side::Client)?;
-        let (host, is_strict) = (ZBox::from_bytes(origin.hostname), origin.reject_unauthorized);
+        let (host, is_strict) = (
+            ZBox::from_bytes(origin.hostname),
+            origin.reject_unauthorized,
+        );
         // RFC 6066 §3.
         if !is_ip_literal && !tls.ssl_mut().set_servername(&host) {
             return None;

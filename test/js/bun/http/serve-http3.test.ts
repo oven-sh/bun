@@ -1368,9 +1368,10 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
         },
       });
       stream.closed.catch(() => {});
-      for await (const _ of stream as AsyncIterable<Uint8Array[]>) {
-      }
-      return status || "no response";
+      return Array.fromAsync(stream as AsyncIterable<Uint8Array[]>).then(
+        () => status,
+        (err: Error) => err.message,
+      );
     }
 
     let status = "";
@@ -1397,7 +1398,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
 
     expect({ inHandler: await outcome, afterStop: await afterStop.promise, handled }).toEqual({
       inHandler: "200 late:body",
-      afterStop: "no response",
+      afterStop: "The QUIC stream was reset by the peer with error code 267", // H3_REQUEST_REJECTED
       handled: 1,
     });
     if (!client.destroyed) client.close().catch(() => {});

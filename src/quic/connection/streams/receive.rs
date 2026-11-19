@@ -145,7 +145,7 @@ impl State {
         final_size: u64,
     ) -> Result {
         self.account(stream, final_size, true)?;
-        if !stream.flags.contains(Flags::READ_DONE) {
+        if stream.mark(Flags::RESET_BY_PEER) && !stream.flags.contains(Flags::STOPPED) {
             self.notify(id, stream, StreamEvent::Reset(code));
         }
         self.finish_reading(id, stream);
@@ -158,6 +158,7 @@ impl State {
             stream.stop_code = code.min(MAX_VARINT);
             self.owe(id, stream, Flags::OWES_STOP_SENDING);
         }
+        stream.flags.insert(Flags::STOPPED);
         self.finish_reading(id, stream);
     }
 

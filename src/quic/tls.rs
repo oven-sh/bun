@@ -29,8 +29,6 @@ pub enum Status {
 pub trait Session: Any {
     /// For a client, to offer a session from [`Handshake::ticket`]. Returns false if it cannot be used.
     fn resume(&mut self, ticket: &[u8]) -> bool;
-    /// For a server, what has to be as it was when a ticket was issued for early data to be accepted.
-    fn set_early_data_context(&mut self, context: &[u8]);
     /// A client starts with no `input`.
     fn advance(
         &mut self,

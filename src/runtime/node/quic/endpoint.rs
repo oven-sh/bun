@@ -17,7 +17,7 @@ use bun_jsc::{
 use bun_ptr::BackRef;
 use bun_quic::{
     Addresses, Algorithm, Batch, Config, Duration, FieldLimits, Http3Config, Incoming, Instant,
-    PreferredAddress, Side, Unrouted, Version,
+    PreferredAddress, Side, TokenBucket, Unrouted, Version,
 };
 use bun_uws as uws;
 use bun_uws::quic::drivers::{self, Driver};
@@ -134,25 +134,6 @@ struct Server {
     alpn: Rc<[u8]>,
 }
 
-struct TokenBucket {
-    per_second: f64,
-    burst: f64,
-    tokens: Cell<f64>,
-    refilled_at: Cell<Instant>,
-}
-
-impl TokenBucket {
-    fn has_token(&self, now: Instant) -> bool {
-        let seconds = (now - self.refilled_at.replace(now)).as_micros() as f64 / 1e6;
-        (self.tokens).update(|it| (it + seconds * self.per_second).min(self.burst));
-        self.tokens.get() >= 1.0
-    }
-
-    fn take(&self) {
-        self.tokens.update(|it| it - 1.0);
-    }
-}
-
 pub(crate) struct QuicEndpoint {
     /// Borrowed views into JSC-owned ArrayBuffers (the wrapper owns both the
     /// ArrayBuffer and this struct, so the pointers are valid for our life).
@@ -174,7 +155,7 @@ pub(crate) struct QuicEndpoint {
     sni_contexts: Rc<SniContexts>,
     pub(super) server_verify_client: Cell<bool>,
     server_session_options: JsCell<Option<bun_jsc::Strong>>,
-    stateless_resets: Option<TokenBucket>,
+    stateless_resets: Option<RefCell<TokenBucket>>,
 
     processing: Cell<bool>,
     followup_due: Cell<bool>,
@@ -409,7 +390,9 @@ fn config_from_js(
         }
     }
     if is_http3 {
-        config.http3 = Some(http3_config_from_js(global, options)?);
+        let mut http3 = http3_config_from_js(global, options)?;
+        http3.datagrams &= config.parameters.max_datagram_frame_size > 0;
+        config.http3 = Some(http3);
     }
     Ok(config)
 }
@@ -634,12 +617,8 @@ impl QuicEndpoint {
             sni_contexts: Rc::default(),
             server_verify_client: Cell::new(false),
             server_session_options: JsCell::new(None),
-            stateless_resets: (!disable_stateless_reset).then(|| TokenBucket {
-                per_second: stateless_reset_rate,
-                burst: stateless_reset_burst,
-                tokens: Cell::new(stateless_reset_burst),
-                refilled_at: Cell::new(now()),
-            }),
+            stateless_resets: (!disable_stateless_reset)
+                .then(|| TokenBucket::new(stateless_reset_rate, stateless_reset_burst).into()),
             processing: Cell::new(false),
             followup_due: Cell::new(false),
             sessions: JsCell::new(Vec::new()),
@@ -957,15 +936,15 @@ impl QuicEndpoint {
                 return other.mark_driver_pending();
             }
         }
-        match &self.stateless_resets {
-            Some(bucket) if !bucket.has_token(now) => {
-                self.add_stat(IDX_STATS_STATELESS_RESET_RATE_LIMITED, 1);
-            }
-            Some(bucket) if self.quic().reset(from, stray) => {
-                bucket.take();
-                self.add_stat(IDX_STATS_STATELESS_RESET_COUNT, 1);
-            }
-            _ => {}
+        let Some(mut bucket) = self.stateless_resets.as_ref().map(RefCell::borrow_mut) else {
+            return;
+        };
+        if !bucket.take(now, 1) {
+            self.add_stat(IDX_STATS_STATELESS_RESET_RATE_LIMITED, 1);
+        } else if self.quic().reset(from, stray) {
+            self.add_stat(IDX_STATS_STATELESS_RESET_COUNT, 1);
+        } else {
+            bucket.put_back();
         }
     }
 

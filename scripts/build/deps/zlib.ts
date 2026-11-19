@@ -132,6 +132,8 @@ export const zlib: Dependency = {
     // clang-cl defines _MSC_VER but needs clang's <arm_neon.h>/<arm_acle.h>,
     // not MSVC's <arm64_neon.h>/<intrin.h>. Upstream gates on _MSC_VER alone.
     "patches/zlib/clang-cl-arm64.patch",
+    // Upstream commit that is not in a release yet.
+    "patches/zlib/inflate-window-size.patch",
   ],
 
   build: cfg => {

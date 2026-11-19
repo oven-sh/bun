@@ -474,16 +474,12 @@ impl Subprocess<'_> {
 
     pub(crate) fn timeout_callback(&self) {
         self.set_event_loop_timer_refd(false);
-        if self.event_loop_timer.state.get() == EventLoopTimerState::CANCELLED {
-            return;
-        }
         if self.has_exited() {
             self.event_loop_timer
                 .state
                 .set(EventLoopTimerState::CANCELLED);
             return;
         }
-        self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
         let _ = self.try_kill(self.kill_signal);
     }
 

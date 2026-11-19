@@ -30,7 +30,7 @@ const SHA512_DIGEST_LENGTH: usize = 64;
 const SHA512_256_DIGEST_LENGTH: usize = 32;
 
 /// Generates a hasher type parameterised by a context
-/// type and four FFI functions. Stable Rust cannot
+/// type and three FFI functions. Stable Rust cannot
 /// take function items as const-generic parameters, and the call sites are pure
 /// token-pasting of BoringSSL symbol names, so this is expressed as a
 /// `macro_rules!` type-generator.
@@ -41,7 +41,6 @@ macro_rules! new_hasher {
         $name:ident,
         $digest_size:expr,
         $ctx:ty,
-        $full:path,
         $init:path,
         $update:path,
         $final_:path
@@ -67,11 +66,9 @@ macro_rules! new_hasher {
             }
 
             pub fn hash(bytes: &[u8], out: &mut [u8; $digest_size]) {
-                // SAFETY: `out` is exactly DIGEST bytes; BoringSSL one-shot hashers
-                // accept (ptr, len, out) and never read past `len`.
-                unsafe {
-                    let _ = $full(bytes.as_ptr(), bytes.len(), out.as_mut_ptr());
-                }
+                let mut this = Self::init();
+                this.update(bytes);
+                this.r#final(out);
             }
 
             pub fn update(&mut self, data: &[u8]) {
@@ -258,7 +255,6 @@ pub mod hashers {
         SHA1,
         SHA1_DIGEST_LENGTH,
         boringssl_sys::SHA_CTX,
-        boringssl_sys::SHA1,
         boringssl_sys::SHA1_Init,
         boringssl_sys::SHA1_Update,
         boringssl_sys::SHA1_Final
@@ -268,7 +264,6 @@ pub mod hashers {
         SHA256,
         SHA256_DIGEST_LENGTH,
         boringssl_sys::SHA256_CTX,
-        boringssl_sys::SHA256,
         boringssl_sys::SHA256_Init,
         boringssl_sys::SHA256_Update,
         boringssl_sys::SHA256_Final

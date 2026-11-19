@@ -238,6 +238,10 @@ pub mod Runtime {
         pub unwrap_commonjs_packages: &'static [&'static [u8]],
 
         pub commonjs_at_runtime: bool,
+        /// See `defer_requires::LOADS`.
+        pub lists_loads: bool,
+        /// See `defer_requires.rs`. Needs `lists_loads`.
+        pub defers_requires: bool,
         pub unwrap_commonjs_to_esm: bool,
         /// `require()` exists at run time: every target except `browser`.
         pub target_has_require: bool,
@@ -312,6 +316,8 @@ pub mod Runtime {
                 code_coverage: false,
                 unwrap_commonjs_packages: &[],
                 commonjs_at_runtime: false,
+                lists_loads: false,
+                defers_requires: false,
                 unwrap_commonjs_to_esm: false,
                 target_has_require: false,
                 emit_decorator_metadata: false,
@@ -384,6 +390,10 @@ pub mod Runtime {
             // `P::runs_imports_in_turn` depends on both, even when `P::uses_test_api` is false. Other files hash nothing extra.
             if self.is_test_entry_point {
                 hasher.update(&[b'e', u8::from(self.vitest_globals)]);
+            }
+
+            if self.lists_loads {
+                hasher.update(&[b'l', u8::from(self.defers_requires)]);
             }
 
             // Hash --feature flags. These directly affect transpiled output via

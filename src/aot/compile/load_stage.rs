@@ -510,11 +510,12 @@ fn gets_at_module_loader(files: &Files<'_>, file: FileId, builtins: &ResolvedBui
         let mut builtins_held = expressions.filter_map(|it| builtins.builtin_of_expression(it));
         builtins_held.any(|id| is(id, BuiltinId::NodeModule))
     };
+    let hands_object_on = || (builtins.exposed().iter()).any(|&id| is(id, BuiltinId::NodeModule));
     builtins
         .mentioned()
         .iter()
         .any(|&id| match is(id, BuiltinId::NodeModule) {
-            true => holds_object(),
+            true => holds_object() || hands_object_on(),
             false => {
                 let mut members = table::members(BuiltinId::NodeModule).iter();
                 tables_of_loaders.iter().any(|&loaders| is(id, loaders))
@@ -1465,6 +1466,7 @@ mod tests {
             ),
             (r#"vi.mock("./helper.cjs");"#, PLAIN, false),
             (r#"await vi.importActual("./helper.cjs");"#, PLAIN, false),
+            (r#"await vi.importActual("node:module");"#, PLAIN, false),
             (r#"vi.resetModules();"#, PLAIN, false),
         ];
         let mut wrong = Vec::new();

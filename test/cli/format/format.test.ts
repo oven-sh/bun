@@ -4786,9 +4786,10 @@ exports.options = { fooStyle: { type: "string" }, fooDepth: { type: "int" } };
       async () => {
         const wider = { ...project, "bunfig.toml": scoped(["*.foo", "*.bar"]), "a.bar": "c   d\n" };
         const error = "error: a.bar: No listed plugin has a parser for this file";
-        const [result, checked] = await Promise.all([
+        const [result, checked, piped] = await Promise.all([
           format(wider, [], { reads: ["a.foo", "a.bar"] }),
           format(wider, ["--check", "a.bar"], { reads: ["a.bar"] }),
+          format(wider, ["--check", "--stdin-filepath", "a.bar"], { stdin: "c   d\n" }),
         ]);
         expect(result.files).toEqual({ "a.foo": "a b\n", "a.bar": "c   d\n" });
         expect(result.stderr.split("\n")).toContain(error);
@@ -4796,6 +4797,8 @@ exports.options = { fooStyle: { type: "string" }, fooDepth: { type: "int" } };
         expect(result.exitCode).toBe(2);
         expect(checked.stderr.split("\n")).toContain(error);
         expect(checked.exitCode).toBe(2);
+        // Prettier's own errors for standard input end a run with --check with 0. This one is about the configuration.
+        expect(piped).toMatchObject({ raw: "", stderr: error, exitCode: 2 });
       },
       timeout,
     );
@@ -4934,7 +4937,10 @@ exports.options = { fooStyle: { type: "string" }, fooDepth: { type: "int" } };
     // The rule formats nothing with the installed Prettier. It reads the list to know which files Bun prints the same.
     test.each<[string, RegExp]>([
       ["prettier-plugin-astro", /^a\.js:1:2: Delete `··` \[Error\/bun\(format\)\]$/],
-      ["prettier-plugin-brace-style", /^a\.js:1:1: This file was not checked because .+ \[Error\/bun\(format\)\]$/],
+      [
+        "prettier-plugin-brace-style",
+        /^a\.js:1:1: This file was not checked because .+ a plugin that bun fmt does not include\. \[Error\/bun\(format\)\]$/,
+      ],
     ])("bun lint reads plugins in [fmt] for bun/format: %s", async (plugin, report) => {
       using dir = tempDir("bun-format-lint", {
         ".oxlintrc.json": '{ "rules": { "bun/format": "error" } }',

@@ -2,7 +2,7 @@
 
 use super::Connection;
 use super::application::CRITICAL_STREAM_CLOSED;
-use super::streams::{Flags, Load, Role, Streams};
+use super::streams::{Flags, Load, Role, Stream, Streams};
 use crate::config::Http3Config;
 use crate::endpoint::Shared;
 use crate::error::{Error, Result, http3_code};
@@ -108,6 +108,32 @@ impl Connection {
                 Side::Server => self.streams.table.next_remote(Direction::Bidirectional),
             };
             (self.streams).write_internal(http3.control_stream, &go_away_frame(id));
+            if self.side.is_server() {
+                self.reject(|_, stream| {
+                    matches!(&stream.role, Role::Message(it) if it.awaits_head())
+                        && !stream.flags.contains(Flags::READ_DONE)
+                });
+            }
+        }
+    }
+
+    /// For requests that are not going to be processed (RFC 9114 §4.1.1).
+    fn reject(&mut self, is_rejected: impl Fn(StreamId, &Stream) -> bool) {
+        let code = match self.side {
+            Side::Client => http3_code::REQUEST_CANCELLED,
+            Side::Server => http3_code::REQUEST_REJECTED,
+        };
+        let streams = self.streams.table.iter_mut();
+        let mut ids: Vec<_> =
+            (streams.filter(|it| is_rejected(it.0, it.1)).map(|it| it.0)).collect();
+        ids.sort_unstable();
+        for id in ids {
+            self.abandon_message(id);
+            if let Some((stream, state)) = self.streams.get_mut(id) {
+                state.notify(id, stream, StreamEvent::Reset(http3_code::REQUEST_REJECTED));
+                state.reset(id, stream, code);
+                state.stop(id, stream, code);
+            }
         }
     }
 
@@ -200,20 +226,8 @@ impl Connection {
             Some(_) => self.streams.state.add_load(Load::Heavy),
             None => self.emit(Event::GoAway),
         }
-        let mut rejected: Vec<_> = (self.streams.table.iter_mut())
-            // Some servers name the last request that they process.
-            .filter(|(id, stream)| *id > first && is_request(*id) && !stream.has_received())
-            .map(|it| it.0)
-            .collect();
-        rejected.sort_unstable();
-        for id in rejected {
-            self.abandon_message(id);
-            if let Some((stream, state)) = self.streams.get_mut(id) {
-                state.notify(id, stream, StreamEvent::Reset(http3_code::REQUEST_REJECTED));
-                state.reset(id, stream, http3_code::REQUEST_CANCELLED);
-                state.stop(id, stream, http3_code::REQUEST_CANCELLED);
-            }
-        }
+        // Some servers name the last request that they process.
+        self.reject(|id, stream| id > first && is_request(id) && !stream.has_received());
         Ok(())
     }
 

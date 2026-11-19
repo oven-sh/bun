@@ -9,6 +9,8 @@ use bun_quic::{Addresses, Batch, Connection, Endpoint, Instant};
 use crate::udp;
 
 const DATAGRAMS_PER_BATCH: usize = 64;
+/// All connections share it. Some systems refuse what is above their limit.
+const RECEIVE_BUFFER_SIZES: [c_int; 2] = [4 << 20, 1 << 20];
 
 #[inline]
 pub fn now() -> Instant {
@@ -102,6 +104,7 @@ unsafe extern "C" {
     safe fn us_quic_read_envelope(buffer: &mut udp::PacketBuffer, index: c_int, out: &mut Envelope);
     safe fn us_quic_local_address(socket: &mut udp::Socket, out: &mut Address);
     safe fn us_quic_set_dontfrag(socket: &mut udp::Socket);
+    safe fn us_quic_ignore_receive_errors(socket: &mut udp::Socket);
     safe fn us_quic_enable_offload(socket: &mut udp::Socket) -> bool;
     fn us_quic_send(
         socket: &mut udp::Socket,
@@ -123,7 +126,12 @@ pub struct Binding {
 impl Binding {
     pub fn new(socket: *mut udp::Socket) -> Self {
         let (udp, mut address) = (udp::Socket::opaque_mut(socket), Address::default());
+        let mut size = 0;
+        udp.buffer_size(true, 0, &mut size);
+        let _ = (RECEIVE_BUFFER_SIZES.iter())
+            .any(|&it| it <= size || udp.buffer_size(true, it, &mut size) == 0);
         us_quic_set_dontfrag(udp);
+        us_quic_ignore_receive_errors(udp);
         us_quic_local_address(udp, &mut address);
         Self {
             socket,
@@ -241,7 +249,7 @@ impl Outbox {
 
     /// What the kernel refuses for good is as if it got lost on the way.
     fn send(&mut self, binding: impl Fn(SocketAddr) -> Option<Binding>) {
-        let (mut is_retry, mut was_segmented) = (false, false);
+        let mut is_retry = false;
         while let unsent @ [first, ..] = &self.messages[self.sent..] {
             let Some(binding) = binding(first.local.into()) else {
                 self.sent += 1;
@@ -263,21 +271,15 @@ impl Outbox {
                     self.is_blocked = true;
                     return;
                 }
-                1.. => {
-                    self.sent += result as usize;
-                    self.has_failed_to_segment |= core::mem::take(&mut was_segmented);
-                }
+                1.. => self.sent += result as usize,
                 // udp(7): the error can be that of an earlier datagram to another peer.
                 _ if !is_retry => {}
                 _ if first.segment_len != 0 => {
                     let segments = first.segments();
                     self.messages.splice(self.sent..=self.sent, segments);
-                    was_segmented = true;
+                    self.has_failed_to_segment |= result == -libc::EIO;
                 }
-                _ => {
-                    self.sent += 1;
-                    was_segmented = false;
-                }
+                _ => self.sent += 1,
             }
             is_retry = result < 0 && !is_retry;
         }

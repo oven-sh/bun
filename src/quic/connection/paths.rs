@@ -222,7 +222,8 @@ impl Connection {
             return Ok(self.candidates.get_mut(at));
         }
         // RFC 9000 §9.5.
-        let keeps_id = self.path.remote.id.is_empty() || destination == self.last_destination.0;
+        let keeps_id = self.path.remote.id.is_empty()
+            || destination == self.last_destination.0 && from.local == self.path.addresses.local;
         let remote = match keeps_id {
             _ if !may_move(self.path.addresses.peer, from.peer) => None,
             true => Some(self.path.remote),

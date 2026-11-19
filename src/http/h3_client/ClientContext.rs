@@ -182,9 +182,9 @@ impl ClientContext {
         // See `abort_by_http_id`.
         let ctx = bun_ptr::BackRef::from(this);
         for s in ctx.sessions.iter().map(RefPtr::as_ptr) {
-            session_mut(s).fail_idle_requests(SWEEP_SECONDS);
+            session_mut(s).sweep(SWEEP_SECONDS);
         }
-        if ctx.sessions.iter().any(|it| !it.pending.is_empty()) {
+        if !ctx.sessions.is_empty() {
             ctx.client.set_alarm(SWEEP_SECONDS);
         }
     }
@@ -196,8 +196,8 @@ impl ClientContext {
         };
         // See `abort_by_http_id` — `BackRef` over the process-lifetime singleton.
         let ctx = bun_ptr::BackRef::from(this);
-        for s in ctx.sessions.iter().map(RefPtr::as_ptr) {
-            session_mut(s).close_if_idle(pool_id);
+        for s in ctx.sessions.iter().filter(|it| it.pool_id == pool_id) {
+            session_mut(s.as_ptr()).close_if_idle();
         }
     }
 

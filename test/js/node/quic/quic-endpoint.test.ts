@@ -44,6 +44,28 @@ test("one endpoint carries raw and HTTP/3 client sessions side by side", async (
   await Promise.all([raw.close(), h3.close()]);
 });
 
+test("maxConnectionsPerHost counts the sessions that are open", async () => {
+  const closed: Promise<void>[] = [];
+  await using server = await listen(session => void closed.push(session.closed), {
+    sni: { "*": { keys: [key], certs: [cert] } },
+    alpn: ["quic-test"],
+    endpoint: { maxConnectionsPerHost: 2 } as EndpointOptions,
+  });
+  const open = async () => {
+    const session = await connect(server.address!, { alpn: "quic-test", verifyPeer: "manual" } as SessionOptions);
+    session.closed.catch(() => {});
+    await session.opened;
+    return session;
+  };
+  const [first, second] = [await open(), await open()];
+  expect(await open().catch(err => err.code)).toBe("ERR_QUIC_TRANSPORT_ERROR");
+  await first.close();
+  await closed[0];
+  const third = await open();
+  await Promise.all([second.close(), third.close()]);
+  expect(closed).toHaveLength(3);
+});
+
 describe("endpoint blockList", () => {
   test("applies to packets forwarded from a sibling endpoint on the same loop", async () => {
     const tp = { maxIdleTimeout: 1 };
@@ -174,10 +196,8 @@ describe("node:quic under --isolate", () => {
   }, 30000);
 });
 
-// An endpoint that both listens and dials keeps two lsquic engines on one
-// socket. A 1-RTT packet for the client leg that also reaches the server
-// engine misses its conns_hash, and the server engine answers unknown packets
-// with a stateless reset -- at our own live connection.
+// An endpoint that listens answers unknown packets with a stateless reset.
+// The packets of a connection that it dialed from the same socket are not unknown.
 describe("dual-mode endpoint", () => {
   test("does not stateless-reset its own client connection", async () => {
     const tp = { maxIdleTimeout: 1 };
@@ -221,9 +241,7 @@ describe("dual-mode endpoint", () => {
 });
 
 // RFC 9000 §18.2: maxIdleTimeout 0 disables the idle timeout, and node stores
-// it as `max_idle_timeout * NGTCP2_SECONDS` so 0 survives. lsquic reads its
-// seconds field whenever the ms field is zero, so 0 has to reach both or it
-// silently becomes the 10s default.
+// it as `max_idle_timeout * NGTCP2_SECONDS` so 0 survives.
 describe("transportParams.maxIdleTimeout", () => {
   test("0 disables the idle timeout instead of falling back to the default", async () => {
     const sniOpt = { "*": { keys: [key], certs: [cert] } };

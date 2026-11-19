@@ -1100,7 +1100,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 #endif
             if (run_recv && !u->closed) {
                 /* Datagrams can come in faster than they are handled. The poll reports the rest again. */
-                int packets_left = 64;
+                int budget = 1024;
                 const int max_packets = u->shared_fd ? 1 : LIBUS_UDP_RECV_COUNT;
 
                 do {
@@ -1108,8 +1108,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
                     int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT, max_packets);
                     if (npackets > 0) {
+                        for (int i = 0; i < npackets; i++) {
+                            budget -= 1 + bsd_udp_packet_buffer_payload_length(&recvbuf, i) / 256;
+                        }
                         u->on_data(u, &recvbuf, npackets);
-                        if (!error && (npackets < max_packets || (packets_left -= npackets) <= 0)) break;
+                        if (!error && (npackets < max_packets || budget <= 0)) break;
                     } else {
                         if (npackets == LIBUS_SOCKET_ERROR) {
                             if (!bsd_would_block()) {
@@ -1132,8 +1135,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 #endif
                                     u->on_recv_error(u, recv_err, 0);
                                 } else {
-                                    /* No error handler (QUIC creates its UDP
-                                     * sockets with recv_error_cb = NULL): the
+                                    /* No error handler: the
                                      * close is the only handling this path has,
                                      * and a persistent recv error on a still-
                                      * readable fd must not spin the loop. */
@@ -1160,7 +1162,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
             if (events & LIBUS_SOCKET_WRITABLE && !u->closed) {
                 /* Clear WRITABLE before on_drain so a callback that re-arms it
-                 * (e.g. QUIC packets_out hitting EAGAIN) keeps the re-arm. We
+                 * (e.g. us_quic_send hitting EAGAIN) keeps the re-arm. We
                  * still default to one-shot drain semantics for callers that
                  * don't touch the poll mask. Not gated on !error: a queued
                  * ICMP error must not leave WRITABLE armed (level-triggered

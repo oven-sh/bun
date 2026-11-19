@@ -3,17 +3,18 @@
 use core::cell::{Cell, RefCell, RefMut};
 use core::ffi::c_int;
 use core::net::{Ipv4Addr, SocketAddr};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use bun_core::ZStr;
 use bun_ptr::BackRef;
 use bun_quic::{
-    Context, Direction, Endpoint, Event, Handle, Incoming, Instant, StreamId, Unrouted, Version,
+    Context, Direction, Duration, Endpoint, Event, Handle, Incoming, Instant, StreamId, Unrouted,
+    Version,
 };
 use bun_quic_tls::BoringSsl;
 
 use super::Header;
-use super::drivers::Driver;
+use super::drivers::{Driver, Registration};
 use super::io::{Binding, Outbox, now};
 use crate::{Loop, udp};
 
@@ -35,6 +36,7 @@ pub(super) trait Application: Driver {
 
 pub(super) struct Engine {
     pub(super) loop_: &'static Loop,
+    registration: Registration,
     accepted: &'static [Version],
     endpoint: RefCell<Endpoint>,
     outbox: RefCell<Outbox>,
@@ -42,7 +44,7 @@ pub(super) struct Engine {
     sockets: RefCell<Vec<Rc<Socket>>>,
     is_processing: Cell<bool>,
     /// When to call [`Application::on_processed`] at the latest.
-    pub(super) alarm: Cell<Option<Instant>>,
+    alarm: Cell<Option<Instant>>,
 }
 
 pub(super) struct Socket {
@@ -56,7 +58,7 @@ pub(super) struct Socket {
 impl<T: Application> Driver for T {
     fn process(&self) {
         let engine = self.engine();
-        if engine.timeout().is_none_or(|it| it > now()) || engine.is_processing.replace(true) {
+        if engine.is_processing.replace(true) {
             return;
         }
         engine.endpoint().handle_timeouts(now());
@@ -68,11 +70,12 @@ impl<T: Application> Driver for T {
             }
         }
         engine.is_processing.set(false);
+        engine.registration.forget_timeout();
         self.on_processed();
     }
 
     fn flush(&self) {
-        if self.engine().endpoint().wants_to_transmit() {
+        if self.engine().endpoint.borrow().wants_to_transmit() {
             self.process();
         }
     }
@@ -98,9 +101,14 @@ pub(super) fn dispatch_events(application: &impl Application) {
 }
 
 impl Engine {
-    pub(super) fn new(loop_: &'static Loop, accepted: &'static [Version]) -> Self {
+    pub(super) fn new(
+        loop_: &'static Loop,
+        owner: Weak<dyn Driver>,
+        accepted: &'static [Version],
+    ) -> Self {
         Self {
             loop_,
+            registration: Registration::new(loop_, owner),
             accepted,
             endpoint: RefCell::new(Endpoint::new(&BoringSsl)),
             outbox: RefCell::default(),
@@ -113,9 +121,35 @@ impl Engine {
     /// Not to be held on to while code of the application runs.
     #[inline]
     pub(super) fn endpoint(&self) -> RefMut<'_, Endpoint> {
+        if !self.is_processing() {
+            self.registration.wake();
+        }
         self.endpoint.borrow_mut()
     }
 
+    pub(super) fn connection_count(&self) -> usize {
+        self.endpoint.borrow().connection_count()
+    }
+
+    /// Unless it is set already.
+    pub(super) fn set_alarm(&self, after: Duration) {
+        if self.alarm.get().is_none() {
+            self.alarm.set(Some(now() + after));
+            self.registration.forget_timeout();
+        }
+    }
+
+    pub(super) fn take_alarm(&self) -> bool {
+        let is_due = self.alarm.get().is_some_and(|it| it <= now());
+        is_due && self.alarm.take().is_some()
+    }
+
+    /// For good.
+    pub(super) fn stop_processing(&self) {
+        self.is_processing.set(true);
+    }
+
+    #[inline]
     pub(super) fn is_processing(&self) -> bool {
         self.is_processing.get()
     }
@@ -145,10 +179,13 @@ impl Engine {
 
     #[inline]
     fn timeout(&self) -> Option<Instant> {
-        let (mut endpoint, outbox) = (self.endpoint(), self.outbox.borrow());
+        if self.is_processing() {
+            return None;
+        }
+        let (mut endpoint, outbox) = (self.endpoint.borrow_mut(), self.outbox.borrow());
         let can_send =
             !outbox.is_blocked() && (outbox.has_unsent() || endpoint.wants_to_transmit());
-        match (can_send || endpoint.has_events()) && !self.is_processing() {
+        match can_send || endpoint.has_events() {
             true => Some(Instant::default()),
             false => endpoint.timeout().into_iter().chain(self.alarm.get()).min(),
         }
@@ -232,7 +269,9 @@ extern "C" fn on_data(udp: *mut udp::Socket, buffer: *mut udp::PacketBuffer, cou
 }
 
 extern "C" fn on_drain(udp: *mut udp::Socket) {
-    Socket::of(udp).owner.engine().outbox.borrow_mut().unblock();
+    let engine = Socket::of(udp).owner.engine();
+    engine.outbox.borrow_mut().unblock();
+    engine.registration.wake();
 }
 
 extern "C" fn on_close(udp: *mut udp::Socket) {
@@ -251,7 +290,7 @@ pub struct Connection {
 impl Connection {
     #[inline]
     pub(super) fn get<T>(&self, f: impl FnOnce(&bun_quic::Connection) -> T) -> Option<T> {
-        self.engine.endpoint().get(self.handle).map(f)
+        self.engine.endpoint.borrow().get(self.handle).map(f)
     }
 
     #[inline]
@@ -287,7 +326,7 @@ impl Connection {
 
     #[inline]
     pub fn recycle(&self, fields: bun_quic::http3::Fields) {
-        self.engine.endpoint().recycle(fields);
+        self.engine.endpoint.borrow_mut().recycle(fields);
     }
 }
 

@@ -301,10 +301,7 @@ describe("HTTP/3 header encoding", () => {
   });
 });
 
-// lsquic decodes a header block that follows another one while the stream is
-// read, not when its bytes arrive. The peer in these tests writes its header
-// blocks in one call, so they share one STREAM frame and that is where the
-// later blocks are decoded.
+// The peer in these tests writes its header blocks in one call, so they share one STREAM frame.
 describe("HTTP/3 header blocks that follow another header block", () => {
   const encoder = new TextEncoder();
   const request = (path: string) => ({
@@ -394,8 +391,6 @@ describe("HTTP/3 header blocks that follow another header block", () => {
       },
     );
     const client = await connectTo(server);
-    // The server queues the trailers event in the lsquic callback that reads
-    // the request, ahead of the packet that carries its response.
     const response = await responseEvents(client, "/trailers", { "x-checksum": "abc123" });
     client.close();
     expect({ response, requestTrailers: { ...requestTrailers } }).toEqual({
@@ -459,7 +454,7 @@ describe("verifyClient", () => {
 
 describe("headers queued before the handshake", () => {
   // The HEADERS frame of a stream created before the handshake completes
-  // must leave once lsquic opens the stream, not once the writer is used.
+  // must leave once the stream can be opened, not once the writer is used.
   test("reach the server without a write to the stream", async () => {
     const gotHeaders = Promise.withResolvers<string>();
     await using server = await listen(
@@ -496,10 +491,10 @@ describe("headers queued before the handshake", () => {
   });
 });
 
-// lsquic can finish the handshake, read the peer's first stream and close the connection in one
-// engine pass, before JS sees any of it. A request created before `opened` is sent with the
-// client's Finished, and lsquic rejects its bad content-length with H3_MESSAGE_ERROR (0x10e).
-test("a malformed request in the handshake's last flight closes only that connection", async () => {
+// The server can finish the handshake, read the peer's first streams and close the connection in
+// one pass, before JS sees any of it. Streams created before `opened` are sent with the client's
+// Finished, and a second control stream is an H3_STREAM_CREATION_ERROR (0x103).
+test("a connection error in the handshake's last flight closes only that connection", async () => {
   const events: unknown[] = [];
   const sessions: Promise<unknown>[] = [];
   await using server = await listen(
@@ -518,7 +513,7 @@ test("a malformed request in the handshake's last flight closes only that connec
     {
       alpn: ["h3"],
       sni: { "*": { keys: [key], certs: [cert] } },
-      transportParams: { maxIdleTimeout: 5 },
+      transportParams: { maxIdleTimeout: 5, initialMaxStreamsUni: 4 },
       onheaders(this: any) {
         this.sendHeaders({ ":status": "200" }, { terminal: true });
       },
@@ -538,10 +533,9 @@ test("a malformed request in the handshake's last flight closes only that connec
     () => undefined,
     (err: any) => ({ code: err.code, errorCode: err.errorCode }),
   );
-  (await malformed.createBidirectionalStream({ headers: { ...headers, "content-length": "abc" } })).closed.catch(
-    () => {},
-  );
-  expect(await close).toEqual({ code: "ERR_QUIC_APPLICATION_ERROR", errorCode: 0x10en });
+  (await malformed.createBidirectionalStream({ headers })).closed.catch(() => {});
+  (await malformed.createUnidirectionalStream({ body: new Uint8Array([0]) })).closed.catch(() => {});
+  expect(await close).toEqual({ code: "ERR_QUIC_APPLICATION_ERROR", errorCode: 0x103n });
 
   const client = await connect(server.address!, options);
   const answered = Promise.withResolvers<string>();
@@ -590,11 +584,8 @@ test("session.close() before the handshake ends doesn't wait for a pending HTTP/
   expect(exitCode).toBe(0);
 }, 30_000);
 
-// `destroy()` sends STOP_SENDING and RESET_STREAM. Once the response is sent and
-// acked, STOP_SENDING finishes the stream and lsquic frees it in the next service
-// pass, so a queued RESET_STREAM packet would point to freed memory.
-describe("QuicStream.destroy on a stream lsquic has already finished", () => {
-  // The peer's FIN has to arrive after a gap, or lsquic closes the read side
+describe("QuicStream.destroy on a stream whose response is acknowledged", () => {
+  // The peer's FIN has to arrive after a gap, or the read side is closed
   // before the app can call destroy(). A UDP relay in front of the server
   // drops the packet carrying the body.
   const script = String.raw`

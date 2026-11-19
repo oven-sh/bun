@@ -231,6 +231,16 @@ impl QuicStream {
                 break;
             }
         }
+        let (is_reset, is_stopped, code) =
+            self.with_state(|s| (s.reset != 0, s.read_ended != 0, s.reset_code));
+        self.update(|conn, id| {
+            if is_reset {
+                conn.reset(id, code);
+            }
+            if is_stopped {
+                conn.stop(id, code);
+            }
+        });
         match (id.direction(), is_local) {
             (Direction::Bidirectional, _) => {}
             (Direction::Unidirectional, true) => {
@@ -376,7 +386,7 @@ impl QuicStream {
 
     fn discard_outbound(&self) {
         self.outbound.with_mut(|o| {
-            o.data.clear();
+            o.data = VecDeque::new();
             o.end = PendingEnd::None;
         });
     }
@@ -465,7 +475,7 @@ impl QuicStream {
         if empty && end == PendingEnd::Fin {
             self.update(Connection::finish);
             self.is_known_to_peer.set(true);
-            self.outbound.with_mut(|o| o.end = PendingEnd::None);
+            self.discard_outbound();
             self.with_state(|s| s.fin_sent = 1);
         } else if empty && end == PendingEnd::Trailers && !self.trailers_requested.replace(true) {
             self.push_event(SessionEvent::StreamWantsTrailers { stream: self.key });
@@ -520,7 +530,7 @@ impl QuicStream {
             // stream. SAFETY: as above.
             unsafe { (*session).remove_stream(self.key) };
         }
-        self.outbound.with_mut(|o| o.data.clear());
+        self.discard_outbound();
         self.inbound.with_mut(|i| {
             i.chunks.clear();
             i.ended = true;
@@ -621,7 +631,10 @@ impl QuicStream {
         };
         self.outbound.with_mut(|o| {
             o.started = true;
-            o.data.extend(bytes.iter().copied());
+            match o.data.is_empty() {
+                true => o.data = bytes.into(),
+                false => o.data.extend(bytes),
+            }
             o.end = PendingEnd::Fin;
         });
         self.with_state(|s| s.has_outbound = 1);
@@ -649,8 +662,7 @@ impl QuicStream {
         let mut queued: u64 = 0;
         let mut append = |bytes: &[u8]| {
             queued += bytes.len() as u64;
-            self.outbound
-                .with_mut(|o| o.data.extend(bytes.iter().copied()));
+            self.outbound.with_mut(|o| o.data.extend(bytes));
         };
         if batch.is_array() {
             let len = batch.get_length(global)?;

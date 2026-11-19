@@ -134,6 +134,7 @@ pub struct Connection {
     first_sample_at: Instant,
     congestion: Controller,
     pto_count: u32,
+    delivery: recovery::Delivery,
     packet_threshold: u64,
     ack_policy: ack_frequency::Policy,
     ack_controller: Option<ack_frequency::Controller>,
@@ -141,7 +142,6 @@ pub struct Connection {
 
     tolerated_load: TokenBucket,
     idle_timeout: Duration,
-    last_received_at: Instant,
     has_sent_since_receiving: bool,
     keep_alive_period: Duration,
 
@@ -240,20 +240,20 @@ impl Connection {
             rtt: Rtt::default(),
             first_sample_at: Instant::NEVER,
             pto_count: 0,
+            delivery: Default::default(),
             packet_threshold: recovery::INITIAL_PACKET_THRESHOLD,
             ack_policy: Default::default(),
             ack_controller: None,
             ack_only_packets: 0,
             tolerated_load: TokenBucket::new(330.0, 10_000.0),
             idle_timeout: Duration::from_millis(local.max_idle_timeout_millis),
-            last_received_at: now,
             has_sent_since_receiving: false,
             keep_alive_period: Duration::MAX,
             streams: Streams::new(side, &local, &config, u64::from_ne_bytes(seed)),
             datagrams: Datagrams::default(),
             http3: None,
             close_reason: CloseReason::Local,
-            close_frame: CloseFrame::default(),
+            close_frame: CloseFrame::no_error(config.http3.is_some()),
             farewell: Vec::new(),
             lingers: true,
             local,
@@ -392,6 +392,7 @@ impl Connection {
                 {
                     self.streams.state.owed |= Control::PING;
                 }
+                (self.timers).set(Timer::KeepAlive, now + self.keep_alive_period);
             }
             Timer::Blocked => self.streams.repeat_blocked(),
             Timer::Path => match self.on_path_timeout(now, shared) {
@@ -401,15 +402,6 @@ impl Connection {
             Timer::KeyDiscard => {
                 self.key_update.discard_previous();
                 self.early_keys = None;
-                if let Some(id) = self.initial_route.take() {
-                    shared.routes.by_initial_id.remove(&id);
-                }
-            }
-            Timer::AckFrequency => {
-                let (rtt, sent) = (self.rtt.smoothed, self.spaces.data.next_number);
-                if (self.ack_controller.as_mut()).is_some_and(|it| it.update(now, rtt, sent)) {
-                    self.streams.state.owed |= Control::ACK_FREQUENCY;
-                }
             }
         }
     }

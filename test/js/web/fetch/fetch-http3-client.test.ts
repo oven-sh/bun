@@ -173,7 +173,7 @@ beforeAll(async () => {
 });
 
 // Don't await: the H3 client's pooled session to this origin stays open
-// until lsquic's idle timeout, so stop(true) would block on it draining.
+// until its idle timeout, so stop(true) would block on it draining.
 afterAll(() => void server?.stop(true));
 
 const h3 = { protocol: "http3", tls: { rejectUnauthorized: false } } as const;
@@ -196,6 +196,28 @@ describe("fetch protocol: http3", () => {
     expect(res.headers.get("x-proto")).toBe("h3");
     expect(await res.text()).toBe("hello over h3");
   });
+
+  // The shortest that the timer allows is between 4 and 8 seconds.
+  test("`timeout` applies to a request, and not to the others on its connection", async () => {
+    const release = Promise.withResolvers<void>();
+    await using slow = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      idleTimeout: 0,
+      fetch: () => release.promise.then(() => new Response("late")),
+    });
+    const request = (timeout: number | boolean) =>
+      fetch(`https://127.0.0.1:${slow.port}/`, { ...h3, timeout } as RequestInit).then(
+        res => res.text(),
+        err => err.name,
+      );
+    const [patient, hasty] = [request(false), request(1000)];
+    expect(await hasty).toBe("TimeoutError");
+    release.resolve();
+    expect(await patient).toBe("late");
+  }, 20_000);
 
   test("'h3' alias", async () => {
     const res = await fetch(`${base}/hello`, { ...h3, protocol: "h3" });
@@ -403,16 +425,11 @@ describe("fetch protocol: http3", () => {
     expect(res.headers.get("x-recv-len")).toBe("1");
   });
 
-  // Regression: src/uws_sys/quic/Header.zig defines `Qpack = enum(u8) { ... _ }`
-  // (non-exhaustive — any u8 is a valid value). The Rust port uses an exhaustive
-  // `#[repr(u8)] enum`, so the only safety net against discriminant drift / a UB
-  // `from_raw` is that every named index must equal its RFC 9204 Appendix A
-  // static-table entry. This pins that contract end-to-end: each header below
-  // hits `Qpack::classify` → `qpack_index` → lsqpack encode → wire → server
-  // decode. A wrong discriminant makes lsqpack emit the wrong static-table
-  // name (or garbage), so the echoed value disappears.
+  // Every variant of `Qpack` (src/uws_sys/quic/header.rs) must equal the index
+  // of its RFC 9204 Appendix A static-table entry. With a wrong one the encoder
+  // emits another name, so the echoed value disappears.
   test("QPACK static-table indexed headers round-trip", async () => {
-    // Every `Class::Indexed` entry in Header.zig's classify map, minus
+    // Every `Class::Indexed` entry in the classify map, minus
     // content-length / accept-encoding (build_request rewrites those).
     // Mixed case on a few to exercise the case-insensitive lookup.
     const sent: Record<string, string> = {
@@ -750,8 +767,7 @@ describe("fetch protocol: http3", () => {
 });
 
 // An aborted upload must end with RESET_STREAM. A FIN tells the server that the
-// truncated body is the whole body. If the request declared a content-length,
-// the server's lsquic answers that FIN by closing the whole connection.
+// truncated body is the whole body.
 describe("aborted upload", () => {
   let server: Server<undefined>;
   let origin: string;
@@ -1649,7 +1665,7 @@ test("connects to a server with an Ed25519 certificate", async () => {
     const res = await fetch(`https://127.0.0.1:${server.port}/`, h3);
     expect(await res.text()).toBe("ed25519 over h3");
   } finally {
-    // As in afterAll: the pooled session drains on lsquic's idle timeout, so stop(true) is not awaited.
+    // As in afterAll: the pooled session drains on its idle timeout, so stop(true) is not awaited.
     server.stop(true);
   }
 });

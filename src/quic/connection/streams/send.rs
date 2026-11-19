@@ -89,8 +89,19 @@ impl State {
 
     fn discard(&mut self, stream: &mut Stream) {
         self.unsent -= stream.send.unsent_len();
-        self.retained -= stream.send.len();
+        self.release(stream.send.len());
         stream.send.discard();
+    }
+
+    #[inline]
+    fn release(&mut self, len: u64) {
+        self.retained -= len;
+        self.released += len;
+    }
+
+    /// How many bytes have been let go of, and how many of those that have been sent have not.
+    pub(crate) fn delivery(&self) -> (u64, u64) {
+        (self.released, self.retained - self.unsent)
     }
 
     /// For a stream that the peer does not know of.
@@ -330,7 +341,7 @@ impl Streams {
         let Some(stream) = stream.filter(|it| !it.flags.contains(Flags::RESET)) else {
             return;
         };
-        self.state.retained -= stream.send.on_acked(range);
+        self.state.release(stream.send.on_acked(range));
         if fin {
             stream.flags.insert(Flags::FIN_ACKED);
         }
@@ -383,6 +394,9 @@ fn write_owed_frames(
     sent: &mut Frames,
 ) -> bool {
     let is_receiving = stream.final_size == UNKNOWN_SIZE;
+    if stream.flags.contains(Flags::OWES_MAX_STREAM_DATA) {
+        stream.receive_limit = (stream.consumed + stream.receive_window).min(MAX_VARINT);
+    }
     for (flag, kind, is_relevant, value) in [
         (
             Flags::OWES_MAX_STREAM_DATA,

@@ -1,18 +1,6 @@
-// A large POST over HTTP/3 as the very first request on the connection, so
-// on_hsk_done and on_new_stream fire in the same lsquic ci_tick. The request
-// headers and body must not starve the client's TLS Finished on the HSK
-// crypto stream. Before the fix, writing the request synchronously from
-// on_stream_open filled the send controller from inside the crypto-read
-// phase and (when the pacer throttled) left the 36-byte Finished
-// unpacketized; the server stayed a mini-conn and dropped every 1-RTT packet
-// until the handshake timeout. The fix defers the whole request to on_write,
-// which lsquic's priority iterator serves after the crypto stream.
-//
-// This is regression coverage for the fixed code path, not a deterministic
-// reproduction of the race (which needs the handshake RTT to push lsquic's
-// pacer past its clock-granularity gate, and that depends on scheduler
-// timing that cannot be forced from JS). See the PR for the lsquic trace
-// that proves the deadlock and the fix.
+// A large POST over HTTP/3 as the very first request on the connection. The
+// request headers and body must not starve the client's TLS Finished: without
+// it the server cannot read any 1-RTT packet until the handshake times out.
 //
 // Parent spawns this with bunExe() and asserts exit 0.
 import { bunEnv, bunExe, tls } from "harness";

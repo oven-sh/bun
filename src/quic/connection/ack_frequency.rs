@@ -13,7 +13,8 @@ pub(super) const MAX_FRAME_LEN: usize = 2 + 8 + 2 + 4 + 1;
 
 const MIN_TOLERANCE: u64 = 2;
 const MAX_TOLERANCE: u64 = 150;
-pub(super) const ROUND_TRIPS_PER_UPDATE: u64 = 3;
+const ROUND_TRIPS_PER_UPDATE: u64 = 3;
+const MIN_TIME_PER_UPDATE: Duration = Duration::from_millis(1);
 const PROPORTIONAL_GAIN: f32 = 0.8;
 const INTEGRAL_GAIN: f32 = 0.35;
 const ERROR_PER_PACKET: f32 = 0.05;
@@ -64,25 +65,34 @@ impl Policy {
 /// Finds the tolerance at which the peer acknowledges a few times in a round trip.
 #[derive(Default)]
 pub(super) struct Controller {
-    pub(super) acks: u64,
+    acks: u64,
     since: Instant,
+    next_update: Instant,
     integral: f32,
     tolerance: Option<u64>,
     next_sequence: u64,
 }
 
 impl Controller {
-    pub(super) fn new(now: Instant) -> Self {
+    pub(super) fn new(now: Instant, rtt: Duration) -> Self {
         Self {
             since: now,
+            next_update: now + rtt * ROUND_TRIPS_PER_UPDATE,
             ..Self::default()
         }
     }
 
     /// Returns whether to tell the peer.
-    pub(super) fn update(&mut self, now: Instant, rtt: Duration, packets_sent: u64) -> bool {
+    #[inline]
+    pub(super) fn on_ack(&mut self, now: Instant, rtt: Duration, packets_sent: u64) -> bool {
+        self.acks += 1;
+        now >= self.next_update && self.update(now, rtt, packets_sent)
+    }
+
+    fn update(&mut self, now: Instant, rtt: Duration, packets_sent: u64) -> bool {
+        self.next_update = now + (rtt * ROUND_TRIPS_PER_UPDATE).max(MIN_TIME_PER_UPDATE);
         let elapsed = now - self.since;
-        if rtt.is_zero() || elapsed.is_zero() || self.acks == 0 {
+        if rtt.is_zero() || elapsed.is_zero() {
             return false;
         }
         self.since = now;

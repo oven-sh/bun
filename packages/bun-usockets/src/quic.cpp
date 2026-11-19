@@ -34,7 +34,6 @@ extern SSL_CTX *us_ssl_ctx_build_raw(
     enum create_bun_socket_error_t *err);
 extern int us_ssl_ctx_set_verify_signature_algorithms(SSL_CTX *ctx);
 extern int us_x509_verify_cert(X509_STORE_CTX *ctx, int purpose);
-extern struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl);
 
 /* ───── addresses ───── */
 
@@ -176,6 +175,11 @@ void us_quic_set_dontfrag(struct us_udp_socket_t *udp) {
     (void) on;
 }
 
+/* With a callback from the start, the errors of earlier datagrams would be queued. */
+void us_quic_ignore_receive_errors(struct us_udp_socket_t *udp) {
+    udp->on_recv_error = [](struct us_udp_socket_t *, int, int) {};
+}
+
 /* Returns whether us_quic_message_t::segment_len is understood. */
 bool us_quic_enable_offload(struct us_udp_socket_t *udp) {
 #ifdef __linux__
@@ -268,7 +272,7 @@ static int us_quic_try_send(LIBUS_SOCKET_DESCRIPTOR fd, bool names_source, const
 #endif
 }
 
-/* Returns how many were sent, 0 if on_drain follows, or -1 if the first one was refused.
+/* Returns how many were sent, 0 if on_drain follows, or the negated error if the first one was refused.
  * `names_source` is for a socket that is not bound to one address. */
 int us_quic_send(struct us_udp_socket_t *udp, bool names_source, const char *bytes,
     const struct us_quic_message_t *messages, size_t count) {
@@ -276,7 +280,8 @@ int us_quic_send(struct us_udp_socket_t *udp, bool names_source, const char *byt
 #ifdef _WIN32
     if (sent > 0 || !(bsd_would_block() || WSAGetLastError() == WSAENOBUFS)) return sent;
 #else
-    if (sent > 0 || !(bsd_would_block() || errno == ENOBUFS)) return sent;
+    if (sent > 0) return sent;
+    if (!bsd_would_block() && errno != ENOBUFS) return -errno;
 #endif
     us_poll_change(&udp->p, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
     return 0;
@@ -315,10 +320,10 @@ SSL_CTX *us_quic_create_server_ssl_ctx(const struct us_bun_socket_context_option
     us_quic_require_tls13(ssl);
     SSL_CTX_set_early_data_enabled(ssl, 0);
     us_ssl_ctx_set_sni_policy(ssl, options->request_cert, options->reject_unauthorized);
-    if (default_ctx) {
-        SSL_CTX_set_verify(ssl, SSL_CTX_get_verify_mode(ssl) | SSL_CTX_get_verify_mode(default_ctx),
-            SSL_CTX_get_verify_callback(ssl));
-    }
+    int mode = SSL_CTX_get_verify_mode(ssl) | (default_ctx ? SSL_CTX_get_verify_mode(default_ctx) : 0);
+    SSL_CTX_set_verify(ssl, mode, mode & SSL_VERIFY_FAIL_IF_NO_PEER_CERT
+        ? [](int ok, X509_STORE_CTX *) { return ok; }
+        : SSL_CTX_get_verify_callback(ssl));
     return ssl;
 }
 
@@ -337,11 +342,6 @@ SSL_CTX *us_quic_server_names_find(const us_quic_server_names_t *names, const ch
     if (!match) return NULL;
     SSL_CTX_up_ref(match->get());
     return match->get();
-}
-
-bool us_quic_is_client_authorized(SSL_CTX *default_ctx, SSL *ssl) {
-    bool enforce = us_ssl_ctx_reject_unauthorized(default_ctx) || us_ssl_ctx_reject_unauthorized(SSL_get_SSL_CTX(ssl));
-    return !enforce || us_ssl_socket_verify_error_from_ssl(ssl).error == 0;
 }
 
 SSL_CTX *us_quic_create_client_ssl_ctx() {

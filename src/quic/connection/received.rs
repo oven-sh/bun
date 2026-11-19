@@ -52,7 +52,7 @@ impl Received {
     pub(super) fn insert(&mut self, now: Instant, number: u64, is_eliciting: bool) -> Order {
         self.ranges.insert(number..number + 1);
         if self.ranges.len() > MAX_RANGES {
-            self.floor = self.ranges.pop_first().map_or(self.floor, |it| it.end);
+            self.floor = (self.floor).max(self.ranges.pop_first().map_or(0, |it| it.end));
         }
         if number >= self.expected {
             self.expected = number + 1;

@@ -52,7 +52,9 @@ struct Counts {
     remote_next: u64,
     /// What the peer has not used yet below `remote_next`.
     remote_skipped: RangeSet,
-    remote_closed: u64,
+    /// How many the application is done with.
+    remote_released: u64,
+    remote_removed: u64,
     /// What the peer has been told.
     remote_limit: u64,
     remote_window: u64,
@@ -88,6 +90,8 @@ pub(crate) struct State {
     unsent: u64,
     /// How many bytes are kept until they are acknowledged.
     retained: u64,
+    /// How many have been let go of.
+    released: u64,
     pub(super) max_retained: u64,
     send_limit: u64,
     blocked_at: Option<u64>,
@@ -239,13 +243,16 @@ impl Streams {
         if !entry.get().is_finished() {
             return;
         }
-        entry.remove();
-        if id.initiator() != table.side && table.counts_mut(id.direction()).close_remote() {
-            state.owed |= match id.direction() {
-                Direction::Bidirectional if table.is_going_away => Control::empty(),
-                Direction::Bidirectional => Control::MAX_STREAMS_BIDI,
-                Direction::Unidirectional => Control::MAX_STREAMS_UNI,
-            };
+        let flags = entry.remove().flags;
+        if flags.intersects(Flags::IN_WRITABLE | Flags::IN_STALLED) {
+            state.writable.retain(|&it| it != id);
+            state.stalled.retain(|&it| it != id);
+        }
+        if id.initiator() != table.side {
+            let counts = table.counts_mut(id.direction());
+            counts.remote_released += u64::from(!flags.contains(Flags::IN_CLOSING));
+            counts.remote_removed += 1;
+            state.owed |= table.owed_max_streams(id.direction());
         }
     }
 
@@ -306,6 +313,10 @@ impl Streams {
                 }
                 let (context, is_known) = (stream.context, stream.flags.contains(Flags::ANNOUNCED));
                 self.table.unreleased -= 1;
+                if id.initiator() != self.table.side {
+                    self.table.counts_mut(id.direction()).remote_released += 1;
+                    self.state.owed |= self.table.owed_max_streams(id.direction());
+                }
                 self.remove_if_finished(id);
                 if is_known {
                     return Some(Event::Stream(id, context, StreamEvent::Closed));
@@ -337,6 +348,18 @@ impl Table {
         match direction {
             Direction::Bidirectional => &mut self.bidirectional,
             Direction::Unidirectional => &mut self.unidirectional,
+        }
+    }
+
+    #[inline]
+    fn owed_max_streams(&self, direction: Direction) -> Control {
+        let counts = self.counts(direction);
+        let gain = counts.next_remote_limit() - counts.remote_limit;
+        match direction {
+            _ if gain < (counts.remote_window / 8).max(1) => Control::empty(),
+            Direction::Bidirectional if self.is_going_away => Control::empty(),
+            Direction::Bidirectional => Control::MAX_STREAMS_BIDI,
+            Direction::Unidirectional => Control::MAX_STREAMS_UNI,
         }
     }
 
@@ -481,14 +504,11 @@ impl Counts {
         Ok(true)
     }
 
+    /// It does not wait for acknowledgments, unless too many are outstanding.
+    #[inline]
     fn next_remote_limit(&self) -> u64 {
-        (self.remote_closed + self.remote_window).min(MAX_STREAM_COUNT)
-    }
-
-    /// Returns whether the limit should be raised.
-    fn close_remote(&mut self) -> bool {
-        self.remote_closed += 1;
-        self.next_remote_limit() - self.remote_limit >= (self.remote_window / 8).max(1)
+        let closed = (self.remote_released).min(self.remote_removed + self.remote_window);
+        (closed + self.remote_window).min(MAX_STREAM_COUNT)
     }
 }
 

@@ -146,12 +146,14 @@ impl Connection {
                         path.on_received(len);
                     }
                     self.restart_idle_timer(now);
-                    self.last_received_at = now;
                     self.has_sent_since_receiving = false;
                     self.update_unsent_target();
                     self.streams.state.start_write_round();
                 }
                 self.set_loss_timer(now);
+                if is_useful && now >= self.delivery.period_end {
+                    self.check_delivery(now);
+                }
             }
         }
     }
@@ -185,14 +187,18 @@ impl Connection {
                 is_useful |= self.receive_short(now, from, rest, shared)?;
                 break;
             }
+            let is_alone = rest.len() == datagram_len;
             let Some(header) = LongHeader::read(rest) else {
-                if let Some(packet) = Invariants::read(rest).filter(|it| it.version == 0) {
+                let packet = Invariants::read(rest);
+                if let Some(packet) = packet.filter(|it| it.version == 0 && is_alone) {
                     self.on_version_negotiation(&packet);
                 }
                 break;
             };
             if header.kind == LongKind::Retry {
-                self.on_retry(now, &header, rest);
+                if is_alone && first & FIXED_BIT != 0 {
+                    self.on_retry(now, &header, rest);
+                }
                 break;
             }
             let has_token = !header.token.is_empty();
@@ -453,6 +459,7 @@ impl Connection {
         while let Some(setup) = &mut self.setup
             && core::mem::take(&mut setup.can_read_more)
         {
+            setup.is_catching_up = true;
             for mut packet in core::mem::take(&mut setup.undecryptable) {
                 self.stats.packets_received -= 1;
                 self.receive_packets(now, &from, &mut packet, 0, shared)?;
@@ -460,6 +467,8 @@ impl Connection {
         }
         if self.is_confirmed() {
             self.setup = None;
+        } else if let Some(setup) = &mut self.setup {
+            setup.is_catching_up = false;
         }
         Ok(())
     }

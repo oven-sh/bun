@@ -165,7 +165,9 @@ impl Sent {
     pub(super) fn find_late(&mut self, acked: impl Iterator<Item = Range<u64>>) -> Option<u64> {
         let (mut late, mut smallest) = (None, 0);
         for range in acked {
-            let first = self.lost.first()?;
+            let Some(first) = self.lost.first() else {
+                break;
+            };
             smallest = range.start;
             if range.end <= first.start {
                 break;

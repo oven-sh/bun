@@ -1285,7 +1285,10 @@ where
         }
         // The normal end path detaches `self.resp` and releases the base ref. uWS
         // markDone() clears onAborted, so no abort would ever do either.
-        self.end_without_body(!MUX);
+        match MUX && resp.state().is_http_write_called() {
+            true => self.force_close(),
+            false => self.end_without_body(!MUX),
+        }
         self.unpipe();
     }
 

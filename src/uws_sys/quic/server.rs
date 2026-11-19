@@ -5,7 +5,7 @@ use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::NonNull;
 use std::rc::{Rc, Weak};
 
-use bun_boringssl_sys::{OwnedSslCtx, SSL, SSL_CTX};
+use bun_boringssl_sys::{OwnedSslCtx, SSL_CTX};
 use bun_core::ZStr;
 use bun_quic::http3::{Fields, Section};
 use bun_quic::{
@@ -14,7 +14,7 @@ use bun_quic::{
 };
 use bun_quic_tls::Session;
 
-use super::drivers::{self, Driver};
+use super::drivers::Driver;
 use super::engine::{Application, Engine, Socket, dispatch_events};
 use super::io::{now, write_ip};
 use super::{Connection, Header, Stream};
@@ -27,8 +27,6 @@ const MAX_REQUEST_FIELDS: usize = 200;
 const MAX_HEADER_SIZE: usize = 0xff_ffff;
 /// As in Http2Context.h.
 const MIN_TOLERATED_HEADER_SIZE: usize = 16 * 1024;
-/// RFC 8446 §6.2.
-const BAD_CERTIFICATE: u64 = transport_code::CRYPTO_ERROR + 42;
 
 bun_opaque::opaque_ffi! {
     struct NameTree;
@@ -47,7 +45,6 @@ unsafe extern "C" {
         name: *const u8,
         len: usize,
     ) -> Option<OwnedSslCtx>;
-    safe fn us_quic_is_client_authorized(default_ctx: &SSL_CTX, ssl: &SSL) -> bool;
 }
 
 #[repr(transparent)]
@@ -121,24 +118,13 @@ impl Application for Server {
 
     #[inline]
     fn on_event(&self, connection: Connection, _: Context, event: Event) {
-        match event {
-            Event::Stream(id, response, event) => {
-                self.on_stream_event(connection.stream(id), response, event);
-            }
-            Event::Ready => {
-                connection.update(|connection| {
-                    let tls = Session::of(connection);
-                    if !tls.is_some_and(|it| us_quic_is_client_authorized(&self.tls, it.ssl())) {
-                        connection.abort(now(), Layer::Transport, BAD_CERTIFICATE, &[]);
-                    }
-                });
-            }
-            _ => {}
+        if let Event::Stream(id, response, event) = event {
+            self.on_stream_event(connection.stream(id), response, event);
         }
     }
 
     fn on_processed(&self) {
-        let is_drained = self.is_closing.get() && self.engine.endpoint().connection_count() == 0;
+        let is_drained = self.is_closing.get() && self.engine.connection_count() == 0;
         if is_drained || PENDING_CLOSES.with_borrow(|it| !it.is_empty()) {
             for socket in self.engine.sockets() {
                 if socket.is_close_pending.take() || is_drained {
@@ -237,7 +223,6 @@ extern "C" fn us_create_quic_socket_context(
             },
             field_overhead: 32,
             advertises_max_field_section_size: true,
-            malformed_message_closes_connection: true,
             ..Http3Config::default()
         }),
         ..Config::server()
@@ -249,8 +234,8 @@ extern "C" fn us_create_quic_socket_context(
             config.progress_timeout = config.progress_timeout.max(timeout);
         }
     }
-    let server = Rc::new(Server {
-        engine: Engine::new(loop_, VERSIONS),
+    Rc::into_raw(Rc::new_cyclic(|this| Server {
+        engine: Engine::new(loop_, Weak::<Server>::clone(this), VERSIONS),
         config: Rc::new(config),
         tls,
         names: OnceCell::new(),
@@ -259,9 +244,7 @@ extern "C" fn us_create_quic_socket_context(
         headers: Cell::default(),
         is_closing: Cell::new(false),
         on_drained: Cell::new(None),
-    });
-    drivers::register(loop_, Rc::<Server>::clone(&server));
-    Rc::into_raw(server)
+    }))
 }
 
 #[unsafe(no_mangle)]
@@ -282,10 +265,7 @@ extern "C" fn us_quic_socket_context_shutdown(
             connection.abort(now, Layer::Transport, code, &[]);
         }
     });
-    if !server.engine.is_processing() {
-        server.process();
-        server.on_processed();
-    }
+    server.process();
 }
 
 /// # Safety
@@ -295,7 +275,7 @@ unsafe extern "C" fn us_quic_socket_context_free(server: *const Server) {
     // SAFETY: the caller's.
     let server = unsafe { Rc::from_raw(server) };
     server.on_drained.set(None);
-    drivers::unregister(server.engine.loop_, &*server);
+    server.engine.stop_processing();
     server.engine.sockets().iter().for_each(|it| it.close());
     (server.engine).for_each_connection(bun_quic::Connection::abort_silently);
     dispatch_events(&*server);

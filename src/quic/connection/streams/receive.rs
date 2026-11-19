@@ -100,14 +100,14 @@ impl State {
             ));
         }
         if end > stream.received {
-            self.received += end - stream.received;
-            stream.received = end;
-            if end > stream.receive_limit || self.received > self.receive_limit {
+            let received = self.received + (end - stream.received);
+            if end > stream.receive_limit || received > self.receive_limit {
                 return Err(Error::transport(
                     transport_code::FLOW_CONTROL_ERROR,
                     "flow control violation",
                 ));
             }
+            (self.received, stream.received) = (received, end);
         }
         if is_final {
             stream.final_size = end;
@@ -187,17 +187,18 @@ impl State {
         stream.consumed = consumed;
         if !is_discarding
             && stream.final_size == UNKNOWN_SIZE
-            && raise(&mut stream.receive_limit, consumed, stream.receive_window)
+            && is_worth_raising(stream.receive_limit, consumed, stream.receive_window)
         {
             self.owe(id, stream, Flags::OWES_MAX_STREAM_DATA);
         }
-        if raise(&mut self.receive_limit, self.consumed, self.receive_window) {
+        if is_worth_raising(self.receive_limit, self.consumed, self.receive_window) {
             self.owed |= Control::MAX_DATA;
         }
     }
 
-    /// The value for MAX_DATA.
-    pub(crate) fn receive_limit(&self) -> u64 {
+    /// Returns the value for MAX_DATA.
+    pub(crate) fn raise_receive_limit(&mut self) -> u64 {
+        self.receive_limit = (self.consumed + self.receive_window).min(MAX_VARINT);
         self.receive_limit
     }
 
@@ -229,12 +230,7 @@ impl State {
     }
 }
 
-/// When less than half of the window is left.
 #[inline]
-fn raise(limit: &mut u64, consumed: u64, window: u64) -> bool {
-    let is_due = 2 * (*limit - consumed) < window && *limit < MAX_VARINT;
-    if is_due {
-        *limit = (consumed + window).min(MAX_VARINT);
-    }
-    is_due
+fn is_worth_raising(limit: u64, consumed: u64, window: u64) -> bool {
+    limit - consumed < window - window / 4 && limit < MAX_VARINT
 }

@@ -3,7 +3,7 @@
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::net::{IpAddr, SocketAddr};
 use core::ptr::NonNull;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use bun_boringssl_sys::{OwnedSslCtx, SSL};
 use bun_core::{ZBox, ZStr, zstr};
@@ -14,7 +14,6 @@ use bun_quic::{
 use bun_quic_tls::Session;
 
 use super::Connection;
-use super::drivers;
 use super::engine::{Application, Engine, Socket};
 use super::io::{Address, now};
 use crate::Loop;
@@ -91,15 +90,13 @@ impl Application for Client {
     }
 
     fn on_processed(&self) {
-        if self.engine.alarm.get().is_some_and(|it| it <= now()) {
-            self.engine.alarm.set(None);
+        if self.engine.take_alarm() {
             (self.on_alarm)();
         }
     }
 }
 
 impl Client {
-    /// The loop keeps it.
     pub fn new(
         loop_: &'static Loop,
         on_event: fn(Connection, Context, Event),
@@ -123,21 +120,19 @@ impl Client {
             }),
             ..Config::client()
         };
-        let client = Rc::new(Self {
-            engine: Engine::new(loop_, &[]),
+        let tls = us_quic_create_client_ssl_ctx()?;
+        Some(Rc::new_cyclic(|this| Self {
+            engine: Engine::new(loop_, Weak::<Self>::clone(this), &[]),
             config: Rc::new(config),
-            tls: us_quic_create_client_ssl_ctx()?,
+            tls,
             on_event,
             on_alarm,
-        });
-        drivers::register(loop_, Rc::<Self>::clone(&client));
-        Some(client)
+        }))
     }
 
     /// Unless it is set already.
     pub fn set_alarm(&self, secs: u32) {
-        let at = || Some(now() + Duration::from_secs(secs.into()));
-        self.engine.alarm.update(|it| it.or_else(at));
+        self.engine.set_alarm(Duration::from_secs(secs.into()));
     }
 
     pub fn connect(&self, origin: &Origin, context: Context) -> Option<Connecting> {

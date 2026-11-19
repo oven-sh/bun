@@ -9,6 +9,7 @@ use bun_core::StackCheck;
 use bun_core::{CStrList, CStrRef, String as BunString, ZStr, strings};
 use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
 use bun_io::max_buf;
+use bun_jsc::ComptimeStringMapExt as _;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::spawn_sync_event_loop::TickState;
 use bun_jsc::{
@@ -53,11 +54,6 @@ impl JSValueSpawnExt for JSValue {
 #[inline]
 fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<SignalCode> {
     bun_sys_jsc::signal_code_jsc::from_js(val, global)
-}
-
-#[inline]
-fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> Option<IPC::SendQueueOwner> {
-    core::ptr::NonNull::new(ptr.cast::<SubprocessT<'static>>()).map(IPC::SendQueueOwner::Subprocess)
 }
 
 bun_output::declare_scope!(Subprocess, hidden);
@@ -377,7 +373,7 @@ fn spawn_maybe_sync(
     let cmd_value: JSValue;
     let mut detached = false;
     let mut args = args_;
-    let mut maybe_ipc_mode: Option<IPC::Mode> = None;
+    let mut maybe_ipc_mode: Option<bun_ipc::Mode> = None;
     let mut ipc_callback: JSValue = JSValue::ZERO;
     let mut extra_fds: Vec<SpawnOptionsStdio> = Vec::new();
     #[cfg(not(windows))]
@@ -491,7 +487,8 @@ fn spawn_maybe_sync(
                         maybe_ipc_mode = Some('ipc_mode: {
                             if let Some(mode_val) = args.get_truthy(cx.global(), "serialization")? {
                                 if mode_val.is_string() {
-                                    break 'ipc_mode match IPC::Mode::from_js(cx.global(), mode_val)?
+                                    break 'ipc_mode match IPC::MODE_MAP
+                                        .from_js(cx.global(), mode_val)?
                                     {
                                         Some(m) => m,
                                         None => {
@@ -508,7 +505,7 @@ fn spawn_maybe_sync(
                                     ));
                                 }
                             }
-                            break 'ipc_mode IPC::Mode::Advanced;
+                            break 'ipc_mode bun_ipc::Mode::Advanced;
                         });
 
                         ipc_callback = val.with_async_context_if_needed(cx.global());
@@ -926,8 +923,8 @@ fn spawn_maybe_sync(
             env_array.push(Some(pipe_env.into()));
 
             env_array.push(Some(CStrRef::from(match ipc_mode {
-                IPC::Mode::Json => c"NODE_CHANNEL_SERIALIZATION_MODE=json",
-                IPC::Mode::Advanced => c"NODE_CHANNEL_SERIALIZATION_MODE=advanced",
+                bun_ipc::Mode::Json => c"NODE_CHANNEL_SERIALIZATION_MODE=json",
+                bun_ipc::Mode::Advanced => c"NODE_CHANNEL_SERIALIZATION_MODE=advanced",
             })));
         }
     }
@@ -1218,8 +1215,7 @@ fn spawn_maybe_sync(
         if let Some(ipc_mode) = maybe_ipc_mode {
             subprocess.ipc_data.set(Some(IPC::SendQueue::new(
                 ipc_mode,
-                subprocess_ipc_owner(subprocess_ptr),
-                IPC::SocketUnion::Uninitialized,
+                IPC::SendQueueOwner::Subprocess(subprocess_nn.into()),
             )));
         }
     }
@@ -1338,8 +1334,7 @@ fn spawn_maybe_sync(
                 let socket = raw_socket;
                 subprocess.ipc_data.set(Some(IPC::SendQueue::new(
                     mode,
-                    subprocess_ipc_owner(subprocess_ptr),
-                    IPC::SocketUnion::Uninitialized,
+                    IPC::SendQueueOwner::Subprocess(subprocess_nn.into()),
                 )));
                 posix_ipc_info = Some(IPC::Socket::from(socket));
             }
@@ -1364,7 +1359,7 @@ fn spawn_maybe_sync(
                     // SAFETY: `ctx` is the live ext-slot pointer returned by uSockets;
                     // it stays valid for the socket's lifetime.
                     unsafe { *ctx = ipc_data.as_ctx_ptr() };
-                    ipc_data.socket.set(IPC::SocketUnion::Open(posix_ipc_info));
+                    ipc_data.attach(posix_ipc_info);
                 }
             }
             // uws owns the fd now (owns_fd=1).
@@ -1391,7 +1386,7 @@ fn spawn_maybe_sync(
                 return Err(cx.global().throw_value(err.to_js(cx.global())));
             }
         }
-        ipc_data.write_version_packet(cx.global());
+        ipc_data.write_version_packet();
     }
 
     if matches!(subprocess.stdin.get(), Writable::Pipe(_)) && promise_for_stream == JSValue::ZERO {

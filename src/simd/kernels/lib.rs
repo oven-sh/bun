@@ -57,6 +57,7 @@ impl Copies for () {
 
     #[inline(always)]
     fn put_each<T, const N: usize>(&mut self, from: &[T], mut load: impl FnMut(&T) -> [u8; N]) {
+        #[rustc_unroll(never)]
         for it in from {
             load(it);
         }

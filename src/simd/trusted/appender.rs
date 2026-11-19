@@ -2,9 +2,10 @@
 use alloc::vec::Vec;
 use core::cell::Cell;
 use core::mem::MaybeUninit;
-use core::{array, slice};
+use core::slice;
 
 type Byte = Cell<MaybeUninit<u8>>;
+type Chunks<const N: usize, const K: usize> = [Cell<MaybeUninit<[u8; N]>>; K];
 
 #[inline(always)]
 fn set<const N: usize>(to: &[Byte; N], bytes: [MaybeUninit<u8>; N]) {
@@ -93,23 +94,23 @@ impl<'a> Appender<'a> {
     fn spans<const N: usize, const K: usize>(
         &self,
         distance: usize,
-    ) -> Option<[&'a [[Byte; N]; K]; 2]> {
-        let to = self.rest.as_chunks().0.first_chunk()?;
+    ) -> Option<[&'a Chunks<N, K>; 2]> {
+        let to = self.rest.as_chunks::<N>().0.first_chunk::<K>()?;
         if distance.wrapping_sub(1) >= self.position() {
             return None;
         }
         let from = self.all.as_ptr().with_addr(self.as_ptr().addr() - distance);
-        // SAFETY: it starts in `all` and before `to`, so it ends before the end of `to`.
-        Some([to, unsafe { &*from.cast() }])
+        // SAFETY: the layouts are alike. `from` starts in `all` and before `to`, so it ends first.
+        Some(unsafe { [&*to.as_ptr().cast(), &*from.cast()] })
     }
 
     /// The bytes from `distance` before the end on, then zeros. `None` without room for as many.
     #[inline(always)]
     pub fn peek<const N: usize>(&self, distance: usize) -> Option<[u8; N]> {
         let [[to], [from]] = self.spans::<N, 1>(distance)?;
-        set(to, [MaybeUninit::new(0); N]);
+        to.set(MaybeUninit::new([0; N]));
         // SAFETY: each byte is before `rest` or in `to`.
-        Some(array::from_fn(|i| unsafe { from[i].get().assume_init() }))
+        Some(unsafe { from.get().assume_init() })
     }
 
     /// Repeats `count` bytes from `distance` back. `false` if a chunk needs itself or `K` do not fit.
@@ -126,14 +127,13 @@ impl<'a> Appender<'a> {
         if distance < count.min(N) {
             return false;
         }
-        let copy = |i: usize| set(&to[i], array::from_fn(|at| from[i][at].get()));
-        copy(0);
+        to[0].set(from[0].get());
         for at in (N..K * N).step_by(N) {
             if at >= count {
                 break;
             }
             before_chunk(at / N);
-            copy(at / N);
+            to[at / N].set(from[at / N].get());
         }
         self.rest = &self.rest[count.min(K * N)..];
         true

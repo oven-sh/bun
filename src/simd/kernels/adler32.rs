@@ -1,7 +1,6 @@
 //! The Adler-32 of zlib, derived from libdeflate (LICENSE.md).
-use crate::{Aligned, Byte, Copies, copy_then};
+use crate::{Byte, Copies, copy_then};
 use bun_simd::{Isa, Out, SharedU8};
-use core::array::from_fn;
 
 const MODULUS: u32 = 65521;
 /// The most bytes after which both sums fit in 32 bits. Lanes may wrap around before that.
@@ -86,16 +85,18 @@ mod simd {
         const VECTORS: usize = ROW / U8::LEN;
         const BIAS: usize = if HAS_PAIRWISE_DOT { ROW / 2 + 1 } else { 1 };
 
-        /// How often each byte of a row counts in the upper half, less `BIAS`.
-        const WEIGHTS: &Aligned<[i8; ROW + U8::LEN]> = &Aligned(from_fn(const |i| {
-            (ROW as isize - BIAS as isize - i as isize) as i8 & -((i < ROW) as i8)
-        }));
         const _: () = {
             let rows = PIECE / ROW;
             assert!(ROW - BIAS < 128 && BIAS < 130);
             assert!(255 * ROW * rows * rows / 2 < 1 << 32);
             assert!(255 * ROW * (ROW + 1) / 2 * rows + 65535 < 1 << 32);
         };
+
+        /// How often the bytes count in the upper half, less `BIAS`, from `left` before the end of a row.
+        #[inline(always)]
+        fn weights(left: usize) -> I8 {
+            I8::splat(left.wrapping_sub(BIAS) as i8) - I8::iota()
+        }
 
         #[inline(always)]
         fn once<C: Copies>(loaded: U8) -> U8 {
@@ -125,7 +126,7 @@ mod simd {
             #[rustc_unroll(full)]
             for (i, to) in bytes.as_chunks_mut().0.iter_mut().enumerate() {
                 let v = once::<C>(U8::load_at(row, i));
-                let weights = I8::from_slice(&WEIGHTS.0[i * U8::LEN..]);
+                let weights = weights(ROW - i * U8::LEN);
                 v.store(to);
                 if ADDS_PAIRS {
                     sum += U64::sums_of_8(v).bitcast::<I32>();
@@ -157,16 +158,18 @@ mod simd {
             if let len @ 1.. = part.len() {
                 let first = once::<C>(U8::load(first));
                 copy.put(first.to_array(), len);
-                let part = first & U8::iota().simd_lt(len as u8).to_vector();
-                let weights = I8::from_slice(&WEIGHTS.0[ROW - start.len()..]);
-                add_vector(part, weights, &mut plain, &mut weighted);
+                let kept = U8::iota().simd_lt(len as u8).to_vector();
+                // Arm takes none that are negative.
+                let weights = weights(start.len()) & kept.bitcast::<I8>();
+                add_vector(first & kept, weights, &mut plain, &mut weighted);
             }
-            let weights = WEIGHTS.0[ROW - vectors.len() * U8::LEN..].as_chunks().0;
+            let mut weights = weights(vectors.len() * U8::LEN);
             #[rustc_unroll(never)]
-            for (bytes, weights) in vectors.iter().zip(weights) {
+            for bytes in vectors {
                 let bytes = once::<C>(U8::load(bytes));
                 copy.put(bytes.to_array(), U8::LEN);
-                add_vector(bytes, I8::load(weights), &mut plain, &mut weighted);
+                add_vector(bytes, weights, &mut plain, &mut weighted);
+                weights -= U8::LEN as i8;
             }
             if !rows.is_empty() {
                 let (mut earlier, mut sums) = (I32::zero(), [I32::zero(); VECTORS]);

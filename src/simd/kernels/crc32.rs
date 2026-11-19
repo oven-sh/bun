@@ -60,7 +60,6 @@ pub fn copy_and_crc32<'a>(crc: &mut u32, from: &[u8], to: Out<'a, u8>) -> &'a mu
     avx2 + "pclmulqdq" + "avx512vl",
     avx2 + "pclmulqdq",
     sse4 + "pclmulqdq",
-    neon + "crc" + "aes" + "sha3",
     neon + "crc" + "aes",
     portable
 )]
@@ -73,9 +72,9 @@ mod folding_simd {
         U8::LEN == 16 || matches!(MORE_FEATURES, [it, ..] if matches!(it.as_bytes(), b"pclmulqdq"));
     const HAS_INSTRUCTION: bool =
         matches!(MORE_FEATURES, [it, ..] if matches!(it.as_bytes(), b"crc"));
-    /// With many registers and an op for three inputs.
-    const IS_RICH: bool =
-        matches!(MORE_FEATURES.last(), Some(it) if matches!(it.as_bytes(), b"avx512vl" | b"sha3"));
+    /// With many registers and a fast op for three inputs. On Neoverse, it waits for products.
+    const IS_RICH: bool = HAS_INSTRUCTION && cfg!(target_vendor = "apple")
+        || matches!(MORE_FEATURES, [_, it] if matches!(it.as_bytes(), b"avx512vl"));
 
     /// Barrett reduction
     #[inline(always)]
@@ -221,6 +220,9 @@ mod folding_simd {
         }
     }
 
+    /// How many bytes the instruction gets for each stride.
+    const BESIDE: usize = 16 * if IS_RICH { 4 } else { 7 };
+
     /// The instruction has a unit of its own, which works on some of the bytes meanwhile.
     #[inline(always)]
     fn fold_beside_instruction(
@@ -228,20 +230,19 @@ mod folding_simd {
         rest: &mut &[[impl Byte; 16]],
         copy: &mut impl Copies,
     ) {
-        const SKIPPED: usize = if IS_RICH { 64 } else { 128 };
-        while let Some((skipped, after)) = rest.split_first_chunk::<{ SKIPPED / 16 }>()
+        while let Some((skipped, after)) = rest.split_first_chunk::<{ BESIDE / 16 }>()
             && let Some((next, after)) = after.split_first_chunk()
         {
-            let (mut crc, mut bytes) = (0, [0; SKIPPED]);
+            let (mut crc, mut bytes) = (0, [0; BESIDE]);
             let words = skipped.as_flattened().as_chunks().0;
             #[rustc_unroll(full)]
             for (i, to) in bytes.as_chunks_mut().0.iter_mut().enumerate() {
                 let word = opaque(u64::from_le_bytes(Vector::load_at(words, i).to_array()));
                 (*to, crc) = (word.to_le_bytes(), crc32_u64(crc, word));
             }
-            copy.put(bytes, SKIPPED);
+            copy.put(bytes, BESIDE);
             for (chain, v) in chains.iter_mut().zip(load_stride(next, copy)) {
-                *chain = fold::<{ STRIDE + SKIPPED }>(*chain, v);
+                *chain = fold::<{ STRIDE + BESIDE }>(*chain, v);
             }
             chains[0] ^= x128::U64::from_first(crc.into());
             *rest = after;
@@ -303,7 +304,7 @@ mod folding_simd {
         match len {
             _ if !HAS_INSTRUCTION => len,
             SHORT.. if IS_RICH => len,
-            384.. => len - (len - 128) % 256,
+            _ if len >= 2 * STRIDE + BESIDE => len - (len - STRIDE) % (STRIDE + BESIDE),
             _ => 0,
         }
     }
@@ -392,19 +393,28 @@ mod instruction_simd {
         crc32_u64(0, (word ^ crc) << (64 - bits)) ^ (crc >> bits) as u32
     }
 
+    /// Returns the bytes.
+    #[inline(always)]
+    fn add_words<const N: usize>(crc: &mut u32, from: &[impl Byte; N]) -> [u8; N] {
+        let (words, mut bytes) = (from.as_chunks().0, [0; N]);
+        #[rustc_unroll(full)]
+        for (i, to) in bytes.as_chunks_mut().0.iter_mut().enumerate() {
+            let word = opaque(u64::from_le_bytes(Vector::load_at(words, i).to_array()));
+            (*to, *crc) = (word.to_le_bytes(), crc32_u64(*crc, word));
+        }
+        bytes
+    }
+
     #[inline(always)]
     fn by_words(mut crc: u32, bytes: &[impl Byte], copy: &mut impl Copies) -> Option<u32> {
-        let (first, (part, words)) = (load(bytes.first_chunk()?), bytes.as_rchunks());
+        let (first, (start, lines)) = (load(bytes.first_chunk()?), bytes.as_rchunks::<64>());
+        let (part, words) = start.as_rchunks::<8>();
         if let len @ 1.. = part.len() {
             copy.put(first.to_le_bytes(), len);
             crc = first_bytes(crc, first, len);
         }
-        #[rustc_unroll(never)]
-        for word in words {
-            let word = load(word);
-            copy.put(word.to_le_bytes(), 8);
-            crc = crc32_u64(crc, word);
-        }
+        copy.put_each(words, |it| add_words(&mut crc, it));
+        copy.put_each(lines, |it| add_words(&mut crc, it));
         Some(crc)
     }
 

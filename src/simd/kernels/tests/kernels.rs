@@ -1542,7 +1542,7 @@ type CopyAndSum = for<'a> fn(&mut u32, &[u8], Out<'a, u8>) -> &'a mut [u8];
 fn checksums() {
     #[track_caller]
     fn check(len: usize, want: u32, kernel: impl Fn() -> u32) {
-        let more = "pclmulqdq avx512vl vpclmulqdq crc crc+aes crc+aes+sha3 dotprod";
+        let more = "pclmulqdq avx512vl vpclmulqdq crc crc+aes dotprod";
         for target in targets() {
             assert_eq!(kernel(), want, "{len} {target:?}");
             for more in more.split(' ').filter(|_| target.arch().is_some()) {

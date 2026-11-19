@@ -176,6 +176,7 @@ fn decode_either(
 
 pub(super) use simd::{decode_to_slice, decode_to_vec};
 
+#[cfg_attr(mordant, allow(reimplemented_helper))] // The copies for the targets look alike.
 #[bun_simd::foreach_target(sse4 + "bmi2", sse4, neon, portable)]
 mod simd {
     /// The arguments of `Lap::new()`.

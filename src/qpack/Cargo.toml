@@ -1,0 +1,19 @@
+[package]
+name = "bun_qpack"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_hpack.workspace = true
+bun_wyhash.workspace = true
+thiserror.workspace = true
+
+[[test]]
+name = "codec"
+path = "tests/codec.rs"

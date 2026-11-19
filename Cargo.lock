@@ -1504,6 +1504,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_qpack"
+version = "0.0.0"
+dependencies = [
+ "bun_hpack",
+ "bun_wyhash",
+ "thiserror",
+]
+
+[[package]]
 name = "bun_quic"
 version = "0.0.0"
 dependencies = [

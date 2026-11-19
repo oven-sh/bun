@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
-import { totalmem, totalmem } from "node:os";
+import { totalmem } from "node:os";
 import zlib from "node:zlib";
 import { inflate, nothing, Z_FINISH } from "./zlib-golden/engine";
 import { input } from "./zlib-golden/inputs";

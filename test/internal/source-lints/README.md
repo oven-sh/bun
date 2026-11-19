@@ -17,8 +17,14 @@ only import built-ins, relative paths, and `harness` (resolved via
 `test/tsconfig.json` paths).
 
 The workflow only triggers for the `paths:` listed in it. A lint that reads
-files outside those paths (for example `packages/bun-types/bun.d.ts` or the
-docs) needs them added there, or a change to those files is only checked by
-whichever later PR happens to trigger the workflow.
+files outside those paths (for example `packages/bun-types/bun.d.ts`) needs
+them added there, or a change to those files is only checked by whichever
+later PR happens to trigger the workflow.
+
+`docs/**` is listed for `compiler-docs-links.test.ts`, which judges the links
+from and to `docs/compiler`, and the Compiler tab and the redirects of
+`docs/docs.json`. A pull request that changes only docs gets no Buildkite
+pipeline (`isDocsOnlyChange()` in `scripts/buildkite.ts`), so no test outside
+this directory reads its pages.
 
 To run locally: `bun test test/internal/source-lints/`.

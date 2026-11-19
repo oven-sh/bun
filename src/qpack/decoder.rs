@@ -61,7 +61,6 @@ pub struct Fields<'a> {
 }
 
 pub struct Field<'a> {
-    pub never_index: bool,
     /// Of an entry with this name if the peer referred to it.
     pub static_index: Option<u8>,
     name_len: usize,
@@ -159,8 +158,7 @@ impl Decoder {
         next.map(|next| next.stream_id)
     }
 
-    /// `section` is a whole field section. Returns `None` if it has to wait for the encoder stream.
-    /// `buffer` is written to from its start. It only ever grows.
+    /// Returns `None` if the section has to wait for the encoder stream. `buffer` is written to from its start.
     #[inline]
     pub fn decode<'a>(
         &'a mut self,
@@ -298,19 +296,19 @@ impl<'a> Fields<'a> {
 
     #[inline(always)]
     fn read_literal(&mut self, first: u8) -> Result<Field<'_>, Stop> {
-        let (entry, never_index) = match first {
+        let entry = match first {
             0x50..0x60 | 0x70.. => {
                 let index = self.input.integer(first, 4)?;
                 let entry = static_table::get(index).ok_or(Stop::Invalid)?;
-                return self.read_value(entry.name(), Some(index as u8), first & 0x20 != 0);
+                return self.read_value(entry.name(), Some(index as u8));
             }
-            0x40.. => (self.before_base(first, 4)?, first & 0x20 != 0),
+            0x40.. => self.before_base(first, 4)?,
             0x20.. => return self.read_name_and_value(first),
-            _ => (self.after_base(first, 3)?, first & 0x08 != 0),
+            _ => self.after_base(first, 3)?,
         };
         let ((start, _), about) = (entry.place.stored(), entry.links);
         let name = self.table.name(Name::Stored(start, about.name_len));
-        self.read_value(name, about.static_index, never_index)
+        self.read_value(name, about.static_index)
     }
 
     #[inline(always)]
@@ -336,7 +334,6 @@ impl<'a> Fields<'a> {
     #[inline(always)]
     fn indexed(&mut self, field: &'a [u8], name_len: usize, static_index: Option<u8>) -> Field<'_> {
         Field {
-            never_index: false,
             static_index,
             name_len,
             in_table: field,
@@ -346,17 +343,11 @@ impl<'a> Fields<'a> {
     }
 
     #[inline(always)]
-    fn read_value(
-        &mut self,
-        name: &'a [u8],
-        static_index: Option<u8>,
-        never_index: bool,
-    ) -> Result<Field<'_>, Stop> {
+    fn read_value(&mut self, name: &'a [u8], static_index: Option<u8>) -> Result<Field<'_>, Stop> {
         let value = self.input.value()?;
         let room = room(self.buffer, self.kept, name.len() + max_len(value));
         let len = name.len() + store(value, room, name.len())?;
         Ok(Field {
-            never_index,
             static_index,
             name_len: name.len(),
             in_table: name,
@@ -372,7 +363,6 @@ impl<'a> Fields<'a> {
         let name_len = store(name, room, 0)?;
         let len = name_len + store(value, room, name_len)?;
         Ok(Field {
-            never_index: first & 0x10 != 0,
             static_index: None,
             name_len,
             in_table: &[],

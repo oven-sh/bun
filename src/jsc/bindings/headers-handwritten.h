@@ -546,8 +546,8 @@ struct MatchedRow {
 JSC::Structure* createMatchedRowsStructure(JSC::VM&, JSC::JSGlobalObject*);
 // The rows cell for what `state` recorded (one cell per call), or empty if the root gets no row. Takes the names out of `state`. Enters no JavaScript.
 JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject*, DeepMatchState&, JSC::JSValue root, JSC::JSValue rootPattern);
-// The same for a comparison that failed. A walk of its own first adds the matchers of the pattern that pass after the first mismatch. It asks those, so it enters JavaScript.
-JSC::JSValue matchedRowsOfFailedMatch(JSC::JSGlobalObject*, DeepMatchState& comparison, JSC::JSValue root, JSC::JSValue rootPattern);
+// The same for a comparison that failed. A walk of its own first adds the matchers of the pattern that pass after the first mismatch. It asks those, so it enters JavaScript. `readsListedKeysOnly` is for a comparison that reads only the keys that an object lists as its own.
+JSC::JSValue matchedRowsOfFailedMatch(JSC::JSGlobalObject*, DeepMatchState& comparison, JSC::JSValue root, JSC::JSValue rootPattern, bool readsListedKeysOnly = false);
 // Whether that walk may ask the asymmetric matcher `matcher`: one of the five built-in kinds that compare with nothing that another value holds, with no promise to read. Runs no user code.
 bool diffMayAsk(JSC::JSObject* matcher);
 // bindings.cpp. The answer of a matcher that diffMayAsk() admits, and nothing for any other: the walk has no other way to a matcher.

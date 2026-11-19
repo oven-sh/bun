@@ -304,8 +304,9 @@ impl<'a> Matcher<'a> {
     #[cold]
     #[optimize(size)]
     pub(super) fn fail_diff(&self, expected: JSValue, received: JSValue) -> Verdict {
-        let diff = DiffFormatter::new(self.global, received, expected, self.not())?;
-        Err(self.fail(format_args!("{diff}\n")))
+        // `.not` shows only the expected value, so it asks for no rows.
+        let rows = if self.not() { MatchedRows::default() } else { MatchedRows::of_failed_equals(self.global, received, expected)? };
+        self.fail_diff_with_rows(expected, received, rows)
     }
 
     /// [`Self::fail_diff`] where `received` prints the matchers in `rows` in place of what they matched.

@@ -4789,6 +4789,113 @@ describe("expect()", () => {
           }
         });
 
+        describe("in the diff of the other matchers that compare two values", () => {
+          const calledWith = (/** @type {unknown} */ value) => {
+            const fn = mock(() => {});
+            fn(value);
+            return fn;
+          };
+          /** @type {[string, (received: any, pattern: any) => unknown][]} */
+          const sites = [
+            ["toEqual", (received, pattern) => expect(received).toEqual(pattern)],
+            ["toStrictEqual", (received, pattern) => expect(received).toStrictEqual(pattern)],
+            ["toHaveProperty", (received, pattern) => expect({ at: received }).toHaveProperty("at", pattern)],
+            ["toHaveBeenCalledWith", (received, pattern) => expect(calledWith(received)).toHaveBeenCalledWith(pattern)],
+            [
+              "toHaveBeenCalledExactlyOnceWith",
+              (received, pattern) => expect(calledWith(received)).toHaveBeenCalledExactlyOnceWith(pattern),
+            ],
+            [
+              "toHaveBeenLastCalledWith",
+              (received, pattern) => expect(calledWith(received)).toHaveBeenLastCalledWith(pattern),
+            ],
+            [
+              "toHaveBeenNthCalledWith",
+              (received, pattern) => expect(calledWith(received)).toHaveBeenNthCalledWith(1, pattern),
+            ],
+          ];
+          /** The lines that the diff of a failed `assertion` flags, without their indent. Null if it passes. */
+          const flaggedBy = (/** @type {() => unknown} */ assertion) => {
+            try {
+              assertion();
+            } catch (e) {
+              return Bun.stripANSI(ANY(e).message)
+                .split("\n")
+                .filter(line => /^[-+] {3}/.test(line))
+                .map(line => line.replace(/ +/g, " "));
+            }
+            return null;
+          };
+
+          test.each(sites)("%s shows a matcher that passed, in each key order", (_, assert) => {
+            const onlyTheDate = ['- "a": Any<Date>,', '+ "a": "foobar",'];
+            expect(
+              flaggedBy(() => assert({ a: "foobar", b: epoch }, { a: expect.any(Date), b: expect.any(Date) })),
+            ).toEqual(onlyTheDate);
+            expect(
+              flaggedBy(() => assert({ b: epoch, a: "foobar" }, { b: expect.any(Date), a: expect.any(Date) })),
+            ).toEqual(onlyTheDate);
+            expect(
+              flaggedBy(() =>
+                assert(
+                  { a: 1, list: [1, { n: 1 }], last: "x" },
+                  { a: 2, list: [1, { n: expect.any(Number) }], last: expect.any(String) },
+                ),
+              ),
+            ).toEqual(['- "a": 2,', '+ "a": 1,']);
+          });
+
+          test("shows none at a key that the comparison does not read", () => {
+            class Account {
+              get email() {
+                return "ada@example.com";
+              }
+            }
+            let asked = 0;
+            const counted = () => askedOf(() => (asked++, true));
+            // toMatchObject reads each of these keys. toEqual and toStrictEqual read the keys that an object lists as
+            // its own, so they fail at the key, and its line stays flagged.
+            for (const [make, key] of [
+              [() => new Account(), "email"],
+              [() => Object.create({ email: "ada@example.com" }), "email"],
+              [() => Object.defineProperty({}, "hidden", { value: 1 }), "hidden"],
+              [() => Object.create(Object.defineProperty({}, "above", { value: 1 })), "above"],
+              [() => ({}), "toString"],
+            ]) {
+              expect(
+                flaggedLines({ a: 1, at: make() }, { a: 2, at: { [key]: expect.anything() } }).filter(line =>
+                  line.includes(`"${key}"`),
+                ),
+              ).toEqual([]);
+              for (const assert of [sites[0][1], sites[1][1]]) {
+                asked = 0;
+                const flagged = flaggedBy(() => assert({ a: 1, at: make() }, { a: 2, at: { [key]: counted() } }));
+                expect(flagged).toContain(`- "${key}": Any<Asked>,`);
+                expect(asked).toBe(0);
+              }
+            }
+          });
+
+          test("asks a matcher once more, and nothing where no diff is printed", () => {
+            let asked = 0;
+            const counted = () => askedOf(() => (asked++, true));
+            // These comparisons keep no record, so the diff asks the matcher before the mismatch a second time.
+            expect(flaggedBy(() => expect({ m: 1, a: 1, z: 1 }).toEqual({ m: counted(), a: 2, z: counted() }))).toEqual(
+              ['- "a": 2,', '+ "a": 1,'],
+            );
+            expect(asked).toBe(3);
+            // Nor does it look inside a value that answers with asymmetricMatch().
+            asked = 0;
+            expect(
+              flaggedBy(() => expect({ m: 1 }).toEqual({ asymmetricMatch: () => false, m: counted() })),
+            ).not.toBeNull();
+            expect(asked).toBe(0);
+            expect(() => expect({ a: 1, m: 1 }).not.toEqual({ a: 1, m: counted() })).toThrow();
+            expect(() => expect(calledWith({ a: 1, m: 1 })).not.toHaveBeenCalledWith({ a: 1, m: counted() })).toThrow();
+            expect(asked).toBe(2);
+          });
+        });
+
         test("leaves a line that differs in the diff", () => {
           class Tagged extends Array {
             #tag = 1;

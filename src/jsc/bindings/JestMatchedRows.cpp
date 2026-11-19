@@ -467,6 +467,8 @@ struct DiffWalk {
     unsigned givenObjectsLeft { maxGivenObjects };
     // Set where the walk is past a limit. It ends there, and the message gets the rows of the comparison alone.
     bool gaveUp { false };
+    // For a comparison that reads only the keys that an object lists as its own (toEqual and the like): the walk gives a row at no other key of the received value.
+    bool readsListedKeysOnly { false };
 };
 
 // The kinds of object whose keys the walk reads: a plain object, a class instance and an array. At most other kinds the printer shows no row, and a read can be a native getter that changes the object.
@@ -677,7 +679,7 @@ static void collectMatchersAtKey(JSC::JSGlobalObject* globalObject, JSC::ThrowSc
             return;
         found = lookUpForDiff(globalObject, scope, obj, property);
         RETURN_IF_EXCEPTION(scope, );
-        if (!found)
+        if (!found || (walk.readsListedKeysOnly && !found.isListed))
             return;
         // Before the read: a getter runs only for a matcher that the walk asks.
         if (diffMayAsk(asObject(subsetProp))) {
@@ -757,13 +759,14 @@ static void collectMatchersIn(JSC::JSGlobalObject* globalObject, JSC::ThrowScope
     }
 }
 
-// Out of line: its one caller is the entry of every toMatchObject().
-NEVER_INLINE JSC::JSValue matchedRowsOfFailedMatch(JSC::JSGlobalObject* globalObject, DeepMatchState& comparison, JSC::JSValue received, JSC::JSValue pattern)
+// Out of line: one caller is the entry of every toMatchObject().
+NEVER_INLINE JSC::JSValue matchedRowsOfFailedMatch(JSC::JSGlobalObject* globalObject, DeepMatchState& comparison, JSC::JSValue received, JSC::JSValue pattern, bool readsListedKeysOnly)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     // The walk lists the keys of the pattern, so the pattern has to be of a kind whose keys it reads. A matcher with keys of its own is not.
     if (!comparison.recorded.hasOverflowed() && diffWalkReadsKeysOf(asObject(pattern)->type())) {
         DiffWalk walk { comparison };
+        walk.readsListedKeysOnly = readsListedKeysOnly;
         unsigned recordsOfComparison = comparison.recordedNames.size();
         leadsToMatcher(globalObject, scope, walk, pattern);
         // Most patterns have no matcher that the walk asks, and then it reads nothing of the received value.
@@ -788,6 +791,19 @@ NEVER_INLINE JSC::JSValue matchedRowsOfFailedMatch(JSC::JSGlobalObject* globalOb
 }
 
 } // namespace Bun
+
+// The rows for the diff of two values that a comparison with no records found unequal (toEqual, toStrictEqual, toHaveProperty, toHaveBeenCalledWith): the matchers in `expected` that pass. Empty if there is none. Asks those, so it enters JavaScript and can throw.
+extern "C" void Bun__JestMatchedRows__ofFailedEquals(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedReceived, JSC::EncodedJSValue encodedExpected, JSC::EncodedJSValue* rows)
+{
+    JSC::JSValue received = JSC::JSValue::decode(encodedReceived);
+    JSC::JSValue expected = JSC::JSValue::decode(encodedExpected);
+    // The walk is over two objects that the comparison looks inside, key by key.
+    if (!received.isObject() || !expected.isObject() || Bun::oneAnswersByAsymmetricMatch(globalObject, received, expected))
+        return;
+    Bun::DeepMatchState noRecords;
+    noRecords.records = true;
+    *rows = JSC::JSValue::encode(Bun::matchedRowsOfFailedMatch(globalObject, noRecords, received, expected, true));
+}
 
 // These answer for any `rows` and `place`: a value that is not a rows cell has no place.
 extern "C" [[ZIG_EXPORT(nothrow)]] uint32_t Bun__JestMatchedRows__root(JSC::EncodedJSValue rows)

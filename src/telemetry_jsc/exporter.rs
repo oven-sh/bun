@@ -223,7 +223,7 @@ impl OtlpHttpExporter {
                 reject_unauthorized: Some(exporter.reject_unauthorized),
                 idle_timeout_seconds: Some(exporter.timeout.as_secs() as u32 + 1),
                 signals: Some(bun_http::Signals {
-                    aborted: Some(NonNull::from(&*borrowed.aborted)),
+                    aborted: Some(NonNull::from_ref(Arc::as_ref(&borrowed.aborted))),
                     ..Default::default()
                 }),
                 compress: (exporter.compression == Compression::Gzip).then_some(CompressOption {

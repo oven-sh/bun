@@ -95,5 +95,6 @@ tracer.startSpan("parented", {
 });
 expectType(Bun.otel.contextManager.enable().disable()).is<typeof Bun.otel.contextManager>();
 
-expectType(Bun.otel.span("query", () => Bun.sql<number[]>`select 1`)).is<Promise<number[]>>();
+declare const thenable: PromiseLike<number> & { values(): void };
+expectType(Bun.otel.span("query", () => thenable)).is<Promise<number>>();
 expectType(Bun.otel.wrap("identity", <T>(value: T) => [value])("a")).is<string[]>();

@@ -271,15 +271,16 @@ void us_internal_poll_close_fd(struct us_poll_t *p);
 void us_internal_poll_read_short(struct us_poll_t *p, struct us_loop_t *loop, int would_block);
 /* send() took less than it was given, or would block (-1). The caller polls for writable next. */
 void us_internal_poll_write_short(struct us_poll_t *p, struct us_loop_t *loop, ssize_t written);
-/* Nothing is known about `events` any more: have the kernel report them if they are ready. */
-void us_internal_poll_ask_again(struct us_poll_t *p, struct us_loop_t *loop, int events);
+/* A write stopped short, and not necessarily at a full send buffer, so an edge may never come.
+ * The caller polls for writable next. */
+void us_internal_poll_write_unknown(struct us_poll_t *p, struct us_loop_t *loop);
 /* Dispatch `p` on the next tick if it is still ready for what it polls for. */
 void us_internal_poll_keep_if_ready(struct us_poll_t *p, struct us_loop_t *loop);
 int us_internal_poll_reads_until_eagain(struct us_poll_t *p);
 #else
 #define us_internal_poll_read_short(p, loop, would_block) ((void) 0)
 #define us_internal_poll_write_short(p, loop, written) ((void) 0)
-#define us_internal_poll_ask_again(p, loop, events) ((void) 0)
+#define us_internal_poll_write_unknown(p, loop) ((void) 0)
 #define us_internal_poll_keep_if_ready(p, loop) ((void) 0)
 #endif
 

@@ -82,7 +82,7 @@ void us_poll_init(struct us_poll_t *p, LIBUS_SOCKET_DESCRIPTOR fd, int poll_type
     p->state.fd = fd;
     p->state.poll_type = poll_type;
 #ifdef LIBUS_USE_EPOLL
-    p->edge.ready = p->edge.armed = p->edge.enabled = p->edge.registered = p->edge.goes_last = 0;
+    p->edge.ready = p->edge.armed = p->edge.enabled = p->edge.suspended = p->edge.registered = p->edge.goes_last = 0;
     p->edge.slot = -1;
 #endif
 }
@@ -202,7 +202,7 @@ static enum {
     TRIGGER_EDGE_MOD,
     /* "edge": EPOLLET, and changes of interest stay in user space. */
     TRIGGER_EDGE,
-    /* "edge-eagain": the same, and only EAGAIN counts. */
+    /* "edge-eagain": the same, but reads go on until EAGAIN and a short write is finished level-triggered. */
     TRIGGER_EDGE_EAGAIN,
 } trigger;
 
@@ -299,17 +299,27 @@ static int edge_change(struct us_poll_t *p, struct us_loop_t *loop, int events) 
     return rc;
 }
 
-void us_internal_poll_ask_again(struct us_poll_t *p, struct us_loop_t *loop, int events) {
-    if (!(p->edge.ready & events)) return;
-    p->edge.ready &= ~events;
-    /* Not armed: arming it asks. */
-    if (p->edge.armed & events) edge_ctl(p, loop, EPOLL_CTL_MOD, p->edge.armed);
+void us_internal_poll_write_unknown(struct us_poll_t *p, struct us_loop_t *loop) {
+    if (!p->edge.enabled || !p->edge.registered) return;
+    edge_forget_still_ready(p, loop);
+    p->edge.enabled = p->edge.ready = p->edge.armed = 0;
+    p->edge.suspended = 1;
+    /* Makes the caller's us_poll_change reach the kernel. */
+    p->state.poll_type = us_internal_poll_type(p);
+    for (int i = loop->current_ready_poll; i < loop->num_ready_polls; i++) {
+        if (GET_READY_POLL(loop, i) == p) {
+            loop->ready_polls[i].events &= ~EPOLLOUT;
+            break;
+        }
+    }
 }
 
 void us_internal_poll_read_short(struct us_poll_t *p, struct us_loop_t *loop, int would_block) {
     if (!p->edge.enabled) return;
     if (UNLIKELY(IO_RESULTS_ARE_FAKE)) {
-        us_internal_poll_ask_again(p, loop, EPOLLIN);
+        if (!(p->edge.ready & EPOLLIN)) return;
+        p->edge.ready &= ~EPOLLIN;
+        if (p->edge.armed & EPOLLIN) edge_ctl(p, loop, EPOLL_CTL_MOD, p->edge.armed);
     } else if (would_block) {
         p->edge.ready &= ~(EPOLLIN | EPOLLPRI);
     } else if (!(p->edge.ready & (EPOLLRDHUP | EPOLLPRI | EPOLLHUP | EPOLLERR)) && trigger != TRIGGER_EDGE_EAGAIN) {
@@ -323,7 +333,7 @@ void us_internal_poll_read_short(struct us_poll_t *p, struct us_loop_t *loop, in
 void us_internal_poll_write_short(struct us_poll_t *p, struct us_loop_t *loop, ssize_t written) {
     if (UNLIKELY(IO_RESULTS_ARE_FAKE) || written >= KERNEL_MAX_SEND || (written >= 0 && trigger == TRIGGER_EDGE_EAGAIN)) {
         int saved_errno = errno;
-        us_internal_poll_ask_again(p, loop, EPOLLOUT);
+        us_internal_poll_write_unknown(p, loop);
         errno = saved_errno;
     } else {
         p->edge.ready &= ~EPOLLOUT;
@@ -969,6 +979,12 @@ int us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     int old_events = us_poll_events(p);
     int rc = 0;
 #ifdef LIBUS_USE_EPOLL
+    if (p->edge.suspended && !(events & LIBUS_SOCKET_WRITABLE)) {
+        p->edge.suspended = 0;
+        p->edge.enabled = 1;
+        p->state.poll_type = us_internal_poll_type(p) | ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0);
+        return edge_ctl(p, loop, EPOLL_CTL_MOD, events);
+    }
     if (p->edge.enabled) {
         if (!p->edge.registered) {
             return old_events != events ? us_poll_start_rc(p, loop, events) : 0;
@@ -1019,7 +1035,8 @@ void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
          rc = epoll_ctl(loop->fd, EPOLL_CTL_DEL, p->state.fd, &event);
     } while (IS_EINTR(rc));
     edge_forget_still_ready(p, loop);
-    p->edge.registered = p->edge.ready = p->edge.armed = 0;
+    p->edge.enabled |= p->edge.suspended;
+    p->edge.suspended = p->edge.registered = p->edge.ready = p->edge.armed = 0;
 #else
     /* A socket poll has a read knote in both of its modes (see kqueue_change), so there is
      * one to delete even when it was not polling for reads. */

@@ -6846,7 +6846,7 @@ describe.skipIf(!isLinux).concurrent("BUN_USOCKETS_TRIGGER", () => {
   const source = /* js */ `
     import { dlopen, ptr } from "bun:ffi";
     import { expect, test } from "bun:test";
-    import { readdirSync, readFileSync } from "node:fs";
+    import { readdirSync, readFileSync, readlinkSync, truncateSync, writeFileSync } from "node:fs";
 
     const libc = dlopen(process.env.LIBC, { send: { args: ["i32", "ptr", "usize", "i32"], returns: "isize" } });
 
@@ -6874,6 +6874,18 @@ describe.skipIf(!isLinux).concurrent("BUN_USOCKETS_TRIGGER", () => {
         for (const [, target, mask] of info.matchAll(/^tfd:\\s+(\\d+) events:\\s+(\\w+)/gm)) {
           if (+target === socket.fd) return parseInt(mask, 16);
         }
+      }
+    }
+
+    // The accepted end of a client, once there is one.
+    function peerOf(client) {
+      const hex = port => port.toString(16).toUpperCase().padStart(4, "0");
+      const inode = readFileSync("/proc/self/net/tcp", "utf8")
+        .split("\\n")
+        .map(line => line.trim().split(/\\s+/))
+        .find(row => row[1]?.endsWith(":" + hex(client.remotePort)) && row[2].endsWith(":" + hex(client.localPort)))[9];
+      for (const fd of readdirSync("/proc/self/fd")) {
+        try { if (readlinkSync("/proc/self/fd/" + fd) === "socket:[" + inode + "]") return { fd: +fd }; } catch {}
       }
     }
 
@@ -6985,6 +6997,54 @@ describe.skipIf(!isLinux).concurrent("BUN_USOCKETS_TRIGGER", () => {
       expect(text).toBe(sent);
     });
 
+    // Resolves once sendfile() waits for a client that reads nothing.
+    async function stalledSendfile(size) {
+      writeFileSync("sendfile.bin", "");
+      truncateSync("sendfile.bin", size);
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        routes: { "/file": () => new Response(Bun.file("sendfile.bin")), "/next": () => new Response("<next>") },
+      });
+      const state = { received: 0, tail: "", [Symbol.dispose]: () => (state.client.terminate(), server.stop(true)) };
+      state.client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: {
+          data(s, chunk) {
+            state.received += chunk.length;
+            state.tail = (state.tail + chunk.subarray(-6)).slice(-6);
+          },
+        },
+      });
+      state.client.pause();
+      state.client.write("GET /file HTTP/1.1\\r\\nHost: a\\r\\n\\r\\n");
+      do await new Promise(setImmediate);
+      while (!(state.peer = peerOf(state.client)) || !(epollMask(state.peer) & 4));
+      return state;
+    }
+
+    test("level-triggered while sendfile() waits", async () => {
+      const size = 32 * 1024 * 1024;
+      using s = await stalledSendfile(size);
+      const waiting = epollMask(s.peer) >>> 31;
+      s.client.resume();
+      while (s.received < size || epollMask(s.peer) & 4) await new Promise(setImmediate);
+      const done = epollMask(s.peer) >>> 31;
+      s.client.write("GET /next HTTP/1.1\\r\\nHost: a\\r\\n\\r\\n");
+      while (s.tail !== "<next>") await new Promise(setImmediate);
+      expect({ waiting, done }).toEqual({ waiting: 0, done: 1 });
+    });
+
+    test("sendfile() gets to the end of a file that shrank", async () => {
+      const size = 32 * 1024 * 1024;
+      using s = await stalledSendfile(size);
+      truncateSync("sendfile.bin", size / 2);
+      s.client.resume();
+      while (s.received < size / 2 || epollMask(s.peer) & 4) await new Promise(setImmediate);
+      expect(s.received).toBeLessThan(size);
+    });
+
     test("bodies larger than the socket buffers, both ways, on many connections", async () => {
       const body = Buffer.alloc(8 * 1024 * 1024, "x");
       await Bun.write("body.bin", body);
@@ -7004,12 +7064,12 @@ describe.skipIf(!isLinux).concurrent("BUN_USOCKETS_TRIGGER", () => {
         },
       });
       const sizes = await Promise.all(
-        ["/buffer", "/file", "/upload"].flatMap(path => [path, path]).map(async path => {
-          const response = await fetch(new URL(path, server.url), path === "/upload" ? { method: "POST", body } : {});
+        [["/buffer"], ["/file"], ["/upload", body], ["/upload", Bun.file("body.bin")]].flatMap(request => [request, request]).map(async ([path, body]) => {
+          const response = await fetch(new URL(path, server.url), body && { method: "POST", body });
           return (await response.bytes()).length;
         }),
       );
-      expect(sizes).toEqual(Array(6).fill(body.length));
+      expect(sizes).toEqual(Array(8).fill(body.length));
     });
   `;
 
@@ -7024,9 +7084,9 @@ describe.skipIf(!isLinux).concurrent("BUN_USOCKETS_TRIGGER", () => {
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect({ summary: stderr.match(/\d+ pass\s+\d+ fail/)?.[0], stderr: exitCode === 0 ? "" : stderr }).toEqual({
-      summary: "9 pass\n 0 fail",
+      summary: "11 pass\n 0 fail",
       stderr: "",
     });
     expect(exitCode).toBe(0);
-  });
+  }, 20_000);
 });

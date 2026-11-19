@@ -128,6 +128,8 @@ struct us_poll_t {
         /* Which of EPOLLIN and EPOLLOUT the kernel watches. */
         unsigned char armed;
         unsigned char enabled : 1, registered : 1;
+        /* Level-triggered, and not `enabled`, until it stops polling for writable. */
+        unsigned char suspended : 1;
         /* Still ready through a change of interest, which EPOLL_CTL_MOD queues behind what is ready already. */
         unsigned char goes_last : 1;
         /* Index in loop->still_ready, or -1. */

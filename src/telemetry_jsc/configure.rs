@@ -16,7 +16,7 @@ use bun_telemetry_cold::config::{
 };
 use bun_telemetry_cold::resource::{self, ResourceInfo};
 
-use crate::exporter::{self, JsExporter, JsFormat, OwnedJsExporter};
+use crate::exporter::{self, JsExporter, JsFormat, OwnedJsExporter, warn_now as warn};
 use crate::generated_bindgen::telemetry::{
     ExporterCompression, ExporterOptions, Propagator, StartOptions,
 };
@@ -30,11 +30,6 @@ unsafe extern "Rust" {
 
 /// Whether the exporters of the environment are in place. Of the threads that start at once, one adds them.
 static IS_SET_UP: bun_threading::Guarded<bool> = bun_threading::Guarded::new(false);
-
-fn warn(message: core::fmt::Arguments<'_>) {
-    bun_core::warn!("[otel] {}", message);
-    bun_core::Output::flush();
-}
 
 fn lossy(bytes: &[u8]) -> String {
     bstr::ByteSlice::to_str_lossy(bytes).into_owned()

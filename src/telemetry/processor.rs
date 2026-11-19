@@ -170,9 +170,10 @@ pub trait Exporter: Send + Sync {
     /// Periodic housekeeping from [`Processor::tick`] (e.g. aborting an
     /// export that has outlived its timeout).
     fn tick(&self, _now: MonoInstant) {}
-    /// The calling thread runs no more tasks, and waits for no other event loop: finish every attempt that
-    /// depends on one.
-    fn finish_for_exit(&self) {}
+    /// The attempts that wait for an event loop, which nobody is going to wait for.
+    fn take_queued_attempts(&self) -> Vec<ExportAttempt> {
+        Vec::new()
+    }
     /// The process has waited for as long as it does.
     fn warn_of_unfinished(&self) {}
 }
@@ -726,20 +727,21 @@ impl Processor {
     }
 
     /// One at a time, as in the SDK: behind a slow exporter the queue fills up and then drops. On another thread:
-    /// the caller has requests to serve.
+    /// the caller has requests to serve. False if there is none to be had.
     #[inline]
-    fn schedule_export(&self) {
+    fn schedule_export(&self) -> bool {
         static EXPORTS: OnDemandThread = OnDemandThread::new(|| {
             let this = global();
             this.is_export_scheduled.store(false, Ordering::Release);
             this.hand_out_next(Taker::Schedule);
         });
-        if self.inflight() == 0
+        let has_no_thread = self.inflight() == 0
             && !self.is_export_scheduled.swap(true, Ordering::AcqRel)
-            && !EXPORTS.wake()
-        {
+            && !EXPORTS.wake();
+        if has_no_thread {
             self.is_export_scheduled.store(false, Ordering::Release);
         }
+        !has_no_thread
     }
 
     /// Call it from an event loop, after [`time_to_tick`](Self::time_to_tick).
@@ -755,8 +757,8 @@ impl Processor {
         }
         let is_due = p.is_due();
         drop(p);
-        if is_due {
-            self.schedule_export();
+        if is_due && !self.schedule_export() {
+            self.hand_out_next(Taker::Schedule);
         }
     }
 
@@ -800,6 +802,19 @@ impl Processor {
             && let Some(more) = self.hand_out_next(taker)
         {
             calls.extend(more);
+        }
+        calls
+    }
+
+    fn queued_calls(&'static self, of: Option<OwnerKey>) -> Calls {
+        let mut calls = Calls::new();
+        for e in self.exporters_with_attempts() {
+            if of.is_none() || e.owner() == of {
+                for mut attempt in e.take_queued_attempts() {
+                    calls.extend(attempt.payload.take().map(|p| (Arc::clone(&e), p)));
+                    self.finish_one();
+                }
+            }
         }
         calls
     }
@@ -987,15 +1002,10 @@ impl Processor {
     /// owned by `owner` (their event loop is about to disappear) and through
     /// the normal async path to everyone else.
     pub fn flush_for_owner(&'static self, owner: OwnerKey) {
-        let finish_attempts = || {
-            (self.exporters_with_attempts().iter())
-                .filter(|e| e.owner() == Some(owner))
-                .for_each(|e| e.finish_for_exit());
-        };
-        finish_attempts();
-        self.make(self.hand_out_all(Taker::LeavingVm(owner)));
+        let pending = self.hand_out_all(Taker::LeavingVm(owner));
         self.wait_for_handouts();
-        finish_attempts();
+        self.make(self.queued_calls(Some(owner)));
+        self.make(pending);
     }
 
     /// The process exits. Blocks for `export_timeout_ms` at most, or until `is_stuck`, which is asked now and then.
@@ -1014,16 +1024,19 @@ impl Processor {
         let deadline = MonoInstant::now() + budget;
         self.is_closing.store(true, Ordering::SeqCst);
         self.wait_for_handouts();
-        for e in self.exporters_with_attempts() {
-            e.finish_for_exit();
-        }
+        let mut calls = self.queued_calls(None);
         // Twice: a worker may leave its last spans meanwhile.
-        for _ in 0..2 {
+        for is_first in [true, false] {
+            let has_news = self.pending_count() != 0 || !self.retries.lock().is_empty();
+            calls.extend(self.hand_out_all(Taker::ClosingProcess));
             self.dispatch_retries(RetryFilter::AllForTheLastTime);
-            let calls = self.hand_out_all(Taker::ClosingProcess);
-            self.wait_idle(deadline, is_stuck);
+            if is_first || has_news {
+                // A collector that hangs uses up the time, so what is sent later gets a little more.
+                let grace = MonoInstant::now() + Duration::from_millis(250);
+                self.wait_idle(deadline.max(grace), is_stuck);
+            }
             // Last: a function may end the process, or write to where the console exporter writes.
-            self.make(calls);
+            self.make(core::mem::take(&mut calls));
         }
         for e in self.exporters_with_attempts() {
             e.warn_of_unfinished();

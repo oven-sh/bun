@@ -1714,7 +1714,7 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     using refuses = collector(() => new Response(null, { status: 401 }));
     const { stderr } = await run(
       `Bun.otel.start({ exporters: ["console", process.env.URL, { export() { console.error("function"); } }] });
-       for (let i = 0; i < 500; i++) Bun.otel.span("s", { k: Buffer.alloc(4096, "a").toString() }, () => {});
+       for (let i = 0; i < 512; i++) Bun.otel.span("s", { k: Buffer.alloc(4096, "a").toString() }, () => {});
        process.exit(0);`,
       { URL: refuses.url },
     );
@@ -1783,5 +1783,150 @@ describe.concurrent("OTLP/HTTP exporter", () => {
       { URL: slow.url.href },
     );
     expect([exitCode, received]).toEqual([0, 40]);
+  });
+
+  test.each([{}, { "retry-after": "0" }])(
+    "what a collector refuses at exit for being sent too much at once is sent as it accepts the rest: %j",
+    async headers => {
+      let inFlight = 0,
+        accepted = 0;
+      using limits = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          await req.bytes();
+          if (inFlight === 1) return new Response(null, { status: 429, headers });
+          inFlight++;
+          await Bun.sleep(100); // for the others to be refused meanwhile
+          inFlight--;
+          accepted++;
+          return new Response();
+        },
+      });
+      const result = await run(
+        `Bun.otel.start({ endpoint: process.env.URL, batch: { maxExportBatchSize: 1 } });
+         for (let i = 0; i < 4; i++) Bun.otel.span("s", () => {});
+         process.exit(0);`,
+        { URL: limits.url.href },
+      );
+      expect({ ...result, accepted }).toEqual({ stdout: "", stderr: "", exitCode: 0, accepted: 4 });
+    },
+  );
+
+  test("a warning is written by the time that forceFlush() resolves", async () => {
+    const { stderr } = await run(
+      `Bun.otel.start({ exporters: [{ export() { throw new Error("boom"); } }] });
+       Bun.otel.span("s", () => {});
+       await Bun.otel.forceFlush();
+       console.error("flushed");`,
+      {},
+    );
+    expect(stderr).toBe(
+      "warn: [otel] exporter callback failed: boom\nflushed\n".replaceAll("\n", stderr.includes("\r") ? "\r\n" : "\n"),
+    );
+  });
+
+  test("the last try at exit does not wait for another collector that hangs", async () => {
+    let posts = 0;
+    const retried = Promise.withResolvers<void>();
+    using hangs = Bun.serve({ port: 0, fetch: () => retried.promise.then(() => new Response()) });
+    using refusesOnce = collector(() => {
+      if (++posts === 1) return new Response(null, { status: 503 });
+      retried.resolve();
+      return new Response();
+    });
+    const result = await run(
+      `Bun.otel.start({ exporters: [process.env.HANGS, process.env.URL] });
+       Bun.otel.span("s", () => {});
+       process.exit(0);`,
+      { HANGS: hangs.url.href, URL: refusesOnce.url },
+    );
+    expect({ ...result, posts }).toEqual({ stdout: "", stderr: "", exitCode: 0, posts: 2 });
+  });
+
+  test("the last tries at exit do not wait for one another", async () => {
+    let posts = 0;
+    const all = Promise.withResolvers<void>();
+    using recovers = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      async fetch(req) {
+        await req.bytes();
+        if (++posts <= 3) return new Response(null, { status: 503, headers: { "retry-after": "100" } });
+        if (posts === 6) all.resolve();
+        await all.promise;
+        return new Response();
+      },
+    });
+    const result = await run(
+      `Bun.otel.start({ endpoint: process.env.URL, batch: { maxExportBatchSize: 1 } });
+       for (let i = 0; i < 3; i++) Bun.otel.span("s", () => {});
+       await Bun.otel.forceFlush();
+       process.exit(0);`,
+      { URL: recovers.url.href },
+    );
+    expect({ ...result, posts }).toEqual({ stdout: "", stderr: "", exitCode: 0, posts: 6 });
+  });
+
+  test.skipIf(isWindows)("a warning that cannot be written blocks neither fetch() nor the exit", async () => {
+    using dir = tempDir("otel-stuck-warning", {});
+    mkfifo(join(String(dir), "fifo"), 0o600);
+    await using unread = await open(join(String(dir), "fifo"), "r+");
+    using refuses = collector(() => new Response(null, { status: 401 }));
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stderr.write(Buffer.alloc(1024 * 1024, "a"));
+         Bun.otel.start({ exporters: [process.env.URL, { export() { throw new Error("boom"); } }], instrumentations: [] });
+         Bun.otel.span("s", () => {});
+         await Bun.otel.forceFlush();
+         console.log(await (await fetch(process.env.URL + "/count")).text());
+         process.exit(0);`,
+      ],
+      env: { ...cleanEnv, URL: refuses.url },
+      stderr: unread.fd,
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "1\n", exitCode: 0 });
+  });
+
+  test.skipIf(isWindows)("a slow reader of stderr holds the program up for one warning, not for each", async () => {
+    using dir = tempDir("otel-slow-warnings", {});
+    mkfifo(join(String(dir), "fifo"), 0o600);
+    const { stdout } = await run(
+      `const fs = require("node:fs");
+       const fifo = fs.openSync(process.env.FIFO, fs.constants.O_RDWR | fs.constants.O_NONBLOCK);
+       const repeat = f => { try { for (;;) f(); } catch {} };
+       const child = Bun.spawn({
+         cmd: [process.execPath, "-e", \`
+           Bun.otel.start({ exporters: [{ export() { throw new Error("boom"); } }], instrumentations: [] });
+           process.on("message", async () => {
+             const began = performance.now();
+             Bun.otel.span("s", () => {});
+             await Bun.otel.forceFlush();
+             process.send(performance.now() - began);
+           });\`],
+         stderr: fs.openSync(process.env.FIFO, "w"),
+         ipc: took => next.resolve(took),
+       });
+       let next, seen = "";
+       const buffer = Buffer.alloc(65536);
+       const slow = [];
+       for (let i = 1; i <= 4; i++) {
+         repeat(() => fs.writeSync(fifo, "a"));
+         next = Promise.withResolvers();
+         child.send("go");
+         slow.push((await next.promise) >= 240);
+         while (seen.split("boom").length <= i) {
+           repeat(() => (seen += buffer.latin1Slice(0, fs.readSync(fifo, buffer)).replaceAll("a", "")));
+           await Bun.sleep(5);
+         }
+         await Bun.sleep(20); // nothing tells that the writer is idle again
+       }
+       child.kill(9);
+       console.log(slow.filter(Boolean).length);`,
+      { FIFO: join(String(dir), "fifo") },
+    );
+    expect(Number(stdout)).toBeWithin(1, 3); // a busy machine may add one
   });
 });

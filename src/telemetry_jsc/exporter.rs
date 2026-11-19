@@ -66,6 +66,8 @@ struct Turns {
     taken: usize,
     waiting: VecDeque<ExportAttempt>,
     waiting_spans: u32,
+    /// Perhaps for being sent too much at once, so each request that is accepted passes its turn to one of these.
+    refused_at_exit: VecDeque<(ExportAttempt, SendError)>,
     unfinished_spans: u32,
 }
 
@@ -124,13 +126,29 @@ fn check_response(response: &HTTPResponseMetadata, body: &[u8]) -> Result<(), Se
     Ok(())
 }
 
-/// Through the thread that writes the console: stderr may block, and a line must not land inside a document.
-fn warn(message: fmt::Arguments<'_>) {
-    WARNINGS.lock().push(message.to_string());
-    WRITER.wake();
+pub(crate) fn warn_now(message: fmt::Arguments<'_>) {
+    bun_core::warn!("[otel] {}", message);
+    bun_core::Output::flush();
 }
 
-/// Before the process ends.
+/// stderr may block, and a line must not land inside a document of the console exporter.
+fn warn(message: fmt::Arguments<'_>) {
+    let was_idle = WRITER.is_idle();
+    let mut warnings = WARNINGS.lock();
+    if warnings.len() < 64 {
+        warnings.push(message.to_string());
+    }
+    drop(warnings);
+    static WAS_SLOW: AtomicBool = AtomicBool::new(false);
+    if WRITER.wake() && was_idle && !WAS_SLOW.load(Ordering::Relaxed) {
+        let began = MonoInstant::now();
+        wait_for_warnings();
+        if MonoInstant::now().since(began) > Duration::from_millis(10) {
+            WAS_SLOW.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
 pub(crate) fn wait_for_warnings() {
     let deadline = MonoInstant::now() + Duration::from_millis(250);
     if !WARNINGS.lock().is_empty() && !WRITER.wake() {
@@ -281,31 +299,36 @@ impl OtlpHttpExporter {
         HTTPThread::schedule([http]);
     }
 
-    fn pass_turn(self: &Arc<Self>, finished: &ExportPayload) {
+    fn pass_turn(self: &Arc<Self>, finished_spans: u32, was_accepted: bool) {
         let mut turns = self.turns.lock();
-        turns.unfinished_spans -= finished.span_count;
-        let Some(next) = turns.waiting.pop_front() else {
+        turns.unfinished_spans -= finished_spans;
+        let next = if let Some(next) = turns.waiting.pop_front() {
+            turns.waiting_spans -= next.payload().span_count;
+            next
+        } else if was_accepted && let Some((next, _)) = turns.refused_at_exit.pop_front() {
+            next
+        } else {
             turns.taken -= 1;
+            if turns.taken != 0 {
+                return;
+            }
+            let refused = core::mem::take(&mut turns.refused_at_exit);
+            turns.unfinished_spans = 0;
+            drop(turns);
+            for (attempt, error) in refused {
+                Arc::clone(self).failed(attempt, &error, true);
+            }
             return;
         };
-        turns.waiting_spans -= next.payload().span_count;
         drop(turns);
         Arc::clone(self).send(next);
     }
 
     fn failed(self: Arc<Self>, attempt: ExportAttempt, error: &SendError, began_at_exit: bool) {
         let is_closing = processor::global().is_closing();
-        let is_worth_a_try_now = match error {
-            SendError::Transport(_) => true,
-            SendError::Status {
-                retry_after_seconds,
-                ..
-            } => retry_after_seconds.is_none(),
-            SendError::OutOfTime => !began_at_exit,
-        };
         if !error.is_retryable()
             || attempt.attempt() + 1 >= MAX_ATTEMPTS
-            || (is_closing && !is_worth_a_try_now)
+            || (is_closing && began_at_exit && matches!(error, SendError::OutOfTime))
         {
             let when = if is_closing { " at exit" } else { "" };
             self.warn_once(attempt.payload().span_count, when, error);
@@ -391,20 +414,32 @@ impl Request {
     unsafe fn release_at_shutdown(this: *mut ()) {
         // SAFETY: the box of `send`, which gets no result any more.
         let this = unsafe { bun_core::heap::take(this.cast::<Self>()) };
-        let waiting = core::mem::take(&mut this.exporter.turns.lock().waiting);
+        let mut turns = this.exporter.turns.lock();
+        let mut waiting = core::mem::take(&mut turns.waiting);
+        waiting.extend(turns.refused_at_exit.drain(..).map(|(attempt, _)| attempt));
+        drop(turns);
         waiting.into_iter().for_each(ExportAttempt::abandoned);
         this.attempt.abandoned();
     }
 
     fn finish(self, result: Result<(), SendError>) {
         (self.exporter.in_flight.lock()).retain(|d| d.async_http_id != self.async_http_id);
-        self.exporter.pass_turn(self.attempt.payload());
+        let spans = self.attempt.payload().span_count;
         let Err(mut error) = result else {
+            self.exporter.pass_turn(spans, true);
             return self.attempt.done(ExportResult::Success);
         };
         if self.aborted.load(Ordering::Relaxed) {
             error = SendError::OutOfTime;
         }
+        if matches!(error, SendError::Status { .. })
+            && error.is_retryable()
+            && processor::global().is_closing()
+        {
+            (self.exporter.turns.lock().refused_at_exit).push_back((self.attempt, error));
+            return self.exporter.pass_turn(0, false);
+        }
+        self.exporter.pass_turn(spans, false);
         (self.exporter).failed(self.attempt, &error, self.began_at_exit);
     }
 }
@@ -461,11 +496,12 @@ static WRITER: OnDemandThread = OnDemandThread::new(ConsoleExporter::write_all);
 
 impl ConsoleExporter {
     fn write_all() {
+        static IS_WRITING: Guarded<()> = Guarded::new(());
+        let _writing = IS_WRITING.lock();
         loop {
             let warnings = core::mem::take(&mut *WARNINGS.lock());
             for warning in warnings {
-                bun_core::warn!("[otel] {}", warning);
-                bun_core::Output::flush();
+                warn_now(format_args!("{warning}"));
             }
             let mut jobs = CONSOLE_JOBS.lock();
             let Some(job) = jobs.first_mut() else { return };
@@ -775,17 +811,8 @@ impl Exporter for JsExporter {
         }
     }
 
-    fn finish_for_exit(&self) {
-        if let Some(state) = self.owner_state() {
-            let tickets: Vec<_> = self.attempts.lock().iter().map(|a| a.ticket).collect();
-            for ticket in tickets {
-                match self.run(state, ticket) {
-                    Ok(Some(_)) => warn_of_pending_export(),
-                    Ok(None) => {}
-                    Err(_terminated) => break,
-                }
-            }
-        }
-        self.take(|_| true).for_each(ExportAttempt::abandoned);
+    fn take_queued_attempts(&self) -> Vec<ExportAttempt> {
+        (self.take(|a| a.has_started)).for_each(ExportAttempt::abandoned);
+        self.take(|_| true).collect()
     }
 }

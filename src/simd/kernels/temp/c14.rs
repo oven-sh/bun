@@ -18,8 +18,11 @@ const fn power_of_x(exponent: usize) -> u64 {
 /// For the last 8-byte words of the input. The sum of the products is the input times x^32.
 static FACTORS: Aligned<[u64; 64]> = Aligned(from_fn(const |i| power_of_x(64 * (63 - i) + 31)));
 
+/// Products are fast there. Detecting `sha3` is no substitute: its op slows them on Neoverse N2.
+const IS_APPLE: bool = cfg!(all(target_vendor = "apple", target_feature = "sha3"));
+
 /// Below it, the instruction of Arm is faster than products.
-const SHORT: usize = 128;
+const SHORT: usize = 64;
 
 /// Up to it, a table is.
 const TINY: usize = 4;
@@ -64,9 +67,6 @@ mod folding_simd {
         U8::LEN == 16 || matches!(MORE_FEATURES, [it, ..] if matches!(it.as_bytes(), b"pclmulqdq"));
     const HAS_INSTRUCTION: bool =
         matches!(MORE_FEATURES, [it, ..] if matches!(it.as_bytes(), b"crc"));
-    /// With many registers and a fast op for three inputs. On Neoverse, it waits for products.
-    const IS_RICH: bool = cfg!(all(target_vendor = "apple", target_feature = "sha3"))
-        || matches!(MORE_FEATURES, [_, it] if matches!(it.as_bytes(), b"avx512vl"));
 
     /// Barrett reduction
     #[inline(always)]
@@ -82,7 +82,7 @@ mod folding_simd {
 
         /// As many as keep the multipliers busy.
         pub const CHAINS: usize = match U8::LEN {
-            16 if HAS_INSTRUCTION => 8,
+            16 if HAS_INSTRUCTION => 10,
             16 => 6,
             _ => 4,
         };
@@ -95,6 +95,17 @@ mod folding_simd {
         fn factors(count: usize) -> &'static [[u64; U64::LEN]] {
             let all = FACTORS.0.as_chunks().0;
             &all[all.len() - count..]
+        }
+
+        /// LLVM would load each half on its own for Arm.
+        #[inline(always)]
+        fn load_factors(from: &[u64; U64::LEN]) -> U64 {
+            let factors = U64::load(from);
+            if HAS_INSTRUCTION {
+                factors.opaque()
+            } else {
+                factors
+            }
         }
 
         #[inline(always)]
@@ -161,7 +172,7 @@ mod folding_simd {
                 match is_long {
                     true => next = fold::<{ U8::LEN }>(padded, next),
                     false => {
-                        sum = add_products(sum, padded, U64::load(&factors(rest.len() + 1)[0]))
+                        sum = add_products(sum, padded, load_factors(&factors(rest.len() + 1)[0]))
                     }
                 }
             }
@@ -179,7 +190,7 @@ mod folding_simd {
                 }
                 let factors = factors(rest.len() + CHAINS).first_chunk::<CHAINS>()?;
                 for i in 0..CHAINS - 1 {
-                    sum = add_products(sum, chains[i], U64::load(&factors[i]));
+                    sum = add_products(sum, chains[i], load_factors(&factors[i]));
                 }
                 next = chains[CHAINS - 1];
             } else {
@@ -191,8 +202,9 @@ mod folding_simd {
             let mut upper = U64::zero();
             #[rustc_unroll(never)]
             for (bytes, factors) in rest.iter().zip(&factors(rest.len() + 1)[..rest.len()]) {
-                sum ^= next.carryless_mul_lower(U64::load(factors));
-                upper ^= next.carryless_mul_upper(U64::load(factors));
+                let factors = load_factors(factors);
+                sum ^= next.carryless_mul_lower(factors);
+                upper ^= next.carryless_mul_upper(factors);
                 next = load(bytes, copy, U8::LEN);
             }
             Some(finish(sum ^ upper, next))
@@ -213,7 +225,7 @@ mod folding_simd {
     }
 
     /// How many bytes the instruction gets for each stride.
-    const BESIDE: usize = 112;
+    const BESIDE: usize = 96;
 
     /// The instruction has a unit of its own, which works on some of the bytes meanwhile.
     #[inline(always)]
@@ -253,7 +265,10 @@ mod folding_simd {
             assert!(sum == 0);
         };
         /// With more, the sums take longer than the products if one starts in each cycle.
-        const SKIPPED: usize = if IS_RICH { 18 } else { 10 };
+        const SKIPPED: usize = match MORE_FEATURES {
+            [_, it] if matches!(it.as_bytes(), b"avx512vl") => 18,
+            _ => 10,
+        };
         const ROUND: usize = SKIPPED + 53usize.next_multiple_of(CHAINS);
         while let Some((round, after)) = rest.split_first_chunk::<ROUND>() {
             let mut skipped = [x128::U64::zero(); SKIPPED];
@@ -290,18 +305,9 @@ mod folding_simd {
         width::x128::finish(x128::U64::zero(), all.slide_up(16 - len).bitcast())
     }
 
-    /// How much is better off with products than with the instruction.
-    #[inline(always)]
-    fn folded_len(len: usize) -> usize {
-        match len {
-            _ if !HAS_INSTRUCTION => len,
-            _ if len >= 3 * STRIDE + 2 * BESIDE => len - (len - STRIDE) % (STRIDE + BESIDE),
-            _ => 0,
-        }
-    }
-
     #[inline(always)]
     fn update_long<C: Copies>(crc: u32, bytes: &[impl Byte], copy: &mut C) -> Option<u32> {
+        assert!(!HAS_INSTRUCTION || bytes.len() >= SHORT);
         if !IS_NARROW && bytes.len() >= 64 {
             return width::full::update(crc, bytes, copy, |_, _, _| {});
         }
@@ -316,42 +322,35 @@ mod folding_simd {
     }
 
     #[inline(always)]
-    fn update_with<B: Byte>(crc: u32, bytes: &[B], rest: impl Fn(u32, &[B]) -> u32) -> u32 {
-        let (folded, others) = bytes.split_at(folded_len(bytes.len()));
-        match update_long(crc, folded, &mut ()) {
-            Some(crc) if others.is_empty() => crc,
-            long if HAS_INSTRUCTION => rest(long.unwrap_or(crc), others),
-            _ => update_short(crc, x128::U8::load_or_zero::<_, 1>(bytes)[0], bytes.len()),
+    fn update_any(crc: u32, bytes: &[impl Byte]) -> u32 {
+        match update_long(crc, bytes, &mut ()) {
+            Some(crc) => crc,
+            None => update_short(crc, x128::U8::load_or_zero::<_, 1>(bytes)[0], bytes.len()),
         }
     }
 
     #[export(or = instruction_simd::update)]
     pub fn update(crc: u32, bytes: &[u8]) -> u32 {
-        update_with(crc, bytes, instruction_simd::update)
+        update_any(crc, bytes)
     }
 
     #[export(or = instruction_simd::update_shared)]
     pub fn update_shared(crc: u32, bytes: &[SharedU8]) -> u32 {
-        update_with(crc, bytes, instruction_simd::update_shared)
+        update_any(crc, bytes)
     }
 
     #[export(or = instruction_simd::copy_and_update)]
     pub fn copy_and_update<'a>(crc: &mut u32, from: &[u8], to: Out<'a, u8>) -> &'a mut [u8] {
         assert!(from.len() <= to.len());
-        let (folded, others) = from.split_at(folded_len(from.len()));
         let mut to = to.take(from.len()).into_writer();
-        match update_long(!*crc, folded, &mut to) {
-            Some(state) => *crc = !state,
-            None if HAS_INSTRUCTION => {}
+        *crc = !match update_long(!*crc, from, &mut to) {
+            Some(state) => state,
             None => {
                 let bytes = x128::U8::load_or_zero::<_, 1>(from)[0].opaque();
                 bytes.append_partial(&mut to, from.len());
-                *crc = !update_short(!*crc, bytes, from.len());
+                update_short(!*crc, bytes, from.len())
             }
-        }
-        if !others.is_empty() {
-            to.append(|to| instruction_simd::copy_and_update(crc, others, to));
-        }
+        };
         to.finish()
     }
 }

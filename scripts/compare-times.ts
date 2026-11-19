@@ -58,22 +58,19 @@ if (mode === "child") {
     [512, 4096],
   ];
   for (const [name, inputs] of lengths(
-    [16, 40, 64, 100, 128, 200, 300, 400, 500, 640, 800, 1000, 1500, 2500, 4096, 16384, 200000],
+    [7, 16, 24, 40, 64, 100, 128, 200, 256, 300, 350, 400, 500, 640, 800, 1000, 1500, 2500, 4096, 16384, 200000],
     ranges,
   )) {
     time(`hash crc32 ${name}`, inputs, "Bun.hash.crc32(x, 0)", 5e7);
-    if (isMain || inputs[0].length < 128) continue;
-    for (const v of upTo(isArm ? 24 : 2)) time(`variant ${v} ${name}`, inputs, `Bun.hash.crc32(x, ${v << 24})`, 3e7);
+    if (isMain || !isArm || inputs[0].length < 64) continue;
+    for (const v of upTo(18)) time(`variant ${v} ${name}`, inputs, `Bun.hash.crc32(x, ${v << 24})`, 3e7);
   }
   for (const [name, inputs] of lengths([16, 40, 64, 100, 128, 200, 300, 400, 700, 1500, 4096, 65536], ranges)) {
     time(`hash adler32 ${name}`, inputs, "Bun.hash.adler32(x)", 5e7);
-    if (isMain) continue;
-    for (const v of isArm ? [30, 31] : [30, 31, 32])
-      time(`variant ${v} ${name}`, inputs, `Bun.hash.crc32(x, ${v << 24})`, 3e7);
   }
   if (!isMain)
     for (const [name, inputs] of lengths([64, 200, 400, 1000, 4096, 16384, 32768, 200000], ranges))
-      for (const v of isArm ? [40, 41, 50, 53, 55, 56, 57, 58, 59] : [40, 41, 43, 50])
+      for (const v of isArm ? [40, 50, 52, 53, 54, 55, 56, 57, 58] : [40, 50])
         time(`variant ${v} ${name}`, inputs, `Bun.hash.murmur32v2(x, ${(v << 24) | 0x5eed01})`, 3e7);
 
   // More than the branch predictor can learn.
@@ -99,7 +96,7 @@ if (mode === "child") {
     runs: Buffer.concat(Array.from({ length: 4000 }, (_, i) => Buffer.alloc(200 + exe[i], exe[i * 3]))),
   };
   for (const [kind, all] of Object.entries(data))
-    for (const level of [1, 6]) {
+    for (const level of [6]) {
       const options = { level, chunkSize: 128 * 1024 };
       const plain = Array.from({ length: Math.min(16, all.length / 60000) | 0 }, (_, i) => [
         all.subarray(5 + i * 60000, 5 + (i + 1) * 60000),

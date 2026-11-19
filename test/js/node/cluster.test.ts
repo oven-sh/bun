@@ -1572,3 +1572,33 @@ test.concurrent.skipIf(isWindows)("the channel closes while a worker replays the
     proc.kill();
   }
 });
+
+test.concurrent("a Worker thread that sets up node:cluster does not take the messages of its process", async () => {
+  using dir = tempDir("cluster-in-worker-thread", {
+    "index.js": `
+      const { Worker, isMainThread } = require("node:worker_threads");
+      const cluster = require("node:cluster");
+      if (!isMainThread) {
+        cluster._setupWorker();
+      } else if (cluster.isPrimary) {
+        const worker = cluster.fork();
+        worker.on("listening", () => worker.disconnect());
+        worker.on("exit", (code, signal) => console.log("exit", code, signal));
+      } else {
+        new Worker(__filename, { env: { ...process.env, NODE_UNIQUE_ID: "1" } }).on("exit", () => {
+          require("node:net").createServer().listen(0, "127.0.0.1", () => console.log("listening"));
+        });
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--no-orphans", "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "listening\nexit 0 null\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});

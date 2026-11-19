@@ -23,8 +23,8 @@ bun_output::declare_scope!(IPC, visible);
 
 // ArrayHashMap::new() is not const, so the global is lazily seeded on first
 // access via `child_singleton()`.
-// PORTING.md §Global mutable state: JS-thread-only singleton with `!Sync`
-// fields (`Strong`). RacyCell — single-thread access is the contract.
+// One for each JS thread: a `Strong` belongs to the VM that made it.
+#[thread_local]
 pub(crate) static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>> =
     bun_core::RacyCell::new(None);
 
@@ -36,10 +36,8 @@ pub(crate) static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>>
 /// must not hold the borrow across a re-entrant `child_singleton()` call.
 #[inline]
 fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
-    // SAFETY: only called on the single JS thread.
-    // `RacyCell::get` returns `*mut Option<_>`; the `Option` lives in
-    // `'static` storage so the returned `&mut` is valid for any caller-chosen
-    // `'a`. Aliasing: each of the three callers borrows for a single
+    // SAFETY: `RacyCell::get` returns `*mut Option<_>` into this thread's
+    // storage, which outlives every caller on this thread. Aliasing: each of the three callers borrows for a single
     // statement/block with no nested call to this fn.
     unsafe { (*CHILD_SINGLETON.get()).get_or_insert_with(Default::default) }
 }

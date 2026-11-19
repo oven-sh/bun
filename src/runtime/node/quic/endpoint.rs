@@ -22,7 +22,7 @@ use bun_quic::{
 };
 use bun_uws as uws;
 use bun_uws::quic::drivers::{Driver, Registration};
-use bun_uws::quic::io::{Binding, DATAGRAMS_PER_READ, Outbox, now, or_loopback};
+use bun_uws::quic::io::{Binding, Outbox, now, or_loopback};
 
 use crate::jsc_hooks::timer_all;
 use crate::socket::SocketAddress;
@@ -352,9 +352,10 @@ extern "C" fn on_data(
         }
     };
     // SAFETY: they are our arguments.
-    unsafe { binding.for_each_datagram(buf, packets, receive) };
-    // There is probably more, and the more is acknowledged, the more can be sent together.
-    if packets == DATAGRAMS_PER_READ && !this.quic().has_waiting_clients() {
+    let read = unsafe { binding.for_each_datagram(buf, packets, receive) };
+    let reads_on = this.outbox.borrow_mut().reads_on(&read, &this.quic());
+    // The more is acknowledged, the more can be sent together.
+    if reads_on && !this.quic().has_waiting_clients() {
         this.mark_driver_pending();
     } else {
         this.process();
@@ -1068,8 +1069,9 @@ impl QuicEndpoint {
             return;
         }
         let _send_scope = self.send_scope();
-        self.quic().handle_timeouts(now());
-        self.outbox.borrow_mut().start_pass();
+        let now = now();
+        self.quic().handle_timeouts(now);
+        self.outbox.borrow_mut().start_pass(now);
         for _ in 0..MAX_ROUNDS {
             self.collect_events();
             self.transmit();
@@ -1081,6 +1083,14 @@ impl QuicEndpoint {
             self.plan_followup();
         }
         self.processing.set(false);
+    }
+
+    /// For between two callbacks of `session`.
+    pub(super) fn drive_if_overdue(&self, session: &QuicSession) {
+        let is_busy = self.marked_sessions.get().len() > session.is_marked.get().into();
+        if self.driver_pending.get() && self.outbox.borrow_mut().is_overdue(is_busy) {
+            self.drive_once();
+        }
     }
 
     fn collect_events(&self) {

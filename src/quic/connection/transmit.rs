@@ -161,7 +161,13 @@ impl Connection {
         let len = out.len() - start;
         if len > 0 {
             self.path.on_sent(len);
-            batch.commit(&self.path.addresses, start);
+            let space = &mut self.spaces.data;
+            if batch.commit(&self.path.addresses, start)
+                && let Some(last) = space.sent.packets.back_mut()
+                && last.number + 1 == space.next_number
+            {
+                last.flight.starts_burst = true;
+            }
         }
         len > 0
     }

@@ -180,6 +180,10 @@ void us_quic_set_dontfrag(struct us_udp_socket_t *udp) {
     (void) on;
 }
 
+void us_quic_stop_reading(struct us_udp_socket_t *udp) {
+    udp->has_read_enough = 1;
+}
+
 /* With a callback from the start, the errors of earlier datagrams would be queued. */
 void us_quic_ignore_receive_errors(struct us_udp_socket_t *udp) {
     udp->on_recv_error = [](struct us_udp_socket_t *, int, int) {};

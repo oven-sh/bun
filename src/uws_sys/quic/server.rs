@@ -342,6 +342,7 @@ extern "C" fn us_quic_listen_socket_close(socket: &Socket) {
         let code = transport_code::NO_ERROR;
         connection.abort(now, Layer::Transport, code, b"user aborted connection");
     });
+    engine.lift_limit();
     if !engine.is_processing() {
         socket.owner.process();
         return socket.close();

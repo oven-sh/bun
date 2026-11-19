@@ -810,6 +810,9 @@ impl QuicSession {
         // pass, so a Closed behind other dispatch is deferred one turn.
         let mut dispatched_js = false;
         loop {
+            if dispatched_js && let Some(endpoint) = self.endpoint_ref() {
+                endpoint.drive_if_overdue(self);
+            }
             let Some(event) = self.events.with_mut(VecDeque::pop_front) else {
                 break;
             };

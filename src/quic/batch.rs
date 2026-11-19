@@ -48,9 +48,9 @@ impl Batch {
             .map(|(run, end)| (&run.addresses, run.start..end, run.segment_len))
     }
 
-    /// The bytes from `start` on are a datagram.
+    /// The bytes from `start` on are a datagram. Returns whether it is the first of a run.
     #[inline]
-    pub(crate) fn commit(&mut self, addresses: &Addresses, start: usize) {
+    pub(crate) fn commit(&mut self, addresses: &Addresses, start: usize) -> bool {
         let len = self.bytes.len() - start;
         self.len += 1;
         if let Some(run) = self.runs.last()
@@ -59,12 +59,13 @@ impl Batch {
             && self.bytes.len() - run.start <= MAX_RUN_LEN.min(MAX_SEGMENTS * run.segment_len)
             && run.addresses == *addresses
         {
-            return;
+            return false;
         }
         self.runs.push(Run {
             addresses: *addresses,
             start,
             segment_len: len,
         });
+        true
     }
 }

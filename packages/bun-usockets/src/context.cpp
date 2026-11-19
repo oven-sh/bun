@@ -374,6 +374,12 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     ls->socket_ext_size = socket_ext_size;
     ls->deferred_accept = 0;
     ls->accept_paused = (options & LIBUS_SOCKET_OPEN_PAUSED) && !ssl_ctx;
+    ls->accepts_tcp = 0;
+#ifdef LIBUS_USE_EPOLL
+    int protocol = 0;
+    socklen_t protocol_length = sizeof(protocol);
+    ls->accepts_tcp = getsockopt(us_poll_fd(&s->p), SOL_SOCKET, SO_PROTOCOL, &protocol, &protocol_length) == 0 && protocol == IPPROTO_TCP;
+#endif
 
     /* Link into the group so close_all() / test-isolation can find it. */
     ls->next = group->head_listen_sockets;
@@ -545,7 +551,7 @@ static struct us_socket_t *us_socket_group_connect_resolved_dns(struct us_socket
     bsd_socket_nodelay(connect_socket_fd.get(), 1);
 
     struct us_poll_t *p = us_internal_start_poll(group->loop, std::move(connect_socket_fd), POLL_TYPE_SEMI_SOCKET,
-                                                 sizeof(struct us_socket_t) + socket_ext_size, LIBUS_SOCKET_WRITABLE);
+                                                 sizeof(struct us_socket_t) + socket_ext_size, LIBUS_SOCKET_WRITABLE | LIBUS_POLL_TCP);
     if (!p) {
         return NULL;
     }
@@ -684,7 +690,7 @@ static int start_connections(struct us_connecting_socket_t *c, int count) {
         }
         bsd_socket_nodelay(connect_socket_fd.get(), 1);
         struct us_socket_t *s = (struct us_socket_t *) us_internal_start_poll(loop, std::move(connect_socket_fd), POLL_TYPE_SEMI_SOCKET,
-                                                                              sizeof(struct us_socket_t) + c->socket_ext_size, LIBUS_SOCKET_WRITABLE);
+                                                                              sizeof(struct us_socket_t) + c->socket_ext_size, LIBUS_SOCKET_WRITABLE | LIBUS_POLL_TCP);
         if (!s) {
             continue;
         }

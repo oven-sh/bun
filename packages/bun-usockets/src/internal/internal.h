@@ -265,6 +265,24 @@ void us_internal_poll_set_type(struct us_poll_t *p, int poll_type);
  * deferred (see us_poll_stop in eventing/libuv.c). */
 void us_internal_poll_close_fd(struct us_poll_t *p);
 
+/* What a poll's I/O showed about its readiness. Only edge-triggered polls listen. */
+#ifdef LIBUS_USE_EPOLL
+/* recv() returned less than it had room for, or would block. */
+void us_internal_poll_read_short(struct us_poll_t *p, struct us_loop_t *loop, int would_block);
+/* send() took less than it was given, or would block (-1). The caller polls for writable next. */
+void us_internal_poll_write_short(struct us_poll_t *p, struct us_loop_t *loop, ssize_t written);
+/* Nothing is known about `events` any more: have the kernel report them if they are ready. */
+void us_internal_poll_ask_again(struct us_poll_t *p, struct us_loop_t *loop, int events);
+/* Dispatch `p` on the next tick if it is still ready for what it polls for. */
+void us_internal_poll_keep_if_ready(struct us_poll_t *p, struct us_loop_t *loop);
+int us_internal_poll_reads_until_eagain(struct us_poll_t *p);
+#else
+#define us_internal_poll_read_short(p, loop, would_block) ((void) 0)
+#define us_internal_poll_write_short(p, loop, written) ((void) 0)
+#define us_internal_poll_ask_again(p, loop, events) ((void) 0)
+#define us_internal_poll_keep_if_ready(p, loop) ((void) 0)
+#endif
+
 /* SSL loop data */
 void us_internal_init_loop_ssl_data(us_loop_r loop);
 void us_internal_free_loop_ssl_data(us_loop_r loop);
@@ -562,6 +580,7 @@ struct us_listen_socket_t {
   unsigned char deferred_accept;
   /* LIBUS_SOCKET_OPEN_PAUSED: accepted sockets start without read interest. */
   unsigned char accept_paused;
+  unsigned char accepts_tcp;
 };
 
 void us_internal_socket_group_link_connecting_socket(us_socket_group_r group, struct us_connecting_socket_t *c);

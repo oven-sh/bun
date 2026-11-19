@@ -6840,3 +6840,193 @@ describe.concurrent("a handler that closes its socket and then waits for a promi
     });
   });
 });
+
+// Each case leaves something readable that the kernel has reported already, and will not report again.
+describe.skipIf(!isLinux).concurrent("BUN_USOCKETS_TRIGGER", () => {
+  const source = /* js */ `
+    import { dlopen, ptr } from "bun:ffi";
+    import { expect, test } from "bun:test";
+    import { readdirSync, readFileSync } from "node:fs";
+
+    const libc = dlopen(process.env.LIBC, { send: { args: ["i32", "ptr", "usize", "i32"], returns: "isize" } });
+
+    // Connected pairs, all accepted before anything is sent, so what is sent in one go is ready in one batch.
+    async function pairs(count, handlers) {
+      const accepted = [];
+      const allAccepted = Promise.withResolvers();
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: { open: s => accepted.push(s) === count && allAccepted.resolve(), ...handlers },
+      });
+      const clients = [];
+      for (let i = 0; i < count; i++) {
+        clients.push(await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } }));
+      }
+      await allAccepted.promise;
+      return { accepted, clients, [Symbol.dispose]: () => (clients.forEach(c => c.terminate()), server.stop(true)) };
+    }
+
+    function epollMask(socket) {
+      for (const fd of readdirSync("/proc/self/fdinfo")) {
+        let info = "";
+        try { info = readFileSync("/proc/self/fdinfo/" + fd, "utf8"); } catch {}
+        for (const [, target, mask] of info.matchAll(/^tfd:\\s+(\\d+) events:\\s+(\\w+)/gm)) {
+          if (+target === socket.fd) return parseInt(mask, 16);
+        }
+      }
+    }
+
+    // Returns what it took for the paused socket to stop watching EPOLLIN, and the EPOLLOUT that pause() asks for.
+    async function sendUntilDisarmed(p) {
+      let sent = "";
+      do {
+        p.clients[0].write("a");
+        sent += "a";
+        await new Promise(setImmediate);
+      } while (epollMask(p.accepted[0]) & 5);
+      return sent;
+    }
+
+    const sendUrgent = socket => libc.symbols.send(socket.fd, ptr(Buffer.from("!")), 1, /* MSG_OOB */ 1);
+
+    // Ticks the loop until the promise settles.
+    const tickUntil = promise =>
+      void Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins: [{ name: "wait", setup: () => promise }] });
+
+    test("TCP sockets are registered with EPOLLET", async () => {
+      using p = await pairs(1, { data() {} });
+      expect([p.accepted[0], p.clients[0]].map(socket => epollMask(socket) >>> 31)).toEqual([1, 1]);
+    });
+
+    test("a tick nested in data() delivers the rest of the batch", async () => {
+      const second = Promise.withResolvers(), done = Promise.withResolvers();
+      let calls = 0;
+      using p = await pairs(2, {
+        data() {
+          if (calls++) return second.resolve();
+          tickUntil(second.promise);
+          done.resolve(calls);
+        },
+      });
+      for (const client of p.clients) client.write("x");
+      expect(await done.promise).toBe(2);
+    });
+
+    test("a resumed socket comes after what was ready before", async () => {
+      const done = Promise.withResolvers(), calls = [];
+      using p = await pairs(2, { data: s => calls.push(p.accepted.indexOf(s)) === 2 && done.resolve() });
+      p.accepted[0].pause();
+      await sendUntilDisarmed(p);
+      p.clients[1].write("x");
+      p.accepted[0].resume();
+      await done.promise;
+      expect(calls).toEqual([1, 0]);
+    });
+
+    test("sockets that stay ready and are reported again count once towards a full batch", async () => {
+      const count = 520;
+      let calls = 0, clientOf;
+      // The urgent byte keeps a socket ready after a short read.
+      const send = client => (client.write("x"), sendUrgent(client), client.write("x"));
+      using p = await pairs(count, { data: s => (calls++, send(clientOf.get(s.remotePort))) });
+      clientOf = new Map(p.clients.map(client => [client.localPort, client]));
+      p.clients.forEach(send);
+      while (calls < count * 2) await new Promise(setImmediate);
+      const before = calls;
+      await new Promise(setImmediate);
+      // 11 reads a socket at most. A full batch is followed by 47 more.
+      expect((calls - before) / count).toBeLessThanOrEqual(11);
+    });
+
+    test("a FIN behind data", async () => {
+      const calls = [], closed = Promise.withResolvers();
+      using p = await pairs(1, { data: (s, chunk) => calls.push(String(chunk)), end: () => calls.push("end"), close: closed.resolve });
+      p.clients[0].write("x");
+      p.clients[0].shutdown();
+      await closed.promise;
+      expect(calls).toEqual(["x", "end"]);
+    });
+
+    test("data behind an urgent byte", async () => {
+      const done = Promise.withResolvers();
+      let text = "";
+      using p = await pairs(1, { data: (s, chunk) => (text += chunk).endsWith("after") && done.resolve() });
+      p.clients[0].write("before");
+      expect(sendUrgent(p.clients[0])).toBe(1n);
+      p.clients[0].write("after");
+      await done.promise;
+      expect(text).toBe("beforeafter");
+    });
+
+    test("data and a FIN that arrive during a pause", async () => {
+      const calls = [], closed = Promise.withResolvers();
+      using p = await pairs(1, { data: (s, chunk) => calls.push(String(chunk)), end: () => calls.push("end"), close: closed.resolve });
+      p.accepted[0].pause();
+      const sent = await sendUntilDisarmed(p);
+      p.clients[0].shutdown();
+      expect(calls).toEqual([]);
+      p.accepted[0].resume();
+      await closed.promise;
+      expect(calls.join("")).toBe(sent + "end");
+    });
+
+    test("data that arrives after a long pause", async () => {
+      let next = Promise.withResolvers(), text = "", sent;
+      using p = await pairs(1, { data: (s, chunk) => (text += chunk).length === sent.length && next.resolve() });
+      p.accepted[0].pause();
+      sent = await sendUntilDisarmed(p);
+      p.accepted[0].resume();
+      await next.promise;
+      next = Promise.withResolvers();
+      sent += "b";
+      p.clients[0].write("b");
+      await next.promise;
+      expect(text).toBe(sent);
+    });
+
+    test("bodies larger than the socket buffers, both ways, on many connections", async () => {
+      const body = Buffer.alloc(8 * 1024 * 1024, "x");
+      await Bun.write("body.bin", body);
+      using server = Bun.serve({
+        port: 0,
+        routes: {
+          "/buffer": () => new Response(body),
+          "/file": () => new Response(Bun.file("body.bin")),
+          "/upload": async req => {
+            let total = 0;
+            for await (const chunk of req.body) {
+              total += chunk.length;
+              await new Promise(setImmediate);
+            }
+            return new Response(new Uint8Array(total));
+          },
+        },
+      });
+      const sizes = await Promise.all(
+        ["/buffer", "/file", "/upload"].flatMap(path => [path, path]).map(async path => {
+          const response = await fetch(new URL(path, server.url), path === "/upload" ? { method: "POST", body } : {});
+          return (await response.bytes()).length;
+        }),
+      );
+      expect(sizes).toEqual(Array(6).fill(body.length));
+    });
+  `;
+
+  it.each(["edge", "edge-mod", "edge-eagain"])("%s", async trigger => {
+    using dir = tempDir("usockets-trigger", { "fixture.test.ts": source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "fixture.test.ts"],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_USOCKETS_TRIGGER: trigger, LIBC: libcPathForDlopen() },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ summary: stderr.match(/\d+ pass\s+\d+ fail/)?.[0], stderr: exitCode === 0 ? "" : stderr }).toEqual({
+      summary: "9 pass\n 0 fail",
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+});

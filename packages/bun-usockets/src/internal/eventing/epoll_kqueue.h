@@ -25,12 +25,15 @@
 #include <sys/eventfd.h>
 #define LIBUS_SOCKET_READABLE EPOLLIN
 #define LIBUS_SOCKET_WRITABLE EPOLLOUT
+/* Passed to us_poll_start_rc with the events: the fd is a TCP socket, which may be polled edge-triggered. */
+#define LIBUS_POLL_TCP ((int) EPOLLET)
 #else
 #include <sys/event.h>
 /* Kqueue's EVFILT_ is NOT a bitfield, you cannot OR together them.
  * We therefore have our own bitfield we then translate in every call */
 #define LIBUS_SOCKET_READABLE 1
 #define LIBUS_SOCKET_WRITABLE 2
+#define LIBUS_POLL_TCP 0
 
 #if defined(__APPLE__)
 #include <mach/mach.h>
@@ -101,6 +104,12 @@ struct us_loop_t {
     /* The list of ready polls */
 #ifdef LIBUS_USE_EPOLL
     alignas(LIBUS_EXT_ALIGNMENT) struct epoll_event ready_polls[1024];
+
+    /* Edge-triggered polls that are still ready for what they poll for. The kernel will not report them again, so
+     * the next tick does not block and dispatches them. NULL where one left. Not mirrored in Loop.rs. */
+    struct us_poll_t **still_ready;
+    int num_still_ready;
+    int still_ready_capacity;
 #else
     alignas(LIBUS_EXT_ALIGNMENT) struct kevent64_s ready_polls[1024];
 #endif
@@ -111,6 +120,20 @@ struct us_poll_t {
         signed int fd : 27; // we could have this unsigned if we wanted to, -1 should never be used
         unsigned int poll_type : 5;
     } state;
+#ifdef LIBUS_USE_EPOLL
+    /* Fits in the padding behind `state`. */
+    struct {
+        /* The EPOLL* bits last reported and not used up since: what a level-triggered poll would report now. */
+        unsigned short ready;
+        /* Which of EPOLLIN and EPOLLOUT the kernel watches. */
+        unsigned char armed;
+        unsigned char enabled : 1, registered : 1;
+        /* Still ready through a change of interest, which EPOLL_CTL_MOD queues behind what is ready already. */
+        unsigned char goes_last : 1;
+        /* Index in loop->still_ready, or -1. */
+        int slot;
+    } edge;
+#endif
 };
 
 #endif // EPOLL_KQUEUE_H

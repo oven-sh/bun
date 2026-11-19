@@ -23,6 +23,7 @@
 #include <uv.h>
 #define LIBUS_SOCKET_READABLE UV_READABLE
 #define LIBUS_SOCKET_WRITABLE UV_WRITABLE
+#define LIBUS_POLL_TCP 0
 
 /* Defined in eventing/libuv.c; used by the sweep escalation in loop.c. */
 int us_internal_libuv_peer_reset_probe(LIBUS_SOCKET_DESCRIPTOR fd);

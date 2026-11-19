@@ -424,6 +424,13 @@ void us_internal_rearm_writable(struct us_socket_t *s) {
                    LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
 }
 
+/* Call right after a send that returned `written`, less than it was given: it reads errno. */
+static void us_internal_note_short_send(struct us_socket_t *s, ssize_t written) {
+    if (written >= 0 || bsd_would_block()) {
+        us_internal_poll_write_short(&s->p, s->group->loop, written);
+    }
+}
+
 /* macOS can report more bytes sent than it was given (golang/go#61060). How many it took is unknown, so nothing
  * may follow them. ECONNABORTED is a peer-gone errno, so it is never retried; the shutdown is for the writers that
  * take any failed send for backpressure. No write may close under its caller: the writable event does. */
@@ -454,6 +461,9 @@ int us_socket_stalled_write_means_peer_gone(struct us_socket_t *s) {
     }
     return us_socket_get_error(s) != 0 ||
            us_internal_libuv_peer_reset_probe(us_poll_fd(&s->p));
+#elif defined(LIBUS_USE_EPOLL)
+    /* A send that would block took EPOLLOUT away, one that failed did not. */
+    return !s->p.edge.enabled || us_socket_is_closed(s) || (s->p.edge.ready & (EPOLLOUT | EPOLLERR | EPOLLHUP));
 #else
     return 1;
 #endif
@@ -467,6 +477,7 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
     ssize_t sent = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
     int written = us_internal_reject_excess_send(s, sent, (size_t) header_length + (size_t) payload_length);
     if (written != header_length + payload_length) {
+        us_internal_note_short_send(s, written);
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
@@ -541,6 +552,7 @@ int us_socket_write(struct us_socket_t *s, const char *data, int length) {
 
     int written = us_internal_reject_excess_send(s, bsd_send(us_poll_fd(&s->p), data, length), length);
     if (written != length) {
+        us_internal_note_short_send(s, written);
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
@@ -641,6 +653,7 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
     if (written < 0) {
         int fatal_send_error = us_internal_classify_failed_send(s);
         if (!fatal_send_error) {
+            us_internal_note_short_send(s, written);
             s->flags.last_write_failed = 1;
             us_internal_rearm_writable(s);
             return 0;
@@ -652,6 +665,7 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
     }
     s->unclassified_send_failures = 0;
     if (written != length) {
+        us_internal_note_short_send(s, written);
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
@@ -675,6 +689,8 @@ int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, in
 
     ssize_t written = us_internal_reject_excess_send(s, bsd_writev(us_poll_fd(&s->p), iov, count), total);
     if (written != (ssize_t)total) {
+        /* bsd_writev sends 1024 entries at most, with room to spare or not. */
+        if (count <= 1024 || written < 0) us_internal_note_short_send(s, written);
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
@@ -699,6 +715,7 @@ int us_internal_socket_raw_write(struct us_socket_t *s, const char *data, int le
         fatal = *fatal_send_error = us_internal_classify_failed_send(s);
     }
     if (written != length) {
+        us_internal_note_short_send(s, written);
         s->flags.last_write_failed = 1;
         if (!fatal) us_internal_rearm_writable(s);
     }

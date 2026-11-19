@@ -57,6 +57,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 void us_loop_free(struct us_loop_t *loop) {
     us_internal_loop_data_free(loop);
     close(loop->fd);
+#ifdef LIBUS_USE_EPOLL
+    us_free(loop->still_ready);
+#endif
     us_free(loop);
 }
 
@@ -78,6 +81,10 @@ void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
 void us_poll_init(struct us_poll_t *p, LIBUS_SOCKET_DESCRIPTOR fd, int poll_type) {
     p->state.fd = fd;
     p->state.poll_type = poll_type;
+#ifdef LIBUS_USE_EPOLL
+    p->edge.ready = p->edge.armed = p->edge.enabled = p->edge.registered = p->edge.goes_last = 0;
+    p->edge.slot = -1;
+#endif
 }
 
 __attribute__((always_inline)) int us_poll_events(struct us_poll_t *p) {
@@ -100,6 +107,8 @@ void us_internal_poll_set_type(struct us_poll_t *p, int poll_type) {
 
 #if defined(LIBUS_USE_EPOLL)
 
+#include <pthread.h>
+#include <stdio.h>
 #include <sys/syscall.h>
 #include <signal.h>
 #include <errno.h>
@@ -184,6 +193,210 @@ static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
 
 extern int Bun__isEpollPwait2SupportedOnLinuxKernel();
 
+/* How TCP sockets are polled, from BUN_USOCKETS_TRIGGER. Everything else is level-triggered: a short read only
+ * proves that a TCP stream is drained. "edge-mod" and "edge" take a short read or write for EAGAIN, which stalls the
+ * socket in two cases: an urgent pointer that arrives after its byte did, and a send() that faults half way. */
+static enum {
+    TRIGGER_LEVEL,
+    /* "edge-mod": EPOLLET, and every change of interest still goes to the kernel. */
+    TRIGGER_EDGE_MOD,
+    /* "edge": EPOLLET, and changes of interest stay in user space. */
+    TRIGGER_EDGE,
+    /* "edge-eagain": the same, and only EAGAIN counts. */
+    TRIGGER_EDGE_EAGAIN,
+} trigger;
+
+static void us_internal_read_trigger(void) {
+    const char *name = getenv("BUN_USOCKETS_TRIGGER");
+    if (!name) return;
+    if (!strcmp(name, "edge-mod")) trigger = TRIGGER_EDGE_MOD;
+    else if (!strcmp(name, "edge")) trigger = TRIGGER_EDGE;
+    else if (!strcmp(name, "edge-eagain")) trigger = TRIGGER_EDGE_EAGAIN;
+    else fprintf(stderr, "warn: ignoring BUN_USOCKETS_TRIGGER=%s\n", name);
+}
+
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+/* An injected short read or EAGAIN has no edge coming after it. */
+#define IO_RESULTS_ARE_FAKE __atomic_load_n(&us_fault_armed, __ATOMIC_ACQUIRE)
+#else
+#define IO_RESULTS_ARE_FAKE 0
+#endif
+
+/* Slots of ready_polls that epoll_wait leaves to loop->still_ready, so a saturated kernel queue cannot starve it. */
+#define STILL_READY_RESERVED_SLOTS 256
+
+static int edge_level(struct us_poll_t *p) {
+    return p->edge.ready & (us_poll_events(p) | EPOLLERR | EPOLLHUP);
+}
+
+static void edge_forget_still_ready(struct us_poll_t *p, struct us_loop_t *loop) {
+    if (p->edge.slot < 0) return;
+    loop->still_ready[p->edge.slot] = NULL;
+    p->edge.slot = -1;
+    while (loop->num_still_ready && !loop->still_ready[loop->num_still_ready - 1]) loop->num_still_ready--;
+}
+
+static void edge_keep_if_ready(struct us_poll_t *p, struct us_loop_t *loop, int goes_last) {
+    if (!edge_level(p)) {
+        edge_forget_still_ready(p, loop);
+        return;
+    }
+    if (p->edge.slot >= 0) {
+        p->edge.goes_last &= goes_last;
+        return;
+    }
+    p->edge.goes_last = goes_last;
+    if (loop->num_still_ready == loop->still_ready_capacity) {
+        loop->still_ready_capacity = loop->still_ready_capacity ? loop->still_ready_capacity * 2 : 64;
+        loop->still_ready = us_realloc(loop->still_ready, sizeof(*loop->still_ready) * (size_t) loop->still_ready_capacity);
+        if (!loop->still_ready) Bun__outOfMemory();
+    }
+    p->edge.slot = loop->num_still_ready++;
+    loop->still_ready[p->edge.slot] = p;
+}
+
+void us_internal_poll_keep_if_ready(struct us_poll_t *p, struct us_loop_t *loop) {
+    edge_keep_if_ready(p, loop, 0);
+}
+
+/* Both EPOLL_CTL_ADD and EPOLL_CTL_MOD report whatever is ready by now. */
+static int edge_ctl(struct us_poll_t *p, struct us_loop_t *loop, int op, int armed) {
+    struct epoll_event event;
+    /* A FIN or urgent data ends a read short of what is queued. */
+    event.events = EPOLLET | armed | ((armed & EPOLLIN) ? EPOLLRDHUP | EPOLLPRI : 0);
+    event.data.ptr = p;
+    int rc;
+    do {
+        rc = epoll_ctl(loop->fd, op, p->state.fd, &event);
+    } while (IS_EINTR(rc));
+    if (rc == -1 && errno == ENOENT && op == EPOLL_CTL_MOD) return edge_ctl(p, loop, EPOLL_CTL_ADD, armed);
+    if (rc == 0) p->edge.armed = armed;
+    return rc;
+}
+
+static int edge_start(struct us_poll_t *p, struct us_loop_t *loop, int events, int is_new) {
+    const int sticky = trigger != TRIGGER_EDGE_MOD;
+    /* Nothing was sent yet on a socket that was just accepted. */
+    p->edge.ready = sticky && is_new && us_internal_poll_type(p) == POLL_TYPE_SOCKET ? EPOLLOUT : 0;
+    int rc = edge_ctl(p, loop, EPOLL_CTL_ADD, sticky ? events | EPOLLIN : events);
+    p->edge.registered = rc == 0;
+    return rc;
+}
+
+static int edge_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+    int rc = 0;
+    if (trigger == TRIGGER_EDGE_MOD) {
+        if (events != p->edge.armed) {
+            p->edge.ready &= ~(events ^ p->edge.armed);
+            rc = edge_ctl(p, loop, EPOLL_CTL_MOD, events);
+        }
+    } else if (events & ~(p->edge.armed | (p->edge.ready & EPOLLOUT))) {
+        /* EPOLLOUT is armed the first time a write has to wait, and stays: TCP only signals it after a full send
+         * buffer. EPOLLIN comes back after edge_complete_batch dropped it. */
+        rc = edge_ctl(p, loop, EPOLL_CTL_MOD, p->edge.armed | events);
+    }
+    edge_keep_if_ready(p, loop, 1);
+    return rc;
+}
+
+void us_internal_poll_ask_again(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+    if (!(p->edge.ready & events)) return;
+    p->edge.ready &= ~events;
+    /* Not armed: arming it asks. */
+    if (p->edge.armed & events) edge_ctl(p, loop, EPOLL_CTL_MOD, p->edge.armed);
+}
+
+void us_internal_poll_read_short(struct us_poll_t *p, struct us_loop_t *loop, int would_block) {
+    if (!p->edge.enabled) return;
+    if (UNLIKELY(IO_RESULTS_ARE_FAKE)) {
+        us_internal_poll_ask_again(p, loop, EPOLLIN);
+    } else if (would_block) {
+        p->edge.ready &= ~(EPOLLIN | EPOLLPRI);
+    } else if (!(p->edge.ready & (EPOLLRDHUP | EPOLLPRI | EPOLLHUP | EPOLLERR)) && trigger != TRIGGER_EDGE_EAGAIN) {
+        p->edge.ready &= ~EPOLLIN;
+    }
+}
+
+/* MAX_RW_COUNT with 64 KB pages: where Linux cuts a send() short however much room there is. */
+#define KERNEL_MAX_SEND 0x7fff0000
+
+void us_internal_poll_write_short(struct us_poll_t *p, struct us_loop_t *loop, ssize_t written) {
+    if (UNLIKELY(IO_RESULTS_ARE_FAKE) || written >= KERNEL_MAX_SEND || (written >= 0 && trigger == TRIGGER_EDGE_EAGAIN)) {
+        int saved_errno = errno;
+        us_internal_poll_ask_again(p, loop, EPOLLOUT);
+        errno = saved_errno;
+    } else {
+        p->edge.ready &= ~EPOLLOUT;
+    }
+}
+
+int us_internal_poll_reads_until_eagain(struct us_poll_t *p) {
+    return trigger == TRIGGER_EDGE_EAGAIN && (edge_level(p) & EPOLLIN);
+}
+
+/* A tick nested in a callback overwrites ready_polls, and the kernel reports an edge once. */
+static void edge_rescue_outer_batch(struct us_loop_t *loop) {
+    for (int i = loop->current_ready_poll; i < loop->num_ready_polls; i++) {
+        struct us_poll_t *p = GET_READY_POLL(loop, i);
+        if (p && CLEAR_POINTER_TAG(p) == p && p->edge.enabled) {
+            us_internal_poll_keep_if_ready(p, loop);
+        }
+    }
+}
+
+static int edge_max_kernel_events(struct us_loop_t *loop) {
+    return LIBUS_MAX_READY_POLLS - (loop->num_still_ready < STILL_READY_RESERVED_SLOTS ? loop->num_still_ready : STILL_READY_RESERVED_SLOTS);
+}
+
+/* Records what the kernel reported and merges loop->still_ready in, to make the batch level-triggered epoll would have
+ * returned: the same events in the same order, and as many of them. */
+static void edge_complete_batch(struct us_loop_t *loop) {
+    int reported = 0;
+    for (int i = 0; i < loop->num_ready_polls; i++) {
+        struct epoll_event event = loop->ready_polls[i];
+        struct us_poll_t *p = event.data.ptr;
+        if (!p) continue;
+        if (CLEAR_POINTER_TAG(p) == p && p->edge.enabled) {
+            /* Woken again for data that nobody reads: this pause is a long one. */
+            if (UNLIKELY(event.events & p->edge.ready & p->edge.armed & ~us_poll_events(p) & EPOLLIN)) {
+                edge_ctl(p, loop, EPOLL_CTL_MOD, p->edge.armed & ~EPOLLIN);
+            }
+            p->edge.ready |= event.events;
+            event.events = edge_level(p);
+            if (p->edge.slot >= 0 || !event.events) continue;
+        }
+        loop->ready_polls[reported++] = event;
+    }
+    loop->num_ready_polls = reported;
+    if (!loop->num_still_ready) return;
+
+    int end = 0, first = 0;
+    for (int room = LIBUS_MAX_READY_POLLS - reported; end < loop->num_still_ready && room; end++) {
+        struct us_poll_t *p = loop->still_ready[end];
+        if (!p) continue;
+        room--;
+        first += !p->edge.goes_last;
+    }
+    memmove(loop->ready_polls + first, loop->ready_polls, sizeof(*loop->ready_polls) * (size_t) reported);
+    loop->num_ready_polls += first;
+
+    int next_first = 0, kept = 0;
+    for (int i = 0; i < loop->num_still_ready; i++) {
+        struct us_poll_t *p = loop->still_ready[i];
+        if (!p) continue;
+        if (i < end) {
+            const int index = p->edge.goes_last ? loop->num_ready_polls++ : next_first++;
+            SET_READY_POLL(loop, index, p);
+            loop->ready_polls[index].events = edge_level(p);
+            p->edge.slot = -1;
+        } else {
+            p->edge.slot = kept;
+            loop->still_ready[kept++] = p;
+        }
+    }
+    loop->num_still_ready = kept;
+}
+
 #else
 
 /* kevent(2) returns EINTR when a signal is caught (XNU kqueue_scan returns
@@ -229,6 +442,9 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
 #ifdef LIBUS_USE_EPOLL
     loop->fd = epoll_create1(EPOLL_CLOEXEC);
 
+    static pthread_once_t trigger_once = PTHREAD_ONCE_INIT;
+    pthread_once(&trigger_once, us_internal_read_trigger);
+
     if (has_epoll_pwait2 == -1) {
         if (Bun__isEpollPwait2SupportedOnLinuxKernel() == 0) {
             has_epoll_pwait2 = 0;
@@ -255,6 +471,7 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
 /* Shared dispatch loop for both us_loop_run and us_loop_run_bun_tick */
 static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
 #ifdef LIBUS_USE_EPOLL
+    if (trigger != TRIGGER_LEVEL) edge_complete_batch(loop);
     for (loop->current_ready_poll = 0; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
         struct us_poll_t *poll = GET_READY_POLL(loop, loop->current_ready_poll);
         if (LIKELY(poll)) {
@@ -263,6 +480,7 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
                 continue;
             }
             int events = loop->ready_polls[loop->current_ready_poll].events;
+            if (poll->edge.enabled) events &= poll->edge.ready;
             /* Normalize to 0/1 like the kqueue path's EV_ERROR: the value is
              * forwarded as a libus close code, and a raw EPOLLERR (8) would
              * read as errno 8 (ENOEXEC) in the JS error path. */
@@ -412,7 +630,7 @@ static void us_internal_drain_ready_polls(struct us_loop_t *loop) {
     while (UNLIKELY(loop->num_ready_polls == LIBUS_MAX_READY_POLLS) && --drain_count != 0 && loop->num_polls > 0) {
 #ifdef LIBUS_USE_EPOLL
         static const struct timespec zero = {0, 0};
-        loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, &zero);
+        loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, edge_max_kernel_events(loop), &zero);
 #else
         do {
             loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, LIBUS_MAX_READY_POLLS, KEVENT_FLAG_IMMEDIATE, NULL);
@@ -447,6 +665,9 @@ void us_loop_run(struct us_loop_t *loop) {
     /* While we have non-fallthrough polls we shouldn't fall through */
     while (loop->num_polls) {
         loop->data.tick_depth++;
+#ifdef LIBUS_USE_EPOLL
+        edge_rescue_outer_batch(loop);
+#endif
         /* Emit pre callback */
         us_internal_loop_pre(loop);
 
@@ -455,7 +676,8 @@ void us_loop_run(struct us_loop_t *loop) {
 
         /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
-        loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, timeout);
+        static const struct timespec zero = {0, 0};
+        loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, edge_max_kernel_events(loop), loop->num_still_ready ? &zero : timeout);
 #else
         loop->num_ready_polls = bun_kevent64_wait(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, 0, timeout);
 #endif
@@ -478,6 +700,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         return;
 
     loop->data.tick_depth++;
+#ifdef LIBUS_USE_EPOLL
+    edge_rescue_outer_batch(loop);
+#endif
 
     /* Emit pre callback */
     us_internal_loop_pre(loop);
@@ -531,7 +756,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     /* A zero timespec already has a fast path in ep_poll (fs/eventpoll.c):
      * it sets timed_out=1 (line 1952) and returns before any scheduler
      * interaction (line 1975). No equivalent of KEVENT_FLAG_IMMEDIATE needed. */
-    loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, timeout);
+    static const struct timespec zero = {0, 0};
+    loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, edge_max_kernel_events(loop), loop->num_still_ready ? &zero : timeout);
 #else
     loop->num_ready_polls = bun_kevent64_wait(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS,
         /* When we won't idle (pending wakeups or zero timeout), use KEVENT_FLAG_IMMEDIATE.
@@ -670,9 +896,16 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
     
     int events = us_poll_events(p);
 #ifdef LIBUS_USE_EPOLL
-    /* Hack: forcefully update poll by stripping away already set events */
-    new_p->state.poll_type = us_internal_poll_type(new_p);
-    us_poll_change(new_p, loop, events);
+    if (p->edge.enabled) {
+        if (p->edge.registered) edge_ctl(new_p, loop, EPOLL_CTL_MOD, p->edge.armed);
+        if (p->edge.slot >= 0) loop->still_ready[p->edge.slot] = new_p;
+        p->edge.slot = -1;
+        p->edge.registered = p->edge.ready = 0;
+    } else {
+        /* Hack: forcefully update poll by stripping away already set events */
+        new_p->state.poll_type = us_internal_poll_type(new_p);
+        us_poll_change(new_p, loop, events);
+    }
 #else
     /* Move the udata to new_p: re-register the polled filters, and for a socket poll re-create
      * its read knote in its current mode (it has one whether or not it reads, see kqueue_change). */
@@ -695,6 +928,11 @@ int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
 #endif
 
 #ifdef LIBUS_USE_EPOLL
+    const int is_new_tcp = events & LIBUS_POLL_TCP;
+    events &= ~LIBUS_POLL_TCP;
+    if (is_new_tcp && trigger != TRIGGER_LEVEL) p->edge.enabled = 1;
+    if (p->edge.enabled) return edge_start(p, loop, events, is_new_tcp);
+
     struct epoll_event event;
     if(!(events & LIBUS_SOCKET_READABLE) && !(events & LIBUS_SOCKET_WRITABLE)) {
         /* Polling neither direction (a half-open socket after the peer's FIN):
@@ -730,6 +968,15 @@ void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
 int us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     int old_events = us_poll_events(p);
     int rc = 0;
+#ifdef LIBUS_USE_EPOLL
+    if (p->edge.enabled) {
+        if (!p->edge.registered) {
+            return old_events != events ? us_poll_start_rc(p, loop, events) : 0;
+        }
+        p->state.poll_type = us_internal_poll_type(p) | ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) | ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
+        return edge_change(p, loop, events);
+    }
+#endif
     if (old_events != events) {
 
         p->state.poll_type = us_internal_poll_type(p) | ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) | ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
@@ -771,6 +1018,8 @@ void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
     do {
          rc = epoll_ctl(loop->fd, EPOLL_CTL_DEL, p->state.fd, &event);
     } while (IS_EINTR(rc));
+    edge_forget_still_ready(p, loop);
+    p->edge.registered = p->edge.ready = p->edge.armed = 0;
 #else
     /* A socket poll has a read knote in both of its modes (see kqueue_change), so there is
      * one to delete even when it was not polling for reads. */

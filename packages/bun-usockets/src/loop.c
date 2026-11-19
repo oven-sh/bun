@@ -516,7 +516,7 @@ static int us_internal_defer_end(struct us_socket_t *s, struct us_loop_t *loop) 
     return 1;
 }
 
-void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events) {
+static void us_internal_dispatch_by_poll_type(struct us_poll_t *p, int error, int eof, int events) {
     switch (us_internal_poll_type(p)) {
     case POLL_TYPE_CALLBACK: {
             struct us_internal_callback_t *cb = (struct us_internal_callback_t *) p;
@@ -570,7 +570,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     do {
                         struct us_poll_t *accepted_p = us_create_poll(loop, 0, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + listen_socket->socket_ext_size);
                         us_poll_init(accepted_p, client_fd, POLL_TYPE_SOCKET);
-                        if (us_poll_start_rc(accepted_p, loop, listen_socket->accept_paused ? 0 : LIBUS_SOCKET_READABLE) != 0) {
+                        if (us_poll_start_rc(accepted_p, loop, (listen_socket->accept_paused ? 0 : LIBUS_SOCKET_READABLE) | (listen_socket->accepts_tcp ? LIBUS_POLL_TCP : 0)) != 0) {
                             /* EPOLL_CTL_ADD failed (e.g. ENOSPC). Close the fd so the
                              * peer sees a RST instead of a connection that silently
                              * never answers. */
@@ -810,6 +810,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     #endif
 
                     if (length > 0) {
+                        /* Before on_data: a tick nested in it can learn of newer data. */
+                        if (length < LIBUS_RECV_BUFFER_LENGTH) {
+                            us_internal_poll_read_short(&s->p, loop, 0);
+                        }
                         s = s->ssl ? us_internal_ssl_on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length)
                                    : us_dispatch_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
                         /* After socket adoption, track the new socket; the old one becomes invalid */
@@ -852,6 +856,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                             }
                         }
                         #undef LOOP_ISNT_VERY_BUSY_THRESHOLD
+                        #ifdef LIBUS_USE_EPOLL
+                        if (s && !us_socket_is_closed(s) && us_internal_poll_reads_until_eagain(&s->p) && ++repeat_recv_count <= 10) {
+                            continue;
+                        }
+                        #endif
                         #else
                         /* Windows eof-drain, same as the POSIX branch above:
                          * poll_cb maps AFD DISCONNECT to the eof hint for a
@@ -908,6 +917,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                          * close site for exactly this reason. */
                         s = us_internal_socket_close_raw(s, LIBUS_ERR, NULL);
                         return;
+                    } else {
+                        us_internal_poll_read_short(&s->p, loop, 1);
                     }
 
                     break;
@@ -1189,6 +1200,20 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             break;
         }
     }
+}
+
+void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events) {
+#ifdef LIBUS_USE_EPOLL
+    if (p->edge.enabled) {
+        us_internal_dispatch_by_poll_type(p, error, eof, events);
+        struct us_socket_t *s = us_internal_socket_follow_adopted((struct us_socket_t *) p);
+        if (!us_socket_is_closed(s)) {
+            us_internal_poll_keep_if_ready(&s->p, s->group->loop);
+        }
+        return;
+    }
+#endif
+    us_internal_dispatch_by_poll_type(p, error, eof, events);
 }
 
 /* Integration only requires the timer to be set up, but not automatically enabled */

@@ -49,6 +49,22 @@ async function run(script: string, keys?: string) {
 describe.concurrent.skipIf(!isWindows)("refused", () => {
   test.each([
     [
+      "report",
+      `say(during(fail("NtQuerySystemInformation", 0xc0000001), () => process.report.getReport().header.cpus));`,
+    ],
+    [
+      "no standard handle",
+      `const k = require("bun:ffi").dlopen("kernel32.dll", { GetStdHandle: { args: ["i32"], returns: "i64" }, CloseHandle: { args: ["i64"], returns: "i32" } }).symbols; await Bun.spawn(quick).exited; k.CloseHandle(k.GetStdHandle(-10)); say(await Bun.spawn(quick, { stdio: ["inherit", "ignore", "ignore"] }).exited);`,
+    ],
+    [
+      "watch: gone by then",
+      `const undo = noWait(), wait = fail("WaitForSingleObject", 0); const p = Bun.spawn(quick, { stdio: ["ignore", "ignore", "ignore"] }); wait(), undo(); say(typeof (await p.exited));`,
+    ],
+    [
+      "worker with children",
+      `const { Worker } = require("worker_threads"); for (let i = 0; i < 5; i++) { const w = new Worker(${JSON.stringify("const f = [process.execPath, '-e', 'setInterval(() => {}, 1000)']; Bun.spawn(f); Bun.$`${f}`.quiet().nothrow().then(); require('child_process').spawn(f[0], f.slice(1)); require('worker_threads').parentPort.postMessage(0);")}, { eval: true }); await once(w, "message"); await w.terminate(); } say("ended");`,
+    ],
+    [
       "watch: Bun.spawn",
       `const p = during(noWait(), () => Bun.spawn(forever, { stdio: ["ignore", "pipe", "pipe"] })); say([typeof (await settle(p.exited)), await gone(p.pid)]);`,
     ],
@@ -197,6 +213,11 @@ describe.concurrent.skipIf(!isWindows)("refused", () => {
 
   const heard = `const heard = new Promise(done => process.stdin.on("data", d => done("data " + d)).on("end", () => done("end")).on("error", e => done("error " + e.code))); console.log("ready"); say(await heard); process.exit(0);`;
   test.each([
+    [
+      "keys: old system",
+      `process.stdin.setRawMode(true); require("tty"); process.stdin.on("data", () => {}); const undo = fail("GetProcAddress", 0, 127); process.stdin.once("data", undo); ${heard}`,
+      "a",
+    ],
     ["peek: gone", `fail("PeekConsoleInputW", 0, 109); ${heard}`, "a\r"],
     ["peek", `fail("PeekConsoleInputW", 0, 5); ${heard}`, "a\r"],
     ["line: gone", `fail("ReadConsoleW", 0, 233); ${heard}`, "a\r"],

@@ -147,6 +147,12 @@ impl Table {
         (explicit_keys.map(<[u8]>::to_vec)).chain(self.flags.iter().map(|flag| key_of(flag)))
     }
 
+    /// The key that each flag has or would have. `--semi` and `--no-semi` are both `semi`.
+    fn flag_keys(&self) -> impl Iterator<Item = Vec<u8>> {
+        let flags = self.params.iter().filter_map(|it| it.names.long);
+        flags.map(|flag| key_of(flag.strip_prefix(b"no-").unwrap_or(flag)))
+    }
+
     /// The flag that `key` sets the default for.
     fn param_of(&self, key: &[u8], at: Loc) -> Result<&'static Param, BunfigError> {
         let renamed = self.renamed.iter().find(|it| it.0 == key).map(|it| it.1);
@@ -196,6 +202,15 @@ fn closest_key(key: &[u8], keys: impl Iterator<Item = Vec<u8>>) -> Option<Vec<u8
         .min_by_key(|it| it.0)
         .filter(|it| it.0 <= key.len().max(3) / 3)
         .map(|it| it.1)
+}
+
+/// True if `key` is `known`, also in another case or with one character more or less. That's a narrower test than
+/// [`closest_key`], because an option of a plugin can be as close to a `[fmt]` key as `xmlWhitespaceSensitivity` and
+/// `tsdoc` are.
+fn is_meant_as(key: &[u8], known: &[u8]) -> bool {
+    key.eq_ignore_ascii_case(known)
+        || (key.len().abs_diff(known.len()) == 1
+            && strings::edit_distance(key.iter().copied(), known) == 1)
 }
 
 /// Rejects `key`, which isn't one of `keys` (all the keys of the `section` table), and suggests the closest one.
@@ -617,9 +632,9 @@ fn patterns(value: &Expr) -> Result<Vec<Vec<u8>>, BunfigError> {
     }
 }
 
-/// Reads the `options` table of an entry of `[[fmt.overrides]]` into `it`. A key that isn't a `[fmt]` key is an option
-/// of a plugin, and it's only taken if [`crate::fmt::cli::Override::may_use_plugin`]. That's decided after every key
-/// is read, so the order of the keys doesn't matter.
+/// Reads the `options` table of an entry of `[[fmt.overrides]]` into `it`. A key that [`is_meant_as`] no `[fmt]` key
+/// and no flag is an option of a plugin, and it's only taken if [`crate::fmt::cli::Override::may_use_plugin`]. That's
+/// decided after every key is read, so the order of the keys doesn't matter.
 fn set_override_options(
     table: &Expr,
     it: &mut crate::fmt::cli::Override,
@@ -650,10 +665,10 @@ fn set_override_options(
     it.plugins = has_plugins.then_some(options.plugins);
     let may_use_plugin = it.may_use_plugin();
     for (key, value) in others {
-        // A misspelled key must not reach Prettier as an option of a plugin, and neither must another `[fmt]` key.
+        // Prettier has options with the name of a flag (`rangeStart`), so those must not reach it as a plugin's.
         let is_of_plugin = may_use_plugin
-            && closest_key(&key.name, keys()).is_none()
-            && !FORMAT.keys().any(|it| it == key.name);
+            && !(FORMAT.keys().chain(FORMAT.flag_keys()))
+                .any(|known| is_meant_as(&key.name, &known));
         if !is_of_plugin {
             return unknown_key(&key.name, key.at, b"fmt.overrides.options", keys());
         }

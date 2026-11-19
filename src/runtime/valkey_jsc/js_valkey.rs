@@ -52,13 +52,6 @@ impl<'a> Object<'a> {
         self.subscription_callback_map().map_or(0, JSMap::size)
     }
 
-    #[cold]
-    fn has_handler(self) -> bool {
-        (js::onconnect_get_cached(self.to_js()).iter())
-            .chain(&js::onclose_get_cached(self.to_js()))
-            .any(|&it| is_handler(it))
-    }
-
     fn take_connection_promise(self, global: &JSGlobalObject) -> Option<&'a mut JSPromise> {
         let promise = js::connection_promise_take_cached(self.to_js(), global)?;
         promise.as_promise().map(JSPromise::opaque_mut)
@@ -640,7 +633,7 @@ impl JSValkeyClient {
         let this_value = object.to_js();
 
         if self.get_connected() {
-            self.client.with_mut(Client::connect);
+            self.client.with_mut(Client::claim);
             return JSPromise::resolved_promise_value(
                 global_object,
                 js::hello_get_cached(this_value).unwrap_or(JSValue::UNDEFINED),
@@ -701,7 +694,7 @@ impl JSValkeyClient {
             global,
             value.to_js().with_graph_context_if_needed(global),
         );
-        self.update_poll_ref(this_value.into());
+        self.claim_for(value.to_js(), this_value.into());
     }
     pub(crate) fn get_onclose(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
         js::onclose_get_cached(this_value.to_js())
@@ -719,7 +712,14 @@ impl JSValkeyClient {
             global,
             value.to_js().with_graph_context_if_needed(global),
         );
-        self.update_poll_ref(this_value.into());
+        self.claim_for(value.to_js(), this_value.into());
+    }
+
+    fn claim_for(&self, handler: JSValue, object: Object<'_>) {
+        if handler.is_callable() {
+            self.client.with_mut(Client::claim);
+            self.update_poll_ref(object);
+        }
     }
 
     fn reset_connection_timeout(&self) {
@@ -772,7 +772,7 @@ impl JSValkeyClient {
 
     /// Every command dials first, so none meets a client that never did.
     pub(crate) fn ensure_dialing(&self, object: Object<'_>) {
-        if let Some(attempt) = self.client.with_mut(Client::first_dial) {
+        if let Some(attempt) = self.client.with_mut(Client::claim_and_dial) {
             bun_core::hint::cold();
             self.dial(object, attempt);
         }
@@ -979,7 +979,7 @@ impl JSValkeyClient {
     fn dispatch(&self, object: Object<'_>, event: Event<JSPromiseStrong>) -> JsResult<()> {
         let global = &self.global_object;
         let _exit = match event {
-            Event::Ignored | Event::Broken { .. } | Event::Busy { .. } => None,
+            Event::Ignored | Event::Broken { .. } | Event::Busy(_) => None,
             _ => Some(self.vm.enter_event_loop_scope()),
         };
         match event {
@@ -988,7 +988,8 @@ impl JSValkeyClient {
                 debug!("failed: {}: {:?}", bstr::BStr::new(&message), error);
                 self.fail(valkey_error_to_js(global, &message, error))
             }
-            Event::Busy { message, error } => {
+            Event::Busy(message) => {
+                let error = RedisError::ConnectionClosed;
                 self.fail_for_now(valkey_error_to_js(global, &message, error))
             }
             Event::Connected(mut hello) => self.on_connected(object, &mut hello),
@@ -1205,8 +1206,7 @@ impl JSValkeyClient {
         let is_idle = client.is_connected()
             && !client.has_pending_commands()
             && object.subscription_count() == 0;
-        let is_awaited = || !client.is_preconnect() || object.has_handler();
-        if client.is_active() && !is_idle && is_awaited() {
+        if client.is_active() && !is_idle && !client.is_preconnect() {
             self.poll_ref.ref_(bun_io::js_vm_ctx());
         } else {
             self.poll_ref.unref(bun_io::js_vm_ctx());

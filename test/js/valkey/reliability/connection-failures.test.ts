@@ -2086,6 +2086,12 @@ describe("Valkey: Recovering After fail()", () => {
     test.concurrent.each([
       { program: `console.log("done")`, stdout: "done\n", stderr: "", exitCode: 0 },
       { program: `Bun.redis.ping().catch(() => console.log("caught"))`, stdout: "caught\n", stderr: "", exitCode: 0 },
+      {
+        program: `Bun.redis.onclose = () => Bun.redis.ping().catch(e => console.log(e.message))`,
+        stdout: "Connection has failed\n",
+        stderr: "",
+        exitCode: 0,
+      },
       { program: `Bun.redis.connect()`, stdout: "", stderr: expect.stringContaining("ERR_REDIS_"), exitCode: 1 },
     ])("$program exits $exitCode", async ({ program, ...outcome }) => {
       const fake = helloServer({ HELLO: () => "-WRONGPASS invalid username-password pair\r\n" });
@@ -2102,6 +2108,34 @@ describe("Valkey: Recovering After fail()", () => {
         fake.server.close();
       }
     });
+  });
+
+  test.concurrent("--redis-preconnect dials once, and the first command dials again", async () => {
+    const fake = helloServer({
+      HELLO: (connection, socket) => (connection === 1 ? (socket.destroy(), null) : "+OK\r\n"),
+    });
+    const port = await fake.listen();
+    try {
+      const lost = once(fake.server, "connection").then(([socket]) => closedOnServer(socket));
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--redis-preconnect",
+          "-e",
+          // A retry would have come after 50 ms.
+          `await Bun.stdin.text(); await Bun.sleep(150); console.log(Bun.redis.connected, await Bun.redis.ping());`,
+        ],
+        env: { ...bunEnv, REDIS_URL: `redis://127.0.0.1:${port}` },
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await Promise.race([lost, proc.exited]);
+      proc.stdin.end();
+      expect(await exitOutcome(proc)).toEqual({ stdout: "false PONG\n", stderr: "", exitCode: 0 });
+    } finally {
+      fake.server.close();
+    }
   });
 
   test.concurrent("connect() on a --redis-preconnect that is connected makes the client script's", async () => {
@@ -2173,6 +2207,8 @@ describe("Valkey: Recovering After fail()", () => {
 
   test.concurrent.each([
     { program: `console.log("done")`, server: "drops every connection", stdout: "done\n" },
+    { program: `console.log("done")`, server: "is not there", stdout: "done\n" },
+    { program: `Bun.redis.onclose = null`, server: "is not there", stdout: "" },
     { program: `Bun.redis.onconnect = () => console.log("connected")`, server: "accepts", stdout: "connected\n" },
     { program: `Bun.redis.onclose = e => console.log(e.message)`, server: "refuses", stdout: "WRONGPASS\n" },
   ] as const)("--redis-preconnect: $program exits when the server $server", async ({ program, server, stdout }) => {
@@ -2183,6 +2219,7 @@ describe("Valkey: Recovering After fail()", () => {
       },
     });
     const port = await fake.listen();
+    if (server === "is not there") fake.server.close();
     try {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "--redis-preconnect", "-e", program],

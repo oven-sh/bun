@@ -2115,6 +2115,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         match local.decls.len_u32() {
                             1 => {
+                                p.preserved_jsx.move_statement(output[prev_idx], stmt);
                                 local.decls.clear();
                                 let new_len = output.len() - 1;
                                 output.truncate(new_len);
@@ -2151,6 +2152,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let StmtData::SLocal(mut prev_local) = prev_stmt.data {
                             if local.can_merge_with(&prev_local) {
                                 prev_local.decls.extend_from_slice(local.decls.slice());
+                                p.preserved_jsx.move_statement(stmt, *prev_stmt);
                                 continue;
                             }
                         }
@@ -2171,6 +2173,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     && s_expr.does_not_affect_tree_shaking;
                                 prev_expr.value =
                                     Expr::join_with_comma(prev_expr.value, s_expr.value);
+                                p.preserved_jsx.move_statement(stmt, *prev_stmt);
                                 continue;
                             }
                         } else if let StmtData::SLocal(prev_local) = prev_stmt.data {
@@ -2204,6 +2207,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             {
                                                 decl.value = Some(bin_assign.right);
                                                 p.ignore_usage(left_id.ref_);
+                                                p.preserved_jsx.move_statement(stmt, *prev_stmt);
                                                 continue;
                                             }
                                         }
@@ -2223,6 +2227,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if !prev_stmt.is_super_call() {
                                 s_switch.test =
                                     Expr::join_with_comma(prev_expr.value, s_switch.test);
+                                p.preserved_jsx.move_statement(prev_stmt, stmt);
                                 output.truncate(prev_idx);
                             }
                         }
@@ -2237,6 +2242,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let StmtData::SExpr(prev_expr) = prev_stmt.data {
                             if !prev_stmt.is_super_call() {
                                 s_if.test = Expr::join_with_comma(prev_expr.value, s_if.test);
+                                p.preserved_jsx.move_statement(prev_stmt, stmt);
                                 output.truncate(prev_idx);
                             }
                         }
@@ -2259,6 +2265,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     prev_expr.value,
                                     ret.value.unwrap(),
                                 ));
+                                p.preserved_jsx.move_statement(prev_stmt, stmt);
                                 output[prev_idx] = stmt;
                                 continue;
                             }
@@ -2280,7 +2287,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_stmt = output[prev_idx];
                         if let StmtData::SExpr(prev_expr) = prev_stmt.data {
                             if !prev_stmt.is_super_call() {
-                                output[prev_idx] = p.s(
+                                let merged = p.s(
                                     S::Throw {
                                         value: Expr::join_with_comma(
                                             prev_expr.value,
@@ -2289,6 +2296,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     },
                                     stmt.loc,
                                 );
+                                p.preserved_jsx.move_statement(prev_stmt, merged);
+                                p.preserved_jsx.move_statement(stmt, merged);
+                                output[prev_idx] = merged;
                                 continue;
                             }
                         }

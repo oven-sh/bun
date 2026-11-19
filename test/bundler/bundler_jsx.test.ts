@@ -1090,6 +1090,24 @@ describe("bundler", () => {
         `,
         "undefined undefined undefined\n",
       ],
+      [
+        "pruned merged declarations and assignments",
+        `
+          function render() {
+            return [typeof a, typeof b, typeof c].join(" ");
+            if (globalThis.flag) {
+              var a = <Unused />;
+              var b = <Unused />;
+            }
+            if (globalThis.flag) {
+              var c;
+              c = <Unused />;
+            }
+          }
+          console.log(render());
+        `,
+        "undefined undefined undefined\n",
+      ],
     ])("runs with preserve after removing JSX in %s", async (_, source, expected) => {
       using dir = tempDir("jsx-discarded-code", { "in.jsx": source });
       await using proc = Bun.spawn({
@@ -1104,9 +1122,22 @@ describe("bundler", () => {
     });
 
     test.each([
-      ["a return", "  if (false) { var binding = <Unused />; }\n  return <Retained />;", 10],
-      ["a condition with a hoisted binding", "  return 1;\n  if (<Retained />) { var binding = <Unused />; }", 7],
-    ] as const)("preserve reports JSX in %s after pruning", async (_, body, column) => {
+      ["a return", "  if (false) { var binding = <Unused />; }\n  return <Retained />;", 3, 10],
+      ["a condition with a hoisted binding", "  return 1;\n  if (<Retained />) { var binding = <Unused />; }", 3, 7],
+      [
+        "a hoisted function between merged variables",
+        [
+          "  return typeof a;",
+          "  if (globalThis.flag) {",
+          "    var a = <Unused />;",
+          "    function hoisted() { return <Retained />; }",
+          "    var b = <Unused />;",
+          "  }",
+        ].join("\n"),
+        5,
+        33,
+      ],
+    ] as const)("preserve reports JSX in %s after pruning", async (_, body, line, column) => {
       using dir = tempDir("jsx-retained-syntax", {
         "in.jsx": ["function render() {", body, "}", "console.log(render());"].join("\n"),
       });
@@ -1120,7 +1151,7 @@ describe("bundler", () => {
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
       expect(exitCode, stderr).toBe(1);
       expect(stderr).toContain("Cannot preserve JSX in a file that Bun runs");
-      expect(stderr).toContain(`in.jsx:3:${column}`);
+      expect(stderr).toContain(`in.jsx:${line}:${column}`);
     });
 
     describe.each([
@@ -1164,6 +1195,15 @@ describe("bundler", () => {
               var binding = [<Unused />];
               console.log(<Unused />);
               if (<Unused />) throw <Unused />;
+              for (var { value = <Unused /> } of []) {}
+              if (globalThis.flag) {
+                var a = <Unused />;
+                var b = <Unused />;
+              }
+              if (globalThis.flag) {
+                var c;
+                c = <Unused />;
+              }
             }
             console.log(render());
           `,

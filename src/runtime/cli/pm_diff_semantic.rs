@@ -58,7 +58,9 @@ impl Projection<'_> {
 /// A plain line diff as `Op`s — the skeleton every view starts from.
 pub(crate) fn line_ops<'a>(old: &'a [u8], new: &'a [u8]) -> Vec<Op<'a>> {
     let hunks = text_diff::diff_lines(old, new);
-    let mut ops = Vec::with_capacity(old.len().min(new.len()) / 32 + 8);
+    let lines = |text: &[u8]| bun_core::strings::count_char(text, b'\n') + 1;
+    let inserted: usize = hunks.iter().map(|h| lines(&new[h.b_lo..h.b_hi])).sum();
+    let mut ops = Vec::with_capacity(lines(old) + inserted);
     // A line is numbered by the position it occupies on each side; a side that did not advance keeps its last.
     let (mut o, mut n) = (0usize, 0usize);
     let mut oa = 0usize;

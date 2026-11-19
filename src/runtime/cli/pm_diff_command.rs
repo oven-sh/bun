@@ -1125,6 +1125,10 @@ impl FileChange<'_> {
             .sum()
     }
 
+    fn is_js(&self) -> bool {
+        matches!(normalize::kind_for(self.path), Some(normalize::Kind::Js(_)))
+    }
+
     fn is_sourcemap(&self) -> bool {
         // Because of the colon, this prefix can only start JSON, never a JavaScript program.
         strings::ends_with(self.path, b".map")
@@ -1369,6 +1373,8 @@ pub(crate) struct Threads {
 }
 
 impl Threads {
+    const MIN_BYTES: usize = 256 << 10;
+
     /// A file that nests too deep for the stack is not parsed, so a thread gets at least as much as this one has left.
     fn with_stack_of_this_one() -> Threads {
         /// Upper bound on the stack that a thread has used when it starts on a file.
@@ -1401,17 +1407,15 @@ impl Threads {
         .without_spare_threads()
     }
 
-    /// Runs `there` on a new thread while `here` runs on this one. Runs neither if the smaller of the two works on
-    /// too few `bytes` for that, or if the OS cannot start a thread.
+    /// Runs `there` on a new thread while `here` runs on this one. Runs neither if the OS cannot start a thread, or if
+    /// `bytes`, which is about how much input the new thread takes off this one, is under `MIN_BYTES`.
     pub(crate) fn try_join<A, B: Send>(
         self,
         bytes: usize,
         here: impl FnOnce() -> A,
         there: impl FnOnce() -> B + Send,
     ) -> Option<(A, B)> {
-        const MIN_BYTES: usize = 256 << 10;
-
-        if bytes < MIN_BYTES {
+        if bytes < Self::MIN_BYTES {
             return None;
         }
         std::thread::scope(|scope| {
@@ -1420,9 +1424,7 @@ impl Threads {
                 .stack_size(self.stack_size)
                 .spawn_scoped(scope, || {
                     Output::Source::configure_named_thread(bun_core::zstr!("Diff"));
-                    let result = there();
-                    normalize::free_stores();
-                    result
+                    there()
                 })
                 .ok()?;
             Some((here(), thread.join().expect("a panic aborts")))
@@ -1585,8 +1587,8 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style, threads:
     }
     // Readable JS is compared on the aggressive key and shown as written; minified JS is shown re-printed,
     // so it gets the gentler display print.
-    let is_parsed = change.is_parsed(flags, style);
-    let readable_js = matches!(normalize::kind_for(path), Some(normalize::Kind::Js(_)))
+    let (is_parsed, js_family) = (change.is_parsed(flags, style), change.is_js());
+    let readable_js = js_family
         && is_parsed
         && !flags.unminify
         && !old.is_some_and(normalize::looks_minified)
@@ -1597,7 +1599,6 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style, threads:
         relayout: true,
         source_map: style.pretty,
     };
-    let js_family = matches!(normalize::kind_for(path), Some(normalize::Kind::Js(_)));
     let renamed = match (old, new) {
         (Some(o), Some(n)) if style.pretty && is_parsed && !readable_js => {
             normalize::normalize_minified_pair(path, o, n, nopts, threads)
@@ -2653,6 +2654,7 @@ fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>
 }
 
 fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors: bool) {
+    bun_ast::initialize_store();
     let bump = Bump::new();
     let parse = |bytes: &[u8]| {
         let src: &[u8] = bump.alloc_slice_copy(bytes);

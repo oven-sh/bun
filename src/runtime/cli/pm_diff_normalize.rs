@@ -99,12 +99,15 @@ pub(crate) fn normalize(path: &[u8], bytes: &[u8], options: Options) -> Option<N
     }
     let mut out = match kind_for(path)? {
         Kind::Js(loader) => {
-            let _store = StoreScope::enter();
-            let arena = Arena::new();
-            let source = bun_ast::Source::init_path_string(path, bytes);
-            let mut ast = parse_js(&arena, &source, loader, options)?;
-            let symbols = take_symbols(&mut ast);
-            print_js(&arena, ast, symbols, &source, options)
+            let printed = {
+                let _store = StoreScope::enter();
+                let arena = Arena::new();
+                let source = bun_ast::Source::init_path_string(path, bytes);
+                let mut ast = parse_js(&arena, &source, loader, options)?;
+                let symbols = take_symbols(&mut ast);
+                print_js(&arena, ast, symbols, &source, options)
+            };
+            printed.map(|printed| printed.decode(bytes))
         }
         Kind::Css => normalize_css(bytes),
         Kind::Json => normalize_json(path, bytes),
@@ -143,7 +146,8 @@ pub(crate) fn normalize_key_pair(
 }
 
 /// Returns the two prints and a sorted list of every name in them that was not renamed, such as the
-/// names of globals and exports. The two `options` may differ only in `source_map`.
+/// names of globals and exports. The two `options` may differ only in `source_map`. On one thread, `new` is
+/// parsed first.
 fn print_pair(
     path: &[u8],
     old: &[u8],
@@ -166,29 +170,34 @@ fn print_pair(
         as_written.set(namer.taken);
         (!namer.too_deep).then_some(namer.sides.map(|side| side.symbols))
     };
-    let _store = StoreScope::enter();
     let on_two_threads = |threads: Threads| {
         // A side that gives up drops its ends, which makes the other one give up.
         let ((send_locals, locals), (send_renamed, renamed)) = (mpsc::channel(), mpsc::channel());
         threads.try_join(
             old.len().min(new.len()),
             || {
-                print_renamed(path, old, loader, options[0], move |o| {
+                let store = StoreScope::enter();
+                let printed = print_renamed(path, old, loader, options[0], move |o| {
                     let [o, n] = rename(o, locals.recv().ok()?)?;
                     send_renamed.send(n).ok()?;
                     Some(o)
-                })
+                });
+                drop(store);
+                printed.map(|printed| printed.decode(old))
             },
             move || {
-                let _store = StoreScope::enter();
-                print_renamed(path, new, loader, options[1], |n| {
+                let store = StoreScope::enter();
+                let printed = print_renamed(path, new, loader, options[1], |n| {
                     send_locals.send(n).ok()?;
                     renamed.recv().ok()
-                })
+                });
+                drop(store);
+                printed.map(|printed| printed.decode(new))
             },
         )
     };
     let on_this_thread = || {
+        let store = StoreScope::enter();
         let mut printed_o = None;
         let printed_n = print_renamed(path, new, loader, options[1], |n| {
             let mut renamed_n = None;
@@ -199,7 +208,11 @@ fn print_pair(
             });
             renamed_n
         });
-        (printed_o, printed_n)
+        drop(store);
+        (
+            printed_o.map(|printed| printed.decode(old)),
+            printed_n.map(|printed| printed.decode(new)),
+        )
     };
     let (o, n) = threads
         .and_then(on_two_threads)
@@ -214,7 +227,7 @@ fn print_renamed(
     loader: bun_ast::Loader,
     options: Options,
     rename: impl FnOnce(Locals) -> Option<Vec<Symbol>>,
-) -> Option<Normalized> {
+) -> Option<Printed> {
     let arena = Arena::new();
     let source = bun_ast::Source::init_path_string(path, bytes);
     let mut ast = parse_js(&arena, &source, loader, options)?;
@@ -229,7 +242,7 @@ fn print_renamed(
 /// `removed` lists the lines of `shown` (0-based, ascending) that the diff marks as removed. A name
 /// mismatch there is accepted, because such a line may still use a local's old name.
 pub(crate) fn same_program(path: &[u8], old: &[u8], shown: &[u8], removed: &[u32]) -> bool {
-    // No second thread: a large `shown` most often fails to parse, and then `old` is not parsed at all.
+    // No second thread, so that `old` is not parsed if `shown` fails to parse.
     same_key(path, old, shown, removed, Options::KEY, None)
 }
 
@@ -335,24 +348,22 @@ pub(crate) fn looks_minified(bytes: &[u8]) -> bool {
     bytes.len() > 256 && long * 2 > bytes.len()
 }
 
-/// The parser allocates AST nodes and vectors from thread-local stores; keep them alive in this scope. After
-/// it, the nodes' stores are reset and the vectors freed.
-struct StoreScope(bun_ast::StoreResetGuard, bun_ast::StoreAstAllocHeap);
+/// The parser allocates AST nodes and vectors from thread-local stores; keep them alive in this scope. Its end frees
+/// the stores, so scopes must not nest.
+struct StoreScope(bun_ast::StoreAstAllocHeap);
 impl StoreScope {
     fn enter() -> StoreScope {
         bun_ast::expr::data::Store::create();
         bun_ast::stmt::data::Store::create();
-        StoreScope(
-            bun_ast::StoreResetGuard::new(),
-            bun_ast::StoreAstAllocHeap::new(),
-        )
+        StoreScope(bun_ast::StoreAstAllocHeap::new())
     }
 }
-
-/// A reset keeps the stores' memory for the thread's next file.
-pub(crate) fn free_stores() {
-    bun_ast::expr::data::Store::deinit();
-    bun_ast::stmt::data::Store::deinit();
+impl Drop for StoreScope {
+    fn drop(&mut self) {
+        // A reset would keep their memory.
+        bun_ast::expr::data::Store::deinit();
+        bun_ast::stmt::data::Store::deinit();
+    }
 }
 
 fn parse_js<'a>(
@@ -422,13 +433,21 @@ fn take_symbols(ast: &mut bun_ast::Ast<'_>) -> Vec<Symbol> {
         .collect()
 }
 
+/// A print whose source map is still encoded, which keeps it small until the AST is freed.
+struct Printed {
+    text: Vec<u8>,
+    map: Option<bun_sourcemap::Chunk>,
+    imports: Vec<Vec<u8>>,
+    hashbang: Vec<u8>,
+}
+
 fn print_js<'a>(
     arena: &'a Arena,
     mut ast: Box<bun_ast::Ast<'a>>,
     symbols: Vec<Symbol>,
     source: &'a bun_ast::Source<'a>,
     options: Options,
-) -> Option<Normalized> {
+) -> Option<Printed> {
     super::pm_diff_relayout::relayout(arena, &mut ast, options.relayout);
     let imports: Vec<Vec<u8>> = ast
         .import_records
@@ -459,71 +478,86 @@ fn print_js<'a>(
         bun_js_printer::print_ast::<false, false>
     };
     print_ast(&mut printer, arena, &ast, symbols, source, print_opts).ok()?;
-    let mut text = printer.ctx.buffer.list;
+    Some(Printed {
+        text: printer.ctx.buffer.list,
+        map: chunk.into_inner(),
+        imports,
+        hashbang: ast.hashbang.slice().to_vec(),
+    })
+}
 
-    let mut map = Vec::new();
-    if let Some(chunk) = chunk.into_inner() {
-        let (printed, original) = (newline_lines(&text), newline_lines(source.contents()));
-        let place = |lines: &Option<Vec<(u32, u32)>>, line: i32, col: i32| {
-            let (line, col) = (line as u32, col.max(0) as u32);
-            match lines.as_ref().and_then(|lines| lines.get(line as usize)) {
-                Some(&(line, start)) => (line, start + col),
-                None => (line, col),
-            }
-        };
-        if let Ok(parsed) = bun_sourcemap::mapping::parse(
-            chunk.buffer.list.as_slice(),
-            None,
-            1,
-            bun_sourcemap::mapping::ParseOptions {
-                allow_names: false,
-                sort: true,
-            },
-        ) {
-            let (from, to) = (parsed.mappings.original(), parsed.mappings.generated());
-            map.reserve(to.len());
-            for (g, o) in to.iter().zip(from) {
-                if g.lines.zero_based() >= 0 && o.lines.zero_based() >= 0 {
-                    let (gen_line, gen_col) =
-                        place(&printed, g.lines.zero_based(), g.columns.zero_based());
-                    let (orig_line, orig_col) =
-                        place(&original, o.lines.zero_based(), o.columns.zero_based());
-                    map.push(MapPoint {
-                        gen_line,
-                        gen_col,
-                        orig_line,
-                        orig_col,
-                    });
+impl Printed {
+    /// `source` is the text that was parsed.
+    fn decode(self, source: &[u8]) -> Normalized {
+        let Printed {
+            mut text,
+            map: chunk,
+            imports,
+            hashbang,
+        } = self;
+        let mut map = Vec::new();
+        if let Some(chunk) = &chunk {
+            let (printed, original) = (newline_lines(&text), newline_lines(source));
+            let place = |lines: &Option<Vec<(u32, u32)>>, line: i32, col: i32| {
+                let (line, col) = (line as u32, col.max(0) as u32);
+                match lines.as_ref().and_then(|lines| lines.get(line as usize)) {
+                    Some(&(line, start)) => (line, start + col),
+                    None => (line, col),
+                }
+            };
+            if let Ok(parsed) = bun_sourcemap::mapping::parse(
+                chunk.buffer.list.as_slice(),
+                None,
+                1,
+                bun_sourcemap::mapping::ParseOptions {
+                    allow_names: false,
+                    sort: true,
+                },
+            ) {
+                let (from, to) = (parsed.mappings.original(), parsed.mappings.generated());
+                map.reserve(to.len());
+                for (g, o) in to.iter().zip(from) {
+                    if g.lines.zero_based() >= 0 && o.lines.zero_based() >= 0 {
+                        let (gen_line, gen_col) =
+                            place(&printed, g.lines.zero_based(), g.columns.zero_based());
+                        let (orig_line, orig_col) =
+                            place(&original, o.lines.zero_based(), o.columns.zero_based());
+                        map.push(MapPoint {
+                            gen_line,
+                            gen_col,
+                            orig_line,
+                            orig_col,
+                        });
+                    }
                 }
             }
         }
-    }
-    // The printer leaves the hashbang to its caller. The hashbang decides what runs the file, so it
-    // is kept as the first line of the output.
-    let hashbang = ast.hashbang.slice();
-    if !hashbang.is_empty() {
-        text = [hashbang, b"\n".as_slice(), text.as_slice()].concat();
-        for point in &mut map {
-            point.gen_line += 1;
+        // The printer leaves the hashbang to its caller. The hashbang decides what runs the file, so it
+        // is kept as the first line of the output.
+        if !hashbang.is_empty() {
+            text = [&hashbang, b"\n".as_slice(), text.as_slice()].concat();
+            for point in &mut map {
+                point.gen_line += 1;
+            }
+            if chunk.is_some() {
+                map.insert(
+                    0,
+                    MapPoint {
+                        gen_line: 0,
+                        gen_col: 0,
+                        orig_line: 0,
+                        orig_col: 0,
+                    },
+                );
+            }
         }
-        if options.source_map {
-            map.insert(
-                0,
-                MapPoint {
-                    gen_line: 0,
-                    gen_col: 0,
-                    orig_line: 0,
-                    orig_col: 0,
-                },
-            );
+        Normalized {
+            text,
+            map,
+            imports,
+            was_minified: false,
         }
     }
-    Some(Normalized {
-        text,
-        map,
-        imports,
-        was_minified: false,
-    })
 }
 
 /// Renames short (mangled-looking) locals on both sides of a diff so that the same code prints with the same names.

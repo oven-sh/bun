@@ -150,6 +150,12 @@ mod simd {
     impl<T: Int<N>, const N: usize> Vector<T, N> {
         /// Keeps LLVM from merging the ops before it with those after it. For a whole register.
         pub fn opaque(self) -> Self {
+            const {
+                assert!(
+                    matches!(size_of::<Self>(), 16..=isa::U8::LEN),
+                    "no register"
+                )
+            };
             isa::opaque_lanes(self)
         }
     }

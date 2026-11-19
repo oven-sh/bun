@@ -60,12 +60,16 @@ cfg_select! {
         }
     }
     _ => {
-        pub use core::convert::{identity as opaque16, identity as opaque32, identity as opaque64};
-        pub use core::mem::drop as keep16;
+        pub use core::convert::identity as opaque16;
+        #[cfg(target_arch = "x86_64")]
+        pub use core::convert::{identity as opaque32, identity as opaque64};
 
         #[inline(always)]
         pub fn opaque(word: u64) -> u64 {
             word
         }
+
+        #[inline(always)]
+        pub fn keep16(_: core::simd::u8x16) {}
     }
 }

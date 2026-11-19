@@ -584,7 +584,7 @@ pub mod avx2 {
         v: crate::Vector<T, N, I>,
     ) -> crate::Vector<T, N, I> {
         match size_of_val(&v) {
-            32 => crate::Vector::from_first_bytes(opaque32(v.first_bytes())),
+            32 => crate::Vector::from_first_bytes::<32>(opaque32(v.first_bytes())),
             _ => native::opaque_lanes(v),
         }
     }
@@ -634,7 +634,7 @@ mod avx512 {
         v: Vector<T, N, I>,
     ) -> Vector<T, N, I> {
         match size_of_val(&v) {
-            64 => Vector::from_first_bytes(opaque64(v.first_bytes())),
+            64 => Vector::from_first_bytes::<64>(opaque64(v.first_bytes())),
             _ => avx2::opaque_lanes(v),
         }
     }

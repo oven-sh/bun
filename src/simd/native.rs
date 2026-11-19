@@ -41,8 +41,7 @@ pub(crate) fn store_shared<const N: usize, const K: usize, const AT: usize>(
 pub(crate) fn opaque_lanes<T: Int<N>, const N: usize, I: Isa>(
     v: Vector<T, N, I>,
 ) -> Vector<T, N, I> {
-    assert!(size_of_val(&v) == 16);
-    Vector::from_first_bytes(opaque16(v.first_bytes()))
+    Vector::from_first_bytes::<16>(opaque16(v.first_bytes()))
 }
 
 #[repr(align(32))]

@@ -767,6 +767,30 @@ mod simd {
 simd::f(b"");
 ```
 
+`opaque` for a vector that does not fill one register:
+
+```rust,compile_fail,E0080
+#[bun_simd::foreach_target]
+mod simd {
+    #[export]
+    pub fn f() -> u8 {
+        isa::x256::U8::zero().opaque()[0]
+    }
+}
+simd::f();
+```
+
+```rust,compile_fail,E0080
+#[bun_simd::foreach_target]
+mod simd {
+    #[export]
+    pub fn f() -> u8 {
+        isa::Vector::<u8, 8>::zero().opaque()[0]
+    }
+}
+simd::f();
+```
+
 A load from shared memory that is wider than a register:
 
 ```rust,compile_fail,E0080

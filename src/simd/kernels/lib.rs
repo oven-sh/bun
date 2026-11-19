@@ -30,7 +30,7 @@ pub mod xml;
 mod xxhash;
 pub mod zlib;
 
-use bun_simd::{Out, Source, Writer};
+use bun_simd::{Out, Source, Writer, opaque};
 
 pub use byte_set::ByteSet;
 pub use {adler32::*, crc32::*, xxhash::*};
@@ -41,7 +41,7 @@ trait Byte = Source<Lane = u8>;
 
 /// What gets the bytes that a checksum loads.
 trait Copies {
-    /// Then loads have to be `opaque`: LLVM may repeat them, and a script may be writing to the input.
+    /// Then loads are `opaque`, or LLVM may make a second pass of the copy.
     const KEEPS: bool;
 
     /// Keeps the first `count`.
@@ -88,7 +88,8 @@ fn copy_then<'a>(
     let mut to = to.into_writer();
     to.extend_from_slice(from);
     let copy = to.finish();
-    *sum = update(*sum, copy);
+    // LLVM may read `from` again, unless this can be another address.
+    *sum = update(*sum, &copy[opaque(0) as usize..]);
     copy
 }
 

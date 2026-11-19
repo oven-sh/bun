@@ -217,7 +217,7 @@ What you have to trust:
 
 - **Detection.** A feature counts only if the CPU reports it and the system saves its registers. The same has to hold for every feature that it implies. SVE does not count on Linux before 6.2 but for 5.14.0, as [for glibc](https://sourceware.org/pipermail/glibc-cvs/2024q2/084813.html): it traps after each system call. Arm requires and LLVM assumes that the length of its vectors is a power of two. `trusted/os.rs` makes the queries. The decoders are pure functions of the answers.
 - **`if_supported!` and `AtomicFn`**, which stores the chosen pointer.
-- **`opaque` and `keep16`**, which are `asm!` without an instruction.
+- **`opaque` for each kind of register, and `keep16`**, which are `asm!` without an instruction.
 - **`from_array`, `load_or_default` and `windows`.** The first takes the lanes of an array as a vector of the same size. The second enables only the lanes that the slice has. The third clamps indices before it uses them. Miri runs all three.
 - **`Out`, `Writer`, `spare_capacity` and `extend_cursor`.** They write only initialized values, and count them. Miri runs their tests, but for `fill_from_last`, which needs AVX-512.
 - **`Appender`.** It can copy bytes that are not initialized, but it does not count them. Miri runs its tests.

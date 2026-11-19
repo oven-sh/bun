@@ -138,9 +138,12 @@ pub(crate) fn exec(
         None => materialize(pm, &left_spec, as_published)?,
     };
     let threads = Threads::with_stack_of_this_one();
-    let (unpacked_right, unpacked_left) = threads
-        .join(|| right.unpack(), || left.unpack())
-        .unwrap_or_else(|| (right.unpack(), left.unpack()));
+    let packed = |tree: &Tree| tree.packed.as_ref().map_or(0, Vec::len);
+    let (unpacked_right, unpacked_left) = threads.join(
+        packed(&right).min(packed(&left)),
+        || right.unpack(),
+        || left.unpack(),
+    );
     unpacked_right
         .and(unpacked_left)
         .map_err(Unreadable::report)?;
@@ -1379,23 +1382,43 @@ impl Threads {
         }
     }
 
-    /// Runs `there` on a new thread while `here` runs on this one. Runs neither if the OS cannot start a thread.
-    pub(crate) fn join<A, B: Send>(
+    /// Runs `there` on a new thread while `here` runs on this one. Runs neither if the smaller of the two works on
+    /// too few `bytes` for that, or if the OS cannot start a thread.
+    pub(crate) fn try_join<A, B: Send>(
         self,
+        bytes: usize,
         here: impl FnOnce() -> A,
         there: impl FnOnce() -> B + Send,
     ) -> Option<(A, B)> {
+        const MIN_BYTES: usize = 256 << 10;
+
+        if bytes < MIN_BYTES {
+            return None;
+        }
         std::thread::scope(|scope| {
             // SAFETY: this command starts no VM, so `there` holds no state of one.
             let thread = std::thread::Builder::new()
                 .stack_size(self.stack_size)
                 .spawn_scoped(scope, || {
                     Output::Source::configure_named_thread(bun_core::zstr!("Diff"));
-                    there()
+                    let result = there();
+                    normalize::free_stores();
+                    result
                 })
                 .ok()?;
             Some((here(), thread.join().expect("a panic aborts")))
         })
+    }
+
+    /// Like `try_join`, but runs both on this thread instead of neither.
+    pub(crate) fn join<A, B: Send>(
+        self,
+        bytes: usize,
+        mut here: impl FnMut() -> A,
+        mut there: impl FnMut() -> B + Send,
+    ) -> (A, B) {
+        self.try_join(bytes, &mut here, &mut there)
+            .unwrap_or_else(|| (here(), there()))
     }
 }
 
@@ -1676,13 +1699,7 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style, threads:
                         // text can show the change.
                         change.semantic = Semantic::Text;
                         unified_hunks(o, n, flags.context, style, change);
-                    } else if !projection.holds(
-                        path,
-                        &shown_o.text,
-                        &shown_n.text,
-                        same_key,
-                        threads,
-                    ) {
+                    } else if !projection.holds(path, &shown_o.text, &shown_n.text, same_key) {
                         change.origin = Some([shown_o.origin, shown_n.origin]);
                         unified_hunks(&shown_o.text, &shown_n.text, flags.context, style, change);
                     } else if projection
@@ -1724,7 +1741,7 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style, threads:
                         .ops
                         .iter()
                         .any(|op| op.kind != Operation::Equal || op.affected);
-                    if !projection.holds(path, &old_v, &new_v, ko.text == kn.text, threads) {
+                    if !projection.holds(path, &old_v, &new_v, ko.text == kn.text) {
                         render_ops(&unfolded, flags.context, style, change, (false, false));
                     } else if shown {
                         change.semantic = Semantic::Projected;

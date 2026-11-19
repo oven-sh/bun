@@ -122,7 +122,7 @@ pub(crate) fn normalize_minified_pair(
     threads: Threads,
 ) -> Option<(Normalized, Normalized)> {
     let all_names = false;
-    let (mut o, mut n, _) = print_pair(path, old, new, [options; 2], all_names, threads)?;
+    let (mut o, mut n, _) = print_pair(path, old, new, [options; 2], all_names, Some(threads))?;
     o.was_minified = true;
     n.was_minified = true;
     Some((o, n))
@@ -139,7 +139,7 @@ pub(crate) fn normalize_key_pair(
     threads: Threads,
 ) -> Option<(Normalized, Normalized)> {
     let all_names = true;
-    print_pair(path, old, new, [options; 2], all_names, threads).map(|(o, n, _)| (o, n))
+    print_pair(path, old, new, [options; 2], all_names, Some(threads)).map(|(o, n, _)| (o, n))
 }
 
 /// Returns the two prints and a sorted list of every name in them that was not renamed, such as the
@@ -150,11 +150,8 @@ fn print_pair(
     new: &[u8],
     options: [Options; 2],
     all_names: bool,
-    threads: Threads,
+    threads: Option<Threads>,
 ) -> Option<(Normalized, Normalized, Vec<Vec<u8>>)> {
-    /// With less text on either side, starting a thread costs more than it saves.
-    const MIN_BYTES_FOR_THREAD: usize = 256 << 10;
-
     let Some(Kind::Js(loader)) = kind_for(path) else {
         return None;
     };
@@ -170,10 +167,11 @@ fn print_pair(
         (!namer.too_deep).then_some(namer.sides.map(|side| side.symbols))
     };
     let _store = StoreScope::enter();
-    let on_two_threads = || {
+    let on_two_threads = |threads: Threads| {
         // A side that gives up drops its ends, which makes the other one give up.
         let ((send_locals, locals), (send_renamed, renamed)) = (mpsc::channel(), mpsc::channel());
-        threads.join(
+        threads.try_join(
+            old.len().min(new.len()),
             || {
                 print_renamed(path, old, loader, options[0], move |o| {
                     let [o, n] = rename(o, locals.recv().ok()?)?;
@@ -182,35 +180,29 @@ fn print_pair(
                 })
             },
             move || {
-                let printed = {
-                    let _store = StoreScope::enter();
-                    print_renamed(path, new, loader, options[1], |n| {
-                        send_locals.send(n).ok()?;
-                        renamed.recv().ok()
-                    })
-                };
-                bun_ast::expr::data::Store::deinit();
-                bun_ast::stmt::data::Store::deinit();
-                printed
+                let _store = StoreScope::enter();
+                print_renamed(path, new, loader, options[1], |n| {
+                    send_locals.send(n).ok()?;
+                    renamed.recv().ok()
+                })
             },
         )
     };
     let on_this_thread = || {
-        let mut printed_n = None;
-        let printed_o = print_renamed(path, old, loader, options[0], |o| {
-            let mut renamed_o = None;
-            printed_n = print_renamed(path, new, loader, options[1], |n| {
+        let mut printed_o = None;
+        let printed_n = print_renamed(path, new, loader, options[1], |n| {
+            let mut renamed_n = None;
+            printed_o = print_renamed(path, old, loader, options[0], |o| {
                 let [o, n] = rename(o, n)?;
-                renamed_o = Some(o);
-                Some(n)
+                renamed_n = Some(n);
+                Some(o)
             });
-            renamed_o
+            renamed_n
         });
         (printed_o, printed_n)
     };
-    let (o, n) = (old.len().min(new.len()) >= MIN_BYTES_FOR_THREAD)
-        .then(on_two_threads)
-        .flatten()
+    let (o, n) = threads
+        .and_then(on_two_threads)
         .unwrap_or_else(on_this_thread);
     Some((o?, n?, as_written.into_inner()))
 }
@@ -236,14 +228,9 @@ fn print_renamed(
 ///
 /// `removed` lists the lines of `shown` (0-based, ascending) that the diff marks as removed. A name
 /// mismatch there is accepted, because such a line may still use a local's old name.
-pub(crate) fn same_program(
-    path: &[u8],
-    old: &[u8],
-    shown: &[u8],
-    removed: &[u32],
-    threads: Threads,
-) -> bool {
-    same_key(path, old, shown, removed, Options::KEY, threads)
+pub(crate) fn same_program(path: &[u8], old: &[u8], shown: &[u8], removed: &[u32]) -> bool {
+    // No second thread: a large `shown` most often fails to parse, and then `old` is not parsed at all.
+    same_key(path, old, shown, removed, Options::KEY, None)
 }
 
 fn same_key(
@@ -252,7 +239,7 @@ fn same_key(
     shown: &[u8],
     removed: &[u32],
     options: Options,
-    threads: Threads,
+    threads: Option<Threads>,
 ) -> bool {
     let options = [options.without_source_map(), options];
     let all_names = true;
@@ -321,7 +308,14 @@ pub(crate) fn stands_for_renamed(
     options: Options,
     threads: Threads,
 ) -> bool {
-    same_key(path, raw, shown, &[], options.without_source_map(), threads)
+    same_key(
+        path,
+        raw,
+        shown,
+        &[],
+        options.without_source_map(),
+        Some(threads),
+    )
 }
 
 /// Keeps exported symbols from being renamed. An export's name is part of the module's interface.
@@ -353,6 +347,12 @@ impl StoreScope {
             bun_ast::StoreAstAllocHeap::new(),
         )
     }
+}
+
+/// A reset keeps the stores' memory for the thread's next file.
+pub(crate) fn free_stores() {
+    bun_ast::expr::data::Store::deinit();
+    bun_ast::stmt::data::Store::deinit();
 }
 
 fn parse_js<'a>(

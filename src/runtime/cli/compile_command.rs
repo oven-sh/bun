@@ -156,6 +156,7 @@ pub(crate) enum AssetError {
 pub(crate) enum CompileFailure {
     NoCompiler,
     CrossCompilation,
+    DecimalOperators,
     NoIdentity(IdentityError),
     TemplateUnreadable {
         error: bun_sys::Error,

@@ -422,6 +422,9 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useAOT() = runsCompiledCode;
             // The bits of DecimalOptions in decimal_options.rs.
             JSC::Options::useDecimal() = decimalOptions & (1 << 0);
+            JSC::Options::useDecimalStructuredClone() = decimalOptions & (1 << 1);
+            JSC::Options::useDecimalToJSON() = decimalOptions & (1 << 2);
+            JSC::Options::useDecimalOperators() = decimalOptions & (1 << 3);
             // Upstream enabled Wasm Memory64 by default (0d0080ea539d); keep
             // it off in Bun while upstream stabilises it.
             // BUN_JSC_useWasmMemory64=1 re-enables it for opt-in testing.

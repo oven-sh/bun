@@ -443,6 +443,9 @@ fn check_request(request: &CompileRequest<'_, '_>) -> Result<Target, CompileFail
     if !request.executable.target.is_default() {
         return Err(CompileFailure::CrossCompilation);
     }
+    if request.executable.runtime_options.decimal.has_operators() {
+        return Err(CompileFailure::DecimalOperators);
+    }
     if let CompileProduct::Executable { .. } = request.product {
         if let Some(path) = request.executable.executable_path {
             return check_template(path);

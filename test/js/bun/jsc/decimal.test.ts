@@ -681,3 +681,151 @@ test.concurrent("there is no literal", async () => {
   }
   expect(await evaluate("", [`(0, eval)("1.5m")`])).toEqual(["throws SyntaxError"]);
 });
+
+describe.concurrent("BUN_JSC_useDecimalStructuredClone", () => {
+  const option = { BUN_JSC_useDecimalStructuredClone: "1" };
+  const values = ["NaN", "Infinity", "-Infinity", "0", "-0", "1", "-1.5", "1e-7", "1e34", "-1e6144", "1e-6176"];
+  values.push("1.234567890123456789012345678901234");
+
+  test.each(Object.entries(clones))("%s", async (_, setup) => {
+    const expressions: string[] = [];
+    const expected: unknown[] = [];
+    for (const text of values) {
+      expressions.push(`clone(d("${text}")).then(exact)`, `clone({ a: [d("${text}")] }).then(x => exact(x.a[0]))`);
+      expressions.push(`exact(d("${text}"))`);
+    }
+    expressions.push(
+      // Identity, and that the numbering of other objects stays right.
+      `(async () => {
+        const x = d("1.5"), o = {}, big = Object(1n);
+        const c = await clone([x, o, x, d("1.5"), big, o, x, big, new Map([[x, x]])]);
+        const [[key, value]] = [...c[8]];
+        return [c[0] === c[2], c[0] === c[6], c[0] !== c[3], c[1] === c[5], c[4] === c[7], key === c[0], value === c[0]];
+      })()`,
+      `clone(Object.assign(new (class extends Decimal {})("2"), { own: 1 })).then(x => [exact(x), x.constructor === Decimal, "own" in x])`,
+    );
+    const results = await evaluate(setup, expressions, option);
+    for (let i = 0; i < values.length; i++) {
+      expected.push(results[3 * i + 2], results[3 * i + 2], results[3 * i + 2]);
+      expect(results[3 * i + 2]).not.toBe("not a Decimal");
+    }
+    expected.push([true, true, true, true, true, true, true], ["2e0", true, false]);
+    expect(results).toEqual(expected);
+  });
+
+  test("Worker", async () => {
+    using dir = tempDir("decimal-worker", {
+      "main.js": `
+        const worker = new Worker(new URL("./worker.js", import.meta.url));
+        worker.onmessage = event => {
+          console.write(event.data.sum instanceof Decimal ? event.data.sum.toString() : "not a Decimal");
+          worker.terminate();
+        };
+        worker.postMessage({ a: new Decimal("0.1"), b: new Decimal("0.2") });
+      `,
+      "worker.js": `onmessage = event => postMessage({ sum: event.data.a.add(event.data.b) });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: { ...env, ...option },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("0.3");
+    expect(exitCode).toBe(0);
+  });
+
+  test("bytes cut short or changed are rejected", async () => {
+    expect(
+      await evaluate(
+        `const { serialize, deserialize } = require("bun:jsc");`,
+        [
+          `(() => {
+          const bytes = new Uint8Array(serialize({ a: d("12345.6789") }));
+          let accepted = 0;
+          for (let length = 1; length < bytes.length; length++) {
+            try { deserialize(bytes.slice(0, length).buffer); accepted++; } catch {}
+          }
+          return accepted;
+        })()`,
+          `(() => {
+          const bytes = new Uint8Array(serialize(d("12345.6789")));
+          const text = Buffer.from("1.23456789e4");
+          const at = Buffer.from(bytes).indexOf(text);
+          bytes[at] = 0x78;
+          return [at > 0, (() => { try { deserialize(bytes.buffer); return "accepted"; } catch { return "rejected"; } })()];
+        })()`,
+        ],
+        option,
+      ),
+    ).toEqual([0, [true, "rejected"]]);
+  });
+
+  test.each([
+    ["Decimal", { ...off, ...option }],
+    ["the option", env],
+  ])("bytes with a Decimal are rejected by a process without %s", async (_, variables) => {
+    const { stdout } = await run(
+      `console.write(Buffer.from(require("bun:jsc").serialize({ a: new Decimal("1.5") })).toString("hex"))`,
+      option,
+    );
+    expect(stdout.length).toBeGreaterThan(20);
+    const read = `try { console.write(String(require("bun:jsc").deserialize(Buffer.from("${stdout}", "hex")))) } catch { console.write("rejected") }`;
+    expect(await spawn([bunExe(), "-e", read], import.meta.dir, variables)).toEqual({
+      stdout: "rejected",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+describe.concurrent("BUN_JSC_useDecimalToJSON", () => {
+  const option = { BUN_JSC_useDecimalToJSON: "1" };
+
+  test("the formats write the exact value", async () => {
+    const text = "1.234567890123456789012345678901234";
+    const results = await evaluate(`const x = d("${text}");`, formats, option);
+    for (const result of results) expect(result).toContain(text);
+  });
+
+  test("a Decimal is still not an indent", async () => {
+    expect(await evaluate(`const x = { a: { b: 1 } };`, indents, option)).toEqual([true, true, true]);
+  });
+});
+
+test.concurrent.each([
+  ["StructuredClone", "Operators", "1.5 TypeError 3"],
+  ["ToJSON", "Operators", 'DataCloneError "1.5" 3'],
+])(
+  "an executable keeps BUN_JSC_useDecimal%s and %s, and no other option",
+  async (first, second, expected) => {
+    const source = `
+    const x = new Decimal("1.5");
+    const outcome = f => { try { return String(f()); } catch (error) { return error.name; } };
+    console.write([() => structuredClone(x), () => JSON.stringify(x), () => x + x].map(outcome).join(" "));
+  `;
+    const variables = { ...env, ["BUN_JSC_useDecimal" + first]: "1", ["BUN_JSC_useDecimal" + second]: "1" };
+    const result = await compileAndRun(["--bytecode", "--format=esm"], { "main.js": source }, variables);
+    expect(result).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+  },
+  60_000,
+);
+
+// Compiled code has no operators, so == would compare identity where bun run compares values.
+test.skipIf(!!unsupported).concurrent.each([
+  ["--aot", ["build", "--compile", "--aot", "main.js"]],
+  ["bun compile", ["compile", "main.js"]],
+  ["compile.aot", ["build.js"]],
+])("%s refuses BUN_JSC_useDecimalOperators", async (subject, command) => {
+  using dir = tempDir("decimal-executable", {
+    "main.js": "console.log(new Decimal(1) == new Decimal(1));",
+    "build.js": `await Bun.build({ entrypoints: ["main.js"], compile: { aot: true, outfile: "program" } });`,
+  });
+  const variables = { ...env, BUN_JSC_useDecimalOperators: "1" };
+  const { stderr, exitCode } = await spawn([bunExe(), ...command], String(dir), variables);
+  expect(stderr).toContain(`${subject} doesn't support BUN_JSC_useDecimalOperators`);
+  expect(exitCode).toBe(1);
+});

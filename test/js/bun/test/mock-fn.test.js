@@ -326,6 +326,25 @@ describe("mock()", () => {
     const fn = jest.fn();
     expect(fn.name).toBe("mockConstructor");
   });
+  if (isBun) {
+    // JavaScriptCore binds an anonymous default export to the private name `*default*`. Its name is "default".
+    test(".name of an anonymous default class or function declaration is default", async () => {
+      const { default: Class } = await import("data:text/javascript,export default class {}");
+      // The text of a SourceTextModule reaches JavaScriptCore as it is written.
+      const module = new vm.SourceTextModule("export default function () {}");
+      await module.link(() => {});
+      await module.evaluate();
+      const declaration = module.namespace.default;
+
+      // jest.fn() has the mock name "jest.fn()" whatever it wraps. mock() takes the name of the function.
+      expect([
+        jest.fn(Class).name,
+        mock(Class).getMockName(),
+        jest.fn(declaration).name,
+        mock(declaration).getMockName(),
+      ]).toEqual(["default", "default", "default", "default"]);
+    });
+  }
   test(".name throwing doesnt segfault", () => {
     function baddie() {
       return this;

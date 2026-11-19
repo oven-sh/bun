@@ -3,7 +3,7 @@
 // STATISTIC: SourceFilesDemoted = 0
 // STATISTIC: SourceFilesChecked = 2
 // CHECK: layout [[box]] kind=Instance module=[[package]] constructor=[[constructor]]
-// CHECK: function [[constructor]] name="default" module=[[package]] {{*}}flags=[HasNewTarget, IsChecked]
+// CHECK: function [[constructor]] name="default" module=[[package]] {{*}}flags=[HasNewTarget, IsChecked, HasExplicitName]
 
 import Box from "ships-typescript";
 console.log(new Box().size);

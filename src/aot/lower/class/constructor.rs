@@ -41,7 +41,11 @@ impl FileLowering<'_, '_, '_, '_> {
             header.flags |= FunctionFlags::HAS_EXPLICIT_NAME;
         } else {
             header.name = name;
-            header.flags = header.flags.without(FunctionFlags::HAS_EXPLICIT_NAME);
+            // A class declaration with no name is `export default class {}`. It has the name `default` from the start, as `export default function () {}` has.
+            header.flags = match self.bound.class_owner[class.idx()] {
+                ClassOwner::Stmt(_) => header.flags | FunctionFlags::HAS_EXPLICIT_NAME,
+                ClassOwner::Expr(_) => header.flags.without(FunctionFlags::HAS_EXPLICIT_NAME),
+            };
         }
         let end = match self.bound.class_owner[class.idx()] {
             ClassOwner::Expr(expression) => hir[expression].end,

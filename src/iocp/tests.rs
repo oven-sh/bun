@@ -12,6 +12,7 @@ use std::time::Instant;
 
 use bun_sys::windows::{self as w, NTSTATUS, PipeDirection, PipeMode};
 use bun_threading::fifo_pool::{Config, FifoPool};
+use bun_threading::spin::has_other_cpu;
 
 use crate::blocking::{self, Cancel};
 use crate::faults::{self, Call, fail, intercept};
@@ -24,13 +25,16 @@ thread_local! {
     static CLOCK_AHEAD: Cell<Duration> = const { Cell::new(Duration::from_secs(1)) };
     /// What each look at the clock takes.
     static CLOCK_STEP: Cell<Duration> = const { Cell::new(Duration::ZERO) };
+    static CLOCK_STOPPED_AT: Cell<Option<Instant>> = const { Cell::new(None) };
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn clock_gettime_monotonic(sec: &mut i64, nsec: &mut i64) {
     static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
     CLOCK_AHEAD.set(CLOCK_AHEAD.get() + CLOCK_STEP.get());
-    let now = START.get_or_init(Instant::now).elapsed() + CLOCK_AHEAD.get();
+    let start = *START.get_or_init(Instant::now);
+    let now = CLOCK_STOPPED_AT.get().unwrap_or_else(Instant::now);
+    let now = now.saturating_duration_since(start) + CLOCK_AHEAD.get();
     (*sec, *nsec) = (now.as_secs() as i64, now.subsec_nanos().into());
 }
 
@@ -1009,7 +1013,7 @@ fn a_slow_turn_waits_a_moment_for_more() {
         });
         CLOCK_AHEAD.set(CLOCK_AHEAD.get() + Duration::from_millis(busy_ms));
         turn(&port, Duration::ZERO);
-        if is_waited_for || start.elapsed() < Duration::from_millis(2) {
+        if has_other_cpu() && (is_waited_for || start.elapsed() < Duration::from_millis(2)) {
             assert_eq!(has_come.get(), is_waited_for);
         }
         run_until(&port, || has_come.get());
@@ -1017,6 +1021,29 @@ fn a_slow_turn_waits_a_moment_for_more() {
     port.expect_more();
     CLOCK_AHEAD.set(CLOCK_AHEAD.get() + Duration::from_millis(50));
     assert_eq!(turn(&port, Duration::ZERO), 0);
+}
+
+#[test]
+fn a_flood_is_left_to_gather() {
+    let port = Port::new().unwrap();
+    CLOCK_STOPPED_AT.set(Some(Instant::now()));
+    CLOCK_STEP.set(Duration::from_nanos(100));
+    let micros = |sends: bool| {
+        let before = CLOCK_AHEAD.get();
+        port.did_receive();
+        if sends {
+            port.did_send();
+        }
+        port.waker().wake();
+        turn(&port, Duration::from_secs(10));
+        (CLOCK_AHEAD.get() - before).as_micros()
+    };
+    let pause = if has_other_cpu() { 9..12 } else { 0..2 };
+    for _ in 0..2 {
+        assert!((0..4).all(|_| micros(false) < 2));
+        assert!((0..4).all(|_| pause.contains(&micros(false))));
+        assert!(micros(true) < 2);
+    }
 }
 
 #[test]

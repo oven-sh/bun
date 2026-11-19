@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use bun_core::{Timespec, TimespecMockMode};
-use bun_threading::spin::{Spin, has_other_cpu, tune};
+use bun_threading::spin::{Spin, has_other_cpu};
 use bun_threading::{Condition, Guarded};
 use bun_windows_sys::Win32Error;
 
@@ -115,8 +115,8 @@ pub struct Port {
     /// When the last turn ended, or a wait for which nothing was ready.
     busy_since_ns: Cell<u64>,
     expects_more: Cell<bool>,
-    woke_at_ns: Cell<u64>,
-    flood: Cell<u64>,
+    /// How many turns in a row have only received what was there at once, and when the last one began.
+    flood: Cell<(u32, u64)>,
     /// The time when it is deferred, and the key and context of the packet.
     delayed: RefCell<BinaryHeap<Reverse<(u64, usize, usize)>>>,
     holds: Cell<usize>,
@@ -153,8 +153,7 @@ impl Port {
             next_turn: RefCell::default(),
             busy_since_ns: Cell::new(now_ns()),
             expects_more: Cell::new(false),
-            woke_at_ns: Cell::new(0),
-            flood: Cell::new(0),
+            flood: Cell::new((0, 0)),
             delayed: RefCell::default(),
             holds: Cell::new(0),
             is_shut_down: Cell::new(false),
@@ -265,46 +264,43 @@ impl Port {
 
     /// Returns how many events there are at most. It neither allocates nor frees.
     pub fn wait(&self, timeout_ns: Option<u64>) -> usize {
-        if self.next.get() == self.end.get() {
-            let pause_ns = tune(0, 0);
-            let mut start = 0;
-            if pause_ns > 0 {
-                if !self.has_received.get() || self.has_sent.get() {
-                    self.flood.set(0);
-                } else if self.flood.get() >= 4 {
-                    while now_ns() < self.woke_at_ns.get() + pause_ns {
-                        core::hint::spin_loop();
-                    }
-                }
-                start = now_ns();
+        /// Less than a sleep takes.
+        const AT_ONCE_NS: u64 = 10_000;
+
+        if self.next.get() < self.end.get() {
+            return self.undispatched();
+        }
+        let only_receives = self.has_received.take() & !self.has_sent.take();
+        let (turns, began_at) = self.flood.take();
+        let start = (only_receives && timeout_ns != Some(0)).then(|| {
+            // A sender pays for every time that it has to tell us.
+            let mut now = now_ns();
+            while turns >= 4 && now < began_at + AT_ONCE_NS && has_other_cpu() {
+                core::hint::spin_loop();
+                now = now_ns();
             }
-            if timeout_ns == Some(0) || self.has_work() {
-                self.fill_batch(Timeout::Now);
-                if pause_ns > 0 {
-                    self.has_received.set(false);
-                    self.has_sent.set(false);
-                }
-            } else {
-                self.shared.is_parked.store(true, Ordering::SeqCst);
-                self.park(timeout_ns);
-                self.shared.is_parked.store(false, Ordering::SeqCst);
-            }
-            if pause_ns > 0 {
-                let now = now_ns();
-                self.woke_at_ns.set(now);
-                let is_at_once = now - start < tune(4, 10_000);
-                (self.flood).update(|count| if is_at_once { count + 1 } else { 0 });
-            }
+            now
+        });
+        if timeout_ns == Some(0) || self.has_work() {
+            self.fill_batch(Timeout::Now);
+        } else {
+            self.shared.is_parked.store(true, Ordering::SeqCst);
+            self.park(timeout_ns, only_receives);
+            self.shared.is_parked.store(false, Ordering::SeqCst);
+        }
+        if let Some((start, now)) = start.map(|start| (start, now_ns()))
+            && now - start < AT_ONCE_NS
+        {
+            self.flood.set((turns.saturating_add(1), now));
         }
         self.undispatched()
     }
 
-    fn park(&self, timeout_ns: Option<u64>) {
+    fn park(&self, timeout_ns: Option<u64>, only_receives: bool) {
         let (start, mut spin) = (now_ns(), self.spin.get());
         let next_due = self.delayed.borrow().peek().map(|entry| entry.0.0);
         let deadline = (timeout_ns.map_or(u64::MAX, |timeout| start.saturating_add(timeout)))
             .min(next_due.unwrap_or(u64::MAX));
-        let only_receives = self.has_received.take() & !self.has_sent.take();
         let awake_ns = if only_receives { 0 } else { spin.limit_ns() };
         let (mut now, awake_until) = (start, start + awake_ns);
         loop {

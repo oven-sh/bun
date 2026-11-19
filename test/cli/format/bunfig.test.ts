@@ -1129,6 +1129,22 @@ insertFinalNewline = false
     ],
     [options(`printwidth = 100, parser = "astro"`), `${unknownInOptions("printwidth")}  Did you mean "printWidth"?`],
     [options(`plugins = ["prettier-plugin-astro"], threads = 1`), unknownInOptions("threads")],
+    // A letter replaced, two letters swapped, and another case.
+    [
+      options(`plugins = ["prettier-plugin-astro"], tabWidtg = 8`),
+      `${unknownInOptions("tabWidtg")}  Did you mean "tabWidth"?`,
+    ],
+    [
+      options(`plugins = ["prettier-plugin-astro"], tabWidht = 8`),
+      `${unknownInOptions("tabWidht")}  Did you mean "tabWidth"?`,
+    ],
+    [options(`tabWidht = 8, parser = "astro"`), `${unknownInOptions("tabWidht")}  Did you mean "tabWidth"?`],
+    [options(`plugins = ["prettier-plugin-astro"], PRINTWIDTH = 100`), unknownInOptions("PRINTWIDTH")],
+    // A plugin's option that is as close to a [fmt] key as a misspelling is refused too.
+    [
+      options(`plugins = ["@prettier/plugin-pug"], pugPrintWidth = 120`),
+      `${unknownInOptions("pugPrintWidth")}  Did you mean "printWidth"?`,
+    ],
     [`overides = []`, `Unknown key "overides" in [fmt]\n  Did you mean "overrides"?`],
   ])("rejects %s with: %s", async (line, message) => {
     const result = await format({ ...bunfig(line), "a.js": "a  ;\n" });

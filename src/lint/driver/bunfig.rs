@@ -204,15 +204,6 @@ fn closest_key(key: &[u8], keys: impl Iterator<Item = Vec<u8>>) -> Option<Vec<u8
         .map(|it| it.1)
 }
 
-/// True if `key` is `known`, also in another case or with one character more or less. That's a narrower test than
-/// [`closest_key`], because an option of a plugin can be as close to a `[fmt]` key as `xmlWhitespaceSensitivity` and
-/// `tsdoc` are.
-fn is_meant_as(key: &[u8], known: &[u8]) -> bool {
-    key.eq_ignore_ascii_case(known)
-        || (key.len().abs_diff(known.len()) == 1
-            && strings::edit_distance(key.iter().copied(), known) == 1)
-}
-
 /// Rejects `key`, which isn't one of `keys` (all the keys of the `section` table), and suggests the closest one.
 fn unknown_key<T>(
     key: &[u8],
@@ -632,9 +623,11 @@ fn patterns(value: &Expr) -> Result<Vec<Vec<u8>>, BunfigError> {
     }
 }
 
-/// Reads the `options` table of an entry of `[[fmt.overrides]]` into `it`. A key that [`is_meant_as`] no `[fmt]` key
-/// and no flag is an option of a plugin, and it's only taken if [`crate::fmt::cli::Override::may_use_plugin`]. That's
-/// decided after every key is read, so the order of the keys doesn't matter.
+/// Reads the `options` table of an entry of `[[fmt.overrides]]` into `it`. A key that isn't one of its own is an option
+/// of a plugin. It's only taken if [`crate::fmt::cli::Override::may_use_plugin`] and it doesn't look like a misspelled
+/// `[fmt]` key or flag: one in another case, or one that [`closest_key`] has a suggestion for. So an option that a
+/// plugin names after a `[fmt]` key, like `pugPrintWidth`, is refused too. That's decided after every key is read, so
+/// the order of the keys doesn't matter.
 fn set_override_options(
     table: &Expr,
     it: &mut crate::fmt::cli::Override,
@@ -664,12 +657,12 @@ fn set_override_options(
     it.format = options.format;
     it.plugins = has_plugins.then_some(options.plugins);
     let may_use_plugin = it.may_use_plugin();
+    // Prettier has options with the name of a flag (`rangeStart`), so those must not reach it as a plugin's.
+    let known = || FORMAT.keys().chain(FORMAT.flag_keys()).chain(keys());
     for (key, value) in others {
-        // Prettier has options with the name of a flag (`rangeStart`), so those must not reach it as a plugin's.
-        let is_of_plugin = may_use_plugin
-            && !(FORMAT.keys().chain(FORMAT.flag_keys()))
-                .any(|known| is_meant_as(&key.name, &known));
-        if !is_of_plugin {
+        let is_misspelled = known().any(|it| it.eq_ignore_ascii_case(&key.name))
+            || closest_key(&key.name, known()).is_some();
+        if !may_use_plugin || is_misspelled {
             return unknown_key(&key.name, key.at, b"fmt.overrides.options", keys());
         }
         let mut json = Vec::new();

@@ -904,7 +904,7 @@ files = ["*.go.html"]
 options = { plugins = ["prettier-plugin-go-template"], parser = "go-template" }
 ```
 
-The same entry takes the plugin's options. An option that no listed plugin declares is an error. So is a key that is a `[fmt]` key or a flag in another case, or with one letter more or less: Bun takes that for a typo.
+The same entry takes the plugin's options. An option that no listed plugin declares is an error. So is a key that is a `[fmt]` key or a flag in another case, or close enough to one for a "Did you mean": Bun takes that for a typo. That also refuses a plugin's option that is named after a `[fmt]` key, like `pugPrintWidth`. Set such an option in a Prettier config file.
 
 ```toml title="bunfig.toml" icon="settings"
 [[fmt.overrides]]

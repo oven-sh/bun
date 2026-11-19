@@ -243,7 +243,7 @@ pub mod Runtime {
         /// See `defer_requires.rs`. Needs `lists_loads`.
         pub defers_requires: bool,
         pub unwrap_commonjs_to_esm: bool,
-        /// `require()` exists at run time: every target except `browser`.
+        /// The bundle's `__require` works for this file: the target of its graph is not `browser`.
         pub target_has_require: bool,
 
         pub emit_decorator_metadata: bool,

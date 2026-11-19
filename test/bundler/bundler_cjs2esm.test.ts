@@ -689,8 +689,7 @@ describe("bundler", () => {
   // With a target that has require() (node, bun), a require() of a `.json`
   // specifier is not unwrapped. `import * as ns` of a JSON file is a module
   // namespace where the parsed value is owed, and Node rejects the import when
-  // the package is external: it has no `with { type: "json" }`. Bun accepts
-  // that import, so the cases that read one key assert the printed call.
+  // the package is external: it has no `with { type: "json" }`.
   const reactPackageJson = {
     "/node_modules/react/package.json": fakeReactNodeModules["/node_modules/react/package.json"],
   };
@@ -704,12 +703,7 @@ describe("bundler", () => {
     target: "node",
     outfile: "/out.mjs",
     runtimeFiles: reactPackageJson,
-    onAfterBundle(api: BundlerTestBundleAPI) {
-      const code = api.readFile("/out.mjs");
-      expect(code).toContain('__require("react/package.json")');
-      expect(code).not.toContain('from "react/package.json"');
-    },
-    run: { stdout: "react 2.0.0" },
+    run: { runtime: "node", stdout: "react 2.0.0" },
   } as const;
   for (const backend of ["cli", "api"] as const) {
     itBundled(`cjs2esm/RequireJsonOfUnwrappedPackageExternal/${backend}`, {
@@ -721,6 +715,11 @@ describe("bundler", () => {
   itBundled("cjs2esm/RequireJsonOfUnwrappedPackagePackagesExternal", {
     ...requireJsonOfExternalReact,
     packages: "external",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.mjs");
+      expect(code).toContain('__require("react/package.json")');
+      expect(code).not.toContain('from "react/package.json"');
+    },
   });
   // `target: "browser"` has no require(): the call is still unwrapped there.
   itBundled("cjs2esm/RequireJsonOfUnwrappedPackageTargetBrowserIsUnwrapped", {
@@ -733,8 +732,61 @@ describe("bundler", () => {
       expect(code).not.toContain("__require");
     },
   });
-  // Bun accepts the import and gives the keys as named exports, so only a
-  // use of the whole value shows the namespace there.
+  // A `#!/usr/bin/env bun` line makes the entry point a file for bun, but the
+  // `__require` of a browser build still throws there.
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`cjs2esm/RequireJsonOfUnwrappedPackageHashbangEntryTargetBrowserIsUnwrapped/${backend}`, {
+      files: {
+        "/entry.js": `#!/usr/bin/env bun\nconst pkg = require("react/package.json");\nconsole.log(pkg.name, pkg.version);`,
+      },
+      external: ["react"],
+      target: "browser",
+      backend,
+      runtimeFiles: reactPackageJson,
+      onAfterBundle(api) {
+        const code = api.readFile("/out.js");
+        expect(code).toContain('import * as pkg from "react/package.json"');
+        expect(code).not.toContain("__require");
+      },
+      run: { stdout: "react 2.0.0" },
+    });
+  }
+  // The rule is per graph. The script of a page that a server imports is
+  // browser code: it is still unwrapped, and not a wrapper that nothing calls.
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`cjs2esm/RequireJsonOfUnwrappedPackageInServerAndInItsPage/${backend}`, {
+      outdir: "/out",
+      entryPoints: ["/server.js"],
+      files: {
+        "/server.js": /* js */ `
+          import page from "./page.html";
+          const pkg = require("react/package.json");
+          console.log("server", Object.keys(pkg).join(","), typeof page);
+        `,
+        "/page.html": `<!DOCTYPE html><html><head><script type="module" src="./client.js"></script></head><body></body></html>`,
+        "/client.js": /* js */ `
+          const pkg = require("react/package.json");
+          console.log("client", Object.keys(pkg).join(","));
+        `,
+        ...fakeReactNodeModules,
+      },
+      target: "bun",
+      backend,
+      onAfterBundle(api) {
+        const client = readdirSync(api.outdir)
+          .filter(f => f.endsWith(".js"))
+          .map(f => api.readFile("/out/" + f))
+          .find(code => code.includes('"client"'));
+        expect(client).toBeDefined();
+        expect(client!).toContain("Object.keys(exports_package)");
+        expect(client!).not.toContain("require_package");
+      },
+      run: { stdout: "server name,version,main object" },
+    });
+  }
+  // Bun accepts `import * as ns` of a JSON file and gives each key as a named
+  // export, so `pkg.name` does not tell the two apart there. The whole value
+  // and a destructuring declaration do.
   itBundled("cjs2esm/RequireJsonOfUnwrappedPackageExternalTargetBun", {
     files: {
       "/entry.js": /* js */ `
@@ -746,6 +798,18 @@ describe("bundler", () => {
     target: "bun",
     runtimeFiles: reactPackageJson,
     run: { stdout: "name,version,main" },
+  });
+  itBundled("cjs2esm/RequireJsonOfUnwrappedPackageExternalTargetBunDestructured", {
+    files: {
+      "/entry.js": /* js */ `
+        const { name, version } = require("react/package.json");
+        console.log(name, version);
+      `,
+    },
+    external: ["react"],
+    target: "bun",
+    runtimeFiles: reactPackageJson,
+    run: { stdout: "react 2.0.0" },
   });
   // The load happens at the call: a require() that does not run loads nothing.
   itBundled("cjs2esm/RequireJsonOfUnwrappedPackageExternalLoadsAtTheCall", {
@@ -763,7 +827,7 @@ describe("bundler", () => {
     target: "node",
     outfile: "/out.mjs",
     runtimeFiles: reactPackageJson,
-    run: { stdout: "react function" },
+    run: { runtime: "node", stdout: "react function" },
   });
   // `format: "cjs"` never unwraps: it is the reference for the bundled value.
   for (const format of ["esm", "cjs"] as const) {
@@ -804,7 +868,7 @@ describe("bundler", () => {
     },
     run: { stdout: "esm name,version,main" },
   });
-  // A write through the import namespace was a build error.
+  // A write through an import namespace is a build error.
   itBundled("cjs2esm/RequireJsonOfUnwrappedPackageBundledWrite", {
     files: {
       "/entry.js": /* js */ `
@@ -850,14 +914,16 @@ describe("bundler", () => {
     target: "node",
     run: { stdout: "react 2.0.0 a 3 3 3 3" },
   });
-  itBundled("cjs2esm/RequireJsonOfUnwrappedPackageSourceFormsExternal", {
-    files: { "/entry.js": requireJsonSourceForms },
-    external: ["react"],
-    target: "node",
-    outfile: "/out.mjs",
-    runtimeFiles: reactJsonFiles,
-    run: { stdout: "react 2.0.0 a 3 3 3 3" },
-  });
+  for (const target of ["node", "bun"] as const) {
+    itBundled(`cjs2esm/RequireJsonOfUnwrappedPackageSourceFormsExternal/${target}`, {
+      files: { "/entry.js": requireJsonSourceForms },
+      external: ["react"],
+      target,
+      outfile: "/out.mjs",
+      runtimeFiles: reactJsonFiles,
+      run: { runtime: target, stdout: "react 2.0.0 a 3 3 3 3" },
+    });
+  }
   itBundled("cjs2esm/RequireJsonOfUnwrappedPackageImportEquals", {
     files: {
       "/entry.ts": /* ts */ `
@@ -868,6 +934,68 @@ describe("bundler", () => {
     },
     target: "node",
     run: { stdout: "name,version,main" },
+  });
+  // As for any other package, the call stays when nothing reads its result.
+  itBundled("cjs2esm/RequireJsonOfUnwrappedPackageUnusedImportEquals", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import pkg = require("react/package.json");
+        console.log("x");
+      `,
+      ...fakeReactNodeModules,
+    },
+    target: "node",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("require_package()");
+    },
+    run: { stdout: "x" },
+  });
+  // The shape of a published package: one CommonJS file with an unwrapped
+  // require() of the package and a kept require() of its package.json.
+  const libraryWithBothRequires = {
+    "/entry.js": /* js */ `
+      import { framework } from "lib";
+      console.log(framework());
+    `,
+    "/node_modules/lib/index.js": /* js */ `
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      function _interopDefault(ex) {
+        return ex && typeof ex === "object" && "default" in ex ? ex["default"] : ex;
+      }
+      var React = require("react");
+      var ReactPkg = _interopDefault(require("react/package.json"));
+      exports.framework = function () {
+        return typeof React.createElement + "@" + ReactPkg.version;
+      };
+    `,
+  };
+  const reactWithCreateElement = {
+    ...reactPackageJson,
+    "/node_modules/react/index.js": /* js */ `
+      exports.createElement = function createElement() {};
+    `,
+  };
+  itBundled("cjs2esm/RequireJsonNextToUnwrappedRequireOfSamePackageExternal", {
+    files: libraryWithBothRequires,
+    external: ["react"],
+    target: "node",
+    outfile: "/out.mjs",
+    runtimeFiles: reactWithCreateElement,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.mjs");
+      expect(code).toContain('import * as React from "react"');
+      expect(code).toContain('_interopDefault(__require("react/package.json"))');
+    },
+    run: { runtime: "node", stdout: "function@2.0.0" },
+  });
+  itBundled("cjs2esm/RequireJsonNextToUnwrappedRequireOfSamePackageBundled", {
+    files: { ...libraryWithBothRequires, ...reactWithCreateElement },
+    target: "node",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("_interopDefault(require_package())");
+    },
+    run: { stdout: "function@2.0.0" },
   });
   // The same for a require() written inside an unwrapped package.
   itBundled("cjs2esm/RequireJsonInsideUnwrappedPackage", {

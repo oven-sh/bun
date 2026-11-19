@@ -305,6 +305,7 @@ const FORMAT: Table = Table {
     renamed: &[
         (b"config", b"config"),
         (b"ignorePatterns", b"ignore-pattern"),
+        (b"plugins", b"plugin"),
     ],
     without_flag: &[b"overrides"],
     actions: &[
@@ -344,7 +345,6 @@ const FORMAT: Table = Table {
         b"no-color",
         b"script",
         b"parser",
-        b"plugin",
         b"jsx-bracket-same-line",
         b"cache",
         b"cache-location",

@@ -188,7 +188,7 @@ fn load_server_chunk(dev: &mut DevServer) -> crate::Result<jsc::JsResult<JSValue
         }
         None => server_hmr_ffi::bake_load_server_hmr_patch(
             dev.global(),
-            BunString::clone_latin1(&server_bundle),
+            BunString::clone_utf8(&server_bundle),
         ),
     })
 }

@@ -263,7 +263,7 @@ function rank(connection: PooledConnection): number {
 }
 
 function idleFirst(a: PooledConnection, b: PooledConnection) {
-  return rank(a) - rank(b);
+  return a.queryCount - b.queryCount;
 }
 
 /// Whether the pool can give it to a caller.
@@ -746,10 +746,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   /// The ready connection that runs the fewest queries, if fewer than `limit`. The `setAside` that will be
   /// idle first are left to the reservations that wait ahead of the caller.
   #leastBusy(limit: number, setAside: number): PooledConnection | null {
-    const connections = this.connections;
+    let connections = this.connections;
     if (setAside !== 0) {
-      const found = connections.filter(isReady).sort(idleFirst)[setAside];
-      return found !== undefined && found.queryCount < limit ? found : null;
+      connections = connections.filter(isReady).sort(idleFirst).slice(setAside);
     }
     let found: PooledConnection | null = null;
     let lowest = Infinity;

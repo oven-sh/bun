@@ -595,6 +595,26 @@ for (const server of servers) {
         expect([...outcomes, await outcome(sql.rollbackDistributed(name))]).toEqual(Array(5).fill("resolved"));
       });
 
+      test("a query behind a reservation that waits shares a busy connection before it gets the one with a prepared distributed transaction", async () => {
+        const connected = new Calls();
+        await using sql = await pool({ max: 2, onconnect: connected.hit });
+        await sql.connect();
+        await connected.reached(2);
+        await using held = await gate();
+        const name = `bun_pool_${(Math.random() * 2 ** 31) | 0}`;
+        // On the connection that logged in first: of two that are as busy, that one is left to the reservation.
+        await sql.beginDistributed(name, tx => tx.unsafe("select 1"));
+        const busy = [held.wait(sql), held.wait(sql)].map(outcome);
+        const reserving = sql.reserve();
+        const query = outcome(sql.unsafe(server.readsTable).execute());
+        await held.open();
+        const outcomes = await Promise.all([...busy, query]);
+        (await reserving).release();
+        // The other one is reserved, so the rollback gets the connection that has it.
+        using _other = await sql.reserve();
+        expect([...outcomes, await outcome(sql.rollbackDistributed(name))]).toEqual(Array(4).fill("resolved"));
+      });
+
       test("a transaction by hand on a pool of one connection keeps it", async () => {
         await using sql = await pool({ max: 1 });
         const id = await sessionId(sql);

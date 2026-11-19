@@ -280,10 +280,7 @@ enum VueStatements {
 }
 
 impl VueStatements {
-    /// Vue compiles a handler as statements only if its value has a `;`, so a handler that has one and more than an
-    /// expression in it has to keep one. The handlers that lose every `;` in Prettier 3.9.9 and oxfmt 0.72.0 are
-    /// [`VueStatements::Separated`]. Only an expression, `a = 1;`, is `a = 1` as in Prettier:
-    /// `semicolon_for_only_statement_in_html` has the rule.
+    /// See "The statements of a Vue event handler" in `src/format/CLAUDE.md`.
     fn of<'b>(file: &'b File<'b>, f: &Formatter<'b>) -> VueStatements {
         if !has_semicolon_in_vue(file.text()) {
             return VueStatements::AsPrettier;
@@ -291,8 +288,7 @@ impl VueStatements {
         let mut statements =
             (file.body().iter()).filter(|it| !matches!(it.kind(), StmtKind::Empty));
         let Some(first) = statements.next() else {
-            // `/* comment */;`: without its `;`, the comment is an expression, which doesn't compile. `;` is nothing
-            // either way.
+            // `/* comment */;`: without its `;`, the comment is an expression, which doesn't compile.
             return match file.comment_count() {
                 0 => VueStatements::AsPrettier,
                 _ => VueStatements::AsWritten,
@@ -303,8 +299,7 @@ impl VueStatements {
         if is_only_an_expression || surely_prints_semicolon(file.body(), f) {
             return VueStatements::AsPrettier;
         }
-        // What `// prettier-ignore` is for is a copy of the source, which ends with a `;` or not, whatever is written
-        // after it.
+        // A copy of the source under `prettier-ignore` ends with a `;` or not, whatever is written after it.
         match f.comments().has_suppression_comments() {
             true => VueStatements::AsWritten,
             false => VueStatements::Separated,
@@ -312,8 +307,7 @@ impl VueStatements {
     }
 }
 
-/// True if `text`, the value of an attribute, has a `;` for Vue, which decodes the character references first: one
-/// that doesn't end `&nbsp;` or `&#160;`. The parser of HTML has refused a `&name;` that isn't a character reference.
+/// True if `text` has a `;` once Vue has decoded its character references: one that doesn't end `&nbsp;` or `&#160;`.
 fn has_semicolon_in_vue(text: &[u8]) -> bool {
     let mut rest = text;
     while let Some(at) = strings::index_of_char_usize(rest, b';') {

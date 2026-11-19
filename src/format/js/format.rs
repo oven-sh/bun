@@ -898,8 +898,7 @@ fn write_ignored_statement<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatte
     });
 }
 
-/// With semicolons, true if Prettier writes a `;` after the copy of `statement`. `span` is the same as for
-/// [`write_ignored_statement`].
+/// With semicolons, true if a `;` follows the copy of `statement`. `span`: see [`write_ignored_statement`].
 fn ignored_statement_has_semicolon(statement: Stmt<'_>, span: Span) -> bool {
     match statement.kind() {
         // `export var a` is an `ExportNamedDeclaration`.

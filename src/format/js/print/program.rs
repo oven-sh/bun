@@ -169,16 +169,7 @@ impl<'a> Format<'a> for FormatStatements<'a> {
     }
 }
 
-/// The statements of a Vue event handler that has a `;`, with a `;` after each but the last, whatever `semicolons` is.
-/// The statements inside them end as `semicolons` says. `VueStatements` in `html/js.rs` says which handlers it's for:
-/// those where [`surely_prints_semicolon`] is false, so none of these statements has a `;` before it or at its end.
-///
-/// Vue compiles a handler as statements only if its value has a `;`, and as the expression `(value)` otherwise: line
-/// breaks don't separate statements there (vuejs/core#8854). Without semicolons, Prettier 3.9.9 and oxfmt 0.72.0 print
-/// `a = 1; b = 2` as `a = 1⏎b = 2` and `if (a) b();` as `if (a) b()`, which Vue 3 doesn't compile. What's printed here
-/// is what oxfmt prints since 0.77.0 (`FormatSeparatedStatements` in its `print/embedded/program.rs`): `a = 1;⏎b = 2`
-/// and `if (a) b();`. With semicolons all of them print `while (a) {};` as `while (a) {}`, which Vue 3 doesn't compile
-/// either. Here it keeps its `;` the same way.
+/// A Vue event handler's statements with a `;` after each but the last: see `VueStatements` in `html/js.rs`.
 #[derive(Copy, Clone)]
 pub(crate) struct FormatSeparatedStatements<'a>(pub(crate) List<'a, Stmt<'a>>);
 
@@ -220,9 +211,7 @@ impl<'a> Format<'a> for FormatSeparatedStatements<'a> {
     }
 }
 
-/// True if what [`FormatStatements`] prints for `statements` has a `;` however the lines break. Only statements are
-/// looked at, and what says yes has to be a `;` that's always printed: a wrong yes leaves a Vue event handler with
-/// none, a wrong no only adds one after a `}`.
+/// True if [`FormatStatements`] surely prints a `;` for `statements`: a wrong yes leaves a Vue handler with none.
 pub(crate) fn surely_prints_semicolon<'a>(
     statements: List<'a, Stmt<'a>>,
     f: &Formatter<'a>,
@@ -252,8 +241,7 @@ pub(crate) fn surely_prints_semicolon<'a>(
     false
 }
 
-/// True if a `prettier-ignore` comment is in `span`. If none is, and the node of `span` isn't ignored, no node in it
-/// is.
+/// True if a `prettier-ignore` comment is in `span`, so that a node in it can be a copy of the source.
 fn has_suppression_comment_in(span: Span, f: &Formatter<'_>) -> bool {
     f.file().comments_by_id().any(|comment| {
         span.start <= comment.span().start

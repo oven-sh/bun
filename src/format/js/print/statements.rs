@@ -189,8 +189,7 @@ fn is_called_by_vue(expression: Expr<'_>) -> bool {
     }
 }
 
-/// True if `expression`, all of a Vue event handler, is a path to a function, which Vue calls. With a `;` after it,
-/// it's a statement that calls nothing. A function is a function either way.
+/// True if `expression`, all of a Vue event handler, is a path to a function: with a `;` after it, nothing is called.
 pub(crate) fn is_path_called_by_vue(expression: Expr<'_>) -> bool {
     let expression = without_vue_event_binding_typescript(expression);
     !matches!(expression.kind(), ExprKind::Fn(_)) && is_called_by_vue(expression)

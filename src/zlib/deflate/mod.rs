@@ -159,12 +159,8 @@ struct Tuning {
 impl Tuning {
     #[inline(always)]
     fn matcher<'a>(&self, chains: &'a mut Chains, window: &'a Window) -> Matcher<'a> {
-        let index = chains.over(&window.bytes);
-        index
-            .spare_steps
-            .check(window.position, self.effort.max_chain);
         Matcher {
-            index,
+            index: chains.over(&window.bytes),
             max_distance: window.max_distance(),
             effort: self.effort,
         }

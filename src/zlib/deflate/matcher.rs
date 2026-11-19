@@ -3,7 +3,7 @@
 use bun_deflate::format::MIN_MATCH_LEN;
 
 use super::chains::{HASHED_LEN, Index, roll};
-use super::spare_steps::FIRST_STEPS;
+use super::spare_steps::{FIRST_STEPS, SHORT_CHAIN};
 use super::window::{Scan, chunk, match_len, word};
 
 const WORD: u32 = 8;
@@ -40,6 +40,17 @@ pub(super) struct Effort {
     pub(super) max_chain: u32,
     /// At the first candidate that looks good and is not.
     pub(super) gives_up_early: bool,
+}
+
+impl Effort {
+    #[inline(always)]
+    fn steps(&self, max_chain: u32, best_len: u32) -> u32 {
+        if best_len >= self.good_len {
+            max_chain / 4
+        } else {
+            max_chain
+        }
+    }
 }
 
 /// Where a match is wanted.
@@ -108,14 +119,20 @@ macro_rules! follow_chain_or_return {
 }
 
 impl<'a> Matcher<'a> {
+    /// For a level that takes spare steps.
     #[inline(always)]
-    fn steps(&self, best_len: u32) -> u32 {
-        let max_chain = self.index.spare_steps.max_chain();
-        if best_len >= self.effort.good_len {
-            max_chain / 4
+    fn max_chain(&self, position: u32) -> u32 {
+        if self.index.spare_steps.has_some(position) {
+            self.effort.max_chain
         } else {
-            max_chain
+            SHORT_CHAIN
         }
+    }
+
+    /// The same.
+    #[inline(always)]
+    fn steps(&self, position: u32, best_len: u32) -> u32 {
+        self.effort.steps(self.max_chain(position), best_len)
     }
 
     #[inline(always)]
@@ -135,7 +152,7 @@ impl<'a> Matcher<'a> {
         distance.wrapping_sub(1) < self.max_distance.min(position.wrapping_sub(1))
     }
 
-    /// Inserts the position, and looks for a match from scratch. With `SPARES` it may take spare steps.
+    /// Inserts the position, and looks for a match from scratch. `SPARES` is for the levels that take spare steps.
     #[inline(always)]
     pub(super) fn insert_and_match<const ROLLING: bool, const SPARES: bool>(
         &mut self,
@@ -154,7 +171,7 @@ impl<'a> Matcher<'a> {
         is_good_enough: bool,
     ) -> Match {
         match self.target(position, lookahead) {
-            Some(target) => self.insert_and_beat::<ROLLING, false>(target, best, is_good_enough),
+            Some(target) => self.insert_and_beat::<ROLLING, true>(target, best, is_good_enough),
             None => best,
         }
     }
@@ -207,7 +224,11 @@ impl<'a> Matcher<'a> {
         mut candidate: u32,
         mut best: Match,
     ) -> Match {
-        let mut steps = self.steps(best.len);
+        let looks_for_first = SPARES && best.len < MIN_MATCH_LEN as u32;
+        let mut steps = match SPARES {
+            true => self.steps(target.position, best.len),
+            false => self.effort.max_chain,
+        };
         let enough = target.lookahead.min(self.effort.nice_len);
         if best.len >= WORD {
             return self.search_long(target.position, target.lookahead, candidate, best, steps);
@@ -217,13 +238,13 @@ impl<'a> Matcher<'a> {
         };
         let limit = target.position.saturating_sub(self.max_distance);
         let (first, mut mask) = (target.first_word(), mask_for(best.len));
-        if SPARES {
+        if looks_for_first {
             match self.find_first(target.position, candidate, first) {
                 Some(found) => (candidate, steps) = found,
                 None => return best,
             }
         }
-        let mut is_found = SPARES;
+        let mut is_found = looks_for_first;
         loop {
             while !core::mem::take(&mut is_found) {
                 let Some(other) = word(self.index.window, candidate) else {
@@ -265,7 +286,7 @@ impl<'a> Matcher<'a> {
         loop {
             let other = word(self.index.window, candidate);
             if other.is_none_or(|it| (it ^ first) & mask == 0) {
-                return Some((candidate, self.index.spare_steps.max_chain() - taken));
+                return Some((candidate, self.max_chain(position) - taken));
             }
             candidate = links.follow(candidate);
             if candidate <= limit {
@@ -283,8 +304,8 @@ impl<'a> Matcher<'a> {
     #[inline(never)]
     fn find_further(&self, position: u32, mut candidate: u32, first: u64) -> Option<(u32, u32)> {
         let (spare_steps, max_chain) = (self.index.spare_steps, self.effort.max_chain);
-        debug_assert!(max_chain > FIRST_STEPS);
-        if !spare_steps.check(position, max_chain) {
+        debug_assert!(max_chain >= SHORT_CHAIN);
+        if !spare_steps.has_some(position) {
             return None;
         }
         let (links, mask) = (self.index.links()?, mask_for(Match::NONE.len));
@@ -352,7 +373,7 @@ impl<'a> Matcher<'a> {
     /// Spares a call if no candidate starts like the target.
     #[inline(always)]
     fn search_rolling(&self, target: Target<'_>, mut candidate: u32, best: Match) -> Match {
-        let mut steps = self.steps(best.len);
+        let mut steps = self.effort.steps(self.effort.max_chain, best.len);
         if best.len < MIN_MATCH_LEN as u32
             && let Some(links) = self.index.links()
         {
@@ -488,7 +509,6 @@ mod tests {
             max_distance: 9999,
             effort,
         };
-        matcher.index.spare_steps.check(0, 128);
         for (position, taken) in (0..128).map(|taken| (900 + 64 * taken, taken)) {
             let found = matcher.find_first(position, 700 + taken, WANTED);
             assert_eq!(found, Some((700, 128 - taken)));
@@ -501,13 +521,13 @@ mod tests {
         for _ in 0..82 {
             let found = matcher.find_first(10_690, 808, WANTED);
             assert_eq!(found, Some((700, 20)));
-            assert_eq!([7, 8].map(|len| matcher.steps(len)), [128, 32]);
         }
         assert_eq!(matcher.find_first(10_693, 708, WANTED), None);
-        assert_eq!([7, 8].map(|len| matcher.steps(len)), [16, 4]);
+        for (position, steps) in [(10_693, [16, 4]), (10_694, [128, 32])] {
+            assert_eq!([7, 8].map(|len| matcher.steps(position, len)), steps);
+        }
         assert_eq!(matcher.find_first(10_693, 707, WANTED), Some((700, 9)));
         assert_eq!(matcher.find_first(10_694, 708, WANTED), Some((700, 120)));
-        assert_eq!(matcher.steps(7), 128);
         for candidate in [703, 750] {
             assert_eq!(matcher.find_first(10_699, candidate, WANTED), None);
         }

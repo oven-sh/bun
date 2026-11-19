@@ -258,9 +258,9 @@ mod tests {
         };
         for empty in [Chains::clear, Chains::start_over] {
             chains.spare_steps.spend(0, 9999);
-            assert!(!chains.spare_steps.check(0, 99));
+            assert!(!chains.spare_steps.has_some(0));
             empty(&mut chains);
-            assert!(chains.spare_steps.check(0, 99));
+            assert!(chains.spare_steps.has_some(0));
         }
     }
 }

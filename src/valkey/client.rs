@@ -52,19 +52,39 @@ enum State {
 struct Active {
     phase: Phase,
     purpose: Purpose,
-    retries: u32,
-    /// For the next handshake: the URL's, or what script selected since.
-    database: u32,
+    /// What script selected, for the next handshake.
+    selected: Option<u32>,
 }
 
 #[derive(Copy, Clone)]
 enum Purpose {
-    /// Script has not used the client, so nobody would hear why it gave up.
+    /// Script has not touched the client: one attempt, and back to `Idle`.
     Preconnect,
-    /// Script sent a command, connected or closed.
-    Asked,
+    Asked {
+        retries: u32,
+    },
     /// Replaces a connection that script had.
-    Reconnect,
+    Reconnect {
+        retries: u32,
+    },
+}
+
+impl Purpose {
+    const ASKED: Self = Self::Asked { retries: 0 };
+
+    fn claim(&mut self) {
+        if let Self::Preconnect = self {
+            *self = Self::ASKED;
+        }
+    }
+
+    /// The server took the connection: the retries start over.
+    fn succeed(&mut self) {
+        match self {
+            Self::Preconnect => {}
+            Self::Asked { .. } | Self::Reconnect { .. } => *self = Self::ASKED,
+        }
+    }
 }
 
 enum Phase {
@@ -156,10 +176,7 @@ pub enum Event<P> {
         error: RedisError,
     },
     /// The server cannot take the handshake now: for [`Client::abandon_handshake`], else as [`Event::Broken`].
-    Busy {
-        message: Box<[u8]>,
-        error: RedisError,
-    },
+    Busy(Box<[u8]>),
 }
 
 /// Whom an acknowledgement answers.
@@ -225,10 +242,7 @@ fn refused<P>(message: &[u8], error: RedisError) -> Event<P> {
         b"ERR max number of clients",
     ];
     if PASSING.iter().any(|prefix| message.starts_with(prefix)) {
-        Event::Busy {
-            message: message.into(),
-            error: RedisError::ConnectionClosed,
-        }
+        Event::Busy(message.into())
     } else {
         broken(message, error)
     }
@@ -329,16 +343,19 @@ impl<P> Client<P> {
         }
     }
 
-    /// An explicit `connect()`, ahead of [`Self::first_dial`] and [`Self::redial`].
+    /// An explicit `connect()`, ahead of [`Self::claim_and_dial`] and [`Self::redial`].
     pub fn connect(&mut self) {
         let active = match &mut self.state {
             State::Idle => return,
-            State::Closed => return self.begin(Phase::Backoff, Purpose::Asked),
+            State::Closed => return self.begin(Phase::Backoff, Purpose::ASKED),
             State::Active(active) => active,
         };
-        active.purpose = Purpose::Asked;
+        active.purpose.claim();
+        if let Purpose::Reconnect { retries } = active.purpose {
+            active.purpose = Purpose::Asked { retries };
+        }
         match active.phase {
-            Phase::Backoff => active.retries = 0,
+            Phase::Backoff => active.purpose = Purpose::ASKED,
             // The close of a dial without a TLS context is still due, and no retry can build one.
             Phase::Ending(End::Failed) => active.phase = Phase::Ending(End::Final),
             Phase::Ending(End::Requested) => active.phase = Phase::Ending(End::Policy),
@@ -354,8 +371,8 @@ impl<P> Client<P> {
         let State::Active(active) = &mut self.state else {
             return Close::Nothing;
         };
-        active.purpose = Purpose::Asked;
-        active.database = self.config.database;
+        active.purpose.claim();
+        active.selected = None;
         let close = match active.phase {
             Phase::Ending(End::Final | End::Failed) => return Close::Nothing,
             Phase::Ending(End::Policy | End::Requested) => Close::Nothing,
@@ -366,18 +383,20 @@ impl<P> Client<P> {
         close
     }
 
-    pub fn first_dial(&mut self) -> Option<Attempt> {
-        if let State::Active(Active {
-            purpose: purpose @ Purpose::Preconnect,
-            ..
-        }) = &mut self.state
-        {
-            *purpose = Purpose::Asked;
+    /// Script touched the client.
+    pub fn claim(&mut self) {
+        if let State::Active(active) = &mut self.state {
+            active.purpose.claim();
         }
-        self.leave_idle(Purpose::Asked)
     }
 
-    /// A dial that script did not ask for. If it fails for good, the first command dials again.
+    /// Ahead of every command.
+    pub fn claim_and_dial(&mut self) -> Option<Attempt> {
+        self.claim();
+        self.leave_idle(Purpose::ASKED)
+    }
+
+    /// A dial that script did not ask for. If it is lost unclaimed, the first command dials again.
     pub fn preconnect(&mut self) -> Option<Attempt> {
         self.leave_idle(Purpose::Preconnect)
     }
@@ -393,8 +412,7 @@ impl<P> Client<P> {
         self.state = State::Active(Active {
             phase,
             purpose,
-            retries: 0,
-            database: self.config.database,
+            selected: None,
         });
     }
 
@@ -425,7 +443,7 @@ impl<P> Client<P> {
     pub fn start(&mut self) {
         let State::Active(Active {
             phase: phase @ Phase::Dialing,
-            database,
+            selected,
             ..
         }) = &mut self.state
         else {
@@ -444,8 +462,9 @@ impl<P> Client<P> {
         let anonymous = username.is_empty() && password.is_empty();
         let out = &mut self.output.byte_list;
         command::encode(b"HELLO", &hello[..if anonymous { 1 } else { 4 }], out);
-        if *database > 0 {
-            write_select(*database, out);
+        let database = selected.unwrap_or(self.config.database);
+        if database > 0 {
+            write_select(database, out);
         }
     }
 
@@ -473,7 +492,7 @@ impl<P> Client<P> {
     pub fn abandon_handshake(&mut self) -> bool {
         let State::Active(Active {
             phase: phase @ (Phase::Dialing | Phase::Hello | Phase::Select(_)),
-            purpose: Purpose::Reconnect,
+            purpose: Purpose::Reconnect { .. },
             ..
         }) = &mut self.state
         else {
@@ -496,32 +515,35 @@ impl<P> Client<P> {
         self.input.clear_and_free();
         self.scanner.reset();
 
-        let reason = match &mut self.state {
-            State::Idle | State::Closed => Reason::Final,
-            State::Active(active) => match active.phase {
-                Phase::Ending(End::Requested) => Reason::Requested,
-                Phase::Ending(End::Final | End::Failed) => Reason::Final,
-                _ if owner_is_gone || !self.config.enable_auto_reconnect => Reason::Final,
-                _ if active.retries >= self.config.max_retries => Reason::RetriesUsedUp,
-                _ => {
-                    if let (Phase::Ready, Purpose::Asked) = (&active.phase, active.purpose) {
-                        active.purpose = Purpose::Reconnect;
+        let (state, reason) = match &mut self.state {
+            State::Idle | State::Closed => (State::Closed, Reason::Final),
+            State::Active(active) => match (active.purpose, &active.phase) {
+                (Purpose::Preconnect, _) => (State::Idle, Reason::Final),
+                (_, Phase::Ending(End::Requested)) => (State::Closed, Reason::Requested),
+                (_, Phase::Ending(End::Final | End::Failed)) => (State::Closed, Reason::Final),
+                (Purpose::Asked { retries } | Purpose::Reconnect { retries }, phase) => {
+                    if owner_is_gone || !self.config.enable_auto_reconnect {
+                        (State::Closed, Reason::Final)
+                    } else if retries >= self.config.max_retries {
+                        (State::Closed, Reason::RetriesUsedUp)
+                    } else {
+                        let retries = retries + 1;
+                        active.purpose = match (active.purpose, phase) {
+                            (Purpose::Reconnect { .. }, _) | (_, Phase::Ready) => {
+                                Purpose::Reconnect { retries }
+                            }
+                            _ => Purpose::Asked { retries },
+                        };
+                        active.phase = Phase::Backoff;
+                        return Lost::Retry {
+                            delay_ms: (FIRST_DELAY_MS << (retries.min(10) - 1)).min(MAX_DELAY_MS),
+                            in_flight: self.take_in_flight(),
+                        };
                     }
-                    active.phase = Phase::Backoff;
-                    active.retries += 1;
-                    let doublings = active.retries.min(10) - 1;
-                    return Lost::Retry {
-                        delay_ms: (FIRST_DELAY_MS << doublings).min(MAX_DELAY_MS),
-                        in_flight: self.take_in_flight(),
-                    };
                 }
             },
         };
-        self.state = if self.is_preconnect() {
-            State::Idle
-        } else {
-            State::Closed
-        };
+        self.state = state;
         Lost::ForGood {
             reason,
             pending: self.take_pending(),
@@ -533,9 +555,9 @@ impl<P> Client<P> {
         // Script was leaving the database that it selected before.
         if let State::Active(active) = &mut self.state
             && (in_flight.iter())
-                .any(|it| matches!(it.expect, Expect::Database(to) if to != active.database))
+                .any(|it| matches!(it.expect, Expect::Database(to) if Some(to) != active.selected))
         {
-            active.database = self.config.database;
+            active.selected = None;
         }
         in_flight.into_iter().map(|it| it.promise).collect()
     }
@@ -723,23 +745,24 @@ impl<P> Client<P> {
             return Event::Ignored;
         };
         let out = &mut self.output.byte_list;
+        let url_database = self.config.database;
         let event = match &mut active.phase {
             Phase::Ready => return self.on_reply(value),
-            Phase::Hello => Self::on_hello(active, value),
+            Phase::Hello => Self::on_hello(active, value, url_database),
             Phase::Select(hello) => {
                 let hello = core::mem::replace(&mut **hello, RESPValue::Null);
-                Self::on_select(active, value, hello, self.config.database, out)
+                Self::on_select(active, value, hello, url_database, out)
             }
             Phase::Dialing | Phase::Ending(_) | Phase::Backoff => Event::Ignored,
         };
         if let Event::Connected(_) = event {
             active.phase = Phase::Ready;
-            active.retries = 0;
+            active.purpose.succeed();
         }
         event
     }
 
-    fn on_hello(active: &mut Active, value: RESPValue) -> Event<P> {
+    fn on_hello(active: &mut Active, value: RESPValue, url_database: u32) -> Event<P> {
         use RedisError::{AuthenticationFailed, UnsupportedProtocol};
         match value {
             RESPValue::Error(message) => {
@@ -763,7 +786,9 @@ impl<P> Client<P> {
             {
                 broken(b"Server does not support RESP3", UnsupportedProtocol)
             }
-            RESPValue::SimpleString(_) | RESPValue::Map(_) if active.database > 0 => {
+            RESPValue::SimpleString(_) | RESPValue::Map(_)
+                if active.selected.unwrap_or(url_database) > 0 =>
+            {
                 active.phase = Phase::Select(Box::new(value));
                 Event::Ignored
             }
@@ -786,9 +811,9 @@ impl<P> Client<P> {
             RESPValue::SimpleString(text) if *text == *b"OK" => Event::Connected(hello),
             // Script selected with rights that it gets in `onconnect`, which has to run.
             RESPValue::Error(message)
-                if active.database != url_database && message.starts_with(b"NOPERM ") =>
+                if active.selected.is_some() && message.starts_with(b"NOPERM ") =>
             {
-                active.database = url_database;
+                active.selected = None;
                 if url_database == 0 {
                     return Event::Connected(hello);
                 }
@@ -834,11 +859,10 @@ impl<P> Client<P> {
             (RESPValue::SimpleString(text), Expect::Database(database)) => {
                 // QUEUED: whether EXEC runs it is not tracked.
                 if let State::Active(active) = &mut self.state {
-                    active.database = match &*text {
-                        b"OK" | b"RESET" => database,
-                        _ if database == active.database => database,
-                        _ => self.config.database,
-                    };
+                    let holds =
+                        matches!(&*text, b"OK" | b"RESET") || active.selected == Some(database);
+                    active.selected =
+                        (holds && database != self.config.database).then_some(database);
                 }
                 Event::Resolved {
                     promise,

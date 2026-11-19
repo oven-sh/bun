@@ -5,7 +5,7 @@
 use bun_core::strings;
 use bun_uws::quic;
 use bun_uws::quic::Qpack;
-use bun_uws::quic::header::Class as QpackClass;
+use bun_uws::quic::header::{Class as QpackClass, field};
 
 use super::stream::Stream;
 use crate::http_request_body::HTTPRequestBody;
@@ -48,18 +48,14 @@ pub(crate) fn write_request(stream: &mut Stream, qs: quic::Stream) -> crate::Res
         );
     }
 
-    let mut headers: Vec<quic::Header> = Vec::with_capacity(request.headers.len() + 4);
+    let mut headers = Vec::with_capacity(request.headers.len() + 4);
 
-    // Names not in the QPACK static table get lowercased into one
-    // pre-sized buffer so the pointers stay stable across the batch.
+    // Names not in the QPACK static table get lowercased into one buffer.
     let mut name_bytes: usize = 0;
     for h in request.headers {
         name_bytes += h.name().len();
     }
     let mut lower = vec![0u8; name_bytes];
-    // Carve disjoint sub-slices out of `lower` via `split_at_mut`; `quic::Header`
-    // stores raw pointers (no lifetime), so each `dst` borrow ends at `init` and
-    // the running `remaining` tail never overlaps a stored header.
     let mut remaining: &mut [u8] = &mut lower;
 
     let mut authority: &[u8] = host;
@@ -69,10 +65,10 @@ pub(crate) fn write_request(stream: &mut Stream, qs: quic::Stream) -> crate::Res
         b"/"
     };
     headers.extend([
-        quic::Header::init(b":method", request.method, Some(Qpack::MethodGet)),
-        quic::Header::init(b":scheme", b"https", Some(Qpack::SchemeHttps)),
-        quic::Header::init(b":authority", b"", Some(Qpack::Authority)),
-        quic::Header::init(b":path", path, Some(Qpack::Path)),
+        field(b":method", request.method, Some(Qpack::MethodGet)),
+        field(b":scheme", b"https", Some(Qpack::SchemeHttps)),
+        field(b":authority", b"", Some(Qpack::Authority)),
+        field(b":path", path, Some(Qpack::Path)),
     ]);
     for h in request.headers {
         if let Some(class) = Qpack::classify(h.name()) {
@@ -80,34 +76,30 @@ pub(crate) fn write_request(stream: &mut Stream, qs: quic::Stream) -> crate::Res
                 QpackClass::Forbidden => {}
                 QpackClass::Host => authority = h.value(),
                 QpackClass::Indexed { name, index } => {
-                    headers.push(quic::Header::init(name, h.value(), Some(index)));
+                    headers.push(field(name, h.value(), Some(index)));
                 }
             }
         } else if strings::eql_case_insensitive_asciii_check_length(h.name(), b"te") {
             let value = strings::trim(h.value(), b" \t");
             if strings::eql_case_insensitive_asciii_check_length(value, b"trailers") {
-                headers.push(quic::Header::init(b"te", b"trailers", None));
+                headers.push(field(b"te", b"trailers", None));
             }
         } else {
             let (dst, rest) = remaining.split_at_mut(h.name().len());
             remaining = rest;
             let _ = strings::copy_lowercase(h.name(), dst);
-            headers.push(quic::Header::init(dst, h.value(), None));
+            headers.push(field(dst, h.value(), None));
         }
     }
     if authority.is_empty() {
         authority = host;
     }
-    headers[2] = quic::Header::init(b":authority", authority, Some(Qpack::Authority));
+    headers[2] = field(b":authority", authority, Some(Qpack::Authority));
 
     let has_inline_body = is_bytes && !req_body.is_empty();
 
     let end_stream = !has_inline_body && !is_streaming;
-    qs.send_headers(&headers, end_stream);
-
-    // Keep `lower` alive until after send_headers (header pointers borrow it).
-    drop(lower);
-    drop(headers);
+    qs.send_headers(headers.into_iter(), end_stream);
 
     if has_inline_body {
         stream.pending_body = req_body;

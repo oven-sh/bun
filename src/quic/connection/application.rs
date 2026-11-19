@@ -7,6 +7,7 @@ use crate::error::{Error, Result, http3_code};
 use crate::event::{Context, Event, StreamEvent};
 use crate::http3::{Fault, Reader, Section, StreamType, data_frame_header};
 use crate::stream_id::{Direction, StreamId};
+use crate::time::Instant;
 
 pub(super) const CRITICAL_STREAM_CLOSED: Error = Error::http3(
     http3_code::CLOSED_CRITICAL_STREAM,
@@ -119,12 +120,16 @@ impl Connection {
 
     /// Gives up on reading.
     pub fn stop(&mut self, id: StreamId, code: u64) {
-        if let Some((stream, state)) = self.streams.get_mut(id)
-            && !stream.flags.contains(Flags::RELEASED)
-        {
-            stream.abandon_message(id, self.http3.as_deref_mut());
+        if let Some((stream, state)) = self.abandon_message(id) {
             state.stop(id, stream, code);
         }
+    }
+
+    fn abandon_message(&mut self, id: StreamId) -> Option<(&mut Stream, &mut State)> {
+        let (stream, state) =
+            (self.streams.get_mut(id)).filter(|it| !it.0.flags.contains(Flags::RELEASED))?;
+        stream.abandon_message(id, self.http3.as_deref_mut());
+        Some((stream, state))
     }
 
     /// Gives up on writing, unless the end has been written.
@@ -136,12 +141,9 @@ impl Connection {
         }
     }
 
-    /// Closes a stream of ours that has not been used without a word to the peer.
+    /// Closes an unused stream of ours without a word to the peer.
     pub fn forget(&mut self, id: StreamId) {
-        if let Some((stream, state)) = self.streams.get_mut(id)
-            && !stream.flags.contains(Flags::RELEASED)
-        {
-            stream.abandon_message(id, self.http3.as_deref_mut());
+        if let Some((stream, state)) = self.abandon_message(id) {
             state.forget(id, stream);
         }
     }
@@ -186,14 +188,8 @@ impl Connection {
         if let Role::Typed(kind) = stream.role {
             return self.read_typed(id, kind, data, shared);
         }
-        let reader = (self.http3.as_mut().zip(self.config.http3.as_ref())).map(|it| Reader {
-            id,
-            side: self.side,
-            http3: it.0,
-            config: it.1,
-            pool: &mut shared.pool,
-            has_priorities: self.config.has_priorities,
-        });
+        let http3 = self.http3.as_deref_mut();
+        let reader = Reader::new(id, self.side, http3, &self.config, &mut shared.pool);
         read(id, stream, state, data, reader, false)
     }
 
@@ -205,14 +201,8 @@ impl Connection {
         is_unblocked: bool,
         shared: &mut Shared,
     ) -> Result {
-        let reader = (self.http3.as_mut().zip(self.config.http3.as_ref())).map(|it| Reader {
-            id,
-            side: self.side,
-            http3: it.0,
-            config: it.1,
-            pool: &mut shared.pool,
-            has_priorities: self.config.has_priorities,
-        });
+        let http3 = self.http3.as_deref_mut();
+        let reader = Reader::new(id, self.side, http3, &self.config, &mut shared.pool);
         (self.streams.get_mut(id)).map_or(Ok(()), |(stream, state)| {
             read(id, stream, state, &[], reader, is_unblocked)
         })
@@ -270,11 +260,7 @@ impl Connection {
 
     /// If it returns `None` and the connection is over, that is for good.
     #[inline]
-    pub(crate) fn poll_event(
-        &mut self,
-        now: crate::time::Instant,
-        shared: &mut Shared,
-    ) -> Option<Event> {
+    pub(crate) fn poll_event(&mut self, now: Instant, shared: &mut Shared) -> Option<Event> {
         loop {
             if let Some(event) = self.streams.state.events.pop_front() {
                 return Some(self.deliver(event));

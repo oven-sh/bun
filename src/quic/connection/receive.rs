@@ -18,7 +18,7 @@ use crate::event::CloseReason;
 use crate::frame::Frame;
 use crate::packet::{
     FIXED_BIT, Invariants, KEY_PHASE, LONG_HEADER, LongHeader, LongKind, MIN_DATAGRAM_LEN,
-    MIN_RESET_LEN, SPIN_BIT, Sealed, has_reserved_bits,
+    MIN_RESET_LEN, Opened, SPIN_BIT, Sealed,
 };
 use crate::path::Addresses;
 use crate::stream_id::Side;
@@ -30,28 +30,7 @@ const MAX_UNDECRYPTABLE: usize = 32;
 const MAX_UNDECRYPTABLE_LEN: usize = 48 * 1024;
 const UNVALIDATED_MAX_UNDECRYPTABLE_LEN: usize = 16 * 1024;
 
-/// An authentic packet.
-pub(crate) struct Opened<'a> {
-    pub(crate) first: u8,
-    pub(crate) number: u64,
-    pub(crate) payload: &'a [u8],
-}
-
-impl Opened<'_> {
-    /// For an Initial packet, which is dropped if there is something wrong with it (RFC 9000 §11.1). The frames also
-    /// have to pass `check`.
-    pub(crate) fn is_valid_initial(&self, mut check: impl FnMut(&Frame) -> bool) -> bool {
-        let mut rest = self.payload;
-        let mut is_valid = !has_reserved_bits(self.first) && !rest.is_empty();
-        while is_valid && !rest.is_empty() {
-            is_valid = Frame::read(&mut rest)
-                .is_ok_and(|frame| frame.is_allowed_in_handshake() && check(&frame));
-        }
-        is_valid
-    }
-}
-
-struct Origin<'a> {
+struct Arrival<'a> {
     now: Instant,
     from: &'a Addresses,
     /// As of before the frames.
@@ -62,7 +41,7 @@ struct Origin<'a> {
 }
 
 #[inline]
-fn is_same(a: SocketAddr, b: SocketAddr) -> bool {
+fn is_same_but_for_zone(a: SocketAddr, b: SocketAddr) -> bool {
     (a.ip(), a.port()) == (b.ip(), b.port())
 }
 
@@ -80,7 +59,7 @@ impl Connection {
         // A client may not know its address, or the zone of that of the server.
         let from = &match self.side {
             Side::Server => *from,
-            Side::Client if is_same(from.peer, current.peer) => current,
+            Side::Client if is_same_but_for_zone(from.peer, current.peer) => current,
             Side::Client => Addresses {
                 local: current.local,
                 peer: from.peer,
@@ -108,7 +87,7 @@ impl Connection {
         self.stats.packets_received += 1;
         self.path.on_received(len);
         let from = self.path.addresses;
-        let origin = Origin {
+        let arrival = Arrival {
             now,
             from: &from,
             is_current_path: true,
@@ -116,7 +95,7 @@ impl Connection {
             is_early: false,
             destination: &[],
         };
-        let result = (self.process(&origin, packet, shared))
+        let result = (self.process(&arrival, packet, shared))
             .and_then(|_| self.receive_packets(now, &from, rest, len, shared));
         self.after_datagram(now, &from, len, result.map(|_| true), shared);
     }
@@ -293,14 +272,8 @@ impl Connection {
         let Some(sealed) = Sealed::new(packet, offset, &*keys.header, expected) else {
             return Ok(false);
         };
-        let (first, number) = (sealed.first, sealed.number);
-        let Some(payload) = sealed.open(&keys.payload) else {
+        let Some(packet) = sealed.open(&keys.payload) else {
             return self.on_forgery();
-        };
-        let packet = Opened {
-            first,
-            number,
-            payload,
         };
         if id == SpaceId::Initial
             && !packet.is_valid_initial(
@@ -328,7 +301,7 @@ impl Connection {
                 self.discard_space(now, |it| it.initial.take());
             }
         }
-        let origin = Origin {
+        let arrival = Arrival {
             now,
             from,
             is_current_path: true,
@@ -336,7 +309,7 @@ impl Connection {
             is_early,
             destination: &header.destination,
         };
-        self.process(&origin, &packet, shared)
+        self.process(&arrival, &packet, shared)
     }
 
     /// RFC 9369 §4.1.
@@ -388,19 +361,13 @@ impl Connection {
         let expected = space.received.expected;
         let opened =
             Sealed::new(packet, 1 + LocalId::LEN, &*keys.header, expected).and_then(|it| {
-                let (first, number) = (it.first, it.number);
-                let generation = self.key_update.generation(first & KEY_PHASE != 0, number);
+                let phase = it.first & KEY_PHASE != 0;
+                let generation = self.key_update.generation(phase, it.number);
                 let key = match generation {
                     Generation::Current => Some(&keys.payload),
                     _ => self.key_update.other_key(generation),
                 };
-                let payload = key.and_then(|key| it.open(key))?;
-                let packet = Opened {
-                    first,
-                    number,
-                    payload,
-                };
-                Some((packet, generation))
+                Some((key.and_then(|key| it.open(key))?, generation))
             });
         let Some((packet, generation)) = opened else {
             if tail.is_some_and(|tail| self.is_reset(from, ResetToken(tail))) {
@@ -419,11 +386,11 @@ impl Connection {
             (self.timers).set(Timer::KeyDiscard, now + self.settling_period());
         }
         let is_current_path = *from == self.path.addresses;
-        if is_current_path && packet.number >= expected && self.spins {
+        if is_current_path && packet.number >= expected && self.uses_spin_bit {
             // RFC 9000 §17.4.
-            self.spin = (packet.first & SPIN_BIT != 0) == self.side.is_server();
+            self.spin_bit = (packet.first & SPIN_BIT != 0) == self.side.is_server();
         }
-        let origin = Origin {
+        let arrival = Arrival {
             now,
             from,
             is_current_path,
@@ -431,7 +398,7 @@ impl Connection {
             is_early: false,
             destination: &destination.0,
         };
-        let is_new = self.process(&origin, &packet, shared)?;
+        let is_new = self.process(&arrival, &packet, shared)?;
         if is_new && *from == self.path.addresses {
             self.last_destination = destination;
         }
@@ -489,9 +456,9 @@ impl Connection {
 
     /// Returns false for a duplicate.
     #[inline]
-    fn process(&mut self, origin: &Origin, packet: &Opened, shared: &mut Shared) -> Result<bool> {
-        let space = self.spaces.open(origin.space);
-        if has_reserved_bits(packet.first) {
+    fn process(&mut self, arrival: &Arrival, packet: &Opened, shared: &mut Shared) -> Result<bool> {
+        let space = self.spaces.open(arrival.space);
+        if packet.has_reserved_bits() {
             return Err(Error::violation("reserved bits are set"));
         }
         if space.received.is_duplicate(packet.number) {
@@ -505,8 +472,8 @@ impl Connection {
         let mut rest = packet.payload;
         while !rest.is_empty() && self.is_receiving() {
             let frame = Frame::read(&mut rest)?;
-            let is_allowed = match origin.space {
-                SpaceId::Data => !origin.is_early || frame.is_allowed_in_early_data(),
+            let is_allowed = match arrival.space {
+                SpaceId::Data => !arrival.is_early || frame.is_allowed_in_early_data(),
                 _ => frame.is_allowed_in_handshake(),
             };
             if !is_allowed {
@@ -519,19 +486,19 @@ impl Connection {
             if matches!(frame, Frame::Ack(_)) && core::mem::replace(&mut has_ack, true) {
                 self.streams.state.add_load(Load::Light);
             }
-            self.on_frame(origin, frame, shared)?;
+            self.on_frame(arrival, frame, shared)?;
         }
-        if let Some(space) = self.spaces.get_mut(origin.space) {
-            let order = (space.received).insert(origin.now, packet.number, is_eliciting);
+        if let Some(space) = self.spaces.get_mut(arrival.space) {
+            let order = (space.received).insert(arrival.now, packet.number, is_eliciting);
             if is_eliciting {
-                self.plan_ack(origin.now, origin.space, &order);
+                self.plan_ack(arrival.now, arrival.space, &order);
             }
         }
-        if !(origin.is_current_path && self.candidates.is_empty()) && is_largest && !is_probing {
-            if *origin.from != self.path.addresses && self.side.is_server() {
-                self.candidate(origin.now, origin.from, origin.destination, true, shared)?;
+        if !(arrival.is_current_path && self.candidates.is_empty()) && is_largest && !is_probing {
+            if *arrival.from != self.path.addresses && self.side.is_server() {
+                self.candidate(arrival.now, arrival.from, arrival.destination, true, shared)?;
             }
-            self.on_peer_moved(origin.now, origin.from, shared)?;
+            self.on_peer_moved(arrival.now, arrival.from, shared)?;
         }
         Ok(true)
     }
@@ -558,17 +525,17 @@ impl Connection {
     }
 
     #[inline]
-    fn on_frame(&mut self, origin: &Origin, frame: Frame, shared: &mut Shared) -> Result {
-        let now = origin.now;
+    fn on_frame(&mut self, arrival: &Arrival, frame: Frame, shared: &mut Shared) -> Result {
+        let now = arrival.now;
         match frame {
             Frame::Stream {
                 id,
                 offset,
                 data,
                 fin,
-            } => return self.on_stream(id, offset, data, fin, origin.is_early, shared),
+            } => return self.on_stream(id, offset, data, fin, arrival.is_early, shared),
             Frame::Ack(ack) => {
-                self.on_ack(now, origin.space, &ack)?;
+                self.on_ack(now, arrival.space, &ack)?;
                 // RFC 9001 §4.1.2.
                 if self.phase == Phase::Established && self.key_update.is_acked(&self.spaces.data) {
                     return self.confirm_handshake(now, shared);
@@ -578,7 +545,7 @@ impl Connection {
             Frame::DataBlocked(limit) => self.streams.state.on_data_blocked(limit),
             Frame::Ping => self.stats.pings_received += 1,
             Frame::Crypto { offset, data } => {
-                return self.on_crypto(now, origin.space, offset, data, shared);
+                return self.on_crypto(now, arrival.space, offset, data, shared);
             }
             Frame::ResetStream {
                 id,
@@ -618,15 +585,15 @@ impl Connection {
             }
             Frame::RetireConnectionId(sequence) => {
                 self.streams.state.add_load(Load::Heavy);
-                return (self.local_ids).on_retired(sequence, origin.destination, shared);
+                return (self.local_ids).on_retired(sequence, arrival.destination, shared);
             }
             Frame::PathChallenge(data) => {
                 self.streams.state.add_load(Load::Light);
-                let path = match *origin.from == self.path.addresses {
+                let path = match *arrival.from == self.path.addresses {
                     true => Some(&mut self.path),
                     false => {
                         let is_server = self.side.is_server();
-                        self.candidate(now, origin.from, origin.destination, is_server, shared)?
+                        self.candidate(now, arrival.from, arrival.destination, is_server, shared)?
                     }
                 };
                 if let Some(path) = path {
@@ -634,7 +601,7 @@ impl Connection {
                 }
             }
             Frame::PathResponse(data) => {
-                return self.on_path_response(now, origin.from, data, shared);
+                return self.on_path_response(now, arrival.from, data, shared);
             }
             Frame::Close {
                 layer,
@@ -654,7 +621,7 @@ impl Connection {
             }
             Frame::HandshakeDone => return self.confirm_handshake(now, shared),
             Frame::Datagram { data, frame_len } => {
-                return self.on_datagram(data, frame_len, origin.is_early);
+                return self.on_datagram(data, frame_len, arrival.is_early);
             }
             Frame::AckFrequency { .. } if !self.config.adapts_ack_frequency => {
                 return Err(Error::violation("ACK_FREQUENCY frame was not negotiated"));

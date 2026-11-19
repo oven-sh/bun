@@ -26,6 +26,9 @@ use crate::range_set::RangeSet;
 use crate::stream_id::{Direction, Side, StreamId};
 use crate::transport_parameters::TransportParameters;
 
+/// A type, a length and a byte.
+const MIN_DATA_FRAME_LEN: u64 = 3;
+
 pub(crate) struct Streams {
     pub(crate) table: Table,
     pub(crate) state: State,
@@ -159,7 +162,7 @@ impl Streams {
             },
             state: State {
                 sends_in_order: config.has_priorities && side.is_server(),
-                min_credit: if is_http3 { 3 } else { 1 },
+                min_credit: if is_http3 { MIN_DATA_FRAME_LEN } else { 1 },
                 write_round: 1,
                 receive_limit: local.initial_max_data,
                 receive_window: local.initial_max_data,
@@ -381,6 +384,15 @@ impl Table {
 
     pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = (StreamId, &mut Stream)> {
         self.map.iter_mut().map(|(&id, stream)| (id, &mut **stream))
+    }
+
+    pub(super) fn sorted(
+        &mut self,
+        is_wanted: impl Fn(StreamId, &Stream) -> bool,
+    ) -> Vec<(StreamId, &mut Stream)> {
+        let mut streams: Vec<_> = self.iter_mut().filter(|it| is_wanted(it.0, it.1)).collect();
+        streams.sort_unstable_by_key(|it| it.0);
+        streams
     }
 
     #[inline]

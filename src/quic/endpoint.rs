@@ -10,7 +10,7 @@ use crate::batch::Batch;
 use crate::cid::{ConnectionId, LocalId, ResetToken};
 use crate::config::Config;
 use crate::connection::handshake::Awaited;
-use crate::connection::{Connection, Introduction, Opened, Remains};
+use crate::connection::{Connection, Introduction, Remains};
 use crate::crypto::{Crypto, InitialSecret, retry_tag};
 use crate::deadlines::Deadlines;
 use crate::error::{Layer, transport_code};
@@ -20,9 +20,9 @@ use crate::hash::{IdMap, KeyedMap, Seeded};
 use crate::http3::{Fields, Header, Pool};
 use crate::packet::{
     FIXED_BIT, Invariants, LONG_HEADER, LongFields, LongHeader, LongKind, MIN_DATAGRAM_LEN,
-    MIN_RESET_LEN, Sealed, Unsealed,
+    MIN_INITIAL_ID_LEN, MIN_RESET_LEN, Opened, Sealed, Unsealed,
 };
-use crate::path::{Addresses, is_reserved_port};
+use crate::path::{AMPLIFICATION_FACTOR, Addresses, is_reserved_port};
 use crate::stream_id::{Side, StreamId};
 use crate::time::Instant;
 use crate::tls;
@@ -39,8 +39,11 @@ const DATAGRAMS_PER_TURN: usize = 44;
 const HELLOS_PER_PASS: usize = 2;
 /// Into how many the clients are divided by their addresses.
 const GROUPS: usize = 64;
-/// RFC 9000 §7.2.
-const MIN_INITIAL_ID_LEN: usize = 8;
+const MAX_AWAITING_HELLO: usize = 1024;
+const MAX_AWAITING_TURN: usize = 1024;
+const MAX_AWAITING_FINISHED: usize = 8192;
+const UNVALIDATED_CLIENTS: TokenBucket = TokenBucket::new(100.0, 512.0);
+const VERSION_NEGOTIATIONS: TokenBucket = TokenBucket::new(100.0, 200.0);
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,7 +87,7 @@ struct Slot {
     awaited: Option<Awaited>,
     group: u8,
     /// From [`Endpoint::unvalidated_clients`].
-    has_token: bool,
+    has_permit: bool,
     may_have_events: bool,
     may_transmit: bool,
 }
@@ -182,7 +185,7 @@ pub struct Incoming<'a> {
     packet: Opened<'a>,
     rest: &'a mut [u8],
     len: usize,
-    has_token: bool,
+    has_permit: bool,
 }
 
 pub struct Endpoint {
@@ -193,7 +196,7 @@ pub struct Endpoint {
     awaiting_hello: Queue,
     awaiting_turn: Queue,
     awaiting_finished: Queue,
-    /// A client gives its token back when its address is validated. Without one it has to see to that first.
+    /// A client gives its permit back when its address is validated. Without one it has to see to that first.
     unvalidated_clients: TokenBucket,
     version_negotiations: TokenBucket,
     /// They can be earlier than what the connections say.
@@ -220,11 +223,11 @@ impl Endpoint {
             slots: Slots::default(),
             free: Vec::new(),
             connections: 0,
-            awaiting_hello: Queue::new(1024),
-            awaiting_turn: Queue::new(1024),
-            awaiting_finished: Queue::new(8192),
-            unvalidated_clients: TokenBucket::new(100.0, 512.0),
-            version_negotiations: TokenBucket::new(100.0, 200.0),
+            awaiting_hello: Queue::new(MAX_AWAITING_HELLO),
+            awaiting_turn: Queue::new(MAX_AWAITING_TURN),
+            awaiting_finished: Queue::new(MAX_AWAITING_FINISHED),
+            unvalidated_clients: UNVALIDATED_CLIENTS,
+            version_negotiations: VERSION_NEGOTIATIONS,
             deadlines: Deadlines::default(),
             with_events: VecDeque::new(),
             to_transmit: VecDeque::new(),
@@ -326,7 +329,7 @@ impl Endpoint {
         };
         let hash = self.shared.routes.by_initial_id.hasher().hash_one(network);
         let slot = self.slots.at_mut(handle.slot);
-        (slot.has_token, slot.group) = (incoming.has_token, (hash % GROUPS as u64) as u8);
+        (slot.has_permit, slot.group) = (incoming.has_permit, (hash % GROUPS as u64) as u8);
         self.track_handshake(now, handle.slot);
         handle
     }
@@ -347,7 +350,7 @@ impl Endpoint {
             Some(it) => (it.awaited(), it.is_validated()),
             None => (None, false),
         };
-        if is_validated && core::mem::take(&mut slot.has_token) {
+        if is_validated && core::mem::take(&mut slot.has_permit) {
             self.unvalidated_clients.put_back(1);
         }
         let (before, group) = (core::mem::replace(&mut slot.awaited, awaited), slot.group);
@@ -463,7 +466,7 @@ impl Endpoint {
             // RFC 9000 §10.2.1.
             remains.datagrams_received = remains.datagrams_received.saturating_add(1);
             if remains.datagrams_received.is_power_of_two()
-                && (1..=3 * datagram.len()).contains(&remains.farewell.len())
+                && (1..=AMPLIFICATION_FACTOR * datagram.len()).contains(&remains.farewell.len())
             {
                 let farewell = remains.farewell.clone();
                 self.reply(from, farewell);
@@ -518,8 +521,8 @@ impl Endpoint {
             destination: &header.destination,
         };
         let validation = self.shared.tokens.validate(now, &scope, header.token);
-        let has_token = validation == Validation::Unknown;
-        if has_token && !self.unvalidated_clients.take(now, 1) {
+        let has_permit = validation == Validation::Unknown;
+        if has_permit && !self.unvalidated_clients.take(now, 1) {
             self.retry(now, from, &header);
             return None;
         }
@@ -528,12 +531,7 @@ impl Endpoint {
         let read_keys = secret.keys(Side::Client);
         let (packet, rest) = datagram.split_at_mut(header.len.min(len));
         let sealed = Sealed::new(packet, header.number_offset, &*read_keys.header, 0)?;
-        let (first, number) = (sealed.first, sealed.number);
-        let packet = Opened {
-            first,
-            number,
-            payload: sealed.open(&read_keys.payload)?,
-        };
+        let packet = sealed.open(&read_keys.payload)?;
         let mut has_hello = false;
         let is_valid = packet.is_valid_initial(|frame| {
             has_hello |= matches!(frame, Frame::Crypto { .. });
@@ -558,7 +556,7 @@ impl Endpoint {
             packet,
             rest,
             len,
-            has_token,
+            has_permit,
         };
         // RFC 9000 §8.1.2.
         if validation == Validation::InvalidRetry {

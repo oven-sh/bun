@@ -160,7 +160,7 @@ fn runs_of_datagrams() {
     assert!(!raw.peer.endpoint.wants_to_transmit());
     assert_eq!((batch.len(), batch.bytes().len()), (6, 220));
     batch.clear();
-    assert!(batch.is_empty() && batch.bytes().is_empty() && batch.runs().next().is_none());
+    assert!(batch.len() == 0 && batch.bytes().is_empty() && batch.runs().next().is_none());
 
     raw.peer.endpoint.reset(&raw.addresses, &[0x40; 31]);
     for _ in 0..65 {

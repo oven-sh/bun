@@ -1,5 +1,8 @@
 use core::net::SocketAddr;
 
+/// RFC 9000 §8.1.
+pub(crate) const AMPLIFICATION_FACTOR: usize = 3;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Addresses {
     pub local: SocketAddr,

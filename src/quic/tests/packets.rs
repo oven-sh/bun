@@ -134,7 +134,6 @@ fn spin_bit() {
 #[test]
 fn statistics() {
     for raw in Raw::both() {
-        let side = !raw.side;
         let mut raw = (raw.config(|it| it.congestion = Algorithm::Cubic)).connected();
         let before = raw.connection().stats();
         let id = raw.peer.open(Unidirectional);
@@ -158,6 +157,5 @@ fn statistics() {
         assert_eq!(after.smoothed_rtt, Duration::from_millis(RTT));
         assert_eq!(after.rtt_variation, Duration::from_micros(4218));
         assert_eq!(after.congestion_window, 32 * 1460);
-        assert_eq!(raw.connection().side(), side);
     }
 }

@@ -10,7 +10,7 @@ const MAX_RANGES: usize = 256;
 /// After the first. They are counted in one byte.
 const MAX_RANGES_IN_FRAME: usize = 63;
 const MAX_TRACKED_ACKS: usize = 16;
-pub(crate) const ACK_DELAY_EXPONENT: u64 = 3;
+pub(super) const ACK_DELAY_EXPONENT: u64 = 3;
 
 struct SentAck {
     packet: u64,

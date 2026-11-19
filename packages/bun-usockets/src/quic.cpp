@@ -8,6 +8,7 @@
 #include "internal/fault_inject.h"
 #include "crypto/root_certs_header.h"
 #include "crypto/sni_tree.h"
+#include <openssl/aes.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
@@ -184,7 +185,7 @@ void us_quic_ignore_receive_errors(struct us_udp_socket_t *udp) {
     udp->on_recv_error = [](struct us_udp_socket_t *, int, int) {};
 }
 
-/* Returns whether us_quic_message_t::segment_len is understood. */
+/* Returns whether us_quic_message_t::segment_len is understood. ECN is not used, so it need not be reported. */
 bool us_quic_enable_offload(struct us_udp_socket_t *udp) {
 #ifdef __linux__
     int value = 0;
@@ -206,6 +207,13 @@ struct us_quic_message_t {
     /* Not 0 for the kernel to cut it into datagrams of this length. */
     uint16_t segment_len;
 };
+
+static_assert(sizeof(us_quic_address_t) == 24 && offsetof(us_quic_address_t, is_ipv6) == 22 &&
+    sizeof(us_quic_envelope_t) == 52 && offsetof(us_quic_envelope_t, peer) == 24 &&
+    sizeof(us_quic_message_t) == 60 && offsetof(us_quic_message_t, peer) == 24 &&
+    offsetof(us_quic_message_t, len) == 52 && offsetof(us_quic_message_t, segment_len) == 56 &&
+    sizeof(us_quic_header_t) == 32 && offsetof(us_quic_header_t, qpack_index) == 28 &&
+    sizeof(us_quic_stream_t) == 24 && US_QUIC_MAX_REQUEST_FIELDS == 200, "update src/uws_sys/quic");
 
 #ifdef __linux__
 #define US_QUIC_SEND_BATCH 64
@@ -280,6 +288,7 @@ static int us_quic_try_send(LIBUS_SOCKET_DESCRIPTOR fd, bool names_source, const
 }
 
 /* Returns how many were sent, 0 if on_drain follows, or the negated error if the first one was refused.
+ * ENOBUFS counts as a refusal, as the socket stays writable.
  * `names_source` is for a socket that is not bound to one address. */
 int us_quic_send(struct us_udp_socket_t *udp, bool names_source, const char *bytes,
     const struct us_quic_message_t *messages, size_t count) {
@@ -313,6 +322,7 @@ static_assert(SSL_ERROR_EARLY_DATA_REJECTED == 15 && SSL_SESS_CACHE_CLIENT == 1 
     ssl_verify_invalid == 1 && ssl_encryption_initial == 0 && ssl_encryption_early_data == 1 &&
     ssl_encryption_handshake == 2 && ssl_encryption_application == 3 && sizeof(SSL_QUIC_METHOD) == 5 * sizeof(void *),
     "update the constants in src/quic_tls/session.rs");
+static_assert(sizeof(AES_KEY) == 244 && alignof(AES_KEY) == 4, "update the type in src/quic_tls/primitives.rs");
 
 static void us_quic_require_tls13(SSL_CTX *ssl) {
     SSL_CTX_set_min_proto_version(ssl, TLS1_3_VERSION);

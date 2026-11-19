@@ -1,9 +1,10 @@
 //! RFC 9114 §4.1.
 
-use super::fields::{self, Expected, Failure, Fields, Pool, Section, Summary};
+use super::control::PUSH_IS_NOT_ENABLED;
+use super::fields::{self, Expected, Fields, Pool, Section, Summary};
 use super::frame::{Cursor, kind};
 use super::{Http3, Priority};
-use crate::config::Http3Config;
+use crate::config::{Config, Http3Config};
 use crate::connection::streams::Ready;
 use crate::error::{Error, http3_code};
 use crate::stream_id::{Side, StreamId};
@@ -47,7 +48,7 @@ pub(crate) enum Fault {
 }
 
 /// RFC 9114 §4.1.2.
-const MALFORMED: Fault = Fault::Stream(http3_code::MESSAGE_ERROR);
+pub(super) const MALFORMED: Fault = Fault::Stream(http3_code::MESSAGE_ERROR);
 
 impl From<Error> for Fault {
     fn from(error: Error) -> Self {
@@ -55,19 +56,45 @@ impl From<Error> for Fault {
     }
 }
 
+impl From<bun_qpack::Error> for Fault {
+    fn from(error: bun_qpack::Error) -> Self {
+        Self::Connection(error.into())
+    }
+}
+
 pub(crate) struct Reader<'a> {
-    pub(crate) id: StreamId,
-    pub(crate) side: Side,
+    id: StreamId,
+    side: Side,
     pub(crate) http3: &'a mut Http3,
-    pub(crate) config: &'a Http3Config,
-    pub(crate) pool: &'a mut Pool,
-    pub(crate) has_priorities: bool,
+    config: &'a Http3Config,
+    pool: &'a mut Pool,
+    has_priorities: bool,
+}
+
+impl<'a> Reader<'a> {
+    #[inline]
+    pub(crate) fn new(
+        id: StreamId,
+        side: Side,
+        http3: Option<&'a mut Http3>,
+        config: &'a Config,
+        pool: &'a mut Pool,
+    ) -> Option<Self> {
+        (http3.zip(config.http3.as_ref())).map(|(http3, http3_config)| Self {
+            id,
+            side,
+            http3,
+            config: http3_config,
+            pool,
+            has_priorities: config.has_priorities,
+        })
+    }
 }
 
 impl Message {
     /// Whether it does not take more bytes at the moment.
     #[inline]
-    pub(crate) fn is_paused(&self) -> bool {
+    fn is_paused(&self) -> bool {
         self.is_blocked
             || self.fields.is_some() && matches!(self.cursor.current(), Some((kind::HEADERS, _)))
     }
@@ -129,9 +156,7 @@ impl Message {
         let is_expected = match kind {
             kind::DATA => self.part == Part::Body,
             kind::HEADERS => self.part != Part::AfterTrailers && !self.is_tunnel,
-            kind::PUSH_PROMISE if reader.side.is_client() => {
-                return Err(Error::http3(http3_code::ID_ERROR, "push is not enabled").into());
-            }
+            kind::PUSH_PROMISE if reader.side.is_client() => return Err(PUSH_IS_NOT_ENABLED.into()),
             kind::PUSH_PROMISE
             | kind::CANCEL_PUSH
             | kind::SETTINGS
@@ -154,7 +179,7 @@ impl Message {
         }
         if len == 0 {
             if kind == kind::HEADERS {
-                return Err(Error::from(bun_qpack::Error::DecompressionFailed).into());
+                return Err(bun_qpack::Error::DecompressionFailed.into());
             }
             self.cursor = Cursor::default();
         }
@@ -202,11 +227,7 @@ impl Message {
         let mut fields = reader.pool.take();
         let decoder = &mut reader.http3.decoder;
         let (id, config) = (reader.id.0, reader.config);
-        let summary = match fields::decode(decoder, id, section, expected, config, &mut fields) {
-            Ok(summary) => summary,
-            Err(Failure::Malformed) => return Err(MALFORMED),
-            Err(Failure::Compression(error)) => return Err(Error::from(error).into()),
-        };
+        let summary = fields::decode(decoder, id, section, expected, config, &mut fields)?;
         self.is_blocked = summary.is_none();
         let Some(summary) = summary else {
             return Ok(false);

@@ -37,7 +37,6 @@ mod version;
 
 pub use batch::Batch;
 pub use cid::ConnectionId;
-pub use coding::MAX_VARINT;
 pub use config::{Config, FieldLimits, Http3Config, KeepAlive};
 pub use congestion::Algorithm;
 pub use connection::{Connection, Stats, StreamInfo};

@@ -2,7 +2,9 @@ use core::ops::Range;
 
 use crate::path::Addresses;
 
+/// The least that `UDP_MAX_SEGMENTS` has been on Linux.
 const MAX_SEGMENTS: usize = 64;
+/// What a UDP datagram can carry over IPv4.
 const MAX_RUN_LEN: usize = 65507;
 
 /// Datagrams to send.
@@ -25,11 +27,6 @@ impl Batch {
     #[inline]
     pub fn len(&self) -> usize {
         self.len
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
     }
 
     pub fn clear(&mut self) {

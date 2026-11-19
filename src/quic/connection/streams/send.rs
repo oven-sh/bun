@@ -130,7 +130,7 @@ impl State {
         if stream.mark(Flags::STOPPED_BY_PEER) {
             self.notify(id, stream, StreamEvent::Stopped(code));
             match stream.flags.contains(Flags::FIN_SENT) && stream.send.first_lost().is_none() {
-                true => stream.stopped_code = answer,
+                true => stream.deferred_reset_code = answer,
                 false => self.reset(id, stream, answer),
             }
         }
@@ -284,10 +284,7 @@ impl Streams {
         let Self { table, state, .. } = self;
         if state.blocked_at().is_some() {
             state.owed |= Control::DATA_BLOCKED;
-        } else if let Some((id, stream)) = table.iter_mut().find(|(_, it)| {
-            it.blocked_at == Some(it.send_limit)
-                && !it.flags.intersects(Flags::RESET | Flags::FIN_SENT)
-        }) {
+        } else if let Some((id, stream)) = table.iter_mut().find(|it| it.1.is_blocked()) {
             state.owe(id, stream, Flags::OWES_STREAM_DATA_BLOCKED);
         }
     }
@@ -389,7 +386,7 @@ impl Streams {
             return;
         }
         if stream.flags.contains(Flags::STOPPED_BY_PEER) {
-            return state.reset(id, stream, stream.stopped_code);
+            return state.reset(id, stream, stream.deferred_reset_code);
         }
         stream.send.on_lost(range);
         if stream.send.first_lost().is_some() && stream.mark(Flags::IN_LOST) {
@@ -430,8 +427,7 @@ fn write_owed_frames(
         (
             Flags::OWES_STREAM_DATA_BLOCKED,
             kind::STREAM_DATA_BLOCKED,
-            stream.blocked_at == Some(stream.send_limit)
-                && !(stream.flags).intersects(Flags::RESET | Flags::FIN_SENT),
+            stream.is_blocked(),
             stream.send_limit,
         ),
         (

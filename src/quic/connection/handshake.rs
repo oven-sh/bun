@@ -1,12 +1,14 @@
 //! RFC 9000 §7 and RFC 9001 §4.
 
 use super::ack_frequency::{self, MIN_ACK_DELAY};
+use super::sent::Control;
 use super::space::SpaceId;
 use super::streams::{Load, Streams};
 use super::timers::Timer;
 use super::{Connection, Phase};
 use crate::cid::ConnectionId;
 use crate::coding::Read;
+use crate::congestion::Algorithm;
 use crate::crypto::{Cipher, InitialSecret, Keys, Secret, retry_tag};
 use crate::endpoint::Shared;
 use crate::error::{Error, Result, http3_code, transport_code};
@@ -14,13 +16,11 @@ use crate::event::{CloseReason, Event};
 use crate::http3::write_settings;
 use crate::packet::{Invariants, LongHeader};
 use crate::stream_id::Side;
-use crate::time::Instant;
+use crate::time::{Duration, Instant};
 use crate::tls::{Alert, Level, Status};
 use crate::transport_parameters::{TransportParameters, VersionInformation};
 use crate::version::Version;
 use crate::with;
-
-use super::sent::Control;
 
 /// How far ahead of what TLS has got CRYPTO frames can be (RFC 9000 §7.5).
 const CRYPTO_WINDOW: u64 = 64 * 1024;
@@ -105,14 +105,14 @@ pub(crate) enum Awaited {
 }
 
 /// What [`Event::Ticket`] has.
-pub(crate) struct Ticket<'a> {
-    pub(crate) version: Version,
+pub(super) struct Ticket<'a> {
+    pub(super) version: Version,
     session: &'a [u8],
     parameters: TransportParameters,
 }
 
 impl<'a> Ticket<'a> {
-    pub(crate) fn read(mut input: &'a [u8]) -> Option<Self> {
+    pub(super) fn read(mut input: &'a [u8]) -> Option<Self> {
         let number = |input: &mut &[u8]| input.array().map(u32::from_be_bytes);
         let bytes = |input: &mut &'a [u8]| number(input).and_then(|len| input.bytes(len.into()));
         let version = Version::from_number(number(&mut input)?)?;
@@ -122,6 +122,20 @@ impl<'a> Ticket<'a> {
             session: bytes(&mut input)?,
             parameters: TransportParameters::decode(bytes(&mut input)?, Side::Server)?.remembered(),
         })
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        let parameters = self.parameters.encode();
+        let len = |bytes: &[u8]| (bytes.len() as u32).to_be_bytes();
+        [
+            &self.version.number().to_be_bytes(),
+            &TICKET_FORMAT.to_be_bytes(),
+            &len(self.session),
+            self.session,
+            &len(&parameters),
+            &parameters,
+        ]
+        .concat()
     }
 }
 
@@ -212,19 +226,14 @@ impl Handshake<'_> {
 
     pub fn ticket(&mut self, session: &[u8]) {
         let connection = &mut *self.connection;
-        let parameters = connection.peer.remembered().encode();
-        let len = |bytes: &[u8]| (bytes.len() as u32).to_be_bytes();
-        let ticket = [
-            &connection.version.number().to_be_bytes(),
-            &TICKET_FORMAT.to_be_bytes(),
-            &len(session),
-            session,
-            &len(&parameters),
-            &parameters,
-        ];
-        connection.tickets = connection.tickets.saturating_add(1);
-        if connection.tickets <= MAX_TICKETS {
-            connection.emit(Event::Ticket(ticket.concat()));
+        connection.tickets_received = connection.tickets_received.saturating_add(1);
+        if connection.tickets_received <= MAX_TICKETS {
+            let ticket = Ticket {
+                version: connection.version,
+                session,
+                parameters: connection.peer.remembered(),
+            };
+            connection.emit(Event::Ticket(ticket.encode()));
         }
     }
 
@@ -323,7 +332,7 @@ impl Connection {
     }
 
     fn wants_tickets(&self) -> bool {
-        self.side.is_client() && self.config.wants_tickets && self.tickets < MAX_TICKETS
+        self.side.is_client() && self.config.wants_tickets && self.tickets_received < MAX_TICKETS
     }
 
     fn advance_tls(&mut self, now: Instant, input: Option<(Level, &[u8])>) -> Result<Status> {
@@ -374,7 +383,7 @@ impl Connection {
         }
         let Some(known) = space.crypto_read.checked_sub(offset) else {
             return space
-                .crypto_early
+                .crypto_kept
                 .insert(offset, data)
                 .map_err(|_| CRYPTO_BUFFER_EXCEEDED);
         };
@@ -385,7 +394,7 @@ impl Connection {
             shared,
         )?;
         while let Some(space) = self.spaces.get_mut(id)
-            && let Some((offset, chunk)) = space.crypto_early.pop(space.crypto_read)
+            && let Some((offset, chunk)) = space.crypto_kept.pop(space.crypto_read)
         {
             let new = chunk.get((space.crypto_read - offset) as usize..);
             self.read_crypto(now, id, new.unwrap_or_default(), shared)?;
@@ -529,7 +538,7 @@ impl Connection {
         self.congestion.set_datagram_len(self.path.mtu.current);
         let timeouts = [&self.local, &self.peer].map(|it| it.max_idle_timeout_millis);
         let shortest = timeouts.into_iter().filter(|&it| it > 0).min();
-        self.idle_timeout = crate::time::Duration::from_millis(shortest.unwrap_or(0));
+        self.idle_timeout = Duration::from_millis(shortest.unwrap_or(0));
         if shortest.is_none() {
             self.timers.stop(Timer::Idle);
         }
@@ -588,7 +597,7 @@ impl Connection {
         }
         (self.local_ids).set_peer_limit(self.peer.active_connection_id_limit);
         if self.config.adapts_ack_frequency
-            && self.config.congestion == crate::congestion::Algorithm::Bbr
+            && self.config.congestion == Algorithm::Bbr
             && (self.peer.min_ack_delay_micros).is_some_and(|it| it <= MIN_ACK_DELAY.as_micros())
         {
             self.ack_controller = Some(ack_frequency::Controller::new(now, self.rtt.smoothed));
@@ -626,8 +635,8 @@ impl Connection {
         if self.side.is_server() {
             return Err(Error::violation("NEW_TOKEN frame from a client"));
         }
-        self.tokens = self.tokens.saturating_add(1);
-        if self.tokens <= MAX_TOKENS && token.len() <= MAX_TOKEN_LEN {
+        self.tokens_received = self.tokens_received.saturating_add(1);
+        if self.tokens_received <= MAX_TOKENS && token.len() <= MAX_TOKEN_LEN {
             self.emit(Event::Token(token.to_vec()));
         }
         Ok(())

@@ -1,7 +1,10 @@
 //! RFC 9000 §12 to §14.
 
+use core::ops::Range;
+
 use smallvec::SmallVec;
 
+use super::close::MIN_FRAME_ROOM;
 use super::sent::{Control, Fate, SentFrame, SentPacket};
 use super::space::{Space, SpaceId};
 use super::streams::WRITE_CHUNK;
@@ -12,6 +15,7 @@ use crate::coding::{Write, two_byte_varint, varint_len};
 use crate::congestion::Permit;
 use crate::crypto::TAG_LEN;
 use crate::endpoint::Shared;
+use crate::error::Result;
 use crate::frame::kind;
 use crate::packet::{
     FIXED_BIT, KEY_PHASE, LongFields, LongKind, MIN_DATAGRAM_LEN, SPIN_BIT, Unsealed, number_len,
@@ -28,6 +32,7 @@ const MAX_ACK_ONLY_PACKETS: u32 = 20;
 const PACKETS_BEFORE_MTU_PROBE: u64 = 10;
 const MAX_INTEGER_FRAME_LEN: usize = 1 + 8;
 const MAX_NEW_TOKEN_FRAME_LEN: usize = 64;
+const MAX_SECS_BLOCKED_IN_SILENCE: u32 = 8;
 const MIN_RETAINED: u64 = 1024 * 1024;
 
 /// A packet that is not sealed yet.
@@ -100,7 +105,7 @@ impl Connection {
     }
 
     #[inline]
-    fn prepare_to_transmit(&mut self, now: Instant) -> crate::error::Result {
+    fn prepare_to_transmit(&mut self, now: Instant) -> Result {
         if core::mem::take(&mut self.streams.state.made_progress) {
             self.restart_progress_timer(now);
         }
@@ -212,7 +217,7 @@ impl Connection {
         let packet = match kind {
             None => {
                 let flags = FIXED_BIT
-                    | if self.spin { SPIN_BIT } else { 0 }
+                    | if self.spin_bit { SPIN_BIT } else { 0 }
                     | if self.key_update.phase { KEY_PHASE } else { 0 };
                 Unsealed::short(out, flags, destination, number, len)
             }
@@ -283,7 +288,7 @@ impl Connection {
         id: SpaceId,
         content: Content,
         out: &mut Vec<u8>,
-        datagram: core::ops::Range<usize>,
+        datagram: Range<usize>,
     ) -> Option<Draft> {
         let space = self.spaces.get(id)?;
         let is_initial = id == SpaceId::Initial;
@@ -369,7 +374,7 @@ impl Connection {
         if may_elicit {
             self.write_frames(now, &mut draft, out, end, shared);
             if out.len() == after_ack {
-                // It may have turned out what is in the way.
+                // The peer may have to be told what is in the way.
                 self.write_frames(now, &mut draft, out, end, shared);
             }
         }
@@ -426,7 +431,8 @@ impl Connection {
         }
         self.streams.write_stream_frames(out, end, sent);
         if core::mem::take(&mut self.streams.state.has_reported_blocked) {
-            let mut delay = Duration::from_secs(1 + u64::from(self.crypto.random_below(8)));
+            let random = self.crypto.random_below(MAX_SECS_BLOCKED_IN_SILENCE);
+            let mut delay = Duration::from_secs(1 + u64::from(random));
             if !self.idle_timeout.is_zero() {
                 delay = delay.min((self.idle_timeout / 2).max(self.probe_timeout()));
             }
@@ -510,7 +516,7 @@ impl Connection {
         let space = self.spaces.open(id);
         if space.received.unacked_eliciting > 0 {
             let number = draft.packet.number;
-            (space.received).write_ack(now, number, out, end - super::close::MIN_FRAME_ROOM);
+            (space.received).write_ack(now, number, out, end - MIN_FRAME_ROOM);
         }
         self.close_frame.write(id, out, end);
         draft.is_expanded = id == SpaceId::Initial && self.side.is_client();

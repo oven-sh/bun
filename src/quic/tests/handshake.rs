@@ -24,7 +24,6 @@ fn flights_of_a_server() {
     let frames = "1[handshake_done, new_token, crypto, new_connection_id]";
     assert_eq!(raw.outline(), frames);
     assert!(raw.connection().is_ready() && raw.connection().tls().is_none());
-    assert_eq!(raw.connection().side(), Side::Server);
     raw.confirm();
     raw.advance(1000);
     assert_eq!((raw.packets(), raw.events()), Default::default());
@@ -40,7 +39,6 @@ fn flights_of_a_client() {
     assert_eq!(raw.events(), "ready");
     assert_eq!(raw.outline(), "I[ack] H[ack, crypto] 1[new_connection_id]");
     assert!(raw.connection().peer_parameters().is_some() && raw.connection().tls().is_some());
-    assert_eq!(raw.connection().side(), Side::Client);
     raw.confirm();
     assert_eq!(raw.events(), "confirmed");
     assert_eq!(raw.outline(), "1[ack]");

@@ -21,7 +21,6 @@ use core::net::SocketAddr;
 use std::rc::Rc;
 
 pub use application::StreamInfo;
-pub(crate) use receive::Opened;
 
 use close::CloseFrame;
 use datagrams::Datagrams;
@@ -42,6 +41,7 @@ use crate::endpoint::Shared;
 use crate::error::{Error, transport_code};
 use crate::event::{CloseReason, Context, Event};
 use crate::http3::Http3;
+use crate::packet::MIN_INITIAL_ID_LEN;
 use crate::path::Addresses;
 use crate::stream_id::Side;
 use crate::time::{Duration, Instant};
@@ -52,6 +52,8 @@ use crate::version::Version;
 
 const EXPECTED_PAUSE: Duration = Duration::from_secs(1);
 const MIN_IDLE_TIMEOUT_TO_KEEP_ALIVE: Duration = Duration::from_secs(2);
+const NEW_PATHS: TokenBucket = TokenBucket::new(1.0, 16.0);
+const TOLERATED_LOAD: TokenBucket = TokenBucket::new(330.0, 10_000.0);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -107,9 +109,9 @@ pub struct Connection {
     peer: Box<TransportParameters>,
     is_ready: bool,
     can_open_streams: bool,
-    tickets: u8,
-    tokens: u8,
-    origins: u8,
+    tickets_received: u8,
+    tokens_received: u8,
+    origin_frames_received: u8,
 
     spaces: Spaces,
     /// For 0-RTT packets.
@@ -117,10 +119,12 @@ pub struct Connection {
     key_update: KeyUpdate,
     /// How many more packets can fail authentication.
     integrity_limit: u64,
+    /// The packet number that is going to be left out (RFC 9000 §21.4).
     next_skip: u64,
+    /// The last one that was.
     skipped: Option<u64>,
-    spins: bool,
-    spin: bool,
+    uses_spin_bit: bool,
+    spin_bit: bool,
 
     path: Path,
     candidates: Vec<Path>,
@@ -227,9 +231,9 @@ impl Connection {
             peer: Box::default(),
             is_ready: false,
             can_open_streams: false,
-            tickets: 0,
-            tokens: 0,
-            origins: 0,
+            tickets_received: 0,
+            tokens_received: 0,
+            origin_frames_received: 0,
             spaces: Spaces::default(),
             early_keys: None,
             key_update: KeyUpdate::default(),
@@ -237,13 +241,13 @@ impl Connection {
             next_skip: u64::MAX,
             skipped: None,
             // RFC 9000 §17.4.
-            spins: spin >= 16,
-            spin: spin < 8,
+            uses_spin_bit: spin >= 16,
+            spin_bit: spin < 8,
             congestion: Controller::new(config.congestion, path.mtu.current, random),
             first_peer: path.addresses.peer,
             path,
             candidates: Vec::new(),
-            new_paths: TokenBucket::new(1.0, 16.0),
+            new_paths: NEW_PATHS,
             previous_peer: None,
             initial_route: None,
             last_destination: id,
@@ -258,7 +262,7 @@ impl Connection {
             ack_policy: Default::default(),
             ack_controller: None,
             ack_only_packets: 0,
-            tolerated_load: TokenBucket::new(330.0, 10_000.0),
+            tolerated_load: TOLERATED_LOAD,
             idle_timeout: Duration::from_millis(local.max_idle_timeout_millis),
             has_sent_since_receiving: false,
             progress_timeout: config.progress_timeout,
@@ -295,9 +299,9 @@ impl Connection {
         let ticket = Ticket::read(ticket).filter(|it| config.versions.contains(&it.version));
         let first = config.versions.first().copied().unwrap_or(Version::V1);
         let version = ticket.as_ref().map_or(first, |it| it.version);
-        // RFC 9000 §7.2.
         let [len, bytes @ ..] = shared.crypto.random::<{ 1 + ConnectionId::MAX_LEN }>();
-        let len = 8 + usize::from(len) % (ConnectionId::MAX_LEN - 7);
+        let lens = ConnectionId::MAX_LEN + 1 - MIN_INITIAL_ID_LEN;
+        let len = MIN_INITIAL_ID_LEN + usize::from(len) % lens;
         let id = (bytes.get(..len).and_then(ConnectionId::new)).unwrap_or_default();
         let path = Path::new(addresses, RemoteId::first(id), true);
         let setup = Setup::new(now, version, id);
@@ -438,10 +442,6 @@ impl Connection {
             _ => (Duration::MAX, Duration::MAX),
         };
         (self.timers).set(Timer::KeepAlive, now + self.keep_alive_period);
-    }
-
-    pub fn side(&self) -> Side {
-        self.side
     }
 
     pub fn addresses(&self) -> &Addresses {

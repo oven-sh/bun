@@ -28,7 +28,7 @@ pub(super) struct Space {
     pub(super) probes: u8,
     pub(super) crypto_send: SendBuffer,
     /// What comes after `crypto_read`.
-    pub(super) crypto_early: Assembler,
+    pub(super) crypto_kept: Assembler,
     pub(super) crypto_read: u64,
 }
 

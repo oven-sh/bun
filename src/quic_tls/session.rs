@@ -3,6 +3,7 @@ use core::ptr::{NonNull, null, null_mut};
 use std::rc::Rc;
 
 use bun_boringssl_sys::{self as ssl, SSL, SSL_CTX, SSL_SESSION};
+use bun_core::ffi::slice;
 use bun_quic::crypto::Cipher;
 use bun_quic::tls::{self, Alert, Handshake, Level, Status};
 use bun_quic::{Side, Version};
@@ -97,8 +98,8 @@ struct Call<'a, 'b> {
 impl Session {
     pub fn new(ctx: &SSL_CTX, side: Side) -> Option<Self> {
         static METHOD: SSL_QUIC_METHOD = SSL_QUIC_METHOD {
-            set_read_secret,
-            set_write_secret,
+            set_read_secret: set_secret::<true>,
+            set_write_secret: set_secret::<false>,
             add_handshake_data,
             flush_flight,
             send_alert,
@@ -168,16 +169,14 @@ impl Session {
         self.verify = Some(verify);
         SSL_set_custom_verify(self.ssl(), ssl::SSL_VERIFY_PEER, verify_peer);
     }
-}
 
-impl Session {
     /// BoringSSL does not compare them before the server has replied.
     fn has_context_of(&self, session: &SSL_SESSION) -> bool {
         let (mut our_len, mut its_len) = (0, 0);
         let ours = SSL_get0_session_id_context(self.ssl(), &mut our_len);
         let its = SSL_SESSION_get0_id_context(session, &mut its_len);
         // SAFETY: BoringSSL returns them with their lengths.
-        unsafe { bytes(ours, our_len) == bytes(its, its_len as usize) }
+        unsafe { slice(ours, our_len) == slice(its, its_len as usize) }
     }
 }
 
@@ -291,24 +290,12 @@ impl Call<'_, '_> {
             let (mut at, mut len) = (null(), 0);
             SSL_get_peer_quic_transport_params(ssl, &mut at, &mut len);
             // SAFETY: they are valid for as long as `ssl` is left alone.
-            let parameters = unsafe { bytes(at, len) };
+            let parameters = unsafe { slice(at, len) };
             let accepts_early_data = SSL_early_data_accepted(ssl) == 1;
-            (self
-                .handshake
-                .peer_parameters(parameters, accepts_early_data))
-            .then_some(())?;
+            let handshake = &mut *self.handshake;
+            (handshake.peer_parameters(parameters, accepts_early_data)).then_some(())?;
         }
         Some(())
-    }
-}
-
-/// # Safety
-/// `at` is valid for `len` bytes.
-unsafe fn bytes<'a>(at: *const u8, len: usize) -> &'a [u8] {
-    match len {
-        0 => &[],
-        // SAFETY: the caller's.
-        _ => unsafe { core::slice::from_raw_parts(at, len) },
     }
 }
 
@@ -328,7 +315,7 @@ fn cipher_from(cipher: &SSL_CIPHER) -> Option<Cipher> {
     }
 }
 
-unsafe extern "C" fn set_read_secret(
+unsafe extern "C" fn set_secret<const IS_FOR_READING: bool>(
     ssl: &SSL,
     level: c_uint,
     cipher: &SSL_CIPHER,
@@ -336,25 +323,13 @@ unsafe extern "C" fn set_read_secret(
     len: usize,
 ) -> c_int {
     let result = Call::with(ssl, |call| {
+        let (level, cipher) = (level_from(level)?, cipher_from(cipher)?);
         // SAFETY: BoringSSL passes a secret of this length.
-        let secret = unsafe { bytes(secret, len) };
-        (call.handshake).read_secret(level_from(level)?, cipher_from(cipher)?, secret);
-        Some(1)
-    });
-    result.unwrap_or(0)
-}
-
-unsafe extern "C" fn set_write_secret(
-    ssl: &SSL,
-    level: c_uint,
-    cipher: &SSL_CIPHER,
-    secret: *const u8,
-    len: usize,
-) -> c_int {
-    let result = Call::with(ssl, |call| {
-        // SAFETY: BoringSSL passes a secret of this length.
-        let secret = unsafe { bytes(secret, len) };
-        (call.handshake).write_secret(level_from(level)?, cipher_from(cipher)?, secret);
+        let secret = unsafe { slice(secret, len) };
+        match IS_FOR_READING {
+            true => call.handshake.read_secret(level, cipher, secret),
+            false => call.handshake.write_secret(level, cipher, secret),
+        }
         Some(1)
     });
     result.unwrap_or(0)
@@ -373,7 +348,7 @@ unsafe extern "C" fn add_handshake_data(
             call.set_local_parameters(ssl)?;
         }
         // SAFETY: BoringSSL passes data of this length.
-        (call.handshake).send(level_from(level)?, unsafe { bytes(data, len) });
+        (call.handshake).send(level_from(level)?, unsafe { slice(data, len) });
         Some(1)
     });
     result.unwrap_or(0)

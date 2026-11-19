@@ -4,10 +4,11 @@
 
 use core::ffi::{c_int, c_uint};
 
+use bun_core::ffi::slice;
 use bun_quic::http3::{self, Indexing};
 
 #[repr(C)]
-pub struct Header {
+pub(crate) struct Header {
     pub(crate) name: *const u8,
     pub(crate) name_len: c_uint,
     pub(crate) value: *const u8,
@@ -15,55 +16,50 @@ pub struct Header {
     pub(crate) qpack_index: c_int, // default -1
 }
 
+bun_core::assert_ffi_layout!(Header, 32, 8; name_len @ 8, value @ 16, value_len @ 24, qpack_index @ 28);
+
 impl Header {
-    /// Safe view of the header name bytes.
+    /// # Safety
+    /// The name and the value are valid for their lengths.
     #[inline]
-    pub fn name_bytes(&self) -> &[u8] {
-        if self.name.is_null() {
-            &[]
-        } else {
-            // SAFETY: whoever made the header keeps `name_len` bytes at `name` for as long as it is used.
-            unsafe { core::slice::from_raw_parts(self.name, self.name_len as usize) }
-        }
-    }
-    /// Safe view of the header value bytes.
-    #[inline]
-    pub fn value_bytes(&self) -> &[u8] {
-        if self.value.is_null() {
-            &[]
-        } else {
-            // SAFETY: same invariant as `name_bytes` — `value` points to
-            // `value_len` bytes valid for the borrow of `&self`, and the null
-            // case is handled above.
-            unsafe { core::slice::from_raw_parts(self.value, self.value_len as usize) }
-        }
-    }
-
-    #[inline]
-    pub(super) fn to_field(&self) -> http3::Header<'_> {
-        let name = self.name_bytes();
+    pub(super) unsafe fn to_field(&self) -> http3::Header<'_> {
+        // SAFETY: the caller's.
+        let (name, value) = unsafe {
+            (
+                slice(self.name, self.name_len as usize),
+                slice(self.value, self.value_len as usize),
+            )
+        };
         http3::Header {
-            name,
-            value: self.value_bytes(),
             static_index: u8::try_from(self.qpack_index).ok(),
-            // RFC 9204 §7.1.3.
-            indexing: match name {
-                b"authorization" | b"cookie" | b"proxy-authorization" | b"set-cookie" => {
-                    Indexing::Never
-                }
-                _ => Indexing::Allowed,
-            },
+            ..field(name, value, None)
         }
     }
 
-    pub fn init(name_: &[u8], value_: &[u8], idx: Option<Qpack>) -> Header {
+    pub(crate) fn init(name: &[u8], value: &[u8]) -> Header {
         Header {
-            name: name_.as_ptr(),
-            name_len: c_uint::try_from(name_.len()).expect("int cast"),
-            value: value_.as_ptr(),
-            value_len: c_uint::try_from(value_.len()).expect("int cast"),
-            qpack_index: if let Some(i) = idx { i as c_int } else { -1 },
+            name: name.as_ptr(),
+            name_len: c_uint::try_from(name.len()).expect("int cast"),
+            value: value.as_ptr(),
+            value_len: c_uint::try_from(value.len()).expect("int cast"),
+            qpack_index: -1,
         }
+    }
+}
+
+#[inline]
+pub fn field<'a>(name: &'a [u8], value: &'a [u8], index: Option<Qpack>) -> http3::Header<'a> {
+    http3::Header {
+        name,
+        value,
+        static_index: index.map(|it| it as u8),
+        // RFC 9204 §7.1.3.
+        indexing: match name {
+            b"authorization" | b"cookie" | b"proxy-authorization" | b"set-cookie" => {
+                Indexing::Never
+            }
+            _ => Indexing::Allowed,
+        },
     }
 }
 

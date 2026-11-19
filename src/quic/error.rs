@@ -22,7 +22,7 @@ pub mod transport_code {
     pub const CRYPTO_ERROR: u64 = 0x100;
 }
 
-/// RFC 9114 §8.1 and RFC 9204 §6.
+/// RFC 9114 §8.1.
 pub mod http3_code {
     pub const NO_ERROR: u64 = 0x100;
     pub const GENERAL_PROTOCOL_ERROR: u64 = 0x101;

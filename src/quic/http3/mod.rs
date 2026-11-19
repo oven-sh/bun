@@ -7,16 +7,23 @@ mod message;
 mod priority;
 
 pub use bun_qpack::Indexing;
-pub(crate) use control::{ControlFrame, ControlReader, write_settings};
+pub(crate) use control::{
+    ControlFrame, ControlReader, go_away_frame, priority_update_frame, write_settings,
+};
 pub(crate) use fields::Pool;
 pub use fields::{Fields, Header, Section};
+pub(crate) use frame::data_frame_header;
 pub(crate) use message::{Fault, Message, Reader};
 pub use priority::Priority;
 
-use crate::coding::{PartialVarint, Write, varint_len};
+use crate::coding::PartialVarint;
 use crate::config::Http3Config;
 use crate::error::{Error, Result, http3_code};
 use crate::stream_id::{Side, StreamId};
+
+/// How many field sections of the largest size can be held, and how many bytes in any case.
+const COLLECTED_SECTIONS: usize = 4;
+const MIN_MAX_COLLECTED: usize = 1024 * 1024;
 
 /// RFC 9114 §6.2.
 #[derive(Clone, Copy)]
@@ -81,7 +88,9 @@ impl Http3 {
             encoder_stream: encoder,
             peer_streams: 0,
             collected: 0,
-            max_collected: (config.tolerated_fields.size.saturating_mul(4)).max(1024 * 1024),
+            max_collected: (config.tolerated_fields.size)
+                .saturating_mul(COLLECTED_SECTIONS)
+                .max(MIN_MAX_COLLECTED),
             peer_accepts_datagrams: None,
             peer_go_away: None,
             early_priorities: Vec::new(),
@@ -116,15 +125,14 @@ impl Http3 {
         credit: usize,
         out: &'a mut Vec<u8>,
     ) -> &'a [u8] {
-        const MAX_FRAME_HEADER_LEN: usize = 9;
         out.clear();
-        out.extend_from_slice(&[0; MAX_FRAME_HEADER_LEN]);
+        out.extend_from_slice(&[0; frame::MAX_HEADER_LEN]);
         let mut section = self.encoder.section(id.0, out, credit);
         for it in headers {
             section.field(it.name, it.static_index, it.value, it.indexing);
         }
         let start = section.finish();
-        let (frame_header, len) = frame_header(frame::kind::HEADERS, (out.len() - start) as u64);
+        let (frame_header, len) = frame::header(frame::kind::HEADERS, (out.len() - start) as u64);
         let start = start - len;
         let room = out.iter_mut().skip(start);
         (room.zip(frame_header).take(len)).for_each(|(to, from)| *to = from);
@@ -132,46 +140,16 @@ impl Http3 {
     }
 }
 
-/// For a type of one byte.
-#[inline]
-fn frame_header(kind: u64, len: u64) -> ([u8; 9], usize) {
-    let len_len = varint_len(len);
-    let tagged = len | u64::from(len_len.trailing_zeros()) << (8 * len_len - 2);
-    let [a, b, c, d, e, f, g, h] = (tagged << (64 - 8 * len_len)).to_be_bytes();
-    ([kind as u8, a, b, c, d, e, f, g, h], 1 + len_len)
-}
-
-#[inline]
-pub(crate) fn data_frame_header(len: u64) -> ([u8; 9], usize) {
-    frame_header(frame::kind::DATA, len)
-}
-
 /// What the control, decoder and encoder streams start with.
 pub(crate) fn preambles(config: &Http3Config, side: Side) -> [(StreamType, Vec<u8>); 3] {
     let mut control = vec![stream_type::CONTROL as u8];
     control::write_settings(config, &mut control);
     if side.is_server() && !config.origins.is_empty() {
-        control::write_frame(frame::kind::ORIGIN, &config.origins, &mut control);
+        frame::write(frame::kind::ORIGIN, &config.origins, &mut control);
     }
     [
         (StreamType::Control, control),
         (StreamType::Decoder, vec![stream_type::DECODER as u8]),
         (StreamType::Encoder, vec![stream_type::ENCODER as u8]),
     ]
-}
-
-pub(crate) fn go_away_frame(id: StreamId) -> Vec<u8> {
-    let (mut payload, mut out) = (Vec::new(), Vec::new());
-    payload.varint(id.0);
-    control::write_frame(frame::kind::GOAWAY, &payload, &mut out);
-    out
-}
-
-pub(crate) fn priority_update_frame(id: StreamId, priority: Priority) -> Vec<u8> {
-    let (mut payload, mut out) = (Vec::new(), Vec::new());
-    payload.varint(id.0);
-    let (value, len) = priority.encode();
-    payload.extend(value.iter().take(len));
-    control::write_frame(frame::kind::PRIORITY_UPDATE_REQUEST, &payload, &mut out);
-    out
 }

@@ -1,6 +1,8 @@
 //! RFC 9114 §7.
 
-use crate::coding::PartialVarint;
+use crate::coding::{PartialVarint, Write, varint_len};
+
+pub(super) const MAX_HEADER_LEN: usize = 1 + 8;
 
 pub(super) mod kind {
     pub(crate) const DATA: u64 = 0x00;
@@ -20,6 +22,25 @@ pub(super) mod kind {
     pub(crate) fn is_from_http2(kind: u64) -> bool {
         matches!(kind, 0x02 | 0x06 | 0x08 | 0x09)
     }
+}
+
+/// For a type of one byte.
+#[inline]
+pub(super) fn header(kind: u64, len: u64) -> ([u8; MAX_HEADER_LEN], usize) {
+    let len_len = varint_len(len);
+    let tagged = len | u64::from(len_len.trailing_zeros()) << (8 * len_len - 2);
+    let [a, b, c, d, e, f, g, h] = (tagged << (64 - 8 * len_len)).to_be_bytes();
+    ([kind as u8, a, b, c, d, e, f, g, h], 1 + len_len)
+}
+
+#[inline]
+pub(crate) fn data_frame_header(len: u64) -> ([u8; MAX_HEADER_LEN], usize) {
+    header(kind::DATA, len)
+}
+
+pub(super) fn write(kind: u64, payload: &[u8], out: &mut Vec<u8>) {
+    out.varint(kind);
+    out.prefixed_bytes(payload);
 }
 
 /// Where a stream is in its sequence of frames.

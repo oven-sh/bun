@@ -72,10 +72,10 @@ pub(crate) struct Stream {
     pub(crate) write_round: u64,
     pub(super) reset_code: u64,
     /// For when the peer asks to stop after everything has been sent, and some of it gets lost.
-    pub(super) stopped_code: u64,
+    pub(super) deferred_reset_code: u64,
 
     /// What comes at or after `read`.
-    pub(super) early: Assembler,
+    pub(super) kept: Assembler,
     /// What is for the application from the bytes before `read`.
     pub(super) ready: Vec<u8>,
     /// How much `ready` had the last time.
@@ -105,8 +105,8 @@ impl Stream {
             turn_end: 0,
             write_round: 0,
             reset_code: 0,
-            stopped_code: 0,
-            early: Assembler::default(),
+            deferred_reset_code: 0,
+            kept: Assembler::default(),
             ready: Vec::new(),
             ready_hint: 0,
             held: 0,
@@ -144,6 +144,12 @@ impl Stream {
     #[inline]
     pub(super) fn owes_fin(&self) -> bool {
         self.flags.contains(Flags::FIN) && !self.flags.intersects(Flags::FIN_SENT | Flags::RESET)
+    }
+
+    /// Whether what STREAM_DATA_BLOCKED has been sent for still holds.
+    pub(super) fn is_blocked(&self) -> bool {
+        self.blocked_at == Some(self.send_limit)
+            && !self.flags.intersects(Flags::RESET | Flags::FIN_SENT)
     }
 
     pub(crate) fn has_unacked_data(&self) -> bool {

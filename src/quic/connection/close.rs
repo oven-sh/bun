@@ -120,17 +120,15 @@ impl Connection {
 
     /// Does not deliver anything more.
     pub fn abort(&mut self, now: Instant, layer: Layer, code: u64, reason: &[u8]) {
-        if self.is_receiving() {
-            self.streams.state.forget_events();
-        }
+        self.streams.state.forget_events();
         let frame = CloseFrame::new(layer, code, reason);
         self.start_closing(now, CloseReason::Local, frame);
     }
 
     /// Without a word to the peer.
     pub fn abort_silently(&mut self) {
+        self.streams.state.forget_events();
         if self.ending != Ending::Over {
-            self.streams.state.forget_events();
             self.lingers = false;
             self.end();
         }

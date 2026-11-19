@@ -5,7 +5,7 @@ use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::NonNull;
 use std::rc::{Rc, Weak};
 
-use bun_boringssl_sys::{OwnedSslCtx, SSL, SSL_CTX};
+use bun_boringssl_sys::{OwnedSslCtx, SSL_CTX};
 use bun_core::ZStr;
 use bun_quic::http3::{Fields, Section};
 use bun_quic::{
@@ -27,8 +27,6 @@ const MAX_REQUEST_FIELDS: usize = 200;
 const MAX_HEADER_SIZE: usize = 0xff_ffff;
 /// As in Http2Context.h.
 const MIN_TOLERATED_HEADER_SIZE: usize = 16 * 1024;
-/// RFC 8446 §6.2.
-const BAD_CERTIFICATE: u64 = transport_code::CRYPTO_ERROR + 42;
 
 bun_opaque::opaque_ffi! {
     struct NameTree;
@@ -47,7 +45,6 @@ unsafe extern "C" {
         name: *const u8,
         len: usize,
     ) -> Option<OwnedSslCtx>;
-    safe fn us_quic_is_client_authorized(default_ctx: &SSL_CTX, ssl: &SSL) -> bool;
 }
 
 #[repr(transparent)]
@@ -121,19 +118,8 @@ impl Application for Server {
 
     #[inline]
     fn on_event(&self, connection: Connection, _: Context, event: Event) {
-        match event {
-            Event::Stream(id, response, event) => {
-                self.on_stream_event(connection.stream(id), response, event);
-            }
-            Event::Ready => {
-                connection.update(|connection| {
-                    let tls = Session::of(connection);
-                    if !tls.is_some_and(|it| us_quic_is_client_authorized(&self.tls, it.ssl())) {
-                        connection.abort(now(), Layer::Transport, BAD_CERTIFICATE, &[]);
-                    }
-                });
-            }
-            _ => {}
+        if let Event::Stream(id, response, event) = event {
+            self.on_stream_event(connection.stream(id), response, event);
         }
     }
 

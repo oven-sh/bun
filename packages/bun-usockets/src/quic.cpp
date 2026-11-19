@@ -34,7 +34,6 @@ extern SSL_CTX *us_ssl_ctx_build_raw(
     enum create_bun_socket_error_t *err);
 extern int us_ssl_ctx_set_verify_signature_algorithms(SSL_CTX *ctx);
 extern int us_x509_verify_cert(X509_STORE_CTX *ctx, int purpose);
-extern struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl);
 
 /* ───── addresses ───── */
 
@@ -321,10 +320,10 @@ SSL_CTX *us_quic_create_server_ssl_ctx(const struct us_bun_socket_context_option
     us_quic_require_tls13(ssl);
     SSL_CTX_set_early_data_enabled(ssl, 0);
     us_ssl_ctx_set_sni_policy(ssl, options->request_cert, options->reject_unauthorized);
-    if (default_ctx) {
-        SSL_CTX_set_verify(ssl, SSL_CTX_get_verify_mode(ssl) | SSL_CTX_get_verify_mode(default_ctx),
-            SSL_CTX_get_verify_callback(ssl));
-    }
+    int mode = SSL_CTX_get_verify_mode(ssl) | (default_ctx ? SSL_CTX_get_verify_mode(default_ctx) : 0);
+    SSL_CTX_set_verify(ssl, mode, mode & SSL_VERIFY_FAIL_IF_NO_PEER_CERT
+        ? [](int ok, X509_STORE_CTX *) { return ok; }
+        : SSL_CTX_get_verify_callback(ssl));
     return ssl;
 }
 
@@ -343,11 +342,6 @@ SSL_CTX *us_quic_server_names_find(const us_quic_server_names_t *names, const ch
     if (!match) return NULL;
     SSL_CTX_up_ref(match->get());
     return match->get();
-}
-
-bool us_quic_is_client_authorized(SSL_CTX *default_ctx, SSL *ssl) {
-    bool enforce = us_ssl_ctx_reject_unauthorized(default_ctx) || us_ssl_ctx_reject_unauthorized(SSL_get_SSL_CTX(ssl));
-    return !enforce || us_ssl_socket_verify_error_from_ssl(ssl).error == 0;
 }
 
 SSL_CTX *us_quic_create_client_ssl_ctx() {

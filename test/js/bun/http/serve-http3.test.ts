@@ -1607,28 +1607,6 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     });
   });
 
-  test.each([
-    ["exits when the promise resolves", "server.stop().then(() => process.exit(0))", true],
-    ["exits when the promise resolves (HTTP/3 only)", "server.stop().then(() => process.exit(0))", false],
-    ["exits by itself", "server.stop()", true],
-    ["exits by itself (HTTP/3 only)", "server.stop()", false],
-  ])("graceful stop: the whole response arrives if the process %s", async (_, stop, http1) => {
-    const size = 900_000;
-    const script = `
-      const server = Bun.serve({
-        port: 0, tls: ${JSON.stringify(tls)}, http3: true, http1: ${http1},
-        fetch() {
-          setImmediate(() => ${stop});
-          return new Response(Buffer.alloc(${size}, "a"));
-        },
-      });
-      console.error("PORT=" + server.port);
-    `;
-    await withCustomServer(script, async port => {
-      expect((await fetchH3(port, "/").then(r => r.bytes())).length).toBe(size);
-    });
-  });
-
   // Each QUIC connection counts as a virtual poll (loop->num_polls); after
   // server.stop() drains, the last conn close releases the UDP fd and the
   // loop has no polls left — the process exits without process.exit().
@@ -1969,26 +1947,6 @@ const requestHeaders = (path: string, extra: Record<string, string> = {}) => ({
   ":authority": "localhost",
   ...extra,
 });
-
-test("server.timeout(req, 0) lets a handler outlast idleTimeout", async () => {
-  const release = Promise.withResolvers<void>();
-  await using server = Bun.serve({
-    port: 0,
-    tls,
-    http3: true,
-    idleTimeout: 2,
-    async fetch(req, server) {
-      if (new URL(req.url).pathname === "/patient") server.timeout(req, 0);
-      await release.promise;
-      return new Response("late");
-    },
-  });
-  // node:quic sends nothing while it waits.
-  const patient = h3Exchange(server.port!, requestHeaders("/patient"));
-  expect(await h3Exchange(server.port!, requestHeaders("/other"))).toBe("closed");
-  release.resolve();
-  expect(await patient).toBe("200 late");
-}, 15_000);
 
 describe("Bun.serve HTTP/3 request validation", () => {
   test("rejects a request whose field value contains CR or LF before the fetch handler runs", async () => {

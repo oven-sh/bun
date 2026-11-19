@@ -641,6 +641,21 @@ describe.skipIf(!isLinux || !cc)("a shell command is ended, reaped and finished"
   });
 });
 
+test.skipIf(!isLinux || !cc)("child_process closes a child whose pidfd fails to register", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const child = require("child_process").spawn("sleep", ["30"]);
+       for (const event of ["error", "exit", "close"]) child.on(event, () => console.log(event));`,
+    ],
+    env: { ...bunEnv, FAIL_EPOLL_CTL: "pidfd-add", LD_PRELOAD: join(String(dir), "shim.so") },
+    stderr: "inherit",
+  });
+  expect(await proc.stdout.text()).toBe("error\nexit\nclose\n");
+  expect(await proc.exited).toBe(0);
+});
+
 // The same goes for what the CLI runs: it reported the script as failed and exited, and the script ran on.
 describe.skipIf(!isLinux || !cc)("a script whose pidfd fails to register with the event loop is ended", () => {
   test.concurrent.each([

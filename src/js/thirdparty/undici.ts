@@ -392,6 +392,20 @@ function handlerError(handler, controller, err) {
   else handler.onResponseError?.(controller, err);
 }
 
+// The rule of native fetch (src/http/lib.rs): it decodes one compressed coding, and any other coding leaves the body as it came.
+function nativeFetchDecodes(contentEncoding: string) {
+  let decodes = false;
+  for (const part of contentEncoding.toLowerCase().split(",")) {
+    const coding = part.trim();
+    if (coding === "" || coding === "identity") continue;
+    const known =
+      coding === "gzip" || coding === "x-gzip" || coding === "deflate" || coding === "br" || coding === "zstd";
+    if (decodes || !known) return false;
+    decodes = true;
+  }
+  return decodes;
+}
+
 // One fetch()-backed request driving legacy (onHeaders/onData) or v7 controller (onResponseStart/...) handler callbacks.
 function fetchDispatch(origin: URL, opts: any, handler: any, pending?: Set<PendingEntry>, nativeInit?: object) {
   const isControllerStyle = isControllerHandler(handler);
@@ -489,7 +503,8 @@ function fetchDispatch(origin: URL, opts: any, handler: any, pending?: Set<Pendi
 
     // fetch() already decoded an encoded body, so its encoding and encoded length no longer describe the bytes delivered.
     const responseHeaders = { __proto__: null, ...resp.headers.toJSON() };
-    if (method.toUpperCase() !== "HEAD" && responseHeaders["content-encoding"] !== undefined) {
+    const contentEncoding = responseHeaders["content-encoding"];
+    if (method.toUpperCase() !== "HEAD" && contentEncoding !== undefined && nativeFetchDecodes(contentEncoding)) {
       delete responseHeaders["content-encoding"];
       delete responseHeaders["content-length"];
     }
@@ -1510,10 +1525,14 @@ function fetchViaDispatcher(dispatcher, input, init) {
   let replay: Request | Response | undefined;
   // Input parsing failures reject the returned promise like WHATWG fetch, never throw synchronously.
   try {
-    const request = input instanceof Request ? input : undefined;
-    url = request ? new URL(request.url) : input instanceof URL ? input : new URL(String(input));
+    let request = input instanceof Request ? input : undefined;
+    // Bun's fetch({ url, ...options }): native fetch reads the options of an input that is no string, URL or Request.
+    const options = request === undefined && typeof input === "object" && !(input instanceof URL) ? input : undefined;
+    const target = request ? request.url : options ? options.url : input;
+    url = target instanceof URL ? target : new URL(String(target));
     // Only http(s) is dispatched, like undici's scheme fetch; data:, blob:, file: and s3: URLs stay with native fetch.
     if (url.protocol !== "http:" && url.protocol !== "https:") return nativeFetch(input, init);
+    if (options) request = new Request(options);
     method = String((init.method ?? request?.method) || "GET");
     headers = new Headers(init.headers ?? request?.headers);
     // A present `signal: null` detaches the Request's own signal, as in native fetch.

@@ -1686,6 +1686,52 @@ describe("undici", () => {
       await pool.close();
     });
 
+    it("keeps content-encoding and content-length when fetch did not decode the body", async () => {
+      const text = Buffer.alloc(600, "hello ").toString();
+      // Native fetch decodes one coding. It hands over a stacked or unknown coding as it came.
+      const bodies: Record<string, Buffer> = {
+        "gzip, br": zlib.brotliCompressSync(zlib.gzipSync(text)),
+        "foobar": Buffer.from(text),
+        "identity": Buffer.from(text),
+      };
+      await using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          const encoding = decodeURIComponent(new URL(req.url).pathname.slice(1));
+          return new Response(bodies[encoding], { headers: { "content-encoding": encoding } });
+        },
+      });
+      const pool = new Pool(`http://localhost:${server.port}`);
+      const results: Record<string, unknown> = {};
+      for (const encoding of Object.keys(bodies)) {
+        const path = `/${encodeURIComponent(encoding)}`;
+        const { headers, body } = await pool.request({ path, method: "GET" });
+        const res = await undiciFetch(`http://localhost:${server.port}${path}`, { dispatcher: pool } as any);
+        results[encoding] = {
+          encoding: headers["content-encoding"],
+          length: headers["content-length"],
+          asSent: Buffer.from(await body.arrayBuffer()).equals(bodies[encoding]),
+          fetchEncoding: res.headers.get("content-encoding"),
+          fetchText: (await res.text()) === text,
+        };
+      }
+      expect(results).toEqual(
+        Object.fromEntries(
+          Object.keys(bodies).map(encoding => [
+            encoding,
+            {
+              encoding,
+              length: String(bodies[encoding].length),
+              asSent: true,
+              fetchEncoding: encoding,
+              fetchText: true,
+            },
+          ]),
+        ),
+      );
+      await pool.close();
+    });
+
     it("a throwing error callback is an uncaught exception, not a swallowed one", async () => {
       await using proc = Bun.spawn({
         cmd: [
@@ -2021,6 +2067,20 @@ describe("undici", () => {
         getters: await (await undiciFetch(server.url, { __proto__: new Init(), dispatcher: agent } as any)).text(),
         inherited: await (await undiciFetch(server.url, { __proto__: inherited, dispatcher: agent } as any)).text(),
       }).toEqual({ getters: "POST payload 1", inherited: "POST payload 1" });
+    });
+
+    it("fetch through a Pool takes Bun's object-form input, and init ranks above it", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        fetch: async req => new Response(`${req.method} ${await req.text()} ${req.headers.get("x-test")}`),
+      });
+      const dispatcher = new Pool(`http://localhost:${server.port}`);
+      const input = () => ({ url: `${server.url}echo`, method: "POST", body: "payload", headers: { "x-test": "1" } });
+      expect({
+        input: await (await undiciFetch(input() as any, { dispatcher } as any)).text(),
+        init: await (await undiciFetch(input() as any, { method: "PUT", body: "other", dispatcher } as any)).text(),
+      }).toEqual({ input: "POST payload 1", init: "PUT other 1" });
+      await dispatcher.close();
     });
 
     it("fetch through a stock Agent adds no abort signal of its own", async () => {
@@ -2601,6 +2661,54 @@ describe("undici", () => {
       const ok = await pool.request({ path: "/ok", method: "GET", throwOnError: true });
       expect(await ok.body.text()).toBe("ok");
       await pool.close();
+    });
+
+    it("the top-level request({ dispatcher, throwOnError }) rejects with its own error and ends the response", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              // One chunk, then the body stays open.
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("first"));
+              },
+            }),
+            { status: 503 },
+          ),
+      });
+      const url = `http://localhost:${server.port}/fail`;
+      const failure = async (dispatcher: unknown) => {
+        const err: any = await request(url, { dispatcher, throwOnError: true } as any).catch(err => err);
+        return { name: err.name, message: err.message, code: err.code };
+      };
+      const expected = { name: "Error", message: "Request failed with status code 503", code: undefined };
+
+      const pool = new Pool(`http://localhost:${server.port}`);
+      expect(await failure(pool)).toEqual(expected);
+      // The body stays open on the server, so close() resolves only when request() ended the response.
+      await pool.close();
+
+      const inner = new Pool(`http://localhost:${server.port}`);
+      let aborted = false;
+      const custom = {
+        dispatch(opts, handler) {
+          return inner.dispatch(opts, {
+            onConnect(abort, context) {
+              handler.onConnect(reason => {
+                aborted = true;
+                abort(reason);
+              }, context);
+            },
+            onHeaders: (...args) => handler.onHeaders(...args),
+            onData: chunk => handler.onData(chunk),
+            onComplete: trailers => handler.onComplete(trailers),
+            onError: err => handler.onError(err),
+          });
+        },
+      };
+      expect({ ...(await failure(custom)), aborted }).toEqual({ ...expected, aborted: true });
+      await inner.close();
     });
 
     it("destroy() of a request() body that is being read rejects the read with RequestAbortedError", async () => {

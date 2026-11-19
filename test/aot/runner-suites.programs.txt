@@ -295,6 +295,7 @@ test/bundler/bun-build-compile.test.ts: Bun.build compile > the sources of an ex
 test/bundler/bun-build-compile.test.ts: Bun.build compile > the sources of an executable know where their lines start (esm, bytecode: true, minify: false, utf16: true)
 test/bundler/bun-build-compile.test.ts: Bun.build compile > the sources of an executable know where their lines start (esm, bytecode: true, minify: true, utf16: false)
 test/bundler/bun-build-compile.test.ts: ELF section > compiled binary preserves PT_GNU_STACK and no late PT_LOAD for .bun (#29963)
+test/bundler/bundler_bun.test.ts: bundler > bun/BytecodeSidecarNonAsciiComment
 test/bundler/bundler_bun.test.ts: bundler > bun/TargetBunNoSourcemapMessage
 test/bundler/bundler_bun.test.ts: bundler > bun/TargetBunSourcemapInline
 test/bundler/bundler_bun.test.ts: bundler > bun/UnknownBunSpecifierDoesNotLoadThePackageNamedLikeItsSuffix-esm

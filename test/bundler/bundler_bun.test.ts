@@ -77,6 +77,33 @@ describe("bundler", () => {
     },
     run: { stdout: "RedisClient\nRedisClient\nRedisClient\n" },
   });
+  // A preserved comment is copied into the output as written (UTF-8). The
+  // module loader and the generator of the `.jsc` next to the file have to
+  // decode it alike, or JSC ignores the bytecode.
+  itBundled("bun/BytecodeSidecarNonAsciiComment", {
+    target: "bun",
+    format: "cjs",
+    bytecode: true,
+    outdir: "/out",
+    files: {
+      "/entry.ts": /* js */ `
+        function legal() {
+          /*! © café-中-🐰 */
+        }
+        const text = legal.toString().split("/*! ")[1].split(" */")[0];
+        console.log(JSON.stringify([text, text.length]));
+      `,
+    },
+    run: {
+      stdout: JSON.stringify(["© café-中-🐰", "© café-中-🐰".length]),
+      env: {
+        BUN_JSC_verboseDiskCache: "1",
+      },
+      validate({ stderr }) {
+        expect(stderr).toContain("[Disk Cache] Cache hit for sourceCode");
+      },
+    },
+  });
   itBundled("bun/embedded-sqlite-file", {
     target: "bun",
     outfile: "",

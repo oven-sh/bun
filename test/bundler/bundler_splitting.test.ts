@@ -338,10 +338,12 @@ describe("bundler", () => {
     readdirSync(api.outdir)
       .filter(file => file.endsWith(".js"))
       .sort();
+  // Sorted by the name with no hash: the hash of one file does not decide where it is in the list.
+  const withoutHash = (file: string) => file.replace(/-[a-z0-9]{8}\./, "-[hash].");
   const outputKinds = (outputs: BuildArtifact[]) =>
     outputs
       .map(output => ({ file: basename(output.path), kind: output.kind, loader: output.loader }))
-      .sort((a, b) => (a.file < b.file ? -1 : 1));
+      .sort((a, b) => (withoutHash(a.file) < withoutHash(b.file) ? -1 : 1));
   const hashedChunk = (name: string) =>
     expect.stringMatching(new RegExp(`^${name.replaceAll(".", "\\.")}-[a-z0-9]{8}\\.js$`));
 
@@ -722,8 +724,8 @@ describe("bundler", () => {
       entryNaming,
       outdir: "/out",
       onAfterBundle(api) {
-        const files = readdirSync(api.outdir).sort();
-        expect(files.map(file => file.replace(/-[a-z0-9]{8}\./, "-[hash]."))).toEqual(
+        const files = readdirSync(api.outdir).sort((a, b) => (withoutHash(a) < withoutHash(b) ? -1 : 1));
+        expect(files.map(withoutHash)).toEqual(
           entryNaming
             ? ["entry-[hash].css", "entry-[hash].js", "styles.module-[hash].css", "styles.module-[hash].js"]
             : ["entry.css", "entry.js", "styles.module-[hash].js", "styles.module.css"],
@@ -1360,7 +1362,6 @@ describe("bundler", () => {
       "<bun>": [`Multiple files share the same output path`],
     },
   });
-
 
   // A require() of a stylesheet whose value nothing reads prints a wrapper. The chunk that has it imports
   // __commonJS from the chunk that the entry points share.

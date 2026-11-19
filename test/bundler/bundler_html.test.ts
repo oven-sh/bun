@@ -538,7 +538,11 @@ export const initNav = () => console.log('Navigation initialized');`,
     onAfterBundle(api) {
       const pages = ["a", "b"].map(name => api.readFile(`out/${name}.html`));
       const scripts = pages.map(html => html.match(/<script[^>]*src="\.\/([^"]+\.js)"/)![1]);
-      expect(readdirSync(api.outdir).filter(file => file.endsWith(".js")).sort()).toEqual([...scripts].sort());
+      expect(
+        readdirSync(api.outdir)
+          .filter(file => file.endsWith(".js"))
+          .sort(),
+      ).toEqual([...scripts].sort());
       for (const html of pages) expect(html).not.toContain("modulepreload");
       expect(api.readFile("out/" + scripts[1])).not.toContain("import");
     },

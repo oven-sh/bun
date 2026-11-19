@@ -222,10 +222,22 @@ pub(super) fn replace_buffers(buffers: Option<Box<Buffers>>) -> Option<Box<Buffe
 }
 
 #[inline]
-fn fill<T: Clone>(list: &mut Vec<T>, len: usize, value: T) {
+fn fill<T: Clone + Send>(list: &mut Vec<T>, len: usize, value: T) {
     list.clear();
     if len != 0 {
+        make_room(list, len, len);
         list.resize(len, value);
+    }
+}
+
+/// For an empty list, which is about to get `likely` items and hardly more than `most`.
+fn make_room<T: Send>(list: &mut Vec<T>, likely: usize, most: usize) {
+    debug_assert!(list.is_empty());
+    if list.capacity() < most {
+        // To grow it would copy the whole block, which makes all of it resident.
+        *list = Vec::new();
+        list.reserve(most);
+        crate::util::prefault(&mut list.spare_capacity_mut()[..likely]);
     }
 }
 
@@ -502,6 +514,11 @@ impl<'f, 's> Binder<'f, 's> {
             ScopeId::NONE,
         );
         fill(&mut b.export_scope, f.exports.len(), ScopeId::NONE);
+        let named = f.members.len() + f.pats.len() + f.type_params.len() + f.enum_members.len();
+        let more = f.fns.len() + f.stmts.len() + f.props.len();
+        make_room(&mut b.symbols, named, named + more);
+        make_room(&mut b.scopes, f.fns.len(), more);
+        make_room(&mut this.tables, f.fns.len(), more);
         // The rest are empty and keep their capacity.
         b.flow.push(Flow::Unreachable);
         this.file();

@@ -1250,7 +1250,48 @@ struct NamesToResolve<'r> {
     next: AtomicUsize,
 }
 
+/// The parts of a step in the load of one long file, for the threads that have nothing to load.
+struct SharedStep {
+    /// Valid until `left` is 0.
+    work: *const (dyn Fn(usize) + Sync),
+    count: usize,
+    /// The index of the first part that no thread has taken.
+    next: AtomicUsize,
+    /// How many parts haven't ended.
+    left: Guarded<usize>,
+    has_ended: bun_threading::Condvar,
+    has_panicked: AtomicBool,
+}
+
+// SAFETY: `work` points to a `Sync` closure.
+unsafe impl Send for SharedStep {}
+// SAFETY: as above.
+unsafe impl Sync for SharedStep {}
+
+impl SharedStep {
+    /// Returns when no part is left to take.
+    fn help(&self) {
+        loop {
+            let part = self.next.fetch_add(1, Ordering::Relaxed);
+            if part >= self.count {
+                return;
+            }
+            // SAFETY: `left` counts this part.
+            let work = std::panic::AssertUnwindSafe(|| unsafe { (*self.work)(part) });
+            if std::panic::catch_unwind(work).is_err() {
+                self.has_panicked.store(true, Ordering::Relaxed);
+            }
+            let mut left = self.left.lock();
+            *left -= 1;
+            if *left == 0 {
+                self.has_ended.notify_all();
+            }
+        }
+    }
+}
+
 struct PrefetchState<'s, 'r> {
+    shared_steps: Vec<Arc<SharedStep>>,
     to_resolve: Vec<Arc<NamesToResolve<'r>>>,
     to_read: std::collections::VecDeque<ToLoad<'r>>,
     /// Files that have been read, with their text. The text is `None` if the run already has the
@@ -1312,6 +1353,7 @@ impl<'s, 'r> Prefetch<'s, 'r> {
         }
         Prefetch {
             state: Guarded::new(PrefetchState {
+                shared_steps: Vec::new(),
                 to_resolve: Vec::new(),
                 seen,
                 to_read: (seeds.into_iter())
@@ -1357,6 +1399,33 @@ impl<'s, 'r> Prefetch<'s, 'r> {
     fn wake_all(&self) {
         self.has_work.notify_all();
         self.has_to_read.notify_all();
+    }
+
+    /// A `util::InParallel`.
+    fn in_parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync), threads: usize) {
+        if count < 2 {
+            return (0..count).for_each(work);
+        }
+        let step = Arc::new(SharedStep {
+            // SAFETY: only the lifetime changes, and this function returns after `left` is 0.
+            work: unsafe {
+                std::mem::transmute::<&(dyn Fn(usize) + Sync), *const (dyn Fn(usize) + Sync)>(work)
+            },
+            count,
+            next: AtomicUsize::new(0),
+            left: Guarded::new(count),
+            has_ended: bun_threading::Condvar::new(),
+            has_panicked: AtomicBool::new(false),
+        });
+        self.state.lock().shared_steps.push(Arc::clone(&step));
+        notify_for_work(&self.has_work, (count - 1).min(11), threads);
+        step.help();
+        (self.state.lock().shared_steps).retain(|it| !Arc::ptr_eq(it, &step));
+        let mut left = step.left.lock();
+        while *left > 0 {
+            step.has_ended.wait_guarded(&mut left);
+        }
+        assert!(!step.has_panicked.load(Ordering::Relaxed));
     }
 
     /// Adjacent paths are in the same directory.
@@ -1518,9 +1587,7 @@ fn notify_for_work(sleepers: &bun_threading::Condvar, units: usize, threads: usi
     if units >= threads {
         return sleepers.notify_all();
     }
-    for _ in 0..units {
-        sleepers.notify_one();
-    }
+    sleepers.notify_many(units);
 }
 
 #[derive(Copy, Clone)]
@@ -1555,6 +1622,16 @@ impl<'s, 'r, 'u: 's> FileLoader<'_, 's, 'r, 'u> {
 
     /// With `once`, returns true after reading or processing one batch, or after one wait.
     fn load(&self, steps: LoadSteps, once: bool) -> bool {
+        let threads = self.host.threads();
+        if threads < 2 {
+            return self.load_files(steps, once);
+        }
+        let in_parallel: crate::util::InParallel<'_> =
+            &|count, work| self.prefetch.in_parallel(count, work, threads);
+        crate::util::lend_helpers(in_parallel, || self.load_files(steps, once))
+    }
+
+    fn load_files(&self, steps: LoadSteps, once: bool) -> bool {
         const RUN: usize = Prefetch::FILES_READ_IN_A_RUN;
         /// Contents that have been read occupy memory until they are processed.
         const AHEAD: usize = 256;
@@ -1586,7 +1663,12 @@ impl<'s, 'r, 'u: 's> FileLoader<'_, 's, 'r, 'u> {
             if once && !std::mem::replace(&mut is_first, false) {
                 return true;
             }
-            if processes && let Some(job) = state.to_resolve.last().cloned() {
+            if processes && let Some(step) = state.shared_steps.first().cloned() {
+                drop(state);
+                step.help();
+                state = shared.lock();
+                state.shared_steps.retain(|it| !Arc::ptr_eq(it, &step));
+            } else if processes && let Some(job) = state.to_resolve.last().cloned() {
                 drop(state);
                 let is_any_left = self.resolve_some(&job);
                 state = shared.lock();
@@ -1594,7 +1676,9 @@ impl<'s, 'r, 'u: 's> FileLoader<'_, 's, 'r, 'u> {
                     state.to_resolve.retain(|it| !Arc::ptr_eq(it, &job));
                 }
             } else if reads && !state.to_read.is_empty() && state.ready.len() <= AHEAD {
-                let count = state.to_read.len().min(RUN);
+                // A library is decompressed, which takes as long as reading many files.
+                let files = state.to_read.iter().take(RUN);
+                let count = files.take_while(|it| !it.is_lib).count().max(1);
                 let some: Vec<_> = state.to_read.drain(..count).collect();
                 state.in_progress += count;
                 drop(state);

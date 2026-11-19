@@ -325,3 +325,21 @@ describe.skipIf(skip)("fetch() seeded short-I/O fuzz", () => {
     }
   });
 });
+
+describe.skipIf(skip)("fetch() without memory for a part of the body", () => {
+  const readers = ["text", "arrayBuffer", "blob", "body", "clone", "tee", "write"];
+  test.concurrent.each([
+    ...readers.flatMap(reader => ["before", "after"].map(when => [reader, when, "more"])),
+    ["text", "before", "end"],
+  ])("rejects %s, which starts %s that, if it is followed by: %s", async (reader, when, rest) => {
+    using dir = tempDir("fetch-body-buffer-fault", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "fetch-body-buffer-fault-fixture.ts"), reader, when, rest],
+      env: { ...bunEnv, OUT: join(String(dir), "out") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "OutOfMemory\n", stderr: "", exitCode: 0 });
+  });
+});

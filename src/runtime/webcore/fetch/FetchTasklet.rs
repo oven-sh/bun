@@ -2351,9 +2351,7 @@ impl FetchTasklet {
                 } else {
                     body
                 };
-                if scheduled.grow_if_needed(chunk.len()).is_ok() {
-                    scheduled.list.extend_from_slice(chunk);
-                } else {
+                if append_to_body(scheduled, chunk).is_err() {
                     *scheduled = MutableString::default();
                     task_ref.response_body_incomplete = true;
                     // Not `abort_transport()`: a reader that comes before the failure would get an empty body.
@@ -2368,8 +2366,12 @@ impl FetchTasklet {
                 task_ref.signal_store.pause_receive();
             }
         }
-        if task_ref.response_body_incomplete && !task_ref.result.has_more {
-            task_ref.result.fail = Some(bun_alloc::AllocError.into());
+        if task_ref.response_body_incomplete {
+            if task_ref.result.has_more {
+                task_ref.signal_store.pause_receive();
+            } else {
+                task_ref.result.fail = Some(bun_alloc::AllocError.into());
+            }
         }
 
         if let Err(has_schedule_callback) = task_ref.has_schedule_callback.compare_exchange(
@@ -2388,6 +2390,19 @@ impl FetchTasklet {
         // tasklet (and the ticket in it) alive across the post.
         task_ref.ticket().post_intrusive(ct);
     }
+}
+
+fn append_to_body(body: &mut MutableString, chunk: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    #[cfg(socket_fault_injection)]
+    {
+        use bun_uws_sys::fault_inject::{FETCH_BODY_BUFFER, fails};
+        if !chunk.is_empty() && fails(FETCH_BODY_BUFFER) {
+            return Err(bun_alloc::AllocError);
+        }
+    }
+    body.grow_if_needed(chunk.len())?;
+    body.list.extend_from_slice(chunk);
+    Ok(())
 }
 
 pub(crate) fn on_resolve_request_stream(

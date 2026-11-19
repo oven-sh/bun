@@ -57,6 +57,9 @@ enum us_fault_syscall {
     /* Not a syscall: one SSL_write call in us_internal_ssl_writev fails with a fatal SSL
      * error. Only US_FAULT_ERRNO applies, and the errno value is ignored. */
     US_FAULT_SSL_WRITE,
+    /* Not a syscall: the room for a chunk in the buffer for the body of a fetch() response.
+     * Only US_FAULT_ERRNO applies, and the errno value is ignored. */
+    US_FAULT_FETCH_BODY_BUFFER,
     US_FAULT_COUNT
 };
 

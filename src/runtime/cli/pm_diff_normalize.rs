@@ -296,13 +296,17 @@ pub(crate) fn looks_minified(bytes: &[u8]) -> bool {
     bytes.len() > 256 && long * 2 > bytes.len()
 }
 
-/// The parser allocates nodes from thread-local stores; keep them alive for the ASTs in this scope, reset after.
-struct StoreScope(bun_ast::StoreResetGuard);
+/// The parser allocates AST nodes and vectors from thread-local stores; keep them alive in this scope. After
+/// it, the nodes' stores are reset and the vectors freed.
+struct StoreScope(bun_ast::StoreResetGuard, bun_ast::StoreAstAllocHeap);
 impl StoreScope {
     fn enter() -> StoreScope {
         bun_ast::expr::data::Store::create();
         bun_ast::stmt::data::Store::create();
-        StoreScope(bun_ast::StoreResetGuard::new())
+        StoreScope(
+            bun_ast::StoreResetGuard::new(),
+            bun_ast::StoreAstAllocHeap::new(),
+        )
     }
 }
 

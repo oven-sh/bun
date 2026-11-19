@@ -1,5 +1,17 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isRoot, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isRoot,
+  isWindows,
+  normalizeBunSnapshot,
+  runCommandMaxRSS,
+  tempDir,
+  tls,
+  withoutAsanQuarantine,
+} from "harness";
 import { chmodSync, existsSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -557,6 +569,39 @@ diffme@1.0.0 → diffme@2.0.0
     expect(text).not.toContain("@@");
     expect(text).not.toContain("+++");
     expect(exitCode).toBe(0);
+  });
+
+  test("peak memory grows little with the number of files", async () => {
+    // Many small arrays take the most memory for their text.
+    const line = "f([1, [2], 3], { a: [4], b: 5 });\n";
+    const body = Buffer.alloc(1000 * line.length, line).toString();
+
+    async function peakMemory(count: number) {
+      const names = Array.from({ length: count }, (_, i) => `f${i}.js`);
+      using dir = tempDir(
+        "pm-diff-memory",
+        Object.fromEntries(
+          names.flatMap((name, i) => [
+            [`a/${name}`, `${body}old(${i});\n`],
+            [`b/${name}`, `${body}new_(${i});\n`],
+          ]),
+        ),
+      );
+      const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+        cmd: [bunExe(), "pm", "diff", "--stat", "./a", "./b"],
+        cwd: String(dir),
+        // The peak also depends on how many files are compared at the same time.
+        env: { ...withoutAsanQuarantine(bunEnv), UV_THREADPOOL_SIZE: undefined, GOMAXPROCS: "2", NO_COLOR: "1" },
+      });
+      expect(stderr).toBe("");
+      expect(stdout).toEndWith(`\n${count} files changed, 0 added, 0 removed  (+${count} -${count} lines)\n`);
+      expect(exitCode).toBe(0);
+      return maxRSS;
+    }
+
+    const [few, many] = [await peakMemory(8), await peakMemory(64)];
+    // When no AST is freed, this is over 40 MiB on Linux x64.
+    expect(many - few).toBeLessThan((isASAN || isDebug ? 40 : 24) * 1024 * 1024);
   });
 
   test("identical sides say so", async () => {

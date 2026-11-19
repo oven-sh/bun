@@ -752,9 +752,12 @@ describe.concurrent("the send queue", () => {
     expect(result).toEqual({ stdout: [`descriptors left ${row.descriptorsLeft}`], stderr: "", exitCode: 0 });
   });
 
-  it.each(["json", "advanced"])("closes a socket whose message the serializer rejects: %s", async serialization => {
-    const result = await runPair(
-      `
+  // Windows has given the child its duplicate by then, so the peer sees no end while the child lives.
+  it.skipIf(isWindows).each(["json", "advanced"])(
+    "closes a socket whose message the serializer rejects: %s",
+    async serialization => {
+      const result = await runPair(
+        `
         const { once } = require("node:events");
         const server = await listen();
         const socket = require("node:net").connect(server.address().port, "127.0.0.1");
@@ -768,10 +771,11 @@ describe.concurrent("the send queue", () => {
         console.log("closed");
         process.exit(0);
       `,
-      `process.on("message", () => {});`,
-    );
-    expect(result).toEqual({ stdout: ["rejected", "closed"], stderr: "", exitCode: 0 });
-  });
+        `process.on("message", () => {});`,
+      );
+      expect(result).toEqual({ stdout: ["rejected", "closed"], stderr: "", exitCode: 0 });
+    },
+  );
 
   it("has the same number of GC roots for any number of callbacks", async () => {
     const result = await runPair(
@@ -802,7 +806,6 @@ describe.concurrent("the send queue", () => {
   });
 });
 
-// Linux only: what one write() sends has to arrive in one read.
 // The child uses descriptor 3 directly.
 describe.concurrent.skipIf(isWindows)("a process.nextTick that runs the event loop until the child is gone", () => {
   // Native code calls this one, because nothing has read the original.
@@ -840,7 +843,7 @@ describe.concurrent.skipIf(isWindows)("a process.nextTick that runs the event lo
       `
         until("blocked");
         const buffer = Buffer.alloc(1 << 20);
-        for (let n = 1, total = 0; n && total < 1 << 20; total += n) n = retry(() => fs.readSync(3, buffer));
+        for (let n = 1, total = 0; n && total < (1 << 20) + 3; total += n) n = retry(() => fs.readSync(3, buffer));
       `,
       {},
       prelude,
@@ -869,6 +872,7 @@ describe.concurrent.skipIf(isWindows)("a process.nextTick that runs the event lo
   });
 });
 
+// Linux only: what one write() sends has to arrive in one read.
 describe.concurrent.skipIf(!isLinux)("a message handler that runs the event loop", () => {
   it.each([
     ["messages arrive in order", `advancedFrame("m3")`, ["m1", "m2", "m3"]],

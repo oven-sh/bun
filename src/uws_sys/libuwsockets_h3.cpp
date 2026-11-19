@@ -90,9 +90,9 @@ void uws_h3_app_listen_with_config(uws_h3_app_t* app, const char* host, uint16_t
 }
 
 int uws_h3_listen_socket_port(us_quic_listen_socket_t* ls) { return us_quic_listen_socket_port(ls); }
-int uws_h3_listen_socket_local_address(us_quic_listen_socket_t* ls, char* buf, int len)
+int uws_h3_listen_socket_local_address(us_quic_listen_socket_t* ls, char (*ip)[16])
 {
-    return us_quic_listen_socket_local_address(ls, buf, len);
+    return us_quic_listen_socket_local_address(ls, ip);
 }
 void uws_h3_listen_socket_close(us_quic_listen_socket_t* ls) { us_quic_listen_socket_close(ls); }
 
@@ -117,7 +117,7 @@ void uws_h3_res_end_stream(uws_h3_res_t* res, bool close_connection)
 void uws_h3_res_force_close(uws_h3_res_t* res)
 {
     ((Http3Response*)res)->clearOnWritableAndAborted();
-    us_quic_stream_close((us_quic_stream_t*)res);
+    us_quic_stream_close(&((Http3Response*)res)->stream);
 }
 
 bool uws_h3_res_try_end(uws_h3_res_t* res, const char* bytes, size_t len, size_t total_len, bool close)
@@ -218,30 +218,14 @@ uint64_t uws_h3_res_get_remote_address_info(uws_h3_res_t* res, const char** dest
     /* Mirror uws_res_get_remote_address_info: stringify with inet_ntop so the
      * caller gets a text slice, not raw in_addr bytes. */
     static thread_local char b[64];
-    int len = 0, ipv6 = 0;
-    us_quic_socket_t* qs = us_quic_stream_socket((us_quic_stream_t*)res);
-    if (!qs) {
-        *dest = b;
-        *port = 0;
-        *is_ipv6 = false;
+    char ip[16];
+    int len = us_quic_stream_remote_address(&((Http3Response*)res)->stream, &ip, port);
+    *dest = b;
+    *is_ipv6 = len == 16;
+    if (len == 0)
         return 0;
-    }
-    us_quic_socket_remote_address(qs, b, &len, port, &ipv6);
-    if (len == 0) {
-        *dest = b;
-        *is_ipv6 = false;
-        return 0;
-    }
-    if (len == 4) {
-        ares_inet_ntop(AF_INET, b, &b[4], 64 - 4);
-        *dest = &b[4];
-        *is_ipv6 = false;
-    } else {
-        ares_inet_ntop(AF_INET6, b, &b[16], 64 - 16);
-        *dest = &b[16];
-        *is_ipv6 = true;
-    }
-    return (uint64_t)strlen(*dest);
+    ares_inet_ntop(*is_ipv6 ? AF_INET6 : AF_INET, ip, b, sizeof(b));
+    return (uint64_t)strlen(b);
 }
 
 /* ───── request ───── */

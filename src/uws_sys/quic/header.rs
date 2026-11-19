@@ -1,9 +1,10 @@
-//! `us_quic_header_t` plus the QPACK static-table index (`enum lsqpack_tnv`,
-//! RFC 9204 Appendix A). Passing the index lets the lsqpack encoder skip its
-//! XXH32 name lookup; the canonical lowercase name string is the map key, so
-//! a hit also avoids lowercasing on the caller side.
+//! `us_quic_header_t`, and the names in the static table of QPACK (RFC 9204 Appendix A). Passing the index lets the
+//! encoder skip its lookup; the canonical lowercase name string is the map key, so a hit also avoids lowercasing on
+//! the caller side.
 
 use core::ffi::{c_int, c_uint};
+
+use bun_quic::http3::{self, Indexing};
 
 #[repr(C)]
 pub struct Header {
@@ -21,10 +22,7 @@ impl Header {
         if self.name.is_null() {
             &[]
         } else {
-            // SAFETY: lsquic populates `name` with `name_len` bytes valid for the
-            // duration of the header callback (or `Header::init` borrowed them
-            // from a caller-owned slice). The returned borrow is tied to `&self`,
-            // and the null case is handled above.
+            // SAFETY: whoever made the header keeps `name_len` bytes at `name` for as long as it is used.
             unsafe { core::slice::from_raw_parts(self.name, self.name_len as usize) }
         }
     }
@@ -41,6 +39,23 @@ impl Header {
         }
     }
 
+    #[inline]
+    pub(super) fn to_field(&self) -> http3::Header<'_> {
+        let name = self.name_bytes();
+        http3::Header {
+            name,
+            value: self.value_bytes(),
+            static_index: u8::try_from(self.qpack_index).ok(),
+            // RFC 9204 §7.1.3.
+            indexing: match name {
+                b"authorization" | b"cookie" | b"proxy-authorization" | b"set-cookie" => {
+                    Indexing::Never
+                }
+                _ => Indexing::Allowed,
+            },
+        }
+    }
+
     pub fn init(name_: &[u8], value_: &[u8], idx: Option<Qpack>) -> Header {
         Header {
             name: name_.as_ptr(),
@@ -52,12 +67,7 @@ impl Header {
     }
 }
 
-/// `enum lsqpack_tnv`. Only the entries a request encoder actually emits are
-/// named (the C enum has more). This closed enum is only ever converted *to*
-/// the C value (`idx as c_int` in [`Header::init`]), never constructed from a
-/// raw `u8`, so the unnamed indices being unrepresentable is fine. If a
-/// decoder ever needs to construct arbitrary indices, switch to
-/// `#[repr(transparent)] pub struct Qpack(u8)` with associated consts.
+/// Only the entries that a request encoder emits are named.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Qpack {

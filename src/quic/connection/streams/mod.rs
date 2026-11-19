@@ -16,7 +16,7 @@ pub(crate) use stream::{Flags, Role, Stream};
 use super::sent::Control;
 use crate::config::Config;
 use crate::error::{Error, Result, http3_code, transport_code};
-use crate::event::{Event, StreamEvent};
+use crate::event::{Context, Event, StreamEvent};
 use crate::frame::MAX_STREAM_COUNT;
 use crate::hash::{IdMap, Seeded};
 use crate::http3::{Message, StreamType};
@@ -69,6 +69,8 @@ pub(crate) struct State {
     /// What it takes to write a byte.
     min_credit: u64,
     pub(crate) events: VecDeque<Event>,
+    /// The streams for which there is [`StreamEvent::Closed`] in `events`.
+    pub(super) removed: VecDeque<(StreamId, Context)>,
     /// The frames about the connection that have to be sent.
     pub(super) owed: Control,
     /// The application has read or written.
@@ -241,11 +243,34 @@ impl Streams {
             .map(|(id, stream)| (id, stream.context))
             .collect();
         open.sort_unstable_by_key(|it| it.0);
-        let closed = |(id, context)| Event::Stream(id, context, StreamEvent::Closed);
-        self.state.events.extend(open.into_iter().map(closed));
+        let closed = |&(id, context)| Event::Stream(id, context, StreamEvent::Closed);
+        self.state.events.extend(open.iter().map(closed));
+        self.state.removed.extend(open);
         self.state.writable.clear();
         self.table.internal = 0;
         !is_empty
+    }
+
+    #[inline]
+    pub(super) fn set_context(&mut self, id: StreamId, context: Context) {
+        let slot = match self.table.get_mut(id) {
+            Some(stream) => Some(&mut stream.context),
+            None => (self.state.removed.iter_mut().find(|it| it.0 == id)).map(|it| &mut it.1),
+        };
+        if let Some(slot) = slot {
+            *slot = context;
+        }
+    }
+
+    /// For an event from [`State::events`].
+    #[inline]
+    pub(super) fn deliver(&mut self, id: StreamId, event: &StreamEvent) -> Option<Context> {
+        if matches!(event, StreamEvent::Closed) {
+            return self.state.removed.pop_front().map(|it| it.1);
+        }
+        let stream = self.table.get_mut(id)?;
+        stream.flags.insert(Flags::ANNOUNCED);
+        Some(stream.context)
     }
 
     pub(super) fn poll_closed(&mut self) -> Option<Event> {

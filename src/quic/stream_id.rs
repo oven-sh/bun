@@ -46,6 +46,7 @@ impl Direction {
     }
 }
 
+#[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct StreamId(pub u64);
 

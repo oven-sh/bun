@@ -443,7 +443,6 @@ pub mod internal_loop_data;
 pub mod listen_socket;
 #[path = "Loop.rs"]
 pub mod loop_;
-#[path = "quic.rs"]
 pub mod quic;
 #[path = "Request.rs"]
 pub mod request;

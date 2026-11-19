@@ -16,9 +16,6 @@ namespace uWS {
  * (:method, :path, :authority) become method/url/host. */
 struct Http3Request {
 
-    Http3Request(us_quic_stream_t *s)
-        : Http3Request(us_quic_stream_header(s, 0), us_quic_stream_header_count(s)) {}
-
     Http3Request(const us_quic_header_t *list, unsigned int count) : headers(list), headerCount(count) {
         for (unsigned int i = 0; i < headerCount; i++) {
             const us_quic_header_t *h = &headers[i];

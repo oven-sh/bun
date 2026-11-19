@@ -280,9 +280,11 @@ impl Message {
     }
 
     /// For when the rest of the stream is not going to be read (RFC 9204 §2.2.2.2).
-    pub(crate) fn abandon(&mut self, id: StreamId, http3: &mut Http3) {
+    pub(crate) fn abandon(&mut self, id: StreamId, is_read_to_end: bool, http3: &mut Http3) {
         http3.collected -= core::mem::take(&mut self.section).len();
-        http3.decoder.cancel_stream(id.0);
+        if self.is_blocked || !is_read_to_end {
+            http3.decoder.cancel_stream(id.0);
+        }
         (self.fields, self.is_blocked) = (None, false);
     }
 }

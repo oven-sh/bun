@@ -5,4 +5,4 @@ mod primitives;
 mod session;
 
 pub use primitives::BoringSsl;
-pub use session::{Session, enable_key_log, enable_tickets, select_http3};
+pub use session::{Session, enable_key_log, enable_tickets, enable_alpn};

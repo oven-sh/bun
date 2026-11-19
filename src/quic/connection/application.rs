@@ -17,7 +17,6 @@ pub(super) const CRITICAL_STREAM_CLOSED: Error = Error::http3(
 pub struct StreamInfo {
     pub has_unacked_data: bool,
     pub has_early_data: bool,
-    pub is_stopped_by_peer: bool,
 }
 
 impl Connection {
@@ -47,9 +46,7 @@ impl Connection {
     }
 
     pub fn set_stream_context(&mut self, id: StreamId, context: Context) {
-        if let Some(stream) = self.streams.table.get_mut(id) {
-            stream.context = context;
-        }
+        self.streams.set_context(id, context);
     }
 
     pub fn stream_info(&self, id: StreamId) -> Option<StreamInfo> {
@@ -57,7 +54,6 @@ impl Connection {
             has_unacked_data: stream.has_unacked_data()
                 || stream.flags & (Flags::RESET | Flags::SEND_DONE) == Flags::RESET,
             has_early_data: stream.flags.contains(Flags::HAS_EARLY_DATA),
-            is_stopped_by_peer: stream.flags.contains(Flags::STOPPED_BY_PEER),
         })
     }
 
@@ -89,11 +85,9 @@ impl Connection {
         Some(taken.len())
     }
 
-    pub fn want_write(&mut self, id: StreamId, is_wanted: bool) {
-        match self.stream(id) {
-            Some((stream, state)) if is_wanted => state.want_write(id, stream),
-            Some((stream, _)) => stream.flags.remove(Flags::WANTS_WRITE),
-            None => {}
+    pub fn want_write(&mut self, id: StreamId) {
+        if let Some((stream, state)) = self.stream(id) {
+            state.want_write(id, stream);
         }
     }
 
@@ -125,6 +119,30 @@ impl Connection {
         }
     }
 
+    /// Gives up on writing, unless the end has been written.
+    pub fn reset_unfinished(&mut self, id: StreamId, code: u64) {
+        if let Some((stream, state)) = self.stream(id)
+            && !stream.flags.contains(Flags::WRITE_DONE)
+        {
+            state.reset(id, stream, code);
+        }
+    }
+
+    /// Closes a stream of ours that has not been used without a word to the peer.
+    pub fn forget(&mut self, id: StreamId) {
+        if let Some((stream, state)) = self.stream(id) {
+            state.forget(id, stream);
+        }
+    }
+
+    /// See [`Config::awaits_consumption`](crate::Config::awaits_consumption).
+    pub fn consume(&mut self, id: StreamId, len: usize) {
+        if let Some((stream, state)) = self.stream(id) {
+            stream.held = stream.held.saturating_sub(len as u64);
+            state.credit(id, stream);
+        }
+    }
+
     pub fn set_paused(&mut self, id: StreamId, is_paused: bool) {
         if let Some((stream, state)) = self.stream(id) {
             stream.flags.set(Flags::PAUSED, is_paused);
@@ -135,9 +153,10 @@ impl Connection {
     pub(super) fn abandon_message(&mut self, id: StreamId) {
         if let (Some(stream), Some(http3)) = (self.streams.table.get_mut(id), &mut self.http3)
             && !stream.flags.contains(Flags::READ_DONE)
+            && let is_read_to_end = stream.is_read_to_end()
             && let Role::Message(message) = &mut stream.role
         {
-            message.abandon(id, http3);
+            message.abandon(id, is_read_to_end, http3);
         }
     }
 
@@ -203,11 +222,14 @@ impl Connection {
         let Some((stream, state)) = self.streams.accept(id, Half::Receive)? else {
             return Ok(());
         };
+        if stream.is_read_to_end() && stream.read_offset() == final_size {
+            return Ok(());
+        }
         match (&mut stream.role, &mut self.http3) {
             (Role::Typed(StreamType::Unknown(_) | StreamType::Ignored), _) => {}
             (Role::Typed(_), _) => return Err(CRITICAL_STREAM_CLOSED),
             (Role::Message(message), Some(http3)) if !stream.flags.contains(Flags::READ_DONE) => {
-                message.abandon(id, http3);
+                message.abandon(id, false, http3);
             }
             _ => {}
         }
@@ -252,7 +274,7 @@ impl Connection {
                     Ok(Some(event)) => return Some(event),
                     Ok(None) => {}
                     Err(error) => {
-                        self.streams.state.forget_events();
+                        self.streams.state.forget_readable();
                         self.fail(now, error);
                     }
                 }
@@ -275,13 +297,8 @@ impl Connection {
     #[inline]
     fn deliver(&mut self, mut event: Event) -> Event {
         match &mut event {
-            Event::Stream(id, context, event) if context.is_null() => {
-                if let Some(stream) = self.streams.table.get_mut(*id) {
-                    *context = stream.context;
-                    if matches!(event, StreamEvent::Opened) {
-                        stream.flags.insert(Flags::ANNOUNCED);
-                    }
-                }
+            Event::Stream(id, context, event) => {
+                *context = (self.streams.deliver(*id, event)).unwrap_or(core::ptr::null_mut());
             }
             Event::Ready => self.can_open_streams = true,
             Event::Datagram { data, .. } => self.datagrams.on_delivered(data),
@@ -327,6 +344,9 @@ impl Connection {
         }
         state.made_progress = true;
         let data = stream.take_ready();
+        if self.config.awaits_consumption {
+            stream.held += data.len() as u64;
+        }
         match is_last {
             true => state.finish_reading(id, stream),
             false => state.credit(id, stream),
@@ -354,7 +374,7 @@ fn read(
         Err(Fault::Connection(error)) => return Err(error),
         Err(Fault::Stream(code)) => {
             if let (Role::Message(message), Some(reader)) = (&mut stream.role, reader) {
-                message.abandon(id, reader.http3);
+                message.abandon(id, false, reader.http3);
             }
             state.abort(id, stream, code);
         }

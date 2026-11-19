@@ -63,6 +63,7 @@ struct Feedback {
     is_persistent_congestion: bool,
     /// What remains.
     in_flight: u64,
+    prior_in_flight: u64,
     last_sent: u64,
 }
 
@@ -77,6 +78,8 @@ pub(crate) struct Controller {
     model: Model,
     pacer: Pacer,
     in_flight: u64,
+    /// As of the last packet, however many ACK frames have come in since.
+    prior_in_flight: u64,
     last_sent: u64,
     /// The last packet that took another path.
     last_foreign: u64,
@@ -97,6 +100,7 @@ impl Controller {
             },
             pacer: Pacer::default(),
             in_flight: 0,
+            prior_in_flight: 0,
             last_sent: 0,
             last_foreign: 0,
             feedback: Feedback::default(),
@@ -157,6 +161,7 @@ impl Controller {
             self.on_idle_restart(now, rtt);
         }
         self.in_flight += u64::from(len);
+        self.prior_in_flight = self.in_flight;
         self.last_sent += 1;
         self.pacer.on_sent(now, len);
         let mut flight = Flight {
@@ -238,6 +243,7 @@ impl Controller {
     pub(crate) fn end_ack(&mut self, now: Instant, rtt: &Rtt) {
         let feedback = Feedback {
             in_flight: self.in_flight,
+            prior_in_flight: self.prior_in_flight,
             last_sent: self.last_sent,
             ..core::mem::take(&mut self.feedback)
         };

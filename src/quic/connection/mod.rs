@@ -140,7 +140,6 @@ pub struct Connection {
 
     idle_timeout: Duration,
     has_sent_since_receiving: bool,
-    keep_alive: KeepAlive,
     keep_alive_period: Duration,
 
     streams: Streams,
@@ -244,7 +243,6 @@ impl Connection {
             ack_only_packets: 0,
             idle_timeout: Duration::from_millis(local.max_idle_timeout_millis),
             has_sent_since_receiving: false,
-            keep_alive: config.keep_alive,
             keep_alive_period: Duration::MAX,
             streams: Streams::new(side, &local, &config, u64::from_ne_bytes(seed)),
             datagrams: Datagrams::default(),
@@ -385,7 +383,7 @@ impl Connection {
             Timer::Ack => self.spaces.data.received.is_ack_due = true,
             Timer::Pacing => {}
             Timer::KeepAlive => {
-                if self.keep_alive != KeepAlive::WhileStreamsAreOpen
+                if self.config.keep_alive != KeepAlive::WhileStreamsAreOpen
                     || self.streams.table.has_application_streams()
                 {
                     self.streams.state.owed |= Control::PING;
@@ -412,15 +410,8 @@ impl Connection {
         }
     }
 
-    pub fn set_keep_alive(&mut self, now: Instant, keep_alive: KeepAlive) {
-        self.keep_alive = keep_alive;
-        if self.phase != Phase::Handshake {
-            self.start_keep_alive(now);
-        }
-    }
-
     fn start_keep_alive(&mut self, now: Instant) {
-        self.keep_alive_period = match self.keep_alive {
+        self.keep_alive_period = match self.config.keep_alive {
             KeepAlive::Every(period) if !period.is_zero() => period,
             KeepAlive::WhileStreamsAreOpen
                 if self.idle_timeout >= MIN_IDLE_TIMEOUT_TO_KEEP_ALIVE =>
@@ -429,9 +420,7 @@ impl Connection {
             }
             _ => Duration::MAX,
         };
-        if self.is_receiving() {
-            (self.timers).set(Timer::KeepAlive, now + self.keep_alive_period);
-        }
+        (self.timers).set(Timer::KeepAlive, now + self.keep_alive_period);
     }
 
     pub fn side(&self) -> Side {
@@ -445,6 +434,11 @@ impl Connection {
     #[inline]
     pub(crate) fn is_handshaking(&self) -> bool {
         self.phase == Phase::Handshake
+    }
+
+    /// See [`Event::Ready`].
+    pub fn is_ready(&self) -> bool {
+        self.is_ready
     }
 
     #[inline]

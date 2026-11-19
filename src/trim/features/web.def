@@ -46,7 +46,6 @@ feature HttpClient "the HTTP client behind fetch, S3 and WebSocket"
   c-function us_internal_ssl_handshake_callback_has_fired us_internal_ssl_get_native_handle us_internal_ssl_verify_error
   c-function us_internal_ssl_sni_servername us_internal_ssl_socket_relocated us_internal_ssl_ctx_up_ref us_internal_ssl_ctx_unref
   c-function us_internal_free_loop_ssl_data
-  c-function us_quic_loop_process us_quic_loop_flush_if_pending
 
 feature Fetch "fetch and Bun.FetchSession"
 

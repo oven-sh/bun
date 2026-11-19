@@ -24,7 +24,7 @@ impl WindowedMax {
     pub(super) fn update(&mut self, round: u64, value: u64) {
         let new = Sample { round, value };
         let [best, second, third] = &mut self.0;
-        if value >= best.value || round - third.round > WINDOW {
+        if value >= best.value {
             self.0 = [new; 3];
             return;
         }

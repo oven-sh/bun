@@ -1,6 +1,6 @@
-//! HTTP/3 client over lsquic via packages/bun-usockets/src/quic.cpp.
+//! HTTP/3 client.
 //!
-//! One `ClientContext` per HTTP-thread loop wraps the lsquic client engine;
+//! One `ClientContext` per HTTP-thread loop wraps the QUIC client;
 //! each `ClientSession` is one QUIC connection to an origin and multiplexes
 //! `Stream`s, each bound 1:1 to an `HTTPClient`. The result-delivery surface
 //! is the same one H2 uses (`handleResponseMetadata` / `handleResponseBody` /
@@ -10,9 +10,9 @@
 //! Layout mirrors `h2_client/`:
 //!   - `Stream`         — one in-flight request
 //!   - `ClientSession`  — one QUIC connection (pooled per origin)
-//!   - `ClientContext`  — process-global lsquic engine + session registry
+//!   - `ClientContext`  — process-global QUIC client + session registry
 //!   - `encode`         — request header/body framing onto a quic.Stream
-//!   - `callbacks`      — lsquic → Rust glue (on_hsk_done / on_stream_* / …)
+//!   - `callbacks`      — events of connections and streams
 //!   - `PendingConnect` — DNS-pending connect resolution
 
 use core::sync::atomic::AtomicU32;

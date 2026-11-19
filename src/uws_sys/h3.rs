@@ -25,19 +25,9 @@ impl ListenSocket {
     pub fn get_local_port(&mut self) -> Option<u16> {
         u16::try_from(c::uws_h3_listen_socket_port(self)).ok()
     }
-    pub fn get_local_address<'a>(&mut self, buf: &'a mut [u8]) -> Option<&'a [u8]> {
-        // SAFETY: self is a live FFI handle; buf ptr/len valid for write
-        let n = unsafe {
-            c::uws_h3_listen_socket_local_address(
-                self,
-                buf.as_mut_ptr(),
-                c_int::try_from(buf.len()).expect("int cast"),
-            )
-        };
-        if n <= 0 {
-            return None;
-        }
-        Some(&buf[..usize::try_from(n).expect("int cast")])
+    pub fn get_local_address<'a>(&mut self, ip: &'a mut [u8; 16]) -> &'a [u8] {
+        let len = c::uws_h3_listen_socket_local_address(self, ip);
+        &ip[..len as usize]
     }
 }
 
@@ -696,10 +686,9 @@ mod c {
             ud: *mut c_void,
         );
         pub(super) safe fn uws_h3_listen_socket_port(ls: &mut ListenSocket) -> i32;
-        pub(super) fn uws_h3_listen_socket_local_address(
-            ls: *mut ListenSocket,
-            buf: *mut u8,
-            len: c_int,
+        pub(super) safe fn uws_h3_listen_socket_local_address(
+            ls: &mut ListenSocket,
+            ip: &mut [u8; 16],
         ) -> c_int;
         pub(super) safe fn uws_h3_listen_socket_close(ls: &mut ListenSocket);
 

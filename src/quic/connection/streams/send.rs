@@ -83,6 +83,15 @@ impl State {
         self.close_if_done(id, stream);
     }
 
+    /// For a stream that the peer does not know of.
+    pub(crate) fn forget(&mut self, id: StreamId, stream: &mut Stream) {
+        self.unsent -= stream.send.unsent_len();
+        stream.send.discard();
+        (stream.flags).insert(Flags::WRITE_DONE | Flags::RESET | Flags::SEND_DONE);
+        stream.final_size = stream.received;
+        self.finish_reading(id, stream);
+    }
+
     /// RFC 9000 §3.5.
     pub(crate) fn on_stop_sending(&mut self, id: StreamId, stream: &mut Stream, code: u64) {
         if stream.mark(Flags::STOPPED_BY_PEER) {

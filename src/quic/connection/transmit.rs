@@ -8,7 +8,6 @@ use super::streams::WRITE_CHUNK;
 use super::timers::Timer;
 use super::{Connection, Ending, Phase, ack_frequency, paths};
 use crate::batch::Batch;
-use crate::cid::ConnectionId;
 use crate::coding::{Write, two_byte_varint, varint_len};
 use crate::congestion::Permit;
 use crate::crypto::TAG_LEN;
@@ -88,6 +87,7 @@ impl Connection {
         if self.ending == Ending::Closing {
             // The server needs the end of the handshake to read 1-RTT packets.
             while self.phase == Phase::Established
+                && self.close_frame.is_for_application()
                 && self.write_datagram(now, Content::Crypto, batch, shared)
             {}
             let start = batch.bytes.len();
@@ -403,7 +403,8 @@ impl Connection {
         self.remote_ids.write_frames(out, end, sent);
         self.streams.write_owed_frames(out, end, sent);
         if !self.datagrams.unsent.is_empty() {
-            let room = (end - draft.packet.payload_start) as u64;
+            let overhead = draft.packet.payload_start - draft.packet.start + TAG_LEN;
+            let room = u64::from(self.path.mtu.current).saturating_sub(overhead as u64);
             let max_len = room.min(self.peer.max_datagram_frame_size) as usize;
             let events = &mut self.streams.state.events;
             self.stats.datagrams_sent +=
@@ -548,12 +549,10 @@ impl Connection {
         self.candidates = candidates;
     }
 
-    /// The largest payload of a DATAGRAM frame.
-    pub fn max_datagram_len(&self) -> usize {
-        let overhead = 1 + ConnectionId::MAX_LEN + 4 + TAG_LEN;
-        let room = u64::from(self.path.mtu.current) - overhead as u64;
-        let frame_len = room.min(self.peer.max_datagram_frame_size);
-        (frame_len as usize).saturating_sub(1 + varint_len(frame_len))
+    /// Does not wait for more packets to acknowledge.
+    pub fn acknowledge(&mut self) {
+        let received = &mut self.spaces.data.received;
+        received.is_ack_due |= received.unacked_eliciting > 0;
     }
 }
 

@@ -77,6 +77,8 @@ pub(crate) struct Stream {
     pub(super) ready: Vec<u8>,
     /// How much `ready` had the last time.
     pub(super) ready_hint: usize,
+    /// How many bytes the application has got, but not consumed.
+    pub(crate) held: u64,
     pub(super) read: u64,
     pub(super) received: u64,
     pub(super) final_size: u64,
@@ -104,6 +106,7 @@ impl Stream {
             early: Assembler::default(),
             ready: Vec::new(),
             ready_hint: 0,
+            held: 0,
             read: 0,
             received: 0,
             final_size: UNKNOWN_SIZE,

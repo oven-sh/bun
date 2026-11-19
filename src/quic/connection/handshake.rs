@@ -484,9 +484,10 @@ impl Connection {
         }
         self.emit(Event::EarlyDataRejected);
         self.streams.close_all();
-        let events = core::mem::take(&mut self.streams.state.events);
-        self.streams = self.new_streams();
-        self.streams.state.events = events;
+        let new = self.new_streams();
+        let old = core::mem::replace(&mut self.streams, new).state;
+        (self.streams.state.events, self.streams.state.removed) = (old.events, old.removed);
+        self.update_unsent_target();
         (self.http3, self.can_open_streams) = (None, false);
         self.set_loss_timer(now);
     }

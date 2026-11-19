@@ -6,6 +6,7 @@ mod frame;
 mod message;
 mod priority;
 
+pub use bun_qpack::Indexing;
 pub(crate) use control::{ControlFrame, ControlReader, write_settings};
 pub(crate) use fields::Pool;
 pub use fields::{Fields, Header, Section};
@@ -119,11 +120,8 @@ impl Http3 {
         out.clear();
         out.extend_from_slice(&[0; MAX_FRAME_HEADER_LEN]);
         let mut section = self.encoder.section(id.0, out, credit);
-        for header in headers {
-            match header.static_index {
-                Some(index) => section.field_with_static_name(index, header.value, header.indexing),
-                None => section.field(header.name, header.value, header.indexing),
-            }
+        for it in headers {
+            section.field(it.name, it.static_index, it.value, it.indexing);
         }
         let start = section.finish();
         let (frame_header, len) = frame_header(frame::kind::HEADERS, (out.len() - start) as u64);

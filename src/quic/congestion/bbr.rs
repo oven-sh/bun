@@ -12,6 +12,9 @@ const DEFAULT_RTT: Duration = Duration::from_millis(25);
 const MIN_RTT_EXPIRY: Duration = Duration::from_secs(10);
 const PROBE_RTT_TIME: Duration = Duration::from_millis(200);
 const ROUNDS_WITHOUT_GROWTH: u8 = 3;
+/// To lose this many in a round, and more than one in `HIGH_LOSS_RATIO`, is no accident.
+const HIGH_LOSS_SEGMENTS: u64 = 6;
+const HIGH_LOSS_RATIO: u64 = 50;
 const PHASES: u8 = 8;
 
 /// In 1024ths.
@@ -55,6 +58,8 @@ struct Recovery {
     end: u64,
     /// For the first round.
     conserves_packets: bool,
+    /// The application made the flight as small as it was, and thus the window.
+    is_application_limited: bool,
 }
 
 pub(super) struct Bbr {
@@ -69,12 +74,18 @@ pub(super) struct Bbr {
     /// Zero until there is a sample.
     min_rtt: Duration,
     min_rtt_at: Instant,
+    /// The clock of the filters. It stands still while the application is the limit (§4.1.1.4).
     round: u64,
     /// The last packet of the round.
     round_end: u64,
+    /// The last packet that the application had nothing to send after.
+    ran_dry_at: u64,
+    acked_in_round: u64,
+    lost_in_round: u64,
     is_pipe_filled: bool,
     is_last_sample_limited: bool,
     is_restarting: bool,
+    has_lost_packets: bool,
     rounds_without_growth: u8,
     bandwidth_to_beat: u64,
     /// What is acknowledged in excess of the bandwidth, as paths and peers bunch acknowledgments.
@@ -103,9 +114,13 @@ impl Bbr {
             min_rtt_at: Instant::default(),
             round: 0,
             round_end: 0,
+            ran_dry_at: 0,
+            acked_in_round: 0,
+            lost_in_round: 0,
             is_pipe_filled: false,
             is_last_sample_limited: false,
             is_restarting: false,
+            has_lost_packets: false,
             rounds_without_growth: 0,
             bandwidth_to_beat: 0,
             excess_acked: WindowedMax::default(),
@@ -143,7 +158,11 @@ impl Bbr {
 
     /// §4.2.1.
     pub(super) fn pacing_rate(&self, rtt: &Rtt) -> (u64, Duration) {
-        let (initial, min_rtt) = (Gain::HIGH.of(INITIAL_WINDOW), self.min_rtt(rtt));
+        let initial = match self.has_lost_packets {
+            true => INITIAL_WINDOW,
+            false => Gain::HIGH.of(INITIAL_WINDOW),
+        };
+        let min_rtt = self.min_rtt(rtt);
         match self.is_pipe_filled || delivered_in(min_rtt, self.pacing_rate) > initial {
             true => (self.pacing_rate, Duration::from_secs(1)),
             false => (initial, min_rtt),
@@ -162,6 +181,7 @@ impl Bbr {
 
     pub(super) fn on_application_limited(&mut self, last_sent: u64) {
         self.sampler.on_application_limited(last_sent);
+        self.ran_dry_at = last_sent;
     }
 
     /// §4.3.4.4.
@@ -180,7 +200,7 @@ impl Bbr {
         if let Some(newest) = &feedback.newest_acked {
             is_round_start = newest.sequence > self.round_end;
             if is_round_start {
-                self.round += 1;
+                self.round += u64::from(!newest.is_application_limited);
                 self.round_end = feedback.last_sent;
             }
             self.update_bandwidth(now, feedback.acked, newest);
@@ -189,10 +209,13 @@ impl Bbr {
             self.update_excess_acked(now, feedback.acked);
         }
         self.update_recovery(feedback, is_round_start);
-        if feedback.is_persistent_congestion
-            && let Some(recovery) = &mut self.recovery
-        {
-            recovery.window = MIN_SEGMENTS * self.segment;
+        if let Some(recovery) = &mut self.recovery {
+            if feedback.is_persistent_congestion {
+                recovery.window = MIN_SEGMENTS * self.segment;
+            }
+            if recovery.is_application_limited && recovery.conserves_packets {
+                self.sampler.on_application_limited(feedback.last_sent);
+            }
         }
 
         let min_rtt = self.min_rtt(rtt);
@@ -201,8 +224,12 @@ impl Bbr {
             capacity => capacity,
         };
         self.advance_phase(now, feedback, min_rtt, capacity);
-        if is_round_start && !self.is_pipe_filled && !self.is_last_sample_limited {
-            self.check_pipe_filled();
+        if !self.is_pipe_filled {
+            if is_round_start {
+                self.check_pipe_filled();
+            }
+            self.acked_in_round += feedback.acked;
+            self.lost_in_round += feedback.lost;
         }
         if self.mode == Mode::Startup && self.is_pipe_filled {
             self.mode = Mode::Drain;
@@ -224,9 +251,7 @@ impl Bbr {
     fn update_bandwidth(&mut self, now: Instant, acked: u64, newest: &Flight) {
         if let Some(sample) = self.sampler.on_delivered(now, acked, newest) {
             self.is_last_sample_limited = newest.is_application_limited;
-            if !newest.is_application_limited || sample > self.bandwidth.get() {
-                self.bandwidth.update(self.round, sample);
-            }
+            self.bandwidth.update(self.round, sample);
         }
     }
 
@@ -236,14 +261,16 @@ impl Bbr {
             return false;
         }
         let is_unknown = self.min_rtt.is_zero();
-        let has_expired = !is_unknown && now > self.min_rtt_at + MIN_RTT_EXPIRY;
+        // After a pause there is no queue to drain, so the new sample comes for free.
+        let expiry = MIN_RTT_EXPIRY / (1 + u64::from(self.is_restarting));
+        let has_expired = !is_unknown && now > self.min_rtt_at + expiry;
         if is_unknown || has_expired || sample < self.min_rtt {
             (self.min_rtt, self.min_rtt_at) = (sample, now);
         }
         has_expired
     }
 
-    /// draft-cardwell-iccrg-bbr-congestion-control-02 §4.5.9.
+    /// draft-cardwell-iccrg-bbr-congestion-control-02 §4.5.5.
     fn update_excess_acked(&mut self, now: Instant, acked: u64) {
         let mut expected = delivered_in(now - self.bunch_start, self.bandwidth.get());
         if self.bunch_len <= expected {
@@ -257,13 +284,15 @@ impl Bbr {
         let min_window = self.min_window();
         let Some(recovery) = &mut self.recovery else {
             if feedback.lost > 0 {
-                let window = feedback.in_flight + feedback.acked.max(1);
+                let window = feedback.prior_in_flight.saturating_sub(feedback.lost);
                 self.recovery = Some(Recovery {
-                    window: window.max(min_window),
+                    window: window.max(feedback.in_flight + 1).max(min_window),
                     end: feedback.last_sent,
                     conserves_packets: true,
+                    is_application_limited: self.ran_dry_at == feedback.last_sent,
                 });
                 self.round_end = feedback.last_sent;
+                self.has_lost_packets = true;
             }
             return;
         };
@@ -282,8 +311,15 @@ impl Bbr {
         recovery.window = recovery.window.max(floor);
     }
 
-    /// §4.3.2.2.
+    /// §4.3.2.2, and draft-ietf-ccwg-bbr-06 §5.3.1.3 for those that never send for three rounds on end.
     fn check_pipe_filled(&mut self) {
+        let acked = core::mem::take(&mut self.acked_in_round);
+        let lost = core::mem::take(&mut self.lost_in_round);
+        let is_loss_high =
+            lost >= HIGH_LOSS_SEGMENTS * self.segment && lost * HIGH_LOSS_RATIO > acked + lost;
+        if self.is_last_sample_limited && !is_loss_high {
+            return;
+        }
         let bandwidth = self.bandwidth.get();
         if bandwidth >= self.bandwidth_to_beat {
             self.bandwidth_to_beat = Gain::PROBE_UP.of(bandwidth);
@@ -311,9 +347,8 @@ impl Bbr {
         };
         let (gain, is_full_length) = (self.pacing_gain(), now - since > rtt);
         let is_over = if gain > Gain::UNIT {
-            let prior_in_flight = feedback.in_flight + feedback.acked + feedback.lost;
             let target = gain.of(capacity).max(self.min_window());
-            is_full_length && (feedback.lost > 0 || prior_in_flight >= target)
+            is_full_length && (feedback.lost > 0 || feedback.prior_in_flight >= target)
         } else if gain < Gain::UNIT {
             is_full_length || feedback.in_flight <= capacity.max(self.min_window())
         } else {

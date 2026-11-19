@@ -2191,11 +2191,7 @@ where
                 // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 let h3l = bun_opaque::opaque_deref_mut(h3l);
                 port = h3l.get_local_port().unwrap_or(port);
-                let mut buf = [0u8; 64];
-                let Some(address_bytes) = h3l.get_local_address(&mut buf) else {
-                    return Ok(JSValue::NULL);
-                };
-                let addr = match SocketAddress::init(address_bytes, port) {
+                let addr = match SocketAddress::init(h3l.get_local_address(&mut [0; 16]), port) {
                     Ok(a) => a,
                     Err(_) => {
                         bun_core::hint::cold();

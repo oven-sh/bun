@@ -777,6 +777,7 @@ dependencies = [
  "bun_http_types",
  "bun_io",
  "bun_ptr",
+ "bun_quic",
  "bun_removable_features",
  "bun_sys",
  "bun_threading",
@@ -1329,13 +1330,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_lsquic_sys"
-version = "0.0.0"
-dependencies = [
- "bun_core",
-]
-
-[[package]]
 name = "bun_md"
 version = "0.0.0"
 dependencies = [
@@ -1510,6 +1504,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_quic"
+version = "0.0.0"
+dependencies = [
+ "bitflags",
+ "bun_core",
+ "bun_qpack",
+ "hashbrown 0.15.5",
+ "smallvec",
+]
+
+[[package]]
+name = "bun_quic_tls"
+version = "0.0.0"
+dependencies = [
+ "bun_boringssl_sys",
+ "bun_opaque",
+ "bun_quic",
+]
+
+[[package]]
 name = "bun_react_compiler"
 version = "0.0.0"
 dependencies = [
@@ -1660,7 +1674,6 @@ dependencies = [
  "bun_libuv_sys",
  "bun_lint",
  "bun_lint_driver",
- "bun_lsquic_sys",
  "bun_md",
  "bun_node_path",
  "bun_opaque",
@@ -1672,6 +1685,8 @@ dependencies = [
  "bun_platform",
  "bun_png",
  "bun_ptr",
+ "bun_quic",
+ "bun_quic_tls",
  "bun_removable_features",
  "bun_resolve_builtins",
  "bun_resolver",
@@ -2184,6 +2199,8 @@ dependencies = [
  "bun_opaque",
  "bun_paths",
  "bun_ptr",
+ "bun_quic",
+ "bun_quic_tls",
  "bun_windows_sys",
  "libc",
  "strum",

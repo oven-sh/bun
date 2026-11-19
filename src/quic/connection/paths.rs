@@ -203,7 +203,7 @@ impl Connection {
         };
         if self.candidates.len() == MAX_CANDIDATES {
             let oldest = self.candidates.remove(0);
-            self.abandon(&oldest, shared)?;
+            self.abandon_path(&oldest, shared)?;
         }
         let is_validated = self.side.is_client() || from.peer == self.path.addresses.peer;
         let mut path = Path::new(*from, remote, is_validated);
@@ -238,7 +238,7 @@ impl Connection {
     }
 
     /// For a path that is not among the others any more.
-    fn abandon(&mut self, path: &Path, shared: &mut Shared) -> Result {
+    fn abandon_path(&mut self, path: &Path, shared: &mut Shared) -> Result {
         let sequence = path.remote.sequence;
         if self.paths().any(|it| it.remote.sequence == sequence) {
             return Ok(());
@@ -270,7 +270,7 @@ impl Connection {
         }
         while let Some(at) = (self.candidates.iter()).position(|it| it.remote.sequence < oldest) {
             let path = self.candidates.remove(at);
-            self.abandon(&path, shared)?;
+            self.abandon_path(&path, shared)?;
         }
         Ok(())
     }
@@ -327,7 +327,7 @@ impl Connection {
 
     fn switch_path(&mut self, at: usize, shared: &mut Shared) -> Result {
         let old = core::mem::replace(&mut self.path, self.candidates.remove(at));
-        self.abandon(&old, shared)?;
+        self.abandon_path(&old, shared)?;
         let (from, to) = (old.addresses, self.path.addresses);
         self.previous_peer = Some(from.peer);
         self.spin = false;
@@ -365,7 +365,7 @@ impl Connection {
             .position(|it| !it.on_timeout(now))
         {
             let path = self.candidates.remove(at);
-            self.abandon(&path, shared)?;
+            self.abandon_path(&path, shared)?;
         }
         Ok(())
     }

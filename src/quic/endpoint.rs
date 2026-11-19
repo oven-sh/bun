@@ -34,6 +34,7 @@ const DATAGRAMS_PER_TURN: usize = 16;
 /// RFC 9000 §7.2.
 const MIN_INITIAL_ID_LEN: usize = 8;
 
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Handle {
     slot: u32,
@@ -90,7 +91,7 @@ struct Slot {
 pub enum Unrouted<'a> {
     Incoming(Incoming<'a>),
     /// For [`Endpoint::reset`].
-    Stray(&'a [u8]),
+    Stray(&'a mut [u8]),
 }
 
 /// The first datagram of a client.
@@ -102,8 +103,8 @@ pub struct Incoming<'a> {
 }
 
 impl Incoming<'_> {
-    pub fn version(&self) -> Version {
-        self.client.1.version
+    pub fn addresses(&self) -> &Addresses {
+        &self.client.0
     }
 }
 

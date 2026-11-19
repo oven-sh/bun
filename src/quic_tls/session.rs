@@ -1,5 +1,6 @@
 use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
 use core::ptr::{NonNull, null, null_mut};
+use std::rc::Rc;
 
 use bun_boringssl_sys::{self as ssl, SSL, SSL_CTX, SSL_SESSION};
 use bun_quic::crypto::Cipher;
@@ -75,6 +76,7 @@ pub struct Session {
     ssl: NonNull<SSL>,
     select_context: Option<Box<SelectContext>>,
     verify: Option<Box<Verify>>,
+    protocols: Option<Rc<[u8]>>,
     has_local_parameters: bool,
     has_peer_parameters: bool,
     is_complete: bool,
@@ -102,6 +104,7 @@ impl Session {
             ssl,
             select_context: None,
             verify: None,
+            protocols: None,
             has_local_parameters: false,
             has_peer_parameters: false,
             is_complete: false,
@@ -135,7 +138,19 @@ impl Session {
         Some(unsafe { CStr::from_ptr(name) })
     }
 
-    /// For a server, to go on with the context for the name that the client asks for.
+    /// For a client. `protocols` has the format of RFC 7301 §3.1.
+    pub fn offer(&mut self, protocols: &[u8]) -> Option<()> {
+        let (ssl, at) = (self.ssl.as_ptr(), protocols.as_ptr());
+        // SAFETY: BoringSSL copies `protocols`.
+        (unsafe { ssl::SSL_set_alpn_protos(ssl, at, protocols.len()) } == 0).then_some(())
+    }
+
+    /// For a server, in place of the name that HTTP/3 has in the version of the connection.
+    pub fn accept(&mut self, protocols: Rc<[u8]>) {
+        self.protocols = Some(protocols);
+    }
+
+    /// For a server, to go on with another context, if there is one for the name that the client asks for.
     pub fn select_context_with(&mut self, select: Box<SelectContext>) {
         self.select_context = Some(select);
         // SAFETY: the callback does not use its argument.
@@ -354,7 +369,9 @@ extern "C" fn send_alert(ssl: &SSL, _level: c_uint, alert: u8) -> c_int {
 
 extern "C" fn select_context(ssl: &SSL, _: *mut c_void) -> c_int {
     let result = Call::with(ssl, |call| {
-        let ctx = call.session.select_context.as_ref()?(ssl.servername())?;
+        let Some(ctx) = call.session.select_context.as_ref()?(ssl.servername()) else {
+            return Some(1);
+        };
         let at = ssl.as_mut_ptr();
         // SAFETY: both are live, and `ssl` takes its own reference.
         unsafe {
@@ -409,11 +426,11 @@ pub unsafe fn enable_key_log(ctx: &SSL_CTX) {
     unsafe { ssl::SSL_CTX_set_keylog_callback(ctx.as_mut_ptr(), Some(key_log)) };
 }
 
-/// Makes a server select the name that HTTP/3 has in the version of the connection.
+/// For a server. See [`Session::accept`].
 ///
 /// # Safety
 /// `ctx` is not shared yet.
-pub unsafe fn select_http3(ctx: &SSL_CTX) {
+pub unsafe fn enable_alpn(ctx: &SSL_CTX) {
     unsafe extern "C" fn select(
         ssl: *mut SSL,
         out: *mut *const u8,
@@ -422,24 +439,17 @@ pub unsafe fn select_http3(ctx: &SSL_CTX) {
         offered_len: c_uint,
         _: *mut c_void,
     ) -> c_int {
-        let ours = Call::with(SSL::opaque_ref(ssl), |call| {
-            Some(call.handshake.version().http3_alpn())
+        let result = Call::with(SSL::opaque_ref(ssl), |call| {
+            let ours = (call.session.protocols.as_deref())
+                .unwrap_or_else(|| call.handshake.version().http3_alpn());
+            let (at, len) = (ours.as_ptr(), ours.len() as c_uint);
+            // SAFETY: the other pointers are those of BoringSSL, which copies the name when this returns.
+            Some(unsafe {
+                ssl::SSL_select_next_proto(out.cast(), out_len, at, len, offered, offered_len)
+            })
         });
-        let ours = ours.unwrap_or_default();
-        // SAFETY: the pointers are those of BoringSSL, and `ours` is static.
-        let result = unsafe {
-            let len = ours.len() as c_uint;
-            ssl::SSL_select_next_proto(
-                out.cast(),
-                out_len,
-                ours.as_ptr(),
-                len,
-                offered,
-                offered_len,
-            )
-        };
         match result {
-            ssl::OPENSSL_NPN_NEGOTIATED => ssl::SSL_TLSEXT_ERR_OK,
+            Some(ssl::OPENSSL_NPN_NEGOTIATED) => ssl::SSL_TLSEXT_ERR_OK,
             _ => ssl::SSL_TLSEXT_ERR_ALERT_FATAL,
         }
     }

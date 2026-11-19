@@ -110,7 +110,6 @@ impl Connection {
         }
     }
 
-    /// The first request that the server is not going to process.
     pub fn peer_go_away(&self) -> Option<StreamId> {
         self.http3.as_ref()?.peer_go_away
     }
@@ -201,7 +200,8 @@ impl Connection {
             None => self.emit(Event::GoAway),
         }
         let mut rejected: Vec<_> = (self.streams.table.iter_mut())
-            .filter(|(id, stream)| *id >= first && is_request(*id) && !stream.has_received())
+            // Some servers name the last request that they process.
+            .filter(|(id, stream)| *id > first && is_request(*id) && !stream.has_received())
             .map(|it| it.0)
             .collect();
         rejected.sort_unstable();

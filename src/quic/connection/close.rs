@@ -41,6 +41,11 @@ impl CloseFrame {
         }
     }
 
+    /// Whether it says more in a 1-RTT packet than in the others.
+    pub(super) fn is_for_application(&self) -> bool {
+        self.layer == Layer::Application
+    }
+
     pub(super) fn write(&self, space: SpaceId, out: &mut Vec<u8>, end: usize) {
         let room = end.saturating_sub(out.len() + MIN_FRAME_ROOM);
         let (layer, code, max_len) = match (self.layer, space) {
@@ -105,6 +110,9 @@ impl Connection {
 
     /// Does not deliver anything more.
     pub fn abort(&mut self, now: Instant, layer: Layer, code: u64, reason: &[u8]) {
+        if self.is_receiving() {
+            self.streams.state.forget_events();
+        }
         let frame = CloseFrame::new(layer, code, reason);
         self.start_closing(now, CloseReason::Local, frame);
     }
@@ -136,7 +144,7 @@ impl Connection {
 
     fn start_closing(&mut self, now: Instant, reason: CloseReason, frame: CloseFrame) {
         if self.is_receiving() {
-            self.streams.state.forget_events();
+            self.streams.state.forget_readable();
             (self.close_reason, self.close_frame) = (reason, frame);
             self.send_close(now);
         }

@@ -3,7 +3,7 @@ use super::{Flags, State, Stream};
 use crate::coding::MAX_VARINT;
 use crate::connection::sent::Control;
 use crate::error::{Error, Result, transport_code};
-use crate::event::StreamEvent;
+use crate::event::{Event, StreamEvent};
 use crate::stream_id::StreamId;
 
 const MAX_READY_HINT: usize = 256 * 1024;
@@ -177,7 +177,7 @@ impl State {
         let is_discarding = stream.flags.contains(Flags::READ_DONE);
         let consumed = match is_discarding {
             true => stream.received,
-            false => stream.read - stream.ready.len() as u64,
+            false => stream.read - stream.ready.len() as u64 - stream.held,
         };
         self.consumed += consumed - stream.consumed;
         stream.consumed = consumed;
@@ -215,9 +215,13 @@ impl State {
         stream.map(|stream| stream.take(Flags::IN_READABLE));
     }
 
-    pub(crate) fn forget_events(&mut self) {
-        self.events.clear();
+    pub(crate) fn forget_readable(&mut self) {
         self.readable.clear();
+    }
+
+    pub(crate) fn forget_events(&mut self) {
+        (self.events).retain(|it| matches!(it, Event::Stream(_, _, StreamEvent::Closed)));
+        self.forget_readable();
     }
 }
 

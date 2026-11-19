@@ -25,6 +25,8 @@ pub struct Config {
     pub uses_preferred_address: bool,
     /// Whether streams are served by urgency and then by ID, as opposed to in turns.
     pub has_priorities: bool,
+    /// Whether what the application has got counts as unread until [`consume`](crate::Connection::consume).
+    pub awaits_consumption: bool,
     pub http3: Option<Http3Config>,
 }
 
@@ -85,6 +87,7 @@ impl Config {
             wants_tickets: false,
             uses_preferred_address: false,
             has_priorities: false,
+            awaits_consumption: false,
             http3: None,
         }
     }

@@ -126,7 +126,8 @@ members = [
   "src/shell_parser",
   "src/tcc_sys",
   "src/uws_sys",
-  "src/lsquic_sys",
+  "src/quic",
+  "src/quic_tls",
   "src/zstd",
   "src/options_types",
   "src/output",
@@ -505,7 +506,8 @@ bun_spawn = { path = "src/spawn" }
 bun_spawn_sys = { path = "src/spawn_sys" }
 bun_tcc_sys = { path = "src/tcc_sys" }
 bun_uws_sys = { path = "src/uws_sys" }
-bun_lsquic_sys = { path = "src/lsquic_sys" }
+bun_quic = { path = "src/quic" }
+bun_quic_tls = { path = "src/quic_tls" }
 bun_zstd = { path = "src/zstd" }
 bun_options_types = { path = "src/options_types" }
 bun_bunfig = { path = "src/bunfig" }
@@ -538,6 +540,12 @@ opt-level = 3
 
 # Runs for every field of an HTTP/2 header block.
 [profile.dev.package.bun_hpack]
+opt-level = 3
+
+# Runs for every packet of a QUIC connection.
+[profile.dev.package.bun_quic]
+opt-level = 3
+[profile.dev.package.bun_quic_tls]
 opt-level = 3
 
 # Runs for every byte that is compressed or decompressed.

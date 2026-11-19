@@ -53,6 +53,12 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
   });
 });
 
+test.skipIf(isWindows)("an empty slice of a pipe that nobody writes to resolves", async () => {
+  using dir = tempDir("bun-file-fd-read", {});
+  using fifo = openFifo(String(dir));
+  expect(await Bun.file(fifo.reader).slice(0, 0).text()).toBe("");
+});
+
 test.skipIf(!isLinux)("an empty read of a FIFO by path stays open until its writer has written", async () => {
   using dir = tempDir("bun-file-fd-read", {});
   using fifo = openFifo(String(dir));

@@ -255,8 +255,8 @@ impl FdOp for ReadFile {
         if expected == 0 && bun_sys::is_regular_file(self.cached_mode) {
             return Ok((fd, Step::Done));
         }
-        // An empty read waits like any other.
-        if self.max_length == 0 && self.must_wait(fd.get()) {
+        // Opening a FIFO lets its writer go on, and closing it at once would break that pipe.
+        if self.max_length == 0 && !matches!(self.file, Target::Fd(_)) && self.must_wait(fd.get()) {
             return Ok((fd, Step::Wait));
         }
         if !self.could_block || expected > 0 {

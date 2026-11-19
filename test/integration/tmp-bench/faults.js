@@ -53,3 +53,11 @@ exports.failTimes = (name, times, result, lastError) => {
 };
 // For what is looked up with GetProcAddress.
 exports.failInPlace = (module, name, result, lastError) => write(k.GetProcAddress(k.GetModuleHandleW(Buffer.from(module + "\0", "utf16le")), Buffer.from(name + "\0")), returns(result, lastError));
+// The thread pool of the system makes the same call, with another key, and ends the process if that fails.
+exports.noWait = result => {
+  const at = k.GetProcAddress(k.GetModuleHandleW(Buffer.from("ntdll.dll\0", "utf16le")), Buffer.from("NtAssociateWaitCompletionPacket\0"));
+  if (arm) return write(at, returns(result));
+  const refuse = returns(result), stub = Buffer.from(toArrayBuffer(at, 0, 32).slice(0));
+  const code = place(Buffer.concat([bytes(0x49, 0x83, 0xf9, 0x08, 0x73, refuse.length), refuse, stub]));
+  return write(at, Buffer.concat([bytes(0x48, 0xb8), u64(code), bytes(0xff, 0xe0)]));
+};

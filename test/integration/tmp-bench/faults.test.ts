@@ -4,7 +4,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 const prelude = `
-  const { fail, failIfFifth, failInPlace, failTimes } = require(${JSON.stringify(join(import.meta.dir, "faults.js"))});
+  const { fail, failIfFifth, failInPlace, failTimes, noWait: refuseWaits } = require(${JSON.stringify(join(import.meta.dir, "faults.js"))});
   const fs = require("fs"), os = require("os"), { once } = require("events");
   const NO_RESOURCES = 0xc000009a, forever = [process.execPath, "-e", "setInterval(() => {}, 1000)"], quick = [process.execPath, "-e", "0"];
   const shown = error => error?.code ?? error?.message ?? String(error);
@@ -13,7 +13,7 @@ const prelude = `
   const during = (undo, f) => { try { return attempt(f); } finally { undo(); } };
   const isAlive = pid => { try { return process.kill(pid, 0); } catch { return false; } };
   const gone = async pid => { for (let i = 0; i < 300 && isAlive(pid); i++) await Bun.sleep(10); return !isAlive(pid); };
-  const noWait = () => failInPlace("ntdll.dll", "NtAssociateWaitCompletionPacket", NO_RESOURCES);
+  const noWait = () => refuseWaits(NO_RESOURCES);
   const say = value => fs.writeFileSync("result.json", JSON.stringify(value));
 `;
 async function run(script: string, keys?: string) {

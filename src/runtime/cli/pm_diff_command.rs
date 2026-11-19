@@ -1101,6 +1101,9 @@ struct FileChange<'a> {
     added: usize,
     removed: usize,
     binary: bool,
+    became_binary: bool,
+    gained_terminal_escapes: bool,
+    gained_bidi_controls: bool,
     /// `*.js.map`: regenerated on every build, never worth reading.
     sourcemap: bool,
     /// Textually different shown lines folded away as equivalent by the key.
@@ -1517,10 +1520,12 @@ fn compare_all(changes: &mut [FileChange<'_>], flags: DiffFlags, style: Style, h
 /// Decides what changed between the two sides of a file, and renders it.
 fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style) {
     let FileChange { path, old, new, .. } = *change;
-    change.binary = [old, new]
-        .iter()
-        .flatten()
-        .any(|side| is_binary(path, side));
+    let [old_binary, new_binary] = [old, new].map(|side| side.map(|side| is_binary(path, side)));
+    change.binary = old_binary == Some(true) || new_binary == Some(true);
+    change.became_binary = old_binary == Some(false) && new_binary == Some(true);
+    let gained = |has: fn(&[u8]) -> bool| new.is_some_and(has) && !old.is_some_and(has);
+    change.gained_terminal_escapes = !change.binary && gained(has_terminal_escapes);
+    change.gained_bidi_controls = !change.binary && gained(has_bidi_controls);
     change.sourcemap = change.is_sourcemap();
     if change.binary || change.sourcemap {
         return;
@@ -1937,7 +1942,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags, threads: Threads) {
         }
         if style.pretty {
             style.file_header(c);
-            Output::print(format_args!("{}", BStr::new(&c.hunks)));
+            print_lossy(&c.hunks);
             continue;
         }
         // A file whose contents the patch omits gets neither a `diff --git` header nor a mode line,
@@ -1956,7 +1961,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags, threads: Threads) {
         // context line has to come out unchanged for the patch to apply.
         let put = |part: &[u8]| {
             if style.escape {
-                Output::print(format_args!("{}", BStr::new(part)));
+                print_lossy(part);
             } else {
                 Output::print_bytes(part);
             }
@@ -2021,6 +2026,15 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags, threads: Threads) {
         }
     }
     print_summary(left, right, &changes, style);
+}
+
+/// Prints U+FFFD in place of what is not UTF-8.
+fn print_lossy(bytes: &[u8]) {
+    if strings::is_valid_utf8(bytes) {
+        Output::print_bytes(bytes);
+    } else {
+        Output::print(format_args!("{}", BStr::new(bytes)));
+    }
 }
 
 /// The header everyone reads first: which versions, how much changed, and the changes worth a second look
@@ -2146,18 +2160,19 @@ fn collect_notes(
             )),
             _ => {}
         }
-        if let Some(n) = c.new {
-            let gained = |needle: fn(&[u8]) -> bool| needle(n) && !c.old.is_some_and(needle);
-            if !c.binary && gained(has_terminal_escapes) {
-                notes.push(note!(
-                    colors,
-                    "terminal escape sequences in <b>{}<r> <d>(shown as ␛)<r>",
-                    &[BStr::new(c.path).to_string()]
-                ));
-            }
-            if !c.binary && gained(has_bidi_controls) {
-                notes.push(note!(colors, "bidirectional text controls in <b>{}<r> <d>(Trojan Source; shown as ‹U+202E›)<r>", &[BStr::new(c.path).to_string()]));
-            }
+        if c.gained_terminal_escapes {
+            notes.push(note!(
+                colors,
+                "terminal escape sequences in <b>{}<r> <d>(shown as ␛)<r>",
+                &[BStr::new(c.path).to_string()]
+            ));
+        }
+        if c.gained_bidi_controls {
+            notes.push(note!(
+                colors,
+                "bidirectional text controls in <b>{}<r> <d>(Trojan Source; shown as ‹U+202E›)<r>",
+                &[BStr::new(c.path).to_string()]
+            ));
         }
         if c.binary && c.old.is_none() {
             notes.push(note!(
@@ -2169,9 +2184,7 @@ fn collect_notes(
                 ],
             ));
         }
-        if c.new.is_some_and(|new| is_binary(c.path, new))
-            && c.old.is_some_and(|old| !is_binary(c.path, old))
-        {
+        if c.became_binary {
             notes.push(note!(
                 colors,
                 "<b>{}<r> was text and is now binary",
@@ -2278,7 +2291,7 @@ fn print_json(left: &Tree, right: &Tree, changes: &[FileChange<'_>], flags: Diff
         lines_removed,
         formatting_only
     );
-    Output::print(format_args!("{}", BStr::new(&out)));
+    print_lossy(&out);
 }
 
 /// What the parser saw that a reviewer would want to know: new imports of consequential builtins, other new

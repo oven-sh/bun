@@ -1029,6 +1029,73 @@ insertFinalNewline = false
     });
   });
 
+  test("`plugins` in an entry lists the plugins for its files, and replaces the list in [fmt]", async () => {
+    const entry = (plugins: string) => `[[fmt.overrides]]\nfiles = "legacy/**"\noptions = { plugins = ${plugins} }\n`;
+    const sources = { "a.js": "a  ;\n", "legacy/b.js": "b  ;\n" };
+    const names = Object.keys(sources);
+    const scoped = { "bunfig.toml": entry(`["prettier-plugin-x"]`), ...sources };
+    const emptied = { "bunfig.toml": `[fmt]\nplugins = ["prettier-plugin-x"]\n\n${entry("[]")}`, ...sources };
+    const [skipped, allowed, exempt] = await Promise.all([
+      format(scoped, names),
+      format(scoped, ["--allow-unsupported", ...names]),
+      format(emptied, names),
+    ]);
+    const left =
+      "error: 1 file was not formatted because --plugin or [fmt] plugins lists plugins that bun fmt does not include: prettier-plugin-x\n";
+    // Bun doesn't have the plugin, which could print a .js file differently. So it leaves the files of the entry.
+    expect(skipped.files).toMatchObject({ "a.js": "a;\n", "legacy/b.js": "b  ;\n" });
+    expect(skipped.stderr).toContain(left);
+    expect(skipped.exitCode).toBe(2);
+    expect(allowed.files).toMatchObject({ "a.js": "a;\n", "legacy/b.js": "b;\n" });
+    expect(allowed.exitCode).toBe(0);
+    // An empty list frees the entry's files from the plugin that [fmt] lists.
+    expect(exempt.files).toMatchObject({ "a.js": "a  ;\n", "legacy/b.js": "b;\n" });
+    expect(exempt.stderr).toContain(
+      `${left}  Put the plugin in a [[fmt.overrides]] entry with "files" to send only those files to your installed Prettier, or use --allow-unsupported to format it without the plugins.`,
+    );
+    expect(exempt.exitCode).toBe(2);
+  });
+
+  test("a built-in plugin in an entry does its work for the entry's files only", async () => {
+    const manifest = `{\n  "version": "1",\n  "name": "a"\n}\n`;
+    const result = await format({
+      "bunfig.toml": `[[fmt.overrides]]\nfiles = "packages/**"\noptions = { plugins = ["prettier-plugin-packagejson"] }\n`,
+      "package.json": manifest,
+      "packages/a/package.json": manifest,
+    });
+    expect(result.stderr).toBe("");
+    expect(result.files).toMatchObject({
+      "package.json": manifest,
+      "packages/a/package.json": `{\n  "name": "a",\n  "version": "1"\n}\n`,
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("`options` takes a plugin's own options next to `plugins` or the plugin's `parser`, in any order", async () => {
+    const accepted = [
+      `plugins = ["prettier-plugin-astro"], astroAllowShorthand = true`,
+      `astroAllowShorthand = true, plugins = ["prettier-plugin-astro"]`,
+      `plugins = ["./plugin.js"], astroAllowShorthand = true`,
+      `parser = "astro", astroAllowShorthand = true`,
+      `astroAllowShorthand = true, parser = "astro"`,
+    ];
+    // No file matches the entry, so nothing goes to Prettier, which is what checks the option's name.
+    const results = await Promise.all(
+      accepted.map(keys =>
+        format({
+          "bunfig.toml": `[[fmt.overrides]]\nfiles = ["*.astro"]\noptions = { ${keys} }\n`,
+          "a.js": "a  ;\n",
+        }),
+      ),
+    );
+    expect(results.map(it => ({ stderr: it.stderr, text: it.files["a.js"], exitCode: it.exitCode }))).toEqual(
+      accepted.map(() => ({ stderr: "", text: "a;\n", exitCode: 0 })),
+    );
+  });
+
+  const unknownInOptions = (key: string) => `Unknown key "${key}" in [fmt.overrides.options]\n`;
+  const options = (text: string) => `overrides = [{ files = "a", options = { ${text} } }]`;
+
   test.each([
     ["overrides = {}", `"overrides" is an array of tables\n  Write [[fmt.overrides]], with two brackets`],
     ["overrides = 1", "expected array but received number"],
@@ -1043,6 +1110,25 @@ insertFinalNewline = false
     [`overrides = [{ files = "a", options = { threads = 1 } }]`, `Unknown key "threads" in [fmt.overrides.options]\n`],
     [`overrides = [{ files = "a", options = { toml = true } }]`, `Unknown key "toml" in [fmt.overrides.options]\n`],
     [`overrides = [{ files = "a", options = { check = true } }]`, `Unknown key "check" in [fmt.overrides.options]\n`],
+    [options(`plugins = [1]`), "expected string but received number"],
+    // A plugin's option needs a plugin that isn't built in, or that plugin's parser, in the same entry.
+    [options(`astroAllowShorthand = true`), unknownInOptions("astroAllowShorthand")],
+    [
+      options(`plugins = ["prettier-plugin-packagejson"], astroAllowShorthand = true`),
+      unknownInOptions("astroAllowShorthand"),
+    ],
+    [
+      options(`astroAllowShorthand = true, plugins = ["prettier-plugin-packagejson"]`),
+      unknownInOptions("astroAllowShorthand"),
+    ],
+    [options(`parser = "babel", astroAllowShorthand = true`), unknownInOptions("astroAllowShorthand")],
+    // Next to a plugin, a misspelled key is still an error, and so is a [fmt] key that isn't for an entry.
+    [
+      options(`plugins = ["prettier-plugin-astro"], printwidth = 100`),
+      `${unknownInOptions("printwidth")}  Did you mean "printWidth"?`,
+    ],
+    [options(`printwidth = 100, parser = "astro"`), `${unknownInOptions("printwidth")}  Did you mean "printWidth"?`],
+    [options(`plugins = ["prettier-plugin-astro"], threads = 1`), unknownInOptions("threads")],
     [`overides = []`, `Unknown key "overides" in [fmt]\n  Did you mean "overrides"?`],
   ])("rejects %s with: %s", async (line, message) => {
     const result = await format({ ...bunfig(line), "a.js": "a  ;\n" });

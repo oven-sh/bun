@@ -124,7 +124,9 @@ describe.concurrent("bun fmt", () => {
       bun({ "a.js": "a;\n" }, ["fmt", "--plugin=prettier-plugin-x", "--allow-unsupported", "--check", "a.js"]),
       bun({ "a.js": "a;\n" }, ["fmt", "--migrate=prettier"]),
     ]);
-    expect(plugin.stderr).toContain("warn: --plugin has no effect because bun fmt does not load Prettier plugins");
+    expect(plugin.stderr).toContain(
+      "warn: prettier-plugin-x in --plugin or [fmt] plugins has no effect because bun fmt does not include that plugin",
+    );
     expect(plugin.exitCode).toBe(0);
     expect(flag.stderr).toStartWith("error: bun fmt does not support --migrate\n");
     expect(flag.exitCode).toBe(2);

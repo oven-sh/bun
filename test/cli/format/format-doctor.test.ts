@@ -521,6 +521,37 @@ Not checked:    other tools' configs, CI files, Git hooks
     });
   });
 
+  test.each([
+    ["its files", `files = ["*.foo"]\noptions = { plugins = ["prettier-plugin-foo"] }`, "b.foo", "*.foo"],
+    [
+      "its files and the plugin's parser",
+      `files = ["*.tpl.html"]\noptions = { plugins = ["prettier-plugin-foo"], parser = "foo" }`,
+      "b.tpl.html",
+      "*.html",
+    ],
+  ])("a plugin in [[fmt.overrides]] with %s is one that uses the installed Prettier", async (_, entry, name, kind) => {
+    const { stdout, stderr, exitCode, isUntouched } = await doctor({
+      ...installed("prettier"),
+      ...installed("prettier-plugin-foo"),
+      "package.json": dependencies("prettier", "prettier-plugin-foo"),
+      "bunfig.toml": `[[fmt.overrides]]\n${entry}\n`,
+      "a.js": ugly,
+      [name]: "b\n",
+    });
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`Using bunfig.toml ([fmt], on top of Prettier's defaults)
+
+    3 files are formatted natively
+    1 file goes to your installed Prettier: 1 ${kind}
+
+Plugins that use your installed Prettier: prettier-plugin-foo
+
+Still needed:   prettier, prettier-plugin-foo (some files go to them)
+`);
+    expect(isUntouched).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
   test("without a config file, suggests --init", async () => {
     const { stdout, stderr, exitCode, isUntouched } = await doctor({ "a.js": ugly });
     expect(stderr).toBe("");

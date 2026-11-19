@@ -1,7 +1,9 @@
 //! Small containers shared by the rest of the crate.
 
+mod helpers;
 pub mod memory;
 
+pub use helpers::{InParallel, has_helpers, lend_helpers, prefault, with_helpers};
 pub use memory::{AppendVec, LocalVec, SmallLocalVec};
 
 use crate::table::Alloc;

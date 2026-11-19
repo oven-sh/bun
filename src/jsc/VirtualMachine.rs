@@ -1130,15 +1130,6 @@ impl VirtualMachine {
         self.graph_contexts.get().get(&id).map(|context| &**context)
     }
 
-    /// Whether a timer or pool job made for `context` under `generation` (the
-    /// [`test_isolation_generation`](Self::test_isolation_generation) of then) has outlived the
-    /// script it would continue: its context has stopped, or `bun test --isolate` has moved on to
-    /// another file since.
-    #[inline]
-    pub fn has_outlived_its_script(&self, context: crate::ContextId, generation: u32) -> bool {
-        generation != self.test_isolation_generation.get() || !self.is_context_live(context)
-    }
-
     /// Whether the context `id` names has not stopped.
     #[inline]
     pub fn is_context_live(&self, id: crate::ContextId) -> bool {
@@ -2359,7 +2350,7 @@ impl VirtualMachine {
         if let Some(hooks) = hooks {
             (hooks.stop_watches_for_vm_teardown)();
             // Drop every TimeoutObject/ImmediateObject's heap node, JS pin and
-            // +1 while runtime state and the JSC heap are alive. The heap itself
+            // loop ref while runtime state and the JSC heap are alive. The heap itself
             // (and the loop handle it embeds) stays up: JSC's own RunLoop timers
             // — GC activity callbacks, sweeper, deferred work — are WTFTimers on
             // this heap and keep being scheduled until ~VM returns.
@@ -2716,7 +2707,7 @@ pub struct RuntimeHooks {
     /// `FakeTimers::min_delay_ms()` of the calling thread's VM. A slot for the same reason as `timer_insert`.
     pub timer_min_delay_ms: fn() -> u32,
     /// `FakeTimers::abort_signal_timeout_clock()` of the calling thread's VM.
-    pub abort_signal_timeout_clock: fn() -> bun_core::TimespecMockMode,
+    pub abort_signal_timeout_clock: fn() -> bun_event_loop::EventLoopTimer::Clock,
     /// Reads the calling thread's `Timer::All`; see `timer_insert`.
     pub timers_left: fn() -> TimersLeft,
     /// `RareData.defaultClientSslCtx()` — lazy default-trust-store client
@@ -2810,7 +2801,7 @@ pub struct RuntimeHooks {
     pub retroactively_report_discovered_tests:
         fn(agent: &mut crate::debugger::TestReporterHandle, next_test_id: i32) -> i32,
     /// Cancel every `TimeoutObject` / `ImmediateObject` still in the calling
-    /// thread's `timer::All` heap so their JS pins and in-heap `+1` refs drop
+    /// thread's `timer::All` heap so their JS pins drop
     /// before the GC sweep. `timer::All` lives in `bun_runtime` (forward-dep);
     /// callers (`global_exit`, `WebWorker::shutdown`) are in this crate.
     ///
@@ -2921,7 +2912,7 @@ impl VirtualMachine {
 
     /// The clock that an `AbortSignal.timeout()` armed now runs on.
     #[inline]
-    pub fn abort_signal_timeout_clock() -> bun_core::TimespecMockMode {
+    pub fn abort_signal_timeout_clock() -> bun_event_loop::EventLoopTimer::Clock {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         (hooks.abort_signal_timeout_clock)()
     }
@@ -3793,6 +3784,38 @@ impl ResolveMode {
 pub struct ResolveFunctionResult<'r> {
     pub path: &'r [u8],
     pub(crate) query_string: &'r [u8],
+}
+
+/// What a specifier resolves to, for all VMs with `defers_requires`. Like Node.js's `Module._pathCache`, it is for good.
+pub struct SharedResolution(Vec<u8>);
+
+static SHARED_RESOLUTIONS: bun_threading::RwLock<
+    Option<bun_collections::HashMap<Vec<u8>, &'static [u8]>>,
+> = bun_threading::RwLock::new(None);
+
+impl SharedResolution {
+    pub fn new(directory: &[u8], specifier: &[u8], is_esm: bool) -> Self {
+        Self(match bun_paths::is_absolute(specifier) {
+            true => [&[u8::from(is_esm)], specifier].concat(),
+            false => [&[u8::from(is_esm)], directory, b"\0", specifier].concat(),
+        })
+    }
+
+    pub fn get(&self) -> Option<&'static [u8]> {
+        SHARED_RESOLUTIONS.read().as_ref()?.get(&self.0).copied()
+    }
+
+    pub fn set(self, path: &[u8]) {
+        if !bun_paths::is_absolute(path) {
+            return;
+        }
+        let mut all = SHARED_RESOLUTIONS.write();
+        let all = all.get_or_insert_default();
+        // `$Bun_defer` requires what it has resolved.
+        let itself = all.entry(Self::new(b"", path, false).0);
+        let path = *itself.or_insert_with(|| Box::leak(path.into()));
+        all.insert(self.0, path);
+    }
 }
 
 fn normalize_specifier_for_resolution<'a>(
@@ -4794,6 +4817,20 @@ impl VirtualMachine {
             top_level_dir
         };
 
+        let is_shared = self.transpiler.get().options.defers_requires
+            && self.transpiler.get().resolver.custom_dir_paths.is_none()
+            && self.transpiler.get().options.macro_remap.count() == 0
+            && !self.finds_entry_points_by_path
+            && self.has_mutated_built_in_extensions.get() == 0
+            && self.commonjs_custom_extensions.get().len() == 0
+            && bun_paths::is_absolute(source_to_use);
+        let shared =
+            is_shared.then(|| SharedResolution::new(source_to_use, normalized_specifier, is_esm));
+        if let Some(path) = shared.as_ref().and_then(SharedResolution::get) {
+            (ret.path, ret.query_string) = (path, query_string);
+            return Ok(());
+        }
+
         // A `loop`
         // returning the resolver result; `retry_on_not_found` is consumed on
         // the first miss.
@@ -4939,6 +4976,9 @@ impl VirtualMachine {
             .path_const()
             .ok_or(crate::CrateError::ModuleNotFound)?;
         ret.path = result_path.text;
+        if let Some(shared) = shared {
+            shared.set(ret.path);
+        }
         if self.finds_entry_points_by_path
             && let Some(entry) = crate::compiled_program::find_entry_point_by_source_path(ret.path)
         {

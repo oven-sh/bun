@@ -10,7 +10,9 @@ use bun_jsc::virtual_machine::{TelemetryFlush as Flush, VirtualMachine};
 use bun_jsc::{JSGlobalObject, JSPromiseStrong, JSValue, JsResult, LoopKind, Strong, VmHandle};
 use bun_telemetry::{FlushTarget, Local, OwnerKey, Record, ScopeId, processor};
 
-use crate::exporter::{JsExporter, OwnedJsExporter, QueuedExport, is_http_thread_stuck};
+use crate::exporter::{
+    JsExporter, OwnedJsExporter, QueuedExport, is_http_thread_stuck, wait_for_warnings,
+};
 use crate::{configure, engine};
 
 /// The `createContextKey()` symbols that mean something to tracing.
@@ -291,6 +293,7 @@ impl VmState {
         let processor = processor::global();
         if self.vm.is_main_thread.get() {
             processor.close(&is_http_thread_stuck);
+            wait_for_warnings();
         } else if !self.js_exporters.borrow().is_empty() {
             processor.flush_for_owner(self.owner_key());
         }
@@ -360,6 +363,7 @@ fn flush_configured(when: Flush) {
     match (when, state) {
         (Flush::WithoutExit, _) => {
             processor::global().flush_blocking(Duration::from_secs(1), &is_http_thread_stuck);
+            wait_for_warnings();
         }
         (Flush::AtEndOfTestFile, Some(state)) if !state.js_exporters.borrow().is_empty() => {
             processor::global().flush_for_owner(state.owner_key());
@@ -372,6 +376,7 @@ fn flush_configured(when: Flush) {
                 && !HAS_MAIN_THREAD_EXITED.swap(true, Ordering::Relaxed)
             {
                 processor::global().close(&is_http_thread_stuck);
+                wait_for_warnings();
             }
         }
     }

@@ -124,9 +124,21 @@ fn check_response(response: &HTTPResponseMetadata, body: &[u8]) -> Result<(), Se
     Ok(())
 }
 
-pub(crate) fn warn(message: fmt::Arguments<'_>) {
-    bun_core::warn!("[otel] {}", message);
-    bun_core::Output::flush();
+/// Through the thread that writes the console: stderr may block, and a line must not land inside a document.
+fn warn(message: fmt::Arguments<'_>) {
+    WARNINGS.lock().push(message.to_string());
+    WRITER.wake();
+}
+
+/// Before the process ends.
+pub(crate) fn wait_for_warnings() {
+    let deadline = MonoInstant::now() + Duration::from_millis(250);
+    if !WARNINGS.lock().is_empty() && !WRITER.wake() {
+        return ConsoleExporter::write_all();
+    }
+    while !WRITER.is_idle() && !deadline.remaining().is_zero() {
+        std::thread::sleep(Duration::from_millis(1));
+    }
 }
 
 /// The userinfo and the query may hold a credential.
@@ -225,6 +237,7 @@ impl OtlpHttpExporter {
             attempt,
             aborted: Arc::clone(&aborted),
             async_http_id: 0,
+            began_at_exit: processor::global().is_closing(),
         }));
         // SAFETY: `Request::finish` frees it, once the client that borrows from it is gone.
         let borrowed: &'static mut Request = unsafe { &mut *request };
@@ -280,11 +293,19 @@ impl OtlpHttpExporter {
         Arc::clone(self).send(next);
     }
 
-    fn failed(self: Arc<Self>, attempt: ExportAttempt, error: &SendError) {
-        let is_closing = attempt.is_process_closing();
+    fn failed(self: Arc<Self>, attempt: ExportAttempt, error: &SendError, began_at_exit: bool) {
+        let is_closing = processor::global().is_closing();
+        let is_worth_a_try_now = match error {
+            SendError::Transport(_) => true,
+            SendError::Status {
+                retry_after_seconds,
+                ..
+            } => retry_after_seconds.is_none(),
+            SendError::OutOfTime => !began_at_exit,
+        };
         if !error.is_retryable()
             || attempt.attempt() + 1 >= MAX_ATTEMPTS
-            || (is_closing && matches!(error, SendError::OutOfTime))
+            || (is_closing && !is_worth_a_try_now)
         {
             let when = if is_closing { " at exit" } else { "" };
             self.warn_once(attempt.payload().span_count, when, error);
@@ -346,6 +367,7 @@ struct Request {
     attempt: ExportAttempt,
     aborted: Arc<AtomicBool>,
     async_http_id: u32,
+    began_at_exit: bool,
 }
 
 impl Request {
@@ -377,13 +399,13 @@ impl Request {
     fn finish(self, result: Result<(), SendError>) {
         (self.exporter.in_flight.lock()).retain(|d| d.async_http_id != self.async_http_id);
         self.exporter.pass_turn(self.attempt.payload());
-        match result {
-            Ok(()) => self.attempt.done(ExportResult::Success),
-            Err(_) if self.aborted.load(Ordering::Relaxed) => {
-                self.exporter.failed(self.attempt, &SendError::OutOfTime);
-            }
-            Err(error) => self.exporter.failed(self.attempt, &error),
+        let Err(mut error) = result else {
+            return self.attempt.done(ExportResult::Success);
+        };
+        if self.aborted.load(Ordering::Relaxed) {
+            error = SendError::OutOfTime;
         }
+        (self.exporter).failed(self.attempt, &error, self.began_at_exit);
     }
 }
 
@@ -396,12 +418,13 @@ impl Exporter for OtlpHttpExporter {
             turns.unfinished_spans += attempt.payload().span_count;
             drop(turns);
             self.send(attempt);
-        } else if turns.waiting_spans < max_waiting {
+        } else if turns.waiting_spans < max_waiting || processor::global().is_closing() {
             turns.waiting_spans += attempt.payload().span_count;
             turns.unfinished_spans += attempt.payload().span_count;
             turns.waiting.push_back(attempt);
         } else {
             drop(turns);
+            self.warn_once(attempt.payload().span_count, "", &SendError::OutOfTime);
             attempt.done(ExportResult::Failure);
         }
     }
@@ -433,10 +456,17 @@ struct ConsoleJob {
 }
 
 static CONSOLE_JOBS: Guarded<Vec<ConsoleJob>> = Guarded::new(Vec::new());
+static WARNINGS: Guarded<Vec<String>> = Guarded::new(Vec::new());
+static WRITER: OnDemandThread = OnDemandThread::new(ConsoleExporter::write_all);
 
 impl ConsoleExporter {
     fn write_all() {
         loop {
+            let warnings = core::mem::take(&mut *WARNINGS.lock());
+            for warning in warnings {
+                bun_core::warn!("[otel] {}", warning);
+                bun_core::Output::flush();
+            }
             let mut jobs = CONSOLE_JOBS.lock();
             let Some(job) = jobs.first_mut() else { return };
             job.has_begun = true;
@@ -460,7 +490,6 @@ impl ConsoleExporter {
 
 impl Exporter for ConsoleExporter {
     fn export(self: Arc<Self>, attempt: ExportAttempt) {
-        static WRITER: OnDemandThread = OnDemandThread::new(ConsoleExporter::write_all);
         let timeout = processor::global().config().export_timeout_ms;
         CONSOLE_JOBS.lock().push(ConsoleJob {
             _exporter: self,
@@ -473,6 +502,9 @@ impl Exporter for ConsoleExporter {
 
     fn tick(&self, now: MonoInstant) {
         Self::finish(&|job| now >= job.deadline, ExportResult::Failure);
+        if !CONSOLE_JOBS.lock().is_empty() && !WRITER.wake() && processor::global().is_closing() {
+            Self::write_all();
+        }
     }
 }
 

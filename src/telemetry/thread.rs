@@ -12,6 +12,7 @@ pub struct OnDemandThread {
 struct State {
     is_running: bool,
     is_wanted: bool,
+    is_working: bool,
 }
 
 impl OnDemandThread {
@@ -22,18 +23,20 @@ impl OnDemandThread {
             state: Guarded::new(State {
                 is_running: false,
                 is_wanted: false,
+                is_working: false,
             }),
             woken: Condvar::new(),
             work,
         }
     }
 
-    /// `work` begins once more after this call has begun.
-    pub fn wake(&'static self) {
+    /// `work` begins once more after this call has begun. False if there is no thread to be had now.
+    pub fn wake(&'static self) -> bool {
         let mut state = self.state.lock();
         state.is_wanted = true;
         if core::mem::replace(&mut state.is_running, true) {
-            return self.woken.notify_one();
+            self.woken.notify_one();
+            return true;
         }
         drop(state);
         let spawned = std::thread::Builder::new().spawn(|| {
@@ -42,15 +45,26 @@ impl OnDemandThread {
             ));
             self.run(Self::LINGERS);
         });
-        if spawned.is_err() {
-            // Never on the caller: `work` may block.
-            bun_core::handle_oom(WorkPool::go(self, |this| this.run(Duration::ZERO)));
+        if spawned.is_ok() {
+            return true;
         }
+        if WorkPool::get().has_workers() {
+            bun_core::handle_oom(WorkPool::go(self, |this| this.run(Duration::ZERO)));
+            return true;
+        }
+        self.state.lock().is_running = false;
+        false
+    }
+
+    pub fn is_idle(&self) -> bool {
+        let state = self.state.lock();
+        !state.is_wanted && !state.is_working
     }
 
     fn run(&self, lingers: Duration) {
         loop {
             let mut state = self.state.lock();
+            state.is_working = false;
             if !state.is_wanted {
                 let _ = (self.woken).timed_wait_guarded(&mut state, lingers.as_nanos() as u64);
             }
@@ -58,6 +72,7 @@ impl OnDemandThread {
                 state.is_running = false;
                 return;
             }
+            state.is_working = true;
             drop(state);
             (self.work)();
         }

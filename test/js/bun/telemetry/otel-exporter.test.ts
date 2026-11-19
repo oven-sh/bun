@@ -1549,7 +1549,8 @@ describe.concurrent("OTLP/HTTP exporter", () => {
       cmd: [
         bunExe(),
         "-e",
-        `Bun.otel.start({ exporters: ["console"], batch: { timeoutMs: 100 } });
+        `const hangs = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+         Bun.otel.start({ exporters: ["console", "http://127.0.0.1:" + hangs.port], batch: { timeoutMs: 100 } });
          for (let i = 0; i < 700; i++) Bun.otel.span("s", { k: Buffer.alloc(4096, "a").toString() }, () => {});
          process.exit(0);`,
       ],
@@ -1707,5 +1708,80 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     });
     await proc.exited;
     expect(proc.signalCode).toBe("SIGTERM");
+  });
+
+  test("neither a warning nor a function exporter writes into a document of the console at exit", async () => {
+    using refuses = collector(() => new Response(null, { status: 401 }));
+    const { stderr } = await run(
+      `Bun.otel.start({ exporters: ["console", process.env.URL, { export() { console.error("function"); } }] });
+       for (let i = 0; i < 500; i++) Bun.otel.span("s", { k: Buffer.alloc(4096, "a").toString() }, () => {});
+       process.exit(0);`,
+      { URL: refuses.url },
+    );
+    const lines = stderr.trimEnd().split("\n");
+    expect(lines.map(line => (line[0] === "{" ? typeof JSON.parse(line) : line.slice(0, 8))).sort()).toEqual([
+      "function",
+      "object",
+      "warn: [o",
+    ]);
+  });
+
+  test("a function exporter that exits during the exit does not cut off the collector", async () => {
+    using c = collector();
+    const { exitCode } = await run(
+      `Bun.otel.start({ exporters: [{ export() { process.exit(5); } }, process.env.URL] });
+       Bun.otel.span("s", () => {});`,
+      { URL: c.url },
+    );
+    expect([exitCode, c.spans().length]).toEqual([5, 1]);
+  });
+
+  test("a request that was sent before the exit and times out gets one more try", async () => {
+    let posts = 0;
+    const arrived = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch(req) {
+        if (req.method === "GET") return arrived.promise.then(() => new Response());
+        if (++posts > 1) return new Response();
+        arrived.resolve();
+        return new Promise<Response>(() => {});
+      },
+    });
+    const result = await run(
+      `Bun.otel.start({ exporters: [{ url: process.env.URL, timeoutMs: 1500 }], instrumentations: [] });
+       Bun.otel.span("s", () => {});
+       Bun.otel.forceFlush();
+       await (await fetch(process.env.URL)).text();
+       process.exit(0);`,
+      { URL: server.url.href },
+    );
+    expect({ ...result, posts }).toEqual({ stdout: "", stderr: "", exitCode: 0, posts: 2 });
+  });
+
+  test("at exit nothing is dropped for want of room to wait", async () => {
+    let received = 0;
+    const full = Promise.withResolvers<void>();
+    using slow = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (req.method === "GET") return full.promise.then(() => new Response());
+        if (++received === 8) full.resolve();
+        await Promise.all([req.bytes(), Bun.sleep(100)]); // nothing tells that the child has begun to exit
+        return new Response();
+      },
+    });
+    const { exitCode } = await run(
+      `const batch = { maxQueueSize: 20, maxExportBatchSize: 1 };
+       Bun.otel.start({ endpoint: process.env.URL, instrumentations: [], batch });
+       for (let i = 0; i < 20; i++) Bun.otel.span("s", () => {});
+       Bun.otel.start({ instrumentations: [], batch }); // hands them all out
+       await (await fetch(process.env.URL)).text();
+       for (let i = 0; i < 20; i++) Bun.otel.span("s", () => {});
+       process.exit(0);`,
+      { URL: slow.url.href },
+    );
+    expect([exitCode, received]).toEqual([0, 40]);
   });
 });

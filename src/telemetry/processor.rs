@@ -106,10 +106,6 @@ impl ExportAttempt {
         self.attempt
     }
 
-    pub fn is_process_closing(&self) -> bool {
-        self.processor.is_closing.load(Ordering::SeqCst)
-    }
-
     /// The exporter's verdict.
     pub fn done(mut self, result: ExportResult) {
         let p = self.payload.take().expect("unfinished ExportAttempt");
@@ -435,6 +431,11 @@ enum Taker {
     ClosingProcess,
 }
 
+const LAST_ATTEMPT: u32 = u32::MAX - 1;
+
+/// For [`Exporter::export_now`].
+type Calls = Vec<(Arc<dyn Exporter>, Arc<ExportPayload>)>;
+
 pub struct Processor {
     pending: Guarded<Pending>,
     /// See [`Processor::exporters_snapshot`] before calling into one.
@@ -589,6 +590,9 @@ impl Processor {
         attempt: u32,
         backoff: Backoff,
     ) {
+        if self.is_closing() {
+            return exporter.export(self.issue(payload, LAST_ATTEMPT));
+        }
         let (Backoff::Own(delay) | Backoff::AskedByServer(delay)) = backoff;
         let due = MonoInstant::now() + delay;
         payload.parked.fetch_add(1, Ordering::AcqRel);
@@ -633,7 +637,7 @@ impl Processor {
                     older
                 }
                 RetryFilter::AllForTheLastTime => {
-                    q.iter_mut().for_each(|r| r.attempt = u32::MAX - 1);
+                    q.iter_mut().for_each(|r| r.attempt = LAST_ATTEMPT);
                     core::mem::take(&mut *q)
                 }
                 RetryFilter::Due => {
@@ -728,10 +732,13 @@ impl Processor {
         static EXPORTS: OnDemandThread = OnDemandThread::new(|| {
             let this = global();
             this.is_export_scheduled.store(false, Ordering::Release);
-            this.deliver_next(Taker::Schedule);
+            this.hand_out_next(Taker::Schedule);
         });
-        if self.inflight() == 0 && !self.is_export_scheduled.swap(true, Ordering::AcqRel) {
-            EXPORTS.wake();
+        if self.inflight() == 0
+            && !self.is_export_scheduled.swap(true, Ordering::AcqRel)
+            && !EXPORTS.wake()
+        {
+            self.is_export_scheduled.store(false, Ordering::Release);
         }
     }
 
@@ -786,9 +793,22 @@ impl Processor {
     }
 
     /// What is pending now, and nothing that comes meanwhile.
-    fn deliver_pending(&'static self, taker: Taker) {
+    fn hand_out_all(&'static self, taker: Taker) -> Calls {
         let target = self.pending.lock().flush();
-        while self.pending.lock().has_older_than(target) && self.deliver_next(taker) {}
+        let mut calls = Calls::new();
+        while self.pending.lock().has_older_than(target)
+            && let Some(more) = self.hand_out_next(taker)
+        {
+            calls.extend(more);
+        }
+        calls
+    }
+
+    /// Nobody waits for these: a function may block, or end the process.
+    fn make(&self, calls: Calls) {
+        for (exporter, payload) in calls {
+            self.record_result(&payload, exporter.export_now(&payload));
+        }
     }
 
     /// Until every payload that another thread has taken is with its exporters. That takes encoding and posting.
@@ -800,7 +820,7 @@ impl Processor {
 
     /// Before the resource or the exporters change.
     pub fn hand_out_pending(&'static self) {
-        self.deliver_pending(Taker::Reconfiguration);
+        self.hand_out_all(Taker::Reconfiguration);
         self.wait_for_handouts();
     }
 
@@ -837,14 +857,14 @@ impl Processor {
             .all(|&(epoch, seq)| epoch >= t.0 || only_waits_for_servers(seq))
     }
 
-    /// False if nothing was taken.
-    fn deliver_next(&'static self, taker: Taker) -> bool {
+    /// `None` if nothing was taken.
+    fn hand_out_next(&'static self, taker: Taker) -> Option<Calls> {
         self.exporting.fetch_add(1, Ordering::SeqCst);
-        let may_take = taker == Taker::ClosingProcess || !self.is_closing.load(Ordering::SeqCst);
+        let may_take = taker == Taker::ClosingProcess || !self.is_closing();
         let Some((payload, exporters)) = may_take.then(|| self.take_payload(taker)).flatten()
         else {
             self.exporting.fetch_sub(1, Ordering::SeqCst);
-            return false;
+            return None;
         };
         if exporters.is_empty() {
             self.drop_unexported(&payload);
@@ -861,12 +881,8 @@ impl Processor {
             e.export(self.issue(Arc::clone(&payload), 0));
         }
         self.exporting.fetch_sub(1, Ordering::SeqCst);
-        // A function may block, or end the process: nobody waits for it.
         self.finish_one();
-        for e in blocking {
-            self.record_result(&payload, e.export_now(&payload));
-        }
-        true
+        Some((blocking.into_iter().map(|e| (e, Arc::clone(&payload)))).collect())
     }
 
     /// One exporter's verdict on `payload`. `exports_*` count per exporter;
@@ -954,6 +970,10 @@ impl Processor {
         }
     }
 
+    pub fn is_closing(&self) -> bool {
+        self.is_closing.load(Ordering::SeqCst)
+    }
+
     pub fn config(&self) -> BatchConfig {
         self.pending.lock().config
     }
@@ -973,7 +993,7 @@ impl Processor {
                 .for_each(|e| e.finish_for_exit());
         };
         finish_attempts();
-        self.deliver_pending(Taker::LeavingVm(owner));
+        self.make(self.hand_out_all(Taker::LeavingVm(owner)));
         self.wait_for_handouts();
         finish_attempts();
     }
@@ -997,14 +1017,14 @@ impl Processor {
         for e in self.exporters_with_attempts() {
             e.finish_for_exit();
         }
-        self.deliver_pending(Taker::ClosingProcess);
-        self.wait_idle(deadline, is_stuck);
-        // What failed gets one more try, and a worker may have left its last spans.
-        self.dispatch_retries(RetryFilter::AllForTheLastTime);
-        self.deliver_pending(Taker::ClosingProcess);
-        // A collector that hangs may have used up the time.
-        let grace = MonoInstant::now() + Duration::from_millis(250);
-        self.wait_idle(deadline.max(grace), is_stuck);
+        // Twice: a worker may leave its last spans meanwhile.
+        for _ in 0..2 {
+            self.dispatch_retries(RetryFilter::AllForTheLastTime);
+            let calls = self.hand_out_all(Taker::ClosingProcess);
+            self.wait_idle(deadline, is_stuck);
+            // Last: a function may end the process, or write to where the console exporter writes.
+            self.make(calls);
+        }
         for e in self.exporters_with_attempts() {
             e.warn_of_unfinished();
         }

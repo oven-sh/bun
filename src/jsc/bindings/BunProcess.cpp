@@ -451,17 +451,25 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
     auto event = Identifier::fromString(vm, "exit"_s);
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(exitCode));
-    if (!emitThroughReplacedEmit(globalObject, process, event, arguments, shape)) [[likely]] {
-        if (emitter.hasEventListeners(event))
-            emitter.emit(event, arguments);
-    }
+    bool replaced = !!emitThroughReplacedEmit(globalObject, process, event, arguments, shape);
+    if (!replaced && emitter.hasEventListeners(event))
+        emitter.emit(event, arguments);
 
+    if (!thrown || vm.hasTerminationRequest()) [[likely]]
+        return;
     // A handler of 'uncaughtException' may exit: the listeners of 'exit' have run by now.
-    if (thrown && !vm.hasTerminationRequest()) [[unlikely]] {
-        // What a replaced emit threw inside process.exit() stays pending for the caller of process.exit().
-        JSC::SuspendExceptionScope suspended(vm);
+    if (!replaced || shape == ProcessEmitCall::MakeCallback) {
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, thrown);
+        return;
     }
+    // What a replaced emit threw inside process.exit() is for the caller of process.exit(). It is not pending while the handlers run, and a termination that they leave stays.
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::Exception* forCaller = scope.exception();
+    if (forCaller && !scope.tryClearException()) [[unlikely]]
+        return;
+    Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, thrown);
+    if (forCaller && !scope.exception())
+        scope.throwException(globalObject, forCaller);
 }
 
 JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))

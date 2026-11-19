@@ -6,7 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 
 import { cxx } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
@@ -17,6 +17,7 @@ import {
   webkitAotFile,
   webkitEngineSources,
   webkitJSCPath,
+  webkitSha256Sums,
   webkitTestAotPath,
   type WebKitAotFile,
 } from "../../scripts/build/deps/webkit.ts";
@@ -24,6 +25,7 @@ import { BuildError } from "../../scripts/build/error.ts";
 import { Ninja, readManifest } from "../../scripts/build/ninja.ts";
 import { getProfile } from "../../scripts/build/profiles.ts";
 import { registerAllRules } from "../../scripts/build/rules.ts";
+import { quote } from "../../scripts/build/shell.ts";
 import {
   depSource,
   resolveDep,
@@ -896,6 +898,15 @@ describe("Provides.files", () => {
     );
     expect(resolved.libs.length).toBeGreaterThan(0);
     expect(resolved.outputs).toEqual(resolved.libs);
+  });
+
+  test("come from a fetch that is given the pins, and runs again when they change", () => {
+    using g = graph();
+    resolveDep(g.n, g.cfg, webkit, new Map<DepName, ResolvedDep>());
+    const fetch = readManifest(g.n.toString()).edges.find(edge => edge.rule === "dep_fetch_prebuilt")!;
+    expect(fetch.implicitInputs.map(input => resolve(g.cfg.buildDir, input))).toContain(webkitSha256Sums);
+    expect(fetch.implicitOutputs.some(output => basename(output) === ".sha256")).toBe(true);
+    expect(fetch.bindings.sha256sums).toBe(quote(webkitSha256Sums, g.cfg.host.os === "windows"));
   });
 
   test("are only for a prebuilt source", () => {

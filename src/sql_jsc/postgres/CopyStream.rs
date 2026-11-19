@@ -13,7 +13,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_ptr::{ParentRef, RefPtr};
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::frontend;
-use bun_sql::postgres::pipeline::MAX_PIPELINE_SIZE;
+use bun_sql::postgres::pipeline::{MAX_PIPELINE_SIZE, Turn};
 use bun_sql::shared::ConnectionFlags;
 
 // The server ends the session for a longer message.
@@ -108,7 +108,7 @@ impl PostgresSQLConnection {
 
     pub(super) fn on_copy_response(&self, writable: bool) -> Result<(), AnyPostgresError> {
         let head = self.pipeline.get().head()?;
-        let (request, simple) = (head.request.clone(), head.is_simple());
+        let (turn, simple) = (head.turn(), head.is_simple());
         if writable {
             if self.open_copy(simple, CopyStream::Writable, CopyStream::WritableOpen) {
                 return Ok(());
@@ -126,7 +126,7 @@ impl PostgresSQLConnection {
             return Ok(());
         }
         self.reject_in_flight(
-            &request,
+            turn,
             postgres_error_to_js(
                 self.global(),
                 Some(b"COPY ... FROM STDIN needs query.writable() and COPY ... TO STDOUT needs query.readable()"),
@@ -237,10 +237,11 @@ impl PostgresSQLQuery {
     }
 
     fn copy_connection(&self, open: CopyStream) -> Option<RefPtr<PostgresSQLConnection>> {
-        self.connection().filter(|connection| {
-            let copying = connection.copying(open);
-            copying.is_some_and(|head| core::ptr::eq(&raw const *head, self))
-        })
+        let (connection, turn) = self.queued()?;
+        let is_open = self.copy.get() == open
+            && (connection.pipeline.get().head())
+                .is_ok_and(|head| head.turn() == turn && !head.is_rejected());
+        is_open.then_some(connection)
     }
 
     fn end_copy_in(&self, failure: Option<&[u8]>) {
@@ -251,10 +252,10 @@ impl PostgresSQLQuery {
     }
 
     /// A backend waiting for room in an unread socket ignores a CancelRequest.
-    pub(super) fn cancel_copy(&self) {
+    pub(super) fn cancel_copy(&self, turn: Turn) {
         if let Some(connection) = self.copy_connection(CopyStream::ReadableOpen) {
             connection.set_reading(true);
-            connection.reject_in_flight(self, connection.cancelled_error(None));
+            connection.reject_in_flight(turn, connection.cancelled_error(None));
         }
     }
 

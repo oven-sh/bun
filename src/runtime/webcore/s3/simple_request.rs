@@ -14,9 +14,10 @@ use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::{S3Credentials, SignOptions, SignResult};
 use bun_s3_signing::error::{ErrorCodeAndMessage, S3Error, get_sign_error_code_and_message};
 use bun_s3_signing::storage_class::StorageClass;
+use bun_s3_signing::upload::{NO_UPLOAD_ID, Request};
 use bun_url::URL;
 
-use crate::webcore::s3::multipart::{MultiPartUpload, UploadPart};
+use crate::webcore::s3::multipart::NetworkSink;
 use crate::webcore::s3::{list_objects, xml_response};
 
 // The result/options structs below carry borrowed slices that are valid only for the
@@ -60,21 +61,6 @@ pub(crate) enum S3UploadResult<'a> {
     Failure(S3Error<'a>),
 }
 
-// manual Debug because upstream `S3Error` (bun_s3_signing) doesn't derive Debug and
-// we may not edit that crate from here. Only the variant tag is needed for `scoped_log!`.
-impl core::fmt::Debug for S3UploadResult<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            S3UploadResult::Success => f.write_str("Success"),
-            S3UploadResult::Failure(err) => f
-                .debug_struct("Failure")
-                .field("code", &bstr::BStr::new(err.code))
-                .field("message", &bstr::BStr::new(err.message))
-                .finish(),
-        }
-    }
-}
-
 pub(crate) enum S3DeleteResult<'a> {
     Success,
     NotFound(S3Error<'a>),
@@ -85,20 +71,6 @@ pub(crate) enum S3DeleteResult<'a> {
 pub(crate) enum S3ListObjectsResult<'a> {
     Success(Box<list_objects::S3ListObjectsV2Result>),
     NotFound(S3Error<'a>),
-    /// failure error is not owned and need to be copied if used after this callback
-    Failure(S3Error<'a>),
-}
-
-// commit result also fails if status 200 but with body containing an Error
-pub(crate) enum S3CommitResult<'a> {
-    Success,
-    /// failure error is not owned and need to be copied if used after this callback
-    Failure(S3Error<'a>),
-}
-
-// commit result also fails if status 200 but with body containing an Error
-pub(crate) enum S3PartResult<'a> {
-    Etag(&'a [u8]),
     /// failure error is not owned and need to be copied if used after this callback
     Failure(S3Error<'a>),
 }
@@ -118,9 +90,7 @@ pub(crate) struct S3HttpSimpleTask {
     /// The resolved proxy, empty for none. Owned: an env-derived slice can be
     /// freed by a process.env.HTTP_PROXY write while the HTTP thread is in flight.
     pub(crate) proxy_url: Box<[u8]>,
-    /// Owned copy of the request body. The HTTP thread reads the body slice
-    /// concurrently for the lifetime of the request, so the task owns its own
-    /// copy instead of borrowing caller memory.
+    /// A copy for the HTTP thread to read. Empty for `Callback::Sink`, which has its own.
     pub(crate) body: Box<[u8]>,
     pub(crate) _keep_alive: JsKeepAlive,
     /// The HTTP client's abort flag: set when the request's context stops so a
@@ -167,13 +137,8 @@ pub(crate) enum Callback {
     Upload(OnUpload),
     Delete(OnDelete),
     ListObjects(OnListObjects),
-    /// An upload that turned out to fit in one request.
-    SingleSend(RefPtr<MultiPartUpload>),
-    Start(RefPtr<MultiPartUpload>),
-    /// The upload and the part's index in `MultiPartUpload::queue`.
-    Part(RefPtr<MultiPartUpload>, u8),
-    Commit(RefPtr<MultiPartUpload>),
-    Rollback(RefPtr<MultiPartUpload>),
+    /// `Request` has the body.
+    Sink(RefPtr<NetworkSink>, Request),
 }
 
 /// An upload's request that was not sent, on its way to fail from the event loop.
@@ -210,11 +175,10 @@ impl Callback {
         error: S3Error<'static>,
     ) -> bun_jsc::JsResult<()> {
         match self {
+            // Nobody waits for it, and a retry would be refused too.
+            Callback::Sink(_, Request::Abort(_)) => Ok(()),
             // These start inside the sink's `write` or `end`, and failing the upload can free the sink.
-            Callback::SingleSend(_)
-            | Callback::Start(_)
-            | Callback::Part(..)
-            | Callback::Commit(_) => {
+            Callback::Sink(..) => {
                 let refused = RefusedRequest {
                     callback: self,
                     error,
@@ -229,8 +193,7 @@ impl Callback {
             | Callback::Download(_)
             | Callback::Upload(_)
             | Callback::Delete(_)
-            | Callback::ListObjects(_)
-            | Callback::Rollback(_) => self.fail(error.code, error.message),
+            | Callback::ListObjects(_) => self.fail(error.code, error.message),
         }
     }
 
@@ -242,23 +205,7 @@ impl Callback {
             Callback::Stat(callback) => callback(S3StatResult::Failure(err)),
             Callback::Delete(callback) => callback(S3DeleteResult::Failure(err)),
             Callback::ListObjects(callback) => callback(S3ListObjectsResult::Failure(err)),
-            Callback::SingleSend(upload) => {
-                MultiPartUpload::single_send_upload_response(&upload, S3UploadResult::Failure(err))
-            }
-            Callback::Start(upload) => MultiPartUpload::start_multi_part_request_result(
-                &upload,
-                S3DownloadResult::Failure(err),
-            ),
-            Callback::Part(upload, index) => {
-                UploadPart::on_part_response(&upload, index, S3PartResult::Failure(err))
-            }
-            Callback::Commit(upload) => {
-                MultiPartUpload::on_commit_multi_part_request(&upload, S3CommitResult::Failure(err))
-            }
-            Callback::Rollback(upload) => MultiPartUpload::on_rollback_multi_part_request(
-                &upload,
-                S3DeleteResult::Failure(err),
-            ),
+            Callback::Sink(sink, request) => NetworkSink::on_reply(&sink, request, Err(err)),
         }
     }
 
@@ -269,14 +216,6 @@ impl Callback {
             Callback::Stat(callback) => callback(S3StatResult::NotFound(err)),
             Callback::Delete(callback) => callback(S3DeleteResult::NotFound(err)),
             Callback::ListObjects(callback) => callback(S3ListObjectsResult::NotFound(err)),
-            Callback::Start(upload) => MultiPartUpload::start_multi_part_request_result(
-                &upload,
-                S3DownloadResult::NotFound(err),
-            ),
-            Callback::Rollback(upload) => MultiPartUpload::on_rollback_multi_part_request(
-                &upload,
-                S3DeleteResult::NotFound(err),
-            ),
             _ => self.fail(code, message),
         }
     }
@@ -394,9 +333,6 @@ impl S3HttpSimpleTask {
                     .unwrap_or(0),
             })),
             (Callback::Delete(callback), 200 | 204) => callback(S3DeleteResult::Success),
-            (Callback::Rollback(upload), 200 | 204) => {
-                MultiPartUpload::on_rollback_multi_part_request(&upload, S3DeleteResult::Success)
-            }
             (Callback::ListObjects(callback), 200) => {
                 let body = this.response_buffer.list.as_slice();
                 let result = match list_objects::parse_s3_list_objects_result(body) {
@@ -410,47 +346,47 @@ impl S3HttpSimpleTask {
                 callback(result)
             }
             (Callback::Upload(callback), 200) => callback(S3UploadResult::Success),
-            (Callback::SingleSend(upload), 200) => {
-                MultiPartUpload::single_send_upload_response(&upload, S3UploadResult::Success)
-            }
-            (callback @ (Callback::Upload(_) | Callback::SingleSend(_)), _) => {
-                this.error_with_body(callback, ErrorType::Failure)
-            }
             (Callback::Download(callback), 200 | 204 | 206) => {
                 let body = core::mem::take(&mut this.response_buffer);
                 callback(S3DownloadResult::Success(S3DownloadSuccess { body }))
             }
-            (Callback::Start(upload), 200 | 204 | 206) => {
-                let body = core::mem::take(&mut this.response_buffer);
-                let result = S3DownloadResult::Success(S3DownloadSuccess { body });
-                MultiPartUpload::start_multi_part_request_result(&upload, result)
+            // 404: the store no longer has the upload, which is what an abort is for.
+            (Callback::Sink(sink, request @ Request::Put(_)), 200)
+            | (Callback::Sink(sink, request @ Request::Abort(_)), 200 | 204 | 404) => {
+                NetworkSink::on_reply(&sink, request, Ok(b""))
             }
-            (Callback::Commit(upload), status) => {
-                // commit multipart upload can fail with status 200
+            (Callback::Sink(sink, Request::Create), 200 | 204 | 206) => {
+                let id = xml_response::parse_upload_id(&this.response_buffer.list);
+                NetworkSink::on_reply(&sink, Request::Create, Ok(&id.unwrap_or_default()))
+            }
+            (Callback::Sink(sink, Request::Create), 404)
+                if xml_response::parse_error(&this.response_buffer.list)
+                    .is_none_or(|error| error.code.is_none()) =>
+            {
+                NetworkSink::on_reply(&sink, Request::Create, Err(NO_UPLOAD_ID))
+            }
+            (Callback::Sink(sink, request @ (Request::Part(..) | Request::Commit(..))), status) => {
                 let parsed = xml_response::parse_error(&this.response_buffer.list);
-                let result = match this.response_error(status, parsed.as_ref()) {
-                    Some(err) => S3CommitResult::Failure(err),
-                    None => S3CommitResult::Success,
+                let etag = match request {
+                    Request::Part(..) => response.header(b"etag"),
+                    _ => Some(&b""[..]),
                 };
-                MultiPartUpload::on_commit_multi_part_request(&upload, result)
-            }
-            (Callback::Part(upload, index), status) => {
-                let parsed = xml_response::parse_error(&this.response_buffer.list);
-                if let Some(err) = this.response_error(status, parsed.as_ref()) {
-                    UploadPart::on_part_response(&upload, index, S3PartResult::Failure(err))
-                } else if let Some(etag) = response.header(b"etag") {
-                    UploadPart::on_part_response(&upload, index, S3PartResult::Etag(etag))
-                } else {
-                    this.error_with_body(Callback::Part(upload, index), ErrorType::Failure)
+                match (this.response_error(status, parsed.as_ref()), etag) {
+                    (Some(err), _) => NetworkSink::on_reply(&sink, request, Err(err)),
+                    (None, Some(etag)) => NetworkSink::on_reply(&sink, request, Ok(etag)),
+                    (None, None) => {
+                        this.error_with_body(Callback::Sink(sink, request), ErrorType::Failure)
+                    }
                 }
+            }
+            (callback @ (Callback::Upload(_) | Callback::Sink(..)), _) => {
+                this.error_with_body(callback, ErrorType::Failure)
             }
             (
                 callback @ (Callback::Stat(_)
                 | Callback::Download(_)
                 | Callback::Delete(_)
-                | Callback::ListObjects(_)
-                | Callback::Start(_)
-                | Callback::Rollback(_)),
+                | Callback::ListObjects(_)),
                 status,
             ) => match status {
                 404 => this.error_with_body(callback, ErrorType::NotFound),
@@ -514,14 +450,7 @@ impl S3HttpSimpleTask {
     }
 }
 
-// callers in `client.rs` / `multipart.rs` were translated with three different
-// names for the request-options struct (`Options`, `S3RequestOptions`, `S3SimpleRequestOptions`)
-// and two for the callback enum. Alias them here so the call sites compile without churn.
-pub(crate) type Options<'a> = S3SimpleRequestOptions<'a>;
-pub(crate) type S3RequestOptions<'a> = S3SimpleRequestOptions<'a>;
-pub(crate) type S3Callback = Callback;
-
-pub(crate) struct S3SimpleRequestOptions<'a> {
+pub(crate) struct Options<'a> {
     // signing options
     pub path: &'a [u8],
     pub method: Method,
@@ -541,7 +470,7 @@ pub(crate) struct S3SimpleRequestOptions<'a> {
     pub(crate) request_payer: bool,
 }
 
-impl<'a> Default for S3SimpleRequestOptions<'a> {
+impl<'a> Default for Options<'a> {
     fn default() -> Self {
         Self {
             path: b"",
@@ -577,7 +506,7 @@ pub(crate) fn resolve_proxy(proxy_url: Option<&[u8]>, url: &[u8]) -> Box<[u8]> {
 
 /// What puts an S3 request on the HTTP thread asks first: this file's function and
 /// `client::download_stream` before anything else, the caller of `client::list_objects` before
-/// it allocates. (A `MultiPartUpload` asks its own abort handle: see `process_buffered`.)
+/// it allocates. (A `NetworkSink` asks its own abort handle first: see `send_ready`.)
 pub(crate) fn nothing_new_leaves(context: &bun_jsc::ScriptExecutionContext) -> bool {
     !VirtualMachine::get().script_allowed() || context.is_stopped()
 }
@@ -592,7 +521,7 @@ pub(crate) const NOTHING_NEW_LEAVES: S3Error<'static> = S3Error {
 pub(crate) fn execute_simple_s3_request(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
-    options: S3SimpleRequestOptions<'_>,
+    options: Options<'_>,
     callback: Callback,
 ) -> bun_jsc::JsResult<()> {
     bun_removable_features::removable_definition!(S3Client, execute_simple_s3_request);
@@ -653,11 +582,14 @@ pub(crate) fn execute_simple_s3_request(
     // `task_ptr` is dereferenced. `'static`: `url`, `headers_buf`, `body` and
     // `http_proxy` borrow heap buffers that `*task` owns and never writes again. They are stored in
     // an `AsyncHTTP<'static>` that the HTTP thread reads, and remain valid until
-    // `task` is dropped in `on_response`.
+    // `on_response` runs.
     let task: &'static mut S3HttpSimpleTask = unsafe { &mut *task_ptr };
     let url = URL::parse(&task.sign_result.url);
     let headers_buf: &'static [u8] = task.headers.buf.as_slice();
-    let body: &'static [u8] = &task.body;
+    let body: &'static [u8] = match &task.callback {
+        Some(Callback::Sink(_, request)) => request.body(),
+        _ => &task.body,
+    };
     let http_proxy = if !task.proxy_url.is_empty() {
         Some(URL::parse(&task.proxy_url))
     } else {

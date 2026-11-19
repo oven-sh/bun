@@ -33,10 +33,12 @@ const repo = resolve(import.meta.dirname, "..");
 const crates = [
   "bun_aot",
   "bun_base64",
+  "bun_brotli",
   "bun_builtin_sources",
   "bun_bundler",
   "bun_collections",
   "bun_crash_handler",
+  "bun_cron",
   "bun_deflate",
   "bun_dispatch",
   "bun_errno",
@@ -53,6 +55,7 @@ const crates = [
   "bun_removable_features",
   "bun_resolve_builtins",
   "bun_resolver",
+  "bun_s3_signing",
   "bun_sema",
   "bun_sema_driver",
   "bun_sema_parser",
@@ -60,14 +63,17 @@ const crates = [
   "bun_shell_parser",
   "bun_shim_impl",
   "bun_sort_by_number",
+  "bun_sql",
   "bun_sql_jsc",
   "bun_standalone_graph",
   "bun_sys",
   "bun_threading",
+  "bun_test_schedule",
   "bun_trim",
   "bun_valkey",
   "bun_webp",
   "bun_wyhash",
+  "bun_zlib",
 ];
 
 // Not `spawnSync`: what runs beside it writes into pipes that this process empties.

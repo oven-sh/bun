@@ -18,7 +18,7 @@
 //! | `murmur64v2`   | [`Murmur2_64::hash_with_seed`]                | u64 → u64     |
 //! | `rapidhash`    | [`RapidHash::hash`]                           | u64 → u64     |
 //!
-//! `wyhash` lives in `bun_wyhash`; `crc32` is provided by `bun_zlib`.
+//! `wyhash` lives in `bun_wyhash`; `crc32` is provided by `bun_highway`.
 
 #![allow(clippy::many_single_char_names)]
 pub mod cityhash;

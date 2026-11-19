@@ -19,7 +19,7 @@ import type { DepName } from "./source.ts";
 import { loadFeatures } from "./trim/features.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
 
-export const safeStackDependencies: readonly DepName[] = ["brotli", "zlib", "zstd"];
+export const safeStackDependencies: readonly DepName[] = ["zstd"];
 
 export function usesSafeStack(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">): boolean {
   return c.hardened && c.x64 && c.abi === "gnu" && !c.asan;
@@ -661,7 +661,7 @@ export const globalFlags: Flag[] = [
     // Every summaried bitcode module in the link must agree on the
     // EnableSplitLTOUnit flag or lld dies with "inconsistent LTO Unit
     // splitting". -fwhole-program-vtables (above) defaults the split ON for
-    // C++ on ELF targets but it's a cxx-only flag, so the C modules (zlib,
+    // C++ on ELF targets but it's a cxx-only flag, so the C modules (zstd,
     // c-ares, mimalloc, boringssl's .c files, ...) would disagree. Force it
     // OFF everywhere instead of on: split LTO units shunt every module's
     // vtables + type metadata into a merged regular-LTO half — a serial
@@ -1935,7 +1935,6 @@ export function bunIncludes(cfg: Config): string[] {
     join(cwd, "src/uws_sys"),
     codegenDir,
     vendorDir,
-    join(vendorDir, "zlib"),
     // NODEJS_HEADERS_PATH comes from the nodejs dep; added separately
   ];
 
@@ -1991,6 +1990,20 @@ export const fileOverrides: FileOverride[] = [
     desc: "Vendored electron/rcedit; VersionInfo ctor throws std::system_error caught in OnEnumResourceLanguage. Self-contained throw/catch — already excluded from PCH",
   },
   {
+    file: "src/jsc/bindings/highway_brotli.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run for every byte that Brotli compresses.",
+  },
+  {
+    file: "src/jsc/bindings/highway_brotli.cpp",
+    // For -mcpu=apple-m1, clang lists `ccidx` on each function, and rustc does not. For all C++ at once, it would be
+    // -Wl,-mllvm,-mattr=+ccidx in the link, which makes the executable 2 MB larger.
+    extraFlags: ["-Xclang", "-target-feature", "-Xclang", "-ccidx"],
+    when: c => c.darwin && c.arm64 && c.lto && rustLtoInLink(c),
+    desc: "LTO inlines a function only into one that has all of its CPU features, and these are called from Rust loops.",
+  },
+  {
     file: "src/jsc/bindings/highway_byte_set.cpp",
     extraFlags: ["-O2"],
     when: c => c.debug,
@@ -2025,6 +2038,12 @@ export const fileOverrides: FileOverride[] = [
     extraFlags: ["-O2"],
     when: c => c.debug,
     desc: "Same as highway_json.cpp below: the kernels run over every pixel of a WebP image.",
+  },
+  {
+    file: "src/jsc/bindings/highway_zlib.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run in the loops of a DEFLATE stream.",
   },
   {
     file: "src/jsc/bindings/highway_xml.cpp",

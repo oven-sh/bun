@@ -3,6 +3,7 @@
 use std::collections::VecDeque;
 
 use bun_collections::OffsetByteList;
+use bun_core::strings;
 
 use crate::command::{self, ACKS, Ack, Reply};
 use crate::valkey_protocol::{Push, RESPValue, RedisError, ReplyScanner, ScanResult, ValkeyReader};
@@ -61,6 +62,8 @@ enum State {
 enum End {
     /// The retry policy decides.
     Policy,
+    /// By [`Client::close`]; as [`End::Final`], until [`Client::connect`] takes it back.
+    Requested,
     /// No retry; what is queued until then is rejected.
     Final,
     /// No retry; everything is rejected already, and new commands are refused.
@@ -138,6 +141,10 @@ pub enum Acked<P> {
     Raw(P, RESPValue),
 }
 
+/// Permission to call [`Client::lost`] once. The next dial cannot start before it is used.
+#[must_use]
+pub struct Attempt(());
+
 #[must_use]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Sent {
@@ -153,26 +160,45 @@ pub enum Close {
     Nothing,
     /// Its close event leads to [`Client::lost`].
     Socket,
-    /// There is no socket: disarm the retry and call [`Client::lost`].
-    Retry,
+    /// There is no socket, only a retry to disarm.
+    Retry(Attempt),
 }
 
 #[must_use]
 pub enum Lost<P> {
-    ForGood {
-        reason: &'static str,
-        pending: Vec<P>,
-    },
-    Retry {
-        delay_ms: u32,
-        in_flight: Vec<P>,
-    },
+    ForGood { reason: Reason, pending: Vec<P> },
+    Retry { delay_ms: u32, in_flight: Vec<P> },
+}
+
+/// Why no retry follows.
+#[derive(Debug)]
+pub enum Reason {
+    Requested,
+    /// The attempt failed for good, or retries are off.
+    Final,
+    RetriesUsedUp,
 }
 
 fn broken<P>(message: &[u8], error: RedisError) -> Event<P> {
     Event::Broken {
         message: message.into(),
         error,
+    }
+}
+
+/// An error reply to the handshake. One that passes is not `error`: script can try again.
+fn refused<P>(message: &[u8], error: RedisError) -> Event<P> {
+    const PASSING: [&[u8]; 5] = [
+        b"LOADING ",
+        b"BUSY ",
+        b"MASTERDOWN ",
+        b"TRYAGAIN ",
+        b"ERR max number of clients",
+    ];
+    if PASSING.iter().any(|prefix| message.starts_with(prefix)) {
+        broken(message, RedisError::ConnectionClosed)
+    } else {
+        broken(message, error)
     }
 }
 
@@ -195,10 +221,6 @@ impl<P> Client<P> {
         &self.config
     }
 
-    pub fn never_dialed(&self) -> bool {
-        matches!(self.state, State::Idle)
-    }
-
     pub fn is_connected(&self) -> bool {
         matches!(self.state, State::Select | State::Ready)
     }
@@ -209,10 +231,6 @@ impl<P> Client<P> {
 
     pub fn is_ending(&self) -> bool {
         matches!(self.state, State::Ending(_))
-    }
-
-    pub fn awaits_retry(&self) -> bool {
-        matches!(self.state, State::Backoff)
     }
 
     /// An event is still to come.
@@ -259,7 +277,7 @@ impl<P> Client<P> {
         }
     }
 
-    /// An explicit `connect()`; the caller dials if [`Self::never_dialed`] or [`Self::awaits_retry`].
+    /// An explicit `connect()`, ahead of [`Self::first_dial`] and [`Self::redial`].
     pub fn connect(&mut self) {
         match self.state {
             State::Backoff | State::Closed => {
@@ -268,33 +286,43 @@ impl<P> Client<P> {
             }
             // The close of a dial without a TLS context is still due, and no retry can build one.
             State::Ending(End::Failed) => self.state = State::Ending(End::Final),
-            State::Ending(End::Final) => self.state = State::Ending(End::Policy),
+            State::Ending(End::Requested) => self.state = State::Ending(End::Policy),
             State::Idle
             | State::Dialing
             | State::Hello
             | State::Select
             | State::Ready
-            | State::Ending(End::Policy) => {}
+            | State::Ending(End::Policy | End::Final) => {}
         }
     }
 
     pub fn close(&mut self) -> Close {
         let close = match self.state {
-            State::Idle | State::Closed | State::Ending(End::Failed) => return Close::Nothing,
-            State::Ending(End::Policy | End::Final) => Close::Nothing,
+            State::Idle | State::Closed | State::Ending(End::Final | End::Failed) => {
+                return Close::Nothing;
+            }
+            State::Ending(End::Policy | End::Requested) => Close::Nothing,
             State::Dialing | State::Hello | State::Select | State::Ready => Close::Socket,
-            State::Backoff => Close::Retry,
+            State::Backoff => Close::Retry(Attempt(())),
         };
-        self.state = State::Ending(End::Final);
+        self.state = State::Ending(End::Requested);
         close
     }
 
-    pub fn dial(&mut self) {
-        debug_assert!(self.never_dialed() || self.awaits_retry());
-        self.state = State::Dialing;
+    pub fn first_dial(&mut self) -> Option<Attempt> {
+        matches!(self.state, State::Idle).then(|| self.dial())
     }
 
-    /// The dial gave no socket; the caller owes a [`Self::lost`].
+    pub fn redial(&mut self) -> Option<Attempt> {
+        matches!(self.state, State::Backoff).then(|| self.dial())
+    }
+
+    fn dial(&mut self) -> Attempt {
+        self.state = State::Dialing;
+        Attempt(())
+    }
+
+    /// The dial gave no socket.
     pub fn dial_failed(&mut self) {
         if let State::Dialing = self.state {
             self.state = State::Ending(End::Policy);
@@ -336,7 +364,7 @@ impl<P> Client<P> {
             | State::Hello
             | State::Select
             | State::Ready
-            | State::Ending(End::Policy | End::Final) => {
+            | State::Ending(End::Policy | End::Requested | End::Final) => {
                 self.state = State::Ending(End::Failed);
                 Some(self.take_pending())
             }
@@ -350,15 +378,16 @@ impl<P> Client<P> {
     }
 
     /// The socket closed, or there never was one.
-    pub fn lost(&mut self, owner_is_gone: bool) -> Lost<P> {
-        debug_assert!(self.is_active() && !self.awaits_retry());
+    pub fn lost(&mut self, Attempt(()): Attempt, owner_is_gone: bool) -> Lost<P> {
         self.output.clear_and_free();
         self.input.clear_and_free();
         self.scanner.reset();
 
         let is_final = matches!(self.state, State::Ending(End::Final | End::Failed));
-        let reason = if is_final || owner_is_gone || !self.config.enable_auto_reconnect {
-            "Connection closed"
+        let reason = if let State::Ending(End::Requested) = self.state {
+            Reason::Requested
+        } else if is_final || owner_is_gone || !self.config.enable_auto_reconnect {
+            Reason::Final
         } else {
             self.retries += 1;
             if self.retries <= self.config.max_retries {
@@ -368,7 +397,7 @@ impl<P> Client<P> {
                     in_flight: self.take_in_flight(),
                 };
             }
-            "Max reconnection attempts reached"
+            Reason::RetriesUsedUp
         };
         self.state = State::Closed;
         Lost::ForGood {
@@ -556,10 +585,12 @@ impl<P> Client<P> {
     fn on_hello(&mut self, value: RESPValue) -> Event<P> {
         use RedisError::{AuthenticationFailed, UnsupportedProtocol};
         match value {
-            RESPValue::Error(message) => Event::Broken {
-                message,
-                error: AuthenticationFailed,
-            },
+            RESPValue::Error(message) => {
+                // Redis 5 has no HELLO. It echoes the arguments, and the password is one.
+                let echo = strings::split_once(&message, b", with args beginning with");
+                let message = echo.map_or(&*message, |(message, _)| message);
+                refused(message, AuthenticationFailed)
+            }
             RESPValue::SimpleString(ref text) if **text != *b"OK" => broken(
                 b"Authentication failed (unexpected response)",
                 AuthenticationFailed,
@@ -589,10 +620,7 @@ impl<P> Client<P> {
                 self.state = State::Ready;
                 Event::Ignored
             }
-            RESPValue::Error(message) => Event::Broken {
-                message,
-                error: RedisError::InvalidCommand,
-            },
+            RESPValue::Error(message) => refused(&message, RedisError::InvalidCommand),
             RESPValue::SimpleString(_) => broken(
                 b"SELECT command failed with non-OK response",
                 RedisError::InvalidResponse,

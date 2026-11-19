@@ -262,6 +262,7 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.callable`                                     | `JsLocal<'a, Callable>`          | a function, or a proxy of one                                 |
 | `b.object`                                       | `JsLocal<'a, JSObject>`          | an object                                                     |
 | `b.jsArray`                                      | `JsLocal<'a, JSArray>`           | an array, as itself                                           |
+| `b.url`                                          | `JsLocal<'a, DOMURL>`            | a `URL`                                                       |
 | `b.any`                                          | `JsLocal<'a>`                    | anything                                                      |
 | `b.any.variadic`                                 | `&'a [JsLocal<'a>]`              | this argument and every one after it; only the last argument  |
 | `b.rest(T)`                                      | `&'a [T]`                        | the same, each converted to `T`; see below                    |
@@ -891,28 +892,23 @@ js_ReadableSinkController::set_pipe_done(this_value, done);
 With `refCounted: true` the struct is a separate, refcounted heap allocation and the object holds one ref:
 
 ```ts
-export const CronJob = b.class({
-  rustPath: "crate::api::cron::CronJob",
+export const FetchSession = b.class({
+  rustPath: "crate::webcore::fetch::FetchSession",
   refCounted: true,
   finalize: true,
-  internalFields: ["callback", "pendingPromise", "cron"],
+  internalFields: ["checkServerIdentity"],
   proto: {
-    cron: { internalField: "cron" },
-    stop: { returns: b.self, passThis: true },
-    "@@dispose": { returns: b.self, passThis: true, rustName: "stop" },
+    close: {},
+    "@@dispose": { rustName: "close" },
   },
 });
 ```
 
 ```rust
-impl CronJob {
+impl FetchSession {
     pub(crate) fn finalize(&self) {
-        self.this_value.with_mut(|v| v.finalize());
-    }
-
-    pub(crate) fn stop<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
-        Self::self_stop(self.self_ref.get().this_ptr(), self.global.bun_vm());
-        this_value
+        self.this_value.with_mut(|r| r.finalize());
+        self.close();
     }
 }
 ```
@@ -928,14 +924,14 @@ impl CronJob {
 
 Native callbacks have no capability. What they need to reach the JS object takes the global object:
 
-| Function                         | What it does                                       |
-| -------------------------------- | -------------------------------------------------- |
-| `js_CronJob::to_js(job, global)` | makes the object, which takes over the `RefPtr`    |
-| `js_CronJob::wrap(job, global)`  | the same, as a `WrapperGuard`, to go on using both |
-| `js_CronJob::from_js(&value)`    | the struct, if `value` is an instance              |
-| `js_CronJob::ref_from_js(value)` | the same, as a new `RefPtr`                        |
+| Function                                  | What it does                                       |
+| ----------------------------------------- | -------------------------------------------------- |
+| `js_FetchSession::to_js(session, global)` | makes the object, which takes over the `RefPtr`    |
+| `js_FetchSession::wrap(session, global)`  | the same, as a `WrapperGuard`, to go on using both |
+| `js_FetchSession::from_js(&value)`        | the struct, if `value` is an instance              |
+| `js_FetchSession::ref_from_js(value)`     | the same, as a new `RefPtr`                        |
 
-The struct also implements `bun_jsc::JsClass`, so `value.as_class_ref::<CronJob>()` works. To get
+The struct also implements `bun_jsc::JsClass`, so `value.as_class_ref::<FetchSession>()` works. To get
 back to its JS object the struct stores a `JsRef`, and calls `finalize()` on it from the class's `finalize`.
 
 ### Memory
@@ -982,6 +978,8 @@ pub(crate) fn call_matcher<'a>(
 `callee` is the JS function that was called, and `arguments` is everything it was called with. The function takes its
 own arguments out of that list, so they're all `b.any`, the last one possibly `.variadic`. It also needs
 `capability: "js"`, `throws: true` and `returns: b.any`, and can't have overloads. The class can't be `refCounted`.
+The type of `matcher` is up to `call_matcher`. Every function of `proto` returns what `matcher` returns. It gets the
+first argument of `matcher` as `this_value`, which can be any `Copy` type whose `payload_ref()` gives `&Self`.
 
 ## What the compiler reads
 

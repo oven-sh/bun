@@ -72,8 +72,6 @@ pub enum Error {
     NotFound,
     #[error("EmptyKey")]
     EmptyKey,
-    #[error("FormatFailed")]
-    FormatFailed,
     #[error("SelfExePathFailed")]
     SelfExePathFailed,
     #[error("SpawnFailed")]
@@ -230,8 +228,6 @@ pub enum Error {
     #[error(transparent)]
     Clap(#[from] bun_clap::Error),
     #[error(transparent)]
-    Zlib(#[from] bun_zlib::ZlibError),
-    #[error(transparent)]
     Http(#[from] bun_http::Error),
     #[error(transparent)]
     JsPrinter(#[from] bun_js_printer::Error),
@@ -365,7 +361,6 @@ impl Error {
             Self::MissingShell => "MissingShell",
             Self::NotFound => "NotFound",
             Self::EmptyKey => "EmptyKey",
-            Self::FormatFailed => "FormatFailed",
             Self::SelfExePathFailed => "SelfExePathFailed",
             Self::SpawnFailed => "SpawnFailed",
             Self::PipeStartFailed => "PipeStartFailed",
@@ -445,7 +440,6 @@ impl Error {
             Self::JsLexer(e) => <&'static str>::from(e),
             Self::StdFmt(_) => "FmtError",
             Self::Clap(e) => e.name(),
-            Self::Zlib(e) => <&'static str>::from(e),
             Self::Http(e) => e.name(),
             Self::JsPrinter(e) => e.name(),
             Self::Sourcemap(e) => e.name(),

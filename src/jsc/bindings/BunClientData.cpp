@@ -121,7 +121,7 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
     };
 
     vm->clientData = clientData; // ~VM deletes this pointer.
-    clientData->m_normalWorld = DOMWrapperWorld::create(*vm, DOMWrapperWorld::Type::Normal);
+    clientData->m_normalWorld = DOMWrapperWorld::create(*vm);
 
     vm->heap.addMarkingConstraint(makeUnique<WebCore::DOMGCOutputConstraint>(*vm, clientData->heapData()));
 

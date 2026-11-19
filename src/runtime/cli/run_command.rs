@@ -1011,11 +1011,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         crate::cli::startup_options::refuse_code_the_compiler_did_not_see();
         bun_jsc::initialize(bun_jsc::InitializeOptions {
             eval_mode: ctx.runtime_options.eval.eval_and_print,
-            one_shot: bun_jsc::is_one_shot_eval_invocation(),
+            one_shot: bun_jsc::is_one_shot_eval_invocation()
+                && !ctx.runtime_options.eval.reads_configuration,
             runs_compiled_code: crate::cli::run_compiled::runs_compiled_code(),
             locks_builtins: crate::cli::run_compiled::is_checked(),
             ..Default::default()
         });
+        if ctx.runtime_options.eval.reads_configuration {
+            bun_jsc::expect_configuration();
+        }
         bun_ast::initialize_store();
 
         let options = VmInitOptions {
@@ -1409,6 +1413,15 @@ impl Run<'_> {
 
         Self::add_conditional_globals(global, ctx);
 
+        if ctx.runtime_options.eval.reads_configuration {
+            bun_removable_features::removable_body_behind_value!(Tools, {
+                crate::read_ahead::enable(vm, true);
+                let script = ctx.runtime_options.eval.script;
+                let configuration = bun_lint_driver::configuration_read_by(script);
+                crate::read_ahead::expect(configuration.into_iter());
+            });
+        }
+
         // ── redis preconnect (must run under the API lock) ─────────────────
         'do_redis_preconnect: {
             if !ctx.runtime_options.redis_preconnect {
@@ -1425,12 +1438,10 @@ impl Run<'_> {
                     let Some(redis) = bun_object.get(global, "redis")? else {
                         return Ok(());
                     };
-                    let Some(client) =
-                        redis.as_class_ref::<crate::valkey_jsc::js_valkey::JSValkeyClient>()
-                    else {
+                    let Some(client) = crate::valkey_jsc::js_valkey::js::from_js(&redis) else {
                         return Ok(());
                     };
-                    client.do_connect(global, redis);
+                    client.do_connect(global, (&client).into());
                     Ok(())
                 })
             };
@@ -1561,6 +1572,7 @@ impl Run<'_> {
         // standalone executable has no transpiler garbage, and its unlinked code blocks came from the embedded bytecode
         // cache — deleting them here only means decoding them again on first call — so leave its heap to the collector.
         if vm.standalone_module_graph.is_none()
+            && !ctx.runtime_options.eval.reads_configuration
             && (vm.is_event_loop_alive() || vm.event_loop().tick_concurrent_with_count() > 0)
         {
             global.vm().release_weak_refs();

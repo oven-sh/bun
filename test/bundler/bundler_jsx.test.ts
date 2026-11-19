@@ -1108,10 +1108,23 @@ describe("bundler", () => {
         `,
         "undefined undefined undefined\n",
       ],
-    ])("runs with preserve after removing JSX in %s", async (_, source, expected) => {
-      using dir = tempDir("jsx-discarded-code", { "in.jsx": source });
+      [
+        "pruned TypeScript enum and decorator lowering",
+        `
+          function render() {
+            return 1;
+            enum UnusedEnum { Value = <Unused /> }
+            @((value) => value) class UnusedClass { render() { return <Unused />; } }
+          }
+          console.log(render());
+        `,
+        "1\n",
+        "in.tsx",
+      ],
+    ])("runs with preserve after removing JSX in %s", async (_, source, expected, file = "in.jsx") => {
+      using dir = tempDir("jsx-discarded-code", { [file]: source });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "run", "--jsx-runtime=preserve", "in.jsx"],
+        cmd: [bunExe(), "run", "--jsx-runtime=preserve", file],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1189,12 +1202,14 @@ describe("bundler", () => {
 
       itBundled(`jsx/PreserveCompilePrunedStatements-${backend}`, {
         files: {
-          "/in.jsx": `
+          "/in.tsx": `
             function render() {
               return typeof binding;
               var binding = [<Unused />];
               console.log(<Unused />);
               if (<Unused />) throw <Unused />;
+              enum UnusedEnum { Value = <Unused /> }
+              @((value) => value) class UnusedClass { render() { return <Unused />; } }
               for (var { value = <Unused /> } of []) {}
               if (globalThis.flag) {
                 var a = <Unused />;

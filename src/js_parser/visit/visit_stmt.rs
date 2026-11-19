@@ -130,9 +130,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if jsx_start != p.preserved_jsx.elements.len()
             && outlined_start == p.react_compiler_outlined_from_nested.len()
-            && let Some([stmt]) = stmts.get(output_start..)
+            && let Some(output) = stmts.get(output_start..)
         {
-            p.preserved_jsx.record_statement(*stmt, jsx_start);
+            p.preserved_jsx.record_statements(output, jsx_start);
         }
         Ok(())
     }

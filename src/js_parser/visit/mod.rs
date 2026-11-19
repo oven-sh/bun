@@ -34,9 +34,15 @@ use bun_ast::StrictModeKind;
 use bun_collections::HashMap;
 use core::{ops::Range, ptr::NonNull};
 use smallvec::SmallVec;
+use std::rc::Rc;
 
 // In the AST crate, ListManaged is arena-backed.
 type ListManaged<'bump, T> = BumpVec<'bump, T>;
+
+enum PreservedJsxRange {
+    Single(Range<usize>),
+    Shared(Rc<Range<usize>>),
+}
 
 /// Track JSX locations by the statement payload that emits their syntax.
 /// A rewrite that moves syntax to another payload moves its locations with it.
@@ -44,7 +50,7 @@ pub(crate) struct PreservedJsx<'a> {
     // Keeping indices stable while nested visitors invalidate locations.
     pub(crate) elements: BumpVec<'a, Option<bun_ast::Loc>>,
     // Hoisted statements can separate the ranges of adjacent declarations.
-    statements: HashMap<*const (), SmallVec<[Range<usize>; 1]>>,
+    statements: HashMap<*const (), SmallVec<[PreservedJsxRange; 1]>>,
 }
 
 impl<'a> PreservedJsx<'a> {
@@ -55,19 +61,37 @@ impl<'a> PreservedJsx<'a> {
         }
     }
 
-    fn record_statement(&mut self, stmt: Stmt, start: usize) {
+    fn record_statements(&mut self, stmts: &[Stmt], start: usize) {
         let end = self.elements.len();
-        if start == end {
+        if start == end || stmts.is_empty() {
             return;
         }
-        if let Some(key) = stmt.data.payload_ptr() {
-            let ranges = self.statements.entry(key).or_default();
-            ranges.retain(|range| range.start < start || range.end > end);
-            ranges.push(start..end);
+
+        if let [stmt] = stmts {
+            if let Some(key) = stmt.data.payload_ptr() {
+                let ranges = self.statements.entry(key).or_default();
+                ranges.retain(|range| match range {
+                    PreservedJsxRange::Single(range) => range.start < start || range.end > end,
+                    PreservedJsxRange::Shared(_) => true,
+                });
+                ranges.push(PreservedJsxRange::Single(start..end));
+            }
+            return;
+        }
+
+        // Sharing the range keeps its locations until every lowered statement drops its syntax.
+        let range = Rc::new(start..end);
+        for stmt in stmts {
+            if let Some(key) = stmt.data.payload_ptr() {
+                self.statements
+                    .entry(key)
+                    .or_default()
+                    .push(PreservedJsxRange::Shared(Rc::clone(&range)));
+            }
         }
     }
 
-    fn take_statement_ranges(&mut self, stmt: Stmt) -> Option<SmallVec<[Range<usize>; 1]>> {
+    fn take_statement_ranges(&mut self, stmt: Stmt) -> Option<SmallVec<[PreservedJsxRange; 1]>> {
         if self.statements.is_empty() {
             return None;
         }
@@ -93,7 +117,13 @@ impl<'a> PreservedJsx<'a> {
         let ranges = self.take_statement_ranges(stmt);
         if let Some(ranges) = ranges {
             for range in ranges {
-                self.elements[range].fill(None);
+                let range = match range {
+                    PreservedJsxRange::Single(range) => Some(range),
+                    PreservedJsxRange::Shared(range) => Rc::into_inner(range),
+                };
+                if let Some(range) = range {
+                    self.elements[range].fill(None);
+                }
             }
         }
     }
@@ -843,7 +873,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 st.kind = self.select_local_kind(st.kind);
                 if outlined_start == self.react_compiler_outlined_from_nested.len() {
-                    self.preserved_jsx.record_statement(stmt, jsx_start);
+                    self.preserved_jsx
+                        .record_statements(core::slice::from_ref(&stmt), jsx_start);
                 }
             }
             _ => {

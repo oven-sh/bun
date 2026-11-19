@@ -7,6 +7,7 @@ const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapt
 const { isDisturbed } = require("internal/streams/utils");
 
 const ObjectCreate = Object.create;
+const ObjectPrototypeToString = Object.prototype.toString;
 const kEmptyObject = Object.freeze(ObjectCreate(null));
 
 // The loose overload keeps request()'s extra init fields accepted; the intersection keeps preconnect typed.
@@ -525,6 +526,11 @@ function fetchDispatch(origin: URL, opts: any, handler: any, pending?: Set<Pendi
   return true;
 }
 
+// Like undici and Response.text(): a leading UTF-8 byte order mark is not part of the text.
+function utf8WithoutBOM(buf: Buffer) {
+  return buf.length > 2 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf ? buf.toString("utf8", 3) : buf.toString();
+}
+
 // dispatcher.request() body: a Readable with undici's body-mixin methods.
 class DispatchBodyReadable extends Readable {
   #used = false;
@@ -575,11 +581,11 @@ class DispatchBodyReadable extends Readable {
   }
 
   async text() {
-    return (await this.#consume()).toString();
+    return utf8WithoutBOM(await this.#consume());
   }
 
   async json() {
-    return JSON.parse((await this.#consume()).toString());
+    return JSON.parse(utf8WithoutBOM(await this.#consume()));
   }
 
   async arrayBuffer() {
@@ -786,6 +792,7 @@ type PendingEntry = { abort: (reason?: Error) => void; done: Promise<void> };
 class DispatcherBase extends Dispatcher {
   #closed = false;
   #destroyed = false;
+  #fetchAbort: AbortController | undefined = undefined;
   declare [kPending]: Set<PendingEntry>;
 
   constructor() {
@@ -826,6 +833,7 @@ class DispatcherBase extends Dispatcher {
     this.#destroyed = true;
     this.#closed = true;
     const reason = err ?? new ClientDestroyedError("The client is destroyed");
+    this.#fetchAbort?.abort(reason);
     for (const entry of this[kPending]) entry.abort(reason);
     Promise.allSettled(Array.from(this[kPending], entry => entry.done)).then(() =>
       queueMicrotask(() => callback(null, null)),
@@ -862,7 +870,7 @@ class DispatcherBase extends Dispatcher {
     return undefined;
   }
 
-  // fetch() through a route-only dispatcher: native fetch, tracked so close() waits for the headers and destroy() aborts it.
+  // fetch() through a route-only dispatcher is native fetch. close() waits for its headers; destroy() aborts it, body included.
   [kFetch](input, init): Promise<Response> {
     try {
       if (this.#destroyed) throw new ClientDestroyedError("The client is destroyed");
@@ -872,15 +880,17 @@ class DispatcherBase extends Dispatcher {
         input = new Request(input, init as any);
         init = kEmptyObject;
       }
-      const ac = new AbortController();
-      const outer = init.signal ?? (input instanceof Request ? input.signal : undefined);
-      const merged = { ...init, signal: outer ? AbortSignal.any([outer, ac.signal]) : ac.signal };
+      // One signal for every fetch() of this dispatcher: native fetch holds it until the body ends, so destroy() reaches that too.
+      const destroyed = (this.#fetchAbort ??= new AbortController()).signal;
+      // A present `signal: null` detaches the Request's own signal, as in native fetch.
+      const outer = init.signal !== undefined ? init.signal : input instanceof Request ? input.signal : undefined;
+      const merged = { ...init, signal: outer ? AbortSignal.any([outer, destroyed]) : destroyed };
       // The caller's own proxy wins, and a unix socket request cannot go through a proxy.
       const proxy = this[kNativeInit]()?.proxy;
       if (proxy !== undefined && merged.proxy === undefined && merged.unix == null) merged.proxy = proxy;
       const response = nativeFetch(input, merged);
       const pending = this[kPending];
-      const entry: PendingEntry = { abort: reason => ac.abort(reason), done: response.then(noop, noop) };
+      const entry: PendingEntry = { abort: noop, done: response.then(noop, noop) };
       pending.add(entry);
       entry.done.then(() => pending.delete(entry));
       return response;
@@ -1303,11 +1313,31 @@ function isReplayableBody(body) {
   );
 }
 
+// The stream Bun makes over a body it holds in memory. A file or a network stream has another source class.
+function isInMemoryBodyStream(stream) {
+  const source = stream?.$bunNativePtr;
+  return (
+    typeof source === "object" &&
+    source !== null &&
+    ObjectPrototypeToString.$call(source) === "[object BlobInternalReadableStreamSource]"
+  );
+}
+
+// Like native fetch: a username or password that does not decode sends no credentials, and does not fail the request.
+function basicAuthorization(url: URL) {
+  try {
+    const userinfo = `${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`;
+    return `Basic ${Buffer.from(userinfo).toString("base64")}`;
+  } catch {
+    return undefined;
+  }
+}
+
 // fetch through a dispatcher that is not route-only: every hop goes through dispatcher.dispatch(), as in undici.
 function fetchViaDispatcher(dispatcher, input, init) {
   let url: URL, method: string, headers: Headers, body: any, signal: any, redirect: any;
-  // A pristine copy of a Request input whose body is buffered: each clone of it is one more sendable body.
-  let replay: Request | undefined;
+  // Holds a body that Bun has in memory and is never read itself: each clone of it is one more sendable body.
+  let replay: Request | Response | undefined;
   // Input parsing failures reject the returned promise like WHATWG fetch, never throw synchronously.
   try {
     const request = input instanceof Request ? input : undefined;
@@ -1316,8 +1346,8 @@ function fetchViaDispatcher(dispatcher, input, init) {
     if (url.protocol !== "http:" && url.protocol !== "https:") return nativeFetch(input, init);
     method = String((init.method ?? request?.method) || "GET");
     headers = new Headers(init.headers ?? request?.headers);
-    body = init.body;
-    signal = init.signal ?? request?.signal;
+    // A present `signal: null` detaches the Request's own signal, as in native fetch.
+    signal = init.signal === undefined ? request?.signal : init.signal;
     redirect = init.redirect ?? request?.redirect ?? "follow";
     // WHATWG fetch normalizes only these six methods; others keep their case.
     const upper = method.toUpperCase();
@@ -1331,18 +1361,29 @@ function fetchViaDispatcher(dispatcher, input, init) {
     ) {
       method = upper;
     }
-    if (body == null && request && method !== "GET" && method !== "HEAD") {
-      // Cloned before the body is read: a buffered body stays buffered in the clone, and a stream body is teed.
-      const spare = request.clone();
-      body = request.body;
-      // Only the stream over a buffered body is native here; a tee branch is not, and undici does not replay a stream.
-      if (body?.$bunNativePtr) replay = spare;
-      else spare.body?.cancel();
+    const initBody = init.body;
+    if (initBody == null) {
+      if (request && method !== "GET" && method !== "HEAD") {
+        // Cloned before the body is read: a body in memory stays in memory in the clone, and a stream body is teed.
+        const spare = request.clone();
+        body = request.body;
+        // undici does not send a stream twice, and the unread half of a tee would hold the whole upload.
+        if (isInMemoryBodyStream(body)) replay = spare;
+        else spare.body?.cancel();
+      }
+    } else if (isReplayableBody(initBody)) {
+      // Bun's own body extraction copies the bytes once and derives the content-type, the form boundary included.
+      replay = new Response(initBody);
+      const type = replay.headers.get("content-type");
+      if (type !== null && !headers.has("content-type")) headers.set("content-type", type);
+      body = replay.clone().body;
+    } else {
+      body = initBody;
     }
     // The dispatch options carry only origin and path, so URL userinfo becomes Basic auth here, as native fetch does.
     if ((url.username || url.password) && !headers.has("authorization")) {
-      const userinfo = `${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`;
-      headers.set("authorization", `Basic ${Buffer.from(userinfo).toString("base64")}`);
+      const authorization = basicAuthorization(url);
+      if (authorization !== undefined) headers.set("authorization", authorization);
     }
     // A pre-aborted signal rejects before the dispatcher is ever invoked, like WHATWG fetch.
     if (signal?.aborted) throw signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
@@ -1396,7 +1437,7 @@ function fetchViaDispatcher(dispatcher, input, init) {
       headers.delete("content-length");
     } else if (replay) {
       body = replay.clone().body;
-    } else if (body != null && !isReplayableBody(body)) {
+    } else if (body != null) {
       throw new TypeError(
         `Cannot follow the ${statusCode} redirect to ${next.origin}: a stream body cannot be sent twice`,
       );

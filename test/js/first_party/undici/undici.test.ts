@@ -1743,22 +1743,25 @@ describe("undici", () => {
       const seen: any[] = [];
       const dispatcher = {
         dispatch(opts: any, handler: any) {
-          seen.push({
-            url: opts.origin + opts.path,
-            method: opts.method,
-            body: opts.body ?? null,
-            authorization: opts.headers.authorization ?? null,
-            type: opts.headers["content-type"] ?? null,
-          });
-          handler.onConnect(() => {});
-          if (opts.path === "/a") handler.onHeaders(307, [Buffer.from("location"), Buffer.from("/b")], () => {}, "");
-          else if (opts.path === "/b")
-            handler.onHeaders(303, [Buffer.from("Location"), Buffer.from("http://other.test/c")], () => {}, "");
-          else {
-            handler.onHeaders(200, [], () => {}, "OK");
-            handler.onData(Buffer.from("ok"));
-            handler.onComplete([]);
-          }
+          (async () => {
+            seen.push({
+              url: opts.origin + opts.path,
+              method: opts.method,
+              body: opts.body == null ? null : await new Response(opts.body).text(),
+              authorization: opts.headers.authorization ?? null,
+              type: opts.headers["content-type"] ?? null,
+            });
+            handler.onConnect(() => {});
+            if (opts.path === "/a") {
+              handler.onHeaders(307, [Buffer.from("location"), Buffer.from("/b")], () => {}, "");
+            } else if (opts.path === "/b") {
+              handler.onHeaders(303, [Buffer.from("Location"), Buffer.from("http://other.test/c")], () => {}, "");
+            } else {
+              handler.onHeaders(200, [], () => {}, "OK");
+              handler.onData(Buffer.from("ok"));
+              handler.onComplete([]);
+            }
+          })();
           return true;
         },
       };
@@ -1874,6 +1877,73 @@ describe("undici", () => {
       expect(dispatched).toBe(21);
     });
 
+    it("fetch with a dispatcher derives the content-type of the body, like native fetch", async () => {
+      const seen: any[] = [];
+      const dispatcher = {
+        dispatch(opts: any, handler: any) {
+          (async () => {
+            seen.push({ type: opts.headers["content-type"] ?? null, body: await new Response(opts.body).text() });
+            handler.onConnect(() => {});
+            handler.onHeaders(200, [], () => {}, "OK");
+            handler.onComplete([]);
+          })();
+          return true;
+        },
+      };
+      const post = (body: any, headers?: any) =>
+        undiciFetch("http://localhost:1/", { dispatcher, method: "POST", body, headers } as any);
+      const form = new FormData();
+      form.append("field", "value");
+      await post(new URLSearchParams({ a: "1", b: "x y" }));
+      await post(new Blob(["blob"], { type: "text/x-test" }));
+      await post(new URLSearchParams({ a: "1" }), { "content-type": "text/plain" });
+      await post(new Uint8Array([104, 105]));
+      await post(form);
+      const multipart = seen.pop();
+      expect(seen).toEqual([
+        { type: "application/x-www-form-urlencoded;charset=UTF-8", body: "a=1&b=x+y" },
+        { type: "text/x-test", body: "blob" },
+        // The caller's own content-type wins.
+        { type: "text/plain", body: "a=1" },
+        { type: null, body: "hi" },
+      ]);
+      // The boundary in the header is the one in the body.
+      const parsed = await new Response(multipart.body, { headers: { "content-type": multipart.type } }).formData();
+      expect({ type: multipart.type.split(";")[0], field: parsed.get("field") }).toEqual({
+        type: "multipart/form-data",
+        field: "value",
+      });
+    });
+
+    it("fetch with a dispatcher ignores URL credentials that do not decode, like native fetch", async () => {
+      const seen: any[] = [];
+      const dispatcher = {
+        dispatch(opts: any, handler: any) {
+          seen.push(opts.headers.authorization ?? null);
+          handler.onConnect(() => {});
+          handler.onHeaders(200, [], () => {}, "OK");
+          handler.onComplete([]);
+          return true;
+        },
+      };
+      const res = await undiciFetch("http://user:100%@localhost:1/", { dispatcher } as any);
+      expect({ status: res.status, seen }).toEqual({ status: 200, seen: [null] });
+    });
+
+    it("fetch(Request, { signal: null }) detaches the Request's signal, like native fetch", async () => {
+      await using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+      const pool = new Pool(`http://localhost:${server.port}`);
+      const custom = { dispatch: (opts: any, handler: any) => pool.dispatch(opts, handler) };
+      const aborted = AbortSignal.abort();
+      const texts: string[] = [];
+      for (const dispatcher of [custom, new Agent()]) {
+        const request = new Request(`http://localhost:${server.port}/`, { signal: aborted });
+        texts.push(await (await undiciFetch(request, { dispatcher, signal: null } as any)).text());
+      }
+      expect(texts).toEqual(["ok", "ok"]);
+      await pool.close();
+    });
+
     it("fetch with a dispatcher sends URL credentials as Basic auth", async () => {
       let authorization: string | undefined;
       const dispatcher = {
@@ -1940,6 +2010,41 @@ describe("undici", () => {
       ).rejects.toHaveProperty("code", "UND_ERR_DESTROYED");
       await agent.destroy();
       await rejected;
+    });
+
+    it("destroy() aborts a response body that is still streaming through a stock Agent", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              // One chunk, then the body stays open: only an abort can end it.
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("first"));
+              },
+            }),
+          ),
+      });
+      const agent = new Agent();
+      const res = await undiciFetch(`http://localhost:${server.port}/`, { dispatcher: agent } as any);
+      const reader = res.body!.getReader();
+      expect(new TextDecoder().decode((await reader.read()).value)).toBe("first");
+      await agent.destroy();
+      await expect(reader.read()).rejects.toHaveProperty("code", "UND_ERR_DESTROYED");
+    });
+
+    it("a request() body drops a UTF-8 byte order mark in text() and json(), like undici", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () => new Response(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('{"a":1}')])),
+      });
+      const pool = new Pool(`http://localhost:${server.port}`);
+      const text = await (await pool.request({ path: "/", method: "GET" })).body.text();
+      const json = await (await pool.request({ path: "/", method: "GET" })).body.json();
+      const bytes = await (await pool.request({ path: "/", method: "GET" })).body.bytes();
+      // The bytes keep the mark; only the text forms drop it.
+      expect({ text, json, bytes: bytes.length }).toEqual({ text: '{"a":1}', json: { a: 1 }, bytes: 10 });
+      await pool.close();
     });
 
     it("fetch through an Agent subclass that overrides dispatch() calls the override", async () => {

@@ -3909,6 +3909,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
   let readableAll = false;
   let writableAll = false;
   let fd;
+  let hostDefaulted = false;
   //port is actually path
   if (typeof port === "string") {
     if (Number.isSafeInteger(hostname)) {
@@ -4042,6 +4043,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       exclusive = true;
     }
     var clusterHost: string | null | undefined = typeof hostname === "string" && hostname.length > 0 ? hostname : null;
+    hostDefaulted = !hostname && fd === undefined;
     hostname = hostname || "::";
   }
 
@@ -4088,26 +4090,38 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       queryAddressType = isIP(clusterHost) || 4;
     }
 
-    listenInCluster(
-      this,
-      queryAddress,
-      queryPort,
-      queryAddressType,
-      backlog,
-      fd,
-      exclusive,
-      ipv6Only,
-      reusePort,
-      readableAll,
-      writableAll,
-      flags,
-      undefined,
-      path,
-      hostname,
-      tls,
-      contexts,
-      onListen,
-    );
+    for (;;) {
+      try {
+        listenInCluster(
+          this,
+          queryAddress,
+          queryPort,
+          queryAddressType,
+          backlog,
+          fd,
+          exclusive,
+          ipv6Only,
+          reusePort,
+          readableAll,
+          writableAll,
+          flags,
+          undefined,
+          path,
+          hostname,
+          tls,
+          contexts,
+          onListen,
+        );
+        break;
+      } catch (err: any) {
+        // With no host, Node binds "::" and, when that fails, "0.0.0.0" (a kernel without IPv6):
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1968-L1980
+        // Not after EADDRINUSE: libuv reports that one from listen(), after the bind that Node retries.
+        if (!hostDefaulted || err?.syscall !== "listen" || err.code === "EADDRINUSE") throw err;
+        hostDefaulted = false;
+        hostname = "0.0.0.0";
+      }
+    }
   } catch (err) {
     const isUnix = path != null;
     process.nextTick(
@@ -4563,6 +4577,14 @@ function uvListenErrorDescription(code) {
       return "address not available";
     case "EINVAL":
       return "invalid argument";
+    case "EAFNOSUPPORT":
+      return "address family not supported";
+    case "EMFILE":
+      return "too many open files";
+    case "ENFILE":
+      return "file table overflow";
+    case "ENOBUFS":
+      return "no buffer space available";
     default:
       return undefined;
   }

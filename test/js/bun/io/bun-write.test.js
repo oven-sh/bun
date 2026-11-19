@@ -1802,6 +1802,22 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
   });
 });
 
+it.skipIf(isWindows).each([
+  ["a Blob", new Blob([Buffer.alloc(2000, "a")]), 2000],
+  ["a large Buffer", Buffer.alloc(300 * 1024, "a"), 300 * 1024],
+])("Bun.write(Bun.file(fd), %s) appends right after the end of a file opened with O_APPEND", async (_, data, size) => {
+  using dir = tempDir("bun-write-append", { log: "first\n" });
+  const log = join(String(dir), "log");
+  const fd = fs.openSync(log, "a");
+  try {
+    expect(await Bun.write(Bun.file(fd), data)).toBe(size);
+  } finally {
+    fs.closeSync(fd);
+  }
+  const written = fs.readFileSync(log);
+  expect({ size: written.length, firstNul: written.indexOf(0) }).toEqual({ size: 6 + size, firstNul: -1 });
+});
+
 describe.skipIf(!isLinux).concurrent("Bun.write() to a pipe that is full", () => {
   const data = new Blob([Buffer.alloc(1 << 20, "a")]);
   /** `.size` makes the file find out that it is not a regular one. */

@@ -71,6 +71,7 @@ members = [
   "src/highway",
   "src/histogram",
   "src/hpack",
+  "src/qpack",
   "src/http1",
   "src/http_jsc",
   "src/http_types",
@@ -449,6 +450,7 @@ bun_removable_features = { path = "src/trim/removable_features" }
 bun_highway = { path = "src/highway" }
 bun_histogram = { path = "src/histogram" }
 bun_hpack = { path = "src/hpack" }
+bun_qpack = { path = "src/qpack" }
 bun_http1 = { path = "src/http1" }
 bun_http_jsc = { path = "src/http_jsc" }
 bun_http_types = { path = "src/http_types" }
@@ -536,8 +538,10 @@ opt-level = 3
 [profile.dev.package.bun_http1]
 opt-level = 3
 
-# Runs for every field of an HTTP/2 header block.
+# Run for every field of an HTTP/2 header block or an HTTP/3 field section.
 [profile.dev.package.bun_hpack]
+opt-level = 3
+[profile.dev.package.bun_qpack]
 opt-level = 3
 
 # Runs for every byte that is compressed or decompressed.

@@ -1510,6 +1510,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_qpack"
+version = "0.0.0"
+dependencies = [
+ "bun_hpack",
+ "bun_wyhash",
+ "thiserror",
+]
+
+[[package]]
 name = "bun_react_compiler"
 version = "0.0.0"
 dependencies = [

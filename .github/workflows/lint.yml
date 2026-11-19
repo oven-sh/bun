@@ -39,10 +39,13 @@ jobs:
         # own; an older one only inside its tarballs.
         run: |
           version=$(sed -n 's/^export const WEBKIT_VERSION = "\(.*\)";$/\1/p' scripts/build/deps/webkit.ts)
-          release="https://github.com/oven-sh/WebKit/releases/download/autobuild-${version#autobuild-}"
+          tag="autobuild-${version#autobuild-}"
+          pinned() { grep -E "^[0-9a-f]{64}  $tag/$1\$" scripts/build/deps/webkit.sha256; }
+          read -r sha256 asset < <(pinned bun-webkit-aot-sources.tar.gz || pinned bun-webkit-linux-amd64-lto.tar.gz) ||
+            { echo "::error::No sha256 is pinned for $tag. Run: bun run pin-webkit"; exit 1; }
           mkdir -p vendor/WebKit
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/engine.tar.gz" "$release/bun-webkit-aot-sources.tar.gz" ||
-            curl -fsSL --retry 3 -o "$RUNNER_TEMP/engine.tar.gz" "$release/bun-webkit-linux-amd64-lto.tar.gz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/engine.tar.gz" "https://github.com/oven-sh/WebKit/releases/download/$asset"
+          echo "$sha256  $RUNNER_TEMP/engine.tar.gz" | sha256sum --check
           tar -xzf "$RUNNER_TEMP/engine.tar.gz" -C vendor/WebKit --strip-components=1 --exclude=bun-webkit/Source/JavaScriptCore/aot/tests bun-webkit/Source/JavaScriptCore/aot
       - name: Check that the engine's generator writes what the build declares
         env:

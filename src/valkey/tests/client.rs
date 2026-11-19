@@ -693,6 +693,82 @@ mod lifecycle {
     }
 
     #[test]
+    fn retries_count_on_within_an_attempt() {
+        let phases: [fn(&mut Driver); 3] = [|_| {}, Driver::start, |it| it.client.dial_failed()];
+        let touches: [fn(&mut Driver); 4] = [
+            |_| {},
+            |it| it.client.claim(),
+            |it| it.client.connect(),
+            |it| (drop(it.client.close()), it.client.connect()).1,
+        ];
+        for (phase, reach) in phases.into_iter().enumerate() {
+            for (touch, apply) in touches.into_iter().enumerate() {
+                let mut it = Driver::connected(Config::default());
+                it.lost();
+                it.dial();
+                reach(&mut it);
+                apply(&mut it);
+                it.lost();
+                assert_eq!(
+                    it.take().last().unwrap(),
+                    "retry in 100 []",
+                    "{phase}, {touch}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn connect_starts_the_retries_over_between_attempts() {
+        let mut it = Driver::connected(Config::default());
+        it.lost();
+        it.client.connect();
+        it.dial();
+        it.lost();
+        assert_eq!(it.take(), ["retry in 50 []", "retry in 50 []"]);
+    }
+
+    #[test]
+    fn a_preconnect_that_failed_is_final_once_claimed() {
+        let touches: [fn(&mut Driver); 3] = [
+            |it| it.client.claim(),
+            |it| it.client.connect(),
+            |it| drop(it.client.close()),
+        ];
+        for (touch, apply) in touches.into_iter().enumerate() {
+            let mut it = Driver::new(Config::default());
+            it.attempt = it.client.preconnect();
+            it.fail();
+            assert!(it.client.is_preconnect() && it.client.rejection().is_some());
+            apply(&mut it);
+            it.lost();
+            assert_eq!(state_of(it), Closed, "{touch}");
+        }
+    }
+
+    #[test]
+    fn the_selected_database_outlasts_failed_attempts() {
+        let touches: [fn(&mut Driver); 3] =
+            [|_| {}, |it| it.client.claim(), |it| it.client.connect()];
+        for (touch, apply) in touches.into_iter().enumerate() {
+            let mut it = Driver::connected(Config::default());
+            it.send("SELECT 1");
+            it.read("+OK\r\n");
+            it.lost();
+            it.dial();
+            apply(&mut it);
+            it.lost();
+            it.dial();
+            it.start();
+            assert_eq!(
+                it.take().last().unwrap(),
+                "write HELLO 3 SELECT 1",
+                "{touch}"
+            );
+        }
+    }
+
+    #[test]
     fn no_retry() {
         let mut it = Driver::connected(Config::default());
         assert!(matches!(it.lose(true), Lost::ForGood { .. }));
@@ -1917,5 +1993,51 @@ mod subscriptions {
                 "write SUBSCRIBE a",
             ]
         );
+    }
+
+    #[test]
+    fn a_session_that_breaks_in_the_restore_forgets_the_database_it_was_leaving() {
+        let steps = [
+            Subscribe("a"),
+            A,
+            Send("SELECT 1"),
+            Read("+OK"),
+            Lost,
+            Redial,
+            Read("+OK"),
+            Send("RESET"),
+            SessionBroke,
+            Lost,
+            Redial,
+        ];
+        let log = run(Config::default(), &steps).take();
+        assert_eq!(log[log.len() - 3], "write HELLO 3");
+    }
+
+    #[test]
+    fn the_restore_keeps_the_retries_and_the_database() {
+        let reach = [
+            Subscribe("a b"),
+            A,
+            Send("SELECT 1"),
+            Read("+OK"),
+            Lost,
+            Redial,
+            Read("+OK"),
+        ];
+        let select = "write HELLO 3 SELECT 1";
+        let rows: [(&[Step], [&str; 2]); 4] = [
+            (&[], ["retry in 100 []", select]),
+            (&[A], ["retry in 100 []", select]),
+            (&[A, A], ["retry in 50 []", select]),
+            (&[Close, Connect], ["retry in 100 []", "write HELLO 3"]),
+        ];
+        for (row, (steps, expected)) in rows.into_iter().enumerate() {
+            let mut it = run(Config::default(), &[&reach, steps, &[Lost]].concat());
+            it.dial();
+            it.start();
+            assert_eq!(it.log[it.log.len() - 2..], expected, "{row}");
+            assert_eq!(it.client.abandon_handshake(), row != 3, "{row}");
+        }
     }
 }

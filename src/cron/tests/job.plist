@@ -22,8 +22,8 @@
         <integer>1</integer>
     </dict>
 <key>StandardOutPath</key>
-<string>/tmp/bun.cron.my_Job-1.stdout.log</string>
+<string>/var/a&amp;b/T/bun.cron.my_Job-1.stdout.log</string>
 <key>StandardErrorPath</key>
-<string>/tmp/bun.cron.my_Job-1.stderr.log</string>
+<string>/var/a&amp;b/T/bun.cron.my_Job-1.stderr.log</string>
 </dict>
 </plist>

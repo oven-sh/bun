@@ -1735,6 +1735,7 @@ impl SendQueue {
         // SAFETY: owner is a BACKREF into the live SendQueue (cleared in
         // socket_closed if not); every method takes `&self`.
         let this = unsafe { &*this };
+        let _alive = this.hold_owner();
         this.windows.with_mut(|w| w.windows_write = None);
         this.with_pipe(|pipe| pipe.unref()); // write complete; unref
         let n = if status.to_error(bun_sys::Tag::write).is_some() {
@@ -2308,6 +2309,7 @@ pub(crate) mod IPCHandlers {
         pub(crate) fn on_writable(send_queue: &SendQueue, _: Socket) {
             log!("onWritable");
 
+            let _alive = send_queue.hold_owner();
             let global_this = send_queue.get_global_this();
             let _scope = global_this.bun_vm().enter_event_loop_scope();
             log!("IPC call continueSend() from onWritable");

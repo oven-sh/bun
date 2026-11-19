@@ -599,7 +599,7 @@ it.skipIf(isWindows)("advanced serialization advertises wire format version 2", 
 });
 
 /** Runs parent.js next to child.js. Both have the helpers below. */
-async function runPair(parent: string, child: string, env: Record<string, string> = {}) {
+async function runPair(parent: string, child: string, env: Record<string, string> = {}, prelude = "") {
   const helpers = `
     const fs = require("node:fs");
     // So that a child does not outlive a test that timed out.
@@ -651,7 +651,11 @@ async function runPair(parent: string, child: string, env: Record<string, string
     const runEventLoopUntil = promise =>
       void Bun.build({ entrypoints: ["./empty.js"], plugins: [{ name: "wait", setup: () => promise.then(() => {}) }] });
   `;
-  using dir = tempDir("ipc-pair", { "parent.js": helpers + parent, "child.js": helpers + child, "empty.js": "" });
+  using dir = tempDir("ipc-pair", {
+    "parent.js": prelude + helpers + parent,
+    "child.js": helpers + child,
+    "empty.js": "",
+  });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--no-orphans", "parent.js"],
     env: { ...bunEnv, ...env },
@@ -778,6 +782,52 @@ describe.concurrent("the send queue", () => {
 });
 
 // Linux only: what one write() sends has to arrive in one read.
+// The child uses descriptor 3 directly.
+describe.concurrent.skipIf(isWindows)("a process.nextTick that runs the event loop until the child is gone", () => {
+  // Native code calls this one, because nothing has read the original.
+  const prelude = `
+    let onNextTick;
+    process.nextTick = (callback, ...args) => {
+      onNextTick?.(callback);
+      queueMicrotask(() => callback(...args));
+    };
+  `;
+  const sendAndForget = (send: string) => `
+    const sent = () => console.log("sent");
+    const { promise: exited, resolve } = Promise.withResolvers();
+    // Not resolved with the Subprocess, which the promise would keep.
+    const onExit = () => resolve();
+    const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+    onNextTick = callback => {
+      if (callback !== sent) return;
+      fs.writeFileSync("in nextTick", "");
+      runEventLoopUntil(gone);
+      for (let i = 0; i < 3; i++) Bun.gc(true), runEventLoopUntil(turn());
+      console.log("collected garbage");
+    };
+    disconnected.then(() => console.log("disconnected"));
+    ${send}
+  `;
+
+  it("when a write completes", async () => {
+    const result = await runPair(
+      sendAndForget(`
+        const gone = Promise.all([exited, disconnected]);
+        (() => void spawnChild({ onExit, onDisconnect }).send(Buffer.alloc(1 << 20, "x").toString(), sent))();
+        fs.writeFileSync("blocked", "");
+      `),
+      `
+        until("blocked");
+        const buffer = Buffer.alloc(1 << 20);
+        for (let n = 1, total = 0; n && total < 1 << 20; total += n) n = retry(() => fs.readSync(3, buffer));
+      `,
+      {},
+      prelude,
+    );
+    expect(result).toEqual({ stdout: ["disconnected", "collected garbage", "sent"], stderr: "", exitCode: 0 });
+  });
+});
+
 describe.concurrent.skipIf(!isLinux)("a message handler that runs the event loop", () => {
   it.each([
     ["messages arrive in order", `advancedFrame("m3")`, ["m1", "m2", "m3"]],

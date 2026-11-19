@@ -439,6 +439,7 @@ pub(crate) fn run_tasks(
                         let scope = manager.scope_for_package_name(name);
                         let is_optional = !manager.is_network_task_required(task.task_id);
                         task.retry_with_abbreviated_manifest(scope, is_optional)?;
+                        task.response = Default::default();
                         enqueue::enqueue_network_task(manager, task_ptr);
                         continue;
                     }

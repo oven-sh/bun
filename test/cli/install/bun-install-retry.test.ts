@@ -1119,6 +1119,34 @@ describe.concurrent("backoff", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("reports the last attempt when the abbreviated manifest gets no answer", async () => {
+    const accepts: string[] = [];
+    await using server = createServer(client => {
+      client.on("error", () => {});
+      let head = "";
+      client.on("data", chunk => {
+        head += chunk;
+        if (!head.endsWith("\r\n\r\n")) return;
+        const abbreviated = head.includes("install-v1");
+        accepts.push(abbreviated ? "abbreviated" : "full");
+        client.end(abbreviated ? "" : "HTTP/1.1 500 Busy\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+      });
+    }).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const registry = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+    using dir = tempDir("install-retry-abbreviated", {
+      "package.json": JSON.stringify({ name: "foo", dependencies: { "bar-musl": "1.0.0" } }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { cache: false, registry } }),
+    });
+    const { lines, exitCode } = await install(String(dir), { BUN_CONFIG_HTTP_RETRY_COUNT: "1" });
+    expect(lines.filter(line => line.startsWith("error:"))).toEqual([
+      "error: ConnectionClosed downloading package manifest bar-musl",
+      "error: bar-musl@1.0.0 failed to resolve",
+    ]);
+    expect(accepts).toEqual(["full", "full", "abbreviated"]);
+    expect(exitCode).toBe(1);
+  });
+
   // yarn.lock and pnpm-lock.yaml don't record `bin`, so a migration asks the registry for it and continues without a
   // response.
   describe.each(["yarn.lock", "pnpm-lock.yaml"] as const)("the manifests that complete a migrated %s", name => {

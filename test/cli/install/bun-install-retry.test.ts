@@ -1147,6 +1147,27 @@ describe.concurrent("backoff", () => {
     expect(exitCode).toBe(1);
   });
 
+  it.each(["dependencies", "peerDependencies"])(
+    "a 304 that leaves minimumReleaseAge without publish times is an error (%s)",
+    async group => {
+      using registry = flakyRegistry((kind, hit) =>
+        kind === "manifest" && hit > 1 ? new Response(null, { status: 304 }) : undefined,
+      );
+      using dir = tempDir("install-retry-304", {
+        "package.json": JSON.stringify({ name: "foo", [group]: { bar: "^0.0.2" } }),
+        "bunfig.toml": Bun.TOML.stringify({ install: { cache: "./.bun-cache", registry: registry.url } }),
+      });
+      const cache = { BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
+      expect(await install(String(dir), cache, "--lockfile-only")).toMatchObject({ exitCode: 0 });
+      rmSync(join(String(dir), "bun.lock"));
+
+      const { lines, exitCode } = await install(String(dir), cache, "--lockfile-only", "--minimum-release-age=1");
+      expect(lines.find(line => line.startsWith("error:"))).toContain("UnexpectedNotModified");
+      expect(registry.at.manifest).toHaveLength(2);
+      expect(exitCode).toBe(1);
+    },
+  );
+
   // yarn.lock and pnpm-lock.yaml don't record `bin`, so a migration asks the registry for it and continues without a
   // response.
   describe.each(["yarn.lock", "pnpm-lock.yaml"] as const)("the manifests that complete a migrated %s", name => {

@@ -564,12 +564,11 @@ pub(crate) fn run_tasks(
 
                 if metadata.status_code() == 304 {
                     // The HTTP request was cached
-                    if let Some(mut manifest) = loaded_manifest.take() {
-                        // If we requested extended manifest but we somehow got an abbreviated one, this is a bug
-                        debug_assert!(
-                            !is_extended_manifest || manifest.pkg.has_extended_manifest()
-                        );
-
+                    // A copy without publish times was not offered, so the parse reports the 304.
+                    let needs_times = manager.options.minimum_release_age_ms.is_some();
+                    if let Some(mut manifest) = (loaded_manifest.take())
+                        .filter(|manifest| !needs_times || manifest.pkg.has_extended_manifest())
+                    {
                         manifest.pkg.public_max_age = npm::Registry::manifest_expiry(metadata);
 
                         // reshaped for borrowck —

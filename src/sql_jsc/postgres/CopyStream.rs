@@ -2,7 +2,7 @@
 //! each chunk (out) or each time the socket has drained (in).
 
 use super::{PostgresSQLConnection, Seat, Socket};
-use crate::jsc::{JSValue, JsResult, js_error_to_postgres};
+use crate::jsc::{AutoFlush as _, JSValue, JsResult, js_error_to_postgres};
 use crate::postgres::PostgresSQLQuery;
 use crate::postgres::error_jsc::postgres_error_to_js;
 use crate::postgres::postgres_sql_query::{CopyStream, js};

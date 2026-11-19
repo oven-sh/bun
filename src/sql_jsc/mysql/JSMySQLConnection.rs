@@ -175,7 +175,7 @@ impl TimedConnection for JSMySQLConnection {
 bun_core::intrusive_field!(JSMySQLConnection, auto_flusher: AutoFlusher);
 
 // SAFETY: refcounted on the heap.
-unsafe impl AutoFlush for JSMySQLConnection {
+unsafe impl bun_jsc::AutoFlush for JSMySQLConnection {
     unsafe fn on_auto_flush(this: *mut Self) -> bool {
         // SAFETY: fn contract.
         let this = unsafe { RefPtr::init_ref(this) };
@@ -187,9 +187,13 @@ unsafe impl AutoFlush for JSMySQLConnection {
     }
 }
 
-impl JSMySQLConnection {
+impl AutoFlush for JSMySQLConnection {
     fn vm(&self) -> &VirtualMachine {
         self.vm.get()
+    }
+
+    fn auto_flusher(&self) -> &AutoFlusher {
+        &self.auto_flusher
     }
 
     fn can_flush(&self) -> bool {
@@ -197,14 +201,9 @@ impl JSMySQLConnection {
             && self.is_connected()
             && (!self.write_buffer.get().is_empty() || self.queue.is_waiting_to_write())
     }
+}
 
-    /// What one turn of JS queued is written in one flush, at the end of the turn.
-    fn register_auto_flusher(&self) {
-        if !self.auto_flusher.is_registered() && self.can_flush() {
-            AutoFlusher::register(self, self.vm());
-        }
-    }
-
+impl JSMySQLConnection {
     #[inline]
     fn is_connected(&self) -> bool {
         matches!(self.session.get().state(), State::Ready(_))

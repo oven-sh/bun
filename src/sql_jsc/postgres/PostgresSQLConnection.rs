@@ -282,7 +282,7 @@ impl TimedConnection for PostgresSQLConnection {
 bun_core::intrusive_field!(PostgresSQLConnection, auto_flusher: AutoFlusher);
 
 // SAFETY: refcounted on the heap.
-unsafe impl AutoFlush for PostgresSQLConnection {
+unsafe impl bun_jsc::AutoFlush for PostgresSQLConnection {
     unsafe fn on_auto_flush(this: *mut Self) -> bool {
         // SAFETY: fn contract.
         let this = unsafe { RefPtr::init_ref(this) };
@@ -294,9 +294,13 @@ unsafe impl AutoFlush for PostgresSQLConnection {
     }
 }
 
-impl PostgresSQLConnection {
+impl AutoFlush for PostgresSQLConnection {
     fn vm(&self) -> &VirtualMachine {
         self.vm.get()
+    }
+
+    fn auto_flusher(&self) -> &AutoFlusher {
+        &self.auto_flusher
     }
 
     fn can_flush(&self) -> bool {
@@ -304,14 +308,9 @@ impl PostgresSQLConnection {
             && !self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE)
             && self.write_buffer.get().len() > 0
     }
+}
 
-    /// What one turn of JS queued is written in one flush, at the end of the turn.
-    fn register_auto_flusher(&self) {
-        if !self.auto_flusher.is_registered() && self.can_flush() {
-            AutoFlusher::register(self, self.vm());
-        }
-    }
-
+impl PostgresSQLConnection {
     /// `on_handshake` sends the StartupMessage.
     fn setup_tls(&self) {
         let started = start_tls(

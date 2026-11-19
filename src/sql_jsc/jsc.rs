@@ -18,8 +18,8 @@
 use core::marker::PhantomData;
 
 pub use bun_jsc::{
-    AutoFlush, AutoFlusher, ErrorBuilder, ErrorCode, ExternColumnIdentifier, GlobalRef,
-    JSArrayIterator, JSGlobalObject, JSObject, JSType, JSValue, JsCell, JsError, JsRef, JsResult,
+    AutoFlusher, ErrorBuilder, ErrorCode, ExternColumnIdentifier, GlobalRef, JSArrayIterator,
+    JSGlobalObject, JSObject, JSType, JSValue, JsCell, JsError, JsRef, JsResult,
     MarkedArgumentBuffer, StringJsc, Strong, StrongOptional, bun_string_jsc,
 };
 
@@ -282,6 +282,20 @@ pub(crate) fn run_callback(global: &JSGlobalObject, callback: JSValue, arguments
 pub use bun_event_loop::EventLoopTimer::{
     OwnedTimer, State as EventLoopTimerState, Tag as EventLoopTimerTag,
 };
+
+/// A connection that writes what one turn of JS queued on it in one flush, at the end of the turn.
+pub(crate) trait AutoFlush: bun_jsc::AutoFlush {
+    fn vm(&self) -> &VirtualMachine;
+    fn auto_flusher(&self) -> &AutoFlusher;
+    /// Connected, without backpressure, and with something to write.
+    fn can_flush(&self) -> bool;
+
+    fn register_auto_flusher(&self) {
+        if !self.auto_flusher().is_registered() && self.can_flush() {
+            AutoFlusher::register(self, self.vm());
+        }
+    }
+}
 
 pub mod api {
     use super::*;

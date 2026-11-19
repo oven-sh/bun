@@ -2094,6 +2094,12 @@ describe("Valkey: Recovering After fail()", () => {
     test.concurrent.each([
       { program: `console.log("done")`, stdout: "done\n", stderr: "", exitCode: 0 },
       { program: `Bun.redis.ping().catch(() => console.log("caught"))`, stdout: "caught\n", stderr: "", exitCode: 0 },
+      {
+        program: `Bun.redis.onclose = () => Bun.redis.ping().catch(e => console.log(e.message))`,
+        stdout: "Connection has failed\n",
+        stderr: "",
+        exitCode: 0,
+      },
       { program: `Bun.redis.connect()`, stdout: "", stderr: expect.stringContaining("ERR_REDIS_"), exitCode: 1 },
     ])("$program exits $exitCode", async ({ program, ...outcome }) => {
       const fake = helloServer({ HELLO: () => "-WRONGPASS invalid username-password pair\r\n" });
@@ -2178,6 +2184,33 @@ describe("Valkey: Recovering After fail()", () => {
       }
     },
   );
+
+  test.concurrent.each([
+    { program: `console.log("done")`, server: "drops every connection", stdout: "done\n" },
+    { program: `console.log("done")`, server: "is not there", stdout: "done\n" },
+    { program: `Bun.redis.onconnect = () => console.log("connected")`, server: "accepts", stdout: "connected\n" },
+    { program: `Bun.redis.onclose = e => console.log(e.message)`, server: "refuses", stdout: "WRONGPASS\n" },
+  ] as const)("--redis-preconnect: $program exits when the server $server", async ({ program, server, stdout }) => {
+    const fake = helloServer({
+      HELLO: (_, socket) => {
+        if (server === "drops every connection") socket.destroy();
+        return server === "accepts" ? "+OK\r\n" : server === "refuses" ? "-WRONGPASS\r\n" : null;
+      },
+    });
+    const port = await fake.listen();
+    if (server === "is not there") fake.server.close();
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--redis-preconnect", "-e", program],
+        env: { ...bunEnv, REDIS_URL: `redis://127.0.0.1:${port}` },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await exitOutcome(proc)).toEqual({ stdout, stderr: "", exitCode: 0 });
+    } finally {
+      fake.server.close();
+    }
+  });
 
   // A TLS stub run under Node in its own process, so it can read while this
   // loop is blocked, and so that what it reports about the peer's close does

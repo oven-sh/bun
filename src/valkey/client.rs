@@ -52,15 +52,33 @@ enum State {
 struct Active {
     phase: Phase,
     purpose: Purpose,
-    retries: u32,
 }
 
 #[derive(Copy, Clone)]
 enum Purpose {
-    /// Script has not used the client, so nobody would hear why it gave up.
+    /// Script has not touched the client: one attempt, and back to `Idle`.
     Preconnect,
-    /// Script sent a command, connected or closed.
-    Asked,
+    Asked {
+        retries: u32,
+    },
+}
+
+impl Purpose {
+    const ASKED: Self = Self::Asked { retries: 0 };
+
+    fn claim(&mut self) {
+        if let Self::Preconnect = self {
+            *self = Self::ASKED;
+        }
+    }
+
+    /// The server took the connection: the retries start over.
+    fn succeed(&mut self) {
+        match self {
+            Self::Preconnect => {}
+            Self::Asked { .. } => *self = Self::ASKED,
+        }
+    }
 }
 
 enum Phase {
@@ -253,7 +271,7 @@ impl<P> Client<P> {
         matches!(self.phase(), Some(Phase::Ready))
     }
 
-    fn is_preconnect(&self) -> bool {
+    pub fn is_preconnect(&self) -> bool {
         matches!(&self.state, State::Active(active) if matches!(active.purpose, Purpose::Preconnect))
     }
 
@@ -306,16 +324,16 @@ impl<P> Client<P> {
         }
     }
 
-    /// An explicit `connect()`, ahead of [`Self::first_dial`] and [`Self::redial`].
+    /// An explicit `connect()`, ahead of [`Self::claim_and_dial`] and [`Self::redial`].
     pub fn connect(&mut self) {
         let active = match &mut self.state {
             State::Idle => return,
-            State::Closed => return self.begin(Phase::Backoff, Purpose::Asked),
+            State::Closed => return self.begin(Phase::Backoff, Purpose::ASKED),
             State::Active(active) => active,
         };
-        active.purpose = Purpose::Asked;
+        active.purpose.claim();
         match active.phase {
-            Phase::Backoff => active.retries = 0,
+            Phase::Backoff => active.purpose = Purpose::ASKED,
             // The close of a dial without a TLS context is still due, and no retry can build one.
             Phase::Ending(End::Failed) => active.phase = Phase::Ending(End::Final),
             Phase::Ending(End::Requested) => active.phase = Phase::Ending(End::Policy),
@@ -331,7 +349,7 @@ impl<P> Client<P> {
         let State::Active(active) = &mut self.state else {
             return Close::Nothing;
         };
-        active.purpose = Purpose::Asked;
+        active.purpose.claim();
         let close = match active.phase {
             Phase::Ending(End::Final | End::Failed) => return Close::Nothing,
             Phase::Ending(End::Policy | End::Requested) => Close::Nothing,
@@ -342,18 +360,20 @@ impl<P> Client<P> {
         close
     }
 
-    pub fn first_dial(&mut self) -> Option<Attempt> {
-        if let State::Active(Active {
-            purpose: purpose @ Purpose::Preconnect,
-            ..
-        }) = &mut self.state
-        {
-            *purpose = Purpose::Asked;
+    /// Script touched the client.
+    pub fn claim(&mut self) {
+        if let State::Active(active) = &mut self.state {
+            active.purpose.claim();
         }
-        self.leave_idle(Purpose::Asked)
     }
 
-    /// A dial that script did not ask for. If it fails for good, the first command dials again.
+    /// Ahead of every command.
+    pub fn claim_and_dial(&mut self) -> Option<Attempt> {
+        self.claim();
+        self.leave_idle(Purpose::ASKED)
+    }
+
+    /// A dial that script did not ask for. If it is lost unclaimed, the first command dials again.
     pub fn preconnect(&mut self) -> Option<Attempt> {
         self.leave_idle(Purpose::Preconnect)
     }
@@ -366,11 +386,7 @@ impl<P> Client<P> {
     }
 
     fn begin(&mut self, phase: Phase, purpose: Purpose) {
-        self.state = State::Active(Active {
-            phase,
-            purpose,
-            retries: 0,
-        });
+        self.state = State::Active(Active { phase, purpose });
     }
 
     pub fn redial(&mut self) -> Option<Attempt> {
@@ -459,29 +475,30 @@ impl<P> Client<P> {
         self.input.clear_and_free();
         self.scanner.reset();
 
-        let reason = match &mut self.state {
-            State::Idle | State::Closed => Reason::Final,
-            State::Active(active) => match active.phase {
-                Phase::Ending(End::Requested) => Reason::Requested,
-                Phase::Ending(End::Final | End::Failed) => Reason::Final,
-                _ if owner_is_gone || !self.config.enable_auto_reconnect => Reason::Final,
-                _ if active.retries >= self.config.max_retries => Reason::RetriesUsedUp,
-                _ => {
-                    active.phase = Phase::Backoff;
-                    active.retries += 1;
-                    let doublings = active.retries.min(10) - 1;
-                    return Lost::Retry {
-                        delay_ms: (FIRST_DELAY_MS << doublings).min(MAX_DELAY_MS),
-                        in_flight: self.take_in_flight(),
-                    };
+        let (state, reason) = match &mut self.state {
+            State::Idle | State::Closed => (State::Closed, Reason::Final),
+            State::Active(active) => match (active.purpose, &active.phase) {
+                (Purpose::Preconnect, _) => (State::Idle, Reason::Final),
+                (_, Phase::Ending(End::Requested)) => (State::Closed, Reason::Requested),
+                (_, Phase::Ending(End::Final | End::Failed)) => (State::Closed, Reason::Final),
+                (Purpose::Asked { retries }, _) => {
+                    if owner_is_gone || !self.config.enable_auto_reconnect {
+                        (State::Closed, Reason::Final)
+                    } else if retries >= self.config.max_retries {
+                        (State::Closed, Reason::RetriesUsedUp)
+                    } else {
+                        let retries = retries + 1;
+                        active.purpose = Purpose::Asked { retries };
+                        active.phase = Phase::Backoff;
+                        return Lost::Retry {
+                            delay_ms: (FIRST_DELAY_MS << (retries.min(10) - 1)).min(MAX_DELAY_MS),
+                            in_flight: self.take_in_flight(),
+                        };
+                    }
                 }
             },
         };
-        self.state = if self.is_preconnect() {
-            State::Idle
-        } else {
-            State::Closed
-        };
+        self.state = state;
         Lost::ForGood {
             reason,
             pending: self.take_pending(),
@@ -695,7 +712,7 @@ impl<P> Client<P> {
                 } else {
                     Phase::Ready
                 };
-                active.retries = 0;
+                active.purpose.succeed();
                 Event::Connected(value)
             }
             _ => broken(

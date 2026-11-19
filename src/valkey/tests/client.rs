@@ -83,7 +83,10 @@ impl Driver {
     }
 
     fn dial(&mut self) {
-        let attempt = self.client.first_dial().or_else(|| self.client.redial());
+        let attempt = self
+            .client
+            .claim_and_dial()
+            .or_else(|| self.client.redial());
         self.attempt = Some(attempt.unwrap());
     }
 
@@ -300,7 +303,7 @@ mod lifecycle {
     /// The core keeps its state private, so this tells them apart through what they do.
     fn state_of(mut it: Driver) -> State {
         it.log.clear();
-        if it.client.first_dial().is_some() {
+        if it.client.claim_and_dial().is_some() {
             Idle
         } else if it.client.redial().is_some() {
             Backoff
@@ -353,7 +356,7 @@ mod lifecycle {
     #[test]
     fn dial() {
         check(
-            |it| it.attempt = it.client.first_dial().or(it.attempt.take()),
+            |it| it.attempt = it.client.claim_and_dial().or(it.attempt.take()),
             &[(Idle, "", Dialing)],
         );
         check(
@@ -540,50 +543,42 @@ mod lifecycle {
     }
 
     #[test]
-    fn a_preconnect_that_fails_unused_is_forgotten() {
-        fn preconnect(then: impl Fn(&mut Driver)) -> State {
-            let mut it = Driver::new(Config {
-                max_retries: 0,
-                ..database(1)
-            });
-            it.attempt = it.client.preconnect();
-            it.start();
-            then(&mut it);
-            state_of(it)
+    fn a_preconnect_that_is_lost_unclaimed_is_forgotten() {
+        type Touch = fn(&mut Driver);
+        let touches: [(&str, Touch, State); 5] = [
+            ("nothing", |_| {}, Idle),
+            ("claim", |it| it.client.claim(), Backoff),
+            ("command", |it| drop(it.client.claim_and_dial()), Backoff),
+            ("connect", |it| it.client.connect(), Backoff),
+            ("close", |it| drop(it.client.close()), Closed),
+        ];
+        let phases: [(&str, Touch); 4] = [
+            ("dialing", |_| {}),
+            ("no socket", |it| it.client.dial_failed()),
+            ("hello", Driver::start),
+            ("ready", |it| (it.start(), it.read("+OK\r\n")).1),
+        ];
+        for (phase, reach) in phases {
+            for (touch, apply, expected) in touches {
+                let mut it = Driver::new(Config::default());
+                it.attempt = it.client.preconnect();
+                reach(&mut it);
+                apply(&mut it);
+                it.lost();
+                assert_eq!(state_of(it), expected, "{phase}, {touch}");
+            }
         }
-        let hello_is_refused = |it: &mut Driver| it.read("-NO\r\n");
-        assert_eq!(preconnect(hello_is_refused), Idle);
-        let select_is_refused = |it: &mut Driver| it.read("+OK\r\n-NO\r\n");
-        assert_eq!(preconnect(select_is_refused), Idle);
-        let retries_are_used_up = Driver::lost;
-        assert_eq!(preconnect(retries_are_used_up), Idle);
-
-        let script_waits_for_it = |it: &mut Driver| {
-            assert!(it.client.first_dial().is_none());
-            it.lost();
-        };
-        assert_eq!(preconnect(script_waits_for_it), Closed);
-        let script_closes_it = |it: &mut Driver| {
-            drop(it.client.close());
-            it.lost();
-        };
-        assert_eq!(preconnect(script_closes_it), Closed);
     }
 
     #[test]
-    fn retries_start_over_after_a_forgotten_preconnect() {
-        let mut it = Driver::new(Config {
-            max_retries: 1,
-            ..Config::default()
-        });
-        it.attempt = it.client.preconnect();
-        it.lost();
-        it.attempt = it.client.redial();
-        it.lost();
-        it.log.clear();
-        it.dial();
-        it.lost();
-        assert_eq!(it.take(), ["retry in 50 []"]);
+    fn a_preconnect_that_is_refused_is_forgotten() {
+        for replies in ["-NO\r\n", "+OK\r\n-NO\r\n"] {
+            let mut it = Driver::new(database(1));
+            it.attempt = it.client.preconnect();
+            it.start();
+            it.read(replies);
+            assert_eq!(state_of(it), Idle, "{replies:?}");
+        }
     }
 
     #[test]

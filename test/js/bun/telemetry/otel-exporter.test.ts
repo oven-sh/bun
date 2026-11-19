@@ -369,7 +369,7 @@ describe.concurrent("OTLP/HTTP exporter", () => {
 
   test("Retry-After on a 429 sets the retry delay", async () => {
     // A 429 with Retry-After: 60 parks the batch for 60 s (not the default 1 s),
-    // so 1.5 s later it has not been retried; forceFlush() then retries it now.
+    // so 1.5 s later it has not been retried. forceFlush() leaves it parked, and the exit gives it a last try.
     using c = collector(i =>
       i === 0 ? new Response("slow down", { status: 429, headers: { "Retry-After": "60" } }) : undefined,
     );
@@ -386,8 +386,27 @@ describe.concurrent("OTLP/HTTP exporter", () => {
       `,
       { COLLECTOR: c.url, BUN_OTEL_INSTRUMENTATIONS: "http" },
     );
-    expect(stdout.trim()).toBe(JSON.stringify([1, 2, 1]));
+    expect(stdout.trim()).toBe(JSON.stringify([1, 1, 0]));
+    expect(c.received.length).toBe(2);
     expect(exitCode).toBe(0);
+  });
+
+  test("forceFlush() neither overrides Retry-After nor waits for it, and waits for the other exporters", async () => {
+    using c = collector(() => new Response(null, { status: 429, headers: { "retry-after": "100" } }));
+    const { stdout, exitCode } = await run(
+      `let slow = "pending";
+       const asked = async () => (await fetch(process.env.URL)).json();
+       Bun.otel.start({
+         instrumentations: [],
+         exporters: [process.env.URL, { async export() { while (!(await asked())) await Bun.sleep(5); await asked(); slow = "done"; } }],
+       });
+       Bun.otel.span("s", () => {});
+       await Bun.otel.forceFlush();
+       await Bun.otel.forceFlush();
+       console.log(slow, await asked());`,
+      { URL: c.url },
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "done 1\n", exitCode: 0 });
   });
 
   test("after a forceFlush(), later failed exports keep their backoff (are not retried in a burst)", async () => {

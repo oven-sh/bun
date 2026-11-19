@@ -530,7 +530,8 @@ declare module "bun" {
     /**
      * Export everything buffered so far. Resolves once every exporter has
      * been handed the batch (function exporters have been called; HTTP
-     * exporters have a response or have given up).
+     * exporters have delivered it, have given up, or were told to come back
+     * later with `Retry-After`).
      */
     forceFlush(): Promise<void>;
 

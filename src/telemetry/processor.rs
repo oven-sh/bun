@@ -67,6 +67,14 @@ enum RetryFilter {
     OlderThan(u64),
 }
 
+#[derive(Clone, Copy)]
+pub enum Backoff {
+    /// A flush cuts it short.
+    Own(Duration),
+    /// `Retry-After`. A flush leaves the payload parked, and does not wait for it.
+    AskedByServer(Duration),
+}
+
 /// One exporter's obligation for one payload. The Processor issues it when it
 /// hands a payload out; exactly one of `done`, `retry_later`, `abandoned`
 /// finishes it (each consumes the token).
@@ -96,7 +104,7 @@ impl ExportAttempt {
 
     /// Hand the payload back to go through `exporter` again after `backoff`,
     /// as the next attempt.
-    pub fn retry_later(mut self, exporter: Arc<dyn Exporter>, backoff: Duration) {
+    pub fn retry_later(mut self, exporter: Arc<dyn Exporter>, backoff: Backoff) {
         let p = self.payload.take().expect("unfinished ExportAttempt");
         self.processor.park(exporter, p, self.attempt + 1, backoff);
     }
@@ -171,6 +179,7 @@ struct ParkedRetry {
     payload: Arc<ExportPayload>,
     attempt: u32,
     due: MonoInstant,
+    is_asked_by_server: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -443,9 +452,10 @@ impl Processor {
         exporter: Arc<dyn Exporter>,
         payload: Arc<ExportPayload>,
         attempt: u32,
-        backoff: Duration,
+        backoff: Backoff,
     ) {
-        let due = MonoInstant::now() + backoff;
+        let (Backoff::Own(delay) | Backoff::AskedByServer(delay)) = backoff;
+        let due = MonoInstant::now() + delay;
         // Counted against the queue once, however many exporters park it.
         if payload.parked.fetch_add(1, Ordering::AcqRel) == 0 {
             self.parked_spans
@@ -456,13 +466,12 @@ impl Processor {
             payload,
             attempt,
             due,
+            is_asked_by_server: matches!(backoff, Backoff::AskedByServer(_)),
         });
         self.finish_one();
         // Wake forceFlush() waiters: a flush waiting on this payload sends it
         // again now (`hurry_retries_before`) instead of waiting out the backoff.
-        for (_, h) in self.settle_hooks.read().iter() {
-            h();
-        }
+        self.run_settle_hooks();
     }
 
     /// `Due`: retries whose backoff has elapsed; `OlderThan`: the parked
@@ -475,8 +484,9 @@ impl Processor {
             }
             match filter {
                 RetryFilter::OlderThan(seq) => {
-                    let (older, rest): (Vec<_>, Vec<_>) =
-                        q.drain(..).partition(|r| r.payload.seq < seq);
+                    let (older, rest): (Vec<_>, Vec<_>) = q
+                        .drain(..)
+                        .partition(|r| r.payload.seq < seq && !r.is_asked_by_server);
                     *q = rest;
                     if older.is_empty() {
                         return;
@@ -634,9 +644,17 @@ impl Processor {
         self.dispatch_retries(RetryFilter::OlderThan(t.0));
     }
 
-    /// True once no payload older than `t` is outstanding.
+    /// True once every payload older than `t` is settled, or only waits because a server asked for it.
     pub fn settled_before(&self, t: FlushTarget) -> bool {
-        self.outstanding.lock().iter().all(|s| *s >= t.0)
+        let retries = self.retries.lock();
+        let only_waits_for_servers = |seq: u64| {
+            let mut asked =
+                (retries.iter()).filter(|r| r.payload.seq == seq && r.is_asked_by_server);
+            asked.next().is_some_and(|first| {
+                first.payload.pending.load(Ordering::Acquire) as usize == 1 + asked.count()
+            })
+        };
+        (self.outstanding.lock().iter()).all(|&seq| seq >= t.0 || only_waits_for_servers(seq))
     }
 
     /// Export the next batch now (at most `max_export_batch_size` spans; the
@@ -708,7 +726,13 @@ impl Processor {
             };
             counter.fetch_add(payload.span_count as u64, Ordering::Relaxed);
             self.retire(payload);
+        } else if payload.parked.load(Ordering::Acquire) != 0 {
+            self.run_settle_hooks();
         }
+    }
+
+    fn run_settle_hooks(&self) {
+        self.settle_hooks.read().iter().for_each(|(_, hook)| hook());
     }
 
     /// A payload taken with no exporter to hand it to.
@@ -727,9 +751,7 @@ impl Processor {
                 o.swap_remove(i);
             }
         }
-        for (_, h) in self.settle_hooks.read().iter() {
-            h();
-        }
+        self.run_settle_hooks();
     }
 
     fn finish_one(&'static self) {

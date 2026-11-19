@@ -18,7 +18,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSPromise, JSValue, JsResult, Strong, VmHandle, bun_string_jsc};
 use bun_telemetry::MonoInstant;
 use bun_telemetry::processor::{
-    self, ExportAttempt, ExportPayload, ExportResult, Exporter, OwnerKey,
+    self, Backoff, ExportAttempt, ExportPayload, ExportResult, Exporter, OwnerKey,
 };
 use bun_telemetry_cold::config::{Compression, ExporterConfig, OtlpExporterConfig};
 use bun_threading::{Condvar, Guarded};
@@ -247,14 +247,14 @@ impl OtlpHttpExporter {
             self.warn_once(attempt.payload(), "", error);
             return attempt.done(ExportResult::Failure);
         }
-        let seconds = match error {
+        let backoff = match error {
             SendError::Status {
                 retry_after_seconds: Some(seconds),
                 ..
-            } => u64::from(*seconds).clamp(1, 120),
-            _ => 1 << attempt.attempt(),
+            } => Backoff::AskedByServer(Duration::from_secs(u64::from(*seconds).clamp(1, 120))),
+            _ => Backoff::Own(Duration::from_secs(1 << attempt.attempt())),
         };
-        attempt.retry_later(self, Duration::from_secs(seconds));
+        attempt.retry_later(self, backoff);
     }
 
     fn warn_once(&self, payload: &ExportPayload, when: &str, error: &SendError) {

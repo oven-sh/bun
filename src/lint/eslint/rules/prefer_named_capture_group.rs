@@ -27,6 +27,7 @@ fn has_same_offsets_in_source(pattern: &[u8], regex_node: Expr<'_>) -> bool {
         | ExprKind::True
         | ExprKind::False
         | ExprKind::Null
+        | ExprKind::Decimal(_)
         | ExprKind::Regex(_) => true,
         ExprKind::Template(template) => template.exprs().is_empty() && template.raw(0) == pattern,
         _ => false,

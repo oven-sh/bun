@@ -36,6 +36,7 @@ fn is_literal(e: Expr<'_>) -> bool {
         ExprTag::String
             | ExprTag::Number
             | ExprTag::BigInt
+            | ExprTag::Decimal
             | ExprTag::Regex
             | ExprTag::True
             | ExprTag::False

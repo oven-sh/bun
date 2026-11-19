@@ -79,7 +79,8 @@ fn boolean_value_if_simple_constant(node: VNode) -> Option<bool> {
         Value::Number(value) => value != 0.0 && !value.is_nan(),
         Value::Str(value) => !value.is_empty(),
         Value::BigInt(digits) => digits.iter().any(|&digit| digit != b'0'),
-        Value::Regex { .. } => true,
+        // A Decimal has no value.
+        Value::Regex { .. } | Value::Undefined => true,
         _ => false,
     })
 }

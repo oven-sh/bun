@@ -18,6 +18,7 @@ pub enum T {
     TNumericLiteral,                // contents are in lexer.number (float64)
     TStringLiteral,                 // contents are in lexer.string_literal ([]uint16)
     TBigIntegerLiteral,             // contents are in lexer.identifier (string)
+    TDecimalLiteral,                // contents are in lexer.identifier (string)
 
     // pseudo-literals
     TTemplateHead,   // contents are in lexer.string_literal ([]uint16)
@@ -291,6 +292,7 @@ pub static TOKEN_TO_STRING: TokenEnumType = TokenEnumType({
     token_enums[T::TNumericLiteral as usize] = b"number";
     token_enums[T::TStringLiteral as usize] = b"string";
     token_enums[T::TBigIntegerLiteral as usize] = b"bigint";
+    token_enums[T::TDecimalLiteral as usize] = b"decimal";
 
     // Pseudo-literals
     token_enums[T::TTemplateHead as usize] = b"template literal";

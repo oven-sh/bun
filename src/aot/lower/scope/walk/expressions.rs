@@ -138,6 +138,7 @@ impl Walker<'_, '_> {
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
             | ExprKind::Regex { .. }
+            | ExprKind::Decimal(_)
             | ExprKind::JsxText(_) => {}
             ExprKind::ImportMeta => {
                 if self.input.modules.has_instances(self.input.file) {

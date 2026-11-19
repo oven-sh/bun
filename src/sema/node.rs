@@ -947,6 +947,7 @@ impl<const FOR_PARENTS: bool, V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, 
             | ExprKind::Number(_)
             | ExprKind::BigInt(_)
             | ExprKind::Regex { .. }
+            | ExprKind::Decimal(_)
             | ExprKind::JsxText(_) => false,
             ExprKind::String(_) => {
                 file.is_namespaced_tag_name(e)
@@ -1536,6 +1537,7 @@ impl<'s> File<'s> {
                     | ExprKind::String(_)
                     | ExprKind::BigInt(_)
                     | ExprKind::Regex { .. }
+                    | ExprKind::Decimal(_)
                     | ExprKind::JsxText(_)
                     | ExprKind::ImportMeta
                     | ExprKind::NewTarget(_)
@@ -2364,7 +2366,8 @@ impl<'s> File<'s> {
             },
             ExprKind::JsxText(_) => Kind::JsxText,
             ExprKind::BigInt(_) => Kind::BigIntLiteral,
-            ExprKind::Regex { .. } => Kind::RegularExpressionLiteral,
+            // TypeScript has no other kind for a token that makes an object.
+            ExprKind::Regex { .. } | ExprKind::Decimal(_) => Kind::RegularExpressionLiteral,
             ExprKind::Template { exprs, .. } if exprs.is_empty() => {
                 Kind::NoSubstitutionTemplateLiteral
             }

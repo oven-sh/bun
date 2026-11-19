@@ -1613,6 +1613,13 @@ impl Walk<'_, '_> {
             }
             // Allowed: it's lowercased.
             (BigInt(x), BigInt(y)) => self.bigint(x, y),
+            (Decimal(_), Decimal(_)) => self.check(
+                is_same_number(
+                    self.a.slice(x.pos, x.end - 1),
+                    self.b.slice(y.pos, y.end - 1),
+                ),
+                "how a decimal is written",
+            ),
             (Regex { .. }, Regex { .. }) => {
                 self.regex(self.a.slice(x.pos, x.end), self.b.slice(y.pos, y.end))
             }

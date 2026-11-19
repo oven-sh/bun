@@ -1045,7 +1045,7 @@ impl<'a> Scanner<'a> {
                 end = digits(end + 1 + sign);
             }
         }
-        if self.byte(end) == b'n' {
+        if matches!(self.byte(end), b'n' | b'm') {
             end += 1;
         }
         self.token(TokenKind::Numeric, start, end);

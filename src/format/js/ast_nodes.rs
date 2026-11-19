@@ -129,7 +129,7 @@ impl std::fmt::Debug for Program<'_> {
 
 ast_nodes! {
     Expr<'a> {
-        IdentifierReference BooleanLiteral NullLiteral NumericLiteral BigIntLiteral RegExpLiteral
+        IdentifierReference BooleanLiteral NullLiteral NumericLiteral BigIntLiteral DecimalLiteral RegExpLiteral
         StringLiteral TemplateLiteral ThisExpression Super ArrayExpression ObjectExpression
         StaticMemberExpression ComputedMemberExpression PrivateFieldExpression CallExpression
         NewExpression ImportExpression MetaProperty TaggedTemplateExpression UnaryExpression
@@ -311,6 +311,7 @@ fn chain_element_slow_path<'a>(e: Expr<'a>) -> AstNodes<'a> {
         ExprTag::String if e.is_jsx_text() => N::JSXText(e),
         ExprTag::String => N::StringLiteral(e),
         ExprTag::BigInt => N::BigIntLiteral(e),
+        ExprTag::Decimal => N::DecimalLiteral(e),
         ExprTag::Regex => N::RegExpLiteral(e),
         ExprTag::Template => N::TemplateLiteral(e),
         ExprTag::TaggedTemplate => N::TaggedTemplateExpression(e),
@@ -870,6 +871,7 @@ impl<'a> AstNodes<'a> {
             | N::NullLiteral(e)
             | N::NumericLiteral(e)
             | N::BigIntLiteral(e)
+            | N::DecimalLiteral(e)
             | N::RegExpLiteral(e)
             | N::StringLiteral(e)
             | N::TemplateLiteral(e)
@@ -1151,6 +1153,7 @@ impl<'a> AstNodes<'a> {
             | N::NullLiteral(e)
             | N::NumericLiteral(e)
             | N::BigIntLiteral(e)
+            | N::DecimalLiteral(e)
             | N::RegExpLiteral(e)
             | N::StringLiteral(e)
             | N::TemplateLiteral(e)

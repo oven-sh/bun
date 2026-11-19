@@ -527,6 +527,8 @@ estree_schema! {
             Leaf::Bool(value) => Value::Bool(value),
             Leaf::BigInt(digits) => Value::BigInt(digits),
             Leaf::Regex { pattern, flags } => Value::Regex { pattern, flags },
+            // Not `null`, by which rules know that literal.
+            Leaf::Decimal => Value::Undefined,
             _ => Value::Null,
         };
         data Regex = match v.leaf()?.0 {

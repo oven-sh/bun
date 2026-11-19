@@ -163,6 +163,7 @@ impl NoUnsafeMemberAccess {
             ExprKind::String(_)
             | ExprKind::Number(_)
             | ExprKind::BigInt(_)
+            | ExprKind::Decimal(_)
             | ExprKind::Regex(_)
             | ExprKind::True
             | ExprKind::False

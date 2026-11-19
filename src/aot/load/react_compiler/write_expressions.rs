@@ -57,6 +57,9 @@ impl TreeWriter<'_, '_> {
             ExprData::EBigInt(big_int) => {
                 ExprKind::BigInt(self.atoms.intern(big_int.value.slice()))
             }
+            ExprData::EDecimal(decimal) => {
+                ExprKind::Decimal(self.atoms.intern(decimal.value.slice()))
+            }
             ExprData::EString(text) => ExprKind::String(self.atoms.intern(&string_text(text))),
             ExprData::ERegExp(regexp) => {
                 let pattern = self.atoms.intern(regexp.pattern());

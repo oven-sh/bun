@@ -280,6 +280,7 @@ fn is_primary(e: Expr) -> bool {
         | ExprTag::Template
         | ExprTag::TaggedTemplate
         | ExprTag::ImportCall
+        | ExprTag::Decimal
         | ExprTag::Regex
         | ExprTag::String
         | ExprTag::Number

@@ -202,6 +202,7 @@ fn is_node_value_not_function(e: Expr) -> bool {
         | ExprKind::Null
         | ExprKind::Number(_)
         | ExprKind::BigInt(_)
+        | ExprKind::Decimal(_)
         | ExprKind::Regex(_)
         | ExprKind::String(_)
         | ExprKind::Assign { .. }

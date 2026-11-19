@@ -2,7 +2,7 @@ use super::{
     ClassId, Expr, ExprFlags, ExprId, ExprKind, File, FileIn, Flags, FnBody, FnId, FnKind, IdList,
     MemberId, MemberKind, ModifierId, ModifierKind, ModuleId, ModuleName, NameKind, ParamId,
     PatKind, PatPropId, Prop, PropId, PropKey, PropKind, Span, Stmt, StmtId, StmtKind, Storage,
-    VarDeclId, has_body, is_nested_namespace,
+    UnOp, VarDeclId, has_body, is_nested_namespace,
 };
 use crate::atom::{Atom, known};
 use bun_core::strings;
@@ -12,6 +12,29 @@ impl<S: Storage> FileIn<S> {
     #[inline]
     pub fn has_typescript_semantics(&self) -> bool {
         !self.is_js
+    }
+
+    /// The text of `1.5m` behind any number of `-`, which the engine takes as a literal, and whether it's negative.
+    pub fn decimal_literal(&self, mut e: ExprId) -> Option<(Atom, bool)> {
+        let mut is_negative = false;
+        loop {
+            e = self.skip_type_assertions(e);
+            match self[e].kind {
+                ExprKind::Decimal(text) => return Some((text, is_negative)),
+                ExprKind::Unary {
+                    op: UnOp::Minus,
+                    operand,
+                } => (e, is_negative) = (operand, !is_negative),
+                _ => return None,
+            }
+        }
+    }
+
+    pub fn is_decimal_token(&self, e: ExprId) -> bool {
+        matches!(
+            self[self.skip_type_assertions(e)].kind,
+            ExprKind::Decimal(_)
+        )
     }
 
     fn runtime_key(&self, key: PropKey, name_pos: u32) -> PropKey {

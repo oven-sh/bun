@@ -3297,6 +3297,12 @@ impl<'a> Lexer<'a> {
 
                 // Store bigints as text to avoid precision loss;
                 self.identifier = text;
+            } else if self.code_point == 0x6D
+                && !is_invalid_legacy_octal_literal
+                && bun_ast::E::Decimal::is_enabled()
+            {
+                self.identifier = text;
+                self.token = T::TDecimalLiteral;
             } else if !has_dot_or_exponent && self.end - self.start < 10 {
                 // Parse a 32-bit integer (very fast path);
                 let mut number: u32 = 0;
@@ -3326,6 +3332,8 @@ impl<'a> Lexer<'a> {
         // Handle bigint literals after the underscore-at-end check above;
         if self.code_point == 0x6E && !has_dot_or_exponent {
             self.token = T::TBigIntegerLiteral;
+            self.step_with(contents);
+        } else if self.token == T::TDecimalLiteral {
             self.step_with(contents);
         }
 

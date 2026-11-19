@@ -922,6 +922,12 @@ impl<'a> Converter<'a, '_> {
                 },
                 loc,
             ),
+            ExprKind::Decimal(value) => JsExpr::init(
+                E::Decimal {
+                    value: StoreStr::new(value.bytes()),
+                },
+                loc,
+            ),
             ExprKind::Regex(regex) => {
                 let text = expr.text();
                 let flags_offset = text.len().checked_sub(regex.flags().len());

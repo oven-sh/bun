@@ -111,6 +111,7 @@ fn is_const_variable_initialized_with_array(ident: Expr) -> Option<bool> {
         | ExprKind::False
         | ExprKind::Null
         | ExprKind::BigInt(_)
+        | ExprKind::Decimal(_)
         | ExprKind::Regex(_)
         | ExprKind::Template(_)
         | ExprKind::Fn(_)

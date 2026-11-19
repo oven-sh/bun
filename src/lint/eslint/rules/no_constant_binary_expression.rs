@@ -240,7 +240,7 @@ fn is_always_new(e: Expr<'_>) -> bool {
     open.push(e);
     while let Some(e) = open.pop() {
         match e.kind() {
-            ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Fn(_) | ExprKind::Class(_) | ExprKind::Regex(_) => {}
+            ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Fn(_) | ExprKind::Class(_) | ExprKind::Regex(_) | ExprKind::Decimal(_) => {}
             // A constructor that isn't built in could return a sentinel object.
             ExprKind::New(call) => {
                 let callee = call.callee();

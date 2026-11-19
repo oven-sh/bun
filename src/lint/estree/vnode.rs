@@ -130,6 +130,7 @@ pub(super) enum Leaf<'a> {
     Number(f64),
     /// In decimal.
     BigInt(&'a [u8]),
+    Decimal,
     Bool(bool),
     Null,
     Regex {
@@ -480,6 +481,7 @@ impl<'a> VNode<'a> {
                     ExprKind::False => Leaf::Bool(false),
                     ExprKind::Number(value) => Leaf::Number(value),
                     ExprKind::BigInt(digits) => Leaf::BigInt(digits.bytes()),
+                    ExprKind::Decimal(_) => Leaf::Decimal,
                     ExprKind::Regex(regex) => Leaf::Regex {
                         pattern: regex.pattern(),
                         flags: regex.flags(),
@@ -784,6 +786,7 @@ fn expr_type(e: Expr, part: Part) -> NodeType {
         | ExprKind::False
         | ExprKind::Number(_)
         | ExprKind::BigInt(_)
+        | ExprKind::Decimal(_)
         | ExprKind::Regex(_) => Literal,
         ExprKind::Template(_) => TemplateLiteral,
         ExprKind::TaggedTemplate(_) => TaggedTemplateExpression,

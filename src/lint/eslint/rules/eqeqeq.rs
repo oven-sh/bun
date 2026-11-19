@@ -34,7 +34,7 @@ fn literal_type(e: Expr) -> Option<&'static str> {
         ExprKind::Number(_) => "number",
         ExprKind::True | ExprKind::False => "boolean",
         ExprKind::BigInt(_) => "bigint",
-        ExprKind::Null | ExprKind::Regex(_) => "object",
+        ExprKind::Null | ExprKind::Regex(_) | ExprKind::Decimal(_) => "object",
         _ => return None,
     })
 }

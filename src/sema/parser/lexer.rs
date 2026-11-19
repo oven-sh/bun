@@ -1989,6 +1989,10 @@ impl<'a> Lexer<'a> {
             };
             self.atom = (self.names).atom(Text::not_in_source(self.src, &decimal), self.atoms);
             T::BigInt
+        } else if radix == 10 && src.get(end) == Some(&b'm') && bun_ast::E::Decimal::is_enabled() {
+            end += 1;
+            self.atom = (self.names).atom(Text::not_in_source(self.src, &text), self.atoms);
+            T::Decimal
         } else {
             self.number = match radix {
                 10 => core::str::from_utf8(&text)

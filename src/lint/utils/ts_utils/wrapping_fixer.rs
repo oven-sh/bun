@@ -172,6 +172,7 @@ fn has_strong_precedence(node: Node<'_>) -> bool {
             | ExprTag::Number
             | ExprTag::String
             | ExprTag::BigInt
+            | ExprTag::Decimal
             | ExprTag::Regex
             | ExprTag::Ident
             | ExprTag::Array

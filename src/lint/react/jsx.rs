@@ -287,6 +287,7 @@ pub(crate) fn to_boolean(e: Expr) -> Option<bool> {
     }
     match e.kind() {
         ExprKind::Regex(_)
+        | ExprKind::Decimal(_)
         | ExprKind::Array(_)
         | ExprKind::Fn(_)
         | ExprKind::Class(_)

@@ -5043,6 +5043,7 @@ impl<'f, 's> Binder<'f, 's> {
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
             | ExprKind::Regex { .. }
+            | ExprKind::Decimal(_)
             | ExprKind::JsxText(_)
             | ExprKind::NewTarget(_) => self.b.expr_parent[id.idx()] = parent,
             ExprKind::Ident(_) => {
@@ -5143,6 +5144,7 @@ impl<'f, 's> Binder<'f, 's> {
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
             | ExprKind::Regex { .. }
+            | ExprKind::Decimal(_)
             | ExprKind::JsxText(_)
             | ExprKind::NewTarget(_) => {}
             ExprKind::ImportMeta => {

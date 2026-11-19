@@ -87,7 +87,11 @@ impl Removable<'_, '_> {
     fn is_written_as_object(&self, expression: ExprId) -> bool {
         matches!(
             self.hir[self.skip_operands_that_never_run(expression)].kind,
-            ExprKind::Regex { .. } | ExprKind::Fn(_) | ExprKind::Array(_) | ExprKind::Object(_)
+            ExprKind::Regex { .. }
+                | ExprKind::Decimal(_)
+                | ExprKind::Fn(_)
+                | ExprKind::Array(_)
+                | ExprKind::Object(_)
         )
     }
 
@@ -207,6 +211,7 @@ impl Removable<'_, '_> {
             | ExprKind::Number(_)
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
+            | ExprKind::Decimal(_)
             | ExprKind::Fn(_)
             | ExprKind::ImportMeta
             | ExprKind::JsxText(_) => true,

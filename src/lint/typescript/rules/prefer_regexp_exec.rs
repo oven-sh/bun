@@ -198,6 +198,7 @@ fn is_strong_precedence_node(node: Expr<'_>) -> bool {
         | ExprTag::Number
         | ExprTag::String
         | ExprTag::BigInt
+        | ExprTag::Decimal
         | ExprTag::Regex
         | ExprTag::Ident
         | ExprTag::Array

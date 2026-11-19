@@ -834,6 +834,17 @@ impl BigInt {
     }
 }
 
+/// `1.5m`. Like a `RegExp` literal, it is a new object each time.
+pub struct Decimal {
+    /// The source text without separators and without the `m`.
+    pub value: Str,
+}
+impl Decimal {
+    pub fn is_enabled() -> bool {
+        bun_core::decimal_options::DecimalOptions::of_process().has_literals()
+    }
+}
+
 // ── immutable JSON nodes ───────────────────────────────────────────────────
 // Compact, read-only object/array nodes: the JSON parser's native output.
 // Children are `PropertyJSON` rows / inline `JsonValue`s in the document's `JsonTape`.

@@ -82,6 +82,7 @@ impl NoAnonymousDefaultExport {
             | ExprKind::Null
             | ExprKind::Number(_)
             | ExprKind::BigInt(_)
+            | ExprKind::Decimal(_)
             | ExprKind::Regex(_)
             | ExprKind::String(_)
             | ExprKind::Template(_) => (self.allow_literal, LITERAL),

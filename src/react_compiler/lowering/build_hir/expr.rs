@@ -307,6 +307,16 @@ pub(crate) fn lower_expression(
             })?;
             Ok(unsupported_node("BigIntLiteral", loc))
         }
+        Data::EDecimal(_) => {
+            builder.record_error(CompilerErrorDetail {
+                category: ErrorCategory::Todo,
+                reason: "(BuildHIR::lowerExpression) Handle DecimalLiteral expressions".to_string(),
+                description: None,
+                loc,
+                suggestions: None,
+            })?;
+            Ok(unsupported_node("DecimalLiteral", loc))
+        }
         Data::ERegExp(re) => Ok(InstructionValue::RegExpLiteral {
             pattern: StoreStr::new(re.pattern()),
             flags: StoreStr::new(re.flags()),

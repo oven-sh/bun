@@ -754,4 +754,56 @@ describe.concurrent.skipIf(!isLinux)("a message handler that runs the event loop
     );
     expect(result).toEqual({ stdout: ["m0", ...expected], stderr: "", exitCode: 0 });
   });
+
+  it("while nothing is buffered: the bytes of another socket are not read as a message", async () => {
+    const result = await runPair(
+      `
+        const { promise: received, resolve: data } = Promise.withResolvers();
+        const { port } = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data } });
+        const client = await Bun.connect({ hostname: "127.0.0.1", port, socket: { data() {} } });
+        spawnChild({
+          serialization: "advanced",
+          onDisconnect: () => process.exit(0),
+          ipc(message) {
+            console.log(message);
+            if (message !== "m1") return;
+            client.write(Buffer.concat(["aa", "zz"].map(advancedFrame)));
+            runEventLoopUntil(received);
+            fs.writeFileSync("received", "");
+          },
+        });
+      `,
+      `
+        write(Buffer.concat(["m1", "m2"].map(advancedFrame)));
+        until("received");
+      `,
+    );
+    expect(result).toEqual({ stdout: ["m1", "m2"], stderr: "", exitCode: 0 });
+  });
+
+  it("while nothing is buffered: messages arrive in order through two nested reads", async () => {
+    const result = await runPair(
+      `
+        const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+        spawnChild({
+          serialization: "advanced",
+          onDisconnect,
+          ipc(message) {
+            console.log(message);
+            if (message !== "m1" && message !== "m2") return;
+            fs.writeFileSync("in " + message, "");
+            runEventLoopUntil(disconnected);
+          },
+        });
+      `,
+      `
+        write(Buffer.concat(["m1", "m2", "m3"].map(advancedFrame)));
+        until("in m1");
+        write(advancedFrame("m4"));
+        until("in m2");
+        write(advancedFrame("m5"));
+      `,
+    );
+    expect(result).toEqual({ stdout: ["m1", "m2", "m3", "m4", "m5"], stderr: "", exitCode: 0 });
+  });
 });

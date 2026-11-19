@@ -2224,51 +2224,41 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
         }
         Mode::Advanced => {
             // Advanced mode: uses length-prefix, no newline scanning needed.
-            // Try to decode directly from the incoming chunk first, only buffer if needed.
+            // Try to decode the first message directly from the incoming chunk, and buffer the rest.
             let buffered = send_queue.incoming.with_mut(|inc| {
                 let IncomingBuffer::Advanced(adv_buf) = inc else {
                     unreachable!()
                 };
                 adv_buf.is_not_empty()
             });
+            let mut first = None;
             if !buffered {
-                loop {
-                    match decode_ipc_message(Mode::Advanced, data, &global_this, None) {
-                        Ok(result) => {
-                            let consumed = result.bytes_consumed as usize;
-                            crate::dispatch::fold(handle_ipc_message(
-                                send_queue,
-                                result.message,
-                                &global_this,
-                            ));
-                            if consumed < data.len() {
-                                data = &data[consumed..];
-                            } else {
-                                return;
-                            }
-                        }
-                        Err(IPCDecodeError::NotEnoughBytes) => {
-                            send_queue.incoming.with_mut(|inc| {
-                                let IncomingBuffer::Advanced(adv_buf) = inc else {
-                                    unreachable!()
-                                };
-                                handle_oom(adv_buf.write(data));
-                            });
-                            log!("hit NotEnoughBytes");
-                            return;
-                        }
-                        Err(e) => return finish_decode(send_queue, &DecodeStep::Fail(e)),
+                match decode_ipc_message(Mode::Advanced, data, &global_this, None) {
+                    Ok(result) => {
+                        data = &data[result.bytes_consumed as usize..];
+                        first = Some(result.message);
                     }
+                    Err(IPCDecodeError::NotEnoughBytes) => {}
+                    Err(e) => return finish_decode(send_queue, &DecodeStep::Fail(e)),
                 }
             }
 
-            // Buffer has existing data, append and process
-            send_queue.incoming.with_mut(|inc| {
+            // `data` is the loop's receive buffer, which a handler that runs the event loop overwrites.
+            let capacity = send_queue.incoming.with_mut(|inc| {
                 let IncomingBuffer::Advanced(adv_buf) = inc else {
                     unreachable!()
                 };
+                let capacity = adv_buf.list.capacity();
                 handle_oom(adv_buf.write(data));
+                capacity
             });
+            let read_in_place = first.is_some();
+            if let Some(message) = first {
+                crate::dispatch::fold(handle_ipc_message(send_queue, message, &global_this));
+                if data.is_empty() {
+                    return;
+                }
+            }
             loop {
                 match decode_next_advanced(&send_queue.incoming, &global_this) {
                     DecodeStep::Message(result) => {
@@ -2278,8 +2268,17 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                             &global_this,
                         ));
                     }
-                    step => return finish_decode(send_queue, &step),
+                    step => break finish_decode(send_queue, &step),
                 }
+            }
+            if read_in_place {
+                // Only a message that is split over reads grows the buffer for good.
+                send_queue.incoming.with_mut(|inc| {
+                    let IncomingBuffer::Advanced(adv_buf) = inc else {
+                        unreachable!()
+                    };
+                    adv_buf.list.shrink_to(capacity);
+                });
             }
         }
     }

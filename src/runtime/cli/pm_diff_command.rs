@@ -61,6 +61,8 @@ struct Tree {
     /// The registry manifest's entry for this version, as JSON. `None` unless this side came from a
     /// registry.
     registry_entry: Option<Vec<u8>>,
+    /// The tarball that holds the files, until `unpack` has read it.
+    packed: Option<Vec<u8>>,
 }
 
 /// `original_cwd` is the folder the user ran the command from; inside a workspace the manager has since `chdir`ed
@@ -118,7 +120,8 @@ pub(crate) fn exec(
         (&left_spec, &mut right_spec)
     {
         if name.is_empty() {
-            let local = materialize(pm, &left_spec, as_published)?;
+            let mut local = materialize(pm, &left_spec, as_published)?;
+            local.unpack().map_err(Unreadable::report)?;
             *name = package_name_in(&local);
             left_early = Some(local);
         }
@@ -126,6 +129,7 @@ pub(crate) fn exec(
     let mut right = materialize(pm, &right_spec, as_published)?;
     if let Spec::Registry { name, .. } = &mut left_spec {
         if name.is_empty() {
+            right.unpack().map_err(Unreadable::report)?;
             *name = package_name_in(&right);
         }
     }
@@ -133,6 +137,13 @@ pub(crate) fn exec(
         Some(tree) => tree,
         None => materialize(pm, &left_spec, as_published)?,
     };
+    let threads = Threads::with_stack_of_this_one();
+    let (unpacked_right, unpacked_left) = threads
+        .join(|| right.unpack(), || left.unpack())
+        .unwrap_or_else(|| (right.unpack(), left.unpack()));
+    unpacked_right
+        .and(unpacked_left)
+        .map_err(Unreadable::report)?;
     // Show local paths the way they were typed, not as resolved against the invoking folder.
     for (tree, spec) in [(&mut left, &left_spec), (&mut right, &right_spec)] {
         if let Spec::Dir(p) | Spec::Tarball(p) = spec {
@@ -161,7 +172,7 @@ pub(crate) fn exec(
             Global::exit(1);
         }
     }
-    print_diff(&left, &right, flags);
+    print_diff(&left, &right, flags, threads);
     Output::flush();
     Ok(())
 }
@@ -516,33 +527,56 @@ fn materialize(
                     Global::exit(1);
                 }
             };
-            let mut tree = Tree {
+            Ok(Tree {
                 label: path.clone(),
                 files: BTreeMap::new(),
                 modes: BTreeMap::new(),
                 registry_entry: None,
-            };
-            read_tarball_into(&bytes, &mut tree)?;
-            Ok(tree)
+                packed: Some(bytes),
+            })
         }
         Spec::Dir(path) => read_dir_tree(path, as_published.then_some(pm)),
     }
 }
 
-fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> {
-    let fail = |err: tar::Error, message: &str| -> crate::Error {
-        if let tar::Error::Alloc(err) = err {
-            return err.into();
+/// Why a tarball was not unpacked. The main thread reports it, so that timing does not pick one of two errors.
+enum Unreadable {
+    Damaged(String),
+    Alloc(bun_alloc::AllocError),
+}
+
+impl Unreadable {
+    fn report(self) -> crate::Error {
+        match self {
+            Unreadable::Damaged(message) => {
+                Status::clear();
+                Output::err_generic("{}", (message.as_str(),));
+                Global::exit(1);
+            }
+            Unreadable::Alloc(err) => err.into(),
         }
-        Status::clear();
-        Output::err_generic("{}: {}", (BStr::new(&tree.label), message));
-        Global::exit(1);
+    }
+}
+
+impl Tree {
+    fn unpack(&mut self) -> Result<(), Unreadable> {
+        match self.packed.take() {
+            Some(bytes) => read_tarball_into(&bytes, self),
+            None => Ok(()),
+        }
+    }
+}
+
+fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), Unreadable> {
+    let fail = |err: tar::Error, message: core::fmt::Arguments<'_>| match err {
+        tar::Error::Alloc(err) => Unreadable::Alloc(err),
+        _ => Unreadable::Damaged(format!("{}: {message}", BStr::new(&tree.label))),
     };
     let mut reader = bun_archive::open_memory(bytes, tar::Dialect::Npm)
-        .map_err(|err| fail(err, "failed to read tarball"))?;
+        .map_err(|err| fail(err, format_args!("failed to read tarball")))?;
     while let Some(entry) = reader
         .next_entry()
-        .map_err(|err| fail(err, "failed to read archive header"))?
+        .map_err(|err| fail(err, format_args!("failed to read archive header")))?
     {
         if entry.kind() != bun_sys::FileKind::File {
             continue;
@@ -555,21 +589,13 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         }
         let rel = rel.into_portable().to_vec();
         let mut data = Vec::new();
-        if let Err(err) = reader.read_data(size, &mut data) {
-            if let tar::Error::Alloc(err) = err {
-                return Err(err.into());
-            }
-            Status::clear();
-            Output::err_generic(
-                "{}: {}: {}",
-                (
-                    BStr::new(&tree.label),
-                    BStr::new(&rel),
-                    "failed to read archive data",
-                ),
-            );
-            Global::exit(1);
-        }
+        // The header can claim any size.
+        (data.try_reserve_exact(size.min(bytes.len())))
+            .map_err(|_| Unreadable::Alloc(bun_alloc::AllocError))?;
+        reader.read_data(size, &mut data).map_err(|err| {
+            let rel = BStr::new(&rel);
+            fail(err, format_args!("{rel}: failed to read archive data"))
+        })?;
         tree.modes.insert(rel.clone(), perm);
         tree.files.insert(rel, data);
     }
@@ -586,6 +612,7 @@ fn read_dir_tree(
         files: BTreeMap::new(),
         modes: BTreeMap::new(),
         registry_entry: None,
+        packed: None,
     };
     let root_dir = match bun_sys::Dir::open(root) {
         Ok(dir) => dir,
@@ -963,14 +990,13 @@ fn fetch_registry_tree(
         }
     }
 
-    let mut tree = Tree {
+    Ok(Tree {
         label,
         files: BTreeMap::new(),
         modes: BTreeMap::new(),
         registry_entry,
-    };
-    read_tarball_into(tarball.list.as_slice(), &mut tree)?;
-    Ok(tree)
+        packed: Some(tarball.list),
+    })
 }
 
 fn registry_get(
@@ -1326,6 +1352,47 @@ fn patch_name(prefix: &[u8], path: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Starts the threads that files are unpacked and compared on.
+#[derive(Clone, Copy)]
+pub(crate) struct Threads {
+    stack_size: usize,
+}
+
+impl Threads {
+    /// A file that nests too deep for the stack is not parsed, so a thread gets at least as much as this one has left.
+    fn with_stack_of_this_one() -> Threads {
+        /// Upper bound on the stack that a thread has used when it starts on a file.
+        const THREAD_START: usize = 64 << 10;
+        /// What the calling thread has left of its stack varies from run to run, because the kernel starts it at a
+        /// random address. The stack size is rounded up to a multiple of this, so that it doesn't.
+        const STACK_STEP: usize = 1 << 20;
+
+        let remaining = StackCheck::init().remaining() + StackCheck::THRESHOLD;
+        Threads {
+            stack_size: remaining.next_multiple_of(STACK_STEP) + THREAD_START,
+        }
+    }
+
+    /// Runs `there` on a new thread while `here` runs on this one. Runs neither if the OS cannot start a thread.
+    pub(crate) fn join<A, B: Send>(
+        self,
+        here: impl FnOnce() -> A,
+        there: impl FnOnce() -> B + Send,
+    ) -> Option<(A, B)> {
+        std::thread::scope(|scope| {
+            // SAFETY: this command starts no VM, so `there` holds no state of one.
+            let thread = std::thread::Builder::new()
+                .stack_size(self.stack_size)
+                .spawn_scoped(scope, || {
+                    Output::Source::configure_named_thread(bun_core::zstr!("Diff"));
+                    there()
+                })
+                .ok()?;
+            Some((here(), thread.join().expect("a panic aborts")))
+        })
+    }
+}
+
 /// Files that one thread compares one after the other. Its memory is that of the largest.
 type Part<'c, 'a> = &'c mut [&'c mut FileChange<'a>];
 
@@ -1350,7 +1417,7 @@ impl Queue<'_, '_> {
 }
 
 /// Compares the files on this thread, or on several others if there is enough work for that.
-fn compare_all(changes: &mut [FileChange<'_>], flags: DiffFlags, style: Style) {
+fn compare_all(changes: &mut [FileChange<'_>], flags: DiffFlags, style: Style, helpers: Threads) {
     /// One more thread per this much work. With less, starting it costs more than it saves.
     const WORK_PER_THREAD: usize = 64 << 10;
     /// Beside one file of any size, files with as many tokens as the largest parsed one has are
@@ -1359,11 +1426,6 @@ fn compare_all(changes: &mut [FileChange<'_>], flags: DiffFlags, style: Style) {
     const MAX_BESIDE: usize = 4 << 20;
     /// A part ends with the file that brings it to this much work, so small files do not take a turn each.
     const WORK_PER_PART: usize = 16 << 10;
-    /// Upper bound on the stack that a pool thread has used when it starts on a file.
-    const THREAD_START: usize = 64 << 10;
-    /// What the calling thread has left of its stack varies from run to run, because the kernel starts it at a random
-    /// address. The pool's stack size is rounded up to a multiple of this, so that it doesn't.
-    const STACK_STEP: usize = 1 << 20;
 
     let mut files: Vec<&mut FileChange<'_>> = changes
         .iter_mut()
@@ -1373,12 +1435,9 @@ fn compare_all(changes: &mut [FileChange<'_>], flags: DiffFlags, style: Style) {
     let threads = (1 + work / WORK_PER_THREAD)
         .min(files.len())
         .min(usize::from(bun_core::get_thread_count()));
-    // A file that nests too deep for the stack is not parsed, so a pool thread gets at least as much as this thread has.
-    let remaining = StackCheck::init().remaining() + StackCheck::THRESHOLD;
-    let stack_size = remaining.next_multiple_of(STACK_STEP) + THREAD_START;
     let pool = ThreadPool::init(thread_pool::Config {
         max_threads: u32::try_from(threads).expect("int cast"),
-        stack_size: u32::try_from(stack_size).unwrap_or(u32::MAX),
+        stack_size: u32::try_from(helpers.stack_size).unwrap_or(u32::MAX),
     })
     .named("Diff")
     .without_spare_threads();
@@ -1745,7 +1804,7 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style) {
     }
 }
 
-fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
+fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags, threads: Threads) {
     let style = Style::detect(flags);
     let mut changes: Vec<FileChange> = Vec::new();
 
@@ -1786,7 +1845,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             ..Default::default()
         });
     }
-    compare_all(&mut changes, flags, style);
+    compare_all(&mut changes, flags, style, threads);
 
     if flags.json {
         print_json(left, right, &changes, flags);

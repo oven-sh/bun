@@ -852,8 +852,7 @@ const kFetch = Symbol("kFetch");
 
 type PendingEntry = { abort: (reason?: Error) => void; done: Promise<void> };
 
-// The caller chose the route. Native fetch ranks a request's proxy above a session's proxy and unix socket, and a
-// session does not show which of them it has, so any session keeps the agent's proxy out.
+// The caller chose the route. A session does not show whether it has a proxy or a unix socket, so any session counts.
 function routesItself(options): boolean {
   return (
     typeof options === "object" &&

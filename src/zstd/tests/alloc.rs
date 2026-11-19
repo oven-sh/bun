@@ -3,7 +3,7 @@ use bun_zstd::ZstdError::{
 };
 use bun_zstd::{
     StreamingDecoder, compress_append, decompress_alloc, decompress_alloc_with_prefix,
-    inflate_embedded, inflate_embedded_nul,
+    decompress_exact, decompressed_size, inflate_embedded, inflate_embedded_nul, split_first_frame,
 };
 
 const ABC: &[u8] = b"\x28\xb5\x2f\xfd\x20\x03\x19\x00\x00abc";
@@ -45,6 +45,31 @@ fn a_frame_without_a_prefix_has_any_size() {
     let frames = [ABC, ABC_WITHOUT_SIZE].concat();
     assert_eq!(decompress_alloc(&frames).as_deref(), Ok(&b"abcabc"[..]));
     assert_eq!(decompress_alloc(b"not a frame"), Err(InvalidZstdData));
+}
+
+#[test]
+fn frames_are_measured_and_split() {
+    assert_eq!(decompressed_size(&[ABC, ABC].concat()), Some(6));
+    let frames = [ABC, ABC_WITHOUT_SIZE].concat();
+    assert_eq!(decompressed_size(&frames), None);
+    assert_eq!(split_first_frame(&frames), Some((ABC, ABC_WITHOUT_SIZE)));
+    assert_eq!(split_first_frame(ABC), Some((ABC, &b""[..])));
+    for bytes in [&ABC[..11], b"not a frame"] {
+        assert_eq!(decompressed_size(bytes), None);
+        assert_eq!(split_first_frame(bytes), None);
+    }
+}
+
+#[test]
+fn exact_room_is_filled() {
+    let mut out = Vec::with_capacity(4);
+    let followed = [ABC, b"not a frame"].concat();
+    let mut fills = |len, frame| decompress_exact(&mut out.spare_capacity_mut()[..len], frame);
+    assert!(!fills(0, b"not a frame") && !fills(3, &followed));
+    assert_eq!([4, 2, 3].map(|len| fills(len, ABC)), [false, false, true]);
+    // SAFETY: the last call has written them.
+    unsafe { out.set_len(3) };
+    assert_eq!(out, b"abc");
 }
 
 #[test]

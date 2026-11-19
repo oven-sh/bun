@@ -1,11 +1,14 @@
 //! zstd as Bun uses it. The codec is in `decoder/` and `encoder/`.
 #![forbid(unsafe_code)]
 #![warn(unused_must_use)]
+#![feature(maybe_uninit_fill)]
 
 mod embed;
 mod streaming_decoder;
 
-use bun_zstd_decoder::{ContentSize, Dictionary};
+use core::mem::MaybeUninit;
+
+use bun_zstd_decoder::{ContentSize, Dictionary, FrameLen};
 
 pub use bun_zstd_decoder::{Decoder, Error, Output, Status, may_start_frame};
 pub use bun_zstd_encoder::{DEFAULT_LEVEL, Encoder, EndDirective, compress, compress_bound};
@@ -90,4 +93,26 @@ pub fn decompress_alloc_with_prefix(src: &[u8], prefix: &[u8]) -> Result<Vec<u8>
         }
         _ => Err(ZstdError::InvalidZstdData),
     }
+}
+
+/// Of the whole frames that `src` consists of, if their headers have it.
+pub fn decompressed_size(src: &[u8]) -> Option<usize> {
+    match bun_zstd_decoder::decompressed_size(src) {
+        ContentSize::Known(size) => size.try_into().ok(),
+        ContentSize::Unknown | ContentSize::Invalid => None,
+    }
+}
+
+/// The first frame of `src`, and what follows it.
+pub fn split_first_frame(src: &[u8]) -> Option<(&[u8], &[u8])> {
+    match bun_zstd_decoder::frame_len(src).ok()? {
+        FrameLen::Complete(len) => src.split_at_checked(len),
+        FrameLen::AtLeast(_) => None,
+    }
+}
+
+/// Initializes `out`, and returns whether `src` decompresses to all of it.
+pub fn decompress_exact(out: &mut [MaybeUninit<u8>], src: &[u8]) -> bool {
+    let mut out = Output::slice(out.write_default());
+    bun_zstd_decoder::decompress(src, &mut out, None).is_ok() && out.room() == 0
 }

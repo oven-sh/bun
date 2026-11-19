@@ -245,8 +245,12 @@ pub trait CodeHost: Host {
         text: &[u8],
         atoms: &Interner<'s>,
     ) -> ParsedCode<'s> {
+        let options = ParseOptions {
+            keeps_comments: true,
+            ..request.options
+        };
         ParsedCode {
-            hir: self.parse(arena, request.path, text, atoms, request.options),
+            hir: self.parse(arena, request.path, text, atoms, options),
             host_values: &[],
             payload: None,
         }

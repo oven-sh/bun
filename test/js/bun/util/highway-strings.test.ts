@@ -689,6 +689,34 @@ describe("byteSetPrefixLength", () => {
   });
 });
 
+describe("byteBits", () => {
+  it("marks the byte, and nothing past the end", () => {
+    for (const len of LENGTHS) {
+      for (const off of OFFSETS) {
+        for (const byte of [0, 0x0a, 0xff]) {
+          const text = new Uint8Array(len + off)
+            .map((_, i) => (i % 7 < 2 ? byte : byte ^ (i % 255 || 1)))
+            .subarray(off);
+          const words = Math.ceil(len / 64);
+          const expected = new BigUint64Array(words + 1);
+          text.forEach((it, i) => {
+            if (it === byte) expected[i >> 6] |= 1n << BigInt(i & 63);
+          });
+          // One word more than the kernel may write, to see that it stops.
+          expected[words] = 0xaaaaaaaaaaaaaaaan;
+          const out = new BigUint64Array(words + 1).fill(0xaaaaaaaaaaaaaaaan);
+          hw("byteBits", text, new Uint8Array(out.buffer), byte);
+          compare("byteBits", out.join(), expected.join(), `len=${len} off=${off} byte=${byte}`);
+        }
+      }
+    }
+  });
+
+  it("rejects a buffer that is too small", () => {
+    expect(() => hw("byteBits", new Uint8Array(65), new Uint8Array(8), 0)).toThrow(RangeError);
+  });
+});
+
 describe.skipIf(process.arch !== "x64")("highway_zstd.cpp", () => {
   const hasKernels = process.arch === "x64" && hw("zstdCountBytes", new Uint8Array(), new Uint8Array(1024)) === 1;
   const withKernels = it.skipIf(!hasKernels);

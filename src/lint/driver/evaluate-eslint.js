@@ -38,7 +38,8 @@ function serializeLanguageOptions({ parser, parserOptions, ...rest }) {
 // What a worker has to know of a parser to stand in for it until a rule calls it: `module` and `export`, the module that exports
 // it, if there is one, the names of its functions, and what else it has that is JSON.
 function describeParser(parser) {
-  const entries = Object.entries(parser);
+  const isCalled = name => (name === "parse" || name === "parseForESLint") && ifLoaded(parser, name) === notLoaded;
+  const entries = Object.keys(parser).map(name => [name, isCalled(name) ? isCalled : parser[name]]);
   const values = entries.map(([name, value]) => [name, typeof value === "function" ? undefined : asJson(value)]);
   return {
     ...locateDeep(parser),
@@ -63,7 +64,21 @@ function describedOnce(prefix, plugin) {
   // A worker says what is in it, if a rule of it is on that is not built in.
   if (described.has(key) || untouched.has(plugin.rules)) return undefined;
   described.add(key);
-  return describe(prefix, plugin);
+  const packageOf = module => /.*[\\/]node_modules[\\/]((?:@[^\\/]+[\\/])?[^\\/]+)/.exec(module)?.[1];
+  const name = objectId(plugin)?.replace(/(?<=.)@[^@]*$/, "") ?? packageOf(locateDeep(plugin)?.module);
+  const [usual, ...native] = Object.hasOwn(builtIn, prefix) ? builtIn[prefix] : [];
+  const isReplaced = !usual || usual === name;
+  return describe(prefix, plugin, it => configured.has(`${prefix}/${it}`) && !(isReplaced && native.includes(it)));
+}
+
+// By prefix: the package, if it has to be that one, and those of its rules that are built in.
+const builtIn = JSON.parse(argument || "{}");
+// The rules that have a setting somewhere.
+const configured = new Set();
+function noteRules(object, depth = 0) {
+  if (typeof object !== "object" || object === null || depth > 16) return;
+  for (const id of Object.keys(object.rules ?? {})) configured.add(id);
+  for (const it of [object.extends ?? []].flat(Infinity)) noteRules(it, depth + 1);
 }
 
 // ───────────── `FlatCompat` ─────────────
@@ -231,6 +246,7 @@ const isOfOxlint = require("node:path").basename(path).startsWith("oxlint.config
   const compat = Object.keys(require.cache).find(file => /[\\/]@eslint[\\/]compat[\\/]dist[\\/]/.test(file));
   if (compat !== undefined) fixupPluginRules = (await import(pathToFileURL(compat).href)).fixupPluginRules ?? null;
   [exported].flat(Infinity).forEach((object, index) => {
+    noteRules(object);
     for (const [prefix, plugin] of Object.entries(object?.plugins ?? {})) {
       if (!pluginsByPrefix.has(prefix)) pluginsByPrefix.set(prefix, { plugin, index });
     }

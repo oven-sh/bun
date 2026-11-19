@@ -11,6 +11,7 @@ use bun_http::Method as HttpMethod;
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper, StringOrJsBytes};
 use bun_ptr::{AsCtxPtr, RefPtr};
+use bun_telemetry_jsc::http_server::HandledRequest;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
@@ -102,6 +103,7 @@ pub(crate) struct NodeHTTPResponse {
     /// resolves through the socket's current response, which under pipelining is a different
     /// one; delivering through it loses the body. Kept alive by req[kHandle]; cleared on finalize.
     pub(crate) armed_this_value: Cell<JSValue>,
+    pub(crate) span: HandledRequest,
     /// node:http: this request's header section captured at dispatch as
     /// [u32 nameLen][u32 valueLen][name][value]... so req.rawHeaders /
     /// req.headers materialize lazily instead of paying 2N JSStrings + a
@@ -591,6 +593,8 @@ impl NodeHTTPResponse {
             return Ok(None);
         };
         self.update_flags(|f| f.insert(Flags::UPGRADED));
+        self.span.set_status(101);
+        self.end_span();
         let ended_unfinished_body = self.leave_pending(BodyReadState::Upgraded);
         // Unref the poll_ref since the socket is now upgraded to WebSocket
         // and will have its own lifecycle management
@@ -664,6 +668,7 @@ impl NodeHTTPResponse {
 
     fn mark_socket_closed(&self) {
         self.update_flags(|f| f.insert(Flags::SOCKET_CLOSED));
+        self.end_span();
         self.leave_pending(BodyReadState::Aborted);
     }
 
@@ -907,6 +912,7 @@ impl NodeHTTPResponse {
             }
         }
 
+        self.span.set_status(status_code as u16);
         'do_it: {
             if status_message_bytes.is_empty() {
                 if let Some(status_message) =
@@ -1272,6 +1278,7 @@ impl NodeHTTPResponse {
             return None;
         }
 
+        self.span.set_status(status_code as u16);
         self.resume_socket();
         self.bytes_written.set(bytes_written);
         if !this_value.is_empty() {
@@ -1555,6 +1562,7 @@ impl NodeHTTPResponse {
             f.remove(Flags::CURRENT);
             f.insert(Flags::SOCKET_CLOSED);
         });
+        self.end_span();
         self.leave_pending(BodyReadState::Aborted);
         if flags.contains(Flags::ENDED) {
             self.on_request_complete();
@@ -1615,6 +1623,7 @@ impl NodeHTTPResponse {
         }
         scoped_log!(NodeHTTPResponse, "onRequestComplete");
         self.update_flags(|f| f.insert(Flags::REQUEST_HAS_COMPLETED));
+        self.end_span();
         self.poll_ref.unref(VirtualMachine::get());
 
         self.mark_request_as_done_if_necessary();
@@ -1660,6 +1669,7 @@ pub(crate) fn on_reject(
     let global_object = cx.global();
     let _dispatch_ref = this.take_dispatch_ref();
     this.maybe_stop_reading_body(wrapper.to_js());
+    this.span.fail(global_object, err.to_js());
 
     let flags = this.flags.get();
     if !flags.contains(Flags::REQUEST_HAS_COMPLETED)
@@ -1678,6 +1688,7 @@ pub(crate) fn on_reject(
             raw_response.clear_on_writable();
             raw_response.clear_timeout();
             if !raw_response.state().is_http_status_called() {
+                this.span.set_status(500);
                 raw_response.write_status(b"500 Internal Server Error");
             }
             raw_response.end_stream(raw_response.state().is_http_connection_close());
@@ -2609,6 +2620,12 @@ impl NodeHTTPResponse {
         self.armed_this_value.set(JSValue::ZERO);
     }
 
+    #[inline]
+    pub(crate) fn end_span(&self) {
+        let flags = self.flags.get();
+        (self.span).end(flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::ENDED));
+    }
+
     /// Hold a ref on `self` for the guard's lifetime (across re-entrant JS).
     #[inline]
     fn ref_guard(&self) -> RefPtr<Self> {
@@ -2639,7 +2656,7 @@ impl Drop for NodeHTTPResponse {
 }
 
 /// # Safety
-/// `response` is the pointer written to `node_response_ptr` by
+/// `response` is the pointer written to `Creation::response` by
 /// `NodeHTTPResponse__createForJS` earlier in the same dispatch and is live;
 /// `data`/`length` describe a caller-owned buffer valid for the call.
 #[unsafe(no_mangle)]
@@ -2656,10 +2673,17 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__adoptRawRequestHeaders(
         .with_mut(|v| v.append_slice(bytes));
 }
 
+/// C++ knows it as a pointer to `response`.
+#[repr(C)]
+pub(crate) struct Creation {
+    pub(crate) response: Option<RefPtr<NodeHTTPResponse>>,
+    pub(crate) span: HandledRequest,
+}
+
 /// # Safety
-/// `has_body`, `request`, `response_ptr`, and `node_response_ptr`
+/// `has_body`, `request`, `response_ptr`, and `creation`
 /// are provided by C++ NodeHTTPServer and must be valid for the duration of the
-/// call; `has_body` must be writable and `*node_response_ptr` null.
+/// call; `has_body` must be writable and `creation.response` null.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
     any_server_tag: u64,
@@ -2669,7 +2693,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
     is_ssl: i32,
     response_ptr: *mut c_void,
     is_current: bool,
-    node_response_ptr: &mut Option<RefPtr<NodeHTTPResponse>>,
+    creation: &mut Creation,
 ) -> JSValue {
     // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
     let request_ref = bun_opaque::opaque_deref(request.cast_const());
@@ -2719,6 +2743,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         promise: JsCell::new(None),
         request_trailers: JsCell::new(Vec::new()),
         armed_this_value: Cell::new(JSValue::ZERO),
+        span: creation.span.take(),
         raw_request_headers: JsCell::new(Vec::new()),
         bytes_written: Cell::new(0),
         pending_pinned_write: Cell::new(PendingPinnedWrite::default()),
@@ -2728,7 +2753,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
     response
         .pending_ref
         .set(Some(PendingRequest::new(response.clone())));
-    *node_response_ptr = Some(response.clone());
+    creation.response = Some(response.clone());
 
     if *has_body {
         response.body_read_ref.r#ref(vm);

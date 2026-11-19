@@ -67,6 +67,8 @@ const crates = [
   "bun_sql_jsc",
   "bun_standalone_graph",
   "bun_sys",
+  "bun_telemetry",
+  "bun_telemetry_cold",
   "bun_threading",
   "bun_test_schedule",
   "bun_trim",

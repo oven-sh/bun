@@ -346,13 +346,6 @@ extern "C" void* Bun__currentGraphContext(JSGlobalObject* globalObject)
     return defaultGlobalObject(globalObject)->currentScriptExecutionContext()->bunContext();
 }
 
-// The frame's properties, in the order async_hooks.ts's Frame declares them, at fixed offsets.
-enum ModuleGraphFrameOffset : PropertyOffset { FrameStorage,
-    FrameValue,
-    FramePrev,
-    FrameMasked,
-    NumberOfFrameProperties };
-
 Structure* createModuleGraphFrameStructure(VM& vm, JSGlobalObject* globalObject)
 {
     auto& names = WebCore::builtinNames(vm);
@@ -366,17 +359,23 @@ Structure* createModuleGraphFrameStructure(VM& vm, JSGlobalObject* globalObject)
     return structure;
 }
 
-JSObject* createAsyncContextFrame(Zig::GlobalObject* globalObject, JSObject* storage, JSValue previous)
+JSObject* createAsyncContextFrame(Zig::GlobalObject* globalObject, JSValue storage, JSValue value, JSValue previous, JSValue masked)
 {
     VM& vm = globalObject->vm();
     JSObject* frame = constructEmptyObject(vm, globalObject->moduleGraphFrameStructure());
     frame->putDirectOffset(vm, FrameStorage, storage);
-    frame->putDirectOffset(vm, FrameValue, jsUndefined());
+    frame->putDirectOffset(vm, FrameValue, value);
     frame->putDirectOffset(vm, FramePrev, previous);
+    frame->putDirectOffset(vm, FrameMasked, masked);
+    return frame;
+}
+
+JSObject* createAsyncContextFrame(Zig::GlobalObject* globalObject, JSObject* storage, JSValue previous)
+{
+    VM& vm = globalObject->vm();
     // What disable()d AsyncLocalStorages the frame below masks, frames above it mask too.
     JSValue masked = previous.isObject() ? asObject(previous)->getDirect(vm, WebCore::builtinNames(vm).maskedPublicName()) : JSValue();
-    frame->putDirectOffset(vm, FrameMasked, masked ? masked : jsUndefined());
-    return frame;
+    return createAsyncContextFrame(globalObject, storage, jsUndefined(), previous, masked ? masked : jsUndefined());
 }
 
 // `graph` null: a frame that leaves the graph's context the frames below are in, keeping their
@@ -422,12 +421,7 @@ JSValue asyncContextWithoutModuleGraphs(Zig::GlobalObject* globalObject, JSValue
         JSObject* frame = frames[i];
         if (isModuleGraphFrame(frame))
             continue;
-        JSObject* copy = constructEmptyObject(vm, globalObject->moduleGraphFrameStructure());
-        copy->putDirectOffset(vm, FrameStorage, getField(frame, names.storagePublicName()));
-        copy->putDirectOffset(vm, FrameValue, getField(frame, vm.propertyNames->value));
-        copy->putDirectOffset(vm, FramePrev, result);
-        copy->putDirectOffset(vm, FrameMasked, getField(frame, names.maskedPublicName()));
-        result = copy;
+        result = createAsyncContextFrame(globalObject, getField(frame, names.storagePublicName()), getField(frame, vm.propertyNames->value), result, getField(frame, names.maskedPublicName()));
     }
     return result;
 }

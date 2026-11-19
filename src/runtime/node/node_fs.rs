@@ -1102,6 +1102,8 @@ impl CpPendingDirs {
 // the thread-pool wrappers that back every `fs.promises.*` call (and the shell
 // `cp` builtin).
 mod _async_tasks {
+    use bun_telemetry_jsc::{NativeSpan, fs as traced_fs};
+
     use super::*;
 
     pub(crate) mod async_ {
@@ -1266,6 +1268,7 @@ mod _async_tasks {
         pub(crate) tracker: AsyncTaskTracker,
         /// The context of the script that called.
         pub(crate) context: bun_jsc::ContextId,
+        span: NativeSpan,
     }
 
     #[cfg(windows)]
@@ -1292,6 +1295,7 @@ mod _async_tasks {
         ) -> JSValue {
             let task = Box::new(Self {
                 completion: FsCompletion::new(cx.global(), callback),
+                span: task_args.begin_span(cx.global(), F.into(), ""),
                 args: task_args,
                 // Sentinel — overwritten by `uv_callback` (or the early-return arms
                 // below) before any read on the JS thread. `Maybe<R>` is
@@ -1574,6 +1578,7 @@ mod _async_tasks {
             // SAFETY: fn contract. The borrow ends before the free below.
             let (result, completion, global_ref, tracker) = unsafe {
                 let task = &mut *this;
+                core::mem::take(&mut task.span).settle(&task.result);
                 if let Ok(result) = &task.result {
                     task.args.write_back(result.bytes_read());
                 }
@@ -1635,6 +1640,12 @@ mod _async_tasks {
         fn write_back(&mut self, _bytes_read: u64) {}
         fn paths(&self) -> [Option<&PathLike<'static>>; 2] {
             [None, None]
+        }
+        #[inline(always)]
+        fn begin_span(&self, global: &JSGlobalObject, operation: &str, suffix: &str) -> NativeSpan {
+            traced_fs::begin(global, operation, suffix, || {
+                self.paths()[0].map(PathLike::slice)
+            })
         }
     }
 
@@ -1894,6 +1905,7 @@ mod _async_tasks {
     pub(crate) struct AsyncFSTask<R, A, const F: NodeFSFunctionEnum> {
         pub(crate) result: Maybe<R>,
         pub args: ThreadIsolated<A>,
+        span: NativeSpan,
     }
     // SAFETY: results are plain data / owned buffers / WTF strings built off
     // thread for hand-off (`ret::*`); `ThreadIsolated<A>` is Send by its contract.
@@ -2031,12 +2043,18 @@ mod _async_tasks {
         ) -> Option<bun_jsc::Completion<Self>> {
             let mut node_fs = NodeFS::default();
             this.result = NodeFS::dispatch::<R, A, F>(&mut node_fs, &this.args, Flavor::Async);
+            this.span.stop_clock();
             Some(done)
         }
 
         fn then(this: Self, js: AsyncFSJs, cx: &bun_jsc::JsThread<'_>) -> bun_jsc::JsResult<()> {
-            let Self { result, mut args } = this;
+            let Self {
+                result,
+                mut args,
+                span,
+            } = this;
             let global_object = cx.global();
+            span.settle(&result);
             let _dispatch = js.tracker.dispatch(global_object);
 
             move_waiting_descriptors();
@@ -2105,6 +2123,7 @@ mod _async_tasks {
             bun_jsc::Job::<Self>::schedule(
                 cx,
                 Self {
+                    span: args.begin_span(cx.global(), F.into(), ""),
                     args,
                     // Sentinel — overwritten by `run` before any read. `Maybe<R>`
                     // may be niche-optimised; never construct an all-zero `Result`.
@@ -10372,7 +10391,8 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
 // ──────────────────────────────────────────────────────────────────────────
 // NodeFSFunctionEnum — one variant per NodeFS method
 // ──────────────────────────────────────────────────────────────────────────
-#[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy)]
+#[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy, strum::IntoStaticStr)]
+#[strum(serialize_all = "camelCase")]
 pub(crate) enum NodeFSFunctionEnum {
     Access,
     AppendFile,
@@ -10402,6 +10422,7 @@ pub(crate) enum NodeFSFunctionEnum {
     Readlink,
     Readv,
     Realpath,
+    #[strum(serialize = "realpath")]
     RealpathNonNative,
     Rename,
     Rm,

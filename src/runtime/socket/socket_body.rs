@@ -33,6 +33,7 @@ use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::String as BunString;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys as sys;
+use bun_telemetry_jsc::{Failed, Instrument, NativeSpan, SpanCell, SpanKind};
 use bun_uws as uws;
 
 // `uws::NewSocketHandler::from_duplex` is now inherent on the canonical
@@ -338,6 +339,7 @@ pub(crate) struct NewSocket<const SSL: bool> {
     /// keeps its verdict after detach (the live error borrows the `SSL`, and
     /// EPROTO reasons are stack-copied in uSockets).
     pub(crate) verify_error: JsCell<Option<StoredVerifyError>>,
+    pub(crate) connect_span: SpanCell,
     /// The session the new-session callback gave last: TLS 1.3 never stores it on the `SSL`.
     pub(crate) latest_session: JsCell<Option<boringssl_sys::OwnedSslSession>>,
 }
@@ -572,6 +574,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
 
         use super::listener::UnixOrHost;
+        this.connect_span.set(this.begin_connect_span(vm.global()));
         match this.connection.get() {
             Some(UnixOrHost::Host { host, port }) => {
                 // getaddrinfo doesn't accept bracketed IPv6.
@@ -652,6 +655,36 @@ impl<const SSL: bool> NewSocket<SSL> {
             None => unreachable!("do_connect requires this.connection to be set"),
         }
         Ok(())
+    }
+
+    #[inline]
+    fn begin_connect_span(&self, global: &JSGlobalObject) -> NativeSpan {
+        use super::listener::UnixOrHost;
+        let (name, transport, host, port): (&str, &str, &[u8], u16) = match self.connection.get() {
+            Some(UnixOrHost::Unix(path)) => ("ipc.connect", "unix", path, 0),
+            Some(UnixOrHost::Host { host, port }) => ("tcp.connect", "tcp", host, *port),
+            Some(UnixOrHost::Fd(_)) | None => return NativeSpan::NONE,
+        };
+        NativeSpan::start(global, Instrument::Net, SpanKind::Client, |r| {
+            r.set_name(if SSL { "tls.connect" } else { name }.as_bytes());
+            r.attr("network.transport", transport).server(host, port);
+        })
+    }
+
+    /// `unauthorized`: why the peer is not authorized, which the caller accepts.
+    #[inline]
+    fn end_connect_span(&self, unauthorized: Option<&[u8]>) {
+        self.connect_span.take().end_with(|r| {
+            if SSL {
+                r.attr("tls.authorized", unauthorized.is_none());
+                r.attr_opt("tls.authorization_error", unauthorized.unwrap_or_default());
+            }
+            let socket = self.socket.get();
+            r.peer(
+                socket.remote_address(&mut [0; 16]).unwrap_or_default(),
+                socket.remote_port().unwrap_or(0),
+            );
+        });
     }
 
     pub(crate) fn resume(&self, _: &mut JsScope<'_>) {
@@ -1126,6 +1159,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         };
 
+        if errno == sys::SystemErrno::ECANCELED as c_int && dns_error == 0 {
+            // The caller gave up, as `autoSelectFamily` does with the address that is too slow.
+            this.connect_span.set(NativeSpan::NONE);
+        } else {
+            this.connect_span.take().settle(&err);
+        }
+
         let _scope_guard = ScopeExit {
             socket: this,
             scope: Some(handlers.enter()),
@@ -1341,6 +1381,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.update_flags(|f| f.remove(Flags::IS_PAUSED));
         if !this.ref_pollref_on_connect.replace(true) {
             this.poll_ref.unref(bun_io::js_vm_ctx());
+        }
+        if !SSL || this.acts_as_tls_server() {
+            this.end_connect_span(None);
         }
         if !SSL {
             this.pause_on_connect_once();
@@ -1728,6 +1771,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         // BYPASS_TLS write path in the window before JS tears the pair down.
         let transport_unusable = reject_unauthorized || (SSL && success == 0);
 
+        match (this.verify_error.get(), transport_unusable) {
+            (problem, false) => this.end_connect_span(problem.as_ref().map(|e| &*e.code)),
+            (Some(e), true) => this.connect_span.take().settle(Failed(&e.code, &e.reason)),
+            (None, true) => (this.connect_span.take())
+                .settle(Failed(b"handshake_failed", b"TLS handshake failed")),
+        }
+
         // `REJECTED` is set before the callback runs so no write path can
         // deliver application data to a peer that is about to be rejected —
         // including the raw twin of an `upgradeTLS` pair, which shares the fd.
@@ -2021,6 +2071,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         jsc::mark_binding!();
         let this = native_ref.this_ptr();
         this.latest_session.set(None);
+        (this.connect_span.take()).settle(Failed(b"closed", b"closed before connecting"));
         // A late close on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -3355,6 +3406,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            connect_span: Default::default(),
             latest_session: JsCell::new(None),
         });
         // Never shadow this with a long-lived borrow: it would alias the
@@ -3470,6 +3522,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            connect_span: Default::default(),
             latest_session: JsCell::new(None),
         });
         let raw_ref = raw.this_ptr();
@@ -4314,6 +4367,7 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
         native_callback: JsCell::new(NativeCallbacks::None),
         twin: JsCell::new(None),
         verify_error: JsCell::new(None),
+        connect_span: Default::default(),
         latest_session: JsCell::new(None),
     });
     let tls_ref = tls.this_ptr();

@@ -47,6 +47,7 @@ const MAX_PIPELINE_SIZE: usize = u16::MAX as usize; // about 64KB per connection
 /// `MySQLConnection`, declared in `JSMySQLConnection.bind.ts`.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct JSMySQLConnection {
+    pub(crate) server: bun_telemetry_jsc::db::Server,
     ref_count: Cell<u32>,
     js_value: JsCell<JsRef>,
     global_object: GlobalRef,
@@ -414,6 +415,7 @@ impl JSMySQLConnection {
         }
 
         let this = RefPtr::new(JSMySQLConnection {
+            server: bun_telemetry_jsc::db::Server::new(hostname, port, &path, &database),
             ref_count: Cell::new(1),
             js_value: JsCell::new(JsRef::empty()),
             global_object: GlobalRef::from(global_object),

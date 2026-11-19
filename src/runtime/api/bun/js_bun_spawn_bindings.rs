@@ -20,6 +20,7 @@ use bun_jsc::{JsCell, SysErrorJsc as _};
 use bun_sys::Fd;
 use bun_sys::UV_E;
 use bun_sys::{self as sys, SignalCode};
+use bun_telemetry_jsc::{Failed, Instrument, NativeSpan, SpanKind};
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
 #[cfg(unix)]
@@ -1056,11 +1057,26 @@ fn spawn_maybe_sync(
     };
 
     crate::node::fs::note_process_start();
-    let mut spawned = match spawn::spawn_process(
+    let instrument = Instrument::ChildProcess;
+    let mut span = NativeSpan::start(cx.global(), instrument, SpanKind::Internal, |r| {
+        // Not the arguments, which carry secrets.
+        let executable = bun_paths::basename(argv.argv0.as_bytes());
+        r.set_name(executable);
+        r.prefix_name(b"spawn");
+        r.attr("process.executable.name", executable);
+        r.attr("process.args_count", argv.args.len() as i64);
+    });
+    let spawned = spawn::spawn_process(
         &spawn_options,
         CStrList::from_unterminated(&mut borrow_c_strings(&argv.args)),
         Some(CStrList::from_unterminated(&mut env_array)),
-    ) {
+    );
+    match &spawned {
+        Err(err) => core::mem::take(&mut span).settle(Failed(err.name().as_bytes(), b"")),
+        Ok(Err(err)) => core::mem::take(&mut span).settle(err),
+        Ok(Ok(_)) => {}
+    }
+    let mut spawned = match spawned {
         Err(err)
             if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE)
                 || err == bun_spawn::Error::Sys(bun_errno::SystemErrno::ENFILE) =>
@@ -1134,6 +1150,9 @@ fn spawn_maybe_sync(
     let spawned_stderr = spawned.stderr.take();
     let mut spawned_extra_pipes = core::mem::take(&mut spawned.extra_pipes);
     let process = spawned.to_process(loop_handle);
+    span.describe(|r| {
+        r.attr("process.pid", i64::from(process.pid));
+    });
 
     #[cfg(unix)]
     let posix_ipc_fd = if !is_sync && maybe_ipc_mode.is_some() {
@@ -1193,6 +1212,7 @@ fn spawn_maybe_sync(
             crate::timer::EventLoopTimerTag::SubprocessTimeout,
         ),
         exited_due_to_maxbuf: Cell::new(None),
+        span: span.into(),
     });
     let subprocess_ptr = subprocess_ref.as_ptr();
     // SAFETY: `subprocess_ref`, and then the wrapper that takes it, outlive this borrow.

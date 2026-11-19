@@ -10,6 +10,7 @@ use bun_paths::resolve_path;
 use bun_ptr::{RefPtr, ThisPtr};
 use bun_resolver::fs::StatHash;
 use bun_sys::{self, Fd, File};
+use bun_telemetry_jsc::http_server::AnsweredRequest;
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::server::file_response_stream::{StartOptions as FileResponseStreamOptions, StreamOwner};
@@ -114,9 +115,13 @@ impl DirectoryRoute {
     fn on(this: ThisPtr<DirectoryRoute>, mut req: AnyRequest, resp: AnyResponse, method: Method) {
         debug_assert!(this.server.get().is_some());
         let route = PendingRequest::new(RefPtr::from_this(this));
+        let mut span = AnsweredRequest::default();
         if let Some(server) = this.server.get() {
             resp.timeout(server.config().idle_timeout);
+            span = server.begin_span(&req, resp, this.as_ptr().cast_const().cast());
         }
+
+        span.set_status(404);
 
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let Some((rel_len, had_trailing_slash)) =
@@ -138,6 +143,7 @@ impl DirectoryRoute {
                     return;
                 }
                 req.set_yield(false);
+                span.set_status(301);
                 write_any_status(resp, 301);
                 resp.write_mark();
                 resp.write_header(b"location", &loc.0[..n]);
@@ -170,6 +176,7 @@ impl DirectoryRoute {
             status_for_preconditions(&req, method, 200, Some(etag), last_modified_ms, range);
 
         req.set_yield(false);
+        span.set_status(status_code);
         write_any_status(resp, status_code);
         resp.write_mark();
 
@@ -245,7 +252,7 @@ impl DirectoryRoute {
             offset: body_offset,
             length: Some(body_len),
             idle_timeout: server.config().idle_timeout,
-            owner: StreamOwner::DirectoryRoute(route),
+            owner: StreamOwner::DirectoryRoute(route, span),
         });
     }
 

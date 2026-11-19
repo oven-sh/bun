@@ -36,6 +36,9 @@ use crate::webcore::streams::EncodedChunk;
 use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
 use crate::webcore::{AbortSignal, DrainResult, InternalBlob, Response, SinkHandle};
 use bun_jsc::AbortSignalRef;
+use bun_telemetry_jsc::{
+    Aborted, Failed, Instrument, NativeSpan, Outcome, Thrown, http_client as traced,
+};
 
 // `bun_event_loop::JsResult` (cycle-broken erased error) — used by
 // ConcurrentTask callbacks at the tier-3 layer.
@@ -205,6 +208,8 @@ pub struct FetchTasklet {
     pub(crate) mutex: Mutex,
 
     pub(crate) tracker: AsyncTaskTracker,
+    /// Under `mutex` once the request is on the HTTP thread.
+    span: NativeSpan,
 
     pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<FetchTasklet>,
 }
@@ -816,7 +821,13 @@ impl FetchTasklet {
             }
         }
 
+        if is_done && self.result.is_success() {
+            self.end_span(false, None);
+        }
         let result = self.deliver_progress(vm);
+        if is_done {
+            self.end_span(false, None);
+        }
         drop(lock);
         if is_done {
             // The HTTP layer will not drain the request body again.
@@ -1127,7 +1138,51 @@ impl FetchTasklet {
         self.abort_handle.unfollow();
     }
 
+    #[inline]
+    fn end_span(&mut self, signal_aborted: bool, rejection: Option<&BodyValueError>) {
+        core::mem::take(&mut self.span).end_with(|r| {
+            let response = self.metadata.as_ref();
+            traced::Exchange {
+                method: self.method.as_str().as_bytes(),
+                url: &self.url_proxy_buffer[..self.url_len],
+                status: response.map_or(0, |r| r.status_code() as u16),
+                protocol_version: response.map_or("", |r| r.http_version()).as_bytes(),
+            }
+            .record(r);
+            let Some(fail) = self.result.fail else { return };
+            let code = fail.name().as_bytes();
+            match rejection {
+                Some(BodyValueError::SystemError(e) | BodyValueError::SystemTypeError(e)) => {
+                    e.record(r)
+                }
+                Some(BodyValueError::Message(text) | BodyValueError::TypeError(text)) => {
+                    Failed(code, &text.to_utf8()).record(r)
+                }
+                Some(BodyValueError::JSValue(error)) if let Some(error) = error.get() => {
+                    if signal_aborted {
+                        Aborted(&self.global_this, error).record(r)
+                    } else {
+                        Thrown(&self.global_this, error).record(r)
+                    }
+                }
+                Some(BodyValueError::AbortReason(jsc::CommonAbortReason::Timeout)) => {
+                    Failed(b"TimeoutError", b"The operation timed out.").record(r)
+                }
+                // The caller aborted, or let go of the body.
+                _ if self.result.abort_reason() == Some(jsc::CommonAbortReason::UserAbort) => {}
+                _ => Failed(code, b"").record(r),
+            }
+        });
+    }
+
     fn on_reject(&mut self) -> BodyValueError {
+        let signal_aborted = self.signal_aborted();
+        let rejection = self.rejection();
+        self.end_span(signal_aborted, Some(&rejection));
+        rejection
+    }
+
+    fn rejection(&mut self) -> BodyValueError {
         debug_assert!(self.result.fail.is_some());
         bun_output::scoped_log!(FetchTasklet, "onReject");
 
@@ -1801,12 +1856,18 @@ impl FetchTasklet {
             is_waiting_request_stream_start: false,
             mutex: Mutex::new(),
             tracker: AsyncTaskTracker::init(cx.vm()),
+            span: NativeSpan::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
         });
 
         fetch_tasklet.signals = fetch_tasklet.signal_store.to_with_backpressure();
 
         fetch_tasklet.tracker.did_schedule(cx.global());
+        fetch_tasklet.span = traced::begin(
+            cx.global(),
+            Instrument::HttpClient,
+            &mut fetch_tasklet.request_headers,
+        );
 
         let url = fetch_options.url;
         let env = cx.vm().transpiler.get().env_mut();
@@ -2284,6 +2345,10 @@ impl FetchTasklet {
             result.has_more,
             result.body.len()
         );
+
+        if !result.has_more {
+            task_ref.span.stop_clock();
+        }
 
         let prev_metadata = task_ref.result.metadata.take();
         let prev_cert_info = task_ref.result.certificate_info.take();

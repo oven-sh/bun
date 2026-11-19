@@ -36,6 +36,8 @@ feature Cron "Bun.cron"
 
 feature Secrets "Bun.secrets"
 
+feature Telemetry "Bun.otel"
+
 feature Shell "the Bun.$ shell"
   minimum 200000 elf
   minimum 200000 macho

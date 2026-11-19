@@ -41,6 +41,7 @@ use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_cares_sys::parse_ip;
+use bun_telemetry_jsc::{Instrument, PromiseSpan, SpanKind};
 use c_ares::RecordType;
 
 // `sockaddr_storage` / `addrinfo` / `AF_*` / `AI_*` are absent from `libc` on
@@ -2261,7 +2262,12 @@ impl Resolver {
 
         let resolver = global_resolver(global_this);
 
-        resolver.do_lookup(name, port, options, global_this, context)
+        let span = PromiseSpan::start(global_this, Instrument::Dns, SpanKind::Client, |r| {
+            r.set_name(b"dns.lookup");
+            r.attr("dns.question.name", name);
+        });
+        let result = resolver.do_lookup(name, port, options, global_this, context);
+        span.end_with(global_this, result)
     }
 
     fn do_lookup(

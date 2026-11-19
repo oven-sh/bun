@@ -1,0 +1,11 @@
+{
+  "name": "bench-telemetry",
+  "private": true,
+  "dependencies": {
+    "@opentelemetry/api": "1.10.0",
+    "@opentelemetry/context-async-hooks": "3.0.0",
+    "@opentelemetry/core": "3.0.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "0.300.0",
+    "@opentelemetry/sdk-trace": "3.0.0"
+  }
+}

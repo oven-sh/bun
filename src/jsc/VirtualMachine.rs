@@ -964,6 +964,13 @@ impl VirtualMachine {
         if p.is_null() { None } else { Some(p) }
     }
 
+    /// Callable from any thread.
+    pub fn main_thread_handle() -> Option<crate::VmHandle> {
+        let vm = MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire);
+        // SAFETY: it outlives every other VM, and `handle` is never written after `init`.
+        (!vm.is_null()).then(|| unsafe { (*vm).handle.clone() })
+    }
+
     #[inline]
     pub fn is_loaded() -> bool {
         VM.get().is_some()
@@ -2155,6 +2162,8 @@ impl VirtualMachine {
 
         ExitHandler::dispatch_on_exit(self);
 
+        flush_telemetry(TelemetryFlush::AtExit);
+
         // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
         if !self.is_inside_deferred_task_queue.get() {
             self.is_inside_deferred_task_queue.set(true);
@@ -2221,6 +2230,9 @@ impl VirtualMachine {
 
     pub fn global_exit(&self) -> ! {
         debug_assert!(self.is_shutting_down());
+        if !self.has_run_cleanup_hooks() {
+            flush_telemetry(TelemetryFlush::AtExit);
+        }
         // FIXME: we should be doing this, but we're not, but unfortunately
         // doing it causes like 50+ tests to break
         // self.event_loop().tick();
@@ -2666,6 +2678,21 @@ pub struct TimersLeft {
     pub holds_loop_ref: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum TelemetryFlush {
+    /// The VM of this thread runs no more script.
+    AtExit,
+    /// `--watch` replaces the process, from any thread. A collector that is down must not hold it up.
+    BeforeRestart,
+}
+
+/// Exports the OpenTelemetry spans that have ended.
+pub fn flush_telemetry(when: TelemetryFlush) {
+    if let Some(hooks) = runtime_hooks() {
+        (hooks.flush_telemetry)(when);
+    }
+}
+
 /// Which of its timers a `--hot` run takes with it.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum CancelHotRunTimers {
@@ -2844,6 +2871,9 @@ pub struct RuntimeHooks {
     /// # Safety
     /// JS thread; `runtime_state` installed.
     pub close_timer_loop_handles_after_vm_destroyed: unsafe fn(vm: *mut VirtualMachine),
+    /// Turns OpenTelemetry tracing on for the calling thread's VM if the environment asks for it.
+    pub start_telemetry: fn(),
+    pub flush_telemetry: fn(TelemetryFlush),
 }
 
 bun_io::link_impl_EventLoopCtx! {
@@ -3314,6 +3344,9 @@ impl VirtualMachine {
 
         let hooks = runtime_hooks();
         let _ = self.ensure_debugger(true);
+        if let Some(hooks) = hooks {
+            (hooks.start_telemetry)();
+        }
 
         // Node.js `--trace-*` and `--stack-trace-limit` flags need
         // `internal/process/pre_execution` to run before any user code.
@@ -4310,6 +4343,7 @@ impl VirtualMachine {
         // execve will not reach on_exit; flush the compile cache here like
         // node's child does via AtExit(FlushCompileCache) on every restart.
         crate::node_compile_cache::persist_now();
+        flush_telemetry(TelemetryFlush::BeforeRestart);
         bun_core::Output::flush();
         bun_removable_features::removable_body!(HotReload, Abort, {
             bun_core::reload_process(should_clear_terminal, may_return);
@@ -5372,6 +5406,9 @@ impl VirtualMachine {
         self.event_loop().ensure_waker();
 
         let _ = self.ensure_debugger(true);
+        if let Some(hooks) = runtime_hooks() {
+            (hooks.start_telemetry)();
+        }
 
         if !self.transpiler.get().options.disable_transpilation {
             if let Some(hooks) = runtime_hooks() {

@@ -1634,12 +1634,12 @@ impl<'a> Formatter<'a> {
                     } else if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
                         self.add_for_new_line(
                             b"Timeout(# ) ".len()
-                                + bun_fmt::digit_count(timer.internals.id),
+                                + bun_fmt::digit_count(timer.id),
                         );
-                        if timer.internals.flags.get().kind() == crate::timer::Kind::SetInterval {
+                        if timer.repeats() {
                             self.add_for_new_line(
                                 b"repeats ".len()
-                                    + bun_fmt::digit_count(timer.internals.id),
+                                    + bun_fmt::digit_count(timer.id),
                             );
                             writer.print(format_args!(
                                 "{}Timeout{} {}(#{}{}{}{}, repeats){}",
@@ -1647,7 +1647,7 @@ impl<'a> Formatter<'a> {
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<yellow>"),
-                                timer.internals.id,
+                                timer.id,
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
@@ -1659,7 +1659,7 @@ impl<'a> Formatter<'a> {
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<yellow>"),
-                                timer.internals.id,
+                                timer.id,
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
@@ -1672,7 +1672,7 @@ impl<'a> Formatter<'a> {
                     {
                         self.add_for_new_line(
                             b"Immediate(# ) ".len()
-                                + bun_fmt::digit_count(immediate.internals.id),
+                                + bun_fmt::digit_count(immediate.id),
                         );
                         writer.print(format_args!(
                             "{}Immediate{} {}(#{}{}{}{}){}",
@@ -1680,7 +1680,7 @@ impl<'a> Formatter<'a> {
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<yellow>"),
-                            immediate.internals.id,
+                            immediate.id,
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),

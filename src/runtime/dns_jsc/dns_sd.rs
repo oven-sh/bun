@@ -143,7 +143,7 @@ fn protocol_for_pending(_q: &QueryState) -> DNSServiceProtocol {
     PROTOCOL_IPV4 | PROTOCOL_IPV6
 }
 
-/// Real time: this timer lives in the real heap (`allow_fake_timers() == false`), so it must never read the mocked clock.
+/// Real time: this timer lives in the real heap, so it must never read the mocked clock.
 fn now_ms() -> i64 {
     bun::timespec::now(bun::TimespecMockMode::ForceRealTime).ms()
 }
@@ -634,8 +634,6 @@ impl SharedConnection {
         let Some(mut this) = Self::current() else {
             return;
         };
-        // The heap pops without updating state; mark FIRED so a re-arm inserts instead of removing.
-        this.early_out_timer.state.set(EventLoopTimerState::FIRED);
         this.early_out_armed_for.set(0);
         let now = now_ms();
         let ready = this.take_ready(|q| {

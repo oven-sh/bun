@@ -25,7 +25,7 @@ const MIN_ROOM: usize = 32;
 const MAX_TRACKED_PACKETS: usize = 32 * 1024;
 /// After how many packets that only have ACK frames to ask for an acknowledgment (RFC 9000 §13.2.4).
 const MAX_ACK_ONLY_PACKETS: u32 = 20;
-const PACKETS_BEFORE_MTU_PROBE: u64 = 30;
+const PACKETS_BEFORE_MTU_PROBE: u64 = 10;
 const MAX_INTEGER_FRAME_LEN: usize = 1 + 8;
 const MAX_NEW_TOKEN_FRAME_LEN: usize = 64;
 const MIN_RETAINED: u64 = 1024 * 1024;
@@ -302,6 +302,9 @@ impl Connection {
             (space.received).write_ack(now, draft.packet.number, out, end);
         }
         if has_frames {
+            if !space.has_crypto_to_send() {
+                space.crypto_send.on_lost(0..space.crypto_send.sent());
+            }
             draft.is_eliciting = write_crypto_frames(space, out, end);
             if !draft.is_eliciting && space.probes > 0 && out.len() < end {
                 out.push(kind::PING as u8);

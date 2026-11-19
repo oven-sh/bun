@@ -1,7 +1,7 @@
 //! RFC 9000 §5.2.
 
 use core::hash::BuildHasher;
-use core::net::IpAddr;
+use core::net::{IpAddr, SocketAddr};
 use core::ops::Range;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -51,7 +51,7 @@ pub struct Handle {
 pub(crate) struct Routes {
     pub(crate) by_id: IdMap<LocalId, u32>,
     pub(crate) by_initial_id: KeyedMap<ConnectionId, u32>,
-    pub(crate) by_reset_token: KeyedMap<ResetToken, u32>,
+    pub(crate) by_reset_token: KeyedMap<(SocketAddr, ResetToken), u32>,
 }
 
 /// What the connections have in common.
@@ -349,7 +349,7 @@ impl Endpoint {
             _ => (None, false),
         };
         if is_validated && core::mem::take(&mut slot.has_token) {
-            self.unvalidated_clients.put_back();
+            self.unvalidated_clients.put_back(1);
         }
         let (before, group) = (core::mem::replace(&mut slot.awaited, awaited), slot.group);
         if before == awaited {
@@ -480,14 +480,11 @@ impl Endpoint {
     /// RFC 9000 §10.3.1. Returns false if it is something else.
     fn receive_reset(&mut self, from: &Addresses, datagram: &[u8]) -> bool {
         let token = (datagram.last_chunk()).filter(|_| datagram.len() >= MIN_RESET_LEN);
-        let Some(token) = token.copied().map(ResetToken) else {
+        let key = token.map(|&it| (from.peer, ResetToken(it)));
+        let Some(&slot) = key.and_then(|it| self.shared.routes.by_reset_token.get(&it)) else {
             return false;
         };
-        let Some(&slot) = self.shared.routes.by_reset_token.get(&token) else {
-            return false;
-        };
-        let handle = self.handle(slot);
-        if let Some(connection) = self.get_mut(handle).filter(|it| it.is_reset(from, token)) {
+        if let Some(connection) = self.get_mut(self.handle(slot)) {
             connection.drain(CloseReason::StatelessReset);
         }
         true

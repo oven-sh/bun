@@ -49,10 +49,10 @@ impl Stream {
 
     /// The role, and where bytes for the application go.
     #[inline]
-    pub(crate) fn reader(&mut self, len: usize) -> (&mut super::Role, Ready<'_>) {
+    pub(crate) fn reader(&mut self) -> (&mut super::Role, Ready<'_>) {
         let ready = Ready {
             bytes: &mut self.ready,
-            hint: self.ready_hint.max(len),
+            hint: self.ready_hint,
         };
         (&mut self.role, ready)
     }
@@ -78,7 +78,7 @@ impl Ready<'_> {
     #[inline]
     pub(crate) fn push(&mut self, data: &[u8]) {
         if self.bytes.capacity() == 0 && !data.is_empty() {
-            self.bytes.reserve_exact(self.hint);
+            self.bytes.reserve_exact(self.hint.max(data.len()));
         }
         self.bytes.extend_from_slice(data);
     }
@@ -191,7 +191,10 @@ impl State {
         {
             self.owe(id, stream, Flags::OWES_MAX_STREAM_DATA);
         }
-        if is_worth_raising(self.receive_limit, self.consumed, self.receive_window) {
+        let (limit, window) = (self.receive_limit, self.receive_window);
+        // The streams that are not being read can hold most of the window.
+        let is_short = self.consumed + window > limit + (limit - self.received).max(window / 64);
+        if is_worth_raising(limit, self.consumed, window) || is_short && limit < MAX_VARINT {
             self.owed |= Control::MAX_DATA;
         }
     }

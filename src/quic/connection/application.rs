@@ -424,7 +424,7 @@ fn try_read(
 /// Returns false if some of `data` had to be kept for later.
 #[inline]
 fn feed(stream: &mut Stream, data: &[u8], reader: &mut Option<Reader>) -> Result<bool, Fault> {
-    let len = match (stream.reader(data.len()), reader) {
+    let len = match (stream.reader(), reader) {
         ((Role::Message(message), ready), Some(reader)) => message.read(data, ready, reader)?,
         ((_, mut ready), _) => {
             ready.push(data);

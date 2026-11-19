@@ -339,7 +339,7 @@ impl Connection {
 
     /// For a connection that is over.
     pub(crate) fn remains(&mut self, shared: &mut Shared) -> Remains {
-        (self.paths()).for_each(|path| self.untrack_reset_token(&path.remote, shared));
+        (self.paths()).for_each(|path| self.untrack_reset_token(path, shared));
         Remains {
             ids: self.local_ids.iter().collect(),
             initial_route: self.initial_route,

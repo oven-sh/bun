@@ -584,13 +584,15 @@ impl Connection {
 
     fn on_handshake_complete(&mut self, now: Instant, shared: &mut Shared) -> Result {
         self.phase = Phase::Established;
-        self.timers.stop(Timer::Handshake);
+        if self.timers.is_set(Timer::Handshake) {
+            (self.timers).set(Timer::Handshake, now + self.config.handshake_timeout);
+        }
         if let Some(setup) = &mut self.setup {
             setup.can_read_more = true;
         }
         if self.side.is_client() {
             self.path.remote.reset_token = self.peer.stateless_reset_token;
-            self.track_reset_token(&self.path.remote, shared);
+            self.track_reset_token(&self.path, shared);
         }
         (self.local_ids).set_peer_limit(self.peer.active_connection_id_limit);
         if self.config.adapts_ack_frequency
@@ -615,6 +617,7 @@ impl Connection {
             return Ok(());
         }
         self.phase = Phase::Confirmed;
+        self.timers.stop(Timer::Handshake);
         self.discard_space(now, SpaceId::Initial);
         self.discard_space(now, SpaceId::Handshake);
         self.emit(Event::HandshakeConfirmed);

@@ -13,6 +13,8 @@ use crate::time::{Duration, Instant};
 
 pub(super) const INITIAL_PACKET_THRESHOLD: u64 = 3;
 const MAX_PACKET_THRESHOLD: u64 = 256;
+/// In round trips.
+const MAX_LATENESS: u64 = 4;
 const PERSISTENT_CONGESTION_THRESHOLD: u64 = 3;
 const MIN_HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(10);
 const MIN_TAIL_TIMEOUT: Duration = Duration::from_millis(10);
@@ -53,9 +55,13 @@ impl Connection {
         let previous_largest = space.sent.largest_acked;
         space.sent.largest_acked = previous_largest.max(Some(ack.largest));
         let mut largest_sent_at = space.received.on_ack(ack);
-        if let Some(late) = space.sent.find_late(ack.ranges()) {
-            let distance = previous_largest.unwrap_or(0).saturating_sub(late) + 1;
+        let oldest = now - self.rtt.smoothed * MAX_LATENESS;
+        let late = space.sent.find_late(oldest, ack.ranges());
+        if let Some(late) = &late {
+            let distance = previous_largest.unwrap_or(0).saturating_sub(late.number) + 1;
             self.packet_threshold = (self.packet_threshold.max(distance)).min(MAX_PACKET_THRESHOLD);
+            self.rtt.on_late(now - late.at);
+            self.congestion.on_late(late.len);
         }
 
         let mut has_news = false;
@@ -109,7 +115,7 @@ impl Connection {
             largest_sent_at.take_if(|_| setup.is_catching_up);
         }
         let is_larger = Some(ack.largest) > previous_largest;
-        if !has_news && !is_larger {
+        if !has_news && !is_larger && late.is_none() {
             return Ok(());
         }
         if let Some(sent_at) = largest_sent_at.filter(|_| has_news && is_larger) {
@@ -207,7 +213,7 @@ impl Connection {
         self.congestion.on_lost(&packet.flight);
         self.path.mtu.on_lost(&packet.flight);
         if let Some(space) = self.spaces.get_mut(id) {
-            space.sent.remember_lost(packet.number);
+            space.sent.remember_lost(packet);
         }
         true
     }
@@ -268,6 +274,7 @@ impl Connection {
         if let Some(space) = self.spaces.get_mut(id) {
             space.sent.remove_settled();
             space.sent.loss_time = Instant::NEVER;
+            space.sent.forget_lost();
             space.received.forget_sent_acks();
         }
     }
@@ -423,7 +430,7 @@ impl Connection {
             && let Some(packet) = space.sent.packets.get_mut(at)
         {
             at += 1;
-            space.probes = if id == SpaceId::Data { PROBES } else { 1 };
+            space.probes = if self.path.is_validated { PROBES } else { 1 };
             let before = *packet;
             if before.fate == Fate::Unknown {
                 packet.fate = Fate::Probed;

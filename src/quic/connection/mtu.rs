@@ -10,7 +10,6 @@ const MAX_PROBES: u8 = 3;
 /// After how many times in a row that only small packets got through the size is suspected.
 const MAX_SUSPICIONS: u8 = 3;
 const LINK_MTU: u16 = 1500;
-const MIN_IPV6_MTU: u16 = 1280;
 
 pub(super) struct Mtu {
     pub(super) current: u16,
@@ -29,7 +28,7 @@ impl Mtu {
     pub(super) fn new(peer: SocketAddr) -> Self {
         let overhead = if peer.is_ipv4() { 20 + 8 } else { 40 + 8 };
         Self {
-            current: MIN_IPV6_MTU - overhead,
+            current: MIN_DATAGRAM_LEN as u16,
             max: LINK_MTU - overhead,
             failed: None,
             lost_probes: 0,
@@ -42,7 +41,6 @@ impl Mtu {
 
     pub(super) fn set_peer_limit(&mut self, limit: u64) {
         self.max = limit.min(self.max.into()) as u16;
-        self.current = self.current.min(self.max);
     }
 
     #[inline]

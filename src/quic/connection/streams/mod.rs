@@ -80,6 +80,8 @@ pub(crate) struct State {
     pub(super) made_progress: bool,
     /// See [`Self::add_load`].
     pub(super) load: u32,
+    /// What makes up for it.
+    pub(super) relief: u32,
 
     received: u64,
     consumed: u64,
@@ -312,6 +314,9 @@ impl Streams {
                     self.state.credit(id, stream);
                 }
                 let (context, is_known) = (stream.context, stream.flags.contains(Flags::ANNOUNCED));
+                if !(stream.flags).intersects(Flags::RESET | Flags::RESET_BY_PEER) {
+                    self.state.relief = self.state.relief.saturating_add(Load::Heavy as u32);
+                }
                 self.table.unreleased -= 1;
                 if id.initiator() != self.table.side {
                     self.table.counts_mut(id.direction()).remote_released += 1;
@@ -355,8 +360,9 @@ impl Table {
     fn owed_max_streams(&self, direction: Direction) -> Control {
         let counts = self.counts(direction);
         let gain = counts.next_remote_limit() - counts.remote_limit;
+        let has_more = counts.remote_next < counts.remote_limit;
         match direction {
-            _ if gain < (counts.remote_window / 8).max(1) => Control::empty(),
+            _ if gain == 0 || has_more && gain < counts.remote_window / 8 => Control::empty(),
             Direction::Bidirectional if self.is_going_away => Control::empty(),
             Direction::Bidirectional => Control::MAX_STREAMS_BIDI,
             Direction::Unidirectional => Control::MAX_STREAMS_UNI,
@@ -455,6 +461,7 @@ impl Table {
                 Flags::WRITE_DONE | Flags::SEND_DONE,
             ),
         };
+        state.owed |= self.owed_max_streams(id.direction());
         let is_unwanted = self.is_going_away;
         flags.set(Flags::RELEASED, is_unwanted);
         let counts = self.counts(id.direction());

@@ -2110,6 +2110,11 @@ impl QuicSession {
         Some(match close {
             CloseReason::Local => return None,
             CloseReason::Peer {
+                layer: Layer::Application,
+                code: http3_code::NO_ERROR,
+                reason,
+            } if self.is_http3() => (CloseType::Application, 0, reason.clone()),
+            CloseReason::Peer {
                 layer,
                 code,
                 reason,

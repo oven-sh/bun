@@ -152,6 +152,7 @@ impl TlsConfig {
         if let Some(v) = tls.get(global, "enableEarlyData")? {
             config.enable_early_data = v.to_boolean();
         }
+        config.enable_early_data &= !(is_server && config.verify_client);
         if let Some(v) = tls.get(global, "ciphers")?.filter(|v| v.is_string()) {
             config.ciphers = Some(bun_core::String::from_js(v, global)?.to_owned_slice());
         }

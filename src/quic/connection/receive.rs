@@ -146,6 +146,7 @@ impl Connection {
                         path.on_received(len);
                     }
                     self.restart_idle_timer(now);
+                    (self.timers).set(Timer::KeepAlive, now + self.keep_alive_period);
                     self.has_sent_since_receiving = false;
                     self.update_unsent_target();
                     self.streams.state.start_write_round();
@@ -161,6 +162,7 @@ impl Connection {
     #[cold]
     fn bear_load(&mut self, now: Instant) -> Result {
         let load = core::mem::take(&mut self.streams.state.load);
+        (self.tolerated_load).put_back(core::mem::take(&mut self.streams.state.relief));
         match (self.tolerated_load.take(now, load), &self.http3) {
             (true, _) => Ok(()),
             (false, Some(_)) => Err(Error::http3(http3_code::EXCESSIVE_LOAD, "excessive load")),
@@ -423,9 +425,8 @@ impl Connection {
     }
 
     /// RFC 9000 §10.3.1.
-    pub(crate) fn is_reset(&self, from: &Addresses, token: ResetToken) -> bool {
-        (self.paths())
-            .any(|it| it.addresses.peer == from.peer && it.remote.reset_token == Some(token))
+    fn is_reset(&self, from: &Addresses, token: ResetToken) -> bool {
+        (self.paths()).any(|it| it.reset_key() == Some((from.peer, token)))
     }
 
     /// RFC 9001 §6.6.

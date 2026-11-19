@@ -604,6 +604,18 @@ unsafe extern "C" fn highway_unpack_words(
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
+unsafe extern "C" fn highway_byte_bits(p: *const u8, len: usize, byte: u8, out: *mut u64) {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    let text = unsafe { bytes(p, len) };
+    for (word, block) in text.chunks(64).enumerate() {
+        let bits =
+            (block.iter().enumerate()).fold(0, |bits, (i, &c)| bits | u64::from(c == byte) << i);
+        // SAFETY: `out` has a word for every block of 64 bytes, whole or not.
+        unsafe { out.add(word).write(bits) };
+    }
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_odd_blocks(p: *const u8, len: usize, out: *mut u64) {
     // SAFETY: the caller passes a slice, as a pointer and a length.
     let text = unsafe { bytes(p, len) };
@@ -939,6 +951,55 @@ unsafe extern "C" fn highway_index_of_needs_escape_for_javascript_string(
     first(unsafe { bytes(p, len) }, |c| {
         c == quote || c == b'\\' || !(0x20..=0x7E).contains(&c) || (quote == b'`' && c == b'$')
     })
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_brotli_remove_pairs(
+    costs: *mut f64,
+    pairs: *mut [u32; 2],
+    count: usize,
+    a: u32,
+    b: u32,
+) -> usize {
+    use core::slice::from_raw_parts_mut as slice;
+    // SAFETY: the caller passes two slices of this length.
+    let (costs, pairs) = unsafe { (slice(costs, count), slice(pairs, count)) };
+    let rank = |(cost, [first, second]): (f64, [u32; 2])| (cost, second - first);
+    let (mut best, mut kept) = ((1e99, [u32::MAX; 2]), 0);
+    for at in 0..count {
+        let mut pair = (costs[at], pairs[at]);
+        if !pair.1.contains(&a) && !pair.1.contains(&b) {
+            if rank(pair) < rank(best) {
+                core::mem::swap(&mut pair, &mut best);
+            }
+            (costs[kept], pairs[kept]) = pair;
+            kept += 1;
+        }
+    }
+    (costs[0], pairs[0]) = best;
+    kept
+}
+/// Rougher than the kernel: the entropy, and four bits to describe each symbol.
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_brotli_estimate_costs(
+    common: *const u32,
+    others: &[*const u32; 4],
+    size: usize,
+    _used: &[u64; 11],
+    totals: &[u32; 4],
+    _gaps: &[[u32; 4]; 2],
+    _table: *mut [f64; 2],
+    _limit: u32,
+    costs: &mut [f64; 4],
+) {
+    // SAFETY: the caller passes five slices of this length.
+    let counts = |of| unsafe { core::slice::from_raw_parts(of, size) };
+    for ((cost, &other), &total) in costs.iter_mut().zip(others).zip(totals) {
+        let sums = counts(common).iter().zip(counts(other)).map(|(a, b)| a + b);
+        let bits = |sum| 4.0 + f64::from(sum) * (f64::from(total) / f64::from(sum)).log2();
+        *cost = sums.filter(|&sum| sum != 0).map(bits).sum();
+    }
 }
 /// Reports `BUN_JSON_IDX_ODDITY`, so `StructuralIndex` falls back to its scalar indexer.
 #[unsafe(no_mangle)]

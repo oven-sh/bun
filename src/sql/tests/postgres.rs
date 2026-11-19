@@ -286,9 +286,10 @@ mod requests {
     use ErrorKind::{Canceled, Other, StaleStatement};
     use Read::*;
     use Wrote::*;
+    use core::cell::Cell;
 
     type Statement = RefPtr<pipeline::Statement<(), ()>>;
-    type Pipeline = pipeline::Pipeline<Rc<char>, (), ()>;
+    type Pipeline = pipeline::Pipeline<Rc<Request>, (), ()>;
 
     #[derive(Clone, Copy, Debug)]
     enum Read {
@@ -312,6 +313,14 @@ mod requests {
         Never,
     }
 
+    struct Request(char, Cell<u64>);
+
+    impl pipeline::Request for Request {
+        fn turn(&self) -> &Cell<u64> {
+            &self.1
+        }
+    }
+
     const DESCRIBED: &[Read] = &[ParseComplete, Parameters, Columns];
     const EXECUTED: &[Read] = &[BindComplete, CommandComplete];
 
@@ -319,8 +328,8 @@ mod requests {
         pipeline::Statement::new(Some(0), vec![0; parameters].into(), ())
     }
 
-    fn push(pipeline: &mut Pipeline, name: char, statement: &Statement) -> Rc<char> {
-        let request = Rc::new(name);
+    fn push(pipeline: &mut Pipeline, name: char, statement: &Statement) -> Rc<Request> {
+        let request = Rc::new(Request(name, Cell::new(0)));
         let protocol = Protocol::Extended {
             describe_first: !statement.declared.is_empty(),
         };
@@ -328,8 +337,8 @@ mod requests {
         request
     }
 
-    fn push_simple(pipeline: &mut Pipeline, name: char) -> Rc<char> {
-        let request = Rc::new(name);
+    fn push_simple(pipeline: &mut Pipeline, name: char) -> Rc<Request> {
+        let request = Rc::new(Request(name, Cell::new(0)));
         let statement = pipeline::Statement::new(None, Box::default(), ());
         pipeline.push(Rc::clone(&request), statement, Protocol::Simple);
         request
@@ -350,7 +359,7 @@ mod requests {
                     (true, true) => CloseParseBind,
                 },
             };
-            wire.push((*request, wrote));
+            wire.push((request.0, wrote));
             match step {
                 Some(step) => assert!(pipeline.wrote(&request, step)),
                 None => assert!(pipeline.unqueue(&request).is_some()),
@@ -374,7 +383,7 @@ mod requests {
 
     /// The request that a ReadyForQuery ends.
     fn ready(pipeline: &mut Pipeline) -> Option<char> {
-        pipeline.on_ready_for_query(b'I').map(|it| *it.request)
+        pipeline.on_ready_for_query(b'I').map(|it| it.request.0)
     }
 
     fn error(pipeline: &mut Pipeline, kind: ErrorKind) -> OnError {
@@ -511,6 +520,15 @@ mod requests {
     }
 
     #[test]
+    fn a_request_is_found_after_others_left() {
+        let (mut pipeline, statement) = prepared(false);
+        let [a, b, c, d] = ['a', 'b', 'c', 'd'].map(|name| push(&mut pipeline, name, &statement));
+        assert!(pipeline.pop().is_some() && pipeline.unqueue(&c).is_some());
+        let live = [&a, &b, &c, &d].map(|request| pipeline.is_live(request));
+        assert_eq!(live, [false, true, false, true]);
+    }
+
+    #[test]
     fn a_retry_says_that_the_request_was_cancelled() {
         let (mut pipeline, statement) = prepared(true);
         let request = push(&mut pipeline, 'a', &statement);
@@ -538,7 +556,7 @@ mod requests {
         let [_, d] = ['c', 'd'].map(|name| push(&mut pipeline, name, &statement));
         assert!(matches!(pipeline.cancel(&d), Some(OnCancel::Unqueued(_))));
         for name in ['a', 'b'] {
-            assert_eq!(pipeline.to_stop().map(|it| **it), Some(name));
+            assert_eq!(pipeline.to_stop().map(|it| it.0), Some(name));
             pipeline.on_cancel_dialed();
             assert_eq!(ready(&mut pipeline), Some(name));
             assert!(pipeline.to_stop().is_none());
@@ -548,7 +566,7 @@ mod requests {
         assert_eq!(advance(&mut pipeline), [('c', Bind)]);
     }
 
-    fn running() -> (Pipeline, Rc<char>) {
+    fn running() -> (Pipeline, Rc<Request>) {
         let mut pipeline = Pipeline::new(true);
         let request = push_simple(&mut pipeline, 'a');
         advance(&mut pipeline);

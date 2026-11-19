@@ -129,7 +129,7 @@ Build flags must come before exec args. `bun bd --asan=off test foo.ts` works; `
 
 Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune`), `globalFlags` (bun + all deps), `bunOnlyFlags` (just bun), `linkFlags`, `stripFlags`. Use `lang: "cxx"` to restrict to C++.
 
-**Bump a dependency** — edit the `commit` in `scripts/build/deps/<name>.ts`. See `deps/README.md` for adding/removing deps.
+**Bump a dependency** — edit the `commit` in `scripts/build/deps/<name>.ts`. See `deps/README.md` for adding/removing deps. For WebKit, edit `WEBKIT_VERSION` and run `bun run pin-webkit`: every download of a prebuilt is checked against `deps/webkit.sha256`, except one that `--webkit-version` asks for.
 
 **Iterate on a dependency from a local checkout** — `bun bd --local-deps=mimalloc=~/code/mimalloc …` builds that dep from the clone instead of the pinned tarball (no fetch, no patches; edits rebuild incrementally). Any `github-archive` dep the graph compiles (not lolhtml or rust-argon2 — cargo reads those via `Cargo.toml`); details in `deps/README.md`.
 

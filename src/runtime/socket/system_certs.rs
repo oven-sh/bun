@@ -72,8 +72,7 @@ impl Loader {
         };
         while let Some(der) = next_certificate(&bio) {
             let mut digest = [0u8; 32];
-            // SAFETY: `digest` has room for SHA-256.
-            unsafe { boringssl::SHA256(der.as_ptr(), der.len(), digest.as_mut_ptr()) };
+            bun_sha_hmac::sha::hashers::SHA256::hash(&der, &mut digest);
             if self.ders.contains_key(&digest) {
                 continue;
             }

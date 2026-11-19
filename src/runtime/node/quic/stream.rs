@@ -578,10 +578,11 @@ impl QuicStream {
 
     fn want_write(&self) {
         let out = self.outbound.get();
-        if out.data.is_empty() && out.end != PendingEnd::None && self.id.get().is_some() {
+        if !out.data.is_empty() {
+            self.update(Connection::want_write);
+        } else if out.end != PendingEnd::None && self.id.get().is_some() {
             self.push_event(SessionEvent::StreamEnd { stream: self.key });
         }
-        self.update(Connection::want_write);
     }
 
     fn kick_write(&self) {

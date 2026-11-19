@@ -137,6 +137,8 @@ pub struct Connection {
     first_sample_at: Instant,
     congestion: Controller,
     pto_count: u32,
+    /// Once between two timeouts.
+    may_probe_early: bool,
     delivery: recovery::Delivery,
     packet_threshold: u64,
     ack_policy: ack_frequency::Policy,
@@ -250,6 +252,7 @@ impl Connection {
             rtt: Rtt::default(),
             first_sample_at: Instant::NEVER,
             pto_count: 0,
+            may_probe_early: false,
             delivery: Default::default(),
             packet_threshold: recovery::INITIAL_PACKET_THRESHOLD,
             ack_policy: Default::default(),

@@ -23,6 +23,7 @@ const DELIVERY_PERIOD: Duration = Duration::from_secs(30);
 /// One part in so many of what has been sent has to be acknowledged in a period.
 const DELIVERY_PARTS: u64 = 8;
 const PROBES: u8 = 2;
+const MAX_PTO_COUNT_IF_HEARD: u32 = 4;
 /// After how many timeouts in a row the size of the packets is suspected.
 const BLACK_HOLE_THRESHOLD: u32 = 2;
 const MIN_SKIP_RANGE: u64 = 256;
@@ -403,6 +404,15 @@ impl Connection {
         };
     }
 
+    /// For a packet from a peer that has not answered probes. The path may just be back.
+    #[cold]
+    pub(super) fn on_sign_of_life(&mut self) {
+        self.pto_count = self.pto_count.min(MAX_PTO_COUNT_IF_HEARD);
+        if self.is_confirmed() && core::mem::take(&mut self.may_probe_early) {
+            self.probe(SpaceId::Data, PROBES.into());
+        }
+    }
+
     /// RFC 9002 §A.9.
     pub(super) fn on_loss_timeout(&mut self, now: Instant) {
         let (loss_time, id) = self.earliest(|_, space| space.sent.loss_time);
@@ -427,6 +437,7 @@ impl Connection {
             }
         }
         self.pto_count = self.pto_count.saturating_add(1);
+        self.may_probe_early = true;
         if self.pto_count == BLACK_HOLE_THRESHOLD {
             self.path.mtu.fall_back();
             self.congestion.set_datagram_len(self.path.mtu.current);

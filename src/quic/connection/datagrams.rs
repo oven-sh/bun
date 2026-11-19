@@ -67,6 +67,13 @@ impl Connection {
         Ok(())
     }
 
+    /// That can be sent (RFC 9297 §2.1.1).
+    #[inline]
+    pub(super) fn has_datagrams(&self) -> bool {
+        !self.datagrams.unsent.is_empty()
+            && (self.http3.as_ref()).is_none_or(|it| it.peer_accepts_datagrams.is_some())
+    }
+
     /// `id` comes back in the event that tells what became of it.
     pub fn send_datagram(&mut self, id: u64, data: Vec<u8>) {
         self.datagrams.unsent.push_back((id, data));

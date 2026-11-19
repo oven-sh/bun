@@ -234,6 +234,13 @@ impl PacketKey for EVP_AEAD_CTX {
     }
 }
 
+impl Drop for AES_KEY {
+    fn drop(&mut self) {
+        self.rd_key.fill(0);
+        core::hint::black_box(&self.rd_key);
+    }
+}
+
 impl HeaderKey for AES_KEY {
     fn mask(&self, sample: &[u8; SAMPLE_LEN]) -> [u8; 5] {
         let mut block = [0; 16];
@@ -244,6 +251,13 @@ impl HeaderKey for AES_KEY {
 }
 
 struct ChaCha20([u8; 32]);
+
+impl Drop for ChaCha20 {
+    fn drop(&mut self) {
+        self.0.fill(0);
+        core::hint::black_box(&self.0);
+    }
+}
 
 impl HeaderKey for ChaCha20 {
     fn mask(&self, &[a, b, c, d, nonce @ ..]: &[u8; SAMPLE_LEN]) -> [u8; 5] {

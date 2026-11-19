@@ -226,6 +226,10 @@ pub(super) enum SessionEvent {
     StreamDrain {
         stream: super::stream::Key,
     },
+    /// Unlike data, the end of a stream takes no credit.
+    StreamEnd {
+        stream: super::stream::Key,
+    },
     StreamBlocked {
         stream: super::stream::Key,
     },
@@ -748,6 +752,9 @@ impl QuicSession {
             }
             let buf = ArrayBuffer::create_buffer(global, &blob).or_report();
             callbacks::run(global, "onSessionTicket", self.handle(), &[buf]);
+            if self.destroyed.get() {
+                return;
+            }
         }
         self.plan_ticket_delivery();
     }
@@ -931,6 +938,10 @@ impl QuicSession {
                 // What Node reports for the notice of a graceful shutdown.
                 let last_stream_id = JSValue::from_int64_no_truncate(global, -1)?;
                 callbacks::run(global, "onSessionGoaway", self.handle(), &[last_stream_id]);
+                // JavaScript takes the session for closing from now on.
+                if !self.is_server && !self.is_close_deferred.replace(true) {
+                    self.close_after_streams.set(true);
+                }
             }
             SessionEvent::StreamWantsTrailers { stream } => {
                 let Some(stream) = self.live_stream(stream) else {
@@ -969,6 +980,12 @@ impl QuicSession {
                 };
                 let handle = stream.handle();
                 callbacks::run(global, "onStreamDrain", handle, &[]);
+            }
+            SessionEvent::StreamEnd { stream } => {
+                if let Some(stream) = self.live_stream(stream) {
+                    stream.drain_outbound();
+                    self.schedule_process();
+                }
             }
             SessionEvent::StreamBlocked { stream } => {
                 let Some(stream) = self.live_stream(stream).filter(|s| s.wants_block()) else {
@@ -1894,6 +1911,9 @@ impl QuicSession {
                 {
                     self.reject_peer(transport_code::CONNECTION_REFUSED, &[]);
                 }
+                if self.accepts_early_data() {
+                    self.push_event(SessionEvent::HandshakeDone);
+                }
                 SessionEvent::HandshakeConfirmed
             }
             Event::EarlyDataRejected => {
@@ -1935,7 +1955,9 @@ impl QuicSession {
 
     fn on_ready(&self) {
         self.get(|conn| self.capture_hsk_snapshot(conn));
-        self.push_event(SessionEvent::HandshakeDone);
+        if !self.accepts_early_data() {
+            self.push_event(SessionEvent::HandshakeDone);
+        }
         if self.peer_verification_refused() {
             self.peer_cert_rejected.set(true);
             self.reject_peer(

@@ -503,7 +503,7 @@ fn streams_take_turns() {
 
 #[test]
 fn urgent_streams_go_first() {
-    let mut raw = Raw::server()
+    let mut raw = Raw::client()
         .config(|it| it.has_priorities = true)
         .connected();
     let priorities = [
@@ -519,7 +519,7 @@ fn urgent_streams_go_first() {
         raw.connection().set_priority(StreamId(id), it);
         assert_eq!(raw.connection().priority(StreamId(id)), Some(it));
     }
-    let expected = [(14, 0), (18, 0), (6, 0), (10, 0), (6, 1), (10, 1), (2, 0)];
+    let expected = [(15, 0), (19, 0), (7, 0), (11, 0), (7, 1), (11, 1), (3, 0)];
     assert_eq!(turns(&mut raw), expected);
 }
 
@@ -600,7 +600,7 @@ fn what_was_sent_twice_can_outlast_its_stream() {
 
 #[test]
 fn what_is_about_to_be_sent_again_can_be_acknowledged() {
-    for (acked, expected) in [(0..=1, "ping, ping"), (1..=1, "fin 2 0 a, ping")] {
+    for (acked, expected) in [(0..=1, ""), (1..=1, "fin 2 0 a")] {
         let mut raw = Raw::server().connected();
         raw.peer.open(Unidirectional);
         raw.peer.send(2, b"a", false);

@@ -237,7 +237,7 @@ fn probe_timeout_backs_off() {
         (20, 25, 67_500),
         (20, 0, 42_500),
         (20, 1000, 1_042_500),
-        (0, 0, 1001),
+        (0, 0, 10_000),
     ] {
         let raw = Raw::client().config(|it| {
             it.parameters.max_idle_timeout_millis = 0;
@@ -328,7 +328,7 @@ fn end_of_a_flight_is_probed_sooner() {
     for (rtt, max_ack_delay, first, second) in [
         (20, 25, 40_000, 135_000),
         (4, 25, 10_000, 67_000),
-        (4, 1, 9500, 19_000),
+        (4, 1, 10_000, 20_000),
     ] {
         let raw = Raw::client().with(&format!("max_ack_delay={max_ack_delay}"));
         let mut raw = raw.connected_over(rtt);
@@ -366,7 +366,7 @@ fn what_is_acknowledged_before_the_probe_is_sent_is_left_out() {
     raw.send("ack");
     assert_eq!(
         raw.outline(),
-        "1[ack, handshake_done, new_token, new_connection_id]; 1[ack, ping]"
+        "1[handshake_done, new_token, new_connection_id]"
     );
 }
 

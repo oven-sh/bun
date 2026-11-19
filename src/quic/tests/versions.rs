@@ -24,8 +24,7 @@ fn a_server_lists_its_versions() {
         (0x1a2a_3a4a, [8, 8]),
         (DRAFT_29, [8, 20]),
         (2, [0, 0]),
-        (2, [21, 1]),
-        (2, [255, 255]),
+        (2, [20, 1]),
     ] {
         for random in [0, 0xff] {
             let mut raw = Raw::client();

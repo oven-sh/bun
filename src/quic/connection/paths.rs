@@ -7,6 +7,8 @@ use smallvec::SmallVec;
 use super::Connection;
 use super::ids::RemoteId;
 use super::mtu::Mtu;
+use super::recovery::INITIAL_PACKET_THRESHOLD;
+use super::sent::Control;
 use super::space::SpaceId;
 use super::timers::Timer;
 use crate::cid::ResetToken;
@@ -17,7 +19,8 @@ use crate::error::Result;
 use crate::event::Event;
 use crate::frame::kind;
 use crate::packet::MIN_DATAGRAM_LEN;
-use crate::path::Addresses;
+use crate::path::{Addresses, is_reserved_port};
+use crate::stream_id::Side;
 use crate::time::{Duration, Instant};
 
 const MAX_CANDIDATES: usize = 3;
@@ -44,7 +47,10 @@ pub(super) struct Path {
     challenges: Vec<Challenge>,
     owes_challenge: bool,
     challenge_deadline: Instant,
-    pub(super) owed_response: Option<[u8; 8]>,
+    /// The latest goes first. Two paths of the peer can be one for us.
+    owed_responses: [Option<[u8; 8]>; 2],
+    /// We are the ones who want to move here.
+    is_preferred: bool,
     /// The peer has answered a challenge.
     is_confirmed: bool,
     /// The peer has moved here.
@@ -63,7 +69,8 @@ impl Path {
             challenges: Vec::new(),
             owes_challenge: false,
             challenge_deadline: Instant::NEVER,
-            owed_response: None,
+            owed_responses: [None; 2],
+            is_preferred: false,
             is_confirmed: false,
             is_wanted: false,
         }
@@ -92,22 +99,42 @@ impl Path {
 
     #[inline]
     pub(super) fn owes_frames(&self) -> bool {
-        self.owes_challenge || self.owed_response.is_some()
+        self.owes_challenge || self.owed_responses[0].is_some()
     }
 
-    pub(super) fn write_frames(&mut self, now: Instant, crypto: &dyn Crypto, out: &mut Vec<u8>) {
-        if let Some(data) = self.owed_response.take() {
+    pub(super) fn owe_response(&mut self, data: [u8; 8]) {
+        self.owed_responses = [Some(data), self.owed_responses[0]];
+    }
+
+    /// How long the datagram with these frames can be.
+    pub(super) fn probe_len(&self) -> usize {
+        match self.is_preferred && self.owes_challenge {
+            true => MIN_DATAGRAM_LEN,
+            false => self.allowance().min(MIN_DATAGRAM_LEN),
+        }
+    }
+
+    /// Returns whether there is a response among them.
+    pub(super) fn write_frames(
+        &mut self,
+        now: Instant,
+        crypto: &dyn Crypto,
+        out: &mut Vec<u8>,
+    ) -> bool {
+        let is_expanded = self.probe_len() == MIN_DATAGRAM_LEN;
+        let responses = core::mem::take(&mut self.owed_responses);
+        for data in responses.iter().rev().flatten() {
             out.push(kind::PATH_RESPONSE as u8);
-            out.extend_from_slice(&data);
+            out.extend_from_slice(data);
         }
         if core::mem::take(&mut self.owes_challenge) {
             let data = crypto.random();
             out.push(kind::PATH_CHALLENGE as u8);
             out.extend_from_slice(&data);
             self.challenge_deadline = now + FIRST_CHALLENGE_TIMEOUT * (1 << self.challenges.len());
-            let is_expanded = self.allowance() >= MIN_DATAGRAM_LEN;
             self.challenges.push(Challenge { data, is_expanded });
         }
+        responses[0].is_some()
     }
 
     fn challenge(&mut self, now: Instant) {
@@ -199,7 +226,7 @@ impl Reach {
 
 /// RFC 9000 §21.5.6.
 fn may_move(from: SocketAddr, to: SocketAddr) -> bool {
-    Reach::of(to.ip()) >= Reach::of(from.ip()).max(Reach::Host)
+    Reach::of(to.ip()) >= Reach::of(from.ip()).max(Reach::Host) && !is_reserved_port(to.port())
 }
 
 impl Connection {
@@ -230,7 +257,7 @@ impl Connection {
         let keeps_id = self.path.remote.id.is_empty()
             || destination == self.last_destination.0 && from.local == self.path.addresses.local;
         let remote = match keeps_id {
-            _ if !may_move(self.path.addresses.peer, from.peer) => None,
+            _ if !may_move(self.first_peer, from.peer) || !self.new_paths.take(now, 1) => None,
             true => Some(self.path.remote),
             false => self.remote_ids.take_spare(),
         };
@@ -242,8 +269,13 @@ impl Connection {
             let path = self.candidates.remove(idle.unwrap_or(0));
             self.abandon_path(&path, shared)?;
         }
-        let is_validated = self.side.is_client() || from.peer == self.path.addresses.peer;
+        let is_preferred = validates && self.side.is_client();
+        let is_validated = match self.side {
+            Side::Client => !is_preferred,
+            Side::Server => from.peer == self.path.addresses.peer,
+        };
         let mut path = Path::new(*from, remote, is_validated);
+        path.is_preferred = is_preferred;
         path.mtu.set_peer_limit(self.peer.max_udp_payload_size);
         path.challenge(now);
         path.owes_challenge = validates;
@@ -374,13 +406,18 @@ impl Connection {
         self.path.is_wanted = false;
         self.previous_peer = Some(from.peer);
         self.spin = false;
+        // RFC 9000 §9.4.
+        self.resend_all(SpaceId::Data);
         if from.local == to.local && from.peer.ip() == to.peer.ip() {
             self.path.mtu = old.mtu;
         } else {
-            // RFC 9000 §9.4.
-            self.resend_all(SpaceId::Data);
             (self.rtt, self.first_sample_at) = (Rtt::default(), Instant::NEVER);
             self.congestion.restart(self.path.mtu.current);
+            self.packet_threshold = INITIAL_PACKET_THRESHOLD;
+            if let Some(controller) = &mut self.ack_controller {
+                controller.restart();
+                self.streams.state.owed |= Control::ACK_FREQUENCY;
+            }
         }
         self.pto_count = 0;
         // Only the last change is of interest.

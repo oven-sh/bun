@@ -22,7 +22,7 @@ use crate::packet::{
     FIXED_BIT, Invariants, LONG_HEADER, LongFields, LongHeader, LongKind, MIN_DATAGRAM_LEN,
     MIN_RESET_LEN, Sealed, Unsealed,
 };
-use crate::path::Addresses;
+use crate::path::{Addresses, is_reserved_port};
 use crate::stream_id::{Side, StreamId};
 use crate::time::Instant;
 use crate::tls;
@@ -398,9 +398,11 @@ impl Endpoint {
 
     /// RFC 9000 §10.3. Returns whether it is going to be sent.
     pub fn reset(&mut self, from: &Addresses, stray: &[u8]) -> bool {
-        let Some(id) = (stray.get(1..1 + LocalId::LEN))
-            .filter(|_| stray.len() > MIN_RESET_LEN && stray.first() >= Some(&FIXED_BIT))
-        else {
+        let Some(id) = stray.get(1..1 + LocalId::LEN).filter(|_| {
+            stray.len() > MIN_RESET_LEN
+                && stray.first() >= Some(&FIXED_BIT)
+                && !is_reserved_port(from.peer.port())
+        }) else {
             return false;
         };
         let [first, len, rest @ ..] = self.shared.crypto.random::<{ USUAL_RESET_LENS.end }>();
@@ -495,7 +497,11 @@ impl Endpoint {
         }
         let invariants = Invariants::read(datagram).filter(|it| it.version != 0)?;
         if !accepted.iter().any(|it| it.number() == invariants.version) {
-            if self.version_negotiations.take(now, 1) {
+            let max_len = (invariants.source.len()).max(invariants.destination.len());
+            if max_len <= ConnectionId::MAX_LEN
+                && !is_reserved_port(from.peer.port())
+                && self.version_negotiations.take(now, 1)
+            {
                 self.negotiate_version(from, &invariants, accepted);
             }
             return None;

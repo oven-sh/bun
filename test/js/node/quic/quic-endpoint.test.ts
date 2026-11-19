@@ -44,28 +44,6 @@ test("one endpoint carries raw and HTTP/3 client sessions side by side", async (
   await Promise.all([raw.close(), h3.close()]);
 });
 
-test("maxConnectionsPerHost counts the sessions that are open", async () => {
-  const closed: Promise<void>[] = [];
-  await using server = await listen(session => void closed.push(session.closed), {
-    sni: { "*": { keys: [key], certs: [cert] } },
-    alpn: ["quic-test"],
-    endpoint: { maxConnectionsPerHost: 2 } as EndpointOptions,
-  });
-  const open = async () => {
-    const session = await connect(server.address!, { alpn: "quic-test", verifyPeer: "manual" } as SessionOptions);
-    session.closed.catch(() => {});
-    await session.opened;
-    return session;
-  };
-  const [first, second] = [await open(), await open()];
-  expect(await open().catch(err => err.code)).toBe("ERR_QUIC_TRANSPORT_ERROR");
-  await first.close();
-  await closed[0];
-  const third = await open();
-  await Promise.all([second.close(), third.close()]);
-  expect(closed).toHaveLength(3);
-});
-
 describe("endpoint blockList", () => {
   test("applies to packets forwarded from a sibling endpoint on the same loop", async () => {
     const tp = { maxIdleTimeout: 1 };

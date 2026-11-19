@@ -103,14 +103,14 @@ fn on_stream_event(
         StreamEvent::Writable if stream.headers_sent => encode::drain_send_body(stream, qstream),
         StreamEvent::Writable => {
             stream.headers_sent = true;
-            let session = stream.session_mut();
-            if let Err(e) = encode::write_request(session, stream, qstream) {
-                session.fail(stream_ptr, e);
+            if let Err(e) = encode::write_request(stream, qstream) {
+                stream.session_mut().fail(stream_ptr, e);
             }
         }
         StreamEvent::Reset(http3_code::MESSAGE_ERROR) if stream.status_code == 0 => {
             (stream.session_mut()).fail(stream, crate::Error::HTTP3ProtocolError);
         }
+        StreamEvent::Stopped(_) if qstream.has_received() => {}
         StreamEvent::Reset(http3_code::REQUEST_REJECTED)
         | StreamEvent::Stopped(http3_code::REQUEST_REJECTED) => {
             stream.peer_rejected = true;

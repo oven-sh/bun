@@ -124,6 +124,8 @@ pub struct Connection {
 
     path: Path,
     candidates: Vec<Path>,
+    new_paths: TokenBucket,
+    first_peer: SocketAddr,
     previous_peer: Option<SocketAddr>,
     /// The ID that the client chose for us.
     initial_route: Option<ConnectionId>,
@@ -144,6 +146,8 @@ pub struct Connection {
     tolerated_load: TokenBucket,
     idle_timeout: Duration,
     has_sent_since_receiving: bool,
+    progress_timeout: Duration,
+    keep_alive: KeepAlive,
     keep_alive_period: Duration,
     /// In its place after an ack-eliciting packet, as more may be on the way to an address that is gone.
     expected_pause: Duration,
@@ -234,8 +238,10 @@ impl Connection {
             spins: spin >= 16,
             spin: spin < 8,
             congestion: Controller::new(config.congestion, path.mtu.current, random),
+            first_peer: path.addresses.peer,
             path,
             candidates: Vec::new(),
+            new_paths: TokenBucket::new(1.0, 16.0),
             previous_peer: None,
             initial_route: None,
             last_destination: id,
@@ -252,6 +258,8 @@ impl Connection {
             tolerated_load: TokenBucket::new(330.0, 10_000.0),
             idle_timeout: Duration::from_millis(local.max_idle_timeout_millis),
             has_sent_since_receiving: false,
+            progress_timeout: config.progress_timeout,
+            keep_alive: config.keep_alive,
             keep_alive_period: Duration::MAX,
             expected_pause: Duration::MAX,
             streams: Streams::new(side, &local, &config, u64::from_ne_bytes(seed)),
@@ -393,7 +401,7 @@ impl Connection {
             Timer::Ack => self.spaces.data.received.is_ack_due = true,
             Timer::Pacing => {}
             Timer::KeepAlive => {
-                if self.config.keep_alive != KeepAlive::WhileStreamsAreOpen
+                if self.keep_alive != KeepAlive::WhileStreamsAreOpen
                     || self.streams.table.has_application_streams()
                 {
                     self.streams.state.owed |= Control::PING;
@@ -413,12 +421,16 @@ impl Connection {
     }
 
     fn start_keep_alive(&mut self, now: Instant) {
-        (self.keep_alive_period, self.expected_pause) = match self.config.keep_alive {
+        (self.keep_alive_period, self.expected_pause) = match self.keep_alive {
             KeepAlive::Every(period) if !period.is_zero() => (period, period),
             KeepAlive::WhileStreamsAreOpen
                 if self.idle_timeout >= MIN_IDLE_TIMEOUT_TO_KEEP_ALIVE =>
             {
-                (self.idle_timeout / 2, EXPECTED_PAUSE)
+                let period = self.idle_timeout / 2;
+                match self.side {
+                    Side::Client => (period, EXPECTED_PAUSE),
+                    Side::Server => (period, period),
+                }
             }
             _ => (Duration::MAX, Duration::MAX),
         };

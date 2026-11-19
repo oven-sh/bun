@@ -731,3 +731,25 @@ test("a stream that reuses a destroyed stream's allocation doesn't get its queue
   expect(stdout).toBe(JSON.stringify({ opened: 16, delivered: 16, closedBeforeSent: [] }) + "\n");
   expect(exitCode).toBe(0);
 }, 30_000);
+
+test.each(["is never read", "is read in part"])("a request that %s can be sent to the end", async how => {
+  const options = { alpn: "quic-test", transportParams: { initialMaxData: 64 * 1024 } };
+  await using server = await listen(
+    session => {
+      session.onstream = async stream => {
+        if (how === "is read in part") for await (const _ of stream) break;
+        stream.setBody("done");
+      };
+    },
+    { ...options, alpn: [options.alpn], sni: { "*": { keys: [key], certs: [cert] } } },
+  );
+  const client = await connect(server.address!, { ...options, verifyPeer: "manual" } as SessionOptions);
+  const exchange = async () => {
+    const stream = await client.createBidirectionalStream({ body: Buffer.alloc(200 * 1024) });
+    const chunks = (await Array.fromAsync(stream)).flat();
+    await stream.closed;
+    return Buffer.concat(chunks).toString();
+  };
+  expect(await Promise.all([exchange(), exchange(), exchange()])).toEqual(["done", "done", "done"]);
+  await client.close();
+});

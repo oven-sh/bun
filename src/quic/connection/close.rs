@@ -5,6 +5,7 @@ use super::streams::{Flags, Role};
 use super::timers::{Timer, Timers};
 use super::{Connection, Ending};
 use crate::coding::{MAX_VARINT, Write};
+use crate::config::KeepAlive;
 use crate::error::{Error, Layer, http3_code, transport_code};
 use crate::event::CloseReason;
 use crate::frame::kind;
@@ -19,6 +20,7 @@ const MAX_HANDSHAKE_REASON_LEN: usize = 128;
 const GRACE_PERIOD: Duration = Duration::from_secs(30);
 const MIN_IDLE_PROBE_TIMEOUT: Duration = Duration::from_millis(150);
 const INITIAL_IDLE_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
+const MAX_UNANSWERED_PROBES: u32 = 3;
 const MAX_SETTLING_PERIOD: Duration = Duration::from_secs(15);
 
 pub(super) struct CloseFrame {
@@ -65,7 +67,9 @@ impl CloseFrame {
         if layer == Layer::Transport {
             out.varint(kind::PADDING);
         }
-        out.prefixed_bytes(self.reason.get(..max_len).unwrap_or(&self.reason));
+        let is_boundary = |&at: &usize| self.reason.get(at).is_none_or(|it| it & 0xc0 != 0x80);
+        let len = (0..=max_len.min(self.reason.len())).rfind(is_boundary);
+        out.prefixed_bytes(self.reason.get(..len.unwrap_or(0)).unwrap_or_default());
     }
 }
 
@@ -196,7 +200,11 @@ impl Connection {
         if !is_graceful && (self.side.is_client() || table.has_application_streams()) {
             return;
         }
-        if !self.is_ready || !state.has_frames() && !table.has_unacked_data() {
+        let is_busy = state.has_frames()
+            || self.has_datagrams()
+            || table.has_unacked_data()
+            || !is_graceful && table.has_unsettled_requests();
+        if !self.is_ready || !is_busy {
             self.send_close(now);
         } else {
             let patience = match table.has_undelivered_application_data() {
@@ -228,8 +236,29 @@ impl Connection {
 
     #[inline]
     pub(super) fn restart_progress_timer(&mut self, now: Instant) {
-        if !self.config.progress_timeout.is_zero() {
-            (self.timers).set(Timer::Progress, now + self.config.progress_timeout);
+        if !self.progress_timeout.is_zero() {
+            (self.timers).set(Timer::Progress, now + self.progress_timeout);
         }
+    }
+
+    /// For when the application may be silent for `timeout`, or for ever if it is zero.
+    pub fn allow_silence(&mut self, now: Instant, timeout: Duration) {
+        if !timeout.is_zero() && timeout <= self.idle_timeout || !self.is_receiving() {
+            return;
+        }
+        if timeout.is_zero() {
+            self.progress_timeout = timeout;
+            self.timers.stop(Timer::Progress);
+        } else if !self.progress_timeout.is_zero() {
+            self.progress_timeout = self.progress_timeout.max(timeout);
+        }
+        self.keep_alive = KeepAlive::WhileStreamsAreOpen;
+        self.start_keep_alive(now);
+    }
+
+    /// Whether the peer may have dropped the connection by the time something new arrives.
+    pub fn is_stale(&self, now: Instant) -> bool {
+        let margin = self.settling_period().max(self.idle_timeout / 16);
+        self.pto_count >= MAX_UNANSWERED_PROBES || now + margin >= self.timers.get(Timer::Idle)
     }
 }

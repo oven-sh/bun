@@ -1,5 +1,5 @@
 use super::stream::UNKNOWN_SIZE;
-use super::{Flags, Role, State, Stream};
+use super::{Flags, Load, Role, State, Stream};
 use crate::coding::MAX_VARINT;
 use crate::connection::sent::Control;
 use crate::error::{Error, Result, transport_code};
@@ -213,6 +213,27 @@ impl State {
         let is_short = self.consumed + window > limit + (limit - self.received).max(window / 64);
         if is_worth_raising(limit, self.consumed, window) || is_short && limit < MAX_VARINT {
             self.owed |= Control::MAX_DATA;
+        }
+    }
+
+    pub(crate) fn is_peer_short_of_credit(&self, stream: &Stream) -> bool {
+        self.receive_limit - self.received < self.receive_window / 8
+            || stream.receive_limit - stream.received < stream.receive_window / 8
+    }
+
+    /// The peer may have missed a limit, or can do with less than is usually worth a frame.
+    pub(crate) fn on_data_blocked(&mut self, limit: u64) {
+        self.add_load(Load::Light);
+        if self.consumed + self.receive_window > limit {
+            self.owed |= Control::MAX_DATA;
+        }
+    }
+
+    /// Likewise.
+    pub(crate) fn on_stream_data_blocked(&mut self, id: StreamId, stream: &mut Stream, limit: u64) {
+        self.add_load(Load::Light);
+        if stream.consumed + stream.receive_window > limit {
+            self.owe(id, stream, Flags::OWES_MAX_STREAM_DATA);
         }
     }
 

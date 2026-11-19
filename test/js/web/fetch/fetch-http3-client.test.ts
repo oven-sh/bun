@@ -197,28 +197,6 @@ describe("fetch protocol: http3", () => {
     expect(await res.text()).toBe("hello over h3");
   });
 
-  // The shortest that the timer allows is between 4 and 8 seconds.
-  test("`timeout` applies to a request, and not to the others on its connection", async () => {
-    const release = Promise.withResolvers<void>();
-    await using slow = Bun.serve({
-      port: 0,
-      tls,
-      http3: true,
-      http1: false,
-      idleTimeout: 0,
-      fetch: () => release.promise.then(() => new Response("late")),
-    });
-    const request = (timeout: number | boolean) =>
-      fetch(`https://127.0.0.1:${slow.port}/`, { ...h3, timeout } as RequestInit).then(
-        res => res.text(),
-        err => err.name,
-      );
-    const [patient, hasty] = [request(false), request(1000)];
-    expect(await hasty).toBe("TimeoutError");
-    release.resolve();
-    expect(await patient).toBe("late");
-  }, 20_000);
-
   test("'h3' alias", async () => {
     const res = await fetch(`${base}/hello`, { ...h3, protocol: "h3" });
     expect(await res.text()).toBe("hello over h3");

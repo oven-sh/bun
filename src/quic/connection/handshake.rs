@@ -2,7 +2,7 @@
 
 use super::ack_frequency::{self, MIN_ACK_DELAY};
 use super::space::SpaceId;
-use super::streams::Load;
+use super::streams::{Load, Streams};
 use super::timers::Timer;
 use super::{Connection, Phase};
 use crate::cid::ConnectionId;
@@ -163,12 +163,13 @@ impl Handshake<'_> {
         let secret = Secret::new(connection.crypto, cipher, secret);
         let keys = secret.keys(connection.version);
         with(connection.setup.as_mut(), |it| it.can_read_more = true);
+        let limit = keys.payload.key.integrity_limit();
+        connection.integrity_limit = connection.integrity_limit.min(limit);
         match level {
             Level::Initial => {}
             Level::EarlyData => connection.early_keys = Some(keys),
             Level::Handshake => connection.spaces.open(SpaceId::Handshake).read_keys = Some(keys),
             Level::Application => {
-                connection.integrity_limit = keys.payload.key.integrity_limit();
                 connection.spaces.data.read_keys = Some(keys);
                 (connection.key_update).set_read_secret(&secret, connection.version);
             }
@@ -186,7 +187,7 @@ impl Handshake<'_> {
             Level::Application => {
                 let limit = keys.payload.key.confidentiality_limit();
                 connection.spaces.data.write_keys = Some(keys);
-                connection.key_update.set_write_secret(secret, limit);
+                (connection.key_update).set_write_secret(secret, limit, &connection.spaces.data);
                 if connection.side.is_client() {
                     connection.early_keys = None;
                 }
@@ -529,6 +530,9 @@ impl Connection {
         let timeouts = [&self.local, &self.peer].map(|it| it.max_idle_timeout_millis);
         let shortest = timeouts.into_iter().filter(|&it| it > 0).min();
         self.idle_timeout = crate::time::Duration::from_millis(shortest.unwrap_or(0));
+        if shortest.is_none() {
+            self.timers.stop(Timer::Idle);
+        }
     }
 
     /// RFC 9001 §4.6.2.
@@ -542,8 +546,9 @@ impl Connection {
         self.emit(Event::EarlyDataRejected);
         self.streams.close_all();
         let new = self.new_streams();
-        let old = core::mem::replace(&mut self.streams, new).state;
-        (self.streams.state.events, self.streams.state.removed) = (old.events, old.removed);
+        let Streams { table, state, .. } = core::mem::replace(&mut self.streams, new);
+        (self.streams.state.events, self.streams.state.removed) = (state.events, state.removed);
+        self.streams.table.is_going_away = table.is_going_away;
         self.update_unsent_target();
         (self.http3, self.can_open_streams) = (None, false);
         self.set_loss_timer(now);
@@ -611,7 +616,7 @@ impl Connection {
         match self.side {
             Side::Client => self.try_preferred_address(now, shared),
             Side::Server => {
-                self.plan_key_discard(now);
+                (self.timers).set(Timer::KeyDiscard, now + self.settling_period());
                 Ok(())
             }
         }

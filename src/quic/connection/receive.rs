@@ -1,5 +1,7 @@
 //! RFC 9000 §12 and §13.1.
 
+use core::net::SocketAddr;
+
 use super::ids::RemoteId;
 use super::key_update::Generation;
 use super::received::Order;
@@ -61,6 +63,11 @@ struct Origin<'a> {
     destination: &'a [u8],
 }
 
+#[inline]
+fn is_same(a: SocketAddr, b: SocketAddr) -> bool {
+    (a.ip(), a.port()) == (b.ip(), b.port())
+}
+
 impl Connection {
     pub(crate) fn receive(
         &mut self,
@@ -71,15 +78,17 @@ impl Connection {
     ) {
         self.stats.bytes_received += datagram.len() as u64;
         let len = datagram.len();
-        // A client may not know its address.
-        let from = &Addresses {
-            local: match self.side {
-                Side::Client => self.path.addresses.local,
-                Side::Server => from.local,
+        let current = self.path.addresses;
+        // A client may not know its address, or the zone of that of the server.
+        let from = &match self.side {
+            Side::Server => *from,
+            Side::Client if is_same(from.peer, current.peer) => current,
+            Side::Client => Addresses {
+                local: current.local,
+                peer: from.peer,
             },
-            peer: from.peer,
         };
-        if *from == self.path.addresses {
+        if *from == current {
             self.path.on_received(len);
         } else if !self.accepts_from(from) {
             return;
@@ -312,7 +321,8 @@ impl Connection {
                 // RFC 9000 §8.1 and RFC 9001 §4.9.1.
                 self.path.is_validated = true;
                 if self.timers.is_set(Timer::Handshake) {
-                    let timeout = self.config.handshake_timeout.max(self.idle_timeout);
+                    let idle_timeout = Duration::from_millis(self.local.max_idle_timeout_millis);
+                    let timeout = self.config.handshake_timeout.max(idle_timeout);
                     (self.timers).set(Timer::Handshake, setup.started_at + timeout);
                 }
                 self.discard_space(now, |it| it.initial.take());
@@ -406,7 +416,7 @@ impl Connection {
             if generation == Generation::Next {
                 self.streams.state.add_load(Load::Heavy);
             }
-            self.plan_key_discard(now);
+            (self.timers).set(Timer::KeyDiscard, now + self.settling_period());
         }
         let is_current_path = *from == self.path.addresses;
         if is_current_path && packet.number >= expected && self.spins {
@@ -426,12 +436,6 @@ impl Connection {
             self.last_destination = destination;
         }
         Ok(is_new)
-    }
-
-    pub(super) fn plan_key_discard(&mut self, now: Instant) {
-        if !self.timers.is_set(Timer::KeyDiscard) {
-            (self.timers).set(Timer::KeyDiscard, now + self.settling_period());
-        }
     }
 
     /// RFC 9000 §10.3.1.
@@ -543,11 +547,11 @@ impl Connection {
         {
             space.received.is_ack_due = true;
         } else if !self.timers.is_set(Timer::Ack) {
+            // The timer may be late.
+            let max_delay = policy.max_delay * 7 / 8;
             let delay = match self.rtt.has_sample() {
-                true => (self.rtt.smoothed / 4)
-                    .min(policy.max_delay)
-                    .max(GRANULARITY),
-                false => policy.max_delay,
+                true => (self.rtt.smoothed / 4).clamp(GRANULARITY, max_delay),
+                false => max_delay,
             };
             self.timers.set(Timer::Ack, now + delay);
         }
@@ -563,8 +567,15 @@ impl Connection {
                 data,
                 fin,
             } => return self.on_stream(id, offset, data, fin, origin.is_early, shared),
-            Frame::Ack(ack) => return self.on_ack(now, origin.space, &ack),
-            Frame::Padding | Frame::Blocked => {}
+            Frame::Ack(ack) => {
+                self.on_ack(now, origin.space, &ack)?;
+                // RFC 9001 §4.1.2.
+                if self.phase == Phase::Established && self.key_update.is_acked(&self.spaces.data) {
+                    return self.confirm_handshake(now, shared);
+                }
+            }
+            Frame::Padding | Frame::StreamsBlocked => {}
+            Frame::DataBlocked(limit) => self.streams.state.on_data_blocked(limit),
             Frame::Ping => self.stats.pings_received += 1,
             Frame::Crypto { offset, data } => {
                 return self.on_crypto(now, origin.space, offset, data, shared);
@@ -582,8 +593,10 @@ impl Connection {
                 }
             }
             Frame::MaxStreams(direction, limit) => self.streams.on_max_streams(direction, limit),
-            Frame::StreamDataBlocked(id) => {
-                self.streams.accept(id, Half::Receive)?;
+            Frame::StreamDataBlocked { id, limit } => {
+                if let Some((stream, state)) = self.streams.accept(id, Half::Receive)? {
+                    state.on_stream_data_blocked(id, stream, limit);
+                }
             }
             Frame::NewToken(token) => return self.on_new_token(token),
             Frame::NewConnectionId {
@@ -617,7 +630,7 @@ impl Connection {
                     }
                 };
                 if let Some(path) = path {
-                    path.owed_response = Some(data);
+                    path.owe_response(data);
                 }
             }
             Frame::PathResponse(data) => {

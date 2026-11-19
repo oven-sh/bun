@@ -81,6 +81,7 @@ struct Callbacks {
 struct Server {
     engine: Engine,
     config: Rc<Config>,
+    idle_timeout: Duration,
     tls: OwnedSslCtx,
     names: OnceCell<Rc<ServerNames>>,
     callbacks: Callbacks,
@@ -118,8 +119,14 @@ impl Application for Server {
 
     #[inline]
     fn on_event(&self, connection: Connection, _: Context, event: Event) {
-        if let Event::Stream(id, response, event) = event {
-            self.on_stream_event(connection.stream(id), response, event);
+        match event {
+            Event::Stream(id, response, event) => {
+                self.on_stream_event(connection.stream(id), response, event);
+            }
+            Event::Ready => {
+                connection.update(|it| it.allow_silence(now(), self.idle_timeout));
+            }
+            _ => {}
         }
     }
 
@@ -227,16 +234,15 @@ extern "C" fn us_create_quic_socket_context(
         }),
         ..Config::server()
     };
-    match Duration::from_secs(idle_timeout_secs.min(MAX_IDLE_TIMEOUT_SECS).into()) {
-        Duration::ZERO => config.progress_timeout = Duration::ZERO,
-        timeout => {
-            config.parameters.max_idle_timeout_millis = timeout.as_millis();
-            config.progress_timeout = config.progress_timeout.max(timeout);
-        }
+    let idle_timeout = Duration::from_secs(idle_timeout_secs.min(MAX_IDLE_TIMEOUT_SECS).into());
+    if !idle_timeout.is_zero() {
+        config.parameters.max_idle_timeout_millis = idle_timeout.as_millis();
+        config.progress_timeout = config.progress_timeout.max(idle_timeout);
     }
     Rc::into_raw(Rc::new_cyclic(|this| Server {
         engine: Engine::new(loop_, Weak::<Server>::clone(this), VERSIONS),
         config: Rc::new(config),
+        idle_timeout,
         tls,
         names: OnceCell::new(),
         callbacks: *callbacks,
@@ -316,6 +322,9 @@ unsafe extern "C" fn us_quic_socket_context_listen(
     }
     // SAFETY: the caller's.
     let host = (!host.is_null()).then(|| unsafe { ZStr::from_c_ptr(host) });
+    // TIME_WAIT, which it is there for, is a matter of TCP.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let flags = flags & !crate::LIBUS_LISTEN_REUSE_ADDR;
     let socket = server.engine.bind(server, host, port, flags);
     socket.map_or(core::ptr::null(), |it| Rc::as_ptr(&it))
 }
@@ -396,6 +405,12 @@ extern "C" fn us_quic_stream_shutdown_read(stream: &Stream) {
 extern "C" fn us_quic_stream_close(stream: &Stream) {
     stream.reset_unfinished(http3_code::INTERNAL_ERROR);
     stream.stop(http3_code::NO_ERROR);
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn us_quic_stream_timeout(stream: &Stream, secs: c_uint) {
+    let timeout = Duration::from_secs(secs.into());
+    (stream.connection).update(|it| it.allow_silence(now(), timeout));
 }
 
 #[unsafe(no_mangle)]

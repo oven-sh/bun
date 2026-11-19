@@ -78,9 +78,12 @@ pub(crate) enum Frame<'a> {
         limit: u64,
     },
     MaxStreams(Direction, u64),
-    /// DATA_BLOCKED or STREAMS_BLOCKED.
-    Blocked,
-    StreamDataBlocked(StreamId),
+    DataBlocked(u64),
+    StreamDataBlocked {
+        id: StreamId,
+        limit: u64,
+    },
+    StreamsBlocked,
     NewConnectionId {
         sequence: u64,
         retire_prior_to: u64,
@@ -223,13 +226,13 @@ impl<'a> Frame<'a> {
             kind::MAX_STREAMS_BIDI | kind::MAX_STREAMS_UNI => {
                 Self::MaxStreams(Direction::from_bit(kind & 1), stream_count(input)?)
             }
-            kind::DATA_BLOCKED => input.varint().map(|_| Self::Blocked)?,
-            kind::STREAM_DATA_BLOCKED => {
-                let (id, _limit) = (input.varint()?, input.varint()?);
-                Self::StreamDataBlocked(StreamId(id))
-            }
+            kind::DATA_BLOCKED => Self::DataBlocked(input.varint()?),
+            kind::STREAM_DATA_BLOCKED => Self::StreamDataBlocked {
+                id: StreamId(input.varint()?),
+                limit: input.varint()?,
+            },
             kind::STREAMS_BLOCKED_BIDI | kind::STREAMS_BLOCKED_UNI => {
-                stream_count(input).map(|_| Self::Blocked)?
+                stream_count(input).map(|_| Self::StreamsBlocked)?
             }
             kind::NEW_CONNECTION_ID => {
                 let (sequence, retire_prior_to) = (input.varint()?, input.varint()?);

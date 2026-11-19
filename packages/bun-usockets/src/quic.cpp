@@ -1,5 +1,7 @@
 /* What src/uws_sys/quic needs from the operating system and from BoringSSL's X.509 code. */
 
+#define __APPLE_USE_RFC_3542
+
 #include "quic.h"
 
 #include "internal/internal.h"
@@ -278,10 +280,10 @@ int us_quic_send(struct us_udp_socket_t *udp, bool names_source, const char *byt
     const struct us_quic_message_t *messages, size_t count) {
     int sent = us_quic_try_send(us_poll_fd(&udp->p), names_source, bytes, messages, count);
 #ifdef _WIN32
-    if (sent > 0 || !(bsd_would_block() || WSAGetLastError() == WSAENOBUFS)) return sent;
+    if (sent > 0 || !bsd_would_block()) return sent;
 #else
     if (sent > 0) return sent;
-    if (!bsd_would_block() && errno != ENOBUFS) return -errno;
+    if (!bsd_would_block()) return -errno;
 #endif
     us_poll_change(&udp->p, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
     return 0;

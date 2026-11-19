@@ -282,15 +282,25 @@ test("the TCP port is released if the UDP port is taken", async () => {
 });
 
 // All of 127.0.0.0/8 is local on Linux, and the kernel would pick 127.0.0.1 as the source of a reply.
-test.skipIf(!isLinux).each(["0.0.0.0", "::"])("a listener on %s replies from the address it was reached at", async hostname => {
-  const body = Buffer.alloc(200_000, "abcdefgh");
-  await using server = Bun.serve({ port: 0, hostname, tls, http3: true, http1: false, fetch: () => new Response(body) });
-  const res = await fetch(`https://127.0.0.2:${server.port}/`, {
-    protocol: "http3",
-    tls: { rejectUnauthorized: false },
-  } as RequestInit);
-  expect(Buffer.from(await res.bytes()).equals(body)).toBe(true);
-});
+test.skipIf(!isLinux).each(["0.0.0.0", "::"])(
+  "a listener on %s replies from the address it was reached at",
+  async hostname => {
+    const body = Buffer.alloc(200_000, "abcdefgh");
+    await using server = Bun.serve({
+      port: 0,
+      hostname,
+      tls,
+      http3: true,
+      http1: false,
+      fetch: () => new Response(body),
+    });
+    const res = await fetch(`https://127.0.0.2:${server.port}/`, {
+      protocol: "http3",
+      tls: { rejectUnauthorized: false },
+    } as RequestInit);
+    expect(Buffer.from(await res.bytes()).equals(body)).toBe(true);
+  },
+);
 
 describe("Bun.serve HTTP/3", () => {
   test("basic GET", async () => {
@@ -1941,6 +1951,26 @@ const requestHeaders = (path: string, extra: Record<string, string> = {}) => ({
   ":authority": "localhost",
   ...extra,
 });
+
+test("server.timeout(req, 0) lets a handler outlast idleTimeout", async () => {
+  const release = Promise.withResolvers<void>();
+  await using server = Bun.serve({
+    port: 0,
+    tls,
+    http3: true,
+    idleTimeout: 2,
+    async fetch(req, server) {
+      if (new URL(req.url).pathname === "/patient") server.timeout(req, 0);
+      await release.promise;
+      return new Response("late");
+    },
+  });
+  // node:quic sends nothing while it waits.
+  const patient = h3Exchange(server.port!, requestHeaders("/patient"));
+  expect(await h3Exchange(server.port!, requestHeaders("/other"))).toBe("closed");
+  release.resolve();
+  expect(await patient).toBe("200 late");
+}, 15_000);
 
 describe("Bun.serve HTTP/3 request validation", () => {
   test("rejects a request whose field value contains CR or LF before the fetch handler runs", async () => {

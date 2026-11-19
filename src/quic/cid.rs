@@ -78,11 +78,17 @@ impl From<LocalId> for ConnectionId {
 }
 
 /// RFC 9000 §10.3.
-#[derive(Debug, Clone, Copy, Eq)]
+#[derive(Clone, Copy, Eq)]
 pub(crate) struct ResetToken(pub(crate) [u8; Self::LEN]);
 
 impl ResetToken {
     pub(crate) const LEN: usize = 16;
+}
+
+impl core::fmt::Debug for ResetToken {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        f.write_str("ResetToken")
+    }
 }
 
 impl PartialEq for ResetToken {

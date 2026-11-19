@@ -43,6 +43,11 @@ impl Rtt {
         self.smoothed = (self.smoothed * 7 + adjusted) / 8;
     }
 
+    /// RFC 9002 §5.2.
+    pub(crate) fn forget_min(&mut self) {
+        self.min = self.latest;
+    }
+
     /// RFC 9002 §6.2.1, without the delay of acknowledgments and without backoff.
     #[inline]
     pub(crate) fn probe_timeout(&self) -> Duration {

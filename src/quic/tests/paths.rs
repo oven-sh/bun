@@ -13,7 +13,7 @@ fn answers_a_challenge_once() {
         let mut raw = raw.connected();
         raw.send_expanded("path_challenge 12345678");
         let packets = raw.take();
-        assert_eq!(packets[0].frames, ["path_response 12345678"]);
+        assert_eq!(packets[0].frames, ["path_response 12345678", "ack 0-1"]);
         assert_eq!((packets.len(), packets[0].datagram.len()), (1, 1200));
         raw.send("path_response 12345678");
         raw.advance(1000);
@@ -59,10 +59,7 @@ fn validates_both_paths_when_a_client_moves() {
             assert_eq!(raw.packets(), expected);
             raw.send("respond");
             assert_eq!(raw.events(), format!("path {OLD} to {address}"));
-            let expected = match is_same_network {
-                true => "1[ack 0-2, stream 3 6 after]",
-                false => "1[ack 0-2, stream 3 0 before, stream 3 6 after]",
-            };
+            let expected = "1[ack 0-2, stream 3 0 before, stream 3 6 after]";
             assert_eq!(raw.packets(), expected);
             let rtt = raw.connection().stats().smoothed_rtt;
             assert_eq!(rtt.is_zero(), !is_same_network);

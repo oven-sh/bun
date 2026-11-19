@@ -1469,6 +1469,7 @@ async function writeBatchWithDrain(handle: StreamHandle, stream: QuicStream, bat
     await waitForDrain(stream);
     if (stream.destroyed) return true;
   }
+  if (state.writeEnded) return true;
 
   const result = handle.write(batch);
   if (result === undefined) {
@@ -1645,6 +1646,7 @@ interface QuicStreamInner {
   oninfo: Callback | undefined;
   onwanttrailers: Callback | undefined;
   earlySnapshot?: boolean;
+  resetCodeSnapshot?: bigint;
 }
 
 class QuicStream {
@@ -1746,13 +1748,9 @@ class QuicStream {
 
     yield* createBlobReaderIterable(inner.reader, {
       getReadError: () => {
-        if (inner.state.readEnded && !inner.state.finReceived) {
-          if (inner.state.reset) {
-            return ERR_QUIC_STREAM_RESET(Number(inner.state.resetCode ?? 0n));
-          }
-          return ERR_QUIC_STREAM_ABORTED("Stream aborted before FIN was received");
-        }
-        return $ERR_INVALID_STATE("The stream is not readable");
+        const resetCode = inner.state.reset ? inner.state.resetCode : inner.resetCodeSnapshot;
+        if (resetCode !== undefined) return ERR_QUIC_STREAM_RESET(Number(resetCode));
+        return ERR_QUIC_STREAM_ABORTED("Stream aborted before FIN was received");
       },
     });
   }
@@ -2502,6 +2500,7 @@ class QuicStream {
     }
     inner.stats?.[kFinishClose]();
     inner.earlySnapshot = inner.state?.early;
+    if (inner.state?.reset) inner.resetCodeSnapshot = inner.state.resetCode;
     inner.state?.[kFinishClose]();
     inner.session![kRemoveStream](this);
     inner.writer?.fail(error);
@@ -2709,6 +2708,7 @@ interface QuicSessionInner {
   endpoint: QuicEndpoint | undefined;
   isPendingClose: boolean;
   selfInitiatedClose: boolean;
+  warnedAboutStream?: boolean;
   destroying: boolean;
   handshakeCompleted: boolean;
   pendingClose: PendingPromise;
@@ -3961,7 +3961,10 @@ class QuicSession {
     stream.highWaterMark = kDefaultHighWaterMark;
 
     if (typeof inner.onstream !== "function") {
-      process.emitWarning("A new stream was received but no onstream callback was provided");
+      if (!inner.warnedAboutStream) {
+        inner.warnedAboutStream = true;
+        process.emitWarning("A new stream was received but no onstream callback was provided");
+      }
       stream.destroy();
       return;
     }

@@ -1,7 +1,7 @@
 //! For packages/bun-usockets/src/quic.cpp.
 
 use core::ffi::c_int;
-use core::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV6};
+use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 
 use bun_core::{Timespec, TimespecMockMode};
 use bun_quic::{Addresses, Batch, Connection, Endpoint, Instant};
@@ -54,6 +54,15 @@ impl From<SocketAddr> for Address {
     }
 }
 
+/// From where the answers come to what is sent to `ip`.
+pub fn or_loopback(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V4(Ipv4Addr::UNSPECIFIED) => Ipv4Addr::LOCALHOST.into(),
+        IpAddr::V6(Ipv6Addr::UNSPECIFIED) => Ipv6Addr::LOCALHOST.into(),
+        ip => ip,
+    }
+}
+
 /// Returns its length.
 #[inline]
 pub(super) fn write_ip(ip: IpAddr, out: &mut [u8; 16]) -> c_int {
@@ -101,7 +110,7 @@ impl Message {
 }
 
 unsafe extern "C" {
-    safe fn us_quic_read_envelope(buffer: &mut udp::PacketBuffer, index: c_int, out: &mut Envelope);
+    fn us_quic_read_envelope(buffer: &mut udp::PacketBuffer, index: c_int, out: &mut Envelope);
     safe fn us_quic_local_address(socket: &mut udp::Socket, out: &mut Address);
     safe fn us_quic_set_dontfrag(socket: &mut udp::Socket);
     safe fn us_quic_ignore_receive_errors(socket: &mut udp::Socket);
@@ -148,8 +157,10 @@ impl Binding {
                 || address.ip().is_unspecified() && address.is_ipv6() == local.is_ipv6())
     }
 
+    /// # Safety
+    /// `buffer` and `count` are those of the callback for data.
     #[inline]
-    pub fn for_each_datagram(
+    pub unsafe fn for_each_datagram(
         &self,
         buffer: *mut udp::PacketBuffer,
         count: c_int,
@@ -162,7 +173,8 @@ impl Binding {
                 peer: Address::default(),
                 segment_len: 0,
             };
-            us_quic_read_envelope(buffer, at, &mut envelope);
+            // SAFETY: the caller's.
+            unsafe { us_quic_read_envelope(buffer, at, &mut envelope) };
             let from = Addresses {
                 local: envelope.local.into(),
                 peer: envelope.peer.into(),

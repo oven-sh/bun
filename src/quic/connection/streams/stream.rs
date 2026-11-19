@@ -151,6 +151,10 @@ impl Stream {
             && (!self.send.is_acked() || self.flags.contains(Flags::FIN))
     }
 
+    pub(crate) fn has_unacked_reset(&self) -> bool {
+        self.flags & (Flags::RESET | Flags::SEND_DONE) == Flags::RESET
+    }
+
     #[inline]
     pub(super) fn is_finished(&self) -> bool {
         (self.flags).contains(Flags::RELEASED | Flags::READ_DONE | Flags::SEND_DONE)

@@ -15,7 +15,7 @@ use bun_quic_tls::Session;
 
 use super::Connection;
 use super::engine::{Application, Engine, Socket};
-use super::io::{Address, now};
+use super::io::{Address, now, or_loopback};
 use crate::Loop;
 
 /// As for HTTP/2.
@@ -195,6 +195,7 @@ impl Client {
         context: Context,
     ) -> Option<Connection> {
         let local = self.socket()?.local();
+        peer.set_ip(or_loopback(peer.ip()));
         match peer.ip() {
             IpAddr::V4(ip) if local.is_ipv6() => peer.set_ip(ip.to_ipv6_mapped().into()),
             IpAddr::V6(_) if local.is_ipv4() => return None,

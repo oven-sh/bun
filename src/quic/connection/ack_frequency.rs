@@ -82,6 +82,11 @@ impl Controller {
         }
     }
 
+    /// For a new path.
+    pub(super) fn restart(&mut self) {
+        (self.integral, self.tolerance) = (0.0, Some(MIN_TOLERANCE));
+    }
+
     /// Returns whether to tell the peer.
     #[inline]
     pub(super) fn on_ack(&mut self, now: Instant, rtt: Duration, packets_sent: u64) -> bool {

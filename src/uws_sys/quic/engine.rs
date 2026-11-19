@@ -8,8 +8,8 @@ use std::rc::{Rc, Weak};
 use bun_core::ZStr;
 use bun_ptr::BackRef;
 use bun_quic::{
-    Context, Direction, Duration, Endpoint, Event, Handle, Incoming, Instant, StreamId, Unrouted,
-    Version,
+    Addresses, Context, Direction, Duration, Endpoint, Event, Handle, Incoming, Instant, StreamId,
+    Unrouted, Version,
 };
 use bun_quic_tls::BoringSsl;
 
@@ -260,12 +260,14 @@ extern "C" fn on_data(udp: *mut udp::Socket, buffer: *mut udp::PacketBuffer, cou
     let Some(binding) = socket.binding.get() else {
         return;
     };
-    binding.for_each_datagram(buffer, count, |from, datagram| {
+    let receive = |from: &Addresses, datagram: &mut [u8]| {
         let unrouted = (engine.endpoint()).receive(now, from, datagram, engine.accepted);
         if let Some(Unrouted::Incoming(incoming)) = unrouted {
             socket.owner.on_incoming(now, incoming);
         }
-    });
+    };
+    // SAFETY: they are our arguments.
+    unsafe { binding.for_each_datagram(buffer, count, receive) };
 }
 
 extern "C" fn on_drain(udp: *mut udp::Socket) {
@@ -312,7 +314,8 @@ impl Connection {
     }
 
     pub fn can_open(&self) -> bool {
-        self.get(|it| it.available_streams(Direction::Bidirectional) > 0) == Some(true)
+        self.get(|it| it.available_streams(Direction::Bidirectional) > 0 && !it.is_stale(now()))
+            == Some(true)
     }
 
     /// Neither side is closing or going away.
@@ -352,6 +355,11 @@ impl Stream {
         if is_end {
             self.finish();
         }
+    }
+
+    pub fn has_received(&self) -> bool {
+        let info = self.connection.get(|it| it.stream_info(self.id));
+        info.flatten().is_some_and(|it| it.has_received)
     }
 
     /// Returns how many bytes it took.

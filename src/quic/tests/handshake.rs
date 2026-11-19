@@ -533,5 +533,5 @@ fn streams_can_be_opened_once_the_application_knows() {
     raw.peer.send(id, b"a", true);
     assert_eq!(raw.packets(), "1[fin 0 0 a]");
     raw.send_all(&[(Handshake, "ack"), (Short, "ack, fin 0 0 b")]);
-    assert_eq!(raw.events(), "0 fin b, 0 closed");
+    assert_eq!(raw.events(), "confirmed, 0 fin b, 0 closed");
 }

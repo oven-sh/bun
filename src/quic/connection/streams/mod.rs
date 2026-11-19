@@ -71,6 +71,8 @@ struct Counts {
 #[derive(Default)]
 pub(crate) struct State {
     has_priorities: bool,
+    /// One response after the other (RFC 9218 §10).
+    sends_in_order: bool,
     /// What it takes to write a byte.
     min_credit: u64,
     pub(crate) events: VecDeque<Event>,
@@ -157,6 +159,7 @@ impl Streams {
             },
             state: State {
                 has_priorities: config.has_priorities,
+                sends_in_order: config.has_priorities && side.is_server(),
                 min_credit: if is_http3 { 3 } else { 1 },
                 write_round: 1,
                 receive_limit: local.initial_max_data,
@@ -197,8 +200,11 @@ impl Streams {
 
     /// Returns the value for MAX_STREAMS.
     pub(super) fn raise_remote_limit(&mut self, direction: Direction) -> u64 {
+        let is_over = direction == Direction::Bidirectional && self.table.is_going_away;
         let counts = self.table.counts_mut(direction);
-        counts.remote_limit = counts.next_remote_limit();
+        if !is_over {
+            counts.remote_limit = counts.next_remote_limit();
+        }
         counts.remote_limit
     }
 
@@ -381,6 +387,12 @@ impl Table {
     #[inline]
     pub(super) fn has_application_streams(&self) -> bool {
         self.unreleased > 0
+    }
+
+    /// Whether the peer has yet to learn that a request is not going to be answered.
+    pub(super) fn has_unsettled_requests(&self) -> bool {
+        !self.bidirectional.remote_skipped.is_empty()
+            || (self.map.values()).any(|it| it.has_unacked_reset())
     }
 
     pub(super) fn has_unacked_data(&self) -> bool {

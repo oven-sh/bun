@@ -99,7 +99,7 @@ fn frames_without_consequences() {
     for raw in Raw::both() {
         let mut raw = raw.connected();
         raw.send("#0300000000010203, padding 1, ping, padding 20, ping, padding 8");
-        raw.send("data_blocked 1, streams_blocked_bidi 1, streams_blocked_uni 1");
+        raw.send("data_blocked 99999999, streams_blocked_bidi 1, streams_blocked_uni 1");
         raw.send("max_data 1, max_streams_bidi 1, max_streams_uni 1");
         assert_eq!((raw.frames(), raw.events()), Default::default());
         assert_eq!(raw.connection().stats().pings_received, 2);

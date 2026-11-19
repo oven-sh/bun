@@ -112,13 +112,19 @@ impl State {
         self.finish_reading(id, stream);
     }
 
-    /// RFC 9000 §3.5.
-    pub(crate) fn on_stop_sending(&mut self, id: StreamId, stream: &mut Stream, code: u64) {
+    /// `answer` is the code to reset the stream with (RFC 9000 §3.5).
+    pub(crate) fn on_stop_sending(
+        &mut self,
+        id: StreamId,
+        stream: &mut Stream,
+        code: u64,
+        answer: u64,
+    ) {
         if stream.mark(Flags::STOPPED_BY_PEER) {
             self.notify(id, stream, StreamEvent::Stopped(code));
-            match stream.flags.contains(Flags::FIN_SENT) {
-                true => stream.stopped_code = code,
-                false => self.reset(id, stream, code),
+            match stream.flags.contains(Flags::FIN_SENT) && stream.send.first_lost().is_none() {
+                true => stream.stopped_code = answer,
+                false => self.reset(id, stream, answer),
             }
         }
     }
@@ -141,6 +147,7 @@ impl State {
             return;
         }
         stream.flags.insert(Flags::WANTS_WRITE);
+        self.report_blocked(id, stream);
         if stream.mark(Flags::IN_WRITABLE) {
             self.writable.push_back(id);
             self.is_write_round_over = false;
@@ -162,7 +169,8 @@ impl State {
 
     /// The value for DATA_BLOCKED, if it still holds.
     pub(crate) fn blocked_at(&self) -> Option<u64> {
-        self.blocked_at.filter(|&limit| limit == self.send_limit)
+        let is_awaited = !self.writable.is_empty() || !self.stalled.is_empty();
+        (self.blocked_at).filter(|&limit| limit == self.send_limit && is_awaited)
     }
 
     /// Less goes first.
@@ -171,7 +179,7 @@ impl State {
         if stream.is_internal() {
             return 0;
         }
-        let takes_turns = !self.has_priorities || stream.priority.is_incremental;
+        let takes_turns = !self.sends_in_order || stream.priority.is_incremental;
         let class = 2 * u64::from(stream.priority.urgency) + u64::from(takes_turns) + 1;
         class << 59 | if takes_turns { turn } else { id.index() } & ((1 << 59) - 1)
     }
@@ -184,6 +192,11 @@ impl State {
             let rank = self.rank(id, stream, self.turns);
             self.sendable.push(Reverse((rank, id)));
         }
+    }
+
+    /// Whether there is something that other streams may depend on.
+    pub(crate) fn has_urgent_frames(&self) -> bool {
+        !self.lost.is_empty() || self.sendable.peek().is_some_and(|it| it.0.0 == 0)
     }
 
     #[inline]
@@ -401,7 +414,8 @@ fn write_owed_frames(
         (
             Flags::OWES_STREAM_DATA_BLOCKED,
             kind::STREAM_DATA_BLOCKED,
-            stream.blocked_at == Some(stream.send_limit) && !stream.flags.contains(Flags::RESET),
+            stream.blocked_at == Some(stream.send_limit)
+                && !(stream.flags).intersects(Flags::RESET | Flags::FIN_SENT),
             stream.send_limit,
         ),
         (

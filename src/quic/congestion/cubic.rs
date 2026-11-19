@@ -131,6 +131,7 @@ impl Cubic {
     /// §4.8.
     fn collapse(&mut self) {
         self.window = MIN_SEGMENTS * self.segment;
+        self.is_recovering = false;
         self.start_epoch(self.slow_start_threshold);
     }
 

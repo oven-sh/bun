@@ -31,9 +31,16 @@ pub(super) struct KeyUpdate {
 }
 
 impl KeyUpdate {
-    pub(super) fn set_write_secret(&mut self, secret: Secret, confidentiality_limit: u64) {
+    pub(super) fn set_write_secret(&mut self, secret: Secret, limit: u64, space: &Space) {
         self.write_secret = Some(secret);
-        self.confidentiality_limit = Some(confidentiality_limit);
+        self.confidentiality_limit = Some(limit);
+        self.first_sent = space.next_number;
+    }
+
+    /// Whether a packet with the current key has been acknowledged.
+    #[inline]
+    pub(super) fn is_acked(&self, space: &Space) -> bool {
+        space.sent.largest_acked >= Some(self.first_sent)
     }
 
     pub(super) fn set_read_secret(&mut self, secret: &Secret, version: Version) {
@@ -99,7 +106,7 @@ impl KeyUpdate {
         let Some(limit) = (self.confidentiality_limit).filter(|limit| used >= limit / 2) else {
             return Ok(());
         };
-        if space.sent.largest_acked >= Some(self.first_sent) && self.first_received.is_some() {
+        if self.is_acked(space) && self.first_received.is_some() {
             self.rotate(space, version);
             return Ok(());
         }

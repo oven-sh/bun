@@ -22,7 +22,7 @@ use bun_quic::{
 };
 use bun_uws as uws;
 use bun_uws::quic::drivers::{Driver, Registration};
-use bun_uws::quic::io::{Binding, Outbox, now};
+use bun_uws::quic::io::{Binding, Outbox, now, or_loopback};
 
 use crate::jsc_hooks::timer_all;
 use crate::socket::SocketAddress;
@@ -344,13 +344,15 @@ extern "C" fn on_data(
     // depth-0 pass applies it).
     let _send_scope = this.send_scope();
     let now = now();
-    binding.for_each_datagram(buf, packets, |from, payload| {
+    let receive = |from: &Addresses, payload: &mut [u8]| {
         this.add_stat(IDX_STATS_PACKETS_RECEIVED, 1);
         this.add_stat(IDX_STATS_BYTES_RECEIVED, payload.len() as u64);
         if !this.peer_blocked(from.peer) && !this.handle_version_negotiation(payload) {
             this.receive(now, from, payload);
         }
-    });
+    };
+    // SAFETY: they are our arguments.
+    unsafe { binding.for_each_datagram(buf, packets, receive) };
     this.process();
 }
 
@@ -1345,10 +1347,12 @@ impl QuicEndpoint {
             session.teardown(global);
             return Err(e);
         }
-        let addresses = Addresses {
-            local,
-            peer: remote,
-        };
+        let mut peer = remote;
+        peer.set_ip(match or_loopback(peer.ip()).to_canonical() {
+            IpAddr::V4(ip) if local.is_ipv6() => ip.to_ipv6_mapped().into(),
+            ip => ip,
+        });
+        let addresses = Addresses { local, peer };
         let conn = (self.quic()).connect(now(), Rc::new(config), addresses, Box::new(tls), &ticket);
         session.bind(conn);
         session.apply_peer_datagram_budget();

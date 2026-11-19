@@ -17,6 +17,9 @@ pub(super) const CRITICAL_STREAM_CLOSED: Error = Error::http3(
 pub struct StreamInfo {
     pub has_unacked_data: bool,
     pub has_early_data: bool,
+    pub has_received: bool,
+    /// The peer cannot send much more.
+    pub is_short_of_credit: bool,
 }
 
 impl Connection {
@@ -54,9 +57,10 @@ impl Connection {
 
     pub fn stream_info(&self, id: StreamId) -> Option<StreamInfo> {
         self.streams.table.get(id).map(|stream| StreamInfo {
-            has_unacked_data: stream.has_unacked_data()
-                || stream.flags & (Flags::RESET | Flags::SEND_DONE) == Flags::RESET,
+            has_unacked_data: stream.has_unacked_data() || stream.has_unacked_reset(),
             has_early_data: stream.flags.contains(Flags::HAS_EARLY_DATA),
+            has_received: stream.has_received(),
+            is_short_of_credit: self.streams.state.is_peer_short_of_credit(stream),
         })
     }
 
@@ -82,7 +86,6 @@ impl Connection {
             state.made_progress = true;
         }
         if taken.len() < data.len() {
-            state.report_blocked(id, stream);
             state.want_write(id, stream);
         }
         Some(taken.len())
@@ -135,7 +138,10 @@ impl Connection {
 
     /// Closes a stream of ours that has not been used without a word to the peer.
     pub fn forget(&mut self, id: StreamId) {
-        if let Some((stream, state)) = self.stream(id) {
+        if let Some((stream, state)) = self.streams.get_mut(id)
+            && !stream.flags.contains(Flags::RELEASED)
+        {
+            stream.abandon_message(id, self.http3.as_deref_mut());
             state.forget(id, stream);
         }
     }
@@ -239,7 +245,14 @@ impl Connection {
                 if self.side.is_server() && is_unanswered(stream) {
                     state.add_load(Load::Heavy);
                 }
-                state.on_stop_sending(id, stream, code);
+                let answer = match (&stream.role, code) {
+                    // RFC 9114 §4.1.1.
+                    (Role::Message(_), http3_code::REQUEST_REJECTED) => {
+                        http3_code::REQUEST_CANCELLED
+                    }
+                    _ => code,
+                };
+                state.on_stop_sending(id, stream, code, answer);
             }
             None => {}
         }

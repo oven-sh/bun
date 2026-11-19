@@ -65,12 +65,15 @@ struct Http3Context {
 
         Ptr ctx = std::make_unique<Http3Context>();
         ctx->loopData = (LoopData *) us_loop_ext((us_loop_t *) loop);
+        ctx->idleTimeoutSecs = idleTimeoutSecs;
         /* Same limit as Http2Context::maxHeaderListSize. */
         ctx->quic.reset(us_create_quic_socket_context((us_loop_t *) loop, &options, idleTimeoutSecs,
             BUN_DEFAULT_MAX_HTTP_HEADER_SIZE ? BUN_DEFAULT_MAX_HTTP_HEADER_SIZE : 64 * 1024, &callbacks, ctx.get()));
         if (!ctx->quic) return nullptr;
         return ctx;
     }
+
+    unsigned idleTimeoutSecs = 0;
 
     Http3ContextData *getContextData() { return &data; }
 

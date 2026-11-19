@@ -177,7 +177,11 @@ bool uws_h3_res_has_responded(uws_h3_res_t* res) { return ((Http3Response*)res)-
 size_t uws_h3_res_get_buffered_amount(uws_h3_res_t* res) { return ((Http3Response*)res)->getBufferedAmount(); }
 
 void uws_h3_res_reset_timeout(uws_h3_res_t*) {}
-void uws_h3_res_timeout(uws_h3_res_t*, uint8_t) {}
+void uws_h3_res_timeout(uws_h3_res_t* res, uint8_t seconds)
+{
+    Http3Response* response = (Http3Response*)res;
+    if (seconds != response->context->idleTimeoutSecs) us_quic_stream_timeout(&response->stream, seconds);
+}
 void uws_h3_res_end_sendfile(uws_h3_res_t* res, uint64_t, bool close)
 {
     /* sendfile path falls back to plain end-of-stream over QUIC. */

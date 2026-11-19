@@ -16,8 +16,7 @@ const MAX_PACKET_THRESHOLD: u64 = 256;
 /// In round trips.
 const MAX_LATENESS: u64 = 4;
 const PERSISTENT_CONGESTION_THRESHOLD: u64 = 3;
-const MIN_HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(10);
-const MIN_TAIL_TIMEOUT: Duration = Duration::from_millis(10);
+const MIN_PROBE_TIMEOUT: Duration = Duration::from_millis(10);
 const MAX_PROBE_TIMEOUT: Duration = Duration::from_secs(60);
 const DELIVERY_PERIOD: Duration = Duration::from_secs(30);
 /// One part in so many of what has been sent has to be acknowledged in a period.
@@ -32,6 +31,7 @@ const MIN_SKIP_RANGE: u64 = 256;
 pub(super) struct Delivery {
     pub(super) period_end: Instant,
     target: u64,
+    oldest_packet: Option<u64>,
     is_in_doubt: bool,
 }
 
@@ -109,6 +109,12 @@ impl Connection {
                 }
             }
         }
+        if has_news {
+            space.probes = 0;
+        }
+        if id == SpaceId::Initial && self.side.is_server() && space.crypto_send.is_acked() {
+            self.resend_all(id);
+        }
         if let Some(setup) = &mut self.setup {
             setup.is_validated_by_peer |= id == SpaceId::Handshake;
             largest_sent_at.take_if(|_| setup.is_catching_up);
@@ -126,13 +132,16 @@ impl Connection {
                 _ => Duration::ZERO,
             };
             if !self.rtt.has_sample() {
-                self.first_sample_at = now;
+                (self.first_sample_at, self.pto_count) = (now, 0);
             }
             self.rtt.update(now - sent_at, delay);
         }
         self.detect_lost(now, id);
-        if !self.has_to_unblock_server() {
-            self.pto_count = 0;
+        if has_news {
+            self.timers.stop(Timer::Loss);
+            if !self.has_to_unblock_server() {
+                self.pto_count = 0;
+            }
         }
         if id == SpaceId::Data {
             if self.next_skip == u64::MAX && self.skipped.is_some_and(|it| it < ack.largest) {
@@ -182,7 +191,9 @@ impl Connection {
                 continue;
             }
             let (sent_at, before) = (packet.flight.at, *packet);
-            if sent_at + delay > now && largest - packet.number < self.packet_threshold {
+            let skipped = (self.skipped).filter(|it| (packet.number..largest).contains(it));
+            let distance = largest - packet.number - u64::from(skipped.is_some());
+            if sent_at + delay > now && distance < self.packet_threshold {
                 space.sent.loss_time = sent_at + delay;
                 break;
             }
@@ -191,6 +202,7 @@ impl Connection {
                 lost_since = lost_since.min(sent_at);
                 if sent_at - lost_since > self.probe_timeout() * PERSISTENT_CONGESTION_THRESHOLD {
                     self.congestion.on_persistent_congestion();
+                    self.rtt.forget_min();
                 }
             }
         }
@@ -251,7 +263,7 @@ impl Connection {
         is_mtu_probe
     }
 
-    /// For packets that cannot arrive, which says nothing about the network.
+    /// For packets that cannot arrive, or do not have to, which says nothing about the network.
     pub(super) fn resend_all(&mut self, id: SpaceId) {
         let mut at = 0;
         while let Some(packet) = self.spaces.open(id).sent.packets.get_mut(at) {
@@ -281,6 +293,7 @@ impl Connection {
                 self.congestion.discard(&packet.flight);
             }
             self.pto_count = 0;
+            self.timers.stop(Timer::Loss);
             self.set_loss_timer(now);
         }
     }
@@ -295,7 +308,7 @@ impl Connection {
     }
 
     fn backed_off(&self, timeout: Duration) -> Duration {
-        (timeout * (1 << self.pto_count.min(16))).min(MAX_PROBE_TIMEOUT.max(timeout))
+        (timeout.max(MIN_PROBE_TIMEOUT) * (1 << self.pto_count.min(16))).min(MAX_PROBE_TIMEOUT)
     }
 
     /// For the end of what there is to send. Acknowledgments are not delayed for more than a packet.
@@ -312,10 +325,10 @@ impl Connection {
             _ if !space.sent.has_in_flight() => return Instant::NEVER,
             SpaceId::Data if self.phase != Phase::Confirmed => return Instant::NEVER,
             SpaceId::Data if self.expects_prompt_ack() => {
-                (self.probe_timeout()).min((self.rtt.smoothed * 2).max(MIN_TAIL_TIMEOUT))
+                (self.probe_timeout()).min(self.rtt.smoothed * 2)
             }
             SpaceId::Data => self.probe_timeout(),
-            _ => self.rtt.probe_timeout().max(MIN_HANDSHAKE_TIMEOUT),
+            _ => self.rtt.probe_timeout(),
         };
         space.sent.last_at + self.backed_off(timeout)
     }
@@ -352,8 +365,8 @@ impl Connection {
         }
         match self.earliest(|id, space| self.probe_time(id, space)).0 {
             Instant::NEVER if self.has_to_unblock_server() => {
-                let timeout = self.rtt.probe_timeout().max(MIN_HANDSHAKE_TIMEOUT);
-                (self.timers.get(Timer::Loss)).min(now + self.backed_off(timeout))
+                let timeout = self.backed_off(self.rtt.probe_timeout());
+                self.timers.get(Timer::Loss).min(now + timeout)
             }
             time => time,
         }
@@ -363,13 +376,16 @@ impl Connection {
     #[cold]
     pub(super) fn check_delivery(&mut self, now: Instant) {
         let (released, unacked) = self.streams.state.delivery();
-        let is_behind = released < self.delivery.target;
+        let oldest_packet = (self.spaces.data.sent.packets.front()).map(|it| it.number);
+        let is_behind = released < self.delivery.target
+            || oldest_packet.is_some() && oldest_packet == self.delivery.oldest_packet;
         if is_behind && self.delivery.is_in_doubt {
             return self.time_out(now, CloseReason::IdleTimeout);
         }
         self.delivery = Delivery {
             period_end: now + DELIVERY_PERIOD,
             target: released + unacked.div_ceil(DELIVERY_PARTS),
+            oldest_packet,
             is_in_doubt: is_behind,
         };
     }

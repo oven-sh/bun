@@ -23,15 +23,22 @@ fn every_second_packet_is_acknowledged_at_once() {
 
 #[test]
 fn delay_is_a_quarter_of_a_round_trip_within_bounds() {
-    for (rtt, delay) in [(1, 1), (4, 1), (8, 2), (96, 24), (100, 25), (140, 25)] {
+    for (rtt, delay) in [
+        (1, 1000),
+        (4, 1000),
+        (8, 2000),
+        (84, 21_000),
+        (88, 21_875),
+        (140, 21_875),
+    ] {
         let mut raw = Raw::client();
         raw.start(&[]);
         raw.advance(rtt);
         raw.send_all(&[(Initial, "ack"), (Handshake, "ack, flight")]);
         raw.forget();
         raw.send("ping");
-        assert_eq!(raw.wait(), delay);
-        assert_eq!(raw.packets(), format!("1[ack 0 +{}]", delay * 1000 / 8));
+        assert_eq!(raw.wait(), delay / 1000);
+        assert_eq!(raw.packets(), format!("1[ack 0 +{}]", delay / 8));
     }
 }
 
@@ -42,8 +49,8 @@ fn delay_without_a_round_trip_time() {
     raw.send_in(Handshake, "flight");
     raw.forget();
     raw.send("ping");
-    assert_eq!(raw.wait(), 25);
-    assert_eq!(raw.packets(), "1[ack 0 +3125]");
+    assert_eq!(raw.wait(), 21);
+    assert_eq!(raw.packets(), "1[ack 0 +2734]");
 }
 
 #[test]

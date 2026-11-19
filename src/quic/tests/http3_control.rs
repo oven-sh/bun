@@ -355,6 +355,10 @@ fn a_server_goes_away_after_the_last_response() {
     raw.connection().finish(StreamId(4));
     assert_eq!(raw.frames(), "fin 4 0 #01030000d9");
     raw.send("ack");
+    assert_eq!(raw.frames(), "");
+    raw.write_http3(0, &format!("headers {GET}"), true);
+    assert_eq!(raw.frames(), "reset_stream 0 0x10b 0");
+    raw.send("ack");
     assert_eq!(raw.frames(), "application_close 0x100");
     assert_eq!(raw.events(), "4 closed, closed: Local");
 }

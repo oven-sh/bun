@@ -74,6 +74,8 @@ void us_quic_stream_shutdown(const us_quic_stream_t *s);
 void us_quic_stream_shutdown_read(const us_quic_stream_t *s);
 /* Resets the stream if the response is not complete. */
 void us_quic_stream_close(const us_quic_stream_t *s);
+/* For how long the connection has to last without a word from the application. 0 is for ever. */
+void us_quic_stream_timeout(const us_quic_stream_t *s, unsigned int seconds);
 /* Returns the length of the address: 4, 16, or 0 if the connection is gone. */
 int us_quic_stream_remote_address(const us_quic_stream_t *s, char (*ip)[16], int *port);
 

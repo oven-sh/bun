@@ -8,7 +8,7 @@ use bun_jsc::{
     ArrayBuffer, JSGlobalObject, JSType, JSValue, JsCell, JsRef, JsResult, StringJsc, Strong,
 };
 use bun_quic::http3::{Header, Indexing, Priority};
-use bun_quic::{CloseReason, Connection, Direction, StreamEvent, StreamId, http3_code};
+use bun_quic::{Connection, Direction, StreamEvent, StreamId, http3_code};
 
 use super::endpoint::alloc_exposed_array_buffer;
 use super::session::{QuicSession, SessionEvent};
@@ -107,8 +107,18 @@ pub(super) struct Inbound {
     pub chunks: VecDeque<Vec<u8>>,
     pub ended: bool,
     pub errored: bool,
-    /// The connection ended first.
+    /// Something is missing before the end.
     pub truncated: bool,
+    /// What arrives is dropped.
+    pub abandoned: bool,
+    pub is_being_read: bool,
+}
+
+struct PendingHeaders {
+    joined: Vec<u8>,
+    count: c_int,
+    is_trailing: bool,
+    is_last: bool,
 }
 
 pub(crate) struct QuicStream {
@@ -125,8 +135,10 @@ pub(crate) struct QuicStream {
     inbound: JsCell<Inbound>,
     wakeup: JsCell<Option<Strong>>,
     is_known_to_peer: Cell<bool>,
+    /// The peer has opened it, and it can be answered.
+    is_request: Cell<bool>,
     priority: Cell<Priority>,
-    pending_headers: JsCell<Vec<(Vec<u8>, c_int, bool)>>,
+    pending_headers: JsCell<VecDeque<PendingHeaders>>,
     trailers_requested: Cell<bool>,
     blocked_reported: Cell<bool>,
     announce_suppressed: Cell<bool>,
@@ -153,8 +165,9 @@ impl QuicStream {
             inbound: JsCell::new(Inbound::default()),
             wakeup: JsCell::new(None),
             is_known_to_peer: Cell::new(false),
+            is_request: Cell::new(false),
             priority: Cell::default(),
-            pending_headers: JsCell::new(Vec::new()),
+            pending_headers: JsCell::new(VecDeque::new()),
             trailers_requested: Cell::new(false),
             blocked_reported: Cell::new(false),
             announce_suppressed: Cell::new(false),
@@ -218,21 +231,7 @@ impl QuicStream {
                 conn.set_priority(id, self.priority.get());
             }
         });
-        for (bytes, count, eos) in self.pending_headers.with_mut(core::mem::take) {
-            if !self.write_headers(&bytes, count, eos) {
-                // sendHeaders() returned true when it queued this block, so
-                // `closed` is what reports the failure.
-                self.is_known_to_peer.set(true);
-                self.update(|conn, id| {
-                    conn.reset(id, http3_code::INTERNAL_ERROR);
-                    conn.stop(id, http3_code::INTERNAL_ERROR);
-                });
-                self.mark_reset(http3_code::INTERNAL_ERROR);
-                self.with_state(|st| st.write_ended = 1);
-                self.discard_outbound();
-                break;
-            }
-        }
+        self.write_pending_headers();
         let (is_reset, is_stopped, code) =
             self.with_state(|s| (s.reset != 0, s.read_ended != 0, s.reset_code));
         self.update(|conn, id| {
@@ -244,7 +243,7 @@ impl QuicStream {
             }
         });
         match (id.direction(), is_local) {
-            (Direction::Bidirectional, _) => {}
+            (Direction::Bidirectional, _) => self.is_request.set(!is_local),
             (Direction::Unidirectional, true) => {
                 self.inbound.with_mut(|i| i.ended = true);
                 self.with_state(|s| s.read_ended = 1);
@@ -252,7 +251,26 @@ impl QuicStream {
             (Direction::Unidirectional, false) => self.with_state(|s| s.write_ended = 1),
         }
         if self.outbound.get().started {
-            self.update(Connection::want_write);
+            self.want_write();
+        }
+    }
+
+    fn write_pending_headers(&self) {
+        let has_body = !self.outbound.get().data.is_empty();
+        while let Some(headers) =
+            (self.pending_headers).with_mut(|q| q.pop_front_if(|it| !(it.is_trailing && has_body)))
+        {
+            if !self.write_headers(&headers) {
+                // sendHeaders() returned true when it queued this block, so
+                // `closed` is what reports the failure.
+                self.is_known_to_peer.set(true);
+                self.update(|conn, id| {
+                    conn.reset(id, http3_code::INTERNAL_ERROR);
+                    conn.stop(id, http3_code::INTERNAL_ERROR);
+                });
+                self.mark_reset(http3_code::INTERNAL_ERROR);
+                self.end_write_side();
+            }
         }
     }
 
@@ -355,6 +373,7 @@ impl QuicStream {
         let len = data.len() as u64;
         self.inbound.with_mut(|inbound| {
             match inbound.chunks.back_mut() {
+                _ if inbound.abandoned => {}
                 Some(last) if last.len() + data.len() <= MAX_JOINED_LEN => last.extend(data),
                 _ if data.is_empty() => {}
                 _ => inbound.chunks.push_back(data),
@@ -374,6 +393,38 @@ impl QuicStream {
         if fin {
             self.with_state(|s| s.fin_received = 1);
         }
+        self.release_unclaimed();
+    }
+
+    /// A request that has been answered may never be read, which must not hold up the peer.
+    fn release_unclaimed(&self) {
+        let is_answered = |s: &StreamState| s.fin_sent != 0 || s.write_ended != 0;
+        if self.inbound.get().abandoned
+            || self.is_request.get()
+                && self.with_state(|s| s.has_reader == 0 && is_answered(s))
+                && (self.get(Connection::stream_info)).is_some_and(|it| it.is_short_of_credit)
+        {
+            self.drop_inbound();
+            self.update(|conn, id| conn.consume(id, usize::MAX));
+        }
+    }
+
+    fn drop_inbound(&self) {
+        self.inbound.with_mut(|i| {
+            i.truncated |= !i.ended || !i.chunks.is_empty();
+            i.chunks = VecDeque::new();
+            i.abandoned = true;
+        });
+        self.write_stat(IDX_STATS_BYTES_ACCUMULATED, 0);
+    }
+
+    /// Like in Node, there is nothing to read from a stream that is destroyed, but a reader has to learn of the loss.
+    fn destroy_inbound(&self) {
+        self.drop_inbound();
+        self.inbound.with_mut(|i| {
+            i.truncated &= i.is_being_read;
+            i.ended = true;
+        });
     }
 
     pub(super) fn take_wakeup(&self) -> Option<Strong> {
@@ -384,8 +435,22 @@ impl QuicStream {
     /// early-data phase.
     pub(super) fn cancel_early_rejected(&self, code: u64) {
         self.mark_reset(code);
+        self.end_write_side();
+    }
+
+    /// Nothing more is written, so nobody has to wait for room.
+    fn end_write_side(&self) {
         self.discard_outbound();
-        self.with_state(|st| st.write_ended = 1);
+        self.pending_headers.with_mut(VecDeque::clear);
+        let was_full = self.with_state(|s| {
+            s.write_ended = 1;
+            core::mem::replace(&mut s.write_desired_size, s.high_water_mark) == 0
+                && s.has_outbound != 0
+        });
+        if was_full {
+            self.push_event(SessionEvent::StreamDrain { stream: self.key });
+        }
+        self.release_unclaimed();
     }
 
     fn discard_outbound(&self) {
@@ -399,9 +464,8 @@ impl QuicStream {
         // bit 1 of the id = uni per RFC 9000 §2.1
         let local_uni =
             self.stream_id() & STREAM_ID_UNI_BIT != 0 && self.with_state(|s| s.read_ended != 0);
-        self.discard_outbound();
+        self.end_write_side();
         self.with_state(|s| {
-            s.write_ended = 1;
             if local_uni && code != 0 && s.reset_code == 0 {
                 s.reset_code = code;
             }
@@ -451,7 +515,7 @@ impl QuicStream {
         }
     }
 
-    fn drain_outbound(&self) {
+    pub(super) fn drain_outbound(&self) {
         loop {
             let (front, _) = self.outbound.get().data.as_slices();
             if front.is_empty() {
@@ -472,6 +536,7 @@ impl QuicStream {
                 break;
             }
         }
+        self.write_pending_headers();
         let (empty, end) = {
             let out = self.outbound.get();
             (out.data.is_empty(), out.end)
@@ -481,10 +546,11 @@ impl QuicStream {
             self.is_known_to_peer.set(true);
             self.discard_outbound();
             self.with_state(|s| s.fin_sent = 1);
+            self.release_unclaimed();
         } else if empty && end == PendingEnd::Trailers && !self.trailers_requested.replace(true) {
             self.push_event(SessionEvent::StreamWantsTrailers { stream: self.key });
         }
-        let pending = self.outbound.get().data.len() as u32;
+        let pending = self.queued_len();
         let (was_full, hwm) = self.with_state(|s| {
             let was_full = s.write_desired_size == 0 && s.has_outbound != 0;
             s.write_desired_size = s.high_water_mark.saturating_sub(pending);
@@ -495,8 +561,20 @@ impl QuicStream {
         }
     }
 
-    fn kick_write(&self) {
+    fn queued_len(&self) -> u32 {
+        (self.outbound.get().data.len().try_into()).unwrap_or(u32::MAX)
+    }
+
+    fn want_write(&self) {
+        let out = self.outbound.get();
+        if out.data.is_empty() && out.end != PendingEnd::None && self.id.get().is_some() {
+            self.push_event(SessionEvent::StreamEnd { stream: self.key });
+        }
         self.update(Connection::want_write);
+    }
+
+    fn kick_write(&self) {
+        self.want_write();
         if let Some(session) = self.session_ref() {
             session.schedule_process();
         }
@@ -535,10 +613,7 @@ impl QuicStream {
             unsafe { (*session).remove_stream(self.key) };
         }
         self.discard_outbound();
-        self.inbound.with_mut(|i| {
-            i.chunks.clear();
-            i.ended = true;
-        });
+        self.destroy_inbound();
         self.with_state(|s| s.read_ended = 1);
         if let Some(wakeup) = self.take_wakeup() {
             let vm = global.bun_vm();
@@ -565,9 +640,16 @@ impl QuicStream {
         let cb = callback.to_js();
 
         if cb.is_undefined_or_null() {
+            // There is only ever one reader.
             self.wakeup.set(None);
+            self.drop_inbound();
+            self.release_unclaimed();
+            if let Some(session) = self.session_ref() {
+                session.mark_pending();
+            }
         } else {
             self.wakeup.set(Some(Strong::create(cb, global)));
+            self.inbound.with_mut(|i| i.is_being_read = true);
         }
     }
 
@@ -620,7 +702,7 @@ impl QuicStream {
 
     pub(crate) fn attach_source(&self, cx: &mut JsScope<'_>, source: JsLocal<'_>) -> JsResult<()> {
         let global = cx.global();
-        if self.destroyed.get() {
+        if self.destroyed.get() || self.with_state(|s| s.write_ended != 0) {
             return Ok(());
         }
         let source = source.to_js();
@@ -679,7 +761,7 @@ impl QuicStream {
         } else if let Some(buf) = batch.as_array_buffer(global) {
             append(buf.byte_slice());
         }
-        let pending = self.outbound.get().data.len() as u32;
+        let pending = self.queued_len();
         self.with_state(|s| s.write_desired_size = s.high_water_mark.saturating_sub(pending));
         if let Some(session) = self.session_ref() {
             session.note_stream_write();
@@ -689,7 +771,7 @@ impl QuicStream {
     }
 
     pub(crate) fn end_write(&self, _: &mut JsScope<'_>) {
-        if self.destroyed.get() {
+        if self.destroyed.get() || self.with_state(|s| s.write_ended != 0) {
             return;
         }
         let wants_trailers = self.with_state(|s| s.wants_trailers != 0);
@@ -741,13 +823,10 @@ impl QuicStream {
                 self.update(|conn, id| conn.reset(id, code));
             }
         }
-        let session = self.session.get();
+        let (session, _root) = (self.session_ref(), self.session_js.replace(None));
         self.teardown(global);
-        if !session.is_null() {
-            // SAFETY: the session outlives its streams -- it stays registered
-            // on the endpoint while any stream exists, so it cannot have been
-            // finalized between teardown and here.
-            unsafe { (*session).schedule_process() };
+        if let Some(session) = session {
+            session.schedule_process();
         }
         Ok(())
     }
@@ -758,11 +837,10 @@ impl QuicStream {
         }
         let code = error_code_arg(code.to_js());
         self.with_state(|s| {
-            s.write_ended = 1;
             s.reset = 1;
             s.reset_code = code;
         });
-        self.discard_outbound();
+        self.end_write_side();
         self.update(|conn, id| conn.reset(id, code));
         self.kick_write();
     }
@@ -781,6 +859,7 @@ impl QuicStream {
                 s.reset_code = code;
             }
         });
+        self.push_event(SessionEvent::StreamWake { stream: self.key });
         self.kick_write();
     }
 
@@ -801,7 +880,7 @@ impl QuicStream {
         let reset =
             (!reset_code.is_empty_or_undefined_or_null()).then(|| error_code_arg(reset_code));
         if let Some(code) = stop {
-            self.inbound.with_mut(|i| i.ended = true);
+            self.destroy_inbound();
             self.with_state(|s| {
                 s.read_ended = 1;
                 if s.reset_code == 0 {
@@ -869,18 +948,22 @@ impl QuicStream {
         let header_count = headers.get_index(global, 1)?.coerce_to_i32(global)?;
         // Latin-1 on the wire, as node does (`StringBytes::Write(.., LATIN1)`).
         use crate::webcore::encoding::BunStringEncode as _;
-        let bytes = bun_core::String::from_js(header_string, global)?
+        let joined = bun_core::String::from_js(header_string, global)?
             .encode(crate::node::types::Encoding::Latin1);
         let is_trailing = kind.coerce_to_i32(global)? as u32 == QUIC_STREAM_HEADERS_KIND_TRAILING;
-        let eos = is_trailing
-            || flags.coerce_to_i32(global)? & (QUIC_STREAM_HEADERS_FLAGS_TERMINAL as i32) != 0;
-        if self.id.get().is_none() {
-            self.pending_headers
-                .with_mut(|q| q.push((bytes, header_count, eos)));
+        let headers = PendingHeaders {
+            joined,
+            count: header_count,
+            is_trailing,
+            is_last: is_trailing
+                || flags.coerce_to_i32(global)? & (QUIC_STREAM_HEADERS_FLAGS_TERMINAL as i32) != 0,
+        };
+        if self.id.get().is_none() || is_trailing && !self.outbound.get().data.is_empty() {
+            self.pending_headers.with_mut(|q| q.push_back(headers));
             self.with_state(|s| s.has_outbound = 1);
             return Ok(JSValue::js_boolean(true));
         }
-        let is_sent = self.write_headers(&bytes, header_count, eos);
+        let is_sent = self.write_headers(&headers);
         if is_sent {
             self.with_state(|s| s.has_outbound = 1);
             self.kick_write();
@@ -888,20 +971,19 @@ impl QuicStream {
         Ok(JSValue::js_boolean(is_sent))
     }
 
-    fn write_headers(&self, joined: &[u8], count: c_int, eos: bool) -> bool {
+    fn write_headers(&self, headers: &PendingHeaders) -> bool {
         let (Some(id), Some(session)) = (self.id.get(), self.session_ref()) else {
             return false;
         };
-        if !split_headers(joined, count).is_some_and(|it| session.send_headers(id, &it)) {
+        let fields = split_headers(&headers.joined, headers.count);
+        if !fields.is_some_and(|it| session.send_headers(id, &it)) {
             return false;
         }
         self.is_known_to_peer.set(true);
-        if eos {
-            self.with_state(|s| {
-                s.fin_sent = 1;
-                s.write_ended = 1;
-            });
+        if headers.is_last {
+            self.with_state(|s| s.fin_sent = 1);
             self.update(Connection::finish);
+            self.end_write_side();
         }
         true
     }
@@ -931,8 +1013,7 @@ impl QuicStream {
                 session.push_event(SessionEvent::StreamWake { stream });
             }
             StreamEvent::Closed => {
-                let is_lost = session.get(|it| !matches!(it.close_reason(), CloseReason::Local));
-                (self.inbound).with_mut(|it| it.truncated = !it.ended && is_lost == Some(true));
+                self.inbound.with_mut(|it| it.truncated |= !it.ended);
                 self.id.set(None);
                 session.push_event(SessionEvent::StreamClosed { stream });
             }

@@ -317,7 +317,7 @@ impl Connection {
     pub(super) fn has_frames(&self) -> bool {
         self.streams.state.has_frames()
             || !self.streams.state.owed.is_empty()
-            || !self.datagrams.unsent.is_empty()
+            || self.has_datagrams()
             || self.spaces.data.has_crypto_to_send()
             || self.local_ids.has_frames()
             || self.remote_ids.has_frames()
@@ -368,6 +368,10 @@ impl Connection {
         let after_ack = out.len();
         if may_elicit {
             self.write_frames(now, &mut draft, out, end, shared);
+            if out.len() == after_ack {
+                // It may have turned out what is in the way.
+                self.write_frames(now, &mut draft, out, end, shared);
+            }
         }
         draft.is_eliciting = out.len() > after_ack;
         if may_elicit && !draft.is_eliciting {
@@ -395,6 +399,7 @@ impl Connection {
         if !self.streams.state.owed.is_empty() {
             draft.control = self.write_control_frames(now, out, end, shared);
         }
+        let has_datagrams = self.has_datagrams();
         let space = &mut self.spaces.data;
         if space.has_crypto_to_send() {
             write_crypto_frames(space, out, end);
@@ -405,18 +410,27 @@ impl Connection {
         }
         self.remote_ids.write_frames(out, end, sent);
         self.streams.write_owed_frames(out, end, sent);
-        if !self.datagrams.unsent.is_empty() {
+        if has_datagrams {
+            if self.streams.state.has_urgent_frames() {
+                self.streams.write_stream_frames(out, end, sent);
+            }
             let overhead = draft.packet.payload_start - draft.packet.start + TAG_LEN;
             let room = u64::from(self.path.mtu.current).saturating_sub(overhead as u64);
-            let max_len = room.min(self.peer.max_datagram_frame_size) as usize;
+            let max_len = match &self.http3 {
+                Some(http3) if http3.peer_accepts_datagrams == Some(false) => 0,
+                _ => room.min(self.peer.max_datagram_frame_size) as usize,
+            };
             let events = &mut self.streams.state.events;
             self.stats.datagrams_sent +=
                 (self.datagrams).write_frames(max_len, out, end, sent, events);
         }
         self.streams.write_stream_frames(out, end, sent);
         if core::mem::take(&mut self.streams.state.has_reported_blocked) {
-            let delay = 1 + self.crypto.random_below(8);
-            (self.timers).set(Timer::Blocked, now + Duration::from_secs(delay.into()));
+            let mut delay = Duration::from_secs(1 + u64::from(self.crypto.random_below(8)));
+            if !self.idle_timeout.is_zero() {
+                delay = delay.min((self.idle_timeout / 2).max(self.probe_timeout()));
+            }
+            self.timers.set(Timer::Blocked, now + delay);
         }
     }
 
@@ -527,26 +541,27 @@ impl Connection {
     /// These packets are not sent again, and have no part in congestion control (RFC 9000 §8.2.1 and §9.4).
     #[cold]
     fn probe_paths(&mut self, now: Instant, batch: &mut Batch) {
-        self.probe_path(now, batch);
+        self.probe_path(now, batch, true);
         let mut candidates = core::mem::take(&mut self.candidates);
         for path in &mut candidates {
             core::mem::swap(&mut self.path, path);
-            self.probe_path(now, batch);
+            self.probe_path(now, batch, false);
             core::mem::swap(&mut self.path, path);
         }
         self.candidates = candidates;
         self.set_path_timer();
     }
 
-    fn probe_path(&mut self, now: Instant, batch: &mut Batch) {
+    fn probe_path(&mut self, now: Instant, batch: &mut Batch, is_active: bool) {
         let out = &mut batch.bytes;
         let start = out.len();
-        let max_len = self.path.allowance().min(MIN_DATAGRAM_LEN);
+        let max_len = self.path.probe_len();
         if self.path.owes_frames()
             && let Some((draft, frames_end)) = self.begin(SpaceId::Data, out, start + max_len)
         {
-            self.path.write_frames(now, self.crypto, out);
-            if self.path.is_wanted {
+            let is_response = self.path.write_frames(now, self.crypto, out);
+            // RFC 9000 §9.3.3.
+            if self.path.is_wanted || is_active && is_response {
                 let number = draft.packet.number;
                 (self.spaces.data.received).write_ack(now, number, out, frames_end);
             }

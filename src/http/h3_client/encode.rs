@@ -7,7 +7,6 @@ use bun_uws::quic;
 use bun_uws::quic::Qpack;
 use bun_uws::quic::header::Class as QpackClass;
 
-use super::client_session::ClientSession;
 use super::stream::Stream;
 use crate::http_request_body::HTTPRequestBody;
 use crate::internal_state::HTTPStage;
@@ -17,11 +16,7 @@ use crate::{HTTPVerboseLevel, Protocol, RequestBuffer};
 /// body transmission.
 // Keeps the `RequestBuffer` out of the caller's frame.
 #[inline(never)]
-pub(crate) fn write_request(
-    session: &ClientSession,
-    stream: &mut Stream,
-    qs: quic::Stream,
-) -> crate::Result<()> {
+pub(crate) fn write_request(stream: &mut Stream, qs: quic::Stream) -> crate::Result<()> {
     let Some(client) = stream.client.as_deref_mut() else {
         return Err(crate::Error::Aborted);
     };
@@ -88,6 +83,11 @@ pub(crate) fn write_request(
                     headers.push(quic::Header::init(name, h.value(), Some(index)));
                 }
             }
+        } else if strings::eql_case_insensitive_asciii_check_length(h.name(), b"te") {
+            let value = strings::trim(h.value(), b" \t");
+            if strings::eql_case_insensitive_asciii_check_length(value, b"trailers") {
+                headers.push(quic::Header::init(b"te", b"trailers", None));
+            }
         } else {
             let (dst, rest) = remaining.split_at_mut(h.name().len());
             remaining = rest;
@@ -96,7 +96,7 @@ pub(crate) fn write_request(
         }
     }
     if authority.is_empty() {
-        authority = session.hostname.as_slice();
+        authority = host;
     }
     headers[2] = quic::Header::init(b":authority", authority, Some(Qpack::Authority));
 

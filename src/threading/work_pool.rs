@@ -15,7 +15,7 @@ pub struct WorkPool;
 /// contract so call sites need only assert "scheduled via this field".
 pub trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
     /// Safe accessor for the intrusive `task: Task` field
-    /// (`&mut self.task`); [`WorkPool::schedule_owned`] uses this to install
+    /// (`&mut self.task`); [`Batch::from_owned`] uses this to install
     /// the callback without raw byte-offset arithmetic.
     #[inline]
     fn task_mut(&mut self) -> &mut Task {
@@ -37,8 +37,7 @@ pub trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
 // The only impl: `OwnedTask::__callback` trusts `from_task_ptr`, so no type may override it.
 impl<T: bun_core::IntrusiveField<Task>> IntrusiveWorkTask for T {}
 
-/// An [`IntrusiveWorkTask`] that the [`WorkPool`] takes ownership of by value
-/// (`Box<Self>`). [`WorkPool::schedule_owned`] performs the `Box` →
+/// An [`IntrusiveWorkTask`] that a [`ThreadPool`] owns. [`Batch::from_owned`] performs the `Box` →
 /// raw-pointer hand-off and [`__callback`](OwnedTask::__callback) recovers
 /// `Box<Self>` via [`IntrusiveWorkTask::from_task_ptr`], so call sites never
 /// touch `Box::into_raw`/`from_raw` directly.
@@ -57,7 +56,7 @@ pub trait OwnedTask: IntrusiveWorkTask + Send + 'static {
     #[doc(hidden)]
     unsafe fn __callback(task: *mut Task) {
         // SAFETY: `task` points to the `Task` field inside a `Box<Self>` that
-        // `WorkPool::schedule_owned` leaked. The thread pool guarantees this
+        // `Batch::from_owned` leaked. The thread pool guarantees this
         // callback fires exactly once per scheduled task, so reclaiming the
         // `Box` here is sound.
         let this = unsafe { Box::from_raw(Self::from_task_ptr(task)) };
@@ -71,7 +70,6 @@ pub trait OwnedTask: IntrusiveWorkTask + Send + 'static {
 /// ```ignore
 /// intrusive_work_task!(ReadFile, task);
 /// intrusive_work_task!([Ctx] CryptoJob<Ctx>, task);
-/// intrusive_work_task!(['a] AsyncHTTP<'a>, task);
 /// ```
 #[macro_export]
 macro_rules! intrusive_work_task {
@@ -120,6 +118,17 @@ macro_rules! owned_task {
     };
 }
 
+impl Batch {
+    /// [`OwnedTask::run`] gets the `Box` back on a thread of the pool that schedules the batch.
+    pub fn from_owned<T: OwnedTask>(mut task: Box<T>) -> Batch {
+        task.task_mut().callback = T::__callback;
+        let raw = Box::into_raw(task);
+        // SAFETY: `raw` is a live heap allocation, which the batch now owns. The `Task` is
+        // projected from the raw pointer, so that it covers the whole allocation.
+        Batch::from(unsafe { T::field_of(raw) })
+    }
+}
+
 static POOL: OnceLock<ThreadPool> = OnceLock::new();
 
 #[cold]
@@ -144,18 +153,8 @@ impl WorkPool {
     /// the `Box`; [`OwnedTask::run`] receives it back on a worker thread.
     /// Replaces the open-coded `Box::into_raw` + `&raw mut (*p).task` +
     /// `container_of`-in-callback pattern.
-    pub fn schedule_owned<T: OwnedTask>(mut task: Box<T>) {
-        // Install the monomorphized shim via the safe accessor — no raw
-        // byte-offset write. `node` is left as the caller initialized it
-        // (always `Node::default()`).
-        task.task_mut().callback = T::__callback;
-        // The single into_raw for every OwnedTask scheduler call. Derive the
-        // intrusive `*mut Task` *after* into_raw so provenance covers the full
-        // allocation and there is exactly one raw-pointer derivation.
-        let raw = Box::into_raw(task);
-        // SAFETY: `raw` is a live heap allocation now owned by the pool;
-        // `IntrusiveField::field_of` projects to the embedded `Task`.
-        Self::schedule(unsafe { T::field_of(raw) });
+    pub fn schedule_owned<T: OwnedTask>(task: Box<T>) {
+        Self::get().schedule(Batch::from_owned(task));
     }
 
     /// `Box::new` + [`schedule_owned`](Self::schedule_owned). Convenience for

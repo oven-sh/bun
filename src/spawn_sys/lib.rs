@@ -12,14 +12,12 @@
 //!   - signal-forwarding / no-orphans `extern "C"` decls
 //!
 //! Dependencies are deliberately leaf-only: `libc`, `bun_sys`, `bun_core`,
-//! `bun_analytics`, and (Windows-only) `bun_libuv_sys`. There is **no**
+//! (Unix-only) `bun_analytics`, and (Windows-only) `bun_libuv_sys`. There is **no**
 //! `bun_event_loop`/`bun_io`/`bun_io`/`bun_threading` dependency — `Process`,
 //! `Poller`, `WaiterThread`, and the `sync` runner stay in `bun_spawn` and
 //! depend on this crate.
 //!
 //! See `docs/SPAWN_SYS_PROPOSAL.md` for the full crate-graph rationale.
-
-use core::ffi::c_char;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Module layout
@@ -37,42 +35,6 @@ pub mod posix_spawn;
 /// Split out of `src/spawn/process.rs`.
 #[path = "spawn_process.rs"]
 pub mod spawn_process;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Canonical FFI type aliases for nullable C-string pointers (`*const c_char`)
-//
-// **Never** spell these as `Option<*const c_char>`: raw pointers are already
-// nullable, and `Option<*const T>` does *not* enjoy the null-pointer-niche
-// guarantee that `Option<&T>`/`Option<NonNull<T>>` do — its layout is
-// implementation-defined. Passing `Vec<Option<*const c_char>>::as_ptr()` to
-// `execve` is the bug class that produced the EFAULT fixed in 813ccdb7622.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// `[*:null]?[*:0]const u8` — null-terminated array of NUL-terminated C
-/// strings (the `argv` shape `posix_spawn`/`execve` accept). Build as
-/// `Vec<*const c_char>` with a trailing `core::ptr::null()`, then `.as_ptr()`.
-pub type Argv = *const *const c_char;
-
-/// Same shape as [`Argv`] for the environment block.
-pub type Envp = *const *const c_char;
-
-/// Element type for an owned `Vec` backing an [`Argv`]/[`Envp`]. Null is the
-/// sentinel; never wrap in `Option`.
-pub type CStrPtr = *const c_char;
-
-// Layout guard: a C-string pointer is exactly one machine word. If this ever
-// fails, every `as_ptr().cast()` from a `Vec<*const c_char>` to `Argv` is
-// suspect.
-const _: () = assert!(core::mem::size_of::<*const c_char>() == core::mem::size_of::<usize>());
-const _: () = assert!(core::mem::align_of::<*const c_char>() == core::mem::align_of::<usize>());
-// Negative guard: `Option<*const c_char>` is **not** word-sized — it carries a
-// discriminant. Any `[Option<*const c_char>; N]` cast to `Argv` is a layout bug.
-// Use `Option<NonNull<c_char>>` for niche-optimized nullable storage instead.
-const _: () =
-    assert!(core::mem::size_of::<Option<*const c_char>>() != core::mem::size_of::<usize>());
-const _: () = assert!(
-    core::mem::size_of::<Option<core::ptr::NonNull<c_char>>>() == core::mem::size_of::<usize>()
-);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Signal-forwarding / no-orphans FFI surface — moved down from
@@ -186,8 +148,6 @@ pub mod pdeathsig {
 // Public surface — flat re-exports so `bun_spawn` can `pub use bun_spawn_sys::*`.
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
-pub use spawn_process::PidFdType;
 #[cfg(unix)]
 pub use spawn_process::spawn_process_posix;
 #[cfg(windows)]

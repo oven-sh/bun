@@ -568,6 +568,34 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
       afterwards: 12 * MiB,
     });
   });
+
+  it.concurrent("zlib.brotliDecompressSync()", async () => {
+    const results = await runCapped(
+      {
+        compressed: zlib.brotliCompressSync(Buffer.alloc(12 * MiB), {
+          params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 2, [zlib.constants.BROTLI_PARAM_LGWIN]: 24 },
+        }),
+        // A window of 24 bits, and the header of 16 MiB that are stored as they are.
+        stored: Buffer.from("cfffffff", "hex"),
+        afterwards: zlib.brotliCompressSync("still works"),
+      },
+      /* js */ `
+        import { brotliDecompressSync } from "node:zlib";
+        for (const [name, bytes] of Object.entries(inputs)) {
+          try {
+            results[name] = brotliDecompressSync(bytes).toString();
+          } catch ({ code, errno }) {
+            results[name] = { code, errno };
+          }
+        }
+      `,
+    );
+    expect(results).toEqual({
+      compressed: { code: "ERR__ERROR_ALLOC_RING_BUFFER_2", errno: -27 },
+      stored: { code: "ERR__ERROR_ALLOC_RING_BUFFER_1", errno: -26 },
+      afterwards: "still works",
+    });
+  });
 });
 
 describe("sync compression argument handling", () => {
@@ -740,8 +768,7 @@ describe("sync compression argument handling", () => {
     }
   });
 
-  // libdeflate is one-shot, so Bun retries with a doubling output buffer; the
-  // retry cap must not be tighter than the zlib backend's (ArrayBuffer max).
+  // The output buffer doubles as it fills; its cap must not be tighter than the zlib backend's (ArrayBuffer max).
   // Spawned so the multi-GB buffer is released with the child.
   it("gunzipSync({library:'libdeflate'}) decompresses output larger than 1 GiB", async () => {
     const MiB = 1024 * 1024;

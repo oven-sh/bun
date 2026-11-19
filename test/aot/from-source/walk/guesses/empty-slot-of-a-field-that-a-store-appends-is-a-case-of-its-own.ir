@@ -1,5 +1,6 @@
 # -- source: empty-slot-of-a-field-that-a-store-appends-is-a-case-of-its-own.ts
 # declare function print(line: unknown): void;
+# declare function id(value: any): any;
 # const enum Level { Low = 1, High = 2 }
 # interface Part { id: number }
 # class Kind { flags: number; constructor(flags: number) { this.flags = flags; } }
@@ -16,7 +17,7 @@
 # const full = new Kind(4);
 # (full as Whole).part = { id: 3 };
 # print(asked(bare)); print(asked(full));
-# Object.defineProperty(Kind.prototype, "part", { get() { return { id: 5 }; }, configurable: true });
+# Object.defineProperty(id(Kind.prototype), "part", { get() { return { id: 5 }; }, configurable: true });
 # print(asked(bare)); print(asked(full));
 # const unranked = new Ranked(4);
 # const high = new Ranked(4);
@@ -34,7 +35,7 @@
 # CHECK: [[filled]]: boolean @Boolean = IsSlotFilled {{*}}key="part"
 # CHECK-NEXT: Branch [[filled]] -> taken {{*}}, notTaken [[empty]]()
 # CHECK: [[empty]]():
-# CHECK-NEXT: = HasLayoutPrototype {{*}}hasNoFieldOutsideSlot
+# CHECK-NEXT: = HasNoFieldOutsideSlot
 # CHECK: = AreMembersUnchanged {{*}}key="part"
 # RUN(BIRTH): walk f2 mechanisms=all
 # BIRTH-LABEL: code f2:Body

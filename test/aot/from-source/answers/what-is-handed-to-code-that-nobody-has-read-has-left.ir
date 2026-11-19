@@ -14,7 +14,7 @@
 # print(box.held + box.tag + gauge.twice + gauge.rise() + double(4));
 # print("went on");
 # -- end of source
-# The green control of the test beside it: without the lie what is handed to code that nobody has read has left, and nothing stops.
+# This is the passing control of the test next to it. Without the fault, a value that is passed to code that the compiler has not read has escaped, and nothing crashes.
 # OPTIONS: testing=CheckProofsAtRunTime
 # RUN(CALL): run-in-shell globalThis.poke = (handed) => { };
 # CALL: 21

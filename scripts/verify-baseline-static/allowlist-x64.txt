@@ -760,6 +760,24 @@ _ZN3bun9N_AVX3_DL11BSwap64ImplEPhm                                             [
 
 
 # ----------------------------------------------------------------------------
+# Bun's packing of words (src/jsc/bindings/highway_strings.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (12 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun6N_AVX213PackWordsImplEPKjmPhS3_                                        [AVX, AVX2]
+_ZN3bun6N_AVX215UnpackWordsImplEPKhmS2_mPjPm                                   [AVX, AVX2]
+_ZN3bun6N_AVX313PackWordsImplEPKjmPhS3_                                        [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun6N_AVX315UnpackWordsImplEPKhmS2_mPjPm                                   [AVX, AVX2]
+_ZN3bun9N_AVX3_DL13PackWordsImplEPKjmPhS3_                                     [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun9N_AVX3_DL15UnpackWordsImplEPKhmS2_mPjPm                                [AVX, AVX2]
+_ZN3bun10N_AVX3_SPR13PackWordsImplEPKjmPhS3_                                   [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun10N_AVX3_SPR15UnpackWordsImplEPKhmS2_mPjPm                              [AVX, AVX2]
+_ZN3bun11N_AVX3_ZEN413PackWordsImplEPKjmPhS3_                                  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun11N_AVX3_ZEN415UnpackWordsImplEPKhmS2_mPjPm                             [AVX, AVX2]
+_ZN3bun9N_AVX10_213PackWordsImplEPKjmPhS3_                                     [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun9N_AVX10_215UnpackWordsImplEPKhmS2_mPjPm                                [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
 # Bun source-map VLQ decoder (src/jsc/bindings/highway_sourcemap.cpp).
 # Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (12 symbols)
 # ----------------------------------------------------------------------------
@@ -778,12 +796,121 @@ _ZN3bun11N_AVX3_ZEN417ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                 [
 
 
 # ----------------------------------------------------------------------------
+# Bun Brotli encoder (src/jsc/bindings/highway_brotli.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (5 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun6N_AVX2L16BrotliAddEntriesEPdjPjm                                       [AVX, AVX2, BMI1, BMI2]
+_ZN3bun6N_AVX2L16BrotliSortLeavesEPKmmbPm                                      [AVX, AVX2, BMI1, BMI2]
+_ZN3bun6N_AVX2L17BrotliRemovePairsEPdPjmjj                                     [AVX, AVX2, BMI1, BMI2]
+_ZN3bun6N_AVX2L18BrotliFindSwitchesEPKtmPKdmmdPdPhS6_                          [AVX, AVX2, BMI1, BMI2]
+_ZN3bun6N_AVX2L19BrotliEstimateCostsEPKjPKS2_mPKmS2_S2_PdjS7_                  [AVX, AVX2, BMI1, BMI2]
+
+
+# ----------------------------------------------------------------------------
+# Bun JPEG transforms and color conversions (src/jsc/bindings/highway_jpeg.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (6 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun6N_AVX2L13JpegYccToRgbaEPKhS2_S2_mPh                                    [AVX, AVX2]
+_ZN3bun6N_AVX2L16JpegRgbaToYcc420EPKhmmmPhS3_S3_m                              [AVX, AVX2]
+_ZN3bun6N_AVX2L16JpegYcc420ToRgbaEPKhS2_S2_S2_S2_mPh                           [AVX, AVX2]
+_ZN3bun6N_AVX2L16JpegYcc422ToRgbaEPKhS2_S2_mPh                                 [AVX, AVX2]
+_ZN3bun6N_AVX2L20JpegForwardTransformEPKhmmPKsPsPmb                            [AVX, AVX2]
+_ZN3bun6N_AVX2L20JpegInverseTransformEPKsmS2_mPhm                              [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
 # Bun PNG scanline filters (src/jsc/bindings/highway_png.cpp).
 # Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (3 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun6N_AVX211PngUnfilterEhmPhPKhm                                           [AVX, AVX2]
 _ZN3bun6N_AVX213PngFilterRgbaEPKhS2_mPhS3_S3_S3_Pm                             [AVX, AVX2]
 _ZN3bun6N_AVX2L10UnfilterUpEPhPKhm                                             [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# Bun CRC-32 and Adler-32 (src/jsc/bindings/highway_checksums.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets,
+# and CPUID in OrWider() for *Vpclmulqdq. (16 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun6N_SSE4L5Crc32EjPKhm                      [PCLMULQDQ]
+_ZN3bun6N_SSE4L12CopyAndCrc32EjPKhPhm            [PCLMULQDQ]
+_ZN3bun6N_AVX2L5Crc32EjPKhm                      [AVX, PCLMULQDQ]
+_ZN3bun6N_AVX2L12CopyAndCrc32EjPKhPhm            [AVX, PCLMULQDQ]
+_ZN3bun6N_AVX2L15Crc32VpclmulqdqEjPKhm           [AVX, AVX2, BMI2, PCLMULQDQ, VPCLMULQDQ]
+_ZN3bun6N_AVX2L22CopyAndCrc32VpclmulqdqEjPKhPhm  [AVX, AVX2, BMI2, PCLMULQDQ, VPCLMULQDQ]
+_ZN3bun6N_AVX3L5Crc32EjPKhm                      [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2, PCLMULQDQ]
+_ZN3bun6N_AVX3L12CopyAndCrc32EjPKhPhm            [AVX, AVX2, AVX512F, AVX512VL, PCLMULQDQ]
+_ZN3bun9N_AVX3_DLL5Crc32EjPKhm                   [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI2, PCLMULQDQ, VPCLMULQDQ]
+_ZN3bun9N_AVX3_DLL12CopyAndCrc32EjPKhPhm         [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI2, PCLMULQDQ, VPCLMULQDQ]
+_ZN3bun6N_AVX2L7Adler32EjPKhm                    [AVX, AVX2, BMI2]
+_ZN3bun6N_AVX2L14CopyAndAdler32EjPKhPhm          [AVX, AVX2, BMI2]
+_ZN3bun6N_AVX3L7Adler32EjPKhm                    [AVX, AVX2, AVX512BW, AVX512F, BMI2]
+_ZN3bun6N_AVX3L14CopyAndAdler32EjPKhPhm          [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2]
+_ZN3bun9N_AVX3_DLL7Adler32EjPKhm                 [AVX, AVX2, AVX512BW, AVX512F, AVX512_VNNI, BMI2]
+_ZN3bun9N_AVX3_DLL14CopyAndAdler32EjPKhPhm       [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
+
+
+# ----------------------------------------------------------------------------
+# Bun Brotli (src/brotli).
+# Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (8 symbols)
+# ----------------------------------------------------------------------------
+_RNvNvNtNt<rust-hash>10bun_brotli7decoder8commands18read_many_literals4bmi2       [BMI2]
+_RNvNvNtNt<rust-hash>10bun_brotli7decoder8commands20run_fast_in_contexts4bmi2     [BMI2]
+_RNvNvNtNt<rust-hash>10bun_brotli7decoder8commands20run_fast_in_one_tree4bmi2     [BMI2]
+_RNvNvNtNt<rust-hash>10bun_brotli7decoder11prefix_code19read_symbol_lengths4bmi2  [BMI2]
+_RNvNvNtNt<rust-hash>10bun_brotli7encoder10bit_stream13write_indexed4bmi2         [BMI2]
+_RNvNvNtNt<rust-hash>10bun_brotli7encoder10bit_stream14write_literals4bmi2        [BMI2]
+_RNvNvNtNt<rust-hash>10bun_brotli7encoder8fragment11write_items4bmi2              [BMI2]
+_RNvNvNtNt<rust-hash>10bun_brotli7encoder8fragment14write_literals4bmi2           [BMI2]
+
+
+# ----------------------------------------------------------------------------
+# Bun DEFLATE (src/deflate, src/zlib).
+# Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (9 symbols)
+# ----------------------------------------------------------------------------
+_RNvNvNt<rust-hash>11bun_deflate5block10write_body4bmi2                        [BMI2]
+_RNvNvNt<rust-hash>11bun_deflate12decompressor13decode_blocks4bmi2             [BMI2]
+_RNvNvNt<rust-hash>11bun_deflate12decompressor14decode_dynamic4bmi2            [BMI2]
+_RNvNvNtNt<rust-hash>8bun_zlib7deflate8encoding11put_symbols4bmi2              [BMI2]
+_RNvNvNtNt<rust-hash>8bun_zlib7deflate5quick14compress_up_to4bmi2              [BMI2]
+_RNvNvNvNtNt<rust-hash>8bun_zlib7inflate5codes15decode_to_slice6masked4bmi2    [BMI2]
+_RNvNvNvNtNt<rust-hash>8bun_zlib7inflate5codes15decode_to_slice8unmasked4bmi2  [BMI2]
+_RNvNvNvNtNt<rust-hash>8bun_zlib7inflate5codes13decode_to_vec6masked4bmi2      [BMI2]
+_RNvNvNvNtNt<rust-hash>8bun_zlib7inflate5codes13decode_to_vec8unmasked4bmi2    [BMI2]
+
+
+# ----------------------------------------------------------------------------
+# Bun byte sets (src/jsc/bindings/highway_byte_set.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (1 symbol)
+# ----------------------------------------------------------------------------
+_ZN3bun6N_AVX227LongByteSetPrefixLengthImplEPKhmS2_                            [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# Bun WebP kernels (src/jsc/bindings/highway_webp_decoder.cpp, highway_webp_encoder.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (14 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun6N_AVX211WebpAnalyzeEPKNS_4webp10MacroblockEPKNS1_5EdgesES7_PA2_NS1_10HistogramsE  [AVX, AVX2]
+_ZN3bun6N_AVX211WebpConvertEPKPKhPKNS_4webp12LinearColorsEPKNS5_10GammaTableEPNS5_10MacroblockE  [AVX, AVX2]
+_ZN3bun6N_AVX212WebpUpsampleEPKhS2_PhS3_m                                      [AVX, AVX2]
+_ZN3bun6N_AVX213WebpYuvToRgbaEPKhS2_S2_S2_Phm                                  [AVX, AVX2]
+_ZN3bun6N_AVX214WebpInverseDctEPsj                                             [AVX, AVX2]
+_ZN3bun6N_AVX216WebpFilterSimplyEPhmPKNS_18WebpFilterStrengthEmb               [AVX, AVX2]
+_ZN3bun6N_AVX216WebpTryLumaModesEPKNS_4webp10MacroblockEPKNS1_5EdgesEmhPKNS1_9QuantizerESA_PNS1_10LumaSourceEPNS1_14LumaCandidatesE  [AVX, AVX2]
+_ZN3bun6N_AVX218WebpFilterNormallyEPhmS1_S1_mPKNS_18WebpFilterStrengthEmb      [AVX, AVX2]
+_ZN3bun6N_AVX218WebpTryChromaModesEPKNS_4webp10MacroblockEPKNS1_5EdgesEmPKNS1_9QuantizerEPA8_KsPNS1_16ChromaCandidatesE  [AVX, AVX2]
+_ZN3bun6N_AVX218WebpUndoCrossColorEPhmPKhj                                     [AVX, AVX2, BMI2]
+_ZN3bun6N_AVX218WebpUndoPredictionEPhPKhmS3_j                                  [AVX, AVX2, BMI2]
+_ZN3bun6N_AVX220WebpTryDiagonalModesEmmhmPKNS_4webp10LumaSourceEPKNS1_9QuantizerEiPNS1_18SubblockCandidatesE  [AVX, AVX2]
+_ZN3bun6N_AVX220WebpTryStraightModesEmmhmPKNS_4webp10LumaSourceEPKNS1_9QuantizerEiPNS1_18SubblockCandidatesE  [AVX, AVX2]
+_ZN3bun6N_AVX224WebpReconstructSubblocksEPKhS2_S2_S2_PKsPh                     [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# Bun zlib (src/jsc/bindings/highway_zlib.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (1 symbol)
+# ----------------------------------------------------------------------------
+_ZN3bun6N_AVX218SubtractSaturatingEPtmt  [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------
@@ -944,70 +1071,6 @@ ZSTD_encodeSequences_bmi2                             [BMI2]
 
 
 # ----------------------------------------------------------------------------
-# libdeflate. Gate: libdeflate_init_x86_cpu_features.
-# (10 symbols)
-# ----------------------------------------------------------------------------
-adler32_x86_avx2                   [AVX, AVX2]
-adler32_x86_avx2_vnni              [AVX, AVX2, AVX_VNNI]
-adler32_x86_avx512_vl256_vnni      [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI]
-adler32_x86_avx512_vl512_vnni      [AVX, AVX2, AVX512BW, AVX512F, AVX512_VNNI]
-crc32_x86_pclmulqdq                [PCLMULQDQ]
-crc32_x86_pclmulqdq_avx            [AVX, PCLMULQDQ]
-crc32_x86_vpclmulqdq_avx2          [AVX, AVX2, PCLMULQDQ, VPCLMULQDQ]
-crc32_x86_vpclmulqdq_avx512_vl256  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, PCLMULQDQ, VPCLMULQDQ]
-crc32_x86_vpclmulqdq_avx512_vl512  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, PCLMULQDQ, VPCLMULQDQ]
-deflate_decompress_bmi2            [BMI2]
-
-
-# ----------------------------------------------------------------------------
-# zlib-ng. Gate: init_functable() — cpu_check_features() CPUID at first call,
-# results cached in `functable` (vendor/zlib/functable.c, arch/x86/x86_features.c).
-# chunkcopy_safe is a static-inline in inflate_p.h that may outline from any of
-# the per-ISA inffast_tpl.h instantiations; the outlined copy is local to that
-# TU and only reachable from the gated inflate_fast_* of the same tier.
-# CHUNKCOPY_SAFE is its per-ISA twin in chunkset_tpl.h (the name is literal, not
-# a macro): same reachability, outlined by clang 23 where clang 21 inlined it.
-# (31 symbols)
-# ----------------------------------------------------------------------------
-# has_pclmulqdq
-crc32_pclmulqdq             [PCLMULQDQ]
-crc32_fold_pclmulqdq        [PCLMULQDQ]
-crc32_fold_pclmulqdq_copy   [PCLMULQDQ]
-crc32_fold_pclmulqdq_final  [PCLMULQDQ]
-crc32_fold_pclmulqdq_reset  [PCLMULQDQ]
-# has_avx2 && has_bmi2
-adler32_avx2                [AVX, AVX2, BMI2]
-adler32_fold_copy_avx2      [AVX, AVX2, BMI2]
-chunkmemset_avx2            [AVX, AVX2, BMI2]
-chunkmemset_safe_avx2       [AVX, AVX2, BMI2]
-compare256_avx2             [AVX, AVX2, BMI2]
-inflate_fast_avx2           [AVX, AVX2, BMI2]
-longest_match_avx2          [AVX, AVX2, BMI2]
-longest_match_slow_avx2     [AVX, AVX2, BMI2]
-slide_hash_avx2             [AVX, AVX2, BMI2]
-# has_avx512_common (F+DQ+BW+VL+BMI2)
-adler32_avx512              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-adler32_fold_copy_avx512    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-chunkmemset_avx512          [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-chunkmemset_safe_avx512     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-compare256_avx512           [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-inflate_fast_avx512         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-longest_match_avx512        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-longest_match_slow_avx512   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-chunkcopy_safe              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-CHUNKCOPY_SAFE              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-# has_avx512vnni
-adler32_avx512_vnni            [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
-adler32_fold_copy_avx512_vnni  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
-# has_pclmulqdq && has_avx512_common && has_vpclmulqdq
-crc32_vpclmulqdq             [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
-crc32_fold_vpclmulqdq        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
-crc32_fold_vpclmulqdq_copy   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
-crc32_fold_vpclmulqdq_final  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
-crc32_fold_vpclmulqdq_reset  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
-
-
-# ----------------------------------------------------------------------------
 # Rust compiler-builtins libm FMA. ifunc-style dispatch.
 # (2 symbols)
 # ----------------------------------------------------------------------------
@@ -1046,13 +1109,12 @@ _RNvNt<rust-hash>12blake2b_simd4avx214compress1_loop  [AVX, AVX2]
 # ----------------------------------------------------------------------------
 # Bun.Image highway kernels (image_resize.cpp). Gate: BUN_HWY_DISPATCH ->
 # hwy::SupportedTargets() via CPUID. Same gate as the highway_strings block.
-# (52 symbols; union of glibc + musl LTO outcomes)
+# (46 symbols; union of glibc + musl LTO outcomes)
 # ----------------------------------------------------------------------------
 _ZN9bun_image10N_AVX3_SPRL12ModulateImplEPhmff  [AVX, AVX512F]
 _ZN9bun_image10N_AVX3_SPRL12Rotate90ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 _ZN9bun_image10N_AVX3_SPRL13Rotate180ImplEPKhmmPh  [AVX, AVX2, AVX512F]
 _ZN9bun_image10N_AVX3_SPRL13Rotate270ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
-_ZN9bun_image10N_AVX3_SPRL14CmykToRgbaImplEPhm  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
 _ZN9bun_image10N_AVX3_SPRL18NearestPaletteImplEPKhjiiii  [AVX]
 _ZN9bun_image10N_AVX3_SPRL8VertPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI1, FMA]
 _ZN9bun_image10N_AVX3_SPRL9FlipHImplEPKhmmPh  [AVX, AVX2, AVX512F]
@@ -1061,7 +1123,6 @@ _ZN9bun_image11N_AVX3_ZEN4L12ModulateImplEPhmff  [AVX, AVX512F]
 _ZN9bun_image11N_AVX3_ZEN4L12Rotate90ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 _ZN9bun_image11N_AVX3_ZEN4L13Rotate180ImplEPKhmmPh  [AVX, AVX2, AVX512F]
 _ZN9bun_image11N_AVX3_ZEN4L13Rotate270ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
-_ZN9bun_image11N_AVX3_ZEN4L14CmykToRgbaImplEPhm  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
 _ZN9bun_image11N_AVX3_ZEN4L18NearestPaletteImplEPKhjiiii  [AVX]
 _ZN9bun_image11N_AVX3_ZEN4L8VertPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI1, FMA]
 _ZN9bun_image11N_AVX3_ZEN4L9FlipHImplEPKhmmPh  [AVX, AVX2, AVX512F]
@@ -1070,7 +1131,6 @@ _ZN9bun_image6N_AVX2L12ModulateImplEPhmff  [AVX, AVX2, FMA]
 _ZN9bun_image6N_AVX2L12Rotate90ImplEPKhmmPh  [AVX]
 _ZN9bun_image6N_AVX2L13Rotate180ImplEPKhmmPh  [AVX, AVX2]
 _ZN9bun_image6N_AVX2L13Rotate270ImplEPKhmmPh  [AVX]
-_ZN9bun_image6N_AVX2L14CmykToRgbaImplEPhm  [AVX, AVX2]
 _ZN9bun_image6N_AVX2L18NearestPaletteImplEPKhjiiii  [AVX]
 _ZN9bun_image6N_AVX2L8VertPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX2, BMI1, FMA]
 _ZN9bun_image6N_AVX2L9FlipHImplEPKhmmPh  [AVX, AVX2]
@@ -1079,7 +1139,6 @@ _ZN9bun_image6N_AVX3L12ModulateImplEPhmff  [AVX, AVX512F]
 _ZN9bun_image6N_AVX3L12Rotate90ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 _ZN9bun_image6N_AVX3L13Rotate180ImplEPKhmmPh  [AVX, AVX2, AVX512F]
 _ZN9bun_image6N_AVX3L13Rotate270ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
-_ZN9bun_image6N_AVX3L14CmykToRgbaImplEPhm  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
 _ZN9bun_image6N_AVX3L18NearestPaletteImplEPKhjiiii  [AVX]
 _ZN9bun_image6N_AVX3L8VertPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX512BW, AVX512F, AVX512VL, BMI1, FMA]
 _ZN9bun_image6N_AVX3L9FlipHImplEPKhmmPh  [AVX, AVX2, AVX512F]
@@ -1088,14 +1147,12 @@ _ZN9bun_image9N_AVX3_DLL12ModulateImplEPhmff  [AVX, AVX512F]
 _ZN9bun_image9N_AVX3_DLL12Rotate90ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 _ZN9bun_image9N_AVX3_DLL13Rotate180ImplEPKhmmPh  [AVX, AVX2, AVX512F]
 _ZN9bun_image9N_AVX3_DLL13Rotate270ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
-_ZN9bun_image9N_AVX3_DLL14CmykToRgbaImplEPhm  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
 _ZN9bun_image9N_AVX3_DLL18NearestPaletteImplEPKhjiiii  [AVX]
 _ZN9bun_image9N_AVX3_DLL8VertPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI1, FMA]
 _ZN9bun_image9N_AVX3_DLL9FlipHImplEPKhmmPh  [AVX, AVX2, AVX512F]
 _ZN9bun_image9N_AVX3_DLL9HorizPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI]
 _ZN9bun_image9N_AVX10_2L12ModulateImplEPhmff  [AVX, AVX512F]
 _ZN9bun_image9N_AVX10_2L13Rotate180ImplEPKhmmPh  [AVX, AVX512F]
-_ZN9bun_image9N_AVX10_2L14CmykToRgbaImplEPhm  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
 _ZN9bun_image9N_AVX10_2L18NearestPaletteImplEPKhjiiii  [AVX]
 _ZN9bun_image9N_AVX10_2L8VertPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX512BW, AVX512F, AVX512_VNNI, BMI1]
 _ZN9bun_image9N_AVX10_2L9FlipHImplEPKhmmPh  [AVX, AVX512F]
@@ -1103,321 +1160,64 @@ _ZN9bun_image9N_AVX10_2L9HorizPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX2, AVX512VL
 
 
 # ----------------------------------------------------------------------------
-# libjpeg-turbo x86_64 AVX2 kernels (vendor/libjpeg-turbo/simd/x86_64/*-avx2.asm).
-# Gate: jpeg_simd_cpu_support() in simd/x86_64/jsimdcpu.asm checks CPUID leaf 7
-# AVX2 and XGETBV YMM state and sets JSIMD_AVX2; simd/jsimd.c only
-# dispatches to a jsimd_*_avx2 kernel when init_simd() saw that bit. The SSE2
-# kernels are baseline and need no entries.
-# The name.label entries are nasm local labels inside those kernels: nasm emits
-# them into .symtab, so the scanner attributes most hits to the labels rather
-# than to the kernel entry points (38 kernels; the Windows PDB sees only those).
-# (282 symbols)
-# ----------------------------------------------------------------------------
-jsimd_convsamp_avx2                                  [AVX, AVX2]
-jsimd_extbgr_gray_convert_avx2.column_ld16           [AVX, AVX2]
-jsimd_extbgr_gray_convert_avx2.column_ld32           [AVX, AVX2]
-jsimd_extbgr_gray_convert_avx2.column_ld4            [AVX, AVX2]
-jsimd_extbgr_gray_convert_avx2.column_ld64           [AVX, AVX2]
-jsimd_extbgr_gray_convert_avx2.column_ld8            [AVX, AVX2]
-jsimd_extbgr_gray_convert_avx2.columnloop            [AVX, AVX2]
-jsimd_extbgr_gray_convert_avx2.return                [AVX, AVX2]
-jsimd_extbgr_gray_convert_avx2.rgb_gray_cnv          [AVX, AVX2]
-jsimd_extbgr_ycc_convert_avx2.column_ld16            [AVX, AVX2]
-jsimd_extbgr_ycc_convert_avx2.column_ld32            [AVX, AVX2]
-jsimd_extbgr_ycc_convert_avx2.column_ld4             [AVX, AVX2]
-jsimd_extbgr_ycc_convert_avx2.column_ld64            [AVX, AVX2]
-jsimd_extbgr_ycc_convert_avx2.column_ld8             [AVX, AVX2]
-jsimd_extbgr_ycc_convert_avx2.columnloop             [AVX, AVX2]
-jsimd_extbgr_ycc_convert_avx2.return                 [AVX, AVX2]
-jsimd_extbgr_ycc_convert_avx2.rgb_ycc_cnv            [AVX, AVX2]
-jsimd_extbgrx_gray_convert_avx2.column_ld1           [AVX, AVX2]
-jsimd_extbgrx_gray_convert_avx2.column_ld16          [AVX, AVX2]
-jsimd_extbgrx_gray_convert_avx2.column_ld2           [AVX, AVX2]
-jsimd_extbgrx_gray_convert_avx2.column_ld4           [AVX, AVX2]
-jsimd_extbgrx_gray_convert_avx2.column_ld8           [AVX, AVX2]
-jsimd_extbgrx_gray_convert_avx2.columnloop           [AVX, AVX2]
-jsimd_extbgrx_gray_convert_avx2.return               [AVX, AVX2]
-jsimd_extbgrx_gray_convert_avx2.rgb_gray_cnv         [AVX, AVX2]
-jsimd_extbgrx_ycc_convert_avx2.column_ld1            [AVX, AVX2]
-jsimd_extbgrx_ycc_convert_avx2.column_ld16           [AVX, AVX2]
-jsimd_extbgrx_ycc_convert_avx2.column_ld2            [AVX, AVX2]
-jsimd_extbgrx_ycc_convert_avx2.column_ld4            [AVX, AVX2]
-jsimd_extbgrx_ycc_convert_avx2.column_ld8            [AVX, AVX2]
-jsimd_extbgrx_ycc_convert_avx2.columnloop            [AVX, AVX2]
-jsimd_extbgrx_ycc_convert_avx2.return                [AVX, AVX2]
-jsimd_extbgrx_ycc_convert_avx2.rgb_ycc_cnv           [AVX, AVX2]
-jsimd_extrgb_gray_convert_avx2.column_ld16           [AVX, AVX2]
-jsimd_extrgb_gray_convert_avx2.column_ld32           [AVX, AVX2]
-jsimd_extrgb_gray_convert_avx2.column_ld4            [AVX, AVX2]
-jsimd_extrgb_gray_convert_avx2.column_ld64           [AVX, AVX2]
-jsimd_extrgb_gray_convert_avx2.column_ld8            [AVX, AVX2]
-jsimd_extrgb_gray_convert_avx2.columnloop            [AVX, AVX2]
-jsimd_extrgb_gray_convert_avx2.return                [AVX, AVX2]
-jsimd_extrgb_gray_convert_avx2.rgb_gray_cnv          [AVX, AVX2]
-jsimd_extrgb_ycc_convert_avx2.column_ld16            [AVX, AVX2]
-jsimd_extrgb_ycc_convert_avx2.column_ld32            [AVX, AVX2]
-jsimd_extrgb_ycc_convert_avx2.column_ld4             [AVX, AVX2]
-jsimd_extrgb_ycc_convert_avx2.column_ld64            [AVX, AVX2]
-jsimd_extrgb_ycc_convert_avx2.column_ld8             [AVX, AVX2]
-jsimd_extrgb_ycc_convert_avx2.columnloop             [AVX, AVX2]
-jsimd_extrgb_ycc_convert_avx2.return                 [AVX, AVX2]
-jsimd_extrgb_ycc_convert_avx2.rgb_ycc_cnv            [AVX, AVX2]
-jsimd_extrgbx_gray_convert_avx2.column_ld1           [AVX, AVX2]
-jsimd_extrgbx_gray_convert_avx2.column_ld16          [AVX, AVX2]
-jsimd_extrgbx_gray_convert_avx2.column_ld2           [AVX, AVX2]
-jsimd_extrgbx_gray_convert_avx2.column_ld4           [AVX, AVX2]
-jsimd_extrgbx_gray_convert_avx2.column_ld8           [AVX, AVX2]
-jsimd_extrgbx_gray_convert_avx2.columnloop           [AVX, AVX2]
-jsimd_extrgbx_gray_convert_avx2.return               [AVX, AVX2]
-jsimd_extrgbx_gray_convert_avx2.rgb_gray_cnv         [AVX, AVX2]
-jsimd_extrgbx_ycc_convert_avx2.column_ld1            [AVX, AVX2]
-jsimd_extrgbx_ycc_convert_avx2.column_ld16           [AVX, AVX2]
-jsimd_extrgbx_ycc_convert_avx2.column_ld2            [AVX, AVX2]
-jsimd_extrgbx_ycc_convert_avx2.column_ld4            [AVX, AVX2]
-jsimd_extrgbx_ycc_convert_avx2.column_ld8            [AVX, AVX2]
-jsimd_extrgbx_ycc_convert_avx2.columnloop            [AVX, AVX2]
-jsimd_extrgbx_ycc_convert_avx2.return                [AVX, AVX2]
-jsimd_extrgbx_ycc_convert_avx2.rgb_ycc_cnv           [AVX, AVX2]
-jsimd_extxbgr_gray_convert_avx2.column_ld1           [AVX, AVX2]
-jsimd_extxbgr_gray_convert_avx2.column_ld16          [AVX, AVX2]
-jsimd_extxbgr_gray_convert_avx2.column_ld2           [AVX, AVX2]
-jsimd_extxbgr_gray_convert_avx2.column_ld4           [AVX, AVX2]
-jsimd_extxbgr_gray_convert_avx2.column_ld8           [AVX, AVX2]
-jsimd_extxbgr_gray_convert_avx2.columnloop           [AVX, AVX2]
-jsimd_extxbgr_gray_convert_avx2.return               [AVX, AVX2]
-jsimd_extxbgr_gray_convert_avx2.rgb_gray_cnv         [AVX, AVX2]
-jsimd_extxbgr_ycc_convert_avx2.column_ld1            [AVX, AVX2]
-jsimd_extxbgr_ycc_convert_avx2.column_ld16           [AVX, AVX2]
-jsimd_extxbgr_ycc_convert_avx2.column_ld2            [AVX, AVX2]
-jsimd_extxbgr_ycc_convert_avx2.column_ld4            [AVX, AVX2]
-jsimd_extxbgr_ycc_convert_avx2.column_ld8            [AVX, AVX2]
-jsimd_extxbgr_ycc_convert_avx2.columnloop            [AVX, AVX2]
-jsimd_extxbgr_ycc_convert_avx2.return                [AVX, AVX2]
-jsimd_extxbgr_ycc_convert_avx2.rgb_ycc_cnv           [AVX, AVX2]
-jsimd_extxrgb_gray_convert_avx2.column_ld1           [AVX, AVX2]
-jsimd_extxrgb_gray_convert_avx2.column_ld16          [AVX, AVX2]
-jsimd_extxrgb_gray_convert_avx2.column_ld2           [AVX, AVX2]
-jsimd_extxrgb_gray_convert_avx2.column_ld4           [AVX, AVX2]
-jsimd_extxrgb_gray_convert_avx2.column_ld8           [AVX, AVX2]
-jsimd_extxrgb_gray_convert_avx2.columnloop           [AVX, AVX2]
-jsimd_extxrgb_gray_convert_avx2.return               [AVX, AVX2]
-jsimd_extxrgb_gray_convert_avx2.rgb_gray_cnv         [AVX, AVX2]
-jsimd_extxrgb_ycc_convert_avx2.column_ld1            [AVX, AVX2]
-jsimd_extxrgb_ycc_convert_avx2.column_ld16           [AVX, AVX2]
-jsimd_extxrgb_ycc_convert_avx2.column_ld2            [AVX, AVX2]
-jsimd_extxrgb_ycc_convert_avx2.column_ld4            [AVX, AVX2]
-jsimd_extxrgb_ycc_convert_avx2.column_ld8            [AVX, AVX2]
-jsimd_extxrgb_ycc_convert_avx2.columnloop            [AVX, AVX2]
-jsimd_extxrgb_ycc_convert_avx2.return                [AVX, AVX2]
-jsimd_extxrgb_ycc_convert_avx2.rgb_ycc_cnv           [AVX, AVX2]
-jsimd_fdct_islow_avx2                                [AVX, AVX2]
-jsimd_h2v1_downsample_avx2.columnloop                [AVX, AVX2]
-jsimd_h2v1_downsample_avx2.columnloop_r16            [AVX, AVX2]
-jsimd_h2v1_downsample_avx2.columnloop_r24            [AVX, AVX2]
-jsimd_h2v1_downsample_avx2.columnloop_r8             [AVX, AVX2]
-jsimd_h2v1_downsample_avx2.downsample                [AVX, AVX2]
-jsimd_h2v1_downsample_avx2.expand_end                [AVX, AVX2]
-jsimd_h2v1_downsample_avx2.return                    [AVX, AVX2]
-jsimd_h2v1_extbgr_merged_upsample_avx2.Yloop_1st     [AVX, AVX2]
-jsimd_h2v1_extbgr_merged_upsample_avx2.Yloop_2nd     [AVX, AVX2]
-jsimd_h2v1_extbgr_merged_upsample_avx2.column_st15   [AVX, AVX2]
-jsimd_h2v1_extbgr_merged_upsample_avx2.column_st3    [AVX, AVX2]
-jsimd_h2v1_extbgr_merged_upsample_avx2.column_st31   [AVX, AVX2]
-jsimd_h2v1_extbgr_merged_upsample_avx2.column_st32   [AVX, AVX2]
-jsimd_h2v1_extbgr_merged_upsample_avx2.column_st64   [AVX, AVX2]
-jsimd_h2v1_extbgr_merged_upsample_avx2.column_st7    [AVX, AVX2]
-jsimd_h2v1_extbgr_merged_upsample_avx2.columnloop    [AVX, AVX2]
-jsimd_h2v1_extbgr_merged_upsample_avx2.out1          [AVX, AVX2]
-jsimd_h2v1_extbgr_merged_upsample_avx2.return        [AVX, AVX2]
-jsimd_h2v1_extbgrx_merged_upsample_avx2.Yloop_1st    [AVX, AVX2]
-jsimd_h2v1_extbgrx_merged_upsample_avx2.Yloop_2nd    [AVX, AVX2]
-jsimd_h2v1_extbgrx_merged_upsample_avx2.column_st15  [AVX, AVX2]
-jsimd_h2v1_extbgrx_merged_upsample_avx2.column_st16  [AVX, AVX2]
-jsimd_h2v1_extbgrx_merged_upsample_avx2.column_st32  [AVX, AVX2]
-jsimd_h2v1_extbgrx_merged_upsample_avx2.column_st64  [AVX, AVX2]
-jsimd_h2v1_extbgrx_merged_upsample_avx2.column_st7   [AVX, AVX2]
-jsimd_h2v1_extbgrx_merged_upsample_avx2.columnloop   [AVX, AVX2]
-jsimd_h2v1_extbgrx_merged_upsample_avx2.out1         [AVX, AVX2]
-jsimd_h2v1_extbgrx_merged_upsample_avx2.return       [AVX, AVX2]
-jsimd_h2v1_extrgb_merged_upsample_avx2.Yloop_1st     [AVX, AVX2]
-jsimd_h2v1_extrgb_merged_upsample_avx2.Yloop_2nd     [AVX, AVX2]
-jsimd_h2v1_extrgb_merged_upsample_avx2.column_st15   [AVX, AVX2]
-jsimd_h2v1_extrgb_merged_upsample_avx2.column_st3    [AVX, AVX2]
-jsimd_h2v1_extrgb_merged_upsample_avx2.column_st31   [AVX, AVX2]
-jsimd_h2v1_extrgb_merged_upsample_avx2.column_st32   [AVX, AVX2]
-jsimd_h2v1_extrgb_merged_upsample_avx2.column_st64   [AVX, AVX2]
-jsimd_h2v1_extrgb_merged_upsample_avx2.column_st7    [AVX, AVX2]
-jsimd_h2v1_extrgb_merged_upsample_avx2.columnloop    [AVX, AVX2]
-jsimd_h2v1_extrgb_merged_upsample_avx2.out1          [AVX, AVX2]
-jsimd_h2v1_extrgb_merged_upsample_avx2.return        [AVX, AVX2]
-jsimd_h2v1_extrgbx_merged_upsample_avx2.Yloop_1st    [AVX, AVX2]
-jsimd_h2v1_extrgbx_merged_upsample_avx2.Yloop_2nd    [AVX, AVX2]
-jsimd_h2v1_extrgbx_merged_upsample_avx2.column_st15  [AVX, AVX2]
-jsimd_h2v1_extrgbx_merged_upsample_avx2.column_st16  [AVX, AVX2]
-jsimd_h2v1_extrgbx_merged_upsample_avx2.column_st32  [AVX, AVX2]
-jsimd_h2v1_extrgbx_merged_upsample_avx2.column_st64  [AVX, AVX2]
-jsimd_h2v1_extrgbx_merged_upsample_avx2.column_st7   [AVX, AVX2]
-jsimd_h2v1_extrgbx_merged_upsample_avx2.columnloop   [AVX, AVX2]
-jsimd_h2v1_extrgbx_merged_upsample_avx2.out1         [AVX, AVX2]
-jsimd_h2v1_extrgbx_merged_upsample_avx2.return       [AVX, AVX2]
-jsimd_h2v1_extxbgr_merged_upsample_avx2.Yloop_1st    [AVX, AVX2]
-jsimd_h2v1_extxbgr_merged_upsample_avx2.Yloop_2nd    [AVX, AVX2]
-jsimd_h2v1_extxbgr_merged_upsample_avx2.column_st15  [AVX, AVX2]
-jsimd_h2v1_extxbgr_merged_upsample_avx2.column_st16  [AVX, AVX2]
-jsimd_h2v1_extxbgr_merged_upsample_avx2.column_st32  [AVX, AVX2]
-jsimd_h2v1_extxbgr_merged_upsample_avx2.column_st64  [AVX, AVX2]
-jsimd_h2v1_extxbgr_merged_upsample_avx2.column_st7   [AVX, AVX2]
-jsimd_h2v1_extxbgr_merged_upsample_avx2.columnloop   [AVX, AVX2]
-jsimd_h2v1_extxbgr_merged_upsample_avx2.out1         [AVX, AVX2]
-jsimd_h2v1_extxbgr_merged_upsample_avx2.return       [AVX, AVX2]
-jsimd_h2v1_extxrgb_merged_upsample_avx2.Yloop_1st    [AVX, AVX2]
-jsimd_h2v1_extxrgb_merged_upsample_avx2.Yloop_2nd    [AVX, AVX2]
-jsimd_h2v1_extxrgb_merged_upsample_avx2.column_st15  [AVX, AVX2]
-jsimd_h2v1_extxrgb_merged_upsample_avx2.column_st16  [AVX, AVX2]
-jsimd_h2v1_extxrgb_merged_upsample_avx2.column_st32  [AVX, AVX2]
-jsimd_h2v1_extxrgb_merged_upsample_avx2.column_st64  [AVX, AVX2]
-jsimd_h2v1_extxrgb_merged_upsample_avx2.column_st7   [AVX, AVX2]
-jsimd_h2v1_extxrgb_merged_upsample_avx2.columnloop   [AVX, AVX2]
-jsimd_h2v1_extxrgb_merged_upsample_avx2.out1         [AVX, AVX2]
-jsimd_h2v1_extxrgb_merged_upsample_avx2.return       [AVX, AVX2]
-jsimd_h2v1_fancy_upsample_avx2                       [AVX, AVX2]
-jsimd_h2v1_fancy_upsample_avx2.columnloop            [AVX, AVX2]
-jsimd_h2v1_fancy_upsample_avx2.columnloop_last       [AVX, AVX2]
-jsimd_h2v1_fancy_upsample_avx2.return                [AVX, AVX2]
-jsimd_h2v1_fancy_upsample_avx2.skip                  [AVX, AVX2]
-jsimd_h2v1_fancy_upsample_avx2.upsample              [AVX, AVX2]
-jsimd_h2v1_merged_upsample_avx2.Yloop_1st            [AVX, AVX2]
-jsimd_h2v1_merged_upsample_avx2.Yloop_2nd            [AVX, AVX2]
-jsimd_h2v1_merged_upsample_avx2.column_st15          [AVX, AVX2]
-jsimd_h2v1_merged_upsample_avx2.column_st3           [AVX, AVX2]
-jsimd_h2v1_merged_upsample_avx2.column_st31          [AVX, AVX2]
-jsimd_h2v1_merged_upsample_avx2.column_st32          [AVX, AVX2]
-jsimd_h2v1_merged_upsample_avx2.column_st64          [AVX, AVX2]
-jsimd_h2v1_merged_upsample_avx2.column_st7           [AVX, AVX2]
-jsimd_h2v1_merged_upsample_avx2.columnloop           [AVX, AVX2]
-jsimd_h2v1_merged_upsample_avx2.out1                 [AVX, AVX2]
-jsimd_h2v1_merged_upsample_avx2.return               [AVX, AVX2]
-jsimd_h2v1_upsample_avx2.above_16                    [AVX, AVX2]
-jsimd_h2v1_upsample_avx2.columnloop                  [AVX, AVX2]
-jsimd_h2v1_upsample_avx2.return                      [AVX, AVX2]
-jsimd_h2v2_downsample_avx2.columnloop                [AVX, AVX2]
-jsimd_h2v2_downsample_avx2.columnloop_r16            [AVX, AVX2]
-jsimd_h2v2_downsample_avx2.columnloop_r24            [AVX, AVX2]
-jsimd_h2v2_downsample_avx2.columnloop_r8             [AVX, AVX2]
-jsimd_h2v2_downsample_avx2.downsample                [AVX, AVX2]
-jsimd_h2v2_downsample_avx2.expand_end                [AVX, AVX2]
-jsimd_h2v2_downsample_avx2.return                    [AVX, AVX2]
-jsimd_h2v2_fancy_upsample_avx2.columnloop            [AVX, AVX2]
-jsimd_h2v2_fancy_upsample_avx2.columnloop_last       [AVX, AVX2]
-jsimd_h2v2_fancy_upsample_avx2.return                [AVX, AVX2]
-jsimd_h2v2_fancy_upsample_avx2.rowloop               [AVX, AVX2]
-jsimd_h2v2_fancy_upsample_avx2.skip                  [AVX, AVX2]
-jsimd_h2v2_fancy_upsample_avx2.upsample              [AVX, AVX2]
-jsimd_h2v2_upsample_avx2.above_16                    [AVX, AVX2]
-jsimd_h2v2_upsample_avx2.columnloop                  [AVX, AVX2]
-jsimd_h2v2_upsample_avx2.return                      [AVX, AVX2]
-jsimd_idct_islow_avx2                                [AVX, AVX2]
-jsimd_idct_islow_avx2.columnDCT                      [AVX, AVX2]
-jsimd_idct_islow_avx2.column_end                     [AVX, AVX2]
-jsimd_quantize_avx2                                  [AVX, AVX2]
-jsimd_rgb_gray_convert_avx2.column_ld16              [AVX, AVX2]
-jsimd_rgb_gray_convert_avx2.column_ld32              [AVX, AVX2]
-jsimd_rgb_gray_convert_avx2.column_ld4               [AVX, AVX2]
-jsimd_rgb_gray_convert_avx2.column_ld64              [AVX, AVX2]
-jsimd_rgb_gray_convert_avx2.column_ld8               [AVX, AVX2]
-jsimd_rgb_gray_convert_avx2.columnloop               [AVX, AVX2]
-jsimd_rgb_gray_convert_avx2.return                   [AVX, AVX2]
-jsimd_rgb_gray_convert_avx2.rgb_gray_cnv             [AVX, AVX2]
-jsimd_rgb_ycc_convert_avx2.column_ld16               [AVX, AVX2]
-jsimd_rgb_ycc_convert_avx2.column_ld32               [AVX, AVX2]
-jsimd_rgb_ycc_convert_avx2.column_ld4                [AVX, AVX2]
-jsimd_rgb_ycc_convert_avx2.column_ld64               [AVX, AVX2]
-jsimd_rgb_ycc_convert_avx2.column_ld8                [AVX, AVX2]
-jsimd_rgb_ycc_convert_avx2.columnloop                [AVX, AVX2]
-jsimd_rgb_ycc_convert_avx2.return                    [AVX, AVX2]
-jsimd_rgb_ycc_convert_avx2.rgb_ycc_cnv               [AVX, AVX2]
-jsimd_ycc_extbgr_convert_avx2.column_st15            [AVX, AVX2]
-jsimd_ycc_extbgr_convert_avx2.column_st3             [AVX, AVX2]
-jsimd_ycc_extbgr_convert_avx2.column_st31            [AVX, AVX2]
-jsimd_ycc_extbgr_convert_avx2.column_st32            [AVX, AVX2]
-jsimd_ycc_extbgr_convert_avx2.column_st64            [AVX, AVX2]
-jsimd_ycc_extbgr_convert_avx2.column_st7             [AVX, AVX2]
-jsimd_ycc_extbgr_convert_avx2.columnloop             [AVX, AVX2]
-jsimd_ycc_extbgr_convert_avx2.out1                   [AVX, AVX2]
-jsimd_ycc_extbgr_convert_avx2.return                 [AVX, AVX2]
-jsimd_ycc_extbgrx_convert_avx2.column_st15           [AVX, AVX2]
-jsimd_ycc_extbgrx_convert_avx2.column_st16           [AVX, AVX2]
-jsimd_ycc_extbgrx_convert_avx2.column_st32           [AVX, AVX2]
-jsimd_ycc_extbgrx_convert_avx2.column_st64           [AVX, AVX2]
-jsimd_ycc_extbgrx_convert_avx2.column_st7            [AVX, AVX2]
-jsimd_ycc_extbgrx_convert_avx2.columnloop            [AVX, AVX2]
-jsimd_ycc_extbgrx_convert_avx2.out1                  [AVX, AVX2]
-jsimd_ycc_extbgrx_convert_avx2.return                [AVX, AVX2]
-jsimd_ycc_extrgb_convert_avx2.column_st15            [AVX, AVX2]
-jsimd_ycc_extrgb_convert_avx2.column_st3             [AVX, AVX2]
-jsimd_ycc_extrgb_convert_avx2.column_st31            [AVX, AVX2]
-jsimd_ycc_extrgb_convert_avx2.column_st32            [AVX, AVX2]
-jsimd_ycc_extrgb_convert_avx2.column_st64            [AVX, AVX2]
-jsimd_ycc_extrgb_convert_avx2.column_st7             [AVX, AVX2]
-jsimd_ycc_extrgb_convert_avx2.columnloop             [AVX, AVX2]
-jsimd_ycc_extrgb_convert_avx2.out1                   [AVX, AVX2]
-jsimd_ycc_extrgb_convert_avx2.return                 [AVX, AVX2]
-jsimd_ycc_extrgbx_convert_avx2.column_st15           [AVX, AVX2]
-jsimd_ycc_extrgbx_convert_avx2.column_st16           [AVX, AVX2]
-jsimd_ycc_extrgbx_convert_avx2.column_st32           [AVX, AVX2]
-jsimd_ycc_extrgbx_convert_avx2.column_st64           [AVX, AVX2]
-jsimd_ycc_extrgbx_convert_avx2.column_st7            [AVX, AVX2]
-jsimd_ycc_extrgbx_convert_avx2.columnloop            [AVX, AVX2]
-jsimd_ycc_extrgbx_convert_avx2.out1                  [AVX, AVX2]
-jsimd_ycc_extrgbx_convert_avx2.return                [AVX, AVX2]
-jsimd_ycc_extxbgr_convert_avx2.column_st15           [AVX, AVX2]
-jsimd_ycc_extxbgr_convert_avx2.column_st16           [AVX, AVX2]
-jsimd_ycc_extxbgr_convert_avx2.column_st32           [AVX, AVX2]
-jsimd_ycc_extxbgr_convert_avx2.column_st64           [AVX, AVX2]
-jsimd_ycc_extxbgr_convert_avx2.column_st7            [AVX, AVX2]
-jsimd_ycc_extxbgr_convert_avx2.columnloop            [AVX, AVX2]
-jsimd_ycc_extxbgr_convert_avx2.out1                  [AVX, AVX2]
-jsimd_ycc_extxbgr_convert_avx2.return                [AVX, AVX2]
-jsimd_ycc_extxrgb_convert_avx2.column_st15           [AVX, AVX2]
-jsimd_ycc_extxrgb_convert_avx2.column_st16           [AVX, AVX2]
-jsimd_ycc_extxrgb_convert_avx2.column_st32           [AVX, AVX2]
-jsimd_ycc_extxrgb_convert_avx2.column_st64           [AVX, AVX2]
-jsimd_ycc_extxrgb_convert_avx2.column_st7            [AVX, AVX2]
-jsimd_ycc_extxrgb_convert_avx2.columnloop            [AVX, AVX2]
-jsimd_ycc_extxrgb_convert_avx2.out1                  [AVX, AVX2]
-jsimd_ycc_extxrgb_convert_avx2.return                [AVX, AVX2]
-jsimd_ycc_rgb_convert_avx2.column_st15               [AVX, AVX2]
-jsimd_ycc_rgb_convert_avx2.column_st3                [AVX, AVX2]
-jsimd_ycc_rgb_convert_avx2.column_st31               [AVX, AVX2]
-jsimd_ycc_rgb_convert_avx2.column_st32               [AVX, AVX2]
-jsimd_ycc_rgb_convert_avx2.column_st64               [AVX, AVX2]
-jsimd_ycc_rgb_convert_avx2.column_st7                [AVX, AVX2]
-jsimd_ycc_rgb_convert_avx2.columnloop                [AVX, AVX2]
-jsimd_ycc_rgb_convert_avx2.out1                      [AVX, AVX2]
-jsimd_ycc_rgb_convert_avx2.return                    [AVX, AVX2]
-
-# ----------------------------------------------------------------------------
 # Bun's Highway kernels for the scanner of `bun check`, `bun lint` and `bun fmt`. Gate: hwy::SupportedTargets via CPUID.
-# (18 symbols)
+# (24 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun6N_AVX219ScannerRunStopsImplEPKhmPhm        [AVX, AVX2, BMI1, BMI2]
 _ZN3bun6N_AVX214LineStartsImplEPKhmPj              [AVX, AVX2, BMI1, BMI2]
+_ZN3bun6N_AVX212ByteBitsImplEPKhmhPm               [AVX, AVX2, BMI2]
 _ZN3bun6N_AVX213OddBlocksImplEPKhmPm               [AVX, AVX2, BMI1, BMI2]
 _ZN3bun6N_AVX319ScannerRunStopsImplEPKhmPhm        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun6N_AVX314LineStartsImplEPKhmPj              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
+_ZN3bun6N_AVX312ByteBitsImplEPKhmhPm               [AVX, AVX512BW, AVX512F, BMI2]
 _ZN3bun6N_AVX313OddBlocksImplEPKhmPm               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun9N_AVX10_219ScannerRunStopsImplEPKhmPhm     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun9N_AVX10_214LineStartsImplEPKhmPj           [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+_ZN3bun9N_AVX10_212ByteBitsImplEPKhmhPm            [AVX, AVX512BW, AVX512F, BMI2]
 _ZN3bun9N_AVX10_213OddBlocksImplEPKhmPm            [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun9N_AVX3_DL19ScannerRunStopsImplEPKhmPhm     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun9N_AVX3_DL14LineStartsImplEPKhmPj           [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+_ZN3bun9N_AVX3_DL12ByteBitsImplEPKhmhPm            [AVX, AVX512BW, AVX512F, BMI2]
 _ZN3bun9N_AVX3_DL13OddBlocksImplEPKhmPm            [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun10N_AVX3_SPR19ScannerRunStopsImplEPKhmPhm   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun10N_AVX3_SPR14LineStartsImplEPKhmPj         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+_ZN3bun10N_AVX3_SPR12ByteBitsImplEPKhmhPm          [AVX, AVX512BW, AVX512F, BMI2]
 _ZN3bun10N_AVX3_SPR13OddBlocksImplEPKhmPm          [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun11N_AVX3_ZEN419ScannerRunStopsImplEPKhmPhm  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun11N_AVX3_ZEN414LineStartsImplEPKhmPj        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+_ZN3bun11N_AVX3_ZEN412ByteBitsImplEPKhmhPm         [AVX, AVX512BW, AVX512F, BMI2]
 _ZN3bun11N_AVX3_ZEN413OddBlocksImplEPKhmPm         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+
+
+# ----------------------------------------------------------------------------
+# The ahead-of-time compiler's search of an array for a value. Gate: findBox() asks
+# CPUFeatureSet::host() for AVX2 (CPUID and XGETBV).
+# (1 symbols)
+# ----------------------------------------------------------------------------
+_ZN3JSC3AOTL12findWithAVX2EPKmmm  [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# The ahead-of-time compiler's search of a Latin-1 string for another. Gate:
+# operationAOTStringFind8() asks CPUFeatureSet::host() for AVX2 (CPUID and XGETBV).
+# (1 symbols)
+# ----------------------------------------------------------------------------
+_ZN3JSC3AOTL18findStringWithAVX2EPKN3WTF15Latin1CharacterEjS4_jj  [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# The ahead-of-time compiler's products and remainders of BigInts. Gate:
+# BigIntArithmetic::hasMULX() asks CPUID for BMI2 and LZCNT.
+# (8 symbols)
+# ----------------------------------------------------------------------------
+_ZN3JSC3AOTL24tryModUsualBigIntsByMULXILj4EEElllPv           [BMI2, LZCNT]
+_ZN3JSC3AOTL24tryModUsualBigIntsByMULXILj8EEElllPv           [BMI2, LZCNT]
+_ZN3JSC3AOTL31tryModUsualBigIntsInFrameByMULXILj4EEElllPv    [BMI2, LZCNT]
+_ZN3JSC3AOTL31tryModUsualBigIntsInFrameByMULXILj8EEElllPv    [BMI2, LZCNT]
+_ZN3JSC3AOTL24tryMulUsualBigIntsByMULXEllPv                  [BMI2, LZCNT]
+_ZN3JSC3AOTL31tryMulUsualBigIntsInFrameByMULXEllPv           [BMI2, LZCNT]
+_ZN3JSC3AOTL32tryRemainderOfUsualFactorsByMULXElllPv         [BMI2, LZCNT]
+_ZN3JSC3AOTL39tryRemainderOfUsualFactorsInFrameByMULXElllPv  [BMI2, LZCNT]
 
 
 # ----------------------------------------------------------------------------

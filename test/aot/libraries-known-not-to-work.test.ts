@@ -62,15 +62,17 @@ type Program = {
 const programs: Record<string, Program> = {
   "private": {
     files: {
-      "main.js": `
+      "main.js": `console.log(require("./private.js").hasOwn.call({ a: 1 }, "a"));`,
+      "private.js": `
         "use strict";
         const originalDefProp = Object.defineProperty;
         function defProp(obj, name, value) {
           try { originalDefProp.call(Object, obj, name, { value }); } catch { obj[name] = value; }
         }
         function makeSafeToCall(fun) { defProp(fun, "call", fun.call); defProp(fun, "apply", fun.apply); return fun; }
-        const hasOwn = makeSafeToCall(Object.prototype.hasOwnProperty);
-        console.log(hasOwn.call({ a: 1 }, "a"));`,
+        exports.hasOwn = makeSafeToCall(Object.prototype.hasOwnProperty);
+        const originalGetOPNs = Object.getOwnPropertyNames;
+        Object.getOwnPropertyNames = function getOwnPropertyNames(object) { return originalGetOPNs(object); };`,
     },
     plain: "true\n",
   },
@@ -193,6 +195,19 @@ const programs: Record<string, Program> = {
         `console.log(Object.values({ a: 1 }));`,
     },
     plain: "[ 1 ]\n",
+  },
+  "minizlib": {
+    files: {
+      "main.js": `
+        const { Buffer } = require("buffer");
+        const OriginalBufferConcat = Buffer.concat;
+        function write(chunks) {
+          Buffer.concat = (args) => args;
+          try { return Buffer.concat(chunks).length; } finally { Buffer.concat = OriginalBufferConcat; }
+        }
+        console.log(write([Buffer.from("a"), Buffer.from("b")]));`,
+    },
+    plain: "2\n",
   },
   "prototype": {
     files: {

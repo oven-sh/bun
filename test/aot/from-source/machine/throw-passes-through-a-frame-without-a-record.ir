@@ -1,12 +1,13 @@
 # -- source: throw-passes-through-a-frame-without-a-record.js
-# function thrower(value) { if (value) throw new Error("thrown"); return 1; }
-# function middle(value, kept) { thrower(value); report(kept); return kept; }
-# function outer(value) { try { return middle(value, 3); } catch (error) { return error.message; } }
-# function outermost(value, kept) { const result = outer(value); report(kept); return String(kept) + result; }
-# report(id(outermost)(0, 5));
-# report(id(outermost)(1, 5));
+# let throws = 0;
+# function thrower() { if (throws) throw new Error("thrown"); return 1; }
+# function middle() { const kept = id(3); thrower(); report(kept); return kept; }
+# function outer(value) { throws = value; try { return middle(); } catch (error) { return error.message; } }
+# function outermost(value) { const kept = id(5); const result = outer(value); report(kept); return String(kept) + result; }
+# report(id(outermost)(0));
+# report(id(outermost)(1));
 # -- end of source
-# The frame of middle() holds one saved register and nothing else, and nothing in it takes the frame pointer register for the frame: on x86-64 it is `push` and `pop`, with no record.
+# `kept` is what a call gave, so it takes a saved register; an argument that calls alone read would wait in a slot. The frame of middle() holds one saved register and nothing else, and nothing in it takes the frame pointer register for the frame: on x86-64 it is `push` and `pop`, with no record.
 # The throw passes through it. Whoever unwinds finds the frame by its size and puts the saved register back out of the word at the place of the record: outermost() keeps `kept` there across the call of outer(), which catches.
 # outer() has a handler, whose landing pad takes the stack pointer from the frame pointer: it keeps its record.
 # f1 = thrower, f2 = middle, f3 = outer, f4 = outermost

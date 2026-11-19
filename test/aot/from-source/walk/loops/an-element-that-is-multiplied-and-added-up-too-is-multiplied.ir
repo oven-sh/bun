@@ -1,0 +1,20 @@
+# -- source: main.js
+# var key = JSON.parse('"go"');
+# var T = { go(d) { var sum = 0, squares = 0; for (var i = 0; i < d.length; i++) { var v = d[i]; sum += v; squares += v * v; } return squares - sum; } };
+# print(T[key](new Float64Array(3).fill(1.5)), T[key](new Float32Array(2).fill(2.5)), T[key](new Int16Array(2).fill(-3)), T[key]([1, 2, 3]), T[key](new Uint8Array(3).fill(2)));
+# -- end of source
+# Floats have their copies behind the front of a loop where the loop's own text multiplies or divides an element of the holder. The text was read from the element on, along its ONLY user: an element with two users,
+# one of them a product, counted as multiplied by nobody, and a variance over a Float64Array went by the copy of all views: 27.9 > 53.3 instructions an element.
+# Each product of the loop is asked for its factors instead.
+# f1 = go
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=Float64Array
+# CHECK: = TypeTest {{*}} testedType=Float32Array
+# CHECK: = IsPristine {{*}} builtinClass=Float64Array aspects=[Storage, Names]
+# CHECK: number @Double = GetTypedArrayElement {{*}} typedArrayType=10 level=Proven [keyIsIntegral, isInsideView]
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 2.25 7.5 24 8 6
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 2.25 7.5 24 8 6
+# NONE-NEXT: exited with 0

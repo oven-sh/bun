@@ -647,3 +647,70 @@ describe("oddBlocks", () => {
     expect(() => hw("oddBlocks", new Uint8Array(4097), new Uint8Array(8))).toThrow(RangeError);
   });
 });
+
+describe("byteSetPrefixLength", () => {
+  // Every bit is used, some rows share one, and one row has none.
+  const rows = [1, 2, 4, 8, 16, 32, 64, 128, 0, 1, 2, 4, 128, 128, 3, 255];
+  const columns = [0xe8, 0xfc, 0xf8, 0x01, 0x02, 0xfc, 0x80, 0xff, 0x00, 0xf8, 0xf4, 0x54, 0xd0, 0x55, 0xf4, 0x70];
+  const set = new Uint8Array([0, ...rows, ...columns]).subarray(1);
+  const isMember = (byte: number) => (rows[byte >> 4] & columns[byte & 15]) !== 0;
+  const member = 0x03;
+  const other = 0x08;
+
+  it("classifies every byte value in every lane", () => {
+    for (let byte = 0; byte < 256; byte++) {
+      for (let pos = 0; pos < 140; pos++) {
+        const text = new Uint8Array(140).fill(member);
+        text[pos] = byte;
+        compare("byteSet", hw("byteSetPrefixLength", text, set), isMember(byte) ? 140 : pos, `byte=${byte} pos=${pos}`);
+      }
+    }
+  });
+
+  it("stops at the first other byte, or where the text ends", () => {
+    for (let len = 16; len <= 200; len++) {
+      for (const off of OFFSETS) {
+        // Members around the text, to see that nothing outside it counts.
+        const text = new Uint8Array(off + len + 64).fill(member).subarray(off, off + len);
+        compare("byteSet", hw("byteSetPrefixLength", text, set), len, `len=${len} off=${off}`);
+        for (let pos = len - 1; pos >= 0; pos--) {
+          text[pos] = other;
+          compare("byteSet", hw("byteSetPrefixLength", text, set), pos, () => `len=${len} off=${off} pos=${pos}`);
+        }
+      }
+    }
+  });
+
+  it("rejects a text or a set that is too short", () => {
+    expect(() => hw("byteSetPrefixLength", new Uint8Array(15), set)).toThrow(RangeError);
+    expect(() => hw("byteSetPrefixLength", new Uint8Array(16), set.subarray(1))).toThrow(RangeError);
+  });
+});
+
+describe("byteBits", () => {
+  it("marks the byte, and nothing past the end", () => {
+    for (const len of LENGTHS) {
+      for (const off of OFFSETS) {
+        for (const byte of [0, 0x0a, 0xff]) {
+          const text = new Uint8Array(len + off)
+            .map((_, i) => (i % 7 < 2 ? byte : byte ^ (i % 255 || 1)))
+            .subarray(off);
+          const words = Math.ceil(len / 64);
+          const expected = new BigUint64Array(words + 1);
+          text.forEach((it, i) => {
+            if (it === byte) expected[i >> 6] |= 1n << BigInt(i & 63);
+          });
+          // One word more than the kernel may write, to see that it stops.
+          expected[words] = 0xaaaaaaaaaaaaaaaan;
+          const out = new BigUint64Array(words + 1).fill(0xaaaaaaaaaaaaaaaan);
+          hw("byteBits", text, new Uint8Array(out.buffer), byte);
+          compare("byteBits", out.join(), expected.join(), `len=${len} off=${off} byte=${byte}`);
+        }
+      }
+    }
+  });
+
+  it("rejects a buffer that is too small", () => {
+    expect(() => hw("byteBits", new Uint8Array(65), new Uint8Array(8), 0)).toThrow(RangeError);
+  });
+});

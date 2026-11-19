@@ -9,8 +9,7 @@
 //! license, which is the specification wherever they differ from it.
 
 #![forbid(unsafe_code)]
-// For code that only `--debug-check` runs: `#[optimize(size)]` roughly halves its size, and its speed doesn't matter.
-#![feature(optimize_attribute)]
+// `#[optimize(size)]` is for code that only `--debug-check` runs: it roughly halves its size, and its speed doesn't matter.
 
 pub mod css;
 pub mod cursor;
@@ -45,6 +44,11 @@ pub mod flow {
 /// Import sorting.
 pub mod sort_imports {
     pub use crate::js::sort_imports::{Settings, SortImports, sorted_text};
+}
+
+/// Recognizes files that are already formatted.
+pub mod settled {
+    pub use crate::js::settled::{Scratch, Verdict, check};
 }
 
 pub use ir::run::Scratch;

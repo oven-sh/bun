@@ -14,6 +14,7 @@ use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::hir::{self, ExportSpecId, Flags, FnBody, ImportId, StmtId};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
 use bun_sema::program::{FileId, FileRole, Files, Sym};
+use bun_sema::util::SharedSort;
 
 #[derive(Copy, Clone, Debug)]
 pub(in crate::modules) enum ExportEntry {
@@ -245,9 +246,21 @@ impl EntryCollector<'_, '_> {
 
     fn collect_own_entries(&self) -> Vec<(Atom, ExportEntry)> {
         let bound = self.bound;
+        let mut rejected: Vec<(SymbolId, Decl)> = (bound.redeclarations.iter())
+            .map(|it| (it.symbol, it.decl))
+            .collect();
+        rejected.shared_sort_by_key(|it| it.0);
+        // A type that conflicts with a value of the same name may hold the place in the table.
+        let rejected_entry = |symbol: SymbolId| {
+            let first = rejected.partition_point(|it| it.0 < symbol);
+            let mut of_symbol = rejected[first..].iter().take_while(|it| it.0 == symbol);
+            of_symbol.find_map(|&(_, decl)| self.declaration_entry(symbol, decl))
+        };
         let entry_of = |&(name, symbol): &(Atom, SymbolId)| {
             let mut declarations = bound.symbol(symbol).decls.iter();
-            let entry = declarations.find_map(|&decl| self.declaration_entry(symbol, decl))?;
+            let entry = declarations
+                .find_map(|&decl| self.declaration_entry(symbol, decl))
+                .or_else(|| rejected_entry(symbol))?;
             (name != known::export_equals).then_some((name, entry))
         };
         let table = bound.table(bound.symbol(bound.file_symbol).exports);
@@ -272,7 +285,7 @@ impl EntryCollector<'_, '_> {
                 let site = self.find_value_site(ImportSiteKind::ExportStar(statement), symbol)?;
                 Some(ExportEntry::Namespace { site })
             }
-            Decl::Enum(_) | Decl::Module(_) if !self.is_first_of_its_name(declaration) => None,
+            Decl::Enum(_) | Decl::Module(_) if !self.decides_its_export(declaration) => None,
             Decl::Var(_)
             | Decl::Fn(_)
             | Decl::Class(_)
@@ -287,7 +300,7 @@ impl EntryCollector<'_, '_> {
         }
     }
 
-    fn is_first_of_its_name(&self, declaration: Decl) -> bool {
+    fn decides_its_export(&self, declaration: Decl) -> bool {
         let bound = self.bound;
         let binding = bound.declared_symbol(declaration);
         let Some(scope) = bound.symbol_scope(binding).some() else {
@@ -295,9 +308,13 @@ impl EntryCollector<'_, '_> {
         };
         let locals = bound.scopes[scope.idx()].locals;
         let local = bound.lookup(locals, bound.symbol(binding).name);
-        let declarations = &bound.symbol(local.unwrap_or(binding)).decls;
-        let first = declarations.iter().find(|&&it| self.produces_code(it));
-        first.is_none_or(|&first| first == declaration)
+        let local = local.unwrap_or(binding);
+        // `bun run` exports the object of an enum as the enum says, whatever a namespace in front of it says.
+        let is_enum = |it| matches!(it, Decl::Enum(_)) && self.produces_code(it);
+        let first = bound
+            .first_declaration(self.hir, local, is_enum)
+            .or_else(|| bound.first_declaration(self.hir, local, |it| self.produces_code(it)));
+        first.is_none_or(|first| first == declaration)
     }
 
     fn produces_code(&self, declaration: Decl) -> bool {

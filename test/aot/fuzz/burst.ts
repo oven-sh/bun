@@ -35,7 +35,6 @@ const lanes: { name: string; options: string[]; share: number; script?: string }
     options: ["--gc-stress", "1,2,3,5,7,11", "--compiled-run-seconds", "60"],
     share: 2,
   },
-  { name: "no-facts", options: ["--modes", "no-flow-results"], share: 1 },
   { name: "malformed-source", script: malformedSource, options: [], share: 1 },
   { name: "scenes-in-packages", script: scenes, options: ["--kind", "packages"], share: 1 },
   { name: "scenes-beside-an-external", script: scenes, options: ["--kind", "external"], share: 1 },

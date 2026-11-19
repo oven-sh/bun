@@ -208,7 +208,6 @@ fn parameter_is_mapped_only_where_that_can_be_told() {
         "once = 1; arguments[0];",
         "(() => { once = 1; })(); arguments[0];",
         "once++; arguments[0];",
-        "function once() {} arguments[0];",
         "var once = 1; arguments[0];",
         "var [once] = other; arguments[0];",
         "var { once } = other; arguments[0];",
@@ -220,6 +219,19 @@ fn parameter_is_mapped_only_where_that_can_be_told() {
         assert!(
             mapped(&format!("{tells} return () => once;"), "once"),
             "{tells}"
+        );
+    }
+    for names_again in [
+        "function once() {} arguments[0];",
+        "function once() {} arguments[0] = 1;",
+        "function once() {} once = 1; arguments[0];",
+        "function once() {} var once = 1; arguments[0];",
+        "function once() {} other(arguments);",
+        "function once() {} eval(other); arguments.length;",
+    ] {
+        assert!(
+            !mapped(&format!("{names_again} return () => once;"), "once"),
+            "{names_again}"
         );
     }
     let one_stored = "other = 1; return () => arguments[0] + once + other;";

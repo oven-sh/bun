@@ -3961,8 +3961,9 @@ declare module "bun" {
      */
     functionSource?: boolean;
     /**
-     * With `aot`: let a dynamic `import()` or `require()` load code that isn't in the executable
-     * from disk when the program runs, such as a plugin or a config file. Bun interprets that code.
+     * With `aot`: let a dynamic `import()`, `require()` or `new Worker()` load code that isn't in the
+     * executable from disk when the program runs, such as a plugin or a config file. Bun interprets
+     * that code.
      *
      * Without it, the executable only runs code that was compiled into it, and such a load throws.
      * The option keeps Bun's transpiler and the source code of Bun's built-in modules in the
@@ -4014,11 +4015,10 @@ declare module "bun" {
      * `eval()` or `new Function()`, runs in the interpreter.
      *
      * Built-in objects such as `Object.prototype`, `Array.prototype` and `Promise` are read-only in
-     * the executable. Assigning to one throws a `TypeError` in strict mode and does nothing in
-     * sloppy mode. Breakpoints aren't available.
+     * the executable. Assigning to one throws a `TypeError`. Breakpoints aren't available.
      *
-     * Requires `format: "esm"` (the default with `aot`) and a `target` that matches the platform
-     * and Bun version running the build.
+     * Requires a `target` that matches the platform and Bun version running the build. `format` has
+     * no effect: each file keeps the module format it is written in.
      *
      * Equivalent CLI flag: `--aot`
      *
@@ -4064,19 +4064,15 @@ declare module "bun" {
      */
     aotExplain?: AotReport | AotReport[];
     /**
-     * With `aot`: make a bug in the compiler harder to turn into a memory bug. Each name costs speed,
-     * and none is on unless it is listed here.
+     * With `aot`: add run-time checks, so that a bug in the compiler is harder to turn into a memory
+     * bug. Each name costs speed, and none is on unless it is listed here.
      *
-     * - `"proof-checks"`: test at run time what the compiler has proven about the type of a value,
-     *   where the value arrives: at parameters, results of calls, fields, variables, captured
-     *   variables and elements. A test that fails stops the process. Objects and closures that the
-     *   compiler would have kept on the stack, or reused once it found them dead, stay on the heap.
-     *   Every read or write of an element looks up, at that moment, where the array or typed array
-     *   keeps its elements, how many there are and how they are stored. An index that the compiler
-     *   took to be in range and that is not stops the process.
-     * - `"ignore-told-ranges"`: tell no read or write that its index is in range. Each one tests
-     *   its index where it is used, against the length that the array, typed array or string has at
-     *   that moment, whatever an earlier test or the head of a loop has shown.
+     * - `"proof-checks"`: check the type that the compiler has proven of a value again at each read,
+     *   and check again what the compiler remembers from earlier code. Objects stay on the heap, not
+     *   on the stack. The build also runs the compiler's own verifier.
+     * - `"ignore-told-ranges"`: check every index against the length, where the index is used.
+     *
+     * A check that fails aborts the process.
      *
      * Takes a list of names, or one string with commas between the names. `Bun.build` throws on a
      * name that it doesn't know.
@@ -4084,6 +4080,29 @@ declare module "bun" {
      * Equivalent CLI flag: `--aot-harden`
      */
     aotHarden?: string | string[];
+    /**
+     * Lay the executable out by the order in which a run of it entered its functions. Requires `aot: true`.
+     *
+     * Run an executable built with `aotRecordOrder: true` with `BUN_AOT_ORDER_OUT=<path>` to record a
+     * start, then build again with that file. A file from an older build of the app still applies.
+     *
+     * With several files, list the most important one first. A function lies where the first file that
+     * lists it places it.
+     *
+     * `false` and `null` mean no file, so `aotOrder: haveProfile && path` works.
+     *
+     * Equivalent CLI flag: `--aot-order <file>[,<file>...]`
+     *
+     * @see https://bun.com/docs/compiler/aot#order-the-executable-by-a-recorded-start
+     */
+    aotOrder?: string | string[] | false | null;
+    /**
+     * Build an executable that writes what `aotOrder` takes when it runs with `BUN_AOT_ORDER_OUT=<path>`.
+     * Other executables have no recorder. Requires `aot: true`.
+     *
+     * Equivalent CLI flag: `--aot-record-order`
+     */
+    aotRecordOrder?: boolean;
     /**
      * Profile-guided layout for the executable's bytecode. Requires `bytecode: true`.
      *
@@ -4787,6 +4806,11 @@ declare module "bun" {
         }>;
         /** List of exported names from this output */
         exports: string[];
+        /**
+         * The strings whose characters are only in the machine code of this executable, such as the labels of
+         * a `switch`. A search of the file's bytes doesn't find them. Only for builds with `compile.aot`.
+         */
+        inlinedStrings?: string[];
         /** Entrypoint path, if this output is an entrypoint */
         entryPoint?: string;
         /** Path to the associated CSS bundle (for JS entrypoints with CSS) */
@@ -9083,7 +9107,7 @@ declare module "bun" {
      * - **Windows headless/CI:** registration fails if the current user's SID can't be
      *   resolved (typical under service accounts). Run as a regular user or create the
      *   task manually with `schtasks /create /ru SYSTEM`.
-     * - **macOS:** stdout/stderr are written to `/tmp/bun.cron.<title>.{stdout,stderr}.log`.
+     * - **macOS:** stdout/stderr are written to `$(getconf DARWIN_USER_TEMP_DIR)bun.cron.<title>.{stdout,stderr}.log`.
      *
      * ### Idempotency & removal
      *
@@ -9091,7 +9115,8 @@ declare module "bun" {
      * {@link Bun.cron.remove} to unregister. The title is namespaced per user, so
      * different users can register jobs with the same title independently.
      *
-     * @param path Path to the module to run. Resolved relative to the calling file.
+     * @param path Path to the module to run, resolved relative to the calling file. It can also be a
+     *   `file://` URL, as a string (what `import.meta.resolve()` returns) or a `URL`.
      * @param schedule Cron expression or nickname (e.g. `"30 2 * * MON"`, `"@daily"`).
      * @param title Unique identifier for this job. Alphanumeric, hyphens, and underscores only —
      *   used directly in crontab markers, launchd service labels, and schtasks task names.
@@ -9113,7 +9138,7 @@ declare module "bun" {
      * @see {@link Bun.cron.remove} to unregister.
      * @see {@link Bun.cron.parse} to preview the next fire time.
      */
-    (path: string, schedule: CronWithAutocomplete, title: string): Promise<void>;
+    (path: string | URL, schedule: CronWithAutocomplete, title: string): Promise<void>;
     /**
      * Remove a previously registered cron job by its title.
      *
@@ -9746,15 +9771,15 @@ declare module "bun" {
      *   on this *machine* (HEIC/AVIF without the OS codec, TIFF on Linux).
      *   Catch this to fall back to a portable format.
      * - `ERR_IMAGE_TOO_MANY_PIXELS` — header dimensions or resize output
-     *   exceed `maxPixels`, a row of a PNG takes 4 GiB or more, or a
-     *   path-backed input is over the 256 MiB cap.
+     *   exceed `maxPixels`, a row of a PNG takes 4 GiB or more, or a path or
+     *   `Bun.file()` input is over the 256 MiB cap.
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
-     *   A damaged JPEG that libjpeg-turbo decodes with only a warning (stray
-     *   bytes, a missing end marker, truncated scan data) does not reject.
-     *   Blocks with no data come back flat grey. A PNG with a wrong CRC or
-     *   Adler-32 does not reject either: Bun verifies neither. A PNG that ends
-     *   before its last row, or inside the data of the `IDAT` chunk that holds
-     *   it, rejects.
+     *   A JPEG with stray bytes, a missing end marker or truncated scan data
+     *   usually does not reject. If it is Huffman-coded, blocks with no data
+     *   come back flat grey, but for some color at their edges. A JPEG with
+     *   more than 100 scans rejects. A PNG with a wrong CRC or Adler-32 does
+     *   not reject: Bun verifies neither. A PNG that ends before its last row,
+     *   or inside the data of the `IDAT` chunk that holds it, rejects.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
      * - `ERR_OUT_OF_MEMORY` — there is no memory for the image, or for a buffer
      *   that its decode or encode needs.
@@ -9838,9 +9863,9 @@ declare module "bun" {
   }
 
   /**
-   * Decode, transform and re-encode images. Ships JPEG and WebP via
-   * statically-linked libjpeg-turbo / libwebp, and its own PNG codec; resize
-   * and rotate are SIMD kernels — no native module install, no `sharp`.
+   * Decode, transform and re-encode images. Ships its own JPEG, PNG and
+   * WebP codecs; resize and rotate are SIMD kernels — no native module
+   * install, no `sharp`.
    *
    * The constructor and every chainable method only *record* settings; the
    * decode → transform → encode pipeline runs on a worker thread when a

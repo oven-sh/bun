@@ -1,5 +1,5 @@
 // A field, a variable and a captured variable that a turn writes: through another name of the object, in a callee, in a getter, in a loop inside or around, under a handler. Only what no turn writes may be read once in front of the loop.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 class Box { x; constructor(x) { this.x = x; } }
 class Pair { left; right; constructor(left, right) { this.left = left; this.right = right; } }

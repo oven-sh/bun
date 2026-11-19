@@ -1,132 +1,56 @@
 "use strict";
 
-const streamState = require("internal/streams/state");
-const { isReadableState, isWritableState } = streamState;
-const kState: typeof streamState.kState = streamState.kState;
-const kErroredValue: typeof streamState.kErroredValue = streamState.kErroredValue;
-
-const enum Flag {
-  AutoDestroy = 1 << 2,
-  EmitClose = 1 << 3,
-  Destroyed = 1 << 4,
-  Closed = 1 << 5,
-  Errored = 1 << 7,
-  ReadableEnded = 1 << 9,
-  ReadableEndEmitted = 1 << 10,
-  WritableFinished = 1 << 13,
-  HasWritable = 1 << 21,
-  Writable = 1 << 22,
-  WritableEnded = 1 << 30,
-}
-
+const SymbolFor = Symbol.for;
 const SymbolIterator = Symbol.iterator;
 const SymbolAsyncIterator = Symbol.asyncIterator;
 
-// We need to use Symbol.for to make these globally available
+// We need to use SymbolFor to make these globally available
 // for interoperability with readable-stream, i.e. readable-stream
 // and node core needs to be able to read/write private state
 // from each other for proper interoperability.
-const kIsDestroyed = Symbol.for("nodejs.stream.destroyed");
-const kIsErrored = Symbol.for("nodejs.stream.errored");
-const kIsReadable = Symbol.for("nodejs.stream.readable");
-const kIsWritable = Symbol.for("nodejs.stream.writable");
-const kIsDisturbed = Symbol.for("nodejs.stream.disturbed");
+const kIsDestroyed = SymbolFor("nodejs.stream.destroyed");
+const kIsErrored = SymbolFor("nodejs.stream.errored");
+const kIsReadable = SymbolFor("nodejs.stream.readable");
+const kIsWritable = SymbolFor("nodejs.stream.writable");
+const kIsDisturbed = SymbolFor("nodejs.stream.disturbed");
 
-const kIsClosedPromise = Symbol.for("nodejs.webstream.isClosedPromise");
-const kControllerErrorFunction = Symbol.for("nodejs.webstream.controllerErrorFunction");
+const kOnConstructed = Symbol("kOnConstructed");
 
-declare global {
-  namespace $Node {
-    /** Whatever passes for a stream of node: one of ours, one of another implementation (the `readable-stream` package), a request or a response of node:http, an old-style stream. */
-    interface AnyStream extends EventEmitter {
-      _readableState?: ReadableState | ForeignState;
-      _writableState?: WritableState | ForeignState;
-      pipe?(destination: AnyStream, options?: PipeOptions): unknown;
-      read?(size?: number): unknown;
-      pause?(): unknown;
-      resume?(): unknown;
-      write?(chunk: unknown, encoding?: string | null | ErrorCallback, callback?: ErrorCallback): boolean | undefined;
-      end?(chunk?: unknown, encoding?: string | null | ErrorCallback, callback?: ErrorCallback): unknown;
-      readable?: boolean;
-      readableObjectMode?: boolean;
-      readableDidRead?: boolean;
-      readableAborted?: boolean;
-      readableErrored?: Error | null;
-      writable?: boolean;
-      writableObjectMode?: boolean;
-      writableEnded?: boolean;
-      writableFinished?: boolean;
-      writableNeedDrain?: boolean;
-      _isStdio?: boolean;
-      writableErrored?: Error | null;
-      destroyed?: boolean;
-      closed?: boolean;
-      errored?: Error | null;
-      destroy?(error?: Error | null): unknown;
-      close?(): unknown;
-      // node:http
-      aborted?: boolean;
-      req?: AnyStream | null;
-      socket?: unknown;
-      setHeader?: unknown;
-      abort?(): unknown;
-      upgradeOrConnect?: boolean;
-      _closed?: boolean;
-      _defaultKeepAlive?: boolean;
-      _removedConnection?: boolean;
-      _removedContLen?: boolean;
-      _sent100?: boolean;
-      _consuming?: boolean;
-      _dumped?: boolean;
-      [kIsDestroyed]?: boolean;
-      [kIsErrored]?: boolean;
-      [kIsReadable]?: boolean;
-      [kIsWritable]?: boolean;
-      [kIsDisturbed]?: boolean;
-    }
+const kIsClosedPromise = SymbolFor("nodejs.webstream.isClosedPromise");
+const kControllerErrorFunction = SymbolFor("nodejs.webstream.controllerErrorFunction");
 
-    type MaybeStream = AnyStream | null | undefined;
+const kState = Symbol("kState");
+const kObjectMode = 1 << 0;
+const kErrorEmitted = 1 << 1;
+const kAutoDestroy = 1 << 2;
+const kEmitClose = 1 << 3;
+const kDestroyed = 1 << 4;
+const kClosed = 1 << 5;
+const kCloseEmitted = 1 << 6;
+const kErrored = 1 << 7;
+const kConstructed = 1 << 8;
 
-    /** A web stream of a polyfill, which is errored through node's symbol. */
-    interface PolyfilledWebStream {
-      [kControllerErrorFunction]?(error: unknown): void;
-    }
-  }
-}
-
-function isReadableNodeStream(obj: any, strict?: boolean): obj is $Node.Readable;
-function isReadableNodeStream(obj: $Node.MaybeStream, strict = false): obj is $Node.Readable {
+function isReadableNodeStream(obj, strict = false) {
   return !!(
     obj &&
     typeof obj.pipe === "function" &&
     typeof obj.on === "function" &&
     (!strict || (typeof obj.pause === "function" && typeof obj.resume === "function")) &&
-    (!obj._writableState || readableSideOf(obj._readableState) !== false) && // Duplex
+    (!obj._writableState || obj._readableState?.readable !== false) && // Duplex
     (!obj._writableState || obj._readableState) // Writable has .pipe.
   );
 }
 
-function readableSideOf(state) {
-  return isReadableState(state) ? state.readable : state?.readable;
-}
-
-function writableSideOf(state) {
-  if (!isWritableState(state)) return state?.writable;
-  return (state[kState] & Flag.HasWritable) !== 0 ? (state[kState] & Flag.Writable) !== 0 : undefined;
-}
-
-function isWritableNodeStream(obj: any): obj is $Node.Writable;
-function isWritableNodeStream(obj: $Node.MaybeStream): obj is $Node.Writable {
+function isWritableNodeStream(obj) {
   return !!(
     obj &&
     typeof obj.write === "function" &&
     typeof obj.on === "function" &&
-    (!obj._readableState || writableSideOf(obj._writableState) !== false) // Duplex
+    (!obj._readableState || obj._writableState?.writable !== false) // Duplex
   );
 }
 
-function isDuplexNodeStream(obj: any): obj is $Node.Duplex;
-function isDuplexNodeStream(obj: $Node.MaybeStream): obj is $Node.Duplex {
+function isDuplexNodeStream(obj) {
   return !!(
     obj &&
     typeof obj.pipe === "function" &&
@@ -136,9 +60,8 @@ function isDuplexNodeStream(obj: $Node.MaybeStream): obj is $Node.Duplex {
   );
 }
 
-function isNodeStream(obj: any): obj is $Node.AnyStream;
-function isNodeStream(obj: $Node.MaybeStream): obj is $Node.AnyStream {
-  return !!(
+function isNodeStream(obj) {
+  return (
     obj &&
     (obj._readableState ||
       obj._writableState ||
@@ -147,123 +70,81 @@ function isNodeStream(obj: $Node.MaybeStream): obj is $Node.AnyStream {
   );
 }
 
-function isReadableStream(obj): obj is ReadableStream {
+function isReadableStream(obj) {
   return $inheritsReadableStream(obj);
 }
 
-function isWritableStream(obj): obj is WritableStream {
+function isWritableStream(obj) {
   return $inheritsWritableStream(obj);
 }
 
-function isTransformStream(obj): obj is TransformStream {
+function isTransformStream(obj) {
   return $inheritsTransformStream(obj);
 }
 
-function isWebStream(obj): obj is ReadableStream | WritableStream | TransformStream {
+function isWebStream(obj) {
   return isReadableStream(obj) || isWritableStream(obj) || isTransformStream(obj);
 }
 
-function isIterable(obj, isAsync: true): obj is AsyncIterable<unknown>;
-function isIterable(obj, isAsync: false): obj is Iterable<unknown>;
-function isIterable(obj, isAsync?: boolean): obj is Iterable<unknown> | AsyncIterable<unknown>;
-function isIterable(obj, isAsync?: boolean) {
+function isIterable(obj, isAsync?) {
   if (obj == null) return false;
   if (isAsync === true) return typeof obj[SymbolAsyncIterator] === "function";
   if (isAsync === false) return typeof obj[SymbolIterator] === "function";
   return typeof obj[SymbolAsyncIterator] === "function" || typeof obj[SymbolIterator] === "function";
 }
 
-function isDestroyed(stream: $Node.MaybeStream) {
-  if (IS_COMPILED_AHEAD_OF_TIME && $isObject(stream) && !$isProxyObject(stream)) {
-    if (
-      !stream._readableState &&
-      !stream._writableState &&
-      !(typeof stream.write === "function" && typeof stream.on === "function") &&
-      !(typeof stream.pipe === "function" && typeof stream.on === "function")
-    ) {
-      return null;
-    }
-    const wState = stream._writableState as $Node.WritableState | $Node.ForeignState | undefined;
-    const rState = stream._readableState as $Node.ReadableState | $Node.ForeignState | undefined;
-    if (stream.destroyed || stream[kIsDestroyed]) return true;
-    const state = wState || rState;
-    const isOfLibrary = wState
-      ? isWritableState(state) || isReadableState(state)
-      : isReadableState(state) || isWritableState(state);
-    return !!(isOfLibrary ? (state![kState] & Flag.Destroyed) !== 0 : state?.destroyed);
-  }
+function isDestroyed(stream) {
   if (!isNodeStream(stream)) return null;
-  const wState = stream._writableState as $Node.WritableState | $Node.ForeignState | undefined;
-  const rState = stream._readableState as $Node.ReadableState | $Node.ForeignState | undefined;
+  const wState = stream._writableState;
+  const rState = stream._readableState;
   const state = wState || rState;
-  return !!(
-    stream.destroyed ||
-    stream[kIsDestroyed] ||
-    (isWritableState(state) || isReadableState(state) ? (state[kState] & Flag.Destroyed) !== 0 : state?.destroyed)
-  );
+  return !!(stream.destroyed || stream[kIsDestroyed] || state?.destroyed);
 }
 
 // Have been end():d.
-function isWritableEnded(stream: $Node.MaybeStream) {
+function isWritableEnded(stream) {
   if (!isWritableNodeStream(stream)) return null;
   if (stream.writableEnded === true) return true;
-  const wState = stream._writableState as $Node.WritableState | $Node.ForeignState | undefined;
-  if (isWritableState(wState)) return (wState[kState] & (Flag.Errored | Flag.WritableEnded)) === Flag.WritableEnded;
+  const wState = stream._writableState;
   if (wState?.errored) return false;
   if (typeof wState?.ended !== "boolean") return null;
   return wState.ended;
 }
 
 // Have emitted 'finish'.
-function isWritableFinished(stream: $Node.MaybeStream, strict) {
+function isWritableFinished(stream, strict) {
   if (!isWritableNodeStream(stream)) return null;
   if (stream.writableFinished === true) return true;
-  const wState = stream._writableState as $Node.WritableState | $Node.ForeignState | undefined;
-  if (isWritableState(wState)) {
-    const flags = wState[kState];
-    if ((flags & Flag.Errored) !== 0) return false;
-    return (
-      (flags & Flag.WritableFinished) !== 0 ||
-      (strict === false && (flags & Flag.WritableEnded) !== 0 && wState.length === 0)
-    );
-  }
+  const wState = stream._writableState;
   if (wState?.errored) return false;
   if (typeof wState?.finished !== "boolean") return null;
   return !!(wState.finished || (strict === false && wState.ended === true && wState.length === 0));
 }
 
 // Have emitted 'end'.
-function isReadableFinished(stream: $Node.MaybeStream, strict?) {
+function isReadableFinished(stream, strict?) {
   if (!isReadableNodeStream(stream)) return null;
-  const rState = stream._readableState as $Node.ReadableState | $Node.ForeignState | undefined;
-  if (isReadableState(rState)) {
-    const flags = rState[kState];
-    if ((flags & Flag.Errored) !== 0) return false;
-    return (
-      (flags & Flag.ReadableEndEmitted) !== 0 ||
-      (strict === false && (flags & Flag.ReadableEnded) !== 0 && rState.length === 0)
-    );
-  }
+  const rState = stream._readableState;
   if (rState?.errored) return false;
   if (typeof rState?.endEmitted !== "boolean") return null;
   return !!(rState.endEmitted || (strict === false && rState.ended === true && rState.length === 0));
 }
 
-function isReadable(stream: $Node.MaybeStream) {
+function isReadable(stream) {
   if (stream && stream[kIsReadable] != null) return stream[kIsReadable];
   if (typeof stream?.readable !== "boolean") return null;
   if (isDestroyed(stream)) return false;
   return isReadableNodeStream(stream) && stream.readable && !isReadableFinished(stream);
 }
 
-function isWritable(stream: $Node.MaybeStream) {
+function isWritable(stream) {
   if (stream && stream[kIsWritable] != null) return stream[kIsWritable];
   if (typeof stream?.writable !== "boolean") return null;
   if (isDestroyed(stream)) return false;
   return isWritableNodeStream(stream) && stream.writable && !isWritableEnded(stream);
 }
 
-function isFinished(stream: $Node.MaybeStream, opts?) {
+function isFinished(stream, opts?) {
   if (!isNodeStream(stream)) {
     return null;
   }
@@ -283,7 +164,7 @@ function isFinished(stream: $Node.MaybeStream, opts?) {
   return true;
 }
 
-function isWritableErrored(stream: $Node.MaybeStream) {
+function isWritableErrored(stream) {
   if (!isNodeStream(stream)) {
     return null;
   }
@@ -293,12 +174,10 @@ function isWritableErrored(stream: $Node.MaybeStream) {
     return writableErrored;
   }
 
-  const state = stream._writableState;
-  if (isWritableState(state)) return (state[kState] & Flag.Errored) !== 0 ? (state[kErroredValue] ?? null) : null;
-  return state?.errored ?? null;
+  return stream._writableState?.errored ?? null;
 }
 
-function isReadableErrored(stream: $Node.MaybeStream) {
+function isReadableErrored(stream) {
   if (!isNodeStream(stream)) {
     return null;
   }
@@ -308,12 +187,10 @@ function isReadableErrored(stream: $Node.MaybeStream) {
     return readableErrored;
   }
 
-  const state = stream._readableState;
-  if (isReadableState(state)) return (state[kState] & Flag.Errored) !== 0 ? (state[kErroredValue] ?? null) : null;
-  return state?.errored ?? null;
+  return stream._readableState?.errored ?? null;
 }
 
-function isClosed(stream: $Node.MaybeStream) {
+function isClosed(stream) {
   if (!isNodeStream(stream)) {
     return null;
   }
@@ -323,8 +200,8 @@ function isClosed(stream: $Node.MaybeStream) {
     return closed;
   }
 
-  const wState = stream._writableState as $Node.WritableState | $Node.ForeignState | undefined;
-  const rState = stream._readableState as $Node.ReadableState | $Node.ForeignState | undefined;
+  const wState = stream._writableState;
+  const rState = stream._readableState;
 
   if (typeof wState?.closed === "boolean" || typeof rState?.closed === "boolean") {
     return wState?.closed || rState?.closed;
@@ -338,7 +215,7 @@ function isClosed(stream: $Node.MaybeStream) {
   return null;
 }
 
-function isOutgoingMessage(stream: $Node.AnyStream) {
+function isOutgoingMessage(stream) {
   return (
     typeof stream._closed === "boolean" &&
     typeof stream._defaultKeepAlive === "boolean" &&
@@ -347,11 +224,11 @@ function isOutgoingMessage(stream: $Node.AnyStream) {
   );
 }
 
-function isServerResponse(stream: $Node.AnyStream) {
+function isServerResponse(stream) {
   return typeof stream._sent100 === "boolean" && isOutgoingMessage(stream);
 }
 
-function isServerRequest(stream: $Node.AnyStream) {
+function isServerRequest(stream) {
   return (
     typeof stream._consuming === "boolean" &&
     typeof stream._dumped === "boolean" &&
@@ -359,15 +236,12 @@ function isServerRequest(stream: $Node.AnyStream) {
   );
 }
 
-function willEmitClose(stream: $Node.MaybeStream) {
+function willEmitClose(stream) {
   if (!isNodeStream(stream)) return null;
-  const wState = stream._writableState as $Node.WritableState | $Node.ForeignState | undefined;
-  const rState = stream._readableState as $Node.ReadableState | $Node.ForeignState | undefined;
-  const state = wState || rState;
 
-  if (isWritableState(state) || isReadableState(state)) {
-    return (state[kState] & (Flag.AutoDestroy | Flag.EmitClose | Flag.Closed)) === (Flag.AutoDestroy | Flag.EmitClose);
-  }
+  const wState = stream._writableState;
+  const rState = stream._readableState;
+  const state = wState || rState;
 
   return (!state && isServerResponse(stream)) || !!(state?.autoDestroy && state.emitClose && state.closed === false);
 }
@@ -390,6 +264,7 @@ function isErrored(stream) {
 }
 
 export default {
+  kOnConstructed,
   isDestroyed,
   kIsDestroyed,
   isDisturbed,
@@ -416,5 +291,15 @@ export default {
   isServerRequest,
   willEmitClose,
   isTransformStream,
+  kState,
   // bitfields
+  kObjectMode,
+  kErrorEmitted,
+  kAutoDestroy,
+  kEmitClose,
+  kDestroyed,
+  kClosed,
+  kCloseEmitted,
+  kErrored,
+  kConstructed,
 } as const;

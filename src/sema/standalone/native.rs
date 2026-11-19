@@ -546,6 +546,76 @@ unsafe extern "C" fn highway_line_starts(p: *const u8, len: usize, out: *mut u32
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
+unsafe extern "C" fn highway_pack_words(
+    words: *const u32,
+    groups: usize,
+    controls: *mut u8,
+    data: *mut u8,
+) -> usize {
+    let mut used = 0;
+    for group in 0..groups {
+        let mut control = 0;
+        for place in 0..4 {
+            // SAFETY: the caller passes four words for each group.
+            let word = unsafe { words.add(4 * group + place).read() };
+            let folded = (word << 1) ^ (word >> 31).wrapping_neg();
+            let code = u8::from(folded != 0) + u8::from(folded > 0xFF) + u8::from(folded > 0xFFFF);
+            control |= code << (2 * place);
+            for &byte in &folded.to_le_bytes()[..(1 << code) >> 1] {
+                // SAFETY: the caller passes room for 16 bytes for each group.
+                unsafe { data.add(used).write(byte) };
+                used += 1;
+            }
+        }
+        // SAFETY: the caller passes room for a control byte for each group.
+        unsafe { controls.add(group).write(control) };
+    }
+    used
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_unpack_words(
+    controls: *const u8,
+    groups: usize,
+    data: *const u8,
+    data_len: usize,
+    words: *mut u32,
+    used: *mut usize,
+) -> usize {
+    // SAFETY: the caller passes slices, as pointers and lengths.
+    let (controls, data) = unsafe { (bytes(controls, groups), bytes(data, data_len)) };
+    let (mut at, mut group) = (0, 0);
+    while group < groups && data_len - at >= 16 {
+        for place in 0..4 {
+            let size = (1 << (controls[group] >> (2 * place) & 3)) >> 1;
+            let mut word = [0; 4];
+            word[..size].copy_from_slice(&data[at..at + size]);
+            let folded = u32::from_le_bytes(word);
+            let word = (folded >> 1) ^ (folded & 1).wrapping_neg();
+            // SAFETY: the caller passes room for four words for each group.
+            unsafe { words.add(4 * group + place).write(word) };
+            at += size;
+        }
+        group += 1;
+    }
+    // SAFETY: the caller passes a place for it.
+    unsafe { used.write(at) };
+    group
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_byte_bits(p: *const u8, len: usize, byte: u8, out: *mut u64) {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    let text = unsafe { bytes(p, len) };
+    for (word, block) in text.chunks(64).enumerate() {
+        let bits =
+            (block.iter().enumerate()).fold(0, |bits, (i, &c)| bits | u64::from(c == byte) << i);
+        // SAFETY: `out` has a word for every block of 64 bytes, whole or not.
+        unsafe { out.add(word).write(bits) };
+    }
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_odd_blocks(p: *const u8, len: usize, out: *mut u64) {
     // SAFETY: the caller passes a slice, as a pointer and a length.
     let text = unsafe { bytes(p, len) };
@@ -869,6 +939,55 @@ unsafe extern "C" fn highway_index_of_needs_escape_for_javascript_string(
     first(unsafe { bytes(p, len) }, |c| {
         c == quote || c == b'\\' || !(0x20..=0x7E).contains(&c) || (quote == b'`' && c == b'$')
     })
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_brotli_remove_pairs(
+    costs: *mut f64,
+    pairs: *mut [u32; 2],
+    count: usize,
+    a: u32,
+    b: u32,
+) -> usize {
+    use core::slice::from_raw_parts_mut as slice;
+    // SAFETY: the caller passes two slices of this length.
+    let (costs, pairs) = unsafe { (slice(costs, count), slice(pairs, count)) };
+    let rank = |(cost, [first, second]): (f64, [u32; 2])| (cost, second - first);
+    let (mut best, mut kept) = ((1e99, [u32::MAX; 2]), 0);
+    for at in 0..count {
+        let mut pair = (costs[at], pairs[at]);
+        if !pair.1.contains(&a) && !pair.1.contains(&b) {
+            if rank(pair) < rank(best) {
+                core::mem::swap(&mut pair, &mut best);
+            }
+            (costs[kept], pairs[kept]) = pair;
+            kept += 1;
+        }
+    }
+    (costs[0], pairs[0]) = best;
+    kept
+}
+/// Rougher than the kernel: the entropy, and four bits to describe each symbol.
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_brotli_estimate_costs(
+    common: *const u32,
+    others: &[*const u32; 4],
+    size: usize,
+    _used: &[u64; 11],
+    totals: &[u32; 4],
+    _gaps: &[[u32; 4]; 2],
+    _table: *mut [f64; 2],
+    _limit: u32,
+    costs: &mut [f64; 4],
+) {
+    // SAFETY: the caller passes five slices of this length.
+    let counts = |of| unsafe { core::slice::from_raw_parts(of, size) };
+    for ((cost, &other), &total) in costs.iter_mut().zip(others).zip(totals) {
+        let sums = counts(common).iter().zip(counts(other)).map(|(a, b)| a + b);
+        let bits = |sum| 4.0 + f64::from(sum) * (f64::from(total) / f64::from(sum)).log2();
+        *cost = sums.filter(|&sum| sum != 0).map(bits).sum();
+    }
 }
 /// Reports `BUN_JSON_IDX_ODDITY`, so `StructuralIndex` falls back to its scalar indexer.
 #[unsafe(no_mangle)]
@@ -1276,21 +1395,67 @@ extern "C" fn is_executable_file(_path: *const c_char) -> bool {
     false
 }
 #[unsafe(no_mangle)]
-extern "C" fn compress2(
-    _d: *mut u8,
-    _dl: *mut usize,
-    _s: *const u8,
-    _sl: usize,
-    _level: c_int,
-) -> c_int {
-    -2
+#[linkage = "weak"]
+unsafe extern "C" fn highway_crc32(state: u32, p: *const u8, len: usize) -> u64 {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    let state = unsafe { bytes(p, len) }.iter().fold(state, |state, &byte| {
+        (0..8).fold(state ^ u32::from(byte), |state, _| {
+            (state >> 1) ^ (0xEDB8_8320 * (state & 1))
+        })
+    });
+    state.into()
 }
 #[unsafe(no_mangle)]
-fn __bun_macro_context_get_remap(
-    _data: *mut c_void,
-    _path: &[u8],
-) -> Option<&'static bun_js_parser::Macro::MacroRemapEntry> {
-    None
+#[linkage = "weak"]
+unsafe extern "C" fn highway_adler32(adler: u32, p: *const u8, len: usize) -> u32 {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    unsafe { bytes(p, len) }.iter().fold(adler, |adler, &byte| {
+        let low = ((adler & 0xffff) + u32::from(byte)) % 65521;
+        (((adler >> 16) + low) % 65521) << 16 | low
+    })
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_copy_and_crc32(
+    state: u32,
+    p: *const u8,
+    copy: *mut u8,
+    len: usize,
+) -> u64 {
+    // SAFETY: the caller passes a slice, and room for it.
+    unsafe {
+        copy.copy_from_nonoverlapping(p, len);
+        highway_crc32(state, copy, len)
+    }
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_copy_and_adler32(
+    adler: u32,
+    p: *const u8,
+    copy: *mut u8,
+    len: usize,
+) -> u32 {
+    // SAFETY: the caller passes a slice, and room for it.
+    unsafe {
+        copy.copy_from_nonoverlapping(p, len);
+        highway_adler32(adler, copy, len)
+    }
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_common_prefix_length(a: *const u8, b: *const u8, len: usize) -> usize {
+    // SAFETY: the caller passes two slices of that length.
+    let (a, b) = unsafe { (bytes(a, len), bytes(b, len)) };
+    a.iter().zip(b).take_while(|(a, b)| a == b).count()
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_subtract_saturating(p: *mut [u16; 64], len: usize, amount: u16) {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    for value in unsafe { core::slice::from_raw_parts_mut(p, len) }.as_flattened_mut() {
+        *value = value.saturating_sub(amount);
+    }
 }
 
 /// Returns the mantissa digits of `text`, starting at the first nonzero digit.

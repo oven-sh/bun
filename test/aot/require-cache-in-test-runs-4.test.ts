@@ -106,7 +106,7 @@ test("a file that only code from disk takes out stays, and the delete throws", a
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--aot"], String(dir), bunEnv);
   expect({ stdout: stdout.split("\n").slice(1), stderr: exitCode ? stderr : "", exitCode }).toEqual({
     stdout: [
-      `Cannot take '/state.ts' out of require.cache: the build found nothing that does, so the code that imports it was compiled for a module that loads once. Spell the path where it is deleted, in a file that the tests import: delete require.cache[require.resolve("./module")]`,
+      `Cannot delete '/state.ts' from require.cache: the build saw no code that deletes it, so the module was compiled to load once. Write the path out where you delete it, in a file that the tests import: delete require.cache[require.resolve("./module")]`,
       "2 2",
       "true true true",
       "",

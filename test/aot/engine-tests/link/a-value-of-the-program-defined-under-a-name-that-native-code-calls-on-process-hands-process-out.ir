@@ -1,0 +1,31 @@
+# Object.defineProperty(process, "reallyExit", { value: hidden }); process.reallyExit
+# A control of a-listener-laid-on-process-for-another-event-brings-nothing-of-the-channel.ir: there native code defines a name of its own, with a value of its own, and nothing of the program is laid.
+# Here the value is the program's: process.exit() calls it on `process`.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+
+layout L0 fields=[{key="value" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/stdio.ts" displayPath="/$bun/js/builtins/stdio.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=StdioGetLightStdioWriteStreams function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectDefineProperty
+    v3 = String string="reallyExit"
+    v4 = NewObject layout=L0
+    v5 = PropGet v0 key="hidden" [isFreeName]
+    PropDefine v4, v5 key="value"
+    v7 = FinishObject v4
+    v8 = Builtin builtin=Process
+    v9 = Call v2, v1, v8, v3, v7 calleeName="Object.defineProperty"
+    v10 = PropGet v8 key="reallyExit"
+    Return v10
+}
+function f1 name="getLightStdioWriteStreams" module=m1 kind=Method role=Library flags=[HasExplicitName] length=7 enclosingRuntimeFunction=StdioGetLightStdioWriteStreams thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything):
+    Return v0
+}

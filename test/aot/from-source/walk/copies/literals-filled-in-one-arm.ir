@@ -1,0 +1,13 @@
+# f1 = fill
+# -- source: main.ts
+# const d = { a: 1, b: 2 };
+# function fill(n: number): number { let sum = 0; for (let i = 0; i < n; i++) { const x = { ...d, c: i }; sum += x.a + x.c; } return sum; }
+# print(fill(5), fill(0), JSON.stringify({ ...d, c: 3 }));
+# -- end of source
+# One layout, one order: the literal is the object that the fields go to, and nothing of it is made.
+# RUN: walk f1 mechanisms=all
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: = NewObject
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 15 0 {"a":1,"b":2,"c":3}

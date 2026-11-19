@@ -1,0 +1,17 @@
+# f1 = place
+# -- source: store-under-a-key-that-is-one-of-two-names.ts
+# type Point = { x: number; y: number };
+# function place(point: Point, axis: "x" | "y", at: number): void {
+#   point[axis] = at;
+# }
+# declare const input: any;
+# const point: Point = { x: +input, y: +input };
+# for (let i = 0; i < input; i++) place(point, i & 1 ? "x" : "y", +input);
+# (globalThis as any).answer = point.x + point.y;
+# -- end of source
+# The compiler before this one: 6 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 16, patches 2, moves 3, unlikely or rare 0.
+# RUN(X64): steps most:19 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 19

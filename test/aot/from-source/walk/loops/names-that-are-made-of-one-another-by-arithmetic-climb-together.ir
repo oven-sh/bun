@@ -12,8 +12,8 @@
 # What is taken is only the next assumption: the walk under it is held at its own back edge. One name climbed a walk before.
 # f1 = shift
 # OPTIONS: check=Validate
-# RUN: compile WalksOfLoops
-# CHECK: statistic WalksOfLoops 3
+# RUN: compile LoopVisits
+# CHECK: statistic LoopVisits 3
 # RUN(SHELL): run-in-shell globalThis.sink = print;
 # SHELL: 153
 # SHELL: exited with 0

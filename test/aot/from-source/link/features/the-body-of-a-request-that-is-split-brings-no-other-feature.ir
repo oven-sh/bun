@@ -1,0 +1,10 @@
+# tee() makes a list of two streams
+# -- source: the-body-of-a-request-that-is-split-brings-no-other-feature.ts
+# Bun.serve({ port: 0, fetch(request) { const [left, right] = request.body!.tee(); right.cancel(); return new Response(left); } });
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by ReadableStreamPrototype
+# RUN(NEVER): features
+# NEVER-NOT: feature Interpreter
+# NEVER-NOT: by BunTranspiler

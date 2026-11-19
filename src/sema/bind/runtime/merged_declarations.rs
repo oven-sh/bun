@@ -1,10 +1,11 @@
-use super::binding_kinds::variable_binding_kind;
-use super::bits::{has_bit, insert_bit};
+use super::binding_kinds::{declaration_binding_kind, record_binding_kind, variable_binding_kind};
+use super::bits::insert_bit;
 use super::declaration_kinds::{
     Declaration, DeclarationKind, declaration_kind, declaration_symbol, is_block_level,
     needs_unique_parameters, pattern_scope,
 };
 use super::declarations::{Declarations, append_symbol, is_var_scope};
+use super::namespace_exports::is_block_binding;
 use super::{BindingKind, EarlyRedeclaration, FunctionFlags, ParameterVarCopy};
 use crate::atom::Atom;
 use crate::bind::{Decl, ScopeId, ScopeKind, SymFlags, SymbolId};
@@ -104,42 +105,29 @@ impl Declarations<'_, '_> {
 
     fn merge_exports_under_two_names(&mut self, scope: ScopeId, local: SymbolId) {
         let (hir, bound) = (self.hir, &*self.bound);
-        let found = bound.export_symbol_of_value_symbol_if_exported(local);
-        if found == local || bound.scopes[scope.idx()].kind != ScopeKind::File {
+        let variable = bound.exported_value(local);
+        if variable == local || bound.scopes[scope.idx()].kind != ScopeKind::File {
             return;
         }
-        let mut values: SmallVec<[(Declaration, SymbolId); 4]> = SmallVec::new();
+        let mut values: SmallVec<[(Decl, SymbolId); 4]> = SmallVec::new();
         for &decl in bound.symbols[local.idx()].decls.iter() {
-            let declaration = Declaration::new(hir, bound, decl);
             let own = declaration_symbol(bound, decl);
-            if declaration.kind.binds_in_table_scope() && own.is_some() {
-                values.push((declaration, own));
+            if declaration_kind(hir, bound, decl).binds_in_table_scope() && own.is_some() {
+                values.push((decl, own));
             }
         }
-        let exported = values.iter().find(|value| value.1 != local);
-        let valueless = &bound.runtime.declarations.valueless_symbols;
-        let Some(&(first, variable)) = (match has_bit(valueless, found.idx()) {
-            true => exported,
-            false => values.iter().find(|value| value.1 == found),
-        }) else {
+        if !values.iter().any(|value| value.1 == variable) {
             return;
-        };
-        let name = bound.symbols[local.idx()].name;
+        }
         let declarations = &mut self.bound.runtime.declarations;
-        for (declaration, own) in values {
-            let key = match declaration.decl {
+        for (decl, own) in values {
+            let key = match decl {
                 Decl::Var(pat) | Decl::Require(pat) => Decl::Var(pat),
                 other => other,
             };
-            if own != variable && (own != local || variable != found) {
+            if own != variable && own != local {
                 declarations.declared_symbols.push((key, variable));
             }
-        }
-        if variable != found {
-            declarations.symbol_scopes[variable.idx()] = scope;
-            insert_bit(&mut self.scopes.hidden_symbols, local.idx());
-            let key = (scope, name);
-            self.scopes.appended_bindings.insert(key, (variable, first));
         }
     }
 
@@ -212,11 +200,49 @@ impl Declarations<'_, '_> {
             return;
         };
         names.add(binding, declaration);
-        if matches!(
-            declaration.kind,
-            DeclarationKind::Var | DeclarationKind::Parameter | DeclarationKind::TopLevelFunction
-        ) {
-            self.record_same_binding(names.scope, binding, declaration);
+        match declaration.kind {
+            DeclarationKind::Var
+            | DeclarationKind::Parameter
+            | DeclarationKind::TopLevelFunction => {
+                self.record_same_binding(names.scope, binding, declaration);
+            }
+            DeclarationKind::Enum | DeclarationKind::Namespace | DeclarationKind::Lexical
+                if !names.first_by_kind.iter().any(Declaration::is_import) =>
+            {
+                self.record_same_container(names.scope, binding, decl);
+            }
+            _ => {}
+        }
+    }
+
+    /// A type of the name has refused the declaration its place in the table: the binding holds its object all the same.
+    fn record_same_container(&mut self, scope: ScopeId, binding: SymbolId, decl: Decl) {
+        if !matches!(decl, Decl::Class(_) | Decl::Enum(_) | Decl::Module(_)) {
+            return;
+        }
+        let bound = &*self.bound;
+        let target = match is_block_binding(bound, bound.scopes[scope.idx()].kind, binding) {
+            true => binding,
+            false => bound.exported_value(binding),
+        };
+        let kind = declaration_binding_kind(self.hir, bound, decl);
+        let own = declaration_symbol(bound, decl);
+        let container = bound.scopes[scope.idx()].symbol;
+        let is_exported_member = target != own
+            && matches!(bound.scopes[scope.idx()].kind, ScopeKind::Module(_))
+            && own.is_some()
+            && bound.symbols[own.idx()].parent == container
+            && bound.symbols[target.idx()].parent != container
+            && bound.exported_value(target) == target;
+        record_binding_kind(self.bound, target, kind);
+        let declarations = &mut self.bound.runtime.declarations;
+        declarations.declared_symbols.push((decl, target));
+        if is_exported_member {
+            let recorded = &mut declarations.binding_kinds[own.idx()];
+            *recorded = (*recorded).max(kind);
+            let values = &mut declarations.exported_values;
+            let at = values.partition_point(|value| value.0 < target);
+            values.insert(at, (target, own));
         }
     }
 
@@ -310,8 +336,7 @@ impl Declarations<'_, '_> {
                     binding.idx(),
                 );
             }
-            self.bound
-                .export_symbol_of_value_symbol_if_exported(binding)
+            self.bound.exported_value(binding)
         };
         let key = match later.decl {
             Decl::Var(pat) | Decl::Param(pat) | Decl::Require(pat) => Decl::Var(pat),
@@ -387,8 +412,17 @@ impl Declarations<'_, '_> {
             (
                 Kind::Var | Kind::Parameter | Kind::TopLevelFunction,
                 Kind::Var | Kind::Parameter | Kind::TopLevelFunction,
-            )
-            | (Kind::BlockFunction, Kind::BlockFunction) => Conflict::No,
+            ) => Conflict::No,
+            (Kind::BlockFunction, Kind::BlockFunction) => match later.decl {
+                // The rest of the file is printed anew, without its directives.
+                Decl::Fn(f)
+                    if self.hir.is_in_known_evaluation(self.hir[f].start)
+                        && self.hir[f].is_strict =>
+                {
+                    Conflict::Always
+                }
+                _ => Conflict::No,
+            },
             (
                 Kind::BlockFunction | Kind::Lexical | Kind::Import | Kind::SimpleCatchParameter,
                 _,
@@ -505,6 +539,12 @@ impl Declarations<'_, '_> {
             None if has_function => self.body_variable_symbols[&parameter],
             None => return,
         };
+        for &(decl, _) in &vars {
+            let decls = &mut self.bound.symbols[variable.idx()].decls;
+            if !decls.contains(&decl) {
+                decls.push(decl);
+            }
+        }
         let declarations = &mut self.bound.runtime.declarations;
         for (_, pat) in vars {
             declarations

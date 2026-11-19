@@ -6,7 +6,7 @@ use crate::load::source_provider::{
 use crate::load::{HOST_ROOT, is_host_path, read_file_bytes};
 use crate::module_keys::{DATABASE_NAMESPACE, name_of_database};
 use crate::options::EntryText;
-use bun_ast::{ImportKind, Loader};
+use bun_ast::{ImportKind, Kind, Loader, Log};
 use bun_core::fmt::hex_byte_lower;
 use bun_core::strings::BOM;
 use bun_paths::platform::Posix;
@@ -19,9 +19,11 @@ use bun_threading::Guarded;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::sync::OnceLock;
+use std::sync::atomic::{self, AtomicBool};
 
 const FILE_NAMESPACE: &[u8] = b"file";
 pub(super) const ENTRY_TEXT_NAMESPACE: &[u8] = b"entrytext";
+pub(crate) const FOLDER_OF_DATABASE_NAMESPACE: &[u8] = b"folder-of-database";
 const VIRTUAL_DIRECTORY: &[u8] = b"plugin/";
 const ENCODED_EMPTY_SEGMENT: &[u8] = b"%2f";
 
@@ -95,6 +97,8 @@ pub(crate) struct PluginModules<'a> {
     virtual_modules: ShardedMap<Vec<u8>, (Vec<u8>, Vec<u8>)>,
     paths_asked_for_load_plugin: ShardedMap<Vec<u8>, bool>,
     deferred: Guarded<Vec<DeferredModule>>,
+    holds_failures: AtomicBool,
+    failed_loads: Guarded<Vec<(Vec<u8>, Log)>>,
 }
 
 impl<'a> PluginModules<'a> {
@@ -128,7 +132,20 @@ impl<'a> PluginModules<'a> {
             virtual_modules: ShardedMap::default(),
             paths_asked_for_load_plugin: ShardedMap::default(),
             deferred: Guarded::new(Vec::new()),
+            holds_failures: AtomicBool::new(false),
+            failed_loads: Guarded::new(Vec::new()),
         }
+    }
+
+    /// From here on what a plugin says of a load that fails waits until it is known who loads the file.
+    pub(crate) fn hold_failures(&self) {
+        self.holds_failures.store(true, atomic::Ordering::Relaxed);
+    }
+
+    pub(crate) fn take_failed_loads(&self) -> Vec<(Vec<u8>, Log)> {
+        let mut failed = std::mem::take(&mut *self.failed_loads.lock());
+        failed.shared_sort_by(|a, b| a.0.cmp(&b.0));
+        failed
     }
 
     pub(crate) fn resolve(&self, request: &CodeRequest<'_>) -> PluginResolution {
@@ -152,7 +169,18 @@ impl<'a> PluginModules<'a> {
                 kind: import_kind(request.kind, request.form),
             };
             let provider = self.provider;
-            match (self.messages).with_log(|log| provider.resolve(&provider_request, log)) {
+            let is_guess = request.form == CodeImportForm::Guess;
+            let resolved = self.messages.with_log(|log| {
+                let resolved = provider.resolve(&provider_request, log);
+                if is_guess {
+                    warn_instead_of_errors(log);
+                }
+                resolved
+            });
+            match resolved {
+                Err(Failed) if is_guess => PluginResolution::External {
+                    specifier: request.specifier.to_vec(),
+                },
                 Ok(Resolution::NotHandled) | Err(Failed) => PluginResolution::NotHandled,
                 Ok(Resolution::External { specifier }) => PluginResolution::External { specifier },
                 Ok(Resolution::Module { namespace, path })
@@ -171,7 +199,7 @@ impl<'a> PluginModules<'a> {
     }
 
     pub(crate) fn add_database(&self, specifier: &[u8]) -> Vec<u8> {
-        let name = name_of_database(specifier);
+        let name = to_native(&name_of_database(specifier)).to_vec();
         let virtual_path = create_virtual_path(DATABASE_NAMESPACE, &name);
         let module = StoredModule {
             loader: Loader::Sqlite,
@@ -183,6 +211,24 @@ impl<'a> PluginModules<'a> {
         let name = (DATABASE_NAMESPACE.to_vec(), name);
         self.virtual_modules.insert_ref(virtual_path.clone(), name);
         virtual_path
+    }
+
+    pub(crate) fn add_folder_of_database(&self, importer: &[u8], name: &[u8]) -> Option<Vec<u8>> {
+        let (namespace, database) = self.virtual_module(importer)?;
+        if namespace != DATABASE_NAMESPACE || database != name {
+            return None;
+        }
+        let virtual_path = create_virtual_path(FOLDER_OF_DATABASE_NAMESPACE, name);
+        let module = StoredModule {
+            loader: Loader::Js,
+            is_from_plugin: true,
+            contents: Some(Cow::Borrowed(b"module.exports = process.cwd();\n")),
+        };
+        let load = OnceLock::from(ModuleLoad::Loaded(module));
+        self.modules.insert_ref(virtual_path.clone(), load);
+        let name = (FOLDER_OF_DATABASE_NAMESPACE.to_vec(), name.to_vec());
+        self.virtual_modules.insert_ref(virtual_path.clone(), name);
+        Some(virtual_path)
     }
 
     pub(crate) fn add_entry_text(&self, text: &EntryText, levels: Option<usize>) -> Vec<u8> {
@@ -217,6 +263,21 @@ impl<'a> PluginModules<'a> {
     }
 
     pub(crate) fn read(&self, path: &[u8], default_loader: Loader) -> ModuleText {
+        self.read_from_disk_as(path, default_loader, default_loader)
+    }
+
+    /// What a plugin answers for a file that is carried unparsed, else the file's own bytes. The plugin is told the loader
+    /// of the file's name, as ever.
+    pub(crate) fn read_bytes(&self, path: &[u8], default_loader: Loader) -> ModuleText {
+        self.read_from_disk_as(path, default_loader, Loader::File)
+    }
+
+    fn read_from_disk_as(
+        &self,
+        path: &[u8],
+        default_loader: Loader,
+        disk_loader: Loader,
+    ) -> ModuleText {
         let cell = match self.modules.get_ref(path) {
             Some(cell) => cell,
             None => self.modules.insert_ref(path.to_vec(), OnceLock::new()),
@@ -224,13 +285,19 @@ impl<'a> PluginModules<'a> {
         let mut first_text = None;
         let load = cell.get_or_init(|| {
             let module = self.module_name(path);
-            let read_file = || self.read_file(path, default_loader);
+            let read_file = || self.read_file(path, disk_loader);
             let request = LoadRequest {
                 module,
                 default_loader,
                 read_file: &read_file,
             };
-            match (self.messages).with_log(|log| self.provider.load(&request, log)) {
+            let mut log = Log::init();
+            let loaded = self.provider.load(&request, &mut log);
+            match loaded.is_err() && self.holds_failures.load(atomic::Ordering::Relaxed) {
+                true => self.failed_loads.lock().push((path.to_vec(), log)),
+                false => self.messages.say(&mut log),
+            }
+            match loaded {
                 Ok(Loaded::Source {
                     contents,
                     loader,
@@ -260,10 +327,10 @@ impl<'a> PluginModules<'a> {
             return ModuleText::Text(text);
         }
         match load {
-            ModuleLoad::Loaded(module) => self.read_again(module, path, default_loader),
+            ModuleLoad::Loaded(module) => self.read_again(module, path, disk_loader),
             ModuleLoad::Deferred(answer) => match answer.get() {
                 None => ModuleText::Deferred,
-                Some(Some(module)) => self.read_again(module, path, default_loader),
+                Some(Some(module)) => self.read_again(module, path, disk_loader),
                 Some(None) => ModuleText::Failed,
             },
             ModuleLoad::Missing => ModuleText::Missing,
@@ -397,7 +464,7 @@ impl<'a> PluginModules<'a> {
         text.map_or(ModuleText::Missing, ModuleText::Text)
     }
 
-    fn read_file(&self, path: &[u8], loader: Loader) -> Option<Cow<'static, [u8]>> {
+    pub(crate) fn read_file(&self, path: &[u8], loader: Loader) -> Option<Cow<'static, [u8]>> {
         if self.virtual_module(path).is_some() {
             return None;
         }
@@ -425,6 +492,19 @@ impl<'a> PluginModules<'a> {
     }
 }
 
+pub(crate) fn first_error_of(log: &Log) -> Vec<u8> {
+    let first = log.msgs.iter().find(|it| it.kind == Kind::Err);
+    first.map_or_else(Vec::new, |it| it.data.text.to_vec())
+}
+
+pub(crate) fn warn_instead_of_errors(log: &mut Log) {
+    for message in log.msgs.iter_mut().filter(|it| it.kind == Kind::Err) {
+        message.kind = Kind::Warn;
+        log.errors -= 1;
+        log.warnings += 1;
+    }
+}
+
 fn import_kind(kind: CodeImportKind, form: CodeImportForm) -> ImportKind {
     match (kind, form) {
         (CodeImportKind::EntryPoint, _) => ImportKind::EntryPointBuild,
@@ -433,6 +513,18 @@ fn import_kind(kind: CodeImportKind, form: CodeImportForm) -> ImportKind {
         (CodeImportKind::Import, _) => ImportKind::Stmt,
         (CodeImportKind::Require, _) => ImportKind::Require,
     }
+}
+
+/// Whether a plugin has given the module a namespace of its own.
+pub(crate) fn is_module_of_plugin(path: &[u8]) -> bool {
+    let below_root = path.strip_prefix(HOST_ROOT);
+    let below_plugins = below_root.and_then(|path| path.strip_prefix(VIRTUAL_DIRECTORY));
+    below_plugins.is_some_and(|path| {
+        let namespace = bun_core::strings::split(path, b"/")
+            .next()
+            .unwrap_or_default();
+        ![ENTRY_TEXT_NAMESPACE, DATABASE_NAMESPACE].contains(&namespace)
+    })
 }
 
 fn create_virtual_path(namespace: &[u8], path: &[u8]) -> Vec<u8> {

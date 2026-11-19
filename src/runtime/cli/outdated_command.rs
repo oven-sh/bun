@@ -167,11 +167,11 @@ impl OutdatedCommand {
         let pkg_names_buf = manager.lockfile.buffers.string_bytes.as_slice();
         let string_buf = declared.string_bytes();
         // (name hash, catalog name hash, behavior)
-        let catalog_key = |item: &DeclaredDependency| {
+        let catalog_key = |item: &DeclaredDependency, catalog_name: &[u8]| {
             let dep = declared.dependency(item);
             (
                 hash(dep.name.slice(string_buf)),
-                hash(dep.version.catalog().slice(string_buf)),
+                hash(catalog_name),
                 dep.behavior,
             )
         };
@@ -181,9 +181,9 @@ impl OutdatedCommand {
             bun_collections::HashMap::new();
 
         for item in outdated_items {
-            if declared.dependency(item).version.tag == dependency::Tag::Catalog {
+            if let dependency::Value::Catalog(catalog) = &declared.dependency(item).version.value {
                 catalog_map
-                    .entry(catalog_key(item))
+                    .entry(catalog_key(item, catalog.slice(string_buf)))
                     .or_default()
                     .push(item.workspace_pkg_id);
             } else {
@@ -196,11 +196,12 @@ impl OutdatedCommand {
 
         // One row per catalog entry, at the first workspace that uses it.
         for item in outdated_items {
-            let version = &declared.dependency(item).version;
-            if version.tag != dependency::Tag::Catalog {
+            let dependency::Value::Catalog(catalog) = &declared.dependency(item).version.value
+            else {
                 continue;
-            }
-            let Some(workspace_list) = catalog_map.get(&catalog_key(item)) else {
+            };
+            let cat_name = catalog.slice(string_buf);
+            let Some(workspace_list) = catalog_map.get(&catalog_key(item, cat_name)) else {
                 continue;
             };
             if workspace_list[0] != item.workspace_pkg_id {
@@ -208,7 +209,6 @@ impl OutdatedCommand {
             }
             let mut workspace_names: Vec<u8> = Vec::new();
 
-            let cat_name = version.catalog().slice(string_buf);
             if !cat_name.is_empty() {
                 workspace_names.extend_from_slice(b"catalog:");
                 workspace_names.extend_from_slice(cat_name);

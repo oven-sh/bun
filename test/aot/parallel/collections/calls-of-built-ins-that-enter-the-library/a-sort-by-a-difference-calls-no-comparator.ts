@@ -1,5 +1,5 @@
-// STATISTIC: SortsThatCallNoComparator >= 2
-// STATISTIC: LibraryFunctionsEnteredBehindRows >= 2
+// STATISTIC: SortComparatorCallsElided >= 2
+// STATISTIC: LibraryFunctionsCalledDirectly >= 2
 // `(a, b) => a - b` and `(a, b) => b - a` on lists as made: the library sorts a short list of numbers where it lies, without one call.
 function sorted(seed: number) {
   const upward: number[] = [], downward: number[] = [];

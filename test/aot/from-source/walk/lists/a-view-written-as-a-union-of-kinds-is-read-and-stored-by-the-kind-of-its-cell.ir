@@ -1,0 +1,31 @@
+# `samples` is written as a union of nine classes of views. All have numbers for elements, so a holder of that type is a holder like that of one class:
+# it is asked once whether it is as its class makes it (the class above them all: a bit of the cell), its length and its vector stand in front of the loop,
+# and the element is a number, read inside the view. The operation names no kind: the code loads the type of the cell and goes by it. Nothing here hangs on who calls.
+# f1 = total, f2 = fill
+# -- source: a-view-written-as-a-union-of-kinds-is-read-and-stored-by-the-kind-of-its-cell.ts
+# type Samples = Int8Array | Uint8Array | Uint8ClampedArray | Int16Array | Uint16Array | Int32Array | Uint32Array | Float32Array | Float64Array;
+# const tools: Record<string, (samples: Samples) => number> = {
+#   total(samples) { let sum = 0; for (let i = 0; i < samples.length; i++) sum += samples[i]; return sum; },
+#   fill(samples) { for (let i = 0; i < samples.length; i++) samples[i] = i * 0.5; return 0; },
+# };
+# const seen = new Float64Array(9);
+# console.log(tools[JSON.parse('"fill"')](seen), tools[JSON.parse('"total"')](seen));
+# -- end of source
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = IsPristine {{*}}builtinClass=TypedArray
+# CHECK: = GetTypedArrayLength
+# CHECK: = GetTypedArrayVector
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: : number @Double = GetTypedArrayElement {{*}}isInsideView
+# CHECK-NEXT: = Add {{*}}form=Numbers
+# RUN(UNNAMED): walk f1:Body f2:Body mechanisms=all
+# UNNAMED-NOT: typedArrayType=
+# RUN(STORE): walk f2:Body mechanisms=all
+# STORE-LABEL: code f2:Body
+# STORE: = IsPristine {{*}}builtinClass=TypedArray
+# STORE: isInLoop=true isLoopHead=true
+# STORE: = PutTypedArrayElement {{*}}isInsideView
+# RUN(CODE): emit f1:Body mechanisms=all
+# CODE: = Load8Z({{*}}JSCell_typeInfoType
+# CODE: = Switch(

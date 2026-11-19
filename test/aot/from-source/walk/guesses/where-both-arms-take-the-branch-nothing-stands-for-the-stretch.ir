@@ -17,7 +17,6 @@
 # console.log(read(0), read(1), read(2));
 # -- end of source
 # RUN(MEET): walk f2 mechanisms=all
-# REQUIRES(MEET): entries-of-bun
 # MEET-LABEL: code f2:Body
 # MEET: = ShapeTest
 # MEET: = Call {{*}}calleeName="floor"

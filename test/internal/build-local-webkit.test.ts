@@ -6,7 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 
 import { cxx } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
@@ -17,6 +17,7 @@ import {
   webkitAotFile,
   webkitEngineSources,
   webkitJSCPath,
+  webkitSha256Sums,
   webkitTestAotPath,
   type WebKitAotFile,
 } from "../../scripts/build/deps/webkit.ts";
@@ -24,6 +25,7 @@ import { BuildError } from "../../scripts/build/error.ts";
 import { Ninja, readManifest } from "../../scripts/build/ninja.ts";
 import { getProfile } from "../../scripts/build/profiles.ts";
 import { registerAllRules } from "../../scripts/build/rules.ts";
+import { quote } from "../../scripts/build/shell.ts";
 import {
   depSource,
   resolveDep,
@@ -317,6 +319,7 @@ const checkout = {
     set(JavaScriptCore_AOT_TEST_SOURCES aot/tests/testaot.cpp)
     set(JavaScriptCore_AOT_PROGRAM_SOURCES aot/runtime/AOTNoFeatureRemoved.cpp)
     set(JavaScriptCore_AOT_SHELL_SOURCES aot/tests/AOTShell.cpp)
+    set(JavaScriptCore_AOT_STAND_IN_HOST_TEST_SOURCES aot/tests/host/AOTNativeTestsOfStandInHost.cpp)
     function(AOT_CHECK_SOURCE_LISTS)
         if (NO SUCH OPERATOR)
         endif ()
@@ -333,7 +336,9 @@ const checkout = {
   "Source/JavaScriptCore/aot/ir/generator/package.json": "",
   "Source/JavaScriptCore/aot/ir/AOTValue.cpp": "",
   "Source/JavaScriptCore/aot/runtime/AOTNoFeatureRemoved.cpp": "",
+  "Source/JavaScriptCore/aot/runtime/generator/forced-jumps-fixtures/leaves-by-no-forced-jump.txt": "",
   "Source/JavaScriptCore/aot/tests/AOTShell.cpp": "",
+  "Source/JavaScriptCore/aot/tests/host/AOTNativeTestsOfStandInHost.cpp": "",
   "Source/JavaScriptCore/aot/tests/testaot.cpp": "",
   "Source/JavaScriptCore/b3/testb3_1.cpp": "",
   "Source/JavaScriptCore/b3/testb3_bun_loops.cpp": "",
@@ -650,6 +655,11 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
         "aot/tests/AOTShell.cpp: listed, and there is no such file",
       ],
       [
+        "a listed file of the stand-in host that does not exist",
+        { "aot/tests/host/AOTNativeTestsOfStandInHost.cpp": undefined },
+        "aot/tests/host/AOTNativeTestsOfStandInHost.cpp: listed, and there is no such file",
+      ],
+      [
         "a path in a list where it does not belong",
         { "aot/Sources.txt": "aot/ir/AOTValue.cpp\naot/tests/testaot.cpp\n" },
         "aot/tests/testaot.cpp: in aot/Sources.txt, and does not belong there",
@@ -863,6 +873,15 @@ describe("Provides.files", () => {
     );
     expect(resolved.libs.length).toBeGreaterThan(0);
     expect(resolved.outputs).toEqual(resolved.libs);
+  });
+
+  test("come from a fetch that is given the pins, and runs again when they change", () => {
+    using g = graph();
+    resolveDep(g.n, g.cfg, webkit, new Map<DepName, ResolvedDep>());
+    const fetch = readManifest(g.n.toString()).edges.find(edge => edge.rule === "dep_fetch_prebuilt")!;
+    expect(fetch.implicitInputs.map(input => resolve(g.cfg.buildDir, input))).toContain(webkitSha256Sums);
+    expect(fetch.implicitOutputs.some(output => basename(output) === ".sha256")).toBe(true);
+    expect(fetch.bindings.sha256sums).toBe(quote(webkitSha256Sums, g.cfg.host.os === "windows"));
   });
 
   test("are only for a prebuilt source", () => {

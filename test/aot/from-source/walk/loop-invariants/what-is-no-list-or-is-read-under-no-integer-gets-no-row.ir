@@ -9,19 +9,15 @@
 # sink(readsAText, readsBytes, readsUnderAFraction, readsUnderAText);
 # -- end of source
 # RUN(TEXT): walk f1 mechanisms=all
-# REQUIRES(TEXT): entries-of-bun
 # TEXT-NOT: = IsPristine
 # TEXT-NOT: = HasArrayStorage
 # TEXT-NOT: testedType=Array
 # RUN(BYTES): walk f2 mechanisms=all
-# REQUIRES(BYTES): entries-of-bun
 # BYTES-NOT: = HasArrayStorage
 # BYTES-NOT: testedType=Array
 # RUN(FRACTION): walk f3 mechanisms=all
-# REQUIRES(FRACTION): entries-of-bun
 # FRACTION-NOT: = HasArrayStorage
 # FRACTION-NOT: = GetArrayStorage
 # RUN(NAME): walk f4 mechanisms=all
-# REQUIRES(NAME): entries-of-bun
 # NAME-NOT: = HasArrayStorage
 # NAME-NOT: = GetArrayStorage

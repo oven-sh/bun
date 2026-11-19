@@ -7,13 +7,17 @@
 #include <JavaScriptCore/AOTHost.h>
 #include <JavaScriptCore/AOTImageLoading.h>
 #include <JavaScriptCore/AOTModuleHost.h>
+#include <JavaScriptCore/AOTOrderRecorder.h>
+#include <JavaScriptCore/AOTRealmStartup.h>
 #include <JavaScriptCore/AOTRuntimeDescription.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/MarkedBlockCage.h>
 #include <JavaScriptCore/Options.h>
+#include <JavaScriptCore/WasmStreamingParser.h>
 #include <array>
 #include <cstdlib>
 #include <cstring>
+#include <openssl/sha.h>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -168,12 +172,34 @@ extern "C" void Bun__didFinishFirstCollectionOfCompiledProgram()
         mi_on_thread_idle_end();
 }
 
+#if ENABLE(WEBASSEMBLY)
+static_assert(sizeof(SHA_CTX) <= JSC::Wasm::SourceHasher::contextSize && alignof(SHA_CTX) <= 8);
+
+extern "C" void Bun__initializeSHA1(void* context)
+{
+    SHA1_Init(static_cast<SHA_CTX*>(context));
+}
+
+extern "C" void Bun__updateSHA1(void* context, std::span<const uint8_t> bytes)
+{
+    SHA1_Update(static_cast<SHA_CTX*>(context), bytes.data(), bytes.size());
+}
+
+extern "C" void Bun__finishSHA1(void* context, std::array<uint8_t, 20>& digest)
+{
+    SHA1_Final(digest.data(), static_cast<SHA_CTX*>(context));
+}
+#endif
+
 extern "C" void Bun__ThreadPool__exitWithoutAnyThread();
 
 extern "C" JSC::AOT::Wire::ImageVerdict Bun__AOT__useImage(BunAOTBytes image, const BunAOTImageFile* fileOrNull, const uint8_t identity[16])
 {
     if (!JSC::AOT::BuiltinBindings::hasHost())
         Bun__AOT__registerHostBindings();
+    JSC::AOT::setBufferStructureProvider([](JSC::JSGlobalObject* realm) {
+        return defaultGlobalObject(realm)->JSBufferSubclassStructure();
+    });
     std::array<uint8_t, 16> id;
     memcpy(id.data(), identity, id.size());
     auto file = fileOrNull ? std::optional(JSC::AOT::ImageFile { fileOrNull->descriptor, fileOrNull->offset }) : std::nullopt;
@@ -190,14 +216,14 @@ extern "C" JSC::AOT::Wire::ImageVerdict Bun__AOT__useImage(BunAOTBytes image, co
 
 extern "C" bool Bun__AOT__useNoImageOnThisThread(BunAOTBytes specifier)
 {
-    if (JSC::AOT::runsOnlyCodeOfImage)
+    if (JSC::AOT::isHardenedBuild)
         return false;
     // All that the thread runs from here on is bytecode.
     if (JSC::Options::crashIfInterpreterIsUsed()) [[unlikely]] {
         dataLogLn("crashIfInterpreterIsUsed: Worker ", WTF::String::fromUTF8ReplacingInvalidSequences(std::span { specifier.ptr, specifier.len }));
         CRASH();
     }
-    JSC::AOT::Image::useNoneOnThisThread();
+    JSC::AOT::Image::disableOnThisThread();
     return true;
 }
 
@@ -219,7 +245,7 @@ extern "C" bool Bun__AOT__admitsUnknownJavaScript(BunAOTBytes image)
 extern "C" bool Bun__AOT__loadsCodeOutsideImage(BunAOTBytes image)
 {
     auto flags = JSC::AOT::Image::flags({ image.ptr, image.len });
-    return !JSC::AOT::runsOnlyCodeOfImage && flags && flags->contains(JSC::AOT::ImageFlag::LoadsCodeOutsideImage);
+    return !JSC::AOT::isHardenedBuild && flags && flags->contains(JSC::AOT::ImageFlag::LoadsCodeOutsideImage);
 }
 
 extern "C" BunAOTBytes Bun__AOT__imageCode()
@@ -232,34 +258,30 @@ extern "C" BunAOTBytes Bun__AOT__imageCode()
 }
 
 extern "C" void Bun__AOT__recordRefusedChange(const BunString* refusal, const BunString* sourceURL, unsigned line, unsigned column);
-extern "C" void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame*, JSC::JSGlobalObject*, BunString* outSourceURL, unsigned* outLine, unsigned* outColumn);
+extern "C" void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame*, JSC::JSGlobalObject*, Bun::OwnedString* outSourceURL, unsigned* outLine, unsigned* outColumn);
 
 static void recordRefusedChange(JSC::JSGlobalObject* globalObject, const String& refusal)
 {
     JSC::CallFrame* callFrame = globalObject->vm().topCallFrame;
     // The loader starts a module from no frame, and what is said of a file that runs names no place.
-    bool namesPlace = !refusal.startsWith("Ran from source "_s);
+    bool namesPlace = !refusal.startsWith("Ran from source "_s) && !refusal.startsWith("Kept the run of "_s) && !refusal.startsWith("Ran more often "_s);
     if (!callFrame && namesPlace)
         return;
-    BunString sourceURL = Bun::BunStringEmpty;
+    Bun::OwnedString sourceURL;
     unsigned line = 0;
     unsigned column = 0;
     if (namesPlace)
         Bun__CallFrame__getCallerSrcLoc(callFrame, globalObject, &sourceURL, &line, &column);
-    BunString text = Bun::toStringRef(refusal);
-    Bun__AOT__recordRefusedChange(&text, &sourceURL, line, column);
-    text.deref();
-    sourceURL.deref();
+    BunString text = Bun::toString(refusal);
+    Bun__AOT__recordRefusedChange(&text, &sourceURL.get(), line, column);
 }
 
 extern "C" void Bun__AOT__recordMissingExport(const BunString* name, const BunString* exporter, const BunString* importer);
 
 static void recordMissingExport(const String& name, const String& exporter, const String& importer)
 {
-    BunString texts[] = { Bun::toStringRef(name), Bun::toStringRef(exporter), Bun::toStringRef(importer) };
+    BunString texts[] = { Bun::toString(name), Bun::toString(exporter), Bun::toString(importer) };
     Bun__AOT__recordMissingExport(&texts[0], &texts[1], &texts[2]);
-    for (BunString& text : texts)
-        text.deref();
 }
 
 static bool listsRefusedChanges;
@@ -267,13 +289,13 @@ static bool listsRefusedChanges;
 extern "C" void Bun__AOT__listRefusedChanges()
 {
     listsRefusedChanges = true;
-    JSC::AOT::setRefusedChangeListener(recordRefusedChange);
+    JSC::AOT::setRejectedChangeListener(recordRefusedChange);
     JSC::AOT::setMissingExportListener(recordMissingExport);
 }
 
 extern "C" void Bun__AOT__openNameWithoutImage(uint32_t holder, const uint8_t* name, size_t length)
 {
-    JSC::AOT::openNameWithoutImage(holder, std::span { name, length });
+    JSC::AOT::unlockNameWithoutImage(holder, std::span { name, length });
 }
 
 namespace Bun {
@@ -290,6 +312,12 @@ void recordFileRunFromSource(JSC::JSGlobalObject* globalObject, const String& pa
         recordRefusedChange(globalObject, makeString("Ran from source '"_s, path, "': "_s, why));
 }
 
+void recordRepeatedFileRun(JSC::JSGlobalObject* globalObject, const String& path, ASCIILiteral why)
+{
+    if (listsRefusedChanges)
+        recordRefusedChange(globalObject, makeString("Ran more often '"_s, path, "': "_s, why));
+}
+
 bool recordAddonLoadedFromDisk(JSC::JSGlobalObject* globalObject, const String& path)
 {
     if (listsRefusedChanges)
@@ -302,6 +330,28 @@ bool recordAddonLoadedFromDisk(JSC::JSGlobalObject* globalObject, const String& 
 extern "C" void Bun__AOT__setVerbose(bool isVerbose)
 {
     JSC::AOT::setVerbose(isVerbose);
+}
+
+extern "C" bool Bun__AOT__recordsOrder()
+{
+    return JSC::AOT::recordsOrder();
+}
+
+extern "C" BunAOTBytes Bun__AOT__startOrderRecording(const char* path)
+{
+    WTF::ASCIILiteral failure = JSC::callRemovable<JSC::RemovableFeature::OrderRecorder, JSC::RemovedFeatureStub::Abort, JSC::AOT::startOrderRecording>(path);
+    return { failure.isNull() ? nullptr : reinterpret_cast<const uint8_t*>(failure.characters()), failure.isNull() ? 0 : failure.length() };
+}
+
+extern "C" void Bun__AOT__finishOrderRecording()
+{
+    if (JSC::AOT::isRecordingOrder())
+        JSC::callRemovable<JSC::RemovableFeature::OrderRecorder, JSC::RemovedFeatureStub::Abort, JSC::AOT::finishOrderRecording>();
+}
+
+extern "C" bool Bun__AOT__isRecordingOrder()
+{
+    return JSC::AOT::isRecordingOrder();
 }
 
 extern "C" int64_t Bun__AOT__offsetInCode(const void* address)
@@ -320,7 +370,7 @@ extern "C" int64_t Bun__AOT__frameAtReturnAddress(const void* returnAddress)
     result |= frame->hasFrameRecord() ? 1 : 0;
     result |= frame->isEmpty() ? 2 : 0;
     result |= frame->liesBelowSpilledArguments() ? 4 : 0;
-    result |= JSC::AOT::isInStubOfImage(returnAddress) ? 8 : 0;
+    result |= JSC::AOT::isInImageStub(returnAddress) ? 8 : 0;
     return result;
 }
 
@@ -340,7 +390,7 @@ static void appendCompiledFrame(StringBuilder& text, const JSC::AOT::Image& imag
     if (JSC::AOT::builtinOfFunctionInFrames(frame.function))
         return;
     auto position = JSC::AOT::positionOf(frame);
-    String place = position && position->source ? makeString(JSC::AOT::sourceURLOf(position->source), ':', position->lineColumn.line, ':', position->lineColumn.column) : String();
+    String place = position && position->source ? makeString(JSC::AOT::displayPathOf(*position), ':', position->lineColumn.line, ':', position->lineColumn.column) : String();
     if (JSC::AOT::FunctionDescription(frame.function).codeType() == JSC::ModuleCode) {
         text.append("    at "_s, place, '\n');
         return;
@@ -407,6 +457,10 @@ extern "C" void Bun__askForAddressSpaceToStart() {}
 extern "C" void Bun__AOT__listRefusedChanges() {}
 extern "C" void Bun__AOT__openNameWithoutImage(uint32_t, const uint8_t*, size_t) {}
 extern "C" void Bun__AOT__setVerbose(bool) {}
+extern "C" BunAOTBytes Bun__AOT__startOrderRecording(const char*) { return { nullptr, 0 }; }
+extern "C" void Bun__AOT__finishOrderRecording() {}
+extern "C" bool Bun__AOT__recordsOrder() { return false; }
+extern "C" bool Bun__AOT__isRecordingOrder() { return false; }
 extern "C" int64_t Bun__AOT__offsetInCode(const void*) { return -1; }
 extern "C" int64_t Bun__AOT__frameAtReturnAddress(const void*) { return -1; }
 extern "C" size_t Bun__AOT__addressOfOffsetInCode(size_t offset) { return offset; }

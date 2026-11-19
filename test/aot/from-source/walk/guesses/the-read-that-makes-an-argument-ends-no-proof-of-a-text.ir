@@ -13,6 +13,5 @@
 # console.log(String(scan(source)));
 # -- end of source
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: = TypeTest {{*}}testedType=string
 # CHECK: = GetStringCodeUnit

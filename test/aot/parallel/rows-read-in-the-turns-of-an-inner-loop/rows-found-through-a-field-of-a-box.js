@@ -1,0 +1,5 @@
+// `box.rows[r][c]`: in the inner loop the row is found under `r` off what `box.rows` finds. Whatever stores the field or the row in a turn is seen by the next read.
+function count(box) { let s = 0; for (let r = 0; r < box.rows.length; r++) for (let c = 0; c < box.rows[r].length; c++) { if (box.rows[r][c]) s++; if (c === 0 && box.spare) { box.rows = box.spare; box.spare = null; } if (c === 1 && box.row) { box.rows[r] = box.row; box.row = null; } } return s; }
+const go = { count }[JSON.parse('"count"')];
+const box = { rows: [[true, false], [true]], spare: null, row: null };
+for (const [rows, spare, row] of [[[[true, false], [true]], null, null], [[[true, true, true]], [[false, false, true, true], [true]], null], [[[true, true, true], [true]], null, [false, false, false, true, true]], [[[1, 0, 2]], null, null], [[[0.5, 0], "ab", new Uint8Array([1, 0])], null, null], [[[true], null], null, null]]) { box.rows = rows; box.spare = spare; box.row = row; try { console.log(go(box)); } catch (error) { console.log(error instanceof TypeError); } }

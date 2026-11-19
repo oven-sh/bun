@@ -11,7 +11,7 @@
 # print(outer());
 # declare function print(...values: unknown[]): void;
 # -- end of source
-# As check-of-a-dead-zone-is-asked-once-in-front-of-the-typed-copy.ir, with `table` in a scope of a function. A variable of a module is asked in front of its loop by Walker::buildLoopTwice(), whatever the turns run.
+# As check-of-a-dead-zone-is-asked-once-in-front-of-the-typed-copy.ir, with `table` in a scope of a function. A variable of a module is asked in front of its loop by Walker::tryVersionLoop(), whatever the turns run.
 # A slot of a scope is not: each call of `outer` makes a scope with its slots empty. Here the walk goes by the value: no turn writes the slot, so its read stands in front of the typed copy, and so does the look at what was read.
 # OPTIONS: check=Validate
 # RUN: walk f2 mechanisms=all

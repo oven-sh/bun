@@ -88,7 +88,8 @@ describe.concurrent("the code size map", () => {
         expect(functions.find(({ name }) => name === "fill")!.operations).toContainEqual({
           operation: "LoopHint",
           form: "Open",
-          values: 1,
+          // One for each build of the loop.
+          values: expect.any(Number),
         });
       }),
     300_000,

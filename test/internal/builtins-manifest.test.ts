@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunExe, tempDir } from "harness";
-import { readdirSync, readFileSync, realpathSync, statSync, utimesSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync, utimesSync } from "node:fs";
 import { join, relative } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
 import {
   type EngineFunctions,
   findModuleHeldInPart,
+  functionFiles,
   functionIds,
   helperModules,
   locate,
@@ -208,9 +209,11 @@ describe("builtins-manifest.ts", () => {
     expect(names.filter(name => name.startsWith("ahead-of-time/"))).toEqual([]);
     for (const name of textsForTheCompiler) {
       expect(read(name)).toBe(readFileSync(join(root, "src", "js", "ahead-of-time", name), "utf8"));
-      expect(read(name)).not.toBe(readFileSync(join(root, "src", "js", name), "utf8"));
+      // A module of compiled programs alone has no first text.
+      const first = join(root, "src", "js", name);
+      if (existsSync(first)) expect(read(name)).not.toBe(readFileSync(first, "utf8"));
     }
-    expect(read("node/path.ts")).toBe(readFileSync(join(root, "src", "js", "node", "path.ts"), "utf8"));
+    expect(read("node/os.ts")).toBe(readFileSync(join(root, "src", "js", "node", "os.ts"), "utf8"));
     const tsconfig = JSON.parse(read("tsconfig.json"));
     expect(Object.keys(tsconfig)).toEqual(["compilerOptions"]);
     expect(tsconfig.compilerOptions).toMatchObject({ experimentalDecorators: true, baseUrl: ".", composite: false });
@@ -327,9 +330,9 @@ describe("builtins-manifest-model.ts", () => {
     // The model starts from its own folder, which is the real one where `src` is a link.
     const sources = realpathSync(join(root, "src", "js"));
     for (const file of textsForTheCompiler) {
-      expect(moduleList).toContain(file);
+      expect(file.startsWith("builtins/") ? functionFiles : moduleList).toContain(file);
       expect(locate(file)).toBe(join(sources, "ahead-of-time", file));
     }
-    expect(locate("node/path.ts")).toBe(join(sources, "node", "path.ts"));
+    expect(locate("node/os.ts")).toBe(join(sources, "node", "os.ts"));
   });
 });

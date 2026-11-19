@@ -1,4 +1,4 @@
-#![feature(allocator_api)]
+#![feature(core_io_borrowed_buf)]
 #![warn(unused_must_use)]
 //! `bun_sourcemap` — source map parsing, encoding, and lookup.
 //!
@@ -28,15 +28,7 @@ pub use line_offset_table::{LineOffsetTable, LineOffsetTableColumns};
 pub use mapping::Mapping;
 pub use parsed_source_map::{ParsedSourceMap, SourceContentPtr};
 
-// SAFETY: `ParsedSourceMap` is shared across threads via the thread-safe
-// `SavedSourceMap` store (its `ref_count` is an `AtomicU32`). The auto-trait
-// inference fails only because `InternalSourceMap` holds the blob's raw data
-// pointer (owned by this map, or borrowed from the embedded standalone
-// section); `SourceContentPtr`'s provider handles are packed as plain
-// integers and never dereferenced off the JS thread.
-unsafe impl Send for ParsedSourceMap {}
-// SAFETY: see the `Send` rationale above — refcount is atomic and the raw
-// provider pointers are opaque, never dereferenced off the JS thread.
+// SAFETY: only `mappings` is not `Sync`, for its `MultiArrayList`. `&mapping::List` only reads it.
 unsafe impl Sync for ParsedSourceMap {}
 
 // `bun.Ordinal = OrdinalT(c_int)` lives in bun_core (lower tier). Re-export so
@@ -299,21 +291,18 @@ pub(crate) fn append_mapping_to_buffer(
         vlqs[0].len as usize + vlqs[1].len as usize + vlqs[2].len as usize + vlqs[3].len as usize;
 
     // Instead of updating .len 5 times, we only need to update it once.
-    let mut writable = buffer
-        .writable_n_bytes(total_len + needs_comma as usize)
+    buffer
+        .grow_if_needed(total_len + needs_comma as usize)
         .expect("unreachable");
-
-    // Put commas in between mappings
-    if needs_comma {
-        writable[0] = b',';
-        writable = &mut writable[1..];
-    }
-
-    for item in &vlqs {
-        let n = item.len as usize;
-        writable[..n].copy_from_slice(item.slice());
-        writable = &mut writable[n..];
-    }
+    bun_core::vec::append_with(&mut buffer.list, usize::MAX, |mut out| {
+        // Put commas in between mappings
+        if needs_comma {
+            out.append(b",");
+        }
+        for item in &vlqs {
+            out.append(item.slice());
+        }
+    });
 }
 
 /// https://github.com/getsentry/rfcs/blob/main/text/0081-sourcemap-debugid.md
@@ -523,10 +512,8 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                 load_path_buf[..source_filename.len()].copy_from_slice(source_filename);
                 load_path_buf[source_filename.len()..source_filename.len() + 4]
                     .copy_from_slice(b".map");
-                load_path_buf[source_filename.len() + 4] = 0;
-                // SAFETY: byte at `len` was just set to NUL; buffer outlives `load_path`.
                 let load_path =
-                    bun_core::ZStr::from_buf(&load_path_buf[..], source_filename.len() + 4);
+                    bun_core::ZStr::nul_terminate(&mut load_path_buf, source_filename.len() + 4);
 
                 // `bun_sys::File::read_from` returns an owned `Vec<u8>`,
                 // freed on scope exit by `Vec`'s Drop.
@@ -624,7 +611,7 @@ pub mod SavedSourceMap {
 // in a module so `crate::SerializedSourceMap::Loaded` resolves as a path.
 #[allow(non_snake_case)]
 pub mod SerializedSourceMap {
-    use bun_core::StringPointer;
+    use bun_core::{StringPointer, Unaligned};
     use core::mem::size_of;
 
     /// Following the header bytes:
@@ -635,9 +622,11 @@ pub mod SerializedSourceMap {
     #[repr(C)]
     #[derive(Clone, Copy)]
     pub struct Header {
-        pub(crate) source_files_count: u32,
+        pub source_files_count: u32,
         pub map_bytes_length: u32,
     }
+
+    bun_core::impl_pod!(Header);
 
     /// The on-disk view (`bytes` points into the standalone-graph trailer, so
     /// it lives for the process — modelled as `'static`).
@@ -646,28 +635,29 @@ pub mod SerializedSourceMap {
         pub bytes: &'static [u8],
     }
 
+    pub struct Parts {
+        pub file_names: &'static [Unaligned<StringPointer>],
+        pub compressed_files: &'static [Unaligned<StringPointer>],
+        pub mapping_blob: &'static [u8],
+    }
+
     impl SerializedSourceMap {
-        #[inline]
-        fn header(self) -> Header {
-            // read_unaligned because the blob
-            // sits at an arbitrary offset inside the executable.
-            // SAFETY: callers guarantee `bytes.len() >= size_of::<Header>()`.
-            unsafe { core::ptr::read_unaligned(self.bytes.as_ptr().cast::<Header>()) }
+        /// `None` if `bytes` is too short for what the header says.
+        pub fn parts(self) -> Option<Parts> {
+            let header: Header = bun_core::read_prefix(self.bytes)?;
+            let table = header.source_files_count as usize * size_of::<StringPointer>();
+            let (file_names, rest) = self.bytes[size_of::<Header>()..].split_at_checked(table)?;
+            let (compressed_files, rest) = rest.split_at_checked(table)?;
+            Some(Parts {
+                file_names: Unaligned::slice_of(file_names),
+                compressed_files: Unaligned::slice_of(compressed_files),
+                mapping_blob: rest.get(..header.map_bytes_length as usize)?,
+            })
         }
 
-        fn compressed_source_file_at(self, index: usize) -> StringPointer {
-            let count = self.header().source_files_count as usize;
-            // SAFETY: second contiguous `StringPointer` array immediately
-            // follows the first (see `Header` layout doc); caller guarantees
-            // `index < count` so the offset stays within `bytes`.
-            unsafe {
-                core::ptr::read_unaligned(
-                    self.bytes
-                        .as_ptr()
-                        .add(size_of::<Header>() + (count + index) * size_of::<StringPointer>())
-                        .cast::<StringPointer>(),
-                )
-            }
+        pub fn get(self, ptr: StringPointer) -> Option<&'static [u8]> {
+            let rest = self.bytes.get(ptr.offset as usize..)?;
+            rest.get(..ptr.length as usize)
         }
     }
 
@@ -675,6 +665,7 @@ pub mod SerializedSourceMap {
     /// source code. Held by `ParsedSourceMap::standalone_module_graph`.
     pub struct Loaded {
         pub map: SerializedSourceMap,
+        pub compressed_files: &'static [Unaligned<StringPointer>],
         /// Only decompress source code once! Once a file is decompressed,
         /// it is stored here. Decompression failure is recorded as an empty
         /// `Vec`, which `source_file_contents` treats as "no contents".
@@ -684,12 +675,7 @@ pub mod SerializedSourceMap {
     impl Loaded {
         pub(crate) fn source_file_contents(&self, index: usize) -> Option<&[u8]> {
             let decompressed = self.decompressed_files[index].get_or_init(|| {
-                let sp = self.map.compressed_source_file_at(index);
-                let start = sp.offset as usize;
-                let Some(compressed_file) = start
-                    .checked_add(sp.length as usize)
-                    .and_then(|end| self.map.bytes.get(start..end))
-                else {
+                let Some(compressed_file) = self.map.get(self.compressed_files[index].get()) else {
                     return Vec::new();
                 };
                 bun_zstd::decompress_alloc(compressed_file).unwrap_or_else(|err| {
@@ -999,10 +985,6 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
 
         let mut psm = map_data;
         psm.external_source_names = source_paths_slice.unwrap();
-        // ParsedSourceMap is `Arc`-managed in the Rust port; the embedded
-        // `ref_count` field is layout parity only and FFI ref/deref routes
-        // through `Arc::{increment,decrement}_strong_count` (see
-        // `ParsedSourceMap::ref_`).
         Some(Arc::new(psm))
     } else {
         None

@@ -117,6 +117,7 @@ fn visit_user(threads: usize, asked: usize) -> Vec<Visit> {
             checked_elsewhere: &[],
             builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
             named_values: &NoNamedValues,
+            alias_mentions: None,
             max_inference_nodes: 4096,
             limits: Default::default(),
         };
@@ -169,7 +170,7 @@ fn visit_user(threads: usize, asked: usize) -> Vec<Visit> {
             request,
             &decided,
             files_to_lower,
-            &lower,
+            &|checker, file, _| lower(checker, file),
             &|file, _| {
                 if file == holder {
                     turns.reach(HAS_COMMITTED);

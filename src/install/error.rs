@@ -218,8 +218,6 @@ pub enum Error {
     #[error(transparent)]
     Http(#[from] bun_http::Error),
     #[error(transparent)]
-    PackageManifest(#[from] crate::PackageManifestError),
-    #[error(transparent)]
     Dotenv(#[from] bun_dotenv::Error),
     #[error(transparent)]
     Parsers(#[from] bun_parsers::Error),
@@ -227,8 +225,6 @@ pub enum Error {
     JsPrinter(#[from] bun_js_printer::Error),
     #[error(transparent)]
     Bunfig(#[from] bun_bunfig::Error),
-    #[error(transparent)]
-    Transpiler(#[from] bun_transpiler::Error),
     #[error(transparent)]
     Paths(#[from] bun_paths::Error),
     #[error(transparent)]
@@ -371,12 +367,10 @@ impl Error {
             Self::Resolver(e) => e.name(),
             Self::Spawn(e) => e.name(),
             Self::Http(e) => e.name(),
-            Self::PackageManifest(e) => <&'static str>::from(e),
             Self::Dotenv(e) => e.name(),
             Self::Parsers(e) => e.name(),
             Self::JsPrinter(e) => e.name(),
             Self::Bunfig(e) => e.name(),
-            Self::Transpiler(e) => e.name(),
             Self::Paths(e) => e.name(),
             Self::PathOptions(e) => <&'static str>::from(e),
             Self::Fmt(_) => "FmtError",

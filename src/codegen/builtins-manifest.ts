@@ -273,7 +273,7 @@ if (archive) {
   ]);
   // For a testing word: what `bun run` evaluates, of each module that has a second text for the compiler.
   const firstTexts = "first-texts/";
-  for (const file of sourceFiles) {
+  for (const file of [...sourceFiles, ...functionFiles]) {
     const first = locateFirstText(file);
     if (first !== undefined) files.push([firstTexts + file, fs.readFileSync(first)]);
   }

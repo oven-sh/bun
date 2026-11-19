@@ -4,7 +4,7 @@
 // CHECK: [[prototype]] = GetConstructPrototype [[newTarget]] layout=[[layout]]
 // CHECK-NEXT: [[allocated]] = NewObject [[prototype]] layout=[[layout]] @
 // CHECK-NEXT: [[this]] = Convert [[allocated]] declared={type=[[layout]]}
-// CHECK: PropSet [[this]], [[a]] key="a"
+// CHECK: PropDefine [[this]], [[a]] key="a"
 
 // RUN(CLOSE): lower
 // CLOSE-NOT: FinishObject

@@ -1,0 +1,13 @@
+# f1 = fill
+# -- source: main.ts
+# function fill(d: { a: number, b: number }, n: number): number { let sum = 0; for (let i = 0; i < n; i++) { const x = { ...d, c: i }; sum += x.a + x.c; } return sum; }
+# const one = { a: 1, b: 2 }, two = { a: 3, b: 4 };
+# print(fill(one, 5), fill(two, 0), fill(two, 3));
+# -- end of source
+# The type of the argument is proven, so nothing was asked in front and the loop was built once: the copy as written stood in it, and the object was made in every turn. Where a test of the object fails, that copy leaves the typed build.
+# RUN: walk f1 mechanisms=all
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: = NewObject
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 15 0 12

@@ -24,6 +24,13 @@ export const addBlockedSPKIForTesting: (hash: ArrayBufferView) => void = $newCpp
 );
 export const clearBlockedSPKIsForTesting: () => void = $newCppFunction("NodeTLS.cpp", "clearBlockedSPKIsForTesting", 0);
 
+/** Lays the one function that runs when the process exits, in front of the listeners of 'exit'. */
+export const runWhenProcessExits: (run: () => void) => void = $newCppFunction(
+  "BunProcess.cpp",
+  "jsFunctionRunWhenProcessExits",
+  1,
+);
+
 // This thread's BoringSSL error queue. An API that returns with entries on it makes the next unrelated failure that
 // reads the queue report them. `put` adds BN_R_BITS_TOO_SMALL; `take` empties it and returns its entries, oldest first.
 export const putBoringSSLErrorForTesting: () => void = $newCppFunction("NodeTLS.cpp", "putBoringSSLErrorForTesting", 0);
@@ -47,7 +54,8 @@ export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) 
 // not found), a count, or for memmem/memrmem the offset with -1 = not found.
 // scannerRunStops fills `arg` with its three bitmaps and returns 0. lineStarts
 // fills `arg` with uint32 offsets and returns how many. oddBlocks fills `arg`
-// with uint64 words and returns 0.
+// with uint64 words and returns 0, and so does byteBits, for `byte`.
+// byteSetPrefixLength takes a set of 32 bytes.
 export const highwayStringsForTesting: (
   op:
     | "indexOfChar"
@@ -68,9 +76,12 @@ export const highwayStringsForTesting: (
     | "memrmem16"
     | "scannerRunStops"
     | "lineStarts"
-    | "oddBlocks",
+    | "oddBlocks"
+    | "byteBits"
+    | "byteSetPrefixLength",
   haystack: Uint8Array,
   arg: number | Uint8Array,
+  byte?: number,
 ) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
 
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
@@ -753,7 +764,7 @@ export function storedOutgoingHeaders(message: any): Record<string, [string, unk
 }
 
 /**
- * The syscalls instrumented in bsd.c, plus non-syscall hooks whose failure
+ * The syscalls instrumented in bsd.cpp, plus non-syscall hooks whose failure
  * paths are otherwise unreachable without injection ("ssl_loop_buffer",
  * "poll_start", "session_buffer", "ssl_write"; see fault_inject.h for the per-hook
  * description). Arming anything else is rejected.

@@ -16,7 +16,6 @@ const ways = ["one"];
 const list = join(import.meta.dir, "mock-sweep.known.txt");
 const lines = readFileSync(list, "utf8").split("\n");
 const known = new Map(lines.filter(line => /^[a-z]/.test(line)).map(line => line.split(": ") as [string, string]));
-const wavering = new Set(lines.filter(line => line.startsWith("~ ")).map(line => line.slice(2)));
 const found = new Map<string, string[]>();
 
 const env = { ...bunEnv, NO_COLOR: "1" };
@@ -44,7 +43,7 @@ export function sweepMocks(part: number, parts: number) {
           if (!plain.has(compiled)) differs.push(way);
         }
         found.set(name, differs);
-        if (rewrite || wavering.has(name)) return;
+        if (rewrite) return;
         expect(differs).toEqual((known.get(name) ?? "").split(" ").filter(way => ways.includes(way)));
       },
       300_000,
@@ -53,8 +52,8 @@ export function sweepMocks(part: number, parts: number) {
 
   afterAll(() => {
     if (!rewrite) return;
-    const kept = lines.filter(line => line.startsWith("#") || line.startsWith("~ "));
-    const named = [...found].filter(([name, differs]) => differs.length && !wavering.has(name));
+    const kept = lines.filter(line => line.startsWith("#"));
+    const named = [...found].filter(([, differs]) => differs.length);
     writeFileSync(
       list,
       [...kept, ...named.map(([name, differs]) => `${name}: ${differs.join(" ")}`).sort(), ""].join("\n"),

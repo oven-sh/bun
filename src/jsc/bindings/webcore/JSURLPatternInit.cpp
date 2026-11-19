@@ -33,112 +33,28 @@ template<> URLPatternInit convertDictionary<URLPatternInit>(JSGlobalObject& lexi
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    bool isNullOrUndefined = value.isUndefinedOrNull();
-    auto* object = isNullOrUndefined ? nullptr : value.getObject();
-    if (!isNullOrUndefined && !object) [[unlikely]] {
-        throwTypeError(&lexicalGlobalObject, throwScope);
-        return {};
-    }
     URLPatternInit result;
-    JSValue baseURLValue;
-    if (isNullOrUndefined)
-        baseURLValue = jsUndefined();
-    else {
-        baseURLValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "baseURL"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!baseURLValue.isUndefined()) {
-        result.baseURL = convert<IDLUSVString>(lexicalGlobalObject, baseURLValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue hashValue;
-    if (isNullOrUndefined)
-        hashValue = jsUndefined();
-    else {
-        hashValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "hash"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!hashValue.isUndefined()) {
-        result.hash = convert<IDLUSVString>(lexicalGlobalObject, hashValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue hostnameValue;
-    if (isNullOrUndefined)
-        hostnameValue = jsUndefined();
-    else {
-        hostnameValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "hostname"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!hostnameValue.isUndefined()) {
-        result.hostname = convert<IDLUSVString>(lexicalGlobalObject, hostnameValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue passwordValue;
-    if (isNullOrUndefined)
-        passwordValue = jsUndefined();
-    else {
-        passwordValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "password"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!passwordValue.isUndefined()) {
-        result.password = convert<IDLUSVString>(lexicalGlobalObject, passwordValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue pathnameValue;
-    if (isNullOrUndefined)
-        pathnameValue = jsUndefined();
-    else {
-        pathnameValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "pathname"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!pathnameValue.isUndefined()) {
-        result.pathname = convert<IDLUSVString>(lexicalGlobalObject, pathnameValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue portValue;
-    if (isNullOrUndefined)
-        portValue = jsUndefined();
-    else {
-        portValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "port"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!portValue.isUndefined()) {
-        result.port = convert<IDLUSVString>(lexicalGlobalObject, portValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue protocolValue;
-    if (isNullOrUndefined)
-        protocolValue = jsUndefined();
-    else {
-        protocolValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "protocol"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!protocolValue.isUndefined()) {
-        result.protocol = convert<IDLUSVString>(lexicalGlobalObject, protocolValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue searchValue;
-    if (isNullOrUndefined)
-        searchValue = jsUndefined();
-    else {
-        searchValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "search"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!searchValue.isUndefined()) {
-        result.search = convert<IDLUSVString>(lexicalGlobalObject, searchValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue usernameValue;
-    if (isNullOrUndefined)
-        usernameValue = jsUndefined();
-    else {
-        usernameValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "username"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!usernameValue.isUndefined()) {
-        result.username = convert<IDLUSVString>(lexicalGlobalObject, usernameValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
+    auto* object = dictionaryObject(lexicalGlobalObject, throwScope, value);
+    if (!object)
+        return result;
+    convertDictionaryMember<IDLUSVString>(lexicalGlobalObject, *object, Identifier::fromString(vm, "baseURL"_s), result.baseURL);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    convertDictionaryMember<IDLUSVString>(lexicalGlobalObject, *object, Identifier::fromString(vm, "hash"_s), result.hash);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    convertDictionaryMember<IDLUSVString>(lexicalGlobalObject, *object, Identifier::fromString(vm, "hostname"_s), result.hostname);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    convertDictionaryMember<IDLUSVString>(lexicalGlobalObject, *object, Identifier::fromString(vm, "password"_s), result.password);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    convertDictionaryMember<IDLUSVString>(lexicalGlobalObject, *object, Identifier::fromString(vm, "pathname"_s), result.pathname);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    convertDictionaryMember<IDLUSVString>(lexicalGlobalObject, *object, Identifier::fromString(vm, "port"_s), result.port);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    convertDictionaryMember<IDLUSVString>(lexicalGlobalObject, *object, Identifier::fromString(vm, "protocol"_s), result.protocol);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    convertDictionaryMember<IDLUSVString>(lexicalGlobalObject, *object, Identifier::fromString(vm, "search"_s), result.search);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    convertDictionaryMember<IDLUSVString>(lexicalGlobalObject, *object, Identifier::fromString(vm, "username"_s), result.username);
+    RETURN_IF_EXCEPTION(throwScope, {});
     return result;
 }
 

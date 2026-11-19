@@ -17,6 +17,7 @@ use bun_uws::NewSocketHandler;
 use bun_uws_sys::socket_group::VTable;
 use bun_uws_sys::{ConnectingSocket, SocketKind, us_bun_verify_error_t, us_socket_t, vtable};
 
+use super::NativeRef;
 use super::uws_handlers as handlers;
 
 /// kind → vtable. Rust kinds get a monomorphized `Trampolines<H>` vtable
@@ -112,10 +113,7 @@ fn vt(s: *mut us_socket_t) -> &'static VTable {
         | SocketKind::UwsHttp
         | SocketKind::UwsHttpTls
         | SocketKind::UwsWs
-        | SocketKind::UwsWsTls => {
-            // `raw_group()` already returns `&mut SocketGroup` for `us_socket_t`.
-            s.raw_group().vtable.expect("group vtable")
-        }
+        | SocketKind::UwsWsTls => s.raw_group().vtable.get().expect("group vtable"),
         _ => TABLES[kind as usize].expect("kind vtable"),
     }
 }
@@ -136,7 +134,7 @@ fn vtc(c: *mut ConnectingSocket) -> &'static VTable {
         | SocketKind::UwsWs
         | SocketKind::UwsWsTls => {
             // SAFETY: raw_group() is non-null for any socket with a valid kind.
-            unsafe { (*c.raw_group()).vtable.expect("group vtable") }
+            unsafe { (*c.raw_group()).vtable.get().expect("group vtable") }
         }
         _ => TABLES[kind as usize].expect("kind vtable"),
     }
@@ -208,18 +206,13 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
     data: *mut u8,
     len: c_int,
 ) -> *mut us_socket_t {
-    // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref
-    // (`s` is non-null per loop.c contract).
-    let s_ref = us_socket_t::opaque_mut(s);
-    debug_assert!(s_ref.kind() == SocketKind::BunSocketTls);
+    debug_assert!(us_socket_t::opaque_mut(s).kind() == SocketKind::BunSocketTls);
     // `bun.jsc.API.NewSocket(true)` → the runtime-local `socket::NewSocket<true>`.
     type TLSSocket = super::NewSocket<true>;
-    // The ext slot for `BunSocketTls` always holds a live `TLSSocket`, stamped
-    // at construction.
-    let tls: bun_ptr::ThisPtr<TLSSocket> =
-        s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>().unwrap();
+    // The ext slot of an open `BunSocketTls` holds its `TLSSocket`.
+    let tls = NativeRef::<true>::of(s).get().unwrap();
     if let Some(raw) = tls.twin.get().as_ref() {
-        let raw: *mut TLSSocket = raw.as_ptr();
+        let raw = raw.this_ptr();
         // A negative length from the C side means there is nothing to deliver;
         // never panic across the `extern "C"` boundary.
         let Ok(len) = usize::try_from(len) else {
@@ -228,16 +221,11 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
         // SAFETY: `data` points to `len` readable bytes from the TLS BIO; loop.c
         // guarantees the buffer outlives this call.
         let slice = unsafe { core::slice::from_raw_parts(data, len) };
-        // SAFETY: `twin` holds a live +1 ref to the `[raw, _]` half, so `raw`
-        // is live for `ThisPtr::new`; dispatch is single-threaded so no
-        // aliasing `&mut` exists.
-        crate::dispatch::fold(unsafe {
-            TLSSocket::on_data(
-                bun_ptr::ThisPtr::new(raw),
-                NewSocketHandler::<true>::from(s),
-                slice,
-            )
-        });
+        crate::dispatch::fold(TLSSocket::on_data(
+            raw,
+            NewSocketHandler::<true>::from(s),
+            slice,
+        ));
     }
     s
 }
@@ -249,7 +237,7 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
 /// `bun_socket_tls` sockets reach this.
 ///
 /// # Safety
-/// `openssl.c` must pass a live, non-null `s` whose ext slot holds a valid
+/// `openssl.cpp` must pass a live, non-null `s` whose ext slot holds a valid
 /// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn us_dispatch_session(
@@ -262,7 +250,7 @@ pub(crate) unsafe extern "C" fn us_dispatch_session(
         return;
     }
     type TLSSocket = super::NewSocket<true>;
-    let Some(tls) = *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() else {
+    let Some(tls) = s_ref.ext::<NativeRef<true>>().get() else {
         return;
     };
     // A negative length from the C side means there is nothing to deliver;
@@ -288,13 +276,12 @@ pub(crate) extern "C" fn us_dispatch_server_identity(
     let ssl = bun_boringssl_sys::SSL::opaque_mut(ssl);
     let verdict = match s_ref.kind() {
         SocketKind::BunSocketTls => s_ref
-            .ext::<Option<bun_ptr::ThisPtr<super::NewSocket<true>>>>()
+            .ext::<NativeRef<true>>()
+            .get()
             .map_or(Unchecked, |tls| tls.server_identity(ssl)),
-        SocketKind::HttpClientTls => s_ref
-            .ext::<Option<core::ptr::NonNull<c_void>>>()
-            .map_or(Unchecked, |ext| {
-                bun_http::http_context::Handler::<true>::server_identity(ext.as_ptr(), ssl)
-            }),
+        SocketKind::HttpClientTls => {
+            bun_http::http_context::Handler::<true>::server_identity(NewSocketHandler::from(s), ssl)
+        }
         SocketKind::WsClientUpgradeTls => s_ref
             .ext::<Option<bun_ptr::ThisPtr<handlers::WSUpgradeClient<true>>>>()
             .map_or(Unchecked, |client| client.server_identity(ssl)),
@@ -323,6 +310,7 @@ pub(crate) extern "C" fn us_dispatch_new_session(
     s: *mut us_socket_t,
     session: *mut bun_boringssl_sys::SSL_SESSION,
 ) -> c_int {
+    use bun_boringssl_sys::{OwnedSslSession, SSL_SESSION};
     let s_ref = us_socket_t::opaque_mut(s);
     match s_ref.kind() {
         SocketKind::HttpClientTls => {
@@ -330,11 +318,12 @@ pub(crate) extern "C" fn us_dispatch_new_session(
             0
         }
         SocketKind::BunSocketTls => {
-            type TLSSocket = super::NewSocket<true>;
-            let Some(tls) = *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() else {
+            let Some(tls) = s_ref.ext::<NativeRef<true>>().get() else {
                 return 0;
             };
-            tls.set_latest_session(session);
+            let session = SSL_SESSION::opaque_ref(session);
+            tls.latest_session
+                .set(Some(OwnedSslSession::retain(session)));
             1
         }
         _ => 0,
@@ -345,7 +334,7 @@ pub(crate) extern "C" fn us_dispatch_new_session(
 /// `keylog` handler.
 ///
 /// # Safety
-/// `openssl.c` must pass a live, non-null `s` whose ext slot holds a valid
+/// `openssl.cpp` must pass a live, non-null `s` whose ext slot holds a valid
 /// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn us_dispatch_keylog(
@@ -358,7 +347,7 @@ pub(crate) unsafe extern "C" fn us_dispatch_keylog(
         return;
     }
     type TLSSocket = super::NewSocket<true>;
-    let Some(tls) = *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() else {
+    let Some(tls) = s_ref.ext::<NativeRef<true>>().get() else {
         return;
     };
     // A negative length from the C side means there is nothing to deliver;

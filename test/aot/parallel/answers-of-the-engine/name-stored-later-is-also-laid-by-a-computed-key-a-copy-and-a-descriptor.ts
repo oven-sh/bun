@@ -1,5 +1,5 @@
 // the same name comes to the object by name, under a computed key, by Object.assign, by Reflect and by a descriptor: as an accessor, hidden from enumeration, read only. Whoever reads or stores by name afterwards finds what the descriptor laid
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 (globalThis as any).report = (value: unknown) => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 declare function report(value: unknown): void;
 function Rec(this: any, n: number) { this.n = n; }

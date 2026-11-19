@@ -1,0 +1,16 @@
+# f1 = write
+# -- source: typed-array-set-different-type.ts
+# function write(target: Uint8Array, chunk: Int16Array, offset: number): void {
+#   target.set(chunk, offset);
+# }
+# declare const input: any;
+# const target = new Uint8Array(64);
+# const chunk = new Int16Array(4);
+# for (let turn = 0; turn < input; turn++) write(target, chunk, +input);
+# -- end of source
+# The compiler before this one: 17 instructions, 2 of them patches.
+# When the bound was taken: steps: operations 20, patches 3, moves 7, unlikely or rare 3.
+# RUN(X64): steps most:27 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 27

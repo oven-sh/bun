@@ -57,6 +57,7 @@ members = [
   "src/clap",
   "src/clap_macros",
   "src/crash_handler",
+  "src/cron",
   "src/csrf",
   "src/css_jsc",
   "src/dns",
@@ -69,6 +70,8 @@ members = [
   "src/trim/removable_features",
   "src/highway",
   "src/histogram",
+  "src/hpack",
+  "src/http1",
   "src/http_jsc",
   "src/http_types",
   "src/ini",
@@ -77,12 +80,13 @@ members = [
   "src/js_parser",
   "src/js_parser_jsc",
   "src/js_printer",
-  "src/libdeflate_sys",
+  "src/deflate",
   "src/libuv_sys",
   "src/ast",
   "src/ast_jsc",
-  "src/picohttp",
   "src/png",
+  "src/jpeg",
+  "src/webp",
   "src/s3_signing",
   "src/sql_jsc",
   "src/zlib",
@@ -90,7 +94,6 @@ members = [
   "src/platform",
   "src/sha_hmac",
   "src/sys_jsc",
-  "src/zlib_sys",
   "src/dispatch",
   "src/brotli",
   "src/bundler_jsc",
@@ -103,7 +106,6 @@ members = [
   "src/jsc_macros",
   "src/ptr",
   "src/boringssl",
-  "src/brotli_sys",
   "src/bun_alloc",
   "src/mimalloc_sys",
   "src/semver_jsc",
@@ -112,6 +114,7 @@ members = [
   "src/wyhash",
   "src/yarr",
   "src/node_path",
+  "src/test_schedule",
   "src/text_diff",
   "src/hash",
   "src/boringssl_sys",
@@ -130,7 +133,6 @@ members = [
   "src/runtime",
   "src/simdutf_sys",
   "src/which",
-  "src/transpiler",
   "src/react_compiler",
   "src/spawn",
   "src/spawn_sys",
@@ -275,7 +277,7 @@ map_clone = "deny"
 trivially_copy_pass_by_ref = "deny"
 large_types_passed_by_value = "deny"
 large_enum_variant = "deny"
-large_stack_frames = "deny"
+large_unopt_stack_frames = "deny"
 vec_init_then_push = "deny"
 format_collect = "deny"
 manual_memcpy = "deny"
@@ -353,22 +355,18 @@ only_used_in_recursion = "allow"
 unnecessary_cast = "allow"
 new_ret_no_self = "allow"
 map_identity = "allow"
+# `v = Vec::new()` is how a buffer over its retention cap is freed; `clear()` keeps it
+new_instead_of_clear = "allow"
 
 [workspace.dependencies]
 rust-argon2 = { path = "vendor/rust-argon2" }
 bcrypt = "0.19"
 getrandom = "0.4"
 strum = { version = "0.26", features = ["derive"] }
-# `allocator-api2` feature gives `hashbrown::HashMap<K, V, S, A>` an externally-
-# implementable `A` bound. We can't use hashbrown's own `nightly` feature (which
-# would bind `A` to `core::alloc::Allocator` directly) because it also enables
-# `min_specialization` on `T: Copy`, which our pinned nightly rejects with
-# "cannot specialize on trait `Copy`". And we can't enable `allocator-api2`'s
-# `nightly` re-export either — that makes hashbrown name `core::alloc::Allocator`
-# without `#![feature(allocator_api)]`. So: use the polyfill trait, and bridge
-# `bun_alloc::{AstAlloc, DefaultAlloc}` to it (see `bun_alloc/hashbrown_bridge.rs`).
+# hashbrown's `A` is bounded on `allocator-api2`'s trait, which that crate's `nightly` feature makes a re-export of
+# `core::alloc::Allocator`. hashbrown's own `nightly` feature does not compile ("cannot specialize on trait `Copy`").
 hashbrown = { version = "0.15", default-features = false, features = ["inline-more", "allocator-api2"] }
-allocator-api2 = { version = "0.2", default-features = false, features = ["alloc"] }
+allocator-api2 = { version = "0.2", default-features = false, features = ["alloc", "nightly"] }
 bstr = { version = "1", default-features = false, features = ["alloc"] }
 scopeguard = "1"
 const_format = "0.2"
@@ -438,6 +436,7 @@ bun_cares_sys = { path = "src/cares_sys" }
 bun_clap = { path = "src/clap" }
 bun_clap_macros = { path = "src/clap_macros" }
 bun_crash_handler = { path = "src/crash_handler" }
+bun_cron = { path = "src/cron" }
 bun_csrf = { path = "src/csrf" }
 bun_css_jsc = { path = "src/css_jsc" }
 bun_dns = { path = "src/dns" }
@@ -449,6 +448,8 @@ bun_trim = { path = "src/trim" }
 bun_removable_features = { path = "src/trim/removable_features" }
 bun_highway = { path = "src/highway" }
 bun_histogram = { path = "src/histogram" }
+bun_hpack = { path = "src/hpack" }
+bun_http1 = { path = "src/http1" }
 bun_http_jsc = { path = "src/http_jsc" }
 bun_http_types = { path = "src/http_types" }
 bun_ini = { path = "src/ini" }
@@ -457,12 +458,12 @@ bun_install_types = { path = "src/install_types" }
 bun_js_parser = { path = "src/js_parser" }
 bun_js_parser_jsc = { path = "src/js_parser_jsc" }
 bun_js_printer = { path = "src/js_printer" }
-bun_libdeflate_sys = { path = "src/libdeflate_sys" }
+bun_deflate = { path = "src/deflate" }
 bun_libuv_sys = { path = "src/libuv_sys" }
 bun_ast = { path = "src/ast" }
 bun_ast_jsc = { path = "src/ast_jsc" }
-bun_picohttp = { path = "src/picohttp" }
 bun_png = { path = "src/png" }
+bun_jpeg = { path = "src/jpeg" }
 bun_s3_signing = { path = "src/s3_signing" }
 bun_sql_jsc = { path = "src/sql_jsc" }
 bun_zlib = { path = "src/zlib" }
@@ -470,7 +471,6 @@ bun_patch = { path = "src/patch" }
 bun_platform = { path = "src/platform" }
 bun_sha_hmac = { path = "src/sha_hmac" }
 bun_sys_jsc = { path = "src/sys_jsc" }
-bun_zlib_sys = { path = "src/zlib_sys" }
 bun_dispatch = { path = "src/dispatch" }
 bun_brotli = { path = "src/brotli" }
 bun_bundler_jsc = { path = "src/bundler_jsc" }
@@ -483,7 +483,6 @@ bun_jsc = { path = "src/jsc" }
 bun_jsc_macros = { path = "src/jsc_macros" }
 bun_ptr = { path = "src/ptr" }
 bun_boringssl = { path = "src/boringssl" }
-bun_brotli_sys = { path = "src/brotli_sys" }
 bun_alloc = { path = "src/bun_alloc" }
 bun_mimalloc_sys = { path = "src/mimalloc_sys" }
 bun_semver_jsc = { path = "src/semver_jsc" }
@@ -492,6 +491,7 @@ bun_uws = { path = "src/uws" }
 bun_wyhash = { path = "src/wyhash" }
 bun_yarr = { path = "src/yarr" }
 bun_node_path = { path = "src/node_path" }
+bun_test_schedule = { path = "src/test_schedule" }
 bun_text_diff = { path = "src/text_diff" }
 bun_hash = { path = "src/hash" }
 bun_boringssl_sys = { path = "src/boringssl_sys" }
@@ -511,12 +511,37 @@ bun_options_types = { path = "src/options_types" }
 bun_bunfig = { path = "src/bunfig" }
 bun_output = { path = "src/output" }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
+bun_webp = { path = "src/webp" }
 bun_which = { path = "src/which" }
-bun_transpiler = { path = "src/transpiler" }
 
 # Loops over every byte of an image: unoptimized, a debug build takes seconds per megapixel. Assertions and overflow
-# checks stay on. scripts/build/flags.ts does the same for highway_png.cpp.
+# checks stay on. scripts/build/flags.ts does the same for highway_png.cpp, highway_jpeg.cpp and highway_webp_*.cpp.
 [profile.dev.package.bun_png]
+opt-level = 3
+[profile.dev.package.bun_jpeg]
+opt-level = 3
+
+[profile.dev.package.bun_webp]
+opt-level = 3
+
+# Loops over every byte that is compressed or decompressed.
+[profile.dev.package.bun_deflate]
+opt-level = 3
+
+# Unoptimized, the default quality takes seconds for a few kilobytes.
+[profile.dev.package.bun_brotli]
+opt-level = 3
+
+# Runs for every line of a response head and every chunk of a body.
+[profile.dev.package.bun_http1]
+opt-level = 3
+
+# Runs for every field of an HTTP/2 header block.
+[profile.dev.package.bun_hpack]
+opt-level = 3
+
+# Runs for every byte that is compressed or decompressed.
+[profile.dev.package.bun_zlib]
 opt-level = 3
 
 # It stands in for vector code that every test program runs over each byte it parses.

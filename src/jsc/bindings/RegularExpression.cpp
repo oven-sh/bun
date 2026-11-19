@@ -92,14 +92,13 @@ extern "C" int Yarr__RegularExpression__matches(Bun::RegularExpression* re, cons
 // Null if Yarr refuses the pattern: then `refusal` is set, otherwise `offsetsSize`.
 extern "C" Bun::RegularExpression* Yarr__RegularExpression__compile(const void* characters, uint32_t length, bool is8Bit, uint16_t flags, uint32_t* offsetsSize, uint8_t* refusal)
 {
-    auto* re = new Bun::RegularExpression(WTF::StringView(characters, length, is8Bit), flags);
+    auto re = std::make_unique<Bun::RegularExpression>(WTF::StringView(characters, length, is8Bit), flags);
     if (!re->bytecode) {
         *refusal = static_cast<uint8_t>(re->refusal());
-        delete re;
         return nullptr;
     }
     *offsetsSize = re->bytecode->m_offsetsSize;
-    return re;
+    return re.release();
 }
 
 // `offsets` has room for the `offsetsSize` of `compile`. What a match leaves there: `Compiled::exec` in src/yarr/lib.rs.

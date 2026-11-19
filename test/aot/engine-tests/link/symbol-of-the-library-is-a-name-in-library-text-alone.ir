@@ -1,0 +1,50 @@
+# node:http keeps the headers of a response under a symbol of its own in a form of its own, which only its own text finds by name. Whoever else looks under the symbol does so with a key that is a value,
+# and the run time first calls what the library has registered for the holders of the field (prepareHoldersBeforeLookupsUnder). If the read in the application were built by name, it would find the raw form.
+# node:http:  const kHeaders = Symbol("kHeaders");  function headersOf(o) { return o[kHeaders] }         main.js, of the same variable:  function read(o) { return o[kHeaders] }
+# All that the variable holds is the one symbol, and the read in main.js still goes by the value of its key.
+# LIBRARY: own
+# RUN: link accesses variables mechanisms=all
+# CHECK: access f2 v2 under symbol("kHeaders")@m1:0
+# CHECK-NOT: access
+# CHECK: variable g0 proven=symbol
+
+layout L0 module=m1 fields=[{key=symbol("kHeaders")@m1:0 declared={type=anything}}]
+variable g0 name="kHeaders" module=m1 declared={type=anything} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="node:http" displayPath="node:http" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeHttp body=f1
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="node:http"
+    v1 = NewObject layout=L0 fields=[]
+    v2 = FinishObject v1
+    v3 = NewClosure function=f3
+    v4 = Call v3, -, v2 calleeName="read"
+    v5 = Undefined
+    Return v5
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="kHeaders"
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=0
+    PutModuleVariable v2 variable=g0
+    v4 = NewObject layout=L0 fields=[]
+    v5 = FinishObject v4
+    v6 = NewClosure function=f2
+    v7 = Call v6, -, v5 calleeName="headersOf"
+    v8 = Undefined
+    Return v8
+}
+function f2 name="headersOf" module=m1 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f3 name="read" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = ElemGet v0, v1
+    Return v2
+}

@@ -1,0 +1,11 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# const same = (_: any, __: any): any => undefined;
+# let probe: any;
+# class Box { @same static accessor #x = 7; [(probe = eval("(o) => o.#x"), "k")](): void {} }
+# print(probe(Box));
+# -- end of source
+# The same where the class object holds the accessor.
+# RUN: run-in-shell
+# CHECK: 7
+# CHECK-NEXT: exited with 0

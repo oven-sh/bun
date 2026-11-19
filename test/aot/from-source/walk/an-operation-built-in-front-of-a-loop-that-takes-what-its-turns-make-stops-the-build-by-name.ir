@@ -1,0 +1,125 @@
+# -- source: main.mjs
+# class Circle { constructor() { this.kind = "circle"; } }
+# class Square { constructor() { this.kind = "square"; } }
+# function run(shape, n) { const isCircle = shape instanceof Circle; let total = 0; for (let i = 0; i < n; i++) { if (!(shape instanceof Square)) break; total += isCircle ? 1 : 2; } return total; }
+# const n = JSON.parse("4");
+# console.log(run(new Square(), n), run(new Circle(), n));
+# -- end of source
+# Whatever the walk builds into a block that stands in front of an open loop may take only what stands in front of that loop. That is asked where every operation is built, in every build, and a no stops the
+# build by name: without it such code was built in silence and the executable died where the function's body should have been (exit 132).
+# The lying word passes over the question that keeps this branch in its turn, so that its arms go in front and name `shape` by a record of the turn: the red control of that question and of every net over it.
+# RUN: compile mechanisms=all testing=AssumeInvariantOperands
+# DIAGNOSTIC: HoistedOperandNotInvariant
+
+module m0 path="main.mjs" displayPath="main.mjs" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Circle" module=m0 position=6 constructor=f2 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}] place=6 ownFieldCount=1
+layout L1 kind=Instance name="Square" module=m0 position=63 constructor=f3 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}] place=63 ownFieldCount=1
+variable g0 name="Circle" module=m0 declared={type=absent|f2 flags=[IsFromCompiler]} flags=[IsImmutable] place=2
+variable g1 name="Square" module=m0 declared={type=absent|f3 flags=[IsFromCompiler]} flags=[IsImmutable] place=6
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=33
+variable g3 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=41
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = NewClass v2 layout=L0 @0
+    PutModuleVariable v3 variable=g2 @0
+    v5 = FinishClass v3 layout=L0 @0
+    v6 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @0
+    v7 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @0
+    PutModuleVariable v7 variable=g0 @0
+    v9 = NewClosure function=f3 @57
+    v10 = NewClass v9 layout=L1 @57
+    PutModuleVariable v10 variable=g3 @57
+    v12 = FinishClass v10 layout=L1 @57
+    v13 = Convert v12 declared={type=f3 flags=[IsFromCompiler]} @57
+    v14 = Convert v12 declared={type=f3 flags=[IsFromCompiler]} @57
+    PutModuleVariable v14 variable=g1 @57
+    v16 = Builtin builtin=JSON @320
+    v17 = PropGet v16 key="parse" @320
+    v18 = Convert v17 declared={type=builtin(JSONParse) flags=[IsExpected]} @320
+    v19 = String string="4" @331
+    v20 = Call v18, v16, v19 calleeKey="parse" calleeName="JSON.parse" @325
+    v21 = Builtin builtin=GlobalThis @337
+    v22 = PropGet v21 key="console" [isFreeName] @337
+    v23 = Convert v22 declared={type=builtin(Console) flags=[IsExpected]} @337
+    v24 = PropGet v23 key="log" @337
+    v25 = Convert v24 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @337
+    v26 = Construct v14 calleeName="Square" @357
+    v27 = Call v1, -, v26, v20 calleeName="run" @349
+    v28 = Construct v7 calleeName="Circle" @379
+    v29 = Call v1, -, v28, v20 calleeName="run" @371
+    v30 = Call v25, v23, v27, v29 calleeKey="log" calleeName="console.log" @345
+    v31 = Undefined @337
+    Return v31 @337
+}
+function f1 name="run" module=m0 position=114 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0|L1, v1: anything):
+    v2 = GetModuleVariable variable=g0 @173
+    v3 = CheckInitialized v2 name="Circle" @173
+    v4 = InstanceOf v0, v3 @162
+    v5 = Integer @193
+    v6 = Convert v5 declared={type=number flags=[IsExpected]} @193
+    v7 = Integer @209
+    v8 = Convert v7 declared={type=number flags=[IsExpected]} @209
+    Jump -> next b1(v6, v8) @205
+  b1(v9, v10):
+    LoopHint @205
+    v12 = Less v10, v1 @216
+    Branch v12 -> taken b2(), notTaken b7() @216
+  b2():
+    v13 = GetModuleVariable variable=g1 @249
+    v14 = CheckInitialized v13 name="Square" @249
+    v15 = InstanceOf v0, v14 @238
+    v16 = ToBoolean v15 @232
+    Branch v16 -> taken b3(| 0), notTaken b7() @232
+  b3(v17):
+    v18 = ToBoolean v4 @274
+    Branch v18 -> taken b4(| 0), notTaken b5(| 0) @274
+  b4(v19):
+    v20 = Integer integer=1 @285
+    Jump -> next b6(v20) @285
+  b5(v21):
+    v22 = Integer integer=2 @289
+    Jump -> next b6(v22) @289
+  b6(v23):
+    v24 = Add v9, v23 @289
+    v25 = Convert v24 declared={type=number flags=[IsExpected]} @265
+    v26 = Increment v10 @219
+    v27 = Convert v26 declared={type=number flags=[IsExpected]} @219
+    Jump -> next b1(v25, v27) @219
+  b7():
+    Return v9 @301
+}
+function f2 name="Circle" module=m0 position=26 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @26
+    v2 = NewObject v1 layout=L0 @26
+    v3 = Convert v2 declared={type=L0} @26
+    v4 = String string="circle" @43
+    PropSet v3, v4 key="kind" @31
+    v6 = Undefined @31
+    v7 = TypeTest v6 testedType=object @31
+    Branch v7 -> taken b1(| 0), notTaken b2(v3) @31
+  b1(v8):
+    Jump -> next b2(v8) @31
+  b2(v9):
+    Return v9 @31
+}
+function f3 name="Square" module=m0 position=83 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1 @83
+    v2 = NewObject v1 layout=L1 @83
+    v3 = Convert v2 declared={type=L1} @83
+    v4 = String string="square" @100
+    PropSet v3, v4 key="kind" @88
+    v6 = Undefined @88
+    v7 = TypeTest v6 testedType=object @88
+    Branch v7 -> taken b1(| 0), notTaken b2(v3) @88
+  b1(v8):
+    Jump -> next b2(v8) @88
+  b2(v9):
+    Return v9 @88
+}

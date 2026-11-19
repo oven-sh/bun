@@ -5,6 +5,7 @@
 #include "DOMIsoSubspaces.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
+#include "JSDOMPrototype.h"
 #include "JSDOMWrapperCache.h"
 #include "JSCompressionStream.h"
 #include "JSDecompressionStream.h"
@@ -20,7 +21,6 @@
 
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ExceptionHelpers.h>
-#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
@@ -94,54 +94,23 @@ namespace WebCore {
 using namespace JSC;
 using namespace Bun::WebStreams;
 
-static JSC_DECLARE_CUSTOM_GETTER(jsTransformStreamDefaultControllerConstructorGetter);
 static JSC_DECLARE_CUSTOM_GETTER(jsTransformStreamDefaultControllerPrototypeGetter_desiredSize);
 static JSC_DECLARE_HOST_FUNCTION(jsTransformStreamDefaultControllerPrototypeFunction_enqueue);
 static JSC_DECLARE_HOST_FUNCTION(jsTransformStreamDefaultControllerPrototypeFunction_error);
 static JSC_DECLARE_HOST_FUNCTION(jsTransformStreamDefaultControllerPrototypeFunction_terminate);
 static JSC_DECLARE_HOST_FUNCTION(jsTransformStreamDefaultControllerPrototype_inspectCustom);
 
-class JSTransformStreamDefaultControllerPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSTransformStreamDefaultControllerPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSTransformStreamDefaultControllerPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSTransformStreamDefaultControllerPrototype))) JSTransformStreamDefaultControllerPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTransformStreamDefaultControllerPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSTransformStreamDefaultControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTransformStreamDefaultControllerPrototype, JSTransformStreamDefaultControllerPrototype::Base);
+using JSTransformStreamDefaultControllerPrototype = JSDOMPrototype<JSTransformStreamDefaultController>;
 
 static const HashTableValue JSTransformStreamDefaultControllerPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTransformStreamDefaultControllerConstructorGetter, 0 } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSTransformStreamDefaultControllerPrototype::constructorGetter, 0 } },
     { "desiredSize"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor, NoIntrinsic, { HashTableValue::GetterSetterType, jsTransformStreamDefaultControllerPrototypeGetter_desiredSize, 0 } },
     { "enqueue"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTransformStreamDefaultControllerPrototypeFunction_enqueue, 0 } },
     { "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTransformStreamDefaultControllerPrototypeFunction_error, 0 } },
     { "terminate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTransformStreamDefaultControllerPrototypeFunction_terminate, 0 } },
 };
 
-const ClassInfo JSTransformStreamDefaultControllerPrototype::s_info = { "TransformStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamDefaultControllerPrototype) };
+template<> const ClassInfo JSTransformStreamDefaultControllerPrototype::s_info = { "TransformStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamDefaultControllerPrototype) };
 
 JSC_DEFINE_HOST_FUNCTION(jsTransformStreamDefaultControllerPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -156,7 +125,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTransformStreamDefaultControllerPrototype_inspectCust
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "TransformStreamDefaultController"_s, data));
 }
 
-void JSTransformStreamDefaultControllerPrototype::finishCreation(VM& vm)
+template<> void JSTransformStreamDefaultControllerPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSTransformStreamDefaultController::info(), JSTransformStreamDefaultControllerPrototypeTableValues, *this);
@@ -165,17 +134,6 @@ void JSTransformStreamDefaultControllerPrototype::finishCreation(VM& vm)
 }
 
 template<> const ClassInfo JSTransformStreamDefaultControllerConstructor::s_info = { "TransformStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamDefaultControllerConstructor) };
-
-template<> JSValue JSTransformStreamDefaultControllerConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    UNUSED_PARAM(vm);
-    return globalObject.functionPrototype();
-}
-
-template<> void JSTransformStreamDefaultControllerConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    initializeBaseProperties(vm, 0, "TransformStreamDefaultController"_s, JSTransformStreamDefaultController::prototype(vm, globalObject));
-}
 
 const ClassInfo JSTransformStreamDefaultController::s_info = { "TransformStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamDefaultController) };
 
@@ -204,9 +162,7 @@ Structure* JSTransformStreamDefaultController::createStructure(VM& vm, JSGlobalO
 
 JSObject* JSTransformStreamDefaultController::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSTransformStreamDefaultControllerPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
-    structure->setMayBePrototype(true);
-    return JSTransformStreamDefaultControllerPrototype::create(vm, &globalObject, structure);
+    return JSTransformStreamDefaultControllerPrototype::create(vm, globalObject, globalObject.objectPrototype());
 }
 
 JSObject* JSTransformStreamDefaultController::prototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -271,16 +227,6 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSPerformTransformRejected, (JSGl
 
 // Prototype accessors & methods.
 
-JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamDefaultControllerConstructorGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSTransformStreamDefaultControllerPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(globalObject, scope);
-    return JSValue::encode(JSTransformStreamDefaultController::getConstructor(vm, prototype->globalObject()));
-}
-
 JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamDefaultControllerPrototypeGetter_desiredSize, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = getVM(globalObject);
@@ -341,26 +287,18 @@ namespace WebStreams {
 using namespace JSC;
 using namespace WebCore;
 
-extern "C" void CompressionStreamCoder__destroy(void*);
-extern "C" void TextEncoderStreamEncoder__destroyForStream(void*);
-extern "C" void TextDecoder__destroyForStream(void*);
-
-// Drop the native coder/decoder now rather than waiting for the cell's finalizer: a
-// CompressionStream's zlib/brotli/zstd state is hundreds of KB of window buffer, and
-// finalizers run late (main-thread, typically only at full GC), so relying on them for
-// this in a hot pipe loop lets native memory grow unbounded. The finalizer stays as an
-// idempotent fallback for an abandoned stream that never reaches a terminal.
+// The cell is destroyed late, and a CompressionStream's zlib/brotli/zstd state is hundreds of KB: a hot pipe loop can't wait.
 void nativeTransformReleaseState(JSTransformStream* stream)
 {
     stream->m_nativeStateReleasePending = false;
     if (auto* s = dynamicDowncast<JSCompressionStream>(stream))
-        CompressionStreamCoder__destroy(std::exchange(s->m_coder, nullptr));
+        s->m_coder = nullptr;
     else if (auto* s = dynamicDowncast<JSDecompressionStream>(stream))
-        CompressionStreamCoder__destroy(std::exchange(s->m_coder, nullptr));
+        s->m_coder = nullptr;
     else if (auto* s = dynamicDowncast<JSTextEncoderStream>(stream))
-        TextEncoderStreamEncoder__destroyForStream(std::exchange(s->m_encoder, nullptr));
+        s->m_encoder = nullptr;
     else if (auto* s = dynamicDowncast<JSTextDecoderStream>(stream))
-        TextDecoder__destroyForStream(std::exchange(s->m_decoder, nullptr));
+        s->m_decoder = nullptr;
 }
 
 void nativeTransformReleaseStateIfIdle(JSTransformStream* stream)

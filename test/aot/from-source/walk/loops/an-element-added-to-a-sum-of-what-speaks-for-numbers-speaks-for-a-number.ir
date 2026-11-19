@@ -1,0 +1,11 @@
+# `total = total + rows[place] + more[place]`: an element speaks for a number where it is added to a parameter of a loop's head, to what an operator on numbers makes, to a written number or to another element under an index. `more[place]` is added to the SUM `total + rows[place]`, and a sum said nothing, so the second list was not asked for beside the first.
+# A sum whose right side speaks for a number is looked through to its left side.
+# -- source: an-element-added-to-a-sum-of-what-speaks-for-numbers-speaks-for-a-number.cjs
+# const rows = JSON.parse("[1, 2, 3, 4.5]"), more = JSON.parse("[2, 3, 4, 5]");
+# function sum(start) { let total = start; for (let place = 0; place < rows.length; place++) total = total + rows[place] + more[place]; return total; }
+# print(sum([].length + 1));
+# -- end of source
+# RUN(COUNT): compile ArraysGuardedBesideArrays mechanisms=all
+# COUNT: statistic ArraysGuardedBesideArrays 2
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 25.5

@@ -1,4 +1,11 @@
 // Calls from a module to functions of JavaScript: each type of argument and result, more arguments than there are registers, results that have to be converted, and results that cannot be.
+// STATISTIC: WasmOptimizedCopies = 10
+// STATISTIC: WasmBaselineCopies = 1
+// STATISTIC: WasmOptimizedCheckingCopies = 0
+// STATISTIC: WasmBaselineCheckingCopies = 0
+// COUNTER in every build: WasmInstancesUsingImageCode = 2
+// COUNTER in every build: WasmInstancesInterpreted = 0
+// COUNTER in every build: WasmModulesFoundBeforeParsing = 2
 /// <reference path="../wasm-files.d.ts" />
 // Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
 import path from "./module.wasm";

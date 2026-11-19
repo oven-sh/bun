@@ -1,38 +1,38 @@
-//! The gzip container (RFC 1952). DEFLATE itself is zlib's.
+//! The gzip container (RFC 1952). DEFLATE itself is in `bun_zlib`.
 
 use crate::error::{Error, Result};
 use crate::output::Output;
-use bun_alloc::AllocError;
+use crate::reader::Dialect;
 use bun_core::strings;
-use bun_zlib::{InflateDecoder, ReturnCode, crc32_bytes};
+use bun_deflate::gzip::{
+    HAS_COMMENT, HAS_EXTRA, HAS_HEADER_CRC, HAS_NAME, HEADER_LEN, MAGIC_AND_METHOD, RESERVED,
+    TRAILER_LEN, UNKNOWN_SYSTEM, plain_header, trailer_for,
+};
+use bun_highway::crc32;
+use bun_zlib::{Deflater, GZIP_ID, Inflater, deflate, inflate};
 
-mod flag {
-    pub(super) const HEADER_CRC: u8 = 2;
-    pub(super) const EXTRA: u8 = 4;
-    pub(super) const NAME: u8 = 8;
-    pub(super) const COMMENT: u8 = 16;
-    pub(super) const RESERVED: u8 = 0xe0;
-}
-
-const RAW_DEFLATE: core::ffi::c_int = -15;
-/// The two identification bytes, and the compression method, which is always DEFLATE.
-const MAGIC: [u8; 3] = [0x1f, 0x8b, 8];
-const FLAGS: usize = MAGIC.len();
-const FIXED_HEADER_SIZE: usize = 10;
+const FLAGS: usize = MAGIC_AND_METHOD.len();
 /// The length of the extra field, and the CRC-16 of the header.
 const SHORT_SIZE: usize = 2;
-/// The CRC-32 and the size.
-const TRAILER_SIZE: usize = 8;
 
-fn fixed_header_flags(fixed: &[u8; FIXED_HEADER_SIZE]) -> Option<u8> {
+fn fixed_header_flags(fixed: &[u8; HEADER_LEN]) -> Option<u8> {
     let flags = fixed[FLAGS];
-    (fixed.starts_with(&MAGIC) && flags & flag::RESERVED == 0).then_some(flags)
+    (fixed.starts_with(&MAGIC_AND_METHOD) && flags & RESERVED == 0).then_some(flags)
+}
+
+/// All that npm looks at.
+pub(crate) fn starts_with_id(data: &[u8]) -> bool {
+    data.starts_with(&GZIP_ID)
 }
 
 /// Whether `data` starts like a gzip header. The optional fields are not looked at.
-pub(crate) fn starts_like_header(data: &[u8]) -> bool {
-    data.first_chunk::<FIXED_HEADER_SIZE>()
+pub fn starts_like_header(data: &[u8]) -> bool {
+    data.first_chunk::<HEADER_LEN>()
         .is_some_and(|fixed| fixed_header_flags(fixed).is_some())
+}
+
+fn is_zero(bytes: &[u8]) -> bool {
+    strings::index_of_not_char(bytes, 0).is_none()
 }
 
 // https://github.com/libarchive/libarchive/blob/27cbc7827172698143e440801fc0ba39ccb4f1f5/libarchive/archive_read_support_filter_gzip.c#L120
@@ -59,6 +59,8 @@ enum State {
     HeaderCrc,
     Body,
     Trailer,
+    /// Zeros behind a member.
+    Padding,
     Done,
     Failed(Error),
 }
@@ -76,32 +78,42 @@ pub enum Progress {
 /// Decompresses a sequence of gzip members, checking the CRC-32 and the size of each.
 pub struct Decoder {
     state: State,
-    inflate: InflateDecoder,
+    inflater: Inflater,
     flags: u8,
-    small: [u8; FIXED_HEADER_SIZE],
+    small: [u8; HEADER_LEN],
     small_len: usize,
     /// How much of the current header is behind us.
     header_len: usize,
     /// The current header started in an earlier piece of input.
     header_spilled: bool,
+    npm: bool,
+    /// Something other than zeros was found behind the last member.
+    left_data: bool,
     crc: u32,
     /// Modulo 2^32, like the field it is compared with.
     size: u32,
 }
 
 impl Decoder {
-    pub fn new() -> Result<Self> {
-        Ok(Self {
+    pub fn new(dialect: Dialect) -> Self {
+        Self {
             state: State::Fixed,
-            inflate: InflateDecoder::new(RAW_DEFLATE).map_err(|_| Error::Alloc(AllocError))?,
+            inflater: Inflater::new(inflate::Container::Raw),
             flags: 0,
-            small: [0; FIXED_HEADER_SIZE],
+            small: [0; HEADER_LEN],
             small_len: 0,
             header_len: 0,
             header_spilled: false,
+            npm: dialect == Dialect::Npm,
+            left_data: false,
             crc: 0,
             size: 0,
-        })
+        }
+    }
+
+    /// After [`Progress::Done`]: npm may find more to decompress. Always `false` in the other dialect.
+    pub(crate) fn left_data_for_npm(&self) -> bool {
+        self.npm && self.left_data
     }
 
     /// Gathers `want` bytes in `small`. `false` when `input` ran out first.
@@ -126,17 +138,18 @@ impl Decoder {
     /// Moves to the first optional field at or behind `from` that the flags announce.
     fn next_header_field(&mut self, from: Field) {
         let has = |flag: u8| self.flags & flag != 0;
-        self.state = if from <= Field::Extra && has(flag::EXTRA) {
+        self.state = if from <= Field::Extra && has(HAS_EXTRA) {
             State::ExtraLength
-        } else if from <= Field::Name && has(flag::NAME) {
+        } else if from <= Field::Name && has(HAS_NAME) {
             State::Name
-        } else if from <= Field::Comment && has(flag::COMMENT) {
+        } else if from <= Field::Comment && has(HAS_COMMENT) {
             State::Comment
-        } else if from <= Field::HeaderCrc && has(flag::HEADER_CRC) {
+        } else if from <= Field::HeaderCrc && has(HAS_HEADER_CRC) {
             State::HeaderCrc
         } else {
             self.crc = 0;
             self.size = 0;
+            self.left_data = false;
             State::Body
         };
     }
@@ -197,12 +210,18 @@ impl Decoder {
             State::Done => Ok(Some(Progress::Done)),
 
             State::Fixed => {
-                if !self.gather(FIXED_HEADER_SIZE, input, used) {
+                let gathered = self.gather(HEADER_LEN, input, used);
+                self.left_data |= !is_zero(input.get(..*used).unwrap_or_default());
+                if !gathered {
                     return Ok(starved(self));
                 }
                 let Some(flags) = fixed_header_flags(&self.small) else {
-                    self.state = State::Done;
-                    return Ok(Some(Progress::Done));
+                    self.state = if self.npm {
+                        State::Padding
+                    } else {
+                        State::Done
+                    };
+                    return Ok(None);
                 };
                 self.flags = flags;
                 self.next_header_field(Field::Extra);
@@ -221,7 +240,7 @@ impl Decoder {
                 let left = left.saturating_sub(u16::try_from(take).unwrap_or(u16::MAX));
                 if left > 0 {
                     self.state = State::Extra(left);
-                    if eof && self.flags & (flag::NAME | flag::COMMENT | flag::HEADER_CRC) == 0 {
+                    if eof && self.flags & (HAS_NAME | HAS_COMMENT | HAS_HEADER_CRC) == 0 {
                         return Err(Error::TruncatedGzip);
                     }
                     return Ok(starved(self));
@@ -234,8 +253,15 @@ impl Decoder {
                     this.state = State::Done;
                     Ok(Some(Progress::Done))
                 };
+                let header_limit = if self.npm {
+                    usize::MAX
+                } else {
+                    SPILLED_HEADER_LIMIT
+                };
                 let looked_at = if self.header_spilled {
-                    let room = (SPILLED_HEADER_LIMIT + 1).saturating_sub(self.header_len);
+                    let room = header_limit
+                        .saturating_add(1)
+                        .saturating_sub(self.header_len);
                     input.get(..room.min(input.len())).unwrap_or_default()
                 } else {
                     input
@@ -243,7 +269,7 @@ impl Decoder {
                 let Some(end) = strings::index_of_char_usize(looked_at, 0) else {
                     *used = looked_at.len();
                     if looked_at.len() < input.len()
-                        || self.header_len.saturating_add(input.len()) > SPILLED_HEADER_LIMIT
+                        || self.header_len.saturating_add(input.len()) > header_limit
                     {
                         return not_a_header(self);
                     }
@@ -276,36 +302,32 @@ impl Decoder {
                     }
                     return Ok(Some(Progress::NeedInput));
                 }
-                let start = out.len();
-                let (consumed, code) = self.inflate.step_limited(input, out, room);
-                *used = consumed;
+                out.try_reserve(room)?;
+                let (start, mut rest) = (out.len(), input);
+                let status = self.inflater.inflate_to_vec(&mut rest, out, room);
+                *used = input.len().saturating_sub(rest.len());
                 let produced = out.get(start..).unwrap_or_default();
-                self.crc = crc32_bytes(self.crc, produced);
+                self.crc = crc32(self.crc, produced);
                 self.size = self.size.wrapping_add(produced.len() as u32);
-                match code {
-                    ReturnCode::Ok => Ok(None),
-                    ReturnCode::StreamEnd => {
-                        if self.inflate.reset() != ReturnCode::Ok {
-                            return Err(Error::GzipDecompressionFailed);
-                        }
+                match status {
+                    Ok(inflate::Status::StreamEnd) => {
+                        self.inflater.reset();
                         self.state = State::Trailer;
                         Ok(None)
                     }
-                    ReturnCode::MemError => Err(Error::Alloc(AllocError)),
-                    _ => Err(Error::GzipDecompressionFailed),
+                    Ok(_) => Ok(None),
+                    Err(bun_zlib::Error::Alloc(error)) => Err(Error::Alloc(error)),
+                    Err(_) => Err(Error::GzipDecompressionFailed),
                 }
             }
             State::Trailer => {
-                if !self.gather(TRAILER_SIZE, input, used) {
+                if !self.gather(TRAILER_LEN, input, used) {
                     if eof {
                         return Err(Error::TruncatedGzip);
                     }
                     return Ok(Some(Progress::NeedInput));
                 }
-                let [c0, c1, c2, c3, s0, s1, s2, s3, ..] = self.small;
-                if u32::from_le_bytes([c0, c1, c2, c3]) != self.crc
-                    || u32::from_le_bytes([s0, s1, s2, s3]) != self.size
-                {
+                if !self.small.starts_with(&trailer_for(self.crc, self.size)) {
                     return Err(Error::GzipTrailerMismatch);
                 }
                 self.state = State::Fixed;
@@ -314,6 +336,15 @@ impl Decoder {
                 // What follows a member is not looked at for a block that is already full.
                 Ok((out.len() >= limit).then_some(Progress::OutputFull))
             }
+            State::Padding => {
+                self.left_data |= !is_zero(input);
+                if self.left_data {
+                    self.state = State::Done;
+                    return Ok(None);
+                }
+                *used = input.len();
+                Ok(starved(self))
+            }
         }
     }
 }
@@ -321,7 +352,7 @@ impl Decoder {
 /// One gzip member with no name and no time, so the same input always gives the same bytes.
 pub struct Encoder<O: Output> {
     out: O,
-    deflate: bun_zlib::DeflateEncoder,
+    deflater: Box<Deflater>,
     buffer: Vec<u8>,
     crc: u32,
     size: u32,
@@ -330,11 +361,21 @@ pub struct Encoder<O: Output> {
 // https://github.com/libarchive/libarchive/blob/27cbc7827172698143e440801fc0ba39ccb4f1f5/libarchive/archive_write_add_filter_gzip.c#L206
 /// At level 0 the room `deflate()` is shown decides where a stored block ends.
 const ENCODER_BUFFER: usize = 61440;
-const OS_UNKNOWN: u8 = 255;
+
+fn compression_error(error: bun_zlib::Error) -> Error {
+    match error {
+        bun_zlib::Error::Alloc(error) => Error::Alloc(error),
+        _ => Error::GzipCompressionFailed,
+    }
+}
 
 impl<O: Output> Encoder<O> {
     /// `level` is 0 to 9.
     pub fn new(out: O, level: u8) -> Result<Self> {
+        let options = deflate::Options {
+            level: i32::from(level).try_into().map_err(compression_error)?,
+            ..Default::default()
+        };
         let mut buffer = Vec::new();
         buffer.try_reserve_exact(ENCODER_BUFFER)?;
         let extra_flags = match level {
@@ -342,12 +383,10 @@ impl<O: Output> Encoder<O> {
             1 => 4,
             _ => 0,
         };
-        buffer.extend_from_slice(&MAGIC);
-        buffer.extend_from_slice(&[0, 0, 0, 0, 0, extra_flags, OS_UNKNOWN]);
+        buffer.extend_from_slice(&plain_header(extra_flags, UNKNOWN_SYSTEM));
         Ok(Self {
             out,
-            deflate: bun_zlib::DeflateEncoder::new(i32::from(level), RAW_DEFLATE, 8, 0)
-                .map_err(|_| Error::Alloc(AllocError))?,
+            deflater: Deflater::new(deflate::Container::Raw, options).map_err(compression_error)?,
             buffer,
             crc: 0,
             size: 0,
@@ -364,22 +403,17 @@ impl<O: Output> Encoder<O> {
                 return Ok(());
             }
             let room = ENCODER_BUFFER.saturating_sub(self.buffer.len());
-            let (used, code) = self.deflate.step_limited(
-                input,
-                &mut self.buffer,
-                room,
-                if finishing {
-                    bun_zlib::FlushValue::Finish
-                } else {
-                    bun_zlib::FlushValue::NoFlush
-                },
-            );
-            input = input.get(used..).unwrap_or_default();
-            match code {
-                ReturnCode::Ok => {}
-                ReturnCode::StreamEnd => return Ok(()),
-                ReturnCode::MemError => return Err(Error::Alloc(AllocError)),
-                _ => return Err(Error::GzipCompressionFailed),
+            let flush = if finishing {
+                deflate::Flush::Finish
+            } else {
+                deflate::Flush::None
+            };
+            let status = self
+                .deflater
+                .deflate_limited(&mut input, &mut self.buffer, room, flush)
+                .map_err(compression_error)?;
+            if status == deflate::Status::StreamEnd {
+                return Ok(());
             }
         }
     }
@@ -387,17 +421,14 @@ impl<O: Output> Encoder<O> {
     pub fn finish(mut self) -> Result<O> {
         self.drive(&[], true)?;
         self.out.write(&self.buffer)?;
-        let mut trailer = [0u8; TRAILER_SIZE];
-        trailer[..4].copy_from_slice(&self.crc.to_le_bytes());
-        trailer[4..].copy_from_slice(&self.size.to_le_bytes());
-        self.out.write(&trailer)?;
+        self.out.write(&trailer_for(self.crc, self.size))?;
         Ok(self.out)
     }
 }
 
 impl<O: Output> Output for Encoder<O> {
     fn write(&mut self, bytes: &[u8]) -> Result<()> {
-        self.crc = crc32_bytes(self.crc, bytes);
+        self.crc = crc32(self.crc, bytes);
         self.size = self.size.wrapping_add(bytes.len() as u32);
         self.drive(bytes, false)
     }

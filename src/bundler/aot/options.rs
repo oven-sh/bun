@@ -111,7 +111,7 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> boo
         bytecode_order: _, compile_target_builtins: _, metafile: _, metafile_json_path: _,
         metafile_markdown_path: _, serve_plugins: _, bunfig_path: _, unwrap_commonjs_packages: _,
         supports_multiple_outputs: _, rewrite_jest_for_tests: _, vitest_globals: _,
-        test_file_imports_vitest: _, own_test_globals: _, code_coverage: _, debugger: _,
+        test_file_imports_vitest: _, own_test_globals: _, code_coverage: _, defers_requires: _, debugger: _,
     } = options;
 
     let is_development_server = framework.is_some() || !dev_server.is_null() || *hot_module_reloading;
@@ -124,7 +124,7 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> boo
         bytecode.then_some("--bytecode"),
         transform_only.then_some("--no-bundle"),
         server_components.then_some("--server-components"),
-        (!matches!(allow_unresolved, AllowUnresolved::All)).then_some("--allow-unresolved"),
+        unresolved_argument(allow_unresolved),
         (!macro_remap.is_empty()).then_some("the \"macros\" map of bunfig.toml"),
         inject.as_ref().is_some_and(|list| !list.is_empty()).then_some("inject"),
         react_compiler_parse_test_pragmas.then_some("reactCompilerParseTestPragmas"),
@@ -140,6 +140,14 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> boo
         }
     }
     reported.is_empty()
+}
+
+fn unresolved_argument(allow_unresolved: &AllowUnresolved) -> Option<&'static str> {
+    match allow_unresolved {
+        AllowUnresolved::All => None,
+        AllowUnresolved::None => Some("--reject-unresolved"),
+        AllowUnresolved::Patterns(..) => Some("--allow-unresolved"),
+    }
 }
 
 fn format_argument(format: Format) -> Option<&'static str> {
@@ -408,7 +416,8 @@ fn root_directory(
             input.assets
         };
         let directory = widen_to_assets(input.working_directory, directory, assets);
-        return Some(real_directory_path(&directory).unwrap_or(directory));
+        let directory = real_directory_path(&directory).unwrap_or(directory);
+        return Some(widen_out_of_packages(directory));
     }
     let root_directory = absolute_path(input.working_directory, written);
     if root_directory.len() >= MAX_PATH_BYTES {
@@ -432,6 +441,18 @@ fn common_entry_directory(working_directory: &[u8], entry_points: &[Vec<u8>]) ->
         .collect();
     let common = absolute_path(working_directory, longest_common_path_of(&all));
     without_trailing_slash_windows_path(&common).to_vec()
+}
+
+fn widen_out_of_packages(directory: Vec<u8>) -> Vec<u8> {
+    let first_below_root = resolve_path::windows_volume_name_len(&directory).0 + 1;
+    let mut start = 0;
+    for folder in directory.split(|&byte| bun_paths::is_sep_any(byte)) {
+        if folder == b"node_modules" && start > first_below_root {
+            return directory[..start - 1].to_vec();
+        }
+        start += folder.len() + 1;
+    }
+    directory
 }
 
 /// Never above the working directory: the executable would name the folders of the machine that built it.
@@ -516,8 +537,7 @@ fn real_file_path(path: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
     name[..path.len()].copy_from_slice(path);
-    name[path.len()] = 0;
-    let name = bun_core::ZStr::from_buf(&name[..], path.len());
+    let name = bun_core::ZStr::nul_terminate(&mut name, path.len());
     let mut buffer = bun_paths::path_buffer_pool::get();
     Some(bun_sys::realpath(name, &mut buffer).ok()?.to_vec())
 }

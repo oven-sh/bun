@@ -82,8 +82,7 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stack
         return;
     }
 
-    auto sourceURL = Zig::sourceURL(vm, stackFrame);
-    frame.source_url = Bun::toStringRef(sourceURL);
+    frame.source_url = Bun::toStringRef(Zig::displayPath(vm, stackFrame));
     auto m_codeBlock = stackFrame.codeBlock();
     if (m_codeBlock) {
         switch (m_codeBlock->codeType()) {
@@ -130,9 +129,9 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stack
     frame.is_async = stackFrame.isAsyncFrame();
 }
 
-static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunString* source_lines,
+static void populateStackFramePosition(const JSC::StackFrame& stackFrame, Bun::OwnedString* source_lines,
     OrdinalNumber* source_line_numbers, uint8_t source_lines_count,
-    ZigStackFramePosition& position, JSC::SourceProvider** referenced_source_provider, PopulateStackTraceFlags flags)
+    ZigStackFramePosition& position, RefPtr<JSC::SourceProvider>& referenced_source_provider, PopulateStackTraceFlags flags)
 {
 #if ENABLE(AOT)
     if (stackFrame.isCompiledFrame()) [[unlikely]] {
@@ -196,12 +195,8 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
 
         // It is key to not clone this data because source code strings are large.
         // Usage of toStringView (non-owning) is safe as we ref the provider.
-        provider->ref();
-        if (*referenced_source_provider != nullptr) {
-            (*referenced_source_provider)->deref();
-        }
-        *referenced_source_provider = provider;
-        source_lines[0] = Bun::toStringView(sourceString.substring(lineStart, lineEnd - lineStart));
+        referenced_source_provider = provider;
+        source_lines[0] = Bun::OwnedString::adopt(Bun::toStringView(sourceString.substring(lineStart, lineEnd - lineStart)));
         source_line_numbers[0] = location.line();
 
         if (lineStart > 0) {
@@ -227,7 +222,7 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
                 }
 
                 // We are at the beginning of the line
-                source_lines[source_line_i] = Bun::toStringView(sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1));
+                source_lines[source_line_i] = Bun::OwnedString::adopt(Bun::toStringView(sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1)));
 
                 source_line_numbers[source_line_i] = location.line().fromZeroBasedInt(location.line().zeroBasedInt() - source_line_i);
                 source_line_i++;
@@ -241,7 +236,7 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
 }
 
 static void populateStackFrame(JSC::VM& vm, ZigStackTrace& trace, const JSC::StackFrame& stackFrame,
-    ZigStackFrame& frame, bool is_top, JSC::SourceProvider** referenced_source_provider, PopulateStackTraceFlags flags)
+    ZigStackFrame& frame, bool is_top, RefPtr<JSC::SourceProvider>& referenced_source_provider, PopulateStackTraceFlags flags)
 {
     if (flags == PopulateStackTraceFlags::OnlyPosition) {
         populateStackFrameMetadata(vm, stackFrame, frame);
@@ -268,6 +263,7 @@ public:
 
         bool isConstructor = false;
         bool isGlobalCode = false;
+        bool isFunction = false;
         bool isAsync = false;
     };
 
@@ -406,6 +402,8 @@ public:
         if (functionName == "global code"_s) {
             functionName = StringView();
             frame.isGlobalCode = true;
+        } else {
+            frame.isFunction = true;
         }
 
         if (functionName.startsWith("async "_s)) {
@@ -458,7 +456,7 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
 
             ZigStackFrame& frame = trace.frames_ptr[frame_i];
             frame.jsc_stack_frame_index = static_cast<int32_t>(stack_frame_i);
-            populateStackFrame(vm, trace, frames[stack_frame_i], frame, frame_i == 0, &trace.referenced_source_provider, flags);
+            populateStackFrame(vm, trace, frames[stack_frame_i], frame, frame_i == 0, trace.referenced_source_provider, flags);
             RETURN_IF_EXCEPTION(scope, );
             stack_frame_i++;
             frame_i++;
@@ -469,7 +467,7 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
             ZigStackFrame& frame = trace.frames_ptr[i];
             if (frame.jsc_stack_frame_index < 0 || static_cast<size_t>(frame.jsc_stack_frame_index) >= frames.size())
                 continue;
-            populateStackFrame(vm, trace, frames[frame.jsc_stack_frame_index], frame, i == 0, &trace.referenced_source_provider, flags);
+            populateStackFrame(vm, trace, frames[frame.jsc_stack_frame_index], frame, i == 0, trace.referenced_source_provider, flags);
             RETURN_IF_EXCEPTION(scope, );
         }
     }
@@ -653,6 +651,8 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
                             current.code_type = ZigStackFrameCodeConstructor;
                         } else if (frame.isGlobalCode) {
                             current.code_type = ZigStackFrameCodeGlobal;
+                        } else if (frame.isFunction) {
+                            current.code_type = ZigStackFrameCodeFunction;
                         }
 
                         except.stack.frames_len += 1;
@@ -675,7 +675,6 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
             return;
         if (sourceURL) {
             if (sourceURL.isString()) {
-                except.stack.frames_ptr[0].source_url.deref();
                 except.stack.frames_ptr[0].source_url = Bun::toStringRef(global, sourceURL);
                 if (!scope.clearExceptionExceptTermination()) [[unlikely]]
                     return;
@@ -834,9 +833,9 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
             auto* symbol = asSymbol(cell);
             auto& uid = symbol->uid();
             if (uid.isNullSymbol() || uid.isEmpty()) {
-                except.message = BunStringEmpty;
+                except.message = Bun::OwnedString::adopt(BunStringEmpty);
             } else {
-                except.message = Bun::toStringRef(static_cast<WTF::StringImpl*>(&uid));
+                except.message = Bun::toStringRef(WTF::String(static_cast<WTF::StringImpl&>(uid)));
             }
             return;
         }

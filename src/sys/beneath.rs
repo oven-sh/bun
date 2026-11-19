@@ -3,7 +3,7 @@
 use bun_core::{ZStr, strings};
 use bun_paths::path_buffer_pool;
 
-use crate::{CloseOnDrop, E, Error, Fd, Maybe, Mode, O, Tag};
+use crate::{Dir, E, Error, Fd, Maybe, Mode, O, Tag};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Symlinks {
@@ -177,9 +177,8 @@ fn in_parent<T>(
         return f(dir, z(path, &mut buf.0, tag)?);
     };
     let parent = z(&path[..slash], &mut buf.0, tag)?;
-    let parent = openat(dir, parent, SEARCH, 0, symlinks)?;
-    let _close = CloseOnDrop::new(parent);
-    f(parent, z(&path[slash + 1..], &mut buf.0, tag)?).map_err(|e| e.with_path(path))
+    let parent = Dir::from_fd(openat(dir, parent, SEARCH, 0, symlinks)?);
+    f(parent.fd(), z(&path[slash + 1..], &mut buf.0, tag)?).map_err(|e| e.with_path(path))
 }
 
 /// `O_NOFOLLOW` covers only the last component, so each one is opened by a call of its own.
@@ -189,9 +188,9 @@ fn open_component_by_component(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> 
     let mut names = strings::split(path.as_bytes(), b"/")
         .filter(|name| !name.is_empty())
         .peekable();
-    let mut current = dir;
-    let mut _close = None;
+    let mut opened: Option<Dir> = None;
     while let Some(name) = names.next() {
+        let current = opened.as_ref().map_or(dir, Dir::fd);
         if names.peek().is_none() {
             // `names` drops a last `/`, which the kernel takes to name a directory.
             let flags = match path.as_bytes().last() {
@@ -203,8 +202,8 @@ fn open_component_by_component(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> 
             };
             return crate::openat_a(current, name, flags | O::NOFOLLOW, mode).map_err(with_path);
         }
-        current = crate::openat_a(current, name, SEARCH | O::NOFOLLOW, 0).map_err(with_path)?;
-        _close = Some(CloseOnDrop::new(current));
+        let next = crate::openat_a(current, name, SEARCH | O::NOFOLLOW, 0).map_err(with_path)?;
+        opened = Some(Dir::from_fd(next));
     }
     Err(with_path(Error::from_code(E::ENOENT, Tag::open)))
 }
@@ -212,8 +211,9 @@ fn open_component_by_component(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> 
 /// `path` without its symlinks and with a NUL. Only what refuses symlinks may use it: the disk can change after this has read it.
 fn resolve_symlinks(dir: Fd, path: &ZStr, flags: i32, symlinks: Symlinks) -> Maybe<Vec<u8>> {
     fn read_link(dir: Fd, path: &mut Vec<u8>, target: &mut [u8]) -> Maybe<usize> {
+        let len = path.len();
         path.push(0);
-        let result = crate::readlinkat(dir, ZStr::from_slice_with_nul(path), target);
+        let result = crate::readlinkat(dir, ZStr::nul_terminate(path, len), target);
         path.pop();
         result
     }
@@ -311,8 +311,7 @@ fn z<'a>(path: &[u8], buf: &'a mut [u8], tag: Tag) -> Maybe<&'a ZStr> {
         return Err(Error::from_code(E::ENAMETOOLONG, tag).with_path(path));
     }
     buf[..path.len()].copy_from_slice(path);
-    buf[path.len()] = 0;
-    Ok(ZStr::from_buf(buf, path.len()))
+    Ok(ZStr::nul_terminate(buf, path.len()))
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -331,11 +330,8 @@ fn kernel_resolves_beneath(dir: Fd) -> Maybe<bool> {
     }
     let leave = || crate::openat(dir, bun_core::zstr!(".."), SEARCH | O_RESOLVE_BENEATH, 0);
     let known = kernel_may_resolve()
-        && match leave() {
-            Ok(fd) => {
-                let _ = crate::close(fd);
-                false
-            }
+        && match leave().map(crate::CloseOnDrop::new) {
+            Ok(_) => false,
             Err(err) => match i32::from(err.errno) {
                 ENOTCAPABLE => true,
                 // These say nothing about the flag, so they are not remembered.

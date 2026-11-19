@@ -21,7 +21,7 @@ fn is_pattern(entry: &[u8]) -> bool {
     has_wildcard || bun_glob::has_extglob_prefix(entry)
 }
 
-fn names(directory: &[u8], entry: &[u8], path: &[u8]) -> bool {
+pub(crate) fn names(directory: &[u8], entry: &[u8], path: &[u8]) -> bool {
     let mut long_path = Vec::new();
     let named = join_spill::<Posix>(&mut long_path, &[directory, entry]);
     match is_pattern(entry) {

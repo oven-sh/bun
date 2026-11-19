@@ -1,5 +1,5 @@
 // A freeze, a seal and preventExtensions show in neither the shape nor the slots of an object, so a typed store looks at its order word. What makes a property read only, an accessor or hidden takes it out of its slot.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 class Point { x; y; label; constructor(x, y) { this.x = x; this.y = y; } }
 function attempt(run) { try { return run(); } catch (e) { return e instanceof TypeError ? "TypeError" : "other"; } }

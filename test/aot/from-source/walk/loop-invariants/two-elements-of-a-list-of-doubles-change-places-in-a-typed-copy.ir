@@ -1,0 +1,12 @@
+# -- source: reversed-in-place.cjs
+# "use strict";
+# const a = []; for (let i = 0; i < 8; i++) a.push(i + 0.5);
+# function f() { for (let i = 0, j = a.length - 1; i < j; i++, j--) { const x = a[i]; a[i] = a[j]; a[j] = x; } return a[3]; }
+# sink(f);
+# -- end of source
+# A hole of raw doubles is their NaN, so what was read out of them and is there is no NaN. Neither store asks, and the second stands in a turn that has stored.
+# RUN: walk f1 mechanisms=all
+# CHECK: = PutDoubleIndex
+# CHECK: = PutDoubleIndex
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: = StrictEq

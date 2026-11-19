@@ -1,0 +1,17 @@
+# -- source: a-record-written-out-keeps-its-whole-numbers-beside-a-spread-under-its-names.ts
+# declare function sink(...values: unknown[]): void;
+# let state = { a: 0, b: 1, c: 2, d: 3 };
+# let other = { a: 0, b: 1, c: 2, d: 3 };
+# function written(n: number) { let s = 0; for (let i = 0, end = n | 0; i < end; i++) s = (s + (state = { a: i, b: state.b, c: state.c, d: state.d }).d) | 0; return s; }
+# function spread(n: number) { let s = 0; for (let i = 0, end = n | 0; i < end; i++) s = (s + (other = { ...other, a: i }).d) | 0; return s; }
+# const limits = JSON.parse("[3]");
+# sink(written(limits[0] | 0), spread(limits[0] | 0));
+# -- end of source
+# Every object that `state` holds is written out with a whole number in each of its four fields, so a read of one is a load and the sum stays on integers.
+# `other` never meets `state`. But a record is one layout for each set of names, so the literal that begins with a spread has to fill every field: it copies an object of its own layout.
+# f1 = written
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: GetSlotOrUndefined
+# CHECK: = GetSlot {{*}}key="b" receivers=[L{{*}}] level=Proven
+# CHECK-NOT: GetSlotOrUndefined
+# CHECK: = Add {{*}}form=Integers

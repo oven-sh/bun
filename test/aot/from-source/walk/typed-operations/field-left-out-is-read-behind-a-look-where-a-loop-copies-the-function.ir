@@ -7,7 +7,7 @@
 # for (let i = 0; i < 4; i++) payloads.push(i === 3 ? { aborted: true, count: i } : { count: i });
 # (globalThis as any).payloads = payloads;
 # let found = 0;
-# for (let i = 0; i < 4; i++) if (calledInLoop(payloads[i])) found++;
+# for (let i = 0; i < payloads.length; i++) if (calledInLoop(payloads[i])) found++;
 # print(found, calledOutsideOfLoops(payloads[3]), calledOutsideOfLoops(payloads[0]));
 # -- end of source
 # The records have left, and three of the four leave the field out. The object itself is asked what has become of it, and behind its answer an empty slot is undefined: in a loop, and wherever the file is checked, so that somebody has written what the receiver is.

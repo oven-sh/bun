@@ -11,15 +11,13 @@
 #   try { s += look({ first, second }); } catch { s++; }
 #   return s;
 # }
-# print(maker("a", "bc"));
+# const kept: any = { first: "x", second: "yy" };
+# print(maker("a", "bc") + look(kept));
 # -- end of source
 # f1 = look, f2 = maker
-# An object whose fields may hold cells is lent to a callee that only looks, under a handler of its maker's own frame. It lies in the frame: where the callee throws, the head of the handler clears what it held.
+# An object whose fields may hold cells is lent to a callee that only looks, under a handler of its maker's own frame. It lies in the frame.
 # RUN: walk f2 mechanisms=all-Inlining
 # CHECK-LABEL: code f2:Body
 # CHECK: = NewObject {{*}}storage=Frame
-# RUN(COUNT): compile UnitsCompiled WordsClearedAtHeadsOfHandlers mechanisms=all-Inlining
-# COUNT: statistic UnitsCompiled
-# COUNT: statistic WordsClearedAtHeadsOfHandlers 2
 # RUN(ANSWER): run-in-shell mechanisms=all
-# ANSWER: 6
+# ANSWER: 12

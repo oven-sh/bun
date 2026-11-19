@@ -1,6 +1,7 @@
 // A loop with guesses at values that it does not change is built twice: typed behind the tests, closed where one fails. Each loop here runs in both copies and is left by break, continue, return, throw, a label, finally and switch. What it defines is read behind it, behind two loops, on two ways, and by a hint alone. Loops stand three deep, side by side with a counter that goes on, and around a suspension.
 // The guard at the entry proves the parameters of many of these functions in the whole body. Without it each loop has its own tests.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
+// Under: --aot-testing=CheckEffectsAtRunTime: a birth that the sweep moves down to where a copy in line leaves for the call is no deed
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 class Box { x; constructor(x) { this.x = x; } }
 let calls = 0;

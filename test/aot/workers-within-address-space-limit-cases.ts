@@ -586,8 +586,9 @@ const symbols: symbol[] = new Array(last);
 let count = 0;
 while (count < first) symbols[count++] = Symbol();
 // No piece as large as a table of that many Symbols stays free, and there is room for whatever is small.
+// Letting go of the buffers of 256 MB makes room for the table. The allocator keeps its arenas of 128 MB, where the smaller ones are, and none of those holds it.
 const held: ArrayBuffer[] = [];
-for (const megabytes of [64, 32, 16, 8]) {
+for (const megabytes of [256, 64, 32, 16, 8]) {
   try {
     for (;;) held.push(new ArrayBuffer(megabytes * 1024 * 1024));
   } catch {}

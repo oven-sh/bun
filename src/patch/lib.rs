@@ -9,9 +9,9 @@ pub use error::{ApplyError, Error, Result};
 use core::mem;
 
 use bun_core::strings;
-use bun_core::{ZBox, ZStr};
+use bun_core::{CStrList, CStrRef, ZBox, ZStr};
 use bun_paths as paths;
-use bun_sys::{self as sys, Fd, FdExt};
+use bun_sys::{self as sys, Fd};
 
 bun_core::declare_scope!(Patch, visible);
 
@@ -78,7 +78,7 @@ impl<'a> PatchFile<'a> {
 
 fn delete_file(patch_dir: Fd, path: &[u8]) -> sys::Result<()> {
     let (parent, base) = resolve_target(patch_dir, path, None)?;
-    sys::unlinkat(parent.fd, &base)
+    sys::unlinkat(parent.fd(), &base)
 }
 
 fn rename_file(patch_dir: Fd, rename: &FileRename<'_>) -> sys::Result<()> {
@@ -86,21 +86,20 @@ fn rename_file(patch_dir: Fd, rename: &FileRename<'_>) -> sys::Result<()> {
         .map_err(|e| e.with_path(rename.from_path))?;
     let (to_parent, to_base) = resolve_target(patch_dir, rename.to_path, Some(CREATED_DIR_MODE))
         .map_err(|e| e.with_path(rename.to_path))?;
-    sys::renameat(from_parent.fd, &from_base, to_parent.fd, &to_base)
+    sys::renameat(from_parent.fd(), &from_base, to_parent.fd(), &to_base)
         .map_err(|e| e.with_path_dest(rename.from_path, rename.to_path))
 }
 
 fn create_file(patch_dir: Fd, creation: &FileCreation<'_>) -> sys::Result<()> {
     let (parent, base) = resolve_target(patch_dir, creation.path, Some(CREATED_DIR_MODE))?;
-    let (fd, _) = open_target_file(
-        parent.fd,
+    let (file, _) = open_target_file(
+        parent.fd(),
         &base,
         sys::O::CREAT | sys::O::RDWR,
         creation.mode.to_bun_mode(),
     )?;
-    let _close = sys::CloseOnDrop::new(fd);
     // `O_TRUNC` isn't used, so that a target that gets rejected hasn't already been emptied.
-    sys::ftruncate(fd, 0)?;
+    sys::ftruncate(file.fd(), 0)?;
 
     // A `@@ -0,0 +0,0 @@` header with no body parses to a hunk with zero parts.
     let Some(first_part) = creation.hunk.as_ref().and_then(|h| h.parts.first()) else {
@@ -110,37 +109,32 @@ fn create_file(patch_dir: Fd, creation: &FileCreation<'_>) -> sys::Result<()> {
     if !first_part.no_newline_at_end_of_file {
         contents.push(b'\n');
     }
-    sys::File::borrow(&fd).write_all(&contents)
+    file.write_all(&contents)
 }
 
 fn patch_file(patch_dir: Fd, patch: &FilePatch<'_>) -> Result<(), ApplyError> {
     let (parent, base) = resolve_target(patch_dir, patch.path, None)?;
-    apply_patch(patch, parent.fd, &base)
+    apply_patch(patch, parent.fd(), &base)
 }
 
 fn change_mode(patch_dir: Fd, change: &FileModeChange<'_>) -> sys::Result<()> {
     let (parent, base) = resolve_target(patch_dir, change.path, None)?;
-    let (fd, _) = open_target_file(parent.fd, &base, sys::O::RDONLY, 0)?;
+    let (file, _) = open_target_file(parent.fd(), &base, sys::O::RDONLY, 0)?;
     // On Windows, `fchmod` needs a CRT-backed fd. Closing that fd also closes the HANDLE.
-    let fd = fd.make_libuv_owned().map_err(|()| {
-        fd.close();
-        sys::Error::from_code(sys::E::EMFILE, sys::Tag::chmod)
-    })?;
-    let _close = sys::CloseOnDrop::new(fd);
-    sys::fchmod(fd, change.new_mode.to_bun_mode())
+    let file = file.make_lib_uv_owned_for_syscall(sys::Tag::chmod)?;
+    sys::fchmod(file.fd(), change.new_mode.to_bun_mode())
 }
 
 /// Hunks are placed by matching their `-` side, like `git apply` does, because the `+` line numbers
 /// can be stale.
 fn apply_patch(patch: &FilePatch<'_>, parent: Fd, base: &ZStr) -> Result<(), ApplyError> {
     // One fd for the read and the write-back, so nothing can be swapped in between them.
-    let (file_fd, stat) = open_target_file(parent, base, sys::O::RDWR, 0)?;
-    let _close_file = sys::CloseOnDrop::new(file_fd);
+    let (file, size) = open_target_file(parent, base, sys::O::RDWR, 0)?;
 
-    if stat.st_size as u64 > MAX_PATCH_TARGET_BYTES {
+    if size > MAX_PATCH_TARGET_BYTES {
         return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::read).into());
     }
-    let filebuf: Vec<u8> = sys::File::borrow(&file_fd)
+    let filebuf: Vec<u8> = file
         .read_to_end()
         .map_err(|_| sys::Error::from_code(sys::E::EINVAL, sys::Tag::read))?;
 
@@ -221,10 +215,10 @@ fn apply_patch(patch: &FilePatch<'_>, parent: Fd, base: &ZStr) -> Result<(), App
         patched.push(b"");
     }
 
-    sys::ftruncate(file_fd, 0)?;
+    sys::ftruncate(file.fd(), 0)?;
     // `read_to_end` advanced the cursor on Windows (POSIX reads use `pread`).
-    sys::set_file_offset(file_fd, 0)?;
-    sys::File::borrow(&file_fd).write_all(&patched.join(&b'\n'))?;
+    file.seek_to(0)?;
+    file.write_all(&patched.join(&b'\n'))?;
     Ok(())
 }
 
@@ -284,16 +278,16 @@ const MAX_PATCH_TARGET_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 /// entered.
 const CREATED_DIR_MODE: sys::Mode = 0o755;
 
-/// `patch_dir` itself for single-component paths (not closed), an owned fd otherwise.
-struct ParentDir {
-    fd: Fd,
-    owned: bool,
+enum ParentDir {
+    PatchDir(Fd),
+    Opened(sys::Dir),
 }
 
-impl Drop for ParentDir {
-    fn drop(&mut self) {
-        if self.owned {
-            self.fd.close();
+impl ParentDir {
+    fn fd(&self) -> Fd {
+        match self {
+            ParentDir::PatchDir(fd) => *fd,
+            ParentDir::Opened(dir) => dir.fd(),
         }
     }
 }
@@ -326,19 +320,13 @@ fn open_parent_beneath(
     path: &[u8],
     create_mode: Option<sys::Mode>,
 ) -> sys::Result<ParentDir> {
-    let mut cur = ParentDir {
-        fd: patch_dir,
-        owned: false,
-    };
+    let mut cur = ParentDir::PatchDir(patch_dir);
     for component in strings::split_any(paths::dirname_simple(path), PATH_SEPS) {
         if component.is_empty() || component == b"." {
             continue;
         }
         let component_z = ZBox::from_vec_with_nul(component.to_vec());
-        cur = ParentDir {
-            fd: open_dir_component(cur.fd, &component_z, create_mode)?,
-            owned: true,
-        };
+        cur = ParentDir::Opened(open_dir_component(cur.fd(), &component_z, create_mode)?);
     }
     Ok(cur)
 }
@@ -359,12 +347,12 @@ fn open_dir_component(
     dir: Fd,
     component: &ZStr,
     create_mode: Option<sys::Mode>,
-) -> sys::Result<Fd> {
+) -> sys::Result<sys::Dir> {
     #[cfg(windows)]
     reject_reparse_point(dir, component)?;
     let flags = sys::O::RDONLY | sys::O::DIRECTORY | sys::O::NOFOLLOW;
     let open_err = match sys::openat(dir, component, flags, 0) {
-        Ok(fd) => return Ok(fd),
+        Ok(fd) => return Ok(sys::Dir::from_fd(fd)),
         Err(e) => e,
     };
     let Some(mode) = create_mode.filter(|_| open_err.get_errno() == sys::E::ENOENT) else {
@@ -376,7 +364,9 @@ fn open_dir_component(
         Err(e) if e.get_errno() == sys::E::EEXIST => {}
         Err(e) => return Err(e),
     }
-    sys::openat(dir, component, flags, 0).map_err(|e| symlink_component_err(dir, component, e))
+    sys::openat(dir, component, flags, 0)
+        .map(sys::Dir::from_fd)
+        .map_err(|e| symlink_component_err(dir, component, e))
 }
 
 /// `O_NOFOLLOW` on a symlink: ENOTDIR or ELOOP on Linux, EMLINK on FreeBSD. ELOOP everywhere.
@@ -393,35 +383,28 @@ fn symlink_component_err(dir: Fd, component: &ZStr, e: sys::Error) -> sys::Error
 }
 
 /// Only accepts a regular file with one hard link, because a second link could reach the inode from
-/// outside the patch directory.
+/// outside the patch directory. Returns the descriptor and the size.
 fn open_target_file(
     parent: Fd,
     base: &ZStr,
     flags: i32,
     mode: sys::Mode,
-) -> sys::Result<(Fd, sys::Stat)> {
+) -> sys::Result<(sys::CloseOnDrop, u64)> {
     #[cfg(windows)]
     reject_reparse_point(parent, base)?;
     // Without `O_NONBLOCK`, opening a FIFO blocks before the `!ISREG` rejection below.
     let nonblock = if cfg!(windows) { 0 } else { sys::O::NONBLOCK };
-    let fd = sys::openat(parent, base, flags | sys::O::NOFOLLOW | nonblock, mode)
-        .map_err(|e| symlink_component_err(parent, base, e))?;
-    let stat = match sys::fstat(fd) {
-        Ok(st) => st,
-        Err(e) => {
-            fd.close();
-            return Err(e);
-        }
-    };
+    let file = sys::openat(parent, base, flags | sys::O::NOFOLLOW | nonblock, mode)
+        .map_err(|e| symlink_component_err(parent, base, e))
+        .map(sys::CloseOnDrop::new)?;
+    let stat = file.stat()?;
     if !sys::S::ISREG(stat.st_mode as u32) {
-        fd.close();
         return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
     }
     if stat.st_nlink > 1 {
-        fd.close();
         return Err(sys::Error::from_code(sys::E::EMLINK, sys::Tag::open));
     }
-    Ok((fd, stat))
+    Ok((file, stat.st_size as u64))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1377,26 +1360,16 @@ fn parse_diff_line_paths(line: &[u8]) -> Option<(&[u8], &[u8])> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// spawnOpts / diffPostProcess / gitDiff*
+// spawn_git_diff / diffPostProcess / gitDiff*
 // ──────────────────────────────────────────────────────────────────────────
 
-/// The storage that `Options.envp` points into.
-pub struct GitDiffEnv {
-    _envp: Vec<*const core::ffi::c_char>,
-    _path: Option<Vec<u8>>,
-}
-
-// `bun_spawn::sync::Options` owns
-// `argv` (`Vec<Box<[u8]>>`) but borrows `envp` (`Option<*const *const c_char>`), so
-// its storage is returned alongside as the second tuple element —
-// caller must keep it alive while `Options` is in use (no `Box::leak`, §Forbidden).
-pub fn spawn_opts(
+pub fn spawn_git_diff(
     old_folder: &[u8],
     new_folder: &[u8],
     cwd: &ZStr,
     git: &ZStr,
-    loop_: &mut bun_event_loop::AnyEventLoop,
-) -> (bun_spawn::sync::Options, GitDiffEnv) {
+    loop_: bun_event_loop::EventLoopHandle,
+) -> bun_spawn::Result<bun_sys::Result<bun_spawn::sync::Result>> {
     let argv: Vec<Box<[u8]>> = {
         const ARGS: [&[u8]; 11] = [
             b"-c",
@@ -1423,7 +1396,7 @@ pub fn spawn_opts(
     let path_var: Option<Vec<u8>> = bun_core::env_var::PATH
         .get()
         .map(|p| [&b"PATH="[..], p, b"\0"].concat());
-    const ENV_STATIC: &[&[u8]] = &[
+    const ENV_STATIC: [&[u8]; 6] = [
         b"GIT_CONFIG_NOSYSTEM=1\0",
         b"GIT_ATTR_NOSYSTEM=1\0",
         b"HOME=\0",
@@ -1433,44 +1406,28 @@ pub fn spawn_opts(
         // .gitattributes above the two folders.
         concat!("GIT_DIR=", bun_core::null_device!(), "\0").as_bytes(),
     ];
-    let mut envp_buf: Vec<*const core::ffi::c_char> =
-        Vec::with_capacity(ENV_STATIC.len() + usize::from(path_var.is_some()) + 1);
-    if let Some(p) = &path_var {
-        envp_buf.push(p.as_ptr().cast::<core::ffi::c_char>());
-    }
-    for s in ENV_STATIC {
-        envp_buf.push(s.as_ptr().cast::<core::ffi::c_char>());
-    }
-    envp_buf.push(core::ptr::null()); // sentinel
+    let mut envp = Vec::with_capacity(ENV_STATIC.len() + 2);
+    let variables = path_var.as_deref().into_iter().chain(ENV_STATIC);
+    envp.extend(variables.map(|variable| Some(CStrRef::from_slice_with_nul(variable))));
 
     #[cfg(not(windows))]
     let _ = loop_;
 
-    let opts = bun_spawn::sync::Options {
+    bun_spawn::sync::spawn(&bun_spawn::sync::Options {
         stdout: bun_spawn::sync::Stdio::Buffer,
         stderr: bun_spawn::sync::Stdio::Buffer,
         cwd: cwd.as_bytes().into(),
-        envp: Some(envp_buf.as_ptr()),
+        envp: Some(CStrList::from_unterminated(&mut envp)),
         argv,
         // `spawn` dereferences `windows.loop_` unconditionally, and `WindowsOptions::default()` is
         // zeroed.
         #[cfg(windows)]
         windows: bun_spawn::sync::WindowsOptions {
-            // `as_handle` owns the handle conversion so variant internals
-            // stay encapsulated.
-            loop_: bun_event_loop::AnyEventLoop::as_handle(loop_),
+            loop_,
             ..Default::default()
         },
         ..Default::default()
-    };
-
-    (
-        opts,
-        GitDiffEnv {
-            _envp: envp_buf,
-            _path: path_var,
-        },
-    )
+    })
 }
 
 pub fn diff_post_process(
@@ -1512,7 +1469,7 @@ pub fn git_diff_preprocess_paths(old_folder: &[u8], new_folder: &[u8]) -> [Vec<u
 pub fn git_diff_internal(
     old_folder_: &[u8],
     new_folder_: &[u8],
-    loop_: &mut bun_event_loop::AnyEventLoop,
+    loop_: bun_event_loop::EventLoopHandle,
 ) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
     let paths = git_diff_preprocess_paths(old_folder_, new_folder_);
     let old_folder = &paths[0][..];
@@ -1529,9 +1486,7 @@ pub fn git_diff_internal(
     )
     .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
 
-    let (opts, _env) = spawn_opts(old_folder, new_folder, ZStr::EMPTY, git, loop_);
-
-    let mut result = bun_spawn::sync::spawn(&opts)??;
+    let mut result = spawn_git_diff(old_folder, new_folder, ZStr::EMPTY, git, loop_)??;
     diff_post_process(&mut result, old_folder, new_folder)
 }
 

@@ -1,5 +1,17 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { describe, expect, test } from "bun:test";
+import { readFileSync, writeFileSync } from "fs";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tls,
+  untilEveryThreadIs,
+} from "harness";
 import { mkfifo } from "mkfifo";
 import path from "path";
 
@@ -979,21 +991,16 @@ test("--parallel never interleaves console output across files", async () => {
 
 test("--parallel lazily scales workers based on file duration", async () => {
   // Each test file appends its PID so we can count distinct worker processes.
-  const body = (sleepMs: number) =>
-    `import {test,expect} from "bun:test"; import {appendFileSync} from "fs";
-     test("t", async()=>{ appendFileSync(process.env.PIDS, process.pid+"\\n"); await Bun.sleep(${sleepMs}); expect(1).toBe(1); });`;
-  const fixture = (sleepMs: number) => ({
-    "a.test.js": body(sleepMs),
-    "b.test.js": body(sleepMs),
-    "c.test.js": body(sleepMs),
-    "d.test.js": body(sleepMs),
-  });
-  const run = async (dir: string, scaleMs: number) => {
-    const pids = dir + "/pids.txt";
+  const run = async (name: string, scaleMs: number, wait: string) => {
+    const body = `import {test,expect} from "bun:test"; import {appendFileSync,readFileSync} from "fs";
+      appendFileSync(process.env.PIDS, process.pid+"\\n"); ${wait}
+      test("t", () => expect(1).toBe(1));`;
+    using dir = tempDir(name, { "a.test.js": body, "b.test.js": body, "c.test.js": body, "d.test.js": body });
+    const pids = String(dir) + "/pids.txt";
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--parallel=4"],
       env: { ...bunEnv, PIDS: pids, BUN_TEST_PARALLEL_SCALE_MS: String(scaleMs) },
-      cwd: dir,
+      cwd: String(dir),
       stderr: "pipe",
       stdout: "pipe",
     });
@@ -1001,29 +1008,22 @@ test("--parallel lazily scales workers based on file duration", async () => {
     return { stderr, exitCode, pids: new Set((await Bun.file(pids).text()).trim().split("\n")) };
   };
 
-  // Fast: 4 files × 0ms with a 250ms threshold. Each file (load + run +
-  // isolation swap) finishes within the threshold, so the coordinator never
-  // spawns a second worker. The threshold is raised from the production 5ms
-  // because debug-build module load alone exceeds 5ms.
+  // Huge threshold: every file finishes within it, on a loaded machine too, so the coordinator never spawns a second
+  // worker. The files are busy for longer than the production threshold of 5ms.
   {
-    using dir = tempDir("parallel-lazy-fast", fixture(0));
-    const r = await run(String(dir), 250);
+    const r = await run("parallel-lazy-fast", 1000000, "await Bun.sleep(20);");
     expect(r.stderr).toContain("4 pass");
     expect(r.pids.size).toBe(1);
     expect(r.exitCode).toBe(0);
   }
 
-  // Slow: 4 files × 200ms with a 50ms threshold. The first file exceeds the
-  // threshold so the coordinator spawns the remaining workers; multiple PIDs
-  // appear. The exact count depends on whether the first worker finishes its
-  // file before the newly-spawned workers report ready, so we only assert
-  // that scale-up happened at all — the differential against the fast case
-  // (which stays at exactly 1) is the proof.
+  // Every file is busy until all four have begun, so each of them needs a worker of its own. The first one exceeds the
+  // threshold, and the coordinator spawns the remaining workers. If it did not, the run would not end.
   {
-    using dir = tempDir("parallel-lazy-slow", fixture(200));
-    const r = await run(String(dir), 50);
+    const haveBegun = `readFileSync(process.env.PIDS, "utf8").trim().split("\\n").length`;
+    const r = await run("parallel-lazy-slow", 50, `while (${haveBegun} < 4) await Bun.sleep(1);`);
     expect(r.stderr).toContain("4 pass");
-    expect(r.pids.size).toBeGreaterThanOrEqual(2);
+    expect(r.pids.size).toBe(4);
     expect(r.exitCode).toBe(0);
   }
 });
@@ -1280,6 +1280,129 @@ test("--parallel: a test writing garbage to fd 3 gets its worker killed and the 
   expect(exitCode).toBe(1);
 });
 
+// The coordinator is stopped meanwhile, so it finds a worker's last frame and its end together.
+describe.skipIf(!isLinux)("--parallel: a worker that has exited gets no file", () => {
+  const exitAfterTheFile = `setTimeout(() => process.exit(0));`;
+  const exitAfterReady = `writeSync(3, Buffer.alloc(5)); process.exit(0);`;
+
+  test.concurrent.each([
+    ["after its file", exitAfterTheFile, {}, "3 pass\n 0 fail", 0],
+    [
+      "after its file, with the exit reported later",
+      exitAfterTheFile,
+      { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1", BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+      "3 pass\n 0 fail",
+      0,
+    ],
+    ["after a Ready frame", exitAfterReady, {}, "1 fail", 1],
+  ])("%s", async (_, exit, env, summary, expectedExitCode) => {
+    using dir = tempDir("parallel-exited-worker", {
+      "a.test.js": `import {test} from "bun:test"; import {existsSync, writeSync} from "fs";
+        test("pid " + process.pid, () => {});
+        test("last", () => { while (!existsSync("go")) Bun.sleepSync(1); ${exit} });`,
+      "b.test.js": `import {test} from "bun:test"; test("b", () => {});`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=1000000", "--no-isolate"],
+      env: { ...bunEnv, ...env },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "ignore",
+    });
+    let stderr = "";
+    let resumed: Promise<void> | undefined;
+    for await (const chunk of proc.stderr.pipeThrough(new TextDecoderStream())) {
+      stderr += chunk;
+      const worker = Number(/\(pass\) pid (\d+)/.exec(stderr)?.[1]);
+      if (!worker) continue;
+      resumed ??= (async () => {
+        proc.kill("SIGSTOP");
+        try {
+          await untilEveryThreadIs("T", proc.pid);
+          writeFileSync(path.join(String(dir), "go"), "");
+          await untilEveryThreadIs("Z", worker);
+        } finally {
+          proc.kill("SIGCONT");
+        }
+      })();
+    }
+    await resumed;
+    expect(stderr).not.toContain("b.test.js (worker crashed");
+    expect(stderr).toContain("(pass) b");
+    expect(stderr).toContain(summary);
+    expect(await proc.exited).toBe(expectedExitCode);
+  });
+});
+
+async function runOnOneWorker(dir: string, ...flags: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=1000000", ...flags],
+    env: bunEnv,
+    cwd: dir,
+    stderr: "pipe",
+    stdout: "ignore",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  return { results: stderr.match(/^(\(pass\) \w+|✗ .*| \d+ (pass|fail))/gm), exitCode };
+}
+
+// On Windows the bytes break libuv's framing before they can be read as a frame.
+describe.skipIf(isWindows)("--parallel: a frame that a test writes to fd 3", () => {
+  test.concurrent("Ready does not take the place of the file that runs", async () => {
+    using dir = tempDir("parallel-forged-ready", {
+      "a.test.js": `import {test} from "bun:test"; import {writeSync} from "fs";
+        test("a", () => { writeSync(3, Buffer.from([/* no payload */ 0, 0, 0, 0, /* Ready */ 0])); });`,
+      "b.test.js": `import {test} from "bun:test"; test("b", () => {});`,
+    });
+    expect(await runOnOneWorker(String(dir))).toEqual({
+      results: ["(pass) a", "(pass) b", " 2 pass", " 0 fail"],
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("Ready is answered with Shutdown when no file is left", async () => {
+    using dir = tempDir("parallel-forged-ready-in-last-file", {
+      "a.test.js": `import {test} from "bun:test"; test("a", () => {});`,
+      "b.test.js": `import {expect, test} from "bun:test"; import {readSync, writeSync} from "fs";
+        test("b", () => {
+          writeSync(3, Buffer.from([/* no payload */ 0, 0, 0, 0, /* Ready */ 0]));
+          const answer = Buffer.alloc(5);
+          for (const deadline = performance.now() + 30_000; ; Bun.sleepSync(1)) {
+            try {
+              readSync(3, answer);
+              break;
+            } catch (error) {
+              if (error.code !== "EAGAIN" || performance.now() > deadline) throw error;
+            }
+          }
+          expect([...answer]).toEqual([/* no payload */ 0, 0, 0, 0, /* Shutdown */ 6]);
+        }, 60_000);`,
+    });
+    expect(await runOnOneWorker(String(dir))).toEqual({
+      results: ["(pass) a", "(pass) b", " 2 pass", " 0 fail"],
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("FileDone does not change the report of another file", async () => {
+    using dir = tempDir("parallel-forged-file-done", {
+      "a.test.js": `import {test} from "bun:test"; test("a", () => {});`,
+      "b.test.js": `import {test} from "bun:test"; import {writeSync} from "fs";
+        test("b", () => {
+          // For file 0. Wherever the elapsed time is, it says two years.
+          const payload = Buffer.concat([Buffer.alloc(4), Buffer.alloc(124, 1)]);
+          writeSync(3, Buffer.concat([Buffer.from([payload.length, 0, 0, 0, /* FileDone */ 3]), payload]));
+        });`,
+    });
+    expect(await runOnOneWorker(String(dir), "--reporter=junit", "--reporter-outfile=out.xml")).toEqual({
+      results: ["(pass) a", "(pass) b", " 2 pass", " 0 fail"],
+      exitCode: 0,
+    });
+    const xml = readFileSync(path.join(String(dir), "out.xml"), "utf8");
+    expect(Number(/<testsuite name="a\.test\.js".* time="([^"]+)"/.exec(xml)![1])).toBeLessThan(1000);
+  });
+});
+
 // About 1 MB of todo lines overflows the socketpair send buffer, so the worker sends its
 // final RepeatBufs frame from its exit drain loop.
 test("--parallel: worker drains a backpressured final frame under the JSC API lock", async () => {
@@ -1401,6 +1524,45 @@ test("--parallel forwards --use-openssl-ca to workers", async () => {
   expect(stdout).toContain("PARALLEL");
   expect(stderr).toContain("2 pass");
   expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
+// Reads /proc.
+test.skipIf(!isLinux)("--parallel forwards the flags of the transpiler to workers, in order", async () => {
+  using dir = tempDir("parallel-worker-argv", {
+    "a.test.js": `import {test} from "bun:test"; import {readFileSync} from "fs";
+      test("a", () => process.stdout.write(readFileSync("/proc/self/cmdline", "utf8").replaceAll("\\0", " ") + "\\n"));`,
+    "b.test.js": `import {test} from "bun:test"; test("b", () => {});`,
+    "other.json": "{}",
+  });
+  const flagsWithValues = [
+    ["--define", "A=1"],
+    ["--loader", ".a:text"],
+    ["--loader", ".b:json5"],
+    ["--loader", ".c:base64"],
+    ["--tsconfig-override", path.join(String(dir), "other.json")],
+    ["--conditions", "c"],
+    ["--drop", "debugger"],
+    ["--feature", "F"],
+  ].flat();
+  const laterFlags = [
+    "--no-macros",
+    "--jsx-factory=h",
+    "--jsx-fragment=F",
+    "--jsx-import-source=p",
+    "--jsx-runtime=classic",
+    "--jsx-side-effects",
+  ];
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", ...laterFlags, ...flagsWithValues],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "ignore",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(` ${flagsWithValues.join(" ")} `);
+  expect(stderr).toContain(` ${laterFlags.join(" ")} `);
   expect(exitCode).toBe(0);
 });
 

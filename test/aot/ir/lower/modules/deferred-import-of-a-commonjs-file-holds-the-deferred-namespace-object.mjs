@@ -1,9 +1,9 @@
 // RUN: link
 // CHECK: module [[stores]] path="{{*}}stores.cjs"
-// CHECK: module [[face]] path="#{{*}}requests=[{target=[[stores]] kind=Require
-// CHECK: module {{*}}main.mjs" {{*}}requests=[{target=[[face]] completes=true isHoisted=true}, {target=[[face]] completes=true}]
-// CHECK: = ModuleNamespace module=[[face]] phase=Defer
-// CHECK-NEXT: = ModuleNamespace module=[[face]] @
+// CHECK: module [[facade]] path="#{{*}}requests=[{target=[[stores]] kind=Require
+// CHECK: module {{*}}main.mjs" {{*}}requests=[{target=[[facade]] completes=true isHoisted=true}, {target=[[facade]] completes=true}]
+// CHECK: = ModuleNamespace module=[[facade]] phase=Defer
+// CHECK-NEXT: = ModuleNamespace module=[[facade]] @
 
 // FILE: main.mjs
 import "./stores.cjs";

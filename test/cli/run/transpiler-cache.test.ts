@@ -292,6 +292,16 @@ describe("transpiler cache", () => {
     expect(statSync(entry).isFile()).toBeTrue();
     expect(readFileSync(entry).equals(good)).toBeTrue();
   });
+  test("an entry that cannot be moved into place leaves no temporary file", async () => {
+    writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "a"));
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("a");
+    const [entry] = readdirSync(cache_dir);
+    unlinkSync(join(cache_dir, entry));
+    mkdirSync(join(cache_dir, entry, "occupied"), { recursive: true });
+
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("a");
+    expect(readdirSync(cache_dir)).toEqual([entry]);
+  });
   test("does not inline process.env", async () => {
     writeFileSync(
       join(temp_dir, "a.js"),

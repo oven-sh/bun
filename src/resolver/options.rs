@@ -208,7 +208,6 @@ pub struct BundleOptions {
     // `linker_context/*`. Projected by `bun_bundler` at link time.
     pub output_dir: Box<[u8]>,
     pub root_dir: Box<[u8]>,
-    pub public_path: Box<[u8]>,
     pub compile: bool,
     pub supports_multiple_outputs: bool,
     pub tree_shaking: bool,

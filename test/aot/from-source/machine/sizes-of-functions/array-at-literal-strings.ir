@@ -1,0 +1,15 @@
+# f1 = pick
+# -- source: array-at-literal-strings.ts
+# const names: string[] = ["a", "bb", "ccc", "dddd", "e", "ff", "ggg", "hhhh"];
+# function pick(index: number): number {
+#   return names.at(index & 7)!.length;
+# }
+# declare const input: any;
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = pick(input | 0);
+# -- end of source
+# The compiler before this one: 13 instructions, 2 of them patches.
+# When the bound was taken: steps: operations 27, patches 3, moves 4, unlikely or rare 33.
+# RUN(X64): steps most:31 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 31

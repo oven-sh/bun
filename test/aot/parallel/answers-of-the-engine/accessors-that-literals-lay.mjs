@@ -1,5 +1,5 @@
 // Accessors that literals lay, as a program sees them: what a read and a store find, the keys in their order, the descriptors, what a deletion, a definition, a freeze, a copy and an heir make of them. Where nothing but such accessors is seen to fill a field, its slot holds the pair of functions.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 const line = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + String(values[i]); return text; };
 const attempt = (f) => { try { return f(); } catch (e) { return e.constructor.name; } };

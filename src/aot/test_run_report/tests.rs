@@ -353,6 +353,20 @@ fn what_tests_replace() {
 }
 
 #[test]
+fn es_packages_that_mocks_name() {
+    let line = line_of_es_packages_that_mocks_name(2);
+    let expected = "AOT modules | ES packages that mocks name, which may run again 2";
+    assert_eq!(line, expected);
+}
+
+#[test]
+fn reloadable_files() {
+    let line = line_of_reloadable_files(3, 1, 9);
+    let expected = "AOT modules | files that a module mock may load again: ES modules 3 | CommonJS files 1 | of 9 compiled files";
+    assert_eq!(line, expected);
+}
+
+#[test]
 fn files_that_may_run_again() {
     let line = line_of_files_that_may_run_again(0);
     assert_eq!(line, "AOT modules | CommonJS files that may run again 0");
@@ -439,6 +453,10 @@ fn file_leaves_open() {
         line_of(FileLeavesOpen::LetsSpyOnGo)
             .contains("asks/index.js lets spyOn go where nobody sees what it is called with")
     );
+    assert!(
+        line_of(FileLeavesOpen::MayStoreLoaderFunction)
+            .ends_with("asks/index.js stores a function that the loader calls, or hands on an object that takes one")
+    );
     let marks = "spies on an object from somewhere under a name that it does not spell";
     let with_texts = line_of(FileLeavesOpen::SpiesUnderNamesFromOutside { texts_passed: 2 });
     assert!(with_texts.contains(marks) && with_texts.ends_with(": 2 texts are passed to it"));
@@ -463,6 +481,21 @@ fn package_takes_from_test_runner() {
     assert!(find(pattern, &line).is_some());
     let spies_alone = line_of_package_that_takes_from_test_runner(path, false, true);
     assert_eq!(find(pattern, &spies_alone), None);
+}
+
+#[test]
+fn the_line_on_code_outside_the_run_says_each_count() {
+    let counts = CodeOutsideRun {
+        files: 6052,
+        parsed_at_first: 4502,
+        parsed_later: 3,
+        import_what_is_sought: 1,
+        take_from_test_runner: 1500,
+    };
+    assert_eq!(
+        line_of_code_outside_run(26, &counts),
+        "AOT test run | files on disk that the run does not reach 6052, asked about 26 files of the run | parsed because they write the last word of one 4502, later 3 | of those parsed 1500 take from the test runner | 1 take nothing from it and import what is sought"
+    );
 }
 
 #[test]

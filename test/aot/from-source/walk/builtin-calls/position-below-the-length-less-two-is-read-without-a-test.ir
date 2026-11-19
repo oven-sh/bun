@@ -5,14 +5,11 @@
 # console.log(codes("abcd"), codes(""));
 # -- end of source
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: isLoopHead=true
 # CHECK: = Less v
 # CHECK: : int[0, 65535] {{*}}= GetStringCodeUnit
 # RUN(ONCE): walk f1 mechanisms=all
-# REQUIRES(ONCE): entries-of-bun
 # ONCE-COUNT-1: = Less v
 # RUN(NEVER): walk f1 mechanisms=all
-# REQUIRES(NEVER): entries-of-bun
 # NEVER-NOT: |whole

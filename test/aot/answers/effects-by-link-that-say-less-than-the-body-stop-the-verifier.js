@@ -1,7 +1,7 @@
 // answers: without-library
 // # function bump(box, depth) { if (depth) bump(box, depth - 1); else box.count = box.count + 1; }
 // # Link's effects of f2 are taken to name no write of ObjectFields, as the verifier of a unit reads them: the PutSlot of the body stops it. No run is needed.
-// # OPTIONS: check=Validate testing=RowSaysLess:Summary/f2/ObjectFields
+// # OPTIONS: check=Validate testing=UnderstateEffects:Summary/f2/ObjectFields
 // # DIAGNOSTIC: EffectsNotCounted
 // # RUN: walk f2 mechanisms=all
 // # CHECK-NOT: code f2:Body

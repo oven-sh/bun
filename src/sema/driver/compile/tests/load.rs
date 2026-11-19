@@ -217,8 +217,8 @@ fn tree_of_leaf_that_no_task_reads_is_freed() {
     ];
     with_program(&files, &["./main.ts"], 1, |program| {
         let files = program.files();
-        let has_tree = |name: &str| !files.module(program.file(name)).hir.stmts.is_empty();
-        let has_text = |name: &str| !files.module(program.file(name)).hir.text.is_empty();
+        let has_tree = |name: &str| !files.hir(program.file(name)).stmts.is_empty();
+        let has_text = |name: &str| !files.hir(program.file(name)).text.is_empty();
         for name in ["unread.test.ts", "helper.ts", "each-other.ts"] {
             assert!(files.module(program.file(name)).is_leaf, "{name}");
             assert!(!has_tree(name), "{name}");
@@ -259,8 +259,8 @@ fn tree_of_file_with_export_star_that_no_task_reads_is_freed() {
     ];
     with_program(&files, &["./main.ts"], 1, |program| {
         let files = program.files();
-        let has_tree = |name: &str| !files.module(program.file(name)).hir.stmts.is_empty();
-        let has_text = |name: &str| !files.module(program.file(name)).hir.text.is_empty();
+        let has_tree = |name: &str| !files.hir(program.file(name)).stmts.is_empty();
+        let has_text = |name: &str| !files.hir(program.file(name)).text.is_empty();
         for name in ["unread-barrel.ts", "only-behind-barrel.ts"] {
             assert!(files.module(program.file(name)).is_leaf, "{name}");
             assert!(!has_tree(name), "{name}");
@@ -367,8 +367,8 @@ fn file_that_is_not_compiled_is_bound_when_a_file_that_is_read_refers_to_it() {
     ];
     with_program(&files, &["./main.ts"], 1, |program| {
         let files = program.files();
-        let is_unbound = |name: &str| files.module(program.file(name)).bound.is_unbound;
-        let symbol_count = |name: &str| files.module(program.file(name)).bound.symbols.len();
+        let is_unbound = |name: &str| files.bound(program.file(name)).is_unbound;
+        let symbol_count = |name: &str| files.bound(program.file(name)).symbols.len();
         for name in ["unread.test.ts", "helper.ts", "hands-on.ts"] {
             assert!(files.module(program.file(name)).is_leaf, "{name}");
             assert_eq!(symbol_count(name), 0, "{name}");
@@ -377,7 +377,7 @@ fn file_that_is_not_compiled_is_bound_when_a_file_that_is_read_refers_to_it() {
             assert!(!is_unbound(name), "{name}");
             assert!(symbol_count(name) > 0, "{name}");
         }
-        let inner = &files.module(program.file("inner.ts")).hir;
+        let inner = files.hir(program.file("inner.ts"));
         let is_spelled_for_class = |member: &bun_sema::hir::Member| match member.key {
             bun_sema::hir::PropKey::Private(name) => files.atoms.bytes(name).starts_with(b"\xFE"),
             _ => true,
@@ -405,7 +405,7 @@ fn module_that_is_reached_has_the_bodies_of_its_functions() {
     with_program(&files, &["./main.ts"], 1, |program| {
         let files = program.files();
         let returns = |name: &str| {
-            let statements = files.module(program.file(name)).hir.stmts.iter();
+            let statements = files.hir(program.file(name)).stmts.iter();
             statements
                 .filter(|it| matches!(it.kind, bun_sema::hir::StmtKind::Return(_)))
                 .count()
@@ -782,6 +782,100 @@ fn libraries_match_bun_check() {
         assert_eq!(unconfigured, checked);
         let expected_types = has_bun_types.then(|| vec![b"bun".to_vec()]);
         assert_eq!(unconfigured.1, expected_types);
+    }
+}
+
+#[test]
+fn installed_types_that_the_program_leads_to_are_its_own() {
+    const LISTS_MAIN: &str = r#""files": ["main.ts"]"#;
+    const LEAVES_MAIN_OUT: &str = r#""include": ["*.ts"], "exclude": ["main.ts"]"#;
+    const IMPORTS: &str = "import \"bun\";\n";
+    const REFERS: &str = "/// <reference types=\"bun\" />\nexport {};\n";
+    const NOTHING: &str = "export {};\n";
+    let package_that_runs_typescript = [
+        (
+            "node_modules/made-up/package.json",
+            r#"{ "name": "made-up", "types": "types.d.ts", "main": "code.ts" }"#,
+        ),
+        ("node_modules/made-up/types.d.ts", NOTHING),
+        ("node_modules/made-up/code.ts", IMPORTS),
+    ];
+    let package_that_refers = [("node_modules/made-up/index.d.ts", REFERS)];
+    type Row<'a> = (&'a str, &'a str, &'a str, &'a [(&'a str, &'a str)], bool);
+    let rows: [Row<'_>; 12] = [
+        ("", LISTS_MAIN, NOTHING, &[], false),
+        ("", LISTS_MAIN, IMPORTS, &[], true),
+        (
+            "",
+            LISTS_MAIN,
+            "export type { Held } from \"bun\";\n",
+            &[],
+            true,
+        ),
+        ("", LISTS_MAIN, REFERS, &[], true),
+        (
+            "",
+            LISTS_MAIN,
+            "import \"./other\";\n",
+            &[("other.ts", IMPORTS)],
+            true,
+        ),
+        ("", LISTS_MAIN, NOTHING, &[("other.ts", IMPORTS)], false),
+        (
+            "",
+            LISTS_MAIN,
+            "import \"./other.js\";\n",
+            &[("other.js", IMPORTS)],
+            false,
+        ),
+        (
+            r#", "allowJs": true"#,
+            LISTS_MAIN,
+            "import \"./other.js\";\n",
+            &[("other.js", IMPORTS)],
+            true,
+        ),
+        (
+            "",
+            LISTS_MAIN,
+            "import \"made-up\";\n",
+            &package_that_refers,
+            true,
+        ),
+        (
+            "",
+            LISTS_MAIN,
+            "import \"made-up\";\n",
+            &package_that_runs_typescript,
+            false,
+        ),
+        (
+            "",
+            LEAVES_MAIN_OUT,
+            IMPORTS,
+            &[("other.ts", NOTHING)],
+            false,
+        ),
+        ("", LEAVES_MAIN_OUT, NOTHING, &[("other.ts", IMPORTS)], true),
+    ];
+    for (options, roots, main, others, leads_there) in rows {
+        let shared = r#""noLib": true, "module": "preserve", "moduleResolution": "bundler""#;
+        let tsconfig = format!(r#"{{ "compilerOptions": {{ {shared}{options} }}, {roots} }}"#);
+        let shared = [
+            ("tsconfig.json", &tsconfig[..]),
+            ("lib.esnext.d.ts", GLOBAL_TYPES),
+            ("main.ts", main),
+        ];
+        let files = [&shared[..], &BUN_TYPES, others].concat();
+        with_program(&files, &["./main.ts"], 1, |program| {
+            let is_own = matches!(program.loaded.bun_types, BunTypes::Installed);
+            assert_eq!(is_own, leads_there, "{roots} {main}{others:?}");
+            let declarations = program.file("node_modules/@types/bun/index.d.ts");
+            let is_brought = program.files().is_brought(declarations);
+            assert_eq!(is_brought, !leads_there, "{roots} {main}");
+            let brings_declarations = program.files().brings_declarations();
+            assert_eq!(brings_declarations, !leads_there, "{roots} {main}");
+        });
     }
 }
 

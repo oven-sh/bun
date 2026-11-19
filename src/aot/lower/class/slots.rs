@@ -115,6 +115,7 @@ impl FileLowering<'_, '_, '_, '_> {
             function: None,
             owner: None,
             flags: VariableFlags::default(),
+            place: None,
         }
     }
 }

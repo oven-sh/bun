@@ -1829,6 +1829,26 @@ describe("DatabaseSync.prototype.setAuthorizer()", () => {
     expect(db.prepare("SELECT count(*) AS n FROM ft").get()!.n).toBe(2);
     db.close();
   });
+
+  // FTS4 asks for the page size when it connects and goes on if that is denied, so SQLite returns a statement.
+  test("prepare() finalizes the statement when the callback threw and SQLite compiled it anyway", () => {
+    using dir = tempDir("node-sqlite-prepare-throw", {});
+    const file = path.join(String(dir), "x.db");
+    const db = new DatabaseSync(file);
+    db.exec("CREATE VIRTUAL TABLE ft USING fts4(x)");
+    db.close();
+    db.open();
+    // The lock lasts until the connection is really closed, which a leaked statement prevents.
+    db.exec("PRAGMA locking_mode = EXCLUSIVE; CREATE TABLE t (a)");
+    db.setAuthorizer(action => {
+      if (action === constants.SQLITE_PRAGMA) throw new Error("denied");
+      return constants.SQLITE_OK;
+    });
+    expect(() => db.prepare("INSERT INTO ft VALUES (1)")).toThrow("denied");
+    db.close();
+    using next = new DatabaseSync(file);
+    expect(next.prepare("INSERT INTO t VALUES (1)").run().changes).toBe(1);
+  });
 });
 
 describe("db.limits", () => {
@@ -2462,8 +2482,8 @@ test.concurrent("unclosed sqlite database does not use-after-free on VM teardown
 });
 
 // process.exit() inside a UDF reaches ~JSDatabaseSync with a BusyScope still
-// on the stack; that path must still flag its session records as dbGone or
-// ~JSNodeSqliteSession writes to the already-swept database cell.
+// on the stack; that path must leave the session handles alone, whichever of
+// the database and the session is swept first.
 test.concurrent.skipIf(!sqliteHasSession)(
   "teardown with a busy connection and an unclosed session does not use-after-free",
   async () => {
@@ -3141,7 +3161,7 @@ describe("GC stress", () => {
       Bun.gc(true);
       // Nothing was written while the session was attached.
       expect(s.changeset()).toHaveLength(0);
-      // Half explicitly close, half drop — races wrapperGone/dbGone.
+      // Half explicitly close, half are left to the collector.
       if (i & 1) s.close();
     }
     // A fresh session records one INSERT into a one-column table: 16 bytes.

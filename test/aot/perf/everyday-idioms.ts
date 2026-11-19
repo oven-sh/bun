@@ -5,15 +5,12 @@
 // With a third of the length the JIT copies it in, and whether the compiler does hangs on a budget of its inliner: then the table measures that budget.
 // That alone is not enough: the compiler sees which function the property holds and may copy turn() into the loop all the same. So turn() also begins with a call of itself
 // that is never made: a function that calls itself is copied into nobody. The call is no tail call: that one the compiler would turn into a loop around the whole of turn().
+// A function is compiled the same way whatever the size of the program around it: `foundAtRunTime` alone makes turn() what a function of a very large program is.
 // With `benchIsCalledOnce` the function that holds the loop is called once, as main(), run() and the body of a test are, and not in a loop of the module's code.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 
 const root = join(import.meta.dir, "everyday");
-
-// A function is compiled the same way whatever the size of the program around it: `foundAtRunTime` alone makes turn() what a function of a very large program is.
-// ./symbols.ts hands these to every build that goes with it.
-export const flagsOfVeryLargeProgram: string[] = [];
 
 const neverTaken = `
   if (i < 0) {

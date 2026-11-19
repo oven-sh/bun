@@ -13,9 +13,6 @@ enum class RsaKeyVariant {
 };
 
 struct RsaKeyPairJobCtx : KeyPairJobCtx {
-    WTF_MAKE_TZONE_ALLOCATED(RsaKeyPairJobCtx);
-
-public:
     RsaKeyPairJobCtx(RsaKeyVariant variant, uint32_t modulusLength, uint32_t exponent, const KeyEncodingConfig& encodingConfig)
         : KeyPairJobCtx(encodingConfig.publicKeyEncoding, encodingConfig.privateKeyEncoding)
         , m_variant(variant)
@@ -46,7 +43,7 @@ public:
     {
     }
 
-    void deinit();
+    void runTask(JSC::JSGlobalObject*) { generate(setup()); }
     ncrypto::EVPKeyCtxPointer setup();
     static std::optional<RsaKeyPairJobCtx> fromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const JSC::GCOwnedDataScope<WTF::StringView>& typeView, JSC::JSValue optionsValue, const KeyEncodingConfig& config);
 
@@ -57,10 +54,6 @@ public:
     int32_t m_saltLength;
     ncrypto::Digest m_md = nullptr;
     ncrypto::Digest m_mgfMd = nullptr;
-};
-
-struct RsaKeyPairJob {
-    static void createAndSchedule(JSC::JSGlobalObject*, RsaKeyPairJobCtx&&, JSC::JSValue callback);
 };
 
 } // namespace Bun

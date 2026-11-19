@@ -54,7 +54,6 @@ describe.concurrent("test.extend()", () => {
     });
   });
 
-  // No test run is built so. Nothing else shows that a fixture is never left out without a word.
   test("without the text of functions a test with fixtures fails and says why", async () => {
     const file = `
       import { test } from "bun:test";
@@ -62,7 +61,7 @@ describe.concurrent("test.extend()", () => {
       const local = test.extend({ state: 5 });
       local("a fixture", ({ state }) => console.log("SAID not reached", state));`;
     expect(
-      await runTests({ "hidden.test.js": file }, ["--aot"], "TestRunLayers:0,TestRunWithoutFunctionSource"),
+      await runTests({ "hidden.test.js": file }, ["--aot", "--no-compile-function-source"], "TestRunLayers:0"),
     ).toEqual({
       said: ["SAID () => { [native code] }"],
       results: ["(pass) no fixtures", "(fail) a fixture"],

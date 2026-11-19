@@ -41,6 +41,9 @@ private:
     OrdinalNumber m_columnNumber;
     intptr_t m_sourceID;
     unsigned int m_flags;
+#if ENABLE(AOT)
+    JSC::AOT::Typed::ModuleID m_compiledModule;
+#endif
 
 public:
     using Base = JSC::JSNonFinalObject;

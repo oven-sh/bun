@@ -1,6 +1,6 @@
 // A helper whose own loop calls a closure that the call hands over is copied where the call stands in a loop, and the closure in turn. What the copy must not change: what the closure captures in each turn,
 // a return out of the helper, a throw out of the closure under try and finally, a list that the closure changes, a closure that calls the helper again, `this`, defaults, rest and `arguments` of the closure, what is no list and no function.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 (globalThis as any).report = (value: unknown) => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 declare function report(value: unknown): void;
 function each<T>(list: T[], visit: (item: T, index: number) => void): void { for (let i = 0; i < list.length; i++) visit(list[i], i); }

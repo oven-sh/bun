@@ -1,5 +1,5 @@
 // for await steps an async generator without a promise and without an object for each step, and each step ends in the turn of the job queue in which it ends by the protocol.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 const log = [];
 const note = (text) => log.push(text);

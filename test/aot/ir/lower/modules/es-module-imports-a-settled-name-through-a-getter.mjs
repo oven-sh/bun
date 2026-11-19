@@ -10,7 +10,7 @@
 // NOWHERE-NOT: declared={type=anything|absent}
 // NOWHERE-NOT: CheckInitialized {{*}}name="width"
 
-// Every run of fixed.cjs stores `width` once, and nothing stores it later: what the getter of fixed-door.cjs answers at the link is what the variable holds ever after. The importer reads the variable, and no file has a face.
+// Every run of fixed.cjs stores `width` once, and nothing stores it later: what the getter of fixed-door.cjs answers at the link is what the variable holds ever after. The importer reads the variable, and no file has a facade.
 import { width } from "./imports/copies/fixed-door.cjs";
 export function readWidth() {
   return width;

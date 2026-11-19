@@ -49,6 +49,8 @@ export const zstd: Dependency = {
     // ZSTD_freeCCtx frees a context's dictionaries before joining the worker
     // threads, so a job that's still running can read freed memory.
     "patches/zstd/free-workers-before-dictionaries.patch",
+    // Sets the bytes after the decoded literals to zero.
+    "patches/zstd/literals-buffer-tail.patch",
   ],
 
   build: cfg => {
@@ -83,7 +85,7 @@ export const zstd: Dependency = {
       pic: true,
       // XXH_NAMESPACE must be a bare token prefix (xxhash pastes it onto
       // symbol names), not a string literal — DirectBuild.defines would
-      // wrap it in quotes. Avoids clashes with lshpack's copy.
+      // wrap it in quotes. Avoids clashes with lsqpack's copy.
       cflags: ["-DXXH_NAMESPACE=ZSTD_"],
     };
     return spec;

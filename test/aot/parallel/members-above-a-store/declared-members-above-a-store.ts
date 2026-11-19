@@ -1,4 +1,5 @@
 // Does a store that creates a property see a member that a class DECLARES above the object?
+// Under: --aot-testing=CheckEffectsAtRunTime: the read of a constructor function's prototype arms guards that a member laid above and taken away again had ended
 let log = "";
 function show(o: object): string { return Object.keys(o).join() + "|" + JSON.stringify(o) + "|" + log; }
 function attempt(run: () => object): string { log = ""; try { return show(run()); } catch (e) { return (e instanceof TypeError ? "TypeError" : "other " + e) + "|" + log; } }

@@ -4,7 +4,7 @@
  * Order matters for two reasons:
  *   1. `fetchDeps` relationships — a dep with fetchDeps must come AFTER the
  *      deps it references, so the referenced .ref stamp node exists in ninja
- *      when we add order-only edges to it. (zlib before lsquic.)
+ *      when we add order-only edges to it. (lsqpack before lsquic.)
  *   2. Link order — when these libs hit the final link line, static linking
  *      resolves left-to-right. Deps that PROVIDE symbols should come after
  *      deps that USE them. This list becomes the link order.
@@ -12,52 +12,35 @@
 
 import type { Dependency } from "../source.ts";
 import { boringssl } from "./boringssl.ts";
-import { brotli } from "./brotli.ts";
 import { cares } from "./cares.ts";
 import { highway } from "./highway.ts";
-import { libdeflate } from "./libdeflate.ts";
-import { libjpegTurbo } from "./libjpeg-turbo.ts";
 import { libuv } from "./libuv.ts";
-import { libwebp } from "./libwebp.ts";
 import { lolhtml } from "./lolhtml.ts";
-import { lshpack } from "./lshpack.ts";
 import { lsqpack } from "./lsqpack.ts";
 import { lsquic } from "./lsquic.ts";
 import { mimalloc } from "./mimalloc.ts";
 import { nodejsHeaders } from "./nodejs-headers.ts";
-import { picohttpparser } from "./picohttpparser.ts";
 import { rustArgon2 } from "./rust-argon2.ts";
 import { sqlite } from "./sqlite.ts";
 import { tinycc } from "./tinycc.ts";
 import { webkit } from "./webkit.ts";
-import { zlib } from "./zlib.ts";
 import { zstd } from "./zstd.ts";
 
 /**
  * All deps in dependency-resolution + link order.
  *
- * zlib FIRST — lsquic's fetchDeps reference it.
- * brotli libs in internal dep order (common last on link line).
  * boringssl near the end — many things depend on crypto/ssl symbols.
  */
 export const allDeps: readonly Dependency[] = [
-  // Header-only / source-only first — no link order concerns.
-  picohttpparser,
+  // Header-only first — no link order concerns.
   nodejsHeaders,
 
-  zlib,
   zstd,
-  brotli,
-  libdeflate,
-  // Image codecs.
-  libjpegTurbo,
-  libwebp,
   cares,
   highway,
   libuv,
   lolhtml,
   rustArgon2,
-  lshpack,
   lsqpack,
   mimalloc,
   sqlite,
@@ -75,24 +58,17 @@ export const allDeps: readonly Dependency[] = [
 // Re-export individuals for direct import when needed.
 export {
   boringssl,
-  brotli,
   cares,
   highway,
-  libdeflate,
-  libjpegTurbo,
   libuv,
-  libwebp,
   lolhtml,
-  lshpack,
   lsqpack,
   lsquic,
   mimalloc,
   nodejsHeaders,
-  picohttpparser,
   rustArgon2,
   sqlite,
   tinycc,
   webkit,
-  zlib,
   zstd,
 };

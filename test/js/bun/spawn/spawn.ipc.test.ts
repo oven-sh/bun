@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick, isLinux, isWindows, tempDir } from "harness";
 import path from "path";
 
 // The receiver rejects a JSON line that's longer than the UTF-8 encoding of a max-length string can be.
@@ -424,6 +424,117 @@ describe("ipc mode advanced", () => {
       });
     },
   );
+});
+
+// The exit can be noticed before the loop has polled the channel: by the waiter thread, or, on macOS, because a process
+// that is already gone can't be watched.
+describe.skipIf(isWindows).each(["advanced", "json"] as const)("a child's last messages (%s)", serialization => {
+  async function run(parent: string, env: Record<string, string> = {}) {
+    using dir = tempDir("ipc-last-messages", {
+      "parent.js": `
+        const { existsSync, readFileSync } = require("fs");
+        const { getPriority } = require("os");
+        function until(condition) {
+          const deadline = Date.now() + 30_000;
+          while (!condition()) {
+            if (Date.now() > deadline) {
+              console.error("30 seconds have passed without " + condition);
+              process.exit(1);
+            }
+            Bun.sleepSync(1);
+          }
+        }
+        const messages = [];
+        const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+        const child = {
+          cmd: [process.execPath, "child.js"],
+          env: { ...process.env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: undefined, BUN_GARBAGE_COLLECTOR_LEVEL: undefined },
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "inherit",
+          serialization: ${JSON.stringify(serialization)},
+          ipc(message, subprocess) {
+            messages.push([message, subprocess === proc]);
+          },
+          onDisconnect,
+        };
+        ${parent}
+        await disconnected;
+        console.log(JSON.stringify({ messages, exitCode: await proc.exited, connected: proc.connected }));
+      `,
+      "child.js": `
+        process.send("first");
+        process.send({ second: 2 });
+        process.send("last");
+        require("fs").writeFileSync("sent", String(process.pid));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: { ...bunEnv, ...env },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr.split("\n").filter(line => line && !line.startsWith("WARNING: ASAN interferes"))).toEqual([]);
+    expect(JSON.parse(stdout)).toEqual({
+      messages: [
+        ["first", true],
+        [{ second: 2 }, true],
+        ["last", true],
+      ],
+      exitCode: 0,
+      connected: false,
+    });
+    expect(exitCode).toBe(0);
+  }
+
+  it.skipIf(!isLinux)("arrive if the waiter thread reaps it before the loop turns", async () => {
+    await run(
+      `
+        const proc = Bun.spawn(child);
+        const next = Bun.spawn({ cmd: ["cat"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+        const isReaped = ({ pid }) => {
+          try {
+            return !process.kill(pid, 0);
+          } catch {
+            return true;
+          }
+        };
+        until(() => isReaped(proc));
+        // The thread posts each exit before it waits for the next process.
+        next.kill("SIGKILL");
+        until(() => isReaped(next));
+      `,
+      { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1", BUN_GARBAGE_COLLECTOR_LEVEL: "1" },
+    );
+  });
+
+  it("arrive if it exits before it is watched", async () => {
+    // pull() runs inside of Bun.spawn(), after the process has started. macOS finds no zombie for getpriority() either.
+    await run(`
+      const isZombie = pid => {
+        if (existsSync("/proc/self/stat")) return readFileSync(\`/proc/\${pid}/stat\`, "latin1").includes(") Z ");
+        try {
+          getPriority(pid);
+          return false;
+        } catch {
+          return true;
+        }
+      };
+      child.stdin = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          let pid;
+          until(() => existsSync("sent") && (pid = Number(readFileSync("sent", "latin1"))));
+          until(() => isZombie(pid));
+          controller.close();
+        },
+      });
+      const proc = Bun.spawn(child);
+    `);
+  });
 });
 
 // get_ipc_instance error path: on Windows, windows_configure_client can open

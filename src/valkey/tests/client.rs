@@ -591,6 +591,60 @@ mod lifecycle {
     }
 
     #[test]
+    fn retries_count_on_within_an_attempt() {
+        let phases: [fn(&mut Driver); 3] = [|_| {}, Driver::start, |it| it.client.dial_failed()];
+        let touches: [fn(&mut Driver); 4] = [
+            |_| {},
+            |it| it.client.claim(),
+            |it| it.client.connect(),
+            |it| (drop(it.client.close()), it.client.connect()).1,
+        ];
+        for (phase, reach) in phases.into_iter().enumerate() {
+            for (touch, apply) in touches.into_iter().enumerate() {
+                let mut it = Driver::connected(Config::default());
+                it.lost();
+                it.dial();
+                reach(&mut it);
+                apply(&mut it);
+                it.lost();
+                assert_eq!(
+                    it.take().last().unwrap(),
+                    "retry in 100 []",
+                    "{phase}, {touch}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn connect_starts_the_retries_over_between_attempts() {
+        let mut it = Driver::connected(Config::default());
+        it.lost();
+        it.client.connect();
+        it.dial();
+        it.lost();
+        assert_eq!(it.take(), ["retry in 50 []", "retry in 50 []"]);
+    }
+
+    #[test]
+    fn a_preconnect_that_failed_is_final_once_claimed() {
+        let touches: [fn(&mut Driver); 3] = [
+            |it| it.client.claim(),
+            |it| it.client.connect(),
+            |it| drop(it.client.close()),
+        ];
+        for (touch, apply) in touches.into_iter().enumerate() {
+            let mut it = Driver::new(Config::default());
+            it.attempt = it.client.preconnect();
+            it.fail();
+            assert!(it.client.is_preconnect() && it.client.rejection().is_some());
+            apply(&mut it);
+            it.lost();
+            assert_eq!(state_of(it), Closed, "{touch}");
+        }
+    }
+
+    #[test]
     fn no_retry() {
         let mut it = Driver::connected(Config::default());
         assert!(matches!(it.lose(true), Lost::ForGood { .. }));

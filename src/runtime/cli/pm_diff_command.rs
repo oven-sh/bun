@@ -10,7 +10,7 @@ use bun_collections::VecExt as _;
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
 use bun_core::strings;
-use bun_core::{Global, Output, pretty, prettyln};
+use bun_core::{Global, Output, StackCheck, pretty, prettyln};
 use bun_http as http;
 use bun_install::dependency::{self, TagExt as _};
 use bun_install::lockfile::LoadResult;
@@ -21,6 +21,7 @@ use bun_install::package_manager::options::Do;
 use bun_install::package_manager::workspace_manifests::WorkspaceManifests;
 use bun_install::{PackageManager, resolution};
 use bun_sys::{Fd, dir_iterator as DirIterator};
+use bun_threading::{Condvar, Guarded, ThreadPool, thread_pool};
 use bun_url::URL;
 
 use crate::cli::pm_diff_normalize as normalize;
@@ -1083,6 +1084,86 @@ struct FileChange<'a> {
     hunks: Vec<u8>,
 }
 
+impl FileChange<'_> {
+    fn bytes(&self) -> usize {
+        [self.old, self.new]
+            .iter()
+            .flatten()
+            .map(|side| side.len())
+            .sum()
+    }
+
+    fn is_sourcemap(&self) -> bool {
+        // Because of the colon, this prefix can only start JSON, never a JavaScript program.
+        strings::ends_with(self.path, b".map")
+            && (self.new.or(self.old)).is_some_and(|b| b.starts_with(b"{\"version\":"))
+    }
+
+    fn is_parsed(&self, flags: DiffFlags) -> bool {
+        !flags.raw && normalize::kind_for(self.path).is_some()
+    }
+
+    /// About how long comparing the file takes, in bytes that are parsed or colored. Others take far less.
+    fn work(&self, flags: DiffFlags) -> usize {
+        let is_read_closely = self.highlight || self.is_parsed(flags);
+        self.bytes() / if is_read_closely { 1 } else { 16 }
+    }
+
+    fn memory(&self, flags: DiffFlags) -> Memory {
+        let sides = [self.old, self.new];
+        // `is_binary` may parse such a file to find out, and most often gives up at once.
+        let may_be_binary = sides.iter().flatten().any(|side| has_early_nul(side));
+        let is_parsed = self.is_parsed(flags);
+        let mut memory = Memory::default();
+        if self.is_sourcemap() && !may_be_binary {
+            return memory;
+        }
+        for side in sides.iter().flatten() {
+            if may_be_binary {
+                memory.at_most += side.len();
+            } else if is_parsed && side.len() <= normalize::MAX_BYTES {
+                let tokens = count_tokens(side).max(side.len() / 8);
+                memory.at_most += tokens;
+                memory.likely += tokens;
+            } else {
+                memory.at_most += (2 * count_lines(side)).max(side.len() / 8);
+            }
+        }
+        memory
+    }
+}
+
+/// About how much memory comparing a file takes, in tokens: words, signs and line ends.
+#[derive(Default, Clone, Copy)]
+struct Memory {
+    /// A line that is not parsed counts as two tokens, eight bytes as at least one, and a byte that may be binary as one.
+    at_most: usize,
+    /// Only the tokens that are parsed.
+    likely: usize,
+}
+
+impl Memory {
+    /// For two files that are compared one after the other.
+    fn max(self, other: Memory) -> Memory {
+        Memory {
+            at_most: self.at_most.max(other.at_most),
+            likely: self.likely.max(other.likely),
+        }
+    }
+}
+
+fn count_tokens(text: &[u8]) -> usize {
+    let in_word = |b: u8| b.is_ascii_alphanumeric() | (b == b'_') | (b == b'$') | (b >= 0x80);
+    let starts_token =
+        |(&a, &b): (&u8, &u8)| (b != b' ') & (b != b'\t') & !(in_word(a) & in_word(b));
+    // No branches, and sums that fit in a byte, so that the compiler looks at many bytes at once.
+    let next = text.get(1..).unwrap_or_default();
+    (text.chunks(255).zip(next.chunks(255)))
+        .map(|(a, b)| a.iter().zip(b).map(starts_token).map(u8::from).sum::<u8>())
+        .map(usize::from)
+        .sum()
+}
+
 fn is_js_like(path: &[u8]) -> bool {
     matches!(
         normalize::kind_for(path),
@@ -1182,13 +1263,17 @@ fn collapse_whitespace(bytes: &[u8]) -> Vec<u8> {
 /// something reads as text, such as scripts and the file types that Bun loads as text.
 fn is_binary(path: &[u8], bytes: &[u8]) -> bool {
     use bun_ast::Loader;
-    strings::contains_char(&bytes[..bytes.len().min(8192)], 0)
+    has_early_nul(bytes)
         && !bytes.starts_with(b"#!")
         && !path.ends_with(b".sh")
         && match bun_bundler::options::DEFAULT_LOADERS.get(bun_paths::extension(path)) {
             Some(loader) => matches!(loader, Loader::Wasm | Loader::Napi),
             None => normalize::normalize(b"as.js", bytes, Default::default()).is_none(),
         }
+}
+
+fn has_early_nul(bytes: &[u8]) -> bool {
+    strings::contains_char(&bytes[..bytes.len().min(8192)], 0)
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -1241,19 +1326,143 @@ fn patch_name(prefix: &[u8], path: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Decides what changed between the two sides of a file, and renders it.
-fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style) {
-    if change.semantic == Semantic::ModeOnly {
+/// Files that one thread compares one after the other. Its memory is that of the largest.
+type Part<'c, 'a> = &'c mut [&'c mut FileChange<'a>];
+
+struct Queue<'c, 'a> {
+    /// The parts that no thread has taken yet, by `Memory::at_most` and then by position.
+    parts: BTreeMap<(usize, usize), Part<'c, 'a>>,
+    /// `Memory::at_most` of the parts that are being compared.
+    running: Vec<usize>,
+    /// How many tokens these may have in total, without the largest.
+    beside_largest: usize,
+}
+
+impl Queue<'_, '_> {
+    /// How many tokens one more part may have.
+    fn room(&self) -> usize {
+        let total: usize = self.running.iter().sum();
+        match self.running.iter().max() {
+            Some(largest) if total > self.beside_largest => self.beside_largest - (total - largest),
+            _ => usize::MAX,
+        }
+    }
+}
+
+/// Compares the files on this thread, or on several others if there is enough work for that.
+fn compare_all(changes: &mut [FileChange<'_>], flags: DiffFlags, style: Style) {
+    /// One more thread per this much work. With less, starting it costs more than it saves.
+    const WORK_PER_THREAD: usize = 64 << 10;
+    /// Beside one file of any size, files with as many tokens as the largest parsed one has are
+    /// compared at the same time, within these limits. A token takes some 100 bytes of memory.
+    const MIN_BESIDE: usize = 128 << 10;
+    const MAX_BESIDE: usize = 4 << 20;
+    /// A part ends with the file that brings it to this much work, so small files do not take a turn each.
+    const WORK_PER_PART: usize = 16 << 10;
+    /// Upper bound on the stack that a pool thread has used when it starts on a file.
+    const THREAD_START: usize = 64 << 10;
+    /// What the calling thread has left of its stack varies from run to run, because the kernel starts it at a random
+    /// address. The pool's stack size is rounded up to a multiple of this, so that it doesn't.
+    const STACK_STEP: usize = 1 << 20;
+
+    let mut files: Vec<&mut FileChange<'_>> = changes
+        .iter_mut()
+        .filter(|change| change.semantic != Semantic::ModeOnly)
+        .collect();
+    let work: usize = files.iter().map(|file| file.work(flags)).sum();
+    let threads = (1 + work / WORK_PER_THREAD)
+        .min(files.len())
+        .min(usize::from(bun_core::get_thread_count()));
+    // A file that nests too deep for the stack is not parsed, so a pool thread gets at least as much as this thread has.
+    let remaining = StackCheck::init().remaining() + StackCheck::THRESHOLD;
+    let stack_size = remaining.next_multiple_of(STACK_STEP) + THREAD_START;
+    let pool = ThreadPool::init(thread_pool::Config {
+        max_threads: u32::try_from(threads).expect("int cast"),
+        stack_size: u32::try_from(stack_size).unwrap_or(u32::MAX),
+    })
+    .named("Diff")
+    .without_spare_threads();
+    if threads > 1 {
+        pool.warm(1);
+    }
+    // If the OS cannot start the pool's first thread, what is scheduled on the pool never runs.
+    if !pool.has_workers() {
+        for file in files {
+            compare(file, flags, style);
+        }
         return;
     }
+
+    let mut in_part = 0;
+    let mut parts: Vec<(Memory, Part<'_, '_>)> = files
+        .split_inclusive_mut(|file| {
+            in_part += file.work(flags);
+            let is_full = in_part >= WORK_PER_PART;
+            if is_full {
+                in_part = 0;
+            }
+            is_full
+        })
+        .map(|part| (Memory::default(), part))
+        .collect();
+    let workers = threads.min(parts.len());
+
+    pool.each_ptr(
+        (),
+        |(), (memory, part), _| {
+            *memory = (part.iter()).fold(*memory, |most, file| most.max(file.memory(flags)));
+        },
+        &mut parts,
+    );
+    let largest = parts.iter().map(|(memory, _)| memory.likely).max();
+    let shared = Guarded::new(Queue {
+        running: Vec::with_capacity(workers),
+        beside_largest: largest.unwrap_or(0).clamp(MIN_BESIDE, MAX_BESIDE),
+        parts: (parts.into_iter().enumerate())
+            .map(|(at, (memory, part))| ((memory.at_most, at), part))
+            .collect(),
+    });
+    let has_room = Condvar::new();
+    let work = || {
+        let mut queue = shared.lock();
+        while !queue.parts.is_empty() {
+            let Some((&next, _)) = queue.parts.range(..=(queue.room(), usize::MAX)).next_back()
+            else {
+                has_room.wait_guarded(&mut queue);
+                continue;
+            };
+            let part = queue
+                .parts
+                .remove(&next)
+                .expect("it was found under this lock");
+            let (tokens, _) = next;
+            queue.running.push(tokens);
+            // Each thread wakes the next, if that one finds a part or can end.
+            if (queue.parts.keys().next()).is_none_or(|smallest| smallest.0 <= queue.room()) {
+                has_room.notify_one();
+            }
+            drop(queue);
+            for file in part {
+                compare(file, flags, style);
+            }
+            queue = shared.lock();
+            let at = queue.running.iter().position(|&it| it == tokens);
+            queue.running.swap_remove(at.expect("this thread added it"));
+        }
+        has_room.notify_one();
+    };
+    // This thread does not join in: whether a file is parsed must not depend on the thread that takes it.
+    pool.each_iter((), |(), _| work(), workers, 0..workers);
+}
+
+/// Decides what changed between the two sides of a file, and renders it.
+fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style) {
     let FileChange { path, old, new, .. } = *change;
     change.binary = [old, new]
         .iter()
         .flatten()
         .any(|side| is_binary(path, side));
-    // Because of the colon, this prefix can only start JSON, never a JavaScript program.
-    change.sourcemap = strings::ends_with(path, b".map")
-        && new.or(old).is_some_and(|b| b.starts_with(b"{\"version\":"));
+    change.sourcemap = change.is_sourcemap();
     if change.binary || change.sourcemap {
         return;
     }
@@ -1581,9 +1790,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             ..Default::default()
         });
     }
-    for change in &mut changes {
-        compare(change, flags, style);
-    }
+    compare_all(&mut changes, flags, style);
 
     if flags.json {
         print_json(left, right, &changes, flags);

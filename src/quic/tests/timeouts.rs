@@ -421,3 +421,38 @@ fn connection_that_the_peer_may_have_given_up() {
     let now = raw.now;
     assert!(!raw.connection().is_stale(now));
 }
+
+#[test]
+fn is_not_silent_when_blocked_again_at_the_same_limit() {
+    let mut raw = Raw::client().with("max_data=0").connected();
+    raw.request_packets("a");
+    raw.connection().reset(StreamId(3), 0);
+    raw.process();
+    raw.send("ack");
+    raw.advance(9000);
+    raw.forget();
+    raw.request_packets("a");
+    raw.advance(9000);
+    assert!(raw.frames().starts_with("data_blocked 0, ping"));
+}
+
+#[test]
+fn a_connection_that_is_back_is_not_stale() {
+    let raw = Raw::server().with("max_datagram_frame_size=65535");
+    let mut raw = raw.connected();
+    raw.connection().send_datagram(1, vec![0; 10]);
+    raw.process();
+    for _ in 0..3 {
+        raw.forget();
+        raw.wait();
+    }
+    raw.forget();
+    raw.send("ping");
+    raw.send("ping");
+    let last = raw.take().pop().unwrap().number;
+    raw.send(&format!("ack {last}"));
+    raw.advance(1000);
+    assert_eq!(raw.frames(), "");
+    let now = raw.now;
+    assert!(!raw.connection().is_stale(now));
+}

@@ -2076,7 +2076,6 @@ class QuicStream {
     // the surviving peer is expected to clean up via its own close/idle
     // timeout rather than via per-stream RESET/STOP_SENDING.
     const cascadingFromSessionDestroy = inner.session !== undefined && isQuicSessionDestroying(inner.session);
-    // Node parity for streams created and abandoned in one turn.
     if (abortCode !== undefined && !cascadingFromSessionDestroy) {
       const wantStop = !inner.state.readEnded;
       const wantReset = inner.writer === undefined && !inner.state.writeEnded;

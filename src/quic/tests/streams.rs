@@ -351,6 +351,17 @@ fn does_not_ask_a_peer_to_stop_that_has() {
 }
 
 #[test]
+fn does_not_ask_either_if_the_end_comes_first() {
+    let mut raw = Raw::client().connected();
+    raw.send("stream 2 0 a");
+    raw.connection().stop(StreamId(2), 7);
+    while raw.peer.poll(raw.now) {}
+    raw.send("fin 2 1 b");
+    assert_eq!(raw.frames(), "max_streams_uni 4");
+    assert!(raw.connection().priority(StreamId(2)).is_none());
+}
+
+#[test]
 fn is_stopped_by_the_peer() {
     let mut raw = Raw::server().connected();
     raw.peer.open(Unidirectional);
@@ -388,18 +399,6 @@ fn gives_up_on_both_halves() {
 }
 
 #[test]
-fn forgets_a_stream_that_was_not_used() {
-    let mut raw = Raw::server().connected();
-    raw.peer.open(Bidirectional);
-    raw.peer.send(0, b"unsent", false);
-    raw.connection().forget(StreamId(0));
-    assert_eq!(raw.frames(), "");
-    assert_eq!(raw.events(), "0 closed");
-    assert!(raw.connection().stream_info(StreamId(0)).is_none());
-    assert_eq!(raw.peer.open(Bidirectional), 4);
-}
-
-#[test]
 fn ignores_calls_for_streams_that_are_not_there() {
     let mut raw = Raw::client().connected();
     let (connection, id) = (raw.connection(), StreamId(0));
@@ -409,7 +408,6 @@ fn ignores_calls_for_streams_that_are_not_there() {
     connection.reset(id, 0);
     connection.reset_unfinished(id, 0);
     connection.stop(id, 0);
-    connection.forget(id);
     connection.consume(id, 1);
     connection.set_paused(id, true);
     connection.set_stream_context(id, context(1));
@@ -476,11 +474,11 @@ fn is_writable_once_for_each_request() {
     }
     raw.connection().finish(ids[1]);
     assert_eq!(raw.events(), "2 writable, 10 writable, 6 closed");
-    raw.connection().want_write(ids[0]);
-    raw.connection().forget(ids[0]);
     raw.peer.polls = false;
-    raw.connection().want_write(ids[2]);
-    raw.connection().reset(ids[2], 0);
+    for id in [ids[0], ids[2]] {
+        raw.connection().want_write(id);
+        raw.connection().reset(id, 0);
+    }
     raw.process();
     raw.peer.polls = true;
     assert_eq!(raw.events(), "2 closed, 10 closed");
@@ -683,8 +681,9 @@ fn streams_that_are_gone_leave_the_queues() {
                 raw.peer.open(Unidirectional);
                 raw.peer.send(id, b"a", false);
             }
-            raw.connection().forget(StreamId(2));
-            while raw.peer.poll(raw.now) {}
+            raw.connection().reset(StreamId(2), 0);
+            let first = raw.take()[0].number;
+            raw.send(&format!("ack {first}"));
             raw.connection()
                 .set_priority(StreamId(6), priority(0, false));
             assert_eq!(raw.events(), "2 closed");

@@ -134,9 +134,11 @@ pub(crate) struct QuicStream {
     pub(super) outbound: JsCell<Outbound>,
     inbound: JsCell<Inbound>,
     wakeup: JsCell<Option<Strong>>,
-    is_known_to_peer: Cell<bool>,
     /// The peer has opened it, and it can be answered.
     is_request: Cell<bool>,
+    /// For when it is not pending any more.
+    pending_reset: Cell<Option<u64>>,
+    pending_stop: Cell<Option<u64>>,
     awaits_reader: Cell<bool>,
     priority: Cell<Priority>,
     pending_headers: JsCell<VecDeque<PendingHeaders>>,
@@ -165,8 +167,9 @@ impl QuicStream {
             outbound: JsCell::new(Outbound::default()),
             inbound: JsCell::new(Inbound::default()),
             wakeup: JsCell::new(None),
-            is_known_to_peer: Cell::new(false),
             is_request: Cell::new(false),
+            pending_reset: Cell::new(None),
+            pending_stop: Cell::new(None),
             awaits_reader: Cell::new(false),
             priority: Cell::default(),
             pending_headers: JsCell::new(VecDeque::new()),
@@ -220,7 +223,6 @@ impl QuicStream {
 
     pub(super) fn bind(&self, id: StreamId, is_local: bool) {
         self.id.set(Some(id));
-        self.is_known_to_peer.set(!is_local);
         self.with_state(|st| {
             st.id = id.0 as i64;
             st.pending = 0;
@@ -234,16 +236,7 @@ impl QuicStream {
             }
         });
         self.write_pending_headers();
-        let (is_reset, is_stopped, code) =
-            self.with_state(|s| (s.reset != 0, s.read_ended != 0, s.reset_code));
-        self.update(|conn, id| {
-            if is_reset {
-                conn.reset(id, code);
-            }
-            if is_stopped {
-                conn.stop(id, code);
-            }
-        });
+        self.abort(self.pending_stop.get(), self.pending_reset.get());
         match (id.direction(), is_local) {
             (Direction::Bidirectional, _) => self.is_request.set(!is_local),
             (Direction::Unidirectional, true) => {
@@ -257,6 +250,13 @@ impl QuicStream {
         }
     }
 
+    fn abort(&self, stop: Option<u64>, reset: Option<u64>) {
+        self.update(|conn, id| {
+            stop.inspect(|&code| conn.stop(id, code));
+            reset.inspect(|&code| conn.reset(id, code));
+        });
+    }
+
     fn write_pending_headers(&self) {
         let has_body = !self.outbound.get().data.is_empty();
         while let Some(headers) =
@@ -265,12 +265,9 @@ impl QuicStream {
             if !self.write_headers(&headers) {
                 // sendHeaders() returned true when it queued this block, so
                 // `closed` is what reports the failure.
-                self.is_known_to_peer.set(true);
-                self.update(|conn, id| {
-                    conn.reset(id, http3_code::INTERNAL_ERROR);
-                    conn.stop(id, http3_code::INTERNAL_ERROR);
-                });
-                self.mark_reset(http3_code::INTERNAL_ERROR);
+                let code = http3_code::INTERNAL_ERROR;
+                self.abort(Some(code), Some(code));
+                self.mark_reset(code);
                 self.end_write_side();
             }
         }
@@ -339,8 +336,12 @@ impl QuicStream {
     pub(super) fn handle(&self) -> JSValue {
         self.this_value.get().get()
     }
-    pub(super) fn pre_reset_code(&self) -> Option<u64> {
-        self.with_state(|s| (s.reset != 0).then_some(s.reset_code))
+    pub(super) fn is_reset(&self) -> bool {
+        self.with_state(|s| s.reset != 0)
+    }
+    /// The peer opened it, reset it and sent nothing.
+    pub(super) fn arrived_spent(&self) -> bool {
+        self.id.get().is_none() && self.is_reset() && self.read_stat(IDX_STATS_BYTES_RECEIVED) == 0
     }
     pub(super) fn release_close_root(&self) {
         self.this_value.with_mut(|r| r.downgrade());
@@ -550,7 +551,6 @@ impl QuicStream {
             let is_short = n < front.len();
             if n > 0 {
                 self.blocked_reported.set(false);
-                self.is_known_to_peer.set(true);
                 self.outbound.with_mut(|out| drop(out.data.drain(..n)));
                 self.add_stat(IDX_STATS_BYTES_SENT, n as u64);
             }
@@ -566,7 +566,6 @@ impl QuicStream {
         };
         if empty && end == PendingEnd::Fin {
             self.update(Connection::finish);
-            self.is_known_to_peer.set(true);
             self.discard_outbound();
             self.with_state(|s| s.fin_sent = 1);
             self.release_unclaimed();
@@ -787,9 +786,6 @@ impl QuicStream {
         }
         let pending = self.queued_len();
         self.with_state(|s| s.write_desired_size = s.high_water_mark.saturating_sub(pending));
-        if let Some(session) = self.session_ref() {
-            session.note_stream_write();
-        }
         self.kick_write();
         Ok(JSValue::js_number(queued as f64))
     }
@@ -807,9 +803,6 @@ impl QuicStream {
                 PendingEnd::Fin
             };
         });
-        if let Some(session) = self.session_ref() {
-            session.note_stream_write();
-        }
         self.kick_write();
     }
 
@@ -828,10 +821,7 @@ impl QuicStream {
             error_code_arg(arg)
         };
         let write_done = self.with_state(|s| s.fin_sent != 0 || s.write_ended != 0);
-        if !cascading
-            && let Some(id) = self.id.get()
-            && !(self.session_ref()).is_some_and(|session| session.has_deferred_abort(id))
-        {
+        if !cascading && self.id.get().is_some() {
             let send_ended = write_done || self.outbound.get().end != PendingEnd::None;
             if code == 0 && send_ended {
                 self.outbound.with_mut(|o| {
@@ -865,8 +855,8 @@ impl QuicStream {
             s.reset_code = code;
         });
         self.end_write_side();
+        self.pending_reset.set(Some(code));
         self.update(|conn, id| conn.reset(id, code));
-        self.is_known_to_peer.set(true);
         self.kick_write();
     }
 
@@ -875,8 +865,8 @@ impl QuicStream {
             return;
         }
         let code = error_code_arg(code.to_js());
+        self.pending_stop.set(Some(code));
         self.update(|conn, id| conn.stop(id, code));
-        self.is_known_to_peer.set(true);
         self.inbound.with_mut(|i| i.ended = true);
         self.with_state(|s| {
             s.read_ended = 1;
@@ -889,7 +879,6 @@ impl QuicStream {
         self.kick_write();
     }
 
-    /// Node parity for streams created and abandoned in one turn.
     pub(crate) fn abort_for_destroy(
         &self,
         _: &mut JsScope<'_>,
@@ -921,19 +910,9 @@ impl QuicStream {
                 s.reset_code = code;
             });
             self.discard_outbound();
+            self.pending_headers.with_mut(VecDeque::clear);
         }
-        if self.is_known_to_peer.get() {
-            self.update(|conn, id| {
-                if let Some(code) = stop {
-                    conn.stop(id, code);
-                }
-                if let Some(code) = reset {
-                    conn.reset(id, code);
-                }
-            });
-        } else if let (Some(id), Some(session)) = (self.id.get(), self.session_ref()) {
-            session.defer_stream_abort(id, reset, stop);
-        }
+        self.abort(stop, reset);
         self.kick_write();
     }
 
@@ -1005,7 +984,6 @@ impl QuicStream {
         if !fields.is_some_and(|it| session.send_headers(id, &it)) {
             return false;
         }
-        self.is_known_to_peer.set(true);
         if headers.is_last {
             self.with_state(|s| s.fin_sent = 1);
             self.update(Connection::finish);
@@ -1016,9 +994,6 @@ impl QuicStream {
 
     pub(super) fn on_event(&self, session: &QuicSession, event: StreamEvent) {
         let stream = self.key;
-        if !matches!(event, StreamEvent::Writable) {
-            self.is_known_to_peer.set(true);
-        }
         match event {
             StreamEvent::Opened => {}
             StreamEvent::Headers(fields) => {

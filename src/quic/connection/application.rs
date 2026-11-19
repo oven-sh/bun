@@ -120,16 +120,12 @@ impl Connection {
 
     /// Gives up on reading.
     pub fn stop(&mut self, id: StreamId, code: u64) {
-        if let Some((stream, state)) = self.abandon_message(id) {
+        if let Some((stream, state)) = self.streams.get_mut(id)
+            && !stream.flags.contains(Flags::RELEASED)
+        {
+            stream.abandon_message(id, self.http3.as_deref_mut());
             state.stop(id, stream, code);
         }
-    }
-
-    fn abandon_message(&mut self, id: StreamId) -> Option<(&mut Stream, &mut State)> {
-        let (stream, state) =
-            (self.streams.get_mut(id)).filter(|it| !it.0.flags.contains(Flags::RELEASED))?;
-        stream.abandon_message(id, self.http3.as_deref_mut());
-        Some((stream, state))
     }
 
     /// Gives up on writing, unless the end has been written.
@@ -138,13 +134,6 @@ impl Connection {
             && !stream.flags.contains(Flags::WRITE_DONE)
         {
             state.reset(id, stream, code);
-        }
-    }
-
-    /// Closes an unused stream of ours without a word to the peer.
-    pub fn forget(&mut self, id: StreamId) {
-        if let Some((stream, state)) = self.abandon_message(id) {
-            state.forget(id, stream);
         }
     }
 

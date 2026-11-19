@@ -115,14 +115,6 @@ impl State {
         (self.released, self.retained - self.unsent)
     }
 
-    /// For a stream that the peer does not know of.
-    pub(crate) fn forget(&mut self, id: StreamId, stream: &mut Stream) {
-        self.discard(stream);
-        (stream.flags).insert(Flags::WRITE_DONE | Flags::RESET | Flags::SEND_DONE);
-        stream.final_size = stream.received;
-        self.finish_reading(id, stream);
-    }
-
     /// `answer` is the code to reset the stream with (RFC 9000 §3.5).
     pub(crate) fn on_stop_sending(
         &mut self,

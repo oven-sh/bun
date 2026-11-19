@@ -870,12 +870,6 @@ impl QuicEndpoint {
         let send_scope = self.send_scope();
         self.followup_after.set(None);
         self.wake_at.set(None);
-        // Not from the mid-turn drain pass: a deferred abort is dropped when
-        // a later stream writes first, and node decides that over the whole
-        // turn -- flushing mid-chain puts a RESET on the wire node never sends.
-        if !self.defer_closes.get() {
-            (self.marked_sessions()).for_each(QuicSession::flush_deferred_aborts);
-        }
         self.drive_once();
 
         let global = self.global();
@@ -915,7 +909,7 @@ impl QuicEndpoint {
         if self.driver_pending.take() {
             self.drive_once();
         }
-        if self.marked_sessions().any(QuicSession::needs_followup) {
+        if self.marked_sessions().any(QuicSession::has_events) {
             self.plan_followup();
         }
     }

@@ -69,7 +69,6 @@ const LISTENER_FLAG_ORIGIN: u32 = 0x20;
 const ORIGIN_LEN_PREFIX: usize = 2;
 
 /// Stream-id bit 1 selects the direction (RFC 9000 §2.1).
-const STREAM_ID_UNI_BIT: u64 = 0x2;
 
 /// Mirrors node's `Session::Application::Type` (node/src/quic/application.h).
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -208,13 +207,6 @@ pub(super) struct HskSnapshot {
     peer_transport_params: Option<TransportParameters>,
 }
 
-pub(super) struct DeferredAbort {
-    id: StreamId,
-    reset: Option<u64>,
-    stop: Option<u64>,
-    marker: u64,
-}
-
 pub(super) enum SessionEvent {
     HandshakeDone,
     /// `None` if it is what this side asked for.
@@ -267,7 +259,6 @@ pub(super) enum SessionEvent {
         id: u64,
         acked: bool,
     },
-    EarlyDataFailed,
     /// HTTP/3 ORIGIN frame payload (RFC 9412).
     Origin(Vec<u8>),
     /// Version Negotiation packet (RFC 8999 sec 6).
@@ -294,8 +285,6 @@ pub(crate) struct QuicSession {
     state: Cell<*mut SessionState>,
     stats: Cell<*mut u64>,
     events: JsCell<VecDeque<SessionEvent>>,
-    deferred_aborts: JsCell<Vec<DeferredAbort>>,
-    write_marker: Cell<u64>,
     /// A graceful close requested while a dispatch was on the stack: applied
     /// on the next depth-0 pass so its GOAWAY/CONNECTION_CLOSE does not share
     /// a flight with data written by the same dispatch (node's close lands an
@@ -350,8 +339,6 @@ impl QuicSession {
             state: Cell::new(null_mut()),
             stats: Cell::new(null_mut()),
             events: JsCell::new(VecDeque::new()),
-            deferred_aborts: JsCell::new(Vec::new()),
-            write_marker: Cell::new(0),
             pending_graceful: JsCell::new(None),
             verneg: Cell::new(None),
             self_close: JsCell::new(None),
@@ -548,8 +535,8 @@ impl QuicSession {
         self.events.with_mut(|e| e.push_back(event));
         self.mark();
     }
-    pub(super) fn needs_followup(&self) -> bool {
-        !self.events.get().is_empty() || !self.deferred_aborts.get().is_empty()
+    pub(super) fn has_events(&self) -> bool {
+        !self.events.get().is_empty()
     }
     fn mark(&self) {
         if let Some(ep) = self.endpoint_ref() {
@@ -580,53 +567,6 @@ impl QuicSession {
         if let Some(ep) = self.endpoint_ref() {
             ep.mark_driver_pending();
         }
-    }
-    pub(super) fn note_stream_write(&self) {
-        self.write_marker
-            .set(self.write_marker.get().wrapping_add(1));
-    }
-    pub(super) fn defer_stream_abort(&self, id: StreamId, reset: Option<u64>, stop: Option<u64>) {
-        let marker = self.write_marker.get();
-        self.mark();
-        self.deferred_aborts.with_mut(|v| {
-            if let Some(e) = v.iter_mut().find(|e| e.id == id) {
-                e.reset = e.reset.or(reset);
-                e.stop = e.stop.or(stop);
-            } else {
-                v.push(DeferredAbort {
-                    id,
-                    reset,
-                    stop,
-                    marker,
-                });
-            }
-        });
-    }
-    pub(super) fn has_deferred_abort(&self, id: StreamId) -> bool {
-        self.deferred_aborts.get().iter().any(|e| e.id == id)
-    }
-    pub(super) fn flush_deferred_aborts(&self) {
-        if self.deferred_aborts.get().is_empty() {
-            return;
-        }
-        let entries = self.deferred_aborts.with_mut(core::mem::take);
-        let marker = self.write_marker.get();
-        self.update(|conn| {
-            for e in entries {
-                if e.marker != marker {
-                    // Node parity — the queued frames are dropped.
-                    conn.forget(e.id);
-                    continue;
-                }
-                if let Some(code) = e.stop {
-                    conn.stop(e.id, code);
-                }
-                match e.reset {
-                    Some(code) => conn.reset(e.id, code),
-                    None => super::stream::close(conn, e.id),
-                }
-            }
-        });
     }
     fn pending_streams(&self, direction: Direction) -> &JsCell<VecDeque<super::stream::Key>> {
         match direction {
@@ -682,7 +622,6 @@ impl QuicSession {
         match self.create_stream(global, self.handle()) {
             Ok((stream, qs, _handle)) => {
                 qs.bind(id, false);
-                self.bump_stream_stat(id.direction(), false);
                 self.push_event(SessionEvent::StreamReady { stream });
             }
             Err(e) => {
@@ -694,6 +633,16 @@ impl QuicSession {
                 crate::dispatch::fold(Err(e));
             }
         }
+    }
+
+    /// A stream that node would have announced, because its body left before the reset.
+    fn has_live_stream_queued(&self) -> bool {
+        self.events.get().iter().any(|it| match *it {
+            SessionEvent::StreamReady { stream } => {
+                (self.live_stream(stream)).is_some_and(|it| !it.is_reset())
+            }
+            _ => false,
+        })
     }
 
     fn refresh_conn_stats(&self, conn: &Connection) {
@@ -842,7 +791,7 @@ impl QuicSession {
         if self.finish_deferred_close() {
             self.schedule_process();
         }
-        if self.needs_followup()
+        if self.has_events()
             || self.pending_graceful.get().is_some()
             || !self.pending_tickets.get().is_empty()
             || !self.unclaimed_streams.get().is_empty()
@@ -902,14 +851,11 @@ impl QuicSession {
                 let Some(stream) = self.live_stream(stream) else {
                     return Ok(());
                 };
-                // A remote stream that arrives already-reset while this
-                // session's close is in the same batch must never be
-                // surfaced (Node's onstream count excludes it).
-                if self.conn.get().is_none() && stream.pre_reset_code().is_some() {
-                    stream.suppress_announce();
-                    return Ok(());
-                }
-                if self.peer_cert_rejected.get() {
+                // Node writes a stream as it is created, so one that is dropped unused still arrives used.
+                if self.peer_cert_rejected.get()
+                    || stream.is_reset() && self.conn.get().is_none()
+                    || stream.arrived_spent() && self.has_live_stream_queued()
+                {
                     stream.suppress_announce();
                     return Ok(());
                 }
@@ -921,9 +867,9 @@ impl QuicSession {
                     stream.close();
                     return Ok(());
                 }
-                // Direction (0=bidi, 1=uni) is bit 1 of the stream id
-                // (RFC 9000 §2.1).
-                let is_uni = stream.stream_id() as u64 & STREAM_ID_UNI_BIT != 0;
+                let direction = StreamId(stream.stream_id() as u64).direction();
+                let is_uni = direction == Direction::Unidirectional;
+                self.bump_stream_stat(direction, false);
                 callbacks::run(
                     global,
                     "onStreamCreated",
@@ -1061,24 +1007,6 @@ impl QuicSession {
                 );
             }
             SessionEvent::DatagramAbandoned(id) => self.report_datagram_abandoned(global, id)?,
-            SessionEvent::EarlyDataFailed => {
-                // Node parity: their `closed` promises reject with an
-                // application error.
-                let code = self.with_state(|s| {
-                    if s.internal_error_code != 0 {
-                        s.internal_error_code
-                    } else {
-                        1
-                    }
-                });
-                let keys: Vec<super::stream::Key> =
-                    self.streams.get().iter().map(|&(key, _)| key).collect();
-                for key in keys {
-                    if let Some(stream) = self.live_stream(key) {
-                        stream.cancel_early_rejected(code);
-                    }
-                }
-            }
             SessionEvent::DatagramAckStatus { id, acked } => {
                 let status_js = if acked {
                     self.add_stat(IDX_STATS_SESSION_DATAGRAMS_ACKNOWLEDGED, 1);
@@ -1951,10 +1879,7 @@ impl QuicSession {
                 }
                 SessionEvent::HandshakeConfirmed
             }
-            Event::EarlyDataRejected => {
-                self.deferred_aborts.with_mut(Vec::clear);
-                SessionEvent::EarlyDataFailed
-            }
+            Event::EarlyDataRejected => return self.on_early_data_rejected(),
             Event::Ticket(ticket) => SessionEvent::SessionResume(ticket),
             Event::Token(token) => SessionEvent::NewToken(token),
             Event::KeyLog(line) => SessionEvent::Keylog(line),
@@ -1986,6 +1911,16 @@ impl QuicSession {
             }
         };
         self.push_event(event);
+    }
+
+    /// As `EarlyDataRejected` in node's application.cc, which leaves pending streams alone.
+    fn on_early_data_rejected(&self) {
+        let code = self.with_state(|s| s.internal_error_code);
+        for &(key, _) in self.streams.get() {
+            if let Some(stream) = self.live_stream(key).filter(|it| !it.is_pending()) {
+                stream.cancel_early_rejected(code);
+            }
+        }
     }
 
     fn on_ready(&self) {

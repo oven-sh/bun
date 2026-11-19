@@ -249,11 +249,15 @@ impl Connection {
         validates: bool,
         shared: &mut Shared,
     ) -> Result<Option<&mut Path>> {
+        let local_id = LocalId::new(destination);
         if let Some(at) = self.candidates.iter().position(|it| it.addresses == *from) {
-            return Ok(self.candidates.get_mut(at));
+            let mut path = self.candidates.get_mut(at);
+            if let Some(path) = &mut path {
+                path.local_id = local_id;
+            }
+            return Ok(path);
         }
         // RFC 9000 §9.5.
-        let local_id = LocalId::new(destination);
         let is_continued = |path: &&Path| {
             path.remote.id.is_empty()
                 || (path.local_id, path.addresses.local) == (local_id, from.local)
@@ -267,11 +271,6 @@ impl Connection {
         let Some(remote) = remote else {
             return Ok(None);
         };
-        if self.candidates.len() == MAX_CANDIDATES {
-            let idle = (self.candidates.iter()).position(|it| !it.is_wanted && !it.is_confirmed);
-            let path = self.candidates.remove(idle.unwrap_or(0));
-            self.abandon_path(&path, shared)?;
-        }
         let is_preferred = validates && self.side.is_client();
         let is_validated = match self.side {
             Side::Client => !is_preferred,
@@ -283,7 +282,12 @@ impl Connection {
         path.challenge(now);
         path.owes_challenge = validates;
         self.track_reset_token(&path, shared);
+        let replaced = (self.candidates.len() == MAX_CANDIDATES).then(|| {
+            let idle = (self.candidates.iter()).position(|it| !it.is_wanted && !it.is_confirmed);
+            self.candidates.remove(idle.unwrap_or(0))
+        });
         self.candidates.push(path);
+        replaced.map_or(Ok(()), |it| self.abandon_path(&it, shared))?;
         Ok(self.candidates.last_mut())
     }
 

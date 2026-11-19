@@ -184,3 +184,15 @@ fn control_frames_of_http3_go_first() {
     raw.connection().go_away();
     assert!(raw.outline().ends_with("stream, datagram]"));
 }
+
+#[test]
+fn what_only_fits_with_a_short_header_waits_for_it() {
+    let raw = Raw::server().with("max_datagram_frame_size=65535");
+    let mut raw = raw.with_ticket();
+    raw.resume();
+    raw.forget();
+    raw.connection().send_datagram(1, vec![0; 1160]);
+    assert_eq!(raw.events(), "");
+    raw.shake_hands();
+    assert_eq!(raw.connection().stats().datagrams_sent, 1);
+}

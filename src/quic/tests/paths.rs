@@ -308,3 +308,41 @@ fn search_for_the_datagram_size_goes_on_after_a_rebinding() {
     }
     assert!(sizes.contains(&1472), "{sizes:?}");
 }
+
+#[test]
+fn an_id_goes_along_with_a_rebinding() {
+    let mut raw = Raw::client().connected_with_spare_id();
+    raw.use_id(1);
+    raw.move_to(NEW);
+    raw.send_expanded("ping");
+    raw.forget();
+    raw.move_to("192.0.2.2:2001");
+    raw.send_expanded("ping");
+    let packets = raw.take();
+    assert_eq!(packets[0].frames, ["path_challenge", "ack 0-3"]);
+    assert_eq!(packets[0].destination, b"raw-id-1");
+
+    let mut raw = Raw::client().connected_with_spare_id();
+    let (old, new) = (raw.destination.clone(), raw.ids[&1].0.clone());
+    for (id, port) in [(&new, 2001), (&old, 2002), (&old, 2003), (&new, 2004)] {
+        raw.destination.clone_from(id);
+        raw.move_to(&format!("192.0.2.2:{port}"));
+        raw.send_expanded("path_challenge 12345678");
+        assert_eq!(raw.frames(), "path_response 12345678, path_challenge");
+    }
+}
+
+#[test]
+fn keeps_its_window_for_another_port_of_the_server() {
+    let raw = Raw::server().config(|it| {
+        (it.congestion, it.uses_preferred_address) = (Algorithm::Cubic, true);
+    });
+    let same_host = format!("{}1{}", &PREFERRED[..26], &PREFERRED[27..]);
+    let mut raw = raw.with(&same_host).connected();
+    raw.request_packets("a");
+    let window = raw.connection().stats().congestion_window;
+    raw.move_to("198.51.100.1:444");
+    raw.send("respond, ack");
+    assert_eq!(raw.connection().addresses().peer.port(), 444);
+    assert_eq!(raw.connection().stats().congestion_window, window);
+}

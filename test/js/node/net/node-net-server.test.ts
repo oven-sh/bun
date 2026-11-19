@@ -858,7 +858,8 @@ describe("net.Server.listen() with no host", () => {
   });
 
   // Node does not fall back on EADDRINUSE: a port that another server holds on "::" alone stays taken.
-  it("does not listen on 0.0.0.0 when the port is in use on ::", async () => {
+  // Not on Windows: there the bind of "::" succeeds beside an IPv6-only holder, so no listen() fails.
+  it.skipIf(isWindows)("does not listen on 0.0.0.0 when the port is in use on ::", async () => {
     const holder = createServer().listen({ host: "::", port: 0, ipv6Only: true });
     await once(holder, "listening");
     try {

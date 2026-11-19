@@ -95,6 +95,7 @@ impl<'a> Appender<'a> {
         &self,
         distance: usize,
     ) -> Option<[&'a Chunks<N, K>; 2]> {
+        const { assert!(size_of::<Chunks<N, K>>() == N * K && align_of::<Chunks<N, K>>() == 1) };
         let to = self.rest.as_chunks::<N>().0.first_chunk::<K>()?;
         if distance.wrapping_sub(1) >= self.position() {
             return None;

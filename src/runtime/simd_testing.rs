@@ -69,6 +69,12 @@ pub(crate) fn scanner_run_stops<'a>(
 
 pub(crate) use kernels::line_starts;
 
+pub(crate) fn byte_bits(text: &[u8], byte: u8) -> impl Iterator<Item = u8> {
+    let mut words = Vec::new();
+    kernels::byte_bits(text, byte, &mut words);
+    words.into_iter().flat_map(u64::to_le_bytes)
+}
+
 pub(crate) fn odd_blocks(text: &[u8]) -> impl Iterator<Item = u8> {
     let mut words = Vec::new();
     // Room for a word too many.

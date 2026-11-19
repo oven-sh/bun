@@ -655,8 +655,9 @@ fn whole_files(js: &[u8], json: &[u8], map: &[u8]) {
     time! {
         "xml16 8 K", xml::index_chunk16(opaque(xml), 0, index.as_mut_slice().into(), &mut Default::default());
     }
-    let marks = &mut vec![0; js.len() / 4096];
+    let (marks, bits) = (&mut vec![0; js.len() / 4096], &mut Vec::new());
     time! {
+        "byte_bits 16 KB", byte_bits(opaque(&js[..16_000]), b'\n', bits);
         "odd_blocks 1 MB", odd_blocks(opaque(js), marks.as_mut_slice().into());
     }
 

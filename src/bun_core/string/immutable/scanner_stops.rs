@@ -49,6 +49,13 @@ impl ScannerStopsBuffer {
         self.filled(text)
     }
 
+    /// The memory that the stops of `text` take more than those of any text so far.
+    pub fn reserve(&mut self, text: &[u8]) -> &mut [core::mem::MaybeUninit<u8>] {
+        let more = (3 * Self::plane_len(text)).saturating_sub(self.planes.len());
+        self.planes.reserve(more);
+        &mut self.planes.spare_capacity_mut()[..more]
+    }
+
     /// The text of the last call is no longer held on to.
     pub fn forget(&mut self) {
         self.filled_for = None;
@@ -93,6 +100,15 @@ impl Stops<'_> {
         match self.0.get(at..at + 8) {
             Some(bits) => u64::from_le_bytes(bits.try_into().unwrap_or_default()) >> (pos & 7),
             None => 1,
+        }
+    }
+
+    /// The bits of the 64 bytes from `64 * index` on.
+    #[inline(always)]
+    pub fn block(self, index: usize) -> u64 {
+        match self.0.get(index * 8..index * 8 + 8) {
+            Some(bits) => u64::from_le_bytes(bits.try_into().unwrap_or_default()),
+            None => u64::MAX,
         }
     }
 

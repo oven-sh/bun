@@ -48,6 +48,13 @@ pub fn line_starts(text: &[u8]) -> Vec<u32> {
     starts
 }
 
+/// A bit for each byte of `text`, lowest first: whether it is `byte`. Those past the end are clear.
+pub fn byte_bits(text: &[u8], byte: u8, out: &mut Vec<u64>) {
+    out.clear();
+    let words = text.len().div_ceil(64);
+    bun_simd::extend_vec(out, words, |out| simd::byte_bits(text, byte, out));
+}
+
 #[bun_simd::foreach_target]
 mod simd {
     use crate::byte_set::simd::this_target::class;
@@ -65,6 +72,15 @@ mod simd {
                 isa::bit_indices(newlines).push_to(&mut out, 64 * i as u32 + 1);
             }
         }
+        out.finish()
+    }
+
+    #[export(up_to = neon)]
+    pub fn byte_bits<'a>(text: &[u8], byte: u8, out: Out<'a, u64>) -> &'a mut [u64] {
+        let (mut out, (whole, rest)) = (out.into_writer(), text.as_chunks());
+        let bits = |block: &[u8; 64]| Some(U8::bitmasks(block, |v| [v.simd_eq(byte)]));
+        out.extend_with(whole, bits);
+        out.extend_with(blocks(rest, &mut [!byte; 64]).next(), bits);
         out.finish()
     }
 

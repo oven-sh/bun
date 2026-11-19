@@ -65,7 +65,7 @@ mod folding_simd {
     const HAS_INSTRUCTION: bool =
         matches!(MORE_FEATURES, [it, ..] if matches!(it.as_bytes(), b"crc"));
     /// With many registers and a fast op for three inputs. On Neoverse, it waits for products.
-    const IS_RICH: bool = HAS_INSTRUCTION && cfg!(target_vendor = "apple")
+    const IS_RICH: bool = cfg!(all(target_vendor = "apple", target_feature = "sha3"))
         || matches!(MORE_FEATURES, [_, it] if matches!(it.as_bytes(), b"avx512vl"));
 
     /// Barrett reduction

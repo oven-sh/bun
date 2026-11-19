@@ -677,3 +677,22 @@ describe("byteSetPrefixLength", () => {
     expect([31, 32, 33, 48].map(withSetOf)).toEqual([-1, 0, -1, -1]);
   });
 });
+
+describe("byteBits", () => {
+  it("marks the byte, and nothing past the end", () => {
+    for (const len of LENGTHS) {
+      for (const off of OFFSETS) {
+        for (const byte of [0, 0x0a, 0xff]) {
+          const text = new Uint8Array(len + off)
+            .map((_, i) => (i % 7 < 2 ? byte : byte ^ (i % 255 || 1)))
+            .subarray(off);
+          const expected = new Uint8Array(Math.ceil(len / 64) * 8);
+          text.forEach((it, i) => {
+            if (it === byte) expected[i >> 3] |= 1 << (i & 7);
+          });
+          compare("byteBits", simd.byteBits(text, byte).join(), expected.join(), `len=${len} off=${off} byte=${byte}`);
+        }
+      }
+    }
+  });
+});

@@ -1,5 +1,5 @@
-# The handles of `bun lint` are a `&File` and an index. They are hashed and compared by the index alone.
-ignore-interior-mutability = ["..", "bun_lint::ast::File"]
+# The handles of `bun lint` are a `&File` and an index. They are hashed and compared by the index alone. A `RuleId` is by name or address.
+ignore-interior-mutability = ["..", "bun_lint::ast::File", "bun_lint::linter::message::RuleId"]
 
 disallowed-methods = [
   { path = "std::fs::read", reason = "use bun_sys::file" },

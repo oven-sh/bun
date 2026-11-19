@@ -827,6 +827,23 @@ fn long_line() {
 }
 
 #[test]
+fn byte_bits() {
+    for t in texts(MIXED).chain([all_bytes(), vec![0; 70], vec![0xFF; 70]]) {
+        for byte in [0, b'\n', 0xFF] {
+            let mut want = vec![0; t.len().div_ceil(64)];
+            for (at, &it) in t.iter().enumerate() {
+                want[at / 64] |= u64::from(it == byte) << (at % 64);
+            }
+            check(want, || {
+                let mut bits = vec![0xA5; 3];
+                kernels::byte_bits(&t, byte, &mut bits);
+                bits
+            });
+        }
+    }
+}
+
+#[test]
 fn odd_blocks() {
     let odd = (0..=255)
         .map(|byte| (byte, 70))

@@ -51,6 +51,7 @@ export const simdStringsForTesting = {
   searchShared: $bindgen("simd_testing.bind.ts", "searchShared"),
   scannerRunStops: $bindgen("simd_testing.bind.ts", "scannerRunStops"),
   lineStarts: $bindgen("simd_testing.bind.ts", "lineStarts"),
+  byteBits: $bindgen("simd_testing.bind.ts", "byteBits"),
   oddBlocks: $bindgen("simd_testing.bind.ts", "oddBlocks"),
 };
 

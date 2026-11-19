@@ -504,6 +504,18 @@ impl Round<'_> {
     }
 
     #[optimize(size)]
+    fn byte_bits(&mut self) {
+        let byte = self.random.one_of(&[0, b'\n', b' ', 0xFF]);
+        let mut want = vec![0; self.text.len().div_ceil(64)];
+        for (at, &it) in self.text.iter().enumerate() {
+            want[at / 64] |= u64::from(it == byte) << (at % 64);
+        }
+        let (text, mut bits) = (self.rooms[0].copy_of(self.text, self.offset), Vec::new());
+        byte_bits(text, byte, &mut bits);
+        self.digests.fails_unless(bits == want, "byte_bits");
+    }
+
+    #[optimize(size)]
     fn odd_blocks(&mut self) {
         let mut text = vec![b' '; 20 * self.text.len()];
         for &byte in self.text.iter().take(20) {
@@ -1478,6 +1490,7 @@ pub(crate) fn run(rounds: u64, only: &[u8], traced: Vec<u8>) -> bool {
             ("searches", Round::searches),
             ("memmem", Round::memmem),
             ("scanner_run_stops", Round::scanner_run_stops),
+            ("byte_bits", Round::byte_bits),
             ("odd_blocks", Round::odd_blocks),
             ("checksums", Round::checksums),
             ("hashes", Round::hashes),

@@ -482,6 +482,15 @@ impl<'a> Lexer<'a> {
         self.comments.truncate(keep_len);
     }
 
+    /// Forgets the comments from `pos` on, which is the end of a token.
+    pub(crate) fn discard_trivia_from(&mut self, pos: u32) {
+        self.discard_comments_from(pos);
+        let directives = (self.comment_directives).partition_point(|it| it.start < pos);
+        self.comment_directives.truncate(directives);
+        let ignored = self.ignore_comments.partition_point(|it| it.0 < pos);
+        self.ignore_comments.truncate(ignored);
+    }
+
     /// Returns the text of `atom`, which came from a token of this file. Empty for `Atom::NONE`.
     pub(crate) fn text_of(&self, atom: Atom) -> &[u8] {
         match self.names.is_own() {

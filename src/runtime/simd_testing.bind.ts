@@ -44,6 +44,7 @@ export const scannerRunStops = b.fn({
   throws: true,
 });
 export const lineStarts = b.fn({ args: { text: plain }, returns: b.array(b.u32) });
+export const byteBits = b.fn({ args: { text: plain, byte: b.u8 }, returns: b.array(b.u8) });
 export const oddBlocks = b.fn({ args: { text: plain }, returns: b.array(b.u8) });
 export const xxHash3 = b.fn({
   args: { bytes: shared, seed: b.any },

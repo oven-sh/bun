@@ -2288,8 +2288,8 @@ impl<'s, V: Record> Interned<'s, V> {
     }
 
     /// Reserves `count` consecutive ids for the caller.
-    fn reserve(&self, count: u32) -> Placeholders<'s> {
-        self.items.add_placeholders(count, V::hole)
+    fn reserve(&self, count: u32, when_reserved: impl FnOnce()) -> Placeholders<'s> {
+        self.items.add_placeholders(count, when_reserved, V::hole)
     }
 
     /// Publishes `record` unless another thread has published an equal one since the caller's lookup. Returns the id of
@@ -3322,16 +3322,21 @@ impl<'s> TypeStore<'s> {
         // first range is cut short so that every later one starts at a multiple of its length.
         let count = ID_RANGE_LENS[kind as usize];
         let count = count - next % count;
+        // The memory of new ids is new to the process, and every task asks for a dozen ranges when it begins.
+        let unlock = || drop(spare);
         match kind {
             Kind::Atom => Placeholders::default(),
-            Kind::Components => self.components.reserve(count),
-            Kind::Mapper => self.mappers.reserve(count),
-            Kind::Sig => self.sigs.reserve(count),
+            Kind::Components => self.components.reserve(count, unlock),
+            Kind::Mapper => self.mappers.reserve(count, unlock),
+            Kind::Sig => self.sigs.reserve(count, unlock),
             Kind::Type => {
-                let ids = self.types.reserve(count);
                 let nothing = || Summary::new(TypeSummary::NOTHING);
-                let summaries = self.summaries.add_placeholders(count, nothing);
-                debug_assert_eq!(ids.first(), summaries.first());
+                let mut first_summary = None;
+                let ids = self.types.reserve(count, || {
+                    first_summary =
+                        (self.summaries.add_placeholders(count, unlock, nothing)).first();
+                });
+                debug_assert_eq!(ids.first(), first_summary);
                 ids
             }
         }

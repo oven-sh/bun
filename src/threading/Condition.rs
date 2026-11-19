@@ -164,6 +164,16 @@ impl Condition {
         self.signal()
     }
 
+    /// `count` calls of [`signal`](Self::signal) in one. The first thread that wakes may take the core from the caller,
+    /// which then gets to the other calls late.
+    #[inline]
+    pub fn notify_many(&self, count: usize) {
+        if count > 0 {
+            self.impl_
+                .wake(Notify::Many(u32::try_from(count).unwrap_or(u32::MAX)));
+        }
+    }
+
     /// Alias for [`broadcast`](Self::broadcast) — `parking_lot::Condvar` spelling.
     #[inline]
     pub fn notify_all(&self) {
@@ -182,6 +192,7 @@ type Impl = FutexImpl;
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum Notify {
     One, // wake up only one thread
+    Many(u32),
     All, // wake up all threads
 }
 
@@ -292,6 +303,9 @@ mod windows_impl {
         pub(super) fn wake(&self, notify: Notify) {
             match notify {
                 Notify::One => WakeConditionVariable(&self.condition),
+                Notify::Many(count) => {
+                    (0..count).for_each(|_| WakeConditionVariable(&self.condition));
+                }
                 Notify::All => WakeAllConditionVariable(&self.condition),
             }
         }
@@ -418,6 +432,7 @@ impl FutexImpl {
 
             let to_wake = match notify {
                 Notify::One => 1,
+                Notify::Many(count) => count.min(wakeable),
                 Notify::All => wakeable,
             };
 
@@ -450,5 +465,36 @@ impl FutexImpl {
                 Err(s) => s,
             };
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Guarded;
+
+    #[test]
+    fn notify_many_wakes_that_many() {
+        // How many wait, and how many may go on
+        let (state, condition) = (Guarded::new((0, 0)), Condition::default());
+        std::thread::scope(|scope| {
+            for _ in 0..5 {
+                scope.spawn(|| {
+                    let mut state = state.lock();
+                    state.0 += 1;
+                    while state.1 == 0 {
+                        condition.wait_guarded(&mut state);
+                    }
+                    *state = (state.0 - 1, state.1 - 1);
+                });
+            }
+            for (waiting, count) in [(5, 3), (2, 7)] {
+                while state.lock().0 != waiting {
+                    std::thread::yield_now();
+                }
+                state.lock().1 = count;
+                condition.notify_many(count);
+            }
+        });
     }
 }

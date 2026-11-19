@@ -190,6 +190,14 @@ fn not_a_key(key: &[u8], section: &[u8], meant: Option<&[u8]>) -> Vec<u8> {
     message
 }
 
+/// The one of `keys` that `key` is most likely a misspelling of.
+fn closest_key(key: &[u8], keys: impl Iterator<Item = Vec<u8>>) -> Option<Vec<u8>> {
+    keys.map(|it| (strings::edit_distance(key.iter().copied(), &it[..]), it))
+        .min_by_key(|it| it.0)
+        .filter(|it| it.0 <= key.len().max(3) / 3)
+        .map(|it| it.1)
+}
+
 /// Rejects `key`, which isn't one of `keys` (all the keys of the `section` table), and suggests the closest one.
 fn unknown_key<T>(
     key: &[u8],
@@ -197,12 +205,8 @@ fn unknown_key<T>(
     section: &[u8],
     keys: impl Iterator<Item = Vec<u8>>,
 ) -> Result<T, BunfigError> {
-    let closest = keys
-        .map(|it| (strings::edit_distance(key.iter().copied(), &it[..]), it))
-        .min_by_key(|it| it.0)
-        .filter(|it| it.0 <= key.len().max(3) / 3);
-    let closest = closest.as_ref().map(|it| &it.1[..]);
-    reject(at, &[&not_a_key(key, section, closest)])
+    let closest = closest_key(key, keys);
+    reject(at, &[&not_a_key(key, section, closest.as_deref())])
 }
 
 fn at(value: &Expr) -> impl Fn(UsageError) -> BunfigError {
@@ -613,36 +617,65 @@ fn patterns(value: &Expr) -> Result<Vec<Vec<u8>>, BunfigError> {
     }
 }
 
-/// Parses `[[fmt.overrides]]`. Same shape as in a `.prettierrc`. `options` takes the `[fmt]` keys that affect output.
+/// Reads the `options` table of an entry of `[[fmt.overrides]]` into `it`. A key that isn't a `[fmt]` key is an option
+/// of a plugin, and it's only taken if [`crate::fmt::cli::Override::may_use_plugin`]. That's decided after every key
+/// is read, so the order of the keys doesn't matter.
+fn set_override_options(
+    table: &Expr,
+    it: &mut crate::fmt::cli::Override,
+) -> Result<(), BunfigError> {
+    let is_option = |flag: &&&[u8]| crate::fmt::cli::option_of(flag).is_some();
+    let option_keys = || FORMAT.flags.iter().filter(is_option).map(|it| key_of(it));
+    // `parser` only makes sense for some files, so it's allowed here and not at the top level.
+    let keys = || option_keys().chain([b"parser".to_vec(), b"plugins".to_vec()]);
+    let mut options = crate::fmt::cli::Options::default();
+    let (mut has_plugins, mut others) = (false, Vec::new());
+    for (key, value) in entries(table)? {
+        let flag: Option<&[u8]> = match &key.name[..] {
+            b"parser" => Some(&b"parser"[..]),
+            b"plugins" => Some(&b"plugin"[..]),
+            _ => None,
+        };
+        if let Some(flag) = flag {
+            let set: &mut Set = &mut |flag, value, is_on| options.set(flag, value, is_on);
+            apply_value(FORMAT.param(flag), value, set)?;
+            has_plugins |= flag == b"plugin";
+        } else if option_keys().any(|it| it == key.name) {
+            set_in_format(&key, value, &mut options)?;
+        } else {
+            others.push((key, value));
+        }
+    }
+    it.format = options.format;
+    it.plugins = has_plugins.then_some(options.plugins);
+    let may_use_plugin = it.may_use_plugin();
+    for (key, value) in others {
+        // A misspelled key must not reach Prettier as an option of a plugin, and neither must another `[fmt]` key.
+        let is_of_plugin = may_use_plugin
+            && closest_key(&key.name, keys()).is_none()
+            && !FORMAT.keys().any(|it| it == key.name);
+        if !is_of_plugin {
+            return unknown_key(&key.name, key.at, b"fmt.overrides.options", keys());
+        }
+        let mut json = Vec::new();
+        write_json(&mut json, &json_of(value)?);
+        it.passthrough.push((key.name, json));
+    }
+    Ok(())
+}
+
+/// Parses `[[fmt.overrides]]`. Same shape as in a `.prettierrc`. `options` takes the `[fmt]` keys that affect output,
+/// `parser` and `plugins`. If it lists a plugin that isn't built in, or sets a `parser` that Prettier doesn't have,
+/// it also takes the options of plugins. Those are kept apart from the rest, for the installed Prettier.
 fn overrides(value: &Expr) -> Result<Vec<crate::fmt::cli::Override>, BunfigError> {
     let items = tables_of(value, b"fmt")?;
-    // `parser` only makes sense for some files, so it's allowed here and not at the top level.
-    let is_option = |flag: &&&[u8]| crate::fmt::cli::option_of(flag).is_some();
-    let options_of = |table: &Expr| {
-        let mut options = crate::fmt::cli::Options::default();
-        for (key, value) in entries(table)? {
-            if key.name == b"parser" {
-                let set: &mut Set = &mut |flag, value, is_on| options.set(flag, value, is_on);
-                apply_value(FORMAT.param(b"parser"), value, set)?;
-                continue;
-            }
-            let mut keys = FORMAT.flags.iter().filter(is_option).map(|it| key_of(it));
-            if !keys.any(|it| it == key.name) {
-                let keys = FORMAT.flags.iter().filter(is_option).map(|it| key_of(it));
-                let keys = keys.chain([b"parser".to_vec()]);
-                return unknown_key(&key.name, key.at, b"fmt.overrides.options", keys);
-            }
-            set_in_format(&key, value, &mut options)?;
-        }
-        Ok(options.format)
-    };
     let one = |item: &Expr| {
         let mut it = crate::fmt::cli::Override::default();
         for (key, value) in entries(item)? {
             match &key.name[..] {
                 b"files" => it.files = patterns(value)?,
                 b"excludeFiles" => it.excluded = patterns(value)?,
-                b"options" => it.format = options_of(value)?,
+                b"options" => set_override_options(value, &mut it)?,
                 _ => {
                     let keys = [&b"files"[..], b"excludeFiles", b"options"];
                     let keys = keys.iter().map(|it| it.to_vec());

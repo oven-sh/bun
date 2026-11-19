@@ -68,11 +68,19 @@ class ClientSpan {
   #span: unknown;
   #method: string;
   #url: string;
+  #status: number | null | undefined = undefined;
+  #httpVersion: string | null | undefined = undefined;
 
   constructor(span: unknown, method: string, url: string) {
     this.#span = span;
     this.#method = method;
     this.#url = url;
+  }
+
+  /** Before the program gets to change it. */
+  received(response: Response) {
+    this.#status = response.statusCode;
+    this.#httpVersion = response.httpVersion;
   }
 
   /** The first call counts. Whatever happens to the socket behind a complete response is no error of the request. */
@@ -81,8 +89,8 @@ class ClientSpan {
       this.#span as any,
       this.#method,
       this.#url,
-      response?.statusCode,
-      response?.httpVersion,
+      this.#status,
+      this.#httpVersion,
       response?.complete ? undefined : (error ?? undefined),
     );
   }
@@ -94,9 +102,10 @@ function startClientSpan(
   method: string,
   protocol: string,
   host: string,
-  port: string | number,
+  givenPort: unknown,
   givenPath: unknown,
 ) {
+  const port = `${givenPort}`;
   const path = `${givenPath}`;
   const started = begin(
     headers.getHeader("traceparent") as string,
@@ -113,7 +122,7 @@ function startClientSpan(
   if (RegExpPrototypeExec.$call(/^[a-z][a-z0-9+.-]*:\/\//i, path) !== null)
     return new ClientSpan(started[0], method, path);
   let url = protocol + "//" + (host[0] !== "[" && StringPrototypeIncludes.$call(host, ":") ? `[${host}]` : host);
-  if (port != (protocol === "https:" ? 443 : 80)) url += ":" + port;
+  if (port !== (protocol === "https:" ? "443" : "80")) url += ":" + port;
   // What CONNECT asks for is no path on this server.
   if (method !== "CONNECT") url += path;
   return new ClientSpan(started[0], method, url);

@@ -337,6 +337,34 @@ describe("@opentelemetry/api", () => {
     expect({ stdout, exitCode }).toEqual({ stdout: "true true true true\n", exitCode: 0 });
   });
 
+  test.concurrent.each([
+    ["assigned back", `globalThis[key] = globalThis[key];`],
+    ["deleted and restored", `const saved = globalThis[key]; delete globalThis[key]; globalThis[key] = saved;`],
+    // These hold the words of registerGlobal(), and are not to be called a second time.
+    ["read by a module", `(globalThis[key] = globalThis[key] ?? {}).version; // WORDS`],
+    ["read by a field", `new (class { f = ((globalThis[key] = globalThis[key]).version, "WORDS"); })();`],
+    ["read by an arrow", `((a, b, c) => { (globalThis[key] = globalThis[key]).version; return "WORDS"; })();`],
+  ])("a meter provider registers after the registry was %s", async (_, before) => {
+    const words = "Attempted duplicate registration of API, does not match previously registered API";
+    using dir = tempDir("otel-api-registry", {
+      "index.cjs": `
+        const key = Symbol.for("opentelemetry.js.api.1");
+        console.log("begins");
+        ${before.replace("WORDS", words)}
+        console.log(require("@opentelemetry/api").metrics.setGlobalMeterProvider({ getMeter() {} }), globalThis[key].version);
+      `,
+    });
+    cpSync(apiPackageDir, path.join(String(dir), "node_modules/@opentelemetry/api"), { recursive: true });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.cjs"],
+      env: { ...bunEnv, BUN_OTEL: "1", OTEL_TRACES_EXPORTER: "none" },
+      cwd: String(dir),
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "begins\ntrue 1.9.0\n", exitCode: 0 });
+  });
+
   test("an older copy that only reads the registry does not fix its version", async () => {
     using dir = tempDir("otel-api-older-first", {
       "node_modules/lib/index.js": `require("@opentelemetry/api").trace.getTracer("lib");`,

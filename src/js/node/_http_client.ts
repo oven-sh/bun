@@ -742,7 +742,10 @@ function processClientData(socket, d, parser) {
 
       const bodyHead = d.slice(bytesParsed, d.length);
 
-      if (hasClientSpans) req[kClientSpan]?.end(res);
+      if (hasClientSpans) {
+        req[kClientSpan]?.received(res);
+        req[kClientSpan]?.end(res);
+      }
 
       const eventName = req.method === "CONNECT" ? "connect" : "upgrade";
       if (req.listenerCount(eventName) > 0) {
@@ -875,6 +878,7 @@ function parserOnIncomingClient(res, shouldKeepAlive) {
   // The response arrived: close the 'http.client.request' span (Node ends it
   // here, in parserOnIncomingClient, before handing the response to the user).
   traceClientResponseEnd(req);
+  if (hasClientSpans) req[kClientSpan]?.received(res);
   req.res = res;
   res.req = req;
 

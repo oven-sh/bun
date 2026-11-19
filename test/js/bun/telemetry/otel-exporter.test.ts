@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { basename } from "node:path";
+import { mkfifo } from "mkfifo";
+import { open } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { gunzipSync } from "node:zlib";
 
 const root = require("@opentelemetry/otlp-transformer/build/src/generated/root");
@@ -1306,7 +1308,10 @@ describe.concurrent("OTLP/HTTP exporter", () => {
   test("exit from a callback that holds up the HTTP thread does not wait for it", async () => {
     using stream = Bun.serve({
       port: 0,
-      fetch: () => new Response(new ReadableStream({ pull: async c => (await Bun.sleep(1), c.enqueue("<p></p>")) })),
+      fetch: req =>
+        req.method === "POST"
+          ? new Response()
+          : new Response(new ReadableStream({ pull: async c => (await Bun.sleep(1), c.enqueue("<p></p>")) })),
     });
     const { exitCode } = await run(
       `Bun.otel.span("s", () => {});
@@ -1320,6 +1325,9 @@ describe.concurrent("OTLP/HTTP exporter", () => {
         OTEL_EXPORTER_OTLP_TIMEOUT: "0",
         OTEL_BSP_EXPORT_TIMEOUT: "0",
         URL: stream.url.href,
+        // Tearing the VM down waits for the HTTP thread too, with or without tracing.
+        BUN_DESTRUCT_VM_ON_EXIT: "0",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
       },
     );
     expect(exitCode).toBe(0);
@@ -1476,5 +1484,77 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     proc.stdin.end("\n");
     expect(await proc.exited).toBe(0);
     expect(c.spans().map(s => s.name)).toEqual(["s"]);
+  });
+
+  test.each(["Bun.otel.forceFlush()", ""])("exit ends while a worker keeps making batches due: %s", async flush => {
+    using slow = Bun.serve({ port: 0, fetch: async req => (await req.bytes(), await Bun.sleep(80), new Response()) });
+    const result = await run(
+      `if (Bun.isMainThread) {
+         const worker = new Worker(import.meta.path);
+         await new Promise(resolve => (worker.onmessage = resolve));
+         process.exit(0);
+       } else {
+         setInterval(() => { Bun.otel.span("s", () => {}); ${flush}; postMessage(""); }, 5);
+       }`,
+      { ...neverTimesOut, BUN_OTEL: "1", OTEL_EXPORTER_OTLP_ENDPOINT: slow.url.href, OTEL_BSP_SCHEDULE_DELAY: "1" },
+    );
+    expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+
+  test("a batch that the work pool is taking goes to the exporter that it was recorded under", async () => {
+    const { stdout, exitCode } = await run(
+      `let wrong = 0, total = 0;
+       for (let round = 0; round < 100; round++) {
+         const name = "round " + round;
+         Bun.otel.start({
+           batch: { maxExportBatchSize: 64 },
+           exporters: [{ export(spans) { total += spans.length; wrong += spans.filter(s => s.name !== name).length; } }],
+         });
+         for (let i = 0; i < 64; i++) Bun.otel.span(name, () => {});
+         if (round % 10 === 0) await Bun.otel.forceFlush();
+       }
+       await Bun.otel.forceFlush();
+       console.log(total + Bun.otel.stats().spansDropped, Bun.otel.stats().spansDropped, wrong);`,
+      {},
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "6400 0 0\n", exitCode: 0 });
+  });
+
+  test("workers that end send no request of their own", async () => {
+    let posts = 0;
+    using hangs = Bun.serve({ port: 0, idleTimeout: 0, fetch: () => (posts++, new Promise<Response>(() => {})) });
+    const { exitCode } = await run(
+      `if (Bun.isMainThread) {
+         for (let i = 0; i < 5; i++) await new Promise(resolve => new Worker(import.meta.path).addEventListener("close", resolve));
+       } else {
+         Bun.otel.span("s", () => {});
+       }`,
+      {
+        BUN_OTEL: "1",
+        OTEL_EXPORTER_OTLP_ENDPOINT: hangs.url.href,
+        OTEL_BSP_SCHEDULE_DELAY: "600000",
+        OTEL_BSP_EXPORT_TIMEOUT: "300",
+      },
+    );
+    expect([exitCode, posts]).toEqual([0, 1]);
+  });
+
+  test.skipIf(isWindows)("exit does not wait past the timeout for a console exporter that cannot write", async () => {
+    using dir = tempDir("otel-stuck-console", {});
+    mkfifo(join(String(dir), "fifo"), 0o600);
+    await using unread = await open(join(String(dir), "fifo"), "r+");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `Bun.otel.start({ exporters: ["console"], batch: { timeoutMs: 100 } });
+         for (let i = 0; i < 512; i++) Bun.otel.span("s", { k: Buffer.alloc(4096, "a").toString() }, () => {});
+         while (Bun.otel.stats().spansPending) await Bun.sleep(1);
+         process.exit(0);`,
+      ],
+      env: cleanEnv,
+      stderr: unread.fd,
+    });
+    expect(await proc.exited).toBe(0);
   });
 });

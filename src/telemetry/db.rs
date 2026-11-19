@@ -233,11 +233,18 @@ pub fn describe_statement(record: &mut Record, operation: Option<&[u8]>, text: &
     }
 }
 
+fn has_secret_arguments(redis_command: &[u8]) -> bool {
+    matches!(
+        redis_command,
+        b"AUTH" | b"HELLO" | b"MIGRATE" | b"ACL" | b"CONFIG"
+    )
+}
+
 /// The text has the first argument, which is the key of most commands, and never a value.
 pub fn describe_redis_command(record: &mut Record, name: &[u8], first: &[u8], has_more: bool) {
     let name = crate::otlp::truncate_utf8(name, 24).to_ascii_uppercase();
     let mut text = Vec::new();
-    if !matches!(&*name, b"AUTH" | b"HELLO" | b"MIGRATE" | b"ACL" | b"CONFIG") {
+    if !has_secret_arguments(&name) {
         text.extend_from_slice(&name);
         if matches!(&*name, b"ECHO" | b"PING") {
             return describe_statement(record, Some(&name), &text);
@@ -257,9 +264,12 @@ impl<'a> DbError<'a> {
     /// A reply quotes arguments: all of them for an unknown command, a password for `ACL`.
     pub fn of_redis(reply: &'a [u8], record: &Record) -> DbError<'a> {
         use bun_core::strings;
-        let end = match record.has_attribute(b"db.query.text") {
-            true => strings::index_of(reply, b", with args beginning with").unwrap_or(reply.len()),
-            false => 0,
+        let command = strings::split(record.name(), b" ")
+            .next()
+            .unwrap_or_default();
+        let end = match has_secret_arguments(command) {
+            true => 0,
+            false => strings::index_of(reply, b", with args beginning with").unwrap_or(reply.len()),
         };
         DbError {
             ty: strings::split(reply, b" ").next().unwrap_or_default(),

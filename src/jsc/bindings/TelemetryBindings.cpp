@@ -770,33 +770,50 @@ static void fillRegistry(Zig::GlobalObject* globalObject, JSObject* registry)
     }
 }
 
-// getGlobal() takes a registry whose minor version is not older than its own. registerGlobal() wants its very own,
-// and is the one that assigns to the global: `_global[key] = _global[key] ?? { version: VERSION }`.
+// getGlobal() takes a registry whose minor version is not older than its own, and registerGlobal() wants its very
+// own. So `version` suits every 1.x until registerGlobal() reads it, which only looking at the caller tells. That is
+// too slow for getGlobal(), but registerGlobal() assigns to the global first:
+// `_global[key] = _global[key] ?? { version: VERSION }`.
+//
+// The three accessor functions keep the registry, and the getter of `version` or what it goes by.
 static constexpr auto registryField = static_cast<JSFunctionWithFields::Field>(0);
-// `true` while registerGlobal() is asked for its version, then the registry that it has made.
-static constexpr auto probeField = static_cast<JSFunctionWithFields::Field>(1);
+static constexpr auto versionGetterField = static_cast<JSFunctionWithFields::Field>(1);
+// The key as a Symbol, or `true` behind an assignment.
+static constexpr auto keyField = static_cast<JSFunctionWithFields::Field>(1);
 
 static Identifier registryKey(VM& vm)
 {
     return Identifier::fromUid(vm.symbolRegistry().symbolForKey("opentelemetry.js.api.1"_s));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsGetApiRegistry, (JSGlobalObject * globalObject, CallFrame* callFrame))
+static Symbol* registrySymbol(VM& vm)
 {
-    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Telemetry, jsGetApiRegistry);
-    auto* getter = uncheckedDowncast<JSFunctionWithFields>(callFrame->jsCallee());
-    if (getter->getField(probeField).isTrue()) [[unlikely]]
-        return JSValue::encode(jsUndefined());
-    if (JSValue registry = getter->getField(registryField); registry.isObject()) [[likely]]
-        return JSValue::encode(registry);
+    return Symbol::create(vm, static_cast<SymbolImpl&>(*registryKey(vm).impl()));
+}
+
+static JSFunctionWithFields* createAccessorFunction(JSGlobalObject* globalObject, NativeFunction body)
+{
     auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* registry = constructEmptyObject(globalObject);
-    registry->putDirect(vm, Identifier::fromString(vm, "version"_s), jsNontrivialString(vm, "1.999.0"_s));
-    fillRegistry(defaultGlobalObject(globalObject), registry);
-    RETURN_IF_EXCEPTION(scope, {});
-    getter->setField(vm, registryField, registry);
-    return JSValue::encode(registry);
+    auto* function = JSFunctionWithFields::create(vm, globalObject, vm.getHostFunction(body, ImplementationVisibility::Private, callHostFunctionAsConstructor, 0, String()));
+    function->setField(vm, registryField, jsUndefined());
+    function->setField(vm, versionGetterField, jsUndefined());
+    return function;
+}
+
+static JSFunctionWithFields* calleeOf(CallFrame* callFrame)
+{
+    return uncheckedDowncast<JSFunctionWithFields>(callFrame->jsCallee());
+}
+
+static bool isRegisterGlobal(CodeBlock* codeBlock)
+{
+    auto* executable = dynamicDowncast<FunctionExecutable>(codeBlock->ownerExecutable());
+    if (!executable || codeBlock->isConstructor() || executable->parameterCount() < 3 || executable->parameterCount() > 4)
+        return false;
+    if (executable->parseMode() != SourceParseMode::NormalFunctionMode || executable->source().length() > 2048)
+        return false;
+    auto source = executable->source().view();
+    return source.contains("Attempted duplicate registration of API"_s) && source.contains("does not match previously registered API"_s);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsIgnoreApiLog, (JSGlobalObject*, CallFrame*))
@@ -804,22 +821,11 @@ JSC_DEFINE_HOST_FUNCTION(jsIgnoreApiLog, (JSGlobalObject*, CallFrame*))
     return JSValue::encode(jsUndefined());
 }
 
-// Calls it once more, as if there were no registry yet.
-static JSValue versionOfCallingApi(JSGlobalObject* globalObject, CallFrame* callFrame, JSFunctionWithFields* getter)
+static JSValue registerInEmptyRealm(JSFunction* registerGlobal)
 {
+    auto* globalObject = registerGlobal->globalObject();
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSCell* registerGlobal = nullptr;
-    StackVisitor::visit(callFrame, vm, [&](StackVisitor& visitor) {
-        if (!visitor->index())
-            return IterationStatus::Continue;
-        // Compiled code has none, and takes no call that the compiler has not seen.
-        if (auto* codeBlock = visitor->codeBlock(); codeBlock && codeBlock->ownerExecutable()->source().view().contains("Attempted duplicate registration of API"_s) && codeBlock->codeType() == FunctionCode)
-            registerGlobal = visitor->callee().asCell();
-        return IterationStatus::Done;
-    });
-    if (!registerGlobal)
-        return jsNontrivialString(vm, "1.10.0"_s);
     JSObject* logger = constructEmptyObject(globalObject);
     for (ASCIILiteral level : { "debug"_s, "error"_s })
         logger->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, level), 0, jsIgnoreApiLog, ImplementationVisibility::Private, NoIntrinsic, 0);
@@ -827,12 +833,110 @@ static JSValue versionOfCallingApi(JSGlobalObject* globalObject, CallFrame* call
     arguments.append(jsEmptyString(vm));
     arguments.append(jsUndefined());
     arguments.append(logger);
-    getter->setField(vm, probeField, jsBoolean(true));
     call(globalObject, registerGlobal, getCallData(registerGlobal), jsUndefined(), arguments);
-    JSValue made = getter->getField(probeField);
-    getter->setField(vm, probeField, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue made = globalObject->get(globalObject, registryKey(vm));
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, getPath(globalObject, made, { "version"_s }));
+}
+
+// Calls it as if there were no registry yet, and leaves the registry as a plain property.
+static JSValue askForVersion(JSFunction* registerGlobal)
+{
+    auto* globalObject = registerGlobal->globalObject();
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Identifier key = registryKey(vm);
+    JSValue registry = globalObject->get(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, {});
+    bool isDeleted = JSCell::deleteProperty(globalObject, globalObject, key);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!isDeleted)
+        return jsUndefined();
+    JSValue version = registerInEmptyRealm(registerGlobal);
+    bool hasThrown = scope.exception();
+    {
+        SuspendExceptionScope suspended(vm);
+        auto restoring = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        PutPropertySlot slot(globalObject);
+        globalObject->methodTable()->put(globalObject, globalObject, key, registry, slot);
+        (void)restoring.tryClearException();
+    }
+    return hasThrown ? JSValue() : version;
+}
+
+// Undefined unless the caller is registerGlobal().
+static JSValue versionOfRegisteringApi(VM& vm, CallFrame* callFrame)
+{
+    JSFunction* registerGlobal = nullptr;
+    bool isCompiledRegisterGlobal = false;
+    StackVisitor::visit(callFrame, vm, [&](StackVisitor& visitor) {
+        if (!visitor->index())
+            return IterationStatus::Continue;
+        if (visitor->isCompiledFrame())
+            isCompiledRegisterGlobal = visitor->functionName() == "registerGlobal"_s;
+        else if (auto* codeBlock = visitor->codeBlock(); codeBlock && isRegisterGlobal(codeBlock))
+            registerGlobal = dynamicDowncast<JSFunction>(visitor->callee().asCell());
+        return IterationStatus::Done;
+    });
+    // It takes no call that the compiler has not seen. The latest release is the guess.
+    if (isCompiledRegisterGlobal)
+        return jsNontrivialString(vm, "1.10.0"_s);
+    return registerGlobal ? askForVersion(registerGlobal) : jsUndefined();
+}
+
+static bool assignmentsOfCallerAreSeen(JSGlobalObject* globalObject, CallFrame* callFrame, Symbol* key)
+{
+    auto& vm = getVM(globalObject);
+    unsigned attributes = 0;
+    if (!globalObject->getDirect(vm, PropertyName(&key->uid()), attributes) || !(attributes & PropertyAttribute::Accessor))
+        return false;
+    if (vm.hasCompiledCode())
+        return true;
+    // A context of node:vm may have been given a copy of the globals.
+    EntryFrame* entryFrame = vm.topEntryFrame;
+    CallFrame* caller = callFrame->callerFrame(entryFrame);
+    return !caller || caller->isNativeCalleeFrame() || caller->lexicalGlobalObject(vm) == globalObject;
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsGetApiVersion, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Telemetry, jsGetApiVersion);
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* getter = calleeOf(callFrame);
+    JSValue key = getter->getField(keyField);
+    if (key.isTrue() || !assignmentsOfCallerAreSeen(globalObject, callFrame, asSymbol(key))) [[unlikely]] {
+        getter->setField(vm, keyField, registrySymbol(vm));
+        JSValue version = versionOfRegisteringApi(vm, callFrame);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (version.isString()) {
+            JSObject* registry = asObject(getter->getField(registryField));
+            registry->methodTable()->defineOwnProperty(registry, globalObject, Identifier::fromString(vm, "version"_s), PropertyDescriptor(version, 0), false);
+            RETURN_IF_EXCEPTION(scope, {});
+            return JSValue::encode(version);
+        }
+    }
+    static NeverDestroyed<String> suitsEveryMinor { MAKE_STATIC_STRING_IMPL("1.999.0") };
+    return JSValue::encode(jsStringWithCache(vm, suitsEveryMinor.get()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsGetApiRegistry, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Telemetry, jsGetApiRegistry);
+    auto* getter = calleeOf(callFrame);
+    if (JSValue registry = getter->getField(registryField); registry.isObject()) [[likely]]
+        return JSValue::encode(registry);
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* registry = constructEmptyObject(globalObject);
+    auto* versionGetter = uncheckedDowncast<JSFunctionWithFields>(getter->getField(versionGetterField));
+    registry->putDirectAccessor(globalObject, Identifier::fromString(vm, "version"_s), GetterSetter::create(vm, globalObject, versionGetter, nullptr), PropertyAttribute::Accessor | 0);
+    fillRegistry(defaultGlobalObject(globalObject), registry);
+    RETURN_IF_EXCEPTION(scope, {});
+    versionGetter->setField(vm, registryField, registry);
+    getter->setField(vm, registryField, registry);
+    return JSValue::encode(registry);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSetApiRegistry, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -840,18 +944,14 @@ JSC_DEFINE_HOST_FUNCTION(jsSetApiRegistry, (JSGlobalObject * globalObject, CallF
     BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Telemetry, jsSetApiRegistry);
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* getter = uncheckedDowncast<JSFunctionWithFields>(uncheckedDowncast<JSFunctionWithFields>(callFrame->jsCallee())->getField(registryField));
+    auto* versionGetter = uncheckedDowncast<JSFunctionWithFields>(calleeOf(callFrame)->getField(versionGetterField));
     JSValue value = callFrame->argument(0);
-    if (getter->getField(probeField).isTrue()) {
-        getter->setField(vm, probeField, value);
+    if (value.isObject() && value == versionGetter->getField(registryField)) {
+        versionGetter->setField(vm, keyField, jsBoolean(true));
         return JSValue::encode(jsUndefined());
     }
-    if (value.isObject() && value == getter->getField(registryField)) {
-        JSValue version = versionOfCallingApi(globalObject, callFrame, getter);
-        RETURN_IF_EXCEPTION(scope, {});
-        asObject(value)->putDirect(vm, Identifier::fromString(vm, "version"_s), version);
-    }
-    globalObject->putDirect(vm, registryKey(vm), value);
+    globalObject->methodTable()->defineOwnProperty(globalObject, globalObject, registryKey(vm), PropertyDescriptor(value, 0), false);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 
@@ -873,15 +973,12 @@ extern "C" void Bun__Telemetry__registerWithApi(JSGlobalObject* lexicalGlobalObj
     if (JSObject* registry = present.getObject())
         RELEASE_AND_RETURN(scope, fillRegistry(globalObject, registry));
     // A program that does not load the package never reads it.
-    auto create = [&](NativeFunction function) {
-        auto* created = JSFunctionWithFields::create(vm, globalObject, vm.getHostFunction(function, ImplementationVisibility::Private, callHostFunctionAsConstructor, 0, String()));
-        created->setField(vm, registryField, jsUndefined());
-        created->setField(vm, probeField, jsUndefined());
-        return created;
-    };
-    auto* getter = create(jsGetApiRegistry);
-    auto* setter = create(jsSetApiRegistry);
-    setter->setField(vm, registryField, getter);
+    auto* versionGetter = createAccessorFunction(globalObject, jsGetApiVersion);
+    auto* getter = createAccessorFunction(globalObject, jsGetApiRegistry);
+    auto* setter = createAccessorFunction(globalObject, jsSetApiRegistry);
+    versionGetter->setField(vm, keyField, registrySymbol(vm));
+    getter->setField(vm, versionGetterField, versionGetter);
+    setter->setField(vm, versionGetterField, versionGetter);
     globalObject->putDirectAccessor(globalObject, key, GetterSetter::create(vm, globalObject, getter, setter), PropertyAttribute::Accessor | 0);
 }
 

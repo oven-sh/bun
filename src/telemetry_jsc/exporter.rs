@@ -56,6 +56,8 @@ struct Deadline {
 }
 
 const MAX_ATTEMPTS: u32 = 5;
+/// Retries, and the batches of VMs that leave, do not wait for their turn.
+const MAX_IN_FLIGHT: usize = 8;
 
 enum SendError {
     Transport(bun_http::Error),
@@ -398,6 +400,9 @@ impl Request {
 
 impl Exporter for OtlpHttpExporter {
     fn export(self: Arc<Self>, attempt: ExportAttempt) {
+        if self.in_flight.lock().len() >= MAX_IN_FLIGHT {
+            return self.failed(attempt, &SendError::OutOfTime);
+        }
         self.send(Arc::clone(attempt.payload()), Receiver::Processor(attempt));
     }
 
@@ -414,7 +419,9 @@ impl Exporter for OtlpHttpExporter {
         deadline: MonoInstant,
     ) -> ExportResult {
         let result = match self.send_blocking(payload, deadline) {
-            Err(error) if error.is_worth_a_try_at_once() => self.send_blocking(payload, deadline),
+            Err(error) if error.is_worth_a_try_at_once() && !payload.is_parked() => {
+                self.send_blocking(payload, deadline)
+            }
             result => result,
         };
         match result {
@@ -431,9 +438,12 @@ impl Exporter for OtlpHttpExporter {
 struct ConsoleExporter;
 
 impl Exporter for ConsoleExporter {
-    fn export(self: Arc<Self>, attempt: ExportAttempt) {
-        let result = self.export_blocking(attempt.payload(), MonoInstant::FAR_FUTURE);
-        attempt.done(result);
+    fn export(self: Arc<Self>, _: ExportAttempt) {
+        unreachable!("synchronous");
+    }
+
+    fn is_synchronous(&self) -> bool {
+        true
     }
 
     fn export_blocking(
@@ -614,7 +624,7 @@ impl JsExporter {
             .find(|e| core::ptr::eq(Arc::as_ptr(&e.shared), self))
             .map(|e| (e.function.get(), e.this.get()))
         else {
-            return Ok(Delivery::Settled(ExportResult::Failure));
+            return Ok(Delivery::Settled(ExportResult::Abandoned));
         };
         // An exporter that calls fetch() would trace its own export, batch after batch.
         let suppressed = Entered::new(global, Some(Context::create_suppressing(global)));
@@ -631,7 +641,7 @@ impl JsExporter {
         drop(suppressed);
         let error = match result {
             Ok(result) if result.is_undefined() && function.call_may_have_been_dropped(global) => {
-                return Ok(Delivery::Settled(ExportResult::Failure));
+                return Ok(Delivery::Settled(ExportResult::Abandoned));
             }
             Ok(result) => match result.as_promise().map(JSPromise::opaque_mut) {
                 Some(promise) if promise.status() == Status::Pending => {
@@ -703,7 +713,7 @@ impl Exporter for JsExporter {
                 warn_of_pending_export();
                 ExportResult::Failure
             }
-            Some(Err(_)) | None => ExportResult::Failure,
+            Some(Err(_)) | None => ExportResult::Abandoned,
         }
     }
 

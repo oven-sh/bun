@@ -681,7 +681,7 @@ describe("Bun.otel", () => {
   });
 
   test("a URL in an error is redacted on every span that the error passes", async () => {
-    const error = new Error('fetching "https://u:secret@h/?sig=secret" failed');
+    const error = new Error(`fetching "https://u:a'secret@h/?sig=secret" failed`);
     await Bun.otel.span("rejects", () => Promise.reject(error)).catch(() => {});
     tracer.startSpan("told").fail(error).end();
     const got = await collect();

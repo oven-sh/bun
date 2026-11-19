@@ -59,6 +59,13 @@ describe.skipIf(!isEnabled)("Valkey: OpenTelemetry", () => {
     expect(JSON.stringify(got)).not.toContain("secret");
   });
 
+  test("captureDbStatement: false keeps the message of the server", async () => {
+    Bun.otel.start({ exporters: [{ export: (b: any[]) => spans.push(...b) }], captureDbStatement: false });
+    await ctx.redis.send("GET", []).catch(() => {});
+    await ctx.redis.send("CONFIG", ["secret"]).catch(() => {});
+    expect((await collect()).map(s => s.status.message)).toEqual([expect.stringContaining("wrong number"), "ERR"]);
+  });
+
   test("commands issued inside an active span are its children", async () => {
     const redis = ctx.redis;
     const tracer = Bun.otel.tracer("test");

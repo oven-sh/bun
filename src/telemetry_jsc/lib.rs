@@ -24,7 +24,7 @@ mod tracer;
 mod values;
 pub mod websocket;
 
-pub use bun_telemetry::{Instrument, SpanKind};
+pub use bun_telemetry::{Instrument, Record, SpanKind};
 pub use configure::before_entry_point;
 pub use held::{Active, HeldSpan};
 pub use native::{NativeSpan, SpanCell};

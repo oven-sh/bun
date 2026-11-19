@@ -351,12 +351,14 @@ pub fn redact_urls_in(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     use std::borrow::Cow;
     let (mut out, mut copied, mut at) = (Vec::new(), 0, 0);
     while let Some(start) = strings::index_of(&text[at..], b"://").map(|i| at + i) {
-        at = strings::index_of_any(&text[start..], b" \t\r\n\"'`<>")
+        at = strings::index_of_any(&text[start..], b" \t\r\n\"`<>")
             .map_or(text.len(), |i| start + i);
-        if let Cow::Owned(redacted) = redact_url(&text[start..at]) {
+        // A password may have a `'`, so it only ends the URL at its end.
+        let end = start + strings::trim_right(&text[start..at], b"'),.;").len();
+        if let Cow::Owned(redacted) = redact_url(&text[start..end]) {
             out.extend_from_slice(&text[copied..start]);
             out.extend_from_slice(&redacted);
-            copied = at;
+            copied = end;
         }
     }
     if copied == 0 {
@@ -749,6 +751,10 @@ mod redact_tests {
 
     #[test]
     fn urls_in_a_text() {
+        assert_eq!(
+            &*super::redact_urls_in(b"'ws://u:a'b@h/?sig=1', x"),
+            b"'ws://REDACTED:REDACTED@h/?sig=REDACTED', x"
+        );
         assert_eq!(
             &*super::redact_urls_in(b"a \"http://h/?sig=1\" b ws://u:p@h c http://h/ok\n://"),
             b"a \"http://h/?sig=REDACTED\" b ws://REDACTED:REDACTED@h c http://h/ok\n://"

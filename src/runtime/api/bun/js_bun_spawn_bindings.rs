@@ -20,7 +20,7 @@ use bun_jsc::{JsCell, SysErrorJsc as _};
 use bun_sys::Fd;
 use bun_sys::UV_E;
 use bun_sys::{self as sys, SignalCode};
-use bun_telemetry_jsc::{Failed, Instrument, NativeSpan, SpanKind};
+use bun_telemetry_jsc::{Failed, Instrument, NativeSpan, Outcome, Record, SpanKind};
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
 #[cfg(unix)]
@@ -1066,9 +1066,13 @@ fn spawn_maybe_sync(
         CStrList::from_unterminated(&mut borrow_c_strings(&argv.args)),
         Some(CStrList::from_unterminated(&mut env_array)),
     );
+    let command = argv.argv0.as_bytes();
     match &spawned {
-        Err(err) => core::mem::take(&mut span).settle(Failed(err.name().as_bytes(), b"")),
-        Ok(Err(err)) => core::mem::take(&mut span).settle(err),
+        Err(err) => {
+            let failure = Failed(err.name().as_bytes(), b"");
+            fail_span(core::mem::take(&mut span), command, failure);
+        }
+        Ok(Err(err)) => fail_span(core::mem::take(&mut span), command, err),
         Ok(Ok(_)) => {}
     }
     let mut spawned = match spawned {
@@ -1805,11 +1809,24 @@ fn throw_spawn_sync_loop_init_failed(global_this: &JSGlobalObject) -> JsError {
 #[inline]
 fn begin_span(global: &JSGlobalObject, executable: &[u8]) -> NativeSpan {
     NativeSpan::start(global, Instrument::ChildProcess, SpanKind::Internal, |r| {
-        let name = bun_paths::basename(executable);
-        r.set_name(name);
-        r.prefix_name(b"spawn");
-        r.attr("process.executable.name", name);
+        name_span(r, executable);
     })
+}
+
+fn name_span(record: &mut Record, executable: &[u8]) {
+    let name = bun_paths::basename(executable);
+    record.set_name(name);
+    record.prefix_name(b"spawn");
+    record.attr("process.executable.name", name);
+}
+
+/// What did not start may be a whole command line.
+#[inline]
+fn fail_span(span: NativeSpan, command: &[u8], failure: impl Outcome) {
+    span.end_with(|r| {
+        name_span(r, strings::split(command, b" ").next().unwrap_or_default());
+        failure.record(r);
+    });
 }
 
 fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsError {
@@ -1823,7 +1840,11 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
         path: BunString::clone_utf8(command),
         ..Default::default()
     };
-    begin_span(global_this, command).settle(&err);
+    fail_span(
+        begin_span(global_this, b""),
+        command,
+        Failed(b"ENOENT", b""),
+    );
     global_this.throw_value(err.to_error_instance(global_this))
 }
 

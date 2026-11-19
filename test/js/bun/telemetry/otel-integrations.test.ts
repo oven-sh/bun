@@ -243,9 +243,14 @@ describe("Bun.spawn", () => {
 });
 
 test("Bun.spawn of a command that is not found has a failed span", async () => {
-  expect(() => Bun.otel.span("parent", () => Bun.spawn(["made-up-command"]))).toThrow("not found");
-  const [span] = await collect("bun.child_process");
-  expect([span.name, span.attributes["error.type"]]).toEqual(["spawn made-up-command", "ENOENT"]);
+  for (const command of ["made-up-command -psecret", "/made-up/command -psecret"])
+    expect(() => Bun.otel.span("parent", () => Bun.spawn([command]))).toThrow();
+  const got = await collect("bun.child_process");
+  expect(got.map(s => [s.name, s.attributes["error.type"]])).toEqual([
+    ["spawn made-up-command", "ENOENT"],
+    ["spawn command", "ENOENT"],
+  ]);
+  expect(JSON.stringify(got)).not.toContain("secret");
 });
 
 test("a WebSocket that is closed before it opens has not failed", async () => {

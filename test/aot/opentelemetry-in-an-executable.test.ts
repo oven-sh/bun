@@ -36,6 +36,8 @@ async function build(program: string, ...flags: string[]) {
   const dir = tempDir("aot-otel", { "main.ts": program });
   const api = dirname(require.resolve("@opentelemetry/api/package.json"));
   cpSync(api, join(String(dir), "node_modules/@opentelemetry/api"), { recursive: true });
+  const api110 = dirname(dirname(require.resolve("opentelemetry-api-1.10")));
+  cpSync(api110, join(String(dir), "node_modules/opentelemetry-api-1.10"), { recursive: true });
   const executable = join(String(dir), isWindows ? "main.exe" : "main");
   const command = [bunExe(), "build", "--compile", "--aot", ...withoutDebugInformation, ...flags];
   const built = await run([...command, "main.ts", "--outfile", executable], String(dir));
@@ -93,16 +95,11 @@ describe("OpenTelemetry in an executable", () => {
 
   test("with BUN_OTEL=1 the release of the package that Bun assumes registers its logger", async () => {
     using dir = await build(`
-      const key = Symbol.for("opentelemetry.js.api.1");
-      const registry = ((globalThis as any)[key] = (globalThis as any)[key] ?? { version: "0" });
-      console.log(registry.version, typeof registry.trace, (globalThis as any)[key] === registry);
+      import { diag, trace } from "opentelemetry-api-1.10";
+      console.log(trace.getTracer("t").startSpan("s").isRecording(), diag.setLogger(console as any));
     `);
     const env = { ...bunEnv, BUN_OTEL: "1", OTEL_TRACES_EXPORTER: "none" };
-    expect(await run([dir.executable], undefined, env)).toEqual({
-      stdout: "1.10.0 object true\n",
-      stderr: "",
-      exitCode: 0,
-    });
+    expect(await run([dir.executable], undefined, env)).toEqual({ stdout: "true true\n", stderr: "", exitCode: 0 });
   });
 
   test.skipIf(!!without("a Bun that trims"))("--trim keeps tracing for a program that names Bun.otel", async () => {

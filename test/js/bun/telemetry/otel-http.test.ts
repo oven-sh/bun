@@ -1715,13 +1715,18 @@ test("node:http: a path that is no string, and a response whose fields were repl
   for (const path of [new URL("http://example.com/x"), "ws://u:secret@example.com/y"]) {
     await new Promise(resolve =>
       http.get({ host: "127.0.0.1", port: server.port, path: path as any }, res => {
-        Object.assign(res, { statusCode: "200", httpVersion: 1.1 }).resume().on("end", resolve);
+        Object.assign(res, { statusCode: "500", httpVersion: 1.1 }).resume().on("end", resolve);
       }),
     );
   }
-  expect(byName(await collect(2), "bun.http.client").map(s => s.attributes["url.full"])).toEqual([
-    "http://example.com/x",
-    "ws://REDACTED:REDACTED@example.com/y",
+  expect(
+    byName(await collect(2), "bun.http.client").map(s => [
+      s.attributes["url.full"],
+      s.attributes["http.response.status_code"],
+    ]),
+  ).toEqual([
+    ["http://example.com/x", 200],
+    ["ws://REDACTED:REDACTED@example.com/y", 400],
   ]);
 });
 

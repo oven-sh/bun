@@ -291,7 +291,7 @@ impl VmState {
         let processor = processor::global();
         if self.vm.is_main_thread.get() {
             processor.close(&is_http_thread_stuck);
-        } else {
+        } else if !self.js_exporters.borrow().is_empty() {
             processor.flush_for_owner(self.owner_key());
         }
         JsExporter::detach_all(self);

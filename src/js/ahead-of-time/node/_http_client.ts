@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_client.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 1beed79ad69e4e796c85693d7069c1497ad463841021693a99d3e2f2546d8b13.
+// Written against that file with the SHA-256 bf7132c6b165ca2197958a1a3dce5c15cd9499d8c235228f885a710a5da35c38.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_client"
@@ -862,7 +862,10 @@ function processClientData(socket: $Node.HttpClientSocket, d: Buffer, parser: $N
 
       const bodyHead = d.slice(bytesParsed, d.length);
 
-      if (hasClientSpans) req[kClientSpan]?.end(res);
+      if (hasClientSpans) {
+        req[kClientSpan]?.received(res);
+        req[kClientSpan]?.end(res);
+      }
 
       const eventName = req.method === "CONNECT" ? "connect" : "upgrade";
       if (req.listenerCount(eventName) > 0) {
@@ -995,6 +998,7 @@ function parserOnIncomingClient(this: $Node.HTTPParser, res: $Node.IncomingMessa
   // The response arrived: close the 'http.client.request' span (Node ends it
   // here, in parserOnIncomingClient, before handing the response to the user).
   traceClientResponseEnd(req);
+  if (hasClientSpans) req[kClientSpan]?.received(res);
   req.res = res;
   res.req = req;
 

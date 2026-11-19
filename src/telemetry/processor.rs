@@ -40,6 +40,10 @@ impl ExportPayload {
             epoch,
         }
     }
+    pub fn is_parked(&self) -> bool {
+        self.parked.load(Ordering::Acquire) != 0
+    }
+
     fn expect(&self, exporters: usize) {
         self.pending.fetch_add(exporters as u32, Ordering::AcqRel);
     }
@@ -60,6 +64,8 @@ pub enum ExportResult {
     Success,
     /// Gave up (non-retryable status, retries exhausted, shutdown).
     Failure,
+    /// The exporter's VM is going away. The verdicts of the others count.
+    Abandoned,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -110,12 +116,8 @@ impl ExportAttempt {
         self.processor.park(exporter, p, self.attempt + 1, backoff);
     }
 
-    /// The owning event loop is gone; stop waiting (not a failure: the
-    /// remaining exporters' verdicts count the spans).
-    pub fn abandoned(mut self) {
-        let p = self.payload.take().expect("unfinished ExportAttempt");
-        self.processor.settle(&p);
-        self.processor.finish_one();
+    pub fn abandoned(self) {
+        self.done(ExportResult::Abandoned);
     }
 }
 
@@ -163,6 +165,10 @@ pub trait Exporter: Send + Sync {
     /// reconfigure on one thread leaves other threads' bound exporters alone.
     fn owner(&self) -> Option<OwnerKey> {
         None
+    }
+    /// It only has `export_blocking`.
+    fn is_synchronous(&self) -> bool {
+        false
     }
     /// Periodic housekeeping from [`Processor::tick`] (e.g. aborting an
     /// export that has outlived its timeout).
@@ -346,6 +352,17 @@ impl Pending {
         }
     }
 
+    /// What is pending now is older than the target, and nothing that comes later is.
+    fn flush(&mut self) -> FlushTarget {
+        self.seal();
+        self.epoch += 1;
+        FlushTarget(self.epoch)
+    }
+
+    fn has_older_than(&self, t: FlushTarget) -> bool {
+        (self.sealed.front()).is_some_and(|oldest| oldest.epoch < t.0)
+    }
+
     fn is_due(&self) -> bool {
         !self.sealed.is_empty() || self.open >= self.config.max_export_batch_size
     }
@@ -519,20 +536,6 @@ impl Processor {
 
     pub fn remove_exporter(&self, e: &Arc<dyn Exporter>) {
         self.exporters.write().retain(|x| !Arc::ptr_eq(x, e));
-        self.fail_retries_where(&|x| Arc::ptr_eq(x, e));
-    }
-
-    /// Parked retries of exporters that are going away count as failed.
-    fn fail_retries_where(&self, gone: &dyn Fn(&Arc<dyn Exporter>) -> bool) {
-        let dropped: Vec<ParkedRetry> = self
-            .retries
-            .lock()
-            .extract_if(.., |r| gone(&r.exporter))
-            .collect();
-        for r in dropped {
-            self.unpark(&r.payload);
-            self.record_result(&r.payload, ExportResult::Failure);
-        }
     }
 
     /// Add `new`; with `replace_owner`, first drop every exporter not owned by
@@ -550,7 +553,6 @@ impl Processor {
             (self.retired.lock()).extend(replaced.map(|e| Arc::downgrade(&e)));
             list.extend(new);
         }
-        self.fail_retries_where(&|e| !keep(e));
     }
 
     /// Snapshot for calling into exporters. INVARIANT: no `Exporter` method is
@@ -736,8 +738,8 @@ impl Processor {
         (until_due.min(timeout)).clamp(Duration::from_millis(50), Duration::from_secs(1))
     }
 
-    /// It counts as in flight until the caller calls `finish_one`.
-    fn take_payload(&self, taker: Taker) -> Option<Arc<ExportPayload>> {
+    /// With the exporters that it is for. It counts as in flight until the caller calls `finish_one`.
+    fn take_payload(&self, taker: Taker) -> Option<(Arc<ExportPayload>, Vec<Arc<dyn Exporter>>)> {
         let mut p = self.pending.lock();
         if taker == Taker::Schedule && !(self.inflight() == 0 && p.is_due()) {
             return None;
@@ -747,37 +749,41 @@ impl Processor {
         let seq = self.next_seq.fetch_add(1, Ordering::AcqRel);
         self.outstanding.lock().push((batch.epoch, seq));
         self.inflight.fetch_add(1, Ordering::AcqRel);
-        let resource = self.resource();
+        let (resource, exporters) = (self.resource(), self.exporters_snapshot());
         let body = core::mem::take(&mut p.spare_body);
         drop(p);
         let body = batch.spans.encode(body, &resource, &self.scopes.read());
         batch.spans.clear();
         self.pending.lock().spare.get_or_insert(batch.spans);
         let payload = ExportPayload::new(body, batch.count, seq, batch.epoch);
-        Some(Arc::new(payload))
+        Some((Arc::new(payload), exporters))
     }
 
     /// What is pending now, and nothing that comes meanwhile.
     fn deliver_pending(&'static self, taker: Taker, deadline: MonoInstant) {
-        self.pending.lock().seal();
-        while !self.pending.lock().sealed.is_empty()
+        let target = self.pending.lock().flush();
+        while self.pending.lock().has_older_than(target)
             && self.deliver_next(taker, deadline)
             && !deadline.remaining().is_zero()
         {}
     }
 
+    /// Until every payload that another thread has taken is with its exporters. That takes encoding and posting.
+    fn wait_for_handouts(&self) {
+        while self.exporting.load(Ordering::SeqCst) != 0 {
+            std::thread::yield_now();
+        }
+    }
+
     /// Before the resource or the exporters change.
     pub fn hand_out_pending(&'static self) {
         self.deliver_pending(Taker::Reconfiguration, MonoInstant::FAR_FUTURE);
+        self.wait_for_handouts();
     }
 
     /// What is pending now is due. See [`settled_before`](Self::settled_before).
     pub fn flush(&'static self) -> FlushTarget {
-        let mut p = self.pending.lock();
-        p.seal();
-        p.epoch += 1;
-        let target = FlushTarget(p.epoch);
-        drop(p);
+        let target = self.pending.lock().flush();
         self.schedule_export();
         target
     }
@@ -791,7 +797,7 @@ impl Processor {
 
     /// True once every payload older than `t` is settled, or only waits because a server asked for it.
     pub fn settled_before(&self, t: FlushTarget) -> bool {
-        if (self.pending.lock().sealed.front()).is_some_and(|oldest| oldest.epoch < t.0) {
+        if self.pending.lock().has_older_than(t) {
             return false;
         }
         let retries = self.retries.lock();
@@ -810,37 +816,40 @@ impl Processor {
     fn deliver_next(&'static self, taker: Taker, deadline: MonoInstant) -> bool {
         self.exporting.fetch_add(1, Ordering::SeqCst);
         let may_take = taker == Taker::ClosingProcess || !self.is_closing.load(Ordering::SeqCst);
-        let taken = may_take.then(|| self.take_payload(taker)).flatten();
-        let mut blocking = Vec::new();
-        if let Some(payload) = &taken {
-            let exporters = self.exporters_snapshot();
-            if exporters.is_empty() {
-                self.drop_unexported(payload);
-            }
-            payload.expect(exporters.len());
-            for e in exporters {
-                let blocks = match taker {
+        let Some((payload, exporters)) = may_take.then(|| self.take_payload(taker)).flatten()
+        else {
+            self.exporting.fetch_sub(1, Ordering::SeqCst);
+            return false;
+        };
+        if exporters.is_empty() {
+            self.drop_unexported(&payload);
+        }
+        payload.expect(exporters.len());
+        let (blocking, others): (Vec<_>, Vec<_>) = exporters.into_iter().partition(|e| {
+            e.is_synchronous()
+                || match taker {
                     Taker::Schedule | Taker::Reconfiguration => false,
                     Taker::LeavingVm(owner) => e.owner() == Some(owner),
                     Taker::ClosingProcess => true,
-                };
-                if blocks {
-                    blocking.push(e);
-                } else {
-                    self.inflight.fetch_add(1, Ordering::AcqRel);
-                    e.export(self.issue(Arc::clone(payload), 0));
                 }
-            }
-            self.finish_one();
+        });
+        for e in others {
+            self.inflight.fetch_add(1, Ordering::AcqRel);
+            e.export(self.issue(Arc::clone(&payload), 0));
         }
         self.exporting.fetch_sub(1, Ordering::SeqCst);
-        // Nobody waits for these: a function may block, or end the process.
-        taken.is_some_and(|payload| {
-            for e in blocking {
-                self.record_result(&payload, e.export_blocking(&payload, deadline));
-            }
-            true
-        })
+        // A function may block, or end the process: nobody waits for it.
+        let runs_script = matches!(taker, Taker::LeavingVm(_) | Taker::ClosingProcess);
+        if runs_script {
+            self.finish_one();
+        }
+        for e in blocking {
+            self.record_result(&payload, e.export_blocking(&payload, deadline));
+        }
+        if !runs_script {
+            self.finish_one();
+        }
+        true
     }
 
     /// One exporter's verdict on `payload`. `exports_*` count per exporter;
@@ -855,6 +864,7 @@ impl Processor {
             ExportResult::Failure => {
                 self.stats.exports_failed.fetch_add(1, Ordering::Relaxed);
             }
+            ExportResult::Abandoned => {}
         }
         self.settle(payload);
     }
@@ -870,7 +880,7 @@ impl Processor {
             };
             counter.fetch_add(payload.span_count as u64, Ordering::Relaxed);
             self.retire(payload);
-        } else if payload.parked.load(Ordering::Acquire) != 0 {
+        } else if payload.is_parked() {
             self.run_settle_hooks();
         }
     }
@@ -938,12 +948,15 @@ impl Processor {
     pub fn flush_for_owner(&'static self, owner: OwnerKey) {
         let deadline =
             MonoInstant::now() + Duration::from_millis(u64::from(self.config().export_timeout_ms));
-        for e in self.exporters_with_attempts() {
-            if e.owner() == Some(owner) {
-                e.finish_for_exit();
-            }
-        }
+        let finish_attempts = || {
+            (self.exporters_with_attempts().iter())
+                .filter(|e| e.owner() == Some(owner))
+                .for_each(|e| e.finish_for_exit());
+        };
+        finish_attempts();
         self.deliver_pending(Taker::LeavingVm(owner), deadline);
+        self.wait_for_handouts();
+        finish_attempts();
     }
 
     /// The process exits. Blocks for `export_timeout_ms` at most, or until `is_stuck`, which is asked now and then.
@@ -961,10 +974,7 @@ impl Processor {
     fn close_within(&'static self, budget: Duration, is_stuck: &dyn Fn() -> bool) {
         let deadline = MonoInstant::now() + budget;
         self.is_closing.store(true, Ordering::SeqCst);
-        // What they hand out has to be in sight below. They encode and post, and wait for nothing.
-        while self.exporting.load(Ordering::SeqCst) != 0 {
-            std::thread::yield_now();
-        }
+        self.wait_for_handouts();
         for e in self.exporters_with_attempts() {
             e.finish_for_exit();
         }
@@ -973,8 +983,8 @@ impl Processor {
         // What was in flight may have been parked by now, and a worker may have left its last spans.
         let parked = core::mem::take(&mut *self.retries.lock());
         for r in parked {
-            self.unpark(&r.payload);
             let result = r.exporter.export_blocking(&r.payload, deadline);
+            self.unpark(&r.payload);
             self.record_result(&r.payload, result);
         }
         self.deliver_pending(Taker::ClosingProcess, deadline);

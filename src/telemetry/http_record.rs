@@ -598,7 +598,8 @@ impl Queued {
         a.put(K::ROUTE, "http.route", route);
         a.put(K::URL_QUERY, "url.query", &*otlp::redact_query(query));
         if !host.is_empty() {
-            let (address, port) = split_host_port(host);
+            let userinfo = bun_core::strings::last_index_of_char(host, b'@');
+            let (address, port) = split_host_port(&host[userinfo.map_or(0, |at| at + 1)..]);
             let address = bun_core::ip_address::strip_ipv6_brackets(address);
             a.put(K::SERVER_ADDRESS, "server.address", address);
             let port = port.unwrap_or(if x.https { 443 } else { 80 });

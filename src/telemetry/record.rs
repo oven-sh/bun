@@ -132,7 +132,7 @@ impl Record {
     }
 
     #[inline]
-    fn name(&self) -> &[u8] {
+    pub(crate) fn name(&self) -> &[u8] {
         &self.text[..self.name_len as usize]
     }
 

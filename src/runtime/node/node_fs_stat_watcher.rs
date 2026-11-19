@@ -22,7 +22,7 @@ use bun_threading::{Guarded, UnboundedQueue};
 use crate::generated_bindgen::node_fs_stat_watcher::js_StatWatcher as js;
 use crate::node::stat::{StatsBig, StatsSmall};
 use crate::node::types::PathLikeExt;
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimer, EventLoopTimerTag};
 
 bun_output::declare_scope!(StatWatcher, visible);
 
@@ -177,10 +177,7 @@ impl StatWatcherScheduler {
 
         // if the interval is 0 means that we stop the timer
         if interval == 0 {
-            // if the timer is active we need to remove it
-            if this.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
-                timer_all.remove(&this.event_loop_timer);
-            }
+            timer_all.remove(&this.event_loop_timer);
             return;
         }
 
@@ -194,12 +191,9 @@ impl StatWatcherScheduler {
     }
 
     pub(crate) fn timer_callback(this: ThisPtr<Self>) {
-        let has_been_cleared = this.event_loop_timer.state.get() == EventLoopTimerState::CANCELLED
-            || this.vm().script_execution_status() != jsc::ScriptExecutionStatus::Running;
-
-        this.event_loop_timer.state.set(EventLoopTimerState::FIRED);
-
-        if has_been_cleared || this.is_shutdown.load(Ordering::Relaxed) {
+        if this.vm().script_execution_status() != jsc::ScriptExecutionStatus::Running
+            || this.is_shutdown.load(Ordering::Relaxed)
+        {
             return;
         }
 

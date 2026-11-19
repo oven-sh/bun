@@ -87,6 +87,8 @@ pub(crate) struct Stream {
     pub(super) final_size: u64,
     /// How many bytes the peer has been given credit for.
     pub(super) consumed: u64,
+    /// Likewise for the connection.
+    pub(super) counted: u64,
     pub(super) receive_limit: u64,
     pub(super) receive_window: u64,
     pub(super) stop_code: u64,
@@ -114,6 +116,7 @@ impl Stream {
             received: 0,
             final_size: UNKNOWN_SIZE,
             consumed: 0,
+            counted: 0,
             receive_limit: receive_window,
             receive_window,
             stop_code: 0,

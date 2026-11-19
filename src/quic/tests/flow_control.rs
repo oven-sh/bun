@@ -73,7 +73,8 @@ fn gives_credit_for_what_has_been_read() {
 
 #[test]
 fn gives_credit_sooner_if_streams_that_are_not_read_hold_the_window() {
-    let mut raw = with_windows(Raw::client(), 6400, [0, 6400, 0]);
+    let raw = Raw::client().config(|it| it.limits_unread_data = true);
+    let mut raw = with_windows(raw, 6400, [0, 6400, 0]);
     raw.send("stream 0 0 -");
     raw.connection().set_paused(StreamId(0), true);
     raw.write(0, &filler(0, 5000), false);
@@ -106,19 +107,26 @@ fn gives_credit_for_what_is_discarded() {
 
 #[test]
 fn gives_no_credit_while_paused() {
-    let mut raw = with_windows(Raw::client(), 100, [0, 100, 0]);
-    raw.send("stream 0 0 -");
-    raw.connection().set_paused(StreamId(0), true);
-    raw.send("stream 0 0 *100");
-    assert_eq!(raw.frames(), "");
-    raw.connection().set_paused(StreamId(0), false);
-    assert_eq!(raw.frames(), "max_data 200, max_stream_data 0 200");
+    for (limits_unread_data, paused, resumed) in [
+        (true, "", "max_data 200, max_stream_data 0 200"),
+        (false, "max_data 200", "max_stream_data 0 200"),
+    ] {
+        let raw = Raw::client().config(|it| it.limits_unread_data = limits_unread_data);
+        let mut raw = with_windows(raw, 100, [0, 100, 0]);
+        raw.send("stream 0 0 -");
+        raw.connection().set_paused(StreamId(0), true);
+        raw.send("stream 0 0 *100");
+        assert_eq!(raw.frames(), paused);
+        raw.connection().set_paused(StreamId(0), false);
+        assert_eq!(raw.frames(), resumed);
+    }
 }
 
 #[test]
 fn tells_whether_the_peer_is_short_of_credit() {
     for (connection, stream) in [(80, 800), (800, 80)] {
-        let mut raw = with_windows(Raw::client(), connection, [0, stream, 0]);
+        let raw = Raw::client().config(|it| it.limits_unread_data = true);
+        let mut raw = with_windows(raw, connection, [0, stream, 0]);
         raw.send("stream 0 0 -");
         raw.connection().set_paused(StreamId(0), true);
         for (frame, has_received, is_short) in [
@@ -161,7 +169,8 @@ fn gives_what_credit_there_is_to_a_peer_that_is_blocked() {
 
 #[test]
 fn gives_credit_for_what_has_been_consumed() {
-    let raw = Raw::client().config(|it| it.awaits_consumption = true);
+    let raw =
+        Raw::client().config(|it| (it.awaits_consumption, it.limits_unread_data) = (true, true));
     let mut raw = with_windows(raw, 100, [0, 100, 100]);
     raw.send("stream 0 0 *100");
     assert_eq!(raw.frames(), "");

@@ -493,6 +493,8 @@ struct us_udp_socket_t {
     uint16_t port;
     uint16_t closed : 1;
     uint16_t shared_fd : 1;
+    /* Set by on_data to leave the other datagrams for the next turn of the loop. */
+    uint16_t has_read_enough : 1;
     struct us_udp_socket_t *next;
 };
 

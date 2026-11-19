@@ -18,7 +18,7 @@ use crate::time::Instant;
 const SEGMENT: u64 = 1460;
 const INITIAL_WINDOW: u64 = 32 * SEGMENT;
 const MAX_WINDOW: u64 = 16 * 1024 * 1024;
-/// To lose this many packets in a row is what happens to a burst that is too long for a queue.
+/// To lose this many packets in a row after its start is what happens to a burst that is too long for a queue.
 const OVERFLOW_LEN: u64 = 3;
 const MICROS_PER_SECOND: u64 = 1_000_000;
 
@@ -33,6 +33,7 @@ pub enum Algorithm {
 pub(crate) struct Flight {
     pub(crate) at: Instant,
     pub(crate) len: u16,
+    pub(crate) starts_burst: bool,
     /// Counts from 1, across the packet number spaces.
     sequence: u64,
     /// The low bits of the number of bytes delivered before.
@@ -61,8 +62,6 @@ struct Feedback {
     newest_acked: Option<Flight>,
     lost: u64,
     newest_lost: u64,
-    /// Up to the newest.
-    lost_in_a_row: u64,
     is_overflow: bool,
     is_persistent_congestion: bool,
     /// What remains.
@@ -89,6 +88,9 @@ pub(crate) struct Controller {
     last_sent: u64,
     /// The last packet that took another path.
     last_foreign: u64,
+    last_lost: u64,
+    /// The packet that makes an overflow if there is no gap between it and `last_lost`.
+    overflow_at: u64,
     feedback: Feedback,
 }
 
@@ -110,6 +112,8 @@ impl Controller {
             prior_in_flight: 0,
             last_sent: 0,
             last_foreign: 0,
+            last_lost: 0,
+            overflow_at: 0,
             feedback: Feedback::default(),
         }
     }
@@ -255,12 +259,15 @@ impl Controller {
     #[inline]
     pub(crate) fn on_lost(&mut self, flight: &Flight) {
         if self.discard(flight) {
-            let feedback = &mut self.feedback;
-            if flight.sequence != feedback.newest_lost + 1 {
-                feedback.lost_in_a_row = 0;
+            if flight.sequence != self.last_lost + 1 {
+                self.overflow_at = match flight.starts_burst {
+                    true => 0,
+                    false => flight.sequence + OVERFLOW_LEN - 1,
+                };
             }
-            feedback.lost_in_a_row += 1;
-            feedback.is_overflow |= feedback.lost_in_a_row == OVERFLOW_LEN;
+            self.last_lost = flight.sequence;
+            let feedback = &mut self.feedback;
+            feedback.is_overflow |= flight.sequence == self.overflow_at;
             feedback.lost += u64::from(flight.len);
             feedback.newest_lost = feedback.newest_lost.max(flight.sequence);
         }

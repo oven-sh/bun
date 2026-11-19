@@ -951,9 +951,7 @@ describe("a pull() that outlives its own end() does not hold the request", () =>
 // Http3Response::markDone() deliberately leaves onAborted armed (unlike
 // HTTP/1's markDone()) so that Http3Context's on_close can notify the
 // holder; end_stream() -> detach_response() -> clear_aborted() is what disarms
-// it. Skipping that leaves the callback pointing at a RequestContext the
-// stream-resolution microtask has already released, and the later
-// on_close invokes it on the freed slot.
+// it. Skipping that leaves the callback armed after the request has ended.
 test.skipIf(!isASAN)(
   "h3: controller.end() from a parked pull() disarms onAborted before the context is released",
   async () => {

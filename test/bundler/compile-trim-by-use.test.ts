@@ -59,7 +59,11 @@ const textsOfLibraries: Record<string, string[]> = {
   // A part of DC_QUANTIZERS in src/webp/lossy/tables.rs.
   "the WebP codec": ["Y[]_`bdefhjlnprtvz|~"],
   tar: ["Damaged tar archive", "Truncated tar archive", "Malformed pax attribute"],
-  QUIC: ["second control or QPACK stream", "HANDSHAKE_DONE frame from a client", "retired connection ID was never issued"],
+  QUIC: [
+    "second control or QPACK stream",
+    "HANDSHAKE_DONE frame from a client",
+    "retired connection ID was never issued",
+  ],
   BoringSSL: [
     "ALPN_MISMATCH_ON_EARLY_DATA",
     "APPLICATION_DATA_ON_SHUTDOWN",

@@ -49,17 +49,4 @@ export const allDeps: readonly Dependency[] = [
 ];
 
 // Re-export individuals for direct import when needed.
-export {
-  boringssl,
-  cares,
-  highway,
-  libuv,
-  lolhtml,
-  mimalloc,
-  nodejsHeaders,
-  rustArgon2,
-  sqlite,
-  tinycc,
-  webkit,
-  zstd,
-};
+export { boringssl, cares, highway, libuv, lolhtml, mimalloc, nodejsHeaders, rustArgon2, sqlite, tinycc, webkit, zstd };

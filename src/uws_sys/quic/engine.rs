@@ -9,8 +9,8 @@ use bun_core::ZStr;
 use bun_ptr::BackRef;
 use bun_quic::http3::{Fields, Header};
 use bun_quic::{
-    Addresses, Context, Direction, Duration, Endpoint, Event, Handle, Incoming, Instant, StreamId,
-    Unrouted, Version,
+    Addresses, Context, Direction, Duration, Endpoint, Event, Handle, Incoming, Instant,
+    StreamEvent, StreamId, Unrouted, Version,
 };
 use bun_quic_tls::BoringSsl;
 
@@ -61,8 +61,9 @@ impl<T: Application> Driver for T {
         if engine.is_processing.replace(true) {
             return;
         }
-        engine.endpoint().handle_timeouts(now());
-        engine.outbox.borrow_mut().start_pass();
+        let now = now();
+        engine.endpoint().handle_timeouts(now);
+        engine.outbox.borrow_mut().start_pass(now);
         for _ in 0..MAX_ROUNDS {
             dispatch_events(self);
             engine.transmit();
@@ -97,7 +98,14 @@ pub(super) fn dispatch_events(application: &impl Application) {
             engine.loop_.dec();
             us_internal_disable_sweep_timer(engine.loop_);
         }
+        let takes_time = matches!(
+            event,
+            Event::Stream(_, _, StreamEvent::Headers(_) | StreamEvent::Data { .. })
+        );
         application.on_event(engine.connection(handle), context, event);
+        if takes_time && engine.is_overdue() {
+            engine.transmit();
+        }
     }
 }
 
@@ -192,6 +200,16 @@ impl Engine {
         }
     }
 
+    #[inline]
+    fn is_overdue(&self) -> bool {
+        let is_busy = self.endpoint.borrow().waiting_with_events() > 1;
+        self.outbox.borrow_mut().is_overdue(is_busy)
+    }
+
+    pub(super) fn lift_limit(&self) {
+        self.outbox.borrow_mut().lift_limit();
+    }
+
     fn transmit(&self) {
         let sockets = self.sockets.borrow();
         let find = |local| {
@@ -268,7 +286,8 @@ extern "C" fn on_data(udp: *mut udp::Socket, buffer: *mut udp::PacketBuffer, cou
         }
     };
     // SAFETY: they are our arguments.
-    unsafe { binding.for_each_datagram(buffer, count, receive) };
+    let read = unsafe { binding.for_each_datagram(buffer, count, receive) };
+    (engine.outbox.borrow_mut()).reads_on(&read, &engine.endpoint.borrow());
 }
 
 extern "C" fn on_drain(udp: *mut udp::Socket) {

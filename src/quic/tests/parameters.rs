@@ -32,13 +32,13 @@ fn what_is_advertised() {
     let [mut client, mut server] = Raw::both();
     assert_eq!(
         advertised(&mut client),
-        "active_connection_id_limit=8 max_data=134217728 max_idle_timeout=30000 \
+        "active_connection_id_limit=8 max_data=1572864 max_idle_timeout=30000 \
          max_stream_data_bidi_remote=1048576 max_stream_data_uni=12288 max_streams_bidi=100 \
          max_streams_uni=3 min_ack_delay=10000 version_information=#000000016b3343cf00000001"
     );
     assert_eq!(
         advertised(&mut server),
-        "active_connection_id_limit=8 max_data=1073741824 max_idle_timeout=30000 \
+        "active_connection_id_limit=8 max_data=15728640 max_idle_timeout=30000 \
          max_stream_data_bidi_local=6291456 max_stream_data_uni=32768 max_streams_bidi=100 \
          max_streams_uni=3 min_ack_delay=10000 version_information=#000000016b3343cf00000001"
     );

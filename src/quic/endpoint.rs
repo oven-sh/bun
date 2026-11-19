@@ -35,6 +35,8 @@ const MAX_REPLIES: usize = 256;
 const USUAL_RESET_LENS: Range<usize> = 43..62;
 /// As many of the largest ones as a run of a [`Batch`] can have.
 const DATAGRAMS_PER_TURN: usize = 44;
+/// Of the number of connections that are put in order. The others are not going to transmit soon.
+const SORTED_BITS: u32 = 9;
 /// The other clients wait until the established connections have been served.
 const HELLOS_PER_PASS: usize = 2;
 /// Into how many the clients are divided by their addresses.
@@ -203,6 +205,8 @@ pub struct Endpoint {
     deadlines: Deadlines,
     with_events: VecDeque<u32>,
     to_transmit: VecDeque<u32>,
+    /// For [`Self::favor_longest_waiting`].
+    order: Vec<u64>,
     replies: VecDeque<(Addresses, Vec<u8>)>,
 }
 
@@ -231,6 +235,7 @@ impl Endpoint {
             deadlines: Deadlines::default(),
             with_events: VecDeque::new(),
             to_transmit: VecDeque::new(),
+            order: Vec::new(),
             replies: VecDeque::new(),
         }
     }
@@ -610,6 +615,12 @@ impl Endpoint {
         !self.with_events.is_empty()
     }
 
+    /// How many connections may have events.
+    #[inline]
+    pub fn waiting_with_events(&self) -> usize {
+        self.with_events.len()
+    }
+
     #[inline]
     pub fn poll_event(&mut self, now: Instant) -> Option<(Handle, Context, Event)> {
         loop {
@@ -700,6 +711,12 @@ impl Endpoint {
         !self.to_transmit.is_empty() || !self.replies.is_empty()
     }
 
+    /// How many connections may have something to send.
+    #[inline]
+    pub fn waiting_to_transmit(&self) -> usize {
+        self.to_transmit.len()
+    }
+
     /// For [`Self::handle_timeouts`] to answer.
     #[inline]
     pub fn has_waiting_clients(&self) -> bool {
@@ -734,10 +751,7 @@ impl Endpoint {
                 None => self.vacate(index),
             }
         }
-        // What is sent last is the first to find a queue full.
-        (self.to_transmit.make_contiguous()).sort_by_key(|&index| {
-            (self.slots.at(index).connection.as_ref()).map(|it| it.last_sent_at())
-        });
+        self.favor_longest_waiting(now);
         let mut turns = 0..HELLOS_PER_PASS;
         while turns.next().is_some()
             && let Some(handle) = self.awaiting_turn.pop(Awaited::Turn, &self.slots)
@@ -748,6 +762,21 @@ impl Endpoint {
                 connection.answer_hello(now, shared);
             }
             self.track_handshake(now, handle.slot);
+        }
+    }
+
+    /// What is sent last is the first to find a queue full.
+    fn favor_longest_waiting(&mut self, now: Instant) {
+        const MAX_WAIT: u64 = (1 << (32 - SORTED_BITS)) - 1;
+        let next = self.to_transmit.iter().take(1 << SORTED_BITS);
+        self.order.extend((0..).zip(next).map(|(position, &index)| {
+            let connection = self.slots.at(index).connection.as_ref();
+            let wait = connection.map_or(0, |it| (now - it.last_sent_at()).as_micros());
+            ((MAX_WAIT - wait.min(MAX_WAIT)) << SORTED_BITS | position) << 32 | u64::from(index)
+        }));
+        self.order.sort_unstable();
+        for (index, key) in self.to_transmit.iter_mut().zip(self.order.drain(..)) {
+            *index = key as u32;
         }
     }
 

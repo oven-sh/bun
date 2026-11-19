@@ -195,12 +195,16 @@ impl State {
     #[inline]
     pub(crate) fn credit(&mut self, id: StreamId, stream: &mut Stream) {
         let is_discarding = stream.flags.contains(Flags::READ_DONE);
-        let delivered = match is_discarding {
+        let in_order = match is_discarding {
             true => stream.received,
-            false => stream.read - stream.ready.len() as u64,
+            false => stream.read,
         };
-        let consumed = delivered - stream.held;
-        self.consumed += consumed - stream.consumed;
+        let consumed = in_order - stream.ready.len() as u64 - stream.held;
+        let counted = match self.limits_unread_data {
+            true => consumed,
+            false => in_order,
+        };
+        self.consumed += counted - core::mem::replace(&mut stream.counted, counted);
         stream.consumed = consumed;
         if !is_discarding
             && stream.final_size == UNKNOWN_SIZE

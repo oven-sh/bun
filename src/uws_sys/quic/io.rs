@@ -4,12 +4,22 @@ use core::ffi::c_int;
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 
 use bun_core::{Timespec, TimespecMockMode};
-use bun_quic::{Addresses, Batch, Connection, Endpoint, Instant};
+use bun_quic::{Addresses, Batch, Connection, Duration, Endpoint, Instant};
 
 use crate::udp;
 
 /// `LIBUS_UDP_RECV_COUNT`.
-pub const DATAGRAMS_PER_READ: c_int = 8;
+const DATAGRAMS_PER_READ: c_int = 8;
+/// How much to read before answering, for each connection that has to.
+const READ_LEN_PER_CONNECTION: usize = 256 * 1024;
+const MAX_READ_LEN: usize = 8 << 20;
+/// What a datagram counts for on top of its length.
+const DATAGRAM_OVERHEAD: usize = 256;
+/// Where a datagram of this length comes from, there is probably more.
+const FULL_DATAGRAM_LEN: usize = 1200;
+/// For how long the first answers wait for the application to come up with more, while the peer may have nothing to do.
+const MIN_PATIENCE: Duration = Duration::from_micros(50);
+const MAX_PATIENCE: Duration = Duration::from_millis(1);
 /// Two messages that are as long as UDP allows.
 const DATAGRAMS_PER_BATCH: usize = 88;
 /// After which the rest of the loop gets its turn, and the acknowledgments are read.
@@ -123,6 +133,7 @@ unsafe extern "C" {
     safe fn us_quic_local_address(socket: &mut udp::Socket, out: &mut Address);
     safe fn us_quic_set_dontfrag(socket: &mut udp::Socket);
     safe fn us_quic_ignore_receive_errors(socket: &mut udp::Socket);
+    safe fn us_quic_stop_reading(socket: &mut udp::Socket);
     safe fn us_quic_enable_offload(socket: &mut udp::Socket) -> bool;
     fn us_quic_send(
         socket: &mut udp::Socket,
@@ -174,8 +185,13 @@ impl Binding {
         buffer: *mut udp::PacketBuffer,
         count: c_int,
         mut f: impl FnMut(&Addresses, &mut [u8]),
-    ) {
+    ) -> Read {
         let (buffer, local) = (udp::PacketBuffer::opaque_mut(buffer), self.address.into());
+        let mut read = Read {
+            socket: self.socket,
+            len: 0,
+            may_be_more: false,
+        };
         for at in 0..count {
             let mut envelope = Envelope {
                 local,
@@ -192,9 +208,22 @@ impl Binding {
                 ..=0 => usize::MAX,
                 len => len as usize,
             };
-            (buffer.get_payload(at).chunks_mut(len)).for_each(|it| f(&from, it));
+            let payload = buffer.get_payload(at);
+            read.len += payload.len() + DATAGRAM_OVERHEAD;
+            read.may_be_more = (FULL_DATAGRAM_LEN..len).contains(&payload.len());
+            payload.chunks_mut(len).for_each(|it| f(&from, it));
         }
+        read.may_be_more |= count == DATAGRAMS_PER_READ;
+        read
     }
+}
+
+/// For [`Outbox::reads_on`].
+#[must_use]
+pub struct Read {
+    socket: *mut udp::Socket,
+    len: usize,
+    may_be_more: bool,
 }
 
 /// The datagrams between an endpoint and its sockets.
@@ -206,6 +235,11 @@ pub struct Outbox {
     sent: usize,
     is_blocked: bool,
     batches_left: usize,
+    is_unlimited: bool,
+    /// Since the last pass.
+    read_len: usize,
+    flushed_at: Instant,
+    patience: Duration,
     /// Not every network device can do it.
     has_failed_to_segment: bool,
 }
@@ -222,13 +256,42 @@ impl Outbox {
     }
 
     #[inline]
-    pub fn start_pass(&mut self) {
-        self.batches_left = BATCHES_PER_PASS;
+    pub fn start_pass(&mut self, now: Instant) {
+        (self.batches_left, self.read_len, self.flushed_at) = (BATCHES_PER_PASS, 0, now);
     }
 
     #[inline]
     pub fn is_pass_over(&self) -> bool {
-        self.batches_left == 0
+        self.batches_left == 0 && !self.is_unlimited
+    }
+
+    /// For when there may not be another pass.
+    pub(super) fn lift_limit(&mut self) {
+        self.is_unlimited = true;
+    }
+
+    /// Returns whether the loop goes on reading from the socket.
+    #[inline]
+    pub fn reads_on(&mut self, read: &Read, endpoint: &Endpoint) -> bool {
+        self.read_len += read.len;
+        self.patience = MIN_PATIENCE;
+        let max_len = READ_LEN_PER_CONNECTION * endpoint.waiting_to_transmit().max(1);
+        let reads_on = read.may_be_more && self.read_len < max_len.min(MAX_READ_LEN);
+        if !reads_on {
+            us_quic_stop_reading(udp::Socket::opaque_mut(read.socket));
+        }
+        reads_on
+    }
+
+    /// Whether to flush in the middle of a pass. `is_busy` is for when there are other peers to serve.
+    #[inline]
+    pub fn is_overdue(&mut self, is_busy: bool) -> bool {
+        let patience = if is_busy { MAX_PATIENCE } else { self.patience };
+        let is_overdue = now() - self.flushed_at >= patience;
+        if is_overdue {
+            self.patience = (patience * 2).clamp(MIN_PATIENCE, MAX_PATIENCE);
+        }
+        is_overdue
     }
 
     #[inline]
@@ -251,12 +314,14 @@ impl Outbox {
             if !self.has_unsent() {
                 self.batch.clear();
                 endpoint.poll_transmit(now(), &mut self.batch, DATAGRAMS_PER_BATCH, &mut visit);
-                self.batches_left -= usize::from(self.batch.len() >= DATAGRAMS_PER_BATCH);
+                let is_full = self.batch.len() >= DATAGRAMS_PER_BATCH;
+                self.batches_left = self.batches_left.saturating_sub(is_full.into());
                 on_batch(&self.batch);
                 self.address(&binding);
             }
             self.send(&binding);
         }
+        self.flushed_at = now();
     }
 
     fn address(&mut self, binding: impl Fn(SocketAddr) -> Option<Binding>) {

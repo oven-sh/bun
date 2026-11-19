@@ -2293,7 +2293,7 @@ describe("undici", () => {
       await pool.close();
     });
 
-    it("a collected fetch() body that got no data yet cancels its dispatch", async () => {
+    it.each(["identity", "gzip"])("a collected %s fetch() body that got no data yet cancels its dispatch", async encoding => {
       let cancelled = false;
       const dispatcher = {
         dispatch(_opts: any, handler: any) {
@@ -2301,7 +2301,7 @@ describe("undici", () => {
             cancelled = true;
           });
           // Headers, and then the server goes silent.
-          handler.onHeaders(200, [], () => {}, "OK");
+          handler.onHeaders(200, [Buffer.from("content-encoding"), Buffer.from(encoding)], () => {}, "OK");
           return true;
         },
       };
@@ -2323,6 +2323,103 @@ describe("undici", () => {
       expect({ viaPool, viaRequest }).toEqual({
         viaPool: "?ids=1&ids=2&page=&q=a%20b",
         viaRequest: "?ids=1&ids=2&page=&q=a%20b",
+      });
+      await pool.close();
+    });
+
+    it("cancelling an encoded fetch() body in the middle of a read is clean", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { fetch } = require("undici");
+           const zlib = require("node:zlib");
+           process.on("uncaughtException", err => console.log("uncaught: " + err.message));
+           // One small chunk in, many chunks out: the decoder still has output when the reader cancels.
+           const body = zlib.gzipSync(Buffer.alloc(4 << 20, "a"));
+           const dispatcher = {
+             dispatch(opts, handler) {
+               handler.onConnect(() => {});
+               handler.onHeaders(200, [Buffer.from("content-encoding"), Buffer.from("gzip")], () => {}, "OK");
+               handler.onData(body);
+               handler.onComplete([]);
+               return true;
+             },
+           };
+           const reader = (await fetch("http://localhost:1/", { dispatcher })).body.getReader();
+           const first = await reader.read();
+           await reader.cancel();
+           console.log("read " + (first.value.length > 0));`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "read true", stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
+    it("close() does not wait for a small fetch() body that nobody read", async () => {
+      await using server = Bun.serve({ port: 0, fetch: () => new Response("tiny") });
+      const pool = new Pool(`http://localhost:${server.port}`);
+      const res = await undiciFetch(server.url, { dispatcher: pool } as any);
+      await pool.close();
+      // The body was buffered, so it is still there.
+      expect(await res.text()).toBe("tiny");
+    });
+
+    it("a legacy handler that paused on the last chunk gets onComplete after resume(), like undici", async () => {
+      await using server = Bun.serve({ port: 0, fetch: () => new Response("x") });
+      const pool = new Pool(`http://localhost:${server.port}`);
+      const events: string[] = [];
+      const paused = Promise.withResolvers<void>();
+      const completed = Promise.withResolvers<void>();
+      let resume: (() => void) | undefined;
+      pool.dispatch(
+        { path: "/", method: "GET" },
+        {
+          onConnect() {},
+          onHeaders(_status: number, _headers: Buffer[], resumeFn: () => void) {
+            resume = resumeFn;
+            return true;
+          },
+          onData() {
+            events.push("data");
+            paused.resolve();
+            return false;
+          },
+          onComplete() {
+            events.push("complete");
+            completed.resolve();
+          },
+          onError: completed.reject,
+        },
+      );
+      await paused.promise;
+      // A whole second request runs to its end while the first one stays paused.
+      expect(await (await pool.request({ path: "/", method: "GET" })).body.text()).toBe("x");
+      events.push("resume");
+      resume!();
+      await completed.promise;
+      expect(events).toEqual(["data", "resume", "complete"]);
+      await pool.close();
+    });
+
+    it("request() takes a string, a URLSearchParams and a list of pairs as query", async () => {
+      await using server = Bun.serve({ port: 0, fetch: req => new Response(new URL(req.url).search) });
+      const pool = new Pool(`http://localhost:${server.port}`);
+      const search = async (query: any) => [
+        await (await request(server.url.href, { query } as any)).body.text(),
+        await (await pool.request({ path: "/", method: "GET", query })).body.text(),
+      ];
+      expect({
+        string: await search("a=1&b=2"),
+        params: await search(new URLSearchParams({ a: "1" })),
+        pairs: await search([["a", "1"]]),
+      }).toEqual({
+        string: ["?a=1&b=2", "?a=1&b=2"],
+        params: ["?a=1", "?a=1"],
+        pairs: ["?a=1", "?a=1"],
       });
       await pool.close();
     });

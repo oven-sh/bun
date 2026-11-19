@@ -1,7 +1,7 @@
 const EventEmitter = require("node:events");
 const dc = require("node:diagnostics_channel");
 const { isArrayBuffer } = require("node:util/types");
-const { Readable } = require("node:stream");
+const { Readable, Transform, pipeline: pipelineStreams } = require("node:stream");
 const { Buffer } = require("node:buffer");
 const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapters");
 const { isDisturbed } = require("internal/streams/utils");
@@ -294,8 +294,11 @@ function mockErrors() {}
 
 let querystring: typeof import("node:querystring") | undefined;
 
-// Like undici's buildURL: an array value repeats its key, and undefined gives an empty value.
+// A record goes through querystring like undici's buildURL; a string, a URLSearchParams or a list of pairs stays as this shim took it.
 function searchFromQuery(query) {
+  if (typeof query !== "object" || typeof query[Symbol.iterator] === "function") {
+    return new URLSearchParams(query).toString();
+  }
   return (querystring ??= require("node:querystring")).stringify(query);
 }
 
@@ -404,6 +407,14 @@ function fetchDispatch(origin: URL, opts: any, handler: any, pending?: Set<Pendi
     }
   };
 
+  const resumed = async () => {
+    while (paused) {
+      const parked = Promise.withResolvers<void>();
+      resumeResolve = parked.resolve;
+      await parked.promise;
+    }
+  };
+
   const abort = reason => {
     if (aborted) return;
     aborted = true;
@@ -499,11 +510,7 @@ function fetchDispatch(origin: URL, opts: any, handler: any, pending?: Set<Pendi
     if (respBody) {
       for await (const chunk of respBody as AsyncIterable<Uint8Array>) {
         if (aborted) throw abortReason;
-        while (paused) {
-          const parked = Promise.withResolvers<void>();
-          resumeResolve = parked.resolve;
-          await parked.promise;
-        }
+        if (paused) await resumed();
         if (aborted) throw abortReason;
         const buf = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
         // Only a legacy onData pauses by returning false; a controller handler pauses through controller.pause().
@@ -512,6 +519,8 @@ function fetchDispatch(origin: URL, opts: any, handler: any, pending?: Set<Pendi
       }
     }
 
+    // A handler that paused on the headers of an empty body, or on the last chunk, gets the end after resume(), as in undici.
+    if (paused) await resumed();
     // Covers abort() called from onHeaders on an empty body or from onData on the final chunk.
     if (aborted) throw abortReason;
 
@@ -1349,52 +1358,41 @@ function basicAuthorization(url: URL) {
 
 let lazyZlib: any;
 
-// The decoder of one content coding, with the options of undici's fetch: a truncated body gives what it has.
-function contentDecoder(coding: string, firstChunk: Uint8Array) {
-  const zlib = (lazyZlib ??= require("node:zlib"));
-  const constants = zlib.constants;
-  if (coding === "br") {
-    const flush = constants.BROTLI_OPERATION_FLUSH;
-    return zlib.createBrotliDecompress({ flush, finishFlush: flush });
+// "deflate" is the zlib format, but some servers send the raw deflate stream. The first byte tells them apart.
+class InflateStream extends Transform {
+  #options: object | undefined = undefined;
+  #inflate: any = undefined;
+
+  constructor(options: object) {
+    super();
+    this.#options = options;
   }
-  if (coding === "zstd") {
-    return zlib.createZstdDecompress({ flush: constants.ZSTD_e_continue, finishFlush: constants.ZSTD_e_end });
+
+  _transform(chunk, encoding, callback) {
+    let inflate = this.#inflate;
+    if (inflate === undefined) {
+      if (chunk.length === 0) return callback();
+      const raw = (chunk[0] & 0x0f) !== 0x08;
+      inflate = this.#inflate = raw ? lazyZlib.createInflateRaw(this.#options) : lazyZlib.createInflate(this.#options);
+      inflate.on("data", data => this.push(data)).on("error", err => this.destroy(err));
+    }
+    inflate.write(chunk, encoding, callback);
   }
-  const options = { flush: constants.Z_SYNC_FLUSH, finishFlush: constants.Z_SYNC_FLUSH };
-  if (coding !== "deflate") return zlib.createGunzip(options);
-  // A zlib stream starts with the deflate method in the low four bits. Some servers send the raw deflate stream.
-  return (firstChunk[0] & 0x0f) === 0x08 ? zlib.createInflate(options) : zlib.createInflateRaw(options);
+
+  _flush(callback) {
+    const inflate = this.#inflate;
+    if (inflate === undefined) return callback();
+    inflate.once("end", callback).end();
+  }
+
+  _destroy(err, callback) {
+    this.#inflate?.destroy();
+    callback(err);
+  }
 }
 
-function decodingStream(coding: string) {
-  // Made for the first chunk: a body with no bytes needs no decoder, and deflate shows its form in its first byte.
-  let decoder: ReturnType<typeof contentDecoder> | undefined;
-  let output: TransformStreamDefaultController;
-  return new TransformStream({
-    start(controller) {
-      output = controller;
-    },
-    transform(chunk: Uint8Array) {
-      if (chunk.byteLength === 0) return;
-      if (decoder === undefined) {
-        decoder = contentDecoder(coding, chunk);
-        decoder.on("data", data => output.enqueue(data)).on("error", err => output.error(err));
-      }
-      const written = Promise.withResolvers<void>();
-      decoder.write(chunk, err => (err ? written.reject(err) : written.resolve()));
-      return written.promise;
-    },
-    flush() {
-      if (decoder === undefined) return;
-      const ended = Promise.withResolvers<void>();
-      decoder.once("end", ended.resolve).once("error", ended.reject).end();
-      return ended.promise;
-    },
-  });
-}
-
-// Like undici's fetch: a body that a dispatcher delivers encoded is decoded, and the headers stay as they came.
-function decodedBody(body: ReadableStream, contentEncoding: string): ReadableStream {
+// The decoders for a content-encoding value, in the order they run. Undefined means the body stays as it came.
+function contentDecoders(contentEncoding: string) {
   const codings = contentEncoding.toLowerCase().split(",");
   // undici's limit: each coding is one more decoder that a small body can be made to inflate through.
   if (codings.length > 5) {
@@ -1402,15 +1400,37 @@ function decodedBody(body: ReadableStream, contentEncoding: string): ReadableStr
   }
   for (let i = 0; i < codings.length; i++) {
     const coding = (codings[i] = codings[i].trim());
-    if (coding === "x-gzip") codings[i] = "gzip";
     // One unknown coding leaves the whole body as it came, like undici.
-    else if (coding !== "gzip" && coding !== "deflate" && coding !== "br" && coding !== "zstd") return body;
+    if (coding !== "gzip" && coding !== "x-gzip" && coding !== "deflate" && coding !== "br" && coding !== "zstd") {
+      return undefined;
+    }
   }
-  // The type of ReadableStream that the ahead-of-time compiler checks builtin modules against has no pipeThrough().
-  let decoded: any = body;
-  for (let i = codings.length - 1; i >= 0; i--) decoded = decoded.pipeThrough(decodingStream(codings[i]));
-  return decoded;
+  const zlib = (lazyZlib ??= require("node:zlib"));
+  const constants = zlib.constants;
+  // The flush modes of undici's fetch: a truncated body gives the bytes that arrived, not an error.
+  const deflate = { flush: constants.Z_SYNC_FLUSH, finishFlush: constants.Z_SYNC_FLUSH };
+  const brotli = { flush: constants.BROTLI_OPERATION_FLUSH, finishFlush: constants.BROTLI_OPERATION_FLUSH };
+  const zstd = { flush: constants.ZSTD_e_continue, finishFlush: constants.ZSTD_e_end };
+  const decoders: any[] = [];
+  for (let i = codings.length - 1; i >= 0; i--) {
+    const coding = codings[i];
+    if (coding === "deflate") decoders.push(new InflateStream(deflate));
+    else if (coding === "br") decoders.push(zlib.createBrotliDecompress(brotli));
+    else if (coding === "zstd") decoders.push(zlib.createZstdDecompress(zstd));
+    else decoders.push(zlib.createGunzip(deflate));
+  }
+  return decoders;
 }
+
+// A fetch() body that nobody reads buffers this many bytes, then the dispatcher is asked to pause.
+const kBodyBufferBytes = 65536;
+
+function chunkByteLength(chunk) {
+  return chunk.byteLength;
+}
+
+// Zero, so pull() runs only while a read waits. The size is in bytes, for the buffer limit.
+const kBodyQueuing = { highWaterMark: 0, size: chunkByteLength };
 
 function runHeldValue(held: () => void) {
   held();
@@ -1552,6 +1572,9 @@ function fetchViaDispatcher(dispatcher, input, init) {
     // False once this hop reached a terminal callback or a redirect replaced it; its later callbacks are ignored.
     let live = true;
     let resumeData: (() => void) | null = null;
+    // For an encoded body: the dispatcher's chunks go into decodeInput, and the reads take from decodeOutput.
+    let decodeInput: any = null;
+    let decodeOutput: any = null;
     const endHop = () => {
       live = false;
       abandonedBodies?.unregister(cancelBody);
@@ -1560,14 +1583,42 @@ function fetchViaDispatcher(dispatcher, input, init) {
       if (!live) return;
       endHop();
       routeError(err);
+      decodeInput?.destroy();
     };
     // The reader cancelled the response body, or the body was collected unread.
     const cancelBody = (reason?: unknown) => {
-      if (!live) return;
-      endHop();
-      removeSignal();
+      const wasLive = live;
+      if (wasLive) {
+        endHop();
+        removeSignal();
+      }
       takeController();
-      abortHop?.(reason instanceof Error ? reason : undefined);
+      decodeInput?.destroy();
+      if (wasLive) abortHop?.(reason instanceof Error ? reason : undefined);
+    };
+    const wantData = () => resumeData?.();
+    // Decoded bytes go to the body only while a read waits, so the decoders hold them and their own backpressure applies.
+    const pumpDecoded = () => {
+      let controller;
+      while ((controller = readingController) !== null) {
+        const chunk = decodeOutput.read();
+        if (chunk === null) return;
+        readingController = null;
+        // enqueue() runs pull() again when one more read waits.
+        controller.enqueue(chunk);
+      }
+    };
+    const closeBody = () => takeController()?.close();
+    // The pipeline ended: with an error when a decoder failed, or when this hop destroyed it.
+    const decodeEnded = err => {
+      if (!err) return;
+      if (live) {
+        const abort = abortHop;
+        fail(err);
+        abort?.(err);
+      } else {
+        takeController()?.error(err);
+      }
     };
     try {
       dispatcher.dispatch(
@@ -1647,30 +1698,36 @@ function fetchViaDispatcher(dispatcher, input, init) {
             let responseBody: ReadableStream | null = null;
             const nullBody = statusCode === 204 || statusCode === 205 || statusCode === 304;
             if (!nullBody && method !== "HEAD") {
-              responseBody = new ReadableStream(
-                {
-                  start(controller) {
-                    bodyController = new SafeWeakRef(controller);
-                  },
-                  pull(controller) {
-                    readingController = controller;
-                    resumeData?.();
-                  },
-                  cancel: cancelBody,
-                },
-                // No queue of its own, so pull() runs only while a read waits.
-                { highWaterMark: 0 },
-              );
               if (contentEncoding) {
+                let decoders;
                 try {
-                  responseBody = decodedBody(responseBody, contentEncoding);
+                  decoders = contentDecoders(contentEncoding);
                 } catch (err) {
                   const abort = abortHop;
                   fail(err);
                   abort?.(err as Error);
                   return true;
                 }
+                if (decoders !== undefined) {
+                  decodeInput = new Readable({ read: wantData });
+                  decodeOutput = pipelineStreams([decodeInput, ...decoders], decodeEnded);
+                  decodeOutput.on("readable", pumpDecoded).on("end", closeBody);
+                }
               }
+              responseBody = new ReadableStream(
+                {
+                  start(controller: ReadableStreamDefaultController) {
+                    bodyController = new SafeWeakRef(controller);
+                  },
+                  pull(controller: ReadableStreamDefaultController) {
+                    readingController = controller;
+                    if (decodeOutput !== null) pumpDecoded();
+                    else resumeData?.();
+                  },
+                  cancel: cancelBody,
+                },
+                kBodyQueuing,
+              );
             }
             // Built before the promise settles so a non-constructible status rejects; the constructor cannot set url or redirected.
             const response = new Response(responseBody, { status: statusCode, statusText, headers: responseHeaders });
@@ -1685,13 +1742,15 @@ function fetchViaDispatcher(dispatcher, input, init) {
             return true;
           },
           onData: chunk => {
-            const controller = live ? (readingController ?? bodyController?.deref()) : undefined;
+            if (!live) return true;
+            // Copied: the dispatch contract only guarantees the chunk during the callback.
+            if (decodeInput !== null) return decodeInput.push(Buffer.from(chunk));
+            const controller = readingController ?? bodyController?.deref();
             if (!controller) return true;
             readingController = null;
-            // Copy: the dispatch contract only guarantees the chunk during the callback.
             controller.enqueue(new Uint8Array(chunk));
-            // enqueue() ran pull() again if one more read already waits. If none does, pause until the next read.
-            return readingController !== null;
+            // enqueue() ran pull() again if one more read already waits. If none does, the body buffers up to its limit.
+            return readingController !== null || (controller.desiredSize ?? 0) > -kBodyBufferBytes;
           },
           onComplete: () => {
             if (!live) return;
@@ -1706,7 +1765,9 @@ function fetchViaDispatcher(dispatcher, input, init) {
               );
               return;
             }
-            takeController()?.close();
+            // A decoded body ends when its decoders gave their last bytes.
+            if (decodeInput !== null) decodeInput.push(null);
+            else closeBody();
           },
           onError: fail,
         },

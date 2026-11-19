@@ -322,7 +322,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
-    /// `getaddrinfo(3)` return code (Windows: `UV_E*`) for a pending connect whose name
+    /// Raw `getaddrinfo(3)` return code for a pending connect whose name
     /// lookup failed; 0 otherwise (a connect failure past name resolution, or
     /// any non-connecting handle). A different namespace from
     /// [`Self::get_error`] (errno).

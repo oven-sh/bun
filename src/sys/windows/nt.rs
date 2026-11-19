@@ -4,14 +4,16 @@ use core::ffi::c_void;
 use core::ptr;
 use std::sync::LazyLock;
 
-use bun_core::WStr;
 use bun_core::ffi::{Zeroable, zeroed};
+use bun_core::{WStr, wstr};
 use bun_paths::w_path_buffer_pool;
 use bun_windows_sys::externs::{
     self as w, FILE_INFORMATION_CLASS as FileClass, FS_INFORMATION_CLASS as VolumeClass,
 };
 
-use super::{HANDLE, IO_STATUS_BLOCK, NT_SUCCESS, NTSTATUS, Win32Error, ntdll, sync_io};
+use super::{
+    HANDLE, IO_STATUS_BLOCK, NT_SUCCESS, NTSTATUS, Win32Error, find_export, ntdll, sync_io,
+};
 use crate::windows_format::names;
 
 fn counted(units: &[u16]) -> Result<w::UNICODE_STRING, NTSTATUS> {
@@ -152,12 +154,15 @@ macro_rules! info {
     )*};
 }
 info!(FileClass:
+    FILE_ACCESS_INFORMATION = FileAccessInformation,
     FILE_ALL_INFORMATION = FileAllInformation,
     FILE_BASIC_INFORMATION = FileBasicInformation,
     FILE_DISPOSITION_INFORMATION = FileDispositionInformation,
     FILE_DISPOSITION_INFORMATION_EX = FileDispositionInformationEx,
     FILE_END_OF_FILE_INFORMATION = FileEndOfFileInformation,
     FILE_ID_FULL_DIR_INFORMATION = FileIdFullDirectoryInformation,
+    FILE_MODE_INFORMATION = FileModeInformation,
+    FILE_PIPE_INFORMATION = FilePipeInformation,
     FILE_POSITION_INFORMATION = FilePositionInformation,
     FILE_STAT_BASIC_INFORMATION = FileStatBasicInformation,
 );
@@ -238,19 +243,11 @@ type NtQueryInformationByName = unsafe extern "system" fn(
 ) -> NTSTATUS;
 
 static QUERY_BY_NAME: LazyLock<Option<NtQueryInformationByName>> = LazyLock::new(|| {
-    // SAFETY: the names are NUL-terminated, both modules stay loaded, and the function has this type.
+    // SAFETY: both modules stay loaded. The first is not called, and the second has this type.
     unsafe {
-        let find = |module: &WStr, name: &core::ffi::CStr| {
-            let module = super::kernel32::GetModuleHandleW(module.as_ptr());
-            ptr::NonNull::new(w::GetProcAddress(module, name.as_ptr()))
-        };
         // It came with `FileStatBasicInformation`.
-        find(
-            bun_core::wstr!("kernelbase.dll"),
-            c"GetFileInformationByName",
-        )?;
-        find(bun_core::wstr!("ntdll.dll"), c"NtQueryInformationByName")
-            .map(|it| core::mem::transmute::<_, NtQueryInformationByName>(it))
+        find_export::<*mut c_void>(wstr!("kernelbase.dll"), c"GetFileInformationByName")?;
+        find_export(wstr!("ntdll.dll"), c"NtQueryInformationByName")
     }
 });
 
@@ -279,15 +276,11 @@ pub(super) fn set<T: Info<FileClass>>(file: HANDLE, mut info: T) -> Result<(), N
     check(unsafe { ntdll::NtSetInformationFile(file, &raw mut io, info, len, T::CLASS) })
 }
 
-fn fs_control<'a>(
-    file: HANDLE,
-    code: u32,
-    input: &[u8],
-    output: &'a mut [u8],
-) -> Result<&'a [u8], NTSTATUS> {
+/// With how much of `output` it has filled.
+fn fs_control(file: HANDLE, code: u32, input: &[u8], output: &mut [u8]) -> (NTSTATUS, usize) {
     let null = ptr::null_mut();
     let or_null = |buf: *mut u8, len: usize| if len == 0 { null } else { buf.cast() };
-    let (status, len) = sync_io::complete(file, |io| {
+    sync_io::complete(file, |io| {
         // SAFETY: the buffers are valid for their lengths until `complete` returns, and hold no pointers for the codes below.
         unsafe {
             ntdll::NtFsControlFile(
@@ -303,15 +296,27 @@ fn fs_control<'a>(
                 output.len() as u32,
             )
         }
-    });
-    check(status)?;
-    output.get(..len).ok_or(NTSTATUS::BUFFER_OVERFLOW)
+    })
 }
 
 pub(super) fn get_reparse_point(file: HANDLE, buf: &mut [u8]) -> Result<&[u8], NTSTATUS> {
-    fs_control(file, w::FSCTL_GET_REPARSE_POINT, &[], buf)
+    let (status, len) = fs_control(file, w::FSCTL_GET_REPARSE_POINT, &[], buf);
+    check(status)?;
+    buf.get(..len).ok_or(NTSTATUS::BUFFER_OVERFLOW)
 }
 
 pub(super) fn set_reparse_point(file: HANDLE, data: &[u8]) -> Result<(), NTSTATUS> {
-    fs_control(file, w::FSCTL_SET_REPARSE_POINT, data, &mut []).map(drop)
+    check(fs_control(file, w::FSCTL_SET_REPARSE_POINT, data, &mut []).0)
+}
+
+/// The head of `FILE_PIPE_PEEK_BUFFER`.
+pub(super) fn peek_pipe(pipe: HANDLE) -> Result<[u32; 4], NTSTATUS> {
+    const FSCTL_PIPE_PEEK: u32 = 0x0011_400C;
+    let mut head = [[0; 4]; 4];
+    match fs_control(pipe, FSCTL_PIPE_PEEK, &[], head.as_flattened_mut()).0 {
+        // There is data behind it.
+        NTSTATUS::BUFFER_OVERFLOW => {}
+        status => check(status)?,
+    }
+    Ok(head.map(u32::from_ne_bytes))
 }

@@ -67,7 +67,7 @@ enum Source {
 impl Source {
     fn open(port: &Rc<Port>, fd: Fd, ownership: Ownership) -> sys::Result<Source> {
         if w::is_missing(fd.native()) {
-            return Err(sys::Error::from_code(E::BADF, Tag::open));
+            return Err(sys::Error::from_code(E::EBADF, Tag::open));
         }
         // Other threads use it, and what they use must not be closed under them.
         let is_kept_by_caller = ownership == Ownership::Borrowed || fd.stdio_tag().is_some();

@@ -37,7 +37,7 @@ pub fn home_directory() -> Result<Vec<u16>, E> {
         return profile_directory().map_err(Win32Error::to_node_e);
     };
     match wide::decoded_len(home.iter().copied().take(MIN_PATH_BYTES)) {
-        ..MIN_PATH_BYTES => Err(E::NOENT),
+        ..MIN_PATH_BYTES => Err(E::ENOENT),
         _ => Ok(home),
     }
 }

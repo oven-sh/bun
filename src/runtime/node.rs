@@ -150,15 +150,3 @@ pub(crate) mod zlib {
     pub(crate) use super::native_zlib_impl as native_zlib;
     pub(crate) use super::native_zstd_impl as native_zstd;
 }
-
-// ─── submodule re-exports ─────────────────────────────────────────────────
-
-#[cfg(unix)]
-pub(crate) type uid_t = libc::uid_t;
-#[cfg(not(unix))]
-pub(crate) type uid_t = u8;
-
-#[cfg(unix)]
-pub(crate) type gid_t = libc::gid_t;
-#[cfg(not(unix))]
-pub(crate) type gid_t = u8;

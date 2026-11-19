@@ -307,6 +307,7 @@ impl Request {
 
     /// Cancels a request on a pipe, and returns how it has ended in place of the callback.
     pub fn finish_now(self) -> Result<Completion, Request> {
+        const MILLISECOND: Timeout = Timeout::After(10_000);
         let requests = &self.port.requests;
         let slot = match requests.get(self.token) {
             Some(slot) if slot.awaits.get() == Awaits::Io => slot,
@@ -322,7 +323,7 @@ impl Request {
                 }
                 return Ok(completion);
             }
-            self.port.fetch(Timeout::After(10_000));
+            self.port.fetch(MILLISECOND);
         }
         Err(self)
     }

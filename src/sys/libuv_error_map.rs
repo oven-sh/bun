@@ -16,8 +16,7 @@ pub(crate) static LIBUV_ERROR_MAP: EnumMap<SystemErrno, &'static str> = build_li
 const fn build_libuv_error_map() -> EnumMap<SystemErrno, &'static str> {
     // Indexing relies on `SystemErrno`'s dense `0..N` discriminants matching the `enum_map::Enum`
     // declaration-order index for every variant referenced below (true on all four targets — see
-    // `bun_errno::*_errno`). The Windows `UV_*` tail variants are never written here; their slots
-    // keep the "unknown error" fill.
+    // `bun_errno::*_errno`).
     let mut arr: [&str; <SystemErrno as Enum>::LENGTH] =
         ["unknown error"; <SystemErrno as Enum>::LENGTH];
 

@@ -1515,7 +1515,7 @@ it("fs.promises.writeFile with iterables under GC pressure does not crash", asyn
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
 });
 
-it.skipIf(isWindows)("throws on invalid writer options instead of crashing", async () => {
+it("throws on invalid writer options instead of crashing", async () => {
   const stderr = Bun.stderr;
   const baseline = fileSinkInternals.liveCount();
   const iterations = 8;

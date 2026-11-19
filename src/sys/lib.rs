@@ -10,11 +10,8 @@
 // `Fd` struct + pure-data accessors are hoisted to `bun_core::Fd`
 // (canonical T0). `fd.rs` is `pub trait FdExt` over that.
 
-// `bun_str` is a historical namespace name; keep a public alias to
-// `bun_core` so any external `bun_sys::bun_core::…` paths continue to resolve.
-#[cfg(windows)]
-pub extern crate bun_core as bun_str;
 use bun_core::vec::{BorrowedBuf, BorrowedCursor};
+#[cfg(unix)]
 use core::mem::MaybeUninit;
 #[cfg(windows)]
 use std::os::windows::io::IntoRawHandle as _;
@@ -50,17 +47,12 @@ pub struct SystemError {
     pub dest: bun_core::String,
 }
 impl SystemError {
-    /// (`Error::to_system_error` stores `errno` negated to match Node.)
+    /// The inverse of `Error::js_errno`.
     #[inline]
     pub fn get_errno(&self) -> E {
-        // On Windows `self.errno` is a libuv code (e.g. UV_EBUSY = -4082);
-        // canonicalize to the small `E` discriminant so Rust-side callers that
-        // compare against `E::BUSY`/`E::BADF` keep matching.
         #[cfg(windows)]
-        if let Some(d) = bun_errno::uv_err_to_e_discriminant(self.errno) {
-            if let Some(e) = E::try_from_raw(d) {
-                return e;
-            }
+        if let Some(e) = bun_errno::uv_to_e(self.errno) {
+            return e;
         }
         e_from_negated(self.errno)
     }
@@ -896,11 +888,7 @@ pub use bun_errno::uv_e as UV_E;
 pub type Maybe<T> = core::result::Result<T, Error>;
 pub type Result<T> = core::result::Result<T, Error>;
 
-/// `Maybe(T)` static helpers — `.success()`, `.errno(e, tag)`,
-/// `.errnoSys(rc, tag)`, as a trait over `Result<T, Error>` so call
-/// sites can write `bun_sys::Result::<()>::errno_sys(rc, tag)`.
-/// Windows-only paths in `windows/mod.rs` lean on these
-/// for the NTSTATUS → `E` mapping.
+/// `Maybe(T)` static helpers, as a trait over `Result<T, Error>`.
 pub trait MaybeExt: Sized {
     type T;
     /// `Maybe(T).success` — `Ok(default())`.
@@ -909,10 +897,6 @@ pub trait MaybeExt: Sized {
         Self::T: Default;
     /// `Maybe(T).errno(e, syscall)` — `Err` from any errno-ish code.
     fn errno<C: error::IntoErrnoInt>(e: C, tag: Tag) -> Self;
-    /// `Maybe(T).errnoSys(rc, syscall)` — `Some(Err(..))` if `rc` maps to an
-    /// errno (NTSTATUS ≠ SUCCESS on Windows; rc == -1 / errno on POSIX).
-    #[cfg(windows)]
-    fn errno_sys(rc: bun_windows_sys::NTSTATUS, tag: Tag) -> Option<Self>;
 }
 impl<T> MaybeExt for Result<T> {
     type T = T;
@@ -926,14 +910,6 @@ impl<T> MaybeExt for Result<T> {
     #[inline]
     fn errno<C: error::IntoErrnoInt>(e: C, tag: Tag) -> Self {
         Err(Error::new(e, tag))
-    }
-    #[cfg(windows)]
-    #[inline]
-    fn errno_sys(rc: bun_windows_sys::NTSTATUS, tag: Tag) -> Option<Self> {
-        if rc == bun_windows_sys::NTSTATUS::SUCCESS {
-            return None;
-        }
-        Some(Err(Error::new(rc, tag)))
     }
 }
 #[cfg(windows)]
@@ -1019,7 +995,7 @@ pub mod O {
     pub const NONBLOCK: i32 = libc::O_NONBLOCK;
     #[cfg(unix)]
     pub const CLOEXEC: i32 = libc::O_CLOEXEC;
-    // Windows libc has no `O_NONBLOCK`/`O_CLOEXEC`; `open` ignores them.
+    // Windows libc has no `O_NONBLOCK`/`O_CLOEXEC`; `open` and `openat` ignore them.
     #[cfg(windows)]
     pub const NONBLOCK: i32 = 0o4000;
     #[cfg(windows)]
@@ -3662,8 +3638,6 @@ mod windows_impl {
     pub fn unlinkat_with_flags(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
         // Convert to NT path and call `DeleteFileBun`;
         // `remove_dir = flags & AT_REMOVEDIR != 0`.
-        // AT_REMOVEDIR on Windows = 0x200.
-        const AT_REMOVEDIR: i32 = 0x200;
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
         super::windows::DeleteFileBun(
@@ -3958,35 +3932,6 @@ mod windows_impl {
         let mut buf = bun_paths::path_buffer_pool::get();
         chdir(super::get_fd_path_z(fd, &mut buf)?)
     }
-    fn recv_uninit(fd: Fd, buf: &mut [MaybeUninit<u8>], flags: i32) -> Maybe<usize> {
-        // Winsock `recv`. Winsock's `len` is a
-        // signed `int`, so clamp to `i32::MAX`
-        // before the `usize → i32` cast — otherwise ≥2 GiB buffers wrap to a
-        // negative length and Winsock fails with WSAEFAULT.
-        let len = buf.len().min(i32::MAX as usize) as i32;
-        let rc =
-            unsafe { w::ws2_32::recv(fd.native() as _, buf.as_mut_ptr().cast::<_>(), len, flags) };
-        if rc < 0 {
-            return Err(Error::from_win32(w::Win32Error::get(), Tag::recv).with_fd(fd));
-        }
-        Ok(rc as usize)
-    }
-    pub(crate) fn send(fd: Fd, buf: &[u8], flags: i32) -> Maybe<usize> {
-        // Winsock `send`. Clamp to `i32::MAX` so the
-        // `usize → i32` cast can't wrap to a negative length on huge buffers.
-        let len = buf.len().min(i32::MAX as usize) as i32;
-        let rc = unsafe { w::ws2_32::send(fd.native() as _, buf.as_ptr().cast::<_>(), len, flags) };
-        if rc < 0 {
-            return Err(Error::from_win32(w::Win32Error::get(), Tag::send).with_fd(fd));
-        }
-        Ok(rc as usize)
-    }
-    pub(crate) fn recv_non_block_uninit(fd: Fd, buf: &mut [MaybeUninit<u8>]) -> Maybe<usize> {
-        recv_uninit(fd, buf, 0)
-    }
-    pub fn send_non_block(fd: Fd, buf: &[u8]) -> Maybe<usize> {
-        send(fd, buf, 0)
-    }
     pub type FcntlInt = isize;
 }
 #[cfg(windows)]
@@ -4020,6 +3965,7 @@ fn pread_owned_buf(fd: Fd, mut cursor: BorrowedCursor<'_, u8>, off: i64) -> Mayb
     unsafe { pread_owned(fd, cursor.as_mut(), off).inspect(|&n| _ = cursor.advance(n)) }
 }
 
+#[cfg(unix)]
 pub fn recv_non_block_buf(fd: Fd, mut cursor: BorrowedCursor<'_, u8>) -> Maybe<usize> {
     // SAFETY: as in `read_buf`.
     unsafe { recv_non_block_uninit(fd, cursor.as_mut()).inspect(|&n| _ = cursor.advance(n)) }
@@ -5738,7 +5684,7 @@ pub fn normalize_path_windows_opts<'a>(
         Err(windows::GetFinalPathNameByHandleError::NameTooLong) => return Err(too_long()),
         // `E.BADFD` (errno 77 'file descriptor in bad state'),
         // not `EBADF` (9).
-        Err(_) => return Err(Error::from_code(E::BADFD, Tag::open)),
+        Err(_) => return Err(Error::from_code(E::EBADFD, Tag::open)),
     };
 
     // The volume boundary is only needed when `..` resolves above the dirfd:
@@ -5761,7 +5707,7 @@ pub fn normalize_path_windows_opts<'a>(
         ) {
             Ok(p) => p,
             Err(windows::GetFinalPathNameByHandleError::NameTooLong) => return Err(too_long()),
-            Err(_) => return Err(Error::from_code(E::BADFD, Tag::open)),
+            Err(_) => return Err(Error::from_code(E::EBADFD, Tag::open)),
         };
         // A mis-placed boundary would resolve `..` to the wrong file; fail
         // loud when the two names don't compose (e.g. a rename race).
@@ -5770,7 +5716,7 @@ pub fn normalize_path_windows_opts<'a>(
                 share_rooted = rooted;
                 len
             }
-            None => return Err(Error::from_code(E::BADFD, Tag::open)),
+            None => return Err(Error::from_code(E::EBADFD, Tag::open)),
         }
     };
     // The `\Device\…` name of a volume-root handle ends in `\`; keep the
@@ -6091,8 +6037,6 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
         );
     }
 
-    let nonblock = (flags & O::NONBLOCK) != 0;
-
     // GENERIC_WRITE includes FILE_WRITE_ATTRIBUTES.
     let mut access_mask: u32 = w::READ_CONTROL | w::SYNCHRONIZE;
     if (flags & O::RDWR) != 0 {
@@ -6122,17 +6066,10 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
         (false, _, false) => w::FILE_OPEN,
     };
 
-    let blocking_flag: u32 = if !nonblock {
-        w::FILE_SYNCHRONOUS_IO_NONALERT
-    } else {
-        0
-    };
-    let follow = (flags & O::NOFOLLOW) == 0;
-    let opts: u32 = if follow {
-        blocking_flag
-    } else {
-        blocking_flag | w::FILE_OPEN_REPARSE_POINT
-    };
+    let mut opts: u32 = w::FILE_SYNCHRONOUS_IO_NONALERT;
+    if (flags & O::NOFOLLOW) != 0 {
+        opts |= w::FILE_OPEN_REPARSE_POINT;
+    }
 
     let mut attributes: u32 = w::FILE_ATTRIBUTE_NORMAL;
     if (flags & O::CREAT) != 0 && (perm & 0x80) == 0 && perm != 0 {
@@ -7048,14 +6985,6 @@ pub mod posix {
     #[cfg(unix)]
     pub use libc::timeval;
 
-    #[cfg(windows)]
-    #[repr(C)]
-    #[derive(Clone, Copy, Default)]
-    pub struct timespec {
-        pub(crate) tv_sec: i64,
-        pub(crate) tv_nsec: i64,
-    }
-
     // ── poll ──
     #[cfg(unix)]
     pub use libc::pollfd as PollFd;
@@ -7936,12 +7865,7 @@ mod win_symlink_impl {
     use super::{E, Error, Maybe, Tag, WindowsSymlinkOptions, ZStr, windows};
     use bun_core::WStr;
     use core::sync::atomic::{AtomicU32, Ordering};
-
-    // `CreateSymbolicLinkW` `dwFlags` bits (winbase.h). Not currently exported
-    // by `bun_windows_sys`; spell them locally so we don't widen the leaf
-    // crate's surface for two constants.
-    const SYMBOLIC_LINK_FLAG_DIRECTORY: u32 = 0x1;
-    const SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE: u32 = 0x2;
+    use windows::{SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE, SYMBOLIC_LINK_FLAG_DIRECTORY};
 
     /// `WindowsSymlinkOptions.symlink_flags` — process-global, starts
     /// with `ALLOW_UNPRIVILEGED_CREATE` and is cleared on `INVALID_PARAMETER`
@@ -7976,10 +7900,7 @@ mod win_symlink_impl {
     pub fn symlink_w(dest: &WStr, target: &WStr, options: WindowsSymlinkOptions) -> Maybe<()> {
         loop {
             let flags = options.flags();
-            // SAFETY: both inputs are NUL-terminated wide strings.
-            let rc = unsafe { windows::CreateSymbolicLinkW(dest.as_ptr(), target.as_ptr(), flags) };
-            if rc == 0 {
-                let win_err = windows::Win32Error::get();
+            if let Err(win_err) = windows::CreateSymbolicLinkW(dest, target, flags) {
                 if win_err == windows::Win32Error::INVALID_PARAMETER
                     && (flags & SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0
                 {
@@ -7990,7 +7911,7 @@ mod win_symlink_impl {
                 // Only ENOENT/EEXIST keep `has_failed_to_create_symlink`
                 // unset; every other failure flips the sticky bit so
                 // `symlinkOrJunction` falls through to junctions next time.
-                if !matches!(err.get_errno(), E::NOENT | E::EXIST) {
+                if !matches!(err.get_errno(), E::ENOENT | E::EEXIST) {
                     WindowsSymlinkOptions::set_has_failed_to_create_symlink(true);
                 }
                 return Err(err);
@@ -8028,7 +7949,7 @@ mod win_symlink_impl {
                 Err(err) => match err.get_errno() {
                     // EEXIST/ENOENT: surface the symlink error; junctions
                     // would hit the same condition.
-                    E::EXIST | E::NOENT => return Err(err),
+                    E::EEXIST | E::ENOENT => return Err(err),
                     // anything else: fall through to junction.
                     _ => {}
                 },
@@ -8039,23 +7960,13 @@ mod win_symlink_impl {
 
     /// `unlinkW` — `DeleteFileW` with errno mapping.
     pub fn unlink_w(from: &WStr) -> Maybe<()> {
-        // SAFETY: `from` is NUL-terminated.
-        let rc = unsafe { windows::DeleteFileW(from.as_ptr()) };
-        if rc == 0 {
-            return Err(Error::from_win32(windows::Win32Error::get(), Tag::unlink));
-        }
-        Ok(())
+        windows::DeleteFileW(from).map_err(|err| Error::from_win32(err, Tag::unlink))
     }
 
     /// `mkdirOSPath` (Windows arm) — `CreateDirectoryW` with
     /// errno mapping. Named `mkdir_w` for parity with `unlink_w`/`symlink_w`.
     pub fn mkdir_w(path: &WStr) -> Maybe<()> {
-        // SAFETY: `path` is NUL-terminated; null security attributes.
-        let rc = unsafe { windows::CreateDirectoryW(path.as_ptr(), core::ptr::null_mut()) };
-        if rc == 0 {
-            return Err(Error::from_win32(windows::Win32Error::get(), Tag::mkdir));
-        }
-        Ok(())
+        windows::CreateDirectoryW(path).map_err(|err| Error::from_win32(err, Tag::mkdir))
     }
 }
 #[cfg(windows)]
@@ -8458,18 +8369,10 @@ fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
 }
 #[cfg(windows)]
 fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
-    let mut info: windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
-    // SAFETY: `info` is a valid out-pointer for the duration of the call; a
-    // handle that is not a console makes the call fail rather than misbehave.
-    let rc = unsafe { windows::kernel32::GetConsoleScreenBufferInfo(fd.native(), &raw mut info) };
-    if rc == windows::FALSE {
-        return None;
-    }
-    // `srWindow` is the visible part of the (possibly much taller) screen buffer.
-    let window = info.srWindow;
+    let (col, row) = windows::console::window_size(fd.native())?;
     Some(bun_core::Winsize {
-        row: u16::try_from(i32::from(window.Bottom) - i32::from(window.Top) + 1).ok()?,
-        col: u16::try_from(i32::from(window.Right) - i32::from(window.Left) + 1).ok()?,
+        row,
+        col,
         xpixel: 0,
         ypixel: 0,
     })
@@ -9050,7 +8953,7 @@ mod normalize_path_windows_tests {
             )
             .expect("open NUL"),
         );
-        assert_eq!(normalize_err(nul.fd(), ".\\x").get_errno(), E::BADFD);
+        assert_eq!(normalize_err(nul.fd(), ".\\x").get_errno(), E::EBADFD);
     }
 
     #[test]

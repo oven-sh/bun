@@ -1876,7 +1876,7 @@ impl SendQueue {
         use bun_sys::windows as w;
         log!("configureClient");
         if !w::named_pipe::is_duplex(pipe_fd.native()) {
-            let (errno, tag) = (bun_sys::E::INVAL, bun_sys::Tag::open);
+            let (errno, tag) = (bun_sys::E::EINVAL, bun_sys::Tag::open);
             return Err(bun_sys::Error::from_code(errno, tag));
         }
         let pipe = Pipe::open_duplex(VirtualMachine::get().uws_loop().port(), pipe_fd)?;

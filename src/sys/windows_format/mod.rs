@@ -3,7 +3,7 @@
 #![forbid(unsafe_code)]
 
 pub mod adapters;
-pub(crate) mod command_line;
+pub mod command_line;
 pub mod cpu_time;
 pub mod crt_descriptors;
 pub mod directory_changes;

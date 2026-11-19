@@ -109,12 +109,8 @@ pub fn read_records(
     const CONSOLE_READ_NOWAIT: u16 = 2;
     static READ_EX: OnceLock<Option<ReadConsoleInputExW>> = OnceLock::new();
     let read_ex = READ_EX.get_or_init(|| {
-        // SAFETY: both names end with a NUL, and kernel32 is never unloaded. https://learn.microsoft.com/en-us/windows/console/readconsoleinputex
-        unsafe {
-            let module = kernel32::GetModuleHandleW(bun_core::wstr!("kernel32.dll").as_ptr());
-            let address = bun_windows_sys::GetProcAddress(module, c"ReadConsoleInputExW".as_ptr());
-            core::mem::transmute::<*mut c_void, Option<ReadConsoleInputExW>>(address)
-        }
+        // SAFETY: https://learn.microsoft.com/en-us/windows/console/readconsoleinputex
+        unsafe { super::find_export(bun_core::wstr!("kernel32.dll"), c"ReadConsoleInputExW") }
     });
     let (mut len, mut read) = (records.len() as DWORD, 0);
     if let Some(read_ex) = read_ex {
@@ -191,13 +187,11 @@ pub fn write_text(output: HANDLE, mut text: &[u16]) -> Result<(), Win32Error> {
 }
 
 /// The columns and rows that are visible.
-pub fn window_size(output: HANDLE) -> Option<(i16, i16)> {
+pub fn window_size(output: HANDLE) -> Option<(u16, u16)> {
     let mut info: bun_windows_sys::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
     // SAFETY: an out-param.
     check(unsafe { kernel32::GetConsoleScreenBufferInfo(output, &raw mut info) }).ok()?;
     let window = info.srWindow;
-    Some((
-        window.Right - window.Left + 1,
-        window.Bottom - window.Top + 1,
-    ))
+    let count = |first, last| u16::try_from(i32::from(last) - i32::from(first) + 1).ok();
+    count(window.Left, window.Right).zip(count(window.Top, window.Bottom))
 }

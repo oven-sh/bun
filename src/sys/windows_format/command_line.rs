@@ -1,5 +1,6 @@
 //! The program and the command line for `CreateProcessW`. None of the strings ends with a NUL.
 
+use bun_core::w;
 use bun_paths::is_sep_any_t;
 
 const BACKSLASH: u16 = b'\\' as u16;
@@ -23,16 +24,12 @@ fn eq_ignore_ascii_case(a: &[u16], b: &[u16]) -> bool {
         .eq(b.iter().map(|&it| lower(it)))
 }
 
-fn extend_ascii(out: &mut Vec<u16>, text: &[u8]) {
-    out.extend(text.iter().map(|&byte| u16::from(byte)));
-}
-
 /// An argument that the program would not see as it was given.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct CannotQuote;
 
 /// For the parser of the C runtime.
-fn push_argument(out: &mut Vec<u16>, argument: &[u16]) {
+pub fn push_argument(out: &mut Vec<u16>, argument: &[u16]) {
     if !argument.is_empty() && !has_any(argument, b" \t\"") {
         return out.extend_from_slice(argument);
     }
@@ -76,9 +73,9 @@ pub(crate) fn join(arguments: &[Vec<u16>]) -> Result<Vec<u16>, CannotQuote> {
 /// `full_path` is from `GetFullPathNameW`.
 pub(crate) fn is_batch_file(full_path: &[u16]) -> bool {
     full_path.last_chunk::<4>().is_some_and(|extension| {
-        [b".bat", b".cmd"]
+        [w!(".bat"), w!(".cmd")]
             .iter()
-            .any(|batch| eq_ignore_ascii_case(extension, &batch.map(u16::from)))
+            .any(|batch| eq_ignore_ascii_case(extension, batch))
     })
 }
 
@@ -102,7 +99,7 @@ fn push_for_cmd(out: &mut Vec<u16>, text: &[u16], needs_quotes: bool) -> Result<
         out.push(unit);
         if unit == u16::from(b'%') {
             // Expands to nothing, and leaves no pair of them around the name of a variable.
-            extend_ascii(out, b"%cd:~,%");
+            out.extend_from_slice(w!("%cd:~,%"));
         }
     }
     if needs_quotes {
@@ -120,7 +117,7 @@ pub(crate) fn join_for_batch_file(
     is_verbatim: bool,
 ) -> Result<Vec<u16>, CannotQuote> {
     let mut out = Vec::new();
-    extend_ascii(&mut out, b"cmd.exe /d /e:ON /v:OFF /s /c \"");
+    out.extend_from_slice(w!("cmd.exe /d /e:ON /v:OFF /s /c \""));
     // It does not know the prefix.
     push_for_cmd(&mut out, &without_verbatim_prefix(full_path), true)?;
     for argument in arguments {
@@ -137,21 +134,19 @@ pub(crate) fn join_for_batch_file(
 
 pub(crate) fn with_verbatim_prefix(full_path: &[u16]) -> Vec<u16> {
     match full_path {
-        [_, COLON, ..] => [&b"\\\\?\\".map(u16::from), full_path].concat(),
+        [_, COLON, ..] => [w!("\\\\?\\"), full_path].concat(),
         [BACKSLASH, BACKSLASH, _, BACKSLASH, ..] if is_any(full_path[2], b"?.") => {
             full_path.to_vec()
         }
-        [BACKSLASH, rest @ ..] => [&b"\\\\?\\UNC".map(u16::from), rest].concat(),
+        [BACKSLASH, rest @ ..] => [w!("\\\\?\\UNC"), rest].concat(),
         _ => full_path.to_vec(),
     }
 }
 
 pub(crate) fn without_verbatim_prefix(path: &[u16]) -> Vec<u16> {
-    match path.strip_prefix(&b"\\\\?\\".map(u16::from)) {
+    match path.strip_prefix(w!("\\\\?\\")) {
         Some(rest @ [_, COLON, BACKSLASH, ..]) => rest.to_vec(),
-        Some(rest) if rest.starts_with(&b"UNC\\".map(u16::from)) => {
-            [&path[..2], &rest[4..]].concat()
-        }
+        Some(rest) if rest.starts_with(w!("UNC\\")) => [&path[..2], &rest[4..]].concat(),
         _ => path.to_vec(),
     }
 }
@@ -163,7 +158,7 @@ fn root_of(absolute: &[u16]) -> &[u16] {
     }
     let is_verbatim_unc = absolute
         .get(2..8)
-        .is_some_and(|it| eq_ignore_ascii_case(it, &b"?\\unc\\".map(u16::from)));
+        .is_some_and(|it| eq_ignore_ascii_case(it, w!("?\\unc\\")));
     let mut separators = (0..absolute.len()).filter(|&index| is_sep_any_t(absolute[index]));
     let end = separators.nth(if is_verbatim_unc { 5 } else { 3 });
     &absolute[..end.unwrap_or(absolute.len())]
@@ -257,9 +252,9 @@ pub(crate) fn find_program(
             candidate.push(DOT);
         }
         let stem_len = candidate.len();
-        for extension in [b"com", b"exe"] {
+        for extension in [w!("com"), w!("exe")] {
             candidate.truncate(stem_len);
-            extend_ascii(&mut candidate, extension);
+            candidate.extend_from_slice(extension);
             if is_file(&mut candidate) {
                 return Some(candidate);
             }

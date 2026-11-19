@@ -845,7 +845,7 @@ impl WindowsPipeWriter {
         assert!(!self.has_inflight_write.get());
         self.payload_len.set(len);
         self.with_source(write)
-            .unwrap_or_else(|| Err(sys::Error::from_code(sys::E::PIPE, sys::Tag::pipe)))
+            .unwrap_or_else(|| Err(sys::Error::from_code(sys::E::EPIPE, sys::Tag::pipe)))
     }
 
     fn submit(&self, payload: Payload) -> sys::Result<()> {
@@ -895,12 +895,12 @@ impl WindowsPipeWriter {
     fn close_current_sink(&self, handler: &impl WriteHandler) -> sys::Result<()> {
         // Only a write to a file goes on after the close.
         if self.has_inflight_write.get() && self.with_source(WriteSource::is_file) != Some(true) {
-            return sys::Result::Err(sys::Error::from_code(sys::E::BUSY, sys::Tag::write));
+            return sys::Result::Err(sys::Error::from_code(sys::E::EBUSY, sys::Tag::write));
         }
         self.close(handler, false);
         // `on_close` started the writer again.
         if self.has_sink() {
-            return sys::Result::Err(sys::Error::from_code(sys::E::BUSY, sys::Tag::write));
+            return sys::Result::Err(sys::Error::from_code(sys::E::EBUSY, sys::Tag::write));
         }
         self.is_done.set(false);
         sys::Result::Ok(())
@@ -1326,7 +1326,7 @@ impl WindowsStreamingWriter {
     pub fn start_sync(&self, handler: &impl WriteHandler, fd: Fd) -> sys::Result<()> {
         // Each chunk is written synchronously, so nothing would drain a queue.
         if self.queued_len() > 0 {
-            return sys::Result::Err(sys::Error::from_code(sys::E::BUSY, sys::Tag::write));
+            return sys::Result::Err(sys::Error::from_code(sys::E::EBUSY, sys::Tag::write));
         }
         self.base.close_current_sink(handler)?;
         self.base.sink.set(Some(Sink::Sync(fd)));

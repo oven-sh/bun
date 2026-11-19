@@ -487,14 +487,7 @@ impl Interpreter {
         // ── stdin ──────────────────────────────────────────────────────────
         log!("Duping stdin");
         let stdin_fd_res = if bun_core::output::stdio::is_stdin_null() {
-            #[cfg(unix)]
-            {
-                bun_sys::open(bun_core::zstr!("/dev/null"), bun_sys::O::RDONLY, 0)
-            }
-            #[cfg(windows)]
-            {
-                bun_sys::open(bun_core::zstr!("NUL"), bun_sys::O::RDONLY, 0)
-            }
+            bun_sys::open(NULL_DEVICE, bun_sys::O::RDONLY, 0)
         } else {
             bun_sys::dup(Fd::stdin())
         };
@@ -1912,21 +1905,16 @@ pub(crate) use crate::shell::io_reader::IOReader;
 pub(crate) use crate::shell::io_writer::IOWriter;
 pub(crate) use crate::shell::states::assigns::AssignCtx;
 
+const NULL_DEVICE: &bun_core::ZStr =
+    bun_core::ZStr::from_slice_with_nul(concat!(bun_core::null_device!(), "\0").as_bytes());
+
 /// Open `/dev/null` `O_RDWR`
 /// on POSIX, `nul` on Windows. Used when a stdio stream was closed at process
 /// start so we have *something* to dup into the shell's root IO. Must be
 /// writable: `setup_io_before_run` installs the result as the stdout/stderr
 /// `IOWriter` target (and `init` uses it for stdin), so `RDWR` covers both.
 fn open_null_device() -> bun_sys::Result<Fd> {
-    #[cfg(unix)]
-    {
-        bun_sys::open(bun_core::zstr!("/dev/null"), bun_sys::O::RDWR, 0)
-    }
-    #[cfg(windows)]
-    {
-        // Windows NUL is bidirectional regardless of the open flags.
-        bun_sys::open(bun_core::zstr!("nul"), bun_sys::O::RDWR, 0)
-    }
+    bun_sys::open(NULL_DEVICE, bun_sys::O::RDWR, 0)
 }
 
 /// `false` (synchronous writes) if `fstat` fails, as on Windows.
@@ -2040,7 +2028,7 @@ fn shell_get_path<'a>(
     syscall: bun_sys::Tag,
 ) -> bun_sys::Result<&'a bun_core::ZStr> {
     if to.as_bytes() == b"/dev/null" {
-        return Ok(crate::shell::shell_body::WINDOWS_DEV_NULL);
+        return Ok(NULL_DEVICE);
     }
     let name_too_long =
         || bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, syscall).with_path(to.as_bytes());

@@ -271,7 +271,7 @@ fn set_mode(handle: HANDLE, mode: Mode) -> sys::Result<()> {
     const VT: u32 = w::ENABLE_VIRTUAL_TERMINAL_INPUT;
 
     if !console::is_input(handle) {
-        let errno = console::mode(handle).map_or(E::BADF, |_| E::INVAL);
+        let errno = console::mode(handle).map_or(E::EBADF, |_| E::EINVAL);
         return Err(sys::Error::from_code(errno, Tag::uv_tty_set_mode));
     }
     let error = |err| sys::Error::from_win32(err, Tag::uv_tty_set_mode);
@@ -298,14 +298,14 @@ fn set_mode(handle: HANDLE, mode: Mode) -> sys::Result<()> {
 
 /// `mode` is a `uv_tty_mode_t`. Returns an error number of Node.js.
 #[unsafe(no_mangle)]
-extern "C" fn Bun__setConsoleMode(fd: c_int, mode: c_int) -> c_int {
+extern "C" fn Bun__ttySetMode(fd: c_int, mode: c_int, _state: *mut u8, _drain: c_int) -> c_int {
     let handle = Fd::from_crt(fd).native();
     let result = match mode {
         0 => set_mode(handle, Mode::Normal),
         1 => set_mode(handle, Mode::Raw),
-        2 => Err(sys::Error::from_code(E::NOTSUP, Tag::uv_tty_set_mode)),
+        2 => Err(sys::Error::from_code(E::ENOTSUP, Tag::uv_tty_set_mode)),
         3 => set_mode(handle, Mode::RawVt),
-        _ => Err(sys::Error::from_code(E::INVAL, Tag::uv_tty_set_mode)),
+        _ => Err(sys::Error::from_code(E::EINVAL, Tag::uv_tty_set_mode)),
     };
     result.map_or_else(|err| err.js_errno(), |()| 0)
 }
@@ -414,7 +414,7 @@ impl Console {
         };
         let text = self.0.with_carriage_returns(text);
         console::write_text(self.fd().native(), &text).map_err(|err| match err {
-            Win32Error::INVALID_HANDLE => sys::Error::from_code(E::PIPE, Tag::write),
+            Win32Error::INVALID_HANDLE => sys::Error::from_code(E::EPIPE, Tag::write),
             err => sys::Error::from_win32(err, Tag::write),
         })
     }
@@ -487,7 +487,7 @@ impl Inner {
         let error = |errno| Some(ReadEvent::Err(sys::Error::from_code(errno, Tag::recv)));
         let handle = self.file.fd().native();
         if !*self.is_input.get_or_init(|| console::is_input(handle)) {
-            return error(E::NOTCONN);
+            return error(E::ENOTCONN);
         }
         let input = match Input::get(handle) {
             Ok(input) => input,
@@ -511,7 +511,7 @@ impl Inner {
         if reads_keys {
             match Request::wait(&self.endpoint.port, input.handle.as_handle(), done) {
                 Ok(request) => self.read.set(Some(request)),
-                Err(_) => return error(E::NOMEM),
+                Err(_) => return error(E::ENOMEM),
             }
             return None;
         }

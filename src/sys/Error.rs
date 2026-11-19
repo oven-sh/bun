@@ -59,19 +59,10 @@ impl IntoErrnoInt for E {
         self as Int
     }
 }
-// On POSIX `E` is a `type` alias for `SystemErrno` (same type → duplicate impl);
-// on Windows they are distinct enums, so the second impl is required.
-#[cfg(windows)]
-impl IntoErrnoInt for SystemErrno {
-    #[inline]
-    fn into_errno_int(self) -> Int {
-        self as Int
-    }
-}
 
 impl Error {
     /// `Error::new(errno, tag)` — dispatches via `IntoErrnoInt` so a single
-    /// constructor covers `E`, `SystemErrno` and (Windows) `NTSTATUS`.
+    /// constructor covers `E` and (Windows) `NTSTATUS`.
     #[inline]
     pub fn new<C: IntoErrnoInt>(errno: C, syscall_tag: Tag) -> Error {
         Error {
@@ -283,7 +274,7 @@ impl Error {
     /// Node reports libuv's codes in `err.errno` on every platform. On POSIX that is just the negated host errno.
     pub fn js_errno(&self) -> c_int {
         #[cfg(windows)]
-        if let Some(errno) = bun_errno::e_discriminant_to_uv(self.errno) {
+        if let Some(errno) = E::from_repr(self.errno).and_then(bun_errno::try_e_to_uv) {
             return errno;
         }
         c_int::from(self.errno).wrapping_neg()

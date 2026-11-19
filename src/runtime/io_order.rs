@@ -66,6 +66,11 @@ impl Turn {
         };
         start_or_queue(queues, key, create(turn));
     }
+
+    /// For a task that goes on to wait.
+    pub(crate) fn pass_on_now(mut self) {
+        self.start_next = Unstarted::start;
+    }
 }
 
 fn start_or_queue(queues: &Queues, key: Key, job: Unstarted) {
@@ -76,13 +81,6 @@ fn start_or_queue(queues: &Queues, key: Key, job: Unstarted) {
     queues.insert(key, VecDeque::new());
     drop(queues);
     job.start();
-}
-
-impl Turn {
-    /// For a task that goes on to wait.
-    pub(crate) fn pass_on_now(mut self) {
-        self.start_next = Unstarted::start;
-    }
 }
 
 impl Drop for Turn {

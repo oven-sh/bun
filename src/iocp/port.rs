@@ -171,7 +171,8 @@ impl Port {
 
     /// For a thread that is about to end. Not for long: `true` if some have ended and others have not.
     pub fn wait_for_pending_writes(&self) -> bool {
-        let deadline = now_ns() + 500_000_000;
+        const PATIENCE_NS: u64 = 500_000_000;
+        let deadline = now_ns() + PATIENCE_NS;
         let mut count = self.shared.pending_writes.lock();
         let before = *count;
         while *count > 0 && now_ns() < deadline {
@@ -267,6 +268,8 @@ impl Port {
         /// Less than a sleep takes.
         const AT_ONCE_NS: u64 = 10_000;
         const FLOOD_TURN_NS: u64 = 20_000;
+        const TURNS_TO_FLOOD: u32 = 4;
+        const TURNS_TO_DOUBT: u32 = 64;
 
         if self.next.get() < self.end.get() {
             return self.undispatched();
@@ -276,7 +279,7 @@ impl Port {
         let start = (only_receives && timeout_ns != Some(0)).then(|| {
             // A sender pays for every time that it has to tell us.
             let mut now = now_ns();
-            while turns >= 4 && now < began_at + FLOOD_TURN_NS && has_other_cpu() {
+            while turns >= TURNS_TO_FLOOD && now < began_at + FLOOD_TURN_NS && has_other_cpu() {
                 core::hint::spin_loop();
                 now = now_ns();
             }
@@ -293,12 +296,13 @@ impl Port {
             && now - start < AT_ONCE_NS
         {
             // After a pause there is always something, so it has to show itself again.
-            self.flood.set(((turns + 1) % 64, now));
+            self.flood.set(((turns + 1) % TURNS_TO_DOUBT, now));
         }
         self.undispatched()
     }
 
     fn park(&self, timeout_ns: Option<u64>, only_receives: bool) {
+        const IDLE_NS: u64 = 100_000;
         let (start, mut spin) = (now_ns(), self.spin.get());
         let next_due = self.delayed.borrow().peek().map(|entry| entry.0.0);
         let deadline = (timeout_ns.map_or(u64::MAX, |timeout| start.saturating_add(timeout)))
@@ -317,7 +321,7 @@ impl Port {
                 break;
             }
         }
-        if now.saturating_sub(start) > 100_000 {
+        if now.saturating_sub(start) > IDLE_NS {
             self.busy_since_ns.set(now);
         }
         spin.waited(start, now);
@@ -412,10 +416,11 @@ impl Port {
 
     /// `false` if nothing has come, or something else is first.
     fn dispatch_soon(&self, on_event: &impl Fn(Event)) -> bool {
+        const SOON_NS: u64 = 50_000;
         if self.has_work() || !has_other_cpu() {
             return false;
         }
-        let deadline = now_ns() + 50_000;
+        let deadline = now_ns() + SOON_NS;
         while !self.fill_batch(Timeout::Now) {
             if now_ns() > deadline {
                 return false;

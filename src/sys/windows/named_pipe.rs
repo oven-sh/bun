@@ -10,44 +10,19 @@ use std::os::windows::io::{AsRawHandle as _, HandleOrInvalid, OwnedHandle};
 
 use bun_core::WStr;
 use bun_windows_sys::externs::{
-    FILE_FLAG_OVERLAPPED, FILE_INFORMATION_CLASS, FILE_READ_ATTRIBUTES, FILE_WRITE_ATTRIBUTES,
-    GENERIC_READ, GENERIC_WRITE, OPEN_EXISTING, PIPE_ACCESS_DUPLEX, WAIT_OBJECT_0,
+    FILE_ACCESS_INFORMATION, FILE_FLAG_OVERLAPPED, FILE_MODE_INFORMATION, FILE_PIPE_INFORMATION,
+    FILE_PIPE_QUEUE_OPERATION, FILE_READ_ATTRIBUTES, FILE_WRITE_ATTRIBUTES, GENERIC_READ,
+    GENERIC_WRITE, OPEN_EXISTING, PIPE_ACCESS_DUPLEX, WAIT_OBJECT_0,
 };
 
-use super::{BOOL, DWORD, HANDLE, NT_ERROR, NTSTATUS, ULONG, Win32Error, kernel32, ntdll, sync_io};
+use super::{
+    BOOL, DWORD, HANDLE, NT_ERROR, NTSTATUS, ULONG, Win32Error, kernel32, nt, ntdll, sync_io,
+};
 
 #[link(name = "kernel32")]
 unsafe extern "system" {
     safe fn GetNamedPipeClientProcessId(Pipe: HANDLE, ClientProcessId: &mut ULONG) -> BOOL;
     safe fn GetNamedPipeServerProcessId(Pipe: HANDLE, ServerProcessId: &mut ULONG) -> BOOL;
-}
-
-/// `FILE_PIPE_INFORMATION`
-type PipeModes = [ULONG; 2];
-const FILE_ACCESS_INFORMATION: FILE_INFORMATION_CLASS = FILE_INFORMATION_CLASS(8);
-const FILE_MODE_INFORMATION: FILE_INFORMATION_CLASS = FILE_INFORMATION_CLASS(16);
-const FILE_PIPE_INFORMATION: FILE_INFORMATION_CLASS = FILE_INFORMATION_CLASS(23);
-
-fn query<const N: usize>(
-    handle: HANDLE,
-    class: FILE_INFORMATION_CLASS,
-) -> Result<[ULONG; N], NTSTATUS> {
-    let mut information = [0; N];
-    // SAFETY: the buffer has the size that is passed. A query has ended when it returns.
-    let status = unsafe {
-        ntdll::NtQueryInformationFile(
-            handle,
-            &mut bun_core::ffi::zeroed(),
-            information.as_mut_ptr().cast(),
-            size_of_val(&information) as ULONG,
-            class,
-        )
-    };
-    if NT_ERROR(status) {
-        Err(status)
-    } else {
-        Ok(information)
-    }
 }
 
 /// Returns at once. Whether no call was under way a moment ago.
@@ -65,41 +40,29 @@ pub enum Kind {
 
 pub fn kind(handle: HANDLE) -> Kind {
     const FILE_SYNCHRONOUS_IO: ULONG = 0x10 | 0x20;
-    match query::<2>(handle, FILE_PIPE_INFORMATION) {
+    match nt::query::<FILE_PIPE_INFORMATION>(handle) {
         Ok(_) | Err(NTSTATUS::ACCESS_DENIED) => {}
         Err(_) => return Kind::NotAPipe,
     }
-    match query(handle, FILE_MODE_INFORMATION) {
-        Ok([mode]) if mode & FILE_SYNCHRONOUS_IO == 0 => Kind::Overlapped,
+    match nt::query::<FILE_MODE_INFORMATION>(handle) {
+        Ok(info) if info.Mode & FILE_SYNCHRONOUS_IO == 0 => Kind::Overlapped,
         _ => Kind::Synchronous,
     }
 }
 
 pub fn is_duplex(handle: HANDLE) -> bool {
     const FILE_READ_AND_WRITE_DATA: ULONG = 1 | 2;
-    query(handle, FILE_ACCESS_INFORMATION)
-        .is_ok_and(|[access]| access & FILE_READ_AND_WRITE_DATA == FILE_READ_AND_WRITE_DATA)
+    nt::query::<FILE_ACCESS_INFORMATION>(handle)
+        .is_ok_and(|it| it.AccessFlags & FILE_READ_AND_WRITE_DATA == FILE_READ_AND_WRITE_DATA)
 }
 
 /// Undoes `PIPE_NOWAIT`.
 pub fn set_blocking(handle: HANDLE) -> Result<(), NTSTATUS> {
-    let [read_mode, _] = query(handle, FILE_PIPE_INFORMATION).unwrap_or_default();
-    let mut modes: PipeModes = [read_mode, 0];
-    // SAFETY: as in `query`.
-    let status = unsafe {
-        ntdll::NtSetInformationFile(
-            handle,
-            &mut bun_core::ffi::zeroed(),
-            modes.as_mut_ptr().cast(),
-            size_of_val(&modes) as ULONG,
-            FILE_PIPE_INFORMATION,
-        )
+    let modes = FILE_PIPE_INFORMATION {
+        ReadMode: nt::query::<FILE_PIPE_INFORMATION>(handle).map_or(0, |it| it.ReadMode),
+        CompletionMode: FILE_PIPE_QUEUE_OPERATION,
     };
-    if NT_ERROR(status) {
-        Err(status)
-    } else {
-        Ok(())
-    }
+    nt::set(handle, modes)
 }
 
 /// How much to try next. With `PIPE_NOWAIT` a write of `len` bytes takes all or nothing.
@@ -109,32 +72,8 @@ pub fn after_empty_write(handle: HANDLE, len: usize) -> usize {
 
 /// Whether a read would return at once with data or an empty message.
 pub fn has_input(handle: HANDLE) -> Result<bool, NTSTATUS> {
-    const FSCTL_PIPE_PEEK: ULONG = 0x0011_400C;
-    // The head of `FILE_PIPE_PEEK_BUFFER`.
-    let mut peek: [ULONG; 4] = [0; 4];
-    let (status, _) = sync_io::complete(handle, |io| {
-        // SAFETY: the buffer has the size that is passed, and outlasts `complete`.
-        unsafe {
-            ntdll::NtFsControlFile(
-                handle,
-                ptr::null_mut(),
-                ptr::null_mut(),
-                ptr::null_mut(),
-                io,
-                FSCTL_PIPE_PEEK,
-                ptr::null_mut(),
-                0,
-                peek.as_mut_ptr().cast(),
-                size_of_val(&peek) as ULONG,
-            )
-        }
-    });
-    let [_state, bytes, messages, _message_len] = peek;
-    if NT_ERROR(status) {
-        Err(status)
-    } else {
-        Ok(bytes > 0 || messages > 0)
-    }
+    let [_state, bytes, messages, _message_len] = nt::peek_pipe(handle)?;
+    Ok(bytes > 0 || messages > 0)
 }
 
 /// Appends at most `max_len` bytes to `buffer`, within its capacity. With 0 it waits for data, and leaves it there.

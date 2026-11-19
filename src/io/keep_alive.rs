@@ -1,7 +1,7 @@
 use core::cell::Cell;
 
 use crate::EventLoopCtx;
-use crate::posix_event_loop::js_vm_ctx;
+use crate::js_vm_ctx;
 
 /// Track if an object whose file descriptor is being watched should keep the
 /// event loop alive. This is not reference counted — only Active / Inactive.

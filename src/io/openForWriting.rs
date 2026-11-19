@@ -100,9 +100,6 @@ where
     {
         let _ = (is_socket, out_nonblocking, ctx, on_tty, is_pollable);
     }
-    // `O_NONBLOCK` opens an asynchronous handle, and a write without an offset fails on those with EINVAL.
-    #[cfg(windows)]
-    let input_flags = input_flags & !bun_sys::O::NONBLOCK;
     // TODO: this should be concurrent.
     #[cfg(unix)]
     let mut isatty = false;

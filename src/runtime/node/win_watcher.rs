@@ -266,13 +266,13 @@ pub(crate) fn watch(
 ) -> sys::Result<Handle> {
     let mut outbuf = bun_paths::path_buffer_pool::get();
     let event_path: &[u8] = match sys::readlink(path, &mut outbuf) {
-        sys::Result::Err(err) if err.get_errno() == sys::E::NOENT => {
-            return sys::Result::Err(sys::Error::from_code(sys::E::NOENT, sys::Tag::open));
+        sys::Result::Err(err) if err.get_errno() == sys::E::ENOENT => {
+            return sys::Result::Err(sys::Error::from_code(sys::E::ENOENT, sys::Tag::open));
         }
         sys::Result::Err(_) => path.as_bytes(),
         sys::Result::Ok(_) => match sys::realpath(path, &mut outbuf) {
-            sys::Result::Err(err) if err.get_errno() == sys::E::NOENT => {
-                return sys::Result::Err(sys::Error::from_code(sys::E::NOENT, sys::Tag::open));
+            sys::Result::Err(err) if err.get_errno() == sys::E::ENOENT => {
+                return sys::Result::Err(sys::Error::from_code(sys::E::ENOENT, sys::Tag::open));
             }
             result => result.unwrap_or(path.as_bytes()),
         },

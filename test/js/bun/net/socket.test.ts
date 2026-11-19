@@ -5748,7 +5748,7 @@ function linuxSocketBufferLimit(name: "rmem_max" | "wmem_max") {
 const receiveBuffer = 8 * 1024 * 1024;
 const sendBuffer = 1024 * 1024;
 
-// setSocketOptions does nothing on Windows, where a readable event is at most two reads anyway.
+// setSocketOptions does nothing on Windows.
 it.skipIf(
   isWindows ||
     (isLinux &&

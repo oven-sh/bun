@@ -123,7 +123,7 @@ impl Pipe {
             _ => Kind::NotAPipe,
         };
         if kind == Kind::NotAPipe {
-            return Err(sys::Error::from_code(E::NOTSOCK, Tag::open));
+            return Err(sys::Error::from_code(E::ENOTSOCK, Tag::open));
         }
         let owned = match fd.stdio_tag() {
             Some(_) => sys::dup(fd)?,
@@ -235,14 +235,14 @@ impl Pipe {
 fn read_error(status: NTSTATUS) -> ReadEvent {
     ReadEvent::Err(match status {
         NTSTATUS::PIPE_BROKEN => return ReadEvent::Eof,
-        NTSTATUS::ACCESS_DENIED => sys::Error::from_code(E::NOTCONN, Tag::recv),
+        NTSTATUS::ACCESS_DENIED => sys::Error::from_code(E::ENOTCONN, Tag::recv),
         status => sys::Error::new(Win32Error::from_ntstatus(status).to_node_e(), Tag::recv),
     })
 }
 
 fn write_error(status: NTSTATUS) -> sys::Error {
     match status {
-        NTSTATUS::ACCESS_DENIED => sys::Error::from_code(E::PIPE, Tag::write),
+        NTSTATUS::ACCESS_DENIED => sys::Error::from_code(E::EPIPE, Tag::write),
         status => sys::Error::from_win32(Win32Error::from_ntstatus(status), Tag::write),
     }
 }
@@ -311,7 +311,7 @@ impl Inner {
             }
             Some(Io::Overlapped(file)) => self.started_read(self.read_overlapped(file, max_len)),
             Some(Io::NotAPipe) => {
-                let err = sys::Error::from_code(E::NOTSOCK, Tag::open);
+                let err = sys::Error::from_code(E::ENOTSOCK, Tag::open);
                 self.endpoint.hold(ReadEvent::Err(err));
                 self.continue_reading(take);
             }
@@ -470,7 +470,7 @@ impl Inner {
     fn start_write(self: &Rc<Self>, payload: Payload, from: usize) -> sys::Result<()> {
         let write = match self.io.get() {
             Some(Io::Overlapped(file)) => self.write_overlapped(file, payload, from)?.into(),
-            Some(Io::NotAPipe) => return Err(sys::Error::from_code(E::NOTSOCK, Tag::open)),
+            Some(Io::NotAPipe) => return Err(sys::Error::from_code(E::ENOTSOCK, Tag::open)),
             Some(Io::Synchronous) | None => self.write_on_thread(payload.into_vec(), from),
         };
         self.started_write(write);

@@ -4410,7 +4410,7 @@ pub(crate) extern "C" fn Bun__resolveAndFetchBuiltinModule(
 // §Dispatch hot-path bodies (`__bun_tick_queue_with_count` / `__bun_run_io`).
 
 /// `bun_io::__bun_get_vm_ctx` body. Declared
-/// `extern "Rust"` in `bun_io::posix_event_loop`; link-time resolved.
+/// `extern "Rust"` in `bun_io`; link-time resolved.
 #[unsafe(no_mangle)]
 fn __bun_get_vm_ctx() -> bun_io::EventLoopCtx {
     VirtualMachine::get().loop_ctx()

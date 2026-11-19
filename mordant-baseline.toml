@@ -33,9 +33,6 @@
 [bun_dotenv]
 "generic_body_not_generic:src/dotenv/env_loader.rs" = 1
 
-[bun_errno]
-"unused_pub:src/errno/windows_errno.rs" = 29
-
 [bun_format]
 "field_valid_only_when:src/format/css/postcss.rs" = 1
 

@@ -561,6 +561,19 @@ pub fn make_inheritable(handle: HANDLE) -> Result<(), Win32Error> {
     ))
 }
 
+/// For what not every version of Windows has.
+///
+/// SAFETY: `module` is never unloaded, and `F` is the type of the function that it exports as `name`.
+pub unsafe fn find_export<F>(module: &WStr, name: &core::ffi::CStr) -> Option<F> {
+    const { assert!(size_of::<F>() == size_of::<*mut c_void>()) };
+    // SAFETY: both names end with a NUL, and fn contract.
+    unsafe {
+        let module = kernel32::GetModuleHandleW(module.as_ptr());
+        let address = externs::GetProcAddress(module, name.as_ptr());
+        (!address.is_null()).then(|| core::mem::transmute_copy(&address))
+    }
+}
+
 /// `root_directory` is `None` if `object_name` is a full NT object name.
 pub fn NtCreateFile(
     root_directory: Option<HANDLE>,
@@ -680,7 +693,7 @@ pub use bun_windows_sys::externs::SaferiIsExecutableFileType;
 /// type.
 pub use bun_windows_sys::Win32Error;
 
-/// `to_system_errno()` / `to_e()` — extension trait from `bun_errno` (the
+/// `to_e()` / `to_node_e()` — extension trait from `bun_errno` (the
 /// `SystemErrno` mapping table is a higher-tier concern than the tier-0
 /// newtype).
 pub use bun_errno::Win32ErrorExt;
@@ -783,7 +796,7 @@ pub fn translate_nt_status_to_errno(err: NTSTATUS) -> E {
             OBJECT_NAME_INVALID => bun_core::debug_warn!(
                 "Received OBJECT_NAME_INVALID, indicates a file path conversion issue.",
             ),
-            t if e == E::UNKNOWN => bun_core::debug_warn!(
+            t if e == E::EUNKNOWN => bun_core::debug_warn!(
                 "Called translateNTStatusToErrno with {:?} which does not have a mapping to errno.",
                 t
             ),
@@ -973,6 +986,25 @@ pub fn user_unique_id() -> u32 {
         bun_core::fmt::utf16(name)
     );
     bun_wyhash::hash32(bun_core::slice_as_bytes(name))
+}
+
+pub(crate) fn CreateDirectoryW(path: &WStr) -> Result<(), Win32Error> {
+    // SAFETY: `path` is NUL-terminated; null security attributes.
+    check(unsafe { externs::CreateDirectoryW(path.as_ptr(), ptr::null_mut()) })
+}
+
+pub(crate) fn CreateSymbolicLinkW(
+    link: &WStr,
+    target: &WStr,
+    flags: u32,
+) -> Result<(), Win32Error> {
+    // SAFETY: both are NUL-terminated.
+    check(unsafe { externs::CreateSymbolicLinkW(link.as_ptr(), target.as_ptr(), flags) }.into())
+}
+
+pub(crate) fn DeleteFileW(path: &WStr) -> Result<(), Win32Error> {
+    // SAFETY: `path` is NUL-terminated.
+    check(unsafe { externs::DeleteFileW(path.as_ptr()) })
 }
 
 pub fn CreateDirectoryExW(
@@ -1340,7 +1372,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         // Treat `STATUS_DELETE_PENDING`/`STATUS_FILE_DELETED` from the open as
         // success — the target is already (being) deleted, which is what the
         // caller wanted. Recursive `rmSync` on Windows reaches this function via
-        // `Syscall::unlinkat`; without this short-circuit it fails with
+        // `unlinkat`; without this short-circuit it fails with
         // `EBUSY`/`UNKNOWN`→`EFAULT` whenever it races a still-open handle
         // (e.g. node test `tmpdir.refresh()` after a stream-heavy test).
         Err(windows::ntstatus::DELETE_PENDING | windows::ntstatus::FILE_DELETED) => {
@@ -1348,77 +1380,34 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         }
         Err(rc) => return bun_sys::Result::errno(rc, bun_sys::Tag::open),
     };
-    let mut io: IO_STATUS_BLOCK = bun_core::ffi::zeroed();
 
     // FileDispositionInformationEx (and therefore FILE_DISPOSITION_POSIX_SEMANTICS and FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE)
     // are only supported on NTFS filesystems, so the version check on its own is only a partial solution. To support non-NTFS filesystems
     // like FAT32, we need to fallback to FileDispositionInformation if the usage of FileDispositionInformationEx gives
     // us INVALID_PARAMETER.
     // The same reasoning for win10_rs5 as in os.renameatW() applies (FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE requires >= win10_rs5).
-    let mut need_fallback = true;
-    // Deletion with posix semantics if the filesystem supports it.
-    let mut info = windows::FILE_DISPOSITION_INFORMATION_EX {
+    let at_once = windows::FILE_DISPOSITION_INFORMATION_EX {
         Flags: FILE_DISPOSITION_DELETE
             | FILE_DISPOSITION_POSIX_SEMANTICS
             | FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE,
     };
-
-    // SAFETY: handle and io are valid
-    let mut rc = unsafe {
-        ntdll::NtSetInformationFile(
-            handle.as_raw_handle(),
-            &mut io,
-            core::ptr::from_mut(&mut info).cast::<c_void>(),
-            size_of::<windows::FILE_DISPOSITION_INFORMATION_EX>() as u32,
-            windows::FileInformationClass::FileDispositionInformationEx,
-        )
+    let result = match nt::set(handle.as_raw_handle(), at_once) {
+        Err(windows::ntstatus::INVALID_PARAMETER) => {
+            let when_closed = windows::FILE_DISPOSITION_INFORMATION { DeleteFile: 1 };
+            nt::set(handle.as_raw_handle(), when_closed)
+        }
+        result => result,
     };
     bun_sys::syslog!(
         "NtSetInformationFile({}, DELETE) = {:?}",
         bun_core::fmt::fmt_path_u16(sub_path_w, Default::default()),
-        rc
+        result
     );
-    match rc {
-        x if x == windows::ntstatus::SUCCESS => return bun_sys::Result::success(),
-        // INVALID_PARAMETER here means that the filesystem does not support FileDispositionInformationEx
-        x if x == windows::ntstatus::INVALID_PARAMETER => {}
-        // For all other statuses, fall down to the switch below to handle them.
-        _ => need_fallback = false,
+    match result {
+        // Another handle may have been first.
+        Ok(()) | Err(windows::ntstatus::DELETE_PENDING | windows::ntstatus::FILE_DELETED) => Ok(()),
+        Err(rc) => bun_sys::Result::errno(rc, bun_sys::Tag::NtSetInformationFile),
     }
-    if need_fallback {
-        // Deletion with file pending semantics, which requires waiting or moving
-        // files to get them removed (from here).
-        let mut file_dispo = windows::FILE_DISPOSITION_INFORMATION {
-            DeleteFile: TRUE as BOOLEAN,
-        };
-
-        // SAFETY: handle and io are valid
-        rc = unsafe {
-            ntdll::NtSetInformationFile(
-                handle.as_raw_handle(),
-                &mut io,
-                core::ptr::from_mut(&mut file_dispo).cast::<c_void>(),
-                size_of::<windows::FILE_DISPOSITION_INFORMATION>() as u32,
-                windows::FileInformationClass::FileDispositionInformation,
-            )
-        };
-        bun_sys::syslog!(
-            "NtSetInformationFile({}, DELETE) = {:?}",
-            bun_core::fmt::fmt_path_u16(sub_path_w, Default::default()),
-            rc
-        );
-    }
-    // Another handle already set the delete disposition; the file is on its
-    // way out, which is what the caller asked for. Checked here so it covers
-    // both the FileDispositionInformationEx result and the legacy fallback.
-    if rc == windows::ntstatus::DELETE_PENDING || rc == windows::ntstatus::FILE_DELETED {
-        return bun_sys::Result::success();
-    }
-    if let Some(err) = bun_sys::Result::<()>::errno_sys(rc, bun_sys::Tag::NtSetInformationFile) {
-        return err;
-    }
-
-    bun_sys::Result::success()
 }
 
 pub const EXCEPTION_CONTINUE_EXECUTION: i32 = -1;
@@ -1703,10 +1692,6 @@ pub mod rescle {
     }
 }
 
-pub use bun_windows_sys::externs::CreateDirectoryW;
-pub use bun_windows_sys::externs::CreateSymbolicLinkW;
-pub use bun_windows_sys::externs::DeleteFileW;
-
 /// In 100-ns ticks.
 pub struct ProcessTimes {
     pub creation: u64,
@@ -1793,7 +1778,7 @@ fn update_stdio_mode_flags(
     if kernel32_2::GetConsoleMode(fd.native(), &mut original_mode) == 0
         || kernel32_2::SetConsoleMode(fd.native(), (original_mode | opts.set) & !opts.unset) == 0
     {
-        return Err(Win32Error::get().to_system_errno());
+        return Err(Win32Error::get().to_e());
     }
     Ok(original_mode)
 }
@@ -1869,7 +1854,7 @@ pub fn become_watcher_manager() -> ! {
             bun_core::err_generic!(
                 "Failed to start \"<b>{}<r>\": {} <d>(CreateProcessW)<r>",
                 bun_core::fmt::utf16(exe_path_w().as_slice()),
-                <&'static str>::from(code.to_system_errno()),
+                <&'static str>::from(code.to_e()),
             );
             bun_core::Output::flush();
             bun_core::Global::exit(1);
@@ -2078,7 +2063,7 @@ pub fn move_opened_file_at(
 
     let struct_len = size_of::<win32::FILE_RENAME_INFORMATION_EX>() - 1 + new_file_name.len() * 2;
     if struct_len > STRUCT_BUF_LEN {
-        return bun_sys::Result::errno(E::NAMETOOLONG, bun_sys::Tag::NtSetInformationFile);
+        return bun_sys::Result::errno(E::ENAMETOOLONG, bun_sys::Tag::NtSetInformationFile);
     }
 
     // SAFETY: AlignedBuf is #[repr(align(8))] which matches FILE_RENAME_INFORMATION_EX alignment.
@@ -2363,20 +2348,20 @@ mod tests {
     /// may read as success.
     #[test]
     fn to_e_never_success() {
-        assert_eq!(Win32Error::FILE_NOT_FOUND.to_e(), E::NOENT);
-        assert_eq!(UNMAPPED.to_e(), E::UNKNOWN);
-        assert_eq!(Win32Error::SUCCESS.to_e(), E::UNKNOWN);
+        assert_eq!(Win32Error::FILE_NOT_FOUND.to_e(), E::ENOENT);
+        assert_eq!(UNMAPPED.to_e(), E::EUNKNOWN);
+        assert_eq!(Win32Error::SUCCESS.to_e(), E::EUNKNOWN);
         // `HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED)` unwraps; other HRESULTs do not.
-        assert_eq!(Win32Error::from_u32(0x8007_0005).to_e(), E::PERM);
-        assert_eq!(Win32Error::from_u32(0x8000_4005).to_e(), E::UNKNOWN);
+        assert_eq!(Win32Error::from_u32(0x8007_0005).to_e(), E::EPERM);
+        assert_eq!(Win32Error::from_u32(0x8000_4005).to_e(), E::EUNKNOWN);
         assert_eq!(Win32Error::from_u32(5), Win32Error::ACCESS_DENIED);
         assert_eq!(
             Error::from_win32(UNMAPPED, Tag::open).get_errno(),
-            E::UNKNOWN
+            E::EUNKNOWN
         );
         assert_eq!(
             Error::from_win32(Win32Error::ACCESS_DENIED, Tag::open).get_errno(),
-            E::PERM
+            E::EPERM
         );
     }
 
@@ -2401,7 +2386,7 @@ mod tests {
     fn delete_file_bun_rejects_a_name_above_32767_units() {
         let name = vec![u16::from(b'a'); 32768];
         let err = DeleteFileBun(&name, DeleteFileOptions::default()).unwrap_err();
-        assert_eq!(err.get_errno(), E::NAMETOOLONG);
+        assert_eq!(err.get_errno(), E::ENAMETOOLONG);
     }
 
     #[test]

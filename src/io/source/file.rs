@@ -45,7 +45,7 @@ impl Write {
     fn run(&self) -> sys::Result<()> {
         let bytes = self.bytes.lock();
         if self.is_claimed.swap(true, Ordering::SeqCst) {
-            return Err(sys::Error::from_code(E::CANCELED, Tag::write));
+            return Err(sys::Error::from_code(E::ECANCELED, Tag::write));
         }
         sys::File::borrow(&self.fd.fd).write_all(&bytes)?;
         self.is_written.store(true, Ordering::SeqCst);
@@ -240,7 +240,7 @@ fn read_device(fd: Fd, mut buffer: Vec<u8>, max_len: usize, cancel: &Cancel) -> 
             Ok(NTSTATUS::ALERTED) if !cancel.is_cancelled() => {}
             Ok(_) | Err(NTSTATUS::END_OF_FILE | NTSTATUS::PIPE_BROKEN) => return ReadEvent::Eof,
             Err(NTSTATUS::ACCESS_DENIED) => {
-                return ReadEvent::Err(sys::Error::from_code(E::BADF, Tag::read));
+                return ReadEvent::Err(sys::Error::from_code(E::EBADF, Tag::read));
             }
             Err(status) => {
                 let err = Win32Error::from_ntstatus(status);

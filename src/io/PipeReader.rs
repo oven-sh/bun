@@ -916,7 +916,7 @@ impl WindowsBufferedReader {
         #[cfg(debug_assertions)]
         if bun_core::env_var::feature_flag::BUN_INTERNAL_FAIL_PIPE_READER_START.get() == Some(true)
         {
-            return sys::Result::Err(sys::Error::from_code(sys::E::INVAL, sys::Tag::open));
+            return sys::Result::Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
         }
         self.start_reading();
         sys::Result::Ok(())

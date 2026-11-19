@@ -193,7 +193,7 @@ pub(crate) fn do_send(
                 #[cfg(windows)]
                 {
                     let _ = fd;
-                    let (errno, tag) = (bun_sys::E::NOTSUP, bun_sys::Tag::write);
+                    let (errno, tag) = (bun_sys::E::ENOTSUP, bun_sys::Tag::write);
                     dup_err = Some(bun_sys::Error::from_code(errno, tag));
                 }
             }

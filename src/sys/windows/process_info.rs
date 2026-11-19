@@ -93,7 +93,7 @@ pub(super) fn with_process<T>(
     }
     match OpenProcess(access, id) {
         Ok(process) => f(process.as_raw_handle()),
-        Err(Win32Error::INVALID_PARAMETER) => Err(E::SRCH),
+        Err(Win32Error::INVALID_PARAMETER) => Err(E::ESRCH),
         Err(error) => Err(error.to_node_e()),
     }
 }
@@ -110,7 +110,7 @@ pub fn priority(id: DWORD) -> Result<i32, E> {
 }
 
 pub fn set_priority(id: DWORD, nice: i32) -> Result<(), E> {
-    let class = class_of_nice(nice).ok_or(E::INVAL)?;
+    let class = class_of_nice(nice).ok_or(E::EINVAL)?;
     with_process(id, PROCESS_SET_INFORMATION, |process| {
         check(SetPriorityClass(process, class)).map_err(Win32Error::to_node_e)
     })

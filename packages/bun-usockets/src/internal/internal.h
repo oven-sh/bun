@@ -472,7 +472,7 @@ struct us_connecting_socket_t {
     struct us_socket_t *connecting_head;
     int options;
     int socket_ext_size;
-    /* error_is_dns: `error` holds the getaddrinfo(3) return code (Windows: UV_E*) for a
+    /* error_is_dns: `error` holds the raw getaddrinfo(3) return code for a
      * failed name lookup rather than an errno. The two constant sets are
      * different namespaces that overlap numerically, so consumers of `error`
      * must check this bit first. */

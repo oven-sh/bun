@@ -252,13 +252,13 @@ impl Command {
             attributes.get() & FILE_ATTRIBUTE_DIRECTORY == 0
         };
         let found = command_line::find_program(&invocation.file, &search, is_file);
-        let mut program = found.ok_or(E::NOENT)?;
+        let mut program = found.ok_or(E::ENOENT)?;
         let script = full_path(program.clone()).map_err(error)?;
         let (arguments, is_verbatim) = (&invocation.arguments, invocation.has_verbatim_arguments);
         let is_batch_file = command_line::is_batch_file(&script) && !is_image(&mut program);
         let line = if is_batch_file {
             if program.starts_with(&super::LONG_PATH_PREFIX) && script != program {
-                return Err(E::INVAL);
+                return Err(E::EINVAL);
             }
             program.resize(super::MAX_PATH, 0);
             let len = super::GetSystemDirectoryW(&mut program).map_err(error)?;
@@ -271,7 +271,7 @@ impl Command {
         } else {
             command_line::join(arguments)
         };
-        let mut line = line.map_err(|_| E::INVAL)?;
+        let mut line = line.map_err(|_| E::EINVAL)?;
         for text in [&mut program, &mut line, &mut cwd] {
             text.push(0);
         }
@@ -409,17 +409,17 @@ fn has_exited(process: HANDLE) -> Result<bool, Win32Error> {
 pub fn kill(process: HANDLE, signal: c_int) -> Result<(), E> {
     const STATUS_PROCESS_IS_TERMINATING: NTSTATUS = NTSTATUS(0xC000_010A);
     match signal {
-        0 if has_exited(process).map_err(Win32Error::to_e)? => Err(E::SRCH),
+        0 if has_exited(process).map_err(Win32Error::to_e)? => Err(E::ESRCH),
         0 => Ok(()),
         // SIGINT, SIGQUIT, SIGKILL, SIGTERM
         2 | 3 | 9 | 15 => check(kernel32::TerminateProcess(process, 1)).map_err(|err| {
             let is_gone = err == Win32Error::ACCESS_DENIED
                 && (RtlGetLastNtStatus() == STATUS_PROCESS_IS_TERMINATING
                     || has_exited(process) == Ok(true));
-            if is_gone { E::SRCH } else { err.to_e() }
+            if is_gone { E::ESRCH } else { err.to_e() }
         }),
-        1..=28 => Err(E::NOSYS),
-        _ => Err(E::INVAL),
+        1..=28 => Err(E::ENOSYS),
+        _ => Err(E::EINVAL),
     }
 }
 

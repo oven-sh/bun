@@ -533,7 +533,6 @@ export const globalFlags: Flag[] = [
   {
     // libuv stubs use C23 anonymous parameters
     flag: "-Wno-c23-extensions",
-    when: c => c.unix,
     desc: "Allow C23 extensions (libuv stubs use anonymous parameters)",
   },
 
@@ -858,11 +857,6 @@ export const bunOnlyFlags: Flag[] = [
     ],
     when: c => c.windows,
     desc: "Suppress noisy warnings from system/dependency headers",
-  },
-  {
-    flag: "-Wno-c23-extensions",
-    when: c => c.windows,
-    desc: "libuv stubs use anonymous parameters (unix has this flag in globalFlags)",
   },
 ];
 

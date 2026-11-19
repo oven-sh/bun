@@ -450,7 +450,7 @@ pub struct HTTPClientResult<'a> {
     pub is_http2: bool,
 
     pub fail: Option<crate::Error>,
-    /// `getaddrinfo(3)` return code (Windows: `UV_E*`) when `fail` is `DNSResolveFailed`;
+    /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
     /// 0 otherwise. Lets the JS side report the resolver error (`ENOTFOUND`,
     /// ...) with `syscall`/`hostname` instead of a generic connect failure.
     pub dns_error: i32,
@@ -2092,7 +2092,7 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    /// `dns_error` is the `getaddrinfo(3)` return code (Windows: `UV_E*`) when the name
+    /// `dns_error` is the raw `getaddrinfo(3)` return code when the name
     /// lookup itself failed; 0 for a connect failure past name resolution.
     pub(crate) fn on_connect_error(
         &mut self,

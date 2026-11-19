@@ -8,8 +8,6 @@ use std::io::Write as _;
 use bun_alloc::Arena as Bump;
 use bun_core::EncodedSlice;
 use bun_core::String as BunString;
-#[cfg(windows)]
-use bun_core::ZStr;
 use bun_core::strings;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::{
@@ -33,9 +31,6 @@ pub(crate) use bun_shell_parser::parse::{
     LexerUnicode, ParseError, Parser, Token, ast, is_if_clause_keyword_bunstr, needs_escape_bunstr,
     needs_escape_utf8_ascii_latin1,
 };
-
-#[cfg(windows)]
-pub(crate) const WINDOWS_DEV_NULL: &ZStr = bun_core::zstr!("NUL");
 
 // ───────────────────────────── ShellErr ─────────────────────────────
 

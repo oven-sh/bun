@@ -830,7 +830,7 @@ fn spawn_maybe_sync(
                     #[cfg(not(unix))]
                     {
                         // On Windows, ConPTY supplies stdio via PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE.
-                        // Set stdio to .ignore so spawnProcessWindows doesn't allocate pipes.
+                        // Set stdio to .ignore so that no pipes are made.
                         stdio[0] = Stdio::Ignore;
                         stdio[1] = Stdio::Ignore;
                         stdio[2] = Stdio::Ignore;
@@ -938,7 +938,7 @@ fn spawn_maybe_sync(
     // - No auto killer (for tests)
     // - No IPC
     // - No inspector (since they might want to press pause or step)
-    let can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = (cfg!(unix) && is_sync)
+    let can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = is_sync
         && abort_signal.is_none()
         && timeout.is_none()
         && max_buffer.is_none()
@@ -1050,7 +1050,7 @@ fn spawn_maybe_sync(
                 || err == bun_spawn::Error::Sys(bun_errno::SystemErrno::ENFILE) =>
         {
             let display_path: &ZStr = &argv.args[0];
-            let mut systemerror = sys::Error::from_code(
+            let systemerror = sys::Error::from_code(
                 if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE) {
                     sys::Errno::EMFILE
                 } else {
@@ -1060,11 +1060,6 @@ fn spawn_maybe_sync(
             )
             .with_path(display_path)
             .to_system_error();
-            systemerror.errno = if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE) {
-                -UV_E::MFILE
-            } else {
-                -UV_E::NFILE
-            };
             return Err(cx
                 .global()
                 .throw_value(SystemError::from(systemerror).to_error_instance(cx.global())));
@@ -1085,17 +1080,14 @@ fn spawn_maybe_sync(
                         .throw_value(c.target.blame(&err).to_js(cx.global())));
                 }
                 match err.get_errno() {
-                    errno @ (sys::Errno::EACCES
+                    sys::Errno::EACCES
                     | sys::Errno::ENOENT
                     | sys::Errno::EPERM
                     | sys::Errno::EISDIR
-                    | sys::Errno::ENOTDIR) => {
+                    | sys::Errno::ENOTDIR => {
                         let display_path: &ZStr = &argv.args[0];
                         if !display_path.as_bytes().is_empty() {
-                            let mut systemerror = err.with_path(display_path).to_system_error();
-                            if errno == sys::Errno::ENOENT {
-                                systemerror.errno = -UV_E::NOENT;
-                            }
+                            let systemerror = err.with_path(display_path).to_system_error();
                             return Err(cx.global().throw_value(
                                 SystemError::from(systemerror).to_error_instance(cx.global()),
                             ));
@@ -1748,7 +1740,7 @@ fn throw_spawn_sync_loop_init_failed(global_this: &JSGlobalObject) -> JsError {
         errno: -UV_E::MFILE,
         path: BunString::EMPTY,
         #[cfg(windows)]
-        syscall: BunString::static_("uv_loop_init"),
+        syscall: BunString::static_("CreateIoCompletionPort"),
         #[cfg(any(target_os = "linux", target_os = "android"))]
         syscall: BunString::static_("epoll_create1"),
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]

@@ -25,19 +25,7 @@
 #else
 #include <io.h>
 #include <fcntl.h>
-
-#endif
-
-#if OS(WINDOWS)
-
-// The numbers of uv_tty_mode_t
-enum class ConsoleMode : int {
-    Normal = 0,
-    // The console makes the escape sequences. Only it knows of some, like those of bracketed paste.
-    RawVT = 3,
-};
-
-extern "C" int Bun__setConsoleMode(int fd, int mode);
+#include <uv.h>
 
 #endif
 
@@ -125,9 +113,7 @@ public:
 
     int fd = -1;
 
-#if !OS(WINDOWS)
     BunTTYState ttyState {};
-#endif
 
 private:
     TTYWrapObject(JSC::VM& vm, JSC::Structure* structure, const int fd)
@@ -185,10 +171,11 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
         return {};
     }
 #if OS(WINDOWS)
-    int err = Bun__setConsoleMode(fdToUse, static_cast<int>(mode_ ? ConsoleMode::RawVT : ConsoleMode::Normal));
-#else
-    int err = Bun__ttySetMode(fdToUse, mode_, state->typedVector(), 1);
+    // Only the console knows of some escape sequences, like those of bracketed paste.
+    if (mode_)
+        mode_ = UV_TTY_MODE_RAW_VT;
 #endif
+    int err = Bun__ttySetMode(fdToUse, mode_, state->typedVector(), 1);
     return JSValue::encode(jsNumber(err));
 }
 
@@ -217,12 +204,8 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
     }
 
     int modeInt = JSC::toInt32(mode.asNumber());
-#if OS(WINDOWS)
-    int err = Bun__setConsoleMode(fd, modeInt);
-#else
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
     int err = Bun__ttySetMode(fd, modeInt, &ttyWrap->ttyState, 1);
-#endif
     return JSValue::encode(jsNumber(err));
 }
 

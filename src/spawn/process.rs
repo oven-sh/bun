@@ -527,7 +527,7 @@ impl Process {
             match windows_process::kill(handle, c_int::from(signal)) {
                 Ok(()) if self.signal.get() == 0 => self.signal.set(signal),
                 // if the process was already killed don't throw
-                Ok(()) | Err(bun_sys::E::SRCH) => {}
+                Ok(()) | Err(bun_sys::E::ESRCH) => {}
                 Err(errno) => return Err(bun_sys::Error::from_code(errno, bun_sys::Tag::kill)),
             }
         }
@@ -699,7 +699,7 @@ impl Process {
             let port = this.event_loop.loop_().port();
             let Ok(exit) = Request::wait(port, handle.as_handle(), on_exit) else {
                 let _ = windows_process::kill(handle.as_raw_handle(), 9);
-                let (errno, tag) = (bun_sys::E::NOMEM, bun_sys::Tag::uv_spawn);
+                let (errno, tag) = (bun_sys::E::ENOMEM, bun_sys::Tag::uv_spawn);
                 return Err(bun_sys::Error::from_code(errno, tag));
             };
             let hold = Hold::new(port);
@@ -1316,12 +1316,12 @@ mod spawn_process_body {
         let count = standard.len() + options.extra_fds.len();
         let refused = |errno| Error::from_code(errno, Tag::uv_spawn);
         if options.uid.is_some() || options.gid.is_some() || count > crt_descriptors::MAX_COUNT {
-            return Err(refused(E::NOTSUP));
+            return Err(refused(E::ENOTSUP));
         }
 
         let path = |text: &[u8]| {
             let mut units = vec![0; text.len() + 1];
-            let path = wide::encode(text, &mut units).map_err(|_| refused(E::NOENT))?;
+            let path = wide::encode(text, &mut units).map_err(|_| refused(E::ENOENT))?;
             Ok::<_, Error>(path.to_vec())
         };
         let wide_list = |list: CStrList<'_>| {

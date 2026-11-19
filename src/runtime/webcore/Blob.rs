@@ -1184,102 +1184,19 @@ impl BlobExt for Blob {
             .to_js());
         }
 
-        let file_sink: RefPtr<webcore::FileSink> = 'brk_sink: {
-            #[cfg(windows)]
-            {
-                let pathlike = &store.data.as_file().pathlike;
-                let fd: Fd = if let PathOrFileDescriptor::Fd(fd) = pathlike {
-                    *fd
-                } else {
-                    let mut file_path = bun_paths::path_buffer_pool::get();
-                    let path = pathlike.path().slice_z(&mut file_path);
-                    let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
-                    let mode = options.mode.unwrap_or(WRITE_PERMISSIONS);
-                    let mut result = bun_sys::open(path, flags, mode);
-                    if let bun_sys::Result::Err(err) = &result {
-                        if err.get_errno() == bun_sys::E::ENOENT
-                            && options.mkdirp_if_not_exists.unwrap_or(true)
-                        {
-                            result = match mkdirp_parent(path.as_bytes()) {
-                                Ok(()) => bun_sys::open(path, flags, mode),
-                                Err(err) => Err(err),
-                            };
-                        }
-                    }
-                    match result {
-                        bun_sys::Result::Ok(result) => {
-                            node::fs::note_opened_for_write(path.as_bytes(), true);
-                            result
-                        }
-                        bun_sys::Result::Err(err) => {
-                            return Ok(JSPromise::rejected_promise(
-                                cx.global(),
-                                err.with_path(path).to_js(cx.global()),
-                            )
-                            .to_js());
-                        }
-                    }
-                };
-
-                let is_stdout_or_stderr = matches!(pathlike, PathOrFileDescriptor::Fd(_))
-                    && matches!(
-                        fd.stdio_tag(),
-                        Some(bun_sys::Stdio::StdOut | bun_sys::Stdio::StdErr)
-                    );
-                let sink = webcore::FileSink::init(
-                    fd,
-                    jsc::EventLoopHandle::init(
-                        self.global_this()
-                            .expect("Blob.global_this set at construction")
-                            .bun_vm()
-                            .event_loop_ptr(),
-                    ),
+        let file = &store.data.as_file().pathlike;
+        let options = streams::FileSinkOptions {
+            truncate: matches!(file, PathOrFileDescriptor::Path(_)),
+            mkdirp: options.mkdirp_if_not_exists.unwrap_or(true),
+            mode: options.mode.unwrap_or(WRITE_PERMISSIONS),
+            ..Default::default()
+        };
+        let file_sink = match start_file_sink(cx, file, options) {
+            Ok(sink) => sink,
+            Err(err) => {
+                return Ok(
+                    JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js(),
                 );
-                let owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_));
-                let started = sink.start_writer(owns_fd, is_stdout_or_stderr);
-                if let bun_sys::Result::Err(err) = started {
-                    return Ok(
-                        JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js(),
-                    );
-                }
-
-                break 'brk_sink sink;
-            }
-
-            #[cfg(not(windows))]
-            {
-                let sink = webcore::FileSink::init(
-                    Fd::INVALID,
-                    jsc::EventLoopHandle::init(
-                        self.global_this()
-                            .expect("Blob.global_this set at construction")
-                            .bun_vm()
-                            .event_loop_ptr(),
-                    ),
-                );
-
-                let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike
-                {
-                    PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
-                    PathOrFileDescriptor::Path(p) => webcore::PathOrFileDescriptor::Path(
-                        bun_core::Utf8Bytes::Owned(p.slice().to_vec()),
-                    ),
-                };
-
-                let stream_start = streams::Start::FileSink(streams::FileSinkOptions {
-                    truncate: matches!(input_path, webcore::PathOrFileDescriptor::Path(_)),
-                    mkdirp: options.mkdirp_if_not_exists.unwrap_or(true),
-                    mode: options.mode.unwrap_or(WRITE_PERMISSIONS),
-                    input_path,
-                    ..Default::default()
-                });
-
-                if let bun_sys::Result::Err(err) = sink.start(&stream_start, cx.context()) {
-                    return Ok(
-                        JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js(),
-                    );
-                }
-                break 'brk_sink sink;
             }
         };
 
@@ -1295,7 +1212,7 @@ impl BlobExt for Blob {
 
     fn writer(&self, cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
         let cx = cx.js_thread();
-        let (global_this, context) = (cx.global(), cx.context());
+        let global_this = cx.global();
         let options = options.to_js();
 
         if !options.is_undefined_or_null() && !options.is_object() {
@@ -1373,100 +1290,19 @@ impl BlobExt for Blob {
             );
         }
 
-        #[cfg(windows)]
-        {
-            let pathlike = &store.data.as_file().pathlike;
-            let fd: Fd = match pathlike {
-                PathOrFileDescriptor::Fd(fd) => *fd,
-                PathOrFileDescriptor::Path(p) => {
-                    let mut file_path = bun_paths::path_buffer_pool::get();
-                    let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT;
-                    if let Some(err) = node::fs::refuse_open_for_write(p.slice(), flags) {
-                        return Err(global_this.throw_value(err.to_js(global_this)));
-                    }
-                    match bun_sys::open(p.slice_z(&mut file_path), flags, WRITE_PERMISSIONS) {
-                        bun_sys::Result::Ok(result) => {
-                            node::fs::note_opened_for_write(p.slice(), false);
-                            result
-                        }
-                        bun_sys::Result::Err(err) => {
-                            return Err(global_this
-                                .throw_value(err.with_path(p.slice()).to_js(global_this)));
-                        }
-                    }
-                }
-            };
-
-            let is_stdout_or_stderr = matches!(pathlike, PathOrFileDescriptor::Fd(_))
-                && matches!(
-                    fd.stdio_tag(),
-                    Some(bun_sys::Stdio::StdOut | bun_sys::Stdio::StdErr)
-                );
-
-            let sink = webcore::FileSink::init(
-                fd,
-                jsc::EventLoopHandle::init(
-                    self.global_this()
-                        .expect("Blob.global_this set at construction")
-                        .bun_vm()
-                        .event_loop_ptr(),
-                ),
-            );
-            // `to_js` gives init's ref to the wrapper; an early return drops it.
-            let owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_));
-            let start_result = sink.start_writer(owns_fd, is_stdout_or_stderr);
-            if let bun_sys::Result::Err(err) = start_result {
-                return Err(global_this.throw_value(err.to_js(global_this)));
-            }
-            if matches!(pathlike, PathOrFileDescriptor::Path(_)) {
-                sink.close_with_graph(context);
-            }
-
-            return Ok(webcore::FileSink::to_js(sink, global_this));
-        }
-
-        #[cfg(not(windows))]
-        {
-            let sink = webcore::FileSink::init(
-                bun_sys::Fd::INVALID,
-                jsc::EventLoopHandle::init(
-                    self.global_this()
-                        .expect("Blob.global_this set at construction")
-                        .bun_vm()
-                        .event_loop_ptr(),
-                ),
-            );
-            // `to_js` gives init's ref to the wrapper; an early return drops it.
-            let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike {
-                PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
-                PathOrFileDescriptor::Path(p) => webcore::PathOrFileDescriptor::Path(
-                    bun_core::Utf8Bytes::Owned(p.slice().to_vec()),
-                ),
-            };
-
-            // `webcore::PathOrFileDescriptor` is not `Clone`; build user
-            // options first, then move `input_path` in once.
-            let mut stream_start = if options.is_object() {
+        if options.is_object()
+            && let streams::Start::Err(err) =
                 crate::generated_bindgen::sink::FileSinkStartOptions::from_js(
                     global_this,
                     options,
                     |options| Ok(streams::Start::file_sink(&options.path, options.fd)),
                 )?
-            } else {
-                streams::Start::FileSink(streams::FileSinkOptions {
-                    input_path: webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
-                    ..Default::default()
-                })
-            };
-            if let streams::Start::FileSink(ref mut opts) = stream_start {
-                opts.input_path = input_path;
-            }
-
-            if let bun_sys::Result::Err(err) = sink.start(&stream_start, context) {
-                return Err(global_this.throw_value(err.to_js(global_this)));
-            }
-
-            Ok(webcore::FileSink::to_js(sink, global_this))
+        {
+            return Err(global_this.throw_value(err.to_js(global_this)));
+        }
+        match start_file_sink(&cx, &store.data.as_file().pathlike, Default::default()) {
+            Ok(sink) => Ok(webcore::FileSink::to_js(sink, global_this)),
+            Err(err) => Err(global_this.throw_value(err.to_js(global_this))),
         }
     }
     fn get_slice_from(
@@ -3305,6 +3141,72 @@ pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
     mkdirp(dirname)
 }
 
+/// `file` stands in for `options.input_path`.
+#[cfg(not(windows))]
+fn start_file_sink(
+    cx: &bun_jsc::JsThread<'_>,
+    file: &PathOrFileDescriptor,
+    mut options: streams::FileSinkOptions,
+) -> bun_sys::Result<RefPtr<webcore::FileSink>> {
+    options.input_path = match file {
+        PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
+        PathOrFileDescriptor::Path(path) => {
+            webcore::PathOrFileDescriptor::Path(Utf8Bytes::Owned(path.slice().to_vec()))
+        }
+    };
+    let event_loop = jsc::EventLoopHandle::init(cx.global().bun_vm().event_loop_ptr());
+    let sink = webcore::FileSink::init(Fd::INVALID, event_loop);
+    sink.start(&streams::Start::FileSink(options), cx.context())?;
+    Ok(sink)
+}
+
+/// With the rules of `node:fs` for a path, and without a duplicate of a descriptor.
+#[cfg(windows)]
+fn start_file_sink(
+    cx: &bun_jsc::JsThread<'_>,
+    file: &PathOrFileDescriptor,
+    options: streams::FileSinkOptions,
+) -> bun_sys::Result<RefPtr<webcore::FileSink>> {
+    let event_loop = jsc::EventLoopHandle::init(cx.global().bun_vm().event_loop_ptr());
+    let path = match file {
+        PathOrFileDescriptor::Path(path) => path,
+        PathOrFileDescriptor::Fd(fd) => {
+            use bun_sys::Stdio::{StdErr, StdOut};
+            let sink = webcore::FileSink::init(*fd, event_loop);
+            sink.start_writer(false, matches!(fd.stdio_tag(), Some(StdOut | StdErr)))?;
+            return Ok(sink);
+        }
+    };
+    let flags = options.flags();
+    let streams::FileSinkOptions {
+        mode,
+        truncate,
+        mkdirp,
+        ..
+    } = options;
+    if let Some(err) = node::fs::refuse_open_for_write(path.slice(), flags) {
+        return Err(err);
+    }
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let resolved = path.slice_z(&mut buf);
+    let open =
+        || bun_sys::File::open(resolved, flags, mode).map_err(|err| err.with_path(path.slice()));
+    let file = match open() {
+        Err(err) if err.get_errno() == bun_sys::E::ENOENT && mkdirp => {
+            mkdirp_parent(path.slice())?;
+            open()?
+        }
+        file => file?,
+    };
+    node::fs::note_opened_for_write(path.slice(), truncate);
+    let sink = webcore::FileSink::init(file.fd(), event_loop);
+    sink.start_writer(true, false)?;
+    // The writer closes it from now on.
+    file.into_raw();
+    sink.close_with_graph(cx.context());
+    Ok(sink)
+}
+
 fn mkdirp(directory: &[u8]) -> bun_sys::Result<()> {
     node::fs::NodeFS::default()
         .mkdir_recursive(&node::fs::args::Mkdir {
@@ -4356,14 +4258,9 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         bun_sys::File::borrow(&lent)
     } else {
         let mut file_path = bun_paths::path_buffer_pool::get();
-        let flags = if cfg!(not(windows)) {
-            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK
-        } else {
-            bun_sys::O::WRONLY | bun_sys::O::CREAT
-        };
         match bun_sys::open(
             pathlike.path().slice_z(&mut file_path),
-            flags,
+            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
             WRITE_PERMISSIONS,
         ) {
             bun_sys::Result::Ok(result) => {
@@ -4384,8 +4281,6 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             }
         }
     };
-
-    // TODO: on windows this is always synchronous
 
     let truncate = NEEDS_OPEN || bytes.is_empty();
     let mut written: usize = 0;

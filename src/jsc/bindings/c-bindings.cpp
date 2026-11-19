@@ -768,13 +768,9 @@ static termios termios_to_restore_later[3];
 // from normal execution; sig_atomic_t is the only integral type POSIX
 // guarantees can be accessed atomically across that boundary.
 extern "C" volatile sig_atomic_t bun_stdio_modified[3] = { 0, 0, 0 };
-#endif
 
 extern "C" void bun_restore_stdio()
 {
-
-#if !OS(WINDOWS)
-
     // Only suppress the restore when Bun is a pipeline producer (stdout is a
     // pipe, not a TTY) and it didn't touch termios itself. That's the #29592
     // case — a downstream consumer on the same /dev/pts/* device has already
@@ -810,10 +806,8 @@ extern "C" void bun_restore_stdio()
         while (err == -1 && errno == EINTR);
         pthread_sigmask(SIG_UNBLOCK, &sa, nullptr);
     }
-#endif
 }
 
-#if !OS(WINDOWS)
 // Implemented by bun_core::Global::raise_default_action.
 extern "C" [[noreturn]] void Bun__raiseDefaultAction(int sig);
 
@@ -969,13 +963,7 @@ extern "C" void bun_initialize_process()
 #endif
 }
 
-#if OS(WINDOWS)
-extern "C" int32_t open_as_nonblocking_tty(int32_t fd, int32_t mode)
-{
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-#else
+#if !OS(WINDOWS)
 
 static bool can_open_as_nonblocking_tty(int32_t fd)
 {

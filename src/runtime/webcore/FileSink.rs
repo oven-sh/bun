@@ -171,17 +171,13 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
     // SAFETY: the object's live sink.
     let this: &FileSink = unsafe { this.as_ref() };
 
+    this.force_sync.set(true);
     #[cfg(not(windows))]
     {
-        this.force_sync.set(true);
         this.writer.set_force_sync(true);
         if this.fd.get() != Fd::INVALID {
             let _ = sys::update_nonblocking(this.fd.get(), false);
         }
-    }
-    #[cfg(windows)]
-    {
-        this.force_sync.set(true);
     }
 }
 

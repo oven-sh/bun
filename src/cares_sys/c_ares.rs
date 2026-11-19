@@ -1156,29 +1156,17 @@ impl Error {
     pub fn init_eai(rc: i32) -> Option<Error> {
         #[cfg(windows)]
         {
-            use bun_errno::uv;
-            // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
-            if rc == uv::UV_EAI_NODATA || rc == uv::UV_EAI_NONAME {
-                return Some(Error::ENOTFOUND);
-            }
-            // TODO: revisit this
+            use bun_windows_sys::ws2_32;
             return match rc {
                 0 => None,
-                uv::UV_EAI_AGAIN => Some(Error::EAI_AGAIN),
-                uv::UV_EAI_ADDRFAMILY => Some(Error::EBADFAMILY),
-                uv::UV_EAI_BADFLAGS => Some(Error::EBADFLAGS),
-                uv::UV_EAI_BADHINTS => Some(Error::EBADHINTS),
-                uv::UV_EAI_CANCELED => Some(Error::ECANCELLED),
-                uv::UV_EAI_FAIL => Some(Error::ENOTFOUND),
-                uv::UV_EAI_FAMILY => Some(Error::EBADFAMILY),
-                uv::UV_EAI_MEMORY => Some(Error::ENOMEM),
-                uv::UV_EAI_NODATA => Some(Error::ENODATA),
-                uv::UV_EAI_NONAME => Some(Error::ENONAME),
-                uv::UV_EAI_OVERFLOW => Some(Error::ENOMEM),
-                uv::UV_EAI_PROTOCOL => Some(Error::EBADQUERY),
-                uv::UV_EAI_SERVICE => Some(Error::ESERVICE),
-                uv::UV_EAI_SOCKTYPE => Some(Error::ECONNREFUSED),
-                _ => Some(Error::ENOTFOUND), // UV_ENOENT and non documented errors
+                ws2_32::EAI_AGAIN => Some(Error::EAI_AGAIN),
+                ws2_32::EAI_BADFLAGS => Some(Error::EBADFLAGS),
+                ws2_32::EAI_FAMILY => Some(Error::EBADFAMILY),
+                ws2_32::EAI_MEMORY => Some(Error::ENOMEM),
+                ws2_32::EAI_SERVICE => Some(Error::ESERVICE),
+                ws2_32::EAI_SOCKTYPE => Some(Error::ECONNREFUSED),
+                ws2_32::WSA_E_CANCELLED => Some(Error::ECANCELLED),
+                _ => Some(Error::ENOTFOUND),
             };
         }
 
@@ -1229,23 +1217,14 @@ impl Error {
     /// This platform's raw getaddrinfo(3) status for the `EAI_*` code named `name`.
     pub fn eai_raw_by_name(name: &[u8]) -> Option<i32> {
         #[cfg(windows)]
-        {
-            use bun_errno::uv;
-            match name {
-                b"EAI_AGAIN" => Some(uv::UV_EAI_AGAIN),
-                b"EAI_FAIL" => Some(uv::UV_EAI_FAIL),
-                b"EAI_NONAME" => Some(uv::UV_EAI_NONAME),
-                _ => None,
-            }
-        }
+        use bun_windows_sys::ws2_32::{EAI_AGAIN, EAI_FAIL, EAI_NONAME};
         #[cfg(not(windows))]
-        {
-            match name {
-                b"EAI_AGAIN" => Some(EAI::AGAIN.0),
-                b"EAI_FAIL" => Some(EAI::FAIL.0),
-                b"EAI_NONAME" => Some(EAI::NONAME.0),
-                _ => None,
-            }
+        use libc::{EAI_AGAIN, EAI_FAIL, EAI_NONAME};
+        match name {
+            b"EAI_AGAIN" => Some(EAI_AGAIN),
+            b"EAI_FAIL" => Some(EAI_FAIL),
+            b"EAI_NONAME" => Some(EAI_NONAME),
+            _ => None,
         }
     }
 

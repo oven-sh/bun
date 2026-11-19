@@ -96,7 +96,6 @@ mod windows {
     pub const UV_EILSEQ: c_int = -4027;
     pub const UV_ESOCKTNOSUPPORT: c_int = -4025;
     pub const UV_ENOEXEC: c_int = -4022;
-    pub const UV_ERRNO_MAX: c_int = -4096;
 }
 
 // `uv_dirent_type_t`

@@ -784,12 +784,7 @@ impl Fd {
         // borrow cannot outlive `&self`.
         unsafe { std::os::fd::BorrowedFd::borrow_raw(raw) }
     }
-    /// The inverse of `from_crt`. On POSIX this equals `native()`. On Windows,
-    /// when kind=Crt this extracts the stored number; when kind=System this
-    /// maps stdio handles to 0/1/2 (checking both the cached statics and the
-    /// live `GetStdHandle` result) and **panics** otherwise — converting an
-    /// arbitrary HANDLE to a descriptor makes closing impossible. The supplier
-    /// should call `make_crt_owned()` near where `open()` was called.
+    /// The inverse of `from_crt`. Panics on a Windows handle, which `make_crt_owned()` converts.
     #[cfg(not(windows))]
     #[inline]
     pub const fn crt(self) -> i32 {
@@ -799,38 +794,7 @@ impl Fd {
     pub fn crt(self) -> i32 {
         match self.decode_windows() {
             DecodeWindows::Crt(v) => v,
-            DecodeWindows::Windows(handle) => {
-                // `.stdin()`/`.stdout()`/`.stderr()` hand out the cached
-                // `WINDOWS_CACHED_STD{IN,OUT,ERR}` (snapshotted at startup),
-                // so round-trip against those first. Comparing only against
-                // the live `GetStdHandle` result panics if the process std
-                // handle was swapped after startup via `SetStdHandle`,
-                // `AllocConsole`, `AttachConsole`, etc.
-                if Some(self) == fd::WINDOWS_CACHED_STDIN.get().copied() {
-                    return 0;
-                }
-                if Some(self) == fd::WINDOWS_CACHED_STDOUT.get().copied() {
-                    return 1;
-                }
-                if Some(self) == fd::WINDOWS_CACHED_STDERR.get().copied() {
-                    return 2;
-                }
-                if fd::is_stdio_handle(fd::STD_INPUT_HANDLE, handle) {
-                    return 0;
-                }
-                if fd::is_stdio_handle(fd::STD_OUTPUT_HANDLE, handle) {
-                    return 1;
-                }
-                if fd::is_stdio_handle(fd::STD_ERROR_HANDLE, handle) {
-                    return 2;
-                }
-                panic!(
-                    "Cast Fd::crt({}) makes closing impossible!\n\n\
-                     The supplier of the Fd should call 'make_crt_owned',\n\
-                     probably where open() was called.",
-                    self,
-                );
-            }
+            DecodeWindows::Windows(_) => panic!("{self} is not a descriptor of the C runtime"),
         }
     }
 
@@ -1234,32 +1198,12 @@ pub mod fd {
     pub(crate) static WINDOWS_CACHED_STDOUT: crate::Once<Fd> = crate::Once::new();
     #[cfg(windows)]
     pub(crate) static WINDOWS_CACHED_STDERR: crate::Once<Fd> = crate::Once::new();
-    #[cfg(windows)]
-    #[cfg(debug_assertions)]
-    pub(crate) static WINDOWS_CACHED_FD_SET: core::sync::atomic::AtomicBool =
-        core::sync::atomic::AtomicBool::new(false);
 
     #[cfg(windows)]
     unsafe extern "C" {
         /// `INVALID_HANDLE_VALUE` if `fd` is not open, -2 for a standard stream that the process was started without.
         pub(crate) safe fn _get_osfhandle(fd: c_int) -> *mut c_void;
     }
-    #[cfg(windows)]
-    pub use crate::windows_sys::{STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
-    #[cfg(windows)]
-    pub(crate) fn is_stdio_handle(id: u32, handle: *mut c_void) -> bool {
-        // The `GetStdHandle` wrapper maps both NULL and
-        // INVALID_HANDLE_VALUE to `None`, so use the Option-returning
-        // wrapper here. Without the INVALID_HANDLE_VALUE filter, a detached
-        // console (GetStdHandle → INVALID_HANDLE_VALUE) compared against
-        // `Fd::INVALID.native()` (= INVALID_HANDLE_VALUE) would spuriously
-        // report a stdio match.
-        match crate::windows_sys::GetStdHandle(id) {
-            Some(h) => handle == h,
-            None => false,
-        }
-    }
-
     /// PEB ProcessParameters subset for stdio/cwd handle lookup.
     /// Full struct lives in `bun_windows_sys::PEB`; only the handle fields are
     /// read here, so a minimal view is exposed via accessor fns.
@@ -2401,7 +2345,7 @@ pub fn is_readable(_fd: Fd) -> Pollable {
     panic!("TODO on Windows");
 }
 
-/// Non-blocking `poll(fd, POLLOUT)` (or `WSAPoll` on Windows); reports writability.
+/// Non-blocking `poll(fd, POLLOUT)`; reports writability.
 #[cfg(not(windows))]
 pub fn is_writable(fd: Fd) -> Pollable {
     debug_assert!(fd.is_valid());
@@ -2432,36 +2376,6 @@ pub fn is_writable(fd: Fd) -> Pollable {
         },
     );
     rc
-}
-#[cfg(windows)]
-pub fn is_writable(fd: Fd) -> Pollable {
-    // bun_core can't depend on
-    // bun_sys (tier inversion), so go to bun_windows_sys::ws2_32 directly.
-    use bun_windows_sys::ws2_32;
-    let mut polls = [ws2_32::WSAPOLLFD {
-        // HANDLE → SOCKET pointer reinterpretation.
-        fd: fd.native() as usize,
-        events: ws2_32::POLLWRNORM,
-        revents: 0,
-    }];
-    // SAFETY: polls is a valid 1-element WSAPOLLFD array; len=1 matches the buffer.
-    let rc = unsafe { ws2_32::WSAPoll(polls.as_mut_ptr(), 1, 0) };
-    let result = rc != ws2_32::SOCKET_ERROR && rc != 0;
-    crate::scoped_log!(
-        SYS,
-        "poll({}) writable: {} ({})",
-        fd,
-        result,
-        polls[0].revents
-    );
-    // Yes, the `WRNORM`-set branch returns `.hup` (not `.ready`); intentional.
-    if result && (polls[0].revents & ws2_32::POLLWRNORM) != 0 {
-        Pollable::Hup
-    } else if result {
-        Pollable::Ready
-    } else {
-        Pollable::NotReady
-    }
 }
 
 // ── os_entropy ────────────────────────────────────────────────────────────

@@ -57,7 +57,7 @@ pub struct InternalState<'a> {
     pub(crate) fail: Option<Error>,
     /// `errno` of the failed `connect(2)` when `fail` is `ConnectionRefused`; 0 otherwise.
     pub(crate) connect_errno: i32,
-    /// `getaddrinfo(3)` return code (Windows: `UV_E*`) when `fail` is `DNSResolveFailed`;
+    /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
     /// 0 otherwise. The JS side turns it into the resolver error
     /// (`ENOTFOUND`, ...) with `syscall`/`hostname`, matching `node:dns`.
     pub(crate) dns_error: i32,

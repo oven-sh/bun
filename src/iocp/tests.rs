@@ -324,7 +324,7 @@ fn a_blocked_thread_can_be_interrupted() {
             cancel.cancel();
             run_until(&port, || result.get().is_some());
             let result = result.get().unwrap();
-            assert!(result.is_none_or(|it| it == Err(bun_sys::E::CANCELED)));
+            assert!(result.is_none_or(|it| it == Err(bun_sys::E::ECANCELED)));
         }
     }
 }
@@ -943,7 +943,7 @@ fn a_cancellation_is_repeated_until_the_call_has_returned() {
     cancel.cancel();
     cancel.cancel();
     go.send(()).unwrap();
-    assert_eq!(reader.join().unwrap(), Some(Err(bun_sys::E::CANCELED)));
+    assert_eq!(reader.join().unwrap(), Some(Err(bun_sys::E::ECANCELED)));
 }
 
 #[test]

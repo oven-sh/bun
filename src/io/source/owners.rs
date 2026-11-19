@@ -3,9 +3,9 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use super::file;
+use crate::owner::__bun_run_io;
 use crate::pipe_reader::ReadEvent;
 use crate::pipe_writer::WriteEvent;
-use crate::posix_event_loop::__bun_run_io;
 use crate::{IoEvent, Owner};
 
 /// Who hears of the reads and the writes of a source.

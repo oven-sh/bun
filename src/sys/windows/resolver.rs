@@ -5,10 +5,9 @@ use core::mem::offset_of;
 use core::ptr::{self, NonNull};
 
 use bun_core::WStr;
-use bun_errno::uv::UV_EINVAL;
 
 use super::ws2_32;
-use crate::windows_format::resolver::{eai_code, encode_name, ip_sockaddr};
+use crate::windows_format::resolver::{encode_name, ip_sockaddr};
 
 #[repr(C)]
 struct ADDRINFOW {
@@ -43,14 +42,14 @@ pub struct AddrInfoList(NonNull<ADDRINFOW>);
 impl AddrInfoList {
     pub const MAX_NAME_LEN: usize = 255;
 
-    /// Blocks until the resolver answers. `Err` is a `UV_E*` code, or 0 for an empty list.
+    /// Blocks until the resolver answers. `Err` is the `EAI_*` status, or 0 for an empty list.
     pub fn lookup(
         host: Option<&[u8]>,
         service: Option<&[u8]>,
         hints: Option<&ws2_32::addrinfo>,
     ) -> Result<Self, c_int> {
         fn encode<'a>(text: Option<&[u8]>, buf: &'a mut [u16]) -> Result<Option<&'a WStr>, c_int> {
-            text.map(|text| encode_name(text, buf).ok_or(UV_EINVAL))
+            text.map(|text| encode_name(text, buf).ok_or(ws2_32::EAI_NONAME))
                 .transpose()
         }
         const NI_MAXSERV: usize = 32;
@@ -81,7 +80,7 @@ impl AddrInfoList {
         };
         match NonNull::new(list) {
             Some(list) if status == 0 => Ok(Self(list)),
-            _ => Err(eai_code(status).unwrap_or_else(|| bun_errno::uv_translate_sys_error(status))),
+            _ => Err(status),
         }
     }
 
@@ -108,8 +107,7 @@ impl Drop for AddrInfoList {
 
 #[cfg(test)]
 mod tests {
-    use bun_errno::uv::{UV_EAI_FAMILY, UV_EAI_NONAME};
-
+    use super::ws2_32::{EAI_FAMILY, EAI_NONAME, EAI_SERVICE, EAI_SOCKTYPE};
     use super::*;
 
     fn lookup(host: &[u8], family: c_int) -> Result<Vec<Vec<u8>>, c_int> {
@@ -136,9 +134,19 @@ mod tests {
 
     #[test]
     fn reports_failures() {
-        assert_eq!(lookup(b"name", 0), Err(UV_EAI_NONAME));
-        assert_eq!(lookup(b"127.0.0.1", 12345), Err(UV_EAI_FAMILY));
-        assert_eq!(lookup(b"", 0), Err(UV_EINVAL));
-        assert_eq!(lookup("\u{FC}".as_bytes(), 0), Err(UV_EINVAL));
+        assert_eq!(lookup(b"name", 0), Err(EAI_NONAME));
+        assert_eq!(lookup(b"127.0.0.1", 12345), Err(EAI_FAMILY));
+        let status = |service: &[u8], ai_flags, ai_socktype| {
+            let hints = ws2_32::addrinfo {
+                ai_flags,
+                ai_socktype,
+                ..bun_core::ffi::zeroed()
+            };
+            AddrInfoList::lookup(Some(b"127.0.0.1"), Some(service), Some(&hints)).err()
+        };
+        assert_eq!(status(b"no-such-service", 0, 1), Some(EAI_SERVICE));
+        assert_eq!(status(b"80", 0, 12345), Some(EAI_SOCKTYPE));
+        assert_eq!(lookup(b"", 0), Err(EAI_NONAME));
+        assert_eq!(lookup("\u{FC}".as_bytes(), 0), Err(EAI_NONAME));
     }
 }

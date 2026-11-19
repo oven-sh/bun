@@ -19,13 +19,13 @@ const PREFIX: &[u16] = bun_core::w!("\\\\.\\pipe\\");
 /// As the system reads it, with a NUL at its end.
 fn wide_name(name: &[u8], tag: Tag) -> sys::Result<Vec<u16>> {
     let mut wide = vec![0; name.len() + 1];
-    let wide = wide::encode(name, &mut wide).map_err(|_| sys::Error::from_code(E::INVAL, tag))?;
+    let wide = wide::encode(name, &mut wide).map_err(|_| sys::Error::from_code(E::EINVAL, tag))?;
     match w::full_path(wide) {
         Ok(mut path) if path.starts_with(PREFIX) => {
             path.push(0);
             Ok(path)
         }
-        _ => Err(sys::Error::from_code(E::ACCES, tag)),
+        _ => Err(sys::Error::from_code(E::EACCES, tag)),
     }
 }
 
@@ -57,9 +57,9 @@ impl PipeServer {
         let name = wide_name(name, Tag::listen)?;
         let first = named_pipe::create_instance(WStr::from_slice_with_nul(&name), true);
         let first = first.map_err(|err| match err {
-            Win32Error::ACCESS_DENIED => sys::Error::from_code(E::ADDRINUSE, Tag::listen),
+            Win32Error::ACCESS_DENIED => sys::Error::from_code(E::EADDRINUSE, Tag::listen),
             Win32Error::PATH_NOT_FOUND | Win32Error::INVALID_NAME => {
-                sys::Error::from_code(E::ACCES, Tag::listen)
+                sys::Error::from_code(E::EACCES, Tag::listen)
             }
             err => sys::Error::from_win32(err, Tag::listen),
         })?;

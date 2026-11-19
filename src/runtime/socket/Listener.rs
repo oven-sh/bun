@@ -284,11 +284,9 @@ impl Listener {
                         // does (EADDRINUSE vs EACCES need different caller
                         // handling) rather than an invalid-arguments TypeError.
                         if let ListenPipeError::Sys(sys_err) = &e {
-                            // get_error_code_tag_name does not reject EUNKNOWN /
-                            // UV_EAI_* (>=3000); neither is a node-style code, so
-                            // route those through the generic error below.
+                            // EUNKNOWN is not a node-style code.
                             if let Some((name, se)) = sys_err.get_error_code_tag_name() {
-                                if se != bun_sys::SystemErrno::EUNKNOWN && (se as u16) < 3000 {
+                                if se != bun_sys::SystemErrno::EUNKNOWN {
                                     let err = jsc::SystemError {
                                         errno: sys_err.js_errno(),
                                         code: bun_core::String::static_(name).into(),
@@ -314,7 +312,6 @@ impl Listener {
                         }
                         let detail = match &e {
                             ListenPipeError::Other(err) => err.name(),
-                            // Sys whose errno has no node-style code (EUNKNOWN / UV_EAI_*).
                             ListenPipeError::Sys(..) => "UNKNOWN",
                         };
                         return Err(cx.global().throw_invalid_arguments(format_args!(
@@ -836,10 +833,7 @@ impl Listener {
             ListenerType::Uws(uws_listener) => {
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 let socket = bun_opaque::opaque_deref_mut(uws_listener.as_ptr()).socket::<false>();
-                // On Windows the listening socket fd is a system-kind SOCKET
-                // handle; routing it through `.crt()` panics for anything but
-                // stdio. The sys_jsc helper branches on kind
-                // (system→u64, crt→i32, posix→i32).
+                // On Windows it is a handle, which has no `.crt()`.
                 use bun_sys_jsc::FdJsc as _;
                 socket.fd().to_js_without_making_crt_owned()
             }

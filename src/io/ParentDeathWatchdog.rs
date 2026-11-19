@@ -47,9 +47,9 @@ use bun_sys::O;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_sys::linux::{PrctlOp, prctl};
 
-use crate::posix_event_loop::EventLoopCtx;
+use crate::EventLoopCtx;
 #[cfg(target_os = "macos")]
-use crate::posix_event_loop::{OwnedFilePoll, Owner, PollTag};
+use crate::{OwnedFilePoll, Owner, PollTag};
 
 /// Exit code used when the watchdog fires. 128 + SIGHUP, matching the
 /// convention for "terminated because the controlling end went away".

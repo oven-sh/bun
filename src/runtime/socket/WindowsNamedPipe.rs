@@ -521,7 +521,7 @@ impl WindowsNamedPipe {
         };
         let _keep_alive = self.keep_alive();
         drop(connecting);
-        let (errno, tag) = (bun_sys::E::CANCELED, bun_sys::Tag::connect);
+        let (errno, tag) = (bun_sys::E::ECANCELED, bun_sys::Tag::connect);
         self.on_connect(Err(bun_sys::Error::from_code(errno, tag)));
     }
 

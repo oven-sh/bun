@@ -29,8 +29,9 @@ pub use error::Error;
 // crate, `EventLoopHandle` is `EventLoopCtx` (the by-value `{kind, owner}`
 // pair) and the seam is type-checked.
 
-// `posix_event_loop` also defines what Windows shares (`js_vm_ctx`, `Owner`, `FileType`).
 mod keep_alive;
+mod owner;
+#[cfg(not(windows))]
 pub mod posix_event_loop;
 pub use keep_alive::{JsKeepAlive, KeepAlive};
 
@@ -59,7 +60,7 @@ pub mod parent_death_watchdog {
     use bun_core::wstr;
     use bun_sys::windows;
 
-    use crate::posix_event_loop::EventLoopCtx;
+    use crate::EventLoopCtx;
 
     pub(crate) const EXIT_CODE: u8 = 128 + 1;
 
@@ -181,9 +182,9 @@ pub use parent_death_watchdog as ParentDeathWatchdog;
 // ─── public surface (was bun_io's crate root) ──────────────────────────────
 
 #[cfg(not(windows))]
-pub use posix_event_loop::{FilePoll, Loop, OwnedFilePoll};
+pub use posix_event_loop::{FilePoll, OwnedFilePoll};
 
-pub use posix_event_loop::{IoEvent, Owner, PollTag, js_vm_ctx};
+pub use owner::{IoEvent, Owner, PollTag};
 
 #[cfg(not(windows))]
 pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);
@@ -207,6 +208,17 @@ bun_dispatch::link_interface! {
         #[cfg(not(windows))]
         fn pipe_read_scratch() -> *const PipeReadScratch;
     }
+}
+
+unsafe extern "Rust" {
+    /// Defined `#[no_mangle]` in `bun_runtime::jsc_hooks`.
+    safe fn __bun_get_vm_ctx() -> EventLoopCtx;
+}
+
+/// JS-thread [`EventLoopCtx`] for `KeepAlive::{ref_,unref}` / `FilePoll`.
+#[inline]
+pub fn js_vm_ctx() -> EventLoopCtx {
+    __bun_get_vm_ctx()
 }
 
 impl EventLoopCtx {
@@ -404,9 +416,7 @@ type EventType = KEvent;
 // ─── IoRequestLoop ──────────────────────────────────────────────────────────
 // The bare-kqueue/epoll request loop that backs
 // `Bun.file(path).text()` / `Bun.write()` & friends (and nothing else; see the
-// crate doc above). NOT the main event loop. Renamed from `Loop` so this
-// crate's `Loop` (= `posix_event_loop::Loop` = the uws `us_loop_t` everyone
-// actually means by "the loop") keeps its short name. Only one external caller
+// crate doc above). NOT the main event loop. Only one external caller
 // (`bun_runtime::webcore::Blob`).
 
 #[cfg(not(windows))]

@@ -66,7 +66,7 @@ extern "C" fn Bun__watchConsoleSignal(signal: c_int, is_watched: bool) {
     }
 }
 
-static WINDOW_SIZE: Guarded<Option<(i16, i16)>> = Guarded::new(None);
+static WINDOW_SIZE: Guarded<Option<(u16, u16)>> = Guarded::new(None);
 
 /// `false` if there is no console.
 pub(crate) fn check_window_size() -> bool {

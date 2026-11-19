@@ -65,7 +65,7 @@ impl Hardlinker {
             let mut cwd_buf = bun_paths::w_path_buffer_pool::get();
             let dest_cwd: &[u16] = match sys::get_fd_path_w(Fd::cwd(), &mut cwd_buf[..]) {
                 Ok(s) => &*s,
-                Err(_) => return Err(sys::Error::from_code(sys::E::ACCES, sys::Tag::link)),
+                Err(_) => return Err(sys::Error::from_code(sys::E::EACCES, sys::Tag::link)),
             };
 
             while let Some(entry) = self.walker.next()? {

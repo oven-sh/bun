@@ -1688,9 +1688,17 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       );
       expect(retry.bodyUsed).toBe(false);
       expect((await retry.arrayBuffer()).byteLength).toBe(CHUNK * COUNT);
-      await expect(
-        Bun.write(join(String(dir), "missing", "c"), await fetch(server.url), { createPath: false }),
-      ).rejects.toThrow(expect.objectContaining({ code: "ENOENT" }));
+      const missing = join(String(dir), "missing", "c");
+      await expect(Bun.write(missing, await fetch(server.url), { createPath: false })).rejects.toThrow(
+        expect.objectContaining({ code: "ENOENT", path: missing }),
+      );
+      // A folder that cannot be made is what the error names.
+      fs.writeFileSync(join(String(dir), "file"), "");
+      const below = join(String(dir), "file", "folder");
+      const failed = await Bun.write(join(below, "d"), await fetch(server.url)).catch(error => error);
+      expect(failed).toMatchObject(
+        isWindows ? { code: "ENOTDIR", syscall: "mkdir", path: expect.not.stringMatching(/d$/) } : { code: "ENOTDIR" },
+      );
     });
   });
 

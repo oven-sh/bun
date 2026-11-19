@@ -2508,7 +2508,7 @@ pub(crate) fn inject<'a>(
             {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
-                    err.to_system_errno()
+                    err.to_e()
                 );
                 return None;
             }
@@ -3383,7 +3383,7 @@ pub fn to_executable(
                 | windows::MOVEFILE_REPLACE_EXISTING
                 | windows::MOVEFILE_WRITE_THROUGH,
         ) {
-            let err = err.to_system_errno();
+            let err = err.to_e();
             let _ = Syscall::unlink(injected.temp_path);
             if err == bun_sys::SystemErrno::EISDIR {
                 return Ok(CompileResult::fail_fmt(format_args!(

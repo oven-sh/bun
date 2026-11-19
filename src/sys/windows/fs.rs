@@ -1,11 +1,10 @@
 //! The file calls, with the errors that Node.js reports. Paths follow the rules of Win32.
 
 use core::mem::MaybeUninit;
-use core::ptr;
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::os::windows::io::{AsRawHandle as _, IntoRawHandle as _, OwnedHandle};
 
-use bun_core::{PathBuffer, S, Timespec, WStr, ZBox, ZStr};
+use bun_core::{PathBuffer, S, WStr, ZBox, ZStr};
 use bun_paths::{path_buffer_pool, w_path_buffer_pool};
 use bun_windows_sys::externs as w;
 
@@ -345,10 +344,14 @@ pub struct Stat {
     pub st_size: u64,
     pub st_blksize: u64,
     pub st_blocks: u64,
-    pub atim: Timespec,
-    pub mtim: Timespec,
-    pub ctim: Timespec,
-    pub birthtim: Timespec,
+    pub st_atime: i64,
+    pub st_atime_nsec: i64,
+    pub st_mtime: i64,
+    pub st_mtime_nsec: i64,
+    pub st_ctime: i64,
+    pub st_ctime_nsec: i64,
+    pub st_birthtime: i64,
+    pub st_birthtime_nsec: i64,
 }
 bun_core::impl_zeroable!(Stat);
 
@@ -383,6 +386,13 @@ impl Stat {
             0 => 0o666,
             _ => 0o444,
         };
+        let [accessed, written, changed, created] = [
+            info.LastAccessTime,
+            info.LastWriteTime,
+            info.ChangeTime,
+            info.CreationTime,
+        ]
+        .map(file_time::to_timespec);
         Self {
             st_dev: (info.VolumeSerialNumber as u32).into(),
             st_mode: (kind | permissions).into(),
@@ -391,10 +401,14 @@ impl Stat {
             st_size: size,
             st_blksize: 4096,
             st_blocks: info.AllocationSize as u64 >> 9,
-            atim: file_time::to_timespec(info.LastAccessTime),
-            mtim: file_time::to_timespec(info.LastWriteTime),
-            ctim: file_time::to_timespec(info.ChangeTime),
-            birthtim: file_time::to_timespec(info.CreationTime),
+            st_atime: accessed.sec,
+            st_atime_nsec: accessed.nsec,
+            st_mtime: written.sec,
+            st_mtime_nsec: written.nsec,
+            st_ctime: changed.sec,
+            st_ctime_nsec: changed.nsec,
+            st_birthtime: created.sec,
+            st_birthtime_nsec: created.nsec,
             ..Self::default()
         }
     }
@@ -604,14 +618,9 @@ pub fn statfs(path: &ZStr) -> Maybe<StatFS> {
 
 // ── names ───────────────────────────────────────────────────────────────────
 
-fn create_directory(path: &WStr) -> Result<()> {
-    // SAFETY: `path` is NUL-terminated.
-    check(unsafe { w::CreateDirectoryW(path.as_ptr(), ptr::null_mut()) })
-}
-
 pub fn mkdir(path: &ZStr, _mode: Mode) -> Maybe<()> {
     let result = with_wide(path, |path| {
-        create_directory(path).map_err(|error| match error {
+        super::CreateDirectoryW(path).map_err(|error| match error {
             Win32Error::INVALID_NAME | Win32Error::DIRECTORY => Win32Error::INVALID_PARAMETER,
             error => error,
         })
@@ -632,7 +641,7 @@ pub fn mkdtemp(template: &mut [u8], random: fn(&mut [u8])) -> Maybe<&[u8]> {
             *letter = LETTERS[(number % 62) as usize];
             number /= 62;
         }
-        result = with_wide(ZStr::from_slice_with_nul(template), create_directory);
+        result = with_wide(ZStr::from_slice_with_nul(template), super::CreateDirectoryW);
         if result != Err(Win32Error::ALREADY_EXISTS) {
             break;
         }
@@ -741,8 +750,7 @@ pub fn link(from: &ZStr, to: &ZStr) -> Maybe<()> {
 fn symbolic_link(target: &ZStr, link: &ZStr, flags: u32) -> Maybe<()> {
     let result = with_both(target, link, |target, link| {
         let flags = flags | w::SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE;
-        // SAFETY: both are NUL-terminated.
-        check(unsafe { w::CreateSymbolicLinkW(link.as_ptr(), target.as_ptr(), flags) }.into())
+        super::CreateSymbolicLinkW(link, target, flags)
     });
     at_path(result, Tag::symlink, target).map_err(|error| error.with_dest(link.as_bytes()))
 }
@@ -855,15 +863,15 @@ pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
     })
 }
 
-pub fn chown(_: &ZStr, _uid: u8, _gid: u8) -> Maybe<()> {
+pub fn chown(_: &ZStr, _uid: u32, _gid: u32) -> Maybe<()> {
     Ok(())
 }
 
-pub fn lchown(_: &ZStr, _uid: u8, _gid: u8) -> Maybe<()> {
+pub fn lchown(_: &ZStr, _uid: u32, _gid: u32) -> Maybe<()> {
     Ok(())
 }
 
-pub fn fchown(_: Fd, _uid: u8, _gid: u8) -> Maybe<()> {
+pub fn fchown(_: Fd, _uid: u32, _gid: u32) -> Maybe<()> {
     Ok(())
 }
 

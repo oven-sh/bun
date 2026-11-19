@@ -2,15 +2,15 @@
 
 #![allow(non_snake_case, non_camel_case_types)]
 
-use core::ffi::{CStr, c_int, c_void};
+use core::ffi::{c_int, c_void};
 use core::ptr;
 use std::os::windows::io::{
     AsRawHandle as _, BorrowedHandle, FromRawHandle as _, HandleOrNull, OwnedHandle,
 };
 use std::sync::OnceLock;
 
-use bun_sys::windows::StatusBlock;
 use bun_sys::windows::kernel32::GetCurrentThreadId;
+use bun_sys::windows::{StatusBlock, find_export};
 use bun_windows_sys::{
     BOOL, BOOLEAN, DWORD, FILETIME, HANDLE, INFINITE, INVALID_HANDLE_VALUE, IO_STATUS_BLOCK,
     NT_SUCCESS, NTSTATUS, OBJECT_ATTRIBUTES, ULONG, UNICODE_STRING, Win32Error,
@@ -349,18 +349,6 @@ pub(crate) fn wait_for(object: &OwnedHandle) {
     bun_sys::windows::kernel32::WaitForSingleObject(object.as_raw_handle(), INFINITE);
 }
 
-/// SAFETY: `F` is the type of the function that ntdll exports as `name`.
-unsafe fn ntdll_export<F>(name: &CStr) -> Option<F> {
-    const { assert!(size_of::<F>() == size_of::<*mut c_void>()) };
-    // SAFETY: both names end with a NUL, ntdll is never unloaded, and fn contract.
-    unsafe {
-        let ntdll =
-            bun_windows_sys::kernel32::GetModuleHandleW(bun_core::wstr!("ntdll.dll").as_ptr());
-        let address = bun_windows_sys::GetProcAddress(ntdll, name.as_ptr());
-        (!address.is_null()).then(|| core::mem::transmute_copy(&address))
-    }
-}
-
 struct WaitPacketCalls {
     create: unsafe extern "system" fn(*mut HANDLE, DWORD, *const c_void) -> NTSTATUS,
     associate: unsafe extern "system" fn(
@@ -387,12 +375,13 @@ impl WaitPacket {
     pub(crate) fn new() -> Result<Option<WaitPacket>, NTSTATUS> {
         static CALLS: OnceLock<Option<WaitPacketCalls>> = OnceLock::new();
         let calls = CALLS.get_or_init(|| {
+            let ntdll = bun_core::wstr!("ntdll.dll");
             // SAFETY: https://learn.microsoft.com/en-us/windows/win32/devnotes/ntassociatewaitcompletionpacket
             unsafe {
                 Some(WaitPacketCalls {
-                    create: ntdll_export(c"NtCreateWaitCompletionPacket")?,
-                    associate: ntdll_export(c"NtAssociateWaitCompletionPacket")?,
-                    cancel: ntdll_export(c"NtCancelWaitCompletionPacket")?,
+                    create: find_export(ntdll, c"NtCreateWaitCompletionPacket")?,
+                    associate: find_export(ntdll, c"NtAssociateWaitCompletionPacket")?,
+                    cancel: find_export(ntdll, c"NtCancelWaitCompletionPacket")?,
                 })
             }
         });

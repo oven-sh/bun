@@ -125,9 +125,21 @@ impl PipeHandle {
     }
 }
 
-// Sunk to `bun_io` so `FilePoll::file_type()` needs no aio→io edge; re-export
-// keeps the historical `bun_io::FileType` / `bun_io::pipes::FileType` paths.
-pub use crate::posix_event_loop::FileType;
+/// Kind of fd a `FilePoll` (or pipe reader/writer) is wrapping.
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum FileType {
+    File,
+    Pipe,
+    NonblockingPipe,
+    Socket,
+}
+
+#[cfg(not(windows))]
+impl FileType {
+    pub(crate) fn is_blocking(self) -> bool {
+        self == FileType::Pipe
+    }
+}
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum ReadState {

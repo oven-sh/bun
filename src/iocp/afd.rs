@@ -365,8 +365,9 @@ impl Sockets {
             poll.state.set(State::Resting);
             return port.delay(key::POLL_AGAIN, token, poll.rest_ns());
         } else if NT_ERROR(status) {
+            const SECOND_NS: u64 = 1_000_000_000;
             poll.state.set(State::Resting);
-            port.delay(key::POLL_AGAIN, token, 1_000_000_000);
+            port.delay(key::POLL_AGAIN, token, SECOND_NS);
             Readiness::WATCH_FAILED
         } else {
             if info.events & LOCAL_CLOSE != 0 {

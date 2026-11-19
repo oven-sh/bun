@@ -328,11 +328,14 @@ pub struct FILE_INFORMATION_CLASS(pub u32);
 impl FILE_INFORMATION_CLASS {
     pub const FileDirectoryInformation: Self = Self(1);
     pub const FileBasicInformation: Self = Self(4);
+    pub const FileAccessInformation: Self = Self(8);
     pub const FileRenameInformation: Self = Self(10);
     pub const FileDispositionInformation: Self = Self(13);
     pub const FilePositionInformation: Self = Self(14);
+    pub const FileModeInformation: Self = Self(16);
     pub const FileAllInformation: Self = Self(18);
     pub const FileEndOfFileInformation: Self = Self(20);
+    pub const FilePipeInformation: Self = Self(23);
     pub const FileIdFullDirectoryInformation: Self = Self(38);
     pub const FileDispositionInformationEx: Self = Self(64);
     pub const FileStatBasicInformation: Self = Self(77);
@@ -383,6 +386,25 @@ pub struct FILE_ALL_INFORMATION {
     pub AlignmentRequirement: ULONG,      // FILE_ALIGNMENT_INFORMATION
     pub FileNameLength: ULONG,            // FILE_NAME_INFORMATION
     pub FileName: [WCHAR; 1],
+}
+
+/// `FILE_ACCESS_INFORMATION` (`ntifs.h`).
+#[repr(C)]
+pub struct FILE_ACCESS_INFORMATION {
+    pub AccessFlags: ULONG,
+}
+
+/// `FILE_MODE_INFORMATION` (`ntifs.h`).
+#[repr(C)]
+pub struct FILE_MODE_INFORMATION {
+    pub Mode: ULONG,
+}
+
+/// `FILE_PIPE_INFORMATION` (`ntifs.h`).
+#[repr(C)]
+pub struct FILE_PIPE_INFORMATION {
+    pub ReadMode: ULONG,
+    pub CompletionMode: ULONG,
 }
 
 /// `FILE_POSITION_INFORMATION` (`wdm.h`).
@@ -1198,11 +1220,6 @@ pub mod ws2_32 {
 
     #[cfg_attr(windows, link(name = "ws2_32"))]
     unsafe extern "system" {
-        pub fn recv(s: usize, buf: *mut c_void, len: c_int, flags: c_int) -> c_int;
-        pub fn send(s: usize, buf: *const c_void, len: c_int, flags: c_int) -> c_int;
-        /// `WSAPoll` (`winsock2.h`). Returns count of ready fds, 0 on timeout,
-        /// or `SOCKET_ERROR` (-1) on failure (`WSAGetLastError` for the code).
-        pub fn WSAPoll(fdArray: *mut WSAPOLLFD, fds: u32, timeout: c_int) -> c_int;
         fn WSAStartup(wVersionRequested: u16, lpWSAData: *mut WSADATA) -> c_int;
     }
 
@@ -1222,17 +1239,16 @@ pub mod ws2_32 {
         IS_STARTED.store(rc == 0, Ordering::Release);
     }
 
-    /// `WSAPOLLFD` (`winsock2.h`). `fd` is a `SOCKET` (= `UINT_PTR`).
-    #[repr(C)]
-    #[derive(Copy, Clone)]
-    pub struct WSAPOLLFD {
-        pub fd: usize,
-        pub events: i16,
-        pub revents: i16,
-    }
-    pub const SOCKET_ERROR: c_int = -1;
-    /// `POLLWRNORM` (`winsock2.h`).
-    pub const POLLWRNORM: i16 = 0x0010;
+    // `ws2tcpip.h`
+    pub const EAI_AGAIN: c_int = 11002;
+    pub const EAI_BADFLAGS: c_int = Win32Error::WSAEINVAL.0 as c_int;
+    pub const EAI_FAIL: c_int = 11003;
+    pub const EAI_FAMILY: c_int = Win32Error::WSAEAFNOSUPPORT.0 as c_int;
+    pub const EAI_MEMORY: c_int = Win32Error::NOT_ENOUGH_MEMORY.0 as c_int;
+    pub const EAI_NONAME: c_int = Win32Error::WSAHOST_NOT_FOUND.0 as c_int;
+    pub const EAI_SERVICE: c_int = 10109;
+    pub const EAI_SOCKTYPE: c_int = Win32Error::WSAESOCKTNOSUPPORT.0 as c_int;
+    pub const WSA_E_CANCELLED: c_int = 10111;
 }
 // ──────────────────────────────────────────────────────────────────────────
 // Win32Error — a transparent newtype with associated consts so unmapped

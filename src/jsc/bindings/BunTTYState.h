@@ -18,7 +18,7 @@ struct BunTTYState {
 
 // `state` points at `Bun__ttyStateSize()` zero-initialized bytes, owned by the
 // caller for as long as the handle lives. The bytes are copied in and out, so
-// the buffer carries no alignment requirement.
+// the buffer carries no alignment requirement. Windows has one mode for the console, and ignores them.
 // `drain` nonzero applies the change with TCSADRAIN (libuv's behavior, for
 // real ttys); zero uses TCSANOW, required for PTY masters (see the comment in
 // wtf-bindings.cpp).

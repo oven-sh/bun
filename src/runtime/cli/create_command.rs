@@ -1331,7 +1331,7 @@ fn file_copier_copy(
                     }
                     if let Err(err) = result {
                         Output::err(
-                            err.to_system_errno(),
+                            err.to_e(),
                             "failed to copy file {}",
                             format_args!(
                                 "{}",

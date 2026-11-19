@@ -55,11 +55,9 @@ pub(crate) mod netc {
 #[cfg(windows)]
 pub(crate) mod netc {
     pub(crate) use bun_sys::windows::ws2_32::{
-        AF_INET, AF_INET6, AF_UNSPEC, SOCK_STREAM, addrinfo, sockaddr, sockaddr_in, sockaddr_in6,
-        sockaddr_storage,
+        AF_INET, AF_INET6, AF_UNSPEC, EAI_NONAME, SOCK_STREAM, addrinfo, sockaddr, sockaddr_in,
+        sockaddr_in6, sockaddr_storage,
     };
-    /// `c_ares::Error::init_eai` reads UV_EAI_* codes on Windows.
-    pub(crate) const EAI_NONAME: core::ffi::c_int = bun_errno::uv::UV_EAI_NONAME;
 }
 type SockaddrStorage = netc::sockaddr_storage;
 type AddrInfo = netc::addrinfo;
@@ -239,7 +237,7 @@ mod lib_c {
         unsafe fn cancel(this: *mut Self) {
             // SAFETY: fn contract. Nothing writes to the field.
             let answer = unsafe { &(*this).answer };
-            Answer::settle(answer, Err(bun_errno::uv::UV_EAI_CANCELED));
+            Answer::settle(answer, Err(bun_sys::windows::ws2_32::WSA_E_CANCELLED));
         }
     }
 

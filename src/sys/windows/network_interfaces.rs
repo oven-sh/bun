@@ -51,8 +51,8 @@ fn read_with(mut size: ULONG) -> Result<Vec<Interface>, E> {
             }
             Win32Error::BUFFER_OVERFLOW if size > capacity => continue,
             Win32Error::NO_DATA => Ok(Vec::new()),
-            ADDRESS_NOT_ASSOCIATED => Err(E::AGAIN),
-            Win32Error::BUFFER_OVERFLOW | Win32Error::INVALID_PARAMETER => Err(E::NOBUFS),
+            ADDRESS_NOT_ASSOCIATED => Err(E::EAGAIN),
+            Win32Error::BUFFER_OVERFLOW | Win32Error::INVALID_PARAMETER => Err(E::ENOBUFS),
             error => Err(error.to_node_e()),
         };
     }

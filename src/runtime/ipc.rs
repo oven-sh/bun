@@ -720,8 +720,8 @@ pub(crate) enum CallbackList {
     None,
     /// js callable
     Callback(Protected),
-    /// js array
-    CallbackArray(Protected),
+    /// js array, and its length
+    CallbackArray(Protected, u32),
 }
 
 impl CallbackList {
@@ -748,10 +748,12 @@ impl CallbackList {
                 arr.value().put_index(global, 1, callback)?; // add the new callback to the array
                 // Overwriting the old `Callback(prev_guard)` drops it →
                 // single `unprotect()` on `prev` (now rooted via `arr`).
-                *self = CallbackList::CallbackArray(arr);
+                *self = CallbackList::CallbackArray(arr, 2);
             }
-            CallbackList::CallbackArray(arr) => {
-                arr.value().push(global, callback)?;
+            CallbackList::CallbackArray(arr, len) => {
+                // Not `push`, which runs a setter on `Array.prototype` while the queue is borrowed.
+                arr.value().put_index(global, *len, callback)?;
+                *len += 1;
             }
         }
         Ok(())
@@ -766,7 +768,7 @@ impl CallbackList {
                 // Assignment drops the old `Callback(cb)` guard → unprotect.
                 *self = CallbackList::None;
             }
-            CallbackList::CallbackArray(arr) => {
+            CallbackList::CallbackArray(arr, _) => {
                 let mut iter = arr.value().array_iterator(global)?;
                 while let Some(item) = iter.next()? {
                     JSValue::call_next_tick_1(item, global, JSValue::NULL)?;

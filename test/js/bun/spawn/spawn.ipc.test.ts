@@ -597,3 +597,103 @@ it.skipIf(isWindows)("advanced serialization advertises wire format version 2", 
   expect(JSON.parse(stdout.trim())).toEqual([1, 2, 0, 0, 0]);
   expect(exitCode).toBe(0);
 });
+
+/** Runs parent.js next to child.js. Both have the helpers below. */
+async function runPair(parent: string, child: string, env: Record<string, string> = {}) {
+  const helpers = `
+    const fs = require("node:fs");
+    // So that a child does not outlive a test that timed out.
+    const deadline = Date.now() + 120_000;
+    function until(file) {
+      while (!fs.existsSync(file)) {
+        if (Date.now() > deadline) throw new Error("gave up waiting for " + file);
+        Bun.sleepSync(1);
+      }
+    }
+    function retry(syscall) {
+      for (;;) {
+        try {
+          return syscall();
+        } catch (e) {
+          if (e.code !== "EAGAIN" || Date.now() > deadline) throw e;
+          Bun.sleepSync(1);
+        }
+      }
+    }
+    function write(bytes) {
+      bytes = Buffer.from(bytes);
+      for (let offset = 0; offset < bytes.length; ) offset += retry(() => fs.writeSync(3, bytes, offset));
+    }
+    function advancedFrame(message) {
+      const body = Buffer.from(require("bun:jsc").serialize(message));
+      const header = Buffer.from([2, 0, 0, 0, 0]);
+      header.writeUInt32LE(body.length, 1);
+      return Buffer.concat([header, body]);
+    }
+    const spawnChild = options =>
+      Bun.spawn({
+        cmd: [process.execPath, "child.js"],
+        env: { ...process.env, BUN_JSC_gcMaxHeapSize: undefined },
+        stdio: ["ignore", "inherit", "inherit"],
+        serialization: "json",
+        ipc() {},
+        onExit: (_, code, signal) => void (code === 0 || console.log("child failed", code, signal)),
+        ...options,
+      });
+    const listen = () =>
+      new Promise((resolve, reject) => {
+        const server = require("node:net").createServer().once("error", reject);
+        server.listen(0, "127.0.0.1", () => resolve(server));
+      });
+    const turn = () => new Promise(resolve => setImmediate(resolve));
+    const openFds = () => fs.readdirSync("/proc/self/fd").length;
+    // Bun.build() runs the event loop until the setup() of a plugin has settled.
+    const runEventLoopUntil = promise =>
+      void Bun.build({ entrypoints: ["./empty.js"], plugins: [{ name: "wait", setup: () => promise.then(() => {}) }] });
+  `;
+  using dir = tempDir("ipc-pair", { "parent.js": helpers + parent, "child.js": helpers + child, "empty.js": "" });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--no-orphans", "parent.js"],
+    env: { ...bunEnv, ...env },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout.split("\n").filter(Boolean), stderr, exitCode };
+}
+
+describe.concurrent("the send queue", () => {
+  it("does not run a setter on Array.prototype to store a callback", async () => {
+    const result = await runPair(
+      `
+        const server = await listen();
+        const child = spawnChild();
+        // Nothing follows a handle until it is acked, so the next three are joined.
+        child.send("handle", server);
+        child.send("a", () => console.log("a"));
+        child.send("b", () => console.log("b"));
+        Object.defineProperty(Array.prototype, 2, {
+          configurable: true,
+          set() {
+            delete Array.prototype[2];
+            console.log("setter");
+            for (let i = 0; i < 16; i++) child.send("handle", server);
+          },
+        });
+        child.send("c", () => console.log("c"));
+        delete Array.prototype[2];
+        child.send("last");
+        await child.exited;
+        server.close();
+      `,
+      `
+        process.on("message", (message, handle) => {
+          handle?.close();
+          if (message === "last") process.disconnect();
+        });
+      `,
+    );
+    expect(result).toEqual({ stdout: ["a", "b", "c"], stderr: "", exitCode: 0 });
+  });
+});

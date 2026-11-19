@@ -96,13 +96,11 @@ struct Command<Args> {
 enum Varargs {
     /// `null` and `undefined` throw.
     Strict,
-    /// `null` and `undefined` are left out.
-    SkipNullish,
-    /// As `SkipNullish`, after a required first argument of this name.
+    /// `null` and `undefined` are left out, after a required first argument of this name.
     KeyThenSkipNullish(&'static str),
 }
 
-/// The arguments after a key, up to the first `null` or `undefined`.
+/// The arguments after a key, without `null` and `undefined`.
 struct AfterKey {
     name: &'static str,
     expected: &'static str,
@@ -201,7 +199,7 @@ impl JSValkeyClient {
         args.push(command.arg(global, key.to_js(), "key", "string or buffer")?);
         for &value in JsLocal::to_js_slice(values) {
             if value.is_undefined_or_null() {
-                break;
+                continue;
             }
             args.push(command.arg(global, value, name, expected)?);
         }
@@ -220,9 +218,15 @@ impl JSValkeyClient {
     ) -> JsResult<JSValue> {
         command.check_state(self)?;
 
-        let key = key.to_js().to_bun_string(global)?;
-        let field = field.to_js().to_bun_string(global)?;
-        let increment = increment.to_js().to_bun_string(global)?;
+        let text = |value: JsLocal<'_>, field, expected| match value.to_js() {
+            value if value.is_undefined_or_null() => {
+                Err(global.throw_invalid_argument_type(command.method, field, expected))
+            }
+            value => value.to_bun_string(global),
+        };
+        let key = text(key, "key", "string or buffer")?;
+        let field = text(field, "field", "string or buffer")?;
+        let increment = text(increment, "increment", "number or string")?;
 
         let args = [key.to_utf8(), field.to_utf8(), increment.to_utf8()];
         Ok(self.send(this, global, command.wire.as_bytes(), &args, command.reply))
@@ -284,15 +288,6 @@ macro_rules! cmd_strings_varargs {
         method!(
             $fn_name(args: &[JsLocal<'_>]) => send_varargs(args),
             $name, $command, $state, Value, Varargs::Strict
-        );
-    };
-}
-
-macro_rules! cmd_key_value_varargs {
-    ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
-        method!(
-            $fn_name(args: &[JsLocal<'_>]) => send_varargs(args),
-            $name, $command, $state, Value, Varargs::SkipNullish
         );
     };
 }
@@ -812,11 +807,11 @@ impl JSValkeyClient {
         key: "key", increment: "increment"
     );
     cmd!(decrby, "decrby", "DECRBY", NotSubscriber, key: "key", decrement: "decrement");
-    cmd_key_value_varargs!(lpush, "lpush", "LPUSH", NotSubscriber);
-    cmd_key_value_varargs!(lpushx, "lpushx", "LPUSHX", NotSubscriber);
+    cmd_key_varargs!(lpush, "lpush", "LPUSH", "key", NotSubscriber);
+    cmd_key_varargs!(lpushx, "lpushx", "LPUSHX", "key", NotSubscriber);
     cmd!(pfadd, "pfadd", "PFADD", NotSubscriber, key: "key", element: "value");
-    cmd_key_value_varargs!(rpush, "rpush", "RPUSH", NotSubscriber);
-    cmd_key_value_varargs!(rpushx, "rpushx", "RPUSHX", NotSubscriber);
+    cmd_key_varargs!(rpush, "rpush", "RPUSH", "key", NotSubscriber);
+    cmd_key_varargs!(rpushx, "rpushx", "RPUSHX", "key", NotSubscriber);
     cmd!(setnx, "setnx", "SETNX", NotSubscriber, key: "key", value: "value");
     cmd!(setex, "setex", "SETEX", NotSubscriber, key: "key", seconds: "seconds", value: "value");
     cmd!(
@@ -828,7 +823,7 @@ impl JSValkeyClient {
         zincrby, "zincrby", "ZINCRBY", NotSubscriber,
         key: "key", increment: "increment", member: "member"
     );
-    cmd_key_value_varargs!(zmscore, "zmscore", "ZMSCORE", NotSubscriber);
+    cmd_key_varargs!(zmscore, "zmscore", "ZMSCORE", "key", NotSubscriber);
     cmd_strings_varargs!(zadd, "zadd", "ZADD", NotSubscriber);
     cmd_strings_varargs!(zscan, "zscan", "ZSCAN", NotSubscriber);
     cmd_strings_varargs!(zdiff, "zdiff", "ZDIFF", NotSubscriber);

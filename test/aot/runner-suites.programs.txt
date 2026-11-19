@@ -286,6 +286,9 @@ test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode
 test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode laid out by an order file > with a recorded run > (unnamed)
 test/bundler/bun-build-compile.test.ts: Bun.build compile > a chunk whose bytecode cannot be generated keeps the embedded files
 test/bundler/bun-build-compile.test.ts: Bun.build compile > bytecode from a compiled executable is not copied into private memory
+test/bundler/bun-build-compile.test.ts: Bun.build compile > the download of another platform's executable is cut short
+test/bundler/bun-build-compile.test.ts: Bun.build compile > the download of another platform's executable is damaged
+test/bundler/bun-build-compile.test.ts: Bun.build compile > the download of another platform's executable is whole
 test/bundler/bun-build-compile.test.ts: Bun.build compile > the sources of an executable know where their lines start (cjs, bytecode: true, minify: false, utf16: false)
 test/bundler/bun-build-compile.test.ts: Bun.build compile > the sources of an executable know where their lines start (esm, bytecode: false, minify: false, utf16: false)
 test/bundler/bun-build-compile.test.ts: Bun.build compile > the sources of an executable know where their lines start (esm, bytecode: true, minify: false, utf16: false)

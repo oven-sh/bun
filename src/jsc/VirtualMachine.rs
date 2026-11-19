@@ -218,16 +218,6 @@ pub struct VirtualMachine {
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: JsCell<Vec<Box<[u8]>>>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
-    /// LAYERING: the real type is `bun_runtime`'s
-    /// `html_rewriter::RewriterPipe` (a forward dep), stored type-erased.
-    ///
-    /// The HTMLRewriter sink whose lol-html `write()`/`end()`/`resume()` call
-    /// is currently on this VM's native stack, if any. Content handlers reach
-    /// their sink through it (to record a thrown exception, and to park the JS
-    /// wrapper + pending promise when an async handler suspends the rewrite).
-    /// Saved and restored LIFO around every lol-html call, so a handler body
-    /// that synchronously starts a nested `transform()` nests correctly.
-    pub html_rewriter_active_sink: Cell<Option<core::ptr::NonNull<c_void>>>,
     // Note: layering — the concrete `bun_standalone_graph::Graph` lives
     // in a higher-tier crate. The resolver already broke that cycle with the
     // `bun_resolver::StandaloneModuleGraph` trait; we hold the same trait
@@ -1138,15 +1128,6 @@ impl VirtualMachine {
             return None;
         }
         self.graph_contexts.get().get(&id).map(|context| &**context)
-    }
-
-    /// Whether a timer or pool job made for `context` under `generation` (the
-    /// [`test_isolation_generation`](Self::test_isolation_generation) of then) has outlived the
-    /// script it would continue: its context has stopped, or `bun test --isolate` has moved on to
-    /// another file since.
-    #[inline]
-    pub fn has_outlived_its_script(&self, context: crate::ContextId, generation: u32) -> bool {
-        generation != self.test_isolation_generation.get() || !self.is_context_live(context)
     }
 
     /// Whether the context `id` names has not stopped.
@@ -2369,7 +2350,7 @@ impl VirtualMachine {
         if let Some(hooks) = hooks {
             (hooks.stop_watches_for_vm_teardown)();
             // Drop every TimeoutObject/ImmediateObject's heap node, JS pin and
-            // +1 while runtime state and the JSC heap are alive. The heap itself
+            // loop ref while runtime state and the JSC heap are alive. The heap itself
             // (and the loop handle it embeds) stays up: JSC's own RunLoop timers
             // — GC activity callbacks, sweeper, deferred work — are WTFTimers on
             // this heap and keep being scheduled until ~VM returns.
@@ -2726,7 +2707,7 @@ pub struct RuntimeHooks {
     /// `FakeTimers::min_delay_ms()` of the calling thread's VM. A slot for the same reason as `timer_insert`.
     pub timer_min_delay_ms: fn() -> u32,
     /// `FakeTimers::abort_signal_timeout_clock()` of the calling thread's VM.
-    pub abort_signal_timeout_clock: fn() -> bun_core::TimespecMockMode,
+    pub abort_signal_timeout_clock: fn() -> bun_event_loop::EventLoopTimer::Clock,
     /// Reads the calling thread's `Timer::All`; see `timer_insert`.
     pub timers_left: fn() -> TimersLeft,
     /// `RareData.defaultClientSslCtx()` — lazy default-trust-store client
@@ -2820,7 +2801,7 @@ pub struct RuntimeHooks {
     pub retroactively_report_discovered_tests:
         fn(agent: &mut crate::debugger::TestReporterHandle, next_test_id: i32) -> i32,
     /// Cancel every `TimeoutObject` / `ImmediateObject` still in the calling
-    /// thread's `timer::All` heap so their JS pins and in-heap `+1` refs drop
+    /// thread's `timer::All` heap so their JS pins drop
     /// before the GC sweep. `timer::All` lives in `bun_runtime` (forward-dep);
     /// callers (`global_exit`, `WebWorker::shutdown`) are in this crate.
     ///
@@ -2931,7 +2912,7 @@ impl VirtualMachine {
 
     /// The clock that an `AbortSignal.timeout()` armed now runs on.
     #[inline]
-    pub fn abort_signal_timeout_clock() -> bun_core::TimespecMockMode {
+    pub fn abort_signal_timeout_clock() -> bun_event_loop::EventLoopTimer::Clock {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         (hooks.abort_signal_timeout_clock)()
     }
@@ -3065,7 +3046,6 @@ impl VirtualMachine {
             pending_unref_counter: Default::default(),
             preload: JsCell::default(),
             unhandled_pending_rejection_to_capture: None,
-            html_rewriter_active_sink: Cell::new(None),
             standalone_module_graph: opts.graph,
             finds_entry_points_by_path: opts.graph.is_some_and(|graph| {
                 graph

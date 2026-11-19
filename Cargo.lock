@@ -1528,6 +1528,7 @@ name = "bun_quic_tls"
 version = "0.0.0"
 dependencies = [
  "bun_boringssl_sys",
+ "bun_core",
  "bun_opaque",
  "bun_quic",
 ]

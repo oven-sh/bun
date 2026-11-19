@@ -157,7 +157,6 @@ impl Peer {
                 datagrams.extend(run.map(|it| (*addresses, it.to_vec())));
             }
             assert_eq!(datagrams.len() - before, batch.len());
-            assert_eq!(datagrams.len() == before, batch.is_empty());
             if !(self.polls && self.endpoint.has_events())
                 && !self.endpoint.wants_to_transmit()
                 && self.endpoint.timeout().is_none_or(|it| it > now)

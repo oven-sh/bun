@@ -10,6 +10,7 @@ use crate::udp;
 
 /// `LIBUS_UDP_RECV_COUNT`.
 pub const DATAGRAMS_PER_READ: c_int = 8;
+/// Two messages that are as long as UDP allows.
 const DATAGRAMS_PER_BATCH: usize = 88;
 /// All connections share it. Some systems refuse what is above their limit.
 const RECEIVE_BUFFER_SIZES: [c_int; 2] = [4 << 20, 1 << 20];
@@ -96,6 +97,10 @@ struct Message {
     len: u32,
     segment_len: u16,
 }
+
+bun_core::assert_ffi_layout!(Address, 24, 4; scope_id @ 16, port @ 20, is_ipv6 @ 22);
+bun_core::assert_ffi_layout!(Envelope, 52, 4; peer @ 24, segment_len @ 48);
+bun_core::assert_ffi_layout!(Message, 60, 4; peer @ 24, start @ 48, len @ 52, segment_len @ 56);
 
 impl Message {
     fn segments(self) -> impl Iterator<Item = Self> {
@@ -214,7 +219,7 @@ impl Outbox {
     }
 
     #[inline]
-    pub fn has_unsent(&self) -> bool {
+    pub(super) fn has_unsent(&self) -> bool {
         self.sent < self.messages.len()
     }
 

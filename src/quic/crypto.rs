@@ -95,8 +95,7 @@ impl Key {
 
 impl Drop for Key {
     fn drop(&mut self) {
-        self.bytes.fill(0);
-        core::hint::black_box(&self.bytes);
+        bun_core::secure_zero(&mut self.bytes);
     }
 }
 

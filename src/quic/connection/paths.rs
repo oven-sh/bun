@@ -18,7 +18,7 @@ use crate::error::Result;
 use crate::event::Event;
 use crate::frame::kind;
 use crate::packet::MIN_DATAGRAM_LEN;
-use crate::path::{Addresses, is_reserved_port, without_zone};
+use crate::path::{AMPLIFICATION_FACTOR, Addresses, is_reserved_port, without_zone};
 use crate::stream_id::Side;
 use crate::time::{Duration, Instant};
 
@@ -27,8 +27,6 @@ const MAX_CHALLENGES: usize = 5;
 const FIRST_CHALLENGE_TIMEOUT: Duration = Duration::from_millis(250);
 /// For a path on which no challenge can be sent, or has to be, or that is not moved to.
 const UNUSED_TIMEOUT: Duration = Duration::from_secs(8);
-/// RFC 9000 §8.1.
-const AMPLIFICATION_FACTOR: u64 = 3;
 
 struct Challenge {
     data: [u8; 8],
@@ -93,7 +91,7 @@ impl Path {
     pub(super) fn allowance(&self) -> usize {
         match self.is_validated {
             true => self.mtu.current.into(),
-            false => (AMPLIFICATION_FACTOR * self.received)
+            false => (AMPLIFICATION_FACTOR as u64 * self.received)
                 .saturating_sub(self.sent)
                 .min(self.mtu.current.into()) as usize,
         }
@@ -338,7 +336,7 @@ impl Connection {
             let old = core::mem::replace(&mut self.path.remote, spare);
             self.track_reset_token(&self.path, shared);
             self.remote_ids.retire(old.sequence)?;
-            self.spin = false;
+            self.spin_bit = false;
         }
         while let Some(at) = (self.candidates.iter()).position(|it| it.remote.sequence < oldest) {
             let path = self.candidates.remove(at);
@@ -415,7 +413,7 @@ impl Connection {
         self.abandon_path(&old, shared)?;
         self.path.is_wanted = false;
         self.previous_peer = Some(from.peer);
-        self.spin = false;
+        self.spin_bit = false;
         if is_other_port {
             self.path.mtu = old.mtu;
         } else {

@@ -98,10 +98,7 @@ impl Connection {
         self.timers.set(Timer::Close, now + GRACE_PERIOD);
         self.streams.table.is_going_away = true;
         let (table, state) = (&mut self.streams.table, &mut self.streams.state);
-        let streams = (table.iter_mut()).filter(|it| it.0.direction() == Direction::Bidirectional);
-        let mut streams: Vec<_> = streams.collect();
-        streams.sort_unstable_by_key(|it| it.0);
-        for (id, stream) in streams {
+        for (id, stream) in table.sorted(|id, _| id.direction() == Direction::Bidirectional) {
             stream.abandon_message(id, self.http3.as_deref_mut());
             if !stream.flags.contains(Flags::WRITE_DONE) {
                 let code = match stream.role {

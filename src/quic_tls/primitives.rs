@@ -9,11 +9,8 @@ bun_opaque::opaque_ffi! {
 }
 
 /// `struct aes_key_st`.
-#[repr(C)]
-struct AES_KEY {
-    rd_key: [u32; 60],
-    rounds: c_uint,
-}
+#[repr(C, align(4))]
+struct AES_KEY([u8; 244]);
 
 unsafe extern "C" {
     safe fn EVP_aead_aes_128_gcm() -> &'static EVP_AEAD;
@@ -145,10 +142,7 @@ impl Crypto for BoringSsl {
             let key = key.try_into();
             return Box::new(ChaCha20(key.expect("the key has the length of the cipher")));
         }
-        let mut aes = Box::new(AES_KEY {
-            rd_key: [0; 60],
-            rounds: 0,
-        });
+        let mut aes = Box::new(AES_KEY([0; _]));
         // SAFETY: `key` has that many bits.
         let result =
             unsafe { AES_set_encrypt_key(key.as_ptr(), key.len() as c_uint * 8, &mut aes) };
@@ -236,8 +230,7 @@ impl PacketKey for EVP_AEAD_CTX {
 
 impl Drop for AES_KEY {
     fn drop(&mut self) {
-        self.rd_key.fill(0);
-        core::hint::black_box(&self.rd_key);
+        bun_core::secure_zero(&mut self.0);
     }
 }
 
@@ -254,8 +247,7 @@ struct ChaCha20([u8; 32]);
 
 impl Drop for ChaCha20 {
     fn drop(&mut self) {
-        self.0.fill(0);
-        core::hint::black_box(&self.0);
+        bun_core::secure_zero(&mut self.0);
     }
 }
 

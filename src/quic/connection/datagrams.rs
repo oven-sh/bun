@@ -16,7 +16,7 @@ const OVERHEAD: usize = 64;
 #[derive(Default)]
 pub(super) struct Datagrams {
     pub(super) unsent: VecDeque<(u64, Vec<u8>)>,
-    pub(super) undelivered_len: usize,
+    undelivered_len: usize,
 }
 
 fn frame_len(data: &[u8]) -> usize {

@@ -11,5 +11,6 @@ workspace = true
 
 [dependencies]
 bun_boringssl_sys.workspace = true
+bun_core.workspace = true
 bun_opaque.workspace = true
 bun_quic.workspace = true

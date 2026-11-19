@@ -3,6 +3,7 @@
 use crate::cid::{ConnectionId, LocalId};
 use crate::coding::{MAX_VARINT, Read, Write, two_byte_varint};
 use crate::crypto::{HeaderKey, Keys, PayloadKey, SAMPLE_LEN, TAG_LEN};
+use crate::frame::Frame;
 use crate::version::Version;
 
 pub(crate) const LONG_HEADER: u8 = 0x80;
@@ -14,8 +15,12 @@ const MAX_NUMBER_LEN: usize = 4;
 /// Of a datagram with an Initial packet, and what every path has to carry (RFC 9000 §14).
 pub(crate) const MIN_DATAGRAM_LEN: usize = 1200;
 
+/// Of the destination of the first packet (RFC 9000 §7.2).
+pub(crate) const MIN_INITIAL_ID_LEN: usize = 8;
+
 /// RFC 9000 §10.3.
 pub(crate) const MIN_RESET_LEN: usize = 21;
+/// So that the peer can answer any packet with a reset that passes for one of its own.
 const MIN_SENT_LEN: usize = MIN_RESET_LEN + 1 + LocalId::LEN;
 
 /// What a long header has in every version (RFC 8999 §5.1).
@@ -107,9 +112,7 @@ impl<'a> LongHeader<'a> {
             len,
         })
     }
-}
 
-impl LongHeader<'_> {
     pub(crate) fn without_token(&self) -> LongHeader<'static> {
         LongHeader {
             token: &[],
@@ -155,14 +158,40 @@ impl<'a> Sealed<'a> {
     }
 
     #[inline]
-    pub(crate) fn open(self, key: &PayloadKey) -> Option<&'a [u8]> {
-        key.open(self.number, self.header, self.payload)
+    pub(crate) fn open(self, key: &PayloadKey) -> Option<Opened<'a>> {
+        Some(Opened {
+            first: self.first,
+            number: self.number,
+            payload: key.open(self.number, self.header, self.payload)?,
+        })
     }
 }
 
-#[inline]
-pub(crate) fn has_reserved_bits(first: u8) -> bool {
-    first & if first & LONG_HEADER != 0 { 0x0c } else { 0x18 } != 0
+/// An authentic packet.
+pub(crate) struct Opened<'a> {
+    pub(crate) first: u8,
+    pub(crate) number: u64,
+    pub(crate) payload: &'a [u8],
+}
+
+impl Opened<'_> {
+    #[inline]
+    pub(crate) fn has_reserved_bits(&self) -> bool {
+        let is_long = self.first & LONG_HEADER != 0;
+        self.first & if is_long { 0x0c } else { 0x18 } != 0
+    }
+
+    /// For an Initial packet, which is dropped if there is something wrong with it (RFC 9000 §11.1). The frames also
+    /// have to pass `check`.
+    pub(crate) fn is_valid_initial(&self, mut check: impl FnMut(&Frame) -> bool) -> bool {
+        let mut rest = self.payload;
+        let mut is_valid = !self.has_reserved_bits() && !rest.is_empty();
+        while is_valid && !rest.is_empty() {
+            is_valid = Frame::read(&mut rest)
+                .is_ok_and(|frame| frame.is_allowed_in_handshake() && check(&frame));
+        }
+        is_valid
+    }
 }
 
 #[inline]

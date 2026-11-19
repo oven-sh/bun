@@ -9,4 +9,5 @@ mod server;
 
 pub use self::client::Client;
 pub use self::engine::{Connection, Stream};
-pub use self::header::{Header, Qpack};
+pub(crate) use self::header::Header;
+pub use self::header::Qpack;

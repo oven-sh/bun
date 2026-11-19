@@ -57,7 +57,7 @@ impl StreamId {
     }
 
     #[inline]
-    pub fn initiator(self) -> Side {
+    pub(crate) fn initiator(self) -> Side {
         match self.0 & 1 {
             0 => Side::Client,
             _ => Side::Server,

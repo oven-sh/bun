@@ -19,25 +19,25 @@ impl Stream {
 
     /// For bytes at `offset` that cannot be used yet.
     pub(crate) fn keep(&mut self, offset: u64, data: &[u8]) -> Result {
-        self.early.insert(offset, data).map_err(|_| TOO_MANY_GAPS)
+        self.kept.insert(offset, data).map_err(|_| TOO_MANY_GAPS)
     }
 
     /// For after [`Self::take_kept`].
     #[inline]
     pub(crate) fn check_kept(&self) -> Result {
-        self.early.check().map_err(|_| TOO_MANY_GAPS)
+        self.kept.check().map_err(|_| TOO_MANY_GAPS)
     }
 
     /// Takes bytes that were kept, and returns how many of them have been read.
     #[inline]
     pub(crate) fn take_kept(&mut self) -> Option<(usize, Vec<u8>)> {
-        let (offset, chunk) = self.early.pop(self.read)?;
+        let (offset, chunk) = self.kept.pop(self.read)?;
         Some(((self.read - offset) as usize, chunk))
     }
 
     #[inline]
     pub(crate) fn has_kept(&self) -> bool {
-        !self.early.is_empty()
+        !self.kept.is_empty()
     }
 
     /// For when what is left of it is not going to be read.
@@ -184,7 +184,7 @@ impl State {
     #[inline]
     pub(crate) fn finish_reading(&mut self, id: StreamId, stream: &mut Stream) {
         if stream.mark(Flags::READ_DONE) {
-            stream.early = Default::default();
+            stream.kept = Default::default();
             stream.ready = Vec::new();
         }
         self.credit(id, stream);

@@ -127,10 +127,7 @@ impl Connection {
             Side::Server => http3_code::REQUEST_REJECTED,
         };
         let Streams { table, state, .. } = &mut self.streams;
-        let streams = table.iter_mut().filter(|it| is_rejected(it.0, it.1));
-        let mut streams: Vec<_> = streams.collect();
-        streams.sort_unstable_by_key(|it| it.0);
-        for (id, stream) in streams {
+        for (id, stream) in table.sorted(is_rejected) {
             stream.abandon_message(id, self.http3.as_deref_mut());
             state.notify(id, stream, StreamEvent::Reset(http3_code::REQUEST_REJECTED));
             state.reset(id, stream, code);
@@ -244,8 +241,8 @@ impl Connection {
                 ControlFrame::GoAway(id) => self.on_go_away(id)?,
                 ControlFrame::PriorityUpdate(id, it) => self.on_priority_update(id, it)?,
                 ControlFrame::Origin(payload) => {
-                    self.origins = self.origins.saturating_add(1);
-                    if self.origins <= MAX_ORIGIN_FRAMES {
+                    self.origin_frames_received = self.origin_frames_received.saturating_add(1);
+                    if self.origin_frames_received <= MAX_ORIGIN_FRAMES {
                         self.emit(Event::Origin(payload));
                     }
                 }

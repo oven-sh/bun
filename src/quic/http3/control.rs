@@ -1,7 +1,7 @@
 //! RFC 9114 §6.2.1 and §7.2.
 
 use super::Priority;
-use super::frame::{Cursor, kind};
+use super::frame::{self, Cursor, kind};
 use crate::coding::{Read, Write};
 use crate::config::Http3Config;
 use crate::error::{Error, Result, http3_code};
@@ -204,10 +204,21 @@ pub(crate) fn write_settings(config: &Http3Config, out: &mut Vec<u8>) {
             payload.varint(value);
         }
     }
-    write_frame(kind::SETTINGS, &payload, out);
+    frame::write(kind::SETTINGS, &payload, out);
 }
 
-pub(super) fn write_frame(kind: u64, payload: &[u8], out: &mut Vec<u8>) {
-    out.varint(kind);
-    out.prefixed_bytes(payload);
+pub(crate) fn go_away_frame(id: StreamId) -> Vec<u8> {
+    let (mut payload, mut out) = (Vec::new(), Vec::new());
+    payload.varint(id.0);
+    frame::write(kind::GOAWAY, &payload, &mut out);
+    out
+}
+
+pub(crate) fn priority_update_frame(id: StreamId, priority: Priority) -> Vec<u8> {
+    let (mut payload, mut out) = (Vec::new(), Vec::new());
+    payload.varint(id.0);
+    let (value, len) = priority.encode();
+    payload.extend(value.iter().take(len));
+    frame::write(kind::PRIORITY_UPDATE_REQUEST, &payload, &mut out);
+    out
 }

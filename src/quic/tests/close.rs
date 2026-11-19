@@ -552,7 +552,6 @@ fn what_is_known_in_each_phase() {
         raw.start(&[]);
         let side = raw.side;
         let connection = raw.connection();
-        assert_eq!(connection.side(), !side);
         assert!(!connection.is_ready() && connection.tls().is_some());
         assert_eq!(connection.peer_parameters().is_some(), side.is_client());
         assert_eq!(connection.local_parameters().max_ack_delay_millis, 25);

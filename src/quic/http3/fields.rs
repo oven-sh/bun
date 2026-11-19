@@ -4,6 +4,7 @@ use bun_core::strings::{self, ByteSet};
 use bun_qpack::{Field, Indexing};
 
 use super::Priority;
+use super::message::{Fault, MALFORMED};
 use crate::coding::MAX_VARINT;
 use crate::config::Http3Config;
 
@@ -142,6 +143,7 @@ enum Name {
 }
 
 impl Name {
+    /// `None` if it is not allowed. The indices are those of RFC 9204 Appendix A.
     #[inline]
     fn of(field: &Field) -> Option<Self> {
         Some(match field.static_index {
@@ -182,11 +184,6 @@ pub(super) struct Summary {
     pub(super) status: u16,
     pub(super) content_length: Option<u64>,
     pub(super) priority: Option<Priority>,
-}
-
-pub(super) enum Failure {
-    Malformed,
-    Compression(bun_qpack::Error),
 }
 
 impl Summary {
@@ -274,6 +271,7 @@ fn is_in(set: &ByteSet, bytes: &[u8]) -> bool {
     set.prefix_len(bytes) == bytes.len()
 }
 
+/// The one in `bun_core` also takes signs and underscores.
 fn parse_decimal(digits: &[u8]) -> Option<u64> {
     let (first, rest) = digits.split_first()?;
     let digit = |byte: &u8| byte.is_ascii_digit().then(|| u64::from(byte - b'0'));
@@ -290,22 +288,21 @@ pub(super) fn decode(
     expected: Expected,
     config: &Http3Config,
     out: &mut Fields,
-) -> Result<Option<Summary>, Failure> {
-    let lines = decoder.decode(stream, section, &mut out.bytes);
-    let Some(mut lines) = lines.map_err(Failure::Compression)? else {
+) -> Result<Option<Summary>, Fault> {
+    let Some(mut lines) = decoder.decode(stream, section, &mut out.bytes)? else {
         return Ok(None);
     };
     let mut summary = Summary::default();
     let (mut size, mut count, mut kept_size) = (0, 0, 0);
     let (mut authority, mut host) = (None, None);
-    while let Some(field) = lines.next().map_err(Failure::Compression)? {
+    while let Some(field) = lines.next()? {
         let (name_len, untrimmed) = (field.name().len(), field.value());
         let len = name_len + untrimmed.len();
         (size, count) = (size + len + FIELD_OVERHEAD, count + 1);
         if size > config.tolerated_fields.size || count > config.tolerated_fields.count {
-            return Err(Failure::Malformed);
+            return Err(MALFORMED);
         }
-        let name = Name::of(&field).ok_or(Failure::Malformed)?;
+        let name = Name::of(&field).ok_or(MALFORMED)?;
         let (value, leading) = match name {
             Name::Pseudo(bit) if bit != Seen::AUTHORITY => (untrimmed, 0),
             _ => {
@@ -314,7 +311,7 @@ pub(super) fn decode(
                 (strings::trim_right(start, b" \t"), leading)
             }
         };
-        (summary.add(&name, value, expected)).ok_or(Failure::Malformed)?;
+        (summary.add(&name, value, expected)).ok_or(MALFORMED)?;
         if kept_size + len + config.field_overhead > config.kept_fields.size
             || out.entries.len() >= config.kept_fields.count
         {
@@ -339,7 +336,7 @@ pub(super) fn decode(
     }
     let is_consistent = (authority.zip(host)).is_none_or(|(a, b)| out.value(&a) == out.value(&b));
     if !is_consistent || !summary.is_complete(expected, config.connect_protocol) {
-        return Err(Failure::Malformed);
+        return Err(MALFORMED);
     }
     Ok(Some(summary))
 }

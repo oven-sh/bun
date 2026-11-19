@@ -7,13 +7,13 @@ use std::rc::{Rc, Weak};
 
 use bun_core::ZStr;
 use bun_ptr::BackRef;
+use bun_quic::http3::{Fields, Header};
 use bun_quic::{
     Addresses, Context, Direction, Duration, Endpoint, Event, Handle, Incoming, Instant, StreamId,
     Unrouted, Version,
 };
 use bun_quic_tls::BoringSsl;
 
-use super::Header;
 use super::drivers::{Driver, Registration};
 use super::io::{Binding, Outbox, now};
 use crate::{Loop, udp};
@@ -328,7 +328,7 @@ impl Connection {
     }
 
     #[inline]
-    pub fn recycle(&self, fields: bun_quic::http3::Fields) {
+    pub fn recycle(&self, fields: Fields) {
         self.engine.endpoint.borrow_mut().recycle(fields);
     }
 }
@@ -341,6 +341,8 @@ pub struct Stream {
     id: StreamId,
 }
 
+bun_core::assert_ffi_layout!(Stream, 24, 8; id @ 16);
+
 impl Stream {
     #[inline]
     pub fn set_context(&self, context: Context) {
@@ -348,9 +350,8 @@ impl Stream {
     }
 
     #[inline]
-    pub fn send_headers(&self, headers: &[Header], is_end: bool) {
+    pub fn send_headers<'a>(&self, headers: impl Iterator<Item = Header<'a>>, is_end: bool) {
         let Connection { engine, handle } = &self.connection;
-        let headers = headers.iter().map(Header::to_field);
         engine.endpoint().send_headers(*handle, self.id, headers);
         if is_end {
             self.finish();

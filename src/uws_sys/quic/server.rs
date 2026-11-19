@@ -180,7 +180,7 @@ impl Server {
     fn on_request(&self, stream: Stream, fields: &Fields) {
         let mut headers = self.headers.take();
         headers.clear();
-        headers.extend(fields.iter().map(|it| Header::init(it.0, it.1, None)));
+        headers.extend(fields.iter().map(|it| Header::init(it.0, it.1)));
         // SAFETY: `user` came with the callbacks, and the headers point into `fields`.
         unsafe {
             let response = (self.callbacks.on_open)(self.user, &stream);
@@ -393,7 +393,8 @@ unsafe extern "C" fn us_quic_stream_send_headers(
 ) {
     // SAFETY: the caller's.
     let headers = unsafe { bun_core::ffi::slice(headers, count as usize) };
-    stream.send_headers(headers, is_end);
+    // SAFETY: likewise.
+    stream.send_headers(headers.iter().map(|it| unsafe { it.to_field() }), is_end);
 }
 
 #[unsafe(no_mangle)]

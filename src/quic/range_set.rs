@@ -123,15 +123,11 @@ impl RangeSet {
     pub(crate) fn gaps(&self, within: Range<u64>) -> impl Iterator<Item = Range<u64>> + '_ {
         let first = self.0.partition_point(|range| range.end <= within.start);
         let end = within.end;
-        (self
-            .0
-            .range(first..)
-            .take_while(move |range| range.start < end))
-        .cloned()
-        .chain(core::iter::once(end..end))
-        .scan(within.start, |at, range| {
-            Some(core::mem::replace(at, range.end)..range.start)
-        })
-        .filter(|gap| !gap.is_empty())
+        let inside = (self.0.range(first..)).take_while(move |range| range.start < end);
+        (inside.cloned().chain(core::iter::once(end..end)))
+            .scan(within.start, |at, range| {
+                Some(core::mem::replace(at, range.end)..range.start)
+            })
+            .filter(|gap| !gap.is_empty())
     }
 }

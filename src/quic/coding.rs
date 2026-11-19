@@ -1,6 +1,6 @@
 //! The integers and byte strings that packets and frames are made of (RFC 9000 §16).
 
-pub const MAX_VARINT: u64 = (1 << 62) - 1;
+pub(crate) const MAX_VARINT: u64 = (1 << 62) - 1;
 const _: () = assert!(MAX_VARINT as usize as u64 == MAX_VARINT);
 
 /// Takes values off the front of a slice. `None` means that the slice is too short.
@@ -92,6 +92,7 @@ impl Write for Vec<u8> {
 
 /// For a length that is known only after what follows it has been written. `value` is less than 2^14.
 #[inline]
+#[cfg_attr(mordant, allow(bound_checked_only_in_debug))]
 pub(crate) fn two_byte_varint(value: usize) -> [u8; 2] {
     debug_assert!(value < 0x4000);
     (value as u16 | 0b01 << 14).to_be_bytes()

@@ -337,15 +337,16 @@ for (const server of servers) {
             onconnect: connected.hit,
             onclose: (err: any) => void (err?.code === code("IDLE_TIMEOUT") && idledOut.hit()),
           });
-          while (connected.count < 4) await call(sql);
+          const sessions = new Set<unknown>();
+          while (connected.count < 4) sessions.add(await call(sql));
           // Dialed after the four have logged in, and its one connection idles out after four times as long: by
           // then the three have had their time.
           let over = false;
           await using clock = await pool({ idleTimeout: 1, onclose: () => void (over = true) });
           const ticking = clock.connect();
-          while (idledOut.count < 3 && !over) await call(sql);
+          while (idledOut.count < 3 && !over) sessions.add(await call(sql));
           await ticking;
-          expect(idledOut.count).toBeGreaterThanOrEqual(3);
+          expect({ sessions: sessions.size, idledOut: idledOut.count >= 3 }).toEqual({ sessions: 1, idledOut: true });
         },
       );
 

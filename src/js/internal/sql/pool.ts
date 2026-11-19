@@ -257,8 +257,7 @@ function closeTimeoutMs(options?: { timeout?: number }): number | undefined {
   return Math.min(seconds * 1000, 2 ** 31 - 1);
 }
 
-/// The fewest queries first. Of those, one without a prepared distributed transaction: a server that keeps that on
-/// its session refuses there whatever is not its commit or rollback.
+/// Fewest queries first, then no prepared distributed transaction: MariaDB refuses other statements beside one.
 function rank(connection: PooledConnection): number {
   return connection.queryCount * 2 + (connection.flags & PooledConnectionFlags.prepared ? 1 : 0);
 }
@@ -503,8 +502,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   protected abstract readonly rollbackPrepared: string;
 
   /// Every connection that is connecting or open. One enters before it dials and leaves when it closes.
-  /// The open ones come first, in the order they logged in. Only a login and a close change the order, so the
-  /// callers that come one after the other get the same connection, and the others can reach `idleTimeout`.
+  /// The open ones come first, in login order.
   public readonly connections: PooledConnection[] = [];
 
   public queue: Array<OnConnected | Reservation> = [];
@@ -745,9 +743,8 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     }
   }
 
-  /// The ready connection of the lowest rank(), if it runs fewer than `limit` queries: of several, the one that
-  /// logged in first. The `setAside` that will be idle first are left to the reservations that wait ahead of the
-  /// caller.
+  /// The ready connection of the lowest rank() that runs fewer than `limit` queries, the first login of several.
+  /// The `setAside` that will be idle first are left to the reservations that wait ahead of the caller.
   #leastBusy(limit: number, setAside: number): PooledConnection | null {
     const connections = this.connections;
     if (setAside !== 0) {

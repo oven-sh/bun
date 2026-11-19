@@ -1200,6 +1200,22 @@ describe.concurrent("backoff", () => {
       expect(registry.at.manifest.length).toBe(3);
       expect(exitCode).toBe(0);
     });
+
+    // A migration from yarn.lock drops an entry whose range has changed.
+    it.if(name === "pnpm-lock.yaml")("are not waited for when the registry URL is invalid", async () => {
+      using dir = project("ftp://127.0.0.1/");
+      await writeFile(join(String(dir), name), lockfile);
+      await writeFile(
+        join(String(dir), "package.json"),
+        JSON.stringify({ name: "foo", dependencies: { bar: "^1.0.0" } }),
+      );
+      const { lines, exitCode } = await install(String(dir), {}, "--lockfile-only");
+      expect(lines.filter(line => /^(warn|error):/.test(line))).toEqual([
+        expect.stringMatching(/^warn: Registry URL must be http/),
+        "error: bar@^1.0.0 failed to resolve",
+      ]);
+      expect(exitCode).toBe(1);
+    });
   });
 
   describe("request concurrency", () => {

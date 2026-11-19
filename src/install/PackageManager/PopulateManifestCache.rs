@@ -86,6 +86,8 @@ fn start_manifest_task(
         !is_required,
         needs_extended_manifest,
     ) {
+        let reported = super::ManifestFailure::already_reported();
+        let _ = manager.manifest_failures.insert(task_id, reported);
         run_tasks::return_network_task(manager, net_ptr);
         return Err(err.into());
     }

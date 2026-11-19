@@ -2277,8 +2277,7 @@ pub mod parse_worker {
         opts.features.allow_runtime = !task.source_index.is_runtime();
         opts.features.unwrap_commonjs_to_esm =
             output_format == options::Format::Esm && FeatureFlags::UNWRAP_COMMONJS_TO_ESM;
-        // `topts.target`, not `target`: a hashbang does not change the bundle's `__require`,
-        // and a client-graph file of a server build is `Browser` here.
+        // Not `target`: a hashbang does not change which `__require` the bundle gets.
         opts.features.target_has_require = topts.target.is_server_side();
         opts.features.top_level_await = output_format == options::Format::Esm
             || output_format == options::Format::InternalBakeDev;

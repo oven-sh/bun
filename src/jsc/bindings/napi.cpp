@@ -1275,6 +1275,8 @@ extern "C" napi_status napi_detach_arraybuffer(napi_env env,
     NAPI_RETURN_EARLY_IF_FALSE(env, jsArrayBuffer && !jsArrayBuffer->isShared(), napi_arraybuffer_expected);
 
     auto* arrayBuffer = jsArrayBuffer->impl();
+    // Unlike Node. The addon may own the bytes and take napi_ok to mean that nothing uses them any more.
+    NAPI_RETURN_EARLY_IF_FALSE(env, !arrayBuffer->isBorrowed(), napi_detachable_arraybuffer_expected);
     // Node then requires IsDetachable(). Detaching an already-detached buffer
     // is a no-op in both engines, so treat that as success.
     NAPI_RETURN_EARLY_IF_FALSE(env, arrayBuffer->isDetached() || arrayBuffer->isDetachable(), napi_detachable_arraybuffer_expected);
@@ -2356,7 +2358,7 @@ public:
     {
     }
 
-    // The contents died (GC, or the heap going away).
+    // The contents died (GC, the heap going away, a detach, or the last unpin after a detach).
     void run(void* data) override
     {
         if (!m_armed || m_finalized)
@@ -2367,7 +2369,11 @@ public:
             m_bound = nullptr;
         }
         NAPI_LOG("external buffer finalizer");
-        m_env->doFinalizer(m_cb, data, m_hint);
+        // From a task, as in Node: the finalizer can call into JS, which the caller of an unpin does not expect.
+        if (m_env->vm().currentThreadIsHoldingAPILock() && !m_env->inGC() && m_env->canCallIntoJS())
+            Bun__napi_enqueue_finalizer(m_env.ptr(), m_cb, data, m_hint);
+        else
+            m_env->doFinalizer(m_cb, data, m_hint);
     }
 
     void arm(void* data)

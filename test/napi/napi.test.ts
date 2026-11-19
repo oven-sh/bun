@@ -513,6 +513,21 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     );
   });
 
+  // Node finalizes the second buffer without waiting for the write, so this only runs on Bun.
+  it("the finalizer of a detached external buffer runs from a task, after the calls that use its bytes", async () => {
+    using dir = tempDir("napi-external-detached", {});
+    const result = await runOn(bunExe(), "test_external_buffer_detached", [join(String(dir), "out")]);
+    expect(result.trim().split(/\r?\n/)).toEqual([
+      "after transfer(0): 0",
+      "later: 1",
+      "while a write is pending: 1 byteLength: 0",
+      "in its callback: 1",
+      "later: 2",
+      "written: 1,2,3,4,5,6,7,8",
+      "resolved to undefined",
+    ]);
+  });
+
   // The finalizer of an external buffer belongs to the env that created it, and that env's
   // teardown frees the bytes, so the bytes must not be transferred to another thread.
   describe("external buffers are untransferable", () => {
@@ -2825,6 +2840,18 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
         "napi_detach_arraybuffer=0 napi_is_detached_arraybuffer=0 is_detached=true napi_get_arraybuffer_info=0 length=0",
         "napi_detach_arraybuffer=0 napi_is_detached_arraybuffer=0 is_detached=true napi_get_arraybuffer_info=0 length=0",
         "napi_detach_arraybuffer=19 napi_is_detached_arraybuffer=0 is_detached=false napi_get_arraybuffer_info=1 length=0",
+      ]);
+    });
+
+    // Node returns napi_ok, so this only runs on Bun.
+    it("rejects a buffer that a pending call is using", async () => {
+      using dir = tempDir("napi-detach-in-use", {});
+      const output = await runOn(bunExe(), "test_detach_arraybuffer_in_use", [join(String(dir), "out")]);
+      expect(output.match(/napi_detach_arraybuffer=.*/g)).toEqual([
+        "napi_detach_arraybuffer=20 napi_is_detached_arraybuffer=0 is_detached=false napi_get_arraybuffer_info=0 length=4096",
+        "napi_detach_arraybuffer=20 napi_is_detached_arraybuffer=0 is_detached=true napi_get_arraybuffer_info=0 length=0",
+        "napi_detach_arraybuffer=0 napi_is_detached_arraybuffer=0 is_detached=true napi_get_arraybuffer_info=0 length=0",
+        "napi_detach_arraybuffer=0 napi_is_detached_arraybuffer=0 is_detached=true napi_get_arraybuffer_info=0 length=0",
       ]);
     });
   });

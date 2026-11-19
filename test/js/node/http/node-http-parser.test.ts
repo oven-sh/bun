@@ -1,5 +1,6 @@
+import { isBufferPinned } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, detachAndReuse } from "harness";
 import { maxHeaderSize } from "node:http";
 const { HTTPParser, ConnectionsList, methods, allMethods } = process.binding("http_parser") as any;
 const { parsers } = require("node:_http_common");
@@ -510,18 +511,31 @@ describe("HTTPParser.prototype.execute", () => {
       ["head", everyCallback.indexOf("\nA")],
       ["body", everyCallback.indexOf("AGET")],
       ["complete", everyCallback.length - 1],
-    ])("keeps it attached from %s on", (name, start) => {
-      let input: Uint8Array | undefined;
-      const transfer = () => void input?.buffer.transfer(0);
-      const { parser, calls, execute } = recorded(REQUEST, { [name]: transfer });
-      if (name === "maxHeaderPairs") Object.defineProperty(parser, name, { get: transfer });
+    ])("reads on when %s detaches it", (name, start) => {
+      let input: Uint8Array<ArrayBuffer> | undefined;
+      const detach = () => void (input?.length && detachAndReuse(input.buffer));
+      const { parser, calls, execute } = recorded(REQUEST, { [name]: detach });
+      if (name === "maxHeaderPairs") Object.defineProperty(parser, name, { get: detach });
       if (name === "complete") (delete parser[kOnHeadersComplete], delete parser[kOnHeaders]);
       execute(text.slice(0, start));
       input = viewOf(text.slice(start));
       expect(parser.execute(input)).toBe(text.length - start);
       expect(calls.at(-1)).toEqual(["body", body]);
-      transfer();
       expect(input.length).toBe(0);
+      expect(isBufferPinned(input)).toBe(false);
+    });
+
+    test("reads a copy of it once it has another owner", () => {
+      const input = viewOf(text);
+      let moved: Uint8Array | undefined, current: Buffer | undefined;
+      const { parser, calls } = recorded(REQUEST, {
+        begin: () => void (moved ??= new Uint8Array(input.buffer.transfer())),
+        head: parser => void (moved!.fill(0), (current = parser.getCurrentBuffer())),
+      });
+      expect(parser.execute(input)).toBe(text.length);
+      expect(calls.at(-1)).toEqual(["body", body]);
+      expect(current!.toString()).toBe(text);
+      expect([input, moved!].map(isBufferPinned)).toEqual([false, false]);
     });
 
     test.each(["called", "read"])("needs it no more when the last callback is %s", when => {
@@ -745,11 +759,13 @@ describe("HTTPParser.prototype.execute", () => {
     expect(names()).toBe("begin head complete");
   });
 
-  test("keeps the input buffer attached when a callback transfers it mid-parse", async () => {
+  test("finishes an input that a callback detaches mid-parse", async () => {
     const parser = new HTTPParser();
     parser.initialize(HTTPParser.REQUEST, {});
 
-    const input = Buffer.from("POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 11\r\n\r\nhello world");
+    const input = new Uint8Array(
+      Buffer.from("POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 11\r\n\r\nhello world"),
+    );
     const inputLength = input.byteLength;
 
     const bodyChunks: string[] = [];
@@ -758,12 +774,9 @@ describe("HTTPParser.prototype.execute", () => {
     parser[kOnHeadersComplete] = function () {
       try {
         // The parser still refers to `input` here and will keep reading
-        // from it after this callback returns. Transferring the backing
-        // ArrayBuffer must not free that memory out from under the parser:
-        // the original buffer stays attached for the rest of execute().
-        input.buffer.transfer();
-        expect(input.buffer.detached).toBe(false);
-        expect(input.byteLength).toBe(inputLength);
+        // from it after this callback returns.
+        detachAndReuse(input.buffer);
+        expect(input.buffer.detached).toBe(true);
       } catch (err) {
         reject(err);
       }
@@ -782,11 +795,12 @@ describe("HTTPParser.prototype.execute", () => {
     // body it reports is the request's actual body.
     expect(bodyChunks.join("")).toBe("hello world");
     expect(executed).toBe(inputLength);
+    expect(isBufferPinned(input)).toBe(false);
   });
 
   // A callback can shrink a resizable ArrayBuffer, or grow a WebAssembly.Memory, while the parser is
-  // still scanning the input. Both unmap the input bytes, which a pin does not stop, so each case
-  // runs in a child process: the parse must finish on bytes that stay mapped.
+  // still scanning the input. Both can unmap the input bytes, so each case runs in a child process:
+  // the parse must finish on bytes that stay mapped.
   const head = "POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n";
   const tail = "0\r\n\r\n";
   const payloadSize = 1024;

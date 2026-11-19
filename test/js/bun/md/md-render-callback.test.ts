@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, detachAndReuse } from "harness";
 
 const Markdown = Bun.markdown;
 
@@ -409,25 +410,53 @@ describe("Bun.markdown.render", () => {
 });
 
 describe("Bun.markdown buffer input", () => {
-  test("the input buffer stays attached while a callback runs and is released after", () => {
-    const input = new TextEncoder().encode("# Hello\n\nworld\n");
-    let detachedDuringRender = null as boolean | null;
-    const result = Markdown.render(input, {
-      heading: (children: string) => {
-        input.buffer.transfer();
-        detachedDuringRender = (input.buffer as ArrayBuffer).detached;
-        return `<h1>${children}</h1>`;
-      },
-      paragraph: (children: string) => `<p>${children}</p>`,
+  describe.each([
+    ["over an ArrayBuffer", () => new TextEncoder().encode("# Hello\n\nworld\n")],
+    ["with no ArrayBuffer yet", () => new Uint8Array(Buffer.from("# Hello\n\nworld".padEnd(4096, "\n")))],
+  ])("an input %s", (_, makeInput) => {
+    test.each<[string, (input: Uint8Array<ArrayBuffer>) => void]>([
+      ["detaches", input => detachAndReuse(input.buffer)],
+      ["overwrites", input => input.fill(0x78)],
+    ])("renders as it was passed when a callback %s it", (_, change) => {
+      const input = makeInput();
+      const result = Markdown.render(input, {
+        heading: (children: string) => (change(input), `<h1>${children}</h1>`),
+        paragraph: (children: string) => `<p>${children}</p>`,
+      });
+      expect(result).toBe("<h1>Hello</h1><p>world</p>");
     });
-    expect(detachedDuringRender).toBe(false);
-    expect(result).toBe("<h1>Hello</h1><p>world</p>");
-
-    input.buffer.transfer();
-    expect((input.buffer as ArrayBuffer).detached).toBe(true);
   });
 
-  // A pin prevents a detach but not a shrink, and `resize()` unmaps the trimmed pages.
+  test("renders the bytes the caller passed when a callback grows their WebAssembly.Memory", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        const memory = new WebAssembly.Memory({ initial: 1 });
+        const { written } = new TextEncoder().encodeInto("# Hello\\n\\nworld\\n", new Uint8Array(memory.buffer));
+        const input = new Uint8Array(memory.buffer, 0, written);
+        const output = Bun.markdown.render(input, {
+          heading: children => (memory.grow(1), "<h1>" + children + "</h1>"),
+          paragraph: children => "<p>" + children + "</p>",
+        });
+        console.log(JSON.stringify({ detached: input.byteLength === 0, output }));
+      `,
+      ],
+      // Without fast memory, `grow()` moves the block on every platform. With system malloc, the old block is unmapped.
+      env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", Malloc: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ detached: true, output: "<h1>Hello</h1><p>world</p>" }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // `resize()` unmaps the trimmed pages.
   // The options are read before the bytes, so a getter that shrinks the input leaves nothing to render.
   describe("survives a resizable input that shrinks during the call", () => {
     const source = "# Hello\n\nworld **bold**\n";

@@ -4891,11 +4891,10 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
                 throwVMTypeError(&lexicalGlobalObject, scope, errorMessageForTransfer(arrayBuffer));
                 RELEASE_AND_RETURN(scope, Exception { ExistingExceptionError });
             }
-            // No generic isDetachable() gate: Bun's native borrows call
+            // No generic isDetachable() gate: Bun::PinnedArrayBuffer calls
             // ArrayBuffer::pin(), which clears isDetachable() without setting
             // the lock flag. A pinned buffer falls through so transferTo()
-            // takes its copyTo() fallback (see bindings.cpp
-            // JSC__JSValue__pinArrayBuffer). WebAssembly.Memory stays rejected
+            // takes its copyTo() fallback. WebAssembly.Memory stays rejected
             // above per the spec's [[ArrayBufferDetachKey]] requirement.
             arrayBuffers.append(WTF::move(arrayBuffer));
             continue;

@@ -3155,6 +3155,42 @@ it("ReadableStream BYOB read pending at cancel() resolves with undefined", async
   await reader.closed;
 });
 
+describe.each([
+  ["over an ArrayBuffer", () => new Uint8Array(new ArrayBuffer(4096))],
+  ["with no ArrayBuffer yet", () => new Uint8Array(4096)],
+  ["over a resizable ArrayBuffer", () => new Uint8Array(new ArrayBuffer(4096, { maxByteLength: 8192 }))],
+])("a byte stream takes over a view %s that a pending call is using", (_, makeView) => {
+  const expected = Buffer.alloc(4096, 97);
+
+  it("enqueue()", async () => {
+    const view = makeView().fill(97);
+    const pending = Bun.zstdCompress(view);
+    const reader = new ReadableStream({ type: "bytes", start: c => c.enqueue(view) }).getReader();
+    expect(view.byteLength).toBe(0);
+    expect(Buffer.from((await reader.read()).value)).toEqual(expected);
+    expect(Bun.zstdDecompressSync(await pending)).toEqual(expected);
+  });
+
+  it.each([
+    ["respond()", request => request.respond(4096)],
+    ["respondWithNewView()", request => request.respondWithNewView(request.view)],
+  ])("read(view) and %s", async (_, respond) => {
+    const view = makeView().fill(97);
+    const pending = [Bun.zstdCompress(view)];
+    const reader = new ReadableStream({
+      type: "bytes",
+      pull(c) {
+        pending.push(Bun.zstdCompress(c.byobRequest.view));
+        respond(c.byobRequest);
+      },
+    }).getReader({ mode: "byob" });
+    const read = reader.read(view);
+    expect(view.byteLength).toBe(0);
+    expect(Buffer.from((await read).value)).toEqual(expected);
+    expect((await Promise.all(pending)).map(bytes => Bun.zstdDecompressSync(bytes))).toEqual([expected, expected]);
+  });
+});
+
 describe("pipeTo from a byte source", () => {
   it("delivers the enqueued chunks and resolves", async () => {
     const rs = new ReadableStream({

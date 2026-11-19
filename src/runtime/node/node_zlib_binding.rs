@@ -174,6 +174,7 @@ enum PendingInput {
 
 /// The ranges an async `write()` reads and fills. They do not overlap.
 struct PendingBuffers {
+    in_js: JSValue,
     input: PendingInput,
     out: PinnedArrayBuffer,
 }
@@ -198,6 +199,7 @@ impl PendingBuffers {
         out.narrow(out_range.start, out_range.len());
         if in_range.is_empty() {
             return Ok(Self {
+                in_js,
                 input: PendingInput::Empty,
                 out,
             });
@@ -212,7 +214,7 @@ impl PendingBuffers {
             throw_if_overlapping(global, &in_buf, &out)?;
             PendingInput::Pinned(in_buf)
         };
-        Ok(Self { input, out })
+        Ok(Self { in_js, input, out })
     }
 
     fn slices<'a>(&'a mut self, input_copy: &'a InputCopy) -> (&'a [u8], &'a mut [u8]) {
@@ -222,6 +224,21 @@ impl PendingBuffers {
             PendingInput::Copied(range) => &input_copy.bytes[range.clone()],
         };
         (input, self.out.slice_mut())
+    }
+
+    /// Copies the last `len` bytes of the input if its view was detached, so JS can't resend them from there.
+    fn copy_unread_if_detached(
+        &mut self,
+        global: &JSGlobalObject,
+        input_copy: &InputCopy,
+        len: usize,
+    ) -> JsResult<JSValue> {
+        let view = self.in_js.as_array_buffer(global);
+        if !view.is_some_and(|view| view.is_detached()) {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let (input, _) = self.slices(input_copy);
+        ArrayBuffer::create_buffer(global, &input[input.len().saturating_sub(len)..])
     }
 }
 
@@ -251,19 +268,28 @@ impl<T: CompressionStreamImpl> JobContext for PendingWrite<T> {
         let (global, this, this_value) = (handle.global(), handle.payload(), handle.to_js());
         let Self {
             mut stream,
-            buffers,
+            mut buffers,
         } = write;
+
+        let result = stream.context.write_result();
+        // JS resends the input if the output was filled.
+        let unread = match result {
+            Ok([0, avail_in]) => {
+                buffers.copy_unread_if_detached(global, &stream.input_copy, avail_in as usize)
+            }
+            _ => Ok(JSValue::UNDEFINED),
+        };
 
         drop(buffers);
         T::pending_input_set_cached(this_value, global, JSValue::ZERO);
         T::pending_output_set_cached(this_value, global, JSValue::ZERO);
 
-        let result = stream.context.write_result();
         // The copy is only read again if some input is unconsumed, because JS then resends it.
-        if let Ok([_, 0]) = result {
+        if matches!(result, Ok([_, 0])) || matches!(unread, Ok(unread) if unread.is_cell()) {
             stream.input_copy = InputCopy::default();
         }
         this.stream().set(Some(stream));
+        let unread = unread?;
 
         match result {
             Ok(result) => T::flush_write_result(global, this_value, result),
@@ -280,7 +306,7 @@ impl<T: CompressionStreamImpl> JobContext for PendingWrite<T> {
                 write_callback,
                 global,
                 this_value,
-                &[],
+                &[unread],
             );
         }
 

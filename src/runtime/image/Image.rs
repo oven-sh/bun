@@ -24,7 +24,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, ArrayBuffer, EncodedSliceJsc as _, JSGlobalObject, JSPromise, JSValue, JsCell,
-    JsClass as _, JsRef, JsResult, StringJsc as _, Strong, SysErrorJsc as _,
+    JsClass as _, JsRef, JsResult, PinnedArrayBuffer, StringJsc as _, Strong, SysErrorJsc as _,
 };
 use bun_sys as sys;
 
@@ -117,19 +117,6 @@ pub(crate) enum Source {
 
 // `Vec<u8>`, `ZString`, and
 // `Strong` all implement `Drop`, so no explicit `Drop` body is needed.
-
-// Image-specific (pins typed-array storage for the off-thread pipeline); no `bun_jsc` wrapper.
-unsafe extern "C" {
-    /// 0 = detached/null, 1 = FastTypedArray (≤~1 KB, GC-movable — dupe),
-    /// 2 = pinned an existing ArrayBuffer (caller must unpin). 3 = held a
-    /// bufferless OversizeTypedArray: valid for the op, nothing to unpin (the
-    /// caller roots the value as it does for 2).
-    safe fn JSC__JSValue__borrowBytesForOffThread(
-        v: JSValue,
-        out_ptr: &mut *const u8,
-        out_len: &mut usize,
-    ) -> i32;
-}
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
@@ -657,6 +644,8 @@ fn error_with_code(global: &JSGlobalObject, code: &'static ZStr, msg: &'static Z
 enum PinError {
     #[error("detached")]
     Detached,
+    #[error("out of memory")]
+    OutOfMemory,
 }
 
 impl Image {
@@ -673,67 +662,28 @@ impl Image {
     fn pin_for_task(
         &self,
         this_value: JSValue,
-        _global: &JSGlobalObject,
-    ) -> Result<(Input, Pin), PinError> {
+        global: &JSGlobalObject,
+    ) -> Result<(Input, Option<PinnedArrayBuffer>), PinError> {
         match self.source.get() {
             Source::JsBuffer => {
-                let Some(v) = js::source_js_get_cached(this_value) else {
-                    return Err(PinError::Detached);
-                };
-                // Classify the storage mode WITHOUT promoting it. A fresh
-                // `new Uint8Array(N)` (the common path — `await res.bytes()`,
-                // `Buffer.from(file)`) is `OversizeTypedArray`: bytes in
-                // fastMalloc, no JSArrayBuffer wrapper, can't be detached or
-                // moved. Calling `possiblySharedBuffer()` on that would
-                // `slowDownAndWasteMemory()` → copy + allocate a wrapper for
-                // every input. The classifier returns the slice directly and
-                // tells us whether anything actually needs pinning.
-                let mut ptr: *const u8 = core::ptr::null();
-                let mut len: usize = 0;
-                match JSC__JSValue__borrowBytesForOffThread(v, &mut ptr, &mut len) {
-                    0 => Err(PinError::Detached),
-                    // FastTypedArray (≤ fastSizeLimit elements, GC-movable): tiny
-                    // by definition — dupe instead of forcing JSC to copy via
-                    // tryCreate(span()) + allocate a butterfly.
-                    1 => {
-                        if len == 0 {
-                            Err(PinError::Detached)
-                        } else {
-                            // SAFETY: classifier guarantees `ptr[0..len]` is
-                            // valid for the duration of this call (JS thread).
-                            let copied = unsafe { bun_core::ffi::slice(ptr, len) }.to_vec();
-                            Ok((
-                                Input {
-                                    copied: Some(copied),
-                                    ..Default::default()
-                                },
-                                Pin::NONE,
-                            ))
-                        }
-                    }
-                    // 2: Wasteful/DataView/JSArrayBuffer, pinned by the helper (unpin when done).
-                    // 3: OversizeTypedArray held without adopting an ArrayBuffer; nothing to unpin.
-                    kind @ (2 | 3) => {
-                        if len == 0 {
-                            if kind == 2 {
-                                v.unpin_array_buffer();
-                            }
-                            Err(PinError::Detached)
-                        } else {
-                            // SAFETY: pinned until the returned `Pin` drops (with the job's
-                            // Js side, or the sync caller's scope).
-                            let bytes = unsafe { bun_core::ffi::slice(ptr, len) };
-                            Ok((
-                                Input {
-                                    bytes: bun_ptr::RawSlice::new(bytes),
-                                    ..Default::default()
-                                },
-                                if kind == 2 { Pin(v) } else { Pin::NONE },
-                            ))
-                        }
-                    }
-                    _ => unreachable!(),
+                let view = js::source_js_get_cached(this_value)
+                    .and_then(|v| v.as_array_buffer(global))
+                    .filter(|view| view.byte_len > 0)
+                    .ok_or(PinError::Detached)?;
+                if view.len <= Input::MAX_COPIED_ELEMENTS {
+                    let input = Input {
+                        copied: Some(view.byte_slice().to_vec()),
+                        ..Default::default()
+                    };
+                    return Ok((input, None));
                 }
+                let pin = PinnedArrayBuffer::root_read_only(global, view.value)
+                    .ok_or(PinError::OutOfMemory)?;
+                let input = Input {
+                    bytes: bun_ptr::RawSlice::new(pin.slice()),
+                    ..Default::default()
+                };
+                Ok((input, Some(pin)))
             }
             // SAFETY: `Owned` bytes outlive the task because `this_ref` is held
             // Strong while pending_tasks > 0 (see `schedule()`).
@@ -742,14 +692,14 @@ impl Image {
                     bytes: bun_ptr::RawSlice::new(b.as_slice()),
                     ..Default::default()
                 },
-                Pin::NONE,
+                None,
             )),
             Source::Path(p) => Ok((
                 Input {
                     path: Some(std::ptr::from_ref::<ZStr>(p.as_zstr())),
                     ..Default::default()
                 },
-                Pin::NONE,
+                None,
             )),
             // schedule() peels this off before pin_for_task is reached.
             Source::Blob(_) => unreachable!(),
@@ -1094,6 +1044,10 @@ impl Image {
                 )
                 .as_value(cx.global()));
             }
+            Err(PinError::OutOfMemory) => {
+                let error = reject_error(cx.global(), codecs::Error::OutOfMemory);
+                return Ok(JSPromise::rejected_promise(cx.global(), error).as_value(cx.global()));
+            }
         };
         let work = PipelineTask {
             pipeline: self.pipeline.get(),
@@ -1169,6 +1123,7 @@ impl Image {
             Err(PinError::Detached) => {
                 return Err(global.throw(format_args!("Image: source ArrayBuffer was detached")));
             }
+            Err(PinError::OutOfMemory) => return Err(global.throw_out_of_memory()),
         };
         // `_pin` unpins at scope exit, after `run()` is done with the bytes.
         let mut task = PipelineTask {
@@ -1180,11 +1135,7 @@ impl Image {
             result: TaskResult::Err(codecs::Error::DecodeFailed),
         };
         task.run();
-        let result = mem::replace(
-            &mut task.result,
-            TaskResult::Err(codecs::Error::DecodeFailed),
-        );
-        match result {
+        match task.result {
             TaskResult::Encoded { out, format, w, h } => {
                 self.last_width.set(i32::try_from(w).expect("int cast"));
                 self.last_height.set(i32::try_from(h).expect("int cast"));
@@ -1324,7 +1275,7 @@ pub(crate) struct PipelineTask {
     auto_orient: bool,
     result: TaskResult,
 }
-// SAFETY: `input` borrows bytes that are pinned (`Pin`) or owned by the Image
+// SAFETY: `input` borrows bytes that are pinned (`_pin`) or owned by the Image
 // the job's Js side keeps alive; read only under the pool borrow. The rest is owned.
 unsafe impl Send for PipelineTask {}
 
@@ -1333,24 +1284,8 @@ unsafe impl Send for PipelineTask {}
 pub(crate) struct PipelineJs {
     promise: jsc::JSPromiseStrong,
     deliver: Deliver,
-    _pin: Pin,
+    _pin: Option<PinnedArrayBuffer>,
     image: PendingTask,
-}
-
-/// An ArrayBuffer pinned by `JSC__JSValue__borrowBytesForOffThread` (mode 2)
-/// so user code cannot transfer/detach it while the pool reads; unpinned on drop.
-pub(crate) struct Pin(JSValue);
-// SAFETY: a pin on a heap cell; gone with the heap.
-unsafe impl bun_jsc::job::JsAffine for Pin {}
-impl Pin {
-    const NONE: Pin = Pin(JSValue::ZERO);
-}
-impl Drop for Pin {
-    fn drop(&mut self) {
-        if !self.0.is_empty() {
-            self.0.unpin_array_buffer();
-        }
-    }
 }
 
 /// One pending operation's hold on its `Image`: keeps the wrapper Strong while
@@ -1401,13 +1336,12 @@ impl jsc::JobContext for PipelineTask {
 
 /// Bytes for the worker: a pinned/owned slice, a copy, or a path to read there.
 pub(crate) struct Input {
-    // Borrows pinned ArrayBuffer or `image.source.owned`; the owning `Image`
-    // is held via BACKREF for the task's lifetime — `RawSlice` invariant.
+    // Borrows from the task's `PinnedArrayBuffer` or `image.source.owned`; the owning
+    // `Image` is held via BACKREF for the task's lifetime — `RawSlice` invariant.
     bytes: bun_ptr::RawSlice<u8>,
     // Borrows `image.source.path` (NUL-terminated); the owning `Image` is
     // held via BACKREF for the task's lifetime, same as `bytes` above.
     path: Option<*const ZStr>,
-    /// FastTypedArray inputs are tiny and GC-movable: copied instead of pinned.
     copied: Option<Vec<u8>>,
 }
 
@@ -1422,6 +1356,9 @@ impl Default for Input {
 }
 
 impl Input {
+    /// `JSArrayBufferView::fastSizeLimit`. To pin a view this small, JSC has to copy it anyway.
+    const MAX_COPIED_ELEMENTS: usize = 1000;
+
     fn slice(&self) -> &[u8] {
         if let Some(c) = &self.copied {
             return c.as_slice();
@@ -1691,25 +1628,22 @@ impl PipelineTask {
         };
     }
 
-    /// Back on the JS thread: publish dims, deliver the result. The pin and
-    /// the hold on the Image are released when `js` drops at the end.
-    pub(crate) fn then(mut self, mut js: PipelineJs, cx: &jsc::JsThread<'_>) -> JsResult<()> {
+    /// Back on the JS thread: publish dims, release the input and the Image, deliver the result.
+    pub(crate) fn then(self, mut js: PipelineJs, cx: &jsc::JsThread<'_>) -> JsResult<()> {
+        let Self { input, result, .. } = self;
         let global = cx.global();
         let promise = js.promise.swap();
         let image = js.image.image(cx);
         // Stash final dims here (JS thread) — `run()` is on a WorkPool thread
         // so writing `image.*` there would race the synchronous getters.
-        match &self.result {
+        match &result {
             TaskResult::Encoded { w, h, .. } | TaskResult::Meta { w, h, .. } => {
                 image.last_width.set(i32::try_from(*w).expect("int cast"));
                 image.last_height.set(i32::try_from(*h).expect("int cast"));
             }
             _ => {}
         }
-        let result = mem::replace(
-            &mut self.result,
-            TaskResult::Err(codecs::Error::UnknownFormat),
-        );
+        drop((input, js._pin, js.image));
         match result {
             TaskResult::Encoded { out, format, .. } => {
                 match &mut js.deliver {

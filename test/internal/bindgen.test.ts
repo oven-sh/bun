@@ -1,7 +1,7 @@
-import { bindgen as bindings } from "bun:internal-for-testing";
+import { bindgen as bindings, isBufferPinned } from "bun:internal-for-testing";
 import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
 import { describe as describeAlways, expect, it as itAlways } from "bun:test";
-import { bunEnv, bunExe, runWithError, tempDir } from "harness";
+import { bunEnv, bunExe, detachAndReuse, runWithError, tempDir } from "harness";
 import { BlockList, SocketAddress } from "node:net";
 import { join } from "node:path";
 import { inspect } from "node:util";
@@ -2254,17 +2254,11 @@ describe("a string or a buffer, as bytes", () => {
     // In place: a write is seen.
     const written = new Uint8Array(eight);
     expect(pinned(written, () => void written.fill(2))).toEqual(new Array(8).fill(2));
-    const kept = new Uint8Array(eight);
-    expect(
-      pinned(kept, () => {
-        // What is pinned is copied and not detached.
-        kept.buffer.transfer();
-        expect(kept.byteLength).toBe(8);
-      }),
-    ).toEqual(eight);
-    kept.buffer.transfer();
-    expect(kept.byteLength).toBe(0);
-    // A shrink unmaps pages, so a resizable buffer is copied.
+    const detached = new Uint8Array(eight);
+    expect(pinned(detached, () => void detachAndReuse(detached.buffer))).toEqual(eight);
+    expect(detached.byteLength).toBe(0);
+    expect(isBufferPinned(detached)).toBe(false);
+    // A resizable buffer is copied.
     const resizable = new ArrayBuffer(8, { maxByteLength: 1 << 20 });
     new Uint8Array(resizable).set(eight);
     expect(pinned(resizable, () => resizable.resize(0))).toEqual(eight);

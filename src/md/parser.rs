@@ -212,7 +212,7 @@ pub fn set_max_block_bytes_for_testing(limit: usize) -> usize {
 /// Callers that size anything from the input length must reject oversized
 /// inputs with this before allocating.
 #[inline]
-pub(crate) fn input_size(text: &[u8]) -> Result<OFF, ParserError> {
+pub fn input_size(text: &[u8]) -> Result<OFF, ParserError> {
     if text.len() > MAX_INPUT_LEN {
         return Err(ParserError::InputTooLarge);
     }
@@ -433,6 +433,7 @@ pub(crate) fn render_to_html(
     flags: Flags,
     render_opts: RenderOptions,
 ) -> Result<Box<[u8]>, ParserError> {
+    input_size(text)?;
     // Skip UTF-8 BOM
     let input = helpers::skip_utf8_bom(text);
 
@@ -458,6 +459,7 @@ pub(crate) fn render_with_renderer<'a>(
     extensions: Option<Extensions<'a>>,
 ) -> Result<(), ParserError> {
     let _ = render_options; // Available for renderer implementations; parse layer does not use these.
+    input_size(text)?;
     // Who wants to know where things are is told places in `text`.
     let input = match rend.ptr.wants_source() {
         true => text,

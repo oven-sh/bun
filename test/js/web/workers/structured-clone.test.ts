@@ -6,7 +6,7 @@ import { BlockList } from "node:net";
 import type { ReadableStreamDefaultReader } from "node:stream/web";
 import { deserialize as v8Deserialize } from "node:v8";
 import { receiveMessageOnPort } from "node:worker_threads";
-import { deflate } from "node:zlib";
+import { deflate, inflateSync } from "node:zlib";
 import { join } from "path";
 
 // Terminal object types that were never entered into the structured clone object
@@ -483,34 +483,26 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
             second: second.byteLength,
           }).toEqual({ name: "DataCloneError", first: 8, second: 0 });
         });
-        // Bun's native borrows call ArrayBuffer::pin(), which makes the buffer
-        // non-detachable without setting the C-API lock flag. Transferring a
-        // pinned buffer must copy via transferTo()'s copyTo() fallback, not
-        // throw (see bindings.cpp JSC__JSValue__pinArrayBuffer). Locks this in
-        // so a future WebKit sync that re-adds upstream's !isDetachable() gate
-        // in SerializedScriptValue::create fails CI.
-        test("A Bun-pinned ArrayBuffer copies on transfer instead of detaching", async () => {
+        test("An ArrayBuffer that a pending native call is using is transferred", async () => {
           const ab = new ArrayBuffer(64);
           new Uint8Array(ab).fill(42);
-          const { promise, resolve, reject } = Promise.withResolvers<void>();
-          // Starting the async deflate pins ab for the duration of the call.
-          deflate(new Uint8Array(ab), e => (e ? reject(e) : resolve()));
+          const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
+          deflate(new Uint8Array(ab), (e, result) => (e ? reject(e) : resolve(result)));
           try {
             const clone = structuredCloneFn(ab, { transfer: [ab] });
             expect({
               cloneLength: clone.byteLength,
               origLength: ab.byteLength,
-              sameObject: clone === ab,
               cloneFirst: new Uint8Array(clone)[0],
-            }).toEqual({ cloneLength: 64, origLength: 64, sameObject: false, cloneFirst: 42 });
+            }).toEqual({ cloneLength: 64, origLength: 0, cloneFirst: 42 });
           } finally {
             await promise;
           }
-          expect(ab.byteLength).toBe(64);
+          expect(inflateSync(await promise)).toEqual(Buffer.alloc(64, 42));
         });
         // WebAssembly.Memory buffers carry a non-undefined [[ArrayBufferDetachKey]]
         // and must be rejected from a transfer list (per HTML's
-        // StructuredSerializeWithTransfer), unlike a Bun-pinned buffer above.
+        // StructuredSerializeWithTransfer).
         test("A WebAssembly.Memory buffer is rejected from the transfer list", () => {
           const mem = new WebAssembly.Memory({ initial: 1 });
           const buf = mem.buffer;

@@ -377,25 +377,6 @@ impl StringOrBuffer<'static> {
         Self::from_js_maybe_async(global, value, Flavor::Sync, StringObjects::Allow)
     }
 
-    /// Like [`from_js`](Self::from_js), but copies a buffer that
-    /// [`can_change_under_borrow`](jsc::ArrayBuffer::can_change_under_borrow).
-    /// Use it for parsers that read a byte more than once.
-    pub(crate) fn from_js_stable(
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<Option<Self>> {
-        let parsed = Self::from_js(global, value)?;
-        if let Some(Self::Buffer(buffer)) = &parsed
-            && buffer.buffer.can_change_under_borrow()
-        {
-            return match buffer.buffer.try_copy_bytes() {
-                Some(copy) => Ok(Some(Self::owned(copy))),
-                None => Err(global.throw_out_of_memory()),
-            };
-        }
-        Ok(parsed)
-    }
-
     /// For a work-pool job that reads the bytes.
     #[inline]
     pub(crate) fn thread_isolated_string(
@@ -1387,7 +1368,7 @@ impl VectorArrayBuffer {
     /// captured.
     ///
     /// `pin` is required when the spans outlive this call (async I/O): `val` and
-    /// each element are rooted and each backing store is pinned against detach
+    /// each element are rooted and each backing store is pinned
     /// until the value drops. `read` says whether the I/O writes to the spans; if so, call
     /// [`write_back`](Self::write_back) after it.
     pub(crate) fn from_js(

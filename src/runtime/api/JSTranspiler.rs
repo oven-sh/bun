@@ -9,7 +9,7 @@ use crate::Error;
 use crate::generated_bindgen::transpiler::{
     TranspilerExternal, TranspilerMinify, TranspilerOptions, TranspilerSourcemap,
 };
-use crate::node::types::Buffer;
+use crate::node::types::{Buffer, Flavor};
 use crate::node::{Encoding, StringOrBuffer, ThreadIsolated};
 use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
 use bun_ast::Expr;
@@ -110,7 +110,7 @@ use bun_bundler_jsc::options_jsc::loader_from_js;
 use bun_collections::index_sort;
 
 /// Reads the `code` argument. Copies a buffer because the loader's `toString()` and macros run JS that can
-/// write to, shrink or detach it. Skips the copy when the parser will reject the buffer for its length anyway.
+/// write to, shrink or detach it. Pins it instead when most parsers will reject it for its length anyway.
 fn code_from_js(
     global: &JSGlobalObject,
     value: StringOrJsBytes<'_>,
@@ -122,7 +122,7 @@ fn code_from_js(
     if !buffer.buffer.can_change_under_borrow()
         && buffer.buffer.byte_len > bun_ast::Source::MAX_PARSEABLE_LEN
     {
-        return Ok(parsed);
+        return StringOrBuffer::buffer_from_js(global, buffer.buffer.value, Flavor::Async);
     }
     match buffer.buffer.try_copy_bytes() {
         Some(copy) => Ok(StringOrBuffer::owned(copy)),

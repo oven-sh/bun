@@ -1,6 +1,8 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
+import { isBufferPinned } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, detachAndReuse, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
@@ -1127,15 +1129,18 @@ describe("zlib.zstd", () => {
 });
 
 describe("async write buffer lifetime", () => {
-  it("keeps the input and output buffers attached while a native write is in flight", async () => {
+  it.each([
+    ["over an ArrayBuffer", () => [new Uint8Array(new ArrayBuffer(64)), new Uint8Array(new ArrayBuffer(1024))]],
+    // Too large to be stored inline, and have no ArrayBuffer until something reads `.buffer`.
+    ["with no ArrayBuffer yet", () => [new Uint8Array(2048), new Uint8Array(4096)]],
+  ])("input and output buffers %s can be detached while a native write is in flight", async (_, makeBuffers) => {
     const { promise, resolve } = Promise.withResolvers();
     const deflate = zlib.createDeflate();
     try {
       const handle = deflate._handle;
 
-      const input = new Uint8Array(new ArrayBuffer(64));
-      input.fill(97);
-      const out = new Uint8Array(new ArrayBuffer(1024));
+      const [input, out] = makeBuffers();
+      const expected = Buffer.from(input.fill(97));
 
       // Mirror the bookkeeping processChunk() performs before calling
       // handle.write(), so the native write callback can complete normally.
@@ -1157,27 +1162,121 @@ describe("async write buffer lifetime", () => {
       );
 
       // The native worker thread reads `input` and writes compressed bytes into
-      // `out` through raw pointers until the write completes. Transferring
-      // either ArrayBuffer must not detach the backing store out from under
-      // the worker -- both buffers must stay attached and full-length.
-      out.buffer.transfer();
-      input.buffer.transfer();
-      expect(out.buffer.detached).toBe(false);
-      expect(out.byteLength).toBe(1024);
-      expect(input.buffer.detached).toBe(false);
-      expect(input.byteLength).toBe(64);
+      // `out` through raw pointers until the write completes.
+      const moved = out.buffer.transfer();
+      detachAndReuse(input.buffer);
+      expect(out.buffer.detached).toBe(true);
+      expect(input.buffer.detached).toBe(true);
 
       await promise;
 
-      // Once the write completes the buffers are released and can be
-      // transferred again.
-      out.buffer.transfer();
-      input.buffer.transfer();
-      expect(out.buffer.detached).toBe(true);
-      expect(input.buffer.detached).toBe(true);
+      expect(zlib.inflateSync(moved)).toEqual(expected);
+      expect([input, out].map(isBufferPinned)).toEqual([false, false]);
     } finally {
       deflate.close();
     }
+  });
+
+  // The output of these fills several chunks, so the input is sent several times.
+  describe.each([
+    ["over an ArrayBuffer", length => new Uint8Array(new ArrayBuffer(length)), input => detachAndReuse(input.buffer)],
+    ["with no ArrayBuffer yet", length => new Uint8Array(length), input => detachAndReuse(input.buffer)],
+    [
+      "over a WebAssembly.Memory",
+      length => {
+        const memory = new WebAssembly.Memory({ initial: 2 });
+        return Object.assign(new Uint8Array(memory.buffer, 0, length), { memory });
+      },
+      input => input.memory.grow(1),
+    ],
+  ])("an input %s that is detached after the call", (_, allocate, detach) => {
+    const original = randomFillSync(Buffer.alloc(80 * 1024));
+    const inputOf = bytes => {
+      const input = allocate(bytes.length);
+      input.set(bytes);
+      return input;
+    };
+
+    describe.each([
+      ["deflate", "inflate"],
+      ["gzip", "gunzip"],
+      ["brotliCompress", "brotliDecompress"],
+      ["zstdCompress", "zstdDecompress"],
+    ])("is read to its end by", (compress, decompress) => {
+      it(compress, async () => {
+        const input = inputOf(original);
+        const pending = util.promisify(zlib[compress])(input);
+        detach(input);
+        expect(zlib[decompress + "Sync"](await pending)).toEqual(original);
+      });
+
+      it(decompress, async () => {
+        const input = inputOf(zlib[compress + "Sync"](original));
+        const pending = util.promisify(zlib[decompress])(input);
+        detach(input);
+        expect(await pending).toEqual(original);
+      });
+    });
+
+    it("is read to its end in an async context", async () => {
+      const input = inputOf(original);
+      const pending = new AsyncLocalStorage().run(1, util.promisify(zlib.deflate), input);
+      detach(input);
+      expect(zlib.inflateSync(await pending)).toEqual(original);
+    });
+
+    it("is read to its end by a stream that waits for its reader", async () => {
+      const input = inputOf(zlib.gzipSync(original));
+      const gunzip = zlib.createGunzip({ readableHighWaterMark: 1 });
+      gunzip.end(input);
+      detach(input);
+      expect(Buffer.concat(await gunzip.toArray())).toEqual(original);
+    });
+  });
+
+  it("an input that is detached while a write is in flight is read to its end by zlib/iter", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--experimental-stream-iter",
+        "--no-warnings",
+        "-e",
+        `const zlib = require("node:zlib"), { compressGzip } = require("node:zlib/iter"), { bytes, pull } = require("node:stream/iter");
+         const original = crypto.getRandomValues(new Uint8Array(4096)), input = original.slice();
+         const prototype = Object.getPrototypeOf(zlib.createGzip()._handle), { write } = prototype;
+         prototype.write = function (flush, chunk) {
+           write.apply(this, arguments);
+           if (chunk === input) input.buffer.transfer(0);
+         };
+         bytes(pull([input], compressGzip({ chunkSize: 64, level: 0, memLevel: 1 }))).then(output =>
+           console.log(input.length, zlib.gunzipSync(output).equals(original)),
+         );`,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("0 true\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("output is not dropped silently if its chunk is detached while a write is in flight", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const zlib = require("node:zlib");
+         process.on("uncaughtException", error => (console.log(error.name), process.exit(0)));
+         const inflate = zlib.createInflate().on("data", chunk => console.log("data", chunk.length));
+         inflate.end(zlib.deflateSync("hello"));
+         inflate._outBuffer.buffer.transfer();`,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("TypeError\n");
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -1215,7 +1314,7 @@ it("a stream of a ShadowRealm keeps its async context across a write", async () 
 });
 
 describe("async write pins are released", () => {
-  it("transfer() detaches once several async writes through the same buffers have completed", async () => {
+  it("once several async writes through the same buffers have completed", async () => {
     const deflate = zlib.createDeflate();
     try {
       const handle = deflate._handle;
@@ -1232,11 +1331,7 @@ describe("async write pins are released", () => {
         handle.write(zlib.constants.Z_NO_FLUSH, input, 0, input.byteLength, out, 0, out.byteLength);
         await promise;
       }
-      // Every write pinned both buffers; every completion must have unpinned them, or they stay undetachable.
-      out.buffer.transfer();
-      input.buffer.transfer();
-      expect(out.buffer.detached).toBe(true);
-      expect(input.buffer.detached).toBe(true);
+      expect([input, out].map(isBufferPinned)).toEqual([false, false]);
     } finally {
       deflate.close();
     }

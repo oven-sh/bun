@@ -359,9 +359,8 @@ fn any_server_from_packed(packed: u64) -> AnyServer {
 /// being copied into the uWS backpressure std::string. The bytes are kept
 /// valid by `pending_pinned_write_owner` (WTFStringImpl ref / borrowed
 /// ArrayBuffer / owned encoded slice); the JS cell is GC-rooted via the
-/// `pendingWriteBuffer` cached slot; for ArrayBuffer-backed inputs the
-/// backing store is additionally `pin()`ed so `transfer()` copies instead of
-/// detaching.
+/// `pendingWriteBuffer` cached slot; for buffer inputs the
+/// backing store is additionally pinned so `transfer()` does not free it.
 #[derive(Clone, Copy)]
 struct PendingPinnedWrite {
     /// The body bytes not yet accepted by the kernel / cork buffer. Borrows
@@ -2181,16 +2180,19 @@ impl NodeHTTPResponse {
                     consumed,
                     bytes_len
                 );
-                // For buffers, pin so `transfer()` copies instead of detaching.
-                // If a pin can't keep the bytes mapped, copy them into the backpressure buffer instead.
+                // For buffers, pin so `transfer()` does not free the tail.
+                // If a pin can't keep the bytes, copy them into the backpressure buffer instead.
                 let pinned_value = match buffer_value {
                     Some(buffer_value) => match buffer_value.as_pinned_arraybuffer(global_object) {
                         Some(ab) if ab.can_be_freed_while_pinned() => {
                             ab.unpin();
                             None
                         }
-                        Some(ab) if ab.pinned => Some(buffer_value),
-                        Some(_) | None => Some(JSValue::ZERO),
+                        Some(ab) => {
+                            debug_assert!(ptr::eq(ab.ptr, bytes.as_ptr()), "the pin moved `bytes`");
+                            Some(buffer_value)
+                        }
+                        None => None,
                     },
                     None => Some(JSValue::ZERO),
                 };

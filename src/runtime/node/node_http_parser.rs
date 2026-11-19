@@ -376,7 +376,11 @@ impl Driver<'_> {
             Event::MessageBegin => self.on_message_begin()?,
             Event::FieldLimitNeeded => self.read_field_limit()?,
             Event::FieldsFull => self.flush(input)?,
-            Event::HeadComplete => return self.on_head_complete(input),
+            Event::HeadComplete => {
+                if let Some(result) = self.on_head_complete(input)? {
+                    return Ok(Some(result));
+                }
+            }
             Event::Body(range) => self.on_body(self.create_buffer(input.slice().get(range))?)?,
             Event::MessageComplete => self.on_message_complete(input)?,
             Event::Done(consumed) => {
@@ -390,6 +394,9 @@ impl Driver<'_> {
                 return Ok(Some(self.this.report(self.global, error, consumed)));
             }
         }
+        if pinned.as_ref().is_some_and(PinnedArrayBuffer::is_view_gone) {
+            self.pin(input, pinned)?;
+        }
         Ok(None)
     }
 
@@ -397,14 +404,15 @@ impl Driver<'_> {
     #[inline(never)]
     fn pin(&self, input: &mut ArrayBuffer, pinned: &mut Option<PinnedArrayBuffer>) -> JsResult<()> {
         let global = self.global;
-        let value = if !input.is_detached() && (input.shared || input.can_be_freed_while_pinned()) {
+        // A pinned view that was detached may have gone to another thread, which makes it like a shared one.
+        let needs_copy = pinned.is_some()
+            || (!input.is_detached() && (input.shared || input.can_be_freed_while_pinned()));
+        let value = if needs_copy {
             ArrayBuffer::create_buffer(global, input.slice())?
         } else {
             input.value
         };
-        if value.materialize_array_buffer_view_buffer() {
-            *pinned = PinnedArrayBuffer::pin(global, value);
-        }
+        *pinned = PinnedArrayBuffer::pin(global, value);
         *input = **pinned
             .as_ref()
             .ok_or_else(|| global.throw_out_of_memory())?;

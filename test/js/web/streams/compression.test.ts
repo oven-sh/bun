@@ -1,5 +1,6 @@
+import { isBufferPinned } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, detachAndReuse, isASAN } from "harness";
 import { once } from "node:events";
 import { addAbortSignal } from "node:stream";
 import type { ReadableStreamDefaultReader } from "node:stream/web";
@@ -444,6 +445,25 @@ describe("CompressionStream and DecompressionStream", () => {
 
       expect(decompressed.byteLength).toBe(big.byteLength);
       expect(Buffer.compare(decompressed, Buffer.from(big.buffer))).toBe(0);
+    });
+
+    test("a chunk with no ArrayBuffer yet can be detached while it is compressed", async () => {
+      const cs = new CompressionStream("gzip");
+      const writer = cs.writable.getWriter();
+      const compressed = new Response(cs.readable).bytes();
+      // The readable side has pulled by then, so write() starts the work before it returns.
+      await new Promise(setImmediate);
+
+      const chunk = new Uint8Array(256 * 1024).fill(97);
+      const pending = writer.write(chunk);
+      expect(isBufferPinned(chunk)).toBe(true);
+      detachAndReuse(chunk.buffer);
+      expect(chunk.buffer.detached).toBe(true);
+      await pending;
+      expect(isBufferPinned(chunk)).toBe(false);
+
+      await writer.close();
+      expect(zlib.gunzipSync(await compressed)).toEqual(Buffer.alloc(256 * 1024, 97));
     });
 
     test("DecompressionStream('gzip') handles a single >128KB compressed chunk", async () => {

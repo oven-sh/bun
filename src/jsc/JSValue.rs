@@ -826,23 +826,20 @@ impl JSValue {
             None
         }
     }
-    /// `as_array_buffer`, but pins the backing `JSC::ArrayBuffer` first so it
-    /// cannot be detached. The pin does not prevent collection.
+    /// `as_array_buffer`, but pins the bytes first so that a detach does not free
+    /// them. The pin does not prevent collection.
     ///
     /// While pinned, a JS `transfer()`, `structuredClone(v, { transfer: [ab] })`
-    /// or `postMessage(v, [ab])` hands the destination a copy and leaves the
-    /// source attached rather than throwing. See `JSC__JSValue__pinArrayBuffer`
-    /// in bindings.cpp for why. Release the pin with `ArrayBuffer::unpin`.
+    /// or `postMessage(v, [ab])` detaches the source and hands the destination,
+    /// which can be another thread, these same bytes. Release the pin with `ArrayBuffer::unpin`.
     pub fn as_pinned_arraybuffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
-        let kind = JSC__JSValue__pinArrayBuffer(self);
-        if kind == 0 {
+        if !JSC__JSValue__pinArrayBuffer(self) {
             return None;
         }
         let mut buffer = self.as_array_buffer(global);
         match &mut buffer {
-            Some(buffer) => buffer.pinned = kind == 1,
-            None if kind == 1 => self.unpin_array_buffer(),
-            None => {}
+            Some(buffer) => buffer.pinned = true,
+            None => self.unpin_array_buffer(),
         }
         buffer
     }
@@ -1994,8 +1991,8 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         out: &mut ArrayBuffer,
     ) -> bool;
-    /// 0 = nothing to pin, 1 = pinned an ArrayBuffer (unpin later), 2 = held a bufferless view (nothing to unpin).
-    safe fn JSC__JSValue__pinArrayBuffer(this: JSValue) -> u8;
+    /// False if there is nothing to pin; otherwise unpin later.
+    safe fn JSC__JSValue__pinArrayBuffer(this: JSValue) -> bool;
     safe fn JSC__JSValue__asPromise(this: JSValue) -> *mut JSPromise;
     safe fn JSC__JSValue__asInternalPromise(this: JSValue) -> *mut JSInternalPromise;
     safe fn Bun__attachAsyncStackFromPromise(

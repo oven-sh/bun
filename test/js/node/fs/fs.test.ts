@@ -1,7 +1,9 @@
+import { arrayBufferViewHasBuffer, isBufferPinned } from "bun:internal-for-testing";
 import { beforeAll, describe, expect, it, spyOn } from "bun:test";
 import {
   bunEnv,
   bunExe,
+  detachAndReuse,
   gc,
   getMaxFD,
   isASAN,
@@ -19,6 +21,7 @@ import {
   tempDirWithFiles,
   tmpdirSync,
 } from "harness";
+import { once } from "node:events";
 import fs, {
   closeSync,
   constants,
@@ -62,6 +65,7 @@ import fs, {
 import * as os from "node:os";
 import path, { dirname, relative, resolve } from "node:path";
 import { inspect, promisify } from "node:util";
+import { Worker } from "node:worker_threads";
 
 import _promises, { type FileHandle } from "node:fs/promises";
 
@@ -100,21 +104,20 @@ function tmpdirTestMkdir(): string {
   return tempdir;
 }
 
-it("fs.statSync keeps a Uint8Array path's ArrayBuffer attached while reading options", () => {
+it("fs.statSync uses a Uint8Array path whose ArrayBuffer is detached while reading options", () => {
   using dir = tempDir("fs-statsync-typed-array-path", { "target.txt": "bun" });
   const encoded = new TextEncoder().encode(join(String(dir), "target.txt"));
   const pathBuffer = Buffer.from(encoded.buffer, encoded.byteOffset, encoded.byteLength);
   const arrayBuffer = pathBuffer.buffer as ArrayBuffer;
   const stats = statSync(pathBuffer, {
     get throwIfNoEntry() {
-      arrayBuffer.transfer();
+      detachAndReuse(arrayBuffer);
       return true;
     },
   });
-  expect(arrayBuffer.detached).toBe(false);
-  expect(stats!.isFile()).toBe(true);
-  arrayBuffer.transfer();
   expect(arrayBuffer.detached).toBe(true);
+  expect(stats!.isFile()).toBe(true);
+  expect(isBufferPinned(arrayBuffer)).toBe(false);
 });
 
 it.skipIf(isWindows)("fs.chmodSync applies mode bits above 0o777", () => {
@@ -7256,65 +7259,138 @@ describe.skipIf(isWindows)("readFileSync on a FIFO larger than the stat size", (
   });
 });
 
-it("fs.read keeps filling the caller's view when its ArrayBuffer is transferred while the read is pending", async () => {
-  using dir = tempDir("fs-read-transfer", {
-    "data.bin": Buffer.alloc(65536, 0x61).toString(),
-  });
+describe.each<[string, () => Uint8Array<ArrayBuffer>]>([
+  ["stored inline", () => new Uint8Array(64)],
+  // Has no ArrayBuffer until something reads `.buffer`.
+  ["with no ArrayBuffer yet", () => new Uint8Array(64 * 1024)],
+  ["over an ArrayBuffer", () => new Uint8Array(new ArrayBuffer(64 * 1024))],
+  ["over a resizable ArrayBuffer", () => new Uint8Array(new ArrayBuffer(64 * 1024, { maxByteLength: 128 * 1024 }))],
+])("a view %s that is detached while a call is pending", (_, makeView) => {
+  type Start = (fd: number, view: Uint8Array) => Promise<unknown>;
+  const reads: [string, Start][] = [
+    ["fs.read", (fd, view) => promisify(fs.read)(fd, view, 0, view.byteLength, 0)],
+    ["fs.readv", (fd, view) => promisify(fs.readv)(fd, [view], 0)],
+  ];
+  const writes: [string, Start][] = [
+    ["fs.write", (fd, view) => promisify(fs.write)(fd, view, 0, view.byteLength, 0)],
+    ["fs.writev", (fd, view) => promisify(fs.writev)(fd, [view], 0)],
+    ["fs.writeFile", (fd, view) => promisify(fs.writeFile)(fd, view)],
+    ["fs.promises.writeFile", (fd, view) => fs.promises.writeFile(fd as any, view)],
+  ];
 
-  // The async read snapshots the destination buffer before handing it to the
-  // work pool. Transferring the backing ArrayBuffer immediately afterwards
-  // must not leave the in-flight read writing into storage the caller's view
-  // no longer owns: the view must still be attached and contain the file's
-  // bytes once the read completes.
-  const script = `
-    const fs = require("node:fs");
-    const path = require("node:path");
-    (async () => {
-      const fd = fs.openSync(path.join(process.cwd(), "data.bin"), "r");
-      const ab = new ArrayBuffer(65536);
-      const view = new Uint8Array(ab);
-      const pending = new Promise((resolve, reject) => {
-        fs.read(fd, view, 0, 65536, 0, (err, bytesRead) => (err ? reject(err) : resolve(bytesRead)));
-      });
-      // Attempt to detach the destination's backing store before the async
-      // read completes. Refusing the detach by throwing is also acceptable.
-      let transferred;
-      try {
-        transferred = ab.transfer();
-      } catch {}
-      const bytesRead = await pending;
-      fs.closeSync(fd);
-      console.log(
-        JSON.stringify({
-          bytesRead,
-          viewByteLength: view.byteLength,
-          first: view[0] ?? null,
-          last: view[65535] ?? null,
-        }),
-      );
-    })().catch(err => {
-      console.error(err);
-      process.exit(1);
+  async function detachDuring<T>(start: Start, contents: string, view: Uint8Array<ArrayBuffer>, detach: () => T) {
+    using dir = tempDir("fs-detach-pending", { "file.bin": contents });
+    const file = join(String(dir), "file.bin");
+    const fd = openSync(file, "r+");
+    try {
+      const pending = start(fd, view);
+      expect(isBufferPinned(view)).toBe(true);
+      const result = detach();
+      expect(view.buffer.detached).toBe(true);
+      await pending;
+      expect(isBufferPinned(view)).toBe(false);
+      return { result, file: readFileSync(file) };
+    } finally {
+      closeSync(fd);
+    }
+  }
+
+  describe.each(reads)("%s", (_, start) => {
+    it.each<[string, (buffer: ArrayBuffer) => ArrayBuffer]>([
+      ["transfer()", buffer => buffer.transfer()],
+      ["structuredClone()", buffer => structuredClone(buffer, { transfer: [buffer] })],
+    ])("fills the result of %s", async (_, move) => {
+      const view = makeView();
+      const expected = Buffer.alloc(view.byteLength, "a");
+      const { result } = await detachDuring(start, expected.toString(), view, () => move(view.buffer));
+      expect(Buffer.from(result)).toEqual(expected);
     });
-  `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
+    it("writes to nothing else if the bytes have no new owner", async () => {
+      const view = makeView();
+      const contents = Buffer.alloc(view.byteLength, "a").toString();
+      const { result } = await detachDuring(start, contents, view, () => detachAndReuse(view.buffer));
+      expect(Buffer.from(result)).toEqual(Buffer.alloc(contents.length, 0xee));
+    });
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout.trim())).toEqual({
-    bytesRead: 65536,
-    viewByteLength: 65536,
-    first: 0x61,
-    last: 0x61,
+  it.each(writes)("%s writes the bytes it was given", async (_, start) => {
+    const view = makeView().fill(0x44);
+    const expected = Buffer.from(view);
+    const { file } = await detachDuring(start, "", view, () => detachAndReuse(view.buffer));
+    expect(file).toEqual(expected);
   });
-  expect(exitCode).toBe(0);
+});
+
+it.each(["read", "readv", "write", "writev"])("fs.%s does not make an ArrayBuffer for a large view", async name => {
+  using dir = tempDir("fs-no-arraybuffer", { "file.bin": "a" });
+  const fd = openSync(join(String(dir), "file.bin"), "r+");
+  try {
+    const view = new Uint8Array(4096);
+    await promisify(fs[name])(fd, name.endsWith("v") ? [view] : view);
+    expect(arrayBufferViewHasBuffer(view)).toBe(false);
+  } finally {
+    closeSync(fd);
+  }
+});
+
+// A read from a FIFO stays pending until the test writes to it.
+it.skipIf(isWindows).each([
+  ["with no ArrayBuffer yet", () => new Uint8Array(4096)],
+  ["over an ArrayBuffer", () => new Uint8Array(new ArrayBuffer(4096))],
+])("a pending fs.read fills a view %s that was transferred to a worker", async (_, makeView) => {
+  using dir = tempDir("fs-read-transfer-worker", {});
+  const fifo = join(String(dir), "fifo");
+  mkfifo(fifo, 0o666);
+  const reader = openSync(fifo, "r+");
+  const writer = openSync(fifo, "w");
+  const worker = new Worker(
+    `const { parentPort } = require("node:worker_threads");
+     parentPort.once("message", buffer => {
+       parentPort.once("message", () => parentPort.postMessage(Buffer.from(buffer, 0, 5).toString()));
+       parentPort.postMessage("received");
+     });`,
+    { eval: true },
+  );
+  try {
+    const view = makeView();
+    const pending = promisify(fs.read)(reader, view, 0, 5, null);
+    worker.postMessage(view.buffer, [view.buffer]);
+    const detached = view.buffer.detached;
+    await once(worker, "message").finally(() => writeSync(writer, "hello"));
+    await pending;
+    worker.postMessage("read");
+    expect({ detached, received: (await once(worker, "message"))[0] }).toEqual({ detached: true, received: "hello" });
+  } finally {
+    await worker.terminate();
+    closeSync(reader);
+    closeSync(writer);
+  }
+});
+
+it.skipIf(isWindows).each<[string, (buffer: ArrayBuffer) => unknown]>([
+  ["resize()", buffer => buffer.resize(1)],
+  ["transfer()", buffer => buffer.transfer(1)],
+  ["resize() of its new owner", buffer => buffer.transfer().resize(1)],
+])("a pending fs.read completes if %s cuts off its range of a resizable ArrayBuffer", async (_, shrink) => {
+  using dir = tempDir("fs-read-shrink", {});
+  const fifo = join(String(dir), "fifo");
+  mkfifo(fifo, 0o666);
+  const reader = openSync(fifo, "r+");
+  const writer = openSync(fifo, "w");
+  try {
+    const buffer = new ArrayBuffer(128 * 1024, { maxByteLength: 128 * 1024 });
+    const pending = promisify(fs.read)(reader, new Uint8Array(buffer), 64 * 1024, 5, null);
+    try {
+      shrink(buffer);
+    } finally {
+      writeSync(writer, "hello");
+    }
+    expect((await pending).bytesRead).toBe(5);
+  } finally {
+    closeSync(reader);
+    closeSync(writer);
+  }
 });
 
 it("writevSync does not write bytes from a buffer detached by an index getter during argument conversion", () => {
@@ -7354,36 +7430,17 @@ it("writevSync does not write bytes from a buffer detached by an index getter du
   expect(readFileSync(file, "latin1")).toBe("BBBBBBBB");
 });
 
-it("fs.writev keeps buffers attached while the write is in flight", async () => {
+it("fs.writev treats a position that is not a number as the current offset", async () => {
   using dir = tempDir("fs-writev-pin", {});
   const file = join(String(dir), "out.bin");
   const fd = openSync(file, "w");
-  const buf = new Uint8Array(new ArrayBuffer(8)).fill(0x43);
-  const { promise, resolve, reject } = Promise.withResolvers();
   try {
-    fs.writev(fd, [buf], 0, (err, written) => (err ? reject(err) : resolve(written)));
-
-    // The native write runs on the thread pool; the backing store cannot be
-    // detached out from under it.
-    buf.buffer.transfer();
-    expect(buf.buffer.detached).toBe(false);
-
-    expect(await promise).toBe(8);
-
-    // Released once the write completes.
-    buf.buffer.transfer();
-    expect(buf.buffer.detached).toBe(true);
-
-    // A non-number position is treated as "current offset" (Node.js behavior);
-    // the buffer is still pinned for the duration of the async write.
+    await promisify(fs.writev)(fd, [Buffer.from("CCCCCCCC")], 0);
     const other = new Uint8Array(new ArrayBuffer(8)).fill(0x44);
-    const second = Promise.withResolvers<number>();
-    fs.writev(fd, [other], "not a position" as any, (err, n) => (err ? second.reject(err) : second.resolve(n)));
-    other.buffer.transfer();
-    expect(other.buffer.detached).toBe(false);
-    expect(await second.promise).toBe(8);
-    other.buffer.transfer();
-    expect(other.buffer.detached).toBe(true);
+    const pending = promisify(fs.writev)(fd, [other], "not a position" as any);
+    expect(isBufferPinned(other)).toBe(true);
+    expect((await pending).bytesWritten).toBe(8);
+    expect(isBufferPinned(other)).toBe(false);
   } finally {
     closeSync(fd);
   }
@@ -7392,55 +7449,8 @@ it("fs.writev keeps buffers attached while the write is in flight", async () => 
   expect(readFileSync(file, "latin1")).toBe("DDDDDDDD");
 });
 
-it("fs.write keeps the source buffer attached while the write is in flight", async () => {
-  using dir = tempDir("fs-write-pin", {});
-  const file = join(String(dir), "out.bin");
-  const fd = openSync(file, "w");
-  const buf = new Uint8Array(new ArrayBuffer(8)).fill(0x44);
-  const { promise, resolve, reject } = Promise.withResolvers();
-  try {
-    fs.write(fd, buf, 0, buf.byteLength, 0, (err, written) => (err ? reject(err) : resolve(written)));
-
-    // The native write runs on the thread pool and reads the source bytes
-    // through a raw pointer; the backing store must not be detachable out
-    // from under it while the write is pending.
-    buf.buffer.transfer();
-    expect(buf.buffer.detached).toBe(false);
-
-    expect(await promise).toBe(8);
-
-    // Released once the write completes.
-    buf.buffer.transfer();
-    expect(buf.buffer.detached).toBe(true);
-  } finally {
-    closeSync(fd);
-  }
-  expect(readFileSync(file, "latin1")).toBe("DDDDDDDD");
-});
-
-it("fs.promises.writeFile keeps the source buffer attached while the write is in flight", async () => {
-  using dir = tempDir("fs-writefile-pin", {});
-  const file = join(String(dir), "out.bin");
-  const buf = new Uint8Array(new ArrayBuffer(8)).fill(0x45);
-  const pending = fs.promises.writeFile(file, buf);
-
-  // The native write runs on the thread pool and reads the source bytes
-  // through a raw pointer; the backing store must not be detachable out
-  // from under it while the write is pending.
-  buf.buffer.transfer();
-  expect(buf.buffer.detached).toBe(false);
-
-  await pending;
-
-  // Released once the write completes.
-  buf.buffer.transfer();
-  expect(buf.buffer.detached).toBe(true);
-
-  expect(readFileSync(file, "latin1")).toBe("EEEEEEEE");
-});
-
-// A pin stops a detach but not `ArrayBuffer.prototype.resize()`. The pool thread copies the path into
-// its own buffer, so it must read the bytes captured at call time, not the shrunk buffer.
+// The pool thread copies the path into its own buffer, so it must read the bytes captured at call time, not the
+// shrunk buffer.
 it("fs.promises.stat reads a Buffer path captured at call time when its resizable ArrayBuffer shrinks in flight", async () => {
   // The unfixed build segfaults on the pool thread, so this runs in a child process.
   await using proc = Bun.spawn({
@@ -7748,38 +7758,46 @@ it.if(isPosix)("realpath reports ENAMETOOLONG when cwd plus the path exceeds the
   expect(exitCode).toBe(0);
 });
 
-it("fs.writeFile (callback) keeps the source buffer attached while the write is in flight", async () => {
-  using dir = tempDir("fs-writefile-cb-pin", {});
-  const file = join(String(dir), "out.bin");
-  const buf = new Uint8Array(new ArrayBuffer(8)).fill(0x46);
-  const { promise, resolve, reject } = Promise.withResolvers();
-  fs.writeFile(file, buf, err => (err ? reject(err) : resolve(null)));
+describe("a path argument with no ArrayBuffer yet", () => {
+  // Over the 1000 elements that JSC stores inline, and under the 1024 bytes of a path on macOS.
+  function longPath(dir: string) {
+    const padding = Buffer.alloc((1010 - dir.length) & ~1, "/.").toString();
+    return new Uint8Array(Buffer.from(dir + padding + "/a.txt"));
+  }
 
-  // The native write runs on the thread pool and reads the source bytes
-  // through a raw pointer; the backing store must not be detachable out
-  // from under it while the write is pending.
-  buf.buffer.transfer();
-  expect(buf.buffer.detached).toBe(false);
+  it("can be detached while an async call is pending", async () => {
+    using dir = tempDir("fs-long-path-async", { "a.txt": "a" });
+    const path = longPath(String(dir));
+    const pending = fs.promises.readFile(path as any, "utf8");
+    detachAndReuse(path.buffer);
+    expect(await pending).toBe("a");
+    expect(isBufferPinned(path)).toBe(false);
+  });
 
-  await promise;
-
-  // Released once the write completes.
-  buf.buffer.transfer();
-  expect(buf.buffer.detached).toBe(true);
-
-  expect(readFileSync(file, "latin1")).toBe("FFFFFFFF");
+  it("can be detached while a sync call reads its options", () => {
+    using dir = tempDir("fs-long-path-sync", { "a.txt": "a" });
+    const path = longPath(String(dir));
+    const stats = statSync(path as any, {
+      get throwIfNoEntry() {
+        detachAndReuse(path.buffer);
+        return true;
+      },
+    });
+    expect(stats!.size).toBe(1);
+    expect(isBufferPinned(path)).toBe(false);
+  });
 });
 
 it("fs.promises.readdir({ recursive: true }) is done with a buffer path argument when it returns", async () => {
   using dir = tempDir("fs-readdir-path-unpinned", { "a/b.txt": "" });
   const path = new TextEncoder().encode(String(dir)).slice();
   const promise = fs.promises.readdir(path as any, { recursive: true });
-  new Uint8Array(path.buffer.transfer()).fill(0);
-  expect(path.buffer.detached).toBe(true);
+  expect(isBufferPinned(path)).toBe(false);
+  path.fill(0);
   expect((await promise).sort()).toEqual(["a", join("a", "b.txt")]);
 });
 
-it("fs.promises.writeFile keeps a buffer path argument attached while options are read", async () => {
+it("fs.promises.writeFile uses a buffer path argument that is detached while options are read", async () => {
   using dir = tempDir("fs-writefile-path-pin", {});
   const file = join(String(dir), "out.txt");
   const pathBytes = new TextEncoder().encode(file);
@@ -7791,16 +7809,15 @@ it("fs.promises.writeFile keeps a buffer path argument attached while options ar
   let detachedDuringOptions: boolean | undefined;
   await fs.promises.writeFile(pathBuf as any, "hello world", {
     // Reading the options object re-enters JavaScript after the native call
-    // captured a pointer into the path buffer; the backing store must not be
-    // detachable out from under it.
+    // captured a pointer into the path buffer.
     get flag() {
-      pathBuf.buffer.transfer();
+      detachAndReuse(pathBuf.buffer);
       detachedDuringOptions = pathBuf.buffer.detached;
       return "w";
     },
   });
 
-  expect(detachedDuringOptions).toBe(false);
+  expect(detachedDuringOptions).toBe(true);
   expect(readFileSync(file, "utf8")).toBe("hello world");
 });
 
@@ -8182,12 +8199,12 @@ describe("the buffer of a finished operation can be transferred from its callbac
     const fd = openSync(join(String(dir), "file.txt"), "r+");
     try {
       const buffer = new ArrayBuffer(8);
-      const { promise, resolve } = Promise.withResolvers<{ source: number; moved: number }>();
+      const { promise, resolve } = Promise.withResolvers<{ pinned: boolean; source: number; moved: number }>();
       start(fd, new Uint8Array(buffer), () => {
         const moved = structuredClone(buffer, { transfer: [buffer] });
-        resolve({ source: buffer.byteLength, moved: moved.byteLength });
+        resolve({ pinned: isBufferPinned(buffer), source: buffer.byteLength, moved: moved.byteLength });
       });
-      expect(await promise).toEqual({ source: 0, moved: 8 });
+      expect(await promise).toEqual({ pinned: false, source: 0, moved: 8 });
     } finally {
       closeSync(fd);
     }

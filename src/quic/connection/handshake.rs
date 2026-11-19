@@ -63,6 +63,8 @@ pub(super) struct Setup {
     pub(super) undecryptable: Vec<Vec<u8>>,
     /// They are worth another try.
     pub(super) can_read_more: bool,
+    /// With them. They have been waiting, so they tell nothing about the round trip.
+    pub(super) is_catching_up: bool,
 }
 
 impl Setup {
@@ -81,6 +83,7 @@ impl Setup {
             hello: Vec::new(),
             undecryptable: Vec::new(),
             can_read_more: false,
+            is_catching_up: false,
         }
     }
 
@@ -542,6 +545,9 @@ impl Connection {
         if let Some(setup) = &mut self.setup {
             setup.remembered = None;
         }
+        for (id, _) in core::mem::take(&mut self.datagrams.unsent) {
+            self.emit(Event::DatagramLost(id));
+        }
         self.emit(Event::EarlyDataRejected);
         self.streams.close_all();
         let new = self.new_streams();
@@ -591,7 +597,7 @@ impl Connection {
             && self.config.congestion == crate::congestion::Algorithm::Bbr
             && (self.peer.min_ack_delay_micros).is_some_and(|it| it <= MIN_ACK_DELAY.as_micros())
         {
-            self.ack_controller = Some(ack_frequency::Controller::new(now));
+            self.ack_controller = Some(ack_frequency::Controller::new(now, self.rtt.smoothed));
         }
         self.plan_skip();
         self.start_keep_alive(now);

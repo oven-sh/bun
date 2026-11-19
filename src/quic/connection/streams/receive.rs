@@ -100,14 +100,14 @@ impl State {
             ));
         }
         if end > stream.received {
-            self.received += end - stream.received;
-            stream.received = end;
-            if end > stream.receive_limit || self.received > self.receive_limit {
+            let received = self.received + (end - stream.received);
+            if end > stream.receive_limit || received > self.receive_limit {
                 return Err(Error::transport(
                     transport_code::FLOW_CONTROL_ERROR,
                     "flow control violation",
                 ));
             }
+            (self.received, stream.received) = (received, end);
         }
         if is_final {
             stream.final_size = end;

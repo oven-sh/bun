@@ -27,13 +27,15 @@ pub(super) struct CloseFrame {
     reason: Vec<u8>,
 }
 
-impl Default for CloseFrame {
-    fn default() -> Self {
-        Self::new(Layer::Transport, transport_code::NO_ERROR, &[])
-    }
-}
-
 impl CloseFrame {
+    /// RFC 9114 §5.2.
+    pub(super) fn no_error(is_http3: bool) -> Self {
+        match is_http3 {
+            true => Self::new(Layer::Application, http3_code::NO_ERROR, &[]),
+            false => Self::new(Layer::Transport, transport_code::NO_ERROR, &[]),
+        }
+    }
+
     fn new(layer: Layer, code: u64, reason: &[u8]) -> Self {
         Self {
             layer,
@@ -90,11 +92,11 @@ impl Connection {
         self.ending = Ending::Graceful;
         self.timers.set(Timer::Close, now + GRACE_PERIOD);
         self.streams.table.is_going_away = true;
-        let (table, state) = (&mut self.streams.table, &mut self.streams.state);
-        let mut ids: Vec<_> = table.iter_mut().map(|it| it.0).collect();
+        let mut ids: Vec<_> = self.streams.table.iter_mut().map(|it| it.0).collect();
         ids.sort_unstable();
         for id in ids {
-            if let Some(stream) = table.get_mut(id)
+            self.abandon_message(id);
+            if let Some((stream, state)) = self.streams.get_mut(id)
                 && id.direction() == Direction::Bidirectional
             {
                 if !stream.flags.contains(Flags::WRITE_DONE) {
@@ -170,6 +172,8 @@ impl Connection {
             self.close_reason = reason;
             self.end();
             self.streams.unpause_all();
+        } else {
+            self.end();
         }
     }
 
@@ -186,7 +190,7 @@ impl Connection {
         };
         match self.config.closes_silently || !has_heard_from_peer {
             true => self.drain(reason),
-            false => self.start_closing(now, reason, CloseFrame::default()),
+            false => self.start_closing(now, reason, CloseFrame::no_error(false)),
         }
     }
 

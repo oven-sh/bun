@@ -1,16 +1,7 @@
 /**
- * HTTP/3 fetch under injected UDP send faults. Exercises lsquic's
- * packets_out short-return path, which is otherwise only reachable when the
- * UDP send buffer is genuinely full or an ICMP from a dead peer is queued on
- * the shared socket.
- *
- * The first case pins the lsquic send_batch requeue-underflow patch: lsquic
- * coalesces the client's INIT-ACK, HSK CRYPTO (TLS Finished) and a SHORT
- * packet into one datagram with pack_off[0]==0 and iovlen>1. If packets_out
- * returns 0 for that spec, the unpatched requeue loop computed
- * &batch->packets[off - 1] with unsigned off and only returned the last
- * packet of the group to the connection; the Finished was silently dropped
- * and the server could never complete the handshake.
+ * HTTP/3 fetch under injected UDP send faults, which are otherwise only
+ * reachable when the UDP send buffer is genuinely full or an ICMP from a dead
+ * peer is queued on the shared socket.
  */
 import { socketFaultInjection as fault, type SocketFaultRule } from "bun:internal-for-testing";
 import { afterEach, expect, test } from "bun:test";
@@ -120,11 +111,8 @@ test.skipIf(skip)("EAGAIN on the coalesced handshake datagram is requeued and th
   await withServer(async port => {
     // Arm an EAGAIN on the second UDP send the client engine makes. The
     // first is the padded Initial (CRYPTO ClientHello). The second is the
-    // response to the server's flight: an INIT ACK coalesced with the HSK
-    // CRYPTO (Finished) and a SHORT NEW_CONNECTION_ID, i.e. the
-    // pack_off[0]==0, iovlen>1 spec whose requeue the patch fixes. The
-    // retry-once in us_quic_packets_out is gated on non-EAGAIN, so EAGAIN
-    // reaches lsquic as a genuine 0-of-N return.
+    // response to the server's flight, which coalesces several packets, the
+    // TLS Finished among them.
     fault.set({ syscall: "sendmsg", action: "errno", errno: "EAGAIN", after: 1, repeat: 1 });
 
     const res = await h3(port);
@@ -139,7 +127,7 @@ test.skipIf(skip)(
     await withServer(async port => {
       // ECONNREFUSED on the very first send is what a stale ICMP on the shared
       // client socket looks like. The failed call consumes the error, so the
-      // one immediate retry in us_quic_packets_out sends the datagram.
+      // one immediate retry sends the datagram.
       fault.set({ syscall: "sendmsg", action: "errno", errno: "ECONNREFUSED", after: 0, repeat: 1 });
 
       const res = await h3(port);
@@ -154,10 +142,8 @@ test.skipIf(skip)(
   async () => {
     await withServer(async port => {
       // Fail the first handful of sends with EAGAIN. Each failure re-arms the
-      // UDP poll's writable interest; on_drain → send_unsent_packets runs on
-      // the next iteration, so progress resumes as soon as the rule disarms.
-      // The 8s abort is well above lsquic's one-second resume_sending_at
-      // failsafe, so the only way to time out is an engine-level stall.
+      // UDP poll's writable interest, so progress resumes as soon as the rule
+      // disarms. The only way to time out is an engine-level stall.
       fault.set({ syscall: "sendmsg", action: "errno", errno: "EAGAIN", after: 0, repeat: 5 });
 
       const res = await h3(port);
@@ -168,8 +154,8 @@ test.skipIf(skip)(
 );
 
 // A send error that is not backpressure and does not go away: the datagram is
-// dropped like a packet lost on the wire, and lsquic's loss timer paces the
-// retries. Reported to lsquic as EAGAIN instead, the engine waits for the UDP
+// dropped like a packet lost on the wire, and the loss timer paces the
+// retries. Taken for EAGAIN instead, the engine waits for the UDP
 // socket to be writable, which it already is, and the event loop spins.
 
 // Not on Windows: its dual-stack socket sends this datagram.
@@ -179,8 +165,8 @@ test.skipIf(isWindows)(
     // No fault injection here, so this runs on release builds too. sendmsg() to
     // the limited broadcast address fails at once and every time on a socket
     // without SO_BROADCAST (EACCES, or ENETUNREACH with no default route). As an
-    // IP literal it skips DNS and the connect-time route probe, so packets_out
-    // is the first to see the error.
+    // IP literal it skips DNS and the connect-time route probe, so the first
+    // send is the first to see the error.
     const client = `
       await using server = Bun.serve({
         port: 0, hostname: "127.0.0.1",
@@ -239,8 +225,7 @@ test.skipIf(skip)("Bun.serve: a send error on every datagram does not spin the s
  * One QUIC long-header datagram with an unsupported version, which makes the
  * server queue a Version Negotiation reply for a connection it does not have.
  * Built from a real Initial the HTTP/3 client sends, with the 4 version bytes
- * replaced: lsquic's parser rejects a hand-built header (`dcil <
- * MIN_INITIAL_DCID_LEN`, a token-length and a payload-length varint).
+ * replaced.
  */
 async function unsupportedVersionDatagram(): Promise<Buffer> {
   const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
@@ -321,11 +306,9 @@ test.skipIf(skip)(
 );
 
 /**
- * EMSGSIZE is the one send error lsquic acts on per datagram: it retires the
- * packet through `ci_packet_too_large` and feeds DPLPMTUD. `packets_out` passes
- * it through for that reason. Reported as EAGAIN instead, every DPLPMTUD probe
- * above the egress MTU pauses the engine and re-arms a writable poll, which
- * stalls the transfer that is in progress.
+ * EMSGSIZE concerns one datagram. Taken for EAGAIN instead, every DPLPMTUD
+ * probe above the egress MTU pauses the engine and re-arms a writable poll,
+ * which stalls the transfer that is in progress.
  *
  * An egress MTU below 1500 is the trigger. `IP_PMTUDISC_PROBE` (quic.cpp,
  * us_quic_set_dontfrag) only makes the kernel ignore its cached path MTU. The
@@ -453,7 +436,7 @@ test.skipIf(!isLinux || !cc)("a DPLPMTUD probe above the egress MTU does not sta
   await using proc = Bun.spawn({
     cmd: [bunExe(), "client.mjs"],
     cwd: String(dir),
-    // 1400 sits above lsquic's base packet size and below its first probe, so
+    // 1400 sits above the base packet size and below the first probe, so
     // only the probes are refused.
     env: { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim, FAKE_MAX_PAYLOAD: "1400" },
     stdout: "pipe",

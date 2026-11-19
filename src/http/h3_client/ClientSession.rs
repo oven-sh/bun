@@ -20,6 +20,11 @@ use crate::{HeaderResult, InFlightRequest, Protocol};
 
 use crate::h3_client::h3_client;
 
+/// For how long a connection is kept without a request, whatever the server does to keep it alive.
+const MAX_IDLE_SECONDS: u32 = 5 * 60;
+/// The same for one on which the server allows no more streams.
+const MAX_SPENT_SECONDS: u32 = 8;
+
 #[derive(bun_ptr::CellRefCounted)]
 pub struct ClientSession {
     /// Held by the `ClientContext.sessions` registry, and by `PendingConnect` while DNS is in flight.
@@ -34,6 +39,7 @@ pub struct ClientSession {
     pub(crate) handshake_done: bool,
     pub(crate) closed: bool,
     pub(crate) registry_index: u32,
+    idle_seconds: u32,
 
     /// The requests that are in flight or wait for a stream, oldest first.
     pub(crate) pending: Vec<AliasableBox<Stream>>,
@@ -65,6 +71,7 @@ impl ClientSession {
             handshake_done: false,
             closed: false,
             registry_index: u32::MAX,
+            idle_seconds: 0,
             pending: Vec::new(),
         })
     }
@@ -92,11 +99,8 @@ impl ClientSession {
     }
 
     /// `Event::Closed` comes in a later turn, so the registry is not touched from here.
-    pub(crate) fn close_if_idle(&mut self, pool_id: u64) {
-        if self.pool_id != pool_id || self.closed || !self.pending.is_empty() {
-            return;
-        }
-        if let Some(connection) = self.connection {
+    pub(crate) fn close_if_idle(&mut self) {
+        if let Some(connection) = self.connection.filter(|_| self.pending.is_empty()) {
             // No later request may pick a connection that is going away.
             self.closed = true;
             connection.close();
@@ -120,6 +124,7 @@ impl ClientSession {
         let stream = AliasableBox::new(Stream::new(self, client));
         let _ = H3::live_streams.fetch_add(1, Ordering::Relaxed);
         self.pending.push(stream);
+        self.idle_seconds = 0;
 
         if self.handshake_done {
             self.open_streams();
@@ -195,9 +200,13 @@ impl ClientSession {
             qs.set_context(core::ptr::null_mut());
             // The server can respond before it has got the whole request.
             qs.reset_unfinished(http3_code::REQUEST_CANCELLED);
+            qs.stop(http3_code::NO_ERROR);
         }
         if let Some(i) = self.pending.iter().position(|s| s.as_ptr() == stream) {
             self.pending.remove(i);
+        }
+        if self.closed {
+            self.close_if_idle();
         }
     }
 
@@ -259,7 +268,17 @@ impl ClientSession {
         }
     }
 
-    pub(crate) fn fail_idle_requests(&mut self, elapsed_seconds: u32) {
+    pub(crate) fn sweep(&mut self, elapsed_seconds: u32) {
+        if self.pending.is_empty() {
+            self.idle_seconds = self.idle_seconds.saturating_add(elapsed_seconds);
+            let max_seconds = match self.has_headroom() {
+                true => MAX_IDLE_SECONDS,
+                false => MAX_SPENT_SECONDS,
+            };
+            if self.idle_seconds >= max_seconds {
+                self.close_if_idle();
+            }
+        }
         let streams: Vec<_> = self.pending.iter().map(AliasableBox::as_ptr).collect();
         for stream in streams {
             let st = stream_mut(stream);

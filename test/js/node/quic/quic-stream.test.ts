@@ -301,10 +301,7 @@ describe("HTTP/3 header encoding", () => {
   });
 });
 
-// lsquic decodes a header block that follows another one while the stream is
-// read, not when its bytes arrive. The peer in these tests writes its header
-// blocks in one call, so they share one STREAM frame and that is where the
-// later blocks are decoded.
+// The peer in these tests writes its header blocks in one call, so they share one STREAM frame.
 describe("HTTP/3 header blocks that follow another header block", () => {
   const encoder = new TextEncoder();
   const request = (path: string) => ({
@@ -394,8 +391,6 @@ describe("HTTP/3 header blocks that follow another header block", () => {
       },
     );
     const client = await connectTo(server);
-    // The server queues the trailers event in the lsquic callback that reads
-    // the request, ahead of the packet that carries its response.
     const response = await responseEvents(client, "/trailers", { "x-checksum": "abc123" });
     client.close();
     expect({ response, requestTrailers: { ...requestTrailers } }).toEqual({
@@ -459,7 +454,7 @@ describe("verifyClient", () => {
 
 describe("headers queued before the handshake", () => {
   // The HEADERS frame of a stream created before the handshake completes
-  // must leave once lsquic opens the stream, not once the writer is used.
+  // must leave once the stream can be opened, not once the writer is used.
   test("reach the server without a write to the stream", async () => {
     const gotHeaders = Promise.withResolvers<string>();
     await using server = await listen(
@@ -589,11 +584,8 @@ test("session.close() before the handshake ends doesn't wait for a pending HTTP/
   expect(exitCode).toBe(0);
 }, 30_000);
 
-// `destroy()` sends STOP_SENDING and RESET_STREAM. Once the response is sent and
-// acked, STOP_SENDING finishes the stream and lsquic frees it in the next service
-// pass, so a queued RESET_STREAM packet would point to freed memory.
-describe("QuicStream.destroy on a stream lsquic has already finished", () => {
-  // The peer's FIN has to arrive after a gap, or lsquic closes the read side
+describe("QuicStream.destroy on a stream whose response is acknowledged", () => {
+  // The peer's FIN has to arrive after a gap, or the read side is closed
   // before the app can call destroy(). A UDP relay in front of the server
   // drops the packet carrying the body.
   const script = String.raw`

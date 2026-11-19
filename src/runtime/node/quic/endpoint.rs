@@ -21,7 +21,7 @@ use bun_quic::{
     PreferredAddress, Side, TokenBucket, Unrouted, Version,
 };
 use bun_uws as uws;
-use bun_uws::quic::drivers::{self, Driver};
+use bun_uws::quic::drivers::{Driver, Registration};
 use bun_uws::quic::io::{Binding, Outbox, now};
 
 use crate::jsc_hooks::timer_all;
@@ -165,7 +165,7 @@ pub(crate) struct QuicEndpoint {
     /// In the order of their addresses.
     sessions: JsCell<Vec<*mut QuicSession>>,
     /// The ones that the next pass has to see to.
-    marked_sessions: JsCell<Vec<*mut QuicSession>>,
+    marked_sessions: JsCell<VecDeque<*mut QuicSession>>,
     sessions_per_host: RefCell<BTreeMap<IpAddr, usize>>,
     pending_new_sessions: JsCell<VecDeque<*mut QuicSession>>,
     pending_verneg: JsCell<Vec<(*mut QuicSession, [u8; VERNEG_PROBE_CID_LEN], Instant)>>,
@@ -174,8 +174,9 @@ pub(crate) struct QuicEndpoint {
     block_list_allow: Cell<bool>,
     pub(crate) event_loop_timer: OwnedTimer,
     pending_endpoint_close: Cell<bool>,
+    close_context: Cell<u8>,
     /// Registered with the loop while this endpoint holds a socket.
-    driver: JsCell<Option<Rc<LoopDriver>>>,
+    driver: JsCell<Option<(Rc<LoopDriver>, Registration)>>,
     driver_pending: Cell<bool>,
     /// Set while the pass runs from the microtask drain: session Closed events
     /// are requeued for the next loop point instead of dispatching mid-chain.
@@ -213,11 +214,21 @@ impl Driver for LoopDriver {
 impl QuicEndpoint {
     /// Not to be held on to while JavaScript runs or allocates.
     pub(super) fn quic(&self) -> RefMut<'_, bun_quic::Endpoint> {
+        self.wake();
         self.quic.borrow_mut()
+    }
+
+    fn wake(&self) {
+        match self.driver.get() {
+            Some((_, registration)) if self.has_pass_pending() => registration.wake(),
+            Some((_, registration)) => registration.forget_timeout(),
+            None => {}
+        }
     }
 
     pub(super) fn mark_driver_pending(&self) {
         self.driver_pending.set(true);
+        self.wake();
     }
 
     /// `defer_closes` distinguishes the microtask-drain pass, which must not
@@ -238,11 +249,13 @@ impl QuicEndpoint {
 
     fn plan_followup(&self) {
         (self.followup_after).set(Some(uws::Loop::get().iteration_number() + 1));
+        self.wake();
     }
 
     /// Every pass forgets it.
     pub(super) fn plan_pass(&self, at: Instant) {
         self.wake_at.update(|it| Some(it.unwrap_or(at).min(at)));
+        self.wake();
     }
 
     fn is_pass_due(&self) -> bool {
@@ -254,7 +267,7 @@ impl QuicEndpoint {
         let probes = self.pending_verneg.get().iter().map(|it| it.2);
         (probes
             .chain(self.wake_at.get())
-            .chain(self.quic().timeout()))
+            .chain(self.quic.borrow_mut().timeout()))
         .min()
     }
 
@@ -282,7 +295,13 @@ extern "C" fn on_drain(_socket: *mut uws::udp::Socket) {
 
 extern "C" fn on_close(socket: *mut uws::udp::Socket) {
     for endpoint in registered_endpoints() {
-        (endpoint.binding).update(|it| it.filter(|it| it.socket != socket));
+        if endpoint.binding.get().is_some_and(|it| it.socket == socket) {
+            endpoint.binding.set(None);
+            endpoint.closing.set(true);
+            endpoint.close_context.set(CLOSECONTEXT_RECEIVE_FAILURE);
+            endpoint.abort_connections();
+            endpoint.plan_followup();
+        }
     }
     on_drain(socket);
 }
@@ -654,7 +673,7 @@ impl QuicEndpoint {
             followup_after: Cell::new(None),
             wake_at: Cell::new(None),
             sessions: JsCell::new(Vec::new()),
-            marked_sessions: JsCell::new(Vec::new()),
+            marked_sessions: JsCell::new(VecDeque::new()),
             sessions_per_host: RefCell::default(),
             pending_new_sessions: JsCell::new(VecDeque::new()),
             pending_verneg: JsCell::new(Vec::new()),
@@ -663,6 +682,7 @@ impl QuicEndpoint {
             block_list_allow: Cell::new(block_list_allow),
             event_loop_timer: OwnedTimer::init_paused(EventLoopTimerTag::QuicEndpoint),
             pending_endpoint_close: Cell::new(false),
+            close_context: Cell::new(CLOSECONTEXT_CLOSE),
             driver: JsCell::new(None),
             driver_pending: Cell::new(false),
             defer_closes: Cell::new(false),
@@ -720,7 +740,8 @@ impl QuicEndpoint {
     }
     pub(super) fn mark(&self, session: &QuicSession) {
         if !session.is_marked.replace(true) {
-            (self.marked_sessions).with_mut(|v| v.push(core::ptr::from_ref(session).cast_mut()));
+            let session = core::ptr::from_ref(session).cast_mut();
+            self.marked_sessions.with_mut(|v| v.push_back(session));
         }
     }
     fn marked_sessions(&self) -> impl Iterator<Item = &QuicSession> {
@@ -796,8 +817,9 @@ impl QuicEndpoint {
         self.binding.set(Some(binding));
         self.local_addr.set(Some(binding.address));
         let driver = Rc::new(LoopDriver(BackRef::new(self)));
-        drivers::register(uws::Loop::get(), Rc::<LoopDriver>::clone(&driver));
-        self.driver.set(Some(driver));
+        let registration =
+            Registration::new(uws::Loop::get(), Rc::<LoopDriver>::downgrade(&driver));
+        self.driver.set(Some((driver, registration)));
         self.with_state(|s| {
             s.bound = 1;
             s.receiving = 1;
@@ -870,8 +892,9 @@ impl QuicEndpoint {
                 );
             }
         }
-        for session in self.marked_sessions.with_mut(core::mem::take) {
-            if let Some(session) = self.live_session(session) {
+        for _ in 0..self.marked_sessions.get().len() {
+            let session = self.marked_sessions.with_mut(VecDeque::pop_front);
+            if let Some(session) = session.and_then(|it| self.live_session(it)) {
                 session.is_marked.set(false);
                 session.process_events(global);
             }
@@ -921,7 +944,7 @@ impl QuicEndpoint {
         // SAFETY: the timer heap only holds timers of live endpoints.
         let this_ref = unsafe { &*this };
         if this_ref.pending_endpoint_close.replace(false) {
-            this_ref.deliver_endpoint_close(this_ref.global(), CLOSECONTEXT_CLOSE, 0);
+            this_ref.deliver_endpoint_close(this_ref.global(), this_ref.close_context.get(), 0);
         }
     }
 
@@ -930,7 +953,7 @@ impl QuicEndpoint {
         let unrouted = self.quic().receive(now, from, datagram, accepted);
         match unrouted {
             Some(Unrouted::Incoming(incoming)) => {
-                if let Err(err) = self.accept(now, from.peer.ip().to_canonical(), incoming) {
+                if let Err(err) = self.accept(now, from.peer, incoming) {
                     crate::dispatch::fold(Err(err));
                 }
             }
@@ -962,18 +985,16 @@ impl QuicEndpoint {
 
     /// Node announces server sessions at Initial receipt — before the
     /// handshake — so `onsession` precedes the client's `opened`.
-    fn accept(&self, now: Instant, host: IpAddr, incoming: Incoming<'_>) -> JsResult<()> {
+    fn accept(&self, now: Instant, peer: SocketAddr, incoming: Incoming<'_>) -> JsResult<()> {
         let Some(server) = self.server.get().as_ref().filter(|_| !self.closing.get()) else {
             self.quic().refuse(incoming);
             return Ok(());
         };
-        let from_host = self.sessions_per_host.borrow().get(&host).copied();
-        let is_reached = |max: u16, count| (1..=count).contains(&usize::from(max));
-        if self.with_state(|s| {
-            s.busy != 0
-                || is_reached(s.max_connections_total, self.sessions.get().len())
-                || is_reached(s.max_connections_per_host, from_host.unwrap_or(0))
-        }) {
+        let (busy, max_conns) = self.with_state(|s| (s.busy, s.max_connections_total));
+        if busy != 0
+            || (1..=self.sessions.get().len()).contains(&max_conns.into())
+            || !self.has_room_for(peer.ip().to_canonical())
+        {
             self.quic().refuse(incoming);
             self.add_stat(IDX_STATS_SERVER_BUSY_COUNT, 1);
             return Ok(());
@@ -997,11 +1018,24 @@ impl QuicEndpoint {
         let conn = self.quic().accept(now, incoming, config, Box::new(tls));
         session.bind(conn);
         let session_ptr = self.register_session(session);
-        session.host.set(Some(host));
-        *self.sessions_per_host.borrow_mut().entry(host).or_default() += 1;
         (self.pending_new_sessions).with_mut(|v| v.push_back(session_ptr));
         self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
         self.apply_server_session_options(global, session)
+    }
+
+    fn has_room_for(&self, host: IpAddr) -> bool {
+        let count = self.sessions_per_host.borrow().get(&host).copied();
+        let max = self.with_state(|s| s.max_connections_per_host);
+        !(1..=count.unwrap_or(0)).contains(&max.into())
+    }
+
+    /// For a client whose address is validated. Returns false if it is one too many.
+    pub(super) fn count_session(&self, session: &QuicSession, peer: SocketAddr) -> bool {
+        let host = peer.ip().to_canonical();
+        let has_room = self.has_room_for(host);
+        session.host.set(Some(host));
+        *self.sessions_per_host.borrow_mut().entry(host).or_default() += 1;
+        has_room
     }
 
     /// RFC 9000 §6.1 makes the reply optional, and a probe is not sent again.
@@ -1021,7 +1055,7 @@ impl QuicEndpoint {
 
     fn send_scope(&self) -> SendScope<'_> {
         self.send_scope_depth.update(|depth| depth + 1);
-        SendScope(&self.send_scope_depth)
+        SendScope(self)
     }
 
     /// Sends what there is to send, and queues the events for JavaScript.
@@ -1099,9 +1133,7 @@ impl QuicEndpoint {
         if self.closed.replace(true) {
             return false;
         }
-        if let Some(driver) = self.driver.replace(None) {
-            drivers::unregister(uws::Loop::get(), &*driver);
-        }
+        self.driver.set(None);
         self.event_loop_timer.disarm();
         ENDPOINT_REGISTRY.with_borrow_mut(|v| v.retain(|it| !core::ptr::eq(&**it, self)));
         if let Some(binding) = self.binding.take() {
@@ -1110,14 +1142,18 @@ impl QuicEndpoint {
         true
     }
 
+    fn abort_connections(&self) {
+        let mut quic = self.quic();
+        for conn in quic.handles() {
+            quic.get_mut(conn).map(bun_quic::Connection::abort_silently);
+        }
+    }
+
     fn teardown(&self) -> bool {
         if !self.release_native() {
             return false;
         }
-        let handles = self.quic().handles();
-        for conn in handles {
-            (self.quic().get_mut(conn)).map(bun_quic::Connection::abort_silently);
-        }
+        self.abort_connections();
         self.collect_events();
         self.server.set(None);
         self.sni_contexts.borrow_mut().clear();
@@ -1351,6 +1387,7 @@ impl QuicEndpoint {
         let session = self.register_session(session);
         self.pending_verneg
             .with_mut(|v| v.push((session, ids[1], now() + VERNEG_PROBE_TIMEOUT)));
+        self.wake();
         self.update_keepalive();
         self.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
         if let Some(binding) = self.binding.get() {
@@ -1493,11 +1530,12 @@ impl QuicEndpoint {
     }
 }
 
-struct SendScope<'a>(&'a Cell<u32>);
+struct SendScope<'a>(&'a QuicEndpoint);
 
 impl Drop for SendScope<'_> {
     fn drop(&mut self) {
-        self.0.update(|depth| depth - 1);
+        self.0.send_scope_depth.update(|depth| depth - 1);
+        self.0.wake();
     }
 }
 

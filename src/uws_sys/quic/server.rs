@@ -14,7 +14,7 @@ use bun_quic::{
 };
 use bun_quic_tls::Session;
 
-use super::drivers::{self, Driver};
+use super::drivers::Driver;
 use super::engine::{Application, Engine, Socket, dispatch_events};
 use super::io::{now, write_ip};
 use super::{Connection, Header, Stream};
@@ -138,7 +138,7 @@ impl Application for Server {
     }
 
     fn on_processed(&self) {
-        let is_drained = self.is_closing.get() && self.engine.endpoint().connection_count() == 0;
+        let is_drained = self.is_closing.get() && self.engine.connection_count() == 0;
         if is_drained || PENDING_CLOSES.with_borrow(|it| !it.is_empty()) {
             for socket in self.engine.sockets() {
                 if socket.is_close_pending.take() || is_drained {
@@ -248,8 +248,8 @@ extern "C" fn us_create_quic_socket_context(
             config.progress_timeout = config.progress_timeout.max(timeout);
         }
     }
-    let server = Rc::new(Server {
-        engine: Engine::new(loop_, VERSIONS),
+    Rc::into_raw(Rc::new_cyclic(|this| Server {
+        engine: Engine::new(loop_, Weak::<Server>::clone(this), VERSIONS),
         config: Rc::new(config),
         tls,
         names: OnceCell::new(),
@@ -258,9 +258,7 @@ extern "C" fn us_create_quic_socket_context(
         headers: Cell::default(),
         is_closing: Cell::new(false),
         on_drained: Cell::new(None),
-    });
-    drivers::register(loop_, Rc::<Server>::clone(&server));
-    Rc::into_raw(server)
+    }))
 }
 
 #[unsafe(no_mangle)]
@@ -281,10 +279,7 @@ extern "C" fn us_quic_socket_context_shutdown(
             connection.abort(now, Layer::Transport, code, &[]);
         }
     });
-    if !server.engine.is_processing() {
-        server.process();
-        server.on_processed();
-    }
+    server.process();
 }
 
 /// # Safety
@@ -294,7 +289,7 @@ unsafe extern "C" fn us_quic_socket_context_free(server: *const Server) {
     // SAFETY: the caller's.
     let server = unsafe { Rc::from_raw(server) };
     server.on_drained.set(None);
-    drivers::unregister(server.engine.loop_, &*server);
+    server.engine.stop_processing();
     server.engine.sockets().iter().for_each(|it| it.close());
     (server.engine).for_each_connection(bun_quic::Connection::abort_silently);
     dispatch_events(&*server);

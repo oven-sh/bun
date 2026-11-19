@@ -196,10 +196,8 @@ describe("node:quic under --isolate", () => {
   }, 30000);
 });
 
-// An endpoint that both listens and dials keeps two lsquic engines on one
-// socket. A 1-RTT packet for the client leg that also reaches the server
-// engine misses its conns_hash, and the server engine answers unknown packets
-// with a stateless reset -- at our own live connection.
+// An endpoint that listens answers unknown packets with a stateless reset.
+// The packets of a connection that it dialed from the same socket are not unknown.
 describe("dual-mode endpoint", () => {
   test("does not stateless-reset its own client connection", async () => {
     const tp = { maxIdleTimeout: 1 };
@@ -243,9 +241,7 @@ describe("dual-mode endpoint", () => {
 });
 
 // RFC 9000 §18.2: maxIdleTimeout 0 disables the idle timeout, and node stores
-// it as `max_idle_timeout * NGTCP2_SECONDS` so 0 survives. lsquic reads its
-// seconds field whenever the ms field is zero, so 0 has to reach both or it
-// silently becomes the 10s default.
+// it as `max_idle_timeout * NGTCP2_SECONDS` so 0 survives.
 describe("transportParams.maxIdleTimeout", () => {
   test("0 disables the idle timeout instead of falling back to the default", async () => {
     const sniOpt = { "*": { keys: [key], certs: [cert] } };

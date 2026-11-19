@@ -51,6 +51,7 @@ fn on_goaway(session: &mut ClientSession) {
     while let Some(stream) = session.first_unopened() {
         session.retry_or_fail(stream, crate::Error::ConnectionClosed);
     }
+    session.close_if_idle();
 }
 
 fn on_close(session: &mut ClientSession) {

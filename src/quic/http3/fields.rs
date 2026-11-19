@@ -23,8 +23,16 @@ static NAME: ByteSet = ByteSet::new(&[
     b'|'..=b'|',
     b'~'..=b'~',
 ]);
-static VALUE: ByteSet = ByteSet::new(&[b'\t'..=b'\t', b' '..=0xff]);
-static PATH: ByteSet = ByteSet::new(core::slice::from_ref(&(b'!'..=0xff)));
+static VALUE: ByteSet = ByteSet::new(&[b'\t'..=b'\t', b' '..=b'~', 0x80..=0xff]);
+static PATH: ByteSet = ByteSet::new(&[b'!'..=b'~', 0x80..=0xff]);
+/// RFC 3986 §3.1.
+static SCHEME: ByteSet = ByteSet::new(&[
+    b'+'..=b'+',
+    b'-'..=b'.',
+    b'0'..=b'9',
+    b'A'..=b'Z',
+    b'a'..=b'z',
+]);
 
 /// To be sent.
 #[derive(Clone, Copy)]
@@ -156,7 +164,7 @@ impl Name {
                 b"te" => Self::Te,
                 b"connection" | b"keep-alive" | b"proxy-connection" | b"transfer-encoding"
                 | b"upgrade" => return None,
-                name @ [_, ..] if NAME.prefix_len(name) == name.len() => Self::Other,
+                name @ [_, ..] if is_in(&NAME, name) => Self::Other,
                 _ => return None,
             },
         })
@@ -183,9 +191,11 @@ pub(super) enum Failure {
 impl Summary {
     #[inline]
     fn add(&mut self, name: &Name, value: &[u8], expected: Expected) -> Option<()> {
-        (VALUE.prefix_len(value) == value.len()).then_some(())?;
+        if let Name::Pseudo(bit) = *name {
+            return self.add_pseudo(bit, value, expected);
+        }
+        is_in(&VALUE, value).then_some(())?;
         match *name {
-            Name::Pseudo(bit) => return self.add_pseudo(bit, value, expected),
             Name::ContentLength => {
                 let len = parse_decimal(value).filter(|&len| len <= MAX_VARINT)?;
                 let before = self.content_length.replace(len);
@@ -200,7 +210,7 @@ impl Summary {
             Name::Priority => self.priority.get_or_insert_default().update(value),
             Name::Te => (expected == Expected::Request && value.eq_ignore_ascii_case(b"trailers"))
                 .then_some(())?,
-            Name::Host | Name::Other => {}
+            Name::Pseudo(_) | Name::Host | Name::Other => {}
         }
         self.seen |= Seen::REGULAR;
         Some(())
@@ -216,26 +226,27 @@ impl Summary {
         (is_allowed && !self.seen.intersects(bit | Seen::REGULAR) && !value.is_empty())
             .then_some(())?;
         self.seen |= bit;
-        match bit {
-            Seen::METHOD => {
-                (self.is_connect, self.is_options) = (value == b"CONNECT", value == b"OPTIONS");
-                (value
-                    .iter()
-                    .all(|&it| NAME.contains(it.to_ascii_lowercase())))
-                .then_some(())
-            }
+        let is_valid = match bit {
             Seen::PATH => {
                 self.has_asterisk = value == b"*";
-                ((self.has_asterisk || value.starts_with(b"/"))
-                    && PATH.prefix_len(value) == value.len())
-                .then_some(())
+                (self.has_asterisk || value.starts_with(b"/")) && is_in(&PATH, value)
             }
             Seen::STATUS => {
                 self.status = parse_decimal(value).filter(|_| value.len() == 3)? as u16;
-                (self.status >= 100 && self.status != 101).then_some(())
+                self.status >= 100 && self.status != 101
             }
-            _ => Some(()),
-        }
+            Seen::AUTHORITY => is_in(&VALUE, value),
+            Seen::SCHEME => {
+                value.first().is_some_and(u8::is_ascii_alphabetic) && is_in(&SCHEME, value)
+            }
+            _ => {
+                if bit == Seen::METHOD {
+                    (self.is_connect, self.is_options) = (value == b"CONNECT", value == b"OPTIONS");
+                }
+                (value.iter()).all(|&it| NAME.contains(it.to_ascii_lowercase()))
+            }
+        };
+        is_valid.then_some(())
     }
 
     fn is_complete(&self, expected: Expected, allows_protocol: bool) -> bool {
@@ -255,6 +266,11 @@ impl Summary {
             Expected::Trailers => true,
         }
     }
+}
+
+#[inline]
+fn is_in(set: &ByteSet, bytes: &[u8]) -> bool {
+    set.prefix_len(bytes) == bytes.len()
 }
 
 fn parse_decimal(digits: &[u8]) -> Option<u64> {

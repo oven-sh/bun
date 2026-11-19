@@ -1,5 +1,7 @@
 //! RFC 9000 §5.2.
 
+use core::hash::BuildHasher;
+use core::net::IpAddr;
 use core::ops::Range;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -34,6 +36,8 @@ const USUAL_RESET_LENS: Range<usize> = 43..62;
 const DATAGRAMS_PER_TURN: usize = 16;
 /// The other clients wait until the established connections have been served.
 const HELLOS_PER_PASS: usize = 2;
+/// Into how many the clients are divided by their addresses.
+const GROUPS: usize = 64;
 /// RFC 9000 §7.2.
 const MIN_INITIAL_ID_LEN: usize = 8;
 
@@ -86,18 +90,21 @@ struct Slot {
     tenant: Tenant,
     generation: u32,
     awaited: Option<Awaited>,
+    group: u8,
     /// From [`Endpoint::unvalidated_clients`].
     has_token: bool,
     may_have_events: bool,
     may_transmit: bool,
 }
 
-/// The connections that wait for the same. The oldest has to make room for a new one.
+/// The connections that wait for the same. The oldest has to make room for a new one, unless the group of the new
+/// one has more than its share.
 struct Queue {
     /// Also some that have left.
     handles: VecDeque<Handle>,
     len: usize,
     max_len: usize,
+    group_lens: [u16; GROUPS],
 }
 
 impl Queue {
@@ -106,7 +113,33 @@ impl Queue {
             handles: VecDeque::new(),
             len: 0,
             max_len,
+            group_lens: [0; GROUPS],
         }
+    }
+
+    fn leave(&mut self, group: u8) {
+        self.len -= 1;
+        self.group_lens
+            .get_mut(usize::from(group))
+            .map(|it| *it -= 1);
+    }
+
+    /// Returns the one that has to leave.
+    fn join(&mut self, new: Handle, group: u8, awaited: Awaited, slots: &[Slot]) -> Option<Handle> {
+        let group_len = self.group_lens.get_mut(usize::from(group))?;
+        *group_len += 1;
+        self.len += 1;
+        self.handles.push_back(new);
+        if self.len > self.max_len {
+            return match usize::from(*group_len) > self.max_len / 4 {
+                true => self.handles.pop_back(),
+                false => self.pop(awaited, slots),
+            };
+        }
+        if self.handles.len() > 2 * self.len {
+            self.handles.retain(|it| it.awaits(awaited, slots));
+        }
+        None
     }
 
     fn pop(&mut self, awaited: Awaited, slots: &[Slot]) -> Option<Handle> {
@@ -285,8 +318,13 @@ impl Endpoint {
             connection.receive_first(now, &incoming.packet, incoming.rest, incoming.len, shared);
             connection
         });
+        let network = match addresses.peer.ip().to_canonical() {
+            IpAddr::V4(ip) => ip.to_bits().into(),
+            IpAddr::V6(ip) => ip.to_bits() >> 64,
+        };
+        let hash = self.shared.routes.by_initial_id.hasher().hash_one(network);
         if let Some(slot) = self.slots.get_mut(handle.slot as usize) {
-            slot.has_token = incoming.has_token;
+            (slot.has_token, slot.group) = (incoming.has_token, (hash % GROUPS as u64) as u8);
         }
         self.track_handshake(now, handle.slot);
         handle
@@ -313,25 +351,19 @@ impl Endpoint {
         if is_validated && core::mem::take(&mut slot.has_token) {
             self.unvalidated_clients.put_back();
         }
-        let before = core::mem::replace(&mut slot.awaited, awaited);
+        let (before, group) = (core::mem::replace(&mut slot.awaited, awaited), slot.group);
         if before == awaited {
             return;
         }
         if let Some(before) = before {
-            self.queue(before).0.len -= 1;
+            self.queue(before).0.leave(group);
         }
         let Some(awaited) = awaited else {
             return;
         };
         let (queue, slots) = self.queue(awaited);
-        queue.len += 1;
-        queue.handles.push_back(handle);
-        if queue.handles.len() > 2 * queue.len {
-            queue.handles.retain(|it| it.awaits(awaited, slots));
-        }
-        if queue.len > queue.max_len
-            && let Some(oldest) = queue.pop(awaited, slots)
-            && let Some(connection) = self.get_mut(oldest)
+        if let Some(unlucky) = queue.join(handle, group, awaited, slots)
+            && let Some(connection) = self.get_mut(unlucky)
         {
             match awaited {
                 Awaited::Turn => {
@@ -340,7 +372,7 @@ impl Endpoint {
                 }
                 _ => connection.abort_silently(),
             }
-            self.track_handshake(now, oldest.slot);
+            self.track_handshake(now, unlucky.slot);
         }
     }
 

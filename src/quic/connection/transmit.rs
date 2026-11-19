@@ -360,7 +360,7 @@ impl Connection {
         }
         let (mut draft, end) = self.begin(SpaceId::Data, out, end)?;
         let space = &mut self.spaces.data;
-        if space.received.is_ack_due || space.received.unacked_eliciting > 0 {
+        if space.received.is_ack_due || space.received.unacked_eliciting > 0 || is_probe {
             (space.received).write_ack(now, draft.packet.number, out, end);
             self.timers.stop(Timer::Ack);
         }

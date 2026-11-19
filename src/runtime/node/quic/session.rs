@@ -1245,7 +1245,9 @@ impl QuicSession {
             }
             // `closed` of a stream can reject, and is commonly looked at after `opened`.
             SessionEvent::StreamClosed { stream }
-                if !self.is_server && !self.handshake_reported.get() && self.conn.get().is_some() =>
+                if !self.is_server
+                    && !self.handshake_reported.get()
+                    && self.conn.get().is_some() =>
             {
                 self.held_stream_closes.with_mut(|v| v.push(stream));
             }
@@ -1303,12 +1305,6 @@ impl QuicSession {
         }
         self.release_stream_closes();
         let snapshot = self.hsk_snapshot.get().as_ref();
-        let cert_ok = !self.is_server
-            || !(self.endpoint_ref()).is_some_and(|ep| ep.server_verify_client.get())
-            || snapshot.is_some_and(|s| s.peer_cert_der.is_some());
-        if !cert_ok {
-            self.peer_cert_rejected.set(true);
-        }
         let open_allowed = !self.peer_cert_rejected.get();
         let max_datagram_size = snapshot
             .and_then(|s| s.peer_transport_params.as_ref())
@@ -1406,16 +1402,6 @@ impl QuicSession {
                 );
             }
         }
-
-        // Matching Node: the server session exists and then closes with a
-        // certificate_required transport error.
-        if !cert_ok && !self.destroyed.get() && self.conn.get().is_some() {
-            self.reject_peer(
-                CRYPTO_ERROR_CERTIFICATE_REQUIRED,
-                b"peer did not provide a certificate",
-            );
-            self.schedule_process();
-        }
     }
 
     fn release_stream_closes(&self) {
@@ -1437,6 +1423,12 @@ impl QuicSession {
                 .get()
                 .as_ref()
                 .is_some_and(|s| s.validation.is_some())
+    }
+
+    fn lacks_client_certificate(&self) -> bool {
+        self.is_server
+            && (self.endpoint_ref()).is_some_and(|ep| ep.server_verify_client.get())
+            && (self.hsk_snapshot.get().as_ref()).is_none_or(|s| s.peer_cert_der.is_none())
     }
 
     fn capture_hsk_snapshot(&self, conn: &Connection) {
@@ -1708,10 +1700,7 @@ impl QuicSession {
                 // close was applied then.
                 match self.parse_close_options(global, options) {
                     Ok((layer, code, reason)) => {
-                        self.update(|conn| match (layer, code, reason.is_empty()) {
-                            (Layer::Transport, 0, true) => conn.close(now()),
-                            _ => conn.abort(now(), layer, code, &reason),
-                        });
+                        self.update(|conn| conn.abort(now(), layer, code, &reason));
                         self.endpoint_ref().map(QuicEndpoint::drive_once);
                     }
                     Err(err) => parse_error = Some(global.take_exception(err)),
@@ -2046,7 +2035,15 @@ impl QuicSession {
             }
             Event::Ready => return self.on_ready(),
             Event::StreamsAvailable(direction) => return self.open_pending_streams(direction),
-            Event::HandshakeConfirmed => SessionEvent::HandshakeConfirmed,
+            Event::HandshakeConfirmed => {
+                if self.is_server
+                    && let (Some(ep), Some(peer)) = (self.endpoint_ref(), self.remote_addr.get())
+                    && !ep.count_session(self, peer)
+                {
+                    self.reject_peer(transport_code::CONNECTION_REFUSED, &[]);
+                }
+                SessionEvent::HandshakeConfirmed
+            }
             Event::EarlyDataRejected => {
                 self.deferred_aborts.with_mut(Vec::clear);
                 SessionEvent::EarlyDataFailed
@@ -2092,6 +2089,14 @@ impl QuicSession {
             self.reject_peer(
                 CRYPTO_ERROR_BAD_CERTIFICATE,
                 b"peer certificate verification failed",
+            );
+        } else if self.lacks_client_certificate() {
+            // Matching Node: the server session exists and then closes with a
+            // certificate_required transport error.
+            self.peer_cert_rejected.set(true);
+            self.reject_peer(
+                CRYPTO_ERROR_CERTIFICATE_REQUIRED,
+                b"peer did not provide a certificate",
             );
         }
         if self.is_server {

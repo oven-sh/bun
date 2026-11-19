@@ -14,11 +14,10 @@ pub(super) enum Timer {
     Blocked,
     Path,
     KeyDiscard,
-    AckFrequency,
 }
 
 impl Timer {
-    pub(super) const ALL: [Self; 12] = [
+    pub(super) const ALL: [Self; 11] = [
         Self::Handshake,
         Self::Idle,
         Self::Progress,
@@ -30,7 +29,6 @@ impl Timer {
         Self::Blocked,
         Self::Path,
         Self::KeyDiscard,
-        Self::AckFrequency,
     ];
 }
 

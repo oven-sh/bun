@@ -1,7 +1,6 @@
 //! RFC 9002 §5 and §6.
 
-use super::ack_frequency::ROUND_TRIPS_PER_UPDATE;
-use super::sent::{Fate, Sent, SentFrame, SentPacket};
+use super::sent::{Control, Fate, Sent, SentFrame, SentPacket};
 use super::space::{Space, SpaceId};
 use super::streams::Flags;
 use super::timers::Timer;
@@ -18,12 +17,22 @@ const PERSISTENT_CONGESTION_THRESHOLD: u64 = 3;
 const MIN_HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(10);
 const MIN_TAIL_TIMEOUT: Duration = Duration::from_millis(10);
 const MAX_PROBE_TIMEOUT: Duration = Duration::from_secs(60);
-/// For how long a peer that is there can leave a packet unacknowledged.
-const MAX_SILENCE: Duration = Duration::from_secs(30);
+const DELIVERY_PERIOD: Duration = Duration::from_secs(30);
+/// One part in so many of what has been sent has to be acknowledged in a period.
+const DELIVERY_PARTS: u64 = 8;
+const MAX_PTO_COUNT_IN_DOUBT: u32 = 4;
 const PROBES: u8 = 2;
 /// After how many timeouts in a row the size of the packets is suspected.
 const BLACK_HOLE_THRESHOLD: u32 = 3;
 const MIN_SKIP_RANGE: u64 = 256;
+
+/// To tell whether a peer that is there takes what is sent to it.
+#[derive(Default)]
+pub(super) struct Delivery {
+    pub(super) period_end: Instant,
+    target: u64,
+    is_in_doubt: bool,
+}
 
 impl Connection {
     #[inline]
@@ -97,11 +106,13 @@ impl Connection {
         }
         if let Some(setup) = &mut self.setup {
             setup.is_validated_by_peer |= id == SpaceId::Handshake;
+            largest_sent_at.take_if(|_| setup.is_catching_up);
         }
-        if !has_news {
+        let is_larger = Some(ack.largest) > previous_largest;
+        if !has_news && !is_larger {
             return Ok(());
         }
-        if let Some(sent_at) = largest_sent_at.filter(|_| Some(ack.largest) > previous_largest) {
+        if let Some(sent_at) = largest_sent_at.filter(|_| has_news && is_larger) {
             let delay = match id {
                 SpaceId::Data => {
                     let scale = 1 << self.peer.ack_delay_exponent;
@@ -122,12 +133,9 @@ impl Connection {
             if self.next_skip == u64::MAX && self.skipped.is_some_and(|it| it < ack.largest) {
                 self.plan_skip();
             }
-            if let Some(controller) = &mut self.ack_controller {
-                controller.acks += 1;
-                if !self.timers.is_set(Timer::AckFrequency) {
-                    let period = self.rtt.smoothed * ROUND_TRIPS_PER_UPDATE;
-                    self.timers.set(Timer::AckFrequency, now + period);
-                }
+            let (rtt, sent) = (self.rtt.smoothed, self.spaces.data.next_number);
+            if (self.ack_controller.as_mut()).is_some_and(|it| it.on_ack(now, rtt, sent)) {
+                self.streams.state.owed |= Control::ACK_FREQUENCY;
             }
         }
         Ok(())
@@ -354,16 +362,31 @@ impl Connection {
         }
     }
 
+    /// For the first datagram after a period. The path may just be back, so the peer gets another one.
+    #[cold]
+    pub(super) fn check_delivery(&mut self, now: Instant) {
+        let (released, unacked) = self.streams.state.delivery();
+        let is_behind = released < self.delivery.target;
+        if is_behind && self.delivery.is_in_doubt {
+            return self.time_out(now, CloseReason::IdleTimeout);
+        }
+        if is_behind {
+            self.pto_count = self.pto_count.min(MAX_PTO_COUNT_IN_DOUBT);
+            self.set_loss_timer(now);
+        }
+        self.delivery = Delivery {
+            period_end: now + DELIVERY_PERIOD,
+            target: released + unacked.div_ceil(DELIVERY_PARTS),
+            is_in_doubt: is_behind,
+        };
+    }
+
     /// RFC 9002 §A.9.
     pub(super) fn on_loss_timeout(&mut self, now: Instant) {
         let (loss_time, id) = self.earliest(|_, space| space.sent.loss_time);
         if loss_time != Instant::NEVER {
             self.detect_lost(now, id);
             return self.set_loss_timer(now);
-        }
-        let oldest = self.spaces.data.sent.packets.front();
-        if oldest.is_some_and(|it| self.last_received_at > it.flight.at + MAX_SILENCE) {
-            return self.time_out(now, CloseReason::IdleTimeout);
         }
         match self.earliest(|id, space| self.probe_time(id, space)) {
             (Instant::NEVER, _) => {

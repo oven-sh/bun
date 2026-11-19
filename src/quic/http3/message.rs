@@ -72,6 +72,10 @@ impl Message {
             || self.fields.is_some() && matches!(self.cursor.current(), Some((kind::HEADERS, _)))
     }
 
+    pub(crate) fn awaits_head(&self) -> bool {
+        self.part == Part::Head
+    }
+
     /// Whether more is to come from the bytes that have been read.
     #[inline]
     pub(crate) fn has_pending_fields(&self) -> bool {
@@ -233,9 +237,9 @@ impl Message {
             // RFC 9114 §4.1.2.
             Expected::Response => {
                 self.expected_len = match summary.status {
+                    ..300 if self.is_connect_request => None,
                     204 | 304 => Some(0),
                     _ if self.is_head_request => Some(0),
-                    ..300 if self.is_connect_request => None,
                     _ => summary.content_length,
                 };
                 self.is_tunnel = self.is_connect_request && summary.status < 300;

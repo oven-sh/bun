@@ -923,6 +923,8 @@ describe("zlib native handle errors and arguments", () => {
 
 describe.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 12 * 1024 ** 3)("2 ** 32 bytes", () => {
   const size = 2 ** 32;
+  // The CRC-32 of zeros with a 1 at the end, and their number modulo 2 ** 32.
+  const trailer = "1bdf05a500000000";
   // In a process of its own, which gives the memory back.
   async function run(script: string) {
     await using proc = Bun.spawn({
@@ -970,16 +972,57 @@ describe.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 
     });
   });
 
-  test.skipIf(isDebug || isASAN).each(["gzipSync", "gzip"])("are all taken by %s()", async method => {
+  test("end where they end", async () => {
+    expect(
+      await run(`
+        const [large, small] = [Buffer.allocUnsafe(size), Buffer.alloc(64)];
+        for (const method of ["write", "writeSync"]) {
+          for (const args of [[large, size, 1, small, 0, 64], [small, 0, 64, large, size, 1]]) {
+            try {
+              zlib.createDeflate()._handle[method](0, ...args);
+            } catch (error) {
+              console.log(error.message);
+            }
+          }
+        }
+        console.log(zlib.createDeflate()._handle.writeSync(0, large, size, 0, small, 0, 64));
+      `),
+    ).toEqual({
+      stdout: ["in", "out", "in", "out"]
+        .map(it => `${it}_off + ${it}_len (4294967297) exceeds ${it}put buffer length (4294967296)\n`)
+        .concat("undefined")
+        .join(""),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.each([
+    ["at once", "console.log(String(zlib.zstdDecompressSync(input)))"],
+    ["by a stream", "zlib.createZstdDecompress().on('data', out => console.log(String(out))).end(input)"],
+  ])("are not all read %s if the compressed data ends", async (_, read) => {
+    expect(
+      await run(`
+        const input = Buffer.allocUnsafe(size);
+        input.fill(0, zlib.zstdCompressSync("abc").copy(input), 64);
+        input[size - 1] = 1;
+        ${read};
+      `),
+    ).toEqual({ stdout: "abc", stderr: "", exitCode: 0 });
+  });
+
+  // These builds take minutes to compress so much.
+  const isSlow = isDebug || isASAN;
+
+  test.skipIf(isSlow).each(["gzipSync", "gzip"])("are all taken by %s()", async method => {
     expect(
       await run(`
         const input = Buffer.alloc(size);
         input[size - 1] = 1;
-        // The CRC-32, and the length modulo 2 ** 32.
         const print = (error, out) => console.log(error ?? out.subarray(-8).toString("hex"));
         const out = zlib.${method}(input, { level: 1, chunkSize: 1 << 20 }, print);
         if (out) print(null, out);
       `),
-    ).toEqual({ stdout: "1bdf05a500000000", stderr: "", exitCode: 0 });
+    ).toEqual({ stdout: trailer, stderr: "", exitCode: 0 });
   });
 });

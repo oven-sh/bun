@@ -142,8 +142,13 @@ impl<C> Stream<C> {
     }
 }
 
+/// So small that a length can be added.
+fn offset_from_js(value: JsLocal<'_>) -> usize {
+    (value.to_js().as_number() as usize).min(1 << f64::MANTISSA_DIGITS)
+}
+
 /// `_writeState` has to be able to count it.
-fn length_from_js(global: &JSGlobalObject, name: &str, value: JsLocal<'_>) -> JsResult<u32> {
+fn length_from_js(global: &JSGlobalObject, name: &str, value: JsLocal<'_>) -> JsResult<usize> {
     if value.to_js().as_number() > f64::from(u32::MAX) {
         return Err(global
             .err(
@@ -152,7 +157,7 @@ fn length_from_js(global: &JSGlobalObject, name: &str, value: JsLocal<'_>) -> Js
             )
             .throw());
     }
-    Ok(jsv_to_u32(value.to_js()))
+    Ok(jsv_to_u32(value.to_js()) as usize)
 }
 
 /// The codecs `memcpy` from `in` to `out`.
@@ -423,7 +428,7 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
                 .throw());
         }
 
-        let (in_off, in_len): (u32, u32) = if in_js.is_null() {
+        let (in_off, in_len): (usize, usize) = if in_js.is_null() {
             // just a flush
             (0, 0)
         } else {
@@ -450,15 +455,15 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
                     )
                     .throw());
             }
-            let in_off = jsv_to_u32(in_off.to_js());
+            let in_off = offset_from_js(in_off);
             let in_len = length_from_js(global_this, "in_len", in_len)?;
-            if in_buf.byte_len < in_off as usize + in_len as usize {
+            if in_buf.byte_len < in_off + in_len {
                 return Err(global_this
                     .err(
                         ErrorCode::OUT_OF_RANGE,
                         format_args!(
                             "in_off + in_len ({}) exceeds input buffer length ({})",
-                            in_off as usize + in_len as usize,
+                            in_off + in_len,
                             in_buf.byte_len,
                         ),
                     )
@@ -475,15 +480,15 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
                 )
                 .throw());
         };
-        let out_off: u32 = jsv_to_u32(out_off.to_js());
+        let out_off = offset_from_js(out_off);
         let out_len = length_from_js(global_this, "out_len", out_len)?;
-        if out_buf.byte_len < out_off as usize + out_len as usize {
+        if out_buf.byte_len < out_off + out_len {
             return Err(global_this
                 .err(
                     ErrorCode::OUT_OF_RANGE,
                     format_args!(
                         "out_off + out_len ({}) exceeds output buffer length ({})",
-                        out_off as usize + out_len as usize,
+                        out_off + out_len,
                         out_buf.byte_len,
                     ),
                 )
@@ -505,9 +510,9 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
         let buffers = PendingBuffers::pin(
             global_this,
             in_js,
-            in_off as usize..in_off as usize + in_len as usize,
+            in_off..in_off + in_len,
             out_js,
-            out_off as usize..out_off as usize + out_len as usize,
+            out_off..out_off + out_len,
             &mut stream.input_copy,
         )?;
         stream
@@ -577,21 +582,21 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
                     )
                     .throw());
             };
-            let in_off = jsv_to_u32(in_off.to_js());
+            let in_off = offset_from_js(in_off);
             let in_len = length_from_js(global_this, "in_len", in_len)?;
-            if in_buf.byte_len < in_off as usize + in_len as usize {
+            if in_buf.byte_len < in_off + in_len {
                 return Err(global_this
                     .err(
                         ErrorCode::OUT_OF_RANGE,
                         format_args!(
                             "in_off + in_len ({}) exceeds input buffer length ({})",
-                            in_off as usize + in_len as usize,
+                            in_off + in_len,
                             in_buf.byte_len,
                         ),
                     )
                     .throw());
             }
-            in_buf.narrow(in_off as usize, in_len as usize);
+            in_buf.narrow(in_off, in_len);
             in_buf
         };
 
@@ -603,21 +608,21 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
                 )
                 .throw());
         };
-        let out_off: u32 = jsv_to_u32(out_off.to_js());
+        let out_off = offset_from_js(out_off);
         let out_len = length_from_js(global_this, "out_len", out_len)?;
-        if out_buf.byte_len < out_off as usize + out_len as usize {
+        if out_buf.byte_len < out_off + out_len {
             return Err(global_this
                 .err(
                     ErrorCode::OUT_OF_RANGE,
                     format_args!(
                         "out_off + out_len ({}) exceeds output buffer length ({})",
-                        out_off as usize + out_len as usize,
+                        out_off + out_len,
                         out_buf.byte_len,
                     ),
                 )
                 .throw());
         }
-        out_buf.narrow(out_off as usize, out_len as usize);
+        out_buf.narrow(out_off, out_len);
         throw_if_overlapping(global_this, &in_buf, &out_buf)?;
 
         let mut stream = self.borrow_idle_stream(global_this)?;

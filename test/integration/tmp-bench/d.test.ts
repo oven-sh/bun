@@ -1,6 +1,2 @@
 import { bench } from "./run";
-bench(
-  "cpu.js",
-  "ping-pong,keep-alive,http server,one by one,ipc paced,stdin,file.stream,FileSink,createReadStream,64K writes,shell echo",
-  "",
-);
+bench("cpu.js", "64 B,128 B", ";0=0;0=10000;0=30000;1=20000;0=30000,1=20000", "7");

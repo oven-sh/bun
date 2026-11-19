@@ -1267,6 +1267,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
             }
         }
         this.socket.set(Self::socket(socket));
+        // What closes an idle connection whose peer is gone without a FIN. Not a unix socket's option.
+        if matches!(this.address, valkey::Address::Host { .. }) {
+            let _ = socket.set_keep_alive(true, 60);
+        }
         if !SSL {
             this.start();
         }

@@ -3,7 +3,7 @@ import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, mock, test } from "bun:test";
 import { once } from "events";
 import { existsSync, readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isIPv6, isWindows, nodeExe, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isIPv6, isLinux, isWindows, nodeExe, tempDir, tls as tlsCert } from "harness";
 import net from "net";
 import path from "path";
 import tls from "tls";
@@ -551,6 +551,89 @@ describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
     } finally {
       client.close();
       await new Promise(closed => server.close(closed));
+    }
+  });
+});
+
+// The kernel's view of the client's socket, as in postgres-connection.test.ts.
+describe.skipIf(!isLinux).concurrent("Valkey: TCP keepalive", () => {
+  // Answers HELLO with `+OK` and every other command with a bulk string, so the client has nothing left to retransmit.
+  async function respServer(secure: boolean) {
+    const sockets: net.Socket[] = [];
+    const onConnection = (socket: net.Socket) => {
+      sockets.push(socket);
+      const state = { buffer: Buffer.alloc(0) };
+      socket.on("data", chunk => {
+        state.buffer = Buffer.concat([state.buffer, chunk as Buffer]);
+        for (const [name] of readCommands(state)) {
+          socket.write(name.toUpperCase() === "HELLO" ? "+OK\r\n" : "$5\r\nvalue\r\n");
+        }
+      });
+      socket.on("error", () => {});
+    };
+    const server = secure
+      ? tls.createServer({ key: tlsCert.key, cert: tlsCert.cert }, onConnection)
+      : net.createServer(onConnection);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as net.AddressInfo;
+    return {
+      port,
+      sockets,
+      url: `${secure ? "rediss" : "redis"}://127.0.0.1:${port}`,
+      async [Symbol.asyncDispose]() {
+        for (const socket of sockets) socket.destroy();
+        await new Promise(closed => server.close(closed));
+      },
+    };
+  }
+
+  /**
+   * Seconds until the kernel probes the peer of the one established socket to `serverPort`: Infinity when keepalive is
+   * off. The `tr` column of /proc/self/net/tcp is 02 while the keepalive timer is armed and 00 when no timer is;
+   * `tm->when` is what is left in 1/100 s. It counts down from the idle time, which is 7200 s unless somebody sets it.
+   */
+  function keepaliveSeconds(serverPort: number) {
+    const remote = "0100007F:" + serverPort.toString(16).toUpperCase().padStart(4, "0");
+    const timers = readFileSync("/proc/self/net/tcp", "utf8")
+      .split("\n")
+      .map(line => line.trim().split(/\s+/))
+      .filter(columns => columns[2] === remote && columns[3] === "01")
+      .map(columns => columns[5]);
+    if (timers.length !== 1) throw new Error(`expected one socket to port ${serverPort}, found ${timers.length}`);
+    const [active, when] = timers[0].split(":");
+    if (active === "00") return Infinity;
+    if (active === "02") return parseInt(when, 16) / 100;
+    throw new Error(`the socket has data in flight (timer ${timers[0]})`);
+  }
+
+  test.each(["redis", "rediss"])("is on for a %s:// connection", async scheme => {
+    const secure = scheme === "rediss";
+    await using server = await respServer(secure);
+    const client = new RedisClient(server.url, secure ? { tls: { ca: tlsCert.cert } } : {});
+    try {
+      expect(await client.get("key")).toBe("value");
+      expect(keepaliveSeconds(server.port)).toBeLessThanOrEqual(60);
+    } finally {
+      client.close();
+    }
+  });
+
+  test("is on for the connection that replaces a dropped one", async () => {
+    await using server = await respServer(false);
+    const client = new RedisClient(server.url);
+    try {
+      const reconnected = Promise.withResolvers<void>();
+      let connects = 0;
+      client.onconnect = () => void (++connects === 2 && reconnected.resolve());
+      expect(await client.get("key")).toBe("value");
+      server.sockets[0].end();
+      await reconnected.promise;
+      expect(await client.get("key")).toBe("value");
+      expect(server.sockets).toHaveLength(2);
+      expect(keepaliveSeconds(server.port)).toBeLessThanOrEqual(60);
+    } finally {
+      client.close();
     }
   });
 });

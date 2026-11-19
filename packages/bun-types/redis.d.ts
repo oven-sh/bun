@@ -16,7 +16,9 @@ declare module "bun" {
     idleTimeout?: number;
 
     /**
-     * Whether to automatically reconnect
+     * Whether to automatically reconnect. A command that Bun already sent when
+     * the connection dropped rejects with `ERR_REDIS_CONNECTION_CLOSED`. Bun
+     * does not send it again on the new connection.
      * @default true
      */
     autoReconnect?: boolean;
@@ -29,7 +31,8 @@ declare module "bun" {
     maxRetries?: number;
 
     /**
-     * Whether to queue commands when disconnected
+     * Whether to queue commands when disconnected. The queue holds only the
+     * commands that Bun did not send yet.
      * @default true
      */
     enableOfflineQueue?: boolean;

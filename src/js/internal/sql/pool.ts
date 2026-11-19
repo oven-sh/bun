@@ -743,8 +743,8 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     }
   }
 
-  /// The ready connection of the lowest rank() that runs fewer than `limit` queries, the first login of several.
-  /// The `setAside` that will be idle first are left to the reservations that wait ahead of the caller.
+  /// The ready connection that runs the fewest queries, if fewer than `limit`. The `setAside` that will be
+  /// idle first are left to the reservations that wait ahead of the caller.
   #leastBusy(limit: number, setAside: number): PooledConnection | null {
     const connections = this.connections;
     if (setAside !== 0) {

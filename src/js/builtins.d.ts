@@ -357,8 +357,6 @@ declare function $putInternalField<Fields extends any[], N extends keyof Fields>
  * - [WebKit - `emit_intrinsic_newArrayWithSize`](https://github.com/oven-sh/WebKit/blob/e1a802a2287edfe7f4046a9dd8307c8b59f5d816/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp#L2317)
  */
 declare function $newArrayWithSize<T>(size: number): T[];
-declare const $ModuleFetch: number;
-declare const $ModuleLink: number;
 declare const $proxyFieldTarget: TODO;
 declare const $proxyFieldHandler: TODO;
 declare const $processBindingConstants: {
@@ -481,7 +479,6 @@ declare function $overridableRequire(this: JSCommonJSModule, id: string): any;
 // The following I cannot find any definitions of, but they are functional.
 declare function $toLength(length: number): number;
 declare function $isTypedArrayView(obj: unknown): obj is ArrayBufferView | DataView | Uint8Array;
-declare function $setStateToMax(target: any, state: number): void;
 /** @deprecated, use new TypeError instead */
 declare function $makeTypeError(message: string): TypeError;
 

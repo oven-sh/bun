@@ -894,7 +894,6 @@ public:
 
     inline napi_callback constructor() const { return m_constructor; }
     inline void*& dataPtr() { return m_dataPtr; }
-    inline void* const& dataPtr() const { return m_dataPtr; }
     inline napi_env env() const { return m_env; }
 
 private:

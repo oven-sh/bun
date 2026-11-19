@@ -100,20 +100,13 @@ pub enum Error {
     // output
     #[error("InvalidOutputType")]
     InvalidOutputType,
-    #[error("SyntaxError")]
-    SyntaxError,
     #[error("InvalidLibraryPath")]
     InvalidLibraryPath,
     #[error("InvalidSymbol")]
     InvalidSymbol,
-    #[error("ExecError")]
-    ExecError,
     /// Could not get a symbol for some reason
     #[error("RelocationError")]
     RelocationError,
-    // Returned by `output_file`.
-    #[error("OutputError")]
-    OutputError,
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
 }

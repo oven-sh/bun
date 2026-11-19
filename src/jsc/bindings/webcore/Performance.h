@@ -38,7 +38,6 @@
 #include "ExceptionOr.h"
 // #include "ReducedResolutionSeconds.h"
 #include "ScriptExecutionContext.h"
-// #include "Timer.h"
 #include <variant>
 
 #include <wtf/ListHashSet.h>
@@ -53,7 +52,6 @@ class JSGlobalObject;
 
 namespace WebCore {
 
-using ReducedResolutionSeconds = Seconds;
 using DOMHighResTimeStamp = double;
 
 class Document;
@@ -79,7 +77,6 @@ public:
     DOMHighResTimeStamp now() const;
     DOMHighResTimeStamp timeOrigin() const;
 
-    // PerformanceNavigation* navigation();
     PerformanceTiming* timing();
 
     Vector<RefPtr<PerformanceEntry>> getEntries() const;

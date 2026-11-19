@@ -21,7 +21,6 @@
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
-// #include "JSBlob.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
@@ -35,7 +34,6 @@
 #include "JSDOMWrapperCache.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
-#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 
 #include <JavaScriptCore/JSFunction.h>
@@ -61,10 +59,6 @@
 #include "wtf/Assertions.h"
 #include "wtf/Forward.h"
 #include <JavaScriptCore/JSBase.h>
-#if ENABLE(MEDIA_SOURCE)
-#include "BufferMediaSource.h"
-#include "JSMediaSource.h"
-#endif
 
 #if OS(WINDOWS)
 #include <windows.h>
@@ -73,7 +67,6 @@
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
 #include <JavaScriptCore/DFGAbstractHeap.h>
 
-// #include <JavaScriptCore/JSTypedArrayViewPrototype.h>
 #include <JavaScriptCore/BufferAccessorRegistry.h>
 #include <JavaScriptCore/JSArrayBufferViewInlines.h>
 #include <JavaScriptCore/MathCommon.h>
@@ -2800,8 +2793,6 @@ JSC_ANNOTATE_HOST_FUNCTION(JSBufferConstructorConstruct, JSBufferConstructor::co
 class JSBuffer : public JSC::JSNonFinalObject {
 
     DECLARE_INFO;
-
-    static constexpr JSC::JSTypeRange typeRange = { Uint8ArrayType, Uint8ArrayType };
 };
 
 const ClassInfo JSBuffer::s_info = {

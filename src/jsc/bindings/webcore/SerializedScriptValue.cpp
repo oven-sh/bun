@@ -28,8 +28,6 @@
 #include "SerializedScriptValue.h"
 #include "BunClientData.h"
 #include "BunString.h"
-// #include "BlobRegistry.h"
-// #include "ByteArrayPixelBuffer.h"
 #include "CryptoAlgorithmChaCha20Poly1305.h"
 #include "CryptoKeyAES.h"
 #include "CryptoKeyAKP.h"

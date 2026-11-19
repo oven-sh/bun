@@ -11,11 +11,8 @@ use bun_js_parser as js_ast;
 
 // `Path`/`PathName` come from the lower-tier `bun_paths::fs` shim
 // so `bun_ast::Source` field types line up;
-// `FileSystem` is the real `bun_resolver::fs` singleton now that
-// `bun_resolver` is in this crate's dep set.
 pub mod Fs {
     pub use bun_paths::fs::{Path, PathName};
-    pub use bun_resolver::fs::FileSystem;
 }
 
 #[derive(Default)]

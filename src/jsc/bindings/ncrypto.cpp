@@ -168,11 +168,6 @@ void DataPointer::reset(void* data, size_t length)
     len_ = length;
 }
 
-void DataPointer::reset(const Buffer<void>& buffer)
-{
-    reset(buffer.data, buffer.len);
-}
-
 Buffer<void> DataPointer::release()
 {
     Buffer<void> buf {

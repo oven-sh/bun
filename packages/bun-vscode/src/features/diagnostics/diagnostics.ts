@@ -35,14 +35,6 @@ class EditorStateManager {
     this.diagnosticCollection = vscode.languages.createDiagnosticCollection("BunDiagnostics");
   }
 
-  getVisibleEditorsWithErrors() {
-    return vscode.window.visibleTextEditors.filter(editor => {
-      const diagnostics = this.diagnosticCollection.get(editor.document.uri);
-
-      return diagnostics && diagnostics.length > 0;
-    });
-  }
-
   clearInFile(uri: vscode.Uri) {
     if (this.diagnosticCollection.has(uri)) {
       output.appendLine(`Clearing diagnostics for ${uri.toString()}`);
@@ -89,18 +81,6 @@ class BunDiagnosticsManager {
       return signal;
     }
   }
-
-  // private static getOrCreateOldVersionInspectURL = createGlobalStateGenerationFn(
-  //   "DIAGNOSTICS_BUN_INSPECT",
-  //   async () => {
-  //     const url =
-  //       process.platform === "win32"
-  //         ? `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`
-  //         : `ws+unix://${os.tmpdir()}/${getRandomId()}.sock`;
-
-  //     return url;
-  //   },
-  // );
 
   public static async initialize(context: vscode.ExtensionContext) {
     const signal = await BunDiagnosticsManager.createSignal();

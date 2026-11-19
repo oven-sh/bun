@@ -19,7 +19,6 @@
 
 #pragma once
 
-// #include "DOMWindow.h"
 #include "BunClientData.h"
 #include "DOMWrapperWorld.h"
 #include "EventListener.h"

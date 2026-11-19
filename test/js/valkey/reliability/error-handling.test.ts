@@ -339,6 +339,11 @@ describe("Valkey: Command Arguments", () => {
     { call: ["ttl", "k"], sends: ["TTL", "k"], resolves: 1 },
     { call: ["smembers", "k"], sends: ["SMEMBERS", "k"], resolves: 1 },
     { call: ["exists", "k"], sends: ["EXISTS", "k"], resolves: true },
+    { call: ["exists", "k", undefined], sends: ["EXISTS", "k"], resolves: true },
+    { call: ["exists", "k", null, undefined], sends: ["EXISTS", "k"], resolves: true },
+    { call: ["exists", "k", 0], sends: ["EXISTS", "k"], resolves: true },
+    { call: ["exists", "k", () => {}], sends: ["EXISTS", "k"], resolves: true },
+    { call: ["exists", "k", 0, ["g"]], sends: ["EXISTS", "k"], resolves: true },
     { call: ["sismember", "k", "m"], sends: ["SISMEMBER", "k", "m"], resolves: true },
     { call: ["hexists", "k", "f"], sends: ["HEXISTS", "k", "f"], resolves: true },
     { call: ["hsetnx", "k", "f", 2], sends: ["HSETNX", "k", "f", "2"], resolves: true },
@@ -414,6 +419,7 @@ describe("Valkey: Command Arguments", () => {
 
   const refused: { call: Call; throws: string }[] = [
     { call: ["getBuffer"], throws: "Expected key to be a string or buffer for 'getBuffer'." },
+    { call: ["exists", undefined, "b"], throws: "Expected key to be a string or buffer for 'exists'." },
     { call: ["sismember", "k", {}], throws: "Expected value to be a string or buffer for 'sismember'." },
     { call: ["hexists", "k", null], throws: "Expected field to be a string or buffer for 'hexists'." },
     { call: ["hsetnx", "k", "f"], throws: "Expected value to be a string or buffer for 'hsetnx'." },
@@ -813,5 +819,49 @@ describe("Valkey: Command Arguments", () => {
     await run(server.client, ["smove", logged("a"), logged("b"), logged("c")]);
     expect(() => run(server.client, ["smove", logged("d"), {}, logged("e")])).toThrow("Expected destination");
     expect(converted).toEqual(["a", "b", "c", "d"]);
+  });
+
+  // EXISTS counts its keys, so the answer for the first key alone is the answer to another question.
+  const secondKey: Call[] = [
+    ["exists", "a", "b"],
+    ["exists", "a", "b", "c"],
+    ["exists", "a", undefined, "c"],
+    ["exists", "a", 0, "c"],
+    ["exists", "a", "b", ["c"]],
+    ["exists", "a", ["b"]],
+    ["exists", "a", new String("b")],
+    ["exists", "a", Buffer.from("b")],
+    ["exists", "a", new Uint8Array([98])],
+    ["exists", "a", new ArrayBuffer(1)],
+    ["exists", "a", new Blob(["b"])],
+    ["exists", Buffer.from("a"), Buffer.from("b")],
+  ];
+  for (const call of secondKey) {
+    test(`${title(call)} throws and sends nothing`, async () => {
+      using server = await connect();
+      // toThrow() also passes for a returned promise that rejects. The refusal has to be synchronous.
+      let thrown: unknown;
+      try {
+        Promise.resolve(run(server.client, call)).catch(() => {});
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toMatchObject({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'exists takes one key. Use send("EXISTS", keys) to count several keys',
+      });
+      await server.client.ping();
+      expect(server.received).toEqual([["HELLO", "3"], ["PING"]]);
+    });
+  }
+
+  test("exists() as the callback of map() and Array.from() sends each key", async () => {
+    using server = await connect();
+    const client: any = server.client;
+    await Promise.all(["a", "b"].map(client.exists, client));
+    await Promise.all(new Proxy(["c", "d"], {}).map(client.exists, client));
+    await Promise.all(Array.from(["e", "f"], client.exists.bind(client)));
+    expect(server.received.slice(1)).toEqual(["a", "b", "c", "d", "e", "f"].map(key => ["EXISTS", key]));
   });
 });

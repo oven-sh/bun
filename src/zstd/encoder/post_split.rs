@@ -5,7 +5,7 @@ use core::ops::Range;
 use bun_zstd_decoder::format::BLOCK_HEADER_LEN;
 use bun_zstd_decoder::{Error, Output, Result};
 
-use crate::block::{BlockWriter, Content};
+use crate::block::{self, BlockWriter, Content};
 use crate::entropy::{LiteralsPlan, count_len};
 use crate::parameters::Tuning;
 use crate::sequences::{
@@ -102,7 +102,7 @@ fn replace_lost_repeats(sequences: &mut [Sequence], decoder: &mut Repeats, searc
 #[inline(never)]
 pub(crate) fn write(
     writer: &mut BlockWriter,
-    mut bytes: &[u8],
+    bytes: &[u8],
     all: &mut Sequences,
     repeats: Repeats,
     tuning: &Tuning,
@@ -138,12 +138,37 @@ pub(crate) fn write(
         return writer.write(&content, tuning, is_last, out);
     }
 
+    let (written_before, repeats_before) = (out.written(), writer.repeats);
+    let splits = splits.get(..count).ok_or(Error::Internal)?;
+    // Half of the margin of `worst_case_len()` is for what follows.
+    let len_max = BLOCK_HEADER_LEN + bytes.len() + (bytes.len() >> 9);
+    match write_parts(writer, bytes, all, splits, tuning, is_last, out) {
+        Ok(()) if out.written() - written_before <= len_max => Ok(()),
+        Ok(()) | Err(Error::DstSizeTooSmall) => {
+            out.rewind(written_before);
+            writer.entropy.forget();
+            writer.repeats = repeats_before;
+            block::write_raw(bytes, is_last, out)
+        }
+        error => error,
+    }
+}
+
+fn write_parts(
+    writer: &mut BlockWriter,
+    mut bytes: &[u8],
+    all: &mut Sequences,
+    splits: &[u16],
+    tuning: &Tuning,
+    is_last: bool,
+    out: &mut Output<'_>,
+) -> Result<()> {
     let mut search_repeats = writer.repeats;
     let (list, mut literals) = all.split_mut();
     let mut start = 0;
-    let ends = splits.into_iter().take(count).map(usize::from);
-    for end in ends.chain([whole.sequences.end]) {
-        let is_last_part = end == whole.sequences.end;
+    let ends = splits.iter().map(|&split| usize::from(split));
+    for end in ends.chain([list.len()]) {
+        let is_last_part = end == list.len();
         let sequences = list.get_mut(start..end).ok_or(Error::Internal)?;
         let (literals_len, len) = if is_last_part {
             (literals.len(), bytes.len())
@@ -196,6 +221,59 @@ fn records_no_more_splits_than_there_is_room_for() -> Result<()> {
         splitter.split(&whole, usize::MAX)?;
         let recorded = splitter.splits.into_iter().skip(SPLITS_MAX - room);
         assert!(recorded.eq(expected.into_iter().take(room)));
+    }
+    Ok(())
+}
+
+#[test]
+fn parts_that_take_too_much_are_given_up() -> Result<()> {
+    use bun_zstd_decoder::XxHash64;
+    use bun_zstd_decoder::format::CodeKind;
+
+    use crate::entropy::Reuse;
+    use crate::parameters::{Purpose, Request};
+
+    let tuning = Request::new(19).tuning(None, Purpose::Frame { dictionary_len: 0 });
+    // The parts add 41 bytes.
+    for (len, room, is_given_up) in [
+        (19455, 20000, true),
+        (19456, 20000, false),
+        (19456, 19496, true),
+    ] {
+        // Sixteen parts that have little in common. Only the first one gets smaller.
+        let mut all = Sequences::new();
+        all.clear_for(1 << 17, 3)?;
+        for index in 0..4800 {
+            let part = index / 300;
+            let code = match part {
+                0 => 22 + index % 2,
+                _ => 24 + part % 8,
+            };
+            all.push(part / 8, OffsetValue::new((1 << code) + index), 3);
+        }
+        let noise = |it: u32| XxHash64::hash(&it.to_le_bytes()) as u8;
+        let bytes: Vec<_> = (0..len).map(noise).collect();
+        all.finish(&bytes, 16800)?;
+
+        let (mut writer, mut room) = (BlockWriter::new(), vec![0; room]);
+        let (repeats, mut out) = (Repeats::INITIAL, Output::slice(&mut room));
+        write(
+            &mut writer,
+            &bytes,
+            &mut all,
+            repeats,
+            &tuning,
+            true,
+            &mut out,
+        )?;
+        let added = out.written() - bytes.len();
+        drop(out);
+        assert_eq!(added, if is_given_up { BLOCK_HEADER_LEN } else { 41 });
+        let content = room.split_at(BLOCK_HEADER_LEN).1;
+        assert_eq!(content.starts_with(&bytes), is_given_up);
+        assert_eq!(writer.repeats == repeats, is_given_up);
+        let reuse = *writer.entropy.codes.reuse_mut(CodeKind::Offset);
+        assert_eq!(reuse == Reuse::Never, is_given_up);
     }
     Ok(())
 }

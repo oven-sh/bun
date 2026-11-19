@@ -3316,6 +3316,37 @@ describe.concurrent("bun fmt", () => {
       expect(result.exitCode).toBe(0);
     });
 
+    // Vue takes a handler for statements only if its text has a `;`: with line breaks alone it's one expression in
+    // parentheses, which it can't parse (vuejs/core#8854). Each row is the HTML, what's printed with and without
+    // semicolons, and what Prettier 3.9.9 prints without them.
+    test.each([
+      [
+        '<button @click="a = null; b = false">x</button>',
+        '<button\n    @click="\n      a = null;\n      b = false;\n    "\n  >\n    x\n  </button>',
+        '<button\n    @click="\n      a = null\n      b = false\n    "\n  >\n    x\n  </button>',
+      ],
+      [
+        '<button v-on:click="a(); b()">x</button>',
+        '<button\n    v-on:click="\n      a();\n      b();\n    "\n  >\n    x\n  </button>',
+        '<button\n    v-on:click="\n      a()\n      b()\n    "\n  >\n    x\n  </button>',
+      ],
+      [
+        '<button @click="if (a) b();">x</button>',
+        '<button @click="if (a) b();">x</button>',
+        '<button @click="if (a) b()">x</button>',
+      ],
+    ])("keeps the semicolons of a Vue event handler without semicolons: %j", async (html, written, byPrettier) => {
+      expect(written).not.toBe(byPrettier);
+      const files = { ".prettierrc": '{ "semi": false }', "a.vue": inTemplate(html) };
+      const withSemicolons = await formatChecked({ "a.vue": files["a.vue"] }, [], { reads: ["a.vue"] });
+      expect(withSemicolons.files).toEqual({ "a.vue": inTemplate(written) });
+      for (const args of [[], ["--no-config", "--no-semi"]]) {
+        const result = await formatChecked(files, args, { reads: ["a.vue"] });
+        expect(result.files).toEqual({ "a.vue": inTemplate(written) });
+        expect(result.exitCode).toBe(0);
+      }
+    });
+
     test("keeps a comment after an object literal in an Angular binding inside the quotes", async () => {
       // Prettier 3.9.9 and oxfmt 0.72.0 print `[x]="{ one: 1 }" // comment`, which turns the comment into attributes.
       const html = '<a [x]="{ one: 1 } // comment"></a>\n<a [x]="{one:  1} // prettier-ignore"></a>\n';

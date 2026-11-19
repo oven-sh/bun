@@ -11,7 +11,9 @@ use crate::js::context::JsFormatContext;
 use crate::js::print::program::{FormatStatements, write_hashbang};
 use crate::js::sort_imports::{SortImports, sorted_text};
 use crate::js::utils::tailwindcss::{Collapse, Texts, collapse_among, ends_in_template};
-use crate::options::{Code, Flavor, HtmlRoot, InHtml, JavaScriptParser, ParseJavaScript, Then};
+use crate::options::{
+    Code, Flavor, HtmlRoot, InHtml, JavaScriptParser, ParseJavaScript, Semicolons, Then,
+};
 use crate::prelude::*;
 use crate::tailwind::{Tailwind, Tidies};
 use crate::{format_args, write};
@@ -86,6 +88,14 @@ pub(crate) fn options_in_html(options: &FormatOptions, in_html: InHtml) -> Forma
         in_html: InHtml {
             quote_style: options.quote_style,
             ..in_html
+        },
+        // Vue takes a handler for statements only if its text has a `;`: with line breaks alone it's one expression
+        // in parentheses, which doesn't parse (vuejs/core#8854). Without semicolons, Prettier 3.9.9 and oxfmt print
+        // `a = 1⏎b = 2`.
+        semicolons: if in_html.root == HtmlRoot::VueEventBinding {
+            Semicolons::Always
+        } else {
+            options.semicolons
         },
         parser: None,
         filepath: None,

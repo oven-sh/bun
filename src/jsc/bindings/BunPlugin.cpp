@@ -9028,17 +9028,6 @@ bool isRequiringModuleMock(Zig::GlobalObject* globalObject, const String& path)
     return mock && mock->factory && mock->importsOriginal && !mock->isOfVitest() && hasSynchronousMockFactory(globalObject, path, true);
 }
 
-bool doesModuleMockKeepImportersOfPreload(JSC::JSObject* moduleMock)
-{
-    auto* mock = uncheckedDowncast<Zig::JSModuleMock>(moduleMock);
-    String specifier = mock->specifier->tryGetValue().data;
-    bool isRequiringMock = mock->importsOriginal && !mock->isOfVitest();
-    if (!mock->factory || mock->spy || isRequiringMock == mock->isOfHook)
-        return false;
-    auto* waiting = Zig::registeredModuleMock(defaultGlobalObject(), specifier);
-    return waiting && (waiting->factory || waiting->spy) && (!waiting->importsOriginal || waiting->isOfVitest());
-}
-
 // An automock settles with its original.
 bool hasSynchronousMockFactory(Zig::GlobalObject* globalObject, const String& path, bool isOriginalSynchronous)
 {

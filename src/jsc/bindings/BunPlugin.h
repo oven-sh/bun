@@ -354,7 +354,6 @@ bool hasModuleMockUnsettledAsyncFactory(JSC::JSObject* moduleMock);
 bool canRequireOriginalOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock);
 bool hasSynchronousMockFactory(Zig::GlobalObject*, const String& path, bool isOriginalSynchronous);
 bool isSpyMock(Zig::GlobalObject*, const String& path);
-bool doesModuleMockKeepImportersOfPreload(JSC::JSObject* moduleMock);
 bool isRequiringModuleMock(Zig::GlobalObject*, const String& path);
 #if ENABLE(AOT)
 bool hasRegisteredModuleMock(Zig::GlobalObject*, const String& path);

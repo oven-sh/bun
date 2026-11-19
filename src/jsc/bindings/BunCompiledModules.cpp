@@ -2353,13 +2353,6 @@ static bool isRequiringMock(JSGlobalObject* globalObject, const String& mocked)
     BUN_END_REMOVABLE_ENTRY_POINT
 }
 
-static bool keepsImportersOfPreload(JSObject* mock)
-{
-    BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, ReturnDefault, bool)
-    return doesModuleMockKeepImportersOfPreload(mock);
-    BUN_END_REMOVABLE_ENTRY_POINT
-}
-
 static bool hasSynchronousFactory(JSGlobalObject* globalObject, const String& mocked, bool isOriginalSynchronous)
 {
     BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, ReturnDefault, bool)
@@ -2449,7 +2442,6 @@ const AOT::ModuleHost compiledModuleHost = {
     &wasFetchedByTestFile,
     &hasSynchronousFactory,
     &isSpy,
-    &keepsImportersOfPreload,
     &isRequiringMock,
     &sourceAfterRelease,
     &hasPendingPatch,
@@ -2458,7 +2450,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &isESModuleInNode,
 };
 // A member missing from the initializer is null, which tells the engine that the host does not support it.
-static_assert(sizeof(AOT::ModuleHost) == 69 * sizeof(void*));
+static_assert(sizeof(AOT::ModuleHost) == 68 * sizeof(void*));
 
 void recordRefusedLoad(JSGlobalObject*, const String& path);
 bool recordAddonLoadedFromDisk(JSGlobalObject*, const String& path);

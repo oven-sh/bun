@@ -1,0 +1,72 @@
+Set the bytes after the decoded literals to zero.
+
+A failed Huffman decode now returns before the literals are shifted rather than
+after.
+
+Remove when the pinned zstd source does the same.
+
+--- a/lib/decompress/zstd_decompress_block.c
++++ b/lib/decompress/zstd_decompress_block.c
+@@ -123,6 +123,26 @@
+     }
+ }
+ 
++/* Bun: sets the WILDCOPY_OVERLENGTH bytes after the literals to zero.
++ * ZSTD_allocateLiteralsBuffer() leaves that room after them, once split literals are shifted.
++ * Skips a NULL dst, which has no literals.
++ * Stops at block, the compressed input, if that overlaps dst.
++ */
++static void ZSTD_finishLiterals(ZSTD_DCtx* dctx, const void* dst, const BYTE* block)
++{
++    if (dctx->litBufferLocation == ZSTD_split)
++        ZSTD_memset(dctx->litExtraBuffer + ZSTD_LITBUFFEREXTRASIZE, 0, WILDCOPY_OVERLENGTH);
++    if (dst == NULL && dctx->litBufferLocation != ZSTD_not_in_dst)
++        return;
++    {   BYTE* const room = dctx->litBuffer + (dctx->litBufferEnd - dctx->litBuffer);
++        size_t length = WILDCOPY_OVERLENGTH;
++        if (dctx->litBufferLocation != ZSTD_not_in_dst
++            && block >= (const BYTE*)dst && block < room + WILDCOPY_OVERLENGTH)
++            length = block > room ? (size_t)(block - room) : 0;
++        ZSTD_memset(room, 0, length);
++    }
++}
++
+ /*! ZSTD_decodeLiteralsBlock() :
+  * Where it is possible to do so without being stomped by the output during decompression, the literals block will be stored
+  * in the dstBuffer.  If there is room to do so, it will be stored in full in the excess dst space after where the current
+@@ -228,6 +248,9 @@
+                             sizeof(dctx->workspace), flags);
+                     }
+                 }
++                /* Bun: checked before the literals are shifted, which copies out of litBuffer. */
++                RETURN_ERROR_IF(HUF_isError(hufSuccess), corruption_detected, "");
++
+                 if (dctx->litBufferLocation == ZSTD_split)
+                 {
+                     assert(litSize > ZSTD_LITBUFFEREXTRASIZE);
+@@ -238,8 +261,7 @@
+                     assert(dctx->litBufferEnd <= (BYTE*)dst + blockSizeMax);
+                 }
+ 
+-                RETURN_ERROR_IF(HUF_isError(hufSuccess), corruption_detected, "");
+-
++                ZSTD_finishLiterals(dctx, dst, istart);
+                 dctx->litPtr = dctx->litBuffer;
+                 dctx->litSize = litSize;
+                 dctx->litEntropy = 1;
+@@ -283,6 +305,7 @@
+                     {
+                         ZSTD_memcpy(dctx->litBuffer, istart + lhSize, litSize);
+                     }
++                    ZSTD_finishLiterals(dctx, dst, istart);
+                     dctx->litPtr = dctx->litBuffer;
+                     dctx->litSize = litSize;
+                     return lhSize+litSize;
+@@ -329,6 +352,7 @@
+                 {
+                     ZSTD_memset(dctx->litBuffer, istart[lhSize], litSize);
+                 }
++                ZSTD_finishLiterals(dctx, dst, istart);
+                 dctx->litPtr = dctx->litBuffer;
+                 dctx->litSize = litSize;
+                 return lhSize+1;

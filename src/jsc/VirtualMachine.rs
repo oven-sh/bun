@@ -3786,6 +3786,38 @@ pub struct ResolveFunctionResult<'r> {
     pub(crate) query_string: &'r [u8],
 }
 
+/// What a specifier resolves to, for all VMs with `defers_requires`. Like Node.js's `Module._pathCache`, it is for good.
+pub struct SharedResolution(Vec<u8>);
+
+static SHARED_RESOLUTIONS: bun_threading::RwLock<
+    Option<bun_collections::HashMap<Vec<u8>, &'static [u8]>>,
+> = bun_threading::RwLock::new(None);
+
+impl SharedResolution {
+    pub fn new(directory: &[u8], specifier: &[u8], is_esm: bool) -> Self {
+        Self(match bun_paths::is_absolute(specifier) {
+            true => [&[u8::from(is_esm)], specifier].concat(),
+            false => [&[u8::from(is_esm)], directory, b"\0", specifier].concat(),
+        })
+    }
+
+    pub fn get(&self) -> Option<&'static [u8]> {
+        SHARED_RESOLUTIONS.read().as_ref()?.get(&self.0).copied()
+    }
+
+    pub fn set(self, path: &[u8]) {
+        if !bun_paths::is_absolute(path) {
+            return;
+        }
+        let mut all = SHARED_RESOLUTIONS.write();
+        let all = all.get_or_insert_default();
+        // `$Bun_defer` requires what it has resolved.
+        let itself = all.entry(Self::new(b"", path, false).0);
+        let path = *itself.or_insert_with(|| Box::leak(path.into()));
+        all.insert(self.0, path);
+    }
+}
+
 fn normalize_specifier_for_resolution<'a>(
     specifier_: &'a [u8],
     query_string: &mut &'a [u8],
@@ -4785,6 +4817,20 @@ impl VirtualMachine {
             top_level_dir
         };
 
+        let is_shared = self.transpiler.get().options.defers_requires
+            && self.transpiler.get().resolver.custom_dir_paths.is_none()
+            && self.transpiler.get().options.macro_remap.count() == 0
+            && !self.finds_entry_points_by_path
+            && self.has_mutated_built_in_extensions.get() == 0
+            && self.commonjs_custom_extensions.get().len() == 0
+            && bun_paths::is_absolute(source_to_use);
+        let shared =
+            is_shared.then(|| SharedResolution::new(source_to_use, normalized_specifier, is_esm));
+        if let Some(path) = shared.as_ref().and_then(SharedResolution::get) {
+            (ret.path, ret.query_string) = (path, query_string);
+            return Ok(());
+        }
+
         // A `loop`
         // returning the resolver result; `retry_on_not_found` is consumed on
         // the first miss.
@@ -4930,6 +4976,9 @@ impl VirtualMachine {
             .path_const()
             .ok_or(crate::CrateError::ModuleNotFound)?;
         ret.path = result_path.text;
+        if let Some(shared) = shared {
+            shared.set(ret.path);
+        }
         if self.finds_entry_points_by_path
             && let Some(entry) = crate::compiled_program::find_entry_point_by_source_path(ret.path)
         {

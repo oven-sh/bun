@@ -677,7 +677,7 @@ static void *worker_main(void *arg) {
     settings.es_versions = (1u << LSQVER_I001);
     settings.es_ecn = 0;
     settings.es_ql_bits = 0;
-    settings.es_cc_algo = 3; // BBRv1
+    settings.es_cc_algo = 2; // BBRv1
 
     char err[200];
     if (lsquic_engine_check_settings(&settings, LSENG_HTTP, err, sizeof(err)) != 0) {

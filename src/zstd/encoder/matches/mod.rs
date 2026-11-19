@@ -581,6 +581,7 @@ impl MatchState {
 
 #[cfg(test)]
 mod tests {
+    use super::lazy::Finder;
     use super::*;
     use crate::parameters::{Purpose, Request};
 
@@ -621,6 +622,26 @@ mod tests {
             assert!(tables.hash.starts_with(&[0, 0, 2, 4607]));
             assert!(tables.chain.starts_with(&[mark, 0, 2, 4607]));
             assert_eq!(tables.hash3.starts_with(&[0, 0, 2, 4607]), strategy == 7);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn what_stays_in_a_chain_counts_as_indexed() -> Result<()> {
+        let history = |prefix| History {
+            prefix,
+            prefix_index: FIRST_INDEX,
+            older: &[],
+            start: 0,
+        };
+        for (at_the_end, stays) in [(b"0123456789", false), (b"9876543210", true)] {
+            let mut state = state(4)?;
+            let none = Attached::empty(state.tuning);
+            let mut chains = chain::Chains::new(&mut state, &none);
+            chains.find::<{ Reach::Prefix }>(&history(b"0123456789"), &mut (), 1, false);
+            let next = chains.finish(&history(at_the_end));
+            assert_eq!(next, FIRST_INDEX + 1 + u32::from(stays));
+            assert!(state.tables.split_mut().hash.iter().all(|&it| it < next));
         }
         Ok(())
     }

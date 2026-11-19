@@ -141,12 +141,13 @@ impl Finder for Chains<'_> {
             return self.next_to_index;
         }
         let last = self.next_to_index - 1;
+        let mut stays_indexed = false;
         if let Some(word) = u64_at(history.prefix, history.position(last))
             && let Some(head) = self.heads.get_mut(self.hasher.hash(word))
             && let Some(&before) = self.chain.get((last & self.mask) as usize)
         {
-            *head = before;
+            stays_indexed = core::mem::replace(head, before) != last;
         }
-        last
+        last + u32::from(stays_indexed)
     }
 }

@@ -396,9 +396,8 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
         return path_too_long();
     }
 
-    let mut tagged = bun_paths::VecPath::from(abs);
+    let mut tagged = bun_paths::Path::from(abs);
     tagged.push(tag.as_bytes());
-    let tagged = tagged.into_vec();
 
     cclog!(
         "[compile cache] resolved path {} + {} -> {}\n",
@@ -468,17 +467,16 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
                 message: None,
             };
         }
-        let mut tagged = tagged;
         if portable {
             // Resolve symlinks (e.g. macOS /var -> /private/var) so relative
             // keys match Bun's realpath'd module paths.
             let mut real_buf = bun_paths::path_buffer_pool::get();
-            if let Ok(real) = sys::realpath(&bun_paths::Path::from(&tagged), &mut real_buf) {
-                tagged = real.to_vec();
+            if let Ok(real) = sys::realpath(&tagged, &mut real_buf) {
+                tagged.set(real);
             }
         }
         *state = Some(CacheState {
-            dir: tagged.into_boxed_slice(),
+            dir: tagged.as_bytes().into(),
             dir_handle,
             portable,
             entries: HashMap::new(),

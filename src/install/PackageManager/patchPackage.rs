@@ -5,9 +5,7 @@ use bun_core::fmt::PathSep;
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{ZBox, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
-use bun_paths::{
-    OSPath, ParentEqual, Path, VecPath, dirname_or_root, from_portable, is_parent_or_equal,
-};
+use bun_paths::{OSPath, ParentEqual, Path, dirname_or_root, from_portable, is_parent_or_equal};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt as _, FdExt as _};
 
 use crate::bin;
@@ -644,7 +642,7 @@ pub fn do_patch_commit(
             path_in_patches_dir = relative;
         }
     }
-    let path_in_patches_dir = ZBox::from_bytes(path_in_patches_dir.as_bytes());
+    let path_in_patches_dir = path_in_patches_dir.to_zbox();
 
     if manager.options.dry_run {
         bun_core::prettyln!(
@@ -1190,7 +1188,7 @@ fn resolve_links(path: &[u8]) -> sys::Result<Vec<u8>> {
         });
         match sys::realpath(&existing_z, &mut buf) {
             Ok(real) => {
-                return Ok(VecPath::join(&[real, &path[existing.len()..]]).into_vec());
+                return Ok(Path::join(&[real, &path[existing.len()..]]).to_vec());
             }
             Err(e) if e.get_errno() == sys::E::ENOENT => {
                 let parent = dirname_or_root(existing);
@@ -1257,7 +1255,7 @@ fn real_folder(
     };
 
     let real = resolve(folder);
-    let link = VecPath::join(&[
+    let link = Path::join(&[
         &resolve(bun_paths::dirname(folder).unwrap_or_default()),
         bun_paths::basename(folder),
     ]);
@@ -1272,7 +1270,7 @@ fn real_folder(
     }
     let is_own_link = is_own(b"node_modules", &link);
     if replaces_folder && is_own_link {
-        return link.into_vec();
+        return link.to_vec();
     }
 
     if !is_in_global_store(cache_path, &real) {
@@ -1331,13 +1329,13 @@ fn is_link_position(folder: &[u8]) -> bool {
 /// Uses the same naming as an install's staging folder, so that `bun prune` removes it if a crash
 /// leaves it behind.
 fn temp_path_in(dir: &[u8]) -> Vec<u8> {
-    let mut path = VecPath::from(dir);
+    let mut path = Path::from(dir);
     path.push_fmt(format_args!(
         "{}{:016x}",
         StagingPath::PREFIX,
         bun_core::fast_random()
     ));
-    path.into_vec()
+    path.to_vec()
 }
 
 fn temp_sibling(folder: &[u8]) -> Vec<u8> {
@@ -1492,8 +1490,8 @@ fn link_entries(from: &[u8], to: &[u8], except: &[u8]) -> sys::Result<()> {
     let mut iter = sys::iterate_dir(dir.fd);
     while let Some(entry) = iter.next()? {
         let name = entry.name.slice_u8();
-        let target = VecPath::join(&[from, name]);
-        let link = VecPath::join(&[to, name]);
+        let target = Path::join(&[from, name]);
+        let link = Path::join(&[to, name]);
         if target.as_bytes() == except {
             continue;
         }
@@ -1813,8 +1811,5 @@ fn pkg_info_for_name_and_version(
         );
         Global::crash();
     }
-    (
-        pkg_id,
-        VecPath::join(&[&node_modules, folder_name]).into_vec(),
-    )
+    (pkg_id, Path::join(&[&node_modules, folder_name]).to_vec())
 }

@@ -16,7 +16,7 @@ use bun_exe_format::identity::{
 };
 use bun_options_types::Format;
 use bun_options_types::aot_options::AotOptions;
-use bun_paths::{Path, VecPath, to_portable};
+use bun_paths::{Path, to_portable};
 use bun_resolver::compiled_program::{
     PathForFileSystemAlone, encode_files_for_file_system_alone, folders_up_to,
 };
@@ -564,7 +564,7 @@ fn build_program(
     let working_directory = bun_sys::getcwd_alloc().ok();
     let to_absolute = |path: &[u8]| {
         let folder = working_directory.as_ref()?.as_bytes();
-        Some(VecPath::resolve(&[folder, path]).into_vec())
+        Some(Path::resolve(&[folder, path]).to_vec())
     };
     let outfile = match request.product {
         CompileProduct::Executable { outfile } => to_absolute(outfile),

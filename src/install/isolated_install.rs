@@ -35,7 +35,7 @@ use bun_collections::{
     index_sort,
 };
 use bun_core::{Global, Output, fast_random, fmt as bun_fmt};
-use bun_paths::{self as paths, Path, VecPath};
+use bun_paths::{self as paths, Path};
 use bun_semver as semver;
 use bun_sys::{self as sys, Fd};
 use bun_wyhash::{Wyhash, Wyhash11};
@@ -1694,7 +1694,7 @@ pub(crate) fn install_isolated_packages(
 
     let has_global_store = manager.options.enable.global_virtual_store()
         && package_manager::node_can_import_from(&manager.get_cache_directory().path);
-    let global_store_path: Option<VecPath> = if has_global_store {
+    let global_store_path: Option<Path> = if has_global_store {
         'global_store_path: {
             let store::entry::EntryColumnsMut {
                 entry_hash: entry_hashes,
@@ -1991,7 +1991,7 @@ pub(crate) fn install_isolated_packages(
 
             // <cache_dir>/links — created lazily by the first task that misses.
             let cache_dir_path = &manager.get_cache_directory().path;
-            break 'global_store_path Some(VecPath::resolve(&[cache_dir_path, b"links"]));
+            break 'global_store_path Some(Path::resolve(&[cache_dir_path, b"links"]));
         }
     } else {
         None

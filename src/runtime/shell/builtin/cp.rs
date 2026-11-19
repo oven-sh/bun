@@ -1,6 +1,6 @@
 use bstr::BStr;
 use bun_jsc::ThreadIsolated;
-use bun_paths::{Path, VecPath};
+use bun_paths::Path;
 
 use crate::node::PathLike;
 use crate::node::fs::{ShellAsyncCpTask, args};
@@ -284,9 +284,9 @@ impl ShellCpTask {
 
         let src_shown = bstr::BStr::new(&self.src);
         let tgt_shown = || -> Vec<u8> {
-            let mut shown = VecPath::from(&self.tgt);
+            let mut shown = Path::from(&self.tgt);
             shown.push(appended.unwrap_or_default());
-            shown.into_vec()
+            shown.to_vec()
         };
 
         // If lstat fails, let the copy report the error.

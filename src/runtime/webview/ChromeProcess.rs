@@ -32,7 +32,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(windows)]
 use bun_libuv_sys::{UvHandle as _, UvStream as _};
 use bun_output::{declare_scope, scoped_log};
-use bun_paths::{self, Path, VecPath};
+use bun_paths::{self, Path};
 use bun_ptr::{AliasableBox, CellExt as _};
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
@@ -297,12 +297,12 @@ fn find_chrome(explicit_path: Option<&CStr>) -> Option<ZBox> {
         // or drag-to-home-folder) land in the latter.
         let home = env_var::HOME.get().unwrap_or(b"");
         for b in bundles {
-            let sys = VecPath::join(&[b"/Applications", b]).into_zbox();
+            let sys = Path::join(&[b"/Applications", b]).to_zbox();
             if is_browser_binary(&sys) {
                 return Some(sys);
             }
             if !home.is_empty() {
-                let user = VecPath::join(&[home, b"Applications", b]).into_zbox();
+                let user = Path::join(&[home, b"Applications", b]).to_zbox();
                 if is_browser_binary(&user) {
                     return Some(user);
                 }
@@ -349,7 +349,7 @@ fn find_chrome(explicit_path: Option<&CStr>) -> Option<ZBox> {
                 if root.is_empty() {
                     continue;
                 }
-                let candidate = VecPath::join(&[root, rel]).into_zbox();
+                let candidate = Path::join(&[root, rel]).to_zbox();
                 if is_browser_binary(&candidate) {
                     return Some(candidate);
                 }
@@ -455,7 +455,7 @@ fn find_playwright_shell() -> Option<ZBox> {
     let subdir_cft: &[u8] = &subdir_cft_owned;
 
     let cache_dir: &[u8] = &cache_dir[..];
-    let bin = VecPath::join(&[cache_dir, &best_name[..best_len], subdir_cft]).into_zbox();
+    let bin = Path::join(&[cache_dir, &best_name[..best_len], subdir_cft]).to_zbox();
     if is_browser_binary(&bin) {
         return Some(bin);
     }
@@ -471,7 +471,7 @@ fn find_playwright_shell() -> Option<ZBox> {
             &best_name[..best_len],
             b"chrome-linux/headless_shell",
         ];
-        let bin2 = VecPath::join(&bin_parts2).into_zbox();
+        let bin2 = Path::join(&bin_parts2).to_zbox();
         if is_browser_binary(&bin2) {
             return Some(bin2);
         }

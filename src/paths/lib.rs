@@ -297,7 +297,7 @@ pub mod portable;
 pub use portable::{from_portable, to_portable, to_portable_in_place};
 #[path = "Path.rs"]
 mod path;
-pub use path::{OSPath, Path, StackPath, VecPath};
+pub use path::{OSPath, Path, StackPath};
 mod path_backend;
 mod path_ops;
 mod path_style;

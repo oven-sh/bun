@@ -2382,7 +2382,7 @@ mod posix_impl {
     }
     /// `unlinkat` with explicit `flags` (e.g. `AT_REMOVEDIR`). The error is
     /// built so the surfaced `SystemError` carries BOTH the dirfd and the path.
-    pub fn unlinkat_with_flags(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
+    pub(crate) fn unlinkat_with_flags(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
         check_fp!(
             // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
             // valid NUL-terminated C string.
@@ -3903,7 +3903,7 @@ mod windows_impl {
         let _ = mode;
         renameat(from_dir, from, to_dir, to)
     }
-    pub fn unlinkat_with_flags(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
+    pub(crate) fn unlinkat_with_flags(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
         // Convert to NT path and call `DeleteFileBun`;
         // `remove_dir = flags & AT_REMOVEDIR != 0`.
         // AT_REMOVEDIR on Windows = 0x200.
@@ -8152,7 +8152,7 @@ pub fn iterate_dir(dir: Fd) -> dir_iterator::WrappedIterator {
     dir_iterator::iterate(dir)
 }
 /// `bun.sys.exists`. Non-NUL-terminated convenience over
-/// [`exists_z`]: copies into a pooled buffer, NUL-terminates, then
+/// [`exists_z`]: copies and NUL-terminates, then
 /// `access(path, F_OK)` (POSIX) / `GetFileAttributesW` (Windows).
 pub fn exists(path: &[u8]) -> bool {
     exists_z(&bun_paths::Path::from(path))
@@ -8434,7 +8434,7 @@ pub fn fetch_cache_directory_path() -> Vec<u8> {
     if let Some(home) = bun_core::getenv_z(bun_core::zstr!("HOME"))
         && !home.is_empty()
     {
-        return bun_paths::VecPath::from_parts(&[home, b".bun/install/cache"]).into_vec();
+        return bun_paths::Path::from_parts(&[home, b".bun/install/cache"]).to_vec();
     }
     b".bun-cache".to_vec()
 }

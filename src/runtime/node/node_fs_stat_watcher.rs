@@ -605,9 +605,9 @@ impl StatWatcher {
         }
 
         let top_level_dir = fs::FileSystem::get().top_level_dir();
-        let mut file_path = bun_paths::VecPath::resolve(&[top_level_dir, slice]);
+        let mut file_path = bun_paths::Path::resolve(&[top_level_dir, slice]);
         file_path.copy_trailing_sep_from(slice);
-        let alloc_file_path = file_path.into_zbox();
+        let alloc_file_path = file_path.to_zbox();
 
         // `args.global_this` is a `BackRef` (JSC_BORROW); safe Deref.
         let vm = args.global_this.bun_vm();

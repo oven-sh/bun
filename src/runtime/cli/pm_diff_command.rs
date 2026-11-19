@@ -90,18 +90,18 @@ pub(crate) fn exec(
     let args: Vec<Vec<u8>> = typed
         .iter()
         .map(|&arg| {
-            use bun_paths::VecPath;
+            use bun_paths::Path;
             let home = bun_core::env_var::HOME.get_not_empty();
             let mut path = match (arg.strip_prefix(b"~/"), home) {
-                (Some(rest), Some(home)) => VecPath::resolve(&[original_cwd, home, rest]),
+                (Some(rest), Some(home)) => Path::resolve(&[original_cwd, home, rest]),
                 _ if looks_like_path(arg) && !bun_paths::is_absolute(arg) => {
-                    VecPath::resolve(&[original_cwd, arg])
+                    Path::resolve(&[original_cwd, arg])
                 }
                 _ => return arg.to_vec(),
             };
             // The trailing separator is what tells a directory named `lib.tgz/` from a tarball.
             path.copy_trailing_sep_from(arg);
-            path.into_vec()
+            path.to_vec()
         })
         .collect();
 

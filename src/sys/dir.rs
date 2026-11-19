@@ -5,6 +5,8 @@
 //! [`Dir::borrow`] for a non-owning `&Dir` view of someone else's fd.
 
 use super::*;
+use bun_core::ZBox;
+use bun_paths::Path;
 
 #[repr(transparent)]
 pub struct Dir {
@@ -122,19 +124,20 @@ impl Dir {
     pub fn delete_tree(&self, sub_path: &[u8]) -> Maybe<()> {
         // `delete_tree_open_initial_subpath` — try unlinking as a file first; if
         // that yields IsDir/EPERM, open it as an iterable directory.
-        let initial = match self.delete_tree_open_initial_subpath(sub_path)? {
+        let sub_path = ZBox::from_bytes(sub_path);
+        let initial = match self.delete_tree_open_initial_subpath(&sub_path)? {
             Some(d) => d,
             None => return Ok(()),
         };
 
         struct StackItem {
-            name: Vec<u8>,
+            name: ZBox,
             parent_dir: Fd,
             iter: dir_iterator::OwnedIterator,
         }
         let mut stack = Vec::<StackItem>::with_capacity(16);
         stack.push(StackItem {
-            name: sub_path.to_vec(),
+            name: sub_path,
             parent_dir: self.fd,
             iter: dir_iterator::iterate_owned(initial),
         });
@@ -147,9 +150,9 @@ impl Dir {
                 let mut unlink_err: Option<Error> = None;
                 'handle_entry: loop {
                     if treat_as_dir {
-                        let new_dir = match openat_a(
+                        let new_dir = match openat(
                             dir,
-                            entry.name.slice_u8(),
+                            entry.name.as_zstr(),
                             O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
                             0,
                         ) {
@@ -167,7 +170,7 @@ impl Dir {
                                 _ => return Err(e),
                             },
                         };
-                        let name = entry.name.slice_u8().to_vec();
+                        let name = entry.name.as_zstr().to_zbox();
                         // The `Vec` grows as needed, so no fixed-depth limit.
                         stack.push(StackItem {
                             name,
@@ -176,7 +179,7 @@ impl Dir {
                         });
                         continue 'process_stack;
                     } else {
-                        match unlinkat_a(dir, entry.name.slice_u8(), 0) {
+                        match unlinkat(dir, entry.name.as_zstr()) {
                             Ok(()) => break 'handle_entry,
                             Err(e) => match e.get_errno() {
                                 E::ENOENT => break 'handle_entry,
@@ -204,7 +207,7 @@ impl Dir {
             stack.truncate(stack.len() - 1);
 
             let mut need_to_retry = false;
-            match unlinkat_a(parent_dir, &name, AT_REMOVEDIR) {
+            match rmdirat(parent_dir, &name) {
                 Ok(()) => {}
                 Err(e) => match e.get_errno() {
                     E::ENOENT => {}
@@ -216,7 +219,7 @@ impl Dir {
             if need_to_retry {
                 // Since we closed the handle that the previous iterator used, we
                 // need to re-open the dir and re-create the iterator.
-                let new_dir = match openat_a(
+                let new_dir = match openat(
                     parent_dir,
                     &name,
                     O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
@@ -226,7 +229,7 @@ impl Dir {
                     Err(e) => match e.get_errno() {
                         E::ENOTDIR => {
                             // Racing fs: it became a file; unlink it.
-                            match unlinkat_a(parent_dir, &name, 0) {
+                            match unlinkat(parent_dir, &name) {
                                 Ok(()) => continue 'process_stack,
                                 Err(e2) => match e2.get_errno() {
                                     E::ENOENT => continue 'process_stack,
@@ -253,10 +256,10 @@ impl Dir {
     /// `sub_path` as a file; on `EISDIR`/`EPERM` open it as an iterable
     /// directory and return it. Returns `None` when removal succeeded or
     /// the path doesn't exist.
-    fn delete_tree_open_initial_subpath(&self, sub_path: &[u8]) -> Maybe<Option<Dir>> {
+    fn delete_tree_open_initial_subpath(&self, sub_path: &ZStr) -> Maybe<Option<Dir>> {
         let mut unlink_err: Option<Error> = None;
         loop {
-            match unlinkat_a(self.fd, sub_path, 0) {
+            match unlinkat(self.fd, sub_path) {
                 Ok(()) => return Ok(None),
                 Err(e) => match e.get_errno() {
                     E::ENOENT => return Ok(None),
@@ -267,7 +270,7 @@ impl Dir {
                     _ => return Err(e),
                 },
             }
-            match openat_a(
+            match openat(
                 self.fd,
                 sub_path,
                 O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
@@ -299,11 +302,6 @@ pub fn rmdirat(dirfd: impl AsFd, path: &ZStr) -> Maybe<()> {
     unlinkat_with_flags(dirfd, path, AT_REMOVEDIR)
 }
 
-/// `unlinkat` taking a non-sentinel slice (NUL-terminates into a path buffer).
-fn unlinkat_a(dirfd: Fd, path: &[u8], flags: i32) -> Maybe<()> {
-    unlinkat_with_flags(dirfd, &bun_paths::Path::from(path), flags)
-}
-
 /// File-creation flags — subset used by `create_file_z` callers
 /// (e.g. the package-manager repository/directories code).
 #[derive(Clone, Copy, Default)]
@@ -318,7 +316,7 @@ impl Dir {
     /// this dir. Unlike `make_path`, does NOT create intermediate directories
     /// and surfaces `EEXIST` for callers to branch on.
     pub fn make_dir(&self, sub_path: &[u8]) -> core::result::Result<(), bun_errno::SystemErrno> {
-        match mkdirat(self.fd, &bun_paths::Path::from(sub_path), 0o755) {
+        match mkdirat(self.fd, &Path::from(sub_path), 0o755) {
             Ok(()) => Ok(()),
             Err(e) if e.get_errno() == E::EEXIST => Err(bun_errno::SystemErrno::EEXIST),
             Err(e) => Err(e.into()),
@@ -330,8 +328,8 @@ impl Dir {
     /// on Windows it selects junction vs. file-symlink and
     /// callers route through `sys_uv::symlink_uv` instead.
     pub fn sym_link(&self, target: &[u8], link_name: &[u8], _is_directory: bool) -> Maybe<()> {
-        let target = bun_paths::Path::from(target);
-        let link_name = bun_paths::Path::from(link_name);
+        let target = Path::from(target);
+        let link_name = Path::from(link_name);
         symlinkat(&target, self.fd, &link_name)
     }
 
@@ -476,7 +474,8 @@ mod tests {
     fn long_path_is_not_truncated() {
         let path = [&b"/".repeat(bun_paths::MAX_PATH_BYTES), &b"name"[..]].concat();
         let errno = |result: Maybe<()>| result.unwrap_err().get_errno();
-        assert_eq!(errno(unlinkat_a(Fd::cwd(), &path, 0)), E::ENAMETOOLONG);
+        let in_missing = [&b"missing"[..], &path].concat();
+        assert_eq!(errno(Dir::cwd().delete_tree(&in_missing)), E::ENAMETOOLONG);
         assert_eq!(
             errno(Dir::cwd().sym_link(b"a", &path, false)),
             E::ENAMETOOLONG

@@ -2882,7 +2882,7 @@ mod _async_tasks {
             WorkPool::schedule_new(ReaddirSubtask {
                 // `self` lives in its heap `Job`, and the `subtask_count` just bumped keeps it alive.
                 readdir_task: bun_ptr::ParentRef::new(self),
-                basename: ZBox::from_bytes(basename.as_bytes()),
+                basename: basename.to_zbox(),
                 task: WorkPoolTask::default(),
             });
         }
@@ -7672,13 +7672,8 @@ impl NodeFS {
         }
         if args.recursive {
             note_found_on_disk();
-            // `slice_z` adds the current drive to `/tmp/foo`, which the `*at` calls do not.
-            #[cfg(windows)]
-            let resolved = args.path.slice_z(&mut self.sync_error_buf).as_bytes();
-            #[cfg(not(windows))]
-            let resolved = args.path.slice();
-            if let Err(err) = zig_delete_tree(&sys::Dir::cwd(), resolved, sys::FileKind::Directory)
-            {
+            let path = args.path.slice_z(&mut self.sync_error_buf);
+            if let Err(err) = zig_delete_tree(&sys::Dir::cwd(), path, sys::FileKind::Directory) {
                 let mut errno: E = map_anyerror_to_errno(&err);
                 if cfg!(windows) && errno == E::ENOTDIR {
                     errno = E::ENOENT;
@@ -7717,15 +7712,8 @@ impl NodeFS {
         // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
         if args.recursive {
             note_found_on_disk();
-            // See the matching comment in `rmdir`: pre-resolve the path on
-            // Windows so rooted-but-driveless paths ("/tmp/foo") get the cwd
-            // drive prepended before reaching the dt_* / Syscall::*at helpers,
-            // which do not do that themselves.
-            #[cfg(windows)]
-            let resolved = args.path.slice_z(&mut self.sync_error_buf).as_bytes();
-            #[cfg(not(windows))]
-            let resolved = args.path.slice();
-            if let Err(err) = zig_delete_tree(&sys::Dir::cwd(), resolved, sys::FileKind::File) {
+            let path = args.path.slice_z(&mut self.sync_error_buf);
+            if let Err(err) = zig_delete_tree(&sys::Dir::cwd(), path, sys::FileKind::File) {
                 if matches!(err, crate::Error::FileNotFound) {
                     if args.force {
                         return Ok(());
@@ -9320,11 +9308,10 @@ fn dt_err(errno: E) -> crate::Error {
 }
 
 #[inline]
-fn dt_open_dir(parent: &sys::Dir, name: &[u8]) -> Result<sys::Dir, E> {
-    let z: &ZStr = &Path::from(name);
+fn dt_open_dir(parent: &sys::Dir, name: &ZStr) -> Result<sys::Dir, E> {
     match Syscall::openat(
         parent.fd,
-        z,
+        name,
         sys::O::DIRECTORY | sys::O::RDONLY | sys::O::NOFOLLOW,
         0,
     ) {
@@ -9334,9 +9321,8 @@ fn dt_open_dir(parent: &sys::Dir, name: &[u8]) -> Result<sys::Dir, E> {
 }
 
 #[inline]
-fn dt_delete_file(parent: &sys::Dir, name: &[u8]) -> Result<(), E> {
-    let z: &ZStr = &Path::from(name);
-    match Syscall::unlinkat(parent.fd, z) {
+fn dt_delete_file(parent: &sys::Dir, name: &ZStr) -> Result<(), E> {
+    match Syscall::unlinkat(parent.fd, name) {
         Ok(()) => Ok(()),
         Err(e) => {
             let errno = e.get_errno();
@@ -9356,8 +9342,7 @@ fn dt_delete_file(parent: &sys::Dir, name: &[u8]) -> Result<(), E> {
             ))]
             if matches!(errno, E::EPERM | E::EACCES) {
                 // No-follow stat — don't follow symlinks, to match unlinkat.
-                // `z` (a `&ZStr`, `Copy`) is still valid — `unlinkat` only borrowed it.
-                if let Ok(st) = Syscall::lstatat(parent.fd, z) {
+                if let Ok(st) = Syscall::lstatat(parent.fd, name) {
                     if sys::S::ISDIR(st.st_mode as u32) {
                         return Err(E::EISDIR);
                     }
@@ -9369,16 +9354,8 @@ fn dt_delete_file(parent: &sys::Dir, name: &[u8]) -> Result<(), E> {
 }
 
 #[inline]
-fn dt_delete_dir(parent: &sys::Dir, name: &[u8]) -> Result<(), E> {
-    let z: &ZStr = &Path::from(name);
-    #[cfg(unix)]
-    let flags: i32 = libc::AT_REMOVEDIR;
-    #[cfg(not(unix))]
-    let flags = 0x200; // AT_REMOVEDIR — Windows path goes through sys_uv which maps this.
-    match Syscall::unlinkat_with_flags(parent.fd, z, flags) {
-        Ok(()) => Ok(()),
-        Err(e) => Err(e.get_errno()),
-    }
+fn dt_delete_dir(parent: &sys::Dir, name: &ZStr) -> Result<(), E> {
+    sys::rmdirat(parent.fd, name).map_err(|err| err.get_errno())
 }
 
 /// A copy's destination, opened without `O_TRUNC`: cut to what was written however the copy ends.
@@ -9409,10 +9386,7 @@ impl Drop for CopyDest {
 }
 
 struct DeleteTreeStackItem {
-    /// Owned copy of the entry name (lives until popped). The very first item
-    /// borrows `sub_path` instead — see `name_is_borrowed`.
-    name: Vec<u8>,
-    name_is_borrowed: bool,
+    name: ZBox,
     /// Non-owning alias of either `self_` (first item) or the previous stack
     /// frame's `iter.dir()`. Ownership of the descriptor stays with the
     /// owner; this is just the raw fd for `Dir::borrow` at call sites.
@@ -9422,7 +9396,7 @@ struct DeleteTreeStackItem {
 
 pub(crate) fn zig_delete_tree(
     self_: &sys::Dir,
-    sub_path: &[u8],
+    sub_path: &ZStr,
     kind_hint: sys::FileKind,
 ) -> crate::Result<()> {
     let initial_iterable_dir =
@@ -9438,8 +9412,7 @@ pub(crate) fn zig_delete_tree(
     let mut stack: Vec<DeleteTreeStackItem> = Vec::with_capacity(16);
 
     stack.push(DeleteTreeStackItem {
-        name: Vec::new(),
-        name_is_borrowed: true,
+        name: sub_path.to_zbox(),
         parent_dir: self_.fd,
         iter: DirIterator::iterate_owned(initial_iterable_dir),
     });
@@ -9454,17 +9427,16 @@ pub(crate) fn zig_delete_tree(
                 Ok(None) => break,
                 Err(err) => return Err(dt_err(err.get_errno())),
             };
-            let entry_name = entry.name.slice_u8();
+            let entry_name = entry.name.as_zstr();
             let mut treat_as_dir = entry.kind == sys::FileKind::Directory;
             'handle_entry: loop {
                 if treat_as_dir {
                     if has_room {
                         match dt_open_dir(sys::Dir::borrow(&top_fd), entry_name) {
                             Ok(iterable_dir) => {
-                                let name = entry_name.to_vec();
+                                let name = entry_name.to_zbox();
                                 stack.push(DeleteTreeStackItem {
                                     name,
-                                    name_is_borrowed: false,
                                     parent_dir: top_fd,
                                     iter: DirIterator::iterate_owned(iterable_dir),
                                 });
@@ -9480,15 +9452,10 @@ pub(crate) fn zig_delete_tree(
                                 // retries rmdir on the directory whose child could
                                 // not be opened and reports its ENOTEMPTY on macOS.
                                 let ancestor = &stack[top_idx];
-                                let ancestor_name: &[u8] = if ancestor.name_is_borrowed {
-                                    sub_path
-                                } else {
-                                    &ancestor.name
-                                };
                                 if matches!(
                                     dt_delete_dir(
                                         sys::Dir::borrow(&ancestor.parent_dir),
-                                        ancestor_name
+                                        &ancestor.name
                                     ),
                                     Err(E::ENOTEMPTY | E::EEXIST)
                                 ) {
@@ -9521,15 +9488,10 @@ pub(crate) fn zig_delete_tree(
                             // NOT converted -- on macOS it can mean "target is a
                             // directory" and must keep flowing to the caller.
                             let ancestor = &stack[top_idx];
-                            let ancestor_name: &[u8] = if ancestor.name_is_borrowed {
-                                sub_path
-                            } else {
-                                &ancestor.name
-                            };
                             if matches!(
                                 dt_delete_dir(
                                     sys::Dir::borrow(&ancestor.parent_dir),
-                                    ancestor_name
+                                    &ancestor.name
                                 ),
                                 Err(E::ENOTEMPTY | E::EEXIST)
                             ) {
@@ -9553,11 +9515,7 @@ pub(crate) fn zig_delete_tree(
         drop(top.iter);
 
         let parent_dir = top.parent_dir;
-        let name: &[u8] = if top.name_is_borrowed {
-            sub_path
-        } else {
-            &top.name
-        };
+        let name: &ZStr = &top.name;
 
         let mut need_to_retry = false;
         match dt_delete_dir(sys::Dir::borrow(&parent_dir), name) {
@@ -9575,13 +9533,8 @@ pub(crate) fn zig_delete_tree(
                 // ENOTEMPTY, not the child's EACCES. (On Linux node surfaces the
                 // child's EACCES, which the plain return below produces.)
                 if let Some(ancestor) = stack.last() {
-                    let ancestor_name: &[u8] = if ancestor.name_is_borrowed {
-                        sub_path
-                    } else {
-                        &ancestor.name
-                    };
                     if matches!(
-                        dt_delete_dir(sys::Dir::borrow(&ancestor.parent_dir), ancestor_name),
+                        dt_delete_dir(sys::Dir::borrow(&ancestor.parent_dir), &ancestor.name),
                         Err(E::ENOTEMPTY | E::EEXIST)
                     ) {
                         return Err(dt_err(E::ENOTEMPTY));
@@ -9633,7 +9586,6 @@ pub(crate) fn zig_delete_tree(
             // the StackItem that we previously popped.
             stack.push(DeleteTreeStackItem {
                 name: top.name,
-                name_is_borrowed: top.name_is_borrowed,
                 parent_dir,
                 iter: DirIterator::iterate_owned(iterable_dir),
             });
@@ -9645,7 +9597,7 @@ pub(crate) fn zig_delete_tree(
 
 fn zig_delete_tree_open_initial_subpath(
     self_: &sys::Dir,
-    sub_path: &[u8],
+    sub_path: &ZStr,
     kind_hint: sys::FileKind,
 ) -> crate::Result<Option<sys::Dir>> {
     // Treat as a file by default
@@ -9674,7 +9626,7 @@ fn zig_delete_tree_open_initial_subpath(
 
 fn zig_delete_tree_min_stack_size_with_kind_hint(
     self_: &sys::Dir,
-    sub_path: &[u8],
+    sub_path: &ZStr,
     kind_hint: sys::FileKind,
 ) -> crate::Result<()> {
     'start_over: loop {
@@ -9685,7 +9637,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
         let mut cleanup_dir_parent: Option<sys::Dir> = None;
 
         // The name of `dir` in `cleanup_dir_parent`.
-        let mut dir_name = paths::Path::new();
+        let mut dir_name = Path::new();
 
         // Here we must avoid recursion, in order to provide O(1) memory guarantee of this function.
         // Go through each entry and if it is not a directory, delete it. If it is a directory,
@@ -9698,7 +9650,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                     Ok(None) => break 'dir_it,
                     Err(err) => break 'scan_dir Err(dt_err(err.get_errno())),
                 };
-                let entry_name = entry.name.slice_u8();
+                let entry_name = entry.name.as_zstr();
                 let mut treat_as_dir = entry.kind == sys::FileKind::Directory;
                 'handle_entry: loop {
                     if treat_as_dir {
@@ -9706,7 +9658,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                             Ok(new_dir) => {
                                 cleanup_dir_parent = Some(dir);
                                 dir = new_dir;
-                                dir_name.set(entry_name);
+                                dir_name.set(entry_name.as_bytes());
                                 continue 'scan_dir;
                             }
                             Err(E::ENOTDIR) => {

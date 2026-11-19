@@ -502,7 +502,7 @@ impl CacheStaging {
         let mut tmp_name_buf = [0u8; 64];
         let tmp_name =
             Path::fs::FileSystem::tmpname(b"tmp", &mut tmp_name_buf, bun_core::fast_random())?;
-        let tmp_path = bun_paths::VecPath::resolve(&[cache_dir_path, tmp_name]).into_vec();
+        let tmp_path = bun_paths::Path::resolve(&[cache_dir_path, tmp_name]).to_vec();
         Ok(Self {
             entry: UnfinishedEntry::new(cache_dir, tmp_name),
             tmp_path,

@@ -323,12 +323,12 @@ pub(crate) fn init_watch_trigger() -> Option<ZBox> {
             let mut rand = [0u8; 16];
             bun_boringssl_sys::rand_bytes(&mut rand);
             let tmpdir = RealFS::tmpdir_path();
-            let mut fresh = bun_paths::VecPath::from(tmpdir);
+            let mut fresh = bun_paths::Path::from(tmpdir);
             fresh.push_fmt(format_args!(
                 ".bun-test-changed-{}.trigger",
                 bun_fmt::hex_lower(&rand)
             ));
-            let fresh = fresh.into_zbox();
+            let fresh = fresh.to_zbox();
             // Export once so every exec()'d descendant inherits the same
             // path. Adding (not removing) an env var is safe w.r.t.
             // the environ snapshot; it simply won't be visible to code that

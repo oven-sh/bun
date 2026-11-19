@@ -65,8 +65,7 @@ pub(crate) fn load_package_for_link(
     let mut package = Package::default();
 
     // A copy: the source borrows its path while `parse` below borrows `manager` mutably.
-    let package_json_path =
-        bun_core::ZBox::from_bytes(manager.original_package_json_path.as_bytes());
+    let package_json_path = manager.original_package_json_path.to_zbox();
     let package_json_source = match bun_ast::to_source(&package_json_path, Default::default()) {
         Ok(s) => s,
         Err(e) => {

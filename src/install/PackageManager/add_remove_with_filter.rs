@@ -9,7 +9,7 @@ use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output, strings};
 use bun_install::dependency;
 use bun_install::{Lockfile, PackageID, PackageNameHash};
-use bun_paths::{Path, VecPath, from_portable, portable};
+use bun_paths::{Path, from_portable, portable};
 use bun_sys::{Fd, File};
 
 use super::add_catalog;
@@ -752,7 +752,7 @@ pub(super) fn update_filtered_workspaces_and_install(
         }));
     }
 
-    let root_package_json_path = VecPath::from(&root_target.package_json_path);
+    let root_package_json_path = Path::from(&root_target.package_json_path);
     install_with_manager(manager, ctx, &root_package_json_path, original_cwd)?;
     package_json_write_back::flush(manager)?;
     remove_leftover_node_modules(manager);

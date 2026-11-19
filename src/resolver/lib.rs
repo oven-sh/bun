@@ -1376,24 +1376,24 @@ pub mod fs {
                 // `bun_core::Once` in `platform_temp_dir()`; the `OnceLock` here is
                 // the allowed process-lifetime singleton (PORTING.md §Forbidden
                 // exception), not a per-call leak.
-                use bun_paths::VecPath;
+                use bun_paths::Path;
                 static OWNED: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
                 return OWNED
                     .get_or_init(|| {
                         if let Some(windir) = (env_var::SYSTEMROOT.get_not_empty())
                             .or_else(|| env_var::WINDIR.get_not_empty())
                         {
-                            return VecPath::from_parts(&[windir, b"Temp"]).into_vec();
+                            return Path::from_parts(&[windir, b"Temp"]).to_vec();
                         }
                         if let Some(profile) = env_var::HOME.get_not_empty() {
-                            return VecPath::resolve(&[profile, b"AppData/Local/Temp"]).into_vec();
+                            return Path::resolve(&[profile, b"AppData/Local/Temp"]).to_vec();
                         }
                         let mut tmp_buf = bun_paths::path_buffer_pool::get();
                         let cwd = match bun_sys::getcwd(&mut tmp_buf[..]) {
                             Ok(len) => &tmp_buf[..len],
                             Err(_) => panic!("Failed to get cwd for platformTempDir"),
                         };
-                        VecPath::resolve(&[cwd, b"/Windows/Temp"]).into_vec()
+                        Path::resolve(&[cwd, b"/Windows/Temp"]).to_vec()
                     })
                     .as_slice();
             }

@@ -8,7 +8,7 @@ use bun_core::ZStr;
 use bun_core::strings;
 #[cfg(windows)]
 use bun_paths::OSPath;
-use bun_paths::{self as path, NameTooLong, Path, SEP, VecPath};
+use bun_paths::{self as path, NameTooLong, Path, SEP};
 use bun_semver::{ExternalString, String};
 #[cfg(not(windows))]
 use bun_sys::Mode;
@@ -1208,7 +1208,7 @@ impl<'a> Linker<'a> {
             }
         };
 
-        let rel_target = VecPath::relative(path::dirname(abs_dest).unwrap_or_default(), abs_target);
+        let rel_target = Path::relative(path::dirname(abs_dest).unwrap_or_default(), abs_target);
 
         // The shim resolves `bin_path` relative to the parent of its directory. Other targets are
         // absolute.
@@ -1265,7 +1265,7 @@ impl<'a> Linker<'a> {
         global: bool,
     ) -> Result<(), Error> {
         let abs_dest_dir = path::dirname(abs_dest).unwrap_or_default();
-        let rel_target: &ZStr = &VecPath::relative(abs_dest_dir, abs_target);
+        let rel_target: &ZStr = &Path::relative(abs_dest_dir, abs_target);
 
         let mut result = sys::symlink_running_executable(rel_target, abs_dest);
 

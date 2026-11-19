@@ -2432,7 +2432,7 @@ pub(crate) fn inject(
     // Note: `tmpname` borrows `buf` mutably for the &ZStr it returns. The
     // tmpdir-fallback retry below may need to repoint `zname` at a heap-owned
     // buffer instead, so hoist that owner here so it outlives the loop.
-    let mut zname_owned: Option<path::VecPath> = None;
+    let mut zname_owned: Option<path::Path> = None;
     let mut zname: &ZStr = match bun_fs::FileSystem::tmpname(
         b"bun-build",
         &mut buf[..],
@@ -2456,7 +2456,7 @@ pub(crate) fn inject(
     #[cfg(not(windows))]
     {
         if additions.has_code {
-            zname = zname_owned.insert(path::VecPath::from_parts(&[output_directory, zname]));
+            zname = zname_owned.insert(path::Path::from_parts(&[output_directory, zname]));
         }
     }
     #[cfg(windows)]
@@ -2544,7 +2544,7 @@ pub(crate) fn inject(
                                 // reached via `bun_bundler`'s public re-export so this
                                 // crate doesn't take a direct `bun_resolver` edge.
                                 {
-                                    let in_tmpdir = path::VecPath::from_parts(&[
+                                    let in_tmpdir = path::Path::from_parts(&[
                                         bun_bundler::bun_fs::RealFS::tmpdir_path(),
                                         path::basename(zname),
                                     ]);

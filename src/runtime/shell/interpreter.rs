@@ -1735,17 +1735,8 @@ impl ShellExecEnv {
     /// `cd -`.
     #[inline]
     pub(crate) fn change_prev_cwd(&mut self) -> bun_sys::Result<()> {
-        // Note: reshaped for borrowck — `prev_cwd()` borrows `self`, so
-        // copy into a stack buffer before the `&mut self` call. Bounded by the
-        // ENAMETOOLONG check inside `change_cwd_impl` (same 4 KiB).
-        // Use a `[4096]u8` buffer on every platform; do NOT use
-        // `bun_paths::PathBuffer` here — on Windows that is ~96 KiB of
-        // zero-filled stack, and `change_cwd_impl` stacks another on top.
-        let mut buf = [0u8; 4096];
-        let prev = self.prev_cwd();
-        let n = prev.len();
-        buf[..n].copy_from_slice(prev);
-        self.change_cwd_impl(&buf[..n], false)
+        let prev = bun_paths::Path::from(self.prev_cwd());
+        self.change_cwd_impl(&prev, false)
     }
 
     /// Thin `in_init = false` wrapper. Accepts the un-terminated slice and
@@ -1764,13 +1755,18 @@ impl ShellExecEnv {
         new_cwd_: &[u8],
         in_init: bool,
     ) -> bun_sys::Result<()> {
-        // The same limit on every platform.
-        type Cwd = bun_paths::StackPath<4096>;
         let new_cwd = match bun_paths::is_absolute(new_cwd_) {
-            true => Cwd::from(new_cwd_),
-            false => Cwd::resolve(&[self.cwd(), new_cwd_]),
+            true => bun_paths::Path::from(new_cwd_),
+            false => bun_paths::Path::resolve(&[self.cwd(), new_cwd_]),
+        };
+        // The same limit on every platform.
+        const MAX_CWD_BYTES: usize = 4096;
+        if new_cwd.len() >= MAX_CWD_BYTES {
+            return Err(bun_sys::Error::from_code(
+                bun_sys::E::ENAMETOOLONG,
+                bun_sys::Tag::chdir,
+            ));
         }
-        .map_err(|_| bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::chdir))?;
         let new_cwd_z: &bun_core::ZStr = &new_cwd;
 
         self.cwd_fd = OwnedFd(shell_openat(
@@ -1979,11 +1975,11 @@ pub(crate) fn shell_join_path(
     syscall: bun_sys::Tag,
     parts: &[&[u8]],
 ) -> bun_sys::Result<bun_core::ZBox> {
-    let joined = bun_paths::VecPath::join(parts);
+    let joined = bun_paths::Path::join(parts);
     if joined.len() >= bun_paths::MAX_PATH_BYTES {
         return Err(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, syscall).with_path(&joined));
     }
-    Ok(joined.into_zbox())
+    Ok(joined.to_zbox())
 }
 
 /// Resolves a builtin's path `operand` against the shell's `cwd`.

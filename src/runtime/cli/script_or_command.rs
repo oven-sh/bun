@@ -307,15 +307,14 @@ fn has_script(name: &[u8], path: &[u8], contents: &[u8]) -> Result<bool, Unparsa
 }
 
 /// The path of `name` below `dir`, which is absolute.
-fn below(dir: &[u8], name: &[u8]) -> Vec<u8> {
-    let mut path = bun_paths::VecPath::from_parts(&[dir, name]);
+fn below(dir: &[u8], name: &[u8]) -> bun_paths::Path {
+    let mut path = bun_paths::Path::from_parts(&[dir, name]);
     path.copy_trailing_sep_from(name);
-    path.into_vec()
+    path
 }
 
 fn entry_kind(dir: &[u8], parts: &[&[u8]]) -> Option<bun_sys::ExistsAtType> {
-    let path = bun_core::ZBox::from_vec(below(dir, &parts.concat()));
-    bun_sys::exists_at_type(bun_core::Fd::cwd(), &path).ok()
+    bun_sys::exists_at_type(bun_core::Fd::cwd(), &below(dir, &parts.concat())).ok()
 }
 
 /// Those of the resolver that can be run: `bun lint -o lint.json` must not take the name away.
@@ -397,7 +396,7 @@ pub(super) fn nearest_package_json(mut dir: &[u8]) -> Option<(&[u8], Vec<u8>, Ve
         let path = below(dir, b"package.json");
         if let Some(contents) = read_package_json(&path) {
             let dir = without_trailing_sep(dir);
-            return Some((dir, path, contents));
+            return Some((dir, path.to_vec(), contents));
         }
         dir = bun_paths::dirname(dir)?;
     }

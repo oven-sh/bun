@@ -4,9 +4,7 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 
-use bun_core::ZBox;
-
-use crate::path_backend::{PathBackend, PoolBackend, StackBackend, VecBackend};
+use crate::path_backend::{HeapBackend, PathBackend, StackBackend};
 use crate::path_ops::{
     EditBuf, LONG_PATH_PREFIX, NAMESPACE_OVERHEAD, NORMALIZE_OVERHEAD, NT_PATH_PREFIX, Relative,
     Resolved, TrimmedPart, Unresolved, last_absolute_posix_part, max_joined_len, max_relative_len,
@@ -15,14 +13,12 @@ use crate::path_style::{Host, PathStyle, Root, last_component, stem_len};
 use crate::path_unit::PathUnit;
 use crate::{NameTooLong, OSPathChar, PathChar};
 
-/// The default. In a pooled buffer, or on the heap once it outgrows that, so the syscall reports `ENAMETOOLONG`.
-pub type Path = GenericPath<PoolBackend>;
-/// In a `Vec`. For storing a path, or when more than 4 (the size of the pool) are alive.
-pub type VecPath = GenericPath<VecBackend>;
+/// The default. On the heap. Grows to any length, so the syscall reports `ENAMETOOLONG`.
+pub type Path = GenericPath<HeapBackend>;
 /// In an inline `[u8; N]`, NUL included. `NameTooLong` if a result does not fit. Allocates only to normalize or transcode input that might not.
 pub type StackPath<const N: usize> = GenericPath<StackBackend<N>>;
 /// [`Path`] in the encoding that syscalls take. For names that go from one syscall to the next.
-pub type OSPath = GenericPath<PoolBackend<OSPathChar>>;
+pub type OSPath = GenericPath<HeapBackend<OSPathChar>>;
 
 type ZSlice<B> = <<B as PathBackend>::Unit as PathUnit>::ZSlice;
 
@@ -110,21 +106,6 @@ impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
     }
 }
 
-impl<U: PathUnit, S: PathStyle> GenericPath<VecBackend<U>, S> {
-    #[inline]
-    pub fn into_vec(self) -> Vec<U> {
-        // SAFETY: `[..len]` is initialized.
-        unsafe { self.backend.into_vec(self.len) }
-    }
-}
-
-impl<S: PathStyle> GenericPath<VecBackend, S> {
-    #[inline]
-    pub fn into_zbox(self) -> ZBox {
-        ZBox::from_vec(self.into_vec())
-    }
-}
-
 impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
     #[inline(always)]
     pub(crate) fn as_slice(&self) -> &[B::Unit] {
@@ -152,7 +133,7 @@ impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
     /// `Err` if no syscall takes a path this long. For where no syscall is there to say so.
     #[inline]
     pub fn check_len(self) -> Result<Self, NameTooLong> {
-        match self.len < B::Unit::BUFFER_LEN {
+        match self.len < B::Unit::PATH_MAX {
             true => Ok(self),
             false => Err(NameTooLong),
         }
@@ -358,7 +339,7 @@ impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
             return result;
         }
         let edited = edit_on_heap(self.as_slice(), max_len, &mut f);
-        self.try_replace_from(0, &edited)
+        self.try_replace_from(0, edited.as_slice())
     }
 
     #[inline(always)]
@@ -492,16 +473,16 @@ fn edit_on_heap<U: PathUnit, S: PathStyle>(
     path: &[U],
     max_len: usize,
     f: &mut dyn FnMut(&mut EditBuf<'_, U, S>),
-) -> Vec<U> {
-    let mut copy = GenericPath::<VecBackend<U>, S>::from(path);
+) -> GenericPath<HeapBackend<U>, S> {
+    let mut copy = GenericPath::<HeapBackend<U>, S>::from(path);
     let Ok(()) = copy.edit(max_len, f);
-    copy.into_vec()
+    copy
 }
 
 #[cold]
 #[inline(never)]
-fn format_on_heap(args: fmt::Arguments<'_>) -> VecPath {
-    let mut text = VecPath::new();
+fn format_on_heap(args: fmt::Arguments<'_>) -> Path {
+    let mut text = Path::new();
     text.write_fmt(args);
     text
 }

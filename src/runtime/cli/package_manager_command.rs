@@ -905,7 +905,7 @@ fn print_node_modules_folder_structure(
             .name
             .slice(string_bytes);
         // `@scope/name` keeps its `/` in the path of a tree.
-        let mut possible_path = bun_paths::VecPath::from(&directory.relative_path);
+        let mut possible_path = Path::from(&directory.relative_path);
         possible_path.push_trailing_sep();
         possible_path.extend_from_slice(package_name);
         possible_path.push(b"node_modules");

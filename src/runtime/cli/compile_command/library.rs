@@ -8,7 +8,7 @@ use bun_alloc::Arena;
 use bun_ast::Expr;
 use bun_core::{Global, Output};
 use bun_options_types::context::ContextData;
-use bun_paths::{VecPath, without_trailing_sep};
+use bun_paths::{Path, without_trailing_sep};
 
 pub(crate) use self::declarations::{add_declaration_files, is_declaration_file};
 pub(crate) use self::package_files::add_package_files;
@@ -107,7 +107,7 @@ impl Project {
 }
 
 fn absolute_path(working_directory: &[u8], path: &[u8]) -> Vec<u8> {
-    VecPath::resolve(&[working_directory, path]).into_vec()
+    Path::resolve(&[working_directory, path]).to_vec()
 }
 
 fn is_inside(ancestor: &[u8], path: &[u8]) -> bool {

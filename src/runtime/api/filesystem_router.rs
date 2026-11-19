@@ -140,9 +140,7 @@ impl FileSystemRouter {
                                 continue 'outer;
                             }
                         }
-                        // Copy, so that the pooled buffer is released before recursing.
-                        let Some(full_path) = entry.build_abs_path().map(|path| path.to_vec())
-                        else {
+                        let Some(full_path) = entry.build_abs_path() else {
                             continue 'outer;
                         };
                         let _ = vm

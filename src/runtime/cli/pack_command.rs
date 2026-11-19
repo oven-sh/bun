@@ -156,7 +156,7 @@ impl PackCommand {
             *option = crate::cli::cli_dupe(&abs);
         }
 
-        let abs_pkg_json = ZBox::from_bytes(manager.original_package_json_path.as_bytes());
+        let abs_pkg_json = manager.original_package_json_path.to_zbox();
 
         let pack_ctx = Context {
             manager,
@@ -1429,7 +1429,7 @@ pub(crate) fn published_files(
         match bin.ty {
             BinType::File if kind == bun_sys::FileKind::File => {
                 pack_queue.add(PackQueueItem {
-                    path: ZBox::from_bytes(bin.path.as_bytes()),
+                    path: bin.path.to_zbox(),
                 })?;
             }
             BinType::Dir if kind == bun_sys::FileKind::Directory => {
@@ -2181,7 +2181,7 @@ fn open_tarball(abs_tarball_dest: &ZStr, is_typed_filename: bool) -> Option<Fd> 
     let mut name_buf = [0u8; 64];
     let name = path::fs::FileSystem::tmpname(b"tmp", &mut name_buf, bun_core::fast_random())
         .expect("unreachable");
-    let mut tmp = path::VecPath::from(abs_tarball_dest);
+    let mut tmp = Path::from(abs_tarball_dest);
     tmp.set_basename(UNFINISHED_TARBALL_PREFIX);
     tmp.extend_from_slice(name);
     let file = File::openat(
@@ -2192,7 +2192,7 @@ fn open_tarball(abs_tarball_dest: &ZStr, is_typed_filename: bool) -> Option<Fd> 
     )
     .ok()?;
     let fd = file.fd();
-    *UNFINISHED_TARBALL.lock() = Some((file, tmp.into_zbox()));
+    *UNFINISHED_TARBALL.lock() = Some((file, tmp.to_zbox()));
     Global::add_exit_callback(remove_unfinished_tarball);
     Some(fd)
 }

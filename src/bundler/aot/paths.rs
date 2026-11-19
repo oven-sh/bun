@@ -1,8 +1,8 @@
 use bun_ast::{Loc, Log};
-use bun_paths::{MAX_PATH_BYTES, Path, VecPath};
+use bun_paths::{MAX_PATH_BYTES, Path};
 
 pub(super) fn absolute_path(working_directory: &[u8], path: &[u8]) -> Vec<u8> {
-    VecPath::resolve(&[working_directory, path]).into_vec()
+    Path::resolve(&[working_directory, path]).to_vec()
 }
 
 pub(super) fn relative_path(working_directory: &[u8], from: &[u8], to: &[u8]) -> Option<Vec<u8>> {

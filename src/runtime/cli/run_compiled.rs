@@ -606,7 +606,7 @@ pub(crate) fn temporary_path(directory: &[u8]) -> ZBox {
         bun_core::fast_random(),
     )
     .expect("64 bytes hold a temporary name");
-    bun_paths::VecPath::from_parts(&[directory, name]).into_zbox()
+    bun_paths::Path::from_parts(&[directory, name]).to_zbox()
 }
 
 #[cfg(unix)]
@@ -1498,8 +1498,7 @@ pub(crate) fn find_why_askers_are_of_product(refusals: &[Vec<u8>]) -> Vec<(Vec<u
     if askers.is_empty() {
         return Vec::new();
     }
-    let files =
-        (askers.iter()).map(|asker| bun_paths::VecPath::from_parts(&[top, asker]).into_vec());
+    let files = (askers.iter()).map(|asker| bun_paths::Path::from_parts(&[top, asker]).to_vec());
     let files: Vec<Vec<u8>> = files.collect();
     let is_compiled = |path: &[u8]| bun_jsc::compiled_program::is_compiled_module(path);
     let importers = bun_aot::builtins::find_importers_outside_run(top, &files, &is_compiled);

@@ -13,6 +13,7 @@
 
 use core::cell::RefCell;
 use core::marker::PhantomData;
+use core::mem::ManuallyDrop;
 use core::ops::{Deref, DerefMut};
 
 use bun_core::{PathBuffer, WPathBuffer};
@@ -89,12 +90,12 @@ impl<T: PoolStorage> PathBufferPoolT<T> {
         let buf = T::with_pool(|p| p.borrow_mut().pop())
             .flatten()
             .unwrap_or_else(T::new_boxed);
-        PoolGuard { buf: Some(buf) }
+        PoolGuard {
+            buf: ManuallyDrop::new(buf),
+        }
     }
 
-    /// Manual return path. Prefer dropping
-    /// the `PoolGuard` instead.
-    pub(crate) fn put(buf: Box<T>) {
+    fn put(buf: Box<T>) {
         // Dropped when the pool is full or TLS is gone.
         let _ = T::with_pool(|p| {
             let mut p = p.borrow_mut();
@@ -107,38 +108,28 @@ impl<T: PoolStorage> PathBufferPoolT<T> {
 
 /// RAII guard returned by `PathBufferPoolT::get()`.
 pub struct PoolGuard<T: PoolStorage> {
-    buf: Option<Box<T>>,
+    buf: ManuallyDrop<Box<T>>,
 }
 
 impl<T: PoolStorage> Deref for PoolGuard<T> {
     type Target = T;
     #[inline]
     fn deref(&self) -> &T {
-        // SAFETY-ish: `buf` is always `Some` until `Drop`.
-        self.buf.as_deref().unwrap()
+        &self.buf
     }
 }
 
 impl<T: PoolStorage> DerefMut for PoolGuard<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
-        self.buf.as_deref_mut().unwrap()
+        &mut self.buf
     }
 }
 
 impl<T: PoolStorage> Drop for PoolGuard<T> {
     fn drop(&mut self) {
-        if let Some(buf) = self.buf.take() {
-            PathBufferPoolT::<T>::put(buf);
-        }
-    }
-}
-
-impl<T: PoolStorage> PoolGuard<T> {
-    /// Extract the `Box` without returning it to the pool; the owner `put`s it later.
-    #[inline]
-    pub(crate) fn into_box(mut self) -> Box<T> {
-        self.buf.take().unwrap()
+        // SAFETY: `buf` is not used again.
+        PathBufferPoolT::<T>::put(unsafe { ManuallyDrop::take(&mut self.buf) });
     }
 }
 

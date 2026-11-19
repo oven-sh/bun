@@ -710,9 +710,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     // cannot be a cycle: defer identifying the target
                                     // (record its logical path) so the walk performs
                                     // no stat unless a nested followed link needs it.
-                                    followed_link = Some(FollowedLink::Pending(ZBox::from_bytes(
-                                        symlink_full_path_z.as_bytes(),
-                                    )));
+                                    followed_link =
+                                        Some(FollowedLink::Pending(symlink_full_path_z.to_zbox()));
                                     true
                                 } else {
                                     match A::statat(&dir_fd, bun_core::zstr!(".")) {

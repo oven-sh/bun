@@ -373,7 +373,7 @@ pub(crate) fn watch(
     let mut handlers = ArrayHashMap::default();
     handle_oom(handlers.put(ctx, ChangeEvent::default()));
     let id = manager.watchers.insert(PathWatcher {
-        path: ZBox::from_bytes(resolved.as_bytes()),
+        path: resolved.to_zbox(),
         recursive,
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         is_file,
@@ -408,9 +408,9 @@ pub(crate) fn watch(
 #[derive(Default)]
 struct WalkScratch {
     /// Absolute path of the directory being read, or of the entry passed to `cb`.
-    abs: path::VecPath,
+    abs: path::Path,
     /// Same path, relative to the watch root.
-    rel: path::VecPath,
+    rel: path::Path,
     /// Unvisited entries as `[is_file][name][0]` records, innermost directory last.
     pending: Vec<u8>,
     /// Directories with records in `pending`, outermost first.
@@ -432,8 +432,8 @@ struct WalkLevel {
 impl WalkScratch {
     /// Truncates `abs` and `rel` to the directory's path, then appends `name`. Returns `abs`.
     fn set_entry<'a>(
-        abs: &'a mut path::VecPath,
-        rel: &mut path::VecPath,
+        abs: &'a mut path::Path,
+        rel: &mut path::Path,
         abs_len: usize,
         rel_len: usize,
         name: &[u8],
@@ -506,8 +506,8 @@ fn walk_subtree<const DIRS_ONLY: bool>(
     cb: &mut impl FnMut(&ZStr, &[u8], bool),
 ) {
     let mut scratch = WalkScratch {
-        abs: path::VecPath::from(abs_dir),
-        rel: path::VecPath::from(rel_dir),
+        abs: path::Path::from(abs_dir),
+        rel: path::Path::from(rel_dir),
         ..Default::default()
     };
     if let Ok(dir) = WalkScratch::open_dir(abs_dir) {

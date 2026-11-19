@@ -2,7 +2,7 @@ use crate::cli::script_or_command::{
     LAUNCHER_SUFFIXES, RUNNABLE_EXTENSIONS, is_runnable_file, nearest_package_json,
     read_package_json,
 };
-use bun_paths::{VecPath, from_portable};
+use bun_paths::{Path, from_portable};
 
 const INDEX_FILES: [&[u8]; 4] = [b"index.ts", b"index.tsx", b"index.mts", b"index.js"];
 
@@ -378,9 +378,9 @@ fn is_outside(directory: &[u8], path: &[u8]) -> bool {
 }
 
 fn join(directory: &[u8], path: &[u8]) -> Vec<u8> {
-    let mut joined = VecPath::resolve(&[directory, path]);
+    let mut joined = Path::resolve(&[directory, path]);
     joined.copy_trailing_sep_from(path);
-    joined.into_vec()
+    joined.to_vec()
 }
 
 fn find_package_entry_point(

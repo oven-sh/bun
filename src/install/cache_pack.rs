@@ -273,7 +273,7 @@ fn lockfile_entries(pm: &mut PackageManager) -> Vec<LockfileEntry> {
         )
         .cache_dir_subpath;
         entries.push(LockfileEntry {
-            name: ZBox::from_bytes(subpath.as_bytes()),
+            name: subpath.to_zbox(),
             tag: resolution.tag,
             expected: expected.is_set(i),
         });
@@ -291,7 +291,7 @@ fn lockfile_entries(pm: &mut PackageManager) -> Vec<LockfileEntry> {
 fn tmpname(prefix: &[u8]) -> ZBox {
     let mut buf = bun_paths::path_buffer_pool::get();
     let name = FileSystem::tmpname(prefix, &mut buf[..], bun_core::fast_random());
-    ZBox::from_bytes(name.expect("unreachable").as_bytes())
+    name.expect("unreachable").to_zbox()
 }
 
 /// Written next to the destination and then renamed over it. Removed on drop if the rename didn't
@@ -936,7 +936,7 @@ pub fn unpack(pm: &mut PackageManager, pack_path: &[u8]) -> Result<UnpackSummary
                 header.size,
                 &mut summary,
             )?;
-            staged.push((ZBox::from_bytes(name.as_bytes()), tag));
+            staged.push((name.to_zbox(), tag));
         }
     }
 

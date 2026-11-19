@@ -78,6 +78,10 @@ impl ZStr {
         // SAFETY: invariant — byte at `len` is NUL and owned by the same allocation.
         unsafe { core::slice::from_raw_parts(self.0.as_ptr(), self.0.len() + 1) }
     }
+    #[inline]
+    pub fn to_zbox(&self) -> ZBox {
+        ZBox(self.as_bytes_with_nul().into())
+    }
     /// Borrow a `&CStr` as `&ZStr` — both are NUL-terminated, len excludes NUL.
     #[inline]
     pub fn from_cstr(s: &core::ffi::CStr) -> &ZStr {

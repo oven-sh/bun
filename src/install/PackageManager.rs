@@ -21,7 +21,7 @@ use bun_dotenv as dot_env;
 use bun_event_loop::{self, EventLoopHandle};
 use bun_http as http;
 use bun_ini as ini;
-use bun_paths::{DELIMITER, Path, VecPath, without_trailing_sep};
+use bun_paths::{DELIMITER, Path, without_trailing_sep};
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
 use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
@@ -1389,7 +1389,7 @@ fn allocate_package_manager(
     log: *mut bun_ast::Log,
     root_dir: &'static fs::DirEntry,
     env: &mut dot_env::Loader,
-    original_package_json_path: VecPath,
+    original_package_json_path: ZBox,
     root_package_json_path: &'static ZStr,
     workspace_package_json_cache: WorkspacePackageJSONCache,
     workspace_name_hash: Option<PackageNameHash>,
@@ -1451,10 +1451,7 @@ fn allocate_package_manager(
                 EventLoopHandle::leak_mini()
             }
         );
-        wr!(
-            original_package_json_path,
-            original_package_json_path.into_zbox()
-        );
+        wr!(original_package_json_path, original_package_json_path);
         wr!(root_package_json_path, root_package_json_path);
         wr!(workspace_package_json_cache, workspace_package_json_cache);
         wr!(workspace_name_hash, workspace_name_hash);
@@ -1673,8 +1670,8 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     );
 }
 
-fn package_json_in(dir: &[u8]) -> VecPath {
-    VecPath::from_parts(&[dir, b"package.json"])
+fn package_json_in(dir: &[u8]) -> Path {
+    Path::from_parts(&[dir, b"package.json"])
 }
 
 /// A relative `$NPM_CONFIG_USERCONFIG` is relative to `start_dir`. A later file in `project_npmrcs`
@@ -2422,7 +2419,7 @@ pub fn init(
         ctx.log,
         entries_option,
         env,
-        original_package_json_path,
+        original_package_json_path.to_zbox(),
         root_package_json_path,
         workspace_package_json_cache,
         workspace_name_hash,
@@ -2713,10 +2710,10 @@ fn init_with_runtime_once(
         return Err(bun_resolver::Error::SecurityScannerConfigured.into());
     }
     // The .npmrc in the start directory is read too, like the bunfig.toml there.
-    let npmrcs: Vec<VecPath> = (Some(start_dir_trimmed).into_iter())
+    let npmrcs: Vec<Path> = (Some(start_dir_trimmed).into_iter())
         .filter(|dir| !settings_dirs.contains(dir))
         .chain(settings_dirs.iter().copied())
-        .map(|dir| VecPath::resolve(&[dir, b".npmrc"]))
+        .map(|dir| Path::resolve(&[dir, b".npmrc"]))
         .collect();
     let no_bunfig = Api::BunInstall::default();
     let npmrc = load_npmrc_files(
@@ -2745,7 +2742,7 @@ fn init_with_runtime_once(
         std::ptr::from_mut(log),
         root_dir,
         env,
-        package_json_in(FileSystem::get().top_level_dir()),
+        package_json_in(FileSystem::get().top_level_dir()).to_zbox(),
         ZStr::EMPTY,
         workspace_package_json_cache,
         None,

@@ -345,7 +345,7 @@ fn get_temporary_directory_run(
         name,
         cache,
         #[cfg(windows)]
-        path: ZBox::from_bytes(temp_dir_path.as_bytes()),
+        path: temp_dir_path.to_zbox(),
     })
 }
 
@@ -366,8 +366,8 @@ fn ensure_cache_directory(this: &mut PackageManager) -> sys::Maybe<&'static Cach
     }
 
     let handle = Dir::cwd().make_open_path(b"node_modules/.cache", Default::default())?;
-    let path = path::VecPath::resolve(&[FileSystem::get().top_level_dir(), b"node_modules/.cache"])
-        .into_zbox();
+    let path =
+        Path::resolve(&[FileSystem::get().top_level_dir(), b"node_modules/.cache"]).to_zbox();
     Ok(CACHE_DIRECTORY.get_or_init(|| CacheDirectory { handle, path }))
 }
 

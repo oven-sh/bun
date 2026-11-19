@@ -1146,9 +1146,7 @@ impl PackageManifest {
 
 pub mod package_manifest {
     use super::*;
-    use bun_paths::StackPath;
-
-    type ManifestFileName = StackPath<{ 16 + "-".len() + 16 + ".npm".len() + 1 }>;
+    use bun_paths::Path;
 
     pub struct Serializer;
 
@@ -1486,14 +1484,14 @@ pub mod package_manifest {
             THREAD_POOL.schedule(batch);
         }
 
-        fn manifest_file_name(file_id: u64, url_hash: u64) -> Result<ManifestFileName, Error> {
-            let mut name = StackPath::new();
-            write!(name, "{}", bun_fmt::hex_int_lower::<16>(file_id))?;
+        fn manifest_file_name(file_id: u64, url_hash: u64) -> Path {
+            let mut name = Path::new();
+            write!(name, "{}", bun_fmt::hex_int_lower::<16>(file_id));
             if url_hash != *registry::DEFAULT_URL_HASH {
-                write!(name, "-{}", bun_fmt::hex_int_lower::<16>(url_hash))?;
+                write!(name, "-{}", bun_fmt::hex_int_lower::<16>(url_hash));
             }
-            name.extend_from_slice(b".npm")?;
-            Ok(name)
+            name.extend_from_slice(b".npm");
+            name
         }
 
         pub(crate) fn save(
@@ -1504,7 +1502,7 @@ pub mod package_manifest {
             let file_id = Wyhash11::hash(0, this.name());
             let mut tmp_path_buf = [0u8; 64];
             let tmp_path = FileSystem::tmpname(b"npm", &mut tmp_path_buf, bun_core::fast_random())?;
-            let out_path = Self::manifest_file_name(file_id, registry.url_hash)?;
+            let out_path = Self::manifest_file_name(file_id, registry.url_hash);
             Self::write_file(this, registry, tmp_path, temp_dir, &out_path)
         }
 
@@ -1513,18 +1511,17 @@ pub mod package_manifest {
             cache_dir: Fd,
             name: &[u8],
             file_id: u64,
-        ) -> Result<Option<PackageManifest>, Error> {
-            let file_name = Self::manifest_file_name(file_id, scope.url_hash)?;
-            let Ok(cache_file) = File::openat(cache_dir, &file_name, bun_sys::O::RDONLY, 0) else {
-                return Ok(None);
-            };
+        ) -> Option<PackageManifest> {
+            let file_name = Self::manifest_file_name(file_id, scope.url_hash);
+            let cache_file = bun_sys::openat(cache_dir, &file_name, bun_sys::O::RDONLY, 0);
+            let cache_file = File::from_fd(cache_file.ok()?);
 
             // A file that cannot be used is not deleted. Another version of bun may have written
             // it, and the next download of the manifest replaces it.
-            Ok(Self::load_by_file(scope, &cache_file)
+            Self::load_by_file(scope, &cache_file)
                 .ok()
                 .flatten()
-                .filter(|manifest| manifest.name() == name))
+                .filter(|manifest| manifest.name() == name)
         }
 
         pub fn load_by_file(

@@ -154,7 +154,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         {
             for shell in Self::SHELLS_TO_SEARCH {
                 if let Some(found) = which(path, cwd, shell) {
-                    return Some(bun_core::ZBox::from_bytes(found.as_bytes()));
+                    return Some(found.to_zbox());
                 }
             }
 
@@ -171,7 +171,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             HARDCODED_POPULAR_ONES
                 .iter()
                 .find(|shell| bun_sys::is_executable_file_path(shell))
-                .map(|shell| bun_core::ZBox::from_bytes(shell.as_bytes()))
+                .map(|shell| shell.to_zbox())
         }
     }
 

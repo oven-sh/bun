@@ -5,18 +5,16 @@ use core::ops::Deref;
 
 use bun_core::strings::{self, CodeUnits};
 use bun_core::vec::BorrowedBuf;
-use bun_core::{MAX_PATH_BYTES, PATH_MAX_WIDE, PathBuffer, WPathBuffer, WStr, ZStr};
+use bun_core::{MAX_PATH_BYTES, PATH_MAX_WIDE, WStr, ZStr};
 
 use crate::PathChar;
-use crate::path_buffer_pool::PoolStorage;
 
 /// `u8` or `u16`.
 pub trait PathUnit: PathChar + Default {
     /// `ZStr` or `WStr`.
     type ZSlice: ?Sized + Deref<Target = [Self]>;
-    /// `PathBuffer` or `WPathBuffer`.
-    type Buffer: PoolStorage;
-    const BUFFER_LEN: usize;
+    /// The most that a syscall takes, NUL included.
+    const PATH_MAX: usize;
     /// A reference, so that an empty path can point at it.
     const NUL: &'static Self;
 
@@ -40,8 +38,7 @@ pub trait PathUnit: PathChar + Default {
 
 impl PathUnit for u8 {
     type ZSlice = ZStr;
-    type Buffer = PathBuffer;
-    const BUFFER_LEN: usize = MAX_PATH_BYTES;
+    const PATH_MAX: usize = MAX_PATH_BYTES;
     const NUL: &'static u8 = &0;
 
     #[inline(always)]
@@ -111,8 +108,7 @@ const COLON: u16 = b':' as u16;
 
 impl PathUnit for u16 {
     type ZSlice = WStr;
-    type Buffer = WPathBuffer;
-    const BUFFER_LEN: usize = PATH_MAX_WIDE;
+    const PATH_MAX: usize = PATH_MAX_WIDE;
     const NUL: &'static u16 = &0;
 
     #[inline(always)]

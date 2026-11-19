@@ -1250,7 +1250,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             original_cwd
         };
         let spelling = bun_sys::existing_spelling(bun_sys::Fd::cwd(), cwd_arg);
-        let out_z = bun_paths::VecPath::resolve(&[base, &spelling]);
+        let out_z = bun_paths::Path::resolve(&[base, &spelling]);
         if let bun_sys::Result::Err(err) = bun_sys::chdir(&out_z) {
             Output::err(
                 err,

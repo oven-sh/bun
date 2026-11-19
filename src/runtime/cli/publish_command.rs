@@ -461,8 +461,7 @@ impl PublishCommand {
             return Self::exec_workspaces(ctx, manager, &original_cwd);
         }
 
-        let abs_package_json_path =
-            bun_core::ZBox::from_bytes(manager.original_package_json_path.as_bytes());
+        let abs_package_json_path = manager.original_package_json_path.to_zbox();
         let context = Context::from_workspace(&mut *ctx, manager, &abs_package_json_path);
 
         if bun_core::handle_oom(Self::publish(manager, &context)) {

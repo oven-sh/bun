@@ -10,7 +10,7 @@ use bun_core::{String as BunString, StringView, ZStr};
 use bun_js_parser::lower::defer_requires::has_react_compiler;
 use bun_js_parser::{CacheLookup, ParsedForCache, ParserOptions};
 use bun_js_printer::analyze_transpiled_module::ModuleInfo;
-use bun_paths::{self as paths, Path, VecPath};
+use bun_paths::{self as paths, Path};
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self as sys, Fd};
 // Wyhash (final4 variant). Must stay stable so on-disk
@@ -567,7 +567,7 @@ fn pread_box(file: &sys::File, len: usize, offset: u64) -> crate::CrateResult<Bo
 impl RuntimeTranspilerCache {
     fn get_cache_file_path(input_hash: u64) -> crate::CrateResult<Path> {
         thread_local! {
-            static CACHE_DIR: OnceCell<Option<VecPath>> = const { OnceCell::new() };
+            static CACHE_DIR: OnceCell<Option<Path>> = const { OnceCell::new() };
         }
         const SUFFIX: &[u8] = if bun_core::env::IS_DEBUG {
             b".debug.pile"
@@ -594,7 +594,7 @@ impl RuntimeTranspilerCache {
     }
 
     /// `None` disables the cache.
-    fn find_cache_dir() -> Option<VecPath> {
+    fn find_cache_dir() -> Option<Path> {
         #[cfg(bun_debug)]
         {
             BUN_DEBUG_RESTORE_FROM_CACHE.store(
@@ -609,13 +609,13 @@ impl RuntimeTranspilerCache {
             return None;
         }
         if let Some(dir) = env_var::BUN_RUNTIME_TRANSPILER_CACHE_PATH.get() {
-            return Some(VecPath::from(dir));
+            return Some(Path::from(dir));
         }
 
         let top = FileSystem::get().top_level_dir();
 
         if let Some(dir) = env_var::XDG_CACHE_HOME.get_not_empty() {
-            return Some(VecPath::resolve(&[top, dir, b"bun/@t@"]));
+            return Some(Path::resolve(&[top, dir, b"bun/@t@"]));
         }
 
         // macOS uses ~/Library/Caches, not the install cache.
@@ -625,7 +625,7 @@ impl RuntimeTranspilerCache {
             b".bun/install/cache/@t@"
         };
         let home = env_var::HOME.get_not_empty()?;
-        Some(VecPath::resolve(&[top, home, cache_subdir]))
+        Some(Path::resolve(&[top, home, cache_subdir]))
     }
 
     pub(crate) fn from_file(

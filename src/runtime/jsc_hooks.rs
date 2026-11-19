@@ -4307,7 +4307,7 @@ fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
     let uid = extract_owner_uid();
     let name = format!(".bun-{uid}-{hash:x}");
     let persistent_folder =
-        bun_paths::VecPath::from_parts(&[Fs::RealFS::tmpdir_path(), name.as_bytes()]).into_vec();
+        bun_paths::Path::from_parts(&[Fs::RealFS::tmpdir_path(), name.as_bytes()]).to_vec();
     let per_process_folder = [
         &persistent_folder[..],
         format!("-{:x}", bun_core::fast_random()).as_bytes(),
@@ -4317,15 +4317,15 @@ fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
         .into_iter()
         .find(|folder| make_or_find_private_folder(folder, uid))?;
     let written_path = |path: &[u8]| {
-        let mut written = bun_paths::VecPath::from(&folder);
+        let mut written = bun_paths::Path::from(&folder);
         match cfg!(windows) {
             true => written.push(&bun_core::strings::replace_owned(path, b":", b"")),
             false => written.push(path),
         }
-        written.into_vec()
+        written
     };
     for (path, contents) in files {
-        let to = bun_core::ZBox::from_vec(written_path(path));
+        let to = written_path(path);
         let is_written = || {
             bun_sys::lstat(&to).is_ok_and(|it| {
                 bun_sys::S::ISREG(it.st_mode as u32) && it.st_size as usize == contents.len()
@@ -4360,7 +4360,7 @@ fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
             }
         }
     }
-    Some(written_path(addon.name))
+    Some(written_path(addon.name).to_vec())
 }
 
 /// Support embedded .node files. `Dead` when `path` is not an embedded file.

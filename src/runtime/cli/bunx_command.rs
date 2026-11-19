@@ -18,7 +18,7 @@ use bun_install::dependency::{self, VersionTag};
 use bun_install::postinstall_optimizer;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
-use bun_paths::{self, DELIMITER, Path, VecPath, from_portable, without_trailing_sep};
+use bun_paths::{self, DELIMITER, Path, from_portable, without_trailing_sep};
 use bun_resolver::fs::RealFS;
 use bun_sys::{self, Fd, FdDirExt as _, O};
 use bun_wyhash::hash;
@@ -461,8 +461,8 @@ impl BunxCommand {
     ) -> crate::Result<InProject> {
         let project = without_trailing_sep(project);
         for dir in bun_paths::ancestors(cwd).take_while(|dir| dir.starts_with(project)) {
-            let package_dir = VecPath::from_parts(&[dir, b"node_modules", package_name]);
-            let package_json = VecPath::from_parts(&[&package_dir, b"package.json"]);
+            let package_dir = Path::from_parts(&[dir, b"node_modules", package_name]);
+            let package_json = Path::from_parts(&[&package_dir, b"package.json"]);
             let bin =
                 match Self::get_bin_from_subpath(transpiler, Fd::cwd(), &package_json, bin_name) {
                     Ok(bin) => bin,
@@ -474,17 +474,15 @@ impl BunxCommand {
             }
 
             let mut buf = bun_paths::path_buffer_pool::get();
-            let bin_dir = VecPath::from_parts(&[dir, b"node_modules/.bin"]);
-            let entry = bun_which::which(&bin_dir, b"", &bin.name)
-                .map(|entry| ZBox::from_bytes(entry.as_bytes()));
+            let bin_dir = Path::from_parts(&[dir, b"node_modules/.bin"]);
+            let entry = bun_which::which(&bin_dir, b"", &bin.name).map(|entry| entry.to_zbox());
             // On Windows the `.bin` entry is a shim executable, not a link, and a script cannot be
             // started without it.
             if cfg!(windows) {
                 return Ok(entry.map_or(InProject::Absent, InProject::Run));
             }
-            let file_path = VecPath::from_parts(&[package_dir.as_bytes(), &bin.file]).into_vec();
-            let file = bun_which::which(b"", b"", &file_path)
-                .map(|file| ZBox::from_bytes(file.as_bytes()));
+            let file_path = Path::from_parts(&[package_dir.as_bytes(), &bin.file]).to_vec();
+            let file = bun_which::which(b"", b"", &file_path).map(|file| file.to_zbox());
 
             let mut real_dir = bun_paths::path_buffer_pool::get();
             let Ok(real_dir) = bun_sys::realpath(&package_dir, &mut real_dir) else {
@@ -751,9 +749,9 @@ impl BunxCommand {
         bunx_cache_dir: &[u8],
         path: &[u8],
     ) -> crate::Result<()> {
-        let mut bin_dir = VecPath::from(bunx_cache_dir);
+        let mut bin_dir = Path::from(bunx_cache_dir);
         bin_dir.push(b"node_modules/.bin");
-        let mut new_path = bin_dir.into_vec();
+        let mut new_path = bin_dir.to_vec();
         if !path.is_empty() {
             new_path.push(DELIMITER);
             new_path.extend_from_slice(path);
@@ -835,13 +833,12 @@ impl BunxCommand {
             _ => initial_bin_name,
         };
         if let Some(bin) = Self::which_in_cache(bunx_cache_dir, cwd, bin_name)? {
-            return Ok(Some(ZBox::from_bytes(bin.as_bytes())));
+            return Ok(Some(bin.to_zbox()));
         }
         match own_bin_name {
             Some(Err(err @ crate::Error::NoBinFound)) => Err(err),
             Some(_) => Ok(None),
-            None => Ok(bun_which::which(path, cwd, initial_bin_name)
-                .map(|bin| ZBox::from_bytes(bin.as_bytes()))),
+            None => Ok(bun_which::which(path, cwd, initial_bin_name).map(|bin| bin.to_zbox())),
         }
     }
 
@@ -1063,7 +1060,7 @@ impl BunxCommand {
 
         let find_on_path = || {
             bun_which::which(&path_for_bin_dirs, which_cwd, initial_bin_name)
-                .map(|bin| ZBox::from_bytes(bin.as_bytes()))
+                .map(|bin| bin.to_zbox())
         };
 
         // 1. Like npx, when one word names both the package and its bin, look for that bin in
@@ -1280,7 +1277,7 @@ impl BunxCommand {
         }
         // An install into a fresh tree only updates the requested package, so package.json gets its
         // old mtime back afterward. Otherwise the dependencies' refresh would be postponed again.
-        let package_json_path = VecPath::from_parts(&[bunx_cache_dir, b"package.json"]);
+        let package_json_path = Path::from_parts(&[bunx_cache_dir, b"package.json"]);
         let last_refresh = (tree == Tree::Fresh)
             .then(|| bun_sys::stat(&package_json_path).ok())
             .flatten();

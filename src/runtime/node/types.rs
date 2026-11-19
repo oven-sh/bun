@@ -997,9 +997,9 @@ fn join_onto_working_directory_in_executable(path: &[u8]) -> Option<Vec<u8>> {
     if path.is_empty() || bun_paths::is_absolute(path) || strings::contains_char(path, 0) {
         return None;
     }
-    let mut joined = bun_paths::VecPath::resolve(&[directory, path]);
+    let mut joined = Path::resolve(&[directory, path]);
     joined.copy_trailing_sep_from(path);
-    Some(joined.into_vec())
+    Some(joined.to_vec())
 }
 
 /// Whether `find_path_meant` may find another path than the one that is written.

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::watcher_impl::{
     Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher, WatcherThread,
 };
-use bun_paths::{ParentEqual, Path, VecPath, is_parent_or_equal};
+use bun_paths::{ParentEqual, Path, is_parent_or_equal};
 
 use bun_collections::index_sort;
 use bun_sys::windows as w;
@@ -21,7 +21,7 @@ pub struct WindowsWatcher {
     pub(crate) port: Arc<OwnedHandle>,
     pub(crate) watcher: DirWatcher,
     /// The watched directory, with a trailing separator.
-    pub(crate) root: VecPath,
+    pub(crate) root: Path,
 }
 
 // SAFETY: `overlapped` points at nothing.
@@ -181,7 +181,7 @@ impl WindowsWatcher {
         let port = w::CreateIoCompletionPort(dir_handle.as_raw_handle(), 0, 1)
             .map_err(|_| crate::Error::from(Error::IocpFailed))?;
 
-        let mut root = VecPath::from(root);
+        let mut root = Path::from(root);
         root.push_trailing_sep();
         Ok(Self {
             // SAFETY: just created.

@@ -138,7 +138,7 @@ fn get_argv0(
         let Some(resolved) = bun_which::which_for_spawn(path_to_use, cwd, argv0_to_use) else {
             return Err(throw_command_not_found(global_this, argv0_to_use));
         };
-        ZBox::from_bytes(resolved.as_bytes())
+        resolved.to_zbox()
     };
 
     Ok(Argv0Result {

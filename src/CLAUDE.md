@@ -233,16 +233,16 @@ for name in names {
 write!(path, "-{hash:x}");                            // no separator; `push_fmt` adds one
 ```
 
-| Type           | Storage       | When to use                                                        |
-| -------------- | ------------- | ------------------------------------------------------------------ |
-| `Path`         | pooled buffer | default                                                            |
-| `VecPath`      | `Vec`         | stored (`into_vec`, `into_zbox`), or more than 4 are alive at once |
-| `StackPath<N>` | inline array  | short names, statics, signal handlers                              |
-| `OSPath`       | pooled buffer | with `OSPathSlice`, which is UTF-16 on Windows                     |
+| Type           | Storage      | When to use                                    |
+| -------------- | ------------ | ---------------------------------------------- |
+| `Path`         | heap         | default                                        |
+| `OSPath`       | heap         | with `OSPathSlice`, which is UTF-16 on Windows |
+| `StackPath<N>` | inline array | signal handlers, statics that must not move    |
 
 They have the same methods. `StackPath` returns `Result<T, NameTooLong>`, is unchanged on `Err`, and
 allocates only to normalize or transcode input that might not fit. The others grow, and the syscall returns
-`ENAMETOOLONG`. Call `check_len()` where no syscall would say so, as with `exists`.
+`ENAMETOOLONG`. Call `check_len()` where no syscall would say so, as with `exists`. They allocate 256
+units or more: to store many paths, store `to_vec()` or `to_zbox()`.
 
 - `from`, `set`, `extend_from_slice` and `prepend` copy as is.
 - `push` and `from_parts` add one separator. `..` is kept, and an absolute part does not replace the path.

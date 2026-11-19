@@ -1,16 +1,17 @@
 //! `cargo test -p bun_paths`, and `bun run rust:miri -p bun_paths`.
 
 use core::cell::Cell;
+use core::convert::Infallible;
 use core::fmt;
 use core::mem::MaybeUninit;
 
 use bun_core::strings;
 
 use crate::path::GenericPath;
-use crate::path_backend::{PathBackend, PoolBackend, StackBackend, VecBackend};
+use crate::path_backend::{HeapBackend, PathBackend, StackBackend};
 use crate::path_style::{PathStyle, Posix, VolumeKind, Windows};
 use crate::path_unit::PathUnit;
-use crate::{MAX_PATH_BYTES, NameTooLong, PATH_MAX_WIDE, Path, StackPath, VecPath, portable};
+use crate::{MAX_PATH_BYTES, NameTooLong, PATH_MAX_WIDE, Path, StackPath, portable};
 
 /// Stand in for the C++ functions, which are not linked into this test binary.
 mod ffi_stubs {
@@ -311,17 +312,23 @@ thread_local!(static CAPACITY: Cell<usize> = const { Cell::new(1) });
 /// `StackBackend` with `CAPACITY` for `N`, and one more unit that nothing may write to.
 struct FixedBackend<U: Unit>(Vec<MaybeUninit<U>>);
 
+impl<U: Unit> FixedBackend<U> {
+    fn new(capacity: usize, contents: &[MaybeUninit<U>]) -> Self {
+        let mut units = vec![MaybeUninit::new(U::from_u8(b'#')); capacity + 1];
+        units[..contents.len()].copy_from_slice(contents);
+        Self(units)
+    }
+}
+
 impl<U: Unit> Default for FixedBackend<U> {
     fn default() -> Self {
-        let mut units = vec![MaybeUninit::new(U::from_u8(b'#')); CAPACITY.get() + 1];
-        units[0].write(*U::NUL);
-        Self(units)
+        Self::new(CAPACITY.get(), &[MaybeUninit::new(*U::NUL)])
     }
 }
 
 impl<U: Unit> Drop for FixedBackend<U> {
     fn drop(&mut self) {
-        // SAFETY: `default` initialized it.
+        // SAFETY: `new` initialized it.
         let guard = unsafe { self.0[self.0.len() - 1].assume_init() };
         assert_eq!(guard, U::from_u8(b'#'));
     }
@@ -347,6 +354,38 @@ impl<U: Unit> PathBackend for FixedBackend<U> {
 
     unsafe fn grow(&mut self, _: usize, _: usize) -> Result<(), NameTooLong> {
         Err(NameTooLong)
+    }
+}
+
+/// `HeapBackend` without the spare room, which would hide an edit that reserves too little.
+struct ExactBackend<U: Unit = u8>(FixedBackend<U>);
+
+impl<U: Unit> Default for ExactBackend<U> {
+    fn default() -> Self {
+        Self(FixedBackend::new(1, &[MaybeUninit::new(*U::NUL)]))
+    }
+}
+
+impl<U: Unit> PathBackend for ExactBackend<U> {
+    type Unit = U;
+    type Error = Infallible;
+    type Output<T> = T;
+
+    fn output<T>(Ok(value): Result<T, Infallible>) -> T {
+        value
+    }
+
+    fn as_ptr(&self) -> *const U {
+        self.0.as_ptr()
+    }
+
+    fn as_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<U>] {
+        self.0.as_uninit_slice_mut()
+    }
+
+    unsafe fn grow(&mut self, len: usize, capacity: usize) -> Result<(), Infallible> {
+        self.0 = FixedBackend::new(capacity, &self.0.0[..len]);
+        Ok(())
     }
 }
 
@@ -417,7 +456,7 @@ fn apply<B: PathBackend<Unit: Unit>, S: PathStyle, C: Unit>(
 
 fn actual<S: PathStyle>(before: &str, op: &Op) -> String {
     init_cwd();
-    let mut path = GenericPath::<VecBackend, S>::from(before.as_bytes());
+    let mut path = GenericPath::<ExactBackend, S>::from(before.as_bytes());
     apply::<_, S, u8>(&mut path, op);
     text(&path).to_owned()
 }
@@ -849,10 +888,15 @@ fn is_terminated<B: PathBackend, S: PathStyle>(path: &GenericPath<B, S>) -> bool
 fn check_every_capacity<S: PathStyle, U: Unit, C: Unit>(before: &str, op: &Op, after: &str) {
     const EXTRA_CAPACITIES: usize = if cfg!(miri) { 2 } else { 48 };
     let (initial, expected) = (U::encode(before), U::encode(after));
-    let mut grown = GenericPath::<VecBackend<U>, S>::from(&initial);
+    let mut grown = GenericPath::<HeapBackend<U>, S>::from(&initial);
     apply::<_, S, C>(&mut grown, op);
     assert_eq!(grown.as_slice(), expected, "{before:?} {op:?}");
     assert!(is_terminated(&grown));
+
+    let mut exact = GenericPath::<ExactBackend<U>, S>::from(&initial);
+    apply::<_, S, C>(&mut exact, op);
+    assert_eq!(exact.as_slice(), expected, "{before:?} {op:?}");
+    assert!(is_terminated(&exact));
 
     let min_capacity = initial.len() + 1;
     let tightest = expected.len().max(min_capacity);
@@ -968,7 +1012,7 @@ fn check_style_getters<S: PathStyle, U: Unit>(path: &str, dir: &str) {
         "{path:?}"
     );
 
-    let mut stripped = GenericPath::<VecBackend<U>, S>::from(&units);
+    let mut stripped = GenericPath::<HeapBackend<U>, S>::from(&units);
     stripped.strip_nt_prefix();
     assert_eq!(
         S::without_nt_prefix(&units),
@@ -1034,9 +1078,9 @@ fn check_invariants<S: PathStyle>() {
 
         let parts = [a.as_bytes(), b.as_bytes(), c.as_bytes()];
         let rest = vec![b.clone(), c.clone()];
-        let joined = GenericPath::<VecBackend, S>::join(&parts);
+        let joined = GenericPath::<ExactBackend, S>::join(&parts);
         assert_eq!(text(&joined), actual::<S>(&a, &Op::Join(rest.clone())));
-        let resolved = GenericPath::<VecBackend, S>::resolve(&parts);
+        let resolved = GenericPath::<ExactBackend, S>::resolve(&parts);
         assert!(
             model::eq_path::<S>(text(&resolved), &actual::<S>(&a, &Op::Resolve(rest))),
             "{a:?} {b:?} {c:?}"
@@ -1045,12 +1089,12 @@ fn check_invariants<S: PathStyle>() {
             actual::<S>(&path, &Op::Push(part.to_string()))
         });
         assert_eq!(
-            text(&GenericPath::<VecBackend, S>::from_parts(&parts)),
+            text(&GenericPath::<ExactBackend, S>::from_parts(&parts)),
             pushed
         );
 
         let (from, to) = (a.clone() + &b, a.clone() + &c);
-        let relative = GenericPath::<VecBackend, S>::relative(from.as_bytes(), to.as_bytes());
+        let relative = GenericPath::<ExactBackend, S>::relative(from.as_bytes(), to.as_bytes());
         let resolve =
             |parts: &[&str]| actual::<S>(&model::resolve::<S>(parts), &Op::PushTrailingSep);
         let followed = resolve(&[init_cwd(), &from, text(&relative)]);
@@ -1062,7 +1106,7 @@ fn check_invariants<S: PathStyle>() {
             "{from:?} {to:?}"
         );
 
-        let mut path = GenericPath::<VecBackend, S>::from(a.as_bytes());
+        let mut path = GenericPath::<ExactBackend, S>::from(a.as_bytes());
         drop(path.push_scoped(b.as_bytes()));
         assert_eq!(text(&path), a);
 
@@ -1495,16 +1539,19 @@ fn relative_can_be_longer_than_its_operands() {
 #[test]
 fn transcodes_lone_surrogates_and_invalid_utf8() {
     let lone = [u16::from(b'a'), 0xD800, u16::from(b'/'), 0xDC00];
-    let narrow = GenericPath::<VecBackend, Posix>::from(&lone);
+    let narrow = GenericPath::<ExactBackend, Posix>::from(&lone);
     assert_eq!(narrow.as_slice(), b"a\xED\xA0\x80/\xED\xB0\x80");
     assert_eq!(
-        GenericPath::<VecBackend<u16>, Posix>::from(&narrow).as_slice(),
+        GenericPath::<ExactBackend<u16>, Posix>::from(&narrow).as_slice(),
         lone
     );
-    let invalid = GenericPath::<VecBackend<u16>, Posix>::from(b"\x80\xFF\xE4\xB8");
+    let invalid = GenericPath::<ExactBackend<u16>, Posix>::from(b"\x80\xFF\xE4\xB8");
     assert_eq!(invalid.as_slice(), [0xFFFD; 4]);
     let widest = u16::encode("世世世世");
-    assert_eq!(text(&VecPath::from(&widest)), "世世世世");
+    assert_eq!(
+        text(&GenericPath::<ExactBackend, Posix>::from(&widest)),
+        "世世世世"
+    );
     assert!(StackPath::<{ 3 * 4 }>::from(&widest).is_err());
 
     let mut exact = GenericPath::<StackBackend<9>, Posix>::new();
@@ -1537,35 +1584,73 @@ fn finds_an_untidy_slash_wherever_it_is() {
     }
 }
 
-fn check_pool_limit<U: Unit>(limit: usize) {
-    let name = vec![U::from_u8(b'a'); limit];
-    let mut path = GenericPath::<PoolBackend<U>, Posix>::from(&name[..limit - 3]);
-    let pooled = path.as_slice().as_ptr();
-    path.push(b"b");
-    assert_eq!(path.as_slice().as_ptr(), pooled);
-    let before = path.as_slice().to_vec();
-    {
-        let mut scope = path.push_scoped(b"c");
-        assert_eq!(scope.len(), limit + 1);
-        scope.push(&name);
-        scope.push(&name);
-        assert_eq!(scope.len(), 3 * limit + 3);
-        assert!(is_terminated(&scope));
+/// Every length at which the first allocation can end is crossed, by one edit and by many.
+fn check_growth<U: Unit>() {
+    let name = vec![U::from_u8(b'a'); 600];
+    let mut unit_by_unit = GenericPath::<HeapBackend<U>, Posix>::new();
+    for len in (1..name.len()).step_by(if cfg!(miri) { 51 } else { 1 }) {
+        while unit_by_unit.len() < len {
+            unit_by_unit.extend_from_slice(b"a");
+        }
+        assert_eq!(unit_by_unit.as_slice(), &name[..len]);
+        assert!(is_terminated(&unit_by_unit));
+
+        let mut path = GenericPath::<HeapBackend<U>, Posix>::from(&name[..len]);
+        {
+            let mut scope = path.push_scoped(b"b");
+            assert_eq!(scope.len(), len + 2);
+            scope.push(&name);
+            scope.push(&name);
+            assert_eq!(scope.len(), len + 2 + 2 * (1 + name.len()));
+            assert!(is_terminated(&scope));
+        }
+        assert_eq!(path.as_slice(), &name[..len]);
+        assert!(is_terminated(&path));
     }
-    assert_eq!(path.as_slice(), before);
-    assert!(is_terminated(&path));
-    let from = GenericPath::<PoolBackend<U>, Posix>::from::<U>;
+}
+
+#[test]
+fn heap_grows_and_keeps_the_path() {
+    check_growth::<u8>();
+    check_growth::<u16>();
+}
+
+#[test]
+fn a_usual_path_allocates_once() {
+    let allocations = ALLOCATIONS.get();
+    drop(Path::new());
+    assert_eq!(ALLOCATIONS.get(), allocations);
+    let mut path = Path::from(b"/home/user/project");
+    for name in [
+        "node_modules",
+        ".bun",
+        "react-dom@18.3.1+abcdef",
+        "index.js",
+    ] {
+        path.push(name.as_bytes());
+    }
+    assert_eq!(ALLOCATIONS.get(), allocations + usize::from(!cfg!(miri)));
+    for len in [191, 192, 255, 256, 447, 448] {
+        let mut long = Path::from(&[b'a'; 448][..len]);
+        let address = long.as_ptr();
+        long.push(&[b'b'; 63]);
+        assert_eq!(long.as_ptr(), address);
+    }
+    std::thread::spawn(move || drop(path)).join().unwrap();
+}
+
+fn check_path_max<U: Unit>(limit: usize) {
+    let name = vec![U::from_u8(b'a'); limit];
+    let from = GenericPath::<HeapBackend<U>, Posix>::from::<U>;
     assert_eq!(from(&name).as_slice(), name);
     assert!(from(&name[1..]).check_len().is_ok());
     assert!(from(&name).check_len().is_err());
 }
 
 #[test]
-fn pool_grows_past_its_buffer() {
-    check_pool_limit::<u8>(MAX_PATH_BYTES);
-    if cfg!(not(miri)) {
-        check_pool_limit::<u16>(PATH_MAX_WIDE);
-    }
+fn check_len_leaves_room_for_the_nul() {
+    check_path_max::<u8>(MAX_PATH_BYTES);
+    check_path_max::<u16>(PATH_MAX_WIDE);
 }
 
 fn check_stack<S: PathStyle, U: Unit>() {
@@ -1614,37 +1699,18 @@ fn stack_does_not_allocate() {
 #[test]
 fn empty_paths_are_nul_terminated() {
     assert!(is_terminated(&Path::new()));
-    assert!(is_terminated(&VecPath::new()));
     assert!(is_terminated(&StackPath::<1>::new()));
     assert!(is_terminated(&bun_core::boxed_zeroed::<StackPath<1>>()));
-    assert!(VecPath::new().into_vec().is_empty());
-    assert!(VecPath::new().as_mut_slice().is_empty());
+    assert!(Path::new().as_mut_slice().is_empty());
+    assert_eq!(Path::new().to_zbox().as_bytes_with_nul(), b"\0");
 }
 
 #[test]
-fn pooled_buffer_is_reused_without_stale_bytes() {
-    let first = Path::from(b"/secret/token");
-    let address = first.as_ptr();
-    drop(first);
-    let mut second = Path::from(b"a");
-    assert_eq!(second.as_ptr(), address);
-    second.truncate(13);
-    assert_eq!(second.as_bytes_with_nul(), b"a\0");
-    std::thread::spawn(move || drop(second)).join().unwrap();
-}
-
-#[test]
-fn vec_path_moves_out_without_a_copy() {
-    let path = VecPath::from(b"abc");
-    let address = path.as_ptr();
-    let vec = path.into_vec();
-    assert_eq!(vec.as_ptr().cast(), address);
-    assert_eq!(vec, b"abc");
-    assert_eq!(vec.capacity(), 4);
-    assert_eq!(
-        VecPath::from(b"abc").into_zbox().as_bytes_with_nul(),
-        b"abc\0"
-    );
+fn truncate_cannot_lengthen() {
+    let mut path = Path::from(b"/secret/token");
+    path.set(b"a");
+    path.truncate(13);
+    assert_eq!(path.to_zbox().as_bytes_with_nul(), b"a\0");
 }
 
 #[test]

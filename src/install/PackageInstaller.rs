@@ -77,7 +77,7 @@ pub struct PackageInstaller<'a> {
     pub(crate) pkg_name_hashes: bun_ptr::RawSlice<PackageNameHash>,
     pub(crate) bins: bun_ptr::RawSlice<Bin>,
     pub(crate) resolutions: bun_ptr::RawSlice<Resolution>,
-    pub(crate) destination_dir_subpath: bun_paths::VecPath,
+    pub(crate) destination_dir_subpath: Path,
     pub(crate) folder_path_buf: PathBuffer,
     pub(crate) successfully_installed: Bitset,
     pub(crate) current_tree_id: lockfile::tree::Id,
@@ -2156,9 +2156,7 @@ impl<'a> PackageInstaller<'a> {
                             dependency_id,
                             tree_dir: destination_fd,
                             cache_dir: installer.cache_dir,
-                            cache_dir_subpath: bun_core::ZBox::from_bytes(
-                                installer.cache_dir_subpath.as_bytes(),
-                            ),
+                            cache_dir_subpath: installer.cache_dir_subpath.to_zbox(),
                             destination_dir_subpath: bun_core::ZBox::from_bytes(
                                 alias.slice(string_buf!()),
                             ),

@@ -471,33 +471,14 @@ impl bun_watcher::WatcherContext for HotReloader {
                                 }
 
                                 if event.op.contains(WatchOp::WRITE) {
-                                    // Check if the entrypoint now exists after an atomic save.
-                                    // If we previously got a NOTE_RENAME on the entrypoint (vim renamed
-                                    // the file), this directory write event signals that the new
-                                    // file has been re-created. Verify it exists and trigger reload.
+                                    // An atomic save (vim) renames the entrypoint away, then creates it again.
                                     if self.main.is_waiting_for_dir_change
                                         && self.main.dir_hash == current_hash
+                                        && files[event.index as usize].is_some()
                                     {
-                                        // `.is_ok()` only checks faccessat didn't
-                                        // error (it errs only on NAMETOOLONG), not
-                                        // that the file exists; harmless in
-                                        // practice (re-watching a missing
-                                        // entrypoint is a no-op downstream).
-                                        let name = bun_paths::StackPath::<256>::from(
-                                            bun_paths::basename(self.main.file),
-                                        );
-                                        let exists = if let Ok(name) = &name
-                                            && let Some(dir) = &files[event.index as usize]
-                                        {
-                                            bun_sys::faccessat(dir.fd(), name).is_ok()
-                                        } else {
-                                            false
-                                        };
-                                        if exists {
-                                            self.main.is_waiting_for_dir_change = false;
-                                            self.changed_paths.record(self.main.file);
-                                            changed = true;
-                                        }
+                                        self.main.is_waiting_for_dir_change = false;
+                                        self.changed_paths.record(self.main.file);
+                                        changed = true;
                                     }
                                 }
 

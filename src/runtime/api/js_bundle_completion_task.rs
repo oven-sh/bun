@@ -291,11 +291,8 @@ impl JSBundleCompletionTask {
                 check_command::warn_about_skipped_typed_files(option, &mut self.log);
             }
             let working_directory = bun_resolver::fs::FileSystem::get().top_level_dir();
-            let outdir = paths::VecPath::resolve(&[
-                working_directory,
-                &config.dir.list,
-                &config.outdir.list,
-            ]);
+            let outdir =
+                paths::Path::resolve(&[working_directory, &config.dir.list, &config.outdir.list]);
             if declarations.writes_typed_files {
                 let tsconfig = &config.tsconfig_override.list;
                 let request = compile_command::TypedOutputs {

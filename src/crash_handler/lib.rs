@@ -3294,9 +3294,9 @@ mod draft {
         argv.push({
             #[cfg(windows)]
             {
-                let mut pdb = bun_paths::VecPath::from(bun_sys::windows::exe_path_w());
+                let mut pdb = bun_paths::Path::from(bun_sys::windows::exe_path_w());
                 pdb.set_extension(b".pdb");
-                pdb.into_vec()
+                pdb.to_vec()
             }
             #[cfg(not(windows))]
             {

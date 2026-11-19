@@ -12,7 +12,7 @@ use bun_aot::{SourceProvider, WithoutServices};
 use bun_ast::{ASTMemoryAllocator, Loader, Log, Msg, SideEffects};
 use bun_core::ZBox;
 use bun_js_parser::{Define, ExpandedImportMetaGlob};
-use bun_paths::{VecPath, to_native_in_place};
+use bun_paths::{Path, to_native_in_place};
 use bun_react_compiler::Observer;
 use bun_resolver::compiled_program::{RefusedData, encode_refused_data};
 use bun_resolver::options::{ExternalModules, Packages};
@@ -241,8 +241,8 @@ fn is_package_json(path: &[u8]) -> bool {
 }
 
 /// `folder` keeps its spelling: paths are compared by their bytes here.
-fn in_folder(folder: &[u8], name: &[u8]) -> VecPath {
-    let mut path = VecPath::from(folder);
+fn in_folder(folder: &[u8], name: &[u8]) -> Path {
+    let mut path = Path::from(folder);
     path.push(name);
     path
 }
@@ -316,13 +316,14 @@ fn list_folder(folder: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
         .ok()?;
     let mut entries = bun_sys::dir_iterator::iterate(directory.fd());
     let (mut files, mut folders) = (Vec::new(), Vec::new());
+    let mut path = Path::from(folder);
     while let Some(entry) = entries.next().ok()? {
-        let path = in_folder(folder, entry.name.slice_u8()).into_vec();
-        match entry.kind {
-            bun_sys::EntryKind::File => files.push(path),
-            bun_sys::EntryKind::Directory => folders.push(path),
-            _ => {}
-        }
+        let list = match entry.kind {
+            bun_sys::EntryKind::File => &mut files,
+            bun_sys::EntryKind::Directory => &mut folders,
+            _ => continue,
+        };
+        list.push(path.push_scoped(entry.name.slice_u8()).to_vec());
     }
     Some((files, folders))
 }
@@ -549,14 +550,14 @@ impl BundlerServices {
         };
         let mut current = Some(folder);
         while let Some(here) = current {
-            let path = in_folder(here, b"package.json").into_vec();
+            let path = in_folder(here, b"package.json");
             if path.len() <= farthest.len() || !closed.insert(here.to_vec()) {
                 return;
             }
             current = bun_paths::dirname(here).filter(|above| above.len() < here.len());
-            let is_present = embedded.iter().any(|it| **it == *path)
+            let is_present = embedded.iter().any(|it| **it == **path)
                 || self.assets.iter().any(|asset| is_at_or_below(&path, asset));
-            let kind = bun_sys::exists_at_type(bun_sys::Fd::cwd(), &ZBox::from_bytes(&path));
+            let kind = bun_sys::exists_at_type(bun_sys::Fd::cwd(), &path);
             if is_present || kind.is_err() {
                 continue;
             }
@@ -568,7 +569,7 @@ impl BundlerServices {
                 return;
             }
             let found = embedded.iter().rfind(|it| it.len() < path.len());
-            added.extend(found.map(|found| (path, found.to_vec())));
+            added.extend(found.map(|found| (path.to_vec(), found.to_vec())));
         }
     }
 
@@ -1067,10 +1068,10 @@ impl SourceProvider for BundlerServices {
         let mut folder =
             bun_paths::dirname(module_path).filter(|_| is_installed_package_file(module_path));
         while let Some(current) = folder.filter(|it| bun_paths::basename(it) != b"node_modules") {
-            let path = in_folder(current, b"package.json").into_vec();
+            let path = in_folder(current, b"package.json");
             let is_new = !self.is_embedded_implicitly(&path, false);
             if is_new && self.embed_file_implicitly(b"", module_path, &path, false) {
-                added.push(path);
+                added.push(path.to_vec());
             }
             folder = bun_paths::dirname(current).filter(|above| above.len() < current.len());
         }

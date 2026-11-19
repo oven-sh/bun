@@ -1,6 +1,6 @@
 use bun_ast::{Loader, Log};
 use bun_bundler::options::{OutputFile, OutputFileValue, OutputKind};
-use bun_paths::{Path, VecPath};
+use bun_paths::Path;
 use bun_sema_driver::typed_files::javascript_path_beside;
 
 use crate::cli::check_command::{
@@ -31,10 +31,10 @@ pub(crate) fn add_typed_files(
     log: &mut Log,
     output_files: &mut Vec<OutputFile>,
 ) -> CompilerOptions {
-    let mut outdir = VecPath::resolve(&[request.working_directory, request.outdir]);
+    let mut outdir = Path::resolve(&[request.working_directory, request.outdir]);
     // Makes `from_native` convert the last name as a directory, like in the paths below it.
     outdir.push_trailing_sep();
-    let path_of = |file: &OutputFile| VecPath::resolve(&[&outdir, &file.dest_path]).into_vec();
+    let path_of = |file: &OutputFile| Path::resolve(&[&outdir, &file.dest_path]).to_vec();
     let text_of = |file: &OutputFile| match &file.value {
         OutputFileValue::Buffer { bytes } => Some(bytes.to_vec()),
         OutputFileValue::Saved(_) => {

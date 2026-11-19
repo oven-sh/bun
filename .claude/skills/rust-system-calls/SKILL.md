@@ -77,7 +77,7 @@ match bun_sys::unlink(path) {
 
 ## Path Buffers
 
-Build paths with `bun_paths::Path`. It is NUL-terminated and uses a pooled buffer, which avoids 96 KB stack allocations on Windows:
+Build paths with `bun_paths::Path`. It is NUL-terminated and grows on the heap, which avoids 96 KB stack allocations on Windows:
 
 ```rust
 use bun_paths::Path;

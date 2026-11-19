@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use bun_core::{ZBox, ZStr, strings};
-use bun_paths::{Path, VecPath};
+use bun_paths::Path;
 use bun_ptr::{AliasableBox, BackRef, RefPtr};
 use bun_sys::{E, File, Maybe, dir_iterator};
 
@@ -345,11 +345,11 @@ impl ShellRmTask {
     /// A relative path is not normalized.
     fn join(parent: &[u8], name: &[u8]) -> ZBox {
         if bun_paths::is_absolute(parent) {
-            return VecPath::join(&[parent, name]).into_zbox();
+            return Path::join(&[parent, name]).to_zbox();
         }
-        let mut path = VecPath::from(parent);
+        let mut path = Path::from(parent);
         path.push(name);
-        path.into_zbox()
+        path.to_zbox()
     }
 
     /// Removes what takes no walk. `Some` is the directory to walk.
@@ -424,7 +424,7 @@ impl ShellRmTask {
             let file_path = self.join_in_style(path, name);
             match self.remove_entry_file(dir_task, &file_path) {
                 Ok(Unlinked::Done) => {}
-                Ok(_) => self.enqueue(dir_task, ZBox::from_bytes(file_path.as_bytes())),
+                Ok(_) => self.enqueue(dir_task, file_path.to_zbox()),
                 Err(e) => break Err(e),
             }
         };
@@ -477,7 +477,7 @@ impl ShellRmTask {
                 // TODO: this task's own count is never released: no child is the last, and `rm` hangs.
                 #[cfg(not(any(target_os = "linux", target_os = "android")))]
                 Unlinked::NotEmpty => {
-                    self.enqueue(dir_task, ZBox::from_bytes(path.as_bytes()));
+                    self.enqueue(dir_task, path.to_zbox());
                     return Ok(Owner::LastChild);
                 }
             }

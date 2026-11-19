@@ -165,6 +165,8 @@ struct Override {
 struct Plugins {
     /// Only for the flags: every entry, for the installed Prettier. A path is absolute.
     names: Vec<Vec<u8>>,
+    /// Only for the flags: every entry as listed, so that a path has none of the working directory's name in it.
+    listed: Vec<Vec<u8>>,
     /// True if one of them isn't built in, so Bun doesn't know its options.
     has_unknown_plugins: bool,
     /// True if one of them is `prettier-plugin-tailwindcss`.
@@ -240,6 +242,11 @@ impl<'a> PluginView<'a> {
     /// [`Plugins::names`] of the flags. Empty if they're dropped.
     pub(crate) fn flag_names(&self) -> &'a [Vec<u8>] {
         self.flags.map_or(&[][..], |it| &it.names[..])
+    }
+
+    /// [`Plugins::listed`] of the flags. Empty if they're dropped.
+    fn flag_listed(&self) -> &'a [Vec<u8>] {
+        self.flags.map_or(&[][..], |it| &it.listed[..])
     }
 
     /// True if one is `prettier-plugin-tailwindcss`.
@@ -955,6 +962,7 @@ impl Plugins {
         };
         Plugins {
             names: listed.iter().map(absolute).collect(),
+            listed: listed.to_vec(),
             ..Plugins::from_names(listed.iter().map(|it| &it[..]))
         }
     }
@@ -963,6 +971,7 @@ impl Plugins {
     fn from_names<'n>(names: impl Iterator<Item = &'n [u8]> + Clone) -> Plugins {
         Plugins {
             names: Vec::new(),
+            listed: Vec::new(),
             has_unknown_plugins: !names.clone().all(is_built_in_plugin),
             sorts_classes: names.clone().any(is_tailwind_plugin),
             reads_svelte: names.clone().any(is_svelte_plugin),
@@ -982,17 +991,18 @@ impl Plugins {
 }
 
 /// Returns `select(override)` for the last of `overrides` that matches the file at `path`, considering only those for
-/// which `select` returns `Some`. Their patterns are relative to `directory`.
-fn in_last_override<'s, T>(
+/// which `select` returns `Some`. Their patterns are relative to `directory()`, which is only asked for if there is
+/// such an override.
+fn in_last_override<'s, 'd, T>(
     overrides: &'s [Override],
-    directory: &[u8],
+    directory: impl Fn() -> &'d [u8],
     path: &[u8],
     select: impl Fn(&'s Override) -> Option<T>,
 ) -> Option<T> {
     let mut found = (overrides.iter().rev()).filter_map(|it| Some((it, select(it)?)));
     let mut relative = None;
     let matches_file = |it: &(&Override, T)| {
-        (it.0).matches(relative.get_or_insert_with(|| paths::relative(directory, path)))
+        (it.0).matches(relative.get_or_insert_with(|| paths::relative(directory(), path)))
     };
     found.find(matches_file).map(|it| it.1)
 }
@@ -1004,7 +1014,8 @@ impl Config {
         path: &[u8],
         select: impl Fn(&'s Override) -> Option<T>,
     ) -> Option<T> {
-        in_last_override(&self.overrides, paths::dirname(&self.path), path, select)
+        let directory = || paths::dirname(&self.path);
+        in_last_override(&self.overrides, directory, path, select)
     }
 
     fn new(path: &[u8], json: &Json, is_oxfmt: bool) -> Config {
@@ -1892,7 +1903,7 @@ impl<'c> Configs<'c> {
             config.and_then(|it| it.in_last_override(path, |it| it.plugins.as_ref()))
         });
         let in_bunfig = |path: &[u8]| {
-            let directory = &self.bunfig_base_directory;
+            let directory = || &self.bunfig_base_directory[..];
             in_last_override(&self.overrides, directory, path, |it| it.plugins.as_ref())
         };
         let scoped_flags = match self.has_override_plugins {
@@ -2337,7 +2348,7 @@ impl<'c> Configs<'c> {
         {
             let _ = resolved.options.set(b"parser", parser);
         }
-        for name in plugins.flag_names() {
+        for name in plugins.flag_listed() {
             sort.add_plugin(name);
         }
         for (name, value) in sort.options_of_unlisted_plugins().chain(unknown) {

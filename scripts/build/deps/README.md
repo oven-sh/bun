@@ -37,6 +37,10 @@ Change the `commit` field. That's it. The build system computes a source
 identity hash from `sha256(commit + patch_contents)` — changing the commit
 invalidates `.ref`, triggers re-fetch, and everything downstream rebuilds.
 
+WebKit takes a second step: after changing `WEBKIT_VERSION`, run
+`bun run pin-webkit` to write the sha256 of the release's tarballs to
+`webkit.sha256`. A tarball that is not in there is not fetched.
+
 The `.github/workflows/update-<name>.yml` jobs do this automatically by
 sed'ing the `const <NAME>_COMMIT = "..."` line. If you rename that
 constant, update the workflow too.

@@ -5333,7 +5333,7 @@ describe("bundler", () => {
     [762, false, ""],
     [993, false, ""],
     [496, true, "f5 runs after f1 once folded"],
-    // Files of these graphs import a CSS module: with a default import, as a namespace, or with import().
+    // Files of these graphs read a CSS module: with a default import, as a namespace, with import() or with require().
     [276, true, ""],
     [395, true, ""],
   ] as const) {

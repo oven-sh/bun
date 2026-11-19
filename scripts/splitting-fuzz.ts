@@ -1,12 +1,13 @@
-// bun scripts/splitting-fuzz.ts <bun> <graphs> [first seed] [bun|browser]
+// bun scripts/splitting-fuzz.ts <bun> <graphs> [first seed] [bun|browser] [css|json]
 // Runs test/bundler/splitting-fuzz.ts over many seeds against <bun> and prints the seeds where chunk folding made a
-// bundle worse than the unfolded one (rerun a seed with `<graphs>` = 1 to look at it).
+// bundle worse than the unfolded one (rerun a seed with `<graphs>` = 1 to look at it). With `json`, a JSON file stands
+// in for the CSS module of a graph.
 import { resolve } from "node:path";
 import { checkGraph } from "../test/bundler/splitting-fuzz";
 
-const [bun, count = "100", first = "1", buildTarget = "bun"] = process.argv.slice(2);
-if (!bun || (buildTarget !== "bun" && buildTarget !== "browser")) {
-  console.error("usage: bun scripts/splitting-fuzz.ts <bun> <graphs> [first seed] [bun|browser]");
+const [bun, count = "100", first = "1", buildTarget = "bun", styles = "css"] = process.argv.slice(2);
+if (!bun || (buildTarget !== "bun" && buildTarget !== "browser") || (styles !== "css" && styles !== "json")) {
+  console.error("usage: bun scripts/splitting-fuzz.ts <bun> <graphs> [first seed] [bun|browser] [css|json]");
   process.exit(1);
 }
 const target = Bun.which(bun) ?? resolve(bun);
@@ -15,7 +16,7 @@ const parallel = 8;
 const end = Number(first) + Number(count);
 for (let seed = Number(first); seed < end; seed += parallel) {
   const batch = [];
-  for (let s = seed; s < Math.min(end, seed + parallel); s++) batch.push(checkGraph(target, s, buildTarget));
+  for (let s = seed; s < Math.min(end, seed + parallel); s++) batch.push(checkGraph(target, s, buildTarget, styles));
   for (const result of await Promise.all(batch)) {
     tally[result.status]++;
     if (result.folded) tally.folded++;

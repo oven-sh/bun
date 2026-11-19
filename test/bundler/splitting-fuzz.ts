@@ -95,10 +95,14 @@ function generateGraph(seed: number): Graph {
     }
   }
 
+  // A module of such a graph can also read the CSS module with require(): the class names are then in a wrapper.
+  const required = rng(seed ^ 0x7f4a7c15);
+
   const files: Record<string, string> = {};
   for (let i = 0; i < n; i++) {
     let src = `import { note, read, attempt, later } from "./log.ts";\n`;
     const importsItself = later() < 0.1 && !pure.has(i);
+    const requiresStyles = required() < 0.15 && importsStyles.size > 0;
     if (importsItself) src += `import * as self${i} from "./f${i}.ts";\n`;
     const styleForm = importsStyles.get(i);
     if (styleForm === "default") src += `import styles from "./styles.module.css";\n`;
@@ -136,6 +140,7 @@ function generateGraph(seed: number): Graph {
       if (importsItself) uses.push(`read("f${i}<self", () => typeof self${i}.get${i})`);
       if (styleForm === "default" || styleForm === "namespace") uses.push(`read("f${i}<styles", () => styles.a)`);
       if (styleForm === "namespace") uses.push(`read("f${i}<styles*", () => Object.keys(styles).sort().join())`);
+      if (requiresStyles) uses.push(`read("f${i}<require(styles)", () => require("./styles.module.css").a)`);
       for (const j of staticImports[i]) {
         if (chance(0.5)) uses.push(`read("f${i}<f${j}", () => get${j}())`);
         if (chance(0.2)) uses.push(`read("f${i}<C${j}", () => new C${j}().tag())`);
@@ -257,9 +262,23 @@ function sameFiles(a: string, b: string) {
   );
 }
 
-/** With `target: "browser"` a require() of a module is a call of its wrapper, not the load of a chunk. */
-export async function checkGraph(bun: string, seed: number, target: "bun" | "browser" = "bun"): Promise<GraphResult> {
+/**
+ * With `target: "browser"` a require() of a module is a call of its wrapper, not the load of a chunk.
+ * With `styles: "json"` a JSON file stands in for the CSS module: what the fold loses in both forms is not about CSS.
+ */
+export async function checkGraph(
+  bun: string,
+  seed: number,
+  target: "bun" | "browser" = "bun",
+  styles: "css" | "json" = "css",
+): Promise<GraphResult> {
   const graph = generateGraph(seed);
+  if (styles === "json") {
+    for (const [name, text] of Object.entries(graph.files)) {
+      graph.files[name] = text.replaceAll("./styles.module.css", "./styles.json");
+    }
+    graph.files["styles.json"] = `{ "a": "a" }\n`;
+  }
   using dir = tempDir("splitting-fuzz", {
     ...graph.files,
     "build.ts": `

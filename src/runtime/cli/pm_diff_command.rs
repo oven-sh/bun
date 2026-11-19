@@ -1,6 +1,6 @@
 //! `bun pm diff` — show what changed between two versions of a package (or a package and a folder/tarball).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::Write as _;
 
 use bstr::BStr;
@@ -1138,7 +1138,7 @@ impl FileChange<'_> {
             && (self.new.is_some() || (style.pretty && style.hunks))
     }
 
-    /// About how long comparing the file takes, in bytes that are parsed or colored. Others take far less.
+    /// About how long comparing and coloring the file take, in bytes that are parsed or colored. Others take far less.
     fn work(&self, flags: DiffFlags, style: Style) -> usize {
         let is_read_closely = self.highlight || self.is_parsed(flags, style);
         self.bytes() / if is_read_closely { 1 } else { 16 }
@@ -1231,8 +1231,9 @@ fn has_bidi_controls(bytes: &[u8]) -> bool {
 /// Makes bytes that come from a package safe to print to a terminal. C0 and C1 control characters
 /// (except tab), bidi overrides and the two Unicode line separators become visible stand-ins.
 fn defang(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {
-    let suspicious = |b: &u8| (*b < 0x20 && *b != b'\t') || *b == 0x7f || *b == 0xc2 || *b == 0xe2;
-    if !text.iter().any(suspicious) {
+    let suspicious = |b: u8| ((b < 0x20) & (b != b'\t')) | (b == 0x7f) | (b == 0xc2) | (b == 0xe2);
+    // No branches, so that the compiler looks at many bytes at once.
+    if !text.iter().fold(false, |found, &b| found | suspicious(b)) {
         return std::borrow::Cow::Borrowed(text);
     }
     let mut out = Vec::with_capacity(text.len() + 16);
@@ -1382,6 +1383,24 @@ impl Threads {
         }
     }
 
+    /// The pool must not be moved once it has started a thread.
+    fn pool_for(self, changes: &[FileChange<'_>], flags: DiffFlags, style: Style) -> ThreadPool {
+        /// One more thread per this much work. With less, starting it costs more than it saves.
+        const WORK_PER_THREAD: usize = 64 << 10;
+
+        let work: usize = (changes.iter())
+            .filter(|change| change.semantic != Semantic::ModeOnly)
+            .map(|change| change.work(flags, style))
+            .sum();
+        let threads = (1 + work / WORK_PER_THREAD).min(usize::from(bun_core::get_thread_count()));
+        ThreadPool::init(thread_pool::Config {
+            max_threads: u32::try_from(threads).expect("int cast"),
+            stack_size: u32::try_from(self.stack_size).unwrap_or(u32::MAX),
+        })
+        .named("Diff")
+        .without_spare_threads()
+    }
+
     /// Runs `there` on a new thread while `here` runs on this one. Runs neither if the smaller of the two works on
     /// too few `bytes` for that, or if the OS cannot start a thread.
     pub(crate) fn try_join<A, B: Send>(
@@ -1445,10 +1464,14 @@ impl Queue<'_, '_> {
     }
 }
 
-/// Compares the files on this thread, or on several others if there is enough work for that.
-fn compare_all(changes: &mut [FileChange<'_>], flags: DiffFlags, style: Style, helpers: Threads) {
-    /// One more thread per this much work. With less, starting it costs more than it saves.
-    const WORK_PER_THREAD: usize = 64 << 10;
+/// Compares the files on the threads of `pool`, or on this one without it.
+fn compare_all(
+    changes: &mut [FileChange<'_>],
+    flags: DiffFlags,
+    style: Style,
+    threads: Threads,
+    pool: Option<&ThreadPool>,
+) {
     /// Beside one file of any size, files with as many tokens as the largest parsed one has are
     /// compared at the same time, within these limits. A token takes some 100 bytes of memory.
     const MIN_BESIDE: usize = 128 << 10;
@@ -1460,27 +1483,12 @@ fn compare_all(changes: &mut [FileChange<'_>], flags: DiffFlags, style: Style, h
         .iter_mut()
         .filter(|change| change.semantic != Semantic::ModeOnly)
         .collect();
-    let work: usize = files.iter().map(|file| file.work(flags, style)).sum();
-    let threads = (1 + work / WORK_PER_THREAD)
-        .min(files.len())
-        .min(usize::from(bun_core::get_thread_count()));
-    let pool = ThreadPool::init(thread_pool::Config {
-        max_threads: u32::try_from(threads).expect("int cast"),
-        stack_size: u32::try_from(helpers.stack_size).unwrap_or(u32::MAX),
-    })
-    .named("Diff")
-    .without_spare_threads();
-    if threads > 1 {
-        pool.warm(1);
-    }
-    // If the OS cannot start the pool's first thread, what is scheduled on the pool never runs.
-    if !pool.has_workers() {
+    let Some(pool) = pool else {
         for file in files {
-            compare(file, flags, style, helpers);
+            compare(file, flags, style, threads);
         }
         return;
-    }
-
+    };
     let mut in_part = 0;
     let mut parts: Vec<(Memory, Part<'_, '_>)> = files
         .split_inclusive_mut(|file| {
@@ -1493,7 +1501,7 @@ fn compare_all(changes: &mut [FileChange<'_>], flags: DiffFlags, style: Style, h
         })
         .map(|part| (Memory::default(), part))
         .collect();
-    let workers = threads.min(parts.len());
+    let workers = pool.max_threads().min(parts.len());
 
     pool.each_ptr(
         (),
@@ -1531,7 +1539,7 @@ fn compare_all(changes: &mut [FileChange<'_>], flags: DiffFlags, style: Style, h
             }
             drop(queue);
             for file in part {
-                compare(file, flags, style, helpers);
+                compare(file, flags, style, threads);
             }
             queue = shared.lock();
             let at = queue.running.iter().position(|&it| it == tokens);
@@ -1889,7 +1897,13 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags, threads: Threads) {
             ..Default::default()
         });
     }
-    compare_all(&mut changes, flags, style, threads);
+    let pool = threads.pool_for(&changes, flags, style);
+    if pool.max_threads() > 1 {
+        pool.warm(1);
+    }
+    // If the OS cannot start the pool's first thread, what is scheduled on the pool never runs.
+    let pool = pool.has_workers().then_some(&pool);
+    compare_all(&mut changes, flags, style, threads, pool);
 
     if flags.json {
         print_json(left, right, &changes, flags);
@@ -1905,6 +1919,12 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags, threads: Threads) {
     }
     if !style.pretty || flags.name_only || flags.stat {
         prettyln!("");
+    }
+
+    if style.pretty && style.hunks {
+        print_in_colors(&changes, style, pool);
+        print_summary(left, right, &changes, style);
+        return;
     }
 
     let path_width = changes
@@ -1977,11 +1997,6 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags, threads: Threads) {
                     bar_del
                 );
             }
-            continue;
-        }
-        if style.pretty {
-            style.file_header(c);
-            print_lossy(&c.hunks);
             continue;
         }
         // A file whose contents the patch omits gets neither a `diff --git` header nor a mode line,
@@ -2065,6 +2080,112 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags, threads: Threads) {
         }
     }
     print_summary(left, right, &changes, style);
+}
+
+/// Prints the terminal view. Syntax colours make it much longer, so only what is about to be printed has them.
+fn print_in_colors(changes: &[FileChange<'_>], style: Style, pool: Option<&ThreadPool>) {
+    const BYTES_PER_PART: usize = 64 << 10;
+    const PARTS_PER_THREAD: usize = 4;
+    /// Beyond this many, printing is what takes the time.
+    const MAX_THREADS: usize = 8;
+
+    struct Ahead<Parts: Iterator> {
+        parts: core::iter::Peekable<Parts>,
+        printed: usize,
+        /// The parts after the printed ones, each `None` until a thread is done with it.
+        colored: VecDeque<Option<Vec<u8>>>,
+    }
+
+    // The first piece of a file has its header.
+    let mut pieces = changes.iter().flat_map(|change| {
+        let (mut header, mut rest) = (Some(change), change.hunks.as_slice());
+        core::iter::from_fn(move || {
+            if header.is_none() && rest.is_empty() {
+                return None;
+            }
+            let piece;
+            (piece, rest) = split_marked(rest, BYTES_PER_PART);
+            Some((header.take(), piece))
+        })
+    });
+    // The header of a binary file has the hashes of its sides.
+    let header_work = |it: &FileChange<'_>| {
+        it.path.len() + style.width * "─".len() + if it.binary { it.bytes() } else { 0 }
+    };
+    // A part has pieces of several files, so that small files do not take a turn each.
+    let parts = core::iter::from_fn(move || {
+        let (mut part, mut len) = (Vec::new(), 0);
+        while len < BYTES_PER_PART
+            && let Some((header, piece)) = pieces.next()
+        {
+            len += piece.len() + header.map_or(0, header_work);
+            part.push((header, piece));
+        }
+        (!part.is_empty()).then_some(part)
+    });
+    let color = |part: Vec<(Option<&FileChange<'_>>, &[u8])>| {
+        let mut out = Vec::with_capacity(2 * BYTES_PER_PART);
+        for (header, piece) in part {
+            if let Some(change) = header {
+                style.file_header(&mut out, change);
+            }
+            style.highlight(&mut out, piece);
+        }
+        if strings::is_valid_utf8(&out) {
+            out
+        } else {
+            BStr::new(&out).to_string().into_bytes()
+        }
+    };
+    let Some(pool) = pool else {
+        return parts.for_each(|part| Output::print_bytes(&color(part)));
+    };
+
+    let threads = pool.max_threads().min(MAX_THREADS);
+    let shared = Guarded::new(Ahead {
+        parts: parts.peekable(),
+        printed: 0,
+        colored: VecDeque::new(),
+    });
+    let (has_room, has_next) = (Condvar::new(), Condvar::new());
+    let work = || {
+        let mut ahead = shared.lock();
+        loop {
+            if ahead.colored.len() == PARTS_PER_THREAD * threads {
+                has_room.wait_guarded(&mut ahead);
+                continue;
+            }
+            let Some(part) = ahead.parts.next() else {
+                // Each thread that ends wakes the next.
+                return has_room.notify_one();
+            };
+            let at = ahead.printed + ahead.colored.len();
+            ahead.colored.push_back(None);
+            drop(ahead);
+            let colored = color(part);
+            ahead = shared.lock();
+            let at = at - ahead.printed;
+            ahead.colored[at] = Some(colored);
+            if at == 0 {
+                has_next.notify_one();
+            }
+        }
+    };
+    let print = || {
+        let mut ahead = shared.lock();
+        while !ahead.colored.is_empty() || ahead.parts.peek().is_some() {
+            let Some(Some(next)) = ahead.colored.pop_front_if(|next| next.is_some()) else {
+                has_next.wait_guarded(&mut ahead);
+                continue;
+            };
+            ahead.printed += 1;
+            has_room.notify_one();
+            drop(ahead);
+            Output::print_bytes(&next);
+            ahead = shared.lock();
+        }
+    };
+    pool.each_while((), |(), (), _| work(), &vec![(); threads], print);
 }
 
 /// Prints U+FFFD in place of what is not UTF-8.
@@ -2845,48 +2966,57 @@ impl<'a> Iterator for Lines<'a> {
     }
 }
 
-/// Plain output is a valid unified patch; a terminal gets a gutter with line numbers instead of `@@` headers.
 /// Line tints for removed/added lines and the stronger tint for the differing span within them.
-struct Palette {
-    del: &'static str,
-    del_strong: &'static str,
-    ins: &'static str,
-    ins_strong: &'static str,
+#[derive(Clone, Copy)]
+enum Tint {
+    None,
+    Del,
+    DelStrong,
+    Ins,
+    InsStrong,
 }
+
+/// Indexed by `Tint`.
+type Palette = [&'static str; 5];
 
 /// GitHub's diff colours where the terminal can show them exactly, the nearest xterm-256 cells otherwise; the
 /// light set keeps default (dark) text readable, the dark set keeps default (light) text readable.
 static PALETTES: [Palette; 4] = [
     // dark, 256
-    Palette {
-        del: "\x1b[48;5;52m",
-        del_strong: "\x1b[48;5;88m",
-        ins: "\x1b[48;5;22m",
-        ins_strong: "\x1b[48;5;28m",
-    },
+    [
+        "",
+        "\x1b[48;5;52m",
+        "\x1b[48;5;88m",
+        "\x1b[48;5;22m",
+        "\x1b[48;5;28m",
+    ],
     // dark, truecolor
-    Palette {
-        del: "\x1b[48;2;68;20;24m",
-        del_strong: "\x1b[48;2;134;40;48m",
-        ins: "\x1b[48;2;18;54;30m",
-        ins_strong: "\x1b[48;2;30;104;52m",
-    },
+    [
+        "",
+        "\x1b[48;2;68;20;24m",
+        "\x1b[48;2;134;40;48m",
+        "\x1b[48;2;18;54;30m",
+        "\x1b[48;2;30;104;52m",
+    ],
     // light, 256
-    Palette {
-        del: "\x1b[48;5;224m",
-        del_strong: "\x1b[48;5;217m",
-        ins: "\x1b[48;5;194m",
-        ins_strong: "\x1b[48;5;157m",
-    },
+    [
+        "",
+        "\x1b[48;5;224m",
+        "\x1b[48;5;217m",
+        "\x1b[48;5;194m",
+        "\x1b[48;5;157m",
+    ],
     // light, truecolor
-    Palette {
-        del: "\x1b[48;2;255;235;233m",
-        del_strong: "\x1b[48;2;255;193;192m",
-        ins: "\x1b[48;2;218;251;225m",
-        ins_strong: "\x1b[48;2;172;238;187m",
-    },
+    [
+        "",
+        "\x1b[48;2;255;235;233m",
+        "\x1b[48;2;255;193;192m",
+        "\x1b[48;2;218;251;225m",
+        "\x1b[48;2;172;238;187m",
+    ],
 ];
 
+/// Plain output is a valid unified patch; a terminal gets a gutter with line numbers instead of `@@` headers.
 #[derive(Clone, Copy)]
 struct Style {
     pretty: bool,
@@ -2990,36 +3120,44 @@ impl Style {
         });
         let text: &[u8] = &defang(text);
         // Changed lines get a tinted background so the foreground is free for syntax colours.
-        let (num, accent, bg, strong) = match op {
+        let (num, accent, tint, strong) = match op {
             // Unchanged text whose meaning moved (now dead, or newly live): flagged, not tinted.
-            Operation::Equal if affected => (new_no, "\x1b[33m", "", ""),
-            Operation::Equal => (new_no, "\x1b[2m", "", ""),
-            Operation::Delete => (
-                old_no,
-                "\x1b[31m",
-                self.palette.del,
-                self.palette.del_strong,
-            ),
-            Operation::Insert => (
-                new_no,
-                "\x1b[32m",
-                self.palette.ins,
-                self.palette.ins_strong,
-            ),
+            Operation::Equal if affected => (new_no, "\x1b[33m", Tint::None, Tint::None),
+            Operation::Equal => (new_no, "\x1b[2m", Tint::None, Tint::None),
+            Operation::Delete => (old_no, "\x1b[31m", Tint::Del, Tint::DelStrong),
+            Operation::Insert => (new_no, "\x1b[32m", Tint::Ins, Tint::InsStrong),
         };
+        let bg = self.palette[tint as usize];
         // Re-printed (un-minified) lines are numbered by where they sit in the original: `line:col`.
         // `(0, 0)` is the no-mapping sentinel (CSS/JSON re-prints have no source map): plain numbering then.
         let pos = pos.filter(|&(l, _)| l > 0);
-        let gutter = match pos {
-            Some((l, c)) => format!("{l}:{c}"),
-            None => format!("{num}"),
+        let gw: usize = if pos.is_some() { 9 } else { 5 };
+        let (mut line_buf, mut col_buf) = (bun_fmt::ItoaBuf::new(), bun_fmt::ItoaBuf::new());
+        let (line, colon, col): (&[u8], &[u8], &[u8]) = match pos {
+            Some((l, c)) => (
+                bun_fmt::itoa(&mut line_buf, l),
+                b":",
+                bun_fmt::itoa(&mut col_buf, c),
+            ),
+            None => (bun_fmt::itoa(&mut line_buf, num), b"", b""),
         };
-        let gw = if pos.is_some() { 9 } else { 5 };
-        let _ = write!(
-            out,
-            "{accent}{gutter:>gw$} \x1b[0m\x1b[2m│\x1b[0m{bg}{accent}\x1b[1m{} \x1b[0m{bg}",
-            sign as char
-        );
+        let padding = gw.saturating_sub(line.len() + colon.len() + col.len());
+        for part in [
+            accent.as_bytes(),
+            &b"         "[..padding],
+            line,
+            colon,
+            col,
+            " \x1b[0m\x1b[2m│\x1b[0m".as_bytes(),
+            bg.as_bytes(),
+            accent.as_bytes(),
+            b"\x1b[1m",
+            &[sign],
+            b" \x1b[0m",
+            bg.as_bytes(),
+        ] {
+            out.extend_from_slice(part);
+        }
         let budget = self.width.saturating_sub(gw + 4);
         match emph {
             Some((lo, hi)) if lo < hi || text.len() > budget => {
@@ -3044,11 +3182,11 @@ impl Style {
                     out.extend_from_slice(bg.as_bytes());
                     prefix = &text[cut..lo];
                 }
-                self.segment(out, prefix, highlight, bg);
-                out.extend_from_slice(strong.as_bytes());
-                self.segment(out, &text[lo..hi], highlight, strong);
+                segment(out, prefix, highlight, tint);
+                out.extend_from_slice(self.palette[strong as usize].as_bytes());
+                segment(out, &text[lo..hi], highlight, strong);
                 out.extend_from_slice(bg.as_bytes());
-                self.segment(out, &text[hi..], highlight, bg);
+                segment(out, &text[hi..], highlight, tint);
             }
             _ if op == Operation::Equal && text.len() > budget && budget > 16 => {
                 // Context nobody will read to the end: one screen line is enough.
@@ -3056,10 +3194,10 @@ impl Style {
                 while cut > 0 && text[cut] & 0xC0 == 0x80 {
                     cut -= 1;
                 }
-                self.segment(out, &text[..cut], highlight, bg);
+                segment(out, &text[..cut], highlight, tint);
                 out.extend_from_slice("\x1b[2m…\x1b[0m".as_bytes());
             }
-            _ => self.segment(out, text, highlight, bg),
+            _ => segment(out, text, highlight, tint),
         }
         // Erase-to-EOL carries the tint to the edge before resetting.
         out.extend_from_slice(if bg.is_empty() {
@@ -3069,42 +3207,33 @@ impl Style {
         });
     }
 
-    fn segment(self, out: &mut Vec<u8>, text: &[u8], highlight: bool, bg: &str) {
-        if text.is_empty() {
-            return;
-        }
-        let start = out.len();
-        let hl = bun_core::fmt::fmt_javascript(
-            text,
-            bun_core::fmt::HighlighterOptions {
-                enable_colors: true,
-                check_for_unhighlighted_write: false,
-                ..Default::default()
-            },
-        );
-        if !highlight || text.len() > 4096 || write!(out, "{hl}").is_err() {
-            out.truncate(start);
-            out.extend_from_slice(text);
-        } else if !bg.is_empty() {
-            // The highlighter resets all attributes between tokens; put the tint back after each reset.
-            let tail = out.split_off(start);
-            for (i, piece) in strings::split(&tail, b"\x1b").enumerate() {
-                if i > 0 {
-                    out.push(0x1b);
-                }
-                if i > 0 && piece.starts_with(b"[0m") {
-                    out.extend_from_slice(b"[0m");
-                    out.extend_from_slice(bg.as_bytes());
-                    out.extend_from_slice(&piece[3..]);
-                } else {
-                    out.extend_from_slice(piece);
-                }
+    /// Copies `lines`, with syntax colours for the code that `segment` has marked in them.
+    fn highlight(self, out: &mut Vec<u8>, mut lines: &[u8]) {
+        while let Some(start) = strings::index_of_char_usize(lines, CODE_START) {
+            out.extend_from_slice(&lines[..start]);
+            let bg = self.palette[usize::from(lines[start + 1])];
+            let code = &lines[start + 2..];
+            let end = strings::index_of_char_usize(code, CODE_END).expect("a mark has an end");
+            let hl = bun_core::fmt::fmt_javascript(
+                &code[..end],
+                bun_core::fmt::HighlighterOptions {
+                    enable_colors: true,
+                    check_for_unhighlighted_write: false,
+                    ..Default::default()
+                },
+            );
+            let before = out.len();
+            if core::fmt::write(&mut Tinted { out, bg }, format_args!("{hl}")).is_err() {
+                out.truncate(before);
+                out.extend_from_slice(&code[..end]);
             }
+            lines = &code[end + 1..];
         }
+        out.extend_from_slice(lines);
     }
 
     /// `path ─────────────── +3 -1`, sized to the terminal.
-    fn file_header(self, c: &FileChange<'_>) {
+    fn file_header(self, out: &mut Vec<u8>, c: &FileChange<'_>) {
         let note = match c.semantic {
             Semantic::Text => "",
             Semantic::FormattingOnly => "\x1b[2mformatting only\x1b[0m",
@@ -3180,12 +3309,58 @@ impl Style {
             .width
             .saturating_sub(strip_ansi_len(&shown_path) + badge_width + 4)
             .max(2);
-        Output::print(format_args!(
+        let _ = write!(
+            out,
             "\n\x1b[1m{}\x1b[0m \x1b[2m{}\x1b[0m {}\n",
             BStr::new(&shown_path),
             "─".repeat(rule),
             badge
-        ));
+        );
+    }
+}
+
+/// Around code that `Style::highlight` is to colour. `defang` leaves neither in the text of a file.
+const CODE_START: u8 = 0x0e;
+const CODE_END: u8 = 0x0f;
+
+fn segment(out: &mut Vec<u8>, text: &[u8], highlight: bool, tint: Tint) {
+    if highlight && !text.is_empty() && text.len() <= 4096 {
+        out.extend_from_slice(&[CODE_START, tint as u8]);
+        out.extend_from_slice(text);
+        out.push(CODE_END);
+    } else {
+        out.extend_from_slice(text);
+    }
+}
+
+/// Splits at `at`, or after the marked code or the character that `at` is inside of. `text` starts outside of both.
+fn split_marked(text: &[u8], at: usize) -> (&[u8], &[u8]) {
+    let mut at = at.min(text.len());
+    if let Some(start) = strings::last_index_of_char(&text[..at], CODE_START) {
+        let len =
+            strings::index_of_char_usize(&text[start..], CODE_END).expect("a mark has an end");
+        at = at.max(start + len + 1);
+    }
+    // A character has three of these at most, so the halves get U+FFFD where the whole would.
+    let continues = |byte: &&u8| **byte & 0xC0 == 0x80;
+    text.split_at(at + text[at..].iter().take(3).take_while(continues).count())
+}
+
+/// The highlighter resets all attributes between tokens. This puts the tint back after each reset.
+struct Tinted<'a> {
+    out: &'a mut Vec<u8>,
+    bg: &'a str,
+}
+
+impl core::fmt::Write for Tinted<'_> {
+    fn write_str(&mut self, text: &str) -> core::fmt::Result {
+        for part in text.as_bytes().split_inclusive(|&b| b == b'm') {
+            self.out.extend_from_slice(part);
+            if part.ends_with(b"\x1b[0m") {
+                self.out.extend_from_slice(self.bg.as_bytes());
+            }
+        }
+        Ok(())
     }
 }
 

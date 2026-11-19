@@ -65,16 +65,6 @@ impl<'a, T> Repeated<'a, T> {
             _marker: PhantomData,
         }
     }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    pub fn len(&self) -> usize {
-        fields(self.body)
-            .filter(|(fl, _)| *fl == self.field)
-            .count()
-    }
 }
 
 impl<'a, T: Message<'a>> IntoIterator for Repeated<'a, T> {
@@ -603,14 +593,14 @@ mod tests {
             let AnyValue::Array(items) = attrs[1].value else {
                 panic!()
             };
-            assert_eq!(items.len(), 2);
+            assert_eq!(items.into_iter().count(), 2);
             let ev = span.events().into_iter().next().unwrap();
             assert_eq!((ev.name, ev.time_ns), (&b"e"[..], 33));
             assert!(matches!(
                 ev.attributes().into_iter().next().unwrap().value,
                 AnyValue::Bool(false)
             ));
-            assert!(span.links().is_empty());
+            assert_eq!(span.links().into_iter().count(), 0);
         });
         assert_eq!(seen, 1);
     }

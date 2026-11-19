@@ -1310,18 +1310,31 @@ pub mod fs {
                     };
                     FileSystem::set_max_fd(file.fd().native());
 
-                    let file_stat = file.stat()?;
+                    let mut file_stat = file.stat()?;
                     // Set when `file` could not name the target, and `realpath` resolved the link by name.
                     let mut resolved_by_name = false;
-                    symlink = match bun_sys::get_opened_path_with(file.fd(), &mut outpath, |buf| {
+                    let resolved = bun_sys::get_opened_path_with(file.fd(), &mut outpath, |buf| {
                         resolved_by_name = true;
                         join_abs_string_buf_z_checked::<platform::Auto>(
                             self.cwd,
                             &mut buf[..join_capacity],
                             &combo,
                         )
-                    }) {
-                        Ok(path) => path,
+                    })
+                    .map(|path| path.len());
+                    // `file` is not the target then, and the target can be of another kind.
+                    let resolved = match resolved {
+                        Ok(len) if resolved_by_name => bun_sys::stat(
+                            bun_core::ZStr::nul_terminate(&mut outpath[..], len),
+                        )
+                        .map(|target_stat| {
+                            file_stat = target_stat;
+                            len
+                        }),
+                        resolved => resolved,
+                    };
+                    symlink = match resolved {
+                        Ok(len) => &outpath[..len],
                         Err(err) if resolved_by_name && is_dangling_link_error(err.get_errno()) => {
                             cache.kind = EntryKind::Dangling;
                             return Ok(cache);

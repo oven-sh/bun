@@ -7020,17 +7020,30 @@ describe.if(isLinux)("the canonical path of a file that is not the file its desc
 #include <sys/stat.h>
 #include <unistd.h>
 
-// Renames a copy of the file over it, or only removes it.
+// Renames a copy of the file over it. REPLACE_WITH=nothing only removes the file, and REPLACE_WITH=directory
+// puts a directory there once, with the copy as its index.js.
 static void replace(const char *name) {
-  char fresh[PATH_MAX + 8], bytes[4096];
+  static int directories;
+  char fresh[PATH_MAX + 8], inside[PATH_MAX + 16], bytes[4096];
+  const char *with = getenv("REPLACE_WITH");
+  int failed;
   ssize_t length;
+  if (with && strcmp(with, "directory") == 0 && directories++) return;
   snprintf(fresh, sizeof fresh, "%s.new", name);
   int from = open(name, O_RDONLY | O_CLOEXEC);
   int to = open(fresh, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
   while ((length = read(from, bytes, sizeof bytes)) > 0 && write(to, bytes, length) == length) {}
   close(from);
   close(to);
-  if ((getenv("REPLACE_WITH_NOTHING") ? unlink(fresh) + unlink(name) : rename(fresh, name)) == 0) {
+  if (!with) {
+    failed = rename(fresh, name);
+  } else if (strcmp(with, "nothing") == 0) {
+    failed = unlink(fresh) + unlink(name);
+  } else {
+    snprintf(inside, sizeof inside, "%s/index.js", name);
+    failed = unlink(name) + mkdir(name, 0755) + rename(fresh, inside);
+  }
+  if (failed == 0) {
     int log = open(getenv("REPLACED_LOG"), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
     dprintf(log, "%s\\n", name);
     close(log);
@@ -7084,6 +7097,33 @@ ssize_t readlink(const char *path, char *buffer, size_t size) {
     });
   });
 
+  it.skipIf(!isGlibc || !cc)(
+    "a symlink resolves to the directory that replaces its target after the open",
+    async () => {
+      using dir = tempDir("fs-opened-path-other-kind", {
+        "app/lib.js": `module.exports = "lib";`,
+        "resolve.js": `
+        const link = __dirname + "/app/link.js";
+        try {
+          console.log(JSON.stringify([require.resolve(link).slice(__dirname.length), require(link)]));
+        } catch (error) {
+          console.log(JSON.stringify(error.code ?? String(error)));
+        }
+      `,
+      });
+      const root = realpathSync(String(dir));
+      symlinkSync("lib.js", join(root, "app", "link.js"));
+      const env = { ...buildShim(root), REPLACE_WITH: "directory" };
+
+      const resolved = await run([bunExe(), "resolve.js"], { cwd: root, root, env });
+
+      expect({ replaced: readFileSync(env.REPLACED_LOG, "utf8").replaceAll(root, ""), resolved }).toEqual({
+        replaced: "/app/lib.js\n",
+        resolved: { stdout: [["/app/lib.js/index.js", "lib"]], stderr: "", exitCode: 0 },
+      });
+    },
+  );
+
   it.skipIf(!isGlibc || !cc)("FileSystemRouter names the route whose file was removed after the open", async () => {
     using dir = tempDir("fs-opened-path-removed", {
       "app/pages/page.js": `export default "page";`,
@@ -7100,7 +7140,7 @@ ssize_t readlink(const char *path, char *buffer, size_t size) {
     symlinkSync("app", join(root, "a-longer-name-than-the-directory-has"));
     mkdirSync(join(root, "a"));
     symlinkSync("../app/pages", join(root, "a", "p"));
-    const env = { ...buildShim(root), REPLACE_WITH_NOTHING: "1" };
+    const env = { ...buildShim(root), REPLACE_WITH: "nothing" };
 
     const messages: string[] = [];
     for (const pages of ["a-longer-name-than-the-directory-has/pages", "a/p"]) {

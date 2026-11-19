@@ -2944,11 +2944,11 @@ impl RunCommand {
             };
             let cwd_len = cwd.as_bytes().len();
             cwd_buf[cwd_len] = paths::SEP;
-            let Some(joined) = paths::resolve_path::join_abs_string_buf_z_checked::<
-                paths::platform::Auto,
-            >(&cwd_buf[..cwd_len + 1], &mut buf.0, &[target]) else {
-                return None;
-            };
+            let joined = paths::resolve_path::join_abs_string_buf_z_checked::<paths::platform::Auto>(
+                &cwd_buf[..cwd_len + 1],
+                &mut buf.0,
+                &[target],
+            )?;
             if joined.is_empty() {
                 return None;
             }

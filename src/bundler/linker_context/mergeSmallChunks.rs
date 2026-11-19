@@ -1138,6 +1138,17 @@ pub(crate) fn merge_small_chunks(
         let deps = &mut groups.values_mut()[group_index].deps;
         this.for_each_file_loaded_by(source_index as u32, |other| {
             deps.push(group_of_file[other as usize]);
+            // The chunk of a file that reads the class names of a stylesheet holds a copy of them: what the copy uses of the runtime, that chunk imports.
+            if this
+                .parse_graph()
+                .css_js_stubs
+                .stylesheet_of(other)
+                .is_some()
+            {
+                this.for_each_file_loaded_by(other, |loaded| {
+                    deps.push(group_of_file[loaded as usize]);
+                });
+            }
         });
     }
     // An entry point's chunk also imports every binding the entry re-exports

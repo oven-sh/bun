@@ -1083,6 +1083,34 @@ describe("bundler", () => {
     });
   }
 
+  // The chunk of p.js holds a copy of the class names, and the copy is in a wrapper that uses the runtime. The fold
+  // of small chunks counts that use: it does not fold the runtime into a chunk that runs s.js, which z.js never
+  // imports.
+  itBundled("splitting/FoldOfSmallChunksCountsTheRuntimeOfACopyOfClassNames", {
+    backend: "cli",
+    files: {
+      "/main.js": `import "./s.js"; console.log("main"); globalThis.later = () => require("./wrapped.js");`,
+      "/e.js": `import "./s.js"; import { get } from "./p.js"; import "./t.js"; console.log("e", get());`,
+      "/e2.js": `import "./s.js"; import { get } from "./p.js"; import "./t.js"; console.log("e2", get());`,
+      "/z.js": `import "./big.js"; import "./t.js"; console.log("z");`,
+      "/s.js": `console.log("s");`,
+      "/t.js": `console.log("t");`,
+      "/big.js": `globalThis.pad = "${Buffer.alloc(20000, "x").toString()}";`,
+      "/p.js": `import styles from "./x.module.css"; export const get = () => styles.foo;`,
+      "/wrapped.js": `import styles from "./x.module.css"; console.log("wrapped", typeof styles.foo); export const w = 1;`,
+      "/x.module.css": `.foo { color: red; }`,
+    },
+    entryPoints: ["/main.js", "/e.js", "/e2.js", "/z.js"],
+    splitting: true,
+    minChunkSize: 16384,
+    outdir: "/out",
+    run: [
+      { file: "/out/z.js", stdout: "t\nz" },
+      { file: "/out/e.js", stdout: "s\nt\ne foo_e7Ht-A" },
+      { file: "/out/main.js", stdout: "s\nmain" },
+    ],
+  });
+
   // shared.js is in a wrapper and reads the class names, so they have a wrapper too. a.js reads them with no
   // wrapped file of its own: its copy of that wrapper needs `__esm` from the chunk that holds the runtime.
   itBundled("splitting/WrappedClassNamesInChunkWithNoOtherWrapper", {
@@ -5304,11 +5332,19 @@ describe("bundler", () => {
     [762, false, ""],
     [993, false, ""],
     [496, true, "f5 runs after f1 once folded"],
-    // Three chunks hold a copy of the class names of a CSS module, and two of them fold into one.
+    // Files of these graphs import a CSS module: with a default import, as a namespace, or with import().
     [276, true, ""],
+    [395, true, ""],
   ] as const) {
     test.todoIf(!!todo).concurrent(`splitting/FoldingNeverMakesABundleWorse: graph ${seed}`, async () => {
       expect(await checkGraph(bunExe(), seed)).toEqual({ seed, status: "ok", folded, problems: [] });
+    });
+  }
+  // With `target: "browser"` a require() is a call of a wrapper, so the class names that a require()d file reads are in
+  // a wrapper too.
+  for (const seed of [12, 259]) {
+    test.concurrent(`splitting/FoldingNeverMakesABundleWorse: graph ${seed} for a browser`, async () => {
+      expect(await checkGraph(bunExe(), seed, "browser")).toEqual({ seed, status: "ok", folded: true, problems: [] });
     });
   }
 

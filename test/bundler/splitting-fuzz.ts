@@ -83,18 +83,27 @@ function generateGraph(seed: number): Graph {
 
   // Draws for shapes added after seeds were pinned come from a stream of their own, so old seeds keep their graphs.
   const later = rng(seed ^ 0x5bd1e995);
-  // A CSS module that some modules read a class name of. Each chunk that reads it holds a copy of the class names,
-  // so a fold that moves a reader has to move a copy with it.
+  // A CSS module that some modules import: with a default import, as a namespace, for its CSS alone, or with
+  // import(). Each chunk that reads a class name holds a copy of the class names, so a fold that moves a reader has
+  // to move a copy with it. The import() loads a chunk of its own.
   const styled = rng(seed ^ 0x2545f491);
-  const readsStyles = new Set<number>();
-  if (styled() < 0.5) for (let i = 0; i < n; i++) if (styled() < 0.3) readsStyles.add(i);
+  const styleForms = ["default", "default", "namespace", "bare", "dynamic"] as const;
+  const importsStyles = new Map<number, (typeof styleForms)[number]>();
+  if (styled() < 0.5) {
+    for (let i = 0; i < n; i++) {
+      if (styled() < 0.3) importsStyles.set(i, styleForms[Math.floor(styled() * styleForms.length)]);
+    }
+  }
 
   const files: Record<string, string> = {};
   for (let i = 0; i < n; i++) {
     let src = `import { note, read, attempt, later } from "./log.ts";\n`;
     const importsItself = later() < 0.1 && !pure.has(i);
     if (importsItself) src += `import * as self${i} from "./f${i}.ts";\n`;
-    if (readsStyles.has(i)) src += `import styles from "./styles.module.css";\n`;
+    const styleForm = importsStyles.get(i);
+    if (styleForm === "default") src += `import styles from "./styles.module.css";\n`;
+    if (styleForm === "namespace") src += `import * as styles from "./styles.module.css";\n`;
+    if (styleForm === "bare") src += `import "./styles.module.css";\n`;
     const uses: string[] = [];
     let base: number | undefined;
     for (const j of staticImports[i]) {
@@ -125,7 +134,8 @@ function generateGraph(seed: number): Graph {
     if (!isPure) {
       // An import nothing uses is dropped from a .ts file.
       if (importsItself) uses.push(`read("f${i}<self", () => typeof self${i}.get${i})`);
-      if (readsStyles.has(i)) uses.push(`read("f${i}<styles", () => styles.a)`);
+      if (styleForm === "default" || styleForm === "namespace") uses.push(`read("f${i}<styles", () => styles.a)`);
+      if (styleForm === "namespace") uses.push(`read("f${i}<styles*", () => Object.keys(styles).sort().join())`);
       for (const j of staticImports[i]) {
         if (chance(0.5)) uses.push(`read("f${i}<f${j}", () => get${j}())`);
         if (chance(0.2)) uses.push(`read("f${i}<C${j}", () => new C${j}().tag())`);
@@ -146,6 +156,9 @@ function generateGraph(seed: number): Graph {
         const t = 1 + int(n - 1);
         if (t !== i)
           src += `later(() => import("./f${t}.ts").then(m => read("f${i}~import${t}", () => m.get${t}())));\n`;
+      }
+      if (styleForm === "dynamic") {
+        src += `later(() => import("./styles.module.css").then(m => read("f${i}~styles", () => m.a + m.default.a)));\n`;
       }
       src += `note("f${i}:done");\n`;
     }
@@ -241,7 +254,8 @@ function sameFiles(a: string, b: string) {
   );
 }
 
-export async function checkGraph(bun: string, seed: number): Promise<GraphResult> {
+/** With `target: "browser"` a require() of a module is a call of its wrapper, not the load of a chunk. */
+export async function checkGraph(bun: string, seed: number, target: "bun" | "browser" = "bun"): Promise<GraphResult> {
   const graph = generateGraph(seed);
   using dir = tempDir("splitting-fuzz", {
     ...graph.files,
@@ -251,7 +265,7 @@ export async function checkGraph(bun: string, seed: number): Promise<GraphResult
           entrypoints: ${JSON.stringify(graph.entries)}.map(entry => import.meta.dir + "/" + entry),
           outdir: import.meta.dir + "/" + outdir,
           splitting: true,
-          target: "bun",
+          target: ${JSON.stringify(target)},
           format: "esm",
           foldChunksForTesting: fold,
         });

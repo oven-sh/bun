@@ -105,7 +105,7 @@ impl Tombstone {
         let previous = key.slots().insert(key, Slot::Cancelled);
         if let Some(Slot::Armed(interest, fd, resume)) = previous {
             let fd = fd.disarm(interest);
-            FdWait { key, interest, fd }.wake(Err(interest.cancelled()), resume);
+            FdWait { key, interest, fd }.queue(resume);
         }
         Self(key)
     }
@@ -145,7 +145,10 @@ impl FdWait {
 
     /// Pool thread. `resume` is called once, on the pool. The descriptor is closed before an `Err`.
     pub fn park(self, resume: impl FnOnce(sys::Result<Self>) + Send + 'static) {
-        let resume: Resume = Box::new(resume);
+        self.queue(Box::new(resume));
+    }
+
+    fn queue(self, resume: Resume) {
         let mut io = IO.lock();
         match io.poller() {
             Ok(poller) => {
@@ -154,8 +157,8 @@ impl FdWait {
                 poller.wake();
             }
             Err(err) => {
-                drop((io, self));
-                resume(Err(err));
+                drop(io);
+                self.wake(Err(err), resume);
             }
         }
     }
@@ -344,8 +347,9 @@ impl Idle {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 impl Armed {
+    /// Leaves it to `Idle::forget`, on the IO thread.
     fn disarm(self, _: Interest) -> Idle {
-        self.fired().forget()
+        self.fired()
     }
 
     fn fired(self) -> Idle {

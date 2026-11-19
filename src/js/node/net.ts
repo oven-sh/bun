@@ -4114,9 +4114,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
         );
         break;
       } catch (err: any) {
-        // With no host, Node binds "::" and, when that fails, "0.0.0.0" (a kernel without IPv6):
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1968-L1980
-        // Not after EADDRINUSE: libuv reports that one from listen(), after the bind that Node retries.
+        // As Node (lib/net.js setupListenHandle): no host binds "::", then "0.0.0.0". libuv defers EADDRINUSE past that retry.
         if (!hostDefaulted || err?.syscall !== "listen" || err.code === "EADDRINUSE") throw err;
         hostDefaulted = false;
         hostname = "0.0.0.0";

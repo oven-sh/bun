@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 5eeb8ba43ae71e037013413be1377520f3d8479baeb04958060cfbe560b3997b.
+// Written against that file with the SHA-256 f030ff1ac9cae049057d21703fecbdb18ad13536837638269765da2448667a19.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -4565,9 +4565,7 @@ Server.prototype.listen = function listen(this: $Node.NetServer, port, hostname,
         );
         break;
       } catch (err: any) {
-        // With no host, Node binds "::" and, when that fails, "0.0.0.0" (a kernel without IPv6):
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1968-L1980
-        // Not after EADDRINUSE: libuv reports that one from listen(), after the bind that Node retries.
+        // As Node (lib/net.js setupListenHandle): no host binds "::", then "0.0.0.0". libuv defers EADDRINUSE past that retry.
         if (!hostDefaulted || err?.syscall !== "listen" || err.code === "EADDRINUSE") throw err;
         hostDefaulted = false;
         hostname = "0.0.0.0";

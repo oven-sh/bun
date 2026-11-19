@@ -785,8 +785,6 @@ impl WriteHandler for WindowsPipes {
     }
 
     fn on_close(&self) {}
-
-    fn set_has_inflight_write(&self, _: bool) {}
 }
 
 /// What the reply pipe produced, handed to C++ from an event-loop task.

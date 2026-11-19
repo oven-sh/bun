@@ -389,6 +389,4 @@ impl WriteHandler for Channel {
     }
 
     fn on_close(&self) {}
-
-    fn set_has_inflight_write(&self, _: bool) {}
 }

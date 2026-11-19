@@ -192,7 +192,4 @@ impl<S: Source> WriteHandler for State<S> {
     fn on_close(&self) {
         bun_output::scoped_log!(StaticPipeWriter, "StaticPipeWriter({:p}) onClose()", self);
     }
-
-    #[cfg(windows)]
-    fn set_has_inflight_write(&self, _: bool) {}
 }

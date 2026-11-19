@@ -1917,9 +1917,6 @@ impl WriteHandler for SendQueue {
     }
 
     fn on_close(&self) {}
-
-    /// The owner closes the channel before it lets go of it.
-    fn set_has_inflight_write(&self, _: bool) {}
 }
 
 impl bun_event_loop::RefTask for SendQueue {

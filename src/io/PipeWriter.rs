@@ -48,9 +48,9 @@ pub trait WriteHandler {
     /// Only from a `StreamingWriter`.
     #[cfg(windows)]
     fn on_writable(&self) {}
-    /// `true` when a write is submitted, `false` when it ends or the writer is closed.
+    /// `true` when a write is submitted, `false` when it ends or the writer is closed. Dropping the writer in between cancels it.
     #[cfg(windows)]
-    fn set_has_inflight_write(&self, value: bool);
+    fn set_has_inflight_write(&self, _: bool) {}
 }
 
 /// A handler that owns the bytes a `BufferedWriter` writes.

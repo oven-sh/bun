@@ -550,6 +550,21 @@ fn streams_of_a_client_take_turns_unless_one_is_more_urgent() {
 }
 
 #[test]
+fn new_priority_leaves_the_other_streams_their_turns() {
+    let mut raw = Raw::server().connected();
+    let ids = [(); 3].map(|()| raw.peer.open(Unidirectional));
+    for id in ids.into_iter().rev() {
+        raw.peer.send(id, b"a", false);
+        raw.connection().want_write(StreamId(id));
+    }
+    (raw.connection()).set_priority(StreamId(10), priority(4, false));
+    raw.peer.polls = false;
+    assert_eq!(raw.frames(), "stream 6 0 a, stream 2 0 a, stream 10 0 a");
+    raw.peer.polls = true;
+    assert_eq!(raw.events(), "6 writable, 2 writable, 10 writable");
+}
+
+#[test]
 fn fills_packets_to_the_last_byte() {
     for len in 1090..1180 {
         let mut raw = Raw::server().connected();
@@ -668,9 +683,10 @@ fn streams_that_are_gone_leave_the_queues() {
                 raw.peer.open(Unidirectional);
                 raw.peer.send(id, b"a", false);
             }
+            raw.connection().forget(StreamId(2));
+            while raw.peer.poll(raw.now) {}
             raw.connection()
                 .set_priority(StreamId(6), priority(0, false));
-            raw.connection().forget(StreamId(2));
             assert_eq!(raw.events(), "2 closed");
             raw.send("max_data 1, max_stream_data 6 1");
             assert!(raw.streams.iter().eq([(&6, &b"a".to_vec())]));

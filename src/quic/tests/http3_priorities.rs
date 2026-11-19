@@ -142,6 +142,44 @@ fn a_client_tells_the_server() {
 }
 
 #[test]
+fn priority_of_a_request_applies_to_what_was_queued_before_its_head_was_complete() {
+    let mut raw = connected(Client);
+    let request = http3(&format!("headers {GET} priority=u=0"));
+    raw.write_http3(0, &format!("headers {GET}"), true);
+    raw.write(4, &request[..1], false);
+    raw.forget();
+    raw.waits = false;
+    for id in [0, 4] {
+        raw.peer.send_headers(id, ":status=103");
+    }
+    raw.write(4, &request[1..], true);
+    let frames = raw.frames();
+    assert!(groups(&frames).iter().map(|it| it[1]).eq(["4", "0"]));
+}
+
+#[test]
+fn response_that_becomes_incremental_lines_up() {
+    let mut raw = connected(Client);
+    for (id, value) in [(0, "i"), (4, "-"), (8, "i"), (396, "-")] {
+        raw.write_http3(id, &format!("headers {GET} priority={value}"), true);
+    }
+    raw.forget();
+    for (first, second) in [(4, 0), (396, 8)] {
+        raw.peer.send_headers(second, ":status=103");
+        raw.peer.send_headers(first, ":status=103");
+        (raw.connection()).set_priority(StreamId(first), priority(3, true));
+        while raw.peer.poll(raw.now) {}
+    }
+    let frames = raw.frames();
+    assert!(
+        groups(&frames)
+            .iter()
+            .map(|it| it[1])
+            .eq(["0", "4", "8", "396"])
+    );
+}
+
+#[test]
 fn responses_are_sent_by_urgency() {
     let mut raw = connected(Client);
     let values = ["u=7,i", "i", "-", "u=0", "-"];

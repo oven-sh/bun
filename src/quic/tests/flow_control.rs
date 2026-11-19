@@ -145,7 +145,9 @@ fn gives_what_credit_there_is_to_a_peer_that_is_blocked() {
         ("data_blocked 6400", "max_data 6401"),
         ("stream_data_blocked 0 100", "max_stream_data 0 101"),
         ("data_blocked 6401, stream_data_blocked 0 101", ""),
-        ("fin 0 1 b, stream_data_blocked 0 101", ""),
+        ("stream 0 1 b", ""),
+        ("data_blocked 6400, stream_data_blocked 0 100", ""),
+        ("fin 0 2 c, stream_data_blocked 0 101", ""),
     ] {
         raw.send(frames);
         assert_eq!(raw.frames(), expected, "{frames}");

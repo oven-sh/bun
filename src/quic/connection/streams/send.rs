@@ -14,6 +14,8 @@ const MIN_UNSENT: u64 = 4 * 1024;
 /// By how much what is unsent has to be below the target for the application to be asked for more.
 pub(in crate::connection) const WRITE_CHUNK: u64 = 32 * 1024;
 const TURN_LEN: u64 = 16 * 1024;
+/// The part of a rank that tells streams of the same priority apart.
+const ORDER_BITS: u32 = 59;
 /// A type and three integers.
 const MAX_OWED_FRAME_LEN: usize = 25;
 
@@ -192,7 +194,8 @@ impl State {
         }
         let takes_turns = !self.sends_in_order || stream.priority.is_incremental;
         let class = 2 * u64::from(stream.priority.urgency) + u64::from(takes_turns) + 1;
-        class << 59 | if takes_turns { turn } else { id.index() } & ((1 << 59) - 1)
+        let order = if takes_turns { turn } else { id.index() };
+        class << ORDER_BITS | order & ((1 << ORDER_BITS) - 1)
     }
 
     #[inline]
@@ -236,9 +239,10 @@ impl Streams {
         let mut sendable = core::mem::take(&mut state.sendable).into_vec();
         let mut writable = core::mem::take(&mut state.writable);
         for (rank, id) in (sendable.iter_mut().map(|it| &mut it.0)).chain(&mut writable) {
-            if let Some(stream) = table.get(*id) {
-                *rank = state.rank(*id, stream, state.turns);
-            }
+            let new = table.get(*id).map(|it| state.rank(*id, it, state.turns));
+            *rank = new
+                .filter(|it| (it ^ *rank) >> ORDER_BITS != 0)
+                .unwrap_or(*rank);
         }
         writable.make_contiguous().sort_unstable();
         (state.sendable, state.writable) = (sendable.into(), writable);

@@ -332,6 +332,7 @@ fn application_that_may_be_silent() {
         (raw.connection()).allow_silence(start, Duration::from_secs(allowed));
         raw.peer.polls = true;
         raw.advance(RTT);
+        raw.send("ack");
         let mut has_pinged = false;
         while raw.peer.closed.is_none() && raw.now < start + Duration::from_secs(LIMIT) {
             raw.forget();
@@ -343,6 +344,45 @@ fn application_that_may_be_silent() {
         }
         let secs = (raw.now - start).as_millis() / 1000;
         assert_eq!((has_pinged, secs), (is_kept_alive, end), "{allowed}");
+    }
+}
+
+#[test]
+fn allowing_silence_again_does_not_put_off_the_next_ping() {
+    let mut raw = Raw::client().connected();
+    raw.send("stream 0 0 a");
+    let mut pings = Vec::new();
+    let start = raw.now;
+    while raw.now < start + Duration::from_secs(40) {
+        let now = raw.now;
+        raw.connection().allow_silence(now, Duration::ZERO);
+        raw.advance(RTT);
+        if raw.frames().ends_with("ping") {
+            pings.push((raw.now - start).as_millis() / 1000);
+            raw.send("ack");
+        }
+    }
+    assert_eq!(pings, [0, 15, 30]);
+}
+
+#[test]
+fn silence_is_allowed_from_now_on_and_until_no_stream_is_left() {
+    for (allowed, is_answered, end) in [(90, false, 91), (90, true, 61), (0, true, 61)] {
+        let mut raw = Raw::client().connected();
+        let start = raw.now;
+        raw.send("fin 0 0 a");
+        raw.advance(1000);
+        let now = raw.now;
+        (raw.connection()).allow_silence(now, Duration::from_secs(allowed));
+        if is_answered {
+            raw.peer.send(0, b"a", true);
+            raw.advance(RTT);
+        }
+        while raw.peer.closed.is_none() {
+            raw.send("ack, ping");
+            raw.advance(500);
+        }
+        assert_eq!((raw.now - start).as_millis() / 1000, end, "{allowed}");
     }
 }
 

@@ -224,6 +224,13 @@ impl Pool {
         }
         Ok(sender)
     }
+
+    /// Between frames, there are only those of one that was given up.
+    fn discard_jobs(&self) {
+        if let Some((_, jobs)) = &self.jobs {
+            while let Ok(Some(_)) = jobs.receive(false) {}
+        }
+    }
 }
 
 impl Drop for Pool {
@@ -269,6 +276,7 @@ impl Workers {
         dictionary: Option<&Shared<Dictionary>>,
         pool: &mut Pool,
     ) -> Result<Self> {
+        pool.discard_jobs();
         pool.prepare(1)?;
         let (section_len, overlap_len) = section_and_overlap_len(&plan, request);
         let window_log = plan.tuning.window_log;
@@ -461,6 +469,25 @@ mod tests {
         let mut pool = Pool::default();
         assert_eq!(pool.prepare(0).err(), Some(Error::MemoryAllocation));
         assert!(pool.prepare(1).is_ok() && pool.prepare(0).is_ok());
+    }
+
+    #[test]
+    fn a_frame_does_not_queue_behind_the_one_before() -> Result<()> {
+        let mut request = Request::new(1);
+        request.set(400, 1)?;
+        let plan = request.plan(request.tuning(None, Purpose::Frame { dictionary_len: 0 }));
+        let mut pool = Pool::default();
+        let mut before = Workers::new(plan, &request, None, None, &mut pool)?;
+        let (_keeps_the_thread_waiting, relay) = channel::new()?;
+        before.relay = relay;
+        for _ in 0..2 {
+            before.fill(&mut &b"a"[..])?;
+            before.post(&mut pool, false)?;
+        }
+        Workers::new(plan, &request, None, None, &mut pool)?;
+        let (_, jobs) = pool.jobs.as_ref().ok_or(Error::Internal)?;
+        assert!(jobs.receive(false)?.is_none());
+        Ok(())
     }
 
     /// The hash is of what `ZSTDMT_initCStream_internal()` arrives at.

@@ -67,6 +67,8 @@ fn workers() -> Result<()> {
     let sections = input[..1 << 16].repeat(32);
     let taken = step(&mut waiting, &sections, 0, Continue);
     assert_eq!(taken, (sections.len(), 0, Ok(Status::Pending)));
+    let more = step(&mut waiting, b"a", 0, Continue);
+    assert_eq!(more, (0, 0, Ok(Status::Pending)));
     out.clear();
     write(&mut waiting, &[], End, usize::MAX, &mut out)?;
     assert_eq!(summary(&out), (26581, 0x0FD7_92CD));

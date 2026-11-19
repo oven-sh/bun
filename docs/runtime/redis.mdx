@@ -427,6 +427,10 @@ const retryOnce = <T>(command: () => Promise<T>) =>
 const value = await retryOnce(() => client.get("key"));
 ```
 
+Do not retry a command that follows `WATCH` or that is inside `MULTI`. The new connection is a new server session with no `WATCH` and no open transaction, so a later `EXEC` runs with no guard.
+
+If a NAT or a load balancer drops an idle connection without closing it, the client learns of it only when it sends the next command. A subscriber sends nothing, so it gets no more messages, no rejection and no `onclose`.
+
 When a connection is lost, the client automatically attempts to reconnect with exponential backoff:
 
 1. The client starts with a small delay (50ms) and doubles it with each attempt

@@ -33,6 +33,28 @@ namespace WebCore {
 // Specialized by generated code for IDL dictionary conversion.
 template<typename T> T convertDictionary(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value);
 
+// nullptr for undefined and null, and after throwing for any other primitive.
+ALWAYS_INLINE JSC::JSObject* dictionaryObject(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& throwScope, JSC::JSValue value)
+{
+    auto* object = value.getObject();
+    if (!object && !value.isUndefinedOrNull()) [[unlikely]]
+        JSC::throwTypeError(&lexicalGlobalObject, throwScope);
+    return object;
+}
+
+// Leaves `member` at its default if `object[name]` is undefined.
+template<typename IDL, typename T>
+ALWAYS_INLINE void convertDictionaryMember(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSObject& object, JSC::PropertyName name, T& member)
+{
+    auto throwScope = DECLARE_THROW_SCOPE(JSC::getVM(&lexicalGlobalObject));
+    JSC::JSValue value = object.get(&lexicalGlobalObject, name);
+    RETURN_IF_EXCEPTION(throwScope, );
+    if (value.isUndefined())
+        return;
+    throwScope.release();
+    member = convert<IDL>(lexicalGlobalObject, value);
+}
+
 template<typename T> struct Converter<IDLDictionary<T>> : DefaultConverter<IDLDictionary<T>> {
     using ReturnType = T;
 

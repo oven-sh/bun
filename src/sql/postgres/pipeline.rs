@@ -138,6 +138,11 @@ enum Reply {
     Skip,
 }
 
+pub trait Request {
+    /// [`Pipeline::push`] numbers the requests, so that the queue is sorted.
+    fn turn(&self) -> &Cell<u64>;
+}
+
 pub struct Entry<R, E, C> {
     pub request: R,
     pub statement: RefPtr<Statement<E, C>>,
@@ -232,6 +237,7 @@ pub enum OnCancel<T> {
 
 pub struct Pipeline<R, E, C> {
     queue: VecDeque<Entry<R, E, C>>,
+    pushed: u64,
     /// How many have their Bind or their Query written: the front of `queue`.
     written: usize,
     pipelining: bool,
@@ -243,10 +249,11 @@ pub struct Pipeline<R, E, C> {
     transaction_status: u8,
 }
 
-impl<R: Deref, E, C> Pipeline<R, E, C> {
+impl<R: Deref<Target: Request>, E, C> Pipeline<R, E, C> {
     pub fn new(pipelining: bool) -> Self {
         Pipeline {
             queue: VecDeque::new(),
+            pushed: 0,
             written: 0,
             pipelining,
             parsing: false,
@@ -260,6 +267,8 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
             // The Query message stands for its Parse.
             statement.state.set(State::Parsing { stored: false });
         }
+        self.pushed += 1;
+        request.turn().set(self.pushed);
         self.queue.push_back(Entry {
             request,
             statement,
@@ -301,8 +310,16 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
         self.transaction_status != b'I' || self.head().is_ok_and(Entry::is_rejected)
     }
 
+    fn position(&self, request: &R::Target) -> Option<usize> {
+        let turn = request.turn().get();
+        let position = self
+            .queue
+            .partition_point(|it| it.request.turn().get() < turn);
+        self.queue.get(position)?.is(request).then_some(position)
+    }
+
     pub fn is_live(&self, request: &R::Target) -> bool {
-        let entry = self.queue.iter().find(|entry| entry.is(request));
+        let entry = self.position(request).and_then(|it| self.queue.get(it));
         entry.is_some_and(|entry| !entry.is_rejected())
     }
 
@@ -370,14 +387,13 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
     }
 
     pub fn unqueue(&mut self, request: &R::Target) -> Option<Entry<R, E, C>> {
-        let mut unwritten = self.queue.iter().skip(self.written);
-        let position = unwritten.position(|entry| entry.is(request))?;
-        self.queue.remove(self.written + position)
+        let position = self.position(request).filter(|it| *it >= self.written)?;
+        self.queue.remove(position)
     }
 
     /// `true`: the host rejects it now. It keeps its place until its ReadyForQuery.
     pub fn reject(&mut self, request: &R::Target) -> bool {
-        let Some(entry) = self.queue.iter_mut().find(|entry| entry.is(request)) else {
+        let Some(entry) = self.position(request).and_then(|it| self.queue.get_mut(it)) else {
             return false;
         };
         entry.reply = match entry.reply {
@@ -516,8 +532,8 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
     }
 
     pub fn cancel(&mut self, request: &R::Target) -> Option<OnCancel<Entry<R, E, C>>> {
-        let mut entries = self.queue.iter_mut().enumerate();
-        let (position, entry) = entries.find(|(_, entry)| entry.is(request))?;
+        let position = self.position(request)?;
+        let entry = self.queue.get_mut(position)?;
         let rejected = match entry.reply {
             Reply::Deliver | Reply::Cancelling => false,
             Reply::OwesCancel { rejected } => rejected,

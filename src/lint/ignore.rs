@@ -353,6 +353,24 @@ fn parses_like_package(line: &[u8]) -> bool {
         && line.trim_ascii_end().len() == line.len()
 }
 
+/// The first segment of every path that the package's regex for `line` matches, if the line spells it out.
+fn first_name_for_package(line: &[u8], ignores_case: bool) -> Option<Vec<u8>> {
+    let (first, rest) = strings::split_once_char(line.strip_prefix(b"/").unwrap_or(line), b'/')?;
+    let is_plain = |it: &u8| it.is_ascii_alphanumeric() || matches!(it, b'-' | b'_' | b'.');
+    let is_anchored = line.starts_with(b"/") || !rest.is_empty();
+    if first.is_empty()
+        || !first.iter().all(is_plain)
+        || !is_anchored
+        || strings::contains_char(rest, b'\\')
+    {
+        return None;
+    }
+    Some(match ignores_case {
+        true => first.to_ascii_lowercase(),
+        false => first.to_vec(),
+    })
+}
+
 /// Indexes into `IgnoreRules::rules`, in ascending order.
 type RuleIndex = StringHashMap<Vec<u32>>;
 
@@ -428,7 +446,14 @@ impl IgnoreRules {
                 || line.starts_with(b"#")
                 || line.ends_with(b"\\") && !line.ends_with(b"\\\\");
             if !is_skipped {
-                self.others.push(self.rules.len() as u32);
+                let at = self.rules.len() as u32;
+                match first_name_for_package(body, self.options.ignores_case) {
+                    Some(first) => {
+                        let rules = self.by_first_name.get_or_put_value(&first, Vec::new());
+                        bun_core::handle_oom(rules).push(at);
+                    }
+                    None => self.others.push(at),
+                }
                 self.has_package_only_rules = true;
                 self.has_exceptions |= line.starts_with(b"!");
                 self.rules.push(Rule {
@@ -437,7 +462,9 @@ impl IgnoreRules {
                     matches_empty_path: false,
                     needs_package_regex: true,
                     is_negated: line.starts_with(b"!"),
-                    is_for_directories: false,
+                    // Its regex ends with `\/$`.
+                    is_for_directories: body.ends_with(b"/")
+                        && !strings::contains_char(body, b'\\'),
                 });
             }
             return;

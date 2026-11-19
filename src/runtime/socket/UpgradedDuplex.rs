@@ -24,7 +24,7 @@ use super::DuplexUpgradeContext;
 use super::ssl_wrapper::{self, SSLWrapper};
 use crate::generated_bindgen::socket_body::js_TLSSocket;
 use crate::generated_bindgen::upgraded_duplex::{self as listeners, DuplexChunk};
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimer, EventLoopTimerTag};
 
 bun_output::declare_scope!(UpgradedDuplex, visible);
 
@@ -437,14 +437,9 @@ impl UpgradedDuplex {
     pub(crate) fn on_timeout(&self) {
         bun_output::scoped_log!(UpgradedDuplex, "onTimeout");
 
-        let has_been_cleared = self.event_loop_timer.state.get() == EventLoopTimerState::CANCELLED
-            || self.vm.is_none_or(|vm| {
-                vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running
-            });
-
-        self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
-
-        if has_been_cleared {
+        if self.vm.is_none_or(|vm| {
+            vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running
+        }) {
             return;
         }
 

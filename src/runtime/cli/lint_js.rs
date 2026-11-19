@@ -21,9 +21,13 @@
 use core::cell::{Cell, RefCell};
 use core::ptr::NonNull;
 
+use bun_collections::HashMap;
 use bun_core::strings;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, Strong, virtual_machine::VirtualMachine};
-use bun_lint_driver::js_plugin::{Demand, Engine, HEAVY, Serve, Vm, Work, program};
+use bun_lint_driver::js_plugin::{
+    Demand, Engine, HEAVY, Serve, Vm, Work, can_be_answered_ahead, drop_spare_lists,
+    has_long_answer, is_last_call, is_same_for_all_files, program, rules_in_message,
+};
 use bun_threading::{Condition, Guarded};
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -46,6 +50,8 @@ pub(crate) struct LintVm {
     call: Cell<Option<NonNull<Call<'static, 'static>>>>,
     /// The answers to [`Bun__Lint__ask`] during this call.
     answers: RefCell<KeptAnswers>,
+    /// See [`Bun__Lint__collectBetweenFiles`]
+    allocated: Cell<u64>,
 }
 
 /// Answers that native code has spans into. Each is written once, and its bytes don't move until the call is over:
@@ -59,6 +65,41 @@ struct KeptAnswers {
     has_lent_span: bool,
 }
 
+thread_local! {
+    /// For the tree of the next file. A new one for each file would leave the allocator with free memory for every size.
+    static SPARE: Cell<Vec<u8>> = const { Cell::new(Vec::new()) };
+}
+
+fn keep_spare(mut buffer: Vec<u8>) {
+    if buffer.capacity() > 8 << 20 {
+        return;
+    }
+    buffer.clear();
+    let kept = SPARE.take();
+    SPARE.set(core::cmp::max_by_key(kept, buffer, Vec::capacity));
+}
+
+fn buffer_for(request: u32) -> Vec<u8> {
+    match has_long_answer(request) {
+        true => SPARE.take(),
+        false => Vec::new(),
+    }
+}
+
+fn collect_between_files() {
+    if !VirtualMachine::is_loaded() {
+        return;
+    }
+    let Some(state) = crate::jsc_hooks::lint_vm().get() else {
+        return;
+    };
+    let vm = VirtualMachine::get();
+    vm.run_with_api_lock(|| {
+        let allocated = &state.allocated;
+        allocated.set(Bun__Lint__collectBetweenFiles(vm.global(), allocated.get()));
+    });
+}
+
 /// Clears `LintVm::call` when the call is over.
 struct CallGuard<'v>(&'v LintVm, &'v JSGlobalObject);
 
@@ -70,6 +111,8 @@ impl Drop for CallGuard<'_> {
         if answers.has_lent_span {
             Bun__Lint__endFile(self.1);
         }
+        let largest = answers.all.into_iter().max_by_key(Vec::capacity);
+        keep_spare(largest.unwrap_or_default());
     }
 }
 
@@ -86,6 +129,7 @@ unsafe extern "C" {
     safe fn Bun__Lint__nodeFunctions(global: &JSGlobalObject) -> JSValue;
     /// src/jsc/bindings/LintHost.cpp. Drops every span that native code holds.
     safe fn Bun__Lint__endFile(global: &JSGlobalObject);
+    safe fn Bun__Lint__collectBetweenFiles(global: &JSGlobalObject, allocated_before: u64) -> u64;
 }
 
 /// Converts the thrown value to text. It can be any value, and the conversion runs plugin code, which can throw again.
@@ -137,7 +181,7 @@ fn ask_and_keep(kind: u32, details: &[u8]) -> Option<LintSpan> {
             return Some(LintSpan::of(known));
         }
     }
-    let mut answer = Vec::new();
+    let mut answer = buffer_for(kind);
     (call.serve)(kind, details, &mut answer);
     // The allocator aligns every block to at least 8 bytes, which native code relies on to read numbers in place.
     debug_assert!(answer.is_empty() || answer.as_ptr().addr().is_multiple_of(8));
@@ -175,6 +219,7 @@ extern "C" fn Bun__Lint__ask(
 /// Runs the program in this thread's new VM.
 fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
     let global = vm.global();
+    crate::read_ahead::enable(vm, false);
     // Strict, so that a plugin's function can't reach the program's functions through `caller`.
     let mut source = b"(function (native) {\n\
         \"use strict\";\n\
@@ -211,6 +256,7 @@ fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
                 handle: Strong::create(handle, global),
                 call: Cell::new(None),
                 answers: RefCell::default(),
+                allocated: Cell::new(0),
             })
         }
         Err(error) => Err(message_of(global, global.take_exception(error))),
@@ -414,6 +460,8 @@ struct Start {
     initialize: std::sync::Once,
     /// Set if the run won't have more than a few VMs. Stays unset if a VM starts before the files are known.
     is_for_few: AtomicBool,
+    /// The same if no VM has much to do
+    is_short: AtomicBool,
     memory: std::sync::OnceLock<usize>,
 }
 
@@ -429,8 +477,9 @@ impl Start {
         self.initialize.call_once(|| {
             // A no-op if a regular expression in a config has already started JSC (`bun_yarr`).
             jsc::initialize(jsc::InitializeOptions::default());
-            if !self.is_for_few.load(Ordering::Relaxed) {
-                jsc::expect_vm_per_thread();
+            match self.is_for_few.load(Ordering::Relaxed) {
+                true => jsc::expect_few_lint_vms(),
+                false => jsc::expect_vm_per_thread(self.is_short.load(Ordering::Relaxed)),
             }
             // The first VM also creates process-wide singletons like `FileSystem::instance()`, which isn't safe from
             // several threads at once. So the others wait here until it's up.
@@ -443,14 +492,18 @@ impl Start {
     }
 
     /// [`Engine::expect`]
-    fn expect(&self, demand: &Demand, size: u64, most: usize) {
+    fn expect(&self, demand: &Demand, files: usize, size: u64, most: usize) {
+        let most = most.min(files.max(1));
         demand.expect(size, most);
         // How many VMs the files are worth.
         let is_enough = |&vms: &usize| !demand.is_worth_another(vms, 0);
         let vms = (1..most).find(is_enough).unwrap_or(most);
         // With few VMs, cores are left for JSC's compiler threads.
-        let is_for_few = vms <= usize::from(bun_core::get_thread_count()) / 2;
+        // More than three keep waiting for each other: a VM that collects garbage stops these threads.
+        let is_for_few = vms <= (usize::from(bun_core::get_thread_count()) / 2).min(3);
         self.is_for_few.store(is_for_few, Ordering::Relaxed);
+        let is_short = size / (vms.max(1) as u64) < 1 << 20;
+        self.is_short.store(is_short, Ordering::Relaxed);
     }
 }
 
@@ -459,6 +512,14 @@ fn name_this_thread(number: usize) {
     bun_core::Output::Source::configure_named_thread(bun_core::ZStr::from_slice_with_nul(
         name.as_bytes(),
     ));
+}
+
+fn wait_for_exit() -> ! {
+    let (nothing, never) = (Guarded::new(()), Condition::new());
+    let mut nothing = nothing.lock();
+    loop {
+        never.wait_guarded(&mut nothing);
+    }
 }
 
 /// Assumed size of a VM until the run has shown how its VMs grow. No project we looked at needed much more. So with 16
@@ -593,6 +654,122 @@ impl Ticket {
     }
 }
 
+/// While a member runs the rules on a file, one helper finishes the file before it and then prepares the one after it. The
+/// other waits for the member.
+const HELPERS: usize = 2;
+
+/// A thread that reads, parses and lints the files of a member, which only runs the JavaScript.
+#[derive(Copy, Clone, PartialEq)]
+struct Helper {
+    member: usize,
+    number: usize,
+}
+
+thread_local! {
+    static HELPER: Cell<Option<Helper>> = const { Cell::new(None) };
+}
+
+/// A request with its details
+type Request = (u32, Vec<u8>);
+
+/// [`Vm::call`] by a helper
+struct RemoteCall {
+    by: Helper,
+    kind: u32,
+    content: NonNull<[u8]>,
+    /// For what the program is likely to ask
+    answers: VecDeque<(Request, Vec<u8>)>,
+    line: Arc<Line>,
+}
+
+// SAFETY: it holds no VM or JS state. `content` is only read, and its owner waits at `line` until the call has returned.
+unsafe impl Send for RemoteCall {}
+
+/// Between a member and a helper, for one call.
+#[derive(Default)]
+struct Line {
+    said: Guarded<Option<Said>>,
+    /// For the helper, and for the member
+    changed: [Condition; 2],
+}
+
+enum Said {
+    Request(Request),
+    Answer(Vec<u8>),
+    /// And [`SPARE`]
+    Returned(Result<Vec<u8>, Vec<u8>>, Vec<u8>),
+}
+
+impl Line {
+    fn say(&self, what: Said) {
+        let is_answer = matches!(what, Said::Answer(_));
+        *self.said.lock() = Some(what);
+        self.changed[usize::from(is_answer)].notify_one();
+    }
+
+    /// Waits for an answer, or for something else.
+    fn hear(&self, an_answer: bool) -> Said {
+        let mut said = self.said.lock();
+        loop {
+            match said.take_if(|it| matches!(it, Said::Answer(_)) == an_answer) {
+                Some(heard) => return heard,
+                None => self.changed[usize::from(an_answer)].wait_guarded(&mut said),
+            }
+        }
+    }
+}
+
+/// The VM of a member, on the thread of a helper.
+struct Remote<'c> {
+    crew: &'c Crew,
+    by: Helper,
+}
+
+impl Vm for Remote<'_> {
+    fn call(&mut self, kind: u32, content: &[u8], serve: &mut Serve) -> Result<Vec<u8>, Vec<u8>> {
+        let (crew, by) = (self.crew, self.by);
+        let rules = rules_in_message(kind, content);
+        let likely = rules.and_then(|rules| {
+            let state = crew.state.lock();
+            state.all[by.member].requests.get(&rules.concat()).cloned()
+        });
+        let answer = |request: Request| {
+            let mut answer = buffer_for(request.0);
+            serve(request.0, &request.1, &mut answer);
+            (request, answer)
+        };
+        let answers = likely.into_iter().flatten().map(answer).collect();
+        let line = Arc::<Line>::default();
+        let mut state = crew.state.lock();
+        let member = &mut state.all[by.member];
+        member.remote_calls.push_back(RemoteCall {
+            by,
+            kind,
+            content: NonNull::from(content),
+            answers,
+            line: Arc::clone(&line),
+        });
+        member.prepares.take_if(|it| *it == by && rules.is_some());
+        drop(state);
+        crew.is_posted.notify_all();
+        crew.may_prepare.notify_all();
+        loop {
+            match line.hear(false) {
+                Said::Request((request, details)) => {
+                    let mut answer = buffer_for(request);
+                    serve(request, &details, &mut answer);
+                    line.say(Said::Answer(answer));
+                }
+                Said::Returned(returned, spare) => {
+                    keep_spare(spare);
+                    return returned;
+                }
+                Said::Answer(_) => unreachable!("not what was waited for"),
+            }
+        }
+    }
+}
+
 /// The arguments of a [`Crew::work_off`] call.
 #[derive(Copy, Clone)]
 struct Shared {
@@ -634,6 +811,16 @@ struct Member {
     is_gone: bool,
     /// [`Shared::number`] of the last work that it has finished its part of.
     done_with: u64,
+    /// The same for the last work that it has started helpers for, and how many of them are at it.
+    helped_with: u64,
+    helpers: usize,
+    /// One at a time takes a file and calls for it to be linted, so that the files come in the order they would without helpers.
+    prepares: Option<Helper>,
+    remote_calls: VecDeque<RemoteCall>,
+    /// The helper that has more calls to make before anyone else does.
+    lent_to: Option<Helper>,
+    /// What the program asked for the last file, by [`rules_in_message`].
+    requests: HashMap<Vec<u8>, Vec<Request>>,
 }
 
 impl Member {
@@ -658,6 +845,8 @@ struct CrewState {
     pending: usize,
     /// The first member has no heavy file left in `shared`.
     is_done_with_heavy: bool,
+    /// How many of its helpers have one.
+    helpers_with_heavy: usize,
     /// The member that should run its `exit` handlers now.
     ends: Option<usize>,
     memory: Memory,
@@ -673,13 +862,16 @@ impl CrewState {
 
     /// How many VMs are busy with heavy files. They don't count towards how many VMs the other files are worth.
     fn heavy_vms(&self) -> usize {
-        usize::from(self.shared.is_some() && !self.is_done_with_heavy)
+        let has_heavy = !self.is_done_with_heavy || self.helpers_with_heavy > 0;
+        usize::from(self.shared.is_some() && has_heavy)
     }
 }
 
 /// A member's next task.
 enum Next {
     Posted(Posted),
+    Remote(RemoteCall),
+    StartHelpers(Shared),
     Heavy(Shared),
     Light(Shared),
     End { frees: bool },
@@ -693,10 +885,14 @@ struct Crew {
     state: Guarded<CrewState>,
     /// A copy of `CrewState::pending` that can be read without the lock.
     busy: AtomicUsize,
+    /// How many helpers are at work.
+    helping: AtomicUsize,
     /// There may be something to do for a member.
     is_posted: Condition,
     /// `pending` is 0, or a member is gone.
     is_over: Condition,
+    /// See [`Member::prepares`]
+    may_prepare: Condition,
 }
 
 /// The VM of the member `at`, on its thread.
@@ -782,7 +978,14 @@ impl Crew {
     fn next(&self, at: usize) -> Next {
         let mut state = self.state.lock();
         loop {
-            if state.all[at].is_freed || state.ends == Some(at) {
+            let member = &mut state.all[at];
+            let lent_to = member.lent_to;
+            let is_allowed = |it: &RemoteCall| lent_to.is_none_or(|helper| helper == it.by);
+            let allowed = member.remote_calls.iter().position(is_allowed);
+            // What another thread waits for comes first.
+            let has_posted = lent_to.is_none() && !state.posted.is_empty();
+            let member = &mut state.all[at];
+            if (member.is_freed && member.helpers == 0) || state.ends == Some(at) {
                 let frees = state.all[at].is_freed;
                 self.finish_shared_work(&mut state, at);
                 return Next::End { frees };
@@ -794,18 +997,34 @@ impl Crew {
                     .or_else(|| state.posted.front().filter(|_| !others_are_free).map(|_| 0)),
                 _ => state.posted.iter().position(|it| it.size < HEAVY),
             };
+            let found = found.filter(|_| has_posted && !state.all[at].is_freed);
             if let Some(posted) = found.and_then(|found| state.posted.remove(found)) {
                 return Next::Posted(posted);
             }
+            let member = &mut state.all[at];
+            if let Some(call) = allowed.and_then(|it| member.remote_calls.remove(it)) {
+                member.lent_to = Some(call.by);
+                return Next::Remote(call);
+            }
+            // SAFETY: read from `shared` under the lock.
+            let can_have_helpers = |it: Shared| unsafe { it.work() }.can_have_helpers(at);
             match state
                 .shared
                 .filter(|it| state.all[at].done_with != it.number)
             {
+                Some(_) if state.all[at].helpers > 0 => {}
+                Some(shared)
+                    if state.all[at].helped_with != shared.number && can_have_helpers(shared) =>
+                {
+                    state.all[at].helped_with = shared.number;
+                    state.all[at].helpers = HELPERS;
+                    return Next::StartHelpers(shared);
+                }
                 Some(shared) if at == 0 && !state.is_done_with_heavy => return Next::Heavy(shared),
                 Some(shared) => return Next::Light(shared),
                 None => {}
             }
-            state.all[at].is_idle = true;
+            state.all[at].is_idle = state.all[at].helpers == 0;
             self.is_posted.wait_guarded(&mut state);
             state.all[at].is_idle = false;
         }
@@ -823,6 +1042,7 @@ impl Crew {
             state.all[at].thread = Some(std::thread::current().id());
             state.all[at].failure = failure;
         }
+        let mut remembered = HashMap::default();
         loop {
             match crew.next(at) {
                 Next::Posted(mut posted) => {
@@ -830,6 +1050,19 @@ impl Crew {
                     let job = unsafe { posted.job.as_mut() };
                     Crew::with_vm_of(crew, at, posted.size, &mut *job.0);
                     posted.ticket.finish();
+                }
+                Next::Remote(call) => Crew::answer(crew, call, &mut remembered),
+                Next::StartHelpers(shared) => {
+                    for number in 0..HELPERS {
+                        let (me, for_thread) = (Helper { member: at, number }, Arc::clone(crew));
+                        // SAFETY: no VM or JS state crosses threads, only numbers, the crew and `shared`.
+                        let started = std::thread::Builder::new()
+                            .stack_size(bun_sema_driver::WORKER_STACK_SIZE as usize)
+                            .spawn(move || Crew::run_helper(&for_thread, me, shared));
+                        if started.is_err() {
+                            crew.state.lock().all[at].helpers -= 1;
+                        }
+                    }
                 }
                 Next::Heavy(shared) => {
                     // SAFETY: this member is counted in `pending` until `finish_shared_work`.
@@ -857,11 +1090,130 @@ impl Crew {
         if !VirtualMachine::is_loaded() {
             drop(log);
         }
-        let (nothing, never) = (Guarded::new(()), Condition::new());
-        let mut nothing = nothing.lock();
-        loop {
-            never.wait_guarded(&mut nothing);
+        wait_for_exit()
+    }
+
+    /// The thread function of a helper. What it leaves, the member does itself.
+    fn run_helper(crew: &Arc<Crew>, me: Helper, shared: Shared) -> ! {
+        bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Bun Lint Help"));
+        bun_sema_driver::run_regions_inline_on_this_thread();
+        HELPER.set(Some(me));
+        crew.helping.fetch_add(1, Ordering::Relaxed);
+        // SAFETY: the member is counted in `pending` as long as it has helpers.
+        let work = unsafe { shared.work() };
+        let mut state = crew.state.lock();
+        let mut has_more = true;
+        while has_more && !state.all[me.member].is_freed {
+            if state.all[me.member].prepares.is_some() {
+                crew.may_prepare.wait_guarded(&mut state);
+                continue;
+            }
+            let is_heavy = me.member == 0 && !state.is_done_with_heavy;
+            if is_heavy || work.needs_realms() {
+                state.all[me.member].prepares = Some(me);
+            }
+            state.helpers_with_heavy += usize::from(is_heavy);
+            drop(state);
+            let has_found = if is_heavy {
+                work.heavy()
+            } else {
+                work.light(me.member)
+            };
+            has_more = has_found || is_heavy;
+            state = crew.state.lock();
+            state.is_done_with_heavy |= is_heavy && !has_found;
+            state.helpers_with_heavy -= usize::from(is_heavy);
+            if state.all[me.member]
+                .prepares
+                .take_if(|it| *it == me)
+                .is_some()
+            {
+                crew.may_prepare.notify_all();
+            }
         }
+        state.all[me.member].helpers -= 1;
+        drop(state);
+        crew.helping.fetch_sub(1, Ordering::Relaxed);
+        crew.is_posted.notify_all();
+        drop(SPARE.take());
+        drop_spare_lists();
+        bun_sema_driver::drop_caches_of_this_thread();
+        bun_sema::session::give_back_free_memory();
+        wait_for_exit()
+    }
+
+    /// Makes the call of a helper, on the thread of its member. `remembered`: see [`is_same_for_all_files`].
+    fn answer(crew: &Arc<Crew>, mut call: RemoteCall, remembered: &mut HashMap<Vec<u8>, Vec<u8>>) {
+        let at = call.by.member;
+        // SAFETY: the helper keeps it until it hears that the call has returned.
+        let content = unsafe { call.content.as_ref() };
+        let rules = rules_in_message(call.kind, content).map(|it| it.concat());
+        let mut requests = Vec::<Request>::new();
+        let mut serve = |request: u32, details: &[u8], out: &mut Vec<u8>| {
+            if can_be_answered_ahead(request) {
+                requests.push((request, details.to_vec()));
+            }
+            let for_all = (rules.as_ref().filter(|_| is_same_for_all_files(request)))
+                .map(|rules| [&request.to_le_bytes(), &rules[..], details].concat());
+            if let Some(known) = for_all.as_ref().and_then(|it| remembered.get(it)) {
+                return out.extend_from_slice(known);
+            }
+            let is_same = |(it, _): &(Request, _)| it.0 == request && it.1 == details;
+            let known = call.answers.iter().position(is_same);
+            let mut answer = match known.and_then(|it| call.answers.remove(it)) {
+                Some((_, answer)) => answer,
+                None => {
+                    call.line.say(Said::Request((request, details.to_vec())));
+                    match call.line.hear(true) {
+                        Said::Answer(answer) => answer,
+                        _ => unreachable!("not what was waited for"),
+                    }
+                }
+            };
+            if let Some(for_all) = for_all {
+                remembered.insert(for_all, answer.clone());
+            }
+            match out.is_empty() {
+                true => *out = answer,
+                false => out.append(&mut answer),
+            }
+        };
+        let failure = crew.state.lock().all[at].failure.clone();
+        let returned = Own { crew, at, failure }.call(call.kind, content, &mut serve);
+        if returned
+            .as_ref()
+            .is_ok_and(|it| is_last_call(call.kind, it))
+        {
+            let member = &mut crew.state.lock().all[at];
+            member.lent_to = None;
+            if let Some(rules) = rules {
+                member.requests.insert(rules, requests);
+            }
+        }
+        call.line.say(Said::Returned(returned, SPARE.take()));
+        collect_between_files();
+    }
+
+    /// [`Engine::with_vm_here`] on the thread of a helper.
+    fn with_vm_for(crew: &Arc<Crew>, by: Helper, size: usize, then: &mut dyn FnMut(&mut dyn Vm)) {
+        thread_local! {
+            static IS_IN_USE: Cell<bool> = const { Cell::new(false) };
+        }
+        let was_in_use = IS_IN_USE.replace(true);
+        then(&mut Remote { crew, by });
+        if was_in_use {
+            return;
+        }
+        IS_IN_USE.set(false);
+        let mut state = crew.state.lock();
+        if state.all[by.member]
+            .lent_to
+            .take_if(|it| *it == by)
+            .is_some()
+        {
+            crew.is_posted.notify_all();
+        }
+        Crew::note_file(crew, &mut state, by.member, size);
     }
 
     /// Counts the calls a VM has answered. The first one only reports what it has to load, so it's loaded after the
@@ -890,8 +1242,14 @@ impl Crew {
         if !is_outermost {
             return;
         }
+        collect_between_files();
         let mut state = crew.state.lock();
         state.all[at].is_in_use = false;
+        Crew::note_file(crew, &mut state, at, size);
+    }
+
+    /// The member `at` is done with a file of `size` bytes.
+    fn note_file(crew: &Arc<Crew>, state: &mut CrewState, at: usize, size: usize) {
         let (planned, vms) = (crew.start.memory(), state.vms());
         (state.memory).note_file(planned, &crew.demand, vms.loaded);
         // Never the first member, which has the heavy files, and never the last one besides it.
@@ -907,7 +1265,7 @@ impl Crew {
         if size < HEAVY {
             crew.demand.note(size);
         }
-        let _ = Crew::start_more(crew, &mut state);
+        let _ = Crew::start_more(crew, state);
     }
 
     /// [`Engine::with_vm`] on a thread that isn't a member.
@@ -998,10 +1356,14 @@ impl Engines {
 
 impl Engine for Engines {
     fn thread_has_realm(&self) -> bool {
-        self.0.here().is_some()
+        HELPER.get().is_some() || self.0.here().is_some()
     }
 
     fn with_vm_here(&self, size: usize, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
+        if let Some(helper) = HELPER.get() {
+            Crew::with_vm_for(&self.0, helper, size, then);
+            return Ok(());
+        }
         match self.0.here() {
             Some(at) => Crew::with_vm_of(&self.0, at, size, then),
             None => return Err(b"This thread cannot run the plugins.".to_vec()),
@@ -1014,6 +1376,10 @@ impl Engine for Engines {
         size: usize,
         then: &mut (dyn FnMut(&mut dyn Vm) + Send),
     ) -> Result<(), Vec<u8>> {
+        if let Some(helper) = HELPER.get() {
+            Crew::with_vm_for(&self.0, helper, size, then);
+            return Ok(());
+        }
         match self.0.here() {
             Some(at) => Crew::with_vm_of(&self.0, at, size, then),
             None => return Crew::post(&self.0, size, then),
@@ -1026,7 +1392,11 @@ impl Engine for Engines {
     }
 
     fn busy(&self) -> usize {
-        self.0.busy.load(Ordering::Relaxed)
+        self.0.busy.load(Ordering::Relaxed) + self.0.helping.load(Ordering::Relaxed)
+    }
+
+    fn realms_that_fit(&self) -> usize {
+        self.0.start.memory() / NOT_LOADED_YET
     }
 
     fn sizes(&self) -> (usize, usize) {
@@ -1049,8 +1419,19 @@ impl Engine for Engines {
         self.0.demand.report_realm_need(size, needed_realm);
     }
 
-    fn expect(&self, _files: usize, size: u64, most: usize) {
-        self.0.start.expect(&self.0.demand, size, most);
+    fn allow_extra_realm(&self) {
+        self.0.demand.allow_extra_realm();
+    }
+
+    fn expect_modules(&self, paths: Vec<Vec<u8>>, has_room_for_bytecode: bool) {
+        if has_room_for_bytecode {
+            crate::read_ahead::make_bytecode();
+        }
+        crate::read_ahead::expect(paths.iter().map(|it| &it[..]));
+    }
+
+    fn expect(&self, files: usize, size: u64, most: usize) {
+        self.0.start.expect(&self.0.demand, files, size, most);
     }
 }
 

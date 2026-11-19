@@ -628,7 +628,7 @@ fn apply_transport_params(
 ) -> JsResult<()> {
     // lsquic's default is 30 seconds.
     s.idle_timeout(DEFAULT_MAX_IDLE_TIMEOUT_SECS);
-    // Node's default `cc` is cubic. lsquic's is adaptive, which picks BBRv1 if the first RTT sample is over 1.5 ms.
+    // Node's default `cc` is cubic. lsquic's is BBRv1.
     s.cc_algo(CC_ALGO_CUBIC);
     if !options.is_object() {
         return Ok(());

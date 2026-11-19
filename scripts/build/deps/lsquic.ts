@@ -14,7 +14,7 @@ import type { Dependency, DirectBuild } from "../source.ts";
 import { depSourceDir } from "../source.ts";
 import { lsxpackDefines } from "./lsqpack.ts";
 
-const LSQUIC_COMMIT = "f812ceb9529e26717df78c6064a2ff648b949f3e";
+const LSQUIC_COMMIT = "f52c00172e04f9b889ab9e28d21e5d1805133cfb";
 
 // gQUIC (Google QUIC, pre-IETF) sources are excluded — Bun only negotiates
 // IETF QUIC. The unconditional engine/global references to gQUIC vtables are
@@ -22,7 +22,6 @@ const LSQUIC_COMMIT = "f812ceb9529e26717df78c6064a2ff648b949f3e";
 // which lets --gc-sections drop ~175 KB of cert tables + handshake code.
 const liblsquic: string[] = [
   "ls-sfparser.c",
-  "lsquic_adaptive_cc.c",
   "lsquic_alarmset.c",
   "lsquic_arr.c",
   "lsquic_attq.c",
@@ -122,10 +121,8 @@ export const lsquic: Dependency = {
     // send_packets_out() leaked every packet already coalesced into the
     // current out_spec when encrypting a later one failed.
     "patches/lsquic/coalesce-batch-drop.patch",
-    // generate_connection_close_packet always used PNS_APP; pre-handshake
-    // there are no 1-RTT keys, so the CONNECTION_CLOSE could
-    // never be encrypted and the peer idled out instead of learning of the
-    // close. Select the PNS by handshake progress, as ngtcp2 does.
+    // A server reports the code of a CONNECTION_CLOSE it gets during the
+    // handshake, and decrypts one sent before a compatible version switch.
     "patches/lsquic/connection-close-pns.patch",
     // A connection that sent GOAWAY answered every new peer stream with
     // STOP_SENDING, unidirectional ones included. A client that opens its
@@ -177,15 +174,6 @@ export const lsquic: Dependency = {
     // tickable. Its CONNECTION_CLOSE then waited for the next alarm or packet,
     // and so did a graceful server.stop().
     "patches/lsquic/going-away-tickable.patch",
-    // Cubic keeps its windows in unsigned long, which is 32 bits on Windows, and
-    // multiplies them without widening. The pacing rate (cwnd * 10^6 / srtt)
-    // wrapped for every window (litespeedtech/lsquic#391).
-    "patches/lsquic/cubic-llp64-overflow.patch",
-    // immediate_close() and ci_abort_error() took "error code != 0" to mean
-    // that an error is recorded. A close with code 0 from
-    // lsquic_conn_abort_error() (an application close, or a transport close
-    // with a reason) went out as transport INTERNAL_ERROR.
-    "patches/lsquic/abort-error-code-zero.patch",
     // lsquic_stream_is_finished(): inside on_close(), tells a stream that
     // completed on its own from one that was torn down with its connection.
     "patches/lsquic/stream-is-finished.patch",
@@ -198,11 +186,6 @@ export const lsquic: Dependency = {
     // dropped before the send, under the id that on_dg_write gave it with
     // lsquic_conn_set_datagram_id(). Applies on top of node-quic-accessors.
     "patches/lsquic/datagram-ids.patch",
-    // lsquic_merge_acks() merges the ACK frames of one batch of packets. When one
-    // frame's range lay inside the other's, it cut the outer range short: [16-8]
-    // merged with [15-12][10-9] gave [16-12][10-9]. A late packet that only the
-    // newer frame acknowledged was then declared lost.
-    "patches/lsquic/merge-acks-contained-range.patch",
     // A read shutdown queued STOP_SENDING without making the connection
     // tickable. On a stream whose send side was done, the frame waited for the
     // connection's next alarm or packet.
@@ -236,8 +219,7 @@ export const lsquic: Dependency = {
     "patches/lsquic/mini-conn-ctx.patch",
     // lsquic_conn_local_transport_error(): lsquic_conn_status() has no error
     // code, and it reports an error that fails the handshake, such as a TLS
-    // alert, as a version negotiation failure. Applies on top of
-    // abort-error-code-zero.
+    // alert, as a version negotiation failure.
     "patches/lsquic/local-transport-error.patch",
     // lsquic_stream_force_reset_ext() resets the send side only, but it dropped a
     // MAX_STREAM_DATA that was queued for the read side. The receive limit had

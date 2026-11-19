@@ -3215,6 +3215,7 @@ describe("Bun.serve HTTP/3 request body that isn't read yet", () => {
 describe("Bun.serve HTTP/3 request that ends early", () => {
   function serve() {
     const body = Promise.withResolvers<string>();
+    const called = Promise.withResolvers<"called">();
     const server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -3222,11 +3223,12 @@ describe("Bun.serve HTTP/3 request that ends early", () => {
       http3: true,
       http1: false,
       async fetch(req) {
+        called.resolve("called");
         body.resolve(req.text().catch(e => e.name));
         return new Response(await body.promise);
       },
     });
-    return { server, body: body.promise };
+    return { server, body: body.promise, called: called.promise };
   }
   const dial = async (port: number, options?: object) => {
     const client = await connect(`127.0.0.1:${port}`, {
@@ -3244,7 +3246,6 @@ describe("Bun.serve HTTP/3 request that ends early", () => {
   test.each([
     [3, "abc", "abc"],
     [0, "", ""],
-    [10, "", "AbortError"],
     [10, "abc", "AbortError"],
     [2, "abc", "AbortError"],
   ])("content-length %d with the body %j reads as %j", async (length, sent, expected) => {
@@ -3259,6 +3260,35 @@ describe("Bun.serve HTTP/3 request that ends early", () => {
     client.destroy();
     await server.stop(true);
     expect(received).toBe(expected);
+  });
+
+  test.each([
+    ["a FIN", undefined],
+    ["trailers that declare another length", { "content-length": "0" }],
+  ])("content-length 10 with no body and then %s reads as AbortError", async (_, trailers) => {
+    const { server, body, called } = serve();
+    const client = await dial(server.port!);
+    const stream = await client.createBidirectionalStream();
+    stream.closed.catch(() => {});
+    const writer = stream.writer;
+    stream.sendHeaders(requestHeaders("/", { ":method": "POST", "content-length": "10" }));
+    await called;
+    if (trailers) stream.sendHeaders(trailers, { terminal: true });
+    else writer.endSync();
+    const received = await body;
+    client.destroy();
+    await server.stop(true);
+    expect(received).toBe("AbortError");
+  });
+
+  test("content-length 10 with the FIN beside the headers is H3_MESSAGE_ERROR before the handler runs", async () => {
+    const { server, called } = serve();
+    using relay = await tamperingRelay(server.port!);
+    const client = await dial(relay.port, { keylog: true, onkeylog: relay.keylog });
+    relay.sendStream0("server", Buffer.from(frames.postOfTenBytes));
+    const errorCode = await client.closed.catch(e => e.errorCode);
+    await server.stop(true);
+    expect([errorCode, await Promise.race([called, "not called"])]).toEqual([0x10en, "not called"]);
   });
 
   test.each([

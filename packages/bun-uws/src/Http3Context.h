@@ -83,7 +83,7 @@ struct Http3Context {
             Http3ResponseData *rd = res->getHttpResponseData();
             rd->receivedBodyBytes += len;
             if (!rd->inStream) return;
-            /* RFC 9114 §4.1.2. lsquic lets a request with no DATA at all through. */
+            /* RFC 9114 §4.1.2. lsquic goes by the last header block with a content-length, trailers included. */
             if (fin && (us_quic_stream_connection_failed(s) ||
                     (rd->declaredContentLength != NO_CONTENT_LENGTH && rd->receivedBodyBytes != rd->declaredContentLength))) {
                 rd->inStream = nullptr;

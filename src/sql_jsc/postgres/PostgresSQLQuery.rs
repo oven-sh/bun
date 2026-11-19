@@ -16,7 +16,7 @@ use super::postgres_request as PostgresRequest;
 use super::postgres_sql_statement::{ResultDescription, describe};
 use bun_sql::postgres::CommandTag;
 use bun_sql::postgres::any_postgres_error::AnyPostgresError;
-use bun_sql::postgres::pipeline::Protocol;
+use bun_sql::postgres::pipeline::{self, Protocol};
 use bun_sql::postgres::postgres_types::ResultFormats;
 use bun_sql::shared::SQLQueryResultMode as PostgresSQLQueryResultMode;
 
@@ -28,6 +28,7 @@ pub(crate) use crate::generated_bindgen::postgres_sql_query::js_PostgresSQLQuery
 #[derive(bun_ptr::CellRefCounted)]
 pub struct PostgresSQLQuery {
     place: JsCell<Place>,
+    turn: Cell<u64>,
     pub(crate) query: BunString,
     undescribed: JsCell<Undescribed<ResultDescription>>,
 
@@ -61,6 +62,12 @@ pub enum CopyStream {
     Writable,
     /// Between CopyInResponse and the CopyDone or CopyFail that the stream ends with.
     WritableOpen,
+}
+
+impl pipeline::Request for PostgresSQLQuery {
+    fn turn(&self) -> &Cell<u64> {
+        &self.turn
+    }
 }
 
 impl PostgresSQLQuery {
@@ -253,6 +260,7 @@ impl PostgresSQLQuery {
 
         let this = RefPtr::new(PostgresSQLQuery {
             place: JsCell::new(Place::New),
+            turn: Cell::new(0),
             query,
             undescribed: JsCell::default(),
             this_value: JsCell::new(JsRef::empty()),

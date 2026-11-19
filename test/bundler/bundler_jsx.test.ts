@@ -1062,6 +1062,21 @@ describe("bundler", () => {
         `,
         "undefined\n",
       ],
+      [
+        "pruned returns, throws, classes, and control flow",
+        `
+          function render() {
+            return 1;
+            return <Unused />;
+            throw <Unused />;
+            class UnusedClass { render() { return <Unused />; } }
+            if (<Unused />) throw <Unused />;
+            while (<Unused />) throw <Unused />;
+          }
+          console.log(render());
+        `,
+        "1\n",
+      ],
     ])("runs with preserve after removing JSX in %s", async (_, source, expected) => {
       using dir = tempDir("jsx-discarded-code", { "in.jsx": source });
       await using proc = Bun.spawn({
@@ -1075,15 +1090,12 @@ describe("bundler", () => {
       expect({ stdout, exitCode }, stderr).toEqual({ stdout: expected, exitCode: 0 });
     });
 
-    test("preserve reports JSX in a return after pruning an earlier initializer", async () => {
-      using dir = tempDir("jsx-retained-return", {
-        "in.jsx": [
-          "function render() {",
-          "  if (false) { var binding = <Unused />; }",
-          "  return <Retained />;",
-          "}",
-          "console.log(render());",
-        ].join("\n"),
+    test.each([
+      ["a return", "  if (false) { var binding = <Unused />; }\n  return <Retained />;", 10],
+      ["a condition with a hoisted binding", "  return 1;\n  if (<Retained />) { var binding = <Unused />; }", 7],
+    ] as const)("preserve reports JSX in %s after pruning", async (_, body, column) => {
+      using dir = tempDir("jsx-retained-syntax", {
+        "in.jsx": ["function render() {", body, "}", "console.log(render());"].join("\n"),
       });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "run", "--jsx-runtime=preserve", "in.jsx"],
@@ -1095,7 +1107,7 @@ describe("bundler", () => {
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
       expect(exitCode, stderr).toBe(1);
       expect(stderr).toContain("Cannot preserve JSX in a file that Bun runs");
-      expect(stderr).toMatch(/in\.jsx:3:10\b/);
+      expect(stderr).toContain(`in.jsx:3:${column}`);
     });
 
     describe.each([
@@ -1138,6 +1150,7 @@ describe("bundler", () => {
               return typeof binding;
               var binding = [<Unused />];
               console.log(<Unused />);
+              if (<Unused />) throw <Unused />;
             }
             console.log(render());
           `,

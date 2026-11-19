@@ -52,16 +52,8 @@ impl<'a> PreservedJsx<'a> {
         }
     }
 
-    fn statement_key(stmt: Stmt) -> Option<*const ()> {
-        match stmt.data {
-            StmtData::SLocal(local) => Some(local.as_ptr().cast()),
-            StmtData::SExpr(expr) => Some(expr.as_ptr().cast()),
-            _ => None,
-        }
-    }
-
     fn record_statement(&mut self, stmt: Stmt, start: usize) {
-        if let Some(key) = Self::statement_key(stmt) {
+        if let Some(key) = stmt.data.payload_ptr() {
             self.statements.insert(key, start..self.elements.len());
         }
     }
@@ -70,11 +62,14 @@ impl<'a> PreservedJsx<'a> {
         if self.statements.is_empty() {
             return;
         }
-        if let Some(key) = Self::statement_key(stmt)
-            && let Some(range) = self.statements.remove(&key)
-        {
-            self.elements[range].fill(None);
-        }
+        let Some(key) = stmt.data.payload_ptr() else {
+            return;
+        };
+        let range = self.statements.remove(&key);
+        let Some(range) = range else {
+            return;
+        };
+        self.elements[range].fill(None);
     }
 }
 

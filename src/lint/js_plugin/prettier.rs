@@ -21,7 +21,9 @@ pub enum Unformatted {
     NotInstalled,
     /// With `looksAtStdin`: the `error.message` of the error that `prettier.format` threw.
     Message(Vec<u8>),
-    /// The thrown error, formatted like `handleError` in Prettier's CLI.
+    /// The thrown error, formatted like `handleError` in Prettier's CLI. Or the worker's own one-line message: no listed
+    /// plugin has a parser for the file, or no listed plugin declares an option of `[[fmt.overrides]]`. Unlike
+    /// [`Message`](Unformatted::Message), it's an error in every mode.
     Thrown(Vec<u8>),
 }
 

@@ -84,8 +84,9 @@ const TLS13_AES_128_GCM_SHA256: &[u8] = b"TLS_AES_128_GCM_SHA256";
 const TLS13_AES_256_GCM_SHA384: &[u8] = b"TLS_AES_256_GCM_SHA384";
 const TLS13_CHACHA20_POLY1305_SHA256: &[u8] = b"TLS_CHACHA20_POLY1305_SHA256";
 
+// `node_quic_shim.c` asserts these, and the `SSL_EARLY_DATA_*` values below, against BoringSSL's headers.
 const SSL_COMPLIANCE_POLICY_FIPS_202205: c_int = 1;
-const SSL_COMPLIANCE_POLICY_WPA3_192_202304: c_int = 2;
+const SSL_COMPLIANCE_POLICY_WPA3_192_202304: c_int = 3;
 
 fn tls13_policy_for_ciphers(ciphers: &[u8]) -> Option<c_int> {
     let mut has_128 = false;

@@ -259,6 +259,25 @@ test("every CRL in one `crl` entry counts", async () => {
   expect(info.validationErrorCode as unknown as string).toBe("CERT_REVOKED");
 });
 
+test("an expired intermediate in `ca` does not shadow the valid one the server sends", async () => {
+  const read = (name: string) =>
+    readFileSync(join(import.meta.dir, "..", "tls", "fixtures", "expired-intermediate", name));
+  const identity = {
+    keys: [createPrivateKey(read("leaf.key"))],
+    certs: [Buffer.concat([read("leaf.pem"), read("int-valid.pem")])],
+  };
+  await using server = await listen(ignoreErrors, { sni: { "*": identity }, alpn: ["quic-test"] });
+  const session = await connect(server.address!, {
+    alpn: "quic-test",
+    servername: "localhost",
+    verifyPeer: "manual",
+    ca: [read("root.pem"), read("int-expired.pem")],
+  } as SessionOptions);
+  const info = await session.opened;
+  await session.close();
+  expect(info.validationErrorCode).toBeUndefined();
+});
+
 test("verifyPeer 'strict' and 'auto' refuse a certificate with a blocked public key", async () => {
   // Unlike agent6's, this certificate names its host, which both modes check.
   const fixtures = join(import.meta.dir, "..", "tls", "fixtures");

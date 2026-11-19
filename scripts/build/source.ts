@@ -138,6 +138,12 @@ export type Source =
        */
       identity: string;
       /**
+       * Absolute path of the file that pins the download's sha256 (format:
+       * `pinnedSha256` in download.ts). The fetch fails if it has no line for
+       * `url`, or if the download hashes to something else.
+       */
+      sha256sums?: string;
+      /**
        * Paths to delete (relative to destDir) after extraction. WebKit
        * deletes `include/unicode` on macOS (conflicts with system ICU
        * headers); nodejs-headers deletes openssl/uv (conflict with
@@ -579,7 +585,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
   // $rm_paths: space-separated paths (relative to dest) to delete after
   // extraction. Trailing positional args to fetch-cli, may be empty.
   n.rule("dep_fetch_prebuilt", {
-    command: `${stream} ${cfg.jsRuntime} ${fetchCli} prebuilt $name $url $dest $identity $rm_paths`,
+    command: `${stream} ${cfg.jsRuntime} ${fetchCli} prebuilt $name $url $dest $identity $sha256sums $rm_paths`,
     description: "fetch $name (prebuilt)",
     restat: true,
     pool: "dep",
@@ -981,17 +987,19 @@ function emitPrebuilt(
   // prunes downstream when fetch was a no-op).
   n.build({
     outputs: [stamp],
-    implicitOutputs: [...libs, ...files],
+    // .sha256: a checkout with no pin for this version can have filled the shared cache since.
+    implicitOutputs: [...libs, ...files, ...(source.sha256sums !== undefined ? [resolve(destDir, ".sha256")] : [])],
     rule: "dep_fetch_prebuilt",
     inputs: [],
-    // Only fetch-cli.ts. download.ts has a lot of shared helpers — editing
+    // Not download.ts: it has a lot of shared helpers — editing
     // those shouldn't re-download a multi-hundred-MB WebKit tarball.
-    implicitInputs: [fetchCliPath],
+    implicitInputs: [fetchCliPath, ...(source.sha256sums !== undefined ? [source.sha256sums] : [])],
     vars: {
       name,
       url: source.url,
       dest: destDir,
       identity: source.identity,
+      sha256sums: source.sha256sums !== undefined ? quote(source.sha256sums, cfg.host.os === "windows") : "-",
       // Space-separated relative paths. No quoting needed — paths are
       // under our control (include/node/openssl etc.), no spaces.
       rm_paths: (source.rmAfterExtract ?? []).join(" "),

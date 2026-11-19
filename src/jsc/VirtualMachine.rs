@@ -2678,6 +2678,8 @@ pub enum TelemetryFlush {
     AtExit,
     /// The process is replaced or kills itself, from any thread. A collector that is down must not hold it up.
     WithoutExit,
+    /// `bun test --isolate`, while the file's functions can still be called.
+    AtEndOfTestFile,
 }
 
 /// Exports the OpenTelemetry spans that have ended.
@@ -2685,6 +2687,11 @@ pub fn flush_telemetry(when: TelemetryFlush) {
     if let Some(hooks) = runtime_hooks() {
         (hooks.flush_telemetry)(when);
     }
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__flushTelemetryBeforeExecve() {
+    flush_telemetry(TelemetryFlush::WithoutExit);
 }
 
 /// Which of its timers a `--hot` run takes with it.
@@ -5623,6 +5630,7 @@ impl VirtualMachine {
     /// outgoing global) before the blind socket-group close below.
     pub fn swap_global_for_test_isolation(&self) {
         debug_assert!(self.test_isolation_enabled.get());
+        flush_telemetry(TelemetryFlush::AtEndOfTestFile);
         // Only the file's graph and its context are torn down. The global object is kept.
         let shares_global = self.test_isolation_state.shares_global.get();
 

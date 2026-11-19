@@ -18,10 +18,12 @@
 #include "ZigGlobalObject.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/AsyncContextSwapScope.h>
+#include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/DeferGCInlines.h>
 #include <JavaScriptCore/DeferTermination.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/FrameTracers.h>
+#include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSFunctionWithFields.h>
 #include <JavaScriptCore/JSMapInlines.h>
@@ -40,7 +42,6 @@ extern "C" JSC::EncodedJSValue Bun__Telemetry__createRootContext(JSC::JSGlobalOb
 extern "C" JSC::EncodedJSValue Bun__Telemetry__createTracerProvider(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue Bun__Telemetry__createContextManager(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue Bun__Telemetry__createPropagator(JSC::JSGlobalObject*);
-extern "C" BunString Bun__Telemetry__installedApiVersion(JSC::JSGlobalObject*, const BunString* package);
 
 namespace Bun::Telemetry {
 
@@ -325,36 +326,11 @@ struct ErrorDescription {
     bool isNullish;
 };
 
-static String readString(JSGlobalObject* globalObject, JSObject* object, const Identifier& name, bool runsGetters)
-{
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue value;
-    if (runsGetters) {
-        value = object->get(globalObject, name);
-        RETURN_IF_EXCEPTION(scope, {});
-    } else {
-        PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-        bool found = object->getPropertySlot(globalObject, name, slot);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (found && slot.isValue())
-            value = slot.getPureResult();
-    }
-    if (!value || !value.isString())
-        return {};
-    RELEASE_AND_RETURN(scope, asString(value)->value(globalObject));
-}
-
 // The first read of an Error's `stack` calls Error.prepareStackTrace, fixes the text and drops the frames.
-static String readStackWithoutRunningScript(JSGlobalObject* globalObject, JSObject* object)
+static String formatFrames(JSGlobalObject* globalObject, ErrorInstance* error)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* error = dynamicDowncast<ErrorInstance>(object);
-    if (!error)
-        RELEASE_AND_RETURN(scope, readString(globalObject, object, vm.propertyNames->stack, false));
-    if (JSValue stack = error->getDirect(vm, vm.propertyNames->stack))
-        RELEASE_AND_RETURN(scope, stack.isString() ? asString(stack)->value(globalObject).data : String());
     // A collection that finds a frame dead frees them all.
     DeferGCForAWhile deferGC(vm);
     auto* frames = error->stackTrace();
@@ -367,6 +343,28 @@ static String readStackWithoutRunningScript(JSGlobalObject* globalObject, JSObje
     OrdinalNumber line, column;
     String sourceURL;
     RELEASE_AND_RETURN(scope, formatStackTrace(vm, defaultGlobalObject(error->globalObject()), error->globalObject(), name, message, line, column, sourceURL, *frames, nullptr));
+}
+
+static String readString(JSGlobalObject* globalObject, JSObject* object, const Identifier& name, bool runsGetters)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value;
+    if (runsGetters) {
+        value = object->get(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, {});
+    } else {
+        for (JSObject* holder = object; holder && !holder->structure()->typeInfo().overridesGetPrototype(); holder = holder->getPrototypeDirect().getObject()) {
+            value = holder->getDirect(vm, name);
+            if (value)
+                break;
+            if (auto* error = name == vm.propertyNames->stack ? dynamicDowncast<ErrorInstance>(holder) : nullptr)
+                RELEASE_AND_RETURN(scope, formatFrames(globalObject, error));
+        }
+    }
+    if (!value || !value.isString())
+        return {};
+    RELEASE_AND_RETURN(scope, asString(value)->value(globalObject));
 }
 
 // The type is the `code`, or else the `name`. A primitive has none: it is the message.
@@ -399,7 +397,7 @@ extern "C" void Bun__Telemetry__describeError(JSGlobalObject* globalObject, Enco
         }
         out->type = Bun::toStringRef(type);
         out->message = Bun::toStringRef(message);
-        stack = runsGetters ? readString(globalObject, object, vm.propertyNames->stack, true) : readStackWithoutRunningScript(globalObject, object);
+        stack = readString(globalObject, object, vm.propertyNames->stack, runsGetters);
         RETURN_IF_EXCEPTION(scope, );
         out->stack = Bun::toStringRef(stack);
         return;
@@ -772,31 +770,89 @@ static void fillRegistry(Zig::GlobalObject* globalObject, JSObject* registry)
     }
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsApiRegistry, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue holder, PropertyName name))
+// getGlobal() takes a registry whose minor version is not older than its own. registerGlobal() wants its very own,
+// and is the one that assigns to the global: `_global[key] = _global[key] ?? { version: VERSION }`.
+static constexpr auto registryField = static_cast<JSFunctionWithFields::Field>(0);
+// `true` while registerGlobal() is asked for its version, then the registry that it has made.
+static constexpr auto probeField = static_cast<JSFunctionWithFields::Field>(1);
+
+static Identifier registryKey(VM& vm)
 {
-    BUN_REMOVABLE_DEFINITION(Telemetry, jsApiRegistry);
-    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(JSValue::decode(holder));
-    auto& vm = getVM(lexicalGlobalObject);
+    return Identifier::fromUid(vm.symbolRegistry().symbolForKey("opentelemetry.js.api.1"_s));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsGetApiRegistry, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Telemetry, jsGetApiRegistry);
+    auto* getter = uncheckedDowncast<JSFunctionWithFields>(callFrame->jsCallee());
+    if (getter->getField(probeField).isTrue()) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    if (JSValue registry = getter->getField(registryField); registry.isObject()) [[likely]]
+        return JSValue::encode(registry);
+    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* registry = constructEmptyObject(globalObject);
-    String reader;
-    StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
-        reader = visitor->sourceURL();
-        return IterationStatus::Done;
-    });
-    String folder = reader.left(lengthOfFolderOfApi(reader));
-    BunString package = Bun::toString(folder);
-    registry->putDirect(vm, Identifier::fromString(vm, "version"_s), jsString(vm, OwnedString::adopt(Bun__Telemetry__installedApiVersion(globalObject, &package)).transferToWTFString()));
+    registry->putDirect(vm, Identifier::fromString(vm, "version"_s), jsNontrivialString(vm, "1.999.0"_s));
+    fillRegistry(defaultGlobalObject(globalObject), registry);
     RETURN_IF_EXCEPTION(scope, {});
-    fillRegistry(globalObject, registry);
-    RETURN_IF_EXCEPTION(scope, {});
-    globalObject->putDirect(vm, name, registry);
+    getter->setField(vm, registryField, registry);
     return JSValue::encode(registry);
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSApiRegistry, (JSGlobalObject * globalObject, EncodedJSValue holder, EncodedJSValue value, PropertyName name))
+JSC_DEFINE_HOST_FUNCTION(jsIgnoreApiLog, (JSGlobalObject*, CallFrame*))
 {
-    return asObject(JSValue::decode(holder))->putDirect(getVM(globalObject), name, JSValue::decode(value));
+    return JSValue::encode(jsUndefined());
+}
+
+// Calls it once more, as if there were no registry yet.
+static JSValue versionOfCallingApi(JSGlobalObject* globalObject, CallFrame* callFrame, JSFunctionWithFields* getter)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSCell* registerGlobal = nullptr;
+    StackVisitor::visit(callFrame, vm, [&](StackVisitor& visitor) {
+        if (!visitor->index())
+            return IterationStatus::Continue;
+        // Compiled code has none, and takes no call that the compiler has not seen.
+        if (auto* codeBlock = visitor->codeBlock(); codeBlock && codeBlock->ownerExecutable()->source().view().contains("Attempted duplicate registration of API"_s) && codeBlock->codeType() == FunctionCode)
+            registerGlobal = visitor->callee().asCell();
+        return IterationStatus::Done;
+    });
+    if (!registerGlobal)
+        return jsNontrivialString(vm, "1.10.0"_s);
+    JSObject* logger = constructEmptyObject(globalObject);
+    for (ASCIILiteral level : { "debug"_s, "error"_s })
+        logger->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, level), 0, jsIgnoreApiLog, ImplementationVisibility::Private, NoIntrinsic, 0);
+    MarkedArgumentBuffer arguments;
+    arguments.append(jsEmptyString(vm));
+    arguments.append(jsUndefined());
+    arguments.append(logger);
+    getter->setField(vm, probeField, jsBoolean(true));
+    call(globalObject, registerGlobal, getCallData(registerGlobal), jsUndefined(), arguments);
+    JSValue made = getter->getField(probeField);
+    getter->setField(vm, probeField, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, getPath(globalObject, made, { "version"_s }));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsSetApiRegistry, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Telemetry, jsSetApiRegistry);
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* getter = uncheckedDowncast<JSFunctionWithFields>(uncheckedDowncast<JSFunctionWithFields>(callFrame->jsCallee())->getField(registryField));
+    JSValue value = callFrame->argument(0);
+    if (getter->getField(probeField).isTrue()) {
+        getter->setField(vm, probeField, value);
+        return JSValue::encode(jsUndefined());
+    }
+    if (value.isObject() && value == getter->getField(registryField)) {
+        JSValue version = versionOfCallingApi(globalObject, callFrame, getter);
+        RETURN_IF_EXCEPTION(scope, {});
+        asObject(value)->putDirect(vm, Identifier::fromString(vm, "version"_s), version);
+    }
+    globalObject->putDirect(vm, registryKey(vm), value);
+    return JSValue::encode(jsUndefined());
 }
 
 extern "C" void Bun__Telemetry__registerWithApi(JSGlobalObject* lexicalGlobalObject)
@@ -804,20 +860,29 @@ extern "C" void Bun__Telemetry__registerWithApi(JSGlobalObject* lexicalGlobalObj
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Identifier registryKey = Identifier::fromUid(vm.symbolRegistry().symbolForKey("opentelemetry.js.api.1"_s));
+    Identifier key = registryKey(vm);
 
     // The compiler has not seen these calls, so it may have left out what they would call.
     if (!vm.hasCompiledCode()) {
-        registerWithLoadedCopiesOfApi(globalObject, registryKey);
+        registerWithLoadedCopiesOfApi(globalObject, key);
         RETURN_IF_EXCEPTION(scope, );
     }
 
-    JSValue present = globalObject->get(globalObject, registryKey);
+    JSValue present = globalObject->get(globalObject, key);
     RETURN_IF_EXCEPTION(scope, );
     if (JSObject* registry = present.getObject())
         RELEASE_AND_RETURN(scope, fillRegistry(globalObject, registry));
     // A program that does not load the package never reads it.
-    globalObject->putDirectCustomAccessor(vm, registryKey, CustomGetterSetter::create(vm, jsApiRegistry, setJSApiRegistry), PropertyAttribute::CustomValue | 0);
+    auto create = [&](NativeFunction function) {
+        auto* created = JSFunctionWithFields::create(vm, globalObject, vm.getHostFunction(function, ImplementationVisibility::Private, callHostFunctionAsConstructor, 0, String()));
+        created->setField(vm, registryField, jsUndefined());
+        created->setField(vm, probeField, jsUndefined());
+        return created;
+    };
+    auto* getter = create(jsGetApiRegistry);
+    auto* setter = create(jsSetApiRegistry);
+    setter->setField(vm, registryField, getter);
+    globalObject->putDirectAccessor(globalObject, key, GetterSetter::create(vm, globalObject, getter, setter), PropertyAttribute::Accessor | 0);
 }
 
 }

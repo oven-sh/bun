@@ -345,6 +345,27 @@ pub fn redact_url(url: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     Cow::Owned(parts.concat())
 }
 
+/// `text` with [`redact_url`] applied to every URL in it.
+pub fn redact_urls_in(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    use bun_core::strings;
+    use std::borrow::Cow;
+    let (mut out, mut copied, mut at) = (Vec::new(), 0, 0);
+    while let Some(start) = strings::index_of(&text[at..], b"://").map(|i| at + i) {
+        at = strings::index_of_any(&text[start..], b" \t\r\n\"'`<>")
+            .map_or(text.len(), |i| start + i);
+        if let Cow::Owned(redacted) = redact_url(&text[start..at]) {
+            out.extend_from_slice(&text[copied..start]);
+            out.extend_from_slice(&redacted);
+            copied = at;
+        }
+    }
+    if copied == 0 {
+        return Cow::Borrowed(text);
+    }
+    out.extend_from_slice(&text[copied..]);
+    Cow::Owned(out)
+}
+
 /// Append `s` (bytes off the wire: a request target, a header value) to
 /// `out` as valid UTF-8, replacing invalid sequences with U+FFFD. proto3
 /// `string` fields must be UTF-8 or receivers reject the whole request; the
@@ -427,7 +448,7 @@ impl Exception<'_> {
             ("exception.stacktrace", self.stack),
         ] {
             if !value.is_empty() {
-                event.attr(key.as_bytes(), &Value::Str(value));
+                event.attr(key.as_bytes(), &Value::Str(&redact_urls_in(value)));
             }
         }
     }
@@ -724,6 +745,14 @@ mod redact_tests {
             redact_query(b"a=1"),
             std::borrow::Cow::Borrowed(_)
         ));
+    }
+
+    #[test]
+    fn urls_in_a_text() {
+        assert_eq!(
+            &*super::redact_urls_in(b"a \"http://h/?sig=1\" b ws://u:p@h c http://h/ok\n://"),
+            b"a \"http://h/?sig=REDACTED\" b ws://REDACTED:REDACTED@h c http://h/ok\n://"
+        );
     }
 
     #[test]

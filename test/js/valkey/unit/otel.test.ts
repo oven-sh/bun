@@ -53,8 +53,9 @@ describe.skipIf(!isEnabled)("Valkey: OpenTelemetry", () => {
   test("neither ECHO nor the reply to an unknown command reveals a value", async () => {
     await ctx.redis.send("ECHO", ["secret"]);
     await ctx.redis.send("MADEUP", ["key", "secret"]).catch(() => {});
+    await ctx.redis.send("CONFIG", ["secret"]).catch(() => {});
     const got = await collect();
-    expect(got.map(s => s.attributes["db.query.text"])).toEqual(["ECHO", "MADEUP key ..."]);
+    expect(got.map(s => s.attributes["db.query.text"])).toEqual(["ECHO", "MADEUP key ...", undefined]);
     expect(JSON.stringify(got)).not.toContain("secret");
   });
 

@@ -311,35 +311,53 @@ describe("@opentelemetry/api", () => {
     await collect();
   });
 
-  test("the api global's version matches the installed @opentelemetry/api, so its registerGlobal() calls succeed", async () => {
-    const { diag, metrics, DiagLogLevel } = require("@opentelemetry/api");
-    const version = require("@opentelemetry/api/package.json").version;
-    expect((globalThis as any)[Symbol.for("opentelemetry.js.api.1")].version).toBe(version);
-    expect(diag.setLogger({ error() {}, warn() {}, info() {}, debug() {}, verbose() {} }, DiagLogLevel.ERROR)).toBe(
-      true,
-    );
-    expect(metrics.setGlobalMeterProvider({ getMeter: () => ({}) as any })).toBe(true);
-    metrics.disable();
-    diag.disable();
-    // …and it is the *resolved* package's version, not a baked-in constant
-    using dir = tempDir("otel-api-version", {
-      "node_modules/@opentelemetry/api/package.json": JSON.stringify({
-        name: "@opentelemetry/api",
-        version: "9.8.7",
-        main: "index.js",
-      }),
-      "node_modules/@opentelemetry/api/index.js": "module.exports = {};",
-      "index.js": `Bun.otel.start({ exporters: [{ export() {} }] }); console.log(globalThis[Symbol.for("opentelemetry.js.api.1")].version);`,
+  test.concurrent.each([
+    ["1.9", apiPackageDir, false],
+    ["1.9, minified", apiPackageDir, true],
+    ["1.10, minified", api110PackageDir, true],
+  ])("a bundle with api %s records, and registers a meter provider and a logger", async (_, packageDir, minify) => {
+    using dir = tempDir("otel-api-bundle", {
+      "src/index.js": `
+        import { trace, metrics, diag } from "@opentelemetry/api";
+        const before = trace.getTracer("t").startSpan("s").isRecording();
+        const logger = { error() {}, warn() {}, info() {}, debug() {}, verbose() {} };
+        console.log(before, metrics.setGlobalMeterProvider({ getMeter() {} }), diag.setLogger(logger), trace.getTracer("t").startSpan("s").isRecording());
+      `,
     });
+    cpSync(packageDir, path.join(String(dir), "src/node_modules/@opentelemetry/api"), { recursive: true });
+    const outdir = path.join(String(dir), "out");
+    await Bun.build({ entrypoints: [path.join(String(dir), "src/index.js")], outdir, target: "bun", minify });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "index.js"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
+      env: { ...bunEnv, BUN_OTEL: "1", OTEL_TRACES_EXPORTER: "none" },
+      cwd: outdir,
       stderr: "inherit",
     });
-    expect((await proc.stdout.text()).trim()).toBe("9.8.7");
-    expect(await proc.exited).toBe(0);
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "true true true true\n", exitCode: 0 });
+  });
+
+  test("an older copy that only reads the registry does not fix its version", async () => {
+    using dir = tempDir("otel-api-older-first", {
+      "node_modules/lib/index.js": `require("@opentelemetry/api").trace.getTracer("lib");`,
+      "index.js": `
+        require("lib");
+        const { trace, metrics } = require("@opentelemetry/api");
+        console.log(trace.getTracer("t").startSpan("s").isRecording(), metrics.setGlobalMeterProvider({ getMeter() {} }));
+      `,
+    });
+    cpSync(apiPackageDir, path.join(String(dir), "node_modules/lib/node_modules/@opentelemetry/api"), {
+      recursive: true,
+    });
+    cpSync(api110PackageDir, path.join(String(dir), "node_modules/@opentelemetry/api"), { recursive: true });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: { ...bunEnv, BUN_OTEL: "1", OTEL_TRACES_EXPORTER: "none" },
+      cwd: String(dir),
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "true true\n", exitCode: 0 });
   });
 
   test("baggage set or deleted on the Context wins over what the request carried in, for fetch and node:http alike", async () => {
@@ -505,7 +523,7 @@ describe("@opentelemetry/api", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[true,[true,1],null,true]\n", stderr: "", exitCode: 0 });
   });
 
-  test("the version is that of the copy that asks, where only a dependency has the package", async () => {
+  test("a meter provider registers where only a dependency has the package", async () => {
     using dir = tempDir("otel-api-transitive", {
       "node_modules/lib/index.js": `module.exports = require("@opentelemetry/api");`,
       "index.js": `console.log(require("lib").metrics.setGlobalMeterProvider({ getMeter() {} }));`,

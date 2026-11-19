@@ -187,8 +187,8 @@ pub(crate) fn node_end<'a>(
     (span, span_value): (&Span, JsLocal<'a>),
     method: &[u8],
     url: &[u8],
-    status: f64,
-    http_version: &[u8],
+    status: Option<f64>,
+    http_version: Option<&[u8]>,
     error: JsLocal<'a>,
 ) {
     removable_body_behind_value!(Telemetry, {
@@ -196,8 +196,8 @@ pub(crate) fn node_end<'a>(
         let exchange = Exchange {
             method,
             url,
-            status: status as u16,
-            protocol_version: http_version,
+            status: status.unwrap_or(0.0) as u16,
+            protocol_version: http_version.unwrap_or_default(),
         };
         span.record(|r| exchange.record(r));
         if !error.is_undefined() {

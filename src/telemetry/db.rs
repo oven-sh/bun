@@ -254,10 +254,13 @@ pub fn describe_redis_command(record: &mut Record, name: &[u8], first: &[u8], ha
 }
 
 impl<'a> DbError<'a> {
-    pub fn of_redis(reply: &'a [u8]) -> DbError<'a> {
+    /// A reply quotes arguments: all of them for an unknown command, a password for `ACL`.
+    pub fn of_redis(reply: &'a [u8], record: &Record) -> DbError<'a> {
         use bun_core::strings;
-        // The reply to an unknown command quotes its arguments.
-        let end = strings::index_of(reply, b", with args beginning with").unwrap_or(reply.len());
+        let end = match record.has_attribute(b"db.query.text") {
+            true => strings::index_of(reply, b", with args beginning with").unwrap_or(reply.len()),
+            false => 0,
+        };
         DbError {
             ty: strings::split(reply, b" ").next().unwrap_or_default(),
             message: &reply[..end],

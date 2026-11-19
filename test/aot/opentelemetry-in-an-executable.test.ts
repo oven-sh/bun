@@ -91,6 +91,20 @@ describe("OpenTelemetry in an executable", () => {
     expect(await run([dir.executable])).toEqual({ stdout: "true true\n", stderr: "", exitCode: 0 });
   });
 
+  test("with BUN_OTEL=1 the release of the package that Bun assumes registers its logger", async () => {
+    using dir = await build(`
+      const key = Symbol.for("opentelemetry.js.api.1");
+      const registry = ((globalThis as any)[key] = (globalThis as any)[key] ?? { version: "0" });
+      console.log(registry.version, typeof registry.trace, (globalThis as any)[key] === registry);
+    `);
+    const env = { ...bunEnv, BUN_OTEL: "1", OTEL_TRACES_EXPORTER: "none" };
+    expect(await run([dir.executable], undefined, env)).toEqual({
+      stdout: "1.10.0 object true\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test.skipIf(!!without("a Bun that trims"))("--trim keeps tracing for a program that names Bun.otel", async () => {
     using dir = await build("void Bun.otel;" + usesTheApi, "--trim");
     expect(await traced(dir.executable)).toEqual(whole);

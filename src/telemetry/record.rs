@@ -312,7 +312,8 @@ impl Record {
 
     pub fn fail(&mut self, e: &Exception<'_>) {
         self.add_exception(e, 0);
-        self.error(if e.ty.is_empty() { b"Error" } else { e.ty }, e.message);
+        let ty: &[u8] = if e.ty.is_empty() { b"Error" } else { e.ty };
+        self.error(ty, &otlp::redact_urls_in(e.message));
     }
 
     /// [`fail`](Self::fail) for an error of native code. The code stands in for a missing message.

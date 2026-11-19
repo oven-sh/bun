@@ -658,6 +658,39 @@ describe("Bun.otel", () => {
     expect((await collect())[0].events[0].attributes["exception.stacktrace"]).toMatch(/^Error: thrown\n +at thrower /);
   });
 
+  test("an object that inherits from an Error is described, and the stack of the Error is left alone", async () => {
+    const { prepareStackTrace } = Error;
+    Error.prepareStackTrace = () => "prepared";
+    try {
+      const inner = new RangeError("inner");
+      const heir = Object.create(inner);
+      expect(() =>
+        Bun.otel.span("throws", () => {
+          throw heir;
+        }),
+      ).toThrow();
+      expect([heir.stack, inner.stack]).toEqual(["prepared", "prepared"]);
+    } finally {
+      Error.prepareStackTrace = prepareStackTrace;
+    }
+    expect((await collect())[0].events[0].attributes).toEqual({
+      "exception.type": "RangeError",
+      "exception.message": "inner",
+      "exception.stacktrace": expect.stringMatching(/^RangeError: inner\n +at /),
+    });
+  });
+
+  test("a URL in an error is redacted on every span that the error passes", async () => {
+    const error = new Error('fetching "https://u:secret@h/?sig=secret" failed');
+    await Bun.otel.span("rejects", () => Promise.reject(error)).catch(() => {});
+    tracer.startSpan("told").fail(error).end();
+    const got = await collect();
+    expect(got.map(s => s.status.message)).toEqual(
+      Array(2).fill('fetching "https://REDACTED:REDACTED@h/?sig=REDACTED" failed'),
+    );
+    expect(JSON.stringify(got)).not.toContain("secret");
+  });
+
   test("a Context made under an entered span, and with(span), outlive its end()", () =>
     scoped(async () => {
       const { contextManager } = Bun.otel;

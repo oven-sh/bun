@@ -7,9 +7,7 @@ use std::sync::Arc;
 use bun_core::{String as BunString, StringPointer};
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
-    FetchHeaders, JSArrayIterator, JSGlobalObject, JSObject, JSValue, JsResult, StringJsc,
-};
+use bun_jsc::{FetchHeaders, JSArrayIterator, JSGlobalObject, JSObject, JSValue, JsResult};
 use bun_removable_features::{Feature, is_removed, removable_body};
 use bun_telemetry::processor::{self, Exporter};
 use bun_telemetry::{Instrument, InstrumentSet, RootSampler, Sampler, Value};
@@ -92,7 +90,7 @@ fn configure_from_environment(vm: &'static VirtualMachine) {
 pub(crate) fn undo_start(state: &VmState) {
     let mut is_set_up = IS_SET_UP.lock();
     bun_telemetry::shut_down();
-    processor::global().export_all();
+    processor::global().hand_out_pending();
     processor::global().install_exporters(Some(state.owner_key()), Vec::new());
     *is_set_up = false;
 }
@@ -210,7 +208,7 @@ pub(crate) fn start<'a>(cx: &mut JsScope<'a>, options: Option<&StartOptions<'a>>
     };
     if !is_first {
         // With the resource they were recorded under.
-        processor::global().export_all();
+        processor::global().hand_out_pending();
     }
     if how == Exporters::Replace {
         JsExporter::retire_all(state);
@@ -488,53 +486,4 @@ fn read_instrumentations(
         }
         Ok(())
     })
-}
-
-fn version_in(global: &JSGlobalObject, package_json: &[u8]) -> JsResult<Option<BunString>> {
-    let Ok(text) = bun_sys::File::read_from(bun_sys::Fd::cwd(), package_json) else {
-        return Ok(None);
-    };
-    let version = (BunString::clone_utf8(&text).to_js_by_parse_json(global))
-        .and_then(|package| match package.is_object() {
-            true => package.get_own(global, &BunString::static_("version")),
-            false => Ok(None),
-        })
-        .and_then(|version| {
-            let version = version.filter(|version| version.is_string_literal());
-            version
-                .map(|version| version.to_bun_string(global))
-                .transpose()
-        });
-    match version {
-        Err(_) if global.clear_exception_except_termination() => Ok(None),
-        version => version,
-    }
-}
-
-/// `registerGlobal()` of @opentelemetry/api refuses a registry of any version but its own. `getGlobal()` takes one
-/// whose minor version is not older. `package` is the folder of the copy that asks, or empty.
-#[unsafe(no_mangle)]
-#[optimize(size)]
-extern "C" fn Bun__Telemetry__installedApiVersion(
-    global: &JSGlobalObject,
-    package: &BunString,
-) -> BunString {
-    use bun_paths::resolve_path::{join, platform};
-    let vm = global.bun_vm();
-    let package = package.to_utf8();
-    let main_dir = vm.main().and_then(bun_paths::dirname);
-    // Not through the resolver, which may install the package.
-    let above = (main_dir.into_iter().chain([vm.top_level_dir()]))
-        .flat_map(|start| core::iter::successors(Some(start), |dir| bun_paths::dirname(dir)))
-        .map(|dir| [dir, b"node_modules/@opentelemetry/api/package.json"]);
-    let asking = (!package.is_empty()).then_some([&*package, b"package.json"]);
-    for path in asking.into_iter().chain(above) {
-        match version_in(global, join::<platform::Auto>(&path)) {
-            Ok(Some(version)) => return version,
-            Ok(None) => {}
-            Err(_terminated) => return BunString::EMPTY,
-        }
-    }
-    // A bundle or an executable. The latest release is the guess.
-    BunString::static_("1.10.0")
 }

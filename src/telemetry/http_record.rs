@@ -471,11 +471,12 @@ fn origin_len(target: &[u8]) -> usize {
     if target.first() == Some(&b'/') {
         return 0;
     }
-    strings::index_of(target, b"://").map_or(0, |scheme| {
-        let authority = scheme + 3;
-        strings::index_of_char_usize(&target[authority..], b'/')
-            .map_or(target.len(), |i| authority + i)
-    })
+    match strings::index_of(target, b"://").map(|scheme| scheme + 3) {
+        Some(authority) => strings::index_of_char_usize(&target[authority..], b'/')
+            .map_or(target.len(), |i| authority + i),
+        // CONNECT user:password@host:port
+        None => strings::last_index_of_char(target, b'@').map_or(0, |at| at + 1),
+    }
 }
 
 fn without_port(address: &[u8]) -> &[u8] {
@@ -637,6 +638,7 @@ mod tests {
             ("/http://x/y", "/http://x/y", ""),
             ("http://u:p@h/x?y", "/x", "y"),
             ("http://u:p@h?y", "", "y"),
+            ("u:p@h:80", "h:80", ""),
             ("*", "*", ""),
         ] {
             let mut facts = Facts::new();

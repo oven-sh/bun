@@ -39,7 +39,7 @@ Bun.otel.start({
 
 An option that you leave out comes from [the environment](#environment-variables), as `process.env` is at the call. The entries of `exporters` don't get `OTEL_EXPORTER_OTLP_HEADERS`, because a list can name several vendors. A second call reconfigures the process. It keeps the exporters unless you pass `exporters` or `endpoint`.
 
-Bun exports what is left when the process exits, also after `process.exit()` and an uncaught exception. A signal from another process that has no handler ends the process at once. A function exporter that needs the network has no event loop at exit, so `await Bun.otel.shutdown()` first.
+Bun exports what is left when the process exits, also after `process.exit()` and an uncaught exception. A signal from another process that has no handler ends the process at once. A function exporter that needs the network has no event loop at exit, so `await Bun.otel.shutdown()` first. A restart of `--watch` exports over OTLP and calls no function exporter.
 
 ## What Bun traces
 
@@ -69,6 +69,7 @@ Attributes follow the [HTTP](https://opentelemetry.io/docs/specs/semconv/http/ht
 - Bun replaces the credentials in a URL, and signatures such as `sig=` and `X-Amz-Signature=`, with `REDACTED`. Other query parameters are recorded.
 - `db.query.text` has placeholders for a tagged template. It is the text you passed for `sql.unsafe()`, `sql.file()` and `db.exec()`. Turn it off with `captureDbStatement: false`. The error message of a server can still quote a value.
 - A Redis span has the command and its first argument. It has only the command for `ECHO` and `PING`, and neither for `AUTH`, `HELLO`, `ACL`, `CONFIG` and `MIGRATE`.
+- A span that an error passes through records its message and stack. Bun redacts the URLs in them and nothing else.
 - A `spawn` span has the name of the executable and the number of arguments.
 - Bun forwards `tracestate` and `baggage` to every host that you call under a request that carried them. Set `propagators` to `["tracecontext"]` to keep baggage back.
 
@@ -136,7 +137,7 @@ Use Bun's tracing or the tracing SDK, not both. Whichever registers first keeps 
 
 ### In a bundle or an executable
 
-Bun finds the package in `node_modules`. In a bundle or an executable it can't, so it assumes version 1.10.0 and can't reach tracers that your code took before `Bun.otel.start()`. Register through the package to cover both:
+In a bundle or an executable Bun can't reach the tracers that your code took before `Bun.otel.start()`. With `bun compile` it also can't ask the package for its version and assumes 1.10.0, so another version refuses your meter provider and your `diag` logger. Leave `BUN_OTEL` unset and register through the package to cover both:
 
 ```ts
 import { trace } from "@opentelemetry/api";

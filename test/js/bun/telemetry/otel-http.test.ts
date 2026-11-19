@@ -1710,6 +1710,21 @@ test("client.address has no port, and a bound", async () => {
   ]);
 });
 
+test("node:http: a path that is no string, and a response whose fields were replaced", async () => {
+  using server = Bun.serve({ port: 0, fetch: () => new Response() });
+  for (const path of [new URL("http://example.com/x"), "ws://u:secret@example.com/y"]) {
+    await new Promise(resolve =>
+      http.get({ host: "127.0.0.1", port: server.port, path: path as any }, res => {
+        Object.assign(res, { statusCode: "200", httpVersion: 1.1 }).resume().on("end", resolve);
+      }),
+    );
+  }
+  expect(byName(await collect(2), "bun.http.client").map(s => s.attributes["url.full"])).toEqual([
+    "http://example.com/x",
+    "ws://REDACTED:REDACTED@example.com/y",
+  ]);
+});
+
 test("a TraceState with a line break is not sent", async () => {
   const seen: unknown[] = [];
   using server = Bun.serve({

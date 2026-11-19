@@ -60,6 +60,13 @@ try {
 } catch (error) {
   console.log(error instanceof PaymentError, Bun.otel.activeSpan());
 }
+for (const thrown of [{ message: "plain", code: "E_PLAIN" }, Object.create(new PaymentError("inherited"))]) {
+  try {
+    Bun.otel.span("throws", () => {
+      throw thrown;
+    });
+  } catch {}
+}
 for (const refused of [class {}, function* generator() {}, async function* asyncGenerator() {}, () => {}]) {
   try {
     Bun.otel.wrap(refused as any);

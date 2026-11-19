@@ -229,6 +229,8 @@ pub struct Flags {
     pub redirect_credentials: RedirectCredentialsPolicy,
     /// While all connections are taken, this request lets the ones without the flag go first.
     pub yields_to_other_requests: bool,
+    /// It starts while all connections are taken. For a caller that bounds its requests itself.
+    pub ignores_request_limit: bool,
 }
 
 impl Default for Flags {
@@ -253,6 +255,7 @@ impl Default for Flags {
             is_node_http_client: false,
             redirect_credentials: RedirectCredentialsPolicy::SameOrigin,
             yields_to_other_requests: false,
+            ignores_request_limit: false,
         }
     }
 }

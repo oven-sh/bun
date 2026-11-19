@@ -1189,13 +1189,30 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0 });
   });
 
-  test("an export that is in flight at exit and fails gets one more try", async () => {
-    using c = collector(n => (n === 0 ? new Response(null, { status: 503 }) : undefined));
-    const result = await run(`Bun.otel.span("s", () => {}); Bun.otel.forceFlush(); process.exit(0);`, {
-      BUN_OTEL: "1",
-      OTEL_EXPORTER_OTLP_ENDPOINT: c.url,
+  test.each([
+    ["begins at exit", ""],
+    ["is in flight at exit", "Bun.otel.forceFlush(); await (await fetch(process.env.URL)).text();"],
+  ])("an export that %s and fails gets one more try", async (_, begin) => {
+    let posts = 0;
+    const arrived = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (req.method === "GET") return arrived.promise.then(() => new Response());
+        if (++posts > 1) return new Response();
+        arrived.resolve();
+        await Bun.sleep(100); // nothing tells that the child has begun to exit
+        return new Response(null, { status: 503 });
+      },
     });
-    expect([result.exitCode, c.received.length]).toEqual([0, 2]);
+    const result = await run(
+      `Bun.otel.start({ endpoint: process.env.URL, instrumentations: [] });
+       Bun.otel.span("s", () => {});
+       ${begin}
+       process.exit(0);`,
+      { URL: server.url.href },
+    );
+    expect({ ...result, posts }).toEqual({ stdout: "", stderr: "", exitCode: 0, posts: 2 });
   });
 
   test("a queue of many batches, of requests and of several scopes, leaves whole", async () => {
@@ -1284,5 +1301,180 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     const printed = async (env: Record<string, string>) =>
       (await run(script, env)).stderr.replace(/\S*otel-exporter\S*?index/g, "index");
     expect(await printed({ BUN_OTEL: "1", OTEL_TRACES_EXPORTER: "none" })).toBe(await printed({}));
+  });
+
+  test("exit from a callback that holds up the HTTP thread does not wait for it", async () => {
+    using stream = Bun.serve({
+      port: 0,
+      fetch: () => new Response(new ReadableStream({ pull: async c => (await Bun.sleep(1), c.enqueue("<p></p>")) })),
+    });
+    const { exitCode } = await run(
+      `Bun.otel.span("s", () => {});
+       let n = 0;
+       // The sleep lets the next chunk arrive.
+       const element = () => ++n === 5 && (Bun.sleepSync(50), process.exit(0));
+       await new HTMLRewriter().on("p", { element }).transform(await fetch(process.env.URL)).text();`,
+      {
+        BUN_OTEL: "1",
+        OTEL_EXPORTER_OTLP_ENDPOINT: stream.url.href,
+        OTEL_EXPORTER_OTLP_TIMEOUT: "0",
+        OTEL_BSP_EXPORT_TIMEOUT: "0",
+        URL: stream.url.href,
+      },
+    );
+    expect(exitCode).toBe(0);
+  }, 20_000);
+
+  test("exports neither take the connections of fetch() nor wait for them", async () => {
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch: req => (req.url.endsWith("/hang") ? new Promise<Response>(() => {}) : new Response("ok")),
+    });
+    const env = { URL: server.url.href, BUN_CONFIG_MAX_HTTP_REQUESTS: "2", OTEL_BSP_EXPORT_TIMEOUT: "100" };
+    const [hogged, starved] = await Promise.all([
+      run(
+        `Bun.otel.start({ endpoint: process.env.URL + "hang", instrumentations: [] });
+         for (let i = 0; i < 10; i++) { Bun.otel.span("s", () => {}); Bun.otel.forceFlush(); await Bun.sleep(1); }
+         console.log(await (await fetch(process.env.URL)).text());
+         process.exit(0);`,
+        env,
+      ),
+      run(
+        `Bun.otel.start({ endpoint: process.env.URL, instrumentations: [] });
+         for (let i = 0; i < 4; i++) fetch(process.env.URL + "hang");
+         Bun.otel.span("s", () => {});
+         await Bun.otel.forceFlush();
+         console.log(Bun.otel.stats().spansExported);
+         process.exit(0);`,
+        env,
+      ),
+    ]);
+    expect([hogged.stdout, starved.stdout]).toEqual(["ok\n", "1\n"]);
+  });
+
+  test("a worker may end while the main thread is exiting", async () => {
+    const result = await run(
+      `const { Worker, isMainThread, workerData, parentPort } = require("node:worker_threads");
+       if (isMainThread) {
+         const shared = new Int32Array(new SharedArrayBuffer(8));
+         Bun.otel.start({ exporters: [{ export(spans) {
+           console.log(spans.map(s => s.name).join());
+           Atomics.store(shared, 0, 1); Atomics.notify(shared, 0); Atomics.wait(shared, 1, 0);
+         } }] });
+         new Worker(__filename, { workerData: shared }).on("message", () => { Bun.otel.span("main", () => {}); process.exit(0); });
+       } else {
+         parentPort.postMessage(1);
+         Atomics.wait(workerData, 0, 0);
+         Bun.otel.span("worker", () => {});
+         process.on("exit", () => { Atomics.store(workerData, 1, 1); Atomics.notify(workerData, 1); });
+       }`,
+      neverTimesOut,
+    );
+    expect(result).toEqual({ stdout: "main\nworker\n", stderr: "", exitCode: 0 });
+  });
+
+  test.each(["process.exit(3)", `throw new Error("x")`])(
+    "a worker's function exporter is called at %s",
+    async ending => {
+      const { stdout } = await run(
+        `if (Bun.isMainThread) {
+         const worker = new Worker(import.meta.path);
+         worker.onerror = () => {};
+         await new Promise(resolve => worker.addEventListener("close", resolve));
+       } else {
+         Bun.otel.start({ exporters: [{ export: spans => console.log(spans[0].name) }] });
+         Bun.otel.span("s", () => {});
+         ${ending};
+       }`,
+        {},
+      );
+      expect(stdout).toBe("s\n");
+    },
+  );
+
+  test("the export timeout does not wait for the delay", async () => {
+    const { stdout } = await run(
+      `Bun.otel.start({ batch: { timeoutMs: 50, delayMs: 600000 }, exporters: [{ export: () => new Promise(() => {}) }] });
+       Bun.otel.span("s", () => {});
+       await Bun.otel.forceFlush();
+       console.log(Bun.otel.stats().exportsFailed);`,
+      {},
+    );
+    expect(stdout).toBe("1\n");
+  });
+
+  test.skipIf(isWindows)("an exporter may exit while the process kills itself", async () => {
+    const result = await run(
+      `Bun.otel.start({ exporters: [{ export() { process.exit(4); } }] });
+       Bun.otel.span("s", () => {});
+       process.kill(process.pid, "SIGTERM");`,
+      neverTimesOut,
+    );
+    expect(result).toEqual({ stdout: "", stderr: "", exitCode: 4 });
+  });
+
+  test.skipIf(isWindows)("process.execve() exports first", async () => {
+    using c = collector();
+    await run(`Bun.otel.span("s", () => {}); process.execve(process.execPath, [process.execPath, "--version"], {});`, {
+      BUN_OTEL: "1",
+      OTEL_EXPORTER_OTLP_ENDPOINT: c.url,
+    });
+    expect(c.spans().map(s => s.name)).toEqual(["s"]);
+  });
+
+  test("bun test --isolate: a file's function exporter gets what the file has left", async () => {
+    const file = (name: string) =>
+      `import { test } from "bun:test";
+       test("t", () => { Bun.otel.start({ exporters: [{ export: s => console.log(s[0].name) }] }); Bun.otel.span("${name}", () => {}); });`;
+    using dir = tempDir("otel-isolate-left", { "a.test.js": file("a"), "b.test.js": file("b") });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./a.test.js", "./b.test.js"],
+      cwd: String(dir),
+      env: cleanEnv,
+      stderr: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toEndWith("a\nb\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("the query of an endpoint is kept", async () => {
+    using c = collector();
+    for (const tail of ["?key=a", "/?key=a", "/own?key=a"]) {
+      await run(`Bun.otel.start({ endpoint: "${c.url}${tail}" }); Bun.otel.span("s", () => {});`, {});
+    }
+    expect(c.received.map(r => r.url.slice(c.url.length))).toEqual([
+      "/v1/traces?key=a",
+      "/v1/traces?key=a",
+      "/own?key=a",
+    ]);
+  });
+
+  test("the debugger, whose URL is its password, is not traced", async () => {
+    using c = collector();
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--inspect=127.0.0.1:0/secret",
+        "-e",
+        `for await (const _ of console) break; Bun.otel.span("s", () => {});`,
+      ],
+      env: { ...cleanEnv, BUN_OTEL: "1", OTEL_EXPORTER_OTLP_ENDPOINT: c.url },
+      stdin: "pipe",
+      stderr: "pipe",
+    });
+    let printed = "";
+    for await (const chunk of proc.stderr) if (/ws:\/\/\S+\s/.test((printed += Buffer.from(chunk)))) break;
+    const ws = new WebSocket(/ws:\/\/\S+/.exec(Bun.stripANSI(printed))![0]);
+    await new Promise((resolve, reject) => {
+      ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: "Runtime.enable" }));
+      ws.onmessage = resolve;
+      ws.onerror = reject;
+    });
+    ws.close();
+    proc.stdin.end("\n");
+    expect(await proc.exited).toBe(0);
+    expect(c.spans().map(s => s.name)).toEqual(["s"]);
   });
 });

@@ -48,24 +48,25 @@ pub enum ExporterConfig {
 /// Signal-specific URLs (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) are not passed
 /// through here; they are used verbatim.
 fn traces_endpoint(base: &str) -> String {
-    let b = base.trim_end_matches('/');
-    if b.ends_with("/v1/traces") {
-        return b.to_string();
-    }
-    format!("{b}/v1/traces")
+    let (base, query) = split_query(base);
+    let base = base.trim_end_matches('/');
+    let base = base.strip_suffix("/v1/traces").unwrap_or(base);
+    format!("{base}/v1/traces{query}")
+}
+
+fn split_query(url: &str) -> (&str, &str) {
+    url.split_at(bun_core::strings::index_of_any(url.as_bytes(), b"?#").unwrap_or(url.len()))
 }
 
 /// `Bun.otel.start({ endpoint })` / bunfig `endpoint`: a bare collector base
 /// URL (no path) gets `/v1/traces`; a URL with a path is used as-is.
 pub fn normalize_traces_url(url: &str) -> String {
-    let after_scheme =
-        bun_core::strings::index_of(url.as_bytes(), b"://").map_or(0, |i| i as usize + 3);
-    match bun_core::strings::index_of_char(&url.as_bytes()[after_scheme..], b'/')
-        .map(|i| i as usize)
-    {
-        None => traces_endpoint(url),
-        Some(i) if url[after_scheme + i..].trim_end_matches('/').is_empty() => traces_endpoint(url),
-        Some(_) => url.to_string(),
+    let origin_and_path = split_query(url).0.trim_end_matches('/').as_bytes();
+    let authority = bun_core::strings::index_of(origin_and_path, b"://").map_or(0, |i| i + 3);
+    if bun_core::strings::contains_char(&origin_and_path[authority..], b'/') {
+        url.to_string()
+    } else {
+        traces_endpoint(url)
     }
 }
 

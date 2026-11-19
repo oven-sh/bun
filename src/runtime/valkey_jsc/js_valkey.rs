@@ -192,7 +192,7 @@ impl PendingCommand {
     }
 
     fn refused(self, message: &[u8]) -> JSPromiseStrong {
-        (self.span).end_with(|r| traced::DbError::of_redis(message).record(r));
+        (self.span).end_with(|r| traced::DbError::of_redis(message, r).record(r));
         self.promise
     }
 

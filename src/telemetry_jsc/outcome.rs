@@ -1,9 +1,5 @@
-use std::borrow::Cow;
-
-use bun_core::strings;
 use bun_jsc::{JSGlobalObject, JSValue, SystemError};
 use bun_telemetry::db::DbError;
-use bun_telemetry::otlp::redact_url;
 use bun_telemetry::{Record, StatusCode};
 
 use crate::engine::{self, ErrorDescription};
@@ -38,20 +34,7 @@ impl Outcome for &bun_sys::Error {
 
 impl Outcome for &SystemError {
     fn record(self, record: &mut Record) {
-        let (code, message, path) = (
-            self.code.to_utf8(),
-            self.message.to_utf8(),
-            self.path.to_utf8(),
-        );
-        // The message of `fetch()` quotes the URL.
-        if strings::contains(&path, b"://")
-            && let Cow::Owned(redacted) = redact_url(&path)
-            && let Some(at) = strings::index_of(&message, &path)
-        {
-            let message = [&message[..at], &redacted, &message[at + path.len()..]].concat();
-            return record.fail_with_code(&code, &message);
-        }
-        record.fail_with_code(&code, &message);
+        record.fail_with_code(&self.code.to_utf8(), &self.message.to_utf8());
     }
 }
 

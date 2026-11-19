@@ -10,7 +10,7 @@ use bun_jsc::virtual_machine::{TelemetryFlush as Flush, VirtualMachine};
 use bun_jsc::{JSGlobalObject, JSPromiseStrong, JSValue, JsResult, LoopKind, Strong, VmHandle};
 use bun_telemetry::{FlushTarget, Local, OwnerKey, Record, ScopeId, processor};
 
-use crate::exporter::{JsExporter, OwnedJsExporter, QueuedExport};
+use crate::exporter::{JsExporter, OwnedJsExporter, QueuedExport, is_http_thread_stuck};
 use crate::{configure, engine};
 
 /// The `createContextKey()` symbols that mean something to tracing.
@@ -69,7 +69,9 @@ impl VmState {
     #[cold]
     #[inline(never)]
     fn create(vm: &'static VirtualMachine) -> Option<&'static VmState> {
-        if vm.is_shutting_down() {
+        // The debugger, whose URL is its password, macros and the like.
+        let runs_the_program = vm.is_main_thread.get() || vm.worker_ref().is_some();
+        if vm.is_shutting_down() || !runs_the_program {
             return None;
         }
         let mut seed = [0u64; 4];
@@ -209,10 +211,10 @@ impl VmState {
         if self.timer.state.get() == TimerState::ACTIVE || self.has_exited.get() {
             return;
         }
-        let delay = processor::global().config().scheduled_delay_ms.max(50);
+        let delay = processor::global().time_to_tick();
         self.timer.next.set(bun_core::Timespec::ms_from_now(
             bun_core::TimespecMockMode::ForceRealTime,
-            delay.into(),
+            delay.as_millis() as i64 + 1,
         ));
         // SAFETY: the timer is not linked, and `self` is boxed until it drops, which unlinks it.
         unsafe {
@@ -247,7 +249,7 @@ impl VmState {
     /// A promise for the moment when every span that has ended by now is exported or given up on.
     pub(crate) fn force_flush(&'static self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let processor = processor::global();
-        let target = processor.export_all();
+        let target = processor.flush();
         let promise = JSPromiseStrong::init(global);
         let value = promise.value();
         self.flush_waiters.borrow_mut().push((target, promise));
@@ -288,7 +290,7 @@ impl VmState {
         }
         let processor = processor::global();
         if self.vm.is_main_thread.get() {
-            processor.close();
+            processor.close(&is_http_thread_stuck);
         } else {
             processor.flush_for_owner(self.owner_key());
         }
@@ -357,15 +359,19 @@ fn flush_configured(when: Flush) {
     let state = vm.and_then(VmState::existing);
     match (when, state) {
         (Flush::WithoutExit, _) => {
-            processor::global().flush_blocking(Duration::from_secs(1));
+            processor::global().flush_blocking(Duration::from_secs(1), &is_http_thread_stuck);
         }
+        (Flush::AtEndOfTestFile, Some(state)) if !state.js_exporters.borrow().is_empty() => {
+            processor::global().flush_for_owner(state.owner_key());
+        }
+        (Flush::AtEndOfTestFile, _) => {}
         (Flush::AtExit, Some(state)) => state.exit(),
         // Only workers have traced.
         (Flush::AtExit, None) => {
             if vm.is_some_and(|vm| vm.is_main_thread.get())
                 && !HAS_MAIN_THREAD_EXITED.swap(true, Ordering::Relaxed)
             {
-                processor::global().close();
+                processor::global().close(&is_http_thread_stuck);
             }
         }
     }

@@ -81,8 +81,8 @@ class ClientSpan {
       this.#span as any,
       this.#method,
       this.#url,
-      response?.statusCode ?? 0,
-      response?.httpVersion ?? "",
+      response?.statusCode,
+      response?.httpVersion,
       response?.complete ? undefined : (error ?? undefined),
     );
   }
@@ -95,8 +95,9 @@ function startClientSpan(
   protocol: string,
   host: string,
   port: string | number,
-  path: string,
+  givenPath: unknown,
 ) {
+  const path = `${givenPath}`;
   const started = begin(
     headers.getHeader("traceparent") as string,
     headers.getHeader("tracestate") as string,
@@ -109,9 +110,10 @@ function startClientSpan(
     else headers.setHeader(started[i] as string, value);
   }
   // Sent to a proxy, it is the whole URL.
-  if (RegExpPrototypeExec.$call(/^https?:\/\//i, path) !== null) return new ClientSpan(started[0], method, path);
+  if (RegExpPrototypeExec.$call(/^[a-z][a-z0-9+.-]*:\/\//i, path) !== null)
+    return new ClientSpan(started[0], method, path);
   let url = protocol + "//" + (host[0] !== "[" && StringPrototypeIncludes.$call(host, ":") ? `[${host}]` : host);
-  if (+port !== (protocol === "https:" ? 443 : 80)) url += ":" + port;
+  if (port != (protocol === "https:" ? 443 : 80)) url += ":" + port;
   // What CONNECT asks for is no path on this server.
   if (method !== "CONNECT") url += path;
   return new ClientSpan(started[0], method, url);

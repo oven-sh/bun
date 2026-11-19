@@ -74,6 +74,18 @@ impl SendError {
             SendError::Status { code, .. } => matches!(code, 408 | 429 | 502 | 503 | 504),
         }
     }
+
+    /// At exit there is no later.
+    fn is_worth_a_try_at_once(&self) -> bool {
+        match self {
+            SendError::Transport(_) => true,
+            SendError::Status {
+                code,
+                retry_after_seconds,
+            } => matches!(code, 502..=504) && retry_after_seconds.is_none(),
+            SendError::OutOfTime => false,
+        }
+    }
 }
 
 impl fmt::Display for SendError {
@@ -213,7 +225,7 @@ impl OtlpHttpExporter {
         // SAFETY: `Request::finish` frees it, once the client that borrows from it is gone.
         let borrowed: &'static mut Request = unsafe { &mut *request };
         let exporter = &*borrowed.exporter;
-        let http = AsyncHTTP::init(
+        let mut http = AsyncHTTP::init(
             Method::POST,
             URL::parse(&exporter.url),
             bun_core::handle_oom(exporter.headers.entries.clone()),
@@ -241,6 +253,7 @@ impl OtlpHttpExporter {
                 ..Default::default()
             },
         );
+        http.client.flags.ignores_request_limit = true;
         borrowed.async_http_id = http.async_http_id;
         exporter.in_flight.lock().push(Deadline {
             async_http_id: http.async_http_id,
@@ -249,6 +262,26 @@ impl OtlpHttpExporter {
         });
         bun_http::http_thread::init(&Default::default());
         HTTPThread::schedule([http]);
+    }
+
+    fn send_blocking(
+        self: &Arc<Self>,
+        payload: &Arc<ExportPayload>,
+        deadline: MonoInstant,
+    ) -> Result<(), SendError> {
+        let deadline = deadline.min(MonoInstant::now() + self.timeout);
+        let outcome = Arc::new(Outcome {
+            result: Guarded::new(None),
+            arrived: Condvar::new(),
+        });
+        let receiver = Receiver::BlockedThread(Arc::clone(&outcome));
+        Arc::clone(self).send(Arc::clone(payload), receiver);
+        let mut result = outcome.result.lock();
+        while result.is_none() && !deadline.remaining().is_zero() && !is_http_thread_stuck() {
+            let slice = deadline.remaining().min(Duration::from_millis(100));
+            let _ = (outcome.arrived).timed_wait_guarded(&mut result, slice.as_nanos() as u64);
+        }
+        result.take().unwrap_or(Err(SendError::OutOfTime))
     }
 
     fn failed(self: Arc<Self>, attempt: ExportAttempt, error: &SendError) {
@@ -273,6 +306,34 @@ impl OtlpHttpExporter {
                 payload.span_count,
                 bstr::BStr::new(&display_url(&self.url)),
             ));
+        }
+    }
+}
+
+/// For a thread that waits for it. `fetch()` runs some callbacks under a lock that the HTTP thread takes, and one
+/// of them may be what ends the process.
+pub(crate) fn is_http_thread_stuck() -> bool {
+    struct Watch {
+        turn: u32,
+        since: MonoInstant,
+        asked_at: MonoInstant,
+    }
+    static WATCH: Guarded<Option<Watch>> = Guarded::new(None);
+    let (turn, now) = (HTTPThread::poke(), MonoInstant::now());
+    let mut watch = WATCH.lock();
+    match &mut *watch {
+        // Unless it has been asked all along, it was asleep.
+        Some(w) if w.turn == turn && now.since(w.asked_at) < Duration::from_millis(500) => {
+            w.asked_at = now;
+            now.since(w.since) > Duration::from_secs(2)
+        }
+        _ => {
+            *watch = Some(Watch {
+                turn,
+                since: now,
+                asked_at: now,
+            });
+            false
         }
     }
 }
@@ -352,19 +413,11 @@ impl Exporter for OtlpHttpExporter {
         payload: &Arc<ExportPayload>,
         deadline: MonoInstant,
     ) -> ExportResult {
-        let deadline = deadline.min(MonoInstant::now() + self.timeout);
-        let outcome = Arc::new(Outcome {
-            result: Guarded::new(None),
-            arrived: Condvar::new(),
-        });
-        let receiver = Receiver::BlockedThread(Arc::clone(&outcome));
-        Arc::clone(&self).send(Arc::clone(payload), receiver);
-        let mut result = outcome.result.lock();
-        while result.is_none() && !deadline.remaining().is_zero() {
-            let left = deadline.remaining().as_nanos() as u64;
-            let _ = outcome.arrived.timed_wait_guarded(&mut result, left);
-        }
-        match result.take().unwrap_or(Err(SendError::OutOfTime)) {
+        let result = match self.send_blocking(payload, deadline) {
+            Err(error) if error.is_worth_a_try_at_once() => self.send_blocking(payload, deadline),
+            result => result,
+        };
+        match result {
             Ok(()) => ExportResult::Success,
             Err(error) => {
                 self.warn_once(payload, " at exit", &error);
@@ -577,6 +630,9 @@ impl JsExporter {
         .and_then(|result| engine::adopt_thenable(global, result));
         drop(suppressed);
         let error = match result {
+            Ok(result) if result.is_undefined() && function.call_may_have_been_dropped(global) => {
+                return Ok(Delivery::Settled(ExportResult::Failure));
+            }
             Ok(result) => match result.as_promise().map(JSPromise::opaque_mut) {
                 Some(promise) if promise.status() == Status::Pending => {
                     return Ok(Delivery::Pending(result));

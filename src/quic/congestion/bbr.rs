@@ -56,10 +56,14 @@ struct Recovery {
     window: u64,
     /// The last packet that was sent before the latest loss.
     end: u64,
+    /// What counts as lost.
+    lost: u64,
     /// For the first round.
     conserves_packets: bool,
     /// The application made the flight as small as it was, and thus the window.
     is_application_limited: bool,
+    /// Nothing got through for a while.
+    has_collapsed: bool,
 }
 
 pub(super) struct Bbr {
@@ -194,6 +198,15 @@ impl Bbr {
         self.sampler.on_sent(flight);
     }
 
+    pub(super) fn on_late(&mut self, len: u64) {
+        self.sampler.delivered += len;
+        self.lost_in_round = self.lost_in_round.saturating_sub(len);
+        self.recovery.take_if(|it| {
+            it.lost = it.lost.saturating_sub(len);
+            it.lost == 0
+        });
+    }
+
     pub(super) fn on_feedback(&mut self, now: Instant, feedback: &Feedback, rtt: &Rtt) {
         let (mut is_round_start, mut has_min_rtt_expired) = (false, false);
         if let Some(newest) = &feedback.newest_acked {
@@ -211,8 +224,11 @@ impl Bbr {
         if let Some(recovery) = &mut self.recovery {
             if feedback.is_persistent_congestion {
                 recovery.window = MIN_SEGMENTS * self.segment;
+                recovery.has_collapsed = true;
             }
-            if recovery.is_application_limited && recovery.conserves_packets {
+            if recovery.has_collapsed
+                || recovery.is_application_limited && recovery.conserves_packets
+            {
                 self.sampler.on_application_limited(feedback.last_sent);
             }
         }
@@ -229,6 +245,9 @@ impl Bbr {
             }
             self.acked_in_round += feedback.acked;
             self.lost_in_round += feedback.lost;
+            if feedback.is_persistent_congestion {
+                self.lost_in_round = 0;
+            }
         }
         if self.mode == Mode::Startup && self.is_pipe_filled {
             self.mode = Mode::Drain;
@@ -290,9 +309,16 @@ impl Bbr {
         let Some(recovery) = &mut self.recovery else {
             if feedback.lost > 0 {
                 let window = feedback.prior_in_flight.saturating_sub(feedback.lost);
+                let floor = match self.is_pipe_filled {
+                    true => (delivered_in(self.min_rtt, self.bandwidth.get()))
+                        .saturating_add(self.excess_acked.get()),
+                    false => 0,
+                };
                 self.recovery = Some(Recovery {
-                    window: window.max(feedback.in_flight + 1).max(min_window),
+                    window: (window.max(feedback.in_flight + 1)).max(floor.max(min_window)),
                     end: feedback.last_sent,
+                    lost: feedback.lost,
+                    has_collapsed: false,
                     conserves_packets: true,
                     is_application_limited: self.ran_dry_at == feedback.last_sent,
                 });
@@ -303,6 +329,7 @@ impl Bbr {
         };
         if feedback.lost > 0 {
             recovery.end = feedback.last_sent;
+            recovery.lost += feedback.lost;
         } else if (feedback.newest_acked).is_some_and(|it| it.sequence > recovery.end) {
             self.recovery = None;
             return;

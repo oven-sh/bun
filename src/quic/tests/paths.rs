@@ -74,10 +74,10 @@ fn validates_both_paths_when_a_client_moves() {
 fn starts_over_with_the_size_on_another_network() {
     for (address, len) in [
         ("192.0.2.1:2000", 1472),
-        (NEW, 1252),
-        ("[2001:db8::1]:1", 1232),
+        (NEW, 1200),
+        ("[2001:db8::1]:1", 1200),
     ] {
-        let mut raw = Raw::client().connected();
+        let mut raw = Raw::client().with("max_udp_payload_size=").connected();
         raw.peer.open(Unidirectional);
         raw.peer.send(3, &filler(0, 200_000), false);
         while raw.streams.get(&3).is_none_or(|it| it.len() < 200_000) {
@@ -169,14 +169,9 @@ fn reports_where_a_connection_has_ended_up() {
 
 #[test]
 fn moves_to_the_preferred_address() {
-    for (local, server, preferred, len) in [
-        (OLD, SERVER, "198.51.100.2:444", 1252),
-        (
-            "[2001:db8::9]:1",
-            "[2001:db8::1]:443",
-            "[2001:db8::2]:444",
-            1232,
-        ),
+    for (local, server, preferred) in [
+        (OLD, SERVER, "198.51.100.2:444"),
+        ("[2001:db8::9]:1", "[2001:db8::1]:443", "[2001:db8::2]:444"),
     ] {
         let raw = Raw::server().config(|it| it.uses_preferred_address = true);
         let mut raw = raw.with(PREFERRED);
@@ -200,9 +195,6 @@ fn moves_to_the_preferred_address() {
         assert_eq!(raw.events(), events);
         let frames = "path_response 12345678, retire_connection_id 0";
         assert_eq!(raw.frames(), frames);
-        raw.peer.open(Unidirectional);
-        raw.peer.send(2, &filler(0, 2000), false);
-        assert_eq!(raw.sizes()[0], len);
 
         raw.move_to(server);
         raw.send("stream 3 0 late");

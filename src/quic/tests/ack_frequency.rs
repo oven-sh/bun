@@ -119,8 +119,7 @@ fn aims_at_few_acknowledgments_in_a_round_trip() {
 #[test]
 fn starts_from_what_the_peer_does() {
     for (sent, tolerance) in [(20, 2), (100, 50 - 13), (299, 149 - 13), (300, 75 - 13)] {
-        let mut raw = Raw::client().with("min_ack_delay=1000 max_udp_payload_size=1200");
-        raw = raw.connected();
+        let mut raw = Raw::client().with("min_ack_delay=1000").connected();
         let (id, end) = (
             raw.peer.open(Unidirectional),
             raw.now + Duration::from_millis(RTT),

@@ -29,7 +29,7 @@ impl TokenBucket {
         has_enough
     }
 
-    pub fn put_back(&mut self) {
-        self.tokens += 1.0;
+    pub fn put_back(&mut self, count: u32) {
+        self.tokens += f64::from(count);
     }
 }

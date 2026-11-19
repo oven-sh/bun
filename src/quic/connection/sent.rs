@@ -3,11 +3,10 @@ use std::collections::VecDeque;
 
 use super::streams::Flags;
 use crate::congestion::Flight;
-use crate::range_set::RangeSet;
 use crate::stream_id::StreamId;
 use crate::time::Instant;
 
-const MAX_LOST_RANGES: usize = 32;
+const MAX_LOST: usize = 256;
 const MAX_IDLE_CAPACITY: usize = 256;
 
 bitflags::bitflags! {
@@ -106,7 +105,22 @@ pub(super) struct Sent {
     /// When the next packet counts as lost (RFC 9002 §6.1.2).
     pub(super) loss_time: Instant,
     /// To tell when a packet was not lost after all.
-    lost: RangeSet,
+    lost: VecDeque<Lost>,
+}
+
+struct Lost {
+    number: u64,
+    at: Instant,
+    len: u16,
+}
+
+/// The packets that are acknowledged after they counted as lost.
+pub(super) struct Late {
+    /// Of the oldest one.
+    pub(super) number: u64,
+    pub(super) at: Instant,
+    /// Of all.
+    pub(super) len: u64,
 }
 
 impl Default for Sent {
@@ -117,7 +131,7 @@ impl Default for Sent {
             largest_acked: None,
             last_at: Instant::default(),
             loss_time: Instant::NEVER,
-            lost: RangeSet::default(),
+            lost: VecDeque::new(),
         }
     }
 }
@@ -153,35 +167,39 @@ impl Sent {
         }
     }
 
-    pub(super) fn remember_lost(&mut self, number: u64) {
-        self.lost.insert(number..number + 1);
-        if self.lost.len() > MAX_LOST_RANGES {
-            self.lost.pop_first();
+    /// In ascending order.
+    pub(super) fn remember_lost(&mut self, packet: &SentPacket) {
+        if self.lost.len() == MAX_LOST {
+            self.lost.pop_front();
         }
+        self.lost.push_back(Lost {
+            number: packet.number,
+            at: packet.flight.at,
+            len: packet.flight.len,
+        });
     }
 
-    /// Returns the smallest number that is acknowledged after it counted as lost.
+    pub(super) fn forget_lost(&mut self) {
+        self.lost = VecDeque::new();
+    }
+
+    /// What was sent before `oldest` is not going to arrive.
     #[inline]
-    pub(super) fn find_late(&mut self, acked: impl Iterator<Item = Range<u64>>) -> Option<u64> {
-        let (mut late, mut smallest) = (None, 0);
-        for range in acked {
-            let Some(first) = self.lost.first() else {
-                break;
-            };
-            smallest = range.start;
-            if range.end <= first.start {
-                break;
-            }
-            let gap = self.lost.gaps(range.clone()).next();
-            if gap.as_ref() != Some(&range) {
-                late = Some(
-                    gap.filter(|it| it.start == range.start)
-                        .map_or(range.start, |it| it.end),
-                );
-                self.lost.remove(range);
+    pub(super) fn find_late(
+        &mut self,
+        oldest: Instant,
+        acked: impl Iterator<Item = Range<u64>>,
+    ) -> Option<Late> {
+        while self.lost.pop_front_if(|it| it.at < oldest).is_some() {}
+        let (first, mut late) = (self.lost.front()?.number, None);
+        for range in acked.take_while(|it| it.end > first) {
+            let below = |number| self.lost.partition_point(|it| it.number < number);
+            let positions = below(range.start)..below(range.end);
+            for Lost { number, at, len } in self.lost.drain(positions).rev() {
+                let len = u64::from(len) + late.map_or(0, |it: Late| it.len);
+                late = Some(Late { number, at, len });
             }
         }
-        self.lost.remove_below(smallest);
         late
     }
 }

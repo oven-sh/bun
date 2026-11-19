@@ -73,6 +73,7 @@ impl Connection {
         });
         let frame = http3.encode_headers(id, headers, credit as usize, scratch);
         message.has_sent_headers = true;
+        stream.write_round = 0;
         state.write(id, stream, &[frame]);
         state.made_progress = true;
         let instructions = http3.encoder.instructions();

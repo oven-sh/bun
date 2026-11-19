@@ -144,9 +144,9 @@ fn statistics() {
         let ack = raw.packet(Short, "ack");
         raw.deliver(&ack);
         let after = raw.connection().stats();
-        assert_eq!(sizes[0], 1252);
+        assert_eq!(sizes[0], 1200);
         assert_eq!(after.packets_sent - before.packets_sent, 2);
-        assert_eq!(after.bytes_sent - before.bytes_sent, 1252 + sizes[1] as u64);
+        assert_eq!(after.bytes_sent - before.bytes_sent, 1200 + sizes[1] as u64);
         assert_eq!(after.packets_received - before.packets_received, 1);
         assert_eq!(
             after.bytes_received - before.bytes_received,

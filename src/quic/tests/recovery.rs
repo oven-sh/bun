@@ -475,15 +475,15 @@ fn persistent_congestion_takes_a_round_trip_time() {
 #[test]
 fn window_and_pace() {
     let raw = Raw::client().config(|it| it.congestion = Algorithm::Cubic);
-    let mut raw = raw.with("max_udp_payload_size=1252").connected();
+    let mut raw = raw.connected();
     let id = raw.peer.open(Unidirectional);
     raw.peer.send(id, &filler(0, 200_000), false);
-    assert_eq!(raw.sizes(), [1252; 14]);
+    assert_eq!(raw.sizes(), [1200; 14]);
     raw.advance(3);
-    assert_eq!(raw.sizes(), [1252; 8]);
+    assert_eq!(raw.sizes(), [1200; 8]);
     raw.advance(7);
     let packets = raw.take();
-    assert_eq!(14 + 8 + packets.len() as u64, INITIAL_WINDOW.div_ceil(1252));
+    assert_eq!(14 + 8 + packets.len() as u64, INITIAL_WINDOW.div_ceil(1200));
     raw.send("ping");
     raw.send("ping");
     assert_eq!(raw.packets(), "1[ack 0-2]");
@@ -491,7 +491,7 @@ fn window_and_pace() {
     raw.wait();
     let last = packets.last().unwrap().at;
     assert_eq!(raw.now - last, Duration::from_micros(67_500));
-    assert_eq!(raw.frames(), "stream 3 0 *1217, stream 3 1217 *1215");
+    assert_eq!(raw.frames(), "stream 3 0 *1165, stream 3 1165 *1163");
 }
 
 #[test]

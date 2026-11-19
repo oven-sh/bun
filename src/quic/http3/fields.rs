@@ -98,7 +98,8 @@ pub(crate) struct Pool(Vec<Fields>);
 
 impl Pool {
     pub(crate) fn put(&mut self, mut fields: Fields) {
-        if self.0.len() < MAX_POOLED && fields.bytes.capacity() <= MAX_POOLED_LEN {
+        let len = fields.bytes.capacity() + fields.entries.capacity() * size_of::<Entry>();
+        if self.0.len() < MAX_POOLED && len <= MAX_POOLED_LEN {
             fields.entries.clear();
             fields.is_incomplete = false;
             self.0.push(fields);

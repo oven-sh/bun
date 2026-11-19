@@ -67,6 +67,7 @@ const IDX_STATS_BYTES_ACCUMULATED: usize = 11;
 const IDX_STATS_MAX_BYTES_ACCUMULATED: usize = 12;
 
 const DEFAULT_HIGH_WATER_MARK: u32 = 16 * 1024;
+const MAX_JOINED_LEN: usize = 2048;
 
 /// Stream-id bit 1 selects the direction: 0 = bidirectional,
 /// 1 = unidirectional (RFC 9000 §2.1).
@@ -102,6 +103,7 @@ pub(super) struct Outbound {
 
 #[derive(Default)]
 pub(super) struct Inbound {
+    /// The short ones are joined.
     pub chunks: VecDeque<Vec<u8>>,
     pub ended: bool,
     pub errored: bool,
@@ -352,8 +354,10 @@ impl QuicStream {
     fn push_inbound(&self, data: Vec<u8>, fin: bool) {
         let len = data.len() as u64;
         self.inbound.with_mut(|inbound| {
-            if len > 0 {
-                inbound.chunks.push_back(data);
+            match inbound.chunks.back_mut() {
+                Some(last) if last.len() + data.len() <= MAX_JOINED_LEN => last.extend(data),
+                _ if data.is_empty() => {}
+                _ => inbound.chunks.push_back(data),
             }
             inbound.ended |= fin;
         });

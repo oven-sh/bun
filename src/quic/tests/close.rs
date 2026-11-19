@@ -113,7 +113,7 @@ fn client_finishes_the_handshake_to_be_understood() {
 fn reason_is_cut_to_what_fits() {
     let mut raw = Raw::client().connected();
     raw.abort(Transport, u64::MAX, &filler(0, 2000));
-    assert_eq!(raw.sizes(), [1252]);
+    assert_eq!(raw.sizes(), [1200]);
     assert_eq!(raw.close, Some((Transport, MAX)));
 
     for (len, sent) in [(127, 127), (128, 128), (129, 128)] {
@@ -130,7 +130,7 @@ fn reason_is_cut_to_what_fits() {
     raw.forget();
     raw.abort(Transport, 1, &filler(0, 2000));
     let packets = raw.take();
-    assert_eq!((packets.len(), packets[0].datagram.len()), (3, 1245));
+    assert_eq!((packets.len(), packets[0].datagram.len()), (3, 1193));
 }
 
 #[test]
@@ -272,7 +272,7 @@ fn graceful_close_waits_for_congestion_control() {
     }
     assert!(raw.streams[&id] == data);
 
-    let mut raw = Raw::client().with("max_udp_payload_size=1200").connected();
+    let mut raw = Raw::client().connected();
     let id = raw.peer.open(Bidirectional);
     raw.peer.send(id, &data, false);
     raw.advance(RTT);

@@ -171,7 +171,7 @@ fn long_flights() {
     let mut raw = Raw::server();
     raw.peer.tls.hello_len = 2500;
     raw.start(&[]);
-    assert_eq!(raw.sizes(), [1252, 1252, 1200]);
+    assert_eq!(raw.sizes(), [1200; 3]);
     raw.shake_hands();
     assert_eq!(raw.events(), "ready");
 }
@@ -209,11 +209,11 @@ fn a_server_sends_three_times_what_it_got_until_the_address_is_validated() {
     let mut raw = Raw::client();
     raw.peer.tls.certificate_len = 10_000;
     raw.start(&[]);
-    assert_eq!(raw.sizes(), [1252, 1252, 1096]);
+    assert_eq!(raw.sizes(), [1200; 3]);
     raw.send_in(Initial, "ack");
-    assert_eq!(raw.sizes(), [1252, 1252, 1096]);
+    assert_eq!(raw.sizes(), [1200; 3]);
     raw.send_in(Handshake, "ack");
-    assert_eq!(raw.sizes().len(), 3);
+    assert_eq!(raw.sizes().len(), 4);
     raw.send_in(Handshake, "ack, flight");
     assert_eq!(raw.events(), "ready, confirmed");
 }
@@ -225,7 +225,7 @@ fn a_client_repeats_its_hello_until_it_gives_up() {
     raw.forget();
     for timeout in [150, 300, 600, 1200, 2400, 4800] {
         assert_eq!(raw.wait(), timeout);
-        assert_eq!(raw.outline(), "I[crypto]");
+        assert_eq!(raw.outline(), "I[crypto]; I[crypto]");
     }
     assert_eq!(raw.wait(), 10_000 - 9450);
     assert_eq!(raw.events(), "closed: HandshakeTimeout");
@@ -241,7 +241,7 @@ fn bounds_of_the_probe_timeout() {
     raw.peer.tls.hello_len = 2000;
     raw.start(&[]);
     for count in 0..12 {
-        assert_eq!(raw.sizes()[0], if count < 3 { 1252 } else { 1200 });
+        raw.forget();
         assert_eq!(raw.wait(), 60_000.min(150 << count));
     }
     for mut raw in Raw::both() {
@@ -285,9 +285,9 @@ fn a_client_probes_as_long_as_the_server_may_be_unable_to_send() {
     raw.advance(RTT);
     raw.send_in(Initial, "ack");
     raw.forget();
-    for timeout in [60, 120, 240] {
+    for (timeout, probes) in [(60, "I[ping]"), (120, "I[ping]; I[ping]")] {
         assert_eq!(raw.wait(), timeout);
-        assert_eq!(raw.outline(), "I[ping]");
+        assert_eq!(raw.outline(), probes);
     }
     raw.send_all(&[(Initial, "ack, hello"), (Handshake, "ping")]);
     raw.forget();

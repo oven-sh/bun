@@ -124,8 +124,8 @@ fn frames_wait_for_a_packet_that_has_room() {
     ]);
     assert_eq!(
         raw.packets(),
-        "1[ack 0, handshake_done, new_token, crypto 0 ~1158]; \
-         1[crypto 1158 ~162, new_connection_id 1 0, retire_connection_id 0]"
+        "1[ack 0, handshake_done, new_token, crypto 0 ~1106]; \
+         1[crypto 1106 ~214, new_connection_id 1 0, retire_connection_id 0]"
     );
 }
 

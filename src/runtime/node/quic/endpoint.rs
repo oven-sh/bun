@@ -133,6 +133,7 @@ struct Server {
     config: Rc<Config>,
     tls: OwnedSslCtx,
     alpn: Rc<[u8]>,
+    allows_early_data: bool,
 }
 
 pub(crate) struct QuicEndpoint {
@@ -881,16 +882,12 @@ impl QuicEndpoint {
                 continue;
             };
             let handle = session.handle();
-            if let Some(callback) = callbacks::get(global, "onSessionNew") {
-                let vm = global.bun_vm();
-                vm.event_loop().run_callback(
-                    bun_event_loop::ContextId::NONE,
-                    callback,
-                    global,
-                    self.this_value.get().get(),
-                    &[handle],
-                );
-            }
+            callbacks::run(
+                global,
+                "onSessionNew",
+                self.this_value.get().get(),
+                &[handle],
+            );
         }
         for _ in 0..self.marked_sessions.get().len() {
             let session = self.marked_sessions.with_mut(VecDeque::pop_front);
@@ -979,7 +976,7 @@ impl QuicEndpoint {
         } else if self.quic().reset(from, stray) {
             self.add_stat(IDX_STATS_STATELESS_RESET_COUNT, 1);
         } else {
-            bucket.put_back();
+            bucket.put_back(1);
         }
     }
 
@@ -1197,19 +1194,15 @@ impl QuicEndpoint {
 
     fn deliver_endpoint_close(&self, global: &JSGlobalObject, context: u8, status: c_int) {
         self.poll_ref.disable();
-        if let Some(callback) = callbacks::get(global, "onEndpointClose") {
-            let vm = global.bun_vm();
-            vm.event_loop().run_callback(
-                bun_event_loop::ContextId::NONE,
-                callback,
-                global,
-                self.this_value.get().get(),
-                &[
-                    JSValue::js_number(context as f64),
-                    JSValue::js_number(status as f64),
-                ],
-            );
-        }
+        callbacks::run(
+            global,
+            "onEndpointClose",
+            self.this_value.get().get(),
+            &[
+                JSValue::js_number(context as f64),
+                JSValue::js_number(status as f64),
+            ],
+        );
         self.this_value.with_mut(|r| r.downgrade());
     }
 
@@ -1255,7 +1248,8 @@ impl QuicEndpoint {
                     http3.origins = origins_from_js(global, tls)?;
                 }
                 if let Some(sni) = tls.get(global, "sni")?.filter(|v| v.is_object()) {
-                    let built = Self::build_sni_contexts(global, sni)?;
+                    let built =
+                        Self::build_sni_contexts(global, sni, tls_config.enable_early_data)?;
                     *self.sni_contexts.borrow_mut() = built;
                 }
             }
@@ -1265,6 +1259,7 @@ impl QuicEndpoint {
                 tls: (tls_config.create_context())
                     .map_err(|e| global.throw(format_args!("tls: {e}")))?,
                 alpn: tls_config.alpn.into(),
+                allows_early_data: tls_config.enable_early_data,
             }));
         }
         // SAFETY: state buffer is live.
@@ -1464,6 +1459,7 @@ impl QuicEndpoint {
     fn build_sni_contexts(
         global: &JSGlobalObject,
         entries: JSValue,
+        allows_early_data: bool,
     ) -> JsResult<Vec<(Vec<u8>, OwnedSslCtx)>> {
         let keys = entries.keys(global)?;
         let len = keys.get_length(global)? as u32;
@@ -1477,7 +1473,9 @@ impl QuicEndpoint {
             if !value.is_object() {
                 continue;
             }
-            match TlsConfig::from_js(global, value, true)?.create_context() {
+            let mut config = TlsConfig::from_js(global, value, true)?;
+            config.enable_early_data &= allows_early_data;
+            match config.create_context() {
                 Ok(ctx) => out.push((host, ctx)),
                 Err(e) => {
                     return Err(global
@@ -1514,7 +1512,9 @@ impl QuicEndpoint {
                 )
                 .throw());
         }
-        let built = Self::build_sni_contexts(global, entries)?;
+        let server = self.server.get().as_ref();
+        let allows_early_data = server.is_some_and(|it| it.allows_early_data);
+        let built = Self::build_sni_contexts(global, entries, allows_early_data)?;
         let mut map = self.sni_contexts.borrow_mut();
         if replace.to_boolean() {
             map.clear();

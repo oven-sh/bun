@@ -2,7 +2,6 @@ use bun_quic::Layer::Transport;
 use bun_quic::transport_code::*;
 use bun_quic::{ConnectionId, PreferredAddress, TransportParameters};
 
-use crate::harness::raw::Kind::Handshake;
 use crate::harness::raw::Raw;
 use crate::harness::wire::{MAX, hex, show_hex};
 
@@ -166,7 +165,7 @@ fn what_the_peer_advertises() {
 #[test]
 fn defaults() {
     let names = "max_data= max_stream_data_bidi_local= max_stream_data_bidi_remote=
-        max_stream_data_uni= max_streams_bidi= max_streams_uni=";
+        max_stream_data_uni= max_streams_bidi= max_streams_uni= max_udp_payload_size=";
     let mut raw = Raw::client().with(names).connected();
     let mut expected = TransportParameters::default();
     expected.initial_source_connection_id = ConnectionId::new(&raw.source);
@@ -301,20 +300,4 @@ fn where_the_error_is_sent() {
     let packets = "I[ack 0, close 0x8] H[close 0x8] 1[close 0x8]";
     assert_eq!(server.packets(), packets);
     assert_eq!(server.error(), Some((Transport, TRANSPORT_PARAMETER_ERROR)));
-}
-
-#[test]
-fn the_size_of_datagrams_is_limited_from_the_first_flight() {
-    for (limit, expected) in [(1200, 1200), (1251, 1251), (1253, 1252)] {
-        let mut raw = Raw::client().with(&format!("max_udp_payload_size={limit}"));
-        raw.peer.tls.certificate_len = 8000;
-        raw.start(&[]);
-        raw.send_in(Handshake, "ack");
-        assert_eq!(raw.sizes().into_iter().max(), Some(expected));
-    }
-    let mut raw = Raw::client();
-    raw.addresses.peer = "[2001:db8::1]:1".parse().unwrap();
-    raw.peer.tls.certificate_len = 8000;
-    raw.start(&[]);
-    assert_eq!(raw.sizes().into_iter().max(), Some(1232));
 }

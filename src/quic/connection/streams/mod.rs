@@ -355,8 +355,9 @@ impl Table {
     fn owed_max_streams(&self, direction: Direction) -> Control {
         let counts = self.counts(direction);
         let gain = counts.next_remote_limit() - counts.remote_limit;
+        let has_more = counts.remote_next < counts.remote_limit;
         match direction {
-            _ if gain < (counts.remote_window / 8).max(1) => Control::empty(),
+            _ if gain == 0 || has_more && gain < counts.remote_window / 8 => Control::empty(),
             Direction::Bidirectional if self.is_going_away => Control::empty(),
             Direction::Bidirectional => Control::MAX_STREAMS_BIDI,
             Direction::Unidirectional => Control::MAX_STREAMS_UNI,
@@ -455,6 +456,7 @@ impl Table {
                 Flags::WRITE_DONE | Flags::SEND_DONE,
             ),
         };
+        state.owed |= self.owed_max_streams(id.direction());
         let is_unwanted = self.is_going_away;
         flags.set(Flags::RELEASED, is_unwanted);
         let counts = self.counts(id.direction());

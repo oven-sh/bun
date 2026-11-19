@@ -69,7 +69,7 @@ pub(crate) struct Stream {
     pub(super) blocked_at: Option<u64>,
     /// Up to where it is this stream's turn to send.
     pub(super) turn_end: u64,
-    pub(super) write_round: u64,
+    pub(crate) write_round: u64,
     pub(super) reset_code: u64,
     /// For when the peer asks to stop after everything has been sent, and some of it gets lost.
     pub(super) stopped_code: u64,

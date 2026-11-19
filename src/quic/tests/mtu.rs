@@ -4,11 +4,15 @@ use bun_quic::{Algorithm, Duration};
 use crate::harness::raw::{RTT, Raw};
 use crate::harness::wire::filler;
 
+fn client() -> Raw {
+    Raw::client().with("max_udp_payload_size=")
+}
+
 impl Raw {
-    /// Up to where the next packet of a server is number 30, which is the first that can be a probe.
+    /// Up to where the next packet of a server is number 10, which is the first that can be a probe.
     fn warmed_up(mut self) -> Self {
         self = self.connected();
-        self.request_packets(&"a".repeat(28));
+        self.request_packets(&"a".repeat(8));
         self.advance(RTT);
         self.send("ack");
         let id = self.peer.open(Unidirectional);
@@ -47,22 +51,21 @@ impl Raw {
 /// RFC 9000 §14.3.
 #[test]
 fn sizes_depend_on_the_address_and_the_limit_of_the_peer() {
-    for (address, limit, first, probes, last) in [
-        ("192.0.2.1:1", "65527", 1252, &[1472][..], 1472),
-        ("192.0.2.1:1", "", 1252, &[1472], 1472),
-        ("[::ffff:192.0.2.1]:1", "65527", 1252, &[1472], 1472),
-        ("[2001:db8::1]:1", "65527", 1232, &[1452], 1452),
-        ("192.0.2.1:1", "1400", 1252, &[1400], 1400),
-        ("192.0.2.1:1", "1265", 1252, &[1265], 1265),
-        ("192.0.2.1:1", "1264", 1252, &[], 1252),
-        ("192.0.2.1:1", "1210", 1210, &[], 1210),
+    for (address, limit, probes, last) in [
+        ("192.0.2.1:1", "65527", &[1472][..], 1472),
+        ("192.0.2.1:1", "", &[1472], 1472),
+        ("[::ffff:192.0.2.1]:1", "65527", &[1472], 1472),
+        ("[2001:db8::1]:1", "65527", &[1452], 1452),
+        ("192.0.2.1:1", "1400", &[1400], 1400),
+        ("192.0.2.1:1", "1213", &[1213], 1213),
+        ("192.0.2.1:1", "1212", &[], 1200),
     ] {
         let new = || {
-            let mut raw = Raw::client().with(&format!("max_udp_payload_size={limit}"));
+            let mut raw = client().with(&format!("max_udp_payload_size={limit}"));
             raw.addresses.peer = address.parse().unwrap();
             raw
         };
-        assert_eq!(new().connected().mtu(), first);
+        assert_eq!(new().connected().mtu(), 1200);
         let mut raw = new().warmed_up();
         assert_eq!(raw.probes(1500), probes);
         assert_eq!(raw.mtu(), last);
@@ -72,11 +75,11 @@ fn sizes_depend_on_the_address_and_the_limit_of_the_peer() {
 #[test]
 fn searches_below_what_did_not_get_through() {
     for (mtu, probes, last) in [
-        (1471, "3x1472 1362 1417 1444 1458", 1458),
-        (1400, "3x1472 1362 3x1417 1389 3x1403", 1389),
-        (1252, "3x1472 3x1362 3x1307 3x1279 3x1265 3x1258", 1252),
+        (1471, "3x1472 1336 1404 1438 1455 1463", 1463),
+        (1400, "3x1472 1336 3x1404 1370 1387 1395", 1395),
+        (1200, "3x1472 3x1336 3x1268 3x1234 3x1217 3x1208", 1200),
     ] {
-        let mut raw = Raw::client().warmed_up();
+        let mut raw = client().warmed_up();
         let sizes = raw.probes(mtu);
         let runs = sizes.chunk_by(|a, b| a == b).map(|run| match run.len() {
             1 => format!("{}", run[0]),
@@ -90,7 +93,7 @@ fn searches_below_what_did_not_get_through() {
 /// RFC 9000 §14.4.
 #[test]
 fn loss_of_a_probe_is_not_congestion() {
-    let mut raw = Raw::client().config(|it| it.congestion = Algorithm::Cubic);
+    let mut raw = client().config(|it| it.congestion = Algorithm::Cubic);
     raw = raw.warmed_up();
     let before = raw.connection().stats().congestion_window;
     raw.probes(1252);
@@ -100,7 +103,7 @@ fn loss_of_a_probe_is_not_congestion() {
 
 #[test]
 fn probe_that_gets_through_at_last() {
-    let mut raw = Raw::client().warmed_up();
+    let mut raw = client().warmed_up();
     for _ in 0..2 {
         raw.send("ack");
         raw.process();
@@ -115,8 +118,8 @@ fn probe_that_gets_through_at_last() {
 
 #[test]
 fn no_probe_while_nothing_is_acknowledged() {
-    let mut raw = Raw::client().connected();
-    raw.request_packets(&"a".repeat(28));
+    let mut raw = client().connected();
+    raw.request_packets(&"a".repeat(8));
     raw.wait();
     assert!(raw.sizes().iter().all(|&it| it < 100));
     raw.advance(RTT);
@@ -126,10 +129,10 @@ fn no_probe_while_nothing_is_acknowledged() {
 
 #[test]
 fn no_probe_before_the_handshake_is_confirmed() {
-    let mut raw = Raw::server();
+    let mut raw = Raw::server().with("max_udp_payload_size=");
     raw.start(&[]);
     raw.shake_hands();
-    raw.request_packets(&"a".repeat(30));
+    raw.request_packets(&"a".repeat(10));
     assert_eq!(raw.sizes(), []);
     raw.send("ack, handshake_done");
     assert_eq!(raw.sizes()[0], 1472);
@@ -137,13 +140,13 @@ fn no_probe_before_the_handshake_is_confirmed() {
 
 #[test]
 fn probe_keeps_the_pace() {
-    let mut raw = Raw::client().connected();
-    raw.request_packets(&"a".repeat(28));
+    let mut raw = client().connected();
+    raw.request_packets(&"a".repeat(8));
     raw.advance(RTT);
     raw.send("ack");
     let id = raw.peer.open(Unidirectional);
     raw.peer.send(id, &filler(0, 100_000), false);
-    assert!(raw.take().last().unwrap().number >= 30);
+    assert!(raw.take().last().unwrap().number >= 10);
     raw.send("ping");
     raw.send("ping");
     assert_eq!(raw.packets(), "1[ack 0-3]");
@@ -152,11 +155,11 @@ fn probe_keeps_the_pace() {
 }
 
 #[test]
-fn falls_back_after_three_timeouts() {
-    let mut raw = Raw::client().warmed_up();
+fn falls_back_after_two_timeouts() {
+    let mut raw = client().warmed_up();
     raw.probes(1472);
     assert_eq!(raw.mtu(), 1472);
-    for size in [1472, 1472, 1200, 1200] {
+    for size in [1472, 1200, 1200] {
         raw.wait();
         assert_eq!(raw.sizes()[0], size);
     }
@@ -182,7 +185,7 @@ fn falls_back_when_only_small_packets_get_through() {
         (1252, "lll", 1200),
     ] {
         let parameters = format!("max_datagram_frame_size=65535 max_udp_payload_size={max}");
-        let mut raw = Raw::client().with(&parameters).warmed_up();
+        let mut raw = client().with(&parameters).warmed_up();
         raw.probes(max);
         for round in rounds.bytes() {
             if round == b'P' {
@@ -212,7 +215,7 @@ fn falls_back_when_only_small_packets_get_through() {
 
 #[test]
 fn loss_of_what_was_sent_with_a_packet_that_got_through_raises_no_suspicion() {
-    let mut raw = Raw::client().warmed_up();
+    let mut raw = client().warmed_up();
     raw.probes(1472);
     raw.advance(RTT);
     raw.forget();
@@ -231,12 +234,12 @@ fn loss_of_what_was_sent_with_a_packet_that_got_through_raises_no_suspicion() {
 /// RFC 9002 §7.6.2 and RFC 9000 §14.4.
 #[test]
 fn persistent_congestion() {
-    for (is_probed, timeouts, window) in [
-        (true, 2, 2 * 1472),
-        (true, 3, 2 * 1460),
-        (false, 2, 32 * 1460 * 4 / 5),
+    for (is_probed, timeouts, pause, window) in [
+        (true, 0, 300, 2 * 1472),
+        (true, 2, 10, 2 * 1460),
+        (false, 2, 10, 32 * 1460 * 4 / 5),
     ] {
-        let raw = Raw::client().config(|it| it.congestion = Algorithm::Cubic);
+        let raw = client().config(|it| it.congestion = Algorithm::Cubic);
         let mut raw = raw.warmed_up();
         match is_probed {
             true => drop(raw.probes(1472)),
@@ -250,7 +253,7 @@ fn persistent_congestion() {
             raw.forget();
             raw.wait();
         }
-        raw.advance(RTT / 2);
+        raw.now = raw.now + Duration::from_millis(pause);
         raw.request_packets("bcde");
         raw.advance(RTT);
         let last = *raw.received[2].last().unwrap();
@@ -261,10 +264,10 @@ fn persistent_congestion() {
 
 #[test]
 fn search_starts_over_after_a_fall_back() {
-    let mut raw = Raw::client().warmed_up();
+    let mut raw = client().warmed_up();
     raw.probes(1400);
-    assert_eq!(raw.mtu(), 1389);
-    for _ in 0..3 {
+    assert_eq!(raw.mtu(), 1395);
+    for _ in 0..2 {
         raw.wait();
         raw.forget();
     }

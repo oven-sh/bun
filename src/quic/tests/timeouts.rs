@@ -115,7 +115,7 @@ fn timeouts_can_be_announced() {
             Raw::server,
             Raw::shake_hands,
             "H[close 0x0] 1[close 0x0]",
-            "Idle",
+            "Handshake",
         ),
         (
             Raw::client,
@@ -228,10 +228,36 @@ fn keep_alive() {
                 assert_eq!(raw.packets(), "1[ping]");
                 raw.advance(RTT);
                 raw.send("ack");
-                assert_eq!(RTT + raw.wait(), period);
+                assert_eq!(raw.wait(), period);
             }
         }
     }
+}
+
+#[test]
+fn keep_alive_is_due_sooner_after_data() {
+    for (mode, pause) in [
+        (KeepAlive::WhileStreamsAreOpen, 1000),
+        (KeepAlive::Every(Duration::from_secs(3)), 3000),
+    ] {
+        let mut raw = Raw::server().config(|it| it.keep_alive = mode).connected();
+        raw.send("stream 3 0 a");
+        raw.advance(pause - 1);
+        assert_eq!(raw.frames(), "");
+        raw.advance(1);
+        assert_eq!(raw.frames(), "ping");
+    }
+}
+
+#[test]
+fn a_client_waits_for_the_confirmation_as_long_as_for_the_handshake() {
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    raw.advance(5000);
+    raw.shake_hands();
+    raw.send_in(Handshake, "ack");
+    assert_eq!(raw.wait_for_the_end(), 10_000);
+    assert_eq!(raw.events(), "closed: HandshakeTimeout");
 }
 
 #[test]

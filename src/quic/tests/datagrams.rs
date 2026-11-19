@@ -81,7 +81,7 @@ fn probes_do_not_repeat_them() {
 /// RFC 9221 §3 and §5.
 #[test]
 fn what_is_too_long_is_given_up() {
-    const ROOM: usize = 1252 - (1 + 8 + 2) - 16;
+    const ROOM: usize = 1200 - (1 + 8 + 2) - 16;
     for (limit, len, fits) in [
         ("", 0, false),
         ("0", 0, false),
@@ -110,13 +110,13 @@ fn share_packets_with_other_frames() {
     raw.send("ping");
     let id = raw.peer.open(Unidirectional);
     raw.peer.send(id, &filler(0, 600), false);
-    for (id, len) in [(1, 600), (2, 2000), (3, 97), (4, 1222), (5, 700)] {
+    for (id, len) in [(1, 600), (2, 2000), (3, 97), (4, 1170), (5, 700)] {
         raw.connection().send_datagram(id, filler(0, len));
     }
     assert_eq!(
         raw.packets(),
-        "1[ack 0-1, datagram *600, datagram *97, stream 3 0 *515]; 1[datagram *1222]; \
-         1[datagram *700, stream 3 515 *85]"
+        "1[ack 0-1, datagram *600, datagram *97, stream 3 0 *463]; 1[datagram *1170]; \
+         1[datagram *700, stream 3 463 *137]"
     );
     assert_eq!(raw.events(), "datagram 2 abandoned");
 }
@@ -125,15 +125,15 @@ fn share_packets_with_other_frames() {
 fn acknowledgment_that_leaves_no_room_goes_first() {
     let [mut raw, _] = both();
     raw.send("ping");
-    raw.connection().send_datagram(1, filler(0, 1222));
-    assert_eq!(raw.packets(), "1[ack 0-1]; 1[datagram *1222]");
+    raw.connection().send_datagram(1, filler(0, 1170));
+    assert_eq!(raw.packets(), "1[ack 0-1]; 1[datagram *1170]");
 }
 
 /// RFC 9221 §5.4.
 #[test]
 fn wait_for_congestion_control() {
     let [mut raw, _] = both();
-    (0..100).for_each(|id| raw.connection().send_datagram(id, filler(0, 1200)));
+    (0..100).for_each(|id| raw.connection().send_datagram(id, filler(0, 1100)));
     let sent = raw.take().len();
     assert_eq!(raw.connection().unsent_datagrams(), 100 - sent);
     assert_eq!(raw.connection().drop_oldest_datagram(), Some(sent as u64));

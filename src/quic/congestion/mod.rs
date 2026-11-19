@@ -234,6 +234,13 @@ impl Controller {
         }
     }
 
+    /// For bytes that have arrived after all.
+    pub(crate) fn on_late(&mut self, len: u64) {
+        if let Model::Bbr(bbr) = &mut self.model {
+            bbr.on_late(len);
+        }
+    }
+
     /// Likewise (RFC 9002 §7.6).
     pub(crate) fn on_persistent_congestion(&mut self) {
         self.feedback.is_persistent_congestion = true;

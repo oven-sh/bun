@@ -23,6 +23,9 @@ use crate::stream_id::Side;
 use crate::time::{Duration, Instant};
 
 const MAX_COALESCED: usize = 8;
+const LOAD_WHILE_GOING_AWAY: u32 = 2000;
+/// While the peer is heard from.
+const MAX_PTO_COUNT: u32 = 4;
 const MAX_UNDECRYPTABLE: usize = 32;
 const MAX_UNDECRYPTABLE_LEN: usize = 48 * 1024;
 const UNVALIDATED_MAX_UNDECRYPTABLE_LEN: usize = 16 * 1024;
@@ -146,7 +149,13 @@ impl Connection {
                         path.on_received(len);
                     }
                     self.restart_idle_timer(now);
+                    let pause = match self.spaces.data.received.unacked_eliciting {
+                        0 => self.keep_alive_period,
+                        _ => self.expected_pause,
+                    };
+                    self.timers.set(Timer::KeepAlive, now + pause);
                     self.has_sent_since_receiving = false;
+                    self.pto_count = self.pto_count.min(MAX_PTO_COUNT);
                     self.update_unsent_target();
                     self.streams.state.start_write_round();
                 }
@@ -163,6 +172,11 @@ impl Connection {
         let load = core::mem::take(&mut self.streams.state.load);
         match (self.tolerated_load.take(now, load), &self.http3) {
             (true, _) => Ok(()),
+            (false, Some(_)) if self.side.is_server() && !self.streams.table.is_going_away => {
+                self.tolerated_load.put_back(LOAD_WHILE_GOING_AWAY);
+                self.go_away();
+                Ok(())
+            }
             (false, Some(_)) => Err(Error::http3(http3_code::EXCESSIVE_LOAD, "excessive load")),
             (false, None) => Err(Error::violation("excessive load")),
         }
@@ -421,9 +435,8 @@ impl Connection {
     }
 
     /// RFC 9000 §10.3.1.
-    pub(crate) fn is_reset(&self, from: &Addresses, token: ResetToken) -> bool {
-        (self.paths())
-            .any(|it| it.addresses.peer == from.peer && it.remote.reset_token == Some(token))
+    fn is_reset(&self, from: &Addresses, token: ResetToken) -> bool {
+        (self.paths()).any(|it| it.reset_key() == Some((from.peer, token)))
     }
 
     /// RFC 9001 §6.6.

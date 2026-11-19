@@ -143,7 +143,8 @@ impl Raw {
         };
         this.set(
             "max_data=10000000 max_stream_data_bidi_local=1000000 max_stream_data_uni=1000000
-            max_stream_data_bidi_remote=1000000 max_streams_bidi=100 max_streams_uni=100",
+            max_stream_data_bidi_remote=1000000 max_streams_bidi=100 max_streams_uni=100
+            max_udp_payload_size=1200",
         );
         this
     }

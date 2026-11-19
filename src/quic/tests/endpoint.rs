@@ -173,16 +173,14 @@ fn runs_of_datagrams() {
 #[test]
 fn a_run_fits_in_a_udp_packet() {
     for excess in [0, 1] {
-        let (mut raw, mut batch) = (Raw::server(), Batch::default());
-        *raw.peer.crypto.planned.borrow_mut() = vec![vec![0; 21]; 54];
-        raw.peer.tls.hello_len = 1100;
-        raw.connect_to(1);
-        raw.peer.tls.hello_len = 1100 + 1235 - raw.sizes()[0];
-        (0..53).for_each(|_| raw.connect_to(1));
-        assert_eq!(raw.runs(&mut batch, 100), [(1, 53 * 1235, 1235)]);
-        let rest = 65507 - 53 * 1235 + excess;
-        *raw.peer.crypto.planned.borrow_mut() = vec![vec![18; 62]];
-        (raw.peer.endpoint).reset(&raw.addresses, &vec![0x40; rest + 1]);
+        let raw = Raw::server().with("max_datagram_frame_size=1200");
+        let (mut raw, mut batch) = (raw.connected(), Batch::default());
+        let first = raw.peer.handle;
+        (0..54).for_each(|_| raw.connect_to(443));
+        assert_eq!(raw.runs(&mut batch, 100), [(443, 54 * 1200, 1200)]);
+        let rest = 65507 - 54 * 1200 + excess;
+        raw.peer.handle = first;
+        (raw.connection()).send_datagram(0, vec![0; rest - (1 + 8 + 2) - 3 - 16]);
         assert_eq!(raw.runs(&mut batch, 100).len(), 1 + excess);
     }
 }
@@ -201,8 +199,8 @@ fn connections_take_turns() {
         });
         assert_eq!(raw.peer.endpoint.wants_to_transmit(), max_len == 20);
     }
-    assert_eq!(visited, [(1, 16), (2, 4), (1, 21), (2, 20), (2, 21)]);
-    assert_eq!(batch.len(), 42);
+    assert_eq!(visited, [(1, 16), (2, 4), (1, 22), (2, 20), (2, 22)]);
+    assert_eq!(batch.len(), 44);
 }
 
 #[test]
@@ -239,7 +237,8 @@ fn every_connection_has_its_own_timers() {
         raw.connection().context = std::ptr::without_provenance_mut(port.into());
         handles.push(raw.peer.handle.unwrap());
         raw.peer.process(raw.now);
-        let times = [150, 450, 1050].into_iter().take_while(|&it| it < timeout);
+        let times = [150, 150, 450, 450, 1050, 1050].into_iter();
+        let times = times.take_while(|&it| it < timeout);
         let times = times.chain([timeout]).map(|it| begin + it);
         expected.insert(port, times.collect::<Vec<_>>());
     }
@@ -307,7 +306,7 @@ fn a_connection_ends_even_if_it_never_gets_to_send() {
 #[test]
 fn token_bucket() {
     let mut bucket = TokenBucket::new(10.0, 3.0);
-    bucket.put_back();
+    bucket.put_back(1);
     for (millis, count, expected) in [
         (1000, 4, false),
         (1000, 2, true),
@@ -322,8 +321,7 @@ fn token_bucket() {
         let now = Instant::from_micros(millis * 1000);
         assert_eq!(bucket.take(now, count), expected, "{millis} {count}");
     }
-    bucket.put_back();
-    bucket.put_back();
+    bucket.put_back(2);
     let now = Instant::from_micros(9_000_000);
     assert!(bucket.take(now, 2) && !bucket.take(now, 1));
 }

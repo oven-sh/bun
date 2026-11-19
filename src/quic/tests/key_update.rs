@@ -119,7 +119,7 @@ fn what_is_lost_is_sent_again_with_the_new_keys() {
 
 fn limited(raw: Raw, confidentiality: u64, integrity: u64) -> Raw {
     raw.peer.crypto.limits.set([confidentiality, integrity]);
-    raw.with("max_udp_payload_size=1200").connected()
+    raw.connected()
 }
 
 /// Returns the number and the key phase of the packet that it gets.

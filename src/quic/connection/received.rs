@@ -6,8 +6,9 @@ use crate::frame::{Ack, kind};
 use crate::range_set::RangeSet;
 use crate::time::Instant;
 
-/// All but the first are counted in one byte.
-const MAX_RANGES: usize = 64;
+const MAX_RANGES: usize = 256;
+/// After the first. They are counted in one byte.
+const MAX_RANGES_IN_FRAME: usize = 63;
 const MAX_TRACKED_ACKS: usize = 16;
 pub(crate) const ACK_DELAY_EXPONENT: u64 = 3;
 
@@ -31,6 +32,8 @@ pub(super) struct Received {
     ranges: RangeSet,
     /// What is below counts as a duplicate.
     floor: u64,
+    /// The peer knows what has arrived below.
+    reported: u64,
     /// Follows the largest packet number.
     pub(super) expected: u64,
     largest_at: Instant,
@@ -62,6 +65,10 @@ impl Received {
             return Order::Expected;
         }
         self.unacked_eliciting += 1;
+        if number < self.reported {
+            self.reported = number;
+            self.sent_acks.clear();
+        }
         let expected = self.expected_eliciting.max(self.floor);
         self.expected_eliciting = expected.max(number + 1);
         if number < expected {
@@ -75,7 +82,10 @@ impl Received {
 
     /// Writes as many ranges as end before `out` has the length `end`.
     pub(super) fn write_ack(&mut self, now: Instant, packet: u64, out: &mut Vec<u8>, end: usize) {
-        let mut ranges = self.ranges.iter().rev();
+        let reported = self.reported;
+        let mut ranges = (self.ranges.iter().rev())
+            .take_while(|it| it.end > reported)
+            .map(|it| it.start.max(reported)..it.end);
         let Some(Range { start, end: top }) = ranges.next() else {
             self.is_ack_due = false;
             return;
@@ -92,7 +102,7 @@ impl Received {
         out.push(0);
         out.varint(first_range);
         let (mut count, mut above) = (0, start);
-        for range in ranges {
+        for range in ranges.take(MAX_RANGES_IN_FRAME) {
             let (gap, len) = (above - range.end - 1, range.end - range.start - 1);
             if out.len() + varint_len(gap) + varint_len(len) > end {
                 break;
@@ -117,15 +127,14 @@ impl Received {
         self.sent_acks.clear();
     }
 
-    /// Forgets what the peer knows to be acknowledged (RFC 9000 §13.2.4). Returns when the largest packet that `ack`
+    /// Stops repeating what the peer knows to be acknowledged (RFC 9000 §13.2.4). Returns when the largest packet that `ack`
     /// names was sent, if it had an ACK frame.
     #[inline]
     pub(super) fn on_ack(&mut self, ack: &Ack) -> Option<Instant> {
         let mut largest_sent_at = None;
         while let Some(sent) = self.sent_acks.pop_front_if(|it| it.packet <= ack.largest) {
             if sent.packet >= ack.first_range().start {
-                self.floor = self.floor.max(sent.largest + 1);
-                self.ranges.remove_below(self.floor);
+                self.reported = self.reported.max(sent.largest + 1);
             }
             largest_sent_at = (sent.packet == ack.largest).then_some(sent.at);
         }

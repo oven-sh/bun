@@ -72,6 +72,24 @@ fn gives_credit_for_what_has_been_read() {
 }
 
 #[test]
+fn gives_credit_sooner_if_streams_that_are_not_read_hold_the_window() {
+    let mut raw = with_windows(Raw::client(), 6400, [0, 6400, 0]);
+    raw.send("stream 0 0 -");
+    raw.connection().set_paused(StreamId(0), true);
+    raw.write(0, &filler(0, 5000), false);
+    for (frame, expected) in [
+        ("stream 4 0 *700", ""),
+        ("stream 4 700 *1", "max_data 7101"),
+        ("stream 0 5000 *1299", ""),
+        ("stream 4 701 *100", ""),
+        ("stream 4 801 *1", "max_data 7202"),
+    ] {
+        raw.send(frame);
+        assert_eq!(raw.frames(), expected);
+    }
+}
+
+#[test]
 fn gives_credit_for_what_is_discarded() {
     let mut raw = with_windows(Raw::client(), 100, [0, 100, 0]);
     raw.send("stream 0 10 *10, reset_stream 0 0 60");
@@ -102,8 +120,9 @@ fn gives_credit_for_what_has_been_consumed() {
     let raw = Raw::client().config(|it| it.awaits_consumption = true);
     let mut raw = with_windows(raw, 100, [0, 100, 100]);
     raw.send("stream 0 0 *100");
-    raw.connection().consume(StreamId(0), 10);
     assert_eq!(raw.frames(), "");
+    raw.connection().consume(StreamId(0), 10);
+    assert_eq!(raw.frames(), "max_data 110");
     raw.connection().consume(StreamId(0), 60);
     assert_eq!(raw.frames(), "max_data 170, max_stream_data 0 170");
     raw.send("fin 0 100 *70");

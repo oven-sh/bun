@@ -9,6 +9,7 @@ use super::ids::RemoteId;
 use super::mtu::Mtu;
 use super::space::SpaceId;
 use super::timers::Timer;
+use crate::cid::ResetToken;
 use crate::congestion::Rtt;
 use crate::crypto::Crypto;
 use crate::endpoint::Shared;
@@ -149,6 +150,10 @@ impl Path {
         is_kept
     }
 
+    pub(super) fn reset_key(&self) -> Option<(SocketAddr, ResetToken)> {
+        Some((self.addresses.peer, self.remote.reset_token?))
+    }
+
     fn is_challenged(&self) -> bool {
         self.owes_challenge || !self.challenges.is_empty()
     }
@@ -242,26 +247,22 @@ impl Connection {
         path.mtu.set_peer_limit(self.peer.max_udp_payload_size);
         path.challenge(now);
         path.owes_challenge = validates;
-        self.track_reset_token(&remote, shared);
+        self.track_reset_token(&path, shared);
         self.candidates.push(path);
         Ok(self.candidates.last_mut())
     }
 
-    pub(super) fn track_reset_token(&self, remote: &RemoteId, shared: &mut Shared) {
-        if let Some(token) = remote.reset_token {
-            shared
-                .routes
-                .by_reset_token
-                .entry(token)
-                .or_insert(self.slot);
+    pub(super) fn track_reset_token(&self, path: &Path, shared: &mut Shared) {
+        if let Some(key) = path.reset_key() {
+            shared.routes.by_reset_token.entry(key).or_insert(self.slot);
         }
     }
 
-    pub(super) fn untrack_reset_token(&self, remote: &RemoteId, shared: &mut Shared) {
-        if let Some(token) = &remote.reset_token
-            && shared.routes.by_reset_token.get(token) == Some(&self.slot)
+    pub(super) fn untrack_reset_token(&self, path: &Path, shared: &mut Shared) {
+        if let Some(key) = &path.reset_key()
+            && shared.routes.by_reset_token.get(key) == Some(&self.slot)
         {
-            shared.routes.by_reset_token.remove(token);
+            shared.routes.by_reset_token.remove(key);
         }
     }
 
@@ -271,11 +272,13 @@ impl Connection {
 
     /// For a path that is not among the others any more.
     fn abandon_path(&mut self, path: &Path, shared: &mut Shared) -> Result {
+        if !self.paths().any(|it| it.reset_key() == path.reset_key()) {
+            self.untrack_reset_token(path, shared);
+        }
         let sequence = path.remote.sequence;
         if self.paths().any(|it| it.remote.sequence == sequence) {
             return Ok(());
         }
-        self.untrack_reset_token(&path.remote, shared);
         self.remote_ids.retire(sequence)
     }
 
@@ -294,9 +297,9 @@ impl Connection {
         if self.path.remote.sequence < oldest
             && let Some(spare) = self.remote_ids.take_spare()
         {
+            self.untrack_reset_token(&self.path, shared);
             let old = core::mem::replace(&mut self.path.remote, spare);
-            self.untrack_reset_token(&old, shared);
-            self.track_reset_token(&spare, shared);
+            self.track_reset_token(&self.path, shared);
             self.remote_ids.retire(old.sequence)?;
             self.spin = false;
         }

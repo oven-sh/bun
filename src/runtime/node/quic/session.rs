@@ -747,16 +747,7 @@ impl QuicSession {
                 continue;
             }
             let buf = ArrayBuffer::create_buffer(global, &blob).or_report();
-            if let Some(cb) = callbacks::get(global, "onSessionTicket") {
-                let vm = global.bun_vm();
-                vm.event_loop().run_callback(
-                    bun_event_loop::ContextId::NONE,
-                    cb,
-                    global,
-                    self.handle(),
-                    &[buf],
-                );
-            }
+            callbacks::run(global, "onSessionTicket", self.handle(), &[buf]);
         }
         self.plan_ticket_delivery();
     }
@@ -891,16 +882,12 @@ impl QuicSession {
                 // Direction (0=bidi, 1=uni) is bit 1 of the stream id
                 // (RFC 9000 §2.1).
                 let is_uni = stream.stream_id() as u64 & STREAM_ID_UNI_BIT != 0;
-                if let Some(cb) = callbacks::get(global, "onStreamCreated") {
-                    let vm = global.bun_vm();
-                    vm.event_loop().run_callback(
-                        bun_event_loop::ContextId::NONE,
-                        cb,
-                        global,
-                        self.handle(),
-                        &[stream.handle(), JSValue::js_number(is_uni.into())],
-                    );
-                }
+                callbacks::run(
+                    global,
+                    "onStreamCreated",
+                    self.handle(),
+                    &[stream.handle(), JSValue::js_number(is_uni.into())],
+                );
             }
             SessionEvent::NewToken(token) => {
                 // Node delivers one.
@@ -910,29 +897,11 @@ impl QuicSession {
                     return Ok(());
                 }
                 let buf = ArrayBuffer::create_buffer(global, &token)?;
-                if let Some(cb) = callbacks::get(global, "onSessionNewToken") {
-                    let vm = global.bun_vm();
-                    vm.event_loop().run_callback(
-                        bun_event_loop::ContextId::NONE,
-                        cb,
-                        global,
-                        self.handle(),
-                        &[buf],
-                    );
-                }
+                callbacks::run(global, "onSessionNewToken", self.handle(), &[buf]);
             }
             SessionEvent::Keylog(line) => {
                 let s = bun_string_jsc::create_utf8_for_js(global, &line)?;
-                if let Some(cb) = callbacks::get(global, "onSessionKeyLog") {
-                    let vm = global.bun_vm();
-                    vm.event_loop().run_callback(
-                        bun_event_loop::ContextId::NONE,
-                        cb,
-                        global,
-                        self.handle(),
-                        &[s],
-                    );
-                }
+                callbacks::run(global, "onSessionKeyLog", self.handle(), &[s]);
             }
             SessionEvent::SessionResume(blob) => {
                 if !self.has_listener(LISTENER_FLAG_SESSION_TICKET) {
@@ -945,16 +914,7 @@ impl QuicSession {
                     return Ok(());
                 }
                 let buf = ArrayBuffer::create_buffer(global, &blob)?;
-                if let Some(cb) = callbacks::get(global, "onSessionTicket") {
-                    let vm = global.bun_vm();
-                    vm.event_loop().run_callback(
-                        bun_event_loop::ContextId::NONE,
-                        cb,
-                        global,
-                        self.handle(),
-                        &[buf],
-                    );
-                }
+                callbacks::run(global, "onSessionTicket", self.handle(), &[buf]);
             }
             SessionEvent::StreamReset { stream, code } => {
                 let Some(stream) = self
@@ -965,48 +925,19 @@ impl QuicSession {
                 };
                 let handle = stream.handle();
                 let err = make_application_error(global, code)?;
-                {
-                    if let Some(cb) = callbacks::get(global, "onStreamReset") {
-                        let vm = global.bun_vm();
-                        vm.event_loop().run_callback(
-                            bun_event_loop::ContextId::NONE,
-                            cb,
-                            global,
-                            handle,
-                            &[err],
-                        );
-                    }
-                }
+                callbacks::run(global, "onStreamReset", handle, &[err]);
             }
             SessionEvent::GoawayReceived => {
                 // What Node reports for the notice of a graceful shutdown.
                 let last_stream_id = JSValue::from_int64_no_truncate(global, -1)?;
-                if let Some(cb) = callbacks::get(global, "onSessionGoaway") {
-                    let vm = global.bun_vm();
-                    vm.event_loop().run_callback(
-                        bun_event_loop::ContextId::NONE,
-                        cb,
-                        global,
-                        self.handle(),
-                        &[last_stream_id],
-                    );
-                }
+                callbacks::run(global, "onSessionGoaway", self.handle(), &[last_stream_id]);
             }
             SessionEvent::StreamWantsTrailers { stream } => {
                 let Some(stream) = self.live_stream(stream) else {
                     return Ok(());
                 };
                 let handle = stream.handle();
-                if let Some(cb) = callbacks::get(global, "onStreamTrailers") {
-                    let vm = global.bun_vm();
-                    vm.event_loop().run_callback(
-                        bun_event_loop::ContextId::NONE,
-                        cb,
-                        global,
-                        handle,
-                        &[],
-                    );
-                }
+                callbacks::run(global, "onStreamTrailers", handle, &[]);
             }
             SessionEvent::StreamHeaders { stream, fields } => {
                 let Some(stream) = self.live_stream(stream).filter(|s| s.wants_headers()) else {
@@ -1025,50 +956,26 @@ impl QuicSession {
                     Section::Head => QUIC_STREAM_HEADERS_KIND_INITIAL,
                     Section::Trailers => QUIC_STREAM_HEADERS_KIND_TRAILING,
                 };
-                {
-                    if let Some(cb) = callbacks::get(global, "onStreamHeaders") {
-                        let vm = global.bun_vm();
-                        vm.event_loop().run_callback(
-                            bun_event_loop::ContextId::NONE,
-                            cb,
-                            global,
-                            handle,
-                            &[js_arr, JSValue::js_number(kind as f64)],
-                        );
-                    }
-                }
+                callbacks::run(
+                    global,
+                    "onStreamHeaders",
+                    handle,
+                    &[js_arr, JSValue::js_number(kind as f64)],
+                );
             }
             SessionEvent::StreamDrain { stream } => {
                 let Some(stream) = self.live_stream(stream) else {
                     return Ok(());
                 };
                 let handle = stream.handle();
-                if let Some(cb) = callbacks::get(global, "onStreamDrain") {
-                    let vm = global.bun_vm();
-                    vm.event_loop().run_callback(
-                        bun_event_loop::ContextId::NONE,
-                        cb,
-                        global,
-                        handle,
-                        &[],
-                    );
-                }
+                callbacks::run(global, "onStreamDrain", handle, &[]);
             }
             SessionEvent::StreamBlocked { stream } => {
                 let Some(stream) = self.live_stream(stream).filter(|s| s.wants_block()) else {
                     return Ok(());
                 };
                 let handle = stream.handle();
-                if let Some(cb) = callbacks::get(global, "onStreamBlocked") {
-                    let vm = global.bun_vm();
-                    vm.event_loop().run_callback(
-                        bun_event_loop::ContextId::NONE,
-                        cb,
-                        global,
-                        handle,
-                        &[],
-                    );
-                }
+                callbacks::run(global, "onStreamBlocked", handle, &[]);
             }
             SessionEvent::StreamWake { stream } => {
                 let Some(stream) = self
@@ -1094,16 +1001,12 @@ impl QuicSession {
                     return Ok(());
                 }
                 let buf = ArrayBuffer::create_buffer(global, &payload)?;
-                if let Some(cb) = callbacks::get(global, "onSessionDatagram") {
-                    let vm = global.bun_vm();
-                    vm.event_loop().run_callback(
-                        bun_event_loop::ContextId::NONE,
-                        cb,
-                        global,
-                        self.handle(),
-                        &[buf, JSValue::js_boolean(early)],
-                    );
-                }
+                callbacks::run(
+                    global,
+                    "onSessionDatagram",
+                    self.handle(),
+                    &[buf, JSValue::js_boolean(early)],
+                );
             }
             SessionEvent::DatagramAbandoned(id) => self.report_datagram_abandoned(global, id)?,
             SessionEvent::EarlyDataFailed => {
@@ -1149,20 +1052,16 @@ impl QuicSession {
                     JSValue::create_array_from_iter(global, [min, requested].into_iter(), |v| {
                         Ok(JSValue::js_number(v as f64))
                     })?;
-                if let Some(cb) = callbacks::get(global, "onSessionVersionNegotiation") {
-                    let vm = global.bun_vm();
-                    vm.event_loop().run_callback(
-                        bun_event_loop::ContextId::NONE,
-                        cb,
-                        global,
-                        self.handle(),
-                        &[
-                            JSValue::js_number(requested as f64),
-                            requested_arr,
-                            supported_arr,
-                        ],
-                    );
-                }
+                callbacks::run(
+                    global,
+                    "onSessionVersionNegotiation",
+                    self.handle(),
+                    &[
+                        JSValue::js_number(requested as f64),
+                        requested_arr,
+                        supported_arr,
+                    ],
+                );
             }
             SessionEvent::Origin(payload) => {
                 if !self.has_listener(LISTENER_FLAG_ORIGIN) {
@@ -1186,16 +1085,7 @@ impl QuicSession {
                     JSValue::create_array_from_iter(global, ranges.into_iter(), |(o, n)| {
                         bun_string_jsc::create_utf8_for_js(global, &payload[o..o + n])
                     })?;
-                if let Some(cb) = callbacks::get(global, "onSessionOrigin") {
-                    let vm = global.bun_vm();
-                    vm.event_loop().run_callback(
-                        bun_event_loop::ContextId::NONE,
-                        cb,
-                        global,
-                        self.handle(),
-                        &[array],
-                    );
-                }
+                callbacks::run(global, "onSessionOrigin", self.handle(), &[array]);
             }
             SessionEvent::PathValidation { preferred, paths } => {
                 if !self.has_listener(LISTENER_FLAG_PATH_VALIDATION) {
@@ -1219,23 +1109,19 @@ impl QuicSession {
                         JSValue::js_boolean(preferred),
                     )
                 };
-                if let Some(cb) = callbacks::get(global, "onSessionPathValidation") {
-                    let vm = global.bun_vm();
-                    vm.event_loop().run_callback(
-                        bun_event_loop::ContextId::NONE,
-                        cb,
-                        global,
-                        self.handle(),
-                        &[
-                            result_js,
-                            address_to_js(global, Some(new.local)),
-                            address_to_js(global, Some(new.peer)),
-                            old_local_js,
-                            old_remote_js,
-                            preferred_js,
-                        ],
-                    );
-                }
+                callbacks::run(
+                    global,
+                    "onSessionPathValidation",
+                    self.handle(),
+                    &[
+                        result_js,
+                        address_to_js(global, Some(new.local)),
+                        address_to_js(global, Some(new.peer)),
+                        old_local_js,
+                        old_remote_js,
+                        preferred_js,
+                    ],
+                );
             }
             SessionEvent::StreamStopSending { stream, code } => {
                 let Some(stream) = self.live_stream(stream) else {
@@ -1274,16 +1160,7 @@ impl QuicSession {
                     return Ok(());
                 };
                 let handle = stream.handle();
-                if let Some(cb) = callbacks::get(global, "onStreamClose") {
-                    let vm = global.bun_vm();
-                    vm.event_loop().run_callback(
-                        bun_event_loop::ContextId::NONE,
-                        cb,
-                        global,
-                        handle,
-                        &[JSValue::UNDEFINED],
-                    );
-                }
+                callbacks::run(global, "onStreamClose", handle, &[JSValue::UNDEFINED]);
                 // onStreamClose is user JS too: re-acquire before the
                 // `release_close_root` below, as above.
                 let Some(stream) = self.live_stream(key) else {
@@ -1360,25 +1237,21 @@ impl QuicSession {
             ),
             None => (JSValue::UNDEFINED, JSValue::UNDEFINED),
         };
-        if let Some(callback) = callbacks::get(global, "onSessionHandshake") {
-            let vm = global.bun_vm();
-            vm.event_loop().run_callback(
-                bun_event_loop::ContextId::NONE,
-                callback,
-                global,
-                self.handle(),
-                &[
-                    sni,
-                    alpn,
-                    cipher,
-                    cipher_version,
-                    verify_reason,
-                    verify_code,
-                    JSValue::js_boolean(early_data.0),
-                    JSValue::js_boolean(early_data.1),
-                ],
-            );
-        }
+        callbacks::run(
+            global,
+            "onSessionHandshake",
+            self.handle(),
+            &[
+                sni,
+                alpn,
+                cipher,
+                cipher_version,
+                verify_reason,
+                verify_code,
+                JSValue::js_boolean(early_data.0),
+                JSValue::js_boolean(early_data.1),
+            ],
+        );
 
         if self.qlog_enabled.get() {
             let t = now_ns() / 1_000_000;
@@ -1391,16 +1264,7 @@ impl QuicSession {
         // Node destroys the early streams and fires `onearlyrejected` — on
         // the CLIENT only.
         if early_data.0 && !early_data.1 && !self.is_server {
-            if let Some(callback) = callbacks::get(global, "onSessionEarlyDataRejected") {
-                let vm = global.bun_vm();
-                vm.event_loop().run_callback(
-                    bun_event_loop::ContextId::NONE,
-                    callback,
-                    global,
-                    self.handle(),
-                    &[],
-                );
-            }
+            callbacks::run(global, "onSessionEarlyDataRejected", self.handle(), &[]);
         }
     }
 
@@ -1470,16 +1334,12 @@ impl QuicSession {
         // so bailing here would silently end the whole qlog stream, not just
         // drop this record.
         let data_js = bun_string_jsc::create_utf8_for_js(global, data.as_bytes()).or_report();
-        if let Some(cb) = callbacks::get(global, "onSessionQlog") {
-            let vm = global.bun_vm();
-            vm.event_loop().run_callback(
-                bun_event_loop::ContextId::NONE,
-                cb,
-                global,
-                self.handle(),
-                &[data_js, JSValue::js_boolean(fin)],
-            );
-        }
+        callbacks::run(
+            global,
+            "onSessionQlog",
+            self.handle(),
+            &[data_js, JSValue::js_boolean(fin)],
+        );
     }
 
     fn report_close(&self, global: &JSGlobalObject, close: Option<Close<CloseType>>) {
@@ -1513,21 +1373,17 @@ impl QuicSession {
             // SAFETY: endpoint is alive (endpoint_js Strong still held).
             unsafe { (*endpoint).unregister_session(self) };
         }
-        if let Some(callback) = callbacks::get(global, "onSessionClose") {
-            let vm = global.bun_vm();
-            vm.event_loop().run_callback(
-                bun_event_loop::ContextId::NONE,
-                callback,
-                global,
-                self.handle(),
-                &[
-                    JSValue::js_number(f64::from(error_type as u8)),
-                    code_js,
-                    reason_js,
-                    JSValue::UNDEFINED,
-                ],
-            );
-        }
+        callbacks::run(
+            global,
+            "onSessionClose",
+            self.handle(),
+            &[
+                JSValue::js_number(f64::from(error_type as u8)),
+                code_js,
+                reason_js,
+                JSValue::UNDEFINED,
+            ],
+        );
     }
 
     pub(super) fn teardown(&self, _global: &JSGlobalObject) {
@@ -1826,16 +1682,12 @@ impl QuicSession {
             return Ok(());
         }
         let id_js = JSValue::from_uint64_no_truncate(global, id)?;
-        if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
-            let vm = global.bun_vm();
-            vm.event_loop().run_callback(
-                bun_event_loop::ContextId::NONE,
-                cb,
-                global,
-                self.handle(),
-                &[id_js, status_js],
-            );
-        }
+        callbacks::run(
+            global,
+            "onSessionDatagramStatus",
+            self.handle(),
+            &[id_js, status_js],
+        );
         Ok(())
     }
 
@@ -2109,6 +1961,11 @@ impl QuicSession {
     fn describe_close(&self, close: &CloseReason) -> Option<Close<CloseType>> {
         Some(match close {
             CloseReason::Local => return None,
+            CloseReason::Peer {
+                layer: Layer::Application,
+                code: http3_code::NO_ERROR,
+                reason,
+            } if self.is_http3() => (CloseType::Application, 0, reason.clone()),
             CloseReason::Peer {
                 layer,
                 code,

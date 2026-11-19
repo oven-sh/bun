@@ -2221,6 +2221,18 @@ test.each([
   expect(render(runs) / render(runs.map((_, i) => runs[i & ~1]))).toBeLessThan(15);
 });
 
+test.each([
+  ["[[``a `b]] `c`", '<x-wikilink data-target="``a `b">``a `b</x-wikilink> <code>c</code>'],
+  [
+    "[[t|``a [[```b `c]] `d`]]",
+    '<x-wikilink data-target="t">``a <x-wikilink data-target="```b `c">```b `c</x-wikilink> <code>d</code></x-wikilink>',
+  ],
+  ["``a ```b [[`c]] d`", '``a ```b <x-wikilink data-target="`c">`c</x-wikilink> d`'],
+  ["![[`a` ``b ```c]](d)", '<img src="d" alt="[a ``b ```c]" />'],
+])("code spans in and around the label of a wiki link: %s", (input, expected) => {
+  expect(Bun.markdown.html(input, { wikiLinks: true })).toBe(`<p>${expected}</p>\n`);
+});
+
 test("the language of fenced code behind a byte order mark", () => {
   const input = "\ufeff```js\nx\n```\n";
   expect(Bun.markdown.html(input)).toBe('<pre><code class="language-js">x\n</code></pre>\n');

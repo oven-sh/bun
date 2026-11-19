@@ -158,22 +158,31 @@ fn all_match_sizes(delims: &[EmphDelim], d: &EmphDelim, is_open: bool) -> Vec<u8
     parts.concat()
 }
 
-/// Finds what closes the code spans of one text, which is asked about from its start to its end.
+/// Finds what closes the code spans of one text.
 #[derive(Default)]
 pub(crate) struct CodeSpanEnds {
+    /// Nothing before it is asked about.
+    from: usize,
     n_failed: u32,
-    /// From the second failure on: the length of each run of backticks that is ahead, and where the last one of that
-    /// length starts, sorted.
+    /// From the second failure on: the length of each run of backticks, and where the last one of that length starts,
+    /// sorted.
     last_runs: Vec<(usize, usize)>,
 }
 
 impl CodeSpanEnds {
+    pub(crate) fn starting_at(from: usize) -> Self {
+        Self {
+            from,
+            ..Default::default()
+        }
+    }
+
     #[inline]
     fn reset(&mut self) {
         self.n_failed = 0;
     }
 
-    /// Where the first run of `count` backticks from `start` on starts.
+    /// Where the first run of `count` backticks from `start` on starts. `start` is not inside of a run.
     #[inline]
     pub(crate) fn find(&mut self, text: &[u8], start: usize, count: usize) -> Option<usize> {
         if self.n_failed >= 2 {
@@ -189,16 +198,16 @@ impl CodeSpanEnds {
         if found.is_none() {
             self.n_failed += 1;
             if self.n_failed == 2 {
-                self.note_last_runs(text, start);
+                self.note_last_runs(text);
             }
         }
         found.map(|it| it.1)
     }
 
     #[cold]
-    fn note_last_runs(&mut self, text: &[u8], start: usize) {
+    fn note_last_runs(&mut self, text: &[u8]) {
         self.last_runs.clear();
-        for run in backtick_runs(text, start) {
+        for run in backtick_runs(text, self.from) {
             match self.last_runs.binary_search_by_key(&run.0, |it| it.0) {
                 Ok(index) => self.last_runs[index] = run,
                 Err(index) => self.last_runs.insert(index, run),

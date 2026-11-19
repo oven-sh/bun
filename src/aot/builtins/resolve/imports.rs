@@ -255,14 +255,16 @@ impl Resolver<'_, '_> {
         false
     }
 
-    fn has_no_factory(&self, mock: ExprId) -> bool {
+    fn may_take_original(&self, mock: ExprId) -> bool {
         let hir = self.input.hir;
         let ExprKind::Call(call) = hir[mock].kind else {
             return false;
         };
         let factory = hir.ids(hir[call].args).nth(1);
-        factory
-            .is_none_or(|it| matches!(hir[hir.skip_type_assertions(it)].kind, ExprKind::Object(_)))
+        factory.is_none_or(|it| match hir[hir.skip_type_assertions(it)].kind {
+            ExprKind::Fn(function) => hir[function].params.iter().next().is_some(),
+            _ => true,
+        })
     }
 
     fn find_runner_that_stub_answers(&self, callee: ExprId, stub: BuiltinId) -> Option<BuiltinId> {
@@ -286,7 +288,7 @@ impl Resolver<'_, '_> {
             }
             match site {
                 ImportSiteKind::ImportCall(call) if self.is_import_awaited_at_once(call) => {}
-                ImportSiteKind::MockModule(mock) if self.has_no_factory(mock) => {
+                ImportSiteKind::MockModule(mock) if self.may_take_original(mock) => {
                     self.expose(table::canonical_id(namespace));
                 }
                 ImportSiteKind::ImportCall(_) | ImportSiteKind::ExportStar(_)

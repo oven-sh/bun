@@ -1036,12 +1036,15 @@ describe("bundler files option", () => {
   });
 
   test("an optional URL of an html page in files names a file in files", async () => {
+    // A URL with a leading `/` is relative to the project root. For a build from `files` that is the working directory.
+    const root = `${process.cwd()}/optional-url-in-files`;
     const result = await Bun.build({
-      entrypoints: ["/app/index.html"],
+      entrypoints: [`${root}/index.html`],
       files: {
-        "/app/index.html": `<!doctype html><link rel="shortcut icon" href="./favicon.ico"><meta property="og:image" content="/app/og.png">`,
-        "/app/favicon.ico": "icon, from files",
-        "/app/og.png": "og, from files",
+        [`${root}/index.html`]: `<!doctype html><link rel="shortcut icon" href="./favicon.ico">
+<link rel="icon" href="/optional-url-in-files/og.png"><meta property="og:image" content="/optional-url-in-files/og.png">`,
+        [`${root}/favicon.ico`]: "icon, from files",
+        [`${root}/og.png`]: "og, from files",
       },
     });
 
@@ -1051,7 +1054,36 @@ describe("bundler files option", () => {
     );
     expect(texts.sort()).toEqual(["icon, from files", "og, from files"]);
     const html = await result.outputs.find(output => output.path.endsWith(".html"))!.text();
-    expect(html).not.toContain(`"./favicon.ico"`);
-    expect(html).not.toContain(`"/app/og.png"`);
+    const [favicon, required, optional] = [...html.matchAll(/ (?:href|content)="([^"]*)"/g)].map(m => m[1]);
+    expect(favicon).toMatch(/favicon-\w+\.ico$/);
+    expect(required).toMatch(/og-\w+\.png$/);
+    expect(optional).toBe(required);
+  });
+
+  test("an optional URL of an html page under a relative key of files names a file on disk", async () => {
+    using dir = tempDir("files-html-relative-key", { "favicon.ico": "icon, on disk" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const result = await Bun.build({
+          entrypoints: ["index.html"],
+          files: { "index.html": '<!doctype html><link rel="icon" href="./favicon.ico"><link rel="shortcut icon" href="./favicon.ico">' },
+        });
+        const html = await result.outputs.find(output => output.path.endsWith(".html")).text();
+        console.log(JSON.stringify({
+          logs: result.logs.map(log => log.message),
+          urls: [...html.matchAll(/ href="([^"]*)"/g)].map(m => m[1]),
+        }));`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { logs, urls } = JSON.parse(stdout);
+    expect(logs).toEqual([]);
+    expect(urls).toEqual([expect.stringMatching(/^\.\/favicon-\w+\.ico$/), urls[0]]);
+    expect(exitCode).toBe(0);
   });
 });

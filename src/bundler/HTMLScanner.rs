@@ -159,14 +159,13 @@ impl Iterator for SrcsetUrls<'_> {
 }
 
 impl<'a> HTMLScanner<'a> {
-    /// The file that an optional `url` names, as written and then without its `?query#fragment`: an in-memory file, or a file on disk relative to the page or, with a leading `/`, to the project root.
+    /// The file that an optional `url` names, as written and then without its `?query#fragment`: an in-memory file or a file on disk, relative to the page or, with a leading `/`, to the project root.
     fn file_of(&self, url: &[u8]) -> Option<Vec<u8>> {
-        let (dir, rooted) = match url {
-            [b'/', ..] => (fs::FileSystem::get().top_level_dir(), 1),
-            _ => (
-                resolve_path::dirname::<platform::Auto>(self.source.path.text()),
-                0,
-            ),
+        let page = self.source.path.text();
+        let rooted = url.first() == Some(&b'/');
+        let in_memory = |specifier: &[u8]| {
+            self.file_map
+                .is_some_and(|files| files.has(page, specifier))
         };
         let without_suffix = url.len() - url_suffix(url).len();
         let mut buf = bun_paths::path_buffer_pool::get();
@@ -174,20 +173,26 @@ impl<'a> HTMLScanner<'a> {
             .into_iter()
             .take(if without_suffix == url.len() { 1 } else { 2 })
             .find_map(|end| {
-                // The record keeps the URL, so that the bundler finds the in-memory file as it does for any other import.
-                if self
-                    .file_map
-                    .is_some_and(|files| files.has(self.source.path.text(), &url[..end]))
-                {
-                    return Some(url[..end].to_vec());
-                }
+                // A page whose path is not absolute (a relative key of `files`) is in the project root, as it is for the resolver.
+                let parts: [&[u8]; 2] = if rooted {
+                    [b"", &url[1..end]]
+                } else {
+                    [resolve_path::dirname::<platform::Auto>(page), &url[..end]]
+                };
                 // A URL of any length: a path that does not fit in the buffer names no file.
                 let mut file = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
-                    dir,
+                    fs::FileSystem::get().top_level_dir(),
                     &mut buf.0[..],
-                    &[&url[rooted..end]],
+                    &parts,
                 )?
                 .to_vec();
+                // The record is what a required URL has, so that the bundler finds the in-memory file in the same way.
+                if rooted && in_memory(&file) {
+                    return Some(file);
+                }
+                if !rooted && in_memory(&url[..end]) {
+                    return Some(url[..end].to_vec());
+                }
                 file.push(0);
                 let path = bun_core::ZStr::from_buf(&file, file.len() - 1);
                 // Not the module resolver: `content="/og?title=..."` or `content="logo"` must not fail a build or find a package.

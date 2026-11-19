@@ -54,7 +54,10 @@ NEVER_INLINE void markdownStreamRelease(JSTransformStreamDefaultController* cont
 {
     BUN_REMOVABLE_DEFINITION(Markdown, markdownStreamRelease);
     auto* markdown = markdownStreamOf(controller);
-    markdown->release(markdown->globalObject());
+    if (markdown->release()) {
+        markdown->m_overrides.clear();
+        markdown->m_kept.clear();
+    }
 }
 
 // Errors both sides, and leaves the MarkdownStream open.

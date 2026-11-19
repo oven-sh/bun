@@ -178,11 +178,9 @@ impl MarkdownStream {
     }
 
     /// The transform is done, cancelled or has failed.
-    pub(crate) fn release<'a>(&self, this_value: JsWrapper<'a, Self>, heap: &JsHeap<'a>) {
-        if !matches!(self.status.replace(Status::Closed), Status::Rendering) {
-            // SAFETY: emptying fields runs no JavaScript.
-            self.close(this_value, unsafe { heap.global() });
-        }
+    pub(crate) fn release(&self) -> bool {
+        self.size.store(0, Ordering::Relaxed);
+        !matches!(self.status.replace(Status::Closed), Status::Rendering)
     }
 
     fn close(&self, this_value: JsWrapper<'_, Self>, global: &JSGlobalObject) {

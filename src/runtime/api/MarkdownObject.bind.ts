@@ -140,7 +140,8 @@ export const MarkdownStream = b.class({
     writable: { getter: b.any.returning("WritableStream"), passThis: true, ...js },
   },
   calledFromCpp: {
-    release: { passThis: true, capability: "heap" },
+    /** Whether the internal fields can be emptied: no member is using them. */
+    release: { returns: b.bool },
   },
   calledFromRust: {
     readableSide: { args: { isCalledDirectly: b.bool }, returns: b.any, throws: true },

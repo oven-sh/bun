@@ -2205,7 +2205,7 @@ test("the language of fenced code behind a byte order mark", () => {
   const input = "\ufeff```js\nx\n```\n";
   expect(Bun.markdown.html(input)).toBe('<pre><code class="language-js">x\n</code></pre>\n');
   expect(Bun.markdown.render(input, { code: (_, meta) => meta!.language! })).toBe("js");
-  expect(Bun.markdown.react(input).props.children[0].props.language).toBe("js");
+  expect((Bun.markdown.react(input).props as any).children[0].props.language).toBe("js");
   expect(Bun.markdown.ansi(input)).toBe(Bun.markdown.ansi(input.slice(1)));
 });
 

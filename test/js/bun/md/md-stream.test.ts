@@ -59,7 +59,8 @@ const formats = {
   },
   react: {
     stream: () => markdown.reactStream({ p: "section" } as any, options),
-    whole: (input: string) => JSON.stringify(markdown.react(input, { p: "section" } as any, options).props.children),
+    whole: (input: string) =>
+      JSON.stringify((markdown.react(input, { p: "section" } as any, options).props as any).children),
     join: (parts: unknown[][]) => JSON.stringify(parts.flat()),
   },
   tokens: {
@@ -442,7 +443,7 @@ test("the stream keeps its callbacks, components and transform alive", async () 
     writer.write("a");
     writer.close();
     expect(await Array.fromAsync(readable)).toEqual([`${i}a`]);
-    expect(react.end("a")[0].type).toEqual({ i });
+    expect<unknown>(react.end("a")[0].type).toEqual({ i });
   }
 });
 

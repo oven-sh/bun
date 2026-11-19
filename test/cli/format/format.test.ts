@@ -4939,7 +4939,7 @@ exports.options = { fooStyle: { type: "string" }, fooDepth: { type: "int" } };
       ["prettier-plugin-astro", /^a\.js:1:2: Delete `··` \[Error\/bun\(format\)\]$/],
       [
         "prettier-plugin-brace-style",
-        /^a\.js:1:1: This file was not checked because .+ a plugin that bun fmt does not include\. \[Error\/bun\(format\)\]$/,
+        /^a\.js:1:1: This file was not checked because bunfig\.toml lists a plugin that bun fmt does not include\. \[Error\/bun\(format\)\]$/,
       ],
     ])("bun lint reads plugins in [fmt] for bun/format: %s", async (plugin, report) => {
       using dir = tempDir("bun-format-lint", {

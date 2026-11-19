@@ -383,6 +383,9 @@ fn write_owed_frames(
     sent: &mut Frames,
 ) -> bool {
     let is_receiving = stream.final_size == UNKNOWN_SIZE;
+    if stream.flags.contains(Flags::OWES_MAX_STREAM_DATA) {
+        stream.receive_limit = (stream.consumed + stream.receive_window).min(MAX_VARINT);
+    }
     for (flag, kind, is_relevant, value) in [
         (
             Flags::OWES_MAX_STREAM_DATA,

@@ -109,6 +109,13 @@ impl Connection {
         }
     }
 
+    /// For the end of [`Self::close`] and [`Self::go_away`].
+    pub fn set_close_error(&mut self, layer: Layer, code: u64, reason: &[u8]) {
+        if self.is_receiving() {
+            self.close_frame = CloseFrame::new(layer, code, reason);
+        }
+    }
+
     /// Does not deliver anything more.
     pub fn abort(&mut self, now: Instant, layer: Layer, code: u64, reason: &[u8]) {
         if self.is_receiving() {

@@ -377,6 +377,9 @@ impl Connection {
             _ => {
                 self.probe(SpaceId::Initial, usize::MAX);
                 self.probe(SpaceId::Handshake, usize::MAX);
+                if self.side.is_client() {
+                    self.probe(SpaceId::Data, PROBES.into());
+                }
             }
         }
         self.pto_count = self.pto_count.saturating_add(1);

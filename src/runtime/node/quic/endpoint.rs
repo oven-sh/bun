@@ -509,7 +509,6 @@ fn http3_config_from_js(global: &JSGlobalObject, options: JSValue) -> JsResult<H
             size: MAX_HEADER_LENGTH,
             count: usize::MAX,
         },
-        malformed_message_closes_connection: true,
         datagrams: true,
         ..Http3Config::default()
     };

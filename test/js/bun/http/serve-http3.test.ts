@@ -281,6 +281,17 @@ test("the TCP port is released if the UDP port is taken", async () => {
   });
 });
 
+// All of 127.0.0.0/8 is local on Linux, and the kernel would pick 127.0.0.1 as the source of a reply.
+test.skipIf(!isLinux).each(["0.0.0.0", "::"])("a listener on %s replies from the address it was reached at", async hostname => {
+  const body = Buffer.alloc(200_000, "abcdefgh");
+  await using server = Bun.serve({ port: 0, hostname, tls, http3: true, http1: false, fetch: () => new Response(body) });
+  const res = await fetch(`https://127.0.0.2:${server.port}/`, {
+    protocol: "http3",
+    tls: { rejectUnauthorized: false },
+  } as RequestInit);
+  expect(Buffer.from(await res.bytes()).equals(body)).toBe(true);
+});
+
 describe("Bun.serve HTTP/3", () => {
   test("basic GET", async () => {
     await withServer(async port => {
@@ -1578,6 +1589,28 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     });
   });
 
+  test.each([
+    ["exits when the promise resolves", "server.stop().then(() => process.exit(0))", true],
+    ["exits when the promise resolves (HTTP/3 only)", "server.stop().then(() => process.exit(0))", false],
+    ["exits by itself", "server.stop()", true],
+    ["exits by itself (HTTP/3 only)", "server.stop()", false],
+  ])("graceful stop: the whole response arrives if the process %s", async (_, stop, http1) => {
+    const size = 900_000;
+    const script = `
+      const server = Bun.serve({
+        port: 0, tls: ${JSON.stringify(tls)}, http3: true, http1: ${http1},
+        fetch() {
+          setImmediate(() => ${stop});
+          return new Response(Buffer.alloc(${size}, "a"));
+        },
+      });
+      console.error("PORT=" + server.port);
+    `;
+    await withCustomServer(script, async port => {
+      expect((await fetchH3(port, "/").then(r => r.bytes())).length).toBe(size);
+    });
+  });
+
   // Each QUIC connection counts as a virtual poll (loop->num_polls); after
   // server.stop() drains, the last conn close releases the UDP fd and the
   // loop has no polls left — the process exits without process.exit().
@@ -1901,6 +1934,7 @@ async function h3Exchange(
           status = received[":status"] as string;
         },
       });
+      stream.onreset = (err: Error & { errorCode?: bigint }) => outcome.resolve(`reset ${err.errorCode}`);
       stream.closed.catch(() => {});
       let body = "";
       for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
@@ -1943,9 +1977,9 @@ describe("Bun.serve HTTP/3 request validation", () => {
     results.after = await h3Exchange(server.port!, requestHeaders("/"));
 
     expect(results).toEqual({
-      [JSON.stringify("a\r\nb: c")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
-      [JSON.stringify("a\nb")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
-      [JSON.stringify("a\rb")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
+      [JSON.stringify("a\r\nb: c")]: "reset 270",
+      [JSON.stringify("a\nb")]: "reset 270",
+      [JSON.stringify("a\rb")]: "reset 270",
       wellFormed: "200 1",
       after: "200 1",
     });
@@ -2032,7 +2066,7 @@ describe("Bun.serve HTTP/3 request validation", () => {
     }).toEqual({
       atTheLimit: "200",
       overTheLimit: "431 ",
-      farOverTheLimit: "closed ERR_QUIC_APPLICATION_ERROR 270",
+      farOverTheLimit: "reset 270",
       after: "200 " + JSON.stringify({ host: "localhost" }),
     });
   });
@@ -2146,7 +2180,7 @@ describe("Bun.serve HTTP/3 request validation", () => {
         }).toEqual({
           atTheLimit: 200,
           overTheLimit: 431,
-          farOverTheLimit: "HTTP3StreamReset",
+          farOverTheLimit: "HTTP3ProtocolError",
           after: 200,
         });
       },

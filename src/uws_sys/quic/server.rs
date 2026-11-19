@@ -237,7 +237,6 @@ extern "C" fn us_create_quic_socket_context(
             },
             field_overhead: 32,
             advertises_max_field_section_size: true,
-            malformed_message_closes_connection: true,
             ..Http3Config::default()
         }),
         ..Config::server()

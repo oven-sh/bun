@@ -47,8 +47,6 @@ pub struct Http3Config {
     /// What a field counts for on top of its name and value in `kept_fields`.
     pub field_overhead: usize,
     pub advertises_max_field_section_size: bool,
-    /// As opposed to its stream (RFC 9114 §8).
-    pub malformed_message_closes_connection: bool,
     pub encodes_with_dynamic_table: bool,
     /// RFC 9297 §2.1.1.
     pub datagrams: bool,

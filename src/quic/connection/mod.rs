@@ -401,9 +401,6 @@ impl Connection {
             Timer::KeyDiscard => {
                 self.key_update.discard_previous();
                 self.early_keys = None;
-                if let Some(id) = self.initial_route.take() {
-                    shared.routes.by_initial_id.remove(&id);
-                }
             }
             Timer::AckFrequency => {
                 let (rtt, sent) = (self.rtt.smoothed, self.spaces.data.next_number);

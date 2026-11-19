@@ -46,6 +46,9 @@ pub(crate) enum Fault {
     Connection(Error),
 }
 
+/// RFC 9114 §4.1.2.
+const MALFORMED: Fault = Fault::Stream(http3_code::MESSAGE_ERROR);
+
 impl From<Error> for Fault {
     fn from(error: Error) -> Self {
         Self::Connection(error)
@@ -59,15 +62,6 @@ pub(crate) struct Reader<'a> {
     pub(crate) config: &'a Http3Config,
     pub(crate) pool: &'a mut Pool,
     pub(crate) has_priorities: bool,
-}
-
-impl Reader<'_> {
-    fn malformed(&self) -> Fault {
-        match self.config.malformed_message_closes_connection {
-            true => Error::http3(http3_code::MESSAGE_ERROR, "malformed message").into(),
-            false => Fault::Stream(http3_code::MESSAGE_ERROR),
-        }
-    }
 }
 
 impl Message {
@@ -149,12 +143,10 @@ impl Message {
         if kind == kind::DATA
             && let Some(expected) = &mut self.expected_len
         {
-            *expected = expected
-                .checked_sub(len)
-                .ok_or_else(|| reader.malformed())?;
+            *expected = expected.checked_sub(len).ok_or(MALFORMED)?;
         }
         if kind == kind::HEADERS && len > reader.config.tolerated_fields.size as u64 {
-            return Err(reader.malformed());
+            return Err(MALFORMED);
         }
         if len == 0 {
             if kind == kind::HEADERS {
@@ -208,30 +200,25 @@ impl Message {
         let (id, config) = (reader.id.0, reader.config);
         let summary = match fields::decode(decoder, id, section, expected, config, &mut fields) {
             Ok(summary) => summary,
-            Err(Failure::Malformed) => return Err(reader.malformed()),
+            Err(Failure::Malformed) => return Err(MALFORMED),
             Err(Failure::Compression(error)) => return Err(Error::from(error).into()),
         };
         self.is_blocked = summary.is_none();
         let Some(summary) = summary else {
             return Ok(false);
         };
-        fields.section = self.enter(expected, &summary, reader)?;
+        fields.section = self.enter(expected, &summary)?;
         self.fields = Some(fields);
         self.fields_follow_data = follows_data;
         Ok(true)
     }
 
     #[inline]
-    fn enter(
-        &mut self,
-        expected: Expected,
-        summary: &Summary,
-        reader: &Reader,
-    ) -> Result<Section, Fault> {
+    fn enter(&mut self, expected: Expected, summary: &Summary) -> Result<Section, Fault> {
         match expected {
             Expected::Trailers => {
                 if self.expected_len.is_some_and(|len| len > 0) {
-                    return Err(reader.malformed());
+                    return Err(MALFORMED);
                 }
                 self.part = Part::AfterTrailers;
                 return Ok(Section::Trailers);
@@ -278,7 +265,7 @@ impl Message {
                 Side::Server => http3_code::REQUEST_INCOMPLETE,
             })),
             Part::Body if self.expected_len.is_none_or(|len| len == 0) => Ok(()),
-            Part::Body => Err(reader.malformed()),
+            Part::Body => Err(MALFORMED),
             Part::AfterTrailers => Ok(()),
         }
     }

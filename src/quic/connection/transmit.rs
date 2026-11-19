@@ -447,7 +447,7 @@ impl Connection {
             match frame {
                 Control::HANDSHAKE_DONE => out.push(kind::HANDSHAKE_DONE as u8),
                 Control::PING => out.push(kind::PING as u8),
-                Control::MAX_DATA => integer(kind::MAX_DATA, streams.state.receive_limit()),
+                Control::MAX_DATA => integer(kind::MAX_DATA, streams.state.raise_receive_limit()),
                 Control::MAX_STREAMS_BIDI => integer(
                     kind::MAX_STREAMS_BIDI,
                     streams.raise_remote_limit(Direction::Bidirectional),
@@ -544,19 +544,21 @@ impl Connection {
     fn probe_path(&mut self, now: Instant, batch: &mut Batch) {
         let out = &mut batch.bytes;
         let start = out.len();
-        let end = start + self.path.allowance().min(MIN_DATAGRAM_LEN);
+        let max_len = self.path.allowance().min(MIN_DATAGRAM_LEN);
         if self.path.owes_frames()
-            && let Some((draft, frames_end)) = self.begin(SpaceId::Data, out, end)
+            && let Some((draft, frames_end)) = self.begin(SpaceId::Data, out, start + max_len)
         {
             self.path.write_frames(now, self.crypto, out);
             if self.path.is_wanted {
                 let number = draft.packet.number;
                 (self.spaces.data.received).write_ack(now, number, out, frames_end);
             }
-            out.resize(frames_end, 0);
+            if max_len == MIN_DATAGRAM_LEN {
+                out.resize(frames_end, 0);
+            }
             if let Some(draft) = draft.finish(out) {
                 self.send(now, &draft, out);
-                self.path.on_sent(end - start);
+                self.path.on_sent(draft.end - start);
                 batch.commit(&self.path.addresses, start);
             }
         }

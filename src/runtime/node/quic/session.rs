@@ -304,6 +304,7 @@ pub(crate) struct QuicSession {
     next_datagram_id: Cell<u64>,
     ticket_delivered: Cell<bool>,
     pending_tickets: JsCell<VecDeque<(Instant, Vec<u8>)>>,
+    held_stream_closes: JsCell<Vec<super::stream::Key>>,
     /// See [`QuicEndpoint::mark`].
     pub(super) is_marked: Cell<bool>,
     /// What it counts for in `maxConnectionsPerHost`.
@@ -316,7 +317,7 @@ pub(crate) struct QuicSession {
     next_stream_key: Cell<u64>,
     handshake_reported: Cell<bool>,
     new_token_reported: Cell<bool>,
-    deferred_close: JsCell<Option<Close<Layer>>>,
+    is_close_deferred: Cell<bool>,
     handshake_pending_ok: Cell<bool>,
     reject_unverified_peer: Cell<bool>,
     peer_cert_rejected: Cell<bool>,
@@ -353,6 +354,7 @@ impl QuicSession {
             next_datagram_id: Cell::new(1),
             ticket_delivered: Cell::new(false),
             pending_tickets: JsCell::new(VecDeque::new()),
+            held_stream_closes: JsCell::new(Vec::new()),
             is_marked: Cell::new(false),
             host: Cell::new(None),
             close_after_streams: Cell::new(false),
@@ -362,7 +364,7 @@ impl QuicSession {
             next_stream_key: Cell::new(0),
             handshake_reported: Cell::new(false),
             new_token_reported: Cell::new(false),
-            deferred_close: JsCell::new(None),
+            is_close_deferred: Cell::new(false),
             handshake_pending_ok: Cell::new(false),
             reject_unverified_peer: Cell::new(true),
             peer_cert_rejected: Cell::new(false),
@@ -548,7 +550,7 @@ impl QuicSession {
     }
     pub(super) fn on_activity(&self, conn: &Connection) {
         self.refresh_conn_stats(conn);
-        if self.deferred_close.get().is_some() {
+        if self.is_close_deferred.get() {
             self.mark();
         }
     }
@@ -804,7 +806,9 @@ impl QuicSession {
                 }
             }
         }
-        self.maybe_finish_deferred_close();
+        if self.finish_deferred_close() {
+            self.schedule_process();
+        }
         if self.has_events()
             || self.pending_graceful.get().is_some()
             || !self.deferred_aborts.get().is_empty()
@@ -1239,6 +1243,12 @@ impl QuicSession {
                 };
                 stream.apply_peer_stop_sending(code);
             }
+            // `closed` of a stream can reject, and is commonly looked at after `opened`.
+            SessionEvent::StreamClosed { stream }
+                if !self.is_server && !self.handshake_reported.get() && self.conn.get().is_some() =>
+            {
+                self.held_stream_closes.with_mut(|v| v.push(stream));
+            }
             SessionEvent::StreamClosed { stream: key } => {
                 let Some(stream) = self.live_stream(key) else {
                     return Ok(());
@@ -1291,6 +1301,7 @@ impl QuicSession {
         if self.handshake_reported.replace(true) || self.destroyed.get() {
             return;
         }
+        self.release_stream_closes();
         let snapshot = self.hsk_snapshot.get().as_ref();
         let cert_ok = !self.is_server
             || !(self.endpoint_ref()).is_some_and(|ep| ep.server_verify_client.get())
@@ -1404,6 +1415,12 @@ impl QuicSession {
                 b"peer did not provide a certificate",
             );
             self.schedule_process();
+        }
+    }
+
+    fn release_stream_closes(&self) {
+        for stream in self.held_stream_closes.with_mut(core::mem::take) {
+            self.push_event(SessionEvent::StreamClosed { stream });
         }
     }
 
@@ -1600,18 +1617,15 @@ impl QuicSession {
         Ok((layer, code, reason))
     }
 
-    fn apply_graceful_close(&self, close: Close<Layer>) {
-        let is_plain = matches!(close, (Layer::Transport, 0, _));
-        if self.is_http3() && is_plain && self.has_opened_stream() {
+    fn apply_graceful_close(&self, (layer, code, reason): Close<Layer>) {
+        self.update(|conn| conn.set_close_error(layer, code, &reason));
+        if self.is_http3() && self.has_opened_stream() {
             // RFC 9114 §5.2.
             self.update(Connection::go_away);
             self.close_after_streams.set(true);
-            self.deferred_close.set(Some(close));
-        } else if self.any_stream_undelivered() {
-            self.deferred_close.set(Some(close));
-        } else {
-            self.apply_close(&close);
         }
+        self.is_close_deferred.set(true);
+        self.finish_deferred_close();
     }
 
     /// Applies a graceful close stashed while a dispatch was on the stack.
@@ -1624,13 +1638,6 @@ impl QuicSession {
         }
         let close = self.pending_graceful.replace(None);
         close.map(|it| self.apply_graceful_close(it)).is_some()
-    }
-
-    fn apply_close(&self, (layer, code, reason): &Close<Layer>) {
-        self.update(|conn| match (layer, code, reason.is_empty()) {
-            (Layer::Transport, 0, true) => conn.close(now()),
-            _ => conn.abort(now(), *layer, *code, reason),
-        });
     }
 
     /// Like Node, pending streams don't delay a graceful close.
@@ -1649,20 +1656,16 @@ impl QuicSession {
         })
     }
 
-    fn maybe_finish_deferred_close(&self) {
-        if self.deferred_close.get().is_none() || self.destroyed.get() {
-            return;
+    /// Returns whether the time has come.
+    fn finish_deferred_close(&self) -> bool {
+        let is_due = self.is_close_deferred.get()
+            && !self.any_stream_undelivered()
+            && !(self.close_after_streams.get() && self.has_opened_stream());
+        if is_due {
+            self.is_close_deferred.set(false);
+            self.update(|conn| conn.close(now()));
         }
-        if self.any_stream_undelivered() {
-            return;
-        }
-        if self.close_after_streams.get() && self.has_opened_stream() {
-            return;
-        }
-        if let Some(close) = self.deferred_close.replace(None) {
-            self.apply_close(&close);
-            self.schedule_process();
-        }
+        is_due
     }
 
     pub(crate) fn graceful_close(
@@ -1704,8 +1707,11 @@ impl QuicSession {
                 // the VM (teardown reaches JS) and re-thrown once it has. No
                 // close was applied then.
                 match self.parse_close_options(global, options) {
-                    Ok(close) => {
-                        self.apply_close(&close);
+                    Ok((layer, code, reason)) => {
+                        self.update(|conn| match (layer, code, reason.is_empty()) {
+                            (Layer::Transport, 0, true) => conn.close(now()),
+                            _ => conn.abort(now(), layer, code, &reason),
+                        });
                         self.endpoint_ref().map(QuicEndpoint::drive_once);
                     }
                     Err(err) => parse_error = Some(global.take_exception(err)),
@@ -2070,6 +2076,7 @@ impl QuicSession {
             Event::Origin(payload) => SessionEvent::Origin(payload),
             Event::Closed(conn) => {
                 self.conn.set(None);
+                self.release_stream_closes();
                 self.refresh_conn_stats(&conn);
                 SessionEvent::Closed(self.describe_close(conn.close_reason()))
             }

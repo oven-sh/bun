@@ -496,10 +496,10 @@ describe("headers queued before the handshake", () => {
   });
 });
 
-// lsquic can finish the handshake, read the peer's first stream and close the connection in one
-// engine pass, before JS sees any of it. A request created before `opened` is sent with the
-// client's Finished, and lsquic rejects its bad content-length with H3_MESSAGE_ERROR (0x10e).
-test("a malformed request in the handshake's last flight closes only that connection", async () => {
+// The server can finish the handshake, read the peer's first streams and close the connection in
+// one pass, before JS sees any of it. Streams created before `opened` are sent with the client's
+// Finished, and a second control stream is an H3_STREAM_CREATION_ERROR (0x103).
+test("a connection error in the handshake's last flight closes only that connection", async () => {
   const events: unknown[] = [];
   const sessions: Promise<unknown>[] = [];
   await using server = await listen(
@@ -518,7 +518,7 @@ test("a malformed request in the handshake's last flight closes only that connec
     {
       alpn: ["h3"],
       sni: { "*": { keys: [key], certs: [cert] } },
-      transportParams: { maxIdleTimeout: 5 },
+      transportParams: { maxIdleTimeout: 5, initialMaxStreamsUni: 4 },
       onheaders(this: any) {
         this.sendHeaders({ ":status": "200" }, { terminal: true });
       },
@@ -538,10 +538,9 @@ test("a malformed request in the handshake's last flight closes only that connec
     () => undefined,
     (err: any) => ({ code: err.code, errorCode: err.errorCode }),
   );
-  (await malformed.createBidirectionalStream({ headers: { ...headers, "content-length": "abc" } })).closed.catch(
-    () => {},
-  );
-  expect(await close).toEqual({ code: "ERR_QUIC_APPLICATION_ERROR", errorCode: 0x10en });
+  (await malformed.createBidirectionalStream({ headers })).closed.catch(() => {});
+  (await malformed.createUnidirectionalStream({ body: new Uint8Array([0]) })).closed.catch(() => {});
+  expect(await close).toEqual({ code: "ERR_QUIC_APPLICATION_ERROR", errorCode: 0x103n });
 
   const client = await connect(server.address!, options);
   const answered = Promise.withResolvers<string>();

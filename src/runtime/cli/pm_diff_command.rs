@@ -1128,21 +1128,24 @@ impl FileChange<'_> {
             && (self.new.or(self.old)).is_some_and(|b| b.starts_with(b"{\"version\":"))
     }
 
-    fn is_parsed(&self, flags: DiffFlags) -> bool {
-        !flags.raw && normalize::kind_for(self.path).is_some()
+    /// Only the terminal view with hunks uses the re-print of a deleted file.
+    fn is_parsed(&self, flags: DiffFlags, style: Style) -> bool {
+        !flags.raw
+            && normalize::kind_for(self.path).is_some()
+            && (self.new.is_some() || (style.pretty && style.hunks))
     }
 
     /// About how long comparing the file takes, in bytes that are parsed or colored. Others take far less.
-    fn work(&self, flags: DiffFlags) -> usize {
-        let is_read_closely = self.highlight || self.is_parsed(flags);
+    fn work(&self, flags: DiffFlags, style: Style) -> usize {
+        let is_read_closely = self.highlight || self.is_parsed(flags, style);
         self.bytes() / if is_read_closely { 1 } else { 16 }
     }
 
-    fn memory(&self, flags: DiffFlags) -> Memory {
+    fn memory(&self, flags: DiffFlags, style: Style) -> Memory {
         let sides = [self.old, self.new];
         // `is_binary` may parse such a file to find out, and most often gives up at once.
         let may_be_binary = sides.iter().flatten().any(|side| has_early_nul(side));
-        let is_parsed = self.is_parsed(flags);
+        let is_parsed = self.is_parsed(flags, style);
         let mut memory = Memory::default();
         if self.is_sourcemap() && !may_be_binary {
             return memory;
@@ -1434,7 +1437,7 @@ fn compare_all(changes: &mut [FileChange<'_>], flags: DiffFlags, style: Style, h
         .iter_mut()
         .filter(|change| change.semantic != Semantic::ModeOnly)
         .collect();
-    let work: usize = files.iter().map(|file| file.work(flags)).sum();
+    let work: usize = files.iter().map(|file| file.work(flags, style)).sum();
     let threads = (1 + work / WORK_PER_THREAD)
         .min(files.len())
         .min(usize::from(bun_core::get_thread_count()));
@@ -1458,7 +1461,7 @@ fn compare_all(changes: &mut [FileChange<'_>], flags: DiffFlags, style: Style, h
     let mut in_part = 0;
     let mut parts: Vec<(Memory, Part<'_, '_>)> = files
         .split_inclusive_mut(|file| {
-            in_part += file.work(flags);
+            in_part += file.work(flags, style);
             let is_full = in_part >= WORK_PER_PART;
             if is_full {
                 in_part = 0;
@@ -1472,7 +1475,7 @@ fn compare_all(changes: &mut [FileChange<'_>], flags: DiffFlags, style: Style, h
     pool.each_ptr(
         (),
         |(), (memory, part), _| {
-            *memory = (part.iter()).fold(*memory, |most, file| most.max(file.memory(flags)));
+            *memory = (part.iter()).fold(*memory, |most, file| most.max(file.memory(flags, style)));
         },
         &mut parts,
     );
@@ -1551,8 +1554,9 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style) {
     }
     // Readable JS is compared on the aggressive key and shown as written; minified JS is shown re-printed,
     // so it gets the gentler display print.
+    let is_parsed = change.is_parsed(flags, style);
     let readable_js = matches!(normalize::kind_for(path), Some(normalize::Kind::Js(_)))
-        && !flags.raw
+        && is_parsed
         && !flags.unminify
         && !old.is_some_and(normalize::looks_minified)
         && !new.is_some_and(normalize::looks_minified);
@@ -1571,10 +1575,10 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style) {
         nopts
     };
     // Canonical re-print: same parser and printer on both sides, so only meaning survives.
-    let (norm_old, norm_new) = match (flags.raw, readable_js, old, new) {
-        (true, ..) => (None, None),
+    let (norm_old, norm_new) = match (is_parsed, readable_js, old, new) {
+        (false, ..) => (None, None),
         // Both sides of readable JS are keyed together so their locals get lockstep names.
-        (false, true, Some(o), Some(n)) => match normalize::normalize_key_pair(path, o, n, popts) {
+        (true, true, Some(o), Some(n)) => match normalize::normalize_key_pair(path, o, n, popts) {
             Some((ko, kn)) => (Some(ko), Some(kn)),
             None => (
                 normalize::normalize(path, o, popts),
@@ -1586,7 +1590,7 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style) {
             new.and_then(|b| normalize::normalize(path, b, popts)),
         ),
     };
-    if !flags.raw && normalize::kind_for(path).is_some() {
+    if is_parsed {
         let too_big = |b: Option<&[u8]>| b.is_some_and(|b| b.len() > normalize::MAX_BYTES);
         if too_big(old) || too_big(new) {
             change.not_normalized = Some("too large to normalize");
@@ -1747,8 +1751,7 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style) {
         (Some(o), Some(n), _, _) => unified_hunks(o, n, flags.context, style, change),
         (None, None, _, _) => unreachable!(),
     }
-    if !flags.name_only
-        && !flags.stat
+    if style.hunks
         && change.hunks.is_empty()
         && change.semantic == Semantic::Text
         && (old.is_none() || new.is_none())
@@ -2854,6 +2857,8 @@ struct Style {
     /// True when the output goes to a terminal, either in color or (with `NO_COLOR`) as a plain
     /// patch. Bytes from a package then go through `defang`.
     escape: bool,
+    /// False with `--name-only` and `--stat`, which only count the changed lines.
+    hunks: bool,
     width: usize,
     palette: &'static Palette,
 }
@@ -2887,6 +2892,7 @@ impl Style {
         Style {
             pretty,
             escape: pretty || (!flags.json && Output::is_stdout_tty()),
+            hunks: !flags.name_only && !flags.stat,
             width,
             palette,
         }
@@ -3377,6 +3383,9 @@ fn render_ops(
             Operation::Delete => change.removed += 1,
             Operation::Equal => {}
         }
+    }
+    if !style.hunks {
+        return;
     }
     let is_change = |op: &Op| op.kind != Operation::Equal || op.affected;
     let last_old = ops.iter().rposition(|op| op.kind != Operation::Insert);

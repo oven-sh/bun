@@ -1,6 +1,2 @@
 import { bench } from "./run";
-bench(
-  "tune.js",
-  "stdin buffer,stdin sink,stdio ping",
-  ";0=0;1=1;6=50000;1=1,6=50000;3=1048576,12=1048576;3=1048576,12=1048576,6=50000;5=1048576;5=67108864;5=1073741824;11=1",
-);
+bench("tune.js", "64 B writes,keep-alive x1$,stdin buffer,http 8 MB body,named pipe stream,Bun.write file");

@@ -11,7 +11,7 @@ const self = process.execPath,
   file = import.meta.path;
 const now = () => performance.now();
 const role = (name, args = [], options = {}) =>
-  Bun.spawn([self, file, "--role", name, ...args], { stderr: "inherit", ...options });
+  Bun.spawn([process.env.ROLE_EXE || self, file, "--role", name, ...args], { stderr: "inherit", ...options });
 const firstLine = async stream => {
   const r = stream.getReader();
   const { value } = await r.read();

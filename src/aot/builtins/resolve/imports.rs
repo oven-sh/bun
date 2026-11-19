@@ -255,6 +255,16 @@ impl Resolver<'_, '_> {
         false
     }
 
+    fn has_no_factory(&self, mock: ExprId) -> bool {
+        let hir = self.input.hir;
+        let ExprKind::Call(call) = hir[mock].kind else {
+            return false;
+        };
+        let factory = hir.ids(hir[call].args).nth(1);
+        factory
+            .is_none_or(|it| matches!(hir[hir.skip_type_assertions(it)].kind, ExprKind::Object(_)))
+    }
+
     fn find_runner_that_stub_answers(&self, callee: ExprId, stub: BuiltinId) -> Option<BuiltinId> {
         if !table::stubs_global(stub) {
             return None;
@@ -276,7 +286,12 @@ impl Resolver<'_, '_> {
             }
             match site {
                 ImportSiteKind::ImportCall(call) if self.is_import_awaited_at_once(call) => {}
-                ImportSiteKind::ImportCall(_) | ImportSiteKind::ExportStar(_) => {
+                ImportSiteKind::MockModule(mock) if self.has_no_factory(mock) => {
+                    self.expose(table::canonical_id(namespace));
+                }
+                ImportSiteKind::ImportCall(_) | ImportSiteKind::ExportStar(_)
+                | ImportSiteKind::ImportByTestRunner(_)
+                | ImportSiteKind::RequireByTestRunner(_) => {
                     self.expose(table::canonical_id(namespace));
                 }
                 ImportSiteKind::ExportFrom(export) => {
@@ -296,8 +311,7 @@ impl Resolver<'_, '_> {
                 | ImportSiteKind::ImportEquals(_) | ImportSiteKind::Require(_)
                 | ImportSiteKind::RequireResolve(_) | ImportSiteKind::ImportMetaRequire(_)
                 | ImportSiteKind::ImportMetaResolve(_) | ImportSiteKind::GetBuiltinModule(_)
-                | ImportSiteKind::MockModule(_) | ImportSiteKind::ImportByTestRunner(_)
-                | ImportSiteKind::RequireByTestRunner(_) => {}
+                | ImportSiteKind::MockModule(_) => {}
             }
         }
     }

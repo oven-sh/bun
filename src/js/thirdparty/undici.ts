@@ -1428,11 +1428,20 @@ class InflateStream extends Transform {
       if (chunk.length === 0) return callback();
       const raw = (chunk[0] & 0x0f) !== 0x08;
       inflate = this.#inflate = raw ? lazyZlib.createInflateRaw(this.#options) : lazyZlib.createInflate(this.#options);
-      inflate.on("data", data => this.push(data)).on("error", err => this.destroy(err));
+      inflate.on("error", err => this.destroy(err));
+      // A paused inflate fills its own buffer and then stops, so one small chunk cannot inflate without bound.
+      inflate.on("data", data => {
+        if (!this.push(data)) inflate.pause();
+      });
       // Also fires early, when bytes follow the end of the deflate stream. zlib then never completes that write.
       inflate.on("end", () => this.push(null));
     }
     inflate.write(chunk, encoding, callback);
+  }
+
+  _read(size) {
+    this.#inflate?.resume();
+    super._read(size);
   }
 
   // Not _flush: Transform would end the output at once, before the inflate gave its last bytes.

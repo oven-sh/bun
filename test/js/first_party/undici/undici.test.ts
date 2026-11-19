@@ -2459,6 +2459,48 @@ describe("undici", () => {
       });
     });
 
+    it("an unread deflate fetch() body does not inflate without bound", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { fetch } = require("undici");
+           const zlib = require("node:zlib");
+           const { heapStats } = require("bun:jsc");
+           // 64 MiB of zeros is about 64 KiB of deflate: one chunk for a dispatcher, in both forms of the coding.
+           const zeros = Buffer.alloc(64 << 20);
+           const bombs = [zlib.deflateSync(zeros), zlib.deflateRawSync(zeros)];
+           const responses = [];
+           Bun.gc(true);
+           const before = heapStats().extraMemorySize;
+           for (const bomb of bombs) {
+             const dispatcher = {
+               dispatch(opts, handler) {
+                 handler.onConnect(() => {});
+                 handler.onHeaders(200, [Buffer.from("content-encoding"), Buffer.from("deflate")], () => {}, "OK");
+                 handler.onData(bomb);
+                 handler.onComplete([]);
+                 return true;
+               },
+             };
+             // Held and never read.
+             responses.push(await fetch("http://localhost:1/", { dispatcher }));
+           }
+           // Runs when nothing is left to do, so the decoders have stopped.
+           process.once("beforeExit", () => {
+             Bun.gc(true);
+             const buffered = Math.round((heapStats().extraMemorySize - before) / 1048576);
+             console.log(buffered < 32 ? "bounded" : buffered + " MiB buffered");
+           });`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "bounded", stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
     it("fetch with a dispatcher does not follow a 301 with a stream body, like undici", async () => {
       const paths: string[] = [];
       const dispatcher = {

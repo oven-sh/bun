@@ -57,10 +57,15 @@ impl Assembler {
                 chunk.extend_from_slice(&next);
             }
         }
-        if self.chunks.len() > FREE_CHUNKS + self.held / MIN_AVERAGE_CHUNK_LEN {
-            return Err(TooFragmented);
+        self.check()
+    }
+
+    #[inline]
+    pub(crate) fn check(&self) -> Result<(), TooFragmented> {
+        match self.chunks.len() > FREE_CHUNKS + self.held / MIN_AVERAGE_CHUNK_LEN {
+            true => Err(TooFragmented),
+            false => Ok(()),
         }
-        Ok(())
     }
 
     /// Takes the first chunk if it starts at or below `offset`, and returns where it starts.

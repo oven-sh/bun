@@ -882,16 +882,12 @@ impl QuicEndpoint {
                 continue;
             };
             let handle = session.handle();
-            if let Some(callback) = callbacks::get(global, "onSessionNew") {
-                let vm = global.bun_vm();
-                vm.event_loop().run_callback(
-                    bun_event_loop::ContextId::NONE,
-                    callback,
-                    global,
-                    self.this_value.get().get(),
-                    &[handle],
-                );
-            }
+            callbacks::run(
+                global,
+                "onSessionNew",
+                self.this_value.get().get(),
+                &[handle],
+            );
         }
         for _ in 0..self.marked_sessions.get().len() {
             let session = self.marked_sessions.with_mut(VecDeque::pop_front);
@@ -1198,19 +1194,15 @@ impl QuicEndpoint {
 
     fn deliver_endpoint_close(&self, global: &JSGlobalObject, context: u8, status: c_int) {
         self.poll_ref.disable();
-        if let Some(callback) = callbacks::get(global, "onEndpointClose") {
-            let vm = global.bun_vm();
-            vm.event_loop().run_callback(
-                bun_event_loop::ContextId::NONE,
-                callback,
-                global,
-                self.this_value.get().get(),
-                &[
-                    JSValue::js_number(context as f64),
-                    JSValue::js_number(status as f64),
-                ],
-            );
-        }
+        callbacks::run(
+            global,
+            "onEndpointClose",
+            self.this_value.get().get(),
+            &[
+                JSValue::js_number(context as f64),
+                JSValue::js_number(status as f64),
+            ],
+        );
         self.this_value.with_mut(|r| r.downgrade());
     }
 

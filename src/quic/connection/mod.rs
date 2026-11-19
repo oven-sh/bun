@@ -50,6 +50,7 @@ use crate::token_bucket::TokenBucket;
 use crate::transport_parameters::TransportParameters;
 use crate::version::Version;
 
+const EXPECTED_PAUSE: Duration = Duration::from_secs(1);
 const MIN_IDLE_TIMEOUT_TO_KEEP_ALIVE: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -144,6 +145,8 @@ pub struct Connection {
     idle_timeout: Duration,
     has_sent_since_receiving: bool,
     keep_alive_period: Duration,
+    /// In its place after an ack-eliciting packet, as more may be on the way to an address that is gone.
+    expected_pause: Duration,
 
     streams: Streams,
     datagrams: Datagrams,
@@ -249,6 +252,7 @@ impl Connection {
             idle_timeout: Duration::from_millis(local.max_idle_timeout_millis),
             has_sent_since_receiving: false,
             keep_alive_period: Duration::MAX,
+            expected_pause: Duration::MAX,
             streams: Streams::new(side, &local, &config, u64::from_ne_bytes(seed)),
             datagrams: Datagrams::default(),
             http3: None,
@@ -407,14 +411,14 @@ impl Connection {
     }
 
     fn start_keep_alive(&mut self, now: Instant) {
-        self.keep_alive_period = match self.config.keep_alive {
-            KeepAlive::Every(period) if !period.is_zero() => period,
+        (self.keep_alive_period, self.expected_pause) = match self.config.keep_alive {
+            KeepAlive::Every(period) if !period.is_zero() => (period, period),
             KeepAlive::WhileStreamsAreOpen
                 if self.idle_timeout >= MIN_IDLE_TIMEOUT_TO_KEEP_ALIVE =>
             {
-                self.idle_timeout / 2
+                (self.idle_timeout / 2, EXPECTED_PAUSE)
             }
-            _ => Duration::MAX,
+            _ => (Duration::MAX, Duration::MAX),
         };
         (self.timers).set(Timer::KeepAlive, now + self.keep_alive_period);
     }

@@ -1493,8 +1493,6 @@ async function consumeAsyncSource(handle: StreamHandle, stream: QuicStream, sour
   } catch (err) {
     if (!stream.destroyed) {
       stream.destroy(err);
-    } else {
-      throw err;
     }
   }
 }
@@ -1515,8 +1513,6 @@ async function consumeSyncSource(handle: StreamHandle, stream: QuicStream, sourc
   } catch (err) {
     if (!stream.destroyed) {
       stream.destroy(err);
-    } else {
-      throw err;
     }
   }
 }

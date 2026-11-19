@@ -80,8 +80,6 @@ pub(crate) struct State {
     pub(super) made_progress: bool,
     /// See [`Self::add_load`].
     pub(super) load: u32,
-    /// What makes up for it.
-    pub(super) relief: u32,
 
     received: u64,
     consumed: u64,
@@ -314,9 +312,6 @@ impl Streams {
                     self.state.credit(id, stream);
                 }
                 let (context, is_known) = (stream.context, stream.flags.contains(Flags::ANNOUNCED));
-                if !(stream.flags).intersects(Flags::RESET | Flags::RESET_BY_PEER) {
-                    self.state.relief = self.state.relief.saturating_add(Load::Heavy as u32);
-                }
                 self.table.unreleased -= 1;
                 if id.initiator() != self.table.side {
                     self.table.counts_mut(id.direction()).remote_released += 1;

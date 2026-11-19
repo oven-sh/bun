@@ -413,6 +413,7 @@ fn try_read(
     while takes_more && let Some((known, chunk)) = stream.take_kept() {
         takes_more = feed(stream, chunk.get(known..).unwrap_or_default(), reader)?;
     }
+    stream.check_kept()?;
     match (&stream.role, reader) {
         (Role::Message(message), Some(reader)) if stream.is_read_to_end() => {
             message.check_end(reader)

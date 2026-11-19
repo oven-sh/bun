@@ -1,6 +1,8 @@
 use core::ops::Range;
 use std::collections::VecDeque;
 
+const MAX_SPARE_CAPACITY: usize = 64;
+
 /// Ranges that neither overlap nor touch, in ascending order.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct RangeSet(VecDeque<Range<u64>>);
@@ -29,7 +31,15 @@ impl RangeSet {
 
     #[inline]
     pub(crate) fn pop_first(&mut self) -> Option<Range<u64>> {
+        self.trim();
         self.0.pop_front()
+    }
+
+    #[inline]
+    fn trim(&mut self) {
+        if self.0.capacity() > MAX_SPARE_CAPACITY + 4 * self.0.len() {
+            self.0.shrink_to(2 * self.0.len());
+        }
     }
 
     pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item = Range<u64>> + '_ {
@@ -60,6 +70,7 @@ impl RangeSet {
             return self.0.insert(first, new);
         }
         let end = (self.0.drain(first + 1..after).next_back()).map_or(new.end, |last| last.end);
+        self.trim();
         if let Some(range) = self.0.get_mut(first) {
             *range = range.start.min(new.start)..range.end.max(new.end).max(end);
         }
@@ -89,6 +100,7 @@ impl RangeSet {
         }
         if first < after {
             self.0.drain(first..after);
+            self.trim();
         }
     }
 
@@ -102,7 +114,7 @@ impl RangeSet {
                 first.start = end;
                 return;
             }
-            self.0.pop_front();
+            self.pop_first();
         }
     }
 

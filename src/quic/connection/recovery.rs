@@ -22,10 +22,9 @@ const MAX_PROBE_TIMEOUT: Duration = Duration::from_secs(60);
 const DELIVERY_PERIOD: Duration = Duration::from_secs(30);
 /// One part in so many of what has been sent has to be acknowledged in a period.
 const DELIVERY_PARTS: u64 = 8;
-const MAX_PTO_COUNT_IN_DOUBT: u32 = 4;
 const PROBES: u8 = 2;
 /// After how many timeouts in a row the size of the packets is suspected.
-const BLACK_HOLE_THRESHOLD: u32 = 3;
+const BLACK_HOLE_THRESHOLD: u32 = 2;
 const MIN_SKIP_RANGE: u64 = 256;
 
 /// To tell whether a peer that is there takes what is sent to it.
@@ -376,10 +375,6 @@ impl Connection {
         let is_behind = released < self.delivery.target;
         if is_behind && self.delivery.is_in_doubt {
             return self.time_out(now, CloseReason::IdleTimeout);
-        }
-        if is_behind {
-            self.pto_count = self.pto_count.min(MAX_PTO_COUNT_IN_DOUBT);
-            self.set_loss_timer(now);
         }
         self.delivery = Delivery {
             period_end: now + DELIVERY_PERIOD,

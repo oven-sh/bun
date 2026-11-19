@@ -7,6 +7,8 @@ use crate::event::{Event, StreamEvent};
 use crate::stream_id::StreamId;
 
 const MAX_READY_HINT: usize = 256 * 1024;
+const TOO_MANY_GAPS: Error =
+    Error::transport(transport_code::INTERNAL_ERROR, "too many gaps in a stream");
 
 impl Stream {
     #[inline]
@@ -16,9 +18,13 @@ impl Stream {
 
     /// For bytes at `offset` that cannot be used yet.
     pub(crate) fn keep(&mut self, offset: u64, data: &[u8]) -> Result {
-        self.early.insert(offset, data).map_err(|_| {
-            Error::transport(transport_code::INTERNAL_ERROR, "too many gaps in a stream")
-        })
+        self.early.insert(offset, data).map_err(|_| TOO_MANY_GAPS)
+    }
+
+    /// For after [`Self::take_kept`].
+    #[inline]
+    pub(crate) fn check_kept(&self) -> Result {
+        self.early.check().map_err(|_| TOO_MANY_GAPS)
     }
 
     /// Takes bytes that were kept, and returns how many of them have been read.

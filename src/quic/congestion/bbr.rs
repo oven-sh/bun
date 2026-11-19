@@ -309,8 +309,13 @@ impl Bbr {
         let Some(recovery) = &mut self.recovery else {
             if feedback.lost > 0 {
                 let window = feedback.prior_in_flight.saturating_sub(feedback.lost);
+                let floor = match self.is_pipe_filled {
+                    true => (delivered_in(self.min_rtt, self.bandwidth.get()))
+                        .saturating_add(self.excess_acked.get()),
+                    false => 0,
+                };
                 self.recovery = Some(Recovery {
-                    window: window.max(feedback.in_flight + 1).max(min_window),
+                    window: (window.max(feedback.in_flight + 1)).max(floor.max(min_window)),
                     end: feedback.last_sent,
                     lost: feedback.lost,
                     has_collapsed: false,

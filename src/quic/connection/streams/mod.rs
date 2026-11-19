@@ -75,6 +75,7 @@ struct Counts {
 pub(crate) struct State {
     /// One response after the other (RFC 9218 §10).
     sends_in_order: bool,
+    limits_unread_data: bool,
     /// What it takes to write a byte.
     min_credit: u64,
     pub(crate) events: VecDeque<Event>,
@@ -162,6 +163,7 @@ impl Streams {
             },
             state: State {
                 sends_in_order: config.has_priorities && side.is_server(),
+                limits_unread_data: config.limits_unread_data,
                 min_credit: if is_http3 { MIN_DATA_FRAME_LEN } else { 1 },
                 write_round: 1,
                 receive_limit: local.initial_max_data,

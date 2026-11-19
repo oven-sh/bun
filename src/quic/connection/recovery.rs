@@ -19,6 +19,8 @@ const MAX_LATENESS: u64 = 4;
 const PERSISTENT_CONGESTION_THRESHOLD: u64 = 3;
 const MIN_PROBE_TIMEOUT: Duration = Duration::from_millis(10);
 const MAX_PROBE_TIMEOUT: Duration = Duration::from_secs(60);
+/// So that it does not take as long to notice that a path is back as it was gone.
+const PROBES_PER_IDLE_TIMEOUT: u64 = 8;
 const DELIVERY_PERIOD: Duration = Duration::from_secs(30);
 /// One part in so many of what has been sent has to be acknowledged in a period.
 const DELIVERY_PARTS: u64 = 8;
@@ -326,7 +328,12 @@ impl Connection {
     }
 
     fn backed_off(&self, timeout: Duration) -> Duration {
-        (timeout.max(MIN_PROBE_TIMEOUT) * (1 << self.pto_count.min(16))).min(MAX_PROBE_TIMEOUT)
+        let timeout = timeout.max(MIN_PROBE_TIMEOUT);
+        let max = match self.is_confirmed() && !self.idle_timeout.is_zero() {
+            true => (self.idle_timeout / PROBES_PER_IDLE_TIMEOUT).max(timeout * 2),
+            false => Duration::MAX,
+        };
+        (timeout * (1 << self.pto_count.min(16))).min(max.min(MAX_PROBE_TIMEOUT))
     }
 
     /// Acknowledgments are not usually delayed for more than a packet.

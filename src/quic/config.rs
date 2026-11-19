@@ -27,6 +27,8 @@ pub struct Config {
     pub has_priorities: bool,
     /// Whether what the application has got counts as unread until [`consume`](crate::Connection::consume).
     pub awaits_consumption: bool,
+    /// Whether what is unread counts for the limit of the connection, so that it can hold up other streams.
+    pub limits_unread_data: bool,
     pub http3: Option<Http3Config>,
 }
 
@@ -69,8 +71,7 @@ impl Config {
             versions: &[Version::V1, Version::V2],
             parameters: TransportParameters {
                 max_idle_timeout_millis: 30_000,
-                // The streams that are not being read do not hold up the others.
-                initial_max_data: 128 * 1024 * 1024,
+                initial_max_data: 1536 * 1024,
                 initial_max_stream_data_bidi_remote: 1024 * 1024,
                 initial_max_stream_data_uni: 12 * 1024,
                 initial_max_streams_bidi: 100,
@@ -87,6 +88,7 @@ impl Config {
             uses_preferred_address: false,
             has_priorities: false,
             awaits_consumption: false,
+            limits_unread_data: false,
             http3: None,
         }
     }
@@ -95,7 +97,7 @@ impl Config {
         Self {
             parameters: TransportParameters {
                 max_idle_timeout_millis: 30_000,
-                initial_max_data: 1024 * 1024 * 1024,
+                initial_max_data: 15 * 1024 * 1024,
                 initial_max_stream_data_bidi_local: 6 * 1024 * 1024,
                 initial_max_stream_data_uni: 32 * 1024,
                 initial_max_streams_bidi: 100,

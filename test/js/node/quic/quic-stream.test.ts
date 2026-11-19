@@ -753,3 +753,30 @@ test.each(["is never read", "is read in part"])("a request that %s can be sent t
   expect(await Promise.all([exchange(), exchange(), exchange()])).toEqual(["done", "done", "done"]);
   await client.close();
 });
+
+test("streams can be read one after the other, in any order", async () => {
+  const sizes = [2, 3, 4].map(megabytes => megabytes << 20);
+  const streams: AsyncIterable<Uint8Array[]>[] = [];
+  const all = Promise.withResolvers<void>();
+  await using server = await listen(
+    session => {
+      session.onstream = stream => {
+        stream[Symbol.asyncIterator]();
+        stream.setBody(null);
+        if (streams.push(stream as any) === sizes.length) all.resolve();
+      };
+    },
+    { alpn: ["quic-test"], sni: { "*": { keys: [key], certs: [cert] } } },
+  );
+  const client = await connect(server.address!, { alpn: "quic-test", verifyPeer: "manual" } as SessionOptions);
+  for (const size of sizes) await client.createBidirectionalStream({ body: Buffer.alloc(size) });
+  await all.promise;
+  const lengths: number[] = [];
+  for (const stream of streams.toReversed()) {
+    let length = 0;
+    for await (const chunks of stream) for (const chunk of chunks) length += chunk.length;
+    lengths.push(length);
+  }
+  expect(lengths).toEqual(sizes.toReversed());
+  await client.close();
+});

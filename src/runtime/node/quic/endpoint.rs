@@ -433,6 +433,7 @@ fn config_from_js(
         .filter(|v| v.is_object())
     {
         apply_transport_params(global, tp, parameters, side)?;
+        config.limits_unread_data = read_u64_option(global, tp, "initialMaxData")?.is_some();
     }
     if let Some(ms) = read_u64_option(global, options, "handshakeTimeout")? {
         config.handshake_timeout = Duration::from_millis(ms);

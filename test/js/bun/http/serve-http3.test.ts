@@ -2,7 +2,7 @@ import type { ServerWebSocket } from "bun";
 import { describe, expect, test } from "bun:test";
 import { createHash, createPrivateKey, randomBytes, X509Certificate } from "crypto";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isLinux, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir, tls } from "harness";
 import { once } from "node:events";
 import type { SocketAddress } from "node:net";
 import { connect, QuicEndpoint, type SessionOptions } from "node:quic";
@@ -1122,6 +1122,31 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     });
   });
 
+  // Linux's loopback takes all the datagrams at once. The handshakes take 10 seconds in a debug build.
+  test.skipIf(!isLinux || isDebug)(
+    "server.stop(true) sends CONNECTION_CLOSE on all of many H3 connections",
+    async () => {
+      const server = Bun.serve({
+        port: 0,
+        tls,
+        http3: true,
+        http1: false,
+        idleTimeout: 255,
+        fetch: () => new Response(),
+      });
+      await using endpoint = new QuicEndpoint();
+      const options = { endpoint, verifyPeer: "manual", transportParams: { maxIdleTimeout: 255 } } as SessionOptions;
+      const closed: Promise<void>[] = [];
+      while (closed.length < 400) {
+        const some = await Promise.all(Array.from({ length: 50 }, () => connect(`127.0.0.1:${server.port}`, options)));
+        await Promise.all(some.map(session => session.opened));
+        closed.push(...some.map(session => session.closed));
+      }
+      server.stop(true);
+      expect(await Promise.allSettled(closed)).toHaveLength(400);
+    },
+  );
+
   // server.stop(true) from the request handler, or from a microtask the handler
   // resolved, runs while the QUIC events are being dispatched. The aborted
   // connection only sends its CONNECTION_CLOSE after that, so the
@@ -1416,9 +1441,8 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     if (!client.destroyed) client.close().catch(() => {});
   });
 
-  // bughunt #3: server.stop() must not leave the engine pointing at a
-  // freed listen-socket. The follow-up GET should cleanly fail to connect,
-  // and the process must still be alive to exit 0 on its own.
+  // The follow-up GET should cleanly fail to connect, and the process must
+  // still be alive to exit 0 on its own.
   test("server.stop() with live H3 connections does not UAF", async () => {
     const script = `
       const tls = ${JSON.stringify(tls)};
@@ -1447,12 +1471,6 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     });
   });
 
-  // end_stream()/end()/end_without_body()/force_close() captured a local
-  // copy of `resp`, cleared onAborted via detach_response(), then called
-  // end_request_streaming_and_drain() (whose drain_microtasks() can re-enter
-  // the engine via drain_quic_if_necessary and free the H3 stream when a client
-  // RESET is queued) before the final resp.state() read.
-  // Only detectable under ASAN; release builds corrupt memory silently.
   test.skipIf(!isASAN)(
     "client abort during streaming response + pending request body does not UAF",
     async () => {

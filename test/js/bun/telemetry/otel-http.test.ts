@@ -7,9 +7,9 @@ import {
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
+import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import fs from "node:fs";
 
 const spans: any[] = [];
 function restore() {

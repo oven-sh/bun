@@ -22,41 +22,21 @@ import {
 } from "../scripts/build/ci-images/spec.ts";
 import {
   getBuildMetadata,
-  getCommit,
   getCommitMessage,
   getEnv,
-  getJson,
   getLastSuccessfulBuild,
   getPullRequestFiles,
-  getRepositoryUrl,
+  getReleaseVersion,
   getSecret,
   isBuildkite,
   isFork,
   isMainBranch,
   isMergeQueue,
-  isPullRequest,
-  parseGitUrl,
   startGroup,
   uploadArtifact,
 } from "../scripts/buildkite.ts";
+import { checkRelease } from "../scripts/check-release.ts";
 import { type ImageState, getImageState } from "../scripts/ci-image.ts";
-
-function parseGitRepository(url: string | URL): string | undefined {
-  const parsed = parseGitUrl(url);
-  if (parsed) {
-    const { hostname, pathname } = parsed;
-    if (hostname == "github.com") {
-      return pathname.slice(1);
-    }
-  }
-
-  return undefined;
-}
-
-function getRepository(): string | undefined {
-  const url = getRepositoryUrl();
-  return url ? parseGitRepository(url) : undefined;
-}
 
 function isBuildManual(): boolean | undefined {
   if (isBuildkite) {
@@ -68,6 +48,15 @@ function isBuildManual(): boolean | undefined {
   }
 
   return undefined;
+}
+
+function isReleaseBranch(): boolean {
+  return getReleaseVersion() !== undefined;
+}
+
+/** "New Build" on a release branch: signs what it builds and uploads it to draft releases. */
+function isReleaseBuild(): boolean {
+  return isReleaseBranch() && !!isBuildManual();
 }
 
 function parseBoolean(value = ""): boolean | undefined {
@@ -85,50 +74,6 @@ function setBuildMetadata(name: string, value: string): void {
   if (isBuildkite && output(["buildkite-agent", "meta-data", "set", name, value]) === undefined) {
     console.error(`Failed to set build meta-data '${name}'`);
   }
-}
-
-/** The fields of GitHub's "get the latest release" response that are read here. */
-interface GithubRelease {
-  tag_name: string;
-}
-
-/** The fields of GitHub's "compare two commits" response that are read here. */
-interface GithubComparison {
-  ahead_by?: unknown;
-}
-
-async function getCanaryRevision(): Promise<number> {
-  if (isPullRequest() || isFork()) {
-    return 1;
-  }
-
-  const repository = getRepository() || "oven-sh/bun";
-  const { error: releaseError, body: release } = await getJson(
-    new URL(`repos/${repository}/releases/latest`, getGithubApiUrl()),
-  );
-  if (releaseError) {
-    return 1;
-  }
-
-  const commit = getCommit();
-  const { tag_name: latest } = release as GithubRelease;
-  const { error: compareError, body: compare } = await getJson(
-    new URL(`repos/${repository}/compare/${latest}...${commit}`, getGithubApiUrl()),
-  );
-  if (compareError) {
-    return 1;
-  }
-
-  const { ahead_by: revision } = compare as GithubComparison;
-  if (typeof revision === "number") {
-    return revision;
-  }
-
-  return 1;
-}
-
-function getGithubApiUrl(): URL {
-  return new URL(process.env.GITHUB_API_URL || "https://api.github.com");
 }
 
 type Emoji = keyof typeof emojiMap;
@@ -298,7 +243,7 @@ const testPlatforms: Platform[] = [
   // The darwin test suite runs on real macOS agents against the Linux-built
   // artifacts from the `darwin-<arch>-build-bun` steps (the only darwin build
   // lanes — see buildPlatforms).
-  // These three version-specific lanes run on main and on opt-in (see
+  // These three version-specific lanes run on main, release branches and opt-in (see
   // darwinTestsEnabled). PR builds instead get one aarch64 lane that any mac
   // agent of that arch can take (prDarwinTestPlatforms), so the whole arm64
   // pool serves one PR lane and the whole x64 pool the other.
@@ -315,6 +260,9 @@ const testPlatforms: Platform[] = [
   { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
   { os: "windows", arch: "aarch64", release: "11", tier: "latest" },
 ];
+
+/** Pull requests build and test the other profiles. main and release branches do not: nothing ships them. */
+const isInRelease = ({ profile }: Target) => profile !== "asan";
 
 function getPlatformKey(platform: Platform): string {
   const { distro, release } = platform;
@@ -455,6 +403,9 @@ function getPriority(): number {
   if (isFork()) {
     return -1;
   }
+  if (isReleaseBranch()) {
+    return 3;
+  }
   if (isMainBranch()) {
     return 2;
   }
@@ -587,11 +538,7 @@ function getBuildArgs(target: Target, options: PipelineOptions): string {
   if (baseline) args.push("--baseline=on");
   if (profile === "asan") args.push("--asan=on");
 
-  // canary: options.canary can be number (revision count) or undefined
-  // (default on). Old system used CANARY_REVISION as a counter; build.ts
-  // has only on/off — disabled only when explicitly 0.
-  const canaryRev = typeof canary === "number" ? canary : 1;
-  if (canaryRev === 0) args.push("--canary=off");
+  if (canary === false) args.push("--canary=off");
 
   return args.join(" ");
 }
@@ -1033,6 +980,16 @@ function getImageSteps(
 
 const windowsSignPlatform: Platform = { os: "windows", arch: "x64", release: "2019" };
 
+/** Each build-bun step produces two zips: <triplet>-profile.zip and <triplet>.zip */
+function getBuildArtifacts(platforms: Platform[]): { artifact: string; step: string }[] {
+  return platforms.flatMap(platform =>
+    ["-profile.zip", ".zip"].map(suffix => ({
+      artifact: `${getTargetTriplet(platform)}${suffix}`,
+      step: `${getTargetKey(platform)}-build-bun`,
+    })),
+  );
+}
+
 /**
  * Batch-signs all Windows artifacts on an x64 agent (`windowsSignPlatform`).
  * DigiCert smctl is x64-only and silently fails under ARM64 emulation, so
@@ -1040,16 +997,8 @@ const windowsSignPlatform: Platform = { os: "windows", arch: "x64", release: "20
  * signed zips with the same names so the release step picks them up
  * transparently.
  */
-function getWindowsSignStep(windowsPlatforms: Platform[], options: PipelineOptions): CommandStep {
-  // Each build-bun step produces two zips: <triplet>-profile.zip and <triplet>.zip
-  const artifacts: string[] = [];
-  const buildSteps: string[] = [];
-  for (const platform of windowsPlatforms) {
-    const triplet = getTargetTriplet(platform);
-    const stepKey = `${getTargetKey(platform)}-build-bun`;
-    artifacts.push(`${triplet}-profile.zip`, `${triplet}.zip`);
-    buildSteps.push(stepKey, stepKey);
-  }
+function getWindowsSignStep(windowsPlatforms: Platform[]): CommandStep {
+  const artifacts = getBuildArtifacts(windowsPlatforms);
 
   // The build platforms themselves are cross-compiled on Linux, so the agent
   // here is explicitly a native Windows box.
@@ -1065,9 +1014,23 @@ function getWindowsSignStep(windowsPlatforms: Platform[], options: PipelineOptio
     // smctl runs signtool.exe, which is only in PATH in a Visual Studio environment.
     command: [
       `pwsh -NoProfile -File .\\scripts\\vs-shell.ps1 pwsh -NoProfile -File .\\.buildkite\\scripts\\sign-windows-artifacts.ps1 ` +
-        `-Artifacts ${artifacts.join(",")} ` +
-        `-BuildSteps ${buildSteps.join(",")}`,
+        `-Artifacts ${artifacts.map(({ artifact }) => artifact).join(",")} ` +
+        `-BuildSteps ${artifacts.map(({ step }) => step).join(",")}`,
     ],
+  };
+}
+
+/** Signs the macOS artifacts on a Buildkite-hosted Mac, and re-uploads the zips with the same names. */
+function getDarwinSignStep(darwinPlatforms: Platform[]): CommandStep {
+  const artifacts = getBuildArtifacts(darwinPlatforms).map(({ artifact, step }) => `${artifact}=${step}`);
+  return {
+    key: "darwin-sign",
+    label: `${getBuildkiteEmoji("darwin")} sign`,
+    depends_on: darwinPlatforms.map(p => `${getTargetKey(p)}-build-bun`),
+    agents: { queue: "release-darwin" },
+    retry: getRetry(),
+    timeout_in_minutes: 30,
+    command: `node .buildkite/scripts/sign-darwin-artifacts.ts ${artifacts.join(" ")}`,
   };
 }
 
@@ -1108,37 +1071,13 @@ function getBinarySizeStep(
 
 const BINARY_SIZE_THRESHOLD_MB = 0.5;
 
-function getReleaseStep(
-  releasePlatforms: Platform[],
-  options: PipelineOptions,
-  { signed = false, testStepKeys = [] }: { signed?: OptionFlag; testStepKeys?: string[] } = {},
-): CommandStep {
-  const { canary } = options;
-  const revision = typeof canary === "number" ? canary : 1;
-
-  // When signing ran, depend on windows-sign instead of the raw Windows builds
-  // so we wait for signed artifacts before releasing.
-  const depends_on = signed
-    ? [...releasePlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
-    : releasePlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
-
-  // Gate canary upload on green tests. A red test lane leaves the artifacts in
-  // Buildkite but skips the GitHub/S3 upload; the next green main push ships.
-  // [skip tests] on main still lets the release run (testStepKeys is empty).
-  depends_on.push(...testStepKeys);
-
+function getReleaseStep(releasePlatforms: Platform[], kind: "canary" | "draft"): CommandStep {
   return {
     key: "release",
     label: getBuildkiteEmoji("rocket"),
     agents: getEc2Agent(buildHostPlatform, { instanceType: "c8g.large" }),
-    depends_on,
-    env: {
-      CANARY: revision,
-      // Tells upload-release.sh to fetch Windows zips from the sign step
-      // (same filenames, but the signed re-uploads are the ones we want).
-      WINDOWS_ARTIFACT_STEP: signed ? "windows-sign" : "",
-    },
-    command: ".buildkite/scripts/upload-release.sh",
+    depends_on: releasePlatforms.map(platform => `${getTargetKey(platform)}-build-bun`),
+    command: `node .buildkite/scripts/upload-release.ts ${kind}`,
   };
 }
 
@@ -1265,7 +1204,7 @@ interface PipelineOptions {
   skipTests?: OptionFlag;
   skipSizeCheck?: OptionFlag;
   forceBuilds?: OptionFlag;
-  canary?: number;
+  canary?: boolean;
   buildPlatforms?: Platform[];
   testPlatforms?: Platform[];
   testFiles?: string[] | undefined;
@@ -1300,7 +1239,7 @@ function getOptionsStep(): BlockStep {
       {
         key: "canary",
         select: "If building, is this a canary build?",
-        hint: "If you are building for a release, this should be false",
+        hint: "Releases are built from release/bun-vX.Y.Z branches, which do not ask",
         required: false,
         default: "true",
         options: booleanOptions,
@@ -1447,7 +1386,12 @@ function getSelectedPlatform(platforms: Map<string, Platform>, key: string): Pla
   return platform;
 }
 
-async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
+function getPipelineOptions(): PipelineOptions | undefined {
+  if (isReleaseBuild()) {
+    checkRelease();
+    return { canary: false, buildPlatforms: buildPlatforms.filter(isInRelease), testPlatforms };
+  }
+
   const isManual = isBuildManual();
   if (isManual && !process.argv.includes("--apply")) {
     return;
@@ -1455,10 +1399,9 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
 
   let filteredBuildPlatforms = buildPlatforms;
   if (isMainBranch()) {
-    filteredBuildPlatforms = buildPlatforms.filter(({ profile }) => profile !== "asan");
+    filteredBuildPlatforms = buildPlatforms.filter(isInRelease);
   }
 
-  const canary = await getCanaryRevision();
   const buildPlatformsMap = new Map(filteredBuildPlatforms.map(platform => [getTargetKey(platform), platform]));
   const testPlatformsMap = new Map(testPlatforms.map(platform => [getPlatformKey(platform), platform]));
 
@@ -1487,7 +1430,7 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
     const buildPlatformKeys = parseArray(options["build-platforms"]);
     const testPlatformKeys = parseArray(options["test-platforms"]);
     return {
-      canary: parseBoolean(options.canary) ? canary : 0,
+      canary: !!parseBoolean(options.canary),
       skipBuilds: parseBoolean(options["skip-builds"]),
       forceBuilds: parseBoolean(options["force-builds"]),
       skipTests: parseBoolean(options["skip-tests"]),
@@ -1521,11 +1464,8 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
     return false;
   };
 
-  const isCanary =
-    !parseBoolean(process.env.RELEASE || "false") && !/\[(release|build release|release build)\]/i.test(commitMessage);
-
   return {
-    canary: isCanary ? canary : 0,
+    canary: !parseBoolean(process.env.RELEASE),
     skipEverything: parseOption(/\[(skip ci|no ci)\]/i),
     skipBuilds: parseOption(/\[(skip builds?|no builds?|only tests?)\]/i),
     forceBuilds: parseOption(/\[(force builds?)\]/i),
@@ -1651,9 +1591,6 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   }
 
   const { buildPlatforms = [], testPlatforms = [] } = options;
-  // DigiCert charges per signature, so canary builds are never signed.
-  const windowsPlatforms = buildPlatforms.filter(p => p.os === "windows");
-  const signWindows = isMainBranch() && !options.canary && windowsPlatforms.length > 0;
 
   // A build makes sure every image of the spec exists, not only the ones its
   // own steps start from: which steps a build has depends on its options (a
@@ -1708,7 +1645,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     }
   }
 
-  const includeASAN = !isMainBranch();
+  const includeASAN = !isMainBranch() && !isReleaseBranch();
 
   // verify-baseline / trace-order: checks that run on a built binary on a
   // test-fleet host. They are drawn in that host's test group (or a
@@ -1816,7 +1753,10 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     { os: "darwin", arch: "x64", release: "any" },
   ];
   const darwinTestsEnabled =
-    isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage() ?? "");
+    isMainBranch() ||
+    isReleaseBranch() ||
+    isBuildManual() ||
+    /\[(macos|darwin) tests?\]/i.test(getCommitMessage() ?? "");
   // The macOS beta lane: a single home-hosted mini on the next macOS,
   // its own queue, soft-fail. PR builds get it only when that queue is
   // idle at upload time, so it is always busy while PRs flow and never
@@ -1833,14 +1773,12 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     .filter(({ os }) => os !== "darwin" || darwinTestsEnabled)
     .concat(darwinTestsEnabled ? [] : prDarwinTestPlatforms)
     .concat(darwinTestsEnabled ? [] : betaDarwinTestPlatforms);
-  const testStepKeys: string[] = [];
   {
     const { skipTests, testFiles } = options;
     if (!skipTests) {
       steps.push(
         ...relevantTestPlatforms.map(target => {
           const step = getTestBunStep(target, options, { testFiles, buildId });
-          testStepKeys.push(step.key);
           // Test shards run on their native platform image; when this build
           // bakes it, they wait for it.
           const dependsOn = getImageDependsOn(target, baking);
@@ -1864,23 +1802,26 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   if (!buildId && strippedPlatforms.length) {
     steps.push(
       getBinarySizeStep(strippedPlatforms, options, {
-        recordOnly: isMainBranch(),
+        recordOnly: isMainBranch() || isReleaseBranch(),
         imageDependsOn: getImageDependsOn(buildHostPlatform, baking),
       }),
     );
   }
 
-  if (signWindows) {
-    steps.push(
-      getStepWithDependsOn(
-        getWindowsSignStep(windowsPlatforms, options),
-        ...getImageDependsOn(windowsSignPlatform, baking),
-      ),
+  // DigiCert charges per signature, so canary builds are never signed.
+  if (isReleaseBuild()) {
+    const windowsSign = getStepWithDependsOn(
+      getWindowsSignStep(buildPlatforms.filter(({ os }) => os === "windows")),
+      ...getImageDependsOn(windowsSignPlatform, baking),
     );
-  }
-
-  if (isMainBranch()) {
-    steps.push(getReleaseStep(buildPlatforms, options, { signed: signWindows, testStepKeys }));
+    const darwinSign = getDarwinSignStep(buildPlatforms.filter(({ os }) => os === "darwin"));
+    steps.push(
+      windowsSign,
+      darwinSign,
+      getStepWithDependsOn(getReleaseStep(buildPlatforms, "draft"), windowsSign.key, darwinSign.key),
+    );
+  } else if (isMainBranch() && options.canary) {
+    steps.push(getReleaseStep(buildPlatforms, "canary"));
   }
 
   // Merge same-label groups into their first occurrence, keeping every
@@ -1906,7 +1847,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
 
 async function main() {
   startGroup("Generating options...");
-  const options = await getPipelineOptions();
+  const options = getPipelineOptions();
   if (options) {
     console.log("Generated options:", options);
   }

@@ -49,29 +49,23 @@ if (mode === "child") {
     ...sizes.map(it => [`${it}`, several(long, it)] as const),
     ...ranges.map(([low, high]) => [`${low}..${high}`, random(low, high)] as const),
   ];
-  const isMain = process.execPath === require("node:fs").realpathSync(rest[0]);
-  const isArm = process.arch === "arm64";
-  const upTo = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
   const ranges = [
+    [1, 32],
     [16, 128],
     [64, 512],
     [512, 4096],
   ];
-  for (const [name, inputs] of lengths(
-    [7, 16, 24, 40, 64, 100, 128, 200, 256, 300, 350, 400, 500, 640, 800, 1000, 1500, 2500, 4096, 16384, 200000],
-    ranges,
-  )) {
-    time(`hash crc32 ${name}`, inputs, "Bun.hash.crc32(x, 0)", 5e7);
-    if (isMain || !isArm || inputs[0].length < 64) continue;
-    for (const v of upTo(18)) time(`variant ${v} ${name}`, inputs, `Bun.hash.crc32(x, ${v << 24})`, 3e7);
-  }
-  for (const [name, inputs] of lengths([16, 40, 64, 100, 128, 200, 300, 400, 700, 1500, 4096, 65536], ranges)) {
-    time(`hash adler32 ${name}`, inputs, "Bun.hash.adler32(x)", 5e7);
-  }
-  if (!isMain)
-    for (const [name, inputs] of lengths([64, 200, 400, 1000, 4096, 16384, 32768, 200000], ranges))
-      for (const v of isArm ? [40, 50, 52, 53, 54, 55, 56, 57, 58] : [40, 50])
-        time(`variant ${v} ${name}`, inputs, `Bun.hash.murmur32v2(x, ${(v << 24) | 0x5eed01})`, 3e7);
+  const sizes = [3, 7, 12, 16, 24, 40, 64, 100, 128, 200, 256, 300, 350, 400, 500, 640, 800, 1000, 1500, 2500, 4096];
+  for (const [name, inputs] of lengths(sizes, ranges))
+    for (const it of ["crc32", "adler32"]) time(`hash ${it} ${name}`, inputs, `Bun.hash.${it}(x)`);
+  const { ptr } = require("bun:ffi");
+  const big = Buffer.concat([long, long, long, long, long, long, long, long]);
+  for (const size of [16384, 30000, 33000, 40000, 65536, 100000, 200000, 1000000, 8000000])
+    for (const past of [0, 16, 3]) {
+      const start = (64 + past - ((Number(ptr(big)) + size) % 64)) % 64;
+      for (const it of ["crc32", "adler32"])
+        time(`long ${it} ${size}+${past}`, [big.subarray(start, start + size)], `Bun.hash.${it}(x)`);
+    }
 
   // More than the branch predictor can learn.
   const all = (pattern: string) => read(...[...new Bun.Glob(pattern).scanSync(repo)].sort()).subarray(0, 1600000);
@@ -110,7 +104,7 @@ if (mode === "child") {
       time(`zlib gunzipSync ${name}`, packed("gzipSync"), "zlib.gunzipSync(x[0], x[1])");
       time(`zlib Bun.gunzipSync ${name}`, packed("gzipSync"), "Bun.gunzipSync(x[0])");
     }
-  for (const size of [300, 1000, 4096, 30000]) {
+  for (const size of [300, 1000, 4096, 30000, 200000]) {
     const options = { level: 0, chunkSize: 32 * 1024 };
     const plain = several(long, size).map(it => [it, options] as const);
     const packed = (to: "gzipSync" | "deflateSync") => plain.map(([it]) => [zlib[to](it, options), options]);

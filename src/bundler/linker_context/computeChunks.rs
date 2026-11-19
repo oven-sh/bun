@@ -75,7 +75,6 @@ fn add_class_names_to_chunks(
     let entry_bits = c.graph.files.items_entry_bits();
     let entry_points_len = c.graph.entry_points.len();
     let entry_source_indices = c.graph.entry_points.items_source_index();
-    let entry_point_kinds = c.graph.files.items_entry_point_kind();
     let all_parts = c.graph.ast.items_parts();
     let all_import_records = c.graph.ast.items_import_records();
     let hold = |chunk: &mut Chunk, stub: IndexInt| {
@@ -108,15 +107,10 @@ fn add_class_names_to_chunks(
         }
     };
 
-    // (file, stub): an `import`, `require()` or unsplit `import()` of the class names. These and the dependencies below are the edges of `for_each_edge` that lead to a stub.
-    let mut imports: Vec<(IndexInt, IndexInt)> = Vec::new();
-    let mut is_read = vec![false; css_js_stubs.len()];
+    // The edges of `for_each_edge` that lead to a stub: the import records, and the parts that a live part depends on.
     for source_index in c.graph.reachable_files.iter() {
         let file = source_index.get();
-        if !files_live.is_set(file as usize)
-            || parse_graph.css_asts[file as usize].is_some()
-            || css_js_stubs.stylesheet_of(file).is_some()
-        {
+        if !files_live.is_set(file as usize) || parse_graph.holds_class_names(file) {
             continue;
         }
         let records = all_import_records[file as usize].as_slice();
@@ -132,7 +126,8 @@ fn add_class_names_to_chunks(
                         .is_some()
                     && !c.is_external_dynamic_import(record, file)
                 {
-                    imports.push((file, record.source_index.get()));
+                    // The chunk printed a copy of the class names where it imports the stylesheet, whatever read them.
+                    lead(file, record.source_index.get(), false);
                 }
             }
             if !is_live {
@@ -140,21 +135,8 @@ fn add_class_names_to_chunks(
             }
             // A live part names a class name or calls the wrapper of the class names: its chunk needs them, also when a fold of small chunks moved the file to a chunk that does not load the stylesheet.
             for dependency in part.dependencies.iter() {
-                let stub = dependency.source_index.get();
-                if let Some(index) = css_js_stubs.index_of(stub) {
-                    is_read[index] = true;
-                    lead(file, stub, true);
-                }
+                lead(file, dependency.source_index.get(), true);
             }
-        }
-    }
-    for (file, stub) in imports {
-        // The chunk printed a copy of the class names where it imports the stylesheet, whatever read them. With no reader but a split `import()`, nothing printed them: only the chunk of the `import()` holds them.
-        let index = css_js_stubs.index_of(stub).expect("unreachable");
-        if is_read[index]
-            || entry_point_kinds[stub as usize] != crate::EntryPoint::Kind::DynamicImport
-        {
-            lead(file, stub, false);
         }
     }
 
@@ -374,8 +356,7 @@ pub(crate) fn compute_chunks<'a>(
 
                 let mut key = css_chunk_key(&css_chunks, hash_to_use, order.slice());
                 // The stylesheet of an `import()` can be an entry point too. Its JS stub takes the CSS chunk of that entry point.
-                if !this.options.css_chunking
-                    && let Some(stylesheet) = css_js_stubs.stylesheet_of(source_index)
+                if let Some(stylesheet) = css_js_stubs.stylesheet_of(source_index)
                     && this.graph.files.items_entry_point_kind()[stylesheet as usize]
                         .is_entry_point()
                     && let Some(entry_id) = entry_source_indices
@@ -469,9 +450,7 @@ pub(crate) fn compute_chunks<'a>(
         for source_index in this.graph.reachable_files.slice() {
             if this.graph.files_live.is_set(source_index.get() as usize) {
                 // A stylesheet is in no JS chunk, and its JS stub is in the chunks that `add_class_names_to_chunks` finds.
-                if css_asts[source_index.get() as usize].is_none()
-                    && css_js_stubs.stylesheet_of(source_index.get()).is_none()
-                {
+                if parse_graph.has_one_js_chunk(source_index.get()) {
                     let entry_bits: &AutoBitSet = &file_entry_bits[source_index.get() as usize];
 
                     if this.graph.code_splitting {

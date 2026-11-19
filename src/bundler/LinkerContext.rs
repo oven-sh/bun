@@ -379,10 +379,6 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 if ast_flags.contains(AstFlags::HAS_LAZY_EXPORT) {
                     exports_kind[entry_point.get() as usize] = ExportsKind::Cjs;
                 }
-                // The lazy export of a stylesheet is on its JS stubs.
-                for stub in parse_graph.css_js_stubs.stubs_of(entry_point.get()) {
-                    exports_kind[stub as usize] = ExportsKind::Cjs;
-                }
 
                 // Entry points with ES6 exports must generate an exports object when
                 // targeting non-ES6 formats. Note that the IIFE format only needs this
@@ -2807,9 +2803,16 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
 
                 let needs_promise_all = async_import_count >= 2;
 
-                let esm_parts: &[u32] = if wrapper_ref.is_valid()
+                // Each chunk that holds the class names of a stylesheet prints a copy of this wrapper. A copy with no class name to declare prints `() => {}`, so the parts that declare them depend on `__esm` (`generate_code_for_lazy_export`), not this one.
+                let uses_esm_runtime = wrapper_ref.is_valid()
                     && self.options.output_format != Format::InternalBakeDev
-                {
+                    && self
+                        .parse_graph()
+                        .css_js_stubs
+                        .stylesheet_of(source_index)
+                        .is_none();
+
+                let esm_parts: &[u32] = if uses_esm_runtime {
                     self.top_level_symbols_to_parts_for_runtime(self.esm_runtime_ref)
                 } else {
                     &[]
@@ -2863,7 +2866,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 debug_assert!(part_index != bun_ast::NAMESPACE_EXPORT_PART_INDEX);
                 self.graph.meta.items_wrapper_part_index_mut()[source_index as usize] =
                     crate::Index::part(part_index);
-                if wrapper_ref.is_valid() && self.options.output_format != Format::InternalBakeDev {
+                if uses_esm_runtime {
                     self.graph
                         .generate_symbol_import_and_use(
                             source_index,

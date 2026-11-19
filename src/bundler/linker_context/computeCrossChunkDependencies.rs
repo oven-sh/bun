@@ -325,10 +325,11 @@ fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Result<AutoBitSet, bun_a
         }
         let mut runs_nothing = !chunk.entry_point.is_entry_point();
         for &source_index in chunk.files_with_parts_in_chunk.keys() {
-            // A copy of the class names of a stylesheet is in each chunk that holds them, and no chunk imports it.
-            if css_js_stubs.stylesheet_of(source_index).is_none() {
-                chunk_of_file[source_index as usize] = chunk_index as u32;
+            // A copy of the class names of a stylesheet runs nothing, and no chunk imports it from another.
+            if css_js_stubs.stylesheet_of(source_index).is_some() {
+                continue;
             }
+            chunk_of_file[source_index as usize] = chunk_index as u32;
             runs_nothing = runs_nothing && c.loading_file_has_no_side_effects(source_index);
         }
         if runs_nothing {
@@ -459,6 +460,17 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         chunk_index,
                     );
                 }
+            } else {
+                // The symbols of a JS stub are in no chunk: a chunk that names one holds a copy of the stub (`add_class_names_to_chunks`).
+                debug_assert!(
+                    c.parse_graph()
+                        .css_js_stubs
+                        .stylesheet_of(import_ref.source_index())
+                        .is_none()
+                        || chunks[chunk_index]
+                            .files_with_parts_in_chunk
+                            .contains(&import_ref.source_index())
+                );
             }
         }
 

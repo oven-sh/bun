@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
+import { existsSync, readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "path";
 import { minimalFramework, tempDirWithBakeDeps } from "../bake-harness";
@@ -524,9 +524,28 @@ export default function () {
       client: `import * as styles from "./x.module.css"; console.log(JSON.stringify(styles));`,
       value: namespace,
     },
+    // One graph reads the class names and the other has a bare import: the value is in the graph that reads it only.
+    {
+      name: "the route reads the class names, the client imports the stylesheet",
+      declines: true,
+      route: `import styles from "../x.module.css"; export default () => JSON.stringify(styles);`,
+      client: `const { a } = require("./w.ts"); console.log("client", a);`,
+      files: { "w.ts": `import "./x.module.css"; export const a = 1;` },
+      value: classNames,
+      stdout: "client 1",
+      clientHoldsNoClassNames: true,
+    },
+    {
+      name: "the client reads the class names, the route imports the stylesheet",
+      declines: true,
+      route: `import "../x.module.css"; export default () => "route";`,
+      client: `import * as styles from "./x.module.css"; console.log(JSON.stringify(styles));`,
+      value: "route",
+      stdout: namespace,
+    },
   ])(
     "a framework route and its client entry point read a CSS module: $name",
-    async ({ declines, route, client, value }) => {
+    async ({ declines, route, client, value, stdout: clientStdout = value, files = {}, clientHoldsNoClassNames }) => {
       using dir = tempDir("bake-production-css-module-value", {
         "server.ts": `
         export function render(req, meta) {
@@ -546,6 +565,7 @@ export default function () {
         "y.css": `.y{color:blue}`,
         "routes/index.ts": route,
         "client.ts": client,
+        ...files,
       });
 
       await using build = Bun.spawn({
@@ -574,11 +594,47 @@ export default function () {
         stderr: "pipe",
       });
       const [stdout, , exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
-      expect(stdout.trim()).toBe(value);
+      expect(stdout.trim()).toBe(clientStdout);
+      if (clientHoldsNoClassNames) {
+        const scripts = readdirSync(path.join(dist, "_bun")).filter(file => file.endsWith(".js"));
+        const holders = scripts.filter(file => readFileSync(path.join(dist, "_bun", file), "utf8").includes("foo_"));
+        expect(holders).toEqual([]);
+      }
       expect(exitCode).toBe(0);
       expect(buildExitCode).toBe(0);
     },
   );
+
+  // The route and the client entry point each have a module with the class names of one stylesheet row. What is
+  // wrong with a `composes` of that stylesheet is reported once.
+  test.concurrent("a composes error of a CSS module that two graphs read is reported once", async () => {
+    using dir = tempDir("bake-production-css-module-composes-error", {
+      "server.ts": `
+        export async function prerender(meta) {
+          return { files: { "index.html": "<body>page=" + (await meta.pageModule.default()) + "</body>" } };
+        }
+      `,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+        const plugins = [{ name: "declines", setup(build) { build.onResolve({ filter: /\\.css$/ }, () => undefined); } }];
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] }, plugins } };
+      `,
+      "x.module.css": `.foo{composes: nope; color:red}`,
+      "routes/index.ts": `import styles from "../x.module.css"; export default () => JSON.stringify(styles);`,
+      "client.ts": `import styles from "./x.module.css"; console.log(JSON.stringify(styles));`,
+    });
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--app", "./app.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(stderr.match(/The name "nope" never appears in/g)).toHaveLength(1);
+    expect(exitCode).toBe(1);
+  });
 
   // With a separate SSR graph, three graphs share the row of the stylesheet, and each graph has an import() of it:
   // the route (server graph), the copy of Button that the server loads through `ssrManifest` (SSR graph) and the

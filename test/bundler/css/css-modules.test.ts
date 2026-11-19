@@ -380,6 +380,50 @@ describe("css", () => {
       },
       run: { "entry.js": '["object","foo_e7Ht-A"]' },
     },
+    // page.js reads the class names and an import() loads it, so they are in a wrapper. Nothing calls that import():
+    // the bundle has no other wrapped file, and the wrapper still has its runtime helper.
+    ClassNamesInWrapperOfFileThatTreeShakingDrops: {
+      files: {
+        "/entry.js": `
+          import "./lazyhost.js";
+          import styles from "./x.module.css";
+          console.log("entry", styles.foo);
+        `,
+        "/lazyhost.js": `console.log("lazyhost"); export const load = () => import("./page.js");`,
+        "/page.js": `import styles from "./x.module.css"; console.log("page", styles.foo);`,
+      },
+      run: { "entry.js": "lazyhost\nentry foo_e7Ht-A" },
+    },
+    // first.js reads the class names at load, before index.js, which an import() loads, has run its own statements.
+    ClassNamesReadAtLoadInAnImportCycleBehindDynamicImport: {
+      files: {
+        "/entry.js": `import("./index.js").then(m => console.log("entry reads", m.styles.foo));`,
+        "/index.js": `import "./first.js"; export { default as styles } from "./x.module.css";`,
+        "/first.js": `
+          import { styles } from "./index.js";
+          console.log("first reads", typeof styles === "undefined" ? "undefined" : styles.foo);
+        `,
+      },
+      run: { "entry.js": "first reads foo_e7Ht-A\nentry reads foo_e7Ht-A" },
+    },
+    // Module code cannot declare a variable of these names: the variable of such a class name has another name.
+    ClassNameThatModuleCodeCannotDeclare: {
+      files: {
+        "/entry.js": `
+          import styles from "./strict.module.css";
+          import * as namespace from "./strict.module.css";
+          import("./strict.module.css").then(lazy =>
+            console.log(JSON.stringify([styles, Object.keys(namespace).sort(), Object.keys(lazy).sort()])),
+          );
+        `,
+        "/strict.module.css": `.arguments { color: red } .eval { color: green } .await { color: blue }`,
+      },
+      run: {
+        "entry.js":
+          '[{"arguments":"arguments_ak0J3Q","eval":"eval_ak0J3Q","await":"await_ak0J3Q"},' +
+          '["arguments","await","default","eval"],["arguments","await","default","eval"]]',
+      },
+    },
   };
   const valueModes = {
     esm: {},
@@ -387,41 +431,54 @@ describe("css", () => {
     iife: { format: "iife" },
     minify: { minifyIdentifiers: true, minifySyntax: true, minifyWhitespace: true },
     bun: { target: "bun" },
-    cli: { backend: "cli" },
   } as const;
   // A file that another file loads is in a wrapper. The class names are the same there.
   const valueLoaders = {
     required: (file: string) => `require(".${file}"); export {};`,
     imported: (file: string) => `import(".${file}");`,
   };
-  for (const [shape, { files, entryPoints = ["/entry.js"], run, skipModes = [] }] of Object.entries(valueShapes)) {
-    for (const [mode, options] of Object.entries(valueModes)) {
-      if (skipModes.includes(mode)) continue;
-      itBundled(`css-module/${shape}/${mode}`, {
-        files: { ...stylesheets, ...files },
-        entryPoints,
-        outdir: "/out",
-        ...options,
-        run: Object.entries(run).map(([file, stdout]) => ({ file: "/out/" + file, stdout })),
-      });
-    }
-    for (const [mode, load] of Object.entries(valueLoaders)) {
-      if (skipModes.includes(mode)) continue;
-      const loaded = entryPoints
-        .map(file => ({ file, name: file.slice(1).replace(/\.\w+$/, ".js") }))
-        .filter(({ name }) => name in run);
-      itBundled(`css-module/${shape}/${mode}`, {
-        files: {
-          ...stylesheets,
-          ...files,
-          ...Object.fromEntries(loaded.map(({ file, name }) => ["/load-" + name, load(file)])),
-        },
-        entryPoints: loaded.map(({ name }) => "/load-" + name),
-        outdir: "/out",
-        run: loaded.map(({ name }) => ({ file: "/out/load-" + name, stdout: run[name] })),
-      });
-    }
+  // One mode builds with `Bun.build` in this process, and itBundled runs such a test alone.
+  for (const [shape, { files, entryPoints = ["/entry.js"], run }] of Object.entries(valueShapes)) {
+    itBundled(`css-module/${shape}/api`, {
+      backend: "api",
+      files: { ...stylesheets, ...files },
+      entryPoints,
+      outdir: "/out",
+      run: Object.entries(run).map(([file, stdout]) => ({ file: "/out/" + file, stdout })),
+    });
   }
+  // The other modes run `bun build`, so they can run at the same time.
+  describe.concurrent("the value of a stylesheet", () => {
+    for (const [shape, { files, entryPoints = ["/entry.js"], run, skipModes = [] }] of Object.entries(valueShapes)) {
+      for (const [mode, options] of Object.entries(valueModes)) {
+        if (skipModes.includes(mode)) continue;
+        itBundled(`css-module/${shape}/${mode}`, {
+          backend: "cli",
+          files: { ...stylesheets, ...files },
+          entryPoints,
+          outdir: "/out",
+          ...options,
+          run: Object.entries(run).map(([file, stdout]) => ({ file: "/out/" + file, stdout })),
+        });
+      }
+      for (const [mode, load] of Object.entries(valueLoaders)) {
+        const loaded = entryPoints
+          .map(file => ({ file, name: file.slice(1).replace(/\.\w+$/, ".js") }))
+          .filter(({ name }) => name in run);
+        itBundled(`css-module/${shape}/${mode}`, {
+          backend: "cli",
+          files: {
+            ...stylesheets,
+            ...files,
+            ...Object.fromEntries(loaded.map(({ file, name }) => ["/load-" + name, load(file)])),
+          },
+          entryPoints: loaded.map(({ name }) => "/load-" + name),
+          outdir: "/out",
+          run: loaded.map(({ name }) => ({ file: "/out/load-" + name, stdout: run[name] })),
+        });
+      }
+    }
+  });
 
   itBundled("css-module/NamespaceImportInExecutable", {
     files: {
@@ -432,6 +489,24 @@ describe("css", () => {
     compile: true,
     backend: "cli",
     run: { stdout: '{"default":{"foo":"foo_e7Ht-A"},"foo":"foo_e7Ht-A"}' },
+  });
+
+  // The minifier gives the shortest names to the characters that the files of a chunk use most. The text of a
+  // stylesheet counts for a chunk that prints its class names, as it did when the row of the stylesheet held them:
+  // the first name goes to the character that the stylesheet repeats.
+  itBundled("css-module/MinifiedNamesCountTheTextOfTheStylesheet", {
+    files: {
+      "/entry.js": `
+        import styles from "./long.module.css";
+        export function read(value) { return styles[value]; }
+      `,
+      "/long.module.css": `.foo::after { content: "${Buffer.alloc(4000, "Q").toString()}" }`,
+    },
+    minifyIdentifiers: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.js")).toContain("var Q = {");
+    },
   });
 
   // The wrapper of a require()d stylesheet holds the class names. The files that the stylesheet names with

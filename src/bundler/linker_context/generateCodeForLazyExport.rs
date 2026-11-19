@@ -48,6 +48,11 @@ pub(crate) fn generate_code_for_lazy_export(
         }
     }
 
+    // Each chunk that holds the class names prints a copy of their `__esm` wrapper, and a copy with no class name to declare prints `() => {}`. So the parts that declare them use `__esm`, not the wrapper part (`create_wrapper_for_file`).
+    let declarations_use_esm_runtime = stub_of.is_some()
+        && this.graph.meta.items_flags()[source_index as usize].wrap == crate::WrapKind::Esm
+        && this.options.output_format != crate::options::OutputFormat::InternalBakeDev;
+
     let all_sources = this.parse_graph().input_files.items_source();
     let all_css_asts = &this.parse_graph().css_asts;
     let maybe_css_ast: Option<&BundlerStyleSheet> = all_css_asts[stylesheet as usize].as_deref();
@@ -249,8 +254,28 @@ pub(crate) fn generate_code_for_lazy_export(
                     // that actually end up being used, and we don't know which ones will
                     // end up actually being used at this point (since import binding hasn't
                     // happened yet). So we need to wait until after tree shaking happens.
-                    let generated =
-                        this.generate_named_export_in_file(source_index, module_ref, name, name)?;
+                    // Module code cannot declare a variable of these names.
+                    let variable: &[u8] = match name {
+                        b"arguments" => b"_arguments",
+                        b"eval" => b"_eval",
+                        b"await" => b"_await",
+                        _ => name,
+                    };
+                    let generated = this.generate_named_export_in_file(
+                        source_index,
+                        module_ref,
+                        variable,
+                        name,
+                    )?;
+                    if declarations_use_esm_runtime {
+                        this.graph.generate_symbol_import_and_use(
+                            source_index,
+                            generated.1,
+                            this.esm_runtime_ref,
+                            1,
+                            Index::RUNTIME,
+                        )?;
+                    }
                     let new_stmts: &mut [Stmt] =
                         alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(
                             S::Local {
@@ -287,6 +312,15 @@ pub(crate) fn generate_code_for_lazy_export(
 
                 let generated =
                     this.generate_named_export_in_file(source_index, module_ref, name, b"default")?;
+                if declarations_use_esm_runtime {
+                    this.graph.generate_symbol_import_and_use(
+                        source_index,
+                        generated.1,
+                        this.esm_runtime_ref,
+                        1,
+                        Index::RUNTIME,
+                    )?;
+                }
                 let new_stmts: &mut [Stmt] =
                     alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(
                         S::ExportDefault {

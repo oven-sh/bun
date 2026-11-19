@@ -811,7 +811,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                         ),
                     );
 
-                    // Each chunk that holds the class names of a stylesheet has its own copy of this wrapper, and a chunk can name them with no `init_foo()` call of its own (an `export ... from`). The class names run nothing: the copy is initialized where it prints.
+                    // A reader of the class names of a stylesheet can run before the `init_foo()` call of the file that imports them (an import cycle), or in a chunk with no such call (an `export ... from`). The class names run nothing, so each copy of them is initialized where it prints.
                     if c.parse_graph()
                         .css_js_stubs
                         .stylesheet_of(source_index as u32)

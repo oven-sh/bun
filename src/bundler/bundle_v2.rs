@@ -1932,8 +1932,8 @@ pub mod bv2_impl {
     pub(crate) struct CssJsStubAllotment {
         /// The source index of the first stub: the row count of the graph during the walk.
         first: IndexInt,
-        /// The stylesheet and the target of each stub, in source index order.
-        stubs: ArrayHashMap<(IndexInt, Target), ()>,
+        /// The key of each stub, in source index order.
+        stubs: ArrayHashMap<crate::Graph::CssJsStubKey, ()>,
         /// Per stub: the walk has left it.
         walked: Vec<bool>,
         /// (importer, import record, stub): the records that import a stub once it has a row.
@@ -2201,9 +2201,12 @@ pub mod bv2_impl {
                                 }
                             {
                                 let target = self.all_targets[source_index.get() as usize];
-                                let entry = bun_core::handle_oom(
-                                    allotment.stubs.get_or_put((next_source.get(), target)),
-                                );
+                                // A split `import()` loads a chunk that holds every class name. The other readers share a stub that holds the class names that they read.
+                                let entry = bun_core::handle_oom(allotment.stubs.get_or_put((
+                                    next_source.get(),
+                                    target,
+                                    was_dynamic_import,
+                                )));
                                 let stub = allotment.first
                                     + IndexInt::try_from(entry.index).expect("int cast");
                                 if !entry.found_existing {
@@ -2413,14 +2416,14 @@ pub mod bv2_impl {
                     position[source_index.get() as usize] = i;
                 }
                 for &(importer, _, stub) in &records {
-                    let (stylesheet, _) = stubs.keys()[(stub - first) as usize];
+                    let (stylesheet, ..) = stubs.keys()[(stub - first) as usize];
                     debug_assert!(
                         position[stub as usize] < position[importer as usize]
                             || position[importer as usize] < position[stylesheet as usize]
                     );
                 }
             }
-            for &(stylesheet, target) in stubs.keys() {
+            for &(stylesheet, target, _) in stubs.keys() {
                 let (input_file, ast) = self.css_js_stub_row(
                     stylesheet,
                     self.graph.input_files.len() as IndexInt,
@@ -2431,7 +2434,7 @@ pub mod bv2_impl {
             }
             let ast = self.graph.ast.split_mut();
             // The stubs have the class names of these stylesheets: the lazy export that the parser gave the row goes.
-            for &(stylesheet, _) in stubs.keys() {
+            for &(stylesheet, ..) in stubs.keys() {
                 ast.flags[stylesheet as usize].remove(crate::bundled_ast::Flags::HAS_LAZY_EXPORT);
                 ast.parts[stylesheet as usize].as_mut_slice()[1] = bun_ast::Part {
                     can_be_removed_if_unused: true,
@@ -2446,7 +2449,11 @@ pub mod bv2_impl {
             // The stub stands for the stylesheet in every JS file of its target: a chunk prints the class names where it first imports the stylesheet, with a binding or without.
             for (importer, record) in bare_records {
                 let record = &mut import_records[importer as usize].as_mut_slice()[record as usize];
-                let key = (record.source_index.get(), ast.target[importer as usize]);
+                let key = (
+                    record.source_index.get(),
+                    ast.target[importer as usize],
+                    false,
+                );
                 if let Some(index) = stubs.get_index(&key) {
                     record.source_index =
                         Index::init(first + IndexInt::try_from(index).expect("int cast"));
@@ -2520,7 +2527,6 @@ pub mod bv2_impl {
                 ..Default::default()
             });
             let side_effects = self.graph.input_files.items_side_effects()[stylesheet as usize];
-            let module_type = self.graph.ast.items_module_type()[stylesheet as usize];
 
             let options = &self.transpiler_for_target(target).options;
             let mut js_parser_options =
@@ -2531,7 +2537,6 @@ pub mod bv2_impl {
                 target,
                 false,
             );
-            js_parser_options.module_type = module_type;
 
             let mut ast = self.lazy_export_ast(
                 target,
@@ -2541,7 +2546,6 @@ pub mod bv2_impl {
                 b"",
             )?;
             ast.target = target;
-            ast.module_type = module_type;
             // A chunk that prints the class names counts the characters of the stylesheet when it picks minified names, as it did when the row of the stylesheet held them.
             ast.char_freq = self.graph.ast.items_char_freq()[stylesheet as usize].clone();
 

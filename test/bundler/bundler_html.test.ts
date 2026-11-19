@@ -1,5 +1,6 @@
 import { describe, expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { readdirSync } from "node:fs";
 import path from "node:path";
 import { type BundlerTestBundleAPI, itBundled } from "./expectBundled";
 
@@ -516,6 +517,30 @@ export const initNav = () => console.log('Navigation initialized');`,
           /<script type="module" crossorigin src="[^"]+"><\/script><link rel="modulepreload"/,
         );
       }
+    },
+  });
+
+  // The scripts of two pages import one stylesheet and read no class name. q.js, which require() loads, imports it
+  // too, so each script prints an empty wrapper for the class names. That wrapper needs no runtime: the pages share
+  // no chunk and preload nothing.
+  itBundled("html/unread-class-names-in-a-wrapper-add-no-chunk", {
+    outdir: "out/",
+    files: {
+      "/a.html": `<!DOCTYPE html><html><head><script type="module" src="./a.js"></script></head><body></body></html>`,
+      "/b.html": `<!DOCTYPE html><html><head><script type="module" src="./b.js"></script></head><body></body></html>`,
+      "/a.js": `import styles from "./x.module.css"; console.log("a"); globalThis.later = () => require("./q.js");`,
+      "/b.js": `import styles from "./x.module.css"; console.log("b");`,
+      "/q.js": `import styles from "./x.module.css"; console.log("q"); export const q = 1;`,
+      "/x.module.css": `.foo { color: red }`,
+    },
+    entryPoints: ["/a.html", "/b.html"],
+    splitting: true,
+    onAfterBundle(api) {
+      const pages = ["a", "b"].map(name => api.readFile(`out/${name}.html`));
+      const scripts = pages.map(html => html.match(/<script[^>]*src="\.\/([^"]+\.js)"/)![1]);
+      expect(readdirSync(api.outdir).filter(file => file.endsWith(".js")).sort()).toEqual([...scripts].sort());
+      for (const html of pages) expect(html).not.toContain("modulepreload");
+      expect(api.readFile("out/" + scripts[1])).not.toContain("import");
     },
   });
 

@@ -259,8 +259,13 @@ impl<'e> ForRules<'e> {
             return Err(Reason::Configuration);
         }
         // `bun fmt` skips the file for a plugin it doesn't include, whether the Prettier config or `[fmt]` lists it.
-        if !allows_unsupported && configs.plugin_view(&scope, Some(path)).has_missing() {
-            return Err(Reason::Plugin);
+        let view = configs.plugin_view(&scope, Some(path));
+        if !allows_unsupported && view.has_missing() {
+            // Rule options with such a plugin are refused in `command_line`, so these flags are all from `[fmt]`.
+            return Err(match view.has_missing_from_flags() {
+                true => Reason::ListedPlugin,
+                false => Reason::Plugin,
+            });
         }
         match language_of(configs, &scope, path) {
             Language::Supported => {}

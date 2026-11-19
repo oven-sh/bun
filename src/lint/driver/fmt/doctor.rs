@@ -90,9 +90,17 @@ pub(super) fn report(
         let is_in_use = |it: &&[u8]| !(is_svelte_off && config::is_svelte_plugin(it));
         let listed = view.packages().chain(view.missing());
         let mut listed = listed.filter(is_in_use).peekable();
-        let goes_to_prettier =
-            listed.peek().is_some() && language_of(configs, scope, path) == Language::Plugin;
-        listed.for_each(|it| plugins.add(it, goes_to_prettier));
+        let lists_any = listed.peek().is_some();
+        let goes_to_prettier = lists_any && language_of(configs, scope, path) == Language::Plugin;
+        // oxfmt loads no Prettier plugins, so those of `--plugin` and `[fmt]` do nothing for a file it formats.
+        let is_left_to_oxfmt = lists_any && !goes_to_prettier && configs.is_oxfmt_for(scope);
+        let unused: &[Vec<u8>] = match is_left_to_oxfmt {
+            true => view.flag_names(),
+            false => &[],
+        };
+        listed
+            .filter(|it| !unused.iter().any(|name| name == it))
+            .for_each(|it| plugins.add(it, goes_to_prettier));
         nested.extend(configs.config_file_path(scope).map(to_relative));
     }
     let mut nested = sorted(nested);

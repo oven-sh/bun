@@ -39,6 +39,11 @@ impl State {
     }
 
     #[inline]
+    pub(crate) fn unsent(&self) -> u64 {
+        self.unsent
+    }
+
+    #[inline]
     fn invites_writes(&self) -> bool {
         self.unsent + WRITE_CHUNK <= self.unsent_target
             && self.retained + WRITE_CHUNK <= self.max_retained
@@ -149,7 +154,13 @@ impl State {
         stream.flags.insert(Flags::WANTS_WRITE);
         self.report_blocked(id, stream);
         if stream.mark(Flags::IN_WRITABLE) {
-            self.writable.push_back(id);
+            self.turns += 1;
+            let rank = self.rank(id, stream, self.turns);
+            let at = match self.writable.back() {
+                Some(last) if last.0 > rank => self.writable.partition_point(|it| it.0 < rank),
+                _ => self.writable.len(),
+            };
+            self.writable.insert(at, (rank, id));
             self.is_write_round_over = false;
         }
     }
@@ -220,30 +231,31 @@ impl Streams {
     }
 
     #[cold]
-    fn sort_sendable(&mut self) {
+    fn apply_priorities(&mut self) {
         let Self { table, state, .. } = self;
-        let mut entries = core::mem::take(&mut state.sendable).into_vec();
-        for Reverse((rank, id)) in &mut entries {
+        let mut sendable = core::mem::take(&mut state.sendable).into_vec();
+        let mut writable = core::mem::take(&mut state.writable);
+        for (rank, id) in (sendable.iter_mut().map(|it| &mut it.0)).chain(&mut writable) {
             if let Some(stream) = table.get(*id) {
                 *rank = state.rank(*id, stream, state.turns);
             }
         }
-        state.sendable = entries.into();
+        writable.make_contiguous().sort_unstable();
+        (state.sendable, state.writable) = (sendable.into(), writable);
     }
 
     /// At most once for a stream until [`State::start_write_round`].
     #[inline]
     pub(crate) fn poll_writable(&mut self) -> Option<Event> {
+        if core::mem::take(&mut self.has_new_priorities) {
+            self.apply_priorities();
+        }
         let Self { table, state, .. } = self;
         while state.awaits_writes() {
-            let ids = state.writable.iter().enumerate();
-            let mut waiting = (ids.filter_map(|(at, &id)| table.get(id).map(|it| (at, id, it))))
-                .filter(|(.., stream)| stream.write_round != state.write_round);
-            let next = match state.has_priorities {
-                false => waiting.next(),
-                true => waiting.min_by_key(|&(at, id, stream)| state.rank(id, stream, at as u64)),
-            };
-            let id = next.map(|it| it.0).and_then(|at| state.writable.remove(at));
+            let at = (state.writable.iter()).position(|it| {
+                (table.get(it.1)).is_some_and(|it| it.write_round != state.write_round)
+            });
+            let id = at.and_then(|at| state.writable.remove(at)).map(|it| it.1);
             let Some((id, stream)) = id.and_then(|id| table.get_mut(id).map(|it| (id, it))) else {
                 state.is_write_round_over = true;
                 return None;
@@ -295,7 +307,7 @@ impl Streams {
     #[inline]
     pub(crate) fn write_stream_frames(&mut self, out: &mut Vec<u8>, end: usize, sent: &mut Frames) {
         if core::mem::take(&mut self.has_new_priorities) {
-            self.sort_sendable();
+            self.apply_priorities();
         }
         let Self { table, state, .. } = self;
         while let Some(&id) = state.lost.front() {

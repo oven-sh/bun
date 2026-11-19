@@ -9,7 +9,6 @@ use super::ids::RemoteId;
 use super::mtu::Mtu;
 use super::recovery::INITIAL_PACKET_THRESHOLD;
 use super::sent::Control;
-use super::space::SpaceId;
 use super::timers::Timer;
 use crate::cid::ResetToken;
 use crate::congestion::Rtt;
@@ -360,7 +359,7 @@ impl Connection {
             return Ok(());
         };
         if candidate.is_confirmed {
-            return self.switch_path(at, shared);
+            return self.switch_path(now, at, shared);
         }
         if !core::mem::replace(&mut candidate.is_wanted, true) {
             if !candidate.is_challenged() {
@@ -394,23 +393,23 @@ impl Connection {
         match (self.candidates.iter_mut()).position(|it| {
             it.on_response(now, data) && (is_client || it.is_wanted && it.addresses == *from)
         }) {
-            Some(at) => self.switch_path(at, shared),
+            Some(at) => self.switch_path(now, at, shared),
             None => Ok(()),
         }
     }
 
-    fn switch_path(&mut self, at: usize, shared: &mut Shared) -> Result {
+    fn switch_path(&mut self, now: Instant, at: usize, shared: &mut Shared) -> Result {
+        self.lose_all(now);
         let old = core::mem::replace(&mut self.path, self.candidates.remove(at));
         self.abandon_path(&old, shared)?;
         let (from, to) = (old.addresses, self.path.addresses);
         self.path.is_wanted = false;
         self.previous_peer = Some(from.peer);
         self.spin = false;
-        // RFC 9000 §9.4.
-        self.resend_all(SpaceId::Data);
         if from.local == to.local && from.peer.ip() == to.peer.ip() {
             self.path.mtu = old.mtu;
         } else {
+            // RFC 9000 §9.4.
             (self.rtt, self.first_sample_at) = (Rtt::default(), Instant::NEVER);
             self.congestion.restart(self.path.mtu.current);
             self.packet_threshold = INITIAL_PACKET_THRESHOLD;

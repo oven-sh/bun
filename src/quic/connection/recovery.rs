@@ -5,6 +5,7 @@ use super::space::{Space, SpaceId, Spaces};
 use super::streams::Flags;
 use super::timers::Timer;
 use super::{Connection, Phase};
+use crate::congestion::{Controller, Flight};
 use crate::error::{Error, Result};
 use crate::event::{CloseReason, Event};
 use crate::frame::Ack;
@@ -265,13 +266,25 @@ impl Connection {
 
     /// For packets that cannot arrive, or do not have to, which says nothing about the network.
     pub(super) fn resend_all(&mut self, id: SpaceId) {
+        self.give_up_on_flight(id, |congestion, flight| {
+            congestion.discard(flight);
+        });
+    }
+
+    /// For when the peer has moved.
+    pub(super) fn lose_all(&mut self, now: Instant) {
+        self.give_up_on_flight(SpaceId::Data, Controller::on_lost);
+        self.congestion.end_ack(now, &self.rtt);
+    }
+
+    fn give_up_on_flight(&mut self, id: SpaceId, report: fn(&mut Controller, &Flight)) {
         let mut at = 0;
         while let Some(packet) = self.spaces.open(id).sent.packets.get_mut(at) {
             at += 1;
             let before = *packet;
             if before.is_in_flight() {
                 packet.fate = Fate::Lost;
-                self.congestion.discard(&before.flight);
+                report(&mut self.congestion, &before.flight);
                 self.requeue(id, &before, Fate::Lost);
             }
         }

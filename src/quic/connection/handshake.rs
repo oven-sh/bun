@@ -31,7 +31,7 @@ const CRYPTO_BUFFER_EXCEEDED: Error = Error::transport(
     "crypto buffer exceeded",
 );
 /// It leaves room for frames in an Initial packet.
-const MAX_TOKEN_LEN: usize = 1100;
+const MAX_TOKEN_LEN: usize = 512;
 const MAX_TICKETS: u8 = 16;
 const MAX_TOKENS: u8 = 16;
 const TICKET_FORMAT: u32 = 1;

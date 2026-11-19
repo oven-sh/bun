@@ -70,7 +70,6 @@ struct Counts {
 /// What the streams share.
 #[derive(Default)]
 pub(crate) struct State {
-    has_priorities: bool,
     /// One response after the other (RFC 9218 §10).
     sends_in_order: bool,
     /// What it takes to write a byte.
@@ -112,7 +111,8 @@ pub(crate) struct State {
     stalled: Vec<StreamId>,
     owing: VecDeque<StreamId>,
     readable: VecDeque<StreamId>,
-    writable: VecDeque<StreamId>,
+    /// By rank.
+    writable: VecDeque<(u64, StreamId)>,
     closing: VecDeque<StreamId>,
 }
 
@@ -158,7 +158,6 @@ impl Streams {
                 ),
             },
             state: State {
-                has_priorities: config.has_priorities,
                 sends_in_order: config.has_priorities && side.is_server(),
                 min_credit: if is_http3 { 3 } else { 1 },
                 write_round: 1,
@@ -250,7 +249,7 @@ impl Streams {
             _ => return,
         };
         if flags.intersects(Flags::IN_WRITABLE | Flags::IN_STALLED) {
-            state.writable.retain(|&it| it != id);
+            state.writable.retain(|it| it.1 != id);
             state.stalled.retain(|&it| it != id);
         }
         if id.initiator() != table.side {

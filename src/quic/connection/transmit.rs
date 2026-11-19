@@ -325,7 +325,7 @@ impl Connection {
 
     #[inline]
     fn may_send(&mut self, now: Instant) -> bool {
-        match self.congestion.permit(now) {
+        match (self.congestion).permit(now, self.streams.state.unsent()) {
             Permit::Now => {
                 let is_held_back = self.spaces.data.sent.packets.len() >= MAX_TRACKED_PACKETS
                     || self.has_peer_moved();

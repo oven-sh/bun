@@ -33,7 +33,8 @@ use crate::version::Version;
 const MAX_REPLIES: usize = 256;
 /// RFC 9000 §10.3.
 const USUAL_RESET_LENS: Range<usize> = 43..62;
-const DATAGRAMS_PER_TURN: usize = 16;
+/// As many of the largest ones as a run of a [`Batch`] can have.
+const DATAGRAMS_PER_TURN: usize = 44;
 /// The other clients wait until the established connections have been served.
 const HELLOS_PER_PASS: usize = 2;
 /// Into how many the clients are divided by their addresses.

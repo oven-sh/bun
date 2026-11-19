@@ -22,7 +22,7 @@ use bun_quic::{
 };
 use bun_uws as uws;
 use bun_uws::quic::drivers::{Driver, Registration};
-use bun_uws::quic::io::{Binding, Outbox, now, or_loopback};
+use bun_uws::quic::io::{Binding, DATAGRAMS_PER_READ, Outbox, now, or_loopback};
 
 use crate::jsc_hooks::timer_all;
 use crate::socket::SocketAddress;
@@ -353,7 +353,11 @@ extern "C" fn on_data(
     };
     // SAFETY: they are our arguments.
     unsafe { binding.for_each_datagram(buf, packets, receive) };
-    this.process();
+    match packets {
+        // There is probably more, and the more is acknowledged, the more can be sent together.
+        DATAGRAMS_PER_READ => this.mark_driver_pending(),
+        _ => this.process(),
+    }
 }
 
 /// Node's SNI resolution order: exact hostname, then a `*.suffix` wildcard,

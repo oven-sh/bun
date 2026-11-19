@@ -135,7 +135,7 @@ pub(crate) struct QuicStream {
     inbound: JsCell<Inbound>,
     wakeup: JsCell<Option<Strong>>,
     is_known_to_peer: Cell<bool>,
-    /// The peer has opened it, and it can be answered.
+    /// The peer has opened it, it can be answered, and the session does not wait for a reader yet.
     is_request: Cell<bool>,
     priority: Cell<Priority>,
     pending_headers: JsCell<VecDeque<PendingHeaders>>,
@@ -396,16 +396,27 @@ impl QuicStream {
         self.release_unclaimed();
     }
 
-    /// A request that has been answered may never be read, which must not hold up the peer.
+    /// A request that has been answered may never be read, which must not hold up the peer for good.
     fn release_unclaimed(&self) {
-        let is_answered = |s: &StreamState| s.fin_sent != 0 || s.write_ended != 0;
-        if self.inbound.get().abandoned
-            || self.is_request.get()
-                && self.with_state(|s| s.has_reader == 0 && is_answered(s))
-                && (self.get(Connection::stream_info)).is_some_and(|it| it.is_short_of_credit)
-        {
+        if self.inbound.get().abandoned {
             self.drop_inbound();
             self.update(|conn, id| conn.consume(id, usize::MAX));
+        } else if self.is_request.get()
+            && !self.inbound.get().ended
+            && self.with_state(|s| s.has_reader == 0 && (s.fin_sent != 0 || s.write_ended != 0))
+            && (self.get(Connection::stream_info)).is_some_and(|it| it.is_short_of_credit)
+            && let Some(session) = self.session_ref()
+        {
+            self.is_request.set(false);
+            session.await_reader(self.key);
+        }
+    }
+
+    pub(super) fn stop_if_unclaimed(&self, code: u64) {
+        if !self.inbound.get().ended && self.with_state(|s| s.has_reader == 0) {
+            self.drop_inbound();
+            self.inbound.with_mut(|i| i.ended = true);
+            self.update(|conn, id| conn.stop(id, code));
         }
     }
 

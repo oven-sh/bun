@@ -1,5 +1,5 @@
 use super::stream::UNKNOWN_SIZE;
-use super::{Flags, Load, Role, State, Stream};
+use super::{Flags, Role, State, Stream};
 use crate::coding::MAX_VARINT;
 use crate::connection::sent::Control;
 use crate::error::{Error, Result, transport_code};
@@ -221,18 +221,19 @@ impl State {
             || stream.receive_limit - stream.received < stream.receive_window / 8
     }
 
-    /// The peer may have missed a limit, or can do with less than is usually worth a frame.
+    /// The peer can do with less than is usually worth a frame.
     pub(crate) fn on_data_blocked(&mut self, limit: u64) {
-        self.add_load(Load::Light);
-        if self.consumed + self.receive_window > limit {
+        if limit == self.receive_limit && self.consumed + self.receive_window > limit {
             self.owed |= Control::MAX_DATA;
         }
     }
 
     /// Likewise.
     pub(crate) fn on_stream_data_blocked(&mut self, id: StreamId, stream: &mut Stream, limit: u64) {
-        self.add_load(Load::Light);
-        if stream.consumed + stream.receive_window > limit {
+        if limit == stream.receive_limit
+            && stream.consumed + stream.receive_window > limit
+            && !stream.flags.contains(Flags::READ_DONE)
+        {
             self.owe(id, stream, Flags::OWES_MAX_STREAM_DATA);
         }
     }

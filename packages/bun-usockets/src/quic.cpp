@@ -148,6 +148,8 @@ bool us_quic_is_routable(const struct us_quic_address_t *address) {
 
 /* ───── UDP ───── */
 
+static_assert(LIBUS_UDP_RECV_COUNT == 8, "update the constant in src/uws_sys/quic/io.rs");
+
 /* RFC 9000 §14. IP_PMTUDISC_PROBE also ignores the path MTU that the kernel has cached, as QUIC probes by itself.
  * A dual-stack socket needs both options. */
 void us_quic_set_dontfrag(struct us_udp_socket_t *udp) {
@@ -185,8 +187,11 @@ void us_quic_ignore_receive_errors(struct us_udp_socket_t *udp) {
 /* Returns whether us_quic_message_t::segment_len is understood. */
 bool us_quic_enable_offload(struct us_udp_socket_t *udp) {
 #ifdef __linux__
-    int value = 1;
+    int value = 0;
     socklen_t len = sizeof(value);
+    setsockopt(us_poll_fd(&udp->p), IPPROTO_IP, IP_RECVTOS, &value, len);
+    setsockopt(us_poll_fd(&udp->p), IPPROTO_IPV6, IPV6_RECVTCLASS, &value, len);
+    value = 1;
     setsockopt(us_poll_fd(&udp->p), IPPROTO_UDP, UDP_GRO, &value, len);
     return getsockopt(us_poll_fd(&udp->p), IPPROTO_UDP, UDP_SEGMENT, &value, &len) == 0;
 #else

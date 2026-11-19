@@ -188,19 +188,19 @@ fn a_run_fits_in_a_udp_packet() {
 #[test]
 fn connections_take_turns() {
     let mut raw = Raw::server();
-    raw.peer.tls.hello_len = 24_000;
+    raw.peer.tls.hello_len = 56_000;
     raw.connect_to(1);
     raw.connect_to(2);
     raw.connection();
     let (mut batch, mut visited) = (Batch::default(), Vec::new());
-    for max_len in [20, 100] {
+    for max_len in [48, 200] {
         (raw.peer.endpoint).poll_transmit(raw.now, &mut batch, max_len, |it| {
             visited.push((it.addresses().peer.port(), it.stats().packets_sent));
         });
-        assert_eq!(raw.peer.endpoint.wants_to_transmit(), max_len == 20);
+        assert_eq!(raw.peer.endpoint.wants_to_transmit(), max_len == 48);
     }
-    assert_eq!(visited, [(1, 16), (2, 4), (1, 22), (2, 20), (2, 22)]);
-    assert_eq!(batch.len(), 44);
+    assert_eq!(visited, [(1, 44), (2, 4), (1, 49), (2, 48), (2, 49)]);
+    assert_eq!(batch.len(), 98);
 }
 
 #[test]

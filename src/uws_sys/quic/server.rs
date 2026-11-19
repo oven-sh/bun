@@ -235,9 +235,12 @@ extern "C" fn us_create_quic_socket_context(
         ..Config::server()
     };
     let idle_timeout = Duration::from_secs(idle_timeout_secs.min(MAX_IDLE_TIMEOUT_SECS).into());
-    if !idle_timeout.is_zero() {
-        config.parameters.max_idle_timeout_millis = idle_timeout.as_millis();
-        config.progress_timeout = config.progress_timeout.max(idle_timeout);
+    match idle_timeout {
+        Duration::ZERO => config.progress_timeout = Duration::ZERO,
+        timeout => {
+            config.parameters.max_idle_timeout_millis = timeout.as_millis();
+            config.progress_timeout = config.progress_timeout.max(timeout);
+        }
     }
     Rc::into_raw(Rc::new_cyclic(|this| Server {
         engine: Engine::new(loop_, Weak::<Server>::clone(this), VERSIONS),

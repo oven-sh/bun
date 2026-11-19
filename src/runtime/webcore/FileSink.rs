@@ -501,13 +501,15 @@ impl FileSink {
 
     /// Starts the writer on `self.fd`.
     #[cfg(windows)]
-    pub(crate) fn start_writer(&self, owns_fd: bool, sync: bool) -> sys::Result<()> {
+    pub(crate) fn start_writer(&self, owns_fd: bool) -> sys::Result<()> {
+        use sys::Stdio::{StdErr, StdOut};
+        let fd = self.fd.get();
         self.writer.set_owns_fd(owns_fd);
-        if sync {
-            self.writer.start_sync(self, self.fd.get())
+        if !owns_fd && matches!(fd.stdio_tag(), Some(StdOut | StdErr)) {
+            self.writer.start_sync(self, fd)
         } else {
             let event_loop = self.event_loop_handle.as_event_loop_ctx();
-            self.writer.start(self, event_loop, self.fd.get(), true)
+            self.writer.start(self, event_loop, fd, true)
         }
     }
 

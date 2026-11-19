@@ -3171,9 +3171,8 @@ fn start_file_sink(
     let path = match file {
         PathOrFileDescriptor::Path(path) => path,
         PathOrFileDescriptor::Fd(fd) => {
-            use bun_sys::Stdio::{StdErr, StdOut};
             let sink = webcore::FileSink::init(*fd, event_loop);
-            sink.start_writer(false, matches!(fd.stdio_tag(), Some(StdOut | StdErr)))?;
+            sink.start_writer(false)?;
             return Ok(sink);
         }
     };
@@ -3200,7 +3199,7 @@ fn start_file_sink(
     };
     node::fs::note_opened_for_write(path.slice(), truncate);
     let sink = webcore::FileSink::init(file.fd(), event_loop);
-    sink.start_writer(true, false)?;
+    sink.start_writer(true)?;
     // The writer closes it from now on.
     file.into_raw();
     sink.close_with_graph(cx.context());

@@ -15,8 +15,6 @@ use crate::uv;
 /// bun_errno::posix::*` unconditionally. Windows has no real `mode_t`/kernel
 /// `errno`, so this is the minimal subset higher tiers reach for.
 pub mod posix {
-    pub type mode_t = i32;
-
     pub type E = super::SystemErrno;
     /// File-mode bits. Re-export the canonical module so
     /// `posix::S::IFDIR` / `posix::S::ISREG(m)` resolve identically to POSIX.

@@ -7,7 +7,9 @@ use bun_jsc::JsCell;
 use bun_ptr::RefPtr;
 
 use crate::json_line_buffer::JSONLineBuffer;
-use bun_collections::{ByteVecExt, VecExt};
+#[cfg(windows)]
+use bun_collections::ByteVecExt;
+use bun_collections::VecExt;
 use bun_core::{Output, handle_oom};
 use bun_core::{String as BunString, StringView, strings};
 use bun_io::KeepAlive;
@@ -141,11 +143,12 @@ impl InternalMsgHolder {
 
 bun_core::define_scoped_log!(log, IPC, visible);
 
-/// Union type that switches between simple Vec<u8> (for advanced mode)
+/// Union type that switches between StreamBuffer (for advanced mode)
 /// and JSONLineBuffer (for JSON mode with optimized newline tracking).
 enum IncomingBuffer {
-    /// For advanced mode - uses length-prefix, no scanning needed
-    Advanced(Vec<u8>),
+    /// For advanced mode - uses length-prefix, no scanning needed.
+    /// The cursor is not a local of the reader: a handler can run the event loop, which reads on from it.
+    Advanced(StreamBuffer),
     /// For JSON mode - tracks newline positions to avoid O(n²) scanning
     Json(JSONLineBuffer),
 }
@@ -153,13 +156,13 @@ enum IncomingBuffer {
 impl IncomingBuffer {
     fn init(mode: Mode) -> IncomingBuffer {
         match mode {
-            Mode::Advanced => IncomingBuffer::Advanced(Vec::<u8>::default()),
+            Mode::Advanced => IncomingBuffer::Advanced(StreamBuffer::default()),
             Mode::Json => IncomingBuffer::Json(JSONLineBuffer::new(json::max_line_len())),
         }
     }
 }
 
-// deinit: Vec<u8>/JSONLineBuffer own their storage and Drop frees it.
+// deinit: StreamBuffer/JSONLineBuffer own their storage and Drop frees it.
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub(crate) enum IsInternal {
@@ -2115,6 +2118,10 @@ enum DecodeStep {
 }
 
 fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
+    if let DecodeStep::Fail(_) = step {
+        // A read that is being delivered further up the stack has nothing left to report.
+        (send_queue.incoming).set(IncomingBuffer::init(send_queue.mode));
+    }
     match step {
         DecodeStep::Message(_) => unreachable!("caller dispatches Message"),
         DecodeStep::Wait => {
@@ -2162,30 +2169,21 @@ fn decode_next_json(incoming: &JsCell<IncomingBuffer>, global: &JSGlobalObject) 
     })
 }
 
-fn decode_next_advanced(
-    incoming: &JsCell<IncomingBuffer>,
-    global: &JSGlobalObject,
-    slice_start: &mut usize,
-) -> DecodeStep {
+fn decode_next_advanced(incoming: &JsCell<IncomingBuffer>, global: &JSGlobalObject) -> DecodeStep {
     incoming.with_mut(|inc| {
         let IncomingBuffer::Advanced(adv_buf) = inc else {
             unreachable!()
         };
-        let slice = &adv_buf.slice()[*slice_start..];
-        match decode_ipc_message(Mode::Advanced, slice, global, None) {
+        match decode_ipc_message(Mode::Advanced, adv_buf.slice(), global, None) {
             Ok(r) => {
-                let consumed = r.bytes_consumed as usize;
-                if consumed < slice.len() {
-                    *slice_start += consumed;
-                } else {
-                    adv_buf.clear();
-                    *slice_start = 0;
-                }
+                adv_buf.cursor += r.bytes_consumed as usize;
                 DecodeStep::Message(r)
             }
             Err(IPCDecodeError::NotEnoughBytes) => {
                 // copy the remaining bytes to the start of the buffer
-                adv_buf.drain_front(*slice_start);
+                adv_buf
+                    .list
+                    .drain_front(core::mem::take(&mut adv_buf.cursor));
                 DecodeStep::Wait
             }
             Err(e) => DecodeStep::Fail(e),
@@ -2231,7 +2229,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                 let IncomingBuffer::Advanced(adv_buf) = inc else {
                     unreachable!()
                 };
-                adv_buf.len() != 0
+                adv_buf.is_not_empty()
             });
             if !buffered {
                 loop {
@@ -2271,9 +2269,8 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                 };
                 handle_oom(adv_buf.write(data));
             });
-            let mut slice_start: usize = 0;
             loop {
-                match decode_next_advanced(&send_queue.incoming, &global_this, &mut slice_start) {
+                match decode_next_advanced(&send_queue.incoming, &global_this) {
                     DecodeStep::Message(result) => {
                         crate::dispatch::fold(handle_ipc_message(
                             send_queue,
@@ -2357,7 +2354,7 @@ pub(crate) mod IPCHandlers {
             log!("NewNamedPipeIPCHandler#onReadAlloc {}", suggested_size);
             send_queue.incoming.with_mut(|inc| match inc {
                 IncomingBuffer::Json(json_buf) => json_buf.data.uv_alloc_spare(suggested_size),
-                IncomingBuffer::Advanced(adv_buf) => adv_buf.uv_alloc_spare(suggested_size),
+                IncomingBuffer::Advanced(adv_buf) => adv_buf.list.uv_alloc_spare(suggested_size),
             })
         }
 
@@ -2408,15 +2405,10 @@ pub(crate) mod IPCHandlers {
                             unreachable!()
                         };
                         // SAFETY: `on_read_alloc` reserved ≥ nread bytes; libuv initialised them.
-                        unsafe { adv_buf.uv_commit(nread) };
+                        unsafe { adv_buf.list.uv_commit(nread) };
                     });
-                    let mut slice_start: usize = 0;
                     loop {
-                        match decode_next_advanced(
-                            &send_queue.incoming,
-                            &global_this,
-                            &mut slice_start,
-                        ) {
+                        match decode_next_advanced(&send_queue.incoming, &global_this) {
                             DecodeStep::Message(result) => {
                                 crate::dispatch::fold(handle_ipc_message(
                                     send_queue,

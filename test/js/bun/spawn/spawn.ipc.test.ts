@@ -716,3 +716,42 @@ describe.concurrent("the send queue", () => {
     expect(result).toEqual({ stdout: [`replies ${count}`], stderr: "", exitCode: 0 });
   });
 });
+
+// Linux only: what one write() sends has to arrive in one read.
+describe.concurrent.skipIf(!isLinux)("a message handler that runs the event loop", () => {
+  it.each([
+    ["messages arrive in order", `advancedFrame("m3")`, ["m1", "m2", "m3"]],
+    [
+      "an undecodable message is reported once",
+      `[2, 4, 0, 0, 0, 255, 255, 255, 255]`,
+      ["m1", "m2", "Unable to deserialize data."],
+    ],
+  ])("while messages are buffered: %s", async (_, later, expected) => {
+    const result = await runPair(
+      `
+        process.on("uncaughtException", error => console.log(error.message));
+        const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+        spawnChild({
+          serialization: "advanced",
+          onDisconnect,
+          ipc(message) {
+            console.log(message);
+            if (message === "m0") fs.writeFileSync("one byte is buffered", "");
+            if (message !== "m1") return;
+            fs.writeFileSync("in the handler", "");
+            runEventLoopUntil(disconnected);
+          },
+        });
+      `,
+      `
+        const bytes = Buffer.concat(["m1", "m2"].map(advancedFrame));
+        write(Buffer.concat([advancedFrame("m0"), bytes.subarray(0, 1)]));
+        until("one byte is buffered");
+        write(bytes.subarray(1));
+        until("in the handler");
+        write(${later});
+      `,
+    );
+    expect(result).toEqual({ stdout: ["m0", ...expected], stderr: "", exitCode: 0 });
+  });
+});

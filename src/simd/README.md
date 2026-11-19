@@ -207,6 +207,8 @@ A Cascade Lake core does the same once 46 multiplications of 256 bits fall into 
 
 With AVX-512, a slice that is shorter than a vector takes one masked access. That can fetch a cache line that the slice does not reach, and waits for stores to its neighbors. A load right after a masked store to the same bytes takes about 5 ns longer. A branch on the length costs more, because lengths are hard to predict.
 
+A feature does not say that its instructions are fast. With `sha3` or `sve2`, LLVM makes one `eor3` of two xors. Neoverse N2 runs that on the only unit for carry-less products, and the CRC of 16 KB took 1.3 times as long. `llvm-mca -mcpu=neoverse-n2` shows this without the core.
+
 ## Why it is safe
 
 rustc rejects a call to a `#[target_feature]` function from a function that lacks one of the features. It also rejects a safe pointer to it there. The functions in a copy have the attribute, and so does every op that calls an intrinsic. `if_supported!` is the only way in. It checks a list of features, then calls a function with the same list, which returns the pointer.
@@ -252,6 +254,6 @@ LLVM can still pick such an instruction for plain code in a kernel. Read the dis
 
 `conformance/digests.txt` has a hash of the results of each kernel in each part of `check.rs`, after 3, 1200 and 10000 rounds. It was recorded on x86-64 from the C++ kernels that came before, through adapters that are not in the repository. Where the interfaces differ, the adapter decided. `modulate` is compared with its formula instead, `lone_match` with the place of the match, `byte_bits` and `zlib` with plain loops, and some kernels with a twin. `bun bd test --run-simd-tests check 1200` prints the lines to add and to remove for that number. Before you replace one, show with `rust:test` that the new results are right. A new part adds lines and changes none. With the name of a kernel at the end, the command prints the results that it hashes too, for a diff between two targets or builds. `check-only webp 1200` runs the parts whose names start with that, `check-only j..m 1200` those that sort from `j` to below `m`.
 
-`BUN_SIMD_BENCHMARK_FILTER=memmem` with `-t "kernels on"` times only the rows that have this in their name. The time of a short call depends on the address of the code: between two builds of the same kernels, some rows differ by more than 10%.
+`BUN_SIMD_BENCHMARK_FILTER=memmem` with `-t "kernels on"` times only the rows that have this in their name. The time of a short call depends on the address of the code: between two builds of the same kernels, some rows differ by more than 10%. So does how well a core learns the branches of an input that repeats: the same instructions took 0.84 to 1.19 of the time for 100 KB of DEFLATE. Time such code on many inputs.
 
 With the feature `test_support`, `limit_to` and `limit_to_with` pick a target, and features beyond it, for the thread and nothing is cached. `portable32` and `portable64` then run a kernel at those widths on any machine, if its module has a target with them. `Memory` is exported, for a `Source` that counts its reads.

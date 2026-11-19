@@ -806,4 +806,41 @@ describe.concurrent.skipIf(!isLinux)("a message handler that runs the event loop
     );
     expect(result).toEqual({ stdout: ["m1", "m2", "m3", "m4", "m5"], stderr: "", exitCode: 0 });
   });
+
+  it.each(["buffered", "not buffered"])("or script that does while Buffers are restored: %s", async kind => {
+    const result = await runPair(
+      `
+        const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+        const { types } = require("node:util");
+        const { isUint8Array } = types;
+        types.isUint8Array = value => {
+          fs.writeFileSync("restoring", "");
+          runEventLoopUntil(disconnected);
+          return isUint8Array(value);
+        };
+        spawnChild({
+          serialization: "advanced",
+          onDisconnect,
+          ipc(message) {
+            console.log(String(message));
+            if (message === "m0") fs.writeFileSync("got m0", "");
+          },
+        });
+      `,
+      `
+        const buffer = Buffer.from("m1");
+        const envelope = advancedFrame([buffer, [buffer]]);
+        envelope[0] = 4;
+        const bytes = Buffer.concat([envelope, advancedFrame("m2")]);
+        const early = ${kind === "buffered" ? 1 : 0};
+        write(Buffer.concat([advancedFrame("m0"), bytes.subarray(0, early)]));
+        until("got m0");
+        write(bytes.subarray(early));
+        until("restoring");
+        write(advancedFrame("m3"));
+      `,
+    );
+    // m1 is last, because restoring it waits for the rest.
+    expect(result).toEqual({ stdout: ["m0", "m2", "m3", "m1"], stderr: "", exitCode: 0 });
+  });
 });

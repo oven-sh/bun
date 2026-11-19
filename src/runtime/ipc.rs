@@ -215,7 +215,25 @@ pub(crate) enum DecodedIPCMessage {
 
 pub(crate) struct DecodeIPCMessageResult {
     pub(crate) bytes_consumed: u32,
-    pub(crate) message: DecodedIPCMessage,
+    pub(crate) message: Unrestored,
+}
+
+pub(crate) enum Unrestored {
+    Plain(DecodedIPCMessage),
+    /// A `[message, buffers]` envelope.
+    WithBuffers(JSValue),
+}
+
+impl Unrestored {
+    /// Can run script, so nothing that was read can be borrowed.
+    fn restore(self, global: &JSGlobalObject) -> JsResult<DecodedIPCMessage> {
+        match self {
+            Unrestored::Plain(message) => Ok(message),
+            Unrestored::WithBuffers(envelope) => {
+                ipc_restore_advanced_buffers(global, envelope).map(DecodedIPCMessage::Data)
+            }
+        }
+    }
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -335,7 +353,7 @@ mod advanced {
         match message_type_raw {
             x if x == IPCMessageType::Version as u8 => Ok(DecodeIPCMessageResult {
                 bytes_consumed: HEADER_LENGTH_U32,
-                message: DecodedIPCMessage::Version(message_len),
+                message: Unrestored::Plain(DecodedIPCMessage::Version(message_len)),
             }),
             x if x == IPCMessageType::SerializedMessage as u8
                 || x == IPCMessageType::SerializedInternalMessage as u8
@@ -360,17 +378,16 @@ mod advanced {
                 }
 
                 let message = &data[HEADER_LENGTH..][..message_len as usize];
-                let mut deserialized = JSValue::deserialize(message, global)?;
-                if x == IPCMessageType::SerializedMessageWithBuffers as u8 {
-                    deserialized = ipc_restore_advanced_buffers(global, deserialized)?;
-                }
+                let deserialized = JSValue::deserialize(message, global)?;
 
                 Ok(DecodeIPCMessageResult {
                     bytes_consumed: HEADER_LENGTH_U32 + message_len,
                     message: if x == IPCMessageType::SerializedInternalMessage as u8 {
-                        DecodedIPCMessage::Internal(deserialized)
+                        Unrestored::Plain(DecodedIPCMessage::Internal(deserialized))
+                    } else if x == IPCMessageType::SerializedMessageWithBuffers as u8 {
+                        Unrestored::WithBuffers(deserialized)
                     } else {
-                        DecodedIPCMessage::Data(deserialized)
+                        Unrestored::Plain(DecodedIPCMessage::Data(deserialized))
                     },
                 })
             }
@@ -550,11 +567,11 @@ mod json {
         match kind {
             Kind::Regular => Ok(DecodeIPCMessageResult {
                 bytes_consumed: idx + 1,
-                message: DecodedIPCMessage::Data(deserialized),
+                message: Unrestored::Plain(DecodedIPCMessage::Data(deserialized)),
             }),
             Kind::Internal => Ok(DecodeIPCMessageResult {
                 bytes_consumed: idx + 1,
-                message: DecodedIPCMessage::Internal(deserialized),
+                message: Unrestored::Plain(DecodedIPCMessage::Internal(deserialized)),
             }),
         }
     }
@@ -2145,6 +2162,13 @@ fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
     }
 }
 
+fn deliver(send_queue: &SendQueue, message: Unrestored, global: &JSGlobalObject) {
+    match message.restore(global) {
+        Ok(message) => crate::dispatch::fold(handle_ipc_message(send_queue, message, global)),
+        Err(err) => finish_decode(send_queue, &DecodeStep::Fail(err.into())),
+    }
+}
+
 fn decode_next_json(incoming: &JsCell<IncomingBuffer>, global: &JSGlobalObject) -> DecodeStep {
     incoming.with_mut(|inc| {
         let IncomingBuffer::Json(json_buf) = inc else {
@@ -2212,11 +2236,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
             loop {
                 match decode_next_json(&send_queue.incoming, &global_this) {
                     DecodeStep::Message(result) => {
-                        crate::dispatch::fold(handle_ipc_message(
-                            send_queue,
-                            result.message,
-                            &global_this,
-                        ));
+                        deliver(send_queue, result.message, &global_this)
                     }
                     step => return finish_decode(send_queue, &step),
                 }
@@ -2254,7 +2274,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
             });
             let read_in_place = first.is_some();
             if let Some(message) = first {
-                crate::dispatch::fold(handle_ipc_message(send_queue, message, &global_this));
+                deliver(send_queue, message, &global_this);
                 if data.is_empty() {
                     return;
                 }
@@ -2262,11 +2282,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
             loop {
                 match decode_next_advanced(&send_queue.incoming, &global_this) {
                     DecodeStep::Message(result) => {
-                        crate::dispatch::fold(handle_ipc_message(
-                            send_queue,
-                            result.message,
-                            &global_this,
-                        ));
+                        deliver(send_queue, result.message, &global_this)
                     }
                     step => break finish_decode(send_queue, &step),
                 }
@@ -2388,11 +2404,7 @@ pub(crate) mod IPCHandlers {
                     loop {
                         match decode_next_json(&send_queue.incoming, &global_this) {
                             DecodeStep::Message(result) => {
-                                crate::dispatch::fold(handle_ipc_message(
-                                    send_queue,
-                                    result.message,
-                                    &global_this,
-                                ));
+                                deliver(send_queue, result.message, &global_this)
                             }
                             step => return finish_decode(send_queue, &step),
                         }
@@ -2409,11 +2421,7 @@ pub(crate) mod IPCHandlers {
                     loop {
                         match decode_next_advanced(&send_queue.incoming, &global_this) {
                             DecodeStep::Message(result) => {
-                                crate::dispatch::fold(handle_ipc_message(
-                                    send_queue,
-                                    result.message,
-                                    &global_this,
-                                ));
+                                deliver(send_queue, result.message, &global_this)
                             }
                             step => return finish_decode(send_queue, &step),
                         }

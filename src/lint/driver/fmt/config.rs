@@ -155,11 +155,16 @@ struct Override {
     settings: Settings,
     /// Its `plugins`, if set.
     plugins: Option<Plugins>,
+    /// In `[[fmt.overrides]]`, the options of plugins. Values are JSON text, and here strings have quotes.
+    passthrough: Settings,
     is_oxfmt: bool,
 }
 
+/// One `plugins` list, of a Prettier config or of the flags: `--plugin`, `[fmt]` or an entry of `[[fmt.overrides]]`.
 #[derive(Default)]
 struct Plugins {
+    /// Only for the flags: every entry, for the installed Prettier. A path is absolute.
+    names: Vec<Vec<u8>>,
     /// True if one of them isn't built in, so Bun doesn't know its options.
     has_unknown_plugins: bool,
     /// True if one of them is `prettier-plugin-tailwindcss`.
@@ -175,6 +180,88 @@ struct Plugins {
     endings: Vec<&'static [u8]>,
     /// The ones that are packages, as opposed to paths or objects.
     packages: Vec<Vec<u8>>,
+}
+
+/// The plugins that apply to one file. A Prettier config lists one side, the flags list the other. On each side the
+/// last list that applies replaces the others.
+pub(crate) struct PluginView<'a> {
+    config: Option<&'a Plugins>,
+    /// `None` if `--config-precedence=prefer-file` drops the flags.
+    flags: Option<&'a Plugins>,
+    /// [`PluginView::is_scoped_to_plugin`]
+    is_scoped_to_plugin: bool,
+}
+
+impl<'a> PluginView<'a> {
+    fn sides(&self) -> impl Iterator<Item = &'a Plugins> + use<'a> {
+        self.config.into_iter().chain(self.flags)
+    }
+
+    /// The plugins that may change the output for files this formatter handles. The config's come first.
+    pub(crate) fn missing(&self) -> impl Iterator<Item = &'a [u8]> + use<'a> {
+        (self.sides().flat_map(|it| &it.missing)).map(|it| &it[..])
+    }
+
+    pub(crate) fn has_missing(&self) -> bool {
+        self.sides().any(|it| !it.missing.is_empty())
+    }
+
+    /// True if the flags list one of [`PluginView::missing`].
+    pub(crate) fn has_missing_from_flags(&self) -> bool {
+        self.flags.is_some_and(|it| !it.missing.is_empty())
+    }
+
+    /// True if a plugin isn't built in, so Bun doesn't know its options.
+    pub(crate) fn lists_unknown(&self) -> bool {
+        self.sides().any(|it| it.has_unknown_plugins)
+    }
+
+    /// True if Prettier formats the file at `path` with one of [`LANGUAGE_PLUGINS`].
+    pub(crate) fn has_ending_of(&self, path: &[u8]) -> bool {
+        (self.sides().flat_map(|it| &it.endings)).any(|ending| path.ends_with(ending))
+    }
+
+    /// True if an override that matches the file has a list of its own, with a plugin that Bun knows nothing about.
+    /// Such an override says which files the plugin formats.
+    pub(crate) fn is_scoped_to_plugin(&self) -> bool {
+        self.is_scoped_to_plugin
+    }
+
+    /// The packages that Prettier loads as plugins for the file.
+    pub(crate) fn packages(&self) -> impl Iterator<Item = &'a [u8]> + use<'a> {
+        (self.sides().flat_map(|it| &it.packages)).map(|it| &it[..])
+    }
+
+    /// [`Plugins::names`] of the flags. Empty if they're dropped.
+    pub(crate) fn flag_names(&self) -> &'a [Vec<u8>] {
+        self.flags.map_or(&[][..], |it| &it.names[..])
+    }
+
+    /// True if one is `prettier-plugin-tailwindcss`.
+    fn sorts_classes(&self) -> bool {
+        self.sides().any(|it| it.sorts_classes)
+    }
+
+    /// True if one is `prettier-plugin-svelte`.
+    fn reads_svelte(&self) -> bool {
+        self.sides().any(|it| it.reads_svelte)
+    }
+
+    /// True if one is `prettier-plugin-packagejson`.
+    fn sorts_package_json(&self) -> bool {
+        self.sides().any(|it| it.sorts_package_json)
+    }
+
+    /// The [`Oxc`] value for the file at `path`, whose `parser` option is `parser`.
+    fn oxc_for(&self, path: Option<&[u8]>, parser: Option<&[u8]>) -> Oxc {
+        match self.config.map_or(Oxc::Absent, |it| it.oxc) {
+            _ if parser.is_some_and(|it| !it.starts_with(b"oxc")) => Oxc::Absent,
+            // Code in MDX is always parsed with Babel.
+            _ if path.is_some_and(|it| it.ends_with(b".mdx")) => Oxc::Absent,
+            Oxc::Absent => self.flags.map_or(Oxc::Absent, |it| it.oxc),
+            oxc => oxc,
+        }
+    }
 }
 
 pub(crate) struct Config {
@@ -255,7 +342,7 @@ fn svelte_in(settings: &Settings) -> Option<bool> {
 }
 
 /// Returns true for a plugin that's built in. These sort imports, classes or `package.json` keys, or format Svelte.
-pub(super) fn is_built_in_plugin(name: &[u8]) -> bool {
+pub(crate) fn is_built_in_plugin(name: &[u8]) -> bool {
     let name = package_of(name);
     name.ends_with(b"/prettier-plugin-sort-imports")
         || name == b"prettier-plugin-organize-imports"
@@ -294,10 +381,6 @@ fn oxc_among<'p>(plugins: impl Iterator<Item = &'p [u8]>) -> Oxc {
 
 fn is_tailwind_plugin(name: &[u8]) -> bool {
     package_of(name) == TAILWIND_PLUGIN
-}
-
-fn is_built_in(plugin: &Json) -> bool {
-    name_of(plugin).is_some_and(is_built_in_plugin)
 }
 
 /// Plugins that add a language to Prettier and don't affect other languages, each with its file name endings. The rest
@@ -343,7 +426,7 @@ fn plugin_endings(name: &[u8]) -> Option<&'static [&'static [u8]]> {
 }
 
 /// True if formatting without the plugin `name` may give different output than with it.
-pub(super) fn is_missing_plugin(name: &[u8]) -> bool {
+pub(crate) fn is_missing_plugin(name: &[u8]) -> bool {
     !is_built_in_plugin(name) && plugin_endings(name).is_none()
 }
 
@@ -840,46 +923,75 @@ impl Plugins {
     /// `json` is an options object that may have `plugins`.
     fn from_options(json: &Json) -> Option<Plugins> {
         let plugins = json.get(b"plugins")?.as_array()?;
+        let names = (plugins.iter()).map(|it| name_of(it).unwrap_or(b"(an object)"));
         Some(Plugins {
-            has_unknown_plugins: !plugins.iter().all(is_built_in),
-            sorts_classes: (plugins.iter().filter_map(name_of)).any(is_tailwind_plugin),
-            reads_svelte: (plugins.iter().filter_map(name_of)).any(is_svelte_plugin),
-            sorts_package_json: (plugins.iter().filter_map(name_of)).any(is_package_json_plugin),
-            oxc: oxc_among(plugins.iter().filter_map(name_of)),
-            missing: (plugins.iter())
-                .map(|it| name_of(it).unwrap_or(b"(an object)"))
-                .filter(|it| is_missing_plugin(it))
-                .map(<[u8]>::to_vec)
-                .collect(),
+            // An object has a name if its exports are known, but it's a module that is already loaded.
             packages: (plugins.iter().filter_map(Json::as_str))
                 .filter(|it| is_package(it))
                 .map(<[u8]>::to_vec)
                 .collect(),
-            endings: (plugins.iter())
-                .filter_map(|it| plugin_endings(it.as_str()?))
-                .flatten()
+            ..Plugins::from_names(names)
+        })
+    }
+
+    /// The list that `--plugin`, `[fmt]` or an entry of `[[fmt.overrides]]` gives. A path in it is relative to `cwd`.
+    fn from_flags(listed: &[Vec<u8>], cwd: &[u8]) -> Plugins {
+        let absolute = |name: &Vec<u8>| match name.starts_with(b".") {
+            true => paths::resolve(cwd, name),
+            false => name.clone(),
+        };
+        Plugins {
+            names: listed.iter().map(absolute).collect(),
+            ..Plugins::from_names(listed.iter().map(|it| &it[..]))
+        }
+    }
+
+    /// `names` are the entries of one `plugins` list, in order.
+    fn from_names<'n>(names: impl Iterator<Item = &'n [u8]> + Clone) -> Plugins {
+        Plugins {
+            names: Vec::new(),
+            has_unknown_plugins: !names.clone().all(is_built_in_plugin),
+            sorts_classes: names.clone().any(is_tailwind_plugin),
+            reads_svelte: names.clone().any(is_svelte_plugin),
+            sorts_package_json: names.clone().any(is_package_json_plugin),
+            oxc: oxc_among(names.clone()),
+            missing: (names.clone().filter(|it| is_missing_plugin(it)))
+                .map(<[u8]>::to_vec)
+                .collect(),
+            packages: (names.clone().filter(|it| is_package(it)))
+                .map(<[u8]>::to_vec)
+                .collect(),
+            endings: (names.filter_map(plugin_endings).flatten())
                 .copied()
                 .collect(),
-        })
+        }
     }
 }
 
+/// Returns `select(override)` for the last of `overrides` that matches the file at `path`, considering only those for
+/// which `select` returns `Some`. Their patterns are relative to `directory`.
+fn in_last_override<'s, T>(
+    overrides: &'s [Override],
+    directory: &[u8],
+    path: &[u8],
+    select: impl Fn(&'s Override) -> Option<T>,
+) -> Option<T> {
+    let mut found = (overrides.iter().rev()).filter_map(|it| Some((it, select(it)?)));
+    let mut relative = None;
+    let matches_file = |it: &(&Override, T)| {
+        (it.0).matches(relative.get_or_insert_with(|| paths::relative(directory, path)))
+    };
+    found.find(matches_file).map(|it| it.1)
+}
+
 impl Config {
-    /// Returns `select(override)` for the last override that matches the file at `path`, considering only overrides for
-    /// which `select` returns `Some`.
+    /// [`in_last_override`] for this file's `overrides`.
     fn in_last_override<'s, T>(
         &'s self,
         path: &[u8],
         select: impl Fn(&'s Override) -> Option<T>,
     ) -> Option<T> {
-        let overrides = self.overrides.iter().rev();
-        let mut found = overrides.filter_map(|it| Some((it, select(it)?)));
-        let mut relative = None;
-        let matches_file = |it: &(&Override, T)| {
-            let directory = paths::dirname(&self.path);
-            (it.0).matches(relative.get_or_insert_with(|| paths::relative(directory, path)))
-        };
-        found.find(matches_file).map(|it| it.1)
+        in_last_override(&self.overrides, paths::dirname(&self.path), path, select)
     }
 
     fn new(path: &[u8], json: &Json, is_oxfmt: bool) -> Config {
@@ -905,6 +1017,7 @@ impl Config {
                         .map(|it| settings(it, is_oxfmt))
                         .unwrap_or_default(),
                     plugins: it.get(b"options").and_then(Plugins::from_options),
+                    passthrough: Vec::new(),
                     is_oxfmt,
                 })
                 .collect(),
@@ -1025,6 +1138,10 @@ pub(crate) struct Configs<'c> {
     by_directory: Guarded<FxHashMap<Vec<u8>, Found>>,
     /// `[[fmt.overrides]]`. Globs are relative to `bunfig_base_directory`.
     overrides: Vec<Override>,
+    /// `--plugin` and `plugins` in `[fmt]`.
+    plugins: Plugins,
+    /// True if one of `overrides` has `plugins`.
+    has_override_plugins: bool,
     /// [`Options::bunfig_base_directory`]
     bunfig_base_directory: Vec<u8>,
     /// The number of configuration files that were run.
@@ -1090,19 +1207,23 @@ impl<'c> Configs<'c> {
             has_slash: strings::contains_char(text, b'/'),
         };
         let strings = |all: &[Vec<u8>]| all.iter().map(pattern).collect();
-        let overrides = (options.overrides.iter())
+        let flag_plugins = |listed: &[Vec<u8>]| Plugins::from_flags(listed, &environment.cwd);
+        let overrides: Vec<Override> = (options.overrides.iter())
             .map(|it| Override {
                 files: strings(&it.files),
                 excluded: strings(&it.excluded),
                 settings: (it.format.iter())
                     .map(|it| (it.0.to_vec(), it.1.clone()))
                     .collect(),
-                plugins: None,
+                plugins: it.plugins.as_deref().map(flag_plugins),
+                passthrough: it.passthrough.clone(),
                 is_oxfmt: true,
             })
             .collect();
         let mut configs = Configs {
             bunfig_base_directory: options.bunfig_base_directory(&environment.cwd),
+            plugins: flag_plugins(&options.plugins),
+            has_override_plugins: overrides.iter().any(|it| it.plugins.is_some()),
             options,
             overrides,
             environment,
@@ -1712,82 +1833,68 @@ impl<'c> Configs<'c> {
             || (self.config_of(scope).ok().flatten()).is_some_and(|config| config.is_oxfmt)
     }
 
-    /// The plugins the configuration lists for the file at `path` in `scope`. The last list that applies replaces the
-    /// others. A `path` of `None` means text without a file name, which no override matches.
-    fn plugins_for<'s>(&'s self, scope: &'s Scope, path: Option<&[u8]>) -> Option<&'s Plugins> {
-        let config = self.config_of(scope).ok().flatten()?;
-        let override_list =
-            path.and_then(|path| config.in_last_override(path, |it| it.plugins.as_ref()));
-        Some(override_list.unwrap_or(&config.plugins))
-    }
-
-    /// [`Plugins::missing`] for the file at `path` in `scope`.
-    pub(crate) fn missing_plugins<'s>(
+    /// The plugins that apply to the file at `path` in `scope`. A `path` of `None` means text without a file name,
+    /// which no override matches. Every file asks, so this allocates nothing and takes no lock while no override has
+    /// `plugins` and no flag lists one.
+    pub(crate) fn plugin_view<'s>(
         &'s self,
         scope: &'s Scope,
         path: Option<&[u8]>,
-    ) -> &'s [Vec<u8>] {
-        (self.plugins_for(scope, path)).map_or(&[][..], |it| &it.missing[..])
-    }
-
-    /// True if the config or `--plugin` lists a plugin that isn't built in, for the file at `path` in `scope`.
-    pub(crate) fn lists_unknown_plugins(&self, scope: &Scope, path: Option<&[u8]>) -> bool {
-        (self.plugins_for(scope, path)).is_some_and(|it| it.has_unknown_plugins)
-            || !(self.options.plugins.iter()).all(|it| is_built_in_plugin(it))
-    }
-
-    /// True if the config or `--plugin` lists `prettier-plugin-tailwindcss` for the file at `path` in `scope`.
-    fn lists_tailwind_plugin(&self, scope: &Scope, path: Option<&[u8]>) -> bool {
-        (self.plugins_for(scope, path)).is_some_and(|it| it.sorts_classes)
-            || (self.options.plugins.iter()).any(|it| is_tailwind_plugin(it))
-    }
-
-    /// The [`Oxc`] value for the file at `path` in `scope`, whose `parser` option is `parser`.
-    fn oxc_for(&self, scope: &Scope, path: Option<&[u8]>, parser: Option<&[u8]>) -> Oxc {
-        let config_oxc = self
-            .plugins_for(scope, path)
-            .map_or(Oxc::Absent, |it| it.oxc);
-        match config_oxc {
-            _ if parser.is_some_and(|it| !it.starts_with(b"oxc")) => Oxc::Absent,
-            // Code in MDX is always parsed with Babel.
-            _ if path.is_some_and(|it| it.ends_with(b".mdx")) => Oxc::Absent,
-            Oxc::Absent => oxc_among(self.options.plugins.iter().map(|it| &it[..])),
-            oxc => oxc,
+    ) -> PluginView<'s> {
+        let config = self.config_of(scope).ok().flatten();
+        let scoped_config = path.and_then(|path| {
+            config.and_then(|it| it.in_last_override(path, |it| it.plugins.as_ref()))
+        });
+        let in_bunfig = |path: &[u8]| {
+            let directory = &self.bunfig_base_directory;
+            in_last_override(&self.overrides, directory, path, |it| it.plugins.as_ref())
+        };
+        let scoped_flags = match self.has_override_plugins {
+            true => path.and_then(in_bunfig),
+            false => None,
+        };
+        let flags = scoped_flags.unwrap_or(&self.plugins);
+        // Prettier then ignores every flag, and `--plugin` is one.
+        let drops_flags = !flags.names.is_empty()
+            && self.options.config_precedence == Precedence::PreferFile
+            && self.has_config_for(scope, path);
+        let flags = (!drops_flags).then_some(flags);
+        let is_unknown_to_bun = |it: &Plugins| !it.missing.is_empty();
+        PluginView {
+            config: scoped_config.or_else(|| config.map(|it| &it.plugins)),
+            flags,
+            is_scoped_to_plugin: scoped_config.is_some_and(is_unknown_to_bun)
+                || (flags.is_some() && scoped_flags.is_some_and(is_unknown_to_bun)),
         }
     }
 
-    /// [`Plugins::endings`] for the file at `path` in `scope`.
-    fn all_plugin_endings<'s>(
+    /// `select(override)` of each entry of `[[fmt.overrides]]` that matches the file at `path`, in order.
+    fn in_bunfig_overrides<'s>(
         &'s self,
-        scope: &'s Scope,
-        path: Option<&[u8]>,
-    ) -> impl Iterator<Item = &'static [u8]> + use<'s, 'c> {
-        let flag_endings = (self.options.plugins.iter())
-            .filter_map(|it| plugin_endings(it))
-            .flatten();
-        let config_plugins = self.plugins_for(scope, path).into_iter();
-        config_plugins
-            .flat_map(|it| &it.endings)
-            .chain(flag_endings)
-            .copied()
+        path: &[u8],
+        select: impl Fn(&'s Override) -> &'s Settings,
+    ) -> Vec<(&'s [u8], &'s [u8])> {
+        if self.overrides.iter().all(|it| select(it).is_empty()) {
+            return Vec::new();
+        }
+        let relative = paths::relative(&self.bunfig_base_directory, path);
+        (self.overrides.iter().filter(|it| it.matches(&relative)))
+            .flat_map(|it| select(it).iter().map(|it| (&it.0[..], &it.1[..])))
+            .collect()
     }
 
-    /// True if Prettier formats the file at `path` in `scope` with a plugin that adds a language.
-    pub(crate) fn is_formatted_by_plugin(&self, scope: &Scope, path: &[u8]) -> bool {
-        (self.all_plugin_endings(scope, Some(path))).any(|ending| path.ends_with(ending))
+    /// The options of Prettier's that `[[fmt.overrides]]` sets for the file at `path`, in the order they apply. To the
+    /// installed Prettier they're flags, like those of `[fmt]` and the command line.
+    pub(crate) fn bunfig_overrides_for(&self, path: &[u8]) -> Vec<(&[u8], &[u8])> {
+        let mut settings = self.in_bunfig_overrides(path, |it| &it.settings);
+        settings.retain(|it| is_prettier_option(it.0));
+        settings
     }
 
-    /// The packages that Prettier loads as plugins for the file at `path` in `scope`.
-    pub(crate) fn plugin_packages<'s>(
-        &'s self,
-        scope: &'s Scope,
-        path: Option<&[u8]>,
-    ) -> impl Iterator<Item = &'s [u8]> + use<'s, 'c> {
-        let flags = self.options.plugins.iter().filter(|it| is_package(it));
-        (self.plugins_for(scope, path).into_iter())
-            .flat_map(|it| &it.packages)
-            .chain(flags)
-            .map(|it| &it[..])
+    /// The options of plugins that `[[fmt.overrides]]` sets for the file at `path`, in the order they apply. Values
+    /// are JSON text, and strings have quotes.
+    pub(crate) fn passthrough_for(&self, path: &[u8]) -> Vec<(&[u8], &[u8])> {
+        self.in_bunfig_overrides(path, |it| &it.passthrough)
     }
 
     /// The path of the configuration file that applies in `scope`.
@@ -1813,7 +1920,7 @@ impl<'c> Configs<'c> {
     pub(crate) fn turns_svelte_off_for_some(&self, scope: &Scope, directory: &[u8]) -> bool {
         let path = paths::join(directory, b"a.svelte");
         (self.overrides.iter()).any(|it| svelte_in(&it.settings) == Some(false))
-            && !self.formats_svelte_with(scope, Some(&path), Some(false))
+            && !self.formats_svelte_with(scope, Some(&path), Some(false), None)
     }
 
     /// True if `--parser svelte`, or the same in `[fmt]`, is set.
@@ -1828,19 +1935,25 @@ impl<'c> Configs<'c> {
     /// by listing the plugin, whichever version of it is installed. If both are set, `--config-precedence` picks one,
     /// as for every option. If neither is set, Svelte is formatted if no config applies.
     pub(crate) fn formats_svelte(&self, scope: &Scope, path: Option<&[u8]>) -> bool {
-        self.formats_svelte_with(scope, path, self.svelte_from_flags(path))
+        self.formats_svelte_with(scope, path, self.svelte_from_flags(path), None)
     }
 
-    /// [`Configs::formats_svelte`], given `flags_value` as the value from the flags and `[fmt]`.
+    /// [`Configs::formats_svelte`], given `flags_value` as the value from the flags and `[fmt]`. `plugins` is the
+    /// file's [`Configs::plugin_view`], if the caller has it.
     fn formats_svelte_with(
         &self,
         scope: &Scope,
         path: Option<&[u8]>,
         flags_value: Option<bool>,
+        plugins: Option<&PluginView<'_>>,
     ) -> bool {
+        let lists_plugin = || match plugins {
+            Some(plugins) => plugins.reads_svelte(),
+            None => self.plugin_view(scope, path).reads_svelte(),
+        };
         let files_value = || match self.is_oxfmt_for(scope) {
             true => self.svelte_from_oxfmt(scope, path),
-            false => self.lists_svelte_plugin(scope, path).then_some(true),
+            false => lists_plugin().then_some(true),
         };
         let decided = match self.options.config_precedence {
             Precedence::CliOverride => flags_value.or_else(files_value),
@@ -1866,18 +1979,6 @@ impl<'c> Configs<'c> {
         let in_override = with_svelte.find(|it| matches_file(it.0)).map(|it| it.1);
         let svelte_setting = || self.options.format.iter().rfind(|it| it.0 == b"svelte");
         in_override.or_else(|| svelte_setting().map(|it| it.1 != b"false"))
-    }
-
-    /// True if the config or `--plugin` lists `prettier-plugin-svelte` for the file at `path` in `scope`.
-    fn lists_svelte_plugin(&self, scope: &Scope, path: Option<&[u8]>) -> bool {
-        (self.plugins_for(scope, path)).is_some_and(|it| it.reads_svelte)
-            || (self.options.plugins.iter()).any(|it| is_svelte_plugin(it))
-    }
-
-    /// True if the config or `--plugin` lists `prettier-plugin-packagejson` for the file at `path` in `scope`.
-    fn lists_package_json_plugin(&self, scope: &Scope, path: Option<&[u8]>) -> bool {
-        (self.plugins_for(scope, path)).is_some_and(|it| it.sorts_package_json)
-            || (self.options.plugins.iter()).any(|it| is_package_json_plugin(it))
     }
 
     /// `hasYarnOrPnpmFiles` of `sort-package-json`
@@ -2036,7 +2137,9 @@ impl<'c> Configs<'c> {
         resolved.options.parse_parts = Some(super::parse_parts);
         resolved.options.embedded_html = true;
         resolved.options.toml = self.is_native_in(scope);
-        resolved.options.svelte.is_on = self.formats_svelte(scope, path);
+        let plugins = self.plugin_view(scope, path);
+        resolved.options.svelte.is_on =
+            self.formats_svelte_with(scope, path, self.svelte_from_flags(path), Some(&plugins));
         if is_oxfmt {
             let _ = resolved.options.set(b"flavor", b"oxfmt");
             // oxfmt sorts `package.json` keys unless told not to.
@@ -2062,15 +2165,14 @@ impl<'c> Configs<'c> {
             is_oxfmt || from_flags.iter().any(|it| it.0 == name)
         };
         // Prettier knows the options of the plugins it loaded.
-        let knows_all_options = !is_oxfmt && !self.lists_unknown_plugins(scope, path);
-        let lists_svelte_plugin = self.lists_svelte_plugin(scope, path);
+        let knows_all_options = !is_oxfmt && !plugins.lists_unknown();
+        let lists_svelte_plugin = plugins.reads_svelte();
         // Prettier validates a plugin's options for every file.
-        let mut package_json = (!is_oxfmt && self.lists_package_json_plugin(scope, path))
-            .then(PackageJsonPlugin::default);
+        let mut package_json =
+            (!is_oxfmt && plugins.sorts_package_json()).then(PackageJsonPlugin::default);
         let mut unknown: Vec<(&[u8], &[u8])> = Vec::new();
         // The `sortTailwindcss` value built from the plugin's options.
-        let mut plugin_entries =
-            (!is_oxfmt && self.lists_tailwind_plugin(scope, path)).then(Vec::new);
+        let mut plugin_entries = (!is_oxfmt && plugins.sorts_classes()).then(Vec::new);
         for (name, value) in all {
             if let Some(entries) = &mut plugin_entries
                 && let Some(entry) = tailwind::plugin_option(name, value)
@@ -2187,7 +2289,7 @@ impl<'c> Configs<'c> {
         {
             let _ = resolved.options.set(b"parser", parser);
         }
-        for name in &self.options.plugins {
+        for name in plugins.flag_names() {
             sort.add_plugin(name);
         }
         for (name, value) in sort.options_of_unlisted_plugins().chain(unknown) {
@@ -2247,7 +2349,7 @@ impl<'c> Configs<'c> {
             && let Some(mut tailwind) =
                 tailwind::for_file(&self.classes, &value, (set_by, directory))
         {
-            tailwind.oxc = self.oxc_for(scope, path, resolved.options.parser.as_deref());
+            tailwind.oxc = plugins.oxc_for(path, resolved.options.parser.as_deref());
             resolved.options.tailwind = Some(Arc::new(tailwind));
         }
         Ok(resolved)

@@ -3,7 +3,8 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tls } from "harness";
 import { cpSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { canTrim } from "../bundler/compile-trim-features";
+import "../bundler/compile-trim-features";
+import { without } from "./harness/capabilities";
 import { run } from "./harness/run";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 import { describe, test } from "./supported";
@@ -90,33 +91,39 @@ describe("OpenTelemetry in an executable", () => {
     expect(await run([dir.executable])).toEqual({ stdout: "true true\n", stderr: "", exitCode: 0 });
   });
 
-  test.skipIf(!canTrim)("--trim keeps tracing for a program that names Bun.otel", async () => {
+  test.skipIf(!!without("a Bun that trims"))("--trim keeps tracing for a program that names Bun.otel", async () => {
     using dir = await build("void Bun.otel;" + usesTheApi, "--trim");
     expect(await traced(dir.executable)).toEqual(whole);
   });
 
-  test.skipIf(!canTrim)("--trim keeps what the exporter needs: TLS, gzip and headers", async () => {
-    using dir = await build(
-      `Bun.otel.start({ exporters: [{ url: process.argv[2], headers: { key: "k" }, compression: "gzip" }] });
+  test.skipIf(!!without("a Bun that trims"))(
+    "--trim keeps what the exporter needs: TLS, gzip and headers",
+    async () => {
+      using dir = await build(
+        `Bun.otel.start({ exporters: [{ url: process.argv[2], headers: { key: "k" }, compression: "gzip" }] });
        Bun.otel.span("only", () => {});`,
-      "--trim",
-    );
-    const received: unknown[] = [];
-    using collector = Bun.serve({
-      port: 0,
-      tls,
-      async fetch(request) {
-        const spans = Bun.otel.decode(Bun.gunzipSync(await request.bytes()));
-        received.push(request.headers.get("key"), ...spans.map(span => span.name));
-        return new Response();
-      },
-    });
-    const env = { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" };
-    expect(await run([dir.executable, collector.url.href], undefined, env)).toMatchObject({ stdout: "", exitCode: 0 });
-    expect(received).toEqual(["k", "only"]);
-  });
+        "--trim",
+      );
+      const received: unknown[] = [];
+      using collector = Bun.serve({
+        port: 0,
+        tls,
+        async fetch(request) {
+          const spans = Bun.otel.decode(Bun.gunzipSync(await request.bytes()));
+          received.push(request.headers.get("key"), ...spans.map(span => span.name));
+          return new Response();
+        },
+      });
+      const env = { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" };
+      expect(await run([dir.executable, collector.url.href], undefined, env)).toMatchObject({
+        stdout: "",
+        exitCode: 0,
+      });
+      expect(received).toEqual(["k", "only"]);
+    },
+  );
 
-  test.skipIf(!canTrim)("--trim removes it from any other, which says so and runs", async () => {
+  test.skipIf(!!without("a Bun that trims"))("--trim removes it from any other, which says so and runs", async () => {
     using dir = await build(
       `import http from "node:http";
        import { Database } from "bun:sqlite";

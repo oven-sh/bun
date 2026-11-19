@@ -200,10 +200,6 @@ impl InstrumentSet {
         InstrumentSet(i.bit())
     }
     #[inline]
-    pub const fn contains(self, i: Instrument) -> bool {
-        self.0 & i.bit() != 0
-    }
-    #[inline]
     pub const fn with(self, i: Instrument) -> Self {
         InstrumentSet(self.0 | i.bit())
     }
@@ -222,10 +218,6 @@ impl InstrumentSet {
     #[inline]
     pub const fn bits(self) -> u32 {
         self.0
-    }
-    #[inline]
-    pub const fn is_empty(self) -> bool {
-        self.0 == 0
     }
     /// Instruments that may start root spans unless configured otherwise.
     pub fn default_roots() -> Self {

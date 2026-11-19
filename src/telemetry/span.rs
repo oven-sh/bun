@@ -31,7 +31,6 @@ impl IdRng {
 }
 
 impl TraceId {
-    pub const INVALID: TraceId = TraceId([0; 16]);
     #[inline]
     pub fn is_valid(&self) -> bool {
         self.0 != [0; 16]
@@ -105,8 +104,6 @@ impl Flags {
     /// Never exported, but keeps the sampled bit for its children.
     const NON_RECORDING: u8 = 0x40;
     const ENDED: u8 = 0x80;
-
-    pub const NONE: Flags = Flags(0);
 
     /// Of a `traceparent` flags byte or an api `traceFlags`, only the sampled bit survives.
     #[inline]

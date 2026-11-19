@@ -435,9 +435,9 @@ impl SpanData {
                     status: r.status,
                     status_message: r.status_message(),
                 };
-                processor.record(|queue| queue.requests.push(facts, &parts, &state().limits));
+                processor.record(&mut |queue| queue.requests.push(facts, &parts, &state().limits));
             }
-            r => processor.record(|queue| {
+            r => processor.record(&mut |queue| {
                 let out = queue.scope(self.stub.scope);
                 let mut w = SpanWriter::begin(out, &self.stub, name, end_ns);
                 w.trace_state(self.trace_state());

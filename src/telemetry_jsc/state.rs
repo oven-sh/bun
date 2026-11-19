@@ -3,7 +3,6 @@
 use core::cell::{Cell, OnceCell, RefCell, RefMut};
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
-use std::sync::Arc;
 
 use bun_event_loop::EventLoopTimer::{OwnedTimer, State as TimerState, Tag as TimerTag};
 use bun_event_loop::{BoxedTask, ContextId, TaskTag, task_tag};
@@ -12,7 +11,7 @@ use bun_jsc::{JSGlobalObject, JSPromiseStrong, JSValue, JsResult, LoopKind, Stro
 use bun_telemetry::{FlushTarget, Local, OwnerKey, Record, ScopeId, processor};
 
 use crate::engine;
-use crate::exporter::{JsExporter, QueuedExport};
+use crate::exporter::{JsExporter, OwnedJsExporter, QueuedExport};
 
 /// The `createContextKey()` symbols that mean something to tracing.
 pub(crate) struct ContextKeys {
@@ -38,7 +37,7 @@ pub struct VmState {
     has_exited: Cell<bool>,
     keys: OnceCell<ContextKeys>,
     realm: RefCell<Option<Realm>>,
-    pub(crate) js_exporters: RefCell<Vec<Arc<JsExporter>>>,
+    pub(crate) js_exporters: RefCell<Vec<OwnedJsExporter>>,
     flush_waiters: RefCell<Vec<(FlushTarget, JSPromiseStrong)>>,
     /// While there are `flush_waiters`: an export on the HTTP thread holds no event loop open.
     flush_keep_alive: bun_io::JsKeepAlive,
@@ -180,10 +179,10 @@ impl VmState {
         tracer
     }
 
-    pub(crate) fn add_js_exporters(&'static self, exporters: &[Arc<JsExporter>]) {
+    pub(crate) fn add_js_exporters(&'static self, exporters: Vec<OwnedJsExporter>) {
         // They leave with the realm.
         drop(self.realm());
-        self.js_exporters.borrow_mut().extend_from_slice(exporters);
+        self.js_exporters.borrow_mut().extend(exporters);
     }
 
     pub(crate) fn register_with_api(&'static self) -> JsResult<()> {

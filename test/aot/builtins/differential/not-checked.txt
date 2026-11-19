@@ -66,6 +66,7 @@ BunJscStartSamplingProfiler/0: it is not called: it reaches outside JavaScript
 BunJscTotalCompileTime/0: it is not called: it reaches outside JavaScript
 BunListen/0: it is not called: it blocks, starts a process or opens a socket
 BunOpenInEditor/0: it is not called: it blocks, starts a process or opens a socket
+BunOtelStart/0: it is not called: it turns tracing on for every thread of the process
 BunServe/0: it is not called: it blocks, starts a process or opens a socket
 BunShrink/0: it is not called: it blocks, starts a process or opens a socket
 BunSleepSync/0: it is not called: it blocks, starts a process or opens a socket

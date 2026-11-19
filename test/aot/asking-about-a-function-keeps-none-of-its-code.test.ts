@@ -36,6 +36,7 @@ const namedIsUsedToday = [
   /^Bun\.YAML\./,
   /^Bun\.dns\./,
   /^Bun\.markdown\./,
+  /^Bun\.otel\./,
   /^Bun\.password\./,
   /^Bun\.secrets\./,
   /^Bun\.semver\./,

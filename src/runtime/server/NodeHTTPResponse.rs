@@ -912,7 +912,8 @@ impl NodeHTTPResponse {
             }
         }
 
-        self.span.set_status(status_code as u16);
+        self.span
+            .set_status(u16::try_from(status_code).expect("int cast"));
         'do_it: {
             if status_message_bytes.is_empty() {
                 if let Some(status_message) =
@@ -1278,7 +1279,8 @@ impl NodeHTTPResponse {
             return None;
         }
 
-        self.span.set_status(status_code as u16);
+        self.span
+            .set_status(u16::try_from(status_code).expect("int cast"));
         self.resume_socket();
         self.bytes_written.set(bytes_written);
         if !this_value.is_empty() {

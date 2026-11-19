@@ -1,11 +1,11 @@
-use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload, JsScope};
-use bun_jsc::{JSGlobalObject, JSString, JSValue, JsResult, bun_string_jsc};
+use bun_jsc::bindgen::{JsLocal, JsPayload, JsScope};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, bun_string_jsc};
 use bun_telemetry::{Carried, Instrument, ScopeId, SpanData, SpanKind, SpanStub, clock, processor};
 
 use crate::context::{self, Binding, Context, native_span_for};
 use crate::engine::Entered;
 use crate::generated_bindgen::telemetry::{SpanKindInput, SpanOptions, js_Tracer as js};
-use crate::span::{Span, global_of};
+use crate::span::Span;
 use crate::state::VmState;
 use crate::values;
 
@@ -106,7 +106,10 @@ impl Tracer {
         options: JSValue,
         context: JSValue,
     ) -> JsResult<(JSValue, Option<JSValue>)> {
-        let name = name.to_js_string(global)?.to_js();
+        let name = match name.is_string_literal() {
+            true => name,
+            false => name.to_js_string(global)?.to_js(),
+        };
         let context = match context.is_undefined_or_null() {
             true => None,
             false => Some(Context::from_api(global, context)?),
@@ -150,20 +153,6 @@ impl Tracer {
             }
             Ok((span, under))
         })
-    }
-
-    pub(crate) fn start_named_span<'a>(
-        &self,
-        heap: &JsHeap<'a>,
-        name: JsLocal<'a, JSString>,
-    ) -> JSValue {
-        let global = global_of(heap);
-        start_internal_span(
-            global,
-            self.0,
-            name.to_js(),
-            &context::active_binding(global),
-        )
     }
 
     pub(crate) fn start_span<'a>(

@@ -708,9 +708,9 @@ mod tests {
                 ResourceValue::Str("prod".into())
             )]
         );
-        assert!(!r.config.instruments.contains(Instrument::Fs));
-        assert!(!r.config.instruments.contains(Instrument::Dns));
-        assert!(r.config.instruments.contains(Instrument::HttpServer));
+        assert!(!(r.config.instruments.bits() & Instrument::Fs.bit() != 0));
+        assert!(!(r.config.instruments.bits() & Instrument::Dns.bit() != 0));
+        assert!((r.config.instruments.bits() & Instrument::HttpServer.bit() != 0));
     }
 
     #[test]

@@ -126,7 +126,10 @@ impl PeerCache {
 
     /// Never 0.
     pub fn next_tag(&mut self) -> u32 {
-        self.last_tag = self.last_tag.checked_add(1).unwrap_or(1);
+        if self.last_tag == u32::MAX {
+            *self = PeerCache::new();
+        }
+        self.last_tag += 1;
         self.last_tag
     }
 
@@ -644,6 +647,7 @@ mod tests {
         assert_eq!(cache.get(first, || Peer::new(b"a", 1)).address(), b"a");
         cache.last_tag = u32::MAX;
         assert_eq!(cache.next_tag(), 1);
+        assert_eq!(cache.get(first, || Peer::new(b"c", 3)).address(), b"c");
     }
 
     #[test]

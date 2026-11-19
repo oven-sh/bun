@@ -118,10 +118,7 @@ export const Tracer = b.class({
   types: [table.viewType("bun.otel.Tracer"), table.exactType("$Bindgen.Tracer")],
   internalFields: ["name", "version"],
   proto: {
-    startSpan: [
-      { args: { name: b.string.local }, returns: Span, capability: "heap", rustName: "start_named_span" },
-      { args: { name: b.any, options: b.any, context: b.any }, returns: Span, ...js },
-    ],
+    startSpan: { args: { name: b.any, options: b.any, context: b.any }, returns: Span, ...js },
     startActiveSpan: { args: { name: b.any, first: b.any, second: b.any, third: b.any }, ...answersAnything },
     name: { internalField: "name" },
     version: { internalField: "version" },
@@ -243,7 +240,15 @@ export const ContextManager = b.class({
       args: { context: b.any, callback: b.callable, thisArg: b.any, args: b.any.variadic },
       ...answersAnything,
     },
-    bind: { args: { context: b.any, target: b.any }, ...answersAnything },
+    bind: {
+      args: { context: b.any, target: b.any },
+      ...answersAnything,
+      uses: {
+        this: table.retainedByNativeCode,
+        context: table.retainedByNativeCode,
+        target: [table.retained, table.returned, table.storedByKey(table.keysNamed("emit"), table.any)],
+      },
+    },
     attach: { args: { context: b.any }, returns: ContextToken, ...js },
     enable: chainable,
     disable: { ...chainable, rustName: "enable" },
@@ -256,7 +261,12 @@ export const TextMapPropagator = b.class({
     fields: { returns: b.array(b.string.utf8) },
     inject: {
       args: { context: b.any, carrier: b.any, setter: b.any },
-      uses: { carrier: [table.everything] },
+      uses: {
+        carrier: [
+          table.retained,
+          table.storedByKey(table.keysNamed("traceparent", "tracestate", "baggage"), table.string),
+        ],
+      },
       ...js,
     },
     extract: { args: { context: b.any, carrier: b.any, getter: b.any }, ...answersAnything },

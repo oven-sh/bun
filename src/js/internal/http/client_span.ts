@@ -17,7 +17,7 @@ interface RequestHeaders {
 
 interface Response {
   statusCode?: number | null;
-  httpVersion?: string;
+  httpVersion?: string | null;
   complete?: boolean;
 }
 

@@ -1903,6 +1903,7 @@
     "aot/order-file.test.ts",
     "aot/type-errors-that-several-projects-are-asked-about.test.ts",
     "aot/a-file-that-only-asks-about-evaluators-is-built-where-code-from-disk-is-allowed.test.ts",
-    "aot/an-import-in-a-text-calls-the-replaced-eval.test.ts"
+    "aot/an-import-in-a-text-calls-the-replaced-eval.test.ts",
+    "aot/opentelemetry-in-an-executable.test.ts"
   ]
 }

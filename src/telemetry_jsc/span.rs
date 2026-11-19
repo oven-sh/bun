@@ -7,7 +7,7 @@ use bun_ptr::JsCell;
 use bun_telemetry::otlp::field;
 use bun_telemetry::{Record, SpanData, StatusCode};
 
-use crate::context::{self, Context};
+use crate::context::{self, Binding, Context};
 use crate::engine;
 use crate::generated_bindgen::telemetry::{LinkInit, StatusInit, StatusInput, js_Span as js};
 use crate::native;
@@ -180,7 +180,8 @@ impl Span {
         bun_core::EncodedSlice::utf8(&name).to_js(global)
     }
 
-    /// As `AsyncLocalStorage.prototype.enterWith()`, keeping the other values of `under`.
+    /// As `AsyncLocalStorage.prototype.enterWith()`, keeping the other values of `under`. No span
+    /// that is active has displaced `span`.
     pub(crate) fn enter_under(global: &JSGlobalObject, span: JSValue, under: Option<JSValue>) {
         if js::displaced_get_cached(span).is_some() {
             return;
@@ -404,7 +405,20 @@ impl Span {
     }
 
     pub(crate) fn enter<'a>(&self, this_value: This<'a>, heap: &JsHeap<'a>) -> This<'a> {
-        Span::enter_under(global_of(heap), this_value.to_js(), None);
+        let (global, span) = (global_of(heap), this_value.to_js());
+        let mut above = Binding::of(&context::active_binding(global)).span();
+        if above == Some(span) {
+            return this_value;
+        }
+        // One that displaced this span, which has left since, must not lead back to it.
+        while let Some(current) = above {
+            above = Binding::of(&js::displaced_get_cached(current).filter(|b| !b.is_null())).span();
+            if above == Some(span) && js::displaced_get_cached(span).is_none() {
+                js::displaced_set_cached(current, global, JSValue::NULL);
+                break;
+            }
+        }
+        Span::enter_under(global, span, None);
         this_value
     }
 

@@ -356,6 +356,11 @@ export const calls: Record<string, string[]> = {
     ),
   ],
   "%IntlSegments%.prototype.containing": ['new Intl.Segmenter("en").segment("ab").containing(0)'],
+  "%Baggage%.prototype.getEntry": [
+    'Bun.otel.propagator.extract(Bun.otel.ROOT_CONTEXT, { baggage: "a=1;b" }).getValue(Symbol.for("OpenTelemetry Baggage Key")).getEntry("a")',
+  ],
+  "%TextMapPropagator%.prototype.fields": ["Bun.otel.propagator.fields()"],
+  "Bun.otel.stats": ["Bun.otel.stats()"],
   "Bun.dns.getCacheStats": ["Bun.dns.getCacheStats()"],
   "Bun.FFI.ptr": ["Bun.FFI.ptr({})", "Bun.FFI.ptr(new Uint8Array(0))"],
   "Bun.FFI.toArrayBuffer": ["const bytes = new Uint8Array(8);\nBun.FFI.toArrayBuffer(Bun.FFI.ptr(bytes), 0, 8)"],

@@ -18,7 +18,7 @@ use bun_telemetry_cold::config::{
 };
 use bun_telemetry_cold::resource::{self, ResourceInfo};
 
-use crate::exporter::{self, JsExporter, JsFormat, warn};
+use crate::exporter::{self, JsExporter, JsFormat, OwnedJsExporter, warn};
 use crate::generated_bindgen::telemetry::{
     ExporterCompression, ExporterOptions, Propagator, StartOptions,
 };
@@ -203,8 +203,8 @@ pub(crate) fn start<'a>(cx: &mut JsScope<'a>, options: Option<&StartOptions<'a>>
     if how == Exporters::Replace {
         JsExporter::retire_all(state);
     }
-    state.add_js_exporters(&functions);
-    exporters.extend(functions.into_iter().map(|f| f as Arc<dyn Exporter>));
+    exporters.extend((functions.iter()).map(|f| Arc::clone(&f.shared) as Arc<dyn Exporter>));
+    state.add_js_exporters(functions);
     apply(state, &config, exporters, how);
     drop(configuring);
     state.register_with_api()
@@ -285,7 +285,7 @@ fn read_exporters(
     state: &VmState,
     options: &StartOptions<'_>,
     config: &mut Config,
-    functions: &mut Vec<Arc<JsExporter>>,
+    functions: &mut Vec<OwnedJsExporter>,
 ) -> JsResult<()> {
     let global = state.global();
     let defaults = config.otlp_defaults.clone();
@@ -334,7 +334,7 @@ fn read_exporters(
             .filter_map(|(function, format)| Some((function?, format)));
             match (given.next(), given.next(), exporter.url.as_deref()) {
                 (Some((function, format)), None, None) => {
-                    functions.push(JsExporter::new(state, function.to_js(), item, format));
+                    functions.push(JsExporter::create(state, function.to_js(), item, format));
                 }
                 (None, _, Some(url)) => {
                     let mut otlp = otlp(url, Vec::new(), exporter.headers)?;

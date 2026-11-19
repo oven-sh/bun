@@ -396,11 +396,11 @@ impl Processor {
 
     pub fn remove_exporter(&self, e: &Arc<dyn Exporter>) {
         self.exporters.write().retain(|x| !Arc::ptr_eq(x, e));
-        self.fail_retries_where(|x| Arc::ptr_eq(x, e));
+        self.fail_retries_where(&|x| Arc::ptr_eq(x, e));
     }
 
     /// Parked retries of exporters that are going away count as failed.
-    fn fail_retries_where(&self, gone: impl Fn(&Arc<dyn Exporter>) -> bool) {
+    fn fail_retries_where(&self, gone: &dyn Fn(&Arc<dyn Exporter>) -> bool) {
         let dropped: Vec<ParkedRetry> = self
             .retries
             .lock()
@@ -426,7 +426,7 @@ impl Processor {
             list.retain(keep);
             list.extend(new);
         }
-        self.fail_retries_where(|e| !keep(e));
+        self.fail_retries_where(&|e| !keep(e));
     }
 
     /// Snapshot for calling into exporters. INVARIANT: no `Exporter` method is
@@ -540,7 +540,7 @@ impl Processor {
 
     /// `write` appends one span.
     #[inline]
-    pub(crate) fn record(&'static self, write: impl FnOnce(&mut Queue)) {
+    pub(crate) fn record(&'static self, write: &mut dyn FnMut(&mut Queue)) {
         let mut p = self.pending.lock();
         let queued = (p.count).saturating_add(self.parked_spans.load(Ordering::Relaxed));
         if queued >= p.config.max_queue_size || crate::is_shut_down() {

@@ -1,6 +1,5 @@
 //! Where batches go: a collector over OTLP/HTTP, stderr, or a function.
 
-use core::cell::RefCell;
 use core::fmt;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -410,15 +409,14 @@ pub(crate) struct JsExporter {
     attempts: Guarded<Vec<JsAttempt>>,
     /// Replaced by a later `start()`. It finishes its attempts.
     is_retired: AtomicBool,
-    /// The function and its receiver.
-    callback: RefCell<Option<(Strong, Strong)>>,
 }
 
-// SAFETY: `callback` is only reached with the owner's `VmState` in hand, which empties it before it lets go of its
-// reference: another thread only drops what is empty.
-unsafe impl Send for JsExporter {}
-// SAFETY: as above.
-unsafe impl Sync for JsExporter {}
+/// What the VM that made the exporter keeps.
+pub(crate) struct OwnedJsExporter {
+    pub(crate) shared: Arc<JsExporter>,
+    function: Strong,
+    this: Strong,
+}
 
 pub struct QueuedExport {
     exporter: Arc<JsExporter>,
@@ -435,7 +433,7 @@ impl Drop for QueuedExport {
 impl QueuedExport {
     pub(crate) fn run(self, state: &VmState) -> JsResult<()> {
         let global = state.global();
-        if let Some(promise) = self.exporter.run(global, self.ticket)? {
+        if let Some(promise) = self.exporter.run(state, self.ticket)? {
             promise.then_with_value(
                 global,
                 JSValue::js_number(self.ticket as f64),
@@ -470,25 +468,29 @@ fn warn_of_pending_export() {
 }
 
 impl JsExporter {
-    pub(crate) fn new(
+    pub(crate) fn create(
         state: &VmState,
         function: JSValue,
         this: JSValue,
         format: JsFormat,
-    ) -> Arc<Self> {
+    ) -> OwnedJsExporter {
         let global = state.global();
-        let callback = (
-            Strong::create(function, global),
-            Strong::create(this, global),
-        );
-        Arc::new(JsExporter {
-            format,
-            vm: global.bun_vm().handle(),
-            owner: state.owner_key(),
-            attempts: Guarded::new(Vec::new()),
-            is_retired: AtomicBool::new(false),
-            callback: RefCell::new(Some(callback)),
-        })
+        OwnedJsExporter {
+            shared: Arc::new(JsExporter {
+                format,
+                vm: global.bun_vm().handle(),
+                owner: state.owner_key(),
+                attempts: Guarded::new(Vec::new()),
+                is_retired: AtomicBool::new(false),
+            }),
+            function: Strong::create(function, global),
+            this: Strong::create(this, global),
+        }
+    }
+
+    fn all_of(state: &VmState) -> Vec<Arc<JsExporter>> {
+        let owned = state.js_exporters.borrow();
+        owned.iter().map(|e| Arc::clone(&e.shared)).collect()
     }
 
     fn owner_state(&self) -> Option<&'static VmState> {
@@ -507,39 +509,32 @@ impl JsExporter {
 
     pub(crate) fn retire_all(state: &VmState) {
         for exporter in state.js_exporters.borrow().iter() {
-            exporter.is_retired.store(true, Ordering::Relaxed);
+            exporter.shared.is_retired.store(true, Ordering::Relaxed);
         }
     }
 
     pub(crate) fn release_retired(state: &VmState) {
-        state.js_exporters.borrow_mut().retain(|exporter| {
-            let is_done =
-                exporter.is_retired.load(Ordering::Relaxed) && exporter.attempts.lock().is_empty();
-            if is_done {
-                exporter.callback.take();
-            }
-            !is_done
+        state.js_exporters.borrow_mut().retain(|e| {
+            !e.shared.is_retired.load(Ordering::Relaxed) || !e.shared.attempts.lock().is_empty()
         });
     }
 
     /// The processor does not list them any more.
     pub(crate) fn finish_retired_for_exit(state: &VmState) {
-        let exporters = state.js_exporters.borrow().clone();
-        (exporters.iter())
+        (Self::all_of(state).iter())
             .filter(|exporter| exporter.is_retired.load(Ordering::Relaxed))
             .for_each(|exporter| exporter.finish_for_exit());
     }
 
     pub(crate) fn detach_all(state: &VmState) {
-        for exporter in state.js_exporters.take() {
-            exporter.callback.take();
-            processor::global().remove_exporter(&(Arc::clone(&exporter) as Arc<dyn Exporter>));
-            exporter.take(|_| true).for_each(ExportAttempt::abandoned);
+        for OwnedJsExporter { shared, .. } in state.js_exporters.take() {
+            processor::global().remove_exporter(&(Arc::clone(&shared) as Arc<dyn Exporter>));
+            shared.take(|_| true).for_each(ExportAttempt::abandoned);
         }
     }
 
     /// The promise that the attempt waits for. Only a termination fails.
-    fn run(&self, global: &JSGlobalObject, ticket: u64) -> JsResult<Option<JSValue>> {
+    fn run(&self, state: &VmState, ticket: u64) -> JsResult<Option<JSValue>> {
         // It stays in the list: the function may call `process.exit()`.
         let payload = (self.attempts.lock().iter_mut())
             .find(|a| a.ticket == ticket && !a.has_started)
@@ -550,7 +545,7 @@ impl JsExporter {
         let Some(payload) = payload else {
             return Ok(None);
         };
-        match self.deliver(global, &payload)? {
+        match self.deliver(state, &payload)? {
             Delivery::Settled(result) => self.settle(ticket, result),
             Delivery::Pending(promise) => return Ok(Some(promise)),
         }
@@ -558,9 +553,11 @@ impl JsExporter {
     }
 
     /// Only a termination fails.
-    fn deliver(&self, global: &JSGlobalObject, payload: &ExportPayload) -> JsResult<Delivery> {
-        let Some((function, this)) =
-            (self.callback.borrow().as_ref()).map(|(function, this)| (function.get(), this.get()))
+    fn deliver(&self, state: &VmState, payload: &ExportPayload) -> JsResult<Delivery> {
+        let global = state.global();
+        let Some((function, this)) = (state.js_exporters.borrow().iter())
+            .find(|e| core::ptr::eq(Arc::as_ptr(&e.shared), self))
+            .map(|e| (e.function.get(), e.this.get()))
         else {
             return Ok(Delivery::Settled(ExportResult::Failure));
         };
@@ -603,8 +600,7 @@ impl JsExporter {
 
 fn settle_export(ticket: f64, result: ExportResult) {
     if let Some(state) = VmState::current() {
-        let exporters = state.js_exporters.borrow().clone();
-        (exporters.iter()).for_each(|exporter| exporter.settle(ticket as u64, result));
+        (JsExporter::all_of(state).iter()).for_each(|e| e.settle(ticket as u64, result));
     }
 }
 
@@ -643,7 +639,7 @@ impl Exporter for JsExporter {
         payload: &Arc<ExportPayload>,
         _: MonoInstant,
     ) -> ExportResult {
-        match (self.owner_state()).map(|state| self.deliver(state.global(), payload)) {
+        match (self.owner_state()).map(|state| self.deliver(state, payload)) {
             Some(Ok(Delivery::Settled(result))) => result,
             Some(Ok(Delivery::Pending(_))) => {
                 warn_of_pending_export();
@@ -670,7 +666,7 @@ impl Exporter for JsExporter {
         if let Some(state) = self.owner_state() {
             let tickets: Vec<_> = self.attempts.lock().iter().map(|a| a.ticket).collect();
             for ticket in tickets {
-                match self.run(state.global(), ticket) {
+                match self.run(state, ticket) {
                     Ok(Some(_)) => warn_of_pending_export(),
                     Ok(None) => {}
                     Err(_terminated) => break,

@@ -126,6 +126,16 @@ describe("Bun.otel", () => {
     expect(next.ended).toBe(true);
   });
 
+  test("enter() of a span that is active, or that an active one displaced, leaves nothing to go round in", () => {
+    const self = Bun.otel.span("self", span => (span.enter().end(), Bun.otel.activeSpan()?.name));
+    const [a, b] = [tracer.startSpan("a"), tracer.startSpan("b")];
+    const resume = Bun.otel.with(undefined, () => (a.enter(), b.enter(), AsyncLocalStorage.snapshot()));
+    a.exit();
+    const ring = resume(() => (a.enter(), a.end(), b.end(), Bun.otel.activeSpan()));
+    expect([self, ring, Bun.otel.activeSpan()]).toEqual(["self", undefined, undefined]);
+    return collect();
+  });
+
   test("while tracing is off a span is a no-op that passes on the ids of its parent, and nothing is set up", async () => {
     const { stdout, exitCode } = await run(`
       const { heapStats } = require("bun:jsc");

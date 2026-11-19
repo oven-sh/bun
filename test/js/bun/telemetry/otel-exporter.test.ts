@@ -800,7 +800,7 @@ describe.concurrent("OTLP/HTTP exporter", () => {
        await Bun.otel.forceFlush().catch(() => {});
        // 20 spans parked (once, not twice) against a queue of 48: 20 more still fit
        for (let i = 0; i < 20; i++) t.startSpan("b" + i).end();
-       await Bun.sleep(150);
+       while (seen.length < 40) await Bun.sleep(5);
        const s = Bun.otel.stats();
        console.log(seen.length, s.spansDropped);`,
       { A: down1.url, B: down2.url, OTEL_BSP_MAX_QUEUE_SIZE: "48", OTEL_BSP_SCHEDULE_DELAY: "50" },

@@ -72,9 +72,9 @@ declare module "bun" {
       /** W3C trace flags; bit 0 = sampled. */
       traceFlags: number;
       /** Present and `true` when the context arrived via a `traceparent` header. */
-      isRemote?: boolean;
+      isRemote?: boolean | undefined;
       /** The W3C `tracestate` carried with this span, if any. */
-      traceState?: TraceState;
+      traceState?: TraceState | undefined;
     }
 
     /**
@@ -82,7 +82,7 @@ declare module "bun" {
      * `Bun.otel.with`): `traceState` may also be the raw header string.
      */
     interface SpanContextInput extends Omit<SpanContext, "traceState"> {
-      traceState?: TraceState | string;
+      traceState?: TraceState | string | undefined;
     }
 
     /** Immutable view of a W3C `tracestate` header (`@opentelemetry/api` `TraceState`). */
@@ -98,7 +98,7 @@ declare module "bun" {
 
     interface Link {
       context: SpanContext | SpanContextInput;
-      attributes?: Attributes;
+      attributes?: Attributes | undefined;
     }
 
     interface SpanOptions {
@@ -150,7 +150,7 @@ declare module "bun" {
       addLink(link: Link): this;
       addLinks(links: Link[]): this;
       /** `message` is only kept for `"error"`. */
-      setStatus(status: { code: SpanStatusCode; message?: string }): this;
+      setStatus(status: { code: SpanStatusCode; message?: string | undefined }): this;
       setStatus(code: SpanStatusCode | SpanStatusName, message?: string): this;
       /**
        * Record `error` as an `exception` event and set the status to `"error"`
@@ -257,19 +257,19 @@ declare module "bun" {
       links: {
         traceId: string;
         spanId: string;
-        traceState?: string;
+        traceState?: string | undefined;
         /** OTLP link flags: low byte = W3C trace flags, 0x100 = is-remote known, 0x200 = is remote. */
         flags: number;
         attributes: ExportedSpan["attributes"];
       }[];
-      status: { code: SpanStatusCode; message?: string };
+      status: { code: SpanStatusCode; message?: string | undefined };
       traceFlags: number;
-      traceState?: string;
-      droppedAttributesCount?: number;
-      droppedEventsCount?: number;
-      droppedLinksCount?: number;
+      traceState?: string | undefined;
+      droppedAttributesCount?: number | undefined;
+      droppedEventsCount?: number | undefined;
+      droppedLinksCount?: number | undefined;
       /** Shared between all spans of the same scope in a batch. */
-      scope: { name: string; version?: string };
+      scope: { name: string; version?: string | undefined };
       /** Shared between all spans in a batch. */
       resource: { attributes: ExportedSpan["attributes"] };
     }

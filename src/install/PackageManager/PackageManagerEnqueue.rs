@@ -87,15 +87,24 @@ fn wait_for_remote_task(this: &mut PackageManager, task_id: Task::Id, waiter: Ta
     }
 }
 
-/// Returns false if `task_id` already had a list, which means the task was started earlier.
+/// Returns false if the task was started earlier.
 fn push_task_callback(
     this: &mut PackageManager,
     task_id: Task::Id,
     callback: TaskCallbackContext,
 ) -> bool {
     let entry = this.task_queue.get_or_put(task_id).expect("unreachable");
+    // No download runs when the isolated linker starts, so one from before would never answer.
+    let starts_over = entry.value_ptr.is_empty()
+        && matches!(
+            callback,
+            TaskCallbackContext::IsolatedPackageInstallContext(_)
+        );
+    if starts_over {
+        let _ = this.network_dedupe_map.remove(&task_id);
+    }
     entry.value_ptr.push(callback);
-    !entry.found_existing
+    starts_over || !entry.found_existing
 }
 
 /// What `bind_row` did with a dependency.

@@ -123,26 +123,6 @@ pub struct Port {
     is_shut_down: Cell<bool>,
 }
 
-/// Temporary: `BUN_TMP_TUNE=0=1,1=4096` replaces defaults, to measure variants.
-fn tune(index: usize, default: u64) -> u64 {
-    static VALUES: std::sync::LazyLock<[Option<u64>; 4]> = std::sync::LazyLock::new(|| {
-        let mut values = [None; 4];
-        let text = bun_core::getenv_z(bun_core::zstr!("BUN_TMP_TUNE")).unwrap_or_default();
-        for pair in bun_core::strings::split(text, b",") {
-            if let Some((key, value)) = bun_core::strings::split_once_char(pair, b'=')
-                && let Ok(key) = bun_core::fmt::parse_int::<usize>(key, 10)
-            {
-                values[key] = bun_core::fmt::parse_int(value, 10).ok();
-            }
-        }
-        values
-    });
-    if cfg!(any(test, debug_assertions)) {
-        return default;
-    }
-    VALUES[index].unwrap_or(default)
-}
-
 pub(crate) fn now_ns() -> u64 {
     Timespec::now(TimespecMockMode::ForceRealTime).ns()
 }
@@ -296,7 +276,7 @@ impl Port {
         let start = (only_receives && timeout_ns != Some(0)).then(|| {
             // A sender pays for every time that it has to tell us.
             let mut now = now_ns();
-            while turns >= 4 && now < began_at + tune(0, FLOOD_TURN_NS) && has_other_cpu() {
+            while turns >= 4 && now < began_at + FLOOD_TURN_NS && has_other_cpu() {
                 core::hint::spin_loop();
                 now = now_ns();
             }
@@ -310,7 +290,7 @@ impl Port {
             self.shared.is_parked.store(false, Ordering::SeqCst);
         }
         if let Some((start, now)) = start.map(|start| (start, now_ns()))
-            && now - start < tune(1, AT_ONCE_NS)
+            && now - start < AT_ONCE_NS
         {
             // After a pause there is always something, so it has to show itself again.
             self.flood.set(((turns + 1) % 64, now));

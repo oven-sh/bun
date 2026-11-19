@@ -29,7 +29,6 @@ import { webkitAotFile, webkitJSCPath, webkitTestAotPath, webkitTestFFIPath } fr
 import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
 import { linkerMapOutputs, orderFilePath, usesOrderFile } from "./flags.ts";
-import { buildRustTests } from "./tmp-rust-tests.ts";
 
 interface SpawnAnnotatedOptions {
   /** Working directory for the subprocess. */
@@ -347,7 +346,7 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // Result: bun-linux-x64-profile, bun-linux-x64-asan, etc.
   const bunPath = exeName.replace(/^bun/, bunTriplet);
   const files: string[] = [basename(exe), "features.json"];
-  const testTools: string[] = buildRustTests(cfg);
+  const testTools: string[] = [];
   for (const program of [webkitTestFFIPath(cfg), webkitJSCPath(cfg), webkitTestAotPath(cfg)]) {
     if (existsSync(program)) {
       chmodSync(program, 0o755);

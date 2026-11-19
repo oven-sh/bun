@@ -137,20 +137,17 @@ calls! {
     imported {
         CreateEventW(a b c d)
         CreateIoCompletionPort(a b c d)
-        CreateNamedPipeW(a b c d e f g h)
         CreateThread(a b c d e f)
         CreateWaitableTimerExW(a b c d)
         DuplicateHandle(a b c d e f g)
         NtCancelIoFileEx(a b c)
         NtCreateFile(a b c d e f g h i j k)
         NtDeviceIoControlFile(a b c d e f g h i j)
-        NtFsControlFile(a b c d e f g h i j)
         NtRemoveIoCompletionEx(a b c d e f)
         NtSetIoCompletion(a b c d e)
         OpenThread(a b c)
         SetFileCompletionNotificationModes(a b)
         SetWaitableTimer(a b c d e f)
-        WaitForSingleObject(a b)
         WSAIoctl(a b c d e f g h i)
     }
     looked_up {

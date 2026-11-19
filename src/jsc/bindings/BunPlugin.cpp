@@ -1789,6 +1789,8 @@ static JSValue requireOriginalModule(Zig::GlobalObject* globalObject, JSModuleMo
 
 #if ENABLE(AOT)
     mock->wasOriginalRequested = true;
+    if (auto file = mock->isFromPreload && mock->state == JSModuleMock::State::Running && globalObject->aotInstance() ? Bun::compiledModuleForPath(mock->specifier->tryGetValue().data) : std::nullopt; file && JSC::AOT::isESModule(*file) && JSC::AOT::wasOriginalRunForStatement(globalObject, *file))
+        JSC::AOT::didRequireOwnOriginal(globalObject, *file);
 #endif
     if (JSValue exports = mock->originalCommonJSExports.get(); exports && !exports.inherits<JSC::JSModuleNamespaceObject>())
         return exports;
@@ -4022,6 +4024,21 @@ static bool isUncalledMockOfHookInPlaceOfFile(Zig::GlobalObject* globalObject, J
     });
 }
 
+static bool isRequiringMockOfPreload(JSModuleMock* mock)
+{
+    return !mock->isOfHook && !mock->isOfVitest() && mock->importsOriginal;
+}
+
+static bool isMockOfHookBehindLoadedMock(Zig::GlobalObject* globalObject, JSModuleMock* ofPreload, JSModuleMock* mockOfHook, const String& specifier)
+{
+    if (!isRequiringMockOfPreload(ofPreload) || ofPreload->state != JSModuleMock::State::Settled || !mockOfHook->isFromPreload || isBuiltinModuleKey(specifier) || isInNodeModules(specifier))
+        return false;
+    if (!mockOfHook->factory || (mockOfHook->importsOriginal && !mockOfHook->isOfVitest()))
+        return false;
+    auto file = Bun::compiledModuleForPath(specifier);
+    return file && JSC::AOT::isESModule(*file) && JSC::AOT::isMockLoadedInPreload(globalObject, *file) && globalObject->onLoadPlugins.pendingCompiledMocks.containsIf([&](const auto& waiting) { return waiting.second.get() == mockOfHook; });
+}
+
 // Mirrors packagesToRestore in unmockModule(), for the module of a preload mock.
 static JSModuleMock* findPreloadMockToRestore(Zig::GlobalObject* globalObject, JSModuleMock* ended, const String& specifier)
 {
@@ -4143,8 +4160,7 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
     auto* displaced = laterMock && laterMock->isOfVitest() ? displacedPreloadMock(globalObject, specifier) : nullptr;
     bool restoresPreloadMock = findPreloadMockToRestore(globalObject, mock, specifier) || (displaced && displaced->isDisplacedByTestMock && displaced->isUnderActualKey);
     auto original = mock->wasInstalledOnPreloadMock || restoresPreloadMock || patchesPreloadPackage(mock, specifier) ? JSC::AOT::RetainedOriginalPolicy::Keep : JSC::AOT::RetainedOriginalPolicy::DiscardWithMock;
-    // Mirrors packagesToRestore below: a patching mock that was installed over the stashing one restores nothing.
-    bool restoresOriginal = restoresCompiledFile(globalObject, mock, specifier);
+    bool restoresOriginal = restoresCompiledFile(globalObject, mock, specifier) || (evict.isReplacedByLaterMock && !laterMock && mock->coversImportedActual && isInNodeModules(specifier));
     for (JSC::AOT::ModuleID module : pendingMockModules) {
         JSC::AOT::didRemoveMock(globalObject, module, original, restoresPreloadMock, restoresOriginal);
         RETURN_IF_EXCEPTION(scope, );
@@ -4306,6 +4322,7 @@ static void unmockModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, co
 #if ENABLE(AOT)
     if (auto module = vm.hasCompiledCode() && !laterMock ? Bun::findMockedModule(specifier) : std::nullopt)
         JSC::AOT::willEndMockOfBuiltin(globalObject, *module, JSC::AOT::MockEnd::Removed);
+    evict.isReplacedByLaterMock = laterMock;
 #endif
     unmockModule(globalObject, mock, specifier, evict, alsoEndsInPlainRun ? laterMock : nullptr);
     RETURN_IF_EXCEPTION(scope, );
@@ -4315,7 +4332,6 @@ static void unmockModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, co
     if (!alsoEndsInPlainRun)
         evict.packagesToRestore.clear();
     evict.keepsFailuresOfCompiledProgram = !alsoEndsInPlainRun;
-    evict.isReplacedByLaterMock = laterMock;
 #endif
     evictModulesAndTheirImporters(globalObject, WTF::move(evict));
     RETURN_IF_EXCEPTION(scope, );
@@ -6189,7 +6205,13 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         bool importsOriginal = previous->importsOriginal && !previous->isOfHook && !previous->wasLoadedByRequire && !previous->spy && (hasNoInstance ? !!loadedByTestFile : previous->firstLoadTestFile == globalObject->onLoadPlugins.testFile && !isInNodeModules(specifier)) && !(factoryOfPreload && factoryOfPreload.isString()) && JSC::AOT::activeMockReloadedBy(globalObject, *loaded.compiledModule) == JSC::AOT::LoadedBy::Nobody;
         if (importsOriginal)
             JSC::AOT::didRequireOwnOriginal(globalObject, *loaded.compiledModule);
+        bool wasOriginalRunForStatement = JSC::AOT::wasOriginalRunForStatement(globalObject, *loaded.compiledModule);
         isPreviousMockKeyEmpty = JSC::AOT::tryEvictRequirerOfOriginal(globalObject, *loaded.compiledModule);
+        if (isPreviousMockKeyEmpty && wasOriginalRunForStatement) {
+            previous->earlyOriginalLoad.clear();
+            evictModulesAndTheirImporters(globalObject, Vector<String> { originalModuleKey(specifier) });
+            RETURN_IF_EXCEPTION(scope, {});
+        }
         didEvictPreloadMock = isPreviousMockKeyEmpty && importsOriginal;
         if (didEvictPreloadMock)
             previous->firstLoadTestFile = 0;
@@ -7743,7 +7765,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
         String specifier = mock->specifier->tryGetValue().data;
 #if ENABLE(AOT)
         auto* mockOfHook = globalObject->vm().hasCompiledCode() ? registeredModuleMock(globalObject, specifier) : nullptr;
-        if (mockOfHook && mockOfHook != mock && !registeredAgain.contains(mockOfHook) && isUncalledMockOfHookInPlaceOfFile(globalObject, mock, specifier, displacedMocks)) {
+        if (mockOfHook && mockOfHook != mock && !registeredAgain.contains(mockOfHook) && (isUncalledMockOfHookInPlaceOfFile(globalObject, mock, specifier, displacedMocks) || isMockOfHookBehindLoadedMock(globalObject, mock, mockOfHook, specifier))) {
             unmockModule(globalObject, mockOfHook, specifier, evict);
             if (scope.exception()) [[unlikely]]
                 (void)scope.tryClearException();
@@ -8998,6 +9020,23 @@ bool isSpyMock(Zig::GlobalObject* globalObject, const String& path)
 {
     auto* mock = Zig::registeredModuleMock(globalObject, path);
     return mock && mock->spy;
+}
+
+bool isRequiringModuleMock(Zig::GlobalObject* globalObject, const String& path)
+{
+    auto* mock = Zig::registeredModuleMock(globalObject, path);
+    return mock && mock->factory && mock->importsOriginal && !mock->isOfVitest() && hasSynchronousMockFactory(globalObject, path, true);
+}
+
+bool doesModuleMockKeepImportersOfPreload(JSC::JSObject* moduleMock)
+{
+    auto* mock = uncheckedDowncast<Zig::JSModuleMock>(moduleMock);
+    String specifier = mock->specifier->tryGetValue().data;
+    bool isRequiringMock = mock->importsOriginal && !mock->isOfVitest();
+    if (!mock->factory || mock->spy || isRequiringMock == mock->isOfHook)
+        return false;
+    auto* waiting = Zig::registeredModuleMock(defaultGlobalObject(), specifier);
+    return waiting && (waiting->factory || waiting->spy) && (!waiting->importsOriginal || waiting->isOfVitest());
 }
 
 // An automock settles with its original.

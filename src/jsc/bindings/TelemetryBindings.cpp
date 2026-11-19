@@ -346,7 +346,7 @@ static String formatFrames(JSGlobalObject* globalObject, ErrorInstance* error)
     RELEASE_AND_RETURN(scope, formatStackTrace(vm, defaultGlobalObject(error->globalObject()), error->globalObject(), name, message, line, column, sourceURL, *frames, nullptr));
 }
 
-static String readString(JSGlobalObject* globalObject, JSObject* object, const Identifier& name, bool runsGetters)
+static __attribute__((minsize)) String readString(JSGlobalObject* globalObject, JSObject* object, const Identifier& name, bool runsGetters)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -369,7 +369,7 @@ static String readString(JSGlobalObject* globalObject, JSObject* object, const I
 }
 
 // The type is the `code`, or else the `name`. A primitive has none: it is the message.
-extern "C" void Bun__Telemetry__describeError(JSGlobalObject* globalObject, EncodedJSValue encodedError, bool runsGetters, ErrorDescription* out)
+extern "C" __attribute__((minsize)) void Bun__Telemetry__describeError(JSGlobalObject* globalObject, EncodedJSValue encodedError, bool runsGetters, ErrorDescription* out)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -572,7 +572,7 @@ static JSValue createUnlessRemoved(JSGlobalObject* globalObject)
     return instance ? instance : constructEmptyObject(globalObject);
 }
 
-void addValuesOfOtel(VM& vm, JSGlobalObject* globalObject, JSObject* otel)
+__attribute__((minsize)) void addValuesOfOtel(VM& vm, JSGlobalObject* globalObject, JSObject* otel)
 {
     auto add = [&](ASCIILiteral name, JSValue value) {
         otel->putDirect(vm, Identifier::fromString(vm, name), value, constantAttributes);
@@ -624,7 +624,7 @@ static size_t lengthOfFolderOfApi(const String& path)
     return folder == "api"_s || folder.startsWith("api@"_s) ? end : 0;
 }
 
-static bool isEntryPointOfApi(const String& path)
+static __attribute__((minsize)) bool isEntryPointOfApi(const String& path)
 {
     size_t folder = lengthOfFolderOfApi(path);
     if (!folder)
@@ -753,7 +753,7 @@ static void registerWithLoadedCopiesOfApi(Zig::GlobalObject* globalObject, const
 }
 
 // What the program has registered stays.
-static void fillRegistry(Zig::GlobalObject* globalObject, JSObject* registry)
+static __attribute__((minsize)) void fillRegistry(Zig::GlobalObject* globalObject, JSObject* registry)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -823,7 +823,7 @@ JSC_DEFINE_HOST_FUNCTION(jsKeepApiLog, (JSGlobalObject * globalObject, CallFrame
 }
 
 // What it logs last.
-static JSValue registerNothing(JSFunction* registerGlobal)
+static __attribute__((minsize)) JSValue registerNothing(JSFunction* registerGlobal)
 {
     auto* globalObject = registerGlobal->globalObject();
     auto& vm = getVM(globalObject);
@@ -843,7 +843,7 @@ static JSValue registerNothing(JSFunction* registerGlobal)
     return log->getField(registryField);
 }
 
-static JSValue versionBehind(JSGlobalObject* globalObject, JSValue logged, ASCIILiteral words)
+static __attribute__((minsize)) JSValue versionBehind(JSGlobalObject* globalObject, JSValue logged, ASCIILiteral words)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -863,7 +863,7 @@ static JSValue versionBehind(JSGlobalObject* globalObject, JSValue logged, ASCII
     return jsString(vm, text.substring(start, end - start));
 }
 
-static JSValue askForVersion(JSFunction* registerGlobal)
+static __attribute__((minsize)) JSValue askForVersion(JSFunction* registerGlobal)
 {
     auto* globalObject = registerGlobal->globalObject();
     auto& vm = getVM(globalObject);
@@ -1007,7 +1007,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSetApiRegistry, (JSGlobalObject * globalObject, CallF
     return JSValue::encode(jsUndefined());
 }
 
-extern "C" void Bun__Telemetry__registerWithApi(JSGlobalObject* lexicalGlobalObject)
+extern "C" __attribute__((minsize)) void Bun__Telemetry__registerWithApi(JSGlobalObject* lexicalGlobalObject)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = globalObject->vm();

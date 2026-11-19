@@ -34,7 +34,7 @@ fn run_sync_with<R: FsReturn, A: FsArgument>(
     move_waiting_descriptors();
     let span = args.begin_span(global, operation.into(), "Sync");
     let result = dispatch(&args);
-    span.settle(&result);
+    span.settle(result.as_ref().err());
     match result {
         Err(err) => Err(global.throw_value(err.to_js(global))),
         Ok(res) => res.fs_to_js(global),
@@ -244,7 +244,7 @@ impl Binding {
         // R-2: blocking syscall — `&mut NodeFS` scoped to the call, no JS re-entry.
         let span = cp_args.begin_span(global, "cp", "Sync");
         let result = self.node_fs.with_mut(|nfs| nfs.cp(&cp_args, Flavor::Sync));
-        span.settle(&result);
+        span.settle(result.as_ref().err());
         match result {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
             Ok(()) => Ok(JSValue::UNDEFINED),

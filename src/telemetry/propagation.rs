@@ -8,6 +8,7 @@ pub const TRACEPARENT_LEN: usize = 55;
 /// Parse `00-<32 hex>-<16 hex>-<2 hex>`. Future versions (`!= 00`) are parsed
 /// per the spec's forward-compat rule: same layout, extra trailing fields
 /// allowed. Version `ff` is invalid.
+#[optimize(speed)]
 pub fn parse_traceparent(h: &[u8]) -> Option<SpanContext> {
     let h = bun_core::strings::trim(h, b" \t");
     if h.len() < TRACEPARENT_LEN {
@@ -48,6 +49,7 @@ pub fn parse_traceparent(h: &[u8]) -> Option<SpanContext> {
     })
 }
 
+#[optimize(speed)]
 pub fn format_traceparent(ctx: &SpanContext) -> [u8; TRACEPARENT_LEN] {
     let mut out = [0u8; TRACEPARENT_LEN];
     out[..3].copy_from_slice(b"00-");

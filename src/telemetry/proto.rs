@@ -31,6 +31,7 @@ pub const fn len_field_len(field: u32, payload: usize) -> usize {
     tag_len(field) + varint_len(payload as u64) + payload
 }
 
+#[optimize(speed)]
 pub fn write_varint(out: &mut Vec<u8>, mut v: u64) {
     while v >= 0x80 {
         out.push((v as u8) | 0x80);

@@ -131,6 +131,7 @@ impl From<u16> for Value<'_> {
 
 /// Body length of the `AnyValue` message for `v`.
 #[inline]
+#[optimize(speed)]
 fn any_value_body_len(v: &Value<'_>) -> usize {
     match *v {
         Value::Str(s) => len_field_len(f::AV_STRING, utf8_lossy_len(s)),
@@ -152,6 +153,7 @@ fn array_body_len(items: &[Value<'_>]) -> usize {
 }
 
 #[inline]
+#[optimize(speed)]
 fn write_any_value_body(out: &mut Vec<u8>, v: &Value<'_>) {
     match *v {
         Value::Str(s) => write_string(out, f::AV_STRING, s),
@@ -174,6 +176,7 @@ fn write_any_value_body(out: &mut Vec<u8>, v: &Value<'_>) {
 
 /// [`write_key_value`] with `attributeValueLengthLimit` applied to string
 /// values, including the string elements of an array value.
+#[optimize(speed)]
 pub fn write_key_value_limited(
     out: &mut Vec<u8>,
     field: u32,
@@ -203,6 +206,7 @@ pub fn write_key_value_limited(
     }
 }
 
+#[optimize(speed)]
 pub fn write_key_value(out: &mut Vec<u8>, field: u32, key: &[u8], v: &Value<'_>) {
     let av = any_value_body_len(v);
     let kv = len_field_len(f::KV_KEY, key.len()) + len_field_len(f::KV_VALUE, av);
@@ -347,6 +351,7 @@ pub fn redact_url(url: &[u8]) -> std::borrow::Cow<'_, [u8]> {
 
 /// `text` without what [`redact_url`] takes out of a URL. Where one ends is not known: URLs may follow one another
 /// behind a quote, or lie in a query.
+#[optimize(size)]
 pub fn redact_urls_in(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     use bun_core::strings;
     use std::borrow::Cow;
@@ -399,6 +404,7 @@ pub fn redact_urls_in(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {
 /// `string` fields must be UTF-8 or receivers reject the whole request; the
 /// ASCII case (nearly always) is one SIMD scan and a copy.
 #[inline]
+#[optimize(speed)]
 pub fn extend_utf8_lossy(out: &mut Vec<u8>, s: &[u8]) {
     if s.is_ascii() || core::str::from_utf8(s).is_ok() {
         out.extend_from_slice(s);
@@ -483,6 +489,7 @@ impl Exception<'_> {
 }
 
 /// The whole `Span.attributes` entry for `key` among encoded `Span` fields.
+#[optimize(speed)]
 pub fn find_attribute(fields: &[u8], key: &[u8]) -> Option<core::ops::Range<usize>> {
     let mut r = proto::Reader::new(fields);
     loop {
@@ -507,6 +514,7 @@ pub struct SpanWriter<'a> {
 impl<'a> SpanWriter<'a> {
     /// Writes identity, name, kind and timestamps.
     #[inline]
+    #[optimize(speed)]
     pub fn begin(
         out: &'a mut Vec<u8>,
         stub: &SpanStub,

@@ -548,6 +548,7 @@ impl Processor {
     /// Add `new`; with `replace_owner`, first drop every exporter not owned by
     /// another VM — in the same write, so a concurrent `export()` never sees
     /// an empty list in between.
+    #[optimize(size)]
     pub fn install_exporters(&self, replace_owner: Option<OwnerKey>, new: Vec<Arc<dyn Exporter>>) {
         let Some(owner) = replace_owner else {
             self.exporters.write().extend(new);
@@ -584,6 +585,7 @@ impl Processor {
 
     /// [`ExportAttempt::retry_later`]: `payload` goes through `exporter` again
     /// after `backoff`, as attempt `attempt`.
+    #[optimize(size)]
     fn park(
         &'static self,
         exporter: Arc<dyn Exporter>,
@@ -620,6 +622,7 @@ impl Processor {
 
     /// `Due`: retries whose backoff has elapsed; `OlderThan`: the parked
     /// retries a forceFlush is waiting on. Backoff already staggers them.
+    #[optimize(size)]
     fn dispatch_retries(&'static self, filter: RetryFilter) {
         let due: Vec<ParkedRetry> = {
             let mut q = self.retries.lock();
@@ -795,6 +798,7 @@ impl Processor {
     }
 
     /// What is pending now, and nothing that comes meanwhile.
+    #[optimize(size)]
     fn hand_out_all(&'static self, taker: Taker) -> Calls {
         let target = self.pending.lock().flush();
         let mut calls = Calls::new();
@@ -806,6 +810,7 @@ impl Processor {
         calls
     }
 
+    #[optimize(size)]
     fn queued_calls(&'static self, of: Option<OwnerKey>) -> Calls {
         let mut calls = Calls::new();
         for e in self.exporters_with_attempts() {
@@ -854,6 +859,7 @@ impl Processor {
     }
 
     /// True once every payload older than `t` is settled, or only waits because a server asked for it.
+    #[optimize(size)]
     pub fn settled_before(&self, t: FlushTarget) -> bool {
         if self.pending.lock().has_older_than(t) {
             return false;
@@ -973,6 +979,7 @@ impl Processor {
         self.inflight.load(Ordering::Acquire)
     }
 
+    #[optimize(size)]
     fn wait_idle(&self, deadline: MonoInstant, is_stuck: &dyn Fn() -> bool) {
         while self.inflight() != 0 && !deadline.remaining().is_zero() && !is_stuck() {
             let now = MonoInstant::now();
@@ -1020,6 +1027,7 @@ impl Processor {
         self.is_closing.store(false, Ordering::Release);
     }
 
+    #[optimize(size)]
     fn close_within(&'static self, budget: Duration, is_stuck: &dyn Fn() -> bool) {
         let deadline = MonoInstant::now() + budget;
         self.is_closing.store(true, Ordering::SeqCst);

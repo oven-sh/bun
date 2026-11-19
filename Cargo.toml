@@ -557,6 +557,13 @@ opt-level = 3
 [profile.release.package.bun_react_compiler]
 opt-level = "s"
 
+# What runs for every span is marked `#[optimize(speed)]`.
+[profile.release.package.bun_telemetry]
+opt-level = "s"
+
+[profile.release.package.bun_telemetry_jsc]
+opt-level = "s"
+
 [profile.release.package.bun_telemetry_cold]
 opt-level = "z"
 

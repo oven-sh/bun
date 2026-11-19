@@ -77,6 +77,7 @@ impl Span {
     }
 
     #[inline]
+    #[optimize(speed)]
     pub(crate) fn put_attribute(
         &self,
         global: &JSGlobalObject,
@@ -96,6 +97,7 @@ impl Span {
         })
     }
 
+    #[optimize(speed)]
     pub(crate) fn put_attributes(
         &self,
         global: &JSGlobalObject,
@@ -163,6 +165,7 @@ impl Span {
 
     /// An exception may be pending.
     #[inline]
+    #[optimize(speed)]
     pub(crate) fn finish(&self, global: &JSGlobalObject, this_value: JSValue, end_ns: u64) {
         if self.get_ended() {
             return;
@@ -190,6 +193,7 @@ impl Span {
 
     /// As `AsyncLocalStorage.prototype.enterWith()`, keeping the other values of `under`. No span
     /// that is active has displaced `span`.
+    #[optimize(speed)]
     pub(crate) fn enter_under(global: &JSGlobalObject, span: JSValue, under: Option<JSValue>) {
         if js::displaced_get_cached(span).is_some() {
             return;

@@ -149,6 +149,7 @@ pub(crate) fn for_each_attribute<F: FnMut(&[u8], JSValue) -> JsResult<()>>(
     object: JSValue,
     each: F,
 ) -> JsResult<()> {
+    #[optimize(speed)]
     unsafe extern "C" fn call<F: FnMut(&[u8], JSValue) -> JsResult<()>>(
         context: *mut c_void,
         key: &StringView<'_>,

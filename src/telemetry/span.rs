@@ -280,6 +280,7 @@ impl SpanStub {
 
     /// A child of `parent`, or a new root when it is `None` or invalid.
     #[inline]
+    #[optimize(speed)]
     pub fn start(
         rng: &mut IdRng,
         parent: Option<&SpanContext>,

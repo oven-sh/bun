@@ -8,6 +8,7 @@ use crate::outcome::Outcome;
 use crate::state::VmState;
 
 /// `None` if `instrument` starts no span there.
+#[optimize(speed)]
 pub(crate) fn parent_for(instrument: Instrument, binding: &Binding<'_>) -> Option<Parent> {
     if binding.suppresses_tracing() {
         return None;
@@ -16,6 +17,7 @@ pub(crate) fn parent_for(instrument: Instrument, binding: &Binding<'_>) -> Optio
     (parent.ctx.is_some() || bun_telemetry::allows_root(instrument)).then_some(parent)
 }
 
+#[optimize(speed)]
 pub(crate) fn start_under(
     global: &JSGlobalObject,
     parent: Parent,
@@ -35,6 +37,7 @@ pub(crate) fn start_under(
 
 /// Under the active span. `None` unless it records: it has no child to pass its ids on to.
 #[inline(never)]
+#[optimize(speed)]
 pub(crate) fn start_leaf(
     global: &JSGlobalObject,
     instrument: Instrument,
@@ -46,6 +49,7 @@ pub(crate) fn start_leaf(
 }
 
 #[inline]
+#[optimize(speed)]
 pub(crate) fn end(data: &mut SpanData, name: &[u8], end_ns: u64) {
     match VmState::current() {
         Some(state) if data.is_recording() => {
@@ -56,6 +60,7 @@ pub(crate) fn end(data: &mut SpanData, name: &[u8], end_ns: u64) {
     }
 }
 
+#[optimize(speed)]
 pub(crate) fn active_span_context(global: &JSGlobalObject) -> Option<SpanContext> {
     Binding::of(&context::active_binding(global)).parent().ctx
 }
@@ -68,12 +73,14 @@ struct Started {
 
 impl Started {
     #[inline(never)]
+    #[optimize(speed)]
     fn record(&mut self) -> Option<&mut Record> {
         self.data.record_mut(VmState::take_record)
     }
 
     #[inline(never)]
     #[allow(clippy::boxed_local, reason = "freed here and not at every call site")]
+    #[optimize(speed)]
     fn end(mut self: Box<Self>) {
         removable_definition!(Telemetry, Started::end);
         end(&mut self.data, b"", self.end_ns);

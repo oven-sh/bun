@@ -107,6 +107,7 @@ fn describe_request(
 }
 
 /// `https`: the listener terminates TLS. The response cannot tell, HTTP/2 also runs in cleartext.
+#[optimize(speed)]
 fn start(
     global: &JSGlobalObject,
     req: &AnyRequest,

@@ -299,6 +299,7 @@ impl OtlpHttpExporter {
         HTTPThread::schedule([http]);
     }
 
+    #[optimize(size)]
     fn pass_turn(self: &Arc<Self>, finished_spans: u32, was_accepted: bool) {
         let mut turns = self.turns.lock();
         turns.unfinished_spans -= finished_spans;
@@ -324,6 +325,7 @@ impl OtlpHttpExporter {
         Arc::clone(self).send(next);
     }
 
+    #[optimize(size)]
     fn failed(self: Arc<Self>, attempt: ExportAttempt, error: &SendError, began_at_exit: bool) {
         let is_closing = processor::global().is_closing();
         if !error.is_retryable()
@@ -411,6 +413,7 @@ impl Request {
         unsafe { bun_core::heap::take(this) }.finish(result);
     }
 
+    #[optimize(size)]
     unsafe fn release_at_shutdown(this: *mut ()) {
         // SAFETY: the box of `send`, which gets no result any more.
         let this = unsafe { bun_core::heap::take(this.cast::<Self>()) };
@@ -495,6 +498,7 @@ static WARNINGS: Guarded<Vec<String>> = Guarded::new(Vec::new());
 static WRITER: OnDemandThread = OnDemandThread::new(ConsoleExporter::write_all);
 
 impl ConsoleExporter {
+    #[optimize(size)]
     fn write_all() {
         static IS_WRITING: Guarded<()> = Guarded::new(());
         let _writing = IS_WRITING.lock();

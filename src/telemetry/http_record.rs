@@ -398,6 +398,7 @@ pub(crate) struct Queue {
 
 impl Queue {
     #[inline]
+    #[optimize(speed)]
     pub(crate) fn push(&mut self, facts: &Facts, p: &SpanParts<'_>, limits: &'static Limits) {
         let parts = [
             &facts.texts,
@@ -456,6 +457,7 @@ impl Queue {
     }
 
     /// As `ScopeSpans.spans` entries.
+    #[optimize(speed)]
     pub(crate) fn encode(&self, out: &mut Vec<u8>) {
         let mut bytes = &self.bytes[..];
         for span in &self.spans {
@@ -548,6 +550,7 @@ impl Derived<'_, '_> {
 }
 
 impl Queued {
+    #[optimize(speed)]
     fn encode(&self, parts: &[&[u8]; 5], out: &mut Vec<u8>) {
         use UserSetKeys as K;
         let [texts, name, trace_state, status_message, fields] = *parts;

@@ -141,6 +141,7 @@ impl Record {
         &self.text[self.name_len as usize..]
     }
 
+    #[optimize(speed)]
     pub fn set_name(&mut self, name: &[u8]) {
         let name = otlp::truncate_utf8(name, u16::MAX as usize);
         self.text
@@ -174,6 +175,7 @@ impl Record {
     }
 
     /// The last write wins, in the place of the first.
+    #[optimize(speed)]
     pub fn set_attribute(&mut self, key: &[u8], v: &Value<'_>) {
         if let (Some(facts), b"http.route", Value::Str(route)) = (self.http_mut(), key, v) {
             return facts.set_route(route);
@@ -394,6 +396,7 @@ impl SpanData {
 
     /// `None` unless the span is recording. `take` supplies the record of a span that has none yet.
     #[inline]
+    #[optimize(speed)]
     pub fn record_mut(
         &mut self,
         take: impl FnOnce() -> Option<Box<Record>>,
@@ -415,6 +418,7 @@ impl SpanData {
 
     /// Queues the span. An empty `name` leaves the recorded one.
     /// `end_ns` 0 is now.
+    #[optimize(speed)]
     pub fn end(&mut self, records: &mut RecordPool, name: &[u8], end_ns: u64) {
         if !self.is_recording() {
             return self.discard();

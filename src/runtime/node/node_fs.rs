@@ -1578,7 +1578,7 @@ mod _async_tasks {
             // SAFETY: fn contract. The borrow ends before the free below.
             let (result, completion, global_ref, tracker) = unsafe {
                 let task = &mut *this;
-                core::mem::take(&mut task.span).settle(&task.result);
+                core::mem::take(&mut task.span).settle(task.result.as_ref().err());
                 if let Ok(result) = &task.result {
                     task.args.write_back(result.bytes_read());
                 }
@@ -1643,10 +1643,19 @@ mod _async_tasks {
         }
         #[inline(always)]
         fn begin_span(&self, global: &JSGlobalObject, operation: &str, suffix: &str) -> NativeSpan {
-            traced_fs::begin(global, operation, suffix, || {
-                self.paths()[0].map(PathLike::slice)
-            })
+            begin_span_at(global, operation, suffix, self.paths()[0])
         }
+    }
+
+    /// Not generic, so that all the calls share what runs while tracing is on.
+    #[inline(always)]
+    fn begin_span_at(
+        global: &JSGlobalObject,
+        operation: &str,
+        suffix: &str,
+        path: Option<&PathLike<'static>>,
+    ) -> NativeSpan {
+        traced_fs::begin(global, operation, suffix, || path.map(PathLike::slice))
     }
 
     fn path_of<'a>(file: &'a PathOrFileDescriptor<'static>) -> Option<&'a PathLike<'static>> {
@@ -2054,7 +2063,7 @@ mod _async_tasks {
                 span,
             } = this;
             let global_object = cx.global();
-            span.settle(&result);
+            span.settle(result.as_ref().err());
             let _dispatch = js.tracker.dispatch(global_object);
 
             move_waiting_descriptors();

@@ -12,6 +12,7 @@ use crate::trace_state::TraceState;
 
 const MAX_ARRAY_ELEMENTS: u32 = 4096;
 
+#[optimize(speed)]
 fn non_string_scalar(value: JSValue) -> Option<Value<'static>> {
     if value.is_int32() {
         return Some(Value::Int(value.as_int32().into()));

@@ -21,6 +21,7 @@ struct Start {
 }
 
 #[inline]
+#[optimize(speed)]
 fn start(global: &JSGlobalObject, name: JSValue, under: &Option<JSValue>, how: Start) -> JSValue {
     let binding = Binding::of(under);
     let mut parent = binding.parent();
@@ -99,6 +100,7 @@ impl Tracer {
     }
 
     /// The span, and the binding whose other values stay active beside it.
+    #[optimize(speed)]
     fn start_with_options(
         &self,
         global: &JSGlobalObject,

@@ -1080,10 +1080,12 @@ describe("bundler files option", () => {
       cwd: String(dir),
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const { logs, urls } = JSON.parse(stdout);
-    expect(logs).toEqual([]);
-    expect(urls).toEqual([expect.stringMatching(/^\.\/favicon-\w+\.ico$/), urls[0]]);
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // No warning, and the same output file for both links.
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: expect.stringMatching(/^\{"logs":\[\],"urls":\["(\.\/favicon-\w+\.ico)","\1"\]\}\n$/),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

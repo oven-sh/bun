@@ -180,30 +180,24 @@ impl<'a> HTMLScanner<'a> {
                     [resolve_path::dirname::<platform::Auto>(page), &url[..end]]
                 };
                 // A URL of any length: a path that does not fit in the buffer names no file.
-                let mut file = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
+                let file = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
                     fs::FileSystem::get().top_level_dir(),
                     &mut buf.0[..],
                     &parts,
-                )?
-                .to_vec();
+                )?;
                 // The record is what a required URL has, so that the bundler finds the in-memory file in the same way.
-                if rooted && in_memory(&file) {
-                    return Some(file);
+                if rooted && in_memory(file.as_bytes()) {
+                    return Some(file.as_bytes().to_vec());
                 }
                 if !rooted && in_memory(&url[..end]) {
                     return Some(url[..end].to_vec());
                 }
-                file.push(0);
-                let path = bun_core::ZStr::from_buf(&file, file.len() - 1);
                 // Not the module resolver: `content="/og?title=..."` or `content="logo"` must not fail a build or find a package.
                 matches!(
-                    sys::exists_at_type(sys::Fd::cwd(), path),
+                    sys::exists_at_type(sys::Fd::cwd(), file),
                     Ok(sys::ExistsAtType::File)
                 )
-                .then(|| {
-                    file.pop();
-                    file
-                })
+                .then(|| file.as_bytes().to_vec())
             })
     }
 

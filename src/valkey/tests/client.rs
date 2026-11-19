@@ -571,6 +571,15 @@ mod lifecycle {
     }
 
     #[test]
+    fn connect_after_close_is_retried() {
+        let mut it = reach(Closed);
+        it.client.connect();
+        it.attempt = it.client.redial();
+        it.lost();
+        assert_eq!(state_of(it), Backoff);
+    }
+
+    #[test]
     fn a_preconnect_that_is_refused_is_forgotten() {
         for replies in ["-NO\r\n", "+OK\r\n-NO\r\n"] {
             let mut it = Driver::new(database(1));

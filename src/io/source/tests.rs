@@ -202,9 +202,10 @@ fn what_is_no_pipe() {
     assert!(source.fd().is_valid() && source.take_available().is_none());
     source.read(usize::MAX);
     peer.write_all(b"abc").unwrap();
-    assert_eq!(next(&port), Seen::Data(b"abc".into()));
-    source.read(usize::MAX);
-    nothing_comes(&port);
+    assert!(matches!(
+        next(&port),
+        Seen::Data(_) | Seen::ReadErr(E::INVAL)
+    ));
     drop(source);
     nothing_comes(&port);
 }

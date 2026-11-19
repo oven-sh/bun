@@ -20,6 +20,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { ar, cc, cxx, link, nasm, pch, type PrecompiledHeader } from "./compile.ts";
 import type { Config } from "./config.ts";
+import { checkedStampPath, pinnedSha256 } from "./download.ts";
 import { assert } from "./error.ts";
 import { computeSourceIdentity, fetchCliPath } from "./fetch-cli.ts";
 import { computeDepFlags, computeTargetLinkFlags, safeStackFlags } from "./flags.ts";
@@ -982,18 +983,21 @@ function emitPrebuilt(
     return inc === "." ? destDir : resolve(destDir, inc);
   });
 
+  // A missing pin is for the fetch to report.
+  const pins = source.sha256sums !== undefined ? [source.sha256sums] : [];
+  const sha256 = source.sha256sums !== undefined ? pinnedSha256(source.sha256sums, source.url) : undefined;
+
   // Outputs: stamp + all libs and files. Stamp is the explicit output; the
   // rest are implicit (so deleting them correctly retriggers fetch, and restat
   // prunes downstream when fetch was a no-op).
   n.build({
     outputs: [stamp],
-    // .sha256: a checkout with no pin for this version can have filled the shared cache since.
-    implicitOutputs: [...libs, ...files, ...(source.sha256sums !== undefined ? [resolve(destDir, ".sha256")] : [])],
+    implicitOutputs: [...libs, ...files, ...(sha256 !== undefined ? [checkedStampPath(destDir, sha256)] : [])],
     rule: "dep_fetch_prebuilt",
     inputs: [],
     // Not download.ts: it has a lot of shared helpers — editing
     // those shouldn't re-download a multi-hundred-MB WebKit tarball.
-    implicitInputs: [fetchCliPath, ...(source.sha256sums !== undefined ? [source.sha256sums] : [])],
+    implicitInputs: [fetchCliPath, ...pins],
     vars: {
       name,
       url: source.url,
@@ -1034,7 +1038,7 @@ function emitPrebuilt(
     objects: [],
     checks,
     generatedHeaders: [],
-    configureInputs: provides.contentsDecideGraph ? [stamp] : [],
+    configureInputs: [...(provides.contentsDecideGraph ? [stamp] : []), ...pins],
     includes,
     defines: provides.defines ?? [],
     outputs,

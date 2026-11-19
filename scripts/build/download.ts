@@ -291,20 +291,27 @@ export function pinnedSha256(sums: string, url: string): string | undefined {
 }
 
 /**
- * `.identity` says what the tree is, `.sha256` which pin its tarball was checked against. Two files, because checkouts
- * share the cache: one that has no pin for this identity has to take a checked tree as it is, not replace it.
+ * The file that says `tree`'s tarball was checked against `sha256`. Checkouts share the cache, so it is apart from
+ * `.identity` (one with no pin takes a checked tree as it is) and has the pin in its name (ninja sees it missing once
+ * one with another pin has replaced the tree).
  */
+export function checkedStampPath(tree: string, sha256: string): string {
+  return resolve(tree, `.sha256-${sha256}`);
+}
+
 export async function stampPrebuilt(tree: string, identity: string, sha256: string | undefined): Promise<void> {
-  // The tarball may have brought one: it does not get to vouch for itself.
-  await rm(resolve(tree, ".sha256"), { recursive: true, force: true });
-  if (sha256 !== undefined) await writeFile(resolve(tree, ".sha256"), sha256 + "\n");
+  // The tarball may have brought some: it does not get to vouch for itself.
+  for (const entry of await readdir(tree)) {
+    if (/^\.sha256-/i.test(entry)) await rm(resolve(tree, entry), { recursive: true, force: true });
+  }
+  if (sha256 !== undefined) await writeFile(checkedStampPath(tree, sha256), "");
   await writeFile(resolve(tree, ".identity"), identity + "\n");
 }
 
 export function prebuiltIsCurrent(tree: string, identity: string, sha256: string | undefined): boolean {
-  const holds = (stamp: string, value: string) =>
-    existsSync(resolve(tree, stamp)) && readFileSync(resolve(tree, stamp), "utf8").trim() === value;
-  return holds(".identity", identity) && (sha256 === undefined || holds(".sha256", sha256));
+  const stamp = resolve(tree, ".identity");
+  if (!existsSync(stamp) || readFileSync(stamp, "utf8").trim() !== identity) return false;
+  return sha256 === undefined || existsSync(checkedStampPath(tree, sha256));
 }
 
 /**

@@ -21,6 +21,7 @@ import { dirname, join } from "node:path";
 import { pins } from "../../scripts/build/ci-images/spec.ts";
 import type { Config } from "../../scripts/build/config.ts";
 import {
+  checkedStampPath,
   checkSha256,
   downloadRetry,
   downloadWithRetry,
@@ -285,10 +286,12 @@ describe("prebuilt tarballs", () => {
       /** Which archive is unpacked. Undefined: the cache has nothing in it at all. */
       unpacked: () =>
         existsSync(cache) && readdirSync(cache).length > 0 ? readFileSync(join(dest, "from"), "utf8") : undefined,
+      isStamped: (pinned: Uint8Array) => existsSync(checkedStampPath(dest, sha256Of(pinned))),
       prefetchFile: (path: string, bytes: Uint8Array) =>
         write(prefetchPathForUrl(server.url.href + path, prefetch)!, bytes),
       prefetchTree(identity: string, from: string, checkedAgainst?: Uint8Array) {
-        if (checkedAgainst) write(join(prefetch, "extracted", "webkit", ".sha256"), sha256Of(checkedAgainst) + "\n");
+        if (checkedAgainst)
+          write(checkedStampPath(join(prefetch, "extracted", "webkit"), sha256Of(checkedAgainst)), "");
         write(join(prefetch, "extracted", "webkit", ".identity"), identity + "\n");
         write(join(prefetch, "extracted", "webkit", "from"), from);
       },
@@ -338,7 +341,7 @@ describe("prebuilt tarballs", () => {
 
   test("replaces a tree that was unpacked unchecked, or checked against another pin", async () => {
     const [second, third] = await Promise.all([archive("second"), archive("third")]);
-    const first = await archive("first", { "bun-webkit/.sha256": sha256Of(second) + "\n" });
+    const first = await archive("first", { [`bun-webkit/.sha256-${sha256Of(second)}`]: "" });
     const assets = { [TARBALL]: first };
     await using r = release(assets);
 
@@ -350,6 +353,8 @@ describe("prebuilt tarballs", () => {
     assets[TARBALL] = third;
     await r.fetchPrebuilt(third);
     expect(r.unpacked()).toBe("third");
+    // An output of the fetch edge: a checkout that pins `second` runs its fetch again.
+    expect([second, third].map(r.isStamped)).toEqual([false, true]);
   });
 
   test("a fetch without pins leaves a checked tree alone", async () => {

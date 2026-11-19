@@ -6,7 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join, relative, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 
 import { cxx } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
@@ -21,6 +21,7 @@ import {
   webkitTestAotPath,
   type WebKitAotFile,
 } from "../../scripts/build/deps/webkit.ts";
+import { checkedStampPath, pinnedSha256 } from "../../scripts/build/download.ts";
 import { BuildError } from "../../scripts/build/error.ts";
 import { Ninja, readManifest } from "../../scripts/build/ninja.ts";
 import { getProfile } from "../../scripts/build/profiles.ts";
@@ -877,10 +878,15 @@ describe("Provides.files", () => {
 
   test("come from a fetch that is given the pins, and runs again when they change", () => {
     using g = graph();
-    resolveDep(g.n, g.cfg, webkit, new Map<DepName, ResolvedDep>());
+    const resolved = resolveDep(g.n, g.cfg, webkit, new Map<DepName, ResolvedDep>())!;
     const fetch = readManifest(g.n.toString()).edges.find(edge => edge.rule === "dep_fetch_prebuilt")!;
+    const source = webkit.source(g.cfg);
+    if (source.kind !== "prebuilt") throw new Error(`a ${source.kind} source`);
     expect(fetch.implicitInputs.map(input => resolve(g.cfg.buildDir, input))).toContain(webkitSha256Sums);
-    expect(fetch.implicitOutputs.some(output => basename(output) === ".sha256")).toBe(true);
+    expect(fetch.implicitOutputs).toContain(
+      checkedStampPath(source.destDir!, pinnedSha256(webkitSha256Sums, source.url)!),
+    );
+    expect(resolved.configureInputs).toContain(webkitSha256Sums);
     expect(fetch.bindings.sha256sums).toBe(quote(webkitSha256Sums, g.cfg.host.os === "windows"));
   });
 

@@ -183,7 +183,10 @@ export async function finish() {
   console.log(lines.join("\\n"));
 }
 `;
-  files["styles.module.css"] = `.a { color: red }\n`;
+  // The stylesheet names two more files, so a chunk that holds a copy of the class names loads a chain of stylesheets.
+  files["styles.module.css"] = `@import "./base.css";\n.a { composes: b from "./other.module.css"; color: red }\n`;
+  files["base.css"] = `body { margin: 0 }\n`;
+  files["other.module.css"] = `.b { color: blue }\n`;
   const entries = ["entry.ts"];
   files["entry.ts"] = `import { finish } from "./log.ts";\nawait import("./f0.ts");\nawait finish();\n`;
   if (twoEntries) {

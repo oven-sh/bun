@@ -1038,12 +1038,14 @@ fn a_flood_is_left_to_gather() {
         turn(&port, Duration::from_secs(10));
         (CLOCK_AHEAD.get() - before).as_micros()
     };
-    let pause = if has_other_cpu() { 9..12 } else { 0..2 };
+    let pause = if has_other_cpu() { 19..22 } else { 0..2 };
     for _ in 0..2 {
         assert!((0..4).all(|_| micros(false) < 2));
         assert!((0..4).all(|_| pause.contains(&micros(false))));
         assert!(micros(true) < 2);
     }
+    let pauses = (0..128).filter(|_| micros(false) >= 2).count();
+    assert_eq!(pauses, if has_other_cpu() { 120 } else { 0 });
 }
 
 #[test]

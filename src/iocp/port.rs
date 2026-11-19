@@ -266,6 +266,7 @@ impl Port {
     pub fn wait(&self, timeout_ns: Option<u64>) -> usize {
         /// Less than a sleep takes.
         const AT_ONCE_NS: u64 = 10_000;
+        const FLOOD_TURN_NS: u64 = 20_000;
 
         if self.next.get() < self.end.get() {
             return self.undispatched();
@@ -275,7 +276,7 @@ impl Port {
         let start = (only_receives && timeout_ns != Some(0)).then(|| {
             // A sender pays for every time that it has to tell us.
             let mut now = now_ns();
-            while turns >= 4 && now < began_at + AT_ONCE_NS && has_other_cpu() {
+            while turns >= 4 && now < began_at + FLOOD_TURN_NS && has_other_cpu() {
                 core::hint::spin_loop();
                 now = now_ns();
             }
@@ -291,7 +292,8 @@ impl Port {
         if let Some((start, now)) = start.map(|start| (start, now_ns()))
             && now - start < AT_ONCE_NS
         {
-            self.flood.set((turns.saturating_add(1), now));
+            // After a pause there is always something, so it has to show itself again.
+            self.flood.set(((turns + 1) % 64, now));
         }
         self.undispatched()
     }

@@ -235,6 +235,8 @@ async function request(
       path: target.pathname + target.search,
       method: method ?? "GET",
       query: undefined,
+      // This function has its own error for the option, below.
+      throwOnError: false,
     });
     if (throwOnError && result.statusCode >= 400 && result.statusCode < 600) {
       result.body.destroy();
@@ -554,6 +556,35 @@ function utf8WithoutBOM(buf: Buffer) {
     : buf.toString();
 }
 
+// The error of request({ throwOnError }), like undici 6: it has the response, and the body when that is JSON or text.
+async function responseStatusCodeError(body: DispatchBodyReadable, statusCode: number, statusText, headers) {
+  const chunks: Buffer[] = [];
+  let length = 0;
+  try {
+    for await (const chunk of body as AsyncIterable<Buffer>) {
+      chunks.push(chunk);
+      // undici's limit. A longer body is not read to its end.
+      if ((length += chunk.length) > 131072) {
+        length = 0;
+        break;
+      }
+    }
+  } catch {
+    length = 0;
+  }
+  let payload;
+  const contentType = headers["content-type"];
+  if (length > 0 && typeof contentType === "string") {
+    try {
+      const text = utf8WithoutBOM(Buffer.concat(chunks, length));
+      if (contentType.startsWith("application/json")) payload = JSON.parse(text);
+      else if (contentType.startsWith("text/")) payload = text;
+    } catch {}
+  }
+  const message = `Response status code ${statusCode}${statusText ? `: ${statusText}` : ""}`;
+  return new ResponseStatusCodeError(message, statusCode, headers, payload);
+}
+
 // dispatcher.request() body: a Readable with undici's body-mixin methods.
 class DispatchBodyReadable extends Readable {
   #used = false;
@@ -577,6 +608,10 @@ class DispatchBodyReadable extends Readable {
   }
 
   _destroy(err, callback) {
+    // Like undici, for a body that somebody reads. undici also errors an unread body, which nobody can catch.
+    if (!err && (this.#reading || this.#used) && !this._readableState.endEmitted) {
+      err = new RequestAbortedError("Request aborted");
+    }
     this.#onDestroy(err);
     // Like undici: a body nobody reads yet fails one macrotask later, so a caller that awaited request() can still listen for it.
     if (this.#reading) callback(err);
@@ -733,7 +768,7 @@ class Dispatcher extends EventEmitter {
             else if (typeof signal.on === "function") signal.on("abort", onSignalAbort);
           }
         },
-        onHeaders: (statusCode, rawHeaders, resume, _statusText) => {
+        onHeaders: (statusCode, rawHeaders, resume, statusText) => {
           // onHeaders after a terminal callback violates the contract; a late 1xx must not fire onInfo either.
           if (completed) return true;
           // 1xx informational responses precede the final onHeaders, like undici.
@@ -755,6 +790,10 @@ class Dispatcher extends EventEmitter {
             },
             headers["content-type"],
           );
+          if (opts.throwOnError && statusCode >= 400) {
+            responseStatusCodeError(body, statusCode, statusText, headers).then(fail);
+            return true;
+          }
           callback(null, {
             statusCode,
             headers,
@@ -1124,7 +1163,22 @@ class HeadersOverflowError extends UndiciError {}
 class BodyTimeoutError extends UndiciError {}
 class RequestContentLengthMismatchError extends UndiciError {}
 class ConnectTimeoutError extends UndiciError {}
-class ResponseStatusCodeError extends UndiciError {}
+class ResponseStatusCodeError extends UndiciError {
+  body: unknown = undefined;
+  headers: unknown = undefined;
+  status: number | undefined = undefined;
+  statusCode: number | undefined = undefined;
+
+  constructor(message?: string, statusCode?: number, headers?: unknown, body?: unknown) {
+    super(message);
+    this.name = "ResponseStatusCodeError";
+    this.code = "UND_ERR_RESPONSE_STATUS_CODE";
+    this.body = body;
+    this.status = statusCode;
+    this.statusCode = statusCode;
+    this.headers = headers;
+  }
+}
 class InvalidArgumentError extends UndiciError {
   constructor(message) {
     super(message);
@@ -1375,14 +1429,18 @@ class InflateStream extends Transform {
       const raw = (chunk[0] & 0x0f) !== 0x08;
       inflate = this.#inflate = raw ? lazyZlib.createInflateRaw(this.#options) : lazyZlib.createInflate(this.#options);
       inflate.on("data", data => this.push(data)).on("error", err => this.destroy(err));
+      // Also fires early, when bytes follow the end of the deflate stream. zlib then never completes that write.
+      inflate.on("end", () => this.push(null));
     }
     inflate.write(chunk, encoding, callback);
   }
 
-  _flush(callback) {
+  // Not _flush: Transform would end the output at once, before the inflate gave its last bytes.
+  _final(callback) {
     const inflate = this.#inflate;
-    if (inflate === undefined) return callback();
-    inflate.once("end", callback).end();
+    if (inflate === undefined) this.push(null);
+    else inflate.end();
+    callback();
   }
 
   _destroy(err, callback) {
@@ -1540,6 +1598,12 @@ function fetchViaDispatcher(dispatcher, input, init) {
     if (next.protocol !== "http:" && next.protocol !== "https:") {
       throw new TypeError("URL scheme must be a HTTP(S) scheme");
     }
+    // The fetch standard checks this before the method changes: only a 303 may follow with a body that has no source.
+    if (statusCode !== 303 && body != null && !replay) {
+      throw new TypeError(
+        `Cannot follow the ${statusCode} redirect to ${next.origin}: a stream body cannot be sent twice`,
+      );
+    }
     if (
       statusCode === 303
         ? method !== "GET" && method !== "HEAD"
@@ -1555,10 +1619,6 @@ function fetchViaDispatcher(dispatcher, input, init) {
       headers.delete("content-length");
     } else if (replay) {
       body = replay.clone().body;
-    } else if (body != null) {
-      throw new TypeError(
-        `Cannot follow the ${statusCode} redirect to ${next.origin}: a stream body cannot be sent twice`,
-      );
     }
     if (next.origin !== url.origin) {
       headers.delete("authorization");
@@ -1609,9 +1669,19 @@ function fetchViaDispatcher(dispatcher, input, init) {
       }
     };
     const closeBody = () => takeController()?.close();
+    let decodeDone = false;
+    const decodeFinished = () => {
+      decodeDone = true;
+      closeBody();
+      // Bytes followed the end of the encoded stream. They are dropped, and must not leave the dispatcher paused.
+      if (live) {
+        decodeInput.destroy();
+        resumeData?.();
+      }
+    };
     // The pipeline ended: with an error when a decoder failed, or when this hop destroyed it.
     const decodeEnded = err => {
-      if (!err) return;
+      if (!err || decodeDone) return;
       if (live) {
         const abort = abortHop;
         fail(err);
@@ -1711,7 +1781,7 @@ function fetchViaDispatcher(dispatcher, input, init) {
                 if (decoders !== undefined) {
                   decodeInput = new Readable({ read: wantData });
                   decodeOutput = pipelineStreams([decodeInput, ...decoders], decodeEnded);
-                  decodeOutput.on("readable", pumpDecoded).on("end", closeBody);
+                  decodeOutput.on("readable", pumpDecoded).on("end", decodeFinished);
                 }
               }
               responseBody = new ReadableStream(
@@ -1744,7 +1814,7 @@ function fetchViaDispatcher(dispatcher, input, init) {
           onData: chunk => {
             if (!live) return true;
             // Copied: the dispatch contract only guarantees the chunk during the callback.
-            if (decodeInput !== null) return decodeInput.push(Buffer.from(chunk));
+            if (decodeInput !== null) return decodeDone || decodeInput.push(Buffer.from(chunk));
             const controller = readingController ?? bodyController?.deref();
             if (!controller) return true;
             readingController = null;
@@ -1766,8 +1836,8 @@ function fetchViaDispatcher(dispatcher, input, init) {
               return;
             }
             // A decoded body ends when its decoders gave their last bytes.
-            if (decodeInput !== null) decodeInput.push(null);
-            else closeBody();
+            if (decodeInput === null) closeBody();
+            else if (!decodeDone) decodeInput.push(null);
           },
           onError: fail,
         },

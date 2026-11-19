@@ -2427,6 +2427,111 @@ describe("undici", () => {
       await pool.close();
     });
 
+    it("a deflate fetch() body ends when bytes follow the end of the deflate stream, like undici", async () => {
+      const text = Buffer.alloc(5000, "hello ").toString();
+      const junk = Buffer.alloc(40000, "J");
+      const bodies: Record<string, Buffer> = { zlib: zlib.deflateSync(text), raw: zlib.deflateRawSync(text) };
+      const completed: string[] = [];
+      const dispatcher = {
+        dispatch(opts: any, handler: any) {
+          const name = opts.path.slice(1);
+          // More than the decoders buffer, so this dispatcher is paused on the way and has to be resumed.
+          const parts = [bodies[name], ...Array.from({ length: 12 }, () => junk)];
+          let sent = 0;
+          const send = () => {
+            while (sent < parts.length) if (handler.onData(parts[sent++]) === false) return;
+            completed.push(name);
+            handler.onComplete([]);
+          };
+          handler.onConnect(() => {});
+          handler.onHeaders(200, [Buffer.from("content-encoding"), Buffer.from("deflate")], send, "OK");
+          send();
+          return true;
+        },
+      };
+      const read = async (name: string) =>
+        (await (await undiciFetch(`http://localhost:1/${name}`, { dispatcher } as any)).text()) === text;
+      expect({ zlib: await read("zlib"), raw: await read("raw") }).toEqual({ zlib: true, raw: true });
+      // The bytes after the end are dropped, and the dispatcher is not left paused on them.
+      while (completed.length < 2) await new Promise(resolve => setImmediate(resolve));
+      expect(completed).toEqual(["zlib", "raw"]);
+    });
+
+    it("fetch with a dispatcher does not follow a 301 with a stream body, like undici", async () => {
+      const paths: string[] = [];
+      const dispatcher = {
+        dispatch(opts: any, handler: any) {
+          paths.push(`${opts.method} ${opts.path}`);
+          handler.onConnect(() => {});
+          handler.onHeaders(301, [Buffer.from("location"), Buffer.from("/next")], () => {}, "");
+          return true;
+        },
+      };
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("payload"));
+          controller.close();
+        },
+      });
+      // A POST becomes a GET on a 301, but the standard rejects before that: the stream has no source to send again.
+      await expect(
+        undiciFetch("http://localhost:1/a", { dispatcher, method: "POST", body, duplex: "half" } as any),
+      ).rejects.toThrow("a stream body cannot be sent twice");
+      expect(paths).toEqual(["POST /a"]);
+    });
+
+    it("request({ throwOnError }) on a dispatcher rejects with ResponseStatusCodeError, like undici 6", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          const path = new URL(req.url).pathname;
+          if (path === "/json") return Response.json({ why: "no" }, { status: 500 });
+          if (path === "/text") return new Response("gone", { status: 404, headers: { "content-type": "text/plain" } });
+          return new Response("ok");
+        },
+      });
+      const pool = new Pool(`http://localhost:${server.port}`);
+      const failure = async (path: string) => {
+        const err: any = await pool.request({ path, method: "GET", throwOnError: true }).catch(err => err);
+        return { name: err.name, code: err.code, statusCode: err.statusCode, status: err.status, body: err.body };
+      };
+      const base = { name: "ResponseStatusCodeError", code: "UND_ERR_RESPONSE_STATUS_CODE" };
+      expect({ json: await failure("/json"), text: await failure("/text") }).toEqual({
+        json: { ...base, statusCode: 500, status: 500, body: { why: "no" } },
+        text: { ...base, statusCode: 404, status: 404, body: "gone" },
+      });
+      const ok = await pool.request({ path: "/ok", method: "GET", throwOnError: true });
+      expect(await ok.body.text()).toBe("ok");
+      await pool.close();
+    });
+
+    it("destroy() of a request() body that is being read rejects the read with RequestAbortedError", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              // One chunk, then the body stays open.
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("first"));
+              },
+            }),
+          ),
+      });
+      const pool = new Pool(`http://localhost:${server.port}`);
+      const { body } = await pool.request({ path: "/", method: "GET" });
+      const reading = body.text();
+      body.destroy();
+      await expect(reading).rejects.toHaveProperty("code", "UND_ERR_ABORTED");
+      // A body that nobody reads closes without an error, so there is nothing to leave uncaught.
+      const unread = (await pool.request({ path: "/", method: "GET" })).body;
+      const closed = Promise.withResolvers<void>();
+      unread.on("close", closed.resolve).destroy();
+      await closed.promise;
+      expect(unread.errored).toBeNull();
+      await pool.destroy();
+    });
+
     it("request() through a closed stock Agent rejects, like fetch()", async () => {
       const agent = new Agent();
       await agent.close();

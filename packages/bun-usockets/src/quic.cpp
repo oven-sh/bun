@@ -1531,6 +1531,7 @@ static enum ssl_verify_result_t us_quic_client_verify(SSL *ssl, uint8_t *out_ale
     if (!vctx) return ssl_verify_invalid;
     if (X509_STORE_CTX_init(vctx.get(), store, leaf, chain) != 1) return ssl_verify_invalid;
     X509_STORE_CTX_set_default(vctx.get(), "ssl_server");
+    if (X509_VERIFY_PARAM_set1(X509_STORE_CTX_get0_param(vctx.get()), SSL_get0_param(ssl)) != 1) return ssl_verify_invalid;
     if (us_x509_verify_cert(vctx.get(), X509_PURPOSE_SSL_SERVER) != 1) return ssl_verify_invalid;
     const char *hostname = qs->hostname.get();
     return hostname && Bun__X509__checkServerIdentity(leaf, hostname, strlen(hostname)) ? ssl_verify_ok : ssl_verify_invalid;

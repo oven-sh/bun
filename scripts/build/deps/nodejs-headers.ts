@@ -7,22 +7,20 @@
  */
 
 import { resolve } from "node:path";
-import { pins } from "../ci-images/spec.ts";
 import type { Dependency } from "../source.ts";
 
 /**
  * Node.js compat version — reported via process.version and used for the
- * headers download URL. It is the Node.js CI's images install, so the tests
- * that compare against `node` compare against the same release.
+ * headers download URL. CI's images install a newer Node.js (`pins.nodejs`).
  * Override via `--nodejs-version=X.Y.Z` to test a bump.
  */
-export const NODEJS_VERSION = pins.nodejs.version;
+export const NODEJS_VERSION = "26.3.0";
 
 /** Node.js NODE_MODULE_VERSION — for native addon ABI compat. */
 export const NODEJS_ABI_VERSION = "147";
 
-/** V8 version reported by process.versions.v8 — must match the pinned Node.js version's. */
-export const NODEJS_V8_VERSION = "14.6.202.34-node.40";
+/** V8 version reported by process.versions.v8 — must match NODEJS_VERSION's. */
+export const NODEJS_V8_VERSION = "14.6.202.34-node.20";
 
 export const nodejsHeaders: Dependency = {
   name: "nodejs",

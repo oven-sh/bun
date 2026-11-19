@@ -78,6 +78,8 @@ pub(crate) struct Controller {
     model: Model,
     pacer: Pacer,
     in_flight: u64,
+    /// There has not been enough room in the window since.
+    is_full: bool,
     /// As of the last packet, however many ACK frames have come in since.
     prior_in_flight: u64,
     last_sent: u64,
@@ -100,6 +102,7 @@ impl Controller {
             },
             pacer: Pacer::default(),
             in_flight: 0,
+            is_full: false,
             prior_in_flight: 0,
             last_sent: 0,
             last_foreign: 0,
@@ -142,13 +145,20 @@ impl Controller {
         }
     }
 
-    /// For one more packet, which may be what fills the window over the brim.
+    /// For one more packet, which may be what fills the window over the brim. After that, it may wait until more of
+    /// what is `unsent` can be sent together.
     #[inline]
-    pub(crate) fn permit(&mut self, now: Instant) -> Permit {
+    pub(crate) fn permit(&mut self, now: Instant, unsent: u64) -> Permit {
         if self.in_flight == 0 {
             return Permit::Now;
         }
-        if self.in_flight >= self.window() {
+        let window = self.window();
+        let needed = match self.is_full {
+            true => unsent.min(self.pacer.bonus()).min(window / 3),
+            false => 0,
+        };
+        self.is_full = self.in_flight + needed >= window;
+        if self.is_full {
             self.pacer.on_limited_otherwise();
             return Permit::Blocked;
         }
@@ -272,7 +282,7 @@ impl Controller {
             Model::Cubic(cubic) => cubic.pacing_rate(rtt),
             Model::Bbr(bbr) => bbr.pacing_rate(rtt),
         };
-        self.pacer.set_rate(len, per, rtt.probe_timeout());
+        self.pacer.set_rate(len, per, rtt);
     }
 }
 

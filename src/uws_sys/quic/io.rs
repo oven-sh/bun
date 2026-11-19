@@ -8,7 +8,9 @@ use bun_quic::{Addresses, Batch, Connection, Endpoint, Instant};
 
 use crate::udp;
 
-const DATAGRAMS_PER_BATCH: usize = 64;
+/// `LIBUS_UDP_RECV_COUNT`.
+pub const DATAGRAMS_PER_READ: c_int = 8;
+const DATAGRAMS_PER_BATCH: usize = 88;
 /// All connections share it. Some systems refuse what is above their limit.
 const RECEIVE_BUFFER_SIZES: [c_int; 2] = [4 << 20, 1 << 20];
 

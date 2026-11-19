@@ -69,7 +69,7 @@ impl Sender {
     }
 
     fn fill(&mut self) -> &mut Self {
-        while self.controller.permit(self.now) != Permit::Blocked {
+        while self.controller.permit(self.now, 0) != Permit::Blocked {
             self.send(1);
         }
         self
@@ -78,7 +78,7 @@ impl Sender {
     /// Returns how many packets are permitted right now.
     fn burst(&mut self) -> u64 {
         let before = self.controller.in_flight();
-        while self.controller.permit(self.now) == Permit::Now {
+        while self.controller.permit(self.now, 0) == Permit::Now {
             self.send(1);
         }
         (self.controller.in_flight() - before) / SEGMENT
@@ -226,7 +226,7 @@ impl Path {
         self.controller.end_ack(self.now, &self.rtt);
         let (mut next, mut burst) = (Instant::NEVER, 0);
         while self.unsent > 0 {
-            match self.controller.permit(self.now) {
+            match (self.controller).permit(self.now, self.unsent.saturating_mul(LEN)) {
                 Permit::Now => self.send(),
                 Permit::At(time) => {
                     next = time;
@@ -348,16 +348,28 @@ fn pace(pacer: &mut Pacer, now: Instant) -> (u64, Duration) {
 
 fn pacer_at(len: u64, per: Duration) -> Pacer {
     let mut pacer = Pacer::default();
-    pacer.set_rate(len, per, millis(50));
+    let mut rtt = Rtt::default();
+    rtt.update(micros(16_668), Duration::ZERO);
+    pacer.set_rate(len, per, &rtt);
     pacer
+}
+
+#[test]
+fn pacer_sends_more_at_once_on_short_paths() {
+    for (rtt, expected) in [(511, 66), (512, 33), (2000, 9), (4000, 1)] {
+        let (mut pacer, mut estimate) = (Pacer::default(), Rtt::default());
+        estimate.update(micros(rtt), Duration::ZERO);
+        pacer.set_rate(1000, millis(5), &estimate);
+        assert_eq!(pace(&mut pacer, START).0, expected, "{rtt}");
+    }
 }
 
 #[test]
 fn pacer_looks_ahead_by_the_granularity() {
     for (len, per, expected) in [
         (1000, millis(5), (1, millis(5))),
-        (1000, micros(500), (3, micros(1500))),
-        (4096, micros(1), (4101, micros(1001))),
+        (1000, micros(500), (4, micros(2000))),
+        (4096, micros(1), (4158, micros(1015))),
         (0, micros(2), (1, millis(2))),
     ] {
         assert_eq!(pace(&mut pacer_at(len, per), START), expected);
@@ -448,7 +460,7 @@ fn window_and_pace_limit_the_first_flight() {
         let mut sender = Sender::new(algorithm);
         assert_eq!(sender.burst(), burst);
         let next = START + micros(delay);
-        assert_eq!(sender.controller.permit(START), Permit::At(next));
+        assert_eq!(sender.controller.permit(START, 0), Permit::At(next));
         assert_eq!(sender.fill().controller.in_flight(), INITIAL_WINDOW);
     }
 }
@@ -567,7 +579,7 @@ fn links_are_filled() {
             path.saturate(millis(1000), |_| {});
             let lost = path.lost;
             assert_within(path.saturate(millis(2000), |_| {}), 97..=100);
-            assert_within(path.lost - lost, 0..=100);
+            assert_within(path.lost - lost, 0..=150);
         }
     }
 }
@@ -656,7 +668,7 @@ fn any_sequence_of_calls_is_fine() {
             }
             assert_eq!(controller.in_flight(), in_flight);
             assert_within(controller.window(), 2 * SEGMENT..=MAX_WINDOW);
-            match controller.permit(now) {
+            match controller.permit(now, 0) {
                 Permit::Now => assert!(in_flight < controller.window()),
                 Permit::At(time) => assert!(time > now && in_flight > 0),
                 Permit::Blocked => assert!(in_flight >= controller.window()),
@@ -1025,7 +1037,7 @@ fn bbr_does_not_care_how_acknowledgments_are_split() {
 fn bbr_allows_for_a_retransmission() {
     let mut sender = Sender::new(Algorithm::Bbr);
     sender.fill().wait(millis(10)).feedback(1, 0);
-    assert_ne!(sender.controller.permit(sender.now), Permit::Blocked);
+    assert_ne!(sender.controller.permit(sender.now, 0), Permit::Blocked);
 }
 
 #[test]

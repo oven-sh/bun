@@ -92,6 +92,8 @@ const DEFAULT_MAX_HEADER_PAIRS: u64 = 128;
 const DEFAULT_MAX_HEADER_LENGTH: u64 = 16384;
 
 const TICKET_DELIVERY_DELAY: Duration = Duration::from_millis(500);
+/// For how long a peer that cannot send more has to wait for a reader.
+const READER_DELAY: Duration = Duration::from_secs(1);
 
 /// Indices into the session stats buffer — must match
 /// [`SESSION_STATS_FIELDS`] positions exactly (the JS layer reads the
@@ -308,6 +310,7 @@ pub(crate) struct QuicSession {
     next_datagram_id: Cell<u64>,
     ticket_delivered: Cell<bool>,
     pending_tickets: JsCell<VecDeque<(Instant, Vec<u8>)>>,
+    unclaimed_streams: JsCell<VecDeque<(Instant, super::stream::Key)>>,
     held_stream_closes: JsCell<Vec<super::stream::Key>>,
     /// See [`QuicEndpoint::mark`].
     pub(super) is_marked: Cell<bool>,
@@ -358,6 +361,7 @@ impl QuicSession {
             next_datagram_id: Cell::new(1),
             ticket_delivered: Cell::new(false),
             pending_tickets: JsCell::new(VecDeque::new()),
+            unclaimed_streams: JsCell::new(VecDeque::new()),
             held_stream_closes: JsCell::new(Vec::new()),
             is_marked: Cell::new(false),
             host: Cell::new(None),
@@ -765,6 +769,31 @@ impl QuicSession {
         }
     }
 
+    pub(super) fn await_reader(&self, stream: super::stream::Key) {
+        (self.unclaimed_streams).with_mut(|q| q.push_back((now() + READER_DELAY, stream)));
+        self.mark();
+        self.mark_pending();
+    }
+
+    fn stop_unclaimed_streams(&self) {
+        let code = if self.is_http3() {
+            http3_code::NO_ERROR
+        } else {
+            0
+        };
+        while let Some(&(at, key)) = self.unclaimed_streams.get().front() {
+            if at > now() {
+                self.endpoint_ref().inspect(|ep| ep.plan_pass(at));
+                return;
+            }
+            self.unclaimed_streams.with_mut(VecDeque::pop_front);
+            if let Some(stream) = self.live_stream(key) {
+                stream.stop_if_unclaimed(code);
+                self.schedule_process();
+            }
+        }
+    }
+
     pub(super) fn process_events(&self, global: &JSGlobalObject) {
         // Every callback below can run user JS that destroys this session
         // (dropping the wrapper Strong) and can trigger GC, so hold a Strong
@@ -804,6 +833,7 @@ impl QuicSession {
                 }
             }
         }
+        self.stop_unclaimed_streams();
         if self.finish_deferred_close() {
             self.schedule_process();
         }
@@ -811,6 +841,7 @@ impl QuicSession {
             || self.pending_graceful.get().is_some()
             || !self.deferred_aborts.get().is_empty()
             || !self.pending_tickets.get().is_empty()
+            || !self.unclaimed_streams.get().is_empty()
         {
             self.mark();
         }

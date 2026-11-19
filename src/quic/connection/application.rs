@@ -297,6 +297,10 @@ impl Connection {
                 return Some(event);
             }
             if let Some(event) = self.streams.poll_closed() {
+                if !self.streams.table.has_application_streams() {
+                    self.progress_timeout = self.config.progress_timeout;
+                    self.streams.state.made_progress = true;
+                }
                 return Some(event);
             }
             if self.ending != Ending::Over || !self.streams.close_all() {

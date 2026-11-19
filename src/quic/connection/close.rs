@@ -1,5 +1,6 @@
 //! RFC 9000 §10.
 
+use super::sent::Control;
 use super::space::SpaceId;
 use super::streams::{Flags, Role};
 use super::timers::{Timer, Timers};
@@ -241,19 +242,22 @@ impl Connection {
         }
     }
 
-    /// For when the application may be silent for `timeout`, or for ever if it is zero.
+    /// For when the application may be silent for `timeout`, or for ever if it is zero, until it has no streams left.
     pub fn allow_silence(&mut self, now: Instant, timeout: Duration) {
         if !timeout.is_zero() && timeout <= self.idle_timeout || !self.is_receiving() {
             return;
         }
-        if timeout.is_zero() {
+        if timeout.is_zero() || !self.progress_timeout.is_zero() && self.progress_timeout < timeout
+        {
             self.progress_timeout = timeout;
-            self.timers.stop(Timer::Progress);
-        } else if !self.progress_timeout.is_zero() {
-            self.progress_timeout = self.progress_timeout.max(timeout);
         }
-        self.keep_alive = KeepAlive::WhileStreamsAreOpen;
-        self.start_keep_alive(now);
+        self.timers.stop(Timer::Progress);
+        self.restart_progress_timer(now);
+        if self.keep_alive == KeepAlive::Never {
+            self.keep_alive = KeepAlive::WhileStreamsAreOpen;
+            self.start_keep_alive(now);
+            self.streams.state.owed |= Control::PING;
+        }
     }
 
     /// Whether the peer may have dropped the connection by the time something new arrives.

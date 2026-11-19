@@ -178,8 +178,10 @@ impl Connection {
                 .early_priorities
                 .extract_if(.., |it| it.0 == id)
                 .last();
-            let priority = early.map(|it| it.1).or(message.priority);
-            stream.priority = priority.unwrap_or(stream.priority);
+            if let Some(priority) = early.map(|it| it.1).or(message.priority) {
+                stream.priority = priority;
+                self.streams.has_new_priorities |= stream.flags.contains(Flags::IN_WRITABLE);
+            }
         }
     }
 

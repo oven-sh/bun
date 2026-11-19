@@ -17,6 +17,8 @@ export default b.declarations(
     "__signpostStop",
     "__tracePointStart",
     "__tracePointStop",
+    "_debugIds",
+    "_sentryDebugIds",
     "gc",
     "process.noDeprecation",
     "process.noProcessWarnings",

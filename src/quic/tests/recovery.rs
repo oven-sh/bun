@@ -316,6 +316,21 @@ fn acknowledgment_of_acknowledgments_does_not_end_the_backoff() {
 }
 
 #[test]
+fn peer_that_is_heard_again_is_probed_once_between_two_timeouts() {
+    let mut raw = Raw::client().connected();
+    raw.request_packets("a");
+    for is_probed in [false, true, true] {
+        raw.wait();
+        raw.forget();
+        raw.send("padding 3");
+        let expected = if is_probed { "stream 3 0 a, ping" } else { "" };
+        assert_eq!(raw.frames(), expected);
+        raw.send("padding 3");
+        assert_eq!(raw.frames(), "");
+    }
+}
+
+#[test]
 fn acknowledgment_without_news_does_not_postpone_the_probe() {
     let mut raw = Raw::client().connected();
     raw.request_packets("a");

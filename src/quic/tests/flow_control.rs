@@ -152,6 +152,11 @@ fn gives_what_credit_there_is_to_a_peer_that_is_blocked() {
         raw.send(frames);
         assert_eq!(raw.frames(), expected, "{frames}");
     }
+    raw.send("stream 4 0 a");
+    raw.connection().stop(StreamId(4), 0);
+    raw.forget();
+    raw.send("stream_data_blocked 4 100");
+    assert_eq!(raw.frames(), "");
 }
 
 #[test]

@@ -1589,13 +1589,23 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style, threads:
         relayout: true,
         source_map: style.pretty,
     };
+    let js_family = matches!(normalize::kind_for(path), Some(normalize::Kind::Js(_)));
+    let renamed = match (old, new) {
+        (Some(o), Some(n)) if style.pretty && is_parsed && !readable_js => {
+            normalize::normalize_minified_pair(path, o, n, nopts, threads)
+        }
+        _ => None,
+    };
     let popts = if readable_js {
         normalize::Options {
             source_map: style.pretty && old.is_some() && new.is_some(),
             ..normalize::Options::KEY
         }
     } else {
-        nopts
+        normalize::Options {
+            source_map: style.pretty && renamed.is_none(),
+            ..nopts
+        }
     };
     // Canonical re-print: same parser and printer on both sides, so only meaning survives.
     let (norm_old, norm_new) = match (is_parsed, readable_js, old, new) {
@@ -1610,6 +1620,12 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style, threads:
                 ),
             }
         }
+        // Two ASTs at once take no more memory than `renamed` does.
+        (_, _, Some(o), Some(n)) if renamed.is_some() => threads.join(
+            o.len().min(n.len()),
+            || normalize::normalize(path, o, popts),
+            || normalize::normalize(path, n, popts),
+        ),
         _ => (
             old.and_then(|b| normalize::normalize(path, b, popts)),
             new.and_then(|b| normalize::normalize(path, b, popts)),
@@ -1645,7 +1661,6 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style, threads:
     // Equal re-prints prove the code is the same; comments and TypeScript types are not in the re-print, so
     // those are checked separately before anything is called "formatting only".
     let reprint_equal = matches!((&norm_old, &norm_new), (Some(a), Some(b)) if a.text == b.text);
-    let js_family = matches!(normalize::kind_for(path), Some(normalize::Kind::Js(_)));
     change.formatting_only = reprint_equal && !js_family;
     match (old, new, &norm_old, &norm_new) {
         // Patch output must apply to the real files, so only the terminal view uses the re-print.
@@ -1657,11 +1672,6 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style, threads:
             // Minified: the original is one enormous line, so an un-minified re-print stands in as the source —
             // locals renamed in lockstep, banner comment as written — and the folded key decides what changed.
             change.semantic = Semantic::Normalized;
-            let renamed = if js_family {
-                normalize::normalize_minified_pair(path, o, n, nopts, threads)
-            } else {
-                None
-            };
             let (disp_o, disp_n) = match &renamed {
                 Some((co, cn)) => (co, cn),
                 None => (no, nn),

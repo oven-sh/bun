@@ -640,7 +640,6 @@ fn for_each_edge(
 
     let parts = c.graph.ast.items_parts()[source_index as usize].as_slice();
     let parts_live = &c.graph.parts_live[source_index as usize];
-    let has_css = c.parse_graph().css_file_count > 0;
     // The namespace export part (index 0) counts last: what it names goes after what the `import` statements import.
     const _: () = assert!(bun_ast::NAMESPACE_EXPORT_PART_INDEX == 0);
     for part_index in 1..=parts.len() {
@@ -666,7 +665,7 @@ fn for_each_edge(
             );
         }
         // A chunk prints its own copy of the CSS class names that it uses, also when the `import` is in another chunk.
-        if runs_here && has_css {
+        if runs_here && c.parse_graph().css_file_count > 0 {
             for dependency in part.dependencies.iter() {
                 let other = dependency.source_index.get();
                 if c.parse_graph().holds_class_names(other) {

@@ -254,19 +254,16 @@ pub(crate) fn generate_code_for_lazy_export(
                     // that actually end up being used, and we don't know which ones will
                     // end up actually being used at this point (since import binding hasn't
                     // happened yet). So we need to wait until after tree shaking happens.
-                    // Module code cannot declare a variable of these names.
-                    let variable: &[u8] = match name {
+                    // Module code cannot declare a variable of these names: the variable gets another name, and the export keeps its alias.
+                    let alias = name;
+                    let name: &[u8] = match alias {
                         b"arguments" => b"_arguments",
                         b"eval" => b"_eval",
                         b"await" => b"_await",
-                        _ => name,
+                        _ => alias,
                     };
-                    let generated = this.generate_named_export_in_file(
-                        source_index,
-                        module_ref,
-                        variable,
-                        name,
-                    )?;
+                    let generated =
+                        this.generate_named_export_in_file(source_index, module_ref, name, alias)?;
                     if declarations_use_esm_runtime {
                         this.graph.generate_symbol_import_and_use(
                             source_index,

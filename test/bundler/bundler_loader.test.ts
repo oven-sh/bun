@@ -67,6 +67,20 @@ describe("bundler", async () => {
         },
         run: { stdout: '{"hello":"world"}' },
       });
+      // Module code cannot declare a variable named `arguments`, `eval` or `await`: the variable of such a key has
+      // another name, and the key is still an export.
+      itBundled("bun/loader-json-file-key-that-module-code-cannot-declare", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        import * as data from './data.json';
+        import all from './data.json';
+        console.write(JSON.stringify([data.arguments, data.eval, data.await, data.arguments === all.arguments]));
+      `,
+          "/data.json": JSON.stringify({ arguments: { a: 1 }, eval: 2, await: 3 }),
+        },
+        run: { stdout: '[{"a":1},2,3,true]' },
+      });
       itBundled("bun/loader-toml-file", {
         target,
         files: {

@@ -2547,7 +2547,8 @@ pub mod bv2_impl {
             )?;
             ast.target = target;
             // A chunk that prints the class names counts the characters of the stylesheet when it picks minified names, as it did when the row of the stylesheet held them.
-            ast.char_freq = self.graph.ast.items_char_freq()[stylesheet as usize].clone();
+            ast.char_freq
+                .clone_from(&self.graph.ast.items_char_freq()[stylesheet as usize]);
 
             // The default loader, not `Loader::Css` as in esbuild: the linker takes a row with that loader for a stylesheet.
             let input_file = crate::Graph::InputFile {

@@ -461,6 +461,8 @@ struct Scratches {
     settled: bun_format::settled::Scratch,
     /// What's already formatted is formatted too.
     ignores_settled: bool,
+    /// What the last result that didn't need the whole file formatted was made from.
+    verdict: Option<Verdict>,
     json: bun_format::json::Scratch,
     css: bun_format::css::Scratch,
     graphql: bun_format::graphql::Scratch,
@@ -891,7 +893,8 @@ fn format(
 /// formatted.
 fn format_unsettled(how: &How, text: &[u8], scratch: &mut Scratches) -> Option<Vec<u8>> {
     let options = &how.resolved.options;
-    match bun_format::settled::check(how.path, text, options, &mut scratch.settled) {
+    let verdict = bun_format::settled::check(how.path, text, options, &mut scratch.settled);
+    let out = match verdict {
         Verdict::Formatted => Some(text.to_vec()),
         Verdict::Unknown => None,
         Verdict::Reduced => {
@@ -912,7 +915,9 @@ fn format_unsettled(how: &How, text: &[u8], scratch: &mut Scratches) -> Option<V
             scratch.settled = settled;
             out
         }
-    }
+    }?;
+    scratch.verdict = Some(verdict);
+    Some(out)
 }
 
 fn print<'a>(
@@ -1087,6 +1092,44 @@ pub fn format_for_tests(
     match does_agree {
         true => formatted,
         false => Err(FormatFailure::Bug),
+    }
+}
+
+/// For the tests of `bun_format::settled`
+#[derive(Default)]
+pub struct BothWaysForTests(Scratches);
+
+impl BothWaysForTests {
+    /// Returns its verdict, and what `bun fmt` prints with and without it.
+    pub fn format(
+        &mut self,
+        path: &[u8],
+        text: &[u8],
+        options: &FormatOptions,
+    ) -> (Verdict, Option<Vec<u8>>, Option<Vec<u8>>) {
+        let resolved = Resolved {
+            options: FormatOptions {
+                format_javascript: Some(format_block),
+                parse_javascript: Some(parse_javascript),
+                parse_parts: Some(parse_parts),
+                ..options.clone()
+            },
+            ..Resolved::default()
+        };
+        let names = Session::new();
+        let atoms = Interner::new_in(&names);
+        let mut run = |ignores_settled: bool| {
+            (self.0.ignores_settled, self.0.verdict) = (ignores_settled, None);
+            let done = format(path, text, &resolved, (&atoms, &names), &mut self.0, false);
+            (done.ok().map(|it| it.0), self.0.verdict)
+        };
+        let (printed, verdict) = run(false);
+        let formatted = match verdict {
+            Some(_) => run(true).0,
+            None => printed.clone(),
+        };
+        let verdict = verdict.unwrap_or(Verdict::Unknown);
+        (verdict, printed, formatted)
     }
 }
 

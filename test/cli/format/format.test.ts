@@ -6359,6 +6359,40 @@ exports.format = async text => "by Prettier";
     });
   });
 
+  // The time of the last access tells that a file has been read, where the file system keeps it.
+  const unread = (path: string) => utimesSync(path, 1, Date.now() / 1000);
+  const keepsAccessTime = (() => {
+    if (!isLinux) return false;
+    using dir = tempDir("format-atime", { a: "a" });
+    unread(join(String(dir), "a"));
+    readFileSync(join(String(dir), "a"));
+    return statSync(join(String(dir), "a")).atimeMs > 1000;
+  })();
+  /** `saved` is written once `bun fmt` has read `read`. */
+  async function formatWhileSaving(files: Record<string, string>, flags: string[], read: string, saved: string[]) {
+    const all = {
+      ...files,
+      "z/prettier.config.cjs": `const fs = require("fs");
+const isRead = () => fs.statSync(__dirname + "/../${read}").atimeMs > 1000;
+const end = Date.now() + ${keepsAccessTime ? 20_000 : 0};
+while (!isRead() && Date.now() < end) Bun.sleepSync(1);
+fs.writeFileSync(__dirname + "/was-read.txt", String(isRead()));
+fs.writeFileSync(__dirname + "/../${saved[0]}", ${JSON.stringify(saved[1])});
+module.exports = {};
+`,
+      ".prettierignore": "*.cjs\n",
+      "z/b.js": "b;\n",
+      // Enough for the search to go on on several threads.
+      ...Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`d${i}/b.js`, "b;\n"])),
+    };
+    const result = await format(all, [...flags, "--threads=4", "."], {
+      reads: [...Object.keys(files), "z/was-read.txt"],
+      before: dir => unread(join(dir, read)),
+    });
+    if (keepsAccessTime) expect(result.files["z/was-read.txt"]).toBe("true");
+    return result;
+  }
+
   test.each([
     ["before( 1 )\n", "after( 2 )\n", [], "after(2);\n", 0],
     ["before(1);\n", "after( 2 )\n", [], "after(2);\n", 0],
@@ -6366,27 +6400,22 @@ exports.format = async text => "by Prettier";
     ["before(1);\n", "after( 2 )\n", ["--check"], "after( 2 )\n", 1],
     ["before( 1 )\n", "after(2);\n", ["--check"], "after(2);\n", 0],
   ])("a file that is saved while the search goes on: %j, %j, %j", async (before, saved, flags, after, exitCode) => {
-    const files = {
-      "a.js": before,
-      "z/prettier.config.cjs": `require("fs").writeFileSync(__dirname + "/../a.js", ${JSON.stringify(saved)});\nmodule.exports = {};\n`,
-      "z/b.js": "b;\n",
-      // Enough for the search to go on on several threads.
-      ...Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`d${i}/b.js`, "b;\n"])),
-    };
-    const result = await format(files, [...flags, "."], { reads: ["a.js"] });
+    const result = await formatWhileSaving({ "a.js": before }, flags, "a.js", ["a.js", saved]);
     expect(result.files["a.js"]).toBe(after);
     expect(result.exitCode).toBe(exitCode);
   });
 
   test("a tsconfig.json that is saved while the search goes on", async () => {
     const files = {
-      ".prettierrc": `{ "plugins": ["prettier-plugin-organize-imports"] }`,
+      ".prettierrc": `{ "plugins": ["prettier-plugin-organize-imports"] }\n`,
       "tsconfig.json": `{ "compilerOptions": { "jsx": "react-jsx" } }\n`,
       "a.tsx": `import React from "react";\nexport const a = <a />;\n`,
-      "z/prettier.config.cjs": `require("fs").writeFileSync(\n  __dirname + "/../tsconfig.json",\n  '{ "compilerOptions": { "jsx": "react" } }\\n',\n);\nmodule.exports = {};\n`,
-      ...Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`d${i}/b.js`, "b;\n"])),
+      // `a.tsx` has to wait for the end of the search. This is found after it, and doesn't.
+      "y/.prettierrc": "{}\n",
+      "y/b.js": "b;\n",
     };
-    const result = await format(files, ["."], { reads: ["a.tsx"] });
+    const saved = ["tsconfig.json", `{ "compilerOptions": { "jsx": "react" } }\n`];
+    const result = await formatWhileSaving(files, [], "y/b.js", saved);
     expect(result.files["a.tsx"]).toBe(files["a.tsx"]);
     expect(result.exitCode).toBe(0);
   });
@@ -11332,6 +11361,9 @@ describe.concurrent("files that are formatted, or nearly", () => {
     ["a.js", "h();\n", { endOfLine: "crlf" }],
     ["a.jsx", 'const a = (\n  <a>\n    b{" "}\n    <c />\n  </a>\n);\n'],
     ["a.js", "const a = css`\n  color:red;\n`;\n"],
+    ["a.ts", "function h({\n  a,\n  b, // c\n}: {/* d */}) {}\n"],
+    ["a.jsx", "h = import(<a />);\n"],
+    ["a.js", "h(\n  function () {\n    return a;\n  },\n  b /* c */\n);\n", { trailingComma: "none" }],
   ];
   test.each([".prettierrc", ".oxfmtrc.json"])("are treated like any other file with %s", async configuration => {
     const files: Record<string, string> = {};

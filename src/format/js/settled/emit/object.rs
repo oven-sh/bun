@@ -58,6 +58,12 @@ impl Emitter<'_, '_> {
         let node = self.node(id);
         self.token("{");
         match self.tree.list_of(node).first() {
+            None if node.has(flag::COMMENT)
+                && node.kind == K::TypeLiteral
+                && self.should_hug_type_literal(id) =>
+            {
+                self.give_up();
+            }
             None => self.dangling_comments(id),
             Some(&first) => {
                 let inner = |e: &mut Self| {

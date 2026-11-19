@@ -62,6 +62,7 @@ What a caller does with a file, in this order, is `format_for_tests` in `src/lin
 - It may be unsure about anything (`require`, `give_up`, `flag::UNSURE`), which costs time. It must never accept what the formatter would change or reject.
 - **Whoever changes a rule in `js/print/` changes it in `js/settled/emit/` too**, or makes it give up there. A node without `flag::ODD` that is on one line is not even looked at, so a new rule about such nodes needs an `odd()` in `js/settled/parser/`.
 - `format_for_tests` checks that both agree on the input and the output of every conformance test, the output at several widths. A disagreement is a `FAIL`.
+- `test/cli/format/settled` checks that they agree on what earlier versions printed, and on changes to that. See its README. **After a change to a rule, run `add.ts` there.**
 - `BUN_FEATURE_FLAG_DISABLE_SETTLED_FORMAT=1` turns it off.
 
 ## Style sheets, YAML, Markdown: the other printer

@@ -650,7 +650,7 @@ impl Parser<'_> {
         let argument = self.assignment()?;
         self.odd_if(matches!(
             self.kind(argument),
-            K::Binary | K::Logical | K::As | K::Satisfies | K::Await | K::Cond
+            K::Binary | K::Logical | K::As | K::Satisfies | K::Await | K::Yield | K::Cond
         ));
         Some(argument)
     }
@@ -752,8 +752,8 @@ impl Parser<'_> {
         }
         let args = self.arguments()?;
         let list = self.tree.list(args);
-        let has_spread = list.iter().any(|&it| self.kind(it) == K::Spread);
-        require(matches!(list.len(), 1 | 2) && !has_spread)?;
+        let is_usual = |&it: &Id| !matches!(self.kind(it), K::Spread | K::Jsx);
+        require(matches!(list.len(), 1 | 2) && list.iter().all(is_usual))?;
         Some(self.add(
             K::ImportCall,
             T::Unknown,

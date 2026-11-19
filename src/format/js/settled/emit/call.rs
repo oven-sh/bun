@@ -334,11 +334,17 @@ impl<'a> Emitter<'a, '_> {
         }
         if let Some(grouped) = self.grouped_argument_among_comments(list) {
             let (node, list) = (self.node(grouped), self.node(list));
-            let others = [
+            let last_end = args.last().map_or(node.end, |&it| self.node(it).end);
+            let before_last_end = [
                 self.comments_between(list.start, node.start),
-                self.comments_between(node.end, list.end),
+                self.comments_between(node.end, last_end),
             ];
-            return match others.iter().any(|it| self.has_line_break_after(it)) {
+            let at_end = self.comments_between(last_end, list.end);
+            let is_broken = before_last_end
+                .iter()
+                .any(|it| self.has_line_break_after(it))
+                || at_end.iter().any(|it| it.is_line);
+            return match is_broken {
                 true => self.group_with(true, None, |e| write(e, true)),
                 false => self.give_up(),
             };

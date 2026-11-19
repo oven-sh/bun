@@ -1855,7 +1855,6 @@
     "aot/files-run-early-by-star-exports.test.ts",
     "aot/originals-ask-load-plugins.test.ts",
     "aot/originals-come-from-disk.test.ts",
-    "aot/joined-package-files.test.ts",
     "aot/commonjs-originals-stay-under-their-key.test.ts",
     "aot/strings-of-builtin-methods.test.ts",
     "aot/mocks-of-deferred-imports.test.ts",

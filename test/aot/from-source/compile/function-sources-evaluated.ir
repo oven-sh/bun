@@ -1,12 +1,9 @@
 # Function gets the source of a function of the file. The build compiles it.
 # -- source: main.cjs
-# function SortTemplate(comparator) { function sort(list, first) { return comparator(list, first); } return sort; }
-# function cloneSort(comparator) {
-#   let template = SortTemplate.toString();
-#   let templateFn = new Function(`return ${template}`)();
-#   return templateFn(comparator);
-# }
-# console.log(cloneSort((a, b) => a.length + b)([1, 2], 3));
+# function slope(rise) { return function (run, start) { return start + run * rise; }; }
+# var text = String(slope);
+# var again = Function("rise", "return (" + text + ")(rise * 2)");
+# console.log(slope(3)(2, 1), again(3)(2, 1), text.length > 20);
 # -- end of source
 # RUN: print
 # CHECK: SwitchString

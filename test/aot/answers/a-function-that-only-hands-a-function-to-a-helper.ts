@@ -1,6 +1,6 @@
 // answers: without-library
-// # `function combinedFlags(node) { return combined(node, flagsOf); }`: all that it does is to hand a function of the program to a helper that only calls it: the program's own version of the helper for that function.
-// # f1 = combined, f2 = flagsOf, f3 = kindOf, f4 = combinedFlags, f5 = combinedKinds, f6 = both, f7 = inTurns, f8 = combinedSums
+// # `function gatheredMarks(crate) { return gathered(crate, marksOf); }`: all that it does is to hand a function of the program to a helper that only calls it: the program's own version of the helper for that function.
+// # f1 = gathered, f2 = marksOf, f3 = sortOf, f4 = gatheredMarks, f5 = gatheredSorts, f6 = both, f7 = inTurns, f8 = gatheredSums
 // # In its own body the helper is copied, and no call by value is left.
 // # RUN(VERSION): walk f4 mechanisms=all
 // # VERSION-LABEL: code f4:Body
@@ -28,21 +28,21 @@
 // # CHECK: 6 of 6 of 6
 // # CHECK-NEXT: exited with 0
 declare function report(value: unknown): void;
-type Item = { flags: number; kind: number; parent: Item | undefined };
-function combined(node: Item, read: (n: Item) => number): number { let flags = read(node); if (node.kind === 1 && node.parent) { node = node.parent; flags |= read(node); } if (node.kind === 2 && node.parent) { node = node.parent; flags |= read(node); } return flags; }
-function flagsOf(node: Item): number { return node.flags; }
-function kindOf(node: Item): number { return node.kind; }
-function combinedFlags(node: Item): number { return combined(node, flagsOf); }
-function combinedKinds(node: Item): number { return combined(node, kindOf); }
-function both(node: Item): number { return combinedFlags(node) * 100 + combinedKinds(node); }
-function inTurns(nodes: Item[]): number { let sum = 0; for (let i = 0; i < nodes.length; i++) sum += combinedFlags(nodes[i]); return sum; }
-function combinedSums(node: Item, more: number): number { return combined(node, (n: Item): number => n.flags + more); }
-const root: Item = { flags: 1, kind: 0, parent: undefined };
-const two: Item = { flags: 2, kind: 2, parent: root };
-const one: Item = { flags: 4, kind: 1, parent: two };
-report(both(root));
-report(both(two));
-report(both(one));
-report(inTurns([root, two, one]));
-report(combinedSums(one, 8));
+type Crate = { marks: number; sort: number; outer: Crate | undefined };
+function gathered(crate: Crate, ask: (c: Crate) => number): number { const own = ask(crate); const around = crate.outer; if (around === undefined || crate.sort === 0) return own; return around.sort === 2 && around.outer ? own | ask(around) | ask(around.outer) : own | ask(around); }
+function marksOf(crate: Crate): number { return crate.marks; }
+function sortOf(crate: Crate): number { return crate.sort; }
+function gatheredMarks(crate: Crate): number { return gathered(crate, marksOf); }
+function gatheredSorts(crate: Crate): number { return gathered(crate, sortOf); }
+function both(crate: Crate): number { return gatheredMarks(crate) * 100 + gatheredSorts(crate); }
+function inTurns(crates: Crate[]): number { let sum = 0; for (let i = 0; i < crates.length; i++) sum += gatheredMarks(crates[i]); return sum; }
+function gatheredSums(crate: Crate, more: number): number { return gathered(crate, (c: Crate): number => c.marks + more); }
+const ship: Crate = { marks: 1, sort: 0, outer: undefined };
+const hold: Crate = { marks: 2, sort: 2, outer: ship };
+const box: Crate = { marks: 4, sort: 1, outer: hold };
+report(both(ship));
+report(both(hold));
+report(both(box));
+report(inTurns([ship, hold, box]));
+report(gatheredSums(box, 8));
 report("end");

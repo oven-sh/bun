@@ -2228,10 +2228,6 @@
     "default": 1600,
     "asan": 3100
   },
-  "aot/joined-package-files.test.ts": {
-    "default": 60000,
-    "asan": 6800
-  },
   "aot/json-objects-shared-in-a-long-text.test.ts": {
     "default": 60000,
     "asan": 5900

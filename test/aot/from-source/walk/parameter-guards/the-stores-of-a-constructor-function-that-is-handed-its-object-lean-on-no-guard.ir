@@ -1,18 +1,18 @@
-# f1 = Sign, f2 = make
+# f1 = Barge, f2 = launch
 # -- source: the-stores-of-a-constructor-function-that-is-handed-its-object-lean-on-no-guard.ts
 # declare function sink(...values: unknown[]): void;
 # declare function next(): any;
-# interface Sign { flags: number; name: string; list?: object[]; id: number; parent?: Sign; members?: object; exports?: object; twin?: Sign; only?: boolean; used?: number; place?: number; links?: object; }
-# function Sign(this: Sign, flags: number, name: string) {
-#     this.flags = flags; this.name = name; this.list = undefined; this.id = 0; this.parent = undefined; this.members = undefined; this.exports = undefined;
-#     this.twin = undefined; this.only = undefined; this.used = undefined; this.place = undefined; this.links = undefined;
+# interface Barge { tons: number; river: string; crew?: object[]; locks: number; tow?: Barge; hold?: object; toll?: object; twin?: Barge; loaded?: boolean; depth?: number; berth?: number; flag?: object; }
+# function Barge(this: Barge, tons: number, river: string) {
+#     this.tons = tons; this.river = river; this.crew = undefined; this.locks = 3; this.hold = undefined; this.tow = undefined; this.toll = undefined;
+#     this.depth = undefined; this.berth = undefined; this.loaded = undefined; this.twin = undefined; this.flag = undefined;
 # }
-# const Maker: new (flags: number, name: string) => Sign = Sign as any;
-# function make(flags: any, name: any) { return new Maker(flags | 32, name); }
-# function fill(sign: Sign, value: object) { sign.exports = value; sign.place = 7; sign.members = value; sign.twin = sign; sign.only = true; sign.used = 3; sign.list = [sign]; sign.parent = sign; sign.links = value; }
-# let sum = 0;
-# for (let i = next(); i > 0; i--) { const sign = make(next(), next()); if (i === 7) fill(sign, [i]); sum += sign.flags + (sign.used ?? 0); }
-# sink(sum);
+# const Yard: new (tons: number, river: string) => Barge = Barge as any;
+# function launch(tons: any, river: any) { return new Yard((tons & 1023) * 2, river); }
+# function sail(barge: Barge, goods: object) { barge.hold = goods; barge.depth = barge.tons / 7; barge.berth = 4; barge.loaded = barge.tons > 9; barge.toll = goods; barge.crew = [goods, barge]; barge.twin = barge; barge.tow = barge; barge.flag = goods; }
+# let load = 0;
+# for (let day = next(); day > 0; day--) { const barge = launch(next(), next()); if (day % 5 === 2) sail(barge, [day]); load += barge.loaded ? barge.tons - barge.locks : barge.berth ?? 1; }
+# sink(load);
 # -- end of source
 # RUN(PLAN): plan units mechanisms=all
 # PLAN: unit f1:Body

@@ -962,6 +962,7 @@ dependencies = [
  "bun_sys",
  "bun_threading",
  "bun_uws_sys",
+ "bun_windows_sys",
  "enumset",
  "libc",
  "strum",

@@ -5,7 +5,8 @@ import { dirname, join } from "node:path";
 
 test
   .skipIf(!isWindows || !isCI)
-  .each([["bun_errno", "--skip", "errno_mapping"], ["bun_iocp"], ["bun_sys", "windows"], ["bun_threading"]])(
+  .each([["bun_errno", "--skip", "errno_mapping"], ["bun_io", "source"],
+  ["bun_iocp"], ["bun_sys", "windows"], ["bun_threading"]])(
   "%s",
   async (crate, ...args) => {
     await using proc = Bun.spawn({

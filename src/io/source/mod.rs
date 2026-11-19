@@ -6,6 +6,8 @@ mod file;
 mod owners;
 mod pipe;
 mod pipe_server;
+#[cfg(test)]
+mod tests;
 
 use std::rc::Rc;
 

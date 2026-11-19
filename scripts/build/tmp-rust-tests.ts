@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { Config } from "./config.ts";
 import { cargoBuildInvocation } from "./rust.ts";
 
-const crates = ["bun_errno", "bun_iocp", "bun_sys", "bun_threading"];
+const crates = ["bun_errno", "bun_io", "bun_iocp", "bun_sys", "bun_threading"];
 
 /** Never fails the build: test/integration/tmp-bench/rust.test.ts reports a missing program. */
 export function buildRustTests(cfg: Config): string[] {
@@ -29,6 +29,7 @@ function build(cfg: Config): string[] {
   ];
   const args = ["test", "--no-run", "--lib", "--locked", "--message-format=json-render-diagnostics"];
   args.push("--target", triple, "--target-dir", join(cfg.buildDir, "rust-tests-target"));
+  args.push("--config", "profile.dev.package.bun_core.debug-assertions=false");
   args.push(...crates.flatMap(crate => ["-p", crate]));
   const started = performance.now();
   const { stdout } = spawnSync(cfg.cargo, args, {

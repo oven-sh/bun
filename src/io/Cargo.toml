@@ -28,5 +28,8 @@ bun_threading.workspace = true
 [target.'cfg(windows)'.dependencies]
 bun_iocp.workspace = true
 
+[target.'cfg(windows)'.dev-dependencies]
+bun_windows_sys.workspace = true
+
 [target.'cfg(unix)'.dependencies]
 bun_spawn_sys.workspace = true

@@ -626,7 +626,7 @@ impl JSValkeyClient {
             global,
             value.to_js().with_graph_context_if_needed(global),
         );
-        self.claim(this_value.into());
+        self.claim_for(value.to_js(), this_value.into());
     }
     pub(crate) fn get_onclose(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
         js::onclose_get_cached(this_value.to_js())
@@ -644,12 +644,14 @@ impl JSValkeyClient {
             global,
             value.to_js().with_graph_context_if_needed(global),
         );
-        self.claim(this_value.into());
+        self.claim_for(value.to_js(), this_value.into());
     }
 
-    fn claim(&self, object: Object<'_>) {
-        self.client.with_mut(Client::claim);
-        self.update_poll_ref(object);
+    fn claim_for(&self, handler: JSValue, object: Object<'_>) {
+        if handler.is_callable() {
+            self.client.with_mut(Client::claim);
+            self.update_poll_ref(object);
+        }
     }
 
     fn reset_connection_timeout(&self) {

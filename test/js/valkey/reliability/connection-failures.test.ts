@@ -2118,6 +2118,34 @@ describe("Valkey: Recovering After fail()", () => {
     });
   });
 
+  test.concurrent("--redis-preconnect dials once, and the first command dials again", async () => {
+    const fake = helloServer({
+      HELLO: (connection, socket) => (connection === 1 ? (socket.destroy(), null) : "+OK\r\n"),
+    });
+    const port = await fake.listen();
+    try {
+      const lost = once(fake.server, "connection").then(([socket]) => closedOnServer(socket));
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--redis-preconnect",
+          "-e",
+          // A retry would have come after 50 ms.
+          `await Bun.stdin.text(); await Bun.sleep(150); console.log(Bun.redis.connected, await Bun.redis.ping());`,
+        ],
+        env: { ...bunEnv, REDIS_URL: `redis://127.0.0.1:${port}` },
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await Promise.race([lost, proc.exited]);
+      proc.stdin.end();
+      expect(await exitOutcome(proc)).toEqual({ stdout: "false PONG\n", stderr: "", exitCode: 0 });
+    } finally {
+      fake.server.close();
+    }
+  });
+
   test.concurrent("connect() on a --redis-preconnect that is connected makes the client script's", async () => {
     const fake = helloServer({ HELLO: connection => (connection === 1 ? "+OK\r\n" : "-WRONGPASS\r\n") });
     const port = await fake.listen();
@@ -2188,6 +2216,7 @@ describe("Valkey: Recovering After fail()", () => {
   test.concurrent.each([
     { program: `console.log("done")`, server: "drops every connection", stdout: "done\n" },
     { program: `console.log("done")`, server: "is not there", stdout: "done\n" },
+    { program: `Bun.redis.onclose = null`, server: "is not there", stdout: "" },
     { program: `Bun.redis.onconnect = () => console.log("connected")`, server: "accepts", stdout: "connected\n" },
     { program: `Bun.redis.onclose = e => console.log(e.message)`, server: "refuses", stdout: "WRONGPASS\n" },
   ] as const)("--redis-preconnect: $program exits when the server $server", async ({ program, server, stdout }) => {

@@ -5835,8 +5835,19 @@ exports.format = async text => "by Prettier";
     expect(allowed.exitCode).toBe(0);
     const flag = await format({ "a.js": ugly }, ["--plugin", "prettier-plugin-brace-style"], { reads: ["a.js"] });
     expect(flag.files["a.js"]).toBe(ugly);
-    expect(flag.stderr).toContain("bun fmt does not include the plugin prettier-plugin-brace-style\n");
+    expect(flag.stderr).toContain(
+      'error: 1 file was not formatted because --plugin or [fmt] plugins lists plugins that bun fmt does not include: prettier-plugin-brace-style\n  Put the plugin in a [[fmt.overrides]] entry with "files" to send only those files to your installed Prettier, or use --allow-unsupported to format it without the plugins.',
+    );
     expect(flag.exitCode).toBe(2);
+    // oxfmt has no plugins, so the file is formatted.
+    const oxfmt = await format({ ".oxfmtrc.json": "{}\n", "a.js": ugly }, ["--plugin", "prettier-plugin-astro", "a.js"], {
+      reads: ["a.js"],
+    });
+    expect(oxfmt.files["a.js"]).toBe(formatted);
+    expect(oxfmt.stderr).toContain(
+      "warn: prettier-plugin-astro in --plugin or [fmt] plugins has no effect because oxfmt does not load Prettier plugins\n",
+    );
+    expect(oxfmt.exitCode).toBe(0);
     for (const flags of [[], ["--check"], ["--list-different"]]) {
       const piped = await format(files, [...flags, "--stdin-filepath", "d.js"], { stdin: ugly });
       expect(piped.raw).toBe("");

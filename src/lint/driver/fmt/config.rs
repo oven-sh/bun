@@ -188,6 +188,8 @@ pub(crate) struct PluginView<'a> {
     config: Option<&'a Plugins>,
     /// `None` if `--config-precedence=prefer-file` drops the flags.
     flags: Option<&'a Plugins>,
+    /// [`PluginView::has_missing_from_flags`]
+    has_missing_from_flags: bool,
     /// [`PluginView::is_scoped_to_plugin`]
     is_scoped_to_plugin: bool,
 }
@@ -199,16 +201,19 @@ impl<'a> PluginView<'a> {
 
     /// The plugins that may change the output for files this formatter handles. The config's come first.
     pub(crate) fn missing(&self) -> impl Iterator<Item = &'a [u8]> + use<'a> {
-        (self.sides().flat_map(|it| &it.missing)).map(|it| &it[..])
+        let flags = self.flags.filter(|_| self.has_missing_from_flags);
+        let sides = self.config.into_iter().chain(flags);
+        (sides.flat_map(|it| &it.missing)).map(|it| &it[..])
     }
 
     pub(crate) fn has_missing(&self) -> bool {
-        self.sides().any(|it| !it.missing.is_empty())
+        self.has_missing_from_flags || self.config.is_some_and(|it| !it.missing.is_empty())
     }
 
-    /// True if the flags list one of [`PluginView::missing`].
+    /// True if the flags list one of [`PluginView::missing`]. Never where the file is formatted like oxfmt, which has
+    /// no plugins to miss.
     pub(crate) fn has_missing_from_flags(&self) -> bool {
-        self.flags.is_some_and(|it| !it.missing.is_empty())
+        self.has_missing_from_flags
     }
 
     /// True if a plugin isn't built in, so Bun doesn't know its options.
@@ -428,6 +433,14 @@ fn plugin_endings(name: &[u8]) -> Option<&'static [&'static [u8]]> {
 /// True if formatting without the plugin `name` may give different output than with it.
 pub(crate) fn is_missing_plugin(name: &[u8]) -> bool {
     !is_built_in_plugin(name) && plugin_endings(name).is_none()
+}
+
+/// Ends a warning that starts with the names of `count` plugins that `--allow-unsupported` goes on without.
+fn ending_for_missing(count: usize) -> &'static [u8] {
+    match count {
+        1 => b" has no effect because bun fmt does not include that plugin",
+        _ => b" have no effect because bun fmt does not include those plugins",
+    }
 }
 
 /// True if Prettier looks for the plugin `name` in `node_modules`. False for a path and for a `file:` URL.
@@ -1306,6 +1319,10 @@ impl<'c> Configs<'c> {
                     .map(Arc::new);
             }
         }
+        // Without either, a plugin that Bun lacks makes it skip files, which is reported at the end.
+        if is_oxfmt || configs.options.allow_unsupported {
+            configs.warn_about_flag_plugins(is_oxfmt);
+        }
         configs
     }
 
@@ -1356,6 +1373,34 @@ impl<'c> Configs<'c> {
         if !warnings.contains(&warning) {
             warnings.push(warning);
         }
+    }
+
+    /// Warns about the plugins of `--plugin`, `[fmt]` and `[[fmt.overrides]]` that change nothing. Where files are
+    /// formatted like oxfmt, `is_oxfmt`, those are all but the built-in ones. Elsewhere they're the ones that Bun
+    /// lacks, and the caller has checked that the run goes on without them.
+    fn warn_about_flag_plugins(&self, is_oxfmt: bool) {
+        let overrides = self.options.overrides.iter();
+        let lists = [&self.options.plugins]
+            .into_iter()
+            .chain(overrides.filter_map(|it| it.plugins.as_ref()));
+        let mut names: Vec<&[u8]> = Vec::new();
+        for name in lists.flatten() {
+            let has_no_effect = match is_oxfmt {
+                true => !is_built_in_plugin(name),
+                false => is_missing_plugin(name),
+            };
+            if has_no_effect && !names.contains(&&name[..]) {
+                names.push(name);
+            }
+        }
+        let end: &[u8] = match (is_oxfmt, names.len()) {
+            (_, 0) => return,
+            (true, 1) => b" has no effect because oxfmt does not load Prettier plugins",
+            (true, _) => b" have no effect because oxfmt does not load Prettier plugins",
+            (false, count) => ending_for_missing(count),
+        };
+        let names = names.join(&b", "[..]);
+        self.warn(&[&names, b" in --plugin or [fmt] plugins", end]);
     }
 
     /// Prettier's `loadConfig`. `None` if the file has no configuration, like most `package.json` files.
@@ -1538,11 +1583,12 @@ impl<'c> Configs<'c> {
         }
         // Without the flag, the affected files are skipped, which is reported at the end.
         if !missing.is_empty() && self.options.allow_unsupported {
-            let end: &[u8] = match missing.len() {
-                1 => b" has no effect because bun fmt does not include that plugin",
-                _ => b" have no effect because bun fmt does not include those plugins",
-            };
+            let end = ending_for_missing(missing.len());
             self.warn(&[&missing.join(&b", "[..]), b" in ", path, end]);
+        }
+        // Also for a config of oxfmt in a run that isn't like oxfmt as a whole.
+        if is_oxfmt {
+            self.warn_about_flag_plugins(true);
         }
         Ok(Some(Arc::new(config)))
     }
@@ -1863,6 +1909,8 @@ impl<'c> Configs<'c> {
         PluginView {
             config: scoped_config.or_else(|| config.map(|it| &it.plugins)),
             flags,
+            has_missing_from_flags: flags.is_some_and(is_unknown_to_bun)
+                && !self.is_oxfmt_for(scope),
             is_scoped_to_plugin: scoped_config.is_some_and(is_unknown_to_bun)
                 || (flags.is_some() && scoped_flags.is_some_and(is_unknown_to_bun)),
         }

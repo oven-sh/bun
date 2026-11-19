@@ -1232,6 +1232,30 @@ struct Run<'r> {
     has_skipped_files: bool,
 }
 
+/// The files that are skipped because they're listed with plugins that `bun fmt` doesn't include.
+#[derive(Default)]
+struct LeftForPlugins<'a> {
+    count: usize,
+    /// Those plugins, each once.
+    names: Vec<&'a [u8]>,
+    /// True if `--plugin`, `[fmt]` or `[[fmt.overrides]]` lists one of them for one of the files. A Prettier config
+    /// lists the others.
+    is_from_flags: bool,
+}
+
+impl<'a> LeftForPlugins<'a> {
+    /// Counts a file whose plugins are `view`.
+    fn add(&mut self, view: &config::PluginView<'a>) {
+        self.count += 1;
+        self.is_from_flags |= view.has_missing_from_flags();
+        for name in view.missing() {
+            if !self.names.contains(&name) {
+                self.names.push(name);
+            }
+        }
+    }
+}
+
 /// Classifies the file at `path`, in `scope`, the way the tool this run emulates would.
 fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Language {
     let view = configs.plugin_view(scope, Some(path));
@@ -1530,8 +1554,9 @@ impl Run<'_> {
         }
         let view = configs.plugin_view(&scope, Some(&path));
         if language == Language::Supported && !allows && view.has_missing() {
-            let names: Vec<&[u8]> = view.missing().collect();
-            self.report_skipped_for_plugins(1, &names);
+            let mut left = LeftForPlugins::default();
+            left.add(&view);
+            self.report_skipped_for_plugins(&left);
             return self.out;
         }
         if Kind::with_options(&path, &options.options).is_none() {
@@ -1612,8 +1637,9 @@ impl Run<'_> {
             return self.out;
         };
         if !self.options.allow_unsupported && view.has_missing() {
-            let names: Vec<&[u8]> = view.missing().collect();
-            self.report_skipped_for_plugins(1, &names);
+            let mut left = LeftForPlugins::default();
+            left.add(&view);
+            self.report_skipped_for_plugins(&left);
             return self.out;
         }
         tailwind::only_where_sorted(&mut options.options, Some(kind));
@@ -2009,8 +2035,7 @@ impl Run<'_> {
 
         // Extensions of files in unsupported languages, with how many files have each.
         let mut others: Vec<(&[u8], usize)> = Vec::new();
-        // How many files are skipped because of plugins that `bun fmt` doesn't include, and those plugins' names.
-        let mut left_for_plugins: (usize, Vec<&[u8]>) = (0, Vec::new());
+        let mut left_for_plugins = LeftForPlugins::default();
         // Keyed by the file's index in `expanded`.
         let mut warnings: Guarded<Vec<(usize, Vec<Problem>)>> = Guarded::new(Vec::new());
         let mut done: Vec<Option<Done>> = (expanded.iter_mut().enumerate())
@@ -2057,12 +2082,7 @@ impl Run<'_> {
             let needed = || [&b"prettier"[..]].into_iter().chain(view.packages());
             match language {
                 Language::Supported if !options.allow_unsupported && view.has_missing() => {
-                    left_for_plugins.0 += 1;
-                    for name in view.missing() {
-                        if !left_for_plugins.1.contains(&name) {
-                            left_for_plugins.1.push(name);
-                        }
-                    }
+                    left_for_plugins.add(&view);
                 }
                 Language::Supported => work.push((index, target)),
                 Language::Plugin if needed().all(&mut has_package) => {
@@ -2095,7 +2115,7 @@ impl Run<'_> {
                 formatted: &work,
                 handed_over: &handed_over,
                 others: &others,
-                left_for_plugins: left_for_plugins.0,
+                left_for_plugins: left_for_plugins.count,
                 not_installed: &not_installed,
             };
             let how = crate::doctor::How {
@@ -2356,7 +2376,7 @@ impl Run<'_> {
             }
         };
         // The reason is printed at the end.
-        self.has_skipped_files = left_for_plugins.0 > 0
+        self.has_skipped_files = left_for_plugins.count > 0
             || !others.is_empty()
             || (classes_are_unknown.is_some() && !options.allow_unsupported);
         // oxfmt has no `--debug-check`, so that flag behaves as it does without a config.
@@ -2459,8 +2479,8 @@ impl Run<'_> {
             Some(error) => self.error(&error),
             None => {}
         }
-        if let (count @ 1.., names) = &left_for_plugins {
-            self.report_skipped_for_plugins(*count, names);
+        if left_for_plugins.count > 0 {
+            self.report_skipped_for_plugins(&left_for_plugins);
         }
         // The emulated tool would have formatted or checked these files, so this is an error and is printed last.
         if !others.is_empty() {
@@ -2469,18 +2489,27 @@ impl Run<'_> {
         self.out
     }
 
-    /// Reports that `count` files were skipped because the config uses the plugins `names`, which `bun fmt` doesn't
-    /// include.
-    fn report_skipped_for_plugins(&mut self, count: usize, names: &[&[u8]]) {
+    /// Reports the files of `left`, and what to do about them.
+    fn report_skipped_for_plugins(&mut self, left: &LeftForPlugins) {
+        let count = left.count;
         let (noun, it) = match count {
             1 => ("file was", "it"),
             _ => ("files were", "them"),
         };
+        // A plugin of the flags applies to every file unless an override lists it.
+        let (who, advice) = match left.is_from_flags {
+            true => (
+                "--plugin or [fmt] plugins lists",
+                "Put the plugin in a [[fmt.overrides]] entry with \"files\" to send only those files to your installed Prettier, or use",
+            ),
+            false => ("the Prettier config uses", "Use"),
+        };
         let text = format!(
-            "{count} {noun} not formatted because the Prettier config uses plugins that bun fmt does not include: "
+            "{count} {noun} not formatted because {who} plugins that bun fmt does not include: "
         );
-        let end = format!("\n  Use --allow-unsupported to format {it} without the plugins.");
-        self.error(&[text.as_bytes(), &names.join(&b", "[..]), end.as_bytes()].concat());
+        let end = format!("\n  {advice} --allow-unsupported to format {it} without the plugins.");
+        let names = left.names.join(&b", "[..]);
+        self.error(&[text.as_bytes(), &names, end.as_bytes()].concat());
     }
 
     /// Warns about the packages that must be installed before more files can go to the project's own Prettier.
@@ -2544,21 +2573,6 @@ impl Run<'_> {
         }
         let configs = Configs::new(options, environment);
         self.is_native = configs.is_native();
-        if let Some(name) = (options.plugins.iter()).find(|it| config::is_missing_plugin(it))
-            && !options.allow_unsupported
-        {
-            return self.fail(
-                &[
-                    b"bun fmt does not include the plugin ",
-                    &name[..],
-                    b"\n  Use --allow-unsupported to format without it.",
-                ]
-                .concat(),
-            );
-        }
-        if !(options.plugins.iter()).all(|it| config::is_built_in_plugin(it)) {
-            self.warn(b"--plugin has no effect because bun fmt does not load Prettier plugins");
-        }
         if configs.requests_svelte_parser()
             && (configs.for_directory(&environment.cwd))
                 .is_ok_and(|own| configs.turns_svelte_off(&own, &environment.cwd))

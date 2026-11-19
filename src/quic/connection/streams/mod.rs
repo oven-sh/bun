@@ -557,11 +557,9 @@ impl State {
         }
     }
 
-    /// Gives up on both halves of a stream.
+    /// Gives up on both halves of a stream that is being read.
     pub(crate) fn abort(&mut self, id: StreamId, stream: &mut Stream, code: u64) {
-        if !stream.flags.contains(Flags::READ_DONE) {
-            self.notify(id, stream, StreamEvent::Reset(code));
-        }
+        self.notify(id, stream, StreamEvent::Reset(code));
         self.reset(id, stream, code);
         self.stop(id, stream, code);
     }

@@ -133,6 +133,23 @@ fn reason_is_cut_to_what_fits() {
     assert_eq!((packets.len(), packets[0].datagram.len()), (3, 1193));
 }
 
+/// RFC 9000 §19.19.
+#[test]
+fn reason_is_not_cut_within_a_character() {
+    for (start, sent) in [(124, 128), (125, 125), (127, 127), (128, 128)] {
+        let mut raw = Raw::server();
+        raw.start(&[]);
+        let reason = ["a".repeat(start), "\u{1f35e}".repeat(2)].concat();
+        raw.abort(Transport, 1, reason.as_bytes());
+        raw.process();
+        assert_eq!(raw.reason, reason.as_bytes()[..sent]);
+    }
+    let mut raw = Raw::client().connected();
+    raw.abort(Transport, 1, &[0x80; 2000]);
+    raw.process();
+    assert_eq!(raw.reason, []);
+}
+
 #[test]
 fn acknowledges_what_has_arrived() {
     let mut raw = Raw::client().connected();
@@ -284,6 +301,21 @@ fn graceful_close_waits_for_congestion_control() {
         raw.outline(),
         "1[ack, reset_stream, stop_sending]; 1[ack, ping]; 1[close]"
     );
+}
+
+#[test]
+fn graceful_close_waits_for_datagrams() {
+    let mut raw = Raw::client()
+        .with("max_datagram_frame_size=1200")
+        .connected();
+    (0..60).for_each(|id| raw.connection().send_datagram(id, filler(0, 1100)));
+    raw.close_gracefully();
+    while raw.close.is_none() {
+        raw.advance(RTT);
+        raw.send("ack");
+    }
+    let closed = raw.peer.closed.unwrap();
+    assert_eq!(closed.stats().datagrams_sent, 60);
 }
 
 #[test]

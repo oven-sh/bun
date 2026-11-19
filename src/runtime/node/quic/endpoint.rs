@@ -967,7 +967,7 @@ impl QuicEndpoint {
 
     fn on_stray(&self, now: Instant, from: &Addresses, stray: &mut [u8]) {
         for other in registered_endpoints() {
-            if !core::ptr::eq(&*other, self)
+            if !core::ptr::eq(other.get(), self)
                 && !other.peer_blocked(from.peer)
                 && other.quic().receive(now, from, stray, &[]).is_none()
             {
@@ -1138,7 +1138,7 @@ impl QuicEndpoint {
         }
         self.driver.set(None);
         self.event_loop_timer.disarm();
-        ENDPOINT_REGISTRY.with_borrow_mut(|v| v.retain(|it| !core::ptr::eq(&**it, self)));
+        ENDPOINT_REGISTRY.with_borrow_mut(|v| v.retain(|it| !core::ptr::eq(it.get(), self)));
         if let Some(binding) = self.binding.take() {
             uws::udp::Socket::opaque_mut(binding.socket).close();
         }

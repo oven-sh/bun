@@ -510,7 +510,10 @@ impl Raw {
     }
 
     pub(crate) fn process(&mut self) {
+        let limit = self.parameters.get(&0x03).cloned().flatten();
+        let limit = limit.and_then(|it| wire::try_varint(&mut &it[..]));
         for (addresses, datagram) in self.peer.process(self.now) {
+            assert!(limit.is_none_or(|it| datagram.len() as u64 <= it.max(1200)));
             let mut rest = &datagram[..];
             while !rest.is_empty() {
                 let is_coalesced = rest.len() < datagram.len();

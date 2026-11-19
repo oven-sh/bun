@@ -479,9 +479,9 @@ impl Endpoint {
         let Some(&slot) = key.and_then(|it| self.shared.routes.by_reset_token.get(&it)) else {
             return false;
         };
-        if let Some(connection) = self.get_mut(self.handle(slot)) {
-            connection.drain(CloseReason::StatelessReset);
-        }
+        crate::with(self.get_mut(self.handle(slot)), |it| {
+            it.drain(CloseReason::StatelessReset);
+        });
         true
     }
 

@@ -116,6 +116,50 @@ fn gives_no_credit_while_paused() {
 }
 
 #[test]
+fn tells_whether_the_peer_is_short_of_credit() {
+    for (connection, stream) in [(80, 800), (800, 80)] {
+        let mut raw = with_windows(Raw::client(), connection, [0, stream, 0]);
+        raw.send("stream 0 0 -");
+        raw.connection().set_paused(StreamId(0), true);
+        for (frame, has_received, is_short) in [
+            ("ping", false, false),
+            ("stream 0 0 *70", true, false),
+            ("stream 0 70 *1", true, true),
+        ] {
+            raw.send(frame);
+            let info = raw.connection().stream_info(StreamId(0)).unwrap();
+            assert_eq!(
+                (info.has_received, info.is_short_of_credit),
+                (has_received, is_short)
+            );
+        }
+    }
+}
+
+#[test]
+fn gives_what_credit_there_is_to_a_peer_that_is_blocked() {
+    let mut raw = with_windows(Raw::client(), 6400, [0, 100, 0]);
+    for (frames, expected) in [
+        ("data_blocked 6400, stream_data_blocked 0 100", ""),
+        ("stream 0 0 a", ""),
+        ("data_blocked 6400", "max_data 6401"),
+        ("stream_data_blocked 0 100", "max_stream_data 0 101"),
+        ("data_blocked 6401, stream_data_blocked 0 101", ""),
+        ("stream 0 1 b", ""),
+        ("data_blocked 6400, stream_data_blocked 0 100", ""),
+        ("fin 0 2 c, stream_data_blocked 0 101", ""),
+    ] {
+        raw.send(frames);
+        assert_eq!(raw.frames(), expected, "{frames}");
+    }
+    raw.send("stream 4 0 a");
+    raw.connection().stop(StreamId(4), 0);
+    raw.forget();
+    raw.send("stream_data_blocked 4 100");
+    assert_eq!(raw.frames(), "");
+}
+
+#[test]
 fn gives_credit_for_what_has_been_consumed() {
     let raw = Raw::client().config(|it| it.awaits_consumption = true);
     let mut raw = with_windows(raw, 100, [0, 100, 100]);
@@ -232,6 +276,31 @@ fn says_that_it_is_blocked_when_there_is_more_to_write() {
 }
 
 #[test]
+fn says_that_it_is_blocked_while_something_waits() {
+    let mut raw = Raw::server().with("max_data=0").connected();
+    let id = StreamId(raw.peer.open(Unidirectional));
+    raw.connection().want_write(id);
+    assert_eq!(raw.frames(), "data_blocked 0");
+    raw.connection().finish(id);
+    assert_eq!(raw.frames(), "fin 2 0 -");
+    raw.send("ack");
+    raw.advance(9000);
+    assert_eq!(raw.frames(), "");
+}
+
+#[test]
+fn says_that_it_is_blocked_as_soon_as_it_finds_out() {
+    let mut raw = Raw::http3(Server).with("max_data=4096").connected_with("");
+    raw.request(&format!("{GET} a=*9000"));
+    raw.forget();
+    raw.send("ack, max_data 4097");
+    raw.forget();
+    raw.request(GET);
+    raw.send("ack");
+    assert_eq!(raw.frames(), "");
+}
+
+#[test]
 fn says_it_again_while_it_holds() {
     for (limit, blocked, raise) in [
         ("max_data=0", "data_blocked 0", "max_data 1"),
@@ -262,6 +331,21 @@ fn says_it_again_while_it_holds() {
     }
 }
 
+/// RFC 9000 §4.1.
+#[test]
+fn says_it_again_before_the_idle_timeout() {
+    for (idle, period) in [(0, 8000), (16_002, 8000), (15_998, 7999), (100, 67)] {
+        let raw = Raw::client().config(|it| it.parameters.max_idle_timeout_millis = idle);
+        let mut raw = raw.with("max_data=0").connected();
+        raw.request_packets("a");
+        raw.send("ack");
+        assert_eq!(
+            (raw.wait(), raw.frames()),
+            (period, "data_blocked 0".into())
+        );
+    }
+}
+
 #[test]
 fn a_stream_that_has_ended_is_not_blocked() {
     for (ends, expected) in [("finish", "fin 2 0 -"), ("reset", "reset_stream 2 0x0 0")] {
@@ -280,6 +364,21 @@ fn a_stream_that_has_ended_is_not_blocked() {
         let (frames, expected) = (groups(&frames), groups(expected));
         assert!((frames.iter()).all(|it| *it == expected[0] || *it == ["ping"]));
     }
+}
+
+#[test]
+fn a_stream_that_has_ended_does_not_say_it_again() {
+    let mut raw = (Raw::server().with("max_stream_data_bidi_remote=0")).connected();
+    let id = StreamId(raw.peer.open(Bidirectional));
+    raw.connection().want_write(id);
+    assert_eq!(raw.lose(), "stream_data_blocked 0 0");
+    raw.connection().finish(id);
+    raw.advance(RTT);
+    raw.send("ack");
+    raw.forget();
+    raw.advance(1000);
+    assert_eq!(raw.connection().stats().packets_lost, 1);
+    assert_eq!(raw.frames(), "");
 }
 
 #[test]

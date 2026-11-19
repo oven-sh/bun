@@ -348,7 +348,9 @@ extern "C" fn us_quic_listen_socket_close(socket: &Socket) {
     }
     socket.is_close_pending.set(true);
     let sockets = engine.sockets();
-    let this = sockets.iter().find(|it| core::ptr::eq(&***it, socket));
+    let this = sockets
+        .iter()
+        .find(|it| core::ptr::eq(Rc::as_ptr(it), socket));
     PENDING_CLOSES.with_borrow_mut(|it| it.extend(this.map(Rc::downgrade)));
 }
 

@@ -537,3 +537,43 @@ fn streams_can_be_opened_once_the_application_knows() {
     raw.send_all(&[(Handshake, "ack"), (Short, "ack, fin 0 0 b")]);
     assert_eq!(raw.events(), "confirmed, 0 fin b, 0 closed");
 }
+
+/// RFC 9001 §4.1.2.
+#[test]
+fn acknowledgment_of_a_1_rtt_packet_confirms_the_handshake() {
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    raw.shake_hands();
+    raw.forget();
+    raw.send("ack");
+    assert_eq!(raw.events(), "confirmed");
+    raw.send_all(&[(Handshake, "ping"), (Short, "handshake_done")]);
+    raw.advance(RTT);
+    assert_eq!((raw.events(), raw.outline()), ("".into(), "1[ack]".into()));
+}
+
+#[test]
+fn a_server_does_not_probe_for_a_hello_that_has_arrived() {
+    let mut raw = Raw::client();
+    raw.start(&[]);
+    raw.forget();
+    raw.wait();
+    assert_eq!(raw.outline(), "I[crypto] H[crypto]");
+    raw.send_in(Initial, "ack 0");
+    raw.wait();
+    assert_eq!(raw.outline(), "H[crypto]");
+}
+
+#[test]
+fn backoff_ends_with_the_first_round_trip_time() {
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    for _ in 0..2 {
+        raw.forget();
+        raw.wait();
+    }
+    raw.forget();
+    raw.advance(RTT);
+    raw.send_in(Initial, "ack");
+    assert_eq!((raw.wait(), raw.outline()), (3 * RTT, "I[ping]".into()));
+}

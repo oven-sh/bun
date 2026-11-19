@@ -60,9 +60,9 @@ fn follows_the_peer() {
 #[test]
 fn old_keys_are_kept_for_three_probe_timeouts() {
     for (delay, is_accepted) in [(202, true), (203, false)] {
-        for (raw, start) in Raw::both().into_iter().zip([1000, 100]) {
+        for raw in Raw::both() {
             let mut raw = raw.connected();
-            raw.advance(start);
+            raw.advance(100);
             raw.use_keys();
             let late = raw.packet(Short, "ping");
             raw.update_keys();

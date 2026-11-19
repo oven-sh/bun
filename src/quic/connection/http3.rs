@@ -180,7 +180,8 @@ impl Connection {
                 .last();
             if let Some(priority) = early.map(|it| it.1).or(message.priority) {
                 stream.priority = priority;
-                self.streams.has_new_priorities |= stream.flags.contains(Flags::IN_WRITABLE);
+                self.streams.has_new_priorities |=
+                    (stream.flags).intersects(Flags::IN_WRITABLE | Flags::IN_SENDABLE);
             }
         }
     }

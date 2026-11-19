@@ -1778,6 +1778,67 @@ describe("undici", () => {
       ]);
     });
 
+    it("fetch(Request) with a dispatcher sends a buffered body again on a 307", async () => {
+      const seen: string[] = [];
+      const dispatcher = {
+        dispatch(opts: any, handler: any) {
+          (async () => {
+            seen.push(`${opts.method} ${opts.path} ${await new Response(opts.body).text()}`);
+            handler.onConnect(() => {});
+            if (opts.path === "/a") {
+              handler.onHeaders(307, [Buffer.from("location"), Buffer.from("/b")], () => {}, "");
+            } else {
+              handler.onHeaders(200, [], () => {}, "OK");
+              handler.onComplete([]);
+            }
+          })();
+          return true;
+        },
+      };
+      const request = new Request("http://localhost:1/a", { method: "PUT", body: "payload" });
+      const res = await undiciFetch(request, { dispatcher } as any);
+      expect({ status: res.status, seen }).toEqual({ status: 200, seen: ["PUT /a payload", "PUT /b payload"] });
+    });
+
+    it("fetch(Request) with a dispatcher does not send a stream body twice", async () => {
+      const seen: string[] = [];
+      const dispatcher = {
+        dispatch(opts: any, handler: any) {
+          (async () => {
+            seen.push(`${opts.method} ${opts.path} ${await new Response(opts.body).text()}`);
+            handler.onConnect(() => {});
+            handler.onHeaders(307, [Buffer.from("location"), Buffer.from("/b")], () => {}, "");
+          })();
+          return true;
+        },
+      };
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("payload"));
+          controller.close();
+        },
+      });
+      const request = new Request("http://localhost:1/a", { method: "PUT", body, duplex: "half" } as any);
+      await expect(undiciFetch(request, { dispatcher } as any)).rejects.toThrow("a stream body cannot be sent twice");
+      expect(seen).toEqual(["PUT /a payload"]);
+    });
+
+    it("a request() body that failed rejects with the failure, not with 'unusable'", async () => {
+      const boom = new Error("boom");
+      class FailsAfterHeaders extends Dispatcher {
+        dispatch(_opts: any, handler: any) {
+          handler.onConnect(() => {});
+          handler.onHeaders(200, [], () => {}, "OK");
+          handler.onError(boom);
+          return true;
+        }
+      }
+      const { body } = await new FailsAfterHeaders().request({ path: "/", method: "GET" });
+      // Once while the 'error' event is still pending, once after the stream closed.
+      await expect(body.text()).rejects.toBe(boom);
+      await expect(body.text()).rejects.toBe(boom);
+    });
+
     it("fetch with a dispatcher and redirect 'manual' returns the redirect response", async () => {
       let dispatched = 0;
       const dispatcher = {

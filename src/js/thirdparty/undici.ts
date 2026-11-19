@@ -418,8 +418,8 @@ function fetchDispatch(origin: URL, opts: any, handler: any, pending?: Set<Pendi
   };
 
   // Tracked for close() drain and destroy() abort; done exists before handler callbacks run so a sync close() from onConnect still waits.
-  let resolveDone: () => void;
-  const entry: PendingEntry = { abort, done: new Promise<void>(r => (resolveDone = r)) };
+  const { promise: done, resolve: resolveDone } = Promise.withResolvers<void>();
+  const entry: PendingEntry = { abort, done };
   pending?.add(entry);
 
   (async () => {
@@ -487,9 +487,9 @@ function fetchDispatch(origin: URL, opts: any, handler: any, pending?: Set<Pendi
       for await (const chunk of respBody as AsyncIterable<Uint8Array>) {
         if (aborted) throw abortReason;
         while (paused) {
-          await new Promise<void>(r => {
-            resumeResolve = r;
-          });
+          const parked = Promise.withResolvers<void>();
+          resumeResolve = parked.resolve;
+          await parked.promise;
         }
         if (aborted) throw abortReason;
         const buf = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
@@ -528,11 +528,30 @@ function fetchDispatch(origin: URL, opts: any, handler: any, pending?: Set<Pendi
 // dispatcher.request() body: a Readable with undici's body-mixin methods.
 class DispatchBodyReadable extends Readable {
   #used = false;
+  #reading = false;
   #contentType;
+  #onDestroy;
 
-  constructor(options, contentType) {
-    super(options);
+  constructor(read: () => void, onDestroy: (err?: Error) => void, contentType) {
+    super({ read });
+    this.#onDestroy = onDestroy;
     this.#contentType = contentType;
+  }
+
+  on(event, listener) {
+    if (event === "data" || event === "readable") this.#reading = true;
+    return super.on(event, listener);
+  }
+
+  addListener(event, listener) {
+    return this.on(event, listener);
+  }
+
+  _destroy(err, callback) {
+    this.#onDestroy(err);
+    // Like undici: a body nobody reads yet fails one macrotask later, so a caller that awaited request() can still listen for it.
+    if (this.#reading) callback(err);
+    else setImmediate(callback, err);
   }
 
   get bodyUsed() {
@@ -540,7 +559,15 @@ class DispatchBodyReadable extends Readable {
   }
 
   async #consume() {
-    if (this.#used || isDisturbed(this)) throw new TypeError("unusable");
+    if (this.#used || isDisturbed(this)) {
+      // Like undici: a body that failed rejects with its error, and only a body that was read is "unusable".
+      if (this.destroyed && !this._readableState.closeEmitted) {
+        const failed = Promise.withResolvers<never>();
+        this.on("error", failed.reject).on("close", () => failed.reject(new TypeError("unusable")));
+        return failed.promise;
+      }
+      throw this.errored ?? new TypeError("unusable");
+    }
     this.#used = true;
     const chunks: Buffer[] = [];
     for await (const chunk of this as AsyncIterable<Buffer>) chunks.push(chunk);
@@ -594,6 +621,17 @@ class DispatchBodyReadable extends Readable {
   }
 }
 
+// The promise form of a callback API. A synchronous throw rejects, as it would inside a Promise executor.
+function promiseForm(run: (callback: (err: unknown, data?: any) => void) => void): Promise<any> {
+  const { promise, resolve, reject } = Promise.withResolvers<any>();
+  try {
+    run((err, data) => (err ? reject(err) : resolve(data)));
+  } catch (err) {
+    reject(err);
+  }
+  return promise;
+}
+
 class Dispatcher extends EventEmitter {
   dispatch(_opts?: any, _handler?: any): boolean {
     throw new Error("not implemented");
@@ -610,9 +648,7 @@ class Dispatcher extends EventEmitter {
   request(opts, callback?) {
     if (callback === undefined) {
       // Not this.request(): the top-level request() runs this on dispatchers that only have dispatch().
-      return new Promise((resolve, reject) => {
-        Dispatcher.prototype.request.$call(this, opts, (err, data) => (err ? reject(err) : resolve(data)));
-      });
+      return promiseForm(cb => Dispatcher.prototype.request.$call(this, opts, cb));
     }
     if (typeof callback !== "function") throw new InvalidArgumentError("invalid callback");
     if (!opts || typeof opts !== "object") {
@@ -682,16 +718,11 @@ class Dispatcher extends EventEmitter {
           resumeBody = resume;
           const headers = headersFromRawHeaders(rawHeaders);
           body = new DispatchBodyReadable(
-            {
-              read() {
-                resumeBody?.();
-              },
-              destroy(err, cb) {
-                // Early body.destroy() cancels the request so the dispatch loop is not left parked.
-                removeSignal();
-                if (!completed) abortBody?.(err ?? undefined);
-                cb(err);
-              },
+            () => resumeBody?.(),
+            err => {
+              // Early body.destroy() cancels the request so the dispatch loop is not left parked.
+              removeSignal();
+              if (!completed) abortBody?.(err ?? undefined);
             },
             headers["content-type"],
           );
@@ -771,11 +802,7 @@ class DispatcherBase extends Dispatcher {
   }
 
   close(callback) {
-    if (callback === undefined) {
-      return new Promise((resolve, reject) => {
-        this.close((err, data) => (err ? reject(err) : resolve(data)));
-      });
-    }
+    if (callback === undefined) return promiseForm(cb => this.close(cb));
     if (typeof callback !== "function") throw new InvalidArgumentError("invalid callback");
     if (this.#destroyed) {
       queueMicrotask(() => callback(new ClientDestroyedError("The client is destroyed"), null));
@@ -794,11 +821,7 @@ class DispatcherBase extends Dispatcher {
       callback = err;
       err = null;
     }
-    if (callback === undefined) {
-      return new Promise((resolve, reject) => {
-        this.destroy(err, (e, data) => (e ? reject(e) : resolve(data)));
-      });
-    }
+    if (callback === undefined) return promiseForm(cb => this.destroy(err, cb));
     if (typeof callback !== "function") throw new InvalidArgumentError("invalid callback");
     this.#destroyed = true;
     this.#closed = true;
@@ -1283,6 +1306,8 @@ function isReplayableBody(body) {
 // fetch through a dispatcher that is not route-only: every hop goes through dispatcher.dispatch(), as in undici.
 function fetchViaDispatcher(dispatcher, input, init) {
   let url: URL, method: string, headers: Headers, body: any, signal: any, redirect: any;
+  // A pristine copy of a Request input whose body is buffered: each clone of it is one more sendable body.
+  let replay: Request | undefined;
   // Input parsing failures reject the returned promise like WHATWG fetch, never throw synchronously.
   try {
     const request = input instanceof Request ? input : undefined;
@@ -1291,7 +1316,7 @@ function fetchViaDispatcher(dispatcher, input, init) {
     if (url.protocol !== "http:" && url.protocol !== "https:") return nativeFetch(input, init);
     method = String((init.method ?? request?.method) || "GET");
     headers = new Headers(init.headers ?? request?.headers);
-    body = init.body ?? request?.body;
+    body = init.body;
     signal = init.signal ?? request?.signal;
     redirect = init.redirect ?? request?.redirect ?? "follow";
     // WHATWG fetch normalizes only these six methods; others keep their case.
@@ -1306,6 +1331,14 @@ function fetchViaDispatcher(dispatcher, input, init) {
     ) {
       method = upper;
     }
+    if (body == null && request && method !== "GET" && method !== "HEAD") {
+      // Cloned before the body is read: a buffered body stays buffered in the clone, and a stream body is teed.
+      const spare = request.clone();
+      body = request.body;
+      // Only the stream over a buffered body is native here; a tee branch is not, and undici does not replay a stream.
+      if (body?.$bunNativePtr) replay = spare;
+      else spare.body?.cancel();
+    }
     // The dispatch options carry only origin and path, so URL userinfo becomes Basic auth here, as native fetch does.
     if ((url.username || url.password) && !headers.has("authorization")) {
       const userinfo = `${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`;
@@ -1317,197 +1350,200 @@ function fetchViaDispatcher(dispatcher, input, init) {
     return Promise.reject(err);
   }
 
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let redirects = 0;
-    let streamController: ReadableStreamDefaultController | null = null;
-    let abortHop: ((reason?: Error) => void) | null = null;
-    let onSignalAbort: (() => void) | null = null;
-    const removeSignal = () => {
-      if (!onSignalAbort) return;
-      if (typeof signal.removeEventListener === "function") signal.removeEventListener("abort", onSignalAbort);
-      else if (typeof signal.removeListener === "function") signal.removeListener("abort", onSignalAbort);
-      onSignalAbort = null;
+  const { promise, resolve, reject } = Promise.withResolvers<Response>();
+  let settled = false;
+  let redirects = 0;
+  let streamController: ReadableStreamDefaultController | null = null;
+  let abortHop: ((reason?: Error) => void) | null = null;
+  let onSignalAbort: (() => void) | null = null;
+  const removeSignal = () => {
+    if (!onSignalAbort) return;
+    if (typeof signal.removeEventListener === "function") signal.removeEventListener("abort", onSignalAbort);
+    else if (typeof signal.removeListener === "function") signal.removeListener("abort", onSignalAbort);
+    onSignalAbort = null;
+  };
+  const routeError = err => {
+    removeSignal();
+    if (!settled) {
+      settled = true;
+      // Null so a late onData cannot park the dispatcher on the orphaned stream's backpressure.
+      streamController = null;
+      reject(err);
+    } else if (streamController) {
+      streamController.error(err);
+      streamController = null;
+    }
+  };
+  // Applies the WHATWG redirect rules to the request state; throws when the redirect cannot be followed.
+  const redirectTo = (statusCode: number, location: string) => {
+    if (++redirects > 20) throw new TypeError("redirect count exceeded");
+    const next = new URL(location, url);
+    if (next.protocol !== "http:" && next.protocol !== "https:") {
+      throw new TypeError("URL scheme must be a HTTP(S) scheme");
+    }
+    if (
+      statusCode === 303
+        ? method !== "GET" && method !== "HEAD"
+        : (statusCode === 301 || statusCode === 302) && method === "POST"
+    ) {
+      method = "GET";
+      body = undefined;
+      replay = undefined;
+      headers.delete("content-encoding");
+      headers.delete("content-language");
+      headers.delete("content-location");
+      headers.delete("content-type");
+      headers.delete("content-length");
+    } else if (replay) {
+      body = replay.clone().body;
+    } else if (body != null && !isReplayableBody(body)) {
+      throw new TypeError(
+        `Cannot follow the ${statusCode} redirect to ${next.origin}: a stream body cannot be sent twice`,
+      );
+    }
+    if (next.origin !== url.origin) {
+      headers.delete("authorization");
+      headers.delete("proxy-authorization");
+      headers.delete("cookie");
+      headers.delete("host");
+    }
+    url = next;
+  };
+  const dispatchHop = () => {
+    // False once this hop reached a terminal callback or a redirect replaced it; its later callbacks are ignored.
+    let live = true;
+    let resumeData: (() => void) | null = null;
+    const fail = err => {
+      if (!live) return;
+      live = false;
+      routeError(err);
     };
-    const routeError = err => {
-      removeSignal();
-      if (!settled) {
-        settled = true;
-        // Null so a late onData cannot park the dispatcher on the orphaned stream's backpressure.
-        streamController = null;
-        reject(err);
-      } else if (streamController) {
-        streamController.error(err);
-        streamController = null;
-      }
-    };
-    // Applies the WHATWG redirect rules to the request state; throws when the redirect cannot be followed.
-    const redirectTo = (statusCode: number, location: string) => {
-      if (++redirects > 20) throw new TypeError("redirect count exceeded");
-      const next = new URL(location, url);
-      if (next.protocol !== "http:" && next.protocol !== "https:") {
-        throw new TypeError("URL scheme must be a HTTP(S) scheme");
-      }
-      if (
-        statusCode === 303
-          ? method !== "GET" && method !== "HEAD"
-          : (statusCode === 301 || statusCode === 302) && method === "POST"
-      ) {
-        method = "GET";
-        body = undefined;
-        headers.delete("content-encoding");
-        headers.delete("content-language");
-        headers.delete("content-location");
-        headers.delete("content-type");
-        headers.delete("content-length");
-      } else if (body != null && !isReplayableBody(body)) {
-        throw new TypeError(
-          `Cannot follow the ${statusCode} redirect to ${next.origin}: a stream body cannot be sent twice`,
-        );
-      }
-      if (next.origin !== url.origin) {
-        headers.delete("authorization");
-        headers.delete("proxy-authorization");
-        headers.delete("cookie");
-        headers.delete("host");
-      }
-      url = next;
-    };
-    const dispatchHop = () => {
-      // False once this hop reached a terminal callback or a redirect replaced it; its later callbacks are ignored.
-      let live = true;
-      let resumeData: (() => void) | null = null;
-      const fail = err => {
-        if (!live) return;
-        live = false;
-        routeError(err);
-      };
-      try {
-        dispatcher.dispatch(
-          {
-            origin: url.origin,
-            path: url.pathname + url.search,
-            method,
-            headers: headers.toJSON(),
-            body,
-            // fetch follows redirects itself, one dispatch per hop, so every hop passes through the dispatcher.
-            maxRedirections: 0,
+    try {
+      dispatcher.dispatch(
+        {
+          origin: url.origin,
+          path: url.pathname + url.search,
+          method,
+          headers: headers.toJSON(),
+          body,
+          // fetch follows redirects itself, one dispatch per hop, so every hop passes through the dispatcher.
+          maxRedirections: 0,
+        },
+        {
+          onConnect: abort => {
+            if (!live || settled) return;
+            abortHop = abort;
+            // onConnect may fire once per retry; drop the previous listener first.
+            removeSignal();
+            // Wired here because DispatchOptions has no signal field; user dispatch() implementations never see it.
+            if (signal) {
+              onSignalAbort = () => abort(signal.reason);
+              if (signal.aborted) onSignalAbort();
+              else if (typeof signal.addEventListener === "function")
+                signal.addEventListener("abort", onSignalAbort, { once: true });
+              else if (typeof signal.on === "function") signal.on("abort", onSignalAbort);
+            }
           },
-          {
-            onConnect: abort => {
-              if (!live || settled) return;
-              abortHop = abort;
-              // onConnect may fire once per retry; drop the previous listener first.
-              removeSignal();
-              // Wired here because DispatchOptions has no signal field; user dispatch() implementations never see it.
-              if (signal) {
-                onSignalAbort = () => abort(signal.reason);
-                if (signal.aborted) onSignalAbort();
-                else if (typeof signal.addEventListener === "function")
-                  signal.addEventListener("abort", onSignalAbort, { once: true });
-                else if (typeof signal.on === "function") signal.on("abort", onSignalAbort);
+          onHeaders: (statusCode, rawHeaders, resume, statusText) => {
+            // A second final onHeaders, or one after a terminal callback, violates the dispatch contract.
+            if (statusCode < 200 || !live || settled) return true;
+            if (
+              redirect !== "manual" &&
+              (statusCode === 301 ||
+                statusCode === 302 ||
+                statusCode === 303 ||
+                statusCode === 307 ||
+                statusCode === 308)
+            ) {
+              if (redirect === "error") {
+                const err = new TypeError(`Redirect response '${statusCode}' received when redirect mode is 'error'`);
+                const abort = abortHop;
+                fail(err);
+                abort?.(err);
+                return true;
               }
-            },
-            onHeaders: (statusCode, rawHeaders, resume, statusText) => {
-              // A second final onHeaders, or one after a terminal callback, violates the dispatch contract.
-              if (statusCode < 200 || !live || settled) return true;
-              if (
-                redirect !== "manual" &&
-                (statusCode === 301 ||
-                  statusCode === 302 ||
-                  statusCode === 303 ||
-                  statusCode === 307 ||
-                  statusCode === 308)
-              ) {
-                if (redirect === "error") {
-                  const err = new TypeError(`Redirect response '${statusCode}' received when redirect mode is 'error'`);
-                  const abort = abortHop;
-                  fail(err);
-                  abort?.(err);
-                  return true;
-                }
-                let location;
-                for (let i = 0; i + 1 < rawHeaders.length; i += 2) {
-                  if (String(rawHeaders[i]).toLowerCase() === "location") location = String(rawHeaders[i + 1]);
-                }
-                if (location !== undefined) {
-                  const abort = abortHop;
-                  try {
-                    redirectTo(statusCode, location);
-                  } catch (err) {
-                    fail(err);
-                    abort?.(err as Error);
-                    return true;
-                  }
-                  // undici drops the connection of a redirect response instead of reading its body.
-                  live = false;
-                  removeSignal();
-                  abortHop = null;
-                  abort?.();
-                  dispatchHop();
-                  return true;
-                }
-              }
-              resumeData = resume;
-              const responseHeaders: [string, string][] = [];
+              let location;
               for (let i = 0; i + 1 < rawHeaders.length; i += 2) {
-                responseHeaders.push([String(rawHeaders[i]), String(rawHeaders[i + 1])]);
+                if (String(rawHeaders[i]).toLowerCase() === "location") location = String(rawHeaders[i + 1]);
               }
-              let responseBody: ReadableStream | null = null;
-              const nullBody = statusCode === 204 || statusCode === 205 || statusCode === 304;
-              if (!nullBody && method !== "HEAD") {
-                responseBody = new ReadableStream({
-                  start(controller) {
-                    streamController = controller;
-                  },
-                  pull() {
-                    resumeData?.();
-                  },
-                  cancel(reason) {
-                    removeSignal();
-                    streamController = null;
-                    abortHop?.(reason instanceof Error ? reason : undefined);
-                  },
-                });
+              if (location !== undefined) {
+                const abort = abortHop;
+                try {
+                  redirectTo(statusCode, location);
+                } catch (err) {
+                  fail(err);
+                  abort?.(err as Error);
+                  return true;
+                }
+                // undici drops the connection of a redirect response instead of reading its body.
+                live = false;
+                removeSignal();
+                abortHop = null;
+                abort?.();
+                dispatchHop();
+                return true;
               }
-              // Built before flipping settled so a non-constructible status rejects; the constructor cannot set url or redirected.
-              const response = new Response(responseBody, { status: statusCode, statusText, headers: responseHeaders });
-              settled = true;
-              resolve(response);
-              return true;
-            },
-            onData: chunk => {
-              if (!live || !streamController) return true;
-              // Copy: the dispatch contract only guarantees the chunk during the callback.
-              streamController.enqueue(new Uint8Array(chunk));
-              return (streamController.desiredSize ?? 1) > 0;
-            },
-            onComplete: () => {
-              if (!live) return;
-              live = false;
-              removeSignal();
-              if (!settled) {
-                settled = true;
-                reject(
-                  new TypeError(
-                    `fetch failed for ${url.origin}: the dispatcher completed without calling onHeaders; onHeaders must be called before onComplete`,
-                  ),
-                );
-                return;
-              }
-              streamController?.close();
-              streamController = null;
-            },
-            onError: fail,
+            }
+            resumeData = resume;
+            const responseHeaders: [string, string][] = [];
+            for (let i = 0; i + 1 < rawHeaders.length; i += 2) {
+              responseHeaders.push([String(rawHeaders[i]), String(rawHeaders[i + 1])]);
+            }
+            let responseBody: ReadableStream | null = null;
+            const nullBody = statusCode === 204 || statusCode === 205 || statusCode === 304;
+            if (!nullBody && method !== "HEAD") {
+              responseBody = new ReadableStream({
+                start(controller) {
+                  streamController = controller;
+                },
+                pull() {
+                  resumeData?.();
+                },
+                cancel(reason) {
+                  removeSignal();
+                  streamController = null;
+                  abortHop?.(reason instanceof Error ? reason : undefined);
+                },
+              });
+            }
+            // Built before flipping settled so a non-constructible status rejects; the constructor cannot set url or redirected.
+            const response = new Response(responseBody, { status: statusCode, statusText, headers: responseHeaders });
+            settled = true;
+            resolve(response);
+            return true;
           },
-        );
-      } catch (err) {
-        // A dispatcher that throws synchronously after resolving must error the body, not vanish into the executor.
-        fail(err);
-      }
-    };
-    dispatchHop();
-  });
+          onData: chunk => {
+            if (!live || !streamController) return true;
+            // Copy: the dispatch contract only guarantees the chunk during the callback.
+            streamController.enqueue(new Uint8Array(chunk));
+            return (streamController.desiredSize ?? 1) > 0;
+          },
+          onComplete: () => {
+            if (!live) return;
+            live = false;
+            removeSignal();
+            if (!settled) {
+              settled = true;
+              reject(
+                new TypeError(
+                  `fetch failed for ${url.origin}: the dispatcher completed without calling onHeaders; onHeaders must be called before onComplete`,
+                ),
+              );
+              return;
+            }
+            streamController?.close();
+            streamController = null;
+          },
+          onError: fail,
+        },
+      );
+    } catch (err) {
+      // A dispatcher that throws synchronously after resolving must error the body, not vanish into the executor.
+      fail(err);
+    }
+  };
+  dispatchHop();
+  return promise;
 }
 
 function fetch(input, init) {

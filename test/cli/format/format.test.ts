@@ -4281,17 +4281,32 @@ describe.concurrent("bun fmt", () => {
   describe("a language that only a Prettier plugin supports", () => {
     // A run starts a VM, and the leak check at exit takes seconds with a VM's threads.
     const timeout = isDebug || isASAN ? 120_000 : 5_000;
-    // Stand-ins. This Prettier collapses spaces and logs the arguments of each call.
+    // Stand-ins. This Prettier collapses spaces and logs the arguments of each call, the plugins among them. Like
+    // Prettier, it imports a plugin that is a path, and only formats a file that the plugin has a language for. The
+    // packages have no code.
     const packages = {
       "node_modules/prettier/package.json": '{ "name": "prettier", "version": "3.0.0", "main": "index.cjs" }',
       "node_modules/prettier/index.cjs": `const fs = require("node:fs");
+const path = require("node:path");
+class UndefinedParserError extends Error {
+  name = "UndefinedParserError";
+}
+const load = plugins =>
+  (plugins ?? []).filter(it => it.startsWith(".") || path.isAbsolute(it)).map(it => require(path.resolve(it)));
 exports.resolveConfig = async (file, { config }) => {
   fs.appendFileSync(__dirname + "/paths.txt", file + "\\n" + config + "\\n");
   return config ? JSON.parse(fs.readFileSync(config, "utf8")) : null;
 };
+exports.getSupportInfo = async ({ plugins }) => ({
+  options: load(plugins).flatMap(it => Object.keys(it.options).map(name => ({ name }))),
+});
 exports.format = async (text, options) => {
   fs.appendFileSync(__dirname + "/calls.txt", JSON.stringify(options) + "\\n");
   if (text.includes("broken")) throw Object.assign(new SyntaxError("Unexpected token (1:2)"), { loc: {} });
+  const endings = load(options.plugins).flatMap(it => it.languages.flatMap(language => language.extensions));
+  if (endings.length > 0 && !options.parser && !endings.some(it => options.filepath.endsWith(it))) {
+    throw new UndefinedParserError('No parser could be inferred for file "' + options.filepath + '".');
+  }
   return text.replace(/ +/g, " ");
 };
 `,
@@ -4637,6 +4652,306 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       },
       timeout,
     );
+
+    // From here on bunfig.toml lists the plugins. The project's own plugin adds a language that no table of bun fmt's
+    // has, so only the `files` of an entry of `[[fmt.overrides]]` say which files are its own.
+    const own = {
+      "plugin.js": `exports.languages = [{ name: "Foo", parsers: ["foo"], extensions: [".foo"] }];
+exports.options = { fooStyle: { type: "string" }, fooDepth: { type: "int" } };
+`,
+    };
+    /** A bunfig.toml whose entry for `patterns` lists the project's own plugin. `more` is the rest of its options. */
+    const scoped = (patterns: string[], more = "") =>
+      `[[fmt.overrides]]\nfiles = ${JSON.stringify(patterns)}\noptions = { plugins = ["./plugin.js"]${more} }\n`;
+    const project = { ...packages, ...own, "bunfig.toml": scoped(["*.foo"]), "a.foo": "a   b\n", "a.js": "a  ;\n" };
+    const log = "node_modules/prettier/calls.txt";
+    type Call = { filepath: string; plugins: string[] };
+    /** The options of each call of the stand-in's `format`. */
+    const callsOf = (result: { files: Record<string, string | null> }): Call[] =>
+      (result.files[log] ?? "")
+        .split("\n")
+        .filter(Boolean)
+        .map(it => JSON.parse(it));
+    /** The whole path of the project's own plugin, which is in the directory of the file of `call`, or `above` it. */
+    const ownPlugin = (call: Call, ...above: string[]) => resolve(dirname(call.filepath), ...above, "plugin.js");
+    const skippedForPlugin =
+      /error: 1 file was not formatted because --plugin or \[fmt\] plugins lists plugins that bun fmt does not include: \S*plugin\.js\n  Put the plugin in a \[\[fmt\.overrides\]\] entry with "files" to send only those files to your installed Prettier, or use --allow-unsupported to format it without the plugins\./;
+
+    test(
+      "plugins in [fmt] is enough for a plugin that adds a language, without a Prettier config",
+      async () => {
+        const { ".prettierrc": _, ...rest } = files;
+        const bunfig = '[fmt]\nplugins = ["prettier-plugin-astro"]\n';
+        const result = await format({ ...rest, "bunfig.toml": bunfig }, [], { reads });
+        expect(result.files["a.astro"]).toBe("<p >a</p>\n");
+        expect(result.files["b.js"]).toBe("b;\n");
+        expect(callsOf(result)).toEqual([
+          { plugins: ["prettier-plugin-astro"], filepath: expect.stringMatching(/[\\/]a\.astro$/) },
+        ]);
+        expect(result.stderr).toContain("Used your installed Prettier for 1 file in a language that needs a plugin");
+        expect(result.exitCode).toBe(0);
+      },
+      timeout,
+    );
+
+    test(
+      "an entry of [[fmt.overrides]] with plugins sends its files to Prettier, and the other files are formatted here",
+      async () => {
+        const result = await format(project, [], { reads: ["a.foo", "a.js", log] });
+        expect(result.files).toMatchObject({ "a.foo": "a b\n", "a.js": "a;\n" });
+        const calls = callsOf(result);
+        expect(calls).toEqual([{ plugins: [expect.any(String)], filepath: expect.stringMatching(/[\\/]a\.foo$/) }]);
+        // Prettier would look for a relative path from the working directory.
+        expect(calls[0].plugins.map(it => resolve(it))).toEqual([ownPlugin(calls[0])]);
+        expect(result.stderr).toContain("Used your installed Prettier for 1 file in a language that needs a plugin");
+        expect(result.exitCode).toBe(0);
+      },
+      timeout,
+    );
+
+    // The plugin could print it differently, and Bun can't tell.
+    test(
+      "a file that Bun formats is skipped in an entry whose plugin Bun doesn't include",
+      async () => {
+        const names = ["a.foo", "a.js", "src/b.js"];
+        const inside = { ...project, "bunfig.toml": scoped(["*.foo", "src/**"]), "src/b.js": "b  ;\n" };
+        const [result, allowed] = await Promise.all([
+          format(inside, [], { reads: names }),
+          format(inside, ["--allow-unsupported"], { reads: names }),
+        ]);
+        expect(result.files).toEqual({ "a.foo": "a b\n", "a.js": "a;\n", "src/b.js": "b  ;\n" });
+        expect(result.stderr).toMatch(skippedForPlugin);
+        expect(result.exitCode).toBe(2);
+        expect(allowed.files).toEqual({ "a.foo": "a b\n", "a.js": "a;\n", "src/b.js": "b;\n" });
+        expect(allowed.exitCode).toBe(0);
+      },
+      timeout,
+    );
+
+    test(
+      "a plugin's parser in an entry sends a file to Prettier that Bun could format itself",
+      async () => {
+        const bunfig = scoped(["*.html"], ', parser = "foo"');
+        const markup = { ...packages, ...own, "bunfig.toml": bunfig, "a.html": "<p   >a</p>\n", "a.js": "a  ;\n" };
+        const result = await format(markup, [], { reads: ["a.html", "a.js", log] });
+        // Bun's own output is `<p>a</p>`.
+        expect(result.files).toMatchObject({ "a.html": "<p >a</p>\n", "a.js": "a;\n" });
+        const calls = callsOf(result);
+        expect(calls).toEqual([
+          { parser: "foo", plugins: [expect.any(String)], filepath: expect.stringMatching(/[\\/]a\.html$/) },
+        ]);
+        expect(calls[0].plugins.map(it => resolve(it))).toEqual([ownPlugin(calls[0])]);
+        expect(result.exitCode).toBe(0);
+      },
+      timeout,
+    );
+
+    test(
+      "Prettier gets the options of an entry, over those of [fmt], and the plugin's own options",
+      async () => {
+        const more = ', printWidth = 120, tabWidth = 8, fooStyle = "wide", fooDepth = 3';
+        const bunfig = `[fmt]\nprintWidth = 100\n\n${scoped(["*.foo"], more)}`;
+        const result = await format({ ...project, "bunfig.toml": bunfig }, [], { reads: ["a.foo", log] });
+        expect(result.files["a.foo"]).toBe("a b\n");
+        expect(callsOf(result)).toEqual([
+          {
+            printWidth: 120,
+            tabWidth: 8,
+            fooStyle: "wide",
+            fooDepth: 3,
+            plugins: [expect.any(String)],
+            filepath: expect.stringMatching(/[\\/]a\.foo$/),
+          },
+        ]);
+        expect(result.exitCode).toBe(0);
+      },
+      timeout,
+    );
+
+    // Prettier ignores an option that it doesn't know, so it would format the file without a word.
+    test(
+      "an option in an entry that none of its plugins has is an error for the file",
+      async () => {
+        const bunfig = scoped(["*.foo"], ', fooStlye = "wide"');
+        const result = await format({ ...project, "bunfig.toml": bunfig }, [], { reads: ["a.foo"] });
+        expect(result.files["a.foo"]).toBe("a   b\n");
+        expect(result.stderr).toContain('Unknown option "fooStlye" in [[fmt.overrides]]: no listed plugin declares it');
+        expect(result.exitCode).toBe(2);
+      },
+      timeout,
+    );
+
+    test(
+      "a file in an entry that none of its plugins has a language for is an error, without a stack trace",
+      async () => {
+        const wider = { ...project, "bunfig.toml": scoped(["*.foo", "*.bar"]), "a.bar": "c   d\n" };
+        const error = "error: a.bar: No listed plugin has a parser for this file";
+        const [result, checked] = await Promise.all([
+          format(wider, [], { reads: ["a.foo", "a.bar"] }),
+          format(wider, ["--check", "a.bar"], { reads: ["a.bar"] }),
+        ]);
+        expect(result.files).toEqual({ "a.foo": "a b\n", "a.bar": "c   d\n" });
+        expect(result.stderr.split("\n")).toContain(error);
+        expect(result.stderr).not.toContain("UndefinedParserError");
+        expect(result.exitCode).toBe(2);
+        expect(checked.stderr.split("\n")).toContain(error);
+        expect(checked.exitCode).toBe(2);
+      },
+      timeout,
+    );
+
+    test(
+      "Prettier loads the plugins of [fmt] together with those of the Prettier config",
+      async () => {
+        const php = "@prettier/plugin-php";
+        const both = {
+          ...packages,
+          [`node_modules/${php}/package.json`]: `{ "name": "${php}", "version": "0.22.0" }`,
+          ".prettierrc": '{ "plugins": ["prettier-plugin-astro"] }\n',
+          "bunfig.toml": `[fmt]\nplugins = ["${php}"]\n`,
+          "a.astro": "<p   >a</p>\n",
+          "b.php": "<?php   echo 1;\n",
+        };
+        const result = await format(both, ["a.astro", "b.php"], { reads: ["a.astro", "b.php", log] });
+        expect(result.files).toMatchObject({ "a.astro": "<p >a</p>\n", "b.php": "<?php echo 1;\n" });
+        // The files are formatted on several threads.
+        const calls = callsOf(result).map(it => ({
+          name: basename(it.filepath),
+          plugins: [...(it.plugins ?? [])].sort(),
+        }));
+        expect(calls.sort((a, b) => a.name.localeCompare(b.name))).toEqual([
+          { name: "a.astro", plugins: [php, "prettier-plugin-astro"] },
+          { name: "b.php", plugins: [php, "prettier-plugin-astro"] },
+        ]);
+        expect(result.exitCode).toBe(0);
+      },
+      timeout,
+    );
+
+    test.each([
+      ["the plugin of [fmt]", '[fmt]\nplugins = ["prettier-plugin-astro"]\n', "a.astro", ", prettier-plugin-astro"],
+      ["the project's own plugin in an entry", scoped(["*.foo"]), "a.foo", ""],
+    ])(
+      "without Prettier installed, a file for %s is left, with a hint to install it",
+      async (_, bunfig, name, plugin) => {
+        const lacking = { ...own, "bunfig.toml": bunfig, [name]: "a   b\n" };
+        const [result, allowed] = await Promise.all([
+          format(lacking, [], { reads: [name] }),
+          format(lacking, ["--allow-unsupported"], { reads: [name] }),
+        ]);
+        const hint = `warn: Not installed: prettier${plugin}\n  Install prettier and every plugin in your config, and bun fmt will use them for these files.\n`;
+        const left = `1 file was not formatted because bun fmt does not support its language yet: 1 ${name.slice(1)}`;
+        expect(result.files[name]).toBe("a   b\n");
+        expect(result.stderr).toContain(`${hint}error: ${left}\n  Use --allow-unsupported to make this a warning.`);
+        expect(result.exitCode).toBe(2);
+        expect(allowed.files[name]).toBe("a   b\n");
+        expect(allowed.stderr).toContain(`${hint}warn: ${left}`);
+        expect(allowed.exitCode).toBe(0);
+      },
+    );
+
+    test.each([
+      ["the plugin of [fmt]", '[fmt]\nplugins = ["prettier-plugin-astro"]\n', "c.astro"],
+      ["the project's own plugin in an entry", scoped(["*.foo"]), "c.foo"],
+    ])(
+      "standard input with a file name for %s is formatted by Prettier",
+      async (_, bunfig, name) => {
+        const piped = { ...packages, ...own, "bunfig.toml": bunfig };
+        const stdin = "<p   >c</p>\n";
+        const [result, checked] = await Promise.all([
+          format(piped, ["--stdin-filepath", name], { stdin }),
+          format(piped, ["--stdin-filepath", name, "--check"], { stdin }),
+        ]);
+        expect(result).toMatchObject({ raw: "<p >c</p>\n", stderr: "", exitCode: 0 });
+        expect(checked).toMatchObject({ raw: "(stdin)\n", exitCode: 1 });
+      },
+      timeout,
+    );
+
+    test(
+      "the files of an entry's plugin are covered by --check and -l",
+      async () => {
+        const names = ["a.foo", "a.js"];
+        const [checked, listed, fine] = await Promise.all([
+          format(project, ["--check", ...names], { reads: names }),
+          different(project, names),
+          different({ ...project, "a.foo": "a b\n", "a.js": "a;\n" }, names),
+        ]);
+        expect(checked.files).toEqual({ "a.foo": project["a.foo"], "a.js": project["a.js"] });
+        expect(checked.stdout.split("\n")).toContain("a.foo");
+        expect(checked.exitCode).toBe(1);
+        expect(listed).toEqual(names);
+        expect(fine).toEqual([]);
+      },
+      timeout,
+    );
+
+    test(
+      "--staged formats a staged file of an entry's plugin with Prettier, and stages it again",
+      async () => {
+        using dir = tempDir("bun-format-staged", { ...project, "b.foo": "c   d\n", "gitconfig": "" });
+        const cwd = String(dir);
+        // An empty global config, so the machine's own doesn't count.
+        const isolated = { ...env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: join(cwd, "gitconfig") };
+        const run = async (...cmd: string[]) => {
+          await using proc = spawn({ cmd, env: isolated, cwd, stdout: "pipe", stderr: "pipe" });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          return { stdout, stderr, exitCode };
+        };
+        for (const args of [
+          ["init", "-q", "-b", "main"],
+          ["config", "core.autocrlf", "false"],
+          ["add", "a.foo", "a.js"],
+        ]) {
+          expect(await run("git", ...args)).toMatchObject({ exitCode: 0 });
+        }
+        const result = await run(...command, "--staged");
+        const names = ["a.foo", "a.js", "b.foo"];
+        expect(names.map(name => readFileSync(join(cwd, name), "utf8"))).toEqual(["a b\n", "a;\n", "c   d\n"]);
+        expect(result.stdout.split("\n").filter(Boolean).sort()).toEqual(["a.foo", "a.js"]);
+        expect((await run("git", "show", ":a.foo")).stdout).toBe("a b\n");
+        expect(result.exitCode).toBe(0);
+      },
+      timeout,
+    );
+
+    test(
+      "a plugin's path in a bunfig.toml above the working directory is relative to that file",
+      async () => {
+        const above = { ...packages, ...own, "bunfig.toml": scoped(["*.foo"]), "sub/a.foo": "a   b\n" };
+        const result = await format(above, [], { cwd: "sub", reads: ["sub/a.foo", log] });
+        expect(result.files["sub/a.foo"]).toBe("a b\n");
+        const calls = callsOf(result);
+        expect(calls).toEqual([
+          { plugins: [expect.any(String)], filepath: expect.stringMatching(/[\\/]sub[\\/]a\.foo$/) },
+        ]);
+        expect(calls[0].plugins.map(it => resolve(it))).toEqual([ownPlugin(calls[0], "..")]);
+        expect(result.exitCode).toBe(0);
+      },
+      timeout,
+    );
+
+    // The rule formats nothing with the installed Prettier. It reads the list to know which files Bun prints the same.
+    test.each<[string, RegExp]>([
+      ["prettier-plugin-astro", /^a\.js:1:2: Delete `··` \[Error\/bun\(format\)\]$/],
+      ["prettier-plugin-brace-style", /^a\.js:1:1: This file was not checked because .+ \[Error\/bun\(format\)\]$/],
+    ])("bun lint reads plugins in [fmt] for bun/format: %s", async (plugin, report) => {
+      using dir = tempDir("bun-format-lint", {
+        ".oxlintrc.json": '{ "rules": { "bun/format": "error" } }',
+        "bunfig.toml": `[fmt]\nplugins = ["${plugin}"]\n`,
+        "a.js": "a  ;\n",
+      });
+      await using proc = spawn({
+        cmd: [bunExe(), "lint", "-f", "unix", "."],
+        env,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout.split("\n").filter(it => it.includes("bun(format)"))).toEqual([expect.stringMatching(report)]);
+      expect(exitCode).toBe(1);
+    });
   });
 
   // Unless a test says otherwise, the expected output is what Prettier 3.9.9 prints on Node, with
@@ -5839,13 +6154,19 @@ exports.format = async text => "by Prettier";
       'error: 1 file was not formatted because --plugin or [fmt] plugins lists plugins that bun fmt does not include: prettier-plugin-brace-style\n  Put the plugin in a [[fmt.overrides]] entry with "files" to send only those files to your installed Prettier, or use --allow-unsupported to format it without the plugins.',
     );
     expect(flag.exitCode).toBe(2);
+    const allowing = ["--plugin", "prettier-plugin-brace-style", "--allow-unsupported"];
+    const flagAllowed = await format({ "a.js": ugly }, allowing, { reads: ["a.js"] });
+    expect(flagAllowed.files["a.js"]).toBe(formatted);
+    expect(flagAllowed.stderr.split("\n")).toContain(
+      "warn: prettier-plugin-brace-style in --plugin or [fmt] plugins has no effect because bun fmt does not include that plugin",
+    );
+    expect(flagAllowed.exitCode).toBe(0);
     // oxfmt has no plugins, so the file is formatted.
-    const oxfmt = await format({ ".oxfmtrc.json": "{}\n", "a.js": ugly }, ["--plugin", "prettier-plugin-astro", "a.js"], {
-      reads: ["a.js"],
-    });
+    const forOxfmt = { ".oxfmtrc.json": "{}\n", "a.js": ugly };
+    const oxfmt = await format(forOxfmt, ["--plugin", "prettier-plugin-astro", "a.js"], { reads: ["a.js"] });
     expect(oxfmt.files["a.js"]).toBe(formatted);
-    expect(oxfmt.stderr).toContain(
-      "warn: prettier-plugin-astro in --plugin or [fmt] plugins has no effect because oxfmt does not load Prettier plugins\n",
+    expect(oxfmt.stderr.split("\n")).toContain(
+      "warn: prettier-plugin-astro in --plugin or [fmt] plugins has no effect because oxfmt does not load Prettier plugins",
     );
     expect(oxfmt.exitCode).toBe(0);
     for (const flags of [[], ["--check"], ["--list-different"]]) {
@@ -11178,6 +11499,21 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
       { ".prettierrc": `{ "plugins": ["prettier-plugin-of-nobody"] }`, "a.js": ugly },
       ["a.js"],
     ],
+    // --plugin has no opposite. The first plugin is built in, and the second one leaves the file unformatted.
+    [
+      `plugins = ["prettier-plugin-packagejson"]`,
+      ["--plugin", "prettier-plugin-packagejson"],
+      [],
+      { "package.json": `{ "version": "1", "name": "a" }\n` },
+      ["package.json"],
+    ],
+    [
+      `plugins = ["prettier-plugin-of-nobody"]`,
+      ["--plugin", "prettier-plugin-of-nobody"],
+      [],
+      { "a.js": ugly },
+      ["a.js"],
+    ],
   ];
 
   test.each(others)("%s matches its flags", async (line, flags, opposite, files, args) => {
@@ -11288,7 +11624,12 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
     [`configPrecedence = "mine"`, `Invalid --config-precedence value.`],
     ["semicolons = false", `Unknown key "semicolons" in [fmt]\n`],
     ["printwidth = 80", `Unknown key "printwidth" in [fmt]\n  Did you mean "printWidth"?`],
-    [`plugins = ["a"]`, `Unknown key "plugins" in [fmt]\n`],
+    ["plugins = [1]", "expected string but received number"],
+    // The key is read. Bun doesn't include this plugin, which could print the file differently.
+    [
+      `plugins = ["a"]`,
+      `1 file was not formatted because --plugin or [fmt] plugins lists plugins that bun fmt does not include: a\n`,
+    ],
     [`parser = "babel"`, `Unknown key "parser" in [fmt]\n`],
   ])("rejects %s: %s", async (line, message) => {
     const result = await run({ "bunfig.toml": `[fmt]\n${line}\n`, "a.js": ugly }, ["a.js"]);

@@ -9,6 +9,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import http from "node:http";
 import path from "node:path";
+import fs from "node:fs";
 
 const spans: any[] = [];
 function restore() {
@@ -1211,7 +1212,7 @@ describe("static routes", () => {
 
   test("requests parked while an HTML bundle builds get a SERVER span too", async () => {
     using dir = tempDir("otel-html", { "index.html": "<!doctype html><title>x</title><p>hi" });
-    const { default: html } = await import(require("node:path").join(String(dir), "index.html"));
+    const { default: html } = await import(path.join(String(dir), "index.html"));
     asExternalClient();
     using server = Bun.serve({ port: 0, development: false, routes: { "/": html }, fetch: () => new Response("f") });
     // the first requests arrive while the bundle is still building
@@ -1551,7 +1552,6 @@ describe("limits", () => {
     const s = Bun.otel.tracer("t").startSpan("lim");
     s.setAttributes({ a: "a\u{1F600}bcd", b: "aaaéé", c: "値値値値値", d: "値値値値", e: "abcde" });
     s.end();
-    const fs = require("node:fs");
     Bun.otel.span("native", () => {
       // a request-independent native span: fs under an active parent; the path is not UTF-8
       try {

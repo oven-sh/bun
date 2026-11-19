@@ -252,7 +252,6 @@ describe("Bun.otel", () => {
     }));
 
   test("a span kept past its block does not pin the AsyncLocalStorage stores it was created under", () => {
-    const { AsyncLocalStorage } = require("node:async_hooks");
     const als = new AsyncLocalStorage();
     class Marker {}
     const kept: any[] = [];

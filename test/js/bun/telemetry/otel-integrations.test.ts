@@ -4,6 +4,8 @@ import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import tls from "node:tls";
 
 const spans: any[] = [];
 restore();
@@ -125,7 +127,6 @@ describe("bun:sqlite", () => {
 });
 
 test("node:sqlite: exec, run, get, all, iterate and a failure", async () => {
-  const { DatabaseSync } = require("node:sqlite");
   Bun.otel.span("parent", () => {
     const db = new DatabaseSync(":memory:");
     db.exec("create table t (a unique)");
@@ -255,7 +256,6 @@ test("a WebSocket that is closed before it opens has not failed", async () => {
 
 describe("net", () => {
   test("tls.connect: the span's verdict is the socket's (kept-but-unauthorized is not an error; a rejected handshake is)", async () => {
-    const tls = require("node:tls");
     using listener = Bun.listen({
       hostname: "127.0.0.1",
       port: 0,
@@ -311,7 +311,6 @@ describe("net", () => {
 
   test("a connect attempt destroyed before it opens is not exported (and a later attempt on the wrapper is not 'replaced')", async () => {
     using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {}, open() {} } });
-    const net = require("node:net");
     const s = net.connect(listener.port, "127.0.0.1");
     s.destroy();
     await new Promise<void>(r => s.once("close", r));

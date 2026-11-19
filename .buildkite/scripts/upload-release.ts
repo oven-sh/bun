@@ -326,6 +326,9 @@ async function verifyDraft(repo: string, tag: string, digests: Map<string, strin
 }
 
 async function uploadDrafts(): Promise<void> {
+  // GitHub shows the account that created the draft as the author of the release, whoever publishes it.
+  const authorToken = readSecret("RELEASE_DRAFT_GITHUB_TOKEN");
+
   // A signed zip has the name of the unsigned one that build-bun uploaded.
   const files = await downloadFiles(artifact => /^bun-(windows|darwin)-/.exec(artifact)?.[1]?.concat("-sign"));
   await signInToGithub();
@@ -346,7 +349,10 @@ async function uploadDrafts(): Promise<void> {
 
   const create = ["gh", "release", "create", tag, ...files, "--draft"] satisfies Command;
   const incomplete = `${title} (incomplete, do not publish)`;
+  const appToken = getEnv("GH_TOKEN");
+  process.env.GH_TOKEN = authorToken;
   await trace([...create, "--repo", repository, "--title", incomplete, "--notes", notes, "--target", commit]);
+  process.env.GH_TOKEN = appToken;
   await trace([...create, "--repo", updaterRepository, "--title", incomplete, "--notes", "bunbunbun"]);
 
   const digests = new Map<string, string>();
@@ -360,7 +366,7 @@ async function uploadDrafts(): Promise<void> {
   const ready = { tag_name: tag, name: title };
   // The draft that is published first is the last to look ready.
   const updaterDraft = await github<Release>("PATCH", `repos/${updaterRepository}/releases/${updaterId}`, ready);
-  const draft = await github<Release>("PATCH", `repos/${repository}/releases/${id}`, ready);
+  const draft = await github<Release>("PATCH", `repos/${repository}/releases/${id}`, ready, authorToken);
 
   const content = `The drafts of ${title} are ready. Check the tests of this build, then publish them in this order:
 

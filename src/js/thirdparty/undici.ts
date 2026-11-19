@@ -854,7 +854,6 @@ type PendingEntry = { abort: (reason?: Error) => void; done: Promise<void> };
 class DispatcherBase extends Dispatcher {
   #closed = false;
   #destroyed = false;
-  #fetchAbort: AbortController | undefined = undefined;
   declare [kPending]: Set<PendingEntry>;
 
   constructor() {
@@ -895,7 +894,6 @@ class DispatcherBase extends Dispatcher {
     this.#destroyed = true;
     this.#closed = true;
     const reason = err ?? new ClientDestroyedError("The client is destroyed");
-    this.#fetchAbort?.abort(reason);
     for (const entry of this[kPending]) entry.abort(reason);
     Promise.allSettled(Array.from(this[kPending], entry => entry.done)).then(() =>
       queueMicrotask(() => callback(null, null)),
@@ -932,30 +930,21 @@ class DispatcherBase extends Dispatcher {
     return undefined;
   }
 
-  // fetch() through a route-only dispatcher is native fetch. close() waits for its headers; destroy() aborts it, body included.
+  // fetch() through a route-only dispatcher is the native fetch it was before dispatchers worked, plus the agent's proxy.
   [kFetch](input, init): Promise<Response> {
+    if (this.#destroyed) return Promise.reject(new ClientDestroyedError("The client is destroyed"));
+    if (this.#closed) return Promise.reject(new ClientClosedError("The client is closed"));
+    const proxy = this[kNativeInit]()?.proxy;
+    // The caller's own init object, so nothing about the call changes. close() and destroy() do not track it.
+    if (proxy === undefined) return nativeFetch(input, init);
+    if (init == null) return nativeFetch(input, { proxy });
+    // The caller's own proxy wins, and a unix socket request cannot go through a proxy.
+    if (init.proxy !== undefined || init.unix != null) return nativeFetch(input, init);
     try {
-      if (this.#destroyed) throw new ClientDestroyedError("The client is destroyed");
-      if (this.#closed) throw new ClientClosedError("The client is closed");
-      // Bun accepts a Request as init; its fields are prototype getters, so fold it into the input before spreading.
-      if (init instanceof Request) {
-        input = new Request(input, init as any);
-        init = kEmptyObject;
-      }
-      // One signal for every fetch() of this dispatcher: native fetch holds it until the body ends, so destroy() reaches that too.
-      const destroyed = (this.#fetchAbort ??= new AbortController()).signal;
-      // A present `signal: null` detaches the Request's own signal, as in native fetch.
-      const outer = init.signal !== undefined ? init.signal : input instanceof Request ? input.signal : undefined;
-      const merged = { ...init, signal: outer ? AbortSignal.any([outer, destroyed]) : destroyed };
-      // The caller's own proxy wins, and a unix socket request cannot go through a proxy.
-      const proxy = this[kNativeInit]()?.proxy;
-      if (proxy !== undefined && merged.proxy === undefined && merged.unix == null) merged.proxy = proxy;
-      const response = nativeFetch(input, merged);
-      const pending = this[kPending];
-      const entry: PendingEntry = { abort: noop, done: response.then(noop, noop) };
-      pending.add(entry);
-      entry.done.then(() => pending.delete(entry));
-      return response;
+      // Bun accepts a Request as init. Its fields are internal, so it becomes part of the input.
+      if (init instanceof Request) return nativeFetch(new Request(input, init as any), { proxy });
+      // Not a copy: native fetch reads each option with a property get, and a copy would lose the inherited ones.
+      return nativeFetch(input, { __proto__: init, proxy });
     } catch (err) {
       return Promise.reject(err);
     }
@@ -973,6 +962,9 @@ function isRouteOnly(dispatcher) {
   );
 }
 
+// Pool, Client and BalancedPool connect to their origin directly, as in undici. Native fetch reads HTTP_PROXY otherwise.
+const kDirect = Object.freeze({ proxy: false });
+
 // Agent, ProxyAgent and EnvHttpProxyAgent route by opts.origin.
 function dispatchToOrigin(agent, opts, handler) {
   if (!opts.origin) throw new InvalidArgumentError("opts.origin must be a non-empty string or URL.");
@@ -988,6 +980,7 @@ class Agent extends DispatcherBase {
     return dispatchToOrigin(this, opts, handler);
   }
 
+  // No proxy option: an Agent keeps native fetch's default, which reads HTTP_PROXY. undici's Agent connects directly.
   [kNativeInit]() {
     return kEmptyObject;
   }
@@ -1003,7 +996,7 @@ class Pool extends DispatcherBase {
   }
 
   [kDispatch](opts, handler) {
-    return fetchDispatch(this.#origin!, opts, handler, this[kPending]);
+    return fetchDispatch(this.#origin!, opts, handler, this[kPending], kDirect);
   }
 }
 
@@ -1018,7 +1011,7 @@ class BalancedPool extends DispatcherBase {
   [kDispatch](opts, handler) {
     const upstream = this.#upstreams[0];
     if (!upstream) throw new BalancedPoolMissingUpstreamError("No upstream has been added to the BalancedPool");
-    return fetchDispatch(upstream, opts, handler, this[kPending]);
+    return fetchDispatch(upstream, opts, handler, this[kPending], kDirect);
   }
 }
 
@@ -1032,7 +1025,7 @@ class Client extends DispatcherBase {
   }
 
   [kDispatch](opts, handler) {
-    return fetchDispatch(this.#origin!, opts, handler, this[kPending]);
+    return fetchDispatch(this.#origin!, opts, handler, this[kPending], kDirect);
   }
 }
 
@@ -1070,14 +1063,9 @@ class ProxyAgent extends DispatcherBase {
 
 // Native fetch applies HTTP_PROXY, HTTPS_PROXY and NO_PROXY itself on every redirect hop, so this agent adds no option.
 class EnvHttpProxyAgent extends DispatcherBase {
-  constructor(opts?: { httpProxy?: string; httpsProxy?: string; noProxy?: string }) {
+  // The httpProxy, httpsProxy and noProxy options are not applied. wrangler passes noProxy at startup, so they must not throw.
+  constructor(_options?: object) {
     super();
-    if (opts != null && (opts.httpProxy != null || opts.httpsProxy != null || opts.noProxy != null)) {
-      throw new InvalidArgumentError(
-        "EnvHttpProxyAgent's httpProxy, httpsProxy and noProxy options are not implemented in Bun. " +
-          "Set the HTTP_PROXY, HTTPS_PROXY and NO_PROXY environment variables, or use ProxyAgent.",
-      );
-    }
   }
 
   [kDispatch](opts, handler) {
@@ -1863,7 +1851,7 @@ function fetch(input, init) {
   // Raw module-local on purpose: nativeFetch stays the fast path until setGlobalDispatcher() installs one.
   const dispatcher = init?.dispatcher ?? globalDispatcher;
   if (dispatcher && typeof dispatcher.dispatch === "function") {
-    if (isRouteOnly(dispatcher)) return dispatcher[kFetch](input, init ?? kEmptyObject);
+    if (isRouteOnly(dispatcher)) return dispatcher[kFetch](input, init);
     return fetchViaDispatcher(dispatcher, input, init ?? kEmptyObject);
   }
   return nativeFetch(input, init);

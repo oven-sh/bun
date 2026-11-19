@@ -1999,39 +1999,54 @@ describe("undici", () => {
       );
     });
 
-    it("destroy() aborts a fetch in flight through a stock Agent", async () => {
+    it("fetch through a stock Agent hands the caller's init to native fetch as it is", async () => {
       await using server = Bun.serve({
         port: 0,
-        // Never respond; the request can only finish by being aborted.
-        fetch: () => new Promise<Response>(() => {}),
+        fetch: async req => new Response(`${req.method} ${await req.text()} ${req.headers.get("x-test")}`),
       });
+      class Init {
+        get method() {
+          return "POST";
+        }
+        get body() {
+          return "payload";
+        }
+        get headers() {
+          return { "x-test": "1" };
+        }
+      }
+      const inherited = Object.create({ method: "POST", body: "payload", headers: { "x-test": "1" } });
       const agent = new Agent();
-      const rejected = expect(
-        undiciFetch(`http://localhost:${server.port}/`, { dispatcher: agent } as any),
-      ).rejects.toHaveProperty("code", "UND_ERR_DESTROYED");
-      await agent.destroy();
-      await rejected;
+      // Native fetch reads each option with a property get. A copy of the own properties would send a bare GET.
+      expect({
+        getters: await (await undiciFetch(server.url, { __proto__: new Init(), dispatcher: agent } as any)).text(),
+        inherited: await (await undiciFetch(server.url, { __proto__: inherited, dispatcher: agent } as any)).text(),
+      }).toEqual({ getters: "POST payload 1", inherited: "POST payload 1" });
     });
 
-    it("destroy() aborts a response body that is still streaming through a stock Agent", async () => {
-      await using server = Bun.serve({
-        port: 0,
-        fetch: () =>
-          new Response(
-            new ReadableStream({
-              // One chunk, then the body stays open: only an abort can end it.
-              start(controller) {
-                controller.enqueue(new TextEncoder().encode("first"));
-              },
-            }),
-          ),
+    it("fetch through a stock Agent adds no abort signal of its own", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { Agent, fetch, setGlobalDispatcher } = require("undici");
+           const { heapStats } = require("bun:jsc");
+           const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+           setGlobalDispatcher(new Agent());
+           const signal = new AbortController().signal;
+           const signals = () => heapStats().objectTypeCounts.AbortSignal ?? 0;
+           const before = signals();
+           for (let i = 0; i < 300; i++) await (await fetch(server.url, { signal })).text();
+           // No collection in between: a signal made for each fetch would still be counted here.
+           console.log(signals() - before < 30 ? "none" : signals() - before + " more signals");
+           server.stop(true);`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
       });
-      const agent = new Agent();
-      const res = await undiciFetch(`http://localhost:${server.port}/`, { dispatcher: agent } as any);
-      const reader = res.body!.getReader();
-      expect(new TextDecoder().decode((await reader.read()).value)).toBe("first");
-      await agent.destroy();
-      await expect(reader.read()).rejects.toHaveProperty("code", "UND_ERR_DESTROYED");
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "none", stderr: "" });
+      expect(exitCode).toBe(0);
     });
 
     it("a request() body drops a UTF-8 byte order mark in text() and json(), like undici", async () => {
@@ -2817,7 +2832,7 @@ describe("undici ProxyAgent", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("ProxyAgent and EnvHttpProxyAgent reject options they would otherwise drop", () => {
+  it("ProxyAgent rejects options it would otherwise drop", () => {
     const uri = "http://127.0.0.1:1";
     for (const arg of [undefined, {}, 123, "", { uri: "" }]) {
       expect(() => new (ProxyAgent as any)(arg)).toThrow("Proxy uri is mandatory");
@@ -2825,10 +2840,43 @@ describe("undici ProxyAgent", () => {
     expect(() => new (ProxyAgent as any)({ uri, token: Buffer.from("t") })).toThrow(errors.InvalidArgumentError);
     expect(() => new (ProxyAgent as any)({ uri, auth: 123 })).toThrow(errors.InvalidArgumentError);
     expect(() => new ProxyAgent({ uri, token: "t", auth: "a" })).toThrow(errors.InvalidArgumentError);
-    expect(() => new EnvHttpProxyAgent({})).not.toThrow();
-    for (const opts of [{ httpProxy: uri }, { httpsProxy: uri }, { noProxy: "example.com" }]) {
-      expect(() => new EnvHttpProxyAgent(opts)).toThrow("not implemented");
-    }
+  });
+
+  it("a Pool and a Client connect to their origin when a proxy variable is set, and wrangler's proxy setup runs", async () => {
+    await using origin = recordingOrigin();
+    await using proxy = await recordingProxy();
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Client, EnvHttpProxyAgent, Pool, fetch, setGlobalDispatcher } = require("undici");
+         const origin = process.argv[1];
+         // What wrangler 4 runs at startup when a proxy variable is set.
+         setGlobalDispatcher(new EnvHttpProxyAgent({ noProxy: "localhost,127.0.0.1,::1" }));
+         const out = [];
+         // miniflare reaches workerd on the loopback interface through a Pool.
+         out.push(await (await new Pool(origin).request({ path: "/pool", method: "GET" })).body.text());
+         out.push(await (await new Client(origin).request({ path: "/client", method: "GET" })).body.text());
+         const pool = new Pool(origin);
+         out.push(await (await fetch(origin + "/wrapped", { dispatcher: { dispatch: (o, h) => pool.dispatch(o, h) } })).text());
+         // The global EnvHttpProxyAgent leaves the variables to native fetch.
+         out.push(await (await fetch(origin + "/global")).text());
+         console.log(JSON.stringify(out));`,
+        origin.url,
+      ],
+      env: { ...bunEnv, HTTP_PROXY: proxy.url, http_proxy: proxy.url, NO_PROXY: "", no_proxy: "" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify(["ORIGIN", "ORIGIN", "ORIGIN", "PROXIED"]),
+      stderr: "",
+    });
+    expect({ origin: origin.seen, proxy: proxy.seen }).toEqual({
+      origin: ["/pool", "/client", "/wrapped"],
+      proxy: [`GET ${origin.url}/global HTTP/1.1`],
+    });
+    expect(exitCode).toBe(0);
   });
 });
 

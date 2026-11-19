@@ -655,6 +655,35 @@ fn short_frames_take_little_room() -> Result<()> {
 }
 
 #[test]
+fn a_frame_fills_its_room_the_same_after_any_other() -> Result<()> {
+    let frame = |byte, literal_len| {
+        let mut frame = Frame::new(12, Vec::new());
+        let sequence = Sequence {
+            literal_len,
+            offset_value: 4,
+            match_len: 3,
+        };
+        frame.compressed(&repeated(byte, literal_len), &[sequence]);
+        frame.state_size();
+        frame.bytes.extend([1, 0, 0]);
+        frame.bytes
+    };
+    let room = |decoder: &mut Decoder, frame: &[u8]| -> Result<_> {
+        let mut room = vec![0xAA; 2000];
+        let (_, status) = decoder.step(frame, &mut Output::slice(&mut room));
+        assert_eq!(status?, Status::Complete);
+        Ok(room)
+    };
+    for literal_len in 290..330 {
+        let mut used = Decoder::new();
+        room(&mut used, &frame(1, 1000))?;
+        let frame = frame(2, literal_len);
+        assert!(room(&mut used, &frame)? == room(&mut Decoder::new(), &frame)?);
+    }
+    Ok(())
+}
+
+#[test]
 fn matches_of_all_periods_and_lengths() -> Result<()> {
     let mut noise = Noise(2);
     let mut frame = Frame::new(14, noise.bytes(100));

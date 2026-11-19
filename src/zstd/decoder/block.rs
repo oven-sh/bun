@@ -158,10 +158,12 @@ impl BlockDecoder {
                         0,
                         len.max(room_for(self.literal_count.max(count))),
                     )?;
+                    let padding = self.literals.get_mut(header.count..len);
+                    padding.ok_or(Error::Internal)?.fill(0);
                     &mut self.literals
                 };
                 header.decode(block, start, table, out, destination.as_ptr())?;
-                (out.get(..header.count + LITERALS_PADDING)).ok_or(Error::Internal)?
+                out.get(..len).ok_or(Error::Internal)?
             }
         };
 

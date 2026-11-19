@@ -3741,6 +3741,57 @@ describe.concurrent("bun fmt", () => {
         }
       });
 
+      // A handler with no `;`, which Vue 3 doesn't compile as statements. Prettier 3.9.9 prints each with a `;` in it:
+      // `let y: { a: string; b: number } = z`, `a();` and `x = 1;`. Printed like that, they'd get a `;` after each
+      // statement the next time, because the one in a type is only printed if the type fits on a line.
+      test.each([
+        ["let y: {a: string, b: number} = z", withoutSemicolons],
+        ["if (f(() => { a( ) })) {}", withSemicolons],
+        ["while (a) {}\nclass A { x = 1 }", withSemicolons],
+      ])("leaves a handler with no `;` as written if it would get one: %j", async (value, args) => {
+        const sfc = (html: string) =>
+          `<script setup lang="ts">\nconst z = 1${args.includes("--no-semi") ? "" : ";"}\n</script>\n\n${inTemplate(html)}`;
+        const html = value.includes("\n") ? asWritten(value) : button("@click", value);
+        const files = { "a.vue": sfc(button("@click", value)), "b.vue": sfc(html) };
+        const result = await formatChecked(files, args, { reads: ["a.vue", "b.vue"] });
+        expect(result.files).toEqual({ "a.vue": sfc(html), "b.vue": sfc(html) });
+        expect(result.exitCode).toBe(0);
+      });
+
+      test("a handler with no `;` doesn't change the second time", async () => {
+        const statements = [
+          "a()",
+          "(b || c)()",
+          "if (a) { b() }",
+          "if (f(() => { a() })) {}",
+          "while (a) {}",
+          "for (const x of xs) f(x)",
+          "try { a() } finally { b() }",
+          "switch (a) { case 1: b() }",
+          "{}",
+          "function f() { a() }",
+          "function f(a = () => { b() }) {}",
+          "class A { x = 1 }",
+          "let x = () => { a() }",
+          "return",
+          "a(() => { if (x) {}\n[c].map(d) })",
+          "a('&nbsp;')",
+        ];
+        const handlers = [...statements, ...statements.flatMap(one => statements.map(next => `${one}\n${next}`))];
+        const text = inTemplate(handlers.map(handler => `<button @click="${handler}">x</button>`).join("\n  "));
+        for (const args of [withSemicolons, withoutSemicolons]) {
+          const first = await format({ "a.vue": text }, args, { reads: ["a.vue"] });
+          expect({ stdout: first.stdout, exitCode: first.exitCode }).toEqual({ stdout: "a.vue", exitCode: 0 });
+          const written = first.files["a.vue"]!;
+          const again = await format({ "a.vue": written }, args, { reads: ["a.vue"] });
+          expect({ ...again.files, stdout: again.stdout, exitCode: again.exitCode }).toEqual({
+            "a.vue": written,
+            stdout: "",
+            exitCode: 0,
+          });
+        }
+      });
+
       test("prints the handler of an HTML event like Prettier, because the browser inserts semicolons", async () => {
         const files = { "a.html": '<button onclick="a(); b()">x</button>\n' };
         const result = await formatChecked(files, withoutSemicolons, { reads: ["a.html"] });

@@ -270,9 +270,12 @@ pub(crate) fn with_file(
 }
 
 /// How the statements of a Vue event handler are printed.
+#[derive(Copy, Clone, PartialEq, Eq)]
 enum VueStatements {
     /// As Prettier prints them: Vue compiles that like the source.
     AsPrettier,
+    /// As Prettier prints them if that has no `;` either, and else not at all: the source has none.
+    WithoutSemicolon,
     /// With a `;` between them: see `FormatSeparatedStatements`.
     Separated,
     /// Not at all. The handler stays as written.
@@ -282,16 +285,14 @@ enum VueStatements {
 impl VueStatements {
     /// See "The statements of a Vue event handler" in `src/format/CLAUDE.md`.
     fn of<'b>(file: &'b File<'b>, f: &Formatter<'b>) -> VueStatements {
-        if !has_semicolon_in_vue(file.text()) {
-            return VueStatements::AsPrettier;
-        }
+        let has_semicolon = has_semicolon_in_vue(file.text());
         let mut statements =
             (file.body().iter()).filter(|it| !matches!(it.kind(), StmtKind::Empty));
         let Some(first) = statements.next() else {
             // `/* comment */;`: without its `;`, the comment is an expression, which doesn't compile.
-            return match file.comment_count() {
-                0 => VueStatements::AsPrettier,
-                _ => VueStatements::AsWritten,
+            return match has_semicolon && file.comment_count() > 0 {
+                true => VueStatements::AsWritten,
+                false => VueStatements::AsPrettier,
             };
         };
         let is_only_an_expression =
@@ -300,11 +301,28 @@ impl VueStatements {
             return VueStatements::AsPrettier;
         }
         // A copy of the source under `prettier-ignore` ends with a `;` or not, whatever is written after it.
-        match f.comments().has_suppression_comments() {
-            true => VueStatements::AsWritten,
-            false => VueStatements::Separated,
+        match (has_semicolon, f.comments().has_suppression_comments()) {
+            (false, _) => VueStatements::WithoutSemicolon,
+            (true, true) => VueStatements::AsWritten,
+            (true, false) => VueStatements::Separated,
         }
     }
+}
+
+/// True if a text that `f` has written since `f.elements().len()` was `start` has a `;` for Vue, printed or not.
+fn may_print_semicolon(start: usize, f: &Formatter<'_>) -> bool {
+    let elements = f.elements().get(start..).unwrap_or_default();
+    elements.iter().any(|element| {
+        let text = match element {
+            FormatElement::Token(token) | FormatElement::TokenIfBreaks(token) => {
+                Some(token.as_bytes())
+            }
+            FormatElement::SourceText(text) => f.source_text().as_bytes().get(text.range()),
+            FormatElement::OwnedText(text) => f.storage.text.get(text.range()),
+            _ => None,
+        };
+        text.is_some_and(has_semicolon_in_vue)
+    })
 }
 
 /// True if `text` has a `;` once Vue has decoded its character references: one that doesn't end `&nbsp;` or `&#160;`.
@@ -885,18 +903,20 @@ pub(crate) fn write_program_in_attribute(
         in_html,
         Piece::Other,
         &mut |file, f| {
-            let is_separated = in_html.root == HtmlRoot::VueEventBinding
-                && match VueStatements::of(file, f) {
-                    VueStatements::AsPrettier => false,
-                    VueStatements::Separated => true,
-                    VueStatements::AsWritten => return false,
-                };
-            let content = format_with(|f| match is_separated {
-                true => write_separated_statements(file, f),
-                false => write_statements(file, f),
+            let statements = match in_html.root {
+                HtmlRoot::VueEventBinding => VueStatements::of(file, f),
+                _ => VueStatements::AsPrettier,
+            };
+            if statements == VueStatements::AsWritten {
+                return false;
+            }
+            let start = f.elements().len();
+            let content = format_with(|f| match statements {
+                VueStatements::Separated => write_separated_statements(file, f),
+                _ => write_statements(file, f),
             });
             write_hugged(hug.should_hug_non_expression(), &content, f);
-            true
+            statements != VueStatements::WithoutSemicolon || !may_print_semicolon(start, f)
         },
     )
 }

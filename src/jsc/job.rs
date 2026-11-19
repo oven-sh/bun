@@ -228,7 +228,7 @@ pub trait OwnedJob: Sized + 'static {
         cx: &JsThread<'_>,
     ) -> JsResult<()>;
     /// JS thread, the VM's stop phase (possibly more than once): make a job that is waiting
-    /// finish soon, so the VM's wait for it is short.
+    /// finish soon, so the VM's wait for it is short. Do not complete a job: the list is being walked.
     fn cancel(js: &mut Self::Js);
 }
 

@@ -333,8 +333,6 @@ describe.skipIf(isWindows)("terminate() cancels a read or write parked on the io
     ["Bun.file(fifo).text()", [`Bun.file(workerData).text()`]],
     ["Bun.file(fifo).bytes() twice", [`Bun.file(workerData).bytes()`, `Bun.file(workerData).bytes()`]],
     ["Bun.write(Bun.file(fd))", [`Bun.write(${knownPipe}, ${moreThanFits})`]],
-    // This one does not park: it calls write() again and again.
-    ["Bun.write(fifo)", [`Bun.write(workerData, ${moreThanFits})`]],
   ])("%s", async (name, reads) => {
     const worker = `
       const fs = require("node:fs");
@@ -393,6 +391,42 @@ describe.skipIf(isWindows)("terminate() cancels a read or write parked on the io
 // entirely the test's to decide — no timing thresholds. Debug builds also name
 // what the wait is waiting for.
 describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled", () => {
+  test("Bun.write() to the path of a FIFO delivers every byte", async () => {
+    using dir = tempDir("worker-terminate-waits", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const fs = require("node:fs");
+        require("node:child_process").execFileSync("mkfifo", ["fifo"]);
+        const reader = fs.openSync("fifo", fs.constants.O_RDWR | fs.constants.O_NONBLOCK);
+        const page = Buffer.alloc(65536);
+        const read = () => {
+          try {
+            return fs.readSync(reader, page);
+          } catch (e) {
+            if (e.code !== "EAGAIN") throw e;
+            return 0;
+          }
+        };
+        const w = new (require("node:worker_threads").Worker)('Bun.write("fifo", new Uint8Array(1 << 20))', { eval: true });
+        let total = 0, gone = false;
+        while (!(total = read())) await Bun.sleep(1);
+        w.terminate().then(() => (gone = true));
+        for (let n; (n = read()) || !gone; total += n) await Bun.sleep(1);
+        console.log(total);
+      `,
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe(`${1 << 20}\n`);
+    expect(exitCode).toBe(0);
+  });
+
   test("a pool thread parked in read() holds the worker's teardown until it returns", async () => {
     using dir = tempDir("worker-terminate-waits", {});
     const fifo = path.join(String(dir), "fifo");

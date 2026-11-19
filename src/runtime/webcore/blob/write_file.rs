@@ -112,7 +112,7 @@ impl FdOp for WriteFile {
                 Err(err) if err.get_errno() != sys::E::EAGAIN => return Err(err.into()),
                 Err(_) if self.could_block => return Ok(Step::Wait),
                 // Spins: https://github.com/oven-sh/bun/pull/35953
-                Err(_) => return Ok(Step::Again),
+                Err(_) => {}
             }
         }
     }

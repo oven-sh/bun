@@ -569,10 +569,11 @@ describe.concurrent.each(pipeKinds)("stdout is a pipe from %s", kind => {
     `);
     await once(child.output, "data");
     child.output.destroy();
-    // A write that was waiting when the reader left ends with ERROR_BROKEN_PIPE, which is EOF to node:fs as well.
+    // A write that was under way when the reader left ends with ERROR_BROKEN_PIPE, which is EOF to node:fs as well, or as on a socket.
+    const underWay = isWindows ? "EOF" : isMacOS ? "ENOTCONN" : kind === "spawn" ? "ECONNRESET" : "EPIPE";
     expect(await child.result()).toEqual({
       exitCode: 0,
-      stderr: expect.stringMatching(isWindows ? /^(EPIPE|EOF)\n$/ : isMacOS ? /^(EPIPE|ENOTCONN)\n$/ : /^EPIPE\n$/),
+      stderr: expect.stringMatching(new RegExp(`^(EPIPE|${underWay})\n$`)),
     });
   });
 });

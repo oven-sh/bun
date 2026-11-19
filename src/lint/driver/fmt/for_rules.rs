@@ -86,7 +86,8 @@ fn command_line(request: &Request, defaults: Option<&Options>) -> Result<Options
         (options.format).retain(|default| !rule_flags.iter().any(|it| it.0 == default.0));
         options.format.extend(rule_flags);
     }
-    options.plugins = plugin_names(request.options)?;
+    // The plugins of `[fmt]` stay. One that isn't included is found for each file, where `allowUnsupported` applies.
+    options.plugins.extend(plugin_names(request.options)?);
     options
         .plugins
         .extend(plugin_names(request.file_info_options)?);
@@ -257,7 +258,8 @@ impl<'e> ForRules<'e> {
         if is_prettier && configs.is_oxfmt_for(&scope) {
             return Err(Reason::Configuration);
         }
-        if !allows_unsupported && !configs.missing_plugins(&scope, Some(path)).is_empty() {
+        // `bun fmt` skips the file for a plugin it doesn't include, whether the Prettier config or `[fmt]` lists it.
+        if !allows_unsupported && configs.plugin_view(&scope, Some(path)).has_missing() {
             return Err(Reason::Plugin);
         }
         match language_of(configs, &scope, path) {

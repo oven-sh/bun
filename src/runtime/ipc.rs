@@ -2021,9 +2021,12 @@ fn handle_ipc_message(
                 // early-error return and the fall-through.
                 let _scope = global_this.bun_vm().enter_event_loop_scope();
                 let fd_js = received_fd_to_js(received.fd());
-                ipc_parse(global_this, target, msg_data, fd_js)?;
-                // The object that `ipc_parse` made closes it.
+                let emit = ipc_parse(global_this, target, msg_data, fd_js)?;
+                // The object that `ipc_parse` made closes it. Before the listener, which can end the thread.
                 received.into_raw();
+                if emit.is_callable() {
+                    emit.call_for_running_script(global_this, JSValue::UNDEFINED, &[])?;
+                }
                 drop(_scope);
 
                 // ipc_parse will call the callback which calls handleIPCMessage()

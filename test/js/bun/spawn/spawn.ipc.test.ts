@@ -984,4 +984,40 @@ describe.concurrent.skipIf(!isLinux)("a received descriptor", () => {
     );
     expect(result).toEqual({ stdout: ["leaked 0"], stderr: "", exitCode: 0 });
   });
+
+  it("is closed once if the Worker that receives it exits in the listener", async () => {
+    const result = await runPair(
+      `
+        const { Worker, isMainThread, workerData } = require("node:worker_threads");
+        const [FD, TAKEN] = [0, 1];
+        if (isMainThread) {
+          const shared = new Int32Array(new SharedArrayBuffer(8));
+          const worker = new Worker(__filename, { workerData: shared });
+          worker.on("message", () => {
+            while (fs.openSync("/dev/null") !== shared[FD]);
+            Atomics.store(shared, TAKEN, 1);
+            Atomics.notify(shared, TAKEN);
+          });
+          worker.on("exit", () => console.log(fs.fstatSync(shared[FD]).isCharacterDevice()));
+        } else {
+          spawnChild({
+            ipc(message, child, socket) {
+              // The number is free now, and the main thread takes it.
+              workerData[FD] = socket._handle.fd;
+              socket._handle.terminate();
+              require("node:worker_threads").parentPort.postMessage("closed");
+              Atomics.wait(workerData, TAKEN, 0);
+              process.exit(0);
+            },
+          });
+        }
+      `,
+      `
+        const server = await listen();
+        const socket = require("node:net").connect(server.address().port, "127.0.0.1", () => process.send("socket", socket));
+        process.on("disconnect", () => process.exit(0));
+      `,
+    );
+    expect(result).toEqual({ stdout: ["true"], stderr: "", exitCode: 0 });
+  });
 });

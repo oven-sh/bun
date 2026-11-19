@@ -75,6 +75,10 @@ fn task_callback_list(this: &mut PackageManager, task_id: Task::Id) -> &mut Task
 /// Makes a git, GitHub or tarball dependency wait for the task that fetches its package.
 fn wait_for_remote_task(this: &mut PackageManager, task_id: Task::Id, waiter: TaskCallbackContext) {
     use TaskCallbackContext::Dependency as Row;
+    // A peer that was bound before its turn has nothing left to wait for.
+    if this.appended_task_packages.contains_key(&task_id) {
+        return;
+    }
     let waiting = task_callback_list(this, task_id);
     // `request_remote_package_ahead` may have put the dependency on the list before its turn.
     let is_waiting = (waiting.iter())

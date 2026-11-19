@@ -689,7 +689,12 @@ impl Process {
             return Ok(());
         };
         if this.watch.get().is_none() {
-            let process = RefPtr::from_this(this);
+            // A port that shuts down drops it without a call, and not every owner is dropped with its thread.
+            let process = scopeguard::guard(RefPtr::from_this(this), |process| {
+                if process.watch.take().is_some() {
+                    process.handle.set(None);
+                }
+            });
             let on_exit = move || Self::report_exit(process.this_ptr());
             let port = this.event_loop.loop_().port();
             let Ok(exit) = Request::wait(port, handle.as_handle(), on_exit) else {

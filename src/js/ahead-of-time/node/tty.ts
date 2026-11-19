@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/tty.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 b19684beadd8bf50111a2b57d536456d39a52a2b514a5de2f8e6c87903aa6c87.
+// Written against that file with the SHA-256 339e01857508388db1480bc1a8971d37749dfb33055b001e967b660853e6880b.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 // Hardcoded module "node:tty"
 
@@ -102,6 +102,11 @@ const prototypeOfReadStream = {
 
     Prototype.setRawMode = function (this: $Node.TTYReadStream, flag: boolean) {
       flag = !!flag;
+
+      if (process.platform === "win32" && this.fd !== 0) {
+        this.emit("error", new Error("setRawMode failed because it was called on something that is not a TTY"));
+        return this;
+      }
 
       const state = (this[kRawModeState] ??= new Uint8Array(rawModeStateSize));
       const err = ttySetMode(this.fd, flag, state);

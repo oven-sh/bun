@@ -4,13 +4,14 @@ use bun_sys::windows_format::open_flags::SEQUENTIAL;
 use bun_sys::{self as sys, O};
 
 use super::blocking::BlockingPart;
-use super::job_file::{JobFile, Target, is_device, pathlike};
+use super::job_file::{JobFile, Target, is_device};
 use crate::io_order::Turn;
 use crate::webcore::blob::write_file::{WriteFileResultType, note_written, settle};
 use crate::webcore::blob::{Blob, SizeType};
 use crate::webcore::node_types::PathOrFileDescriptor;
 
 pub(crate) struct WriteFile {
+    /// Not for `run`: the thread of the script changes its store.
     file_blob: Blob,
     bytes_blob: Blob,
     mkdirp_if_not_exists: bool,
@@ -30,10 +31,9 @@ impl JobContext for WriteFile {
 
     fn run(this: &mut Self, done: Completion<Self>) -> Option<Completion<Self>> {
         let turn = this.turn.take();
-        let target = core::mem::take(&mut this.target);
         let bytes = this.bytes_blob.shared_view();
         let (flags, mkdirp) = (O::TRUNC | SEQUENTIAL, this.mkdirp_if_not_exists);
-        match JobFile::destination(target, this.destination(), flags, mkdirp) {
+        match JobFile::destination(&mut this.target, flags, mkdirp) {
             // The write reports a bad descriptor.
             Ok(file) if file.can_block().unwrap_or_default() => {
                 let store = this.bytes_blob.store().expect("infallible: store present");
@@ -63,7 +63,7 @@ impl JobContext for WriteFile {
                 WriteFileResultType::Result(this.bytes_blob.shared_view().len() as SizeType)
             }
             Err(err) => {
-                let err = match this.destination() {
+                let err = match destination(&this.file_blob) {
                     PathOrFileDescriptor::Path(path) => err.with_path(path.slice()),
                     PathOrFileDescriptor::Fd(fd) => err.with_fd(*fd),
                 };
@@ -83,10 +83,10 @@ impl JobContext for WriteFile {
 impl WriteFile {
     pub(crate) fn create(file_blob: Blob, bytes_blob: Blob, mkdirp_if_not_exists: bool) -> Self {
         WriteFile {
+            target: Target::new(destination(&file_blob)),
             file_blob,
             bytes_blob,
             mkdirp_if_not_exists,
-            target: Target::default(),
             turn: None,
             result: Ok(()),
             blocking_part: BlockingPart::default(),
@@ -94,16 +94,17 @@ impl WriteFile {
     }
 
     pub(crate) fn schedule(mut self, promise: JSPromiseStrong, cx: &JsThread<'_>) {
-        self.target = Target::new(self.destination());
-        let can_block = is_device(self.destination());
-        Turn::after_earlier(cx, self.target.key(self.destination()), true, |turn| {
+        let destination = destination(&self.file_blob);
+        let can_block = is_device(destination);
+        Turn::after_earlier(cx, self.target.key(destination), true, |turn| {
             self.turn = Some(turn);
             let js = (promise, BackRef::new(cx.global()));
             Job::<Self>::create(cx, self, js).for_device_if(can_block)
         });
     }
+}
 
-    fn destination(&self) -> &PathOrFileDescriptor<'static> {
-        pathlike(self.file_blob.store().expect("infallible: store present"))
-    }
+fn destination(blob: &Blob) -> &PathOrFileDescriptor<'static> {
+    let store = blob.store().expect("infallible: store present");
+    &store.data.as_file().pathlike
 }

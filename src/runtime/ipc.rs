@@ -1724,7 +1724,7 @@ impl SendQueue {
     /// The rest of a burst of messages goes out in large writes. The last one follows when the microtasks run out.
     #[cfg(windows)]
     fn is_in_burst(&self) -> bool {
-        const WRITTEN_SINGLY: u32 = 2;
+        const WRITTEN_SINGLY: u32 = 5;
         const LARGE_WRITE: usize = 64 * 1024;
         let vm = VirtualMachine::get();
         if vm.is_inside_deferred_task_queue.get() || vm.is_shutting_down() || !self.socket_is_open()

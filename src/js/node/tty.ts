@@ -100,6 +100,11 @@ const prototypeOfReadStream = {
     Prototype.setRawMode = function (this: $Node.TTYReadStream, flag: boolean) {
       flag = !!flag;
 
+      if (process.platform === "win32" && this.fd !== 0) {
+        this.emit("error", new Error("setRawMode failed because it was called on something that is not a TTY"));
+        return this;
+      }
+
       const state = (this[kRawModeState] ??= new Uint8Array(rawModeStateSize));
       const err = ttySetMode(this.fd, flag, state);
       if (err) {

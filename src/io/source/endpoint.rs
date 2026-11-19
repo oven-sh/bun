@@ -76,12 +76,13 @@ impl Endpoint {
 
     /// An empty one to read into. It is small until much comes, because it is there for as long as nothing comes.
     pub(super) fn buffer(&self, max_len: usize) -> Vec<u8> {
+        let mut buffer = self.spare.take();
         let size = if self.is_busy.get() {
             BUSY_SIZE
         } else {
+            buffer.shrink_to(BUSY_SIZE);
             IDLE_SIZE
         };
-        let mut buffer = self.spare.take();
         buffer.reserve(size.min(max_len));
         buffer
     }

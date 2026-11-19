@@ -58,7 +58,7 @@ test.each(modules)(
       stderr: "ignore",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    // On Windows getColorDepth() goes by the version of the system.
+    // On Windows setRawMode() is for stdin only.
     if (isWindows && id === "node:tty") expect(stdout).toMatchSnapshot("on Windows");
     else expect(stdout).toMatchSnapshot();
     expect(exitCode).toBe(0);

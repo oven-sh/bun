@@ -6,25 +6,19 @@ use bun_sys::{self as sys, E, File, FileKind, O, Tag};
 
 use super::blocking::Blocking;
 use crate::io_order::{KeptOpen, Key};
-use crate::node::fs::DEFAULT_PERMISSION;
+use crate::node::fs::{DEFAULT_PERMISSION, error_for_caller};
 use crate::node::types::PathLikeExt as _;
-use crate::webcore::blob::{Store, mkdirp, sys_error_with_path_like};
-use crate::webcore::node_types::PathOrFileDescriptor;
-
-pub(super) fn pathlike(store: &Store) -> &PathOrFileDescriptor<'static> {
-    &store.data.as_file().pathlike
-}
+use crate::webcore::blob::mkdirp;
+use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
 
 /// What the script named.
 pub(super) enum Target {
     Lent(KeptOpen),
-    Path(ZBox),
-}
-
-impl Default for Target {
-    fn default() -> Self {
-        Self::Lent(KeptOpen::default())
-    }
+    Path {
+        resolved: ZBox,
+        /// For errors.
+        shown: Box<[u8]>,
+    },
 }
 
 impl Target {
@@ -32,12 +26,15 @@ impl Target {
     pub(super) fn new(pathlike: &PathOrFileDescriptor<'_>) -> Self {
         match pathlike {
             PathOrFileDescriptor::Fd(fd) => Self::Lent(KeptOpen::new(*fd)),
-            PathOrFileDescriptor::Path(path) => {
+            PathOrFileDescriptor::Path(shown) => {
                 let mut buf = bun_paths::path_buffer_pool::get();
-                let path = path.slice_z(&mut buf).as_bytes();
+                let path = shown.slice_z(&mut buf).as_bytes();
                 // The job reports a bad path.
                 let verbatim = sys::windows::verbatim_path(path);
-                Self::Path(verbatim.unwrap_or_else(|| ZBox::from_bytes(path)))
+                Self::Path {
+                    resolved: verbatim.unwrap_or_else(|| ZBox::from_bytes(path)),
+                    shown: shown.slice().into(),
+                }
             }
         }
     }
@@ -46,7 +43,17 @@ impl Target {
     pub(super) fn key(&self, pathlike: &PathOrFileDescriptor<'_>) -> Key {
         match self {
             Self::Lent(_) => Key::descriptor(pathlike.fd()),
-            Self::Path(path) => Key::path(path.as_bytes()),
+            Self::Path { resolved, .. } => Key::path(resolved.as_bytes()),
+        }
+    }
+
+    pub(super) fn blame(&self, err: sys::Error) -> sys::Error {
+        match self {
+            Self::Lent(_) => err,
+            Self::Path { shown, .. } => error_for_caller(
+                [Some(&PathLike::borrowed(shown)), None],
+                err.with_path(shown),
+            ),
         }
     }
 }
@@ -72,28 +79,25 @@ impl core::ops::Deref for JobFile {
 }
 
 impl JobFile {
-    /// `pathlike` is what an error shows.
-    pub(super) fn source(target: Target, pathlike: &PathOrFileDescriptor<'_>) -> sys::Result<Self> {
+    pub(super) fn source(target: &mut Target) -> sys::Result<Self> {
         match target {
-            Target::Lent(file) => Ok(Self::Lent(file)),
-            Target::Path(path) => File::open(path.as_zstr(), O::RDONLY, 0)
+            Target::Lent(file) => Ok(Self::Lent(core::mem::take(file))),
+            Target::Path { resolved, .. } => File::open(resolved.as_zstr(), O::RDONLY, 0)
                 .map(Self::Opened)
-                .map_err(|err| sys_error_with_path_like(&err, pathlike)),
+                .map_err(|err| target.blame(err)),
         }
     }
 
     /// `flags` are added to those that create a file for writing.
     pub(super) fn destination(
-        target: Target,
-        pathlike: &PathOrFileDescriptor<'_>,
+        target: &mut Target,
         flags: i32,
         mut may_make_folder: bool,
     ) -> sys::Result<Self> {
-        let path = match target {
-            Target::Lent(file) => return Ok(Self::Lent(file)),
-            Target::Path(path) => path,
+        let (path, shown) = match target {
+            Target::Lent(file) => return Ok(Self::Lent(core::mem::take(file))),
+            Target::Path { resolved, shown } => (resolved.as_zstr(), &**shown),
         };
-        let (path, shown) = (path.as_zstr(), pathlike.path().slice());
         loop {
             match File::open(path, O::WRONLY | O::CREAT | flags, DEFAULT_PERMISSION) {
                 Ok(file) => return Ok(Self::Opened(file)),

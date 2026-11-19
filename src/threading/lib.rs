@@ -21,7 +21,7 @@ pub mod fifo_pool;
 pub mod guarded;
 pub mod io_thread_pool;
 pub mod signal_ring;
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 pub mod spin;
 pub mod unbounded_queue;
 #[path = "WaitGroup.rs"]

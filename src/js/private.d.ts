@@ -1068,8 +1068,6 @@ declare namespace $Bindgen {
   interface FileInternalReadableStreamSource {
     updateRef(ref: boolean): void;
     setFlowing(flowing: boolean): void;
-    /** `undefined`, or the system error. */
-    setRawMode(enabled: boolean): Error | undefined;
   }
 
   // src/runtime/api/bun/subprocess.rs. What `Bun.spawn` answers; native code hands it to builtins as an opaque owner.

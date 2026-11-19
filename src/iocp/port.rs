@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use bun_core::{Timespec, TimespecMockMode};
-use bun_threading::spin::Spin;
+use bun_threading::spin::{Spin, has_other_cpu};
 use bun_threading::{Condition, Guarded};
 use bun_windows_sys::Win32Error;
 
@@ -112,7 +112,7 @@ pub struct Port {
     deferred: RefCell<VecDeque<Packet>>,
     /// The same, for a turn that has not begun.
     next_turn: RefCell<VecDeque<Packet>>,
-    /// When the last turn ended, plus the time parked since.
+    /// When the last turn ended, or a wait for which nothing was ready.
     busy_since_ns: Cell<u64>,
     expects_more: Cell<bool>,
     /// The time when it is deferred, and the key and context of the packet.
@@ -293,11 +293,11 @@ impl Port {
                 break;
             }
         }
-        (self.busy_since_ns).update(|since| since + now.saturating_sub(start));
-        if !only_receives {
-            spin.waited(start, now);
-            self.spin.set(spin);
+        if now.saturating_sub(start) > 100_000 {
+            self.busy_since_ns.set(now);
         }
+        spin.waited(start, now);
+        self.spin.set(spin);
     }
 
     /// `false` if there is nothing to dispatch.
@@ -386,8 +386,11 @@ impl Port {
         self.busy_since_ns.set(now);
     }
 
-    /// `false` if nothing has come.
+    /// `false` if nothing has come, or something else is first.
     fn dispatch_soon(&self, on_event: &impl Fn(Event)) -> bool {
+        if self.has_work() || !has_other_cpu() {
+            return false;
+        }
         let deadline = now_ns() + 50_000;
         while !self.fill_batch(Timeout::Now) {
             if now_ns() > deadline {

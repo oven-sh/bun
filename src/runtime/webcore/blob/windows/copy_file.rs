@@ -10,14 +10,11 @@ use bun_sys::windows_format::wide;
 use bun_sys::{self as sys, E, Mode, O, Tag, Win32ErrorExt as _};
 
 use super::blocking::{Blocking, BlockingPart};
-use super::job_file::{JobFile, Target, bare, is_device, make_folder_for, pathlike};
+use super::job_file::{JobFile, Target, bare, is_device, make_folder_for};
 use crate::io_order::Turn;
-use crate::webcore::blob::{MAX_SIZE, SizeType, Store, sys_error_with_path_like};
-use crate::webcore::node_types::PathOrFileDescriptor;
+use crate::webcore::blob::{MAX_SIZE, SizeType, Store};
 
 pub(crate) struct CopyFile {
-    from: RefPtr<Store>,
-    to: RefPtr<Store>,
     source: Target,
     destination: Target,
     turn: Option<Turn>,
@@ -38,18 +35,11 @@ impl JobContext for CopyFile {
 
     fn run(this: &mut Self, done: Completion<Self>) -> Option<Completion<Self>> {
         let mut turn = this.turn.take();
-        let source = core::mem::take(&mut this.source);
-        let destination = core::mem::take(&mut this.destination);
-        if let (Target::Path(from), Target::Path(to)) = (&source, &destination)
-            && suits_copy_file(from.as_bytes())
-            && suits_copy_file(to.as_bytes())
-            // For testing the read/write loop.
-            && feature_flag::BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE.get() != Some(true)
-        {
-            this.result = this.copy_path(from.as_zstr(), to.as_zstr());
+        if let Some(result) = this.copy_path() {
+            this.result = result;
             return Some(done);
         }
-        match this.open(source, destination) {
+        match this.open() {
             Ok(transfer) if transfer.source_can_block || transfer.destination_can_block => {
                 // Other writes do not wait for a source that may never end.
                 if let Some(turn) = turn.take_if(|_| transfer.source_can_block) {
@@ -71,8 +61,8 @@ impl JobContext for CopyFile {
         let (promise, global) = (promise.swap(), cx.global());
         match this.blocking_part.take_result().unwrap_or(this.result) {
             Ok(copied) => {
-                if let PathOrFileDescriptor::Path(path) = pathlike(&this.to) {
-                    crate::node::fs::note_opened_for_write(path.slice(), true);
+                if let Target::Path { shown, .. } = &this.destination {
+                    crate::node::fs::note_opened_for_write(shown, true);
                 }
                 promise.resolve(global, JSValue::js_number_from_uint64(copied))
             }
@@ -100,14 +90,16 @@ impl CopyFile {
         mkdirp_if_not_exists: bool,
         destination_mode: Option<Mode>,
     ) -> JSValue {
-        let (source, destination) = (Target::new(pathlike(&from)), Target::new(pathlike(&to)));
-        let can_block = is_device(pathlike(&from)) || is_device(pathlike(&to));
+        let stores = [from, to];
+        let [from, to] = stores
+            .each_ref()
+            .map(|store| &store.data.as_file().pathlike);
+        let (source, destination) = (Target::new(from), Target::new(to));
+        let can_block = is_device(from) || is_device(to);
         let promise = JSPromiseStrong::init(cx.global());
         let value = promise.value();
-        Turn::after_earlier(cx, destination.key(pathlike(&to)), true, |turn| {
+        Turn::after_earlier(cx, destination.key(to), true, |turn| {
             let copy = CopyFile {
-                from,
-                to,
                 source,
                 destination,
                 turn: Some(turn),
@@ -122,9 +114,24 @@ impl CopyFile {
         value
     }
 
-    fn copy_path(&self, from: &ZStr, to: &ZStr) -> sys::Result<SizeType> {
-        let shown_from = pathlike(&self.from).path().slice();
-        let shown_to = pathlike(&self.to).path().slice();
+    /// `None` if it takes the read/write loop.
+    fn copy_path(&self) -> Option<sys::Result<SizeType>> {
+        let [from, to] = [&self.source, &self.destination].map(|target| match target {
+            Target::Path { resolved, shown } if suits_copy_file(resolved.as_bytes()) => {
+                Some((resolved.as_zstr(), &**shown))
+            }
+            _ => None,
+        });
+        // For testing the read/write loop.
+        let is_disabled = feature_flag::BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE.get() == Some(true);
+        Some(self.copy_file(from.filter(|_| !is_disabled)?, to?))
+    }
+
+    fn copy_file(
+        &self,
+        (from, shown_from): (&ZStr, &[u8]),
+        (to, shown_to): (&ZStr, &[u8]),
+    ) -> sys::Result<SizeType> {
         let error = |errno: E, path| sys::Error::from_code(errno, Tag::copyfile).with_path(path);
         let refused = |path| move |err| error(Win32Error::from(err).to_node_e(), path);
         let mut from_buf = bun_paths::w_path_buffer_pool::get();
@@ -169,16 +176,16 @@ impl CopyFile {
         Ok(size)
     }
 
-    fn open(&self, source: Target, mut destination: Target) -> sys::Result<Transfer> {
-        let to = pathlike(&self.to);
+    fn open(&mut self) -> sys::Result<Transfer> {
+        let is_lent = matches!(self.destination, Target::Lent(_));
         let mut open_destination = |flags| {
-            let target = core::mem::take(&mut destination);
-            let file = JobFile::destination(target, to, flags, self.mkdirp_if_not_exists)?;
+            let mkdirp = self.mkdirp_if_not_exists;
+            let file = JobFile::destination(&mut self.destination, flags, mkdirp)?;
             file.can_block().map(|can_block| (file, can_block))
         };
-        let lent = to.is_fd().then(|| open_destination(0)).transpose()?;
+        let lent = is_lent.then(|| open_destination(0)).transpose()?;
 
-        let source = JobFile::source(source, pathlike(&self.from))?;
+        let source = JobFile::source(&mut self.source)?;
         let source_can_block = source.can_block()?;
         // A volume has no `stat`.
         let source_stat = (!source_can_block).then(|| source.stat().ok()).flatten();
@@ -197,7 +204,7 @@ impl CopyFile {
             .flatten();
         if destination_stat.is_some_and(|stat| sys::S::ISDIR(stat.st_mode as _)) {
             let err = sys::Error::from_code(E::EISDIR, Tag::open);
-            return Err(sys_error_with_path_like(&err, to));
+            return Err(self.destination.blame(err));
         }
 
         Ok(Transfer {

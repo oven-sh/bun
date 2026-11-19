@@ -4,7 +4,7 @@ use bun_ptr::RefPtr;
 use bun_sys::{self as sys, E, Stat, Tag};
 
 use super::blocking::{Blocking, BlockingPart};
-use super::job_file::{JobFile, Target, bare, is_device, pathlike};
+use super::job_file::{JobFile, Target, bare, is_device};
 use crate::io_order::{Key, Turn};
 use crate::webcore::blob::read_file::{
     PendingReadFileCompletion, ReadFileCompletion, ReadFileRead, ReadFileResultType,
@@ -17,12 +17,14 @@ use crate::webcore::node_types::PathOrFileDescriptor;
 const MAX_BUFFER: usize = bun_jsc::ArrayBuffer::MAX_SIZE as usize;
 
 pub(crate) struct ReadFile {
+    /// Not for `run`: the thread of the script changes it.
     store: RefPtr<Store>,
     target: Target,
     turn: Option<Turn>,
     offset: SizeType,
     max_length: SizeType,
     result: sys::Result<Vec<u8>>,
+    is_directory: bool,
     /// For the store, which `then` updates.
     last_modified: Option<JSTimeType>,
     blocking_part: BlockingPart<Vec<u8>>,
@@ -62,7 +64,7 @@ impl JobContext for ReadFile {
         }
         let result = match this.blocking_part.take_result().unwrap_or(this.result) {
             Ok(bytes) => ReadFileResultType::Result(ReadFileRead { buf: bytes.into() }),
-            Err(err) if err.get_errno() == E::EISDIR => {
+            Err(_) if this.is_directory => {
                 ReadFileResultType::Err(directory_error(pathlike(&this.store)))
             }
             Err(err) => ReadFileResultType::Err(err.to_system_error().into()),
@@ -76,6 +78,10 @@ impl JobContext for ReadFile {
     }
 }
 
+fn pathlike(store: &Store) -> &PathOrFileDescriptor<'static> {
+    &store.data.as_file().pathlike
+}
+
 impl ReadFile {
     pub(crate) fn create(blob: &Blob) -> ReadFile {
         let store = blob.store().expect("infallible: store present").clone();
@@ -86,6 +92,7 @@ impl ReadFile {
             offset: blob.offset.get(),
             max_length: blob.size.get(),
             result: Ok(Vec::new()),
+            is_directory: false,
             last_modified: None,
             blocking_part: BlockingPart::default(),
         }
@@ -108,10 +115,11 @@ impl ReadFile {
     }
 
     fn open(&mut self) -> sys::Result<(JobFile, Stat)> {
-        let file = JobFile::source(core::mem::take(&mut self.target), pathlike(&self.store))?;
+        let file = JobFile::source(&mut self.target)?;
         let stat = file.stat().map_err(|err| bare(&err))?;
         self.last_modified = Some(stat_to_js_mtime(&stat));
-        if sys::S::ISDIR(stat.st_mode as _) {
+        self.is_directory = sys::S::ISDIR(stat.st_mode as _);
+        if self.is_directory {
             return Err(sys::Error::from_code(E::EISDIR, Tag::read));
         }
         Ok((file, stat))

@@ -71,7 +71,7 @@ struct Inner {
     /// Others may read it too, so data is only taken out at a moment when the reader is known to want it.
     is_input_shared: Cell<bool>,
     read: Cell<Option<InFlight>>,
-    /// The last read on a thread has filled a large buffer.
+    /// The last read on a thread has found much.
     has_more: Cell<bool>,
     write: Cell<Option<InFlight>>,
 }
@@ -383,7 +383,7 @@ impl Inner {
     fn on_data(self: Rc<Self>, completion: Completion) {
         let (status, mut buffer) = (completion.status, completion.buffer);
         if !buffer.is_empty() {
-            if buffer.len() == buffer.capacity() {
+            if buffer.len() >= buffer.capacity().min(BUSY_SIZE) {
                 self.endpoint.expect_much();
                 self.endpoint.port.expect_more();
             } else {
@@ -416,8 +416,7 @@ impl Inner {
             this.set_kind(kind);
             match read {
                 ThreadRead::Ended(completion) => {
-                    let (len, room) = (completion.buffer.len(), completion.buffer.capacity());
-                    this.has_more.set(len == room && len >= BUSY_SIZE);
+                    this.has_more.set(completion.buffer.len() >= BUSY_SIZE);
                     this.on_data(completion);
                 }
                 ThreadRead::Readable(buffer) => {
@@ -428,9 +427,11 @@ impl Inner {
         });
         let (request, remote) = Request::remote(&self.endpoint.port, done);
         let (handle, cancel) = (Arc::clone(&self.handle), Cancel::default());
+        let has_more = self.has_more.take();
+        let max_len = max_len.min(if has_more { THREAD_SIZE } else { BUSY_SIZE });
         let (mut buffer, thread) = (self.endpoint.buffer(max_len), cancel.clone());
-        if self.has_more.take() {
-            buffer.reserve(max_len.min(THREAD_SIZE));
+        if has_more {
+            buffer.reserve(max_len);
         }
         let is_kind_known = self.io.get().is_some();
         let take = self.is_input_shared.get().then_some(take);

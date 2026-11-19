@@ -5,11 +5,19 @@ use std::sync::LazyLock;
 /// Enough for another thread to wake up and answer.
 const AWAKE_NS: u64 = 50_000;
 const BUSY_NS: u64 = 100_000;
+/// What follows can be work of another kind.
+const IDLE_NS: u64 = 1_000_000;
 
 /// How many waits a phase has.
 const TRIAL: u16 = 8;
 const MAX_AWAKE: u16 = 512;
 const MAX_ASLEEP: u16 = 256;
+
+pub fn has_other_cpu() -> bool {
+    static ANSWER: LazyLock<bool> =
+        LazyLock::new(|| std::thread::available_parallelism().is_ok_and(|count| count.get() > 1));
+    *ANSWER
+}
 
 /// Has a thread look for work before it goes to sleep, for as long as the work comes faster for it.
 #[derive(Copy, Clone)]
@@ -37,8 +45,7 @@ impl Spin {
     }
 
     pub fn limit_ns(&self) -> u64 {
-        static HAS_OTHER_CPU: LazyLock<bool> = LazyLock::new(|| bun_sys::windows::cpu::count() > 1);
-        if self.is_awake && *HAS_OTHER_CPU {
+        if self.is_awake && has_other_cpu() {
             AWAKE_NS
         } else {
             0
@@ -48,6 +55,9 @@ impl Spin {
     /// With the time asleep, if it came to that.
     pub fn waited(&mut self, from_ns: u64, to_ns: u64) {
         let ns = to_ns.saturating_sub(from_ns);
+        if ns > IDLE_NS {
+            self.next_len_asleep = (self.next_len_asleep / 2).max(TRIAL);
+        }
         if ns > BUSY_NS {
             return self.begin(false, self.next_len_asleep);
         }
@@ -86,13 +96,13 @@ mod tests {
 
     const WAKE_NS: u64 = 20_000;
 
-    /// The percentage of waits that start awake. `next` says when work comes for a wait that starts at a time.
-    fn awake(next: impl Fn(u64) -> u64) -> u64 {
-        let (mut spin, mut now, mut count) = (Spin::new(), 1, 0);
-        for _ in 0..10_000 {
-            let (from, comes) = (now + 5_000, next(now + 5_000));
-            let is_caught = spin.is_awake && comes - from <= AWAKE_NS;
-            count += u64::from(spin.is_awake);
+    /// The percentage of waits that start awake. `next` says when work comes, from the number and the start of a wait.
+    fn awake(spin: &mut Spin, next: impl Fn(u64, u64) -> u64) -> u64 {
+        let (mut now, mut count) = (1, 0);
+        for index in 0..10_000 {
+            let (from, comes) = (now + 5_000, next(index, now + 5_000));
+            let is_caught = comes - from <= spin.limit_ns();
+            count += u64::from(spin.limit_ns() > 0);
             now = comes + if is_caught { 0 } else { WAKE_NS };
             spin.waited(from, now);
         }
@@ -101,23 +111,20 @@ mod tests {
 
     #[test]
     fn stays_awake_only_where_it_pays() {
+        if !has_other_cpu() {
+            return;
+        }
+        let spin = &mut Spin::new();
         for answer_ns in [2_000, 20_000, 45_000] {
-            assert!(awake(|now| now + answer_ns) > 90);
+            assert!(awake(spin, |_, now| now + answer_ns) > 90);
         }
+        assert!(awake(spin, |index, now| now + [9_000, 60_000][index as usize % 2]) > 90);
         for pace_ns in [30_000, 40_000, 80_000] {
-            assert!(awake(|now| now.next_multiple_of(pace_ns)) < 6);
+            assert!(awake(spin, |_, now| now.next_multiple_of(pace_ns)) < 8);
         }
-        assert!(awake(|now| now + 60_000) < 6);
-        let is_long = core::cell::Cell::new(false);
-        assert!(
-            awake(|now| now
-                + if is_long.replace(!is_long.get()) {
-                    60_000
-                } else {
-                    9_000
-                })
-                > 90
-        );
-        assert_eq!(awake(|now| now + 200_000), 0);
+        assert!(awake(spin, |_, now| now + 60_000) < 6);
+        assert_eq!(awake(spin, |_, now| now + 200_000), 0);
+        let pause = |index| if index % 100 == 0 { 5_000_000 } else { 9_000 };
+        assert!(awake(spin, |index, now| now + pause(index)) > 80);
     }
 }

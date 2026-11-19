@@ -1574,6 +1574,7 @@ impl Run<'_> {
             }
             return out;
         }
+        view.note_formatted_here();
         let kind = Kind::with_options(&path, &options.options);
         tailwind::only_where_sorted(&mut options.options, kind);
         let piped = Piped {
@@ -1646,6 +1647,7 @@ impl Run<'_> {
             self.report_skipped_for_plugins(&left);
             return self.out;
         }
+        view.note_formatted_here();
         tailwind::only_where_sorted(&mut options.options, Some(kind));
         let paths = syntaxes_to_try(&parser, &text);
         let piped = Piped {
@@ -1731,6 +1733,7 @@ impl Run<'_> {
         } = piped;
         let is_read_only = self.options.check || self.options.list_different;
         let exits_zero_on_error = configs.flavor == Flavor::Prettier && is_read_only;
+        configs.warn_about_unused_flag_plugins();
         for warning in std::mem::take(&mut *configs.warnings.lock()) {
             self.warn(&warning);
         }
@@ -1964,7 +1967,10 @@ impl Run<'_> {
                     Language::Supported if target.linked.is_some() || lacks_plugins() => {
                         When::AfterSearch
                     }
-                    Language::Supported => When::Now,
+                    Language::Supported => {
+                        view.note_formatted_here();
+                        When::Now
+                    }
                     Language::Unknown if target.ignores_unknown || options.ignore_unknown => {
                         When::Never
                     }
@@ -2075,7 +2081,13 @@ impl Run<'_> {
             let language =
                 language_with(configs.parser_for(scope, path), &view, configs, scope, path);
             let lacks_plugins = !options.allow_unsupported && view.has_missing();
-            is_included(ignored, target).then_some((language, lacks_plugins))
+            if !is_included(ignored, target) {
+                return None;
+            }
+            if language == Language::Supported && !lacks_plugins {
+                view.note_formatted_here();
+            }
+            Some((language, lacks_plugins))
         };
         let classified = configs.with_warnings_in_order(
             || pool.map(&expanded, &classify),
@@ -2372,6 +2384,7 @@ impl Run<'_> {
                 self.error(&error);
             }
         }
+        configs.warn_about_unused_flag_plugins();
         for warning in std::mem::take(&mut *configs.warnings.lock()) {
             self.warn(&warning);
         }

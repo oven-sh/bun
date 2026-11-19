@@ -4715,15 +4715,23 @@ exports.options = { fooStyle: { type: "string" }, fooDepth: { type: "int" } };
       async () => {
         const names = ["a.foo", "a.js", "src/b.js"];
         const inside = { ...project, "bunfig.toml": scoped(["*.foo", "src/**"]), "src/b.js": "b  ;\n" };
-        const [result, allowed] = await Promise.all([
+        const [result, allowed, nothingLeftOut] = await Promise.all([
           format(inside, [], { reads: names }),
           format(inside, ["--allow-unsupported"], { reads: names }),
+          format(project, ["--allow-unsupported"], { reads: ["a.foo", "a.js"] }),
         ]);
         expect(result.files).toEqual({ "a.foo": "a b\n", "a.js": "a;\n", "src/b.js": "b  ;\n" });
         expect(result.stderr).toMatch(skippedForPlugin);
         expect(result.exitCode).toBe(2);
         expect(allowed.files).toEqual({ "a.foo": "a b\n", "a.js": "a;\n", "src/b.js": "b;\n" });
+        expect(allowed.stderr.split("\n")).toContain(
+          "warn: ./plugin.js in --plugin or [fmt] plugins has no effect because bun fmt does not include that plugin",
+        );
         expect(allowed.exitCode).toBe(0);
+        // Prettier formats every file of the entry with the plugin, so the flag allows nothing.
+        expect(nothingLeftOut.files).toEqual({ "a.foo": "a b\n", "a.js": "a;\n" });
+        expect(nothingLeftOut.stderr).not.toContain("no effect");
+        expect(nothingLeftOut.exitCode).toBe(0);
       },
       timeout,
     );
@@ -6175,6 +6183,21 @@ exports.format = async text => "by Prettier";
       "warn: prettier-plugin-astro in --plugin or [fmt] plugins has no effect because oxfmt does not load Prettier plugins",
     );
     expect(oxfmt.exitCode).toBe(0);
+    // A config of oxfmt says so only for the files it applies to: those of `sub`, and none below a nearer .prettierrc.
+    const nested = { ".prettierrc": "{}\n", "b.js": ugly, "sub/.oxfmtrc.json": "{}\n", "sub/a.js": ugly };
+    const shadowed = { ".oxfmtrc.json": "{}\n", "pkg/.prettierrc": "{}\n", "pkg/a.js": ugly };
+    const [inSub, below] = await Promise.all([
+      format(nested, ["--plugin", "prettier-plugin-astro"], { reads: ["b.js", "sub/a.js"] }),
+      format(shadowed, ["--plugin", "prettier-plugin-astro", "a.js"], { cwd: "pkg", reads: ["pkg/a.js"] }),
+    ]);
+    expect(inSub.files).toEqual({ "b.js": formatted, "sub/a.js": formatted });
+    expect(inSub.stderr.split("\n")).toContain(
+      "warn: prettier-plugin-astro in --plugin or [fmt] plugins has no effect because oxfmt does not load Prettier plugins",
+    );
+    expect(inSub.exitCode).toBe(0);
+    expect(below.files["pkg/a.js"]).toBe(formatted);
+    expect(below.stderr).not.toContain("no effect");
+    expect(below.exitCode).toBe(0);
     for (const flags of [[], ["--check"], ["--list-different"]]) {
       const piped = await format(files, [...flags, "--stdin-filepath", "d.js"], { stdin: ugly });
       expect(piped.raw).toBe("");

@@ -2,7 +2,7 @@
 use crate::partial::copy_short;
 use crate::{Int, Isa, Matches, Out, Padded, SharedOutU8, Source};
 use bun_simd_trusted::quarters;
-use core::hint::{cold_path, likely};
+use core::hint::{black_box, cold_path, likely};
 use core::ops::Range;
 
 #[inline(always)]
@@ -254,8 +254,14 @@ mod simd {
             {
                 let holds =
                     |i: usize| ((tests(a)[i] | tests(b)[i]) | (tests(c)[i] | tests(d)[i])).any();
-                if holds(0) && holds(1) {
-                    break;
+                if holds(0) {
+                    if holds(1) {
+                        break;
+                    }
+                    if cfg!(target_arch = "aarch64") {
+                        // Without it, each step can run both tests.
+                        black_box(());
+                    }
                 }
                 rest = if FORWARD { end } else { start };
             }

@@ -724,7 +724,6 @@ fn each_byte_in_each_escape() {
     let alone = (*b"\x1B\x90\x98\x9B\x9D\x9E\x9F[a").map(|byte| vec![byte]);
     for start in after_esc.into_iter().chain(alone) {
         for (before, byte) in (0..=255).flat_map(|byte| [0, 61, 62, 63, 64].map(|it| (it, byte))) {
-            // Blocks start at a control byte in front, or at the escape.
             for first in [&b""[..], b"\x01"] {
                 let t = [
                     first,
@@ -738,6 +737,21 @@ fn each_byte_in_each_escape() {
                     kernels::visible_latin1_width_exclude_ansi(&t)
                 });
             }
+        }
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "reads only a slice")]
+fn one_escape_at_each_place() {
+    let lengths = (60..200).chain([255, 256, 257, 258, 319, 320, 321, 512, 513, 514, 577]);
+    for (len, line) in lengths.flat_map(|len| [(len, 7), (len, 999)]) {
+        let plain = Vec::from_iter((1..=len).map(|i| if i % line == 0 { b'\n' } else { b'a' }));
+        for (at, odd) in (0..len).flat_map(|at| [(at, &b"\t"[..]), (at, b"\x1B[1m")]) {
+            let t = [&plain[..at], odd, &plain[at..]].concat();
+            check(width_without_escapes(&t[..len]), || {
+                kernels::visible_latin1_width_exclude_ansi(&t[..len])
+            });
         }
     }
 }

@@ -145,10 +145,25 @@ mod simd {
                 _ => width_with_escapes(0, text),
             };
         }
-        match U8::position_refined(text, |v| [is_not_printable_ascii(v), !is_visible(v)]) {
-            None => text.len(),
-            Some(at) => width_with_escapes(at, &text[at..]),
+        let Some(last) = text.last_chunk() else {
+            return width_with_escapes(0, text);
+        };
+        // At least one byte is left for the last block.
+        let before = &text[..text.len() - 1];
+        let invisible = |v| [is_not_printable_ascii(v), !is_visible(v)];
+        let mut width = U8::skip::<_, true>(before, 0, invisible);
+        let mut rest = &before[width..];
+        while let Some((block, after)) = rest.split_first_chunk()
+            && let [visible, 0] = visible_and_suspects(block)
+        {
+            (width, rest) = (width + visible.count_ones() as usize, after);
         }
+        if rest.len() < 64
+            && let [visible, 0] = visible_and_suspects(last)
+        {
+            return width + (visible >> (63 - rest.len())).count_ones() as usize;
+        }
+        width_with_escapes(width, &text[before.len() - rest.len()..])
     }
 
     /// The second are not visible. All that start a sequence are among them.

@@ -194,7 +194,7 @@ impl Reach {
 
 /// RFC 9000 §21.5.6.
 fn may_move(from: SocketAddr, to: SocketAddr) -> bool {
-    to.port() != 0 && Reach::of(to.ip()) >= Reach::of(from.ip()).max(Reach::Host)
+    Reach::of(to.ip()) >= Reach::of(from.ip()).max(Reach::Host)
 }
 
 impl Connection {
@@ -203,8 +203,7 @@ impl Connection {
         match self.side.is_server() {
             true => self.is_confirmed(),
             false => {
-                from.peer == self.path.addresses.peer
-                    || Some(from.peer) == self.previous_peer
+                Some(from.peer) == self.previous_peer
                     || (self.candidates.iter()).any(|it| it.addresses.peer == from.peer)
             }
         }
@@ -216,6 +215,7 @@ impl Connection {
         now: Instant,
         from: &Addresses,
         destination: &[u8],
+        validates: bool,
         shared: &mut Shared,
     ) -> Result<Option<&mut Path>> {
         if let Some(at) = self.candidates.iter().position(|it| it.addresses == *from) {
@@ -241,7 +241,7 @@ impl Connection {
         let mut path = Path::new(*from, remote, is_validated);
         path.mtu.set_peer_limit(self.peer.max_udp_payload_size);
         path.challenge(now);
-        path.owes_challenge = self.side.is_server();
+        path.owes_challenge = validates;
         self.track_reset_token(&remote, shared);
         self.candidates.push(path);
         Ok(self.candidates.last_mut())
@@ -436,11 +436,8 @@ impl Connection {
         };
         let peer = peer.filter(|&peer| self.config.uses_preferred_address && peer != current);
         self.on_new_connection_id(remote, 0, shared)?;
-        if let Some(peer) = peer
-            && let Some(path) = self.candidate(now, &Addresses { local, peer }, &[], shared)?
-        {
-            path.challenge(now);
-        }
-        Ok(())
+        peer.map_or(Ok(()), |peer| {
+            (self.candidate(now, &Addresses { local, peer }, &[], true, shared)).map(drop)
+        })
     }
 }

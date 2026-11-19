@@ -75,19 +75,10 @@ impl Shared {
 }
 
 #[derive(Default)]
-enum Tenant {
-    #[default]
-    None,
-    Live(Box<Connection>),
-    Gone {
-        remains: Box<Remains>,
-        datagrams_received: u32,
-    },
-}
-
-#[derive(Default)]
 struct Slot {
-    tenant: Tenant,
+    connection: Option<Box<Connection>>,
+    /// Of the connection that was here.
+    remains: Option<Box<Remains>>,
     generation: u32,
     awaited: Option<Awaited>,
     group: u8,
@@ -95,6 +86,25 @@ struct Slot {
     has_token: bool,
     may_have_events: bool,
     may_transmit: bool,
+}
+
+#[derive(Default)]
+struct Slots {
+    all: Vec<Slot>,
+    /// In place of those that are out of range.
+    vacant: Slot,
+}
+
+impl Slots {
+    #[inline]
+    fn at(&self, index: u32) -> &Slot {
+        self.all.get(index as usize).unwrap_or(&self.vacant)
+    }
+
+    #[inline]
+    fn at_mut(&mut self, index: u32) -> &mut Slot {
+        self.all.get_mut(index as usize).unwrap_or(&mut self.vacant)
+    }
 }
 
 /// The connections that wait for the same. The oldest has to make room for a new one, unless the group of the new
@@ -119,19 +129,23 @@ impl Queue {
 
     fn leave(&mut self, group: u8) {
         self.len -= 1;
-        self.group_lens
-            .get_mut(usize::from(group))
-            .map(|it| *it -= 1);
+        self.change_group_len(group, -1);
+    }
+
+    fn change_group_len(&mut self, group: u8, by: i16) -> usize {
+        self.group_lens.get_mut(usize::from(group)).map_or(0, |it| {
+            *it = it.wrapping_add_signed(by);
+            usize::from(*it)
+        })
     }
 
     /// Returns the one that has to leave.
-    fn join(&mut self, new: Handle, group: u8, awaited: Awaited, slots: &[Slot]) -> Option<Handle> {
-        let group_len = self.group_lens.get_mut(usize::from(group))?;
-        *group_len += 1;
+    fn join(&mut self, new: Handle, group: u8, awaited: Awaited, slots: &Slots) -> Option<Handle> {
+        let group_len = self.change_group_len(group, 1);
         self.len += 1;
         self.handles.push_back(new);
         if self.len > self.max_len {
-            return match usize::from(*group_len) > self.max_len / 4 {
+            return match group_len > self.max_len / 4 {
                 true => self.handles.pop_back(),
                 false => self.pop(awaited, slots),
             };
@@ -142,15 +156,15 @@ impl Queue {
         None
     }
 
-    fn pop(&mut self, awaited: Awaited, slots: &[Slot]) -> Option<Handle> {
+    fn pop(&mut self, awaited: Awaited, slots: &Slots) -> Option<Handle> {
         core::iter::from_fn(|| self.handles.pop_front()).find(|it| it.awaits(awaited, slots))
     }
 }
 
 impl Handle {
-    fn awaits(self, awaited: Awaited, slots: &[Slot]) -> bool {
-        (slots.get(self.slot as usize))
-            .is_some_and(|it| (it.generation, it.awaited) == (self.generation, Some(awaited)))
+    fn awaits(self, awaited: Awaited, slots: &Slots) -> bool {
+        let slot = slots.at(self.slot);
+        (slot.generation, slot.awaited) == (self.generation, Some(awaited))
     }
 }
 
@@ -172,7 +186,7 @@ pub struct Incoming<'a> {
 
 pub struct Endpoint {
     shared: Shared,
-    slots: Vec<Slot>,
+    slots: Slots,
     free: Vec<u32>,
     connections: usize,
     awaiting_hello: Queue,
@@ -202,7 +216,7 @@ impl Endpoint {
                 pool: Pool::default(),
                 scratch: Vec::new(),
             },
-            slots: Vec::new(),
+            slots: Slots::default(),
             free: Vec::new(),
             connections: 0,
             awaiting_hello: Queue::new(1024),
@@ -223,8 +237,8 @@ impl Endpoint {
     }
 
     pub fn handles(&self) -> Vec<Handle> {
-        let slots = (0..).zip(&self.slots);
-        (slots.filter(|(_, it)| matches!(it.tenant, Tenant::Live(_))))
+        let slots = (0..).zip(&self.slots.all);
+        (slots.filter(|(_, it)| it.connection.is_some()))
             .map(|(slot, it)| Handle {
                 slot,
                 generation: it.generation,
@@ -234,14 +248,8 @@ impl Endpoint {
 
     #[inline]
     pub fn get(&self, handle: Handle) -> Option<&Connection> {
-        match self.slots.get(handle.slot as usize)? {
-            Slot {
-                tenant: Tenant::Live(connection),
-                generation,
-                ..
-            } if *generation == handle.generation => Some(connection),
-            _ => None,
-        }
+        let slot = self.slots.at(handle.slot);
+        (slot.connection.as_deref()).filter(|_| slot.generation == handle.generation)
     }
 
     #[inline]
@@ -251,13 +259,9 @@ impl Endpoint {
 
     #[inline]
     fn touch(&mut self, handle: Handle) -> Option<(&mut Connection, &mut Shared)> {
-        let slot = self.slots.get_mut(handle.slot as usize)?;
-        let Tenant::Live(connection) = &mut slot.tenant else {
-            return None;
-        };
-        if slot.generation != handle.generation {
-            return None;
-        }
+        let slot = self.slots.at_mut(handle.slot);
+        let connection =
+            (slot.connection.as_deref_mut()).filter(|_| slot.generation == handle.generation)?;
         enqueue(
             &mut self.with_events,
             &mut slot.may_have_events,
@@ -270,19 +274,16 @@ impl Endpoint {
     fn handle(&self, slot: u32) -> Handle {
         Handle {
             slot,
-            generation: self.slots.get(slot as usize).map_or(0, |it| it.generation),
+            generation: self.slots.at(slot).generation,
         }
     }
 
     fn insert(&mut self, new: impl FnOnce(u32, &mut Shared) -> Box<Connection>) -> Handle {
         let slot = self.free.pop().unwrap_or_else(|| {
-            self.slots.push(Slot::default());
-            self.slots.len() as u32 - 1
+            self.slots.all.push(Slot::default());
+            self.slots.all.len() as u32 - 1
         });
-        let connection = new(slot, &mut self.shared);
-        if let Some(it) = self.slots.get_mut(slot as usize) {
-            it.tenant = Tenant::Live(connection);
-        }
+        self.slots.at_mut(slot).connection = Some(new(slot, &mut self.shared));
         self.connections += 1;
         let handle = self.handle(slot);
         self.touch(handle);
@@ -323,30 +324,27 @@ impl Endpoint {
             IpAddr::V6(ip) => ip.to_bits() >> 64,
         };
         let hash = self.shared.routes.by_initial_id.hasher().hash_one(network);
-        if let Some(slot) = self.slots.get_mut(handle.slot as usize) {
-            (slot.has_token, slot.group) = (incoming.has_token, (hash % GROUPS as u64) as u8);
-        }
+        let slot = self.slots.at_mut(handle.slot);
+        (slot.has_token, slot.group) = (incoming.has_token, (hash % GROUPS as u64) as u8);
         self.track_handshake(now, handle.slot);
         handle
     }
 
-    fn queue(&mut self, awaited: Awaited) -> (&mut Queue, &mut [Slot]) {
+    fn queue(&mut self, awaited: Awaited) -> (&mut Queue, &Slots) {
         match awaited {
-            Awaited::Hello => (&mut self.awaiting_hello, &mut self.slots),
-            Awaited::Turn => (&mut self.awaiting_turn, &mut self.slots),
-            Awaited::Finished => (&mut self.awaiting_finished, &mut self.slots),
+            Awaited::Hello => (&mut self.awaiting_hello, &self.slots),
+            Awaited::Turn => (&mut self.awaiting_turn, &self.slots),
+            Awaited::Finished => (&mut self.awaiting_finished, &self.slots),
         }
     }
 
     #[cold]
     fn track_handshake(&mut self, now: Instant, index: u32) {
         let handle = self.handle(index);
-        let Some(slot) = self.slots.get_mut(index as usize) else {
-            return;
-        };
-        let (awaited, is_validated) = match &slot.tenant {
-            Tenant::Live(it) => (it.awaited(), it.is_validated()),
-            _ => (None, false),
+        let slot = self.slots.at_mut(index);
+        let (awaited, is_validated) = match &slot.connection {
+            Some(it) => (it.awaited(), it.is_validated()),
+            None => (None, false),
         };
         if is_validated && core::mem::take(&mut slot.has_token) {
             self.unvalidated_clients.put_back();
@@ -448,30 +446,24 @@ impl Endpoint {
                 false => Some(Unrouted::Stray(datagram)),
             };
         };
-        let slot = self.slots.get_mut(index as usize)?;
-        match &mut slot.tenant {
-            Tenant::None => {}
-            Tenant::Live(connection) => {
-                connection.receive(now, from, datagram, &mut self.shared);
-                enqueue(&mut self.with_events, &mut slot.may_have_events, index);
-                enqueue(&mut self.to_transmit, &mut slot.may_transmit, index);
-                if slot.awaited.is_some() {
-                    self.track_handshake(now, index);
-                }
+        let slot = self.slots.at_mut(index);
+        if let Some(connection) = &mut slot.connection {
+            connection.receive(now, from, datagram, &mut self.shared);
+            enqueue(&mut self.with_events, &mut slot.may_have_events, index);
+            enqueue(&mut self.to_transmit, &mut slot.may_transmit, index);
+            if slot.awaited.is_some() {
+                self.track_handshake(now, index);
             }
-            Tenant::Gone { remains, .. } if from.peer != remains.addresses.peer => {}
-            Tenant::Gone {
-                remains,
-                datagrams_received,
-            } => {
-                // RFC 9000 §10.2.1.
-                *datagrams_received = datagrams_received.saturating_add(1);
-                if datagrams_received.is_power_of_two()
-                    && (1..=3 * datagram.len()).contains(&remains.farewell.len())
-                {
-                    let farewell = remains.farewell.clone();
-                    self.reply(from, farewell);
-                }
+        } else if let Some(remains) = &mut slot.remains
+            && from.peer == remains.addresses.peer
+        {
+            // RFC 9000 §10.2.1.
+            remains.datagrams_received = remains.datagrams_received.saturating_add(1);
+            if remains.datagrams_received.is_power_of_two()
+                && (1..=3 * datagram.len()).contains(&remains.farewell.len())
+            {
+                let farewell = remains.farewell.clone();
+                self.reply(from, farewell);
             }
         }
         None
@@ -530,7 +522,7 @@ impl Endpoint {
         let header = header.without_token();
         let secret = InitialSecret::new(self.shared.crypto, header.version, &header.destination);
         let read_keys = secret.keys(Side::Client);
-        let (packet, rest) = datagram.split_at_mut_checked(header.len)?;
+        let (packet, rest) = datagram.split_at_mut(header.len.min(len));
         let sealed = Sealed::new(packet, header.number_offset, &*read_keys.header, 0)?;
         let (first, number) = (sealed.first, sealed.number);
         let packet = Opened {
@@ -620,51 +612,42 @@ impl Endpoint {
     pub fn poll_event(&mut self, now: Instant) -> Option<(Handle, Context, Event)> {
         loop {
             let index = *self.with_events.front()?;
-            let slot = self.slots.get_mut(index as usize)?;
+            let slot = self.slots.at_mut(index);
             let handle = Handle {
                 slot: index,
                 generation: slot.generation,
             };
-            let mut is_over = false;
-            if let Tenant::Live(connection) = &mut slot.tenant {
-                enqueue(&mut self.to_transmit, &mut slot.may_transmit, index);
-                if let Some(event) = connection.poll_event(now, &mut self.shared) {
-                    return Some((handle, connection.context, event));
-                }
-                is_over = connection.is_over();
+            enqueue(&mut self.to_transmit, &mut slot.may_transmit, index);
+            if let Some(connection) = &mut slot.connection
+                && let Some(event) = connection.poll_event(now, &mut self.shared)
+            {
+                return Some((handle, connection.context, event));
             }
             slot.may_have_events = false;
             self.with_events.pop_front();
-            if is_over && let Some(connection) = self.retire(now, index) {
+            if let Some(mut connection) = slot.connection.take_if(|it| it.is_over()) {
+                self.retire(now, index, &mut connection);
                 return Some((handle, connection.context, Event::Closed(connection)));
             }
         }
     }
 
-    fn retire(&mut self, now: Instant, index: u32) -> Option<Box<Connection>> {
-        let slot = self.slots.get_mut(index as usize)?;
-        let Tenant::Live(mut connection) = core::mem::take(&mut slot.tenant) else {
-            return None;
-        };
+    fn retire(&mut self, now: Instant, index: u32, connection: &mut Connection) {
+        let slot = self.slots.at_mut(index);
         slot.generation = slot.generation.wrapping_add(1);
         self.connections -= 1;
         let remains = Box::new(connection.remains(&mut self.shared));
-        let lingers_for = remains.lingers_for;
-        slot.tenant = Tenant::Gone {
-            remains,
-            datagrams_received: 0,
-        };
+        let lingers_for = slot.remains.insert(remains).lingers_for;
         self.track_handshake(now, index);
         match lingers_for.is_zero() {
             true => self.vacate(index),
             false => self.deadlines.set(index, now + lingers_for),
         }
-        Some(connection)
     }
 
     fn vacate(&mut self, index: u32) {
-        let slot = self.slots.get_mut(index as usize);
-        if let Some(Tenant::Gone { remains, .. }) = slot.map(|it| core::mem::take(&mut it.tenant)) {
+        self.deadlines.set(index, Instant::NEVER);
+        crate::with(self.slots.at_mut(index).remains.take(), |remains| {
             let routes = &mut self.shared.routes;
             for id in &remains.ids {
                 routes.by_id.remove(id);
@@ -672,9 +655,8 @@ impl Endpoint {
             if let Some(id) = &remains.initial_route {
                 routes.by_initial_id.remove(id);
             }
-            self.deadlines.set(index, Instant::NEVER);
             self.free.push(index);
-        }
+        });
     }
 
     /// Adds to `batch` until it has about `max_len` datagrams. `visit` gets the connections that may have changed.
@@ -694,10 +676,10 @@ impl Endpoint {
         }
         while batch.len() < max_len
             && let Some(index) = self.to_transmit.pop_front()
-            && let Some(slot) = self.slots.get_mut(index as usize)
         {
+            let slot = self.slots.at_mut(index);
             slot.may_transmit = false;
-            if let Tenant::Live(connection) = &mut slot.tenant {
+            if let Some(connection) = &mut slot.connection {
                 let turn = DATAGRAMS_PER_TURN.min(max_len - batch.len());
                 if connection.transmit(now, batch, turn, &mut self.shared) {
                     enqueue(&mut self.to_transmit, &mut slot.may_transmit, index);
@@ -722,9 +704,7 @@ impl Endpoint {
             return Some(Instant::default());
         }
         for &index in &self.to_transmit {
-            if let Some(Tenant::Live(connection)) =
-                self.slots.get(index as usize).map(|it| &it.tenant)
-            {
+            if let Some(connection) = &self.slots.at(index).connection {
                 bring_forward(&mut self.deadlines, index, connection);
             }
         }
@@ -733,28 +713,29 @@ impl Endpoint {
 
     pub fn handle_timeouts(&mut self, now: Instant) {
         while let Some((_, index)) = self.deadlines.first().filter(|it| it.0 <= now) {
-            let handle = self.handle(index);
-            match self.get(handle).map(Connection::timeout) {
-                Some(deadline) if deadline > now => self.deadlines.set(index, deadline),
-                Some(_) => {
+            let slot = self.slots.at_mut(index);
+            match (slot.connection.as_mut()).map(|it| (it.timeout(), it)) {
+                Some((deadline, _)) if deadline > now => self.deadlines.set(index, deadline),
+                Some((_, connection)) => {
                     // It is going to be set again, as the connection has to transmit.
                     self.deadlines.set(index, Instant::NEVER);
-                    if let Some((connection, shared)) = self.touch(handle) {
-                        connection.handle_timeouts(now, shared);
-                    }
+                    enqueue(&mut self.with_events, &mut slot.may_have_events, index);
+                    enqueue(&mut self.to_transmit, &mut slot.may_transmit, index);
+                    connection.handle_timeouts(now, &mut self.shared);
                 }
                 None => self.vacate(index),
             }
         }
-        for _ in 0..HELLOS_PER_PASS {
-            if let Some(handle) = self.awaiting_turn.pop(Awaited::Turn, &self.slots) {
-                if let Some((connection, shared)) = self.touch(handle)
-                    && connection.awaited() == Some(Awaited::Turn)
-                {
-                    connection.answer_hello(now, shared);
-                }
-                self.track_handshake(now, handle.slot);
+        let mut turns = 0..HELLOS_PER_PASS;
+        while turns.next().is_some()
+            && let Some(handle) = self.awaiting_turn.pop(Awaited::Turn, &self.slots)
+        {
+            if let Some((connection, shared)) = self.touch(handle)
+                && connection.awaited() == Some(Awaited::Turn)
+            {
+                connection.answer_hello(now, shared);
             }
+            self.track_handshake(now, handle.slot);
         }
     }
 

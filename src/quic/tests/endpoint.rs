@@ -100,6 +100,11 @@ fn refusal() {
     );
     assert_eq!(raw.peer.endpoint.connection_count(), 0);
 
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    raw.send_in(Initial, "close 2 0 -");
+    assert_eq!(raw.events(), "closed by close 0x2 -");
+
     let mut raw = Raw::client().config(|it| it.versions = &[]);
     raw.start(&[]);
     assert_eq!((raw.packets(), raw.events()), Default::default());

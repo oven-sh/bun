@@ -465,7 +465,7 @@ impl Session for Careless {
         if let Some((Level::Application, _)) = input {
             handshake.send(Level::Initial, b"a");
             handshake.send(Level::Handshake, b"a");
-            assert!(!handshake.peer_parameters(&[], false));
+            assert!(!handshake.peer_parameters(&[0, 0], false));
         }
         self.0.advance(input, handshake)
     }

@@ -1,7 +1,7 @@
 //! RFC 9000 §7 and RFC 9001 §4.
 
 use super::ack_frequency::{self, MIN_ACK_DELAY};
-use super::space::{Space, SpaceId};
+use super::space::SpaceId;
 use super::streams::Load;
 use super::timers::Timer;
 use super::{Connection, Phase};
@@ -13,11 +13,12 @@ use crate::error::{Error, Result, http3_code, transport_code};
 use crate::event::{CloseReason, Event};
 use crate::http3::write_settings;
 use crate::packet::{Invariants, LongHeader};
-use crate::stream_id::{Direction, Side};
+use crate::stream_id::Side;
 use crate::time::Instant;
 use crate::tls::{Alert, Level, Status};
 use crate::transport_parameters::{TransportParameters, VersionInformation};
 use crate::version::Version;
+use crate::with;
 
 use super::sent::Control;
 
@@ -161,13 +162,11 @@ impl Handshake<'_> {
         let connection = &mut *self.connection;
         let secret = Secret::new(connection.crypto, cipher, secret);
         let keys = secret.keys(connection.version);
-        if let Some(setup) = &mut connection.setup {
-            setup.can_read_more = true;
-        }
+        with(connection.setup.as_mut(), |it| it.can_read_more = true);
         match level {
             Level::Initial => {}
             Level::EarlyData => connection.early_keys = Some(keys),
-            Level::Handshake => connection.handshake_space().read_keys = Some(keys),
+            Level::Handshake => connection.spaces.open(SpaceId::Handshake).read_keys = Some(keys),
             Level::Application => {
                 connection.integrity_limit = keys.payload.key.integrity_limit();
                 connection.spaces.data.read_keys = Some(keys);
@@ -183,7 +182,7 @@ impl Handshake<'_> {
         match level {
             Level::Initial => {}
             Level::EarlyData => connection.early_keys = Some(keys),
-            Level::Handshake => connection.handshake_space().write_keys = Some(keys),
+            Level::Handshake => connection.spaces.open(SpaceId::Handshake).write_keys = Some(keys),
             Level::Application => {
                 let limit = keys.payload.key.confidentiality_limit();
                 connection.spaces.data.write_keys = Some(keys);
@@ -258,16 +257,13 @@ impl Connection {
         self.continue_handshake(now, Level::Initial, &hello.unwrap_or_default(), shared)
     }
 
-    fn handshake_space(&mut self) -> &mut Space {
-        self.spaces.handshake.get_or_insert_default()
-    }
-
     pub(super) fn set_initial_keys(&mut self) {
-        if let (Some(space), Some(setup)) = (&mut self.spaces.initial, &self.setup) {
+        let both = self.spaces.initial.as_mut().zip(self.setup.as_ref());
+        with(both, |(space, setup)| {
             let secret = InitialSecret::new(self.crypto, self.version, &setup.initial_destination);
             space.read_keys = Some(secret.keys(!self.side));
             space.write_keys = Some(secret.keys(self.side));
-        }
+        });
     }
 
     /// The versions that the connection can end up with, in the order of the server's preference.
@@ -304,16 +300,15 @@ impl Connection {
         }
         self.set_version_information();
         self.advance_tls(now, None)?;
-        let remembered = self.setup.as_mut().map(|setup| &mut setup.remembered);
-        match (remembered, &self.early_keys) {
-            (Some(Some(remembered)), Some(_)) => {
-                *self.peer = remembered.clone();
-                self.apply_peer_parameters();
-                self.start_application(now)?;
-                self.can_open_streams = true;
-            }
-            (Some(remembered), _) => *remembered = None,
-            _ => {}
+        let remembered = self.setup.as_mut().and_then(|setup| {
+            setup.remembered.take_if(|_| self.early_keys.is_none());
+            setup.remembered.clone()
+        });
+        if let Some(remembered) = remembered {
+            *self.peer = remembered;
+            self.apply_peer_parameters();
+            self.start_application(now)?;
+            self.can_open_streams = true;
         }
         Ok(())
     }
@@ -331,17 +326,16 @@ impl Connection {
     }
 
     fn advance_tls(&mut self, now: Instant, input: Option<(Level, &[u8])>) -> Result<Status> {
-        let Some(mut tls) = self.tls.take() else {
-            return Ok(Status::Complete);
-        };
+        let mut tls = self.tls.take();
         let mut handshake = Handshake {
             connection: self,
             now,
             error: None,
         };
-        let result = tls.advance(input, &mut handshake);
+        let result =
+            (tls.as_mut()).map_or(Ok(Status::Complete), |it| it.advance(input, &mut handshake));
         let error = handshake.error;
-        self.tls = Some(tls);
+        self.tls = tls;
         result.map_err(|alert| error.unwrap_or_else(|| alert_error(alert)))
     }
 
@@ -417,9 +411,7 @@ impl Connection {
         if next.is_some_and(|space| space.read_keys.is_some()) {
             return Err(Error::violation("CRYPTO frame at a level that is over"));
         }
-        if let Some(space) = self.spaces.get_mut(id) {
-            space.crypto_read += data.len() as u64;
-        }
+        self.spaces.open(id).crypto_read += data.len() as u64;
         if let Some(setup) = &mut self.setup {
             setup.is_version_settled = true;
             setup.other_keys.take_if(|_| self.side.is_client());
@@ -523,10 +515,10 @@ impl Connection {
     pub(super) fn switch_version(&mut self, version: Version) {
         let old = core::mem::replace(&mut self.version, version);
         let keys = (self.spaces.initial.as_mut()).and_then(|it| it.read_keys.take());
-        if let Some(setup) = &mut self.setup {
+        with(self.setup.as_mut(), |setup| {
             setup.other_keys = (keys.map(|keys| (old, keys))).filter(|_| self.side.is_server());
             setup.is_version_settled = true;
-        }
+        });
         self.set_initial_keys();
     }
 
@@ -543,9 +535,7 @@ impl Connection {
     fn on_early_data_rejected(&mut self, now: Instant) {
         self.early_keys = None;
         self.resend_all(SpaceId::Data);
-        if let Some(setup) = &mut self.setup {
-            setup.remembered = None;
-        }
+        with(self.setup.as_mut(), |it| it.remembered = None);
         for (id, _) in core::mem::take(&mut self.datagrams.unsent) {
             self.emit(Event::DatagramLost(id));
         }
@@ -563,13 +553,11 @@ impl Connection {
         if let Some(config) = &self.config.http3
             && self.http3.is_none()
         {
-            if self.streams.table.available(Direction::Unidirectional) < 3 {
-                return Err(Error::http3(
-                    http3_code::GENERAL_PROTOCOL_ERROR,
-                    "peer allows too few unidirectional streams",
-                ));
-            }
-            self.http3 = self.streams.start_http3(config, self.side);
+            let http3 = self.streams.start_http3(config, self.side);
+            self.http3 = Some(http3.ok_or(Error::http3(
+                http3_code::GENERAL_PROTOCOL_ERROR,
+                "peer allows too few unidirectional streams",
+            ))?);
         }
         self.restart_progress_timer(now);
         Ok(())
@@ -586,9 +574,7 @@ impl Connection {
     fn on_handshake_complete(&mut self, now: Instant, shared: &mut Shared) -> Result {
         self.phase = Phase::Established;
         self.timers.stop(Timer::Handshake);
-        if let Some(setup) = &mut self.setup {
-            setup.can_read_more = true;
-        }
+        with(self.setup.as_mut(), |it| it.can_read_more = true);
         if self.side.is_client() {
             self.path.remote.reset_token = self.peer.stateless_reset_token;
             self.track_reset_token(&self.path.remote, shared);
@@ -605,7 +591,7 @@ impl Connection {
         self.become_ready(now)?;
         if self.side.is_server() {
             self.streams.state.owed |= Control::HANDSHAKE_DONE | Control::NEW_TOKEN;
-            self.confirm_handshake(now, shared)?;
+            return self.confirm_handshake(now, shared);
         }
         Ok(())
     }
@@ -616,8 +602,8 @@ impl Connection {
             return Ok(());
         }
         self.phase = Phase::Confirmed;
-        self.discard_space(now, SpaceId::Initial);
-        self.discard_space(now, SpaceId::Handshake);
+        self.discard_space(now, |it| it.initial.take());
+        self.discard_space(now, |it| it.handshake.take());
         self.emit(Event::HandshakeConfirmed);
         match self.side {
             Side::Client => self.try_preferred_address(now, shared),
@@ -641,6 +627,11 @@ impl Connection {
 
     /// RFC 9000 §17.2.5.2.
     pub(super) fn on_retry(&mut self, now: Instant, header: &LongHeader, packet: &[u8]) {
+        let is_for = |original: &ConnectionId| {
+            (packet.split_at_checked(header.number_offset)).is_some_and(|(packet, tag)| {
+                retry_tag(self.crypto, self.version, original, packet) == tag
+            })
+        };
         let Some(setup) = self.setup.as_mut().filter(|setup| {
             self.side.is_client()
                 && setup.initial_source.is_none()
@@ -648,21 +639,10 @@ impl Connection {
                 && header.version == self.version
                 && header.source != setup.original_destination
                 && (1..=MAX_TOKEN_LEN).contains(&header.token.len())
+                && is_for(&setup.original_destination)
         }) else {
             return;
         };
-        let Some((packet, tag)) = packet.split_at_checked(header.number_offset) else {
-            return;
-        };
-        if retry_tag(
-            self.crypto,
-            self.version,
-            &setup.original_destination,
-            packet,
-        ) != tag
-        {
-            return;
-        }
         setup.token = header.token.to_vec();
         setup.initial_destination = header.source;
         setup.other_keys = None;

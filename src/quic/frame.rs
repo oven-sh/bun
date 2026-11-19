@@ -130,7 +130,7 @@ impl<'a> Ack<'a> {
             largest,
             delay,
             first_range,
-            more_ranges: start.get(..start.len() - input.len())?,
+            more_ranges: start.get(..start.len() - input.len()).unwrap_or_default(),
         })
     }
 

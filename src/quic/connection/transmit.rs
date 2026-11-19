@@ -185,14 +185,14 @@ impl Connection {
         }
         // RFC 9001 §4.9.1.
         if self.side.is_client() && drafts.iter().any(|it| it.space == SpaceId::Handshake) {
-            self.discard_space(now, SpaceId::Initial);
+            self.discard_space(now, |it| it.initial.take());
         }
     }
 
     /// Writes the header, and returns where the frames have to end.
     #[inline]
     fn begin(&mut self, id: SpaceId, out: &mut Vec<u8>, end: usize) -> Option<(Draft, usize)> {
-        let space = self.spaces.get_mut(id)?;
+        let space = self.spaces.open(id);
         if id == SpaceId::Data && space.next_number == self.next_skip {
             (self.skipped, self.next_skip) = (Some(space.next_number), u64::MAX);
             space.next_number += 1;
@@ -245,9 +245,7 @@ impl Connection {
 
     #[inline]
     fn send(&mut self, now: Instant, draft: &Draft, out: &mut [u8]) {
-        let Some(space) = self.spaces.get_mut(draft.space) else {
-            return;
-        };
+        let space = self.spaces.open(draft.space);
         let keys = space.write_keys.as_ref().or(self.early_keys.as_ref());
         draft
             .packet
@@ -297,7 +295,7 @@ impl Connection {
             return None;
         }
         let (mut draft, end) = self.begin(id, out, datagram.end)?;
-        let space = self.spaces.get_mut(id)?;
+        let space = self.spaces.open(id);
         if has_ack {
             (space.received).write_ack(now, draft.packet.number, out, end);
         }
@@ -473,9 +471,9 @@ impl Connection {
                 }
                 _ => {
                     let max_delay = self.peer_max_ack_delay();
-                    if let Some(controller) = &mut self.ack_controller {
-                        controller.write_frame(max_delay, out);
-                    }
+                    crate::with(self.ack_controller.as_mut(), |it| {
+                        it.write_frame(max_delay, out)
+                    });
                 }
             }
         }
@@ -492,7 +490,7 @@ impl Connection {
     ) -> Option<Draft> {
         self.spaces.get(id)?.write_keys.as_ref()?;
         let (mut draft, end) = self.begin(id, out, end)?;
-        let space = self.spaces.get_mut(id)?;
+        let space = self.spaces.open(id);
         if space.received.unacked_eliciting > 0 {
             let number = draft.packet.number;
             (space.received).write_ack(now, number, out, end - super::close::MIN_FRAME_ROOM);
@@ -509,21 +507,17 @@ impl Connection {
             && self.phase == Phase::Confirmed
             && self.pto_count == 0
             && self.may_send(now)
+            && let out = &mut batch.bytes
+            && let start = out.len()
+            && let Some((mut draft, end)) = self.begin(SpaceId::Data, out, start + usize::from(len))
         {
-            let out = &mut batch.bytes;
-            let start = out.len();
-            let end = start + usize::from(len);
-            if let Some((mut draft, frames_end)) = self.begin(SpaceId::Data, out, end) {
-                out.push(kind::PING as u8);
-                out.resize(frames_end, 0);
-                self.spaces.data.sent.frames.push(SentFrame::MtuProbe);
-                self.path.mtu.on_probe_sent(len);
-                draft.is_eliciting = true;
-                if let Some(draft) = draft.finish(out) {
-                    self.send(now, &draft, out);
-                    batch.commit(&self.path.addresses, start);
-                }
-            }
+            out.push(kind::PING as u8);
+            out.resize(end, 0);
+            self.spaces.data.sent.frames.push(SentFrame::MtuProbe);
+            self.path.mtu.on_probe_sent(len);
+            draft.is_eliciting = true;
+            self.send(now, &draft.end(out), out);
+            batch.commit(&self.path.addresses, start);
         }
     }
 
@@ -556,11 +550,9 @@ impl Connection {
             if max_len == MIN_DATAGRAM_LEN {
                 out.resize(frames_end, 0);
             }
-            if let Some(draft) = draft.finish(out) {
-                self.send(now, &draft, out);
-                self.path.on_sent(draft.end - start);
-                batch.commit(&self.path.addresses, start);
-            }
+            self.send(now, &draft.end(out), out);
+            self.path.on_sent(out.len() - start);
+            batch.commit(&self.path.addresses, start);
         }
     }
 
@@ -574,14 +566,19 @@ impl Connection {
 impl Draft {
     /// Takes the header back if there are no frames.
     #[inline]
-    fn finish(mut self, out: &mut Vec<u8>) -> Option<Self> {
+    fn finish(self, out: &mut Vec<u8>) -> Option<Self> {
         if out.len() == self.packet.payload_start {
             out.truncate(self.packet.start);
             return None;
         }
+        Some(self.end(out))
+    }
+
+    #[inline]
+    fn end(mut self, out: &mut Vec<u8>) -> Self {
         self.packet.end(out);
         self.end = out.len();
-        Some(self)
+        self
     }
 
     /// With PADDING frames. It is the last packet.

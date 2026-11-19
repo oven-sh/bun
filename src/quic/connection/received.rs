@@ -101,9 +101,7 @@ impl Received {
             out.varint(len);
             (count, above) = (count + 1, range.start);
         }
-        if let Some(byte) = out.get_mut(count_at) {
-            *byte = count;
-        }
+        crate::with(out.get_mut(count_at), |it| *it = count);
         self.unacked_eliciting = 0;
         self.is_ack_due = false;
         if self.sent_acks.len() < MAX_TRACKED_ACKS {
@@ -132,5 +130,28 @@ impl Received {
             largest_sent_at = (sent.packet == ack.largest).then_some(sent.at);
         }
         largest_sent_at
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn acks_fit_or_wait() {
+        let (now, mut received) = (Instant::default(), Received::default());
+        received.insert(now, 0, true);
+        received.insert(now, 2, true);
+        for (end, ack) in [
+            (4, &[][..]),
+            (5, &[2, 2, 0, 0, 0]),
+            (6, &[2, 2, 0, 0, 0]),
+            (7, &[2, 2, 0, 1, 0, 0, 0]),
+        ] {
+            let mut out = Vec::new();
+            received.is_ack_due = true;
+            received.write_ack(now, 0, &mut out, end);
+            assert_eq!((&out[..], received.is_ack_due), (ack, ack.is_empty()));
+        }
     }
 }

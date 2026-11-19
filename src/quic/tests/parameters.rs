@@ -13,7 +13,6 @@ fn advertised(raw: &mut Raw) -> String {
     raw.start(&[]);
     let mut parameters = raw.peer_parameters();
     parameters.retain(|it| !it.0.ends_with("_id") && !it.0.ends_with("_token"));
-    parameters.retain(|it| it.0 != "min_ack_delay");
     parameters.sort();
     let parameters = parameters.iter().map(|it| format!("{}={}", it.0, it.1));
     parameters.collect::<Vec<_>>().join(" ")
@@ -36,13 +35,13 @@ fn what_is_advertised() {
         advertised(&mut client),
         "active_connection_id_limit=8 max_data=1572864 max_idle_timeout=30000 \
          max_stream_data_bidi_remote=1048576 max_stream_data_uni=12288 max_streams_bidi=100 \
-         max_streams_uni=3 version_information=#000000016b3343cf00000001"
+         max_streams_uni=3 min_ack_delay=10000 version_information=#000000016b3343cf00000001"
     );
     assert_eq!(
         advertised(&mut server),
         "active_connection_id_limit=8 max_data=15728640 max_idle_timeout=30000 \
          max_stream_data_bidi_local=6291456 max_stream_data_uni=32768 max_streams_bidi=100 \
-         max_streams_uni=3 version_information=#000000016b3343cf00000001"
+         max_streams_uni=3 min_ack_delay=10000 version_information=#000000016b3343cf00000001"
     );
     let mut raw = Raw::client().config(|it| {
         let parameters = &mut it.parameters;
@@ -66,7 +65,7 @@ fn what_is_advertised() {
             "active_connection_id_limit=8 disable_active_migration=# max_data={MAX} \
              max_datagram_frame_size=1073741823 max_stream_data_bidi_local=63 \
              max_stream_data_bidi_remote=64 max_stream_data_uni=16383 max_streams_bidi=16384 \
-             max_streams_uni=1073741824 max_udp_payload_size=1500 \
+             max_streams_uni=1073741824 max_udp_payload_size=1500 min_ack_delay=10000 \
              version_information=#000000016b3343cf00000001"
         )
     );
@@ -221,6 +220,7 @@ fn ranges() {
         ("max_udp_payload_size", 1200, 1199),
         ("ack_delay_exponent", 20, 21),
         ("max_ack_delay", (1 << 14) - 1, 1 << 14),
+        ("min_ack_delay", 25_000, 25_001),
         ("active_connection_id_limit", 2, 1),
         ("max_streams_bidi", 1000, (1u64 << 60) + 1),
         ("max_streams_uni", 1000, (1 << 60) + 1),
@@ -240,6 +240,7 @@ fn malformed_parameters() {
         "max_data=-",
         "max_data=#40",
         "max_data=#0101",
+        "min_ack_delay=-",
         "disable_active_migration=a",
         "stateless_reset_token=*15",
         "stateless_reset_token=*17",

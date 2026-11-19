@@ -198,8 +198,9 @@ impl PayloadKey {
         header: &[u8],
         sealed: &'a mut [u8],
     ) -> Option<&'a [u8]> {
-        let (payload, tag) = sealed.split_last_chunk_mut()?;
-        (self.key.open(&self.nonce(number), header, payload, tag)).then_some(payload)
+        sealed.split_last_chunk_mut().and_then(|(payload, tag)| {
+            (self.key.open(&self.nonce(number), header, payload, tag)).then_some(&*payload)
+        })
     }
 }
 

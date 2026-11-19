@@ -1,9 +1,10 @@
 use super::stream::UNKNOWN_SIZE;
-use super::{Flags, State, Stream};
+use super::{Flags, Role, State, Stream};
 use crate::coding::MAX_VARINT;
 use crate::connection::sent::Control;
 use crate::error::{Error, Result, transport_code};
 use crate::event::{Event, StreamEvent};
+use crate::http3::Http3;
 use crate::stream_id::StreamId;
 
 const MAX_READY_HINT: usize = 256 * 1024;
@@ -33,6 +34,16 @@ impl Stream {
         !self.early.is_empty()
     }
 
+    /// For when what is left of it is not going to be read.
+    pub(crate) fn abandon_message(&mut self, id: StreamId, http3: Option<&mut Http3>) {
+        let is_read_to_end = self.is_read_to_end();
+        if let (Role::Message(message), Some(http3)) = (&mut self.role, http3)
+            && !self.flags.contains(Flags::READ_DONE)
+        {
+            message.abandon(id, is_read_to_end, http3);
+        }
+    }
+
     pub(crate) fn has_received(&self) -> bool {
         self.received > 0 || self.flags.contains(Flags::READ_DONE)
     }
@@ -49,7 +60,7 @@ impl Stream {
 
     /// The role, and where bytes for the application go.
     #[inline]
-    pub(crate) fn reader(&mut self, len: usize) -> (&mut super::Role, Ready<'_>) {
+    pub(crate) fn reader(&mut self, len: usize) -> (&mut Role, Ready<'_>) {
         let ready = Ready {
             bytes: &mut self.ready,
             hint: self.ready_hint.max(len),

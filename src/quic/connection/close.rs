@@ -92,22 +92,20 @@ impl Connection {
         self.ending = Ending::Graceful;
         self.timers.set(Timer::Close, now + GRACE_PERIOD);
         self.streams.table.is_going_away = true;
-        let mut ids: Vec<_> = self.streams.table.iter_mut().map(|it| it.0).collect();
-        ids.sort_unstable();
-        for id in ids {
-            self.abandon_message(id);
-            if let Some((stream, state)) = self.streams.get_mut(id)
-                && id.direction() == Direction::Bidirectional
-            {
-                if !stream.flags.contains(Flags::WRITE_DONE) {
-                    let code = match stream.role {
-                        Role::Message(_) => http3_code::REQUEST_CANCELLED,
-                        _ => 0,
-                    };
-                    state.reset(id, stream, code);
-                }
-                state.stop(id, stream, http3_code::NO_ERROR);
+        let (table, state) = (&mut self.streams.table, &mut self.streams.state);
+        let streams = (table.iter_mut()).filter(|it| it.0.direction() == Direction::Bidirectional);
+        let mut streams: Vec<_> = streams.collect();
+        streams.sort_unstable_by_key(|it| it.0);
+        for (id, stream) in streams {
+            stream.abandon_message(id, self.http3.as_deref_mut());
+            if !stream.flags.contains(Flags::WRITE_DONE) {
+                let code = match stream.role {
+                    Role::Message(_) => http3_code::REQUEST_CANCELLED,
+                    _ => 0,
+                };
+                state.reset(id, stream, code);
             }
+            state.stop(id, stream, http3_code::NO_ERROR);
         }
     }
 

@@ -125,10 +125,10 @@ fn what_is_lost_is_sent_again() {
         ("max_data 2000", |it| it.send("stream 2 0 *1000")),
         ("max_streams_uni 2", |it| it.send("fin 2 0 -")),
         ("max_streams_bidi 2", |it| {
-            it.send("fin 0 0 -");
+            it.send("stream 0 0 -");
             it.peer.send(0, b"", true);
             it.forget();
-            it.send("ack");
+            it.send("ack, fin 0 0 -");
         }),
         ("stream_data_blocked 1 3, stream 1 0 abc", |it| {
             it.peer.send(1, b"abcd", false);
@@ -225,7 +225,8 @@ fn what_is_out_of_date_is_not_sent_again() {
         raw.advance(10);
         raw.forget();
         raw.wait();
-        assert_eq!(raw.packets(), format!("1[{first}]; 1[ping]"), "{news}");
+        let packets = raw.take().into_iter().map(|it| it.frames[1..].join(", "));
+        assert_eq!(packets.collect::<Vec<_>>(), [first, "ping"], "{news}");
     }
 }
 
@@ -295,11 +296,14 @@ fn probes_repeat_the_oldest_packets() {
     let mut raw = Raw::client().connected();
     (["a", "b", "c"].into_iter()).for_each(|it| raw.request_packets(it));
     raw.wait();
-    assert_eq!(raw.packets(), "1[stream 3 0 a, stream 7 0 b]; 1[ping]");
+    assert_eq!(
+        raw.packets(),
+        "1[ack 0 +7500, stream 3 0 a, stream 7 0 b]; 1[ack 0 +7500, ping]"
+    );
     raw.wait();
     assert_eq!(
         raw.packets(),
-        "1[stream 11 0 c, stream 3 0 a, stream 7 0 b]; 1[ping]"
+        "1[ack 0 +24375, stream 11 0 c, stream 3 0 a, stream 7 0 b]; 1[ack 0 +24375, ping]"
     );
     let stats = raw.connection().stats();
     assert_eq!((stats.packets_lost, stats.packets_retransmitted), (0, 4));
@@ -362,7 +366,7 @@ fn what_is_acknowledged_before_the_probe_is_sent_is_left_out() {
     raw.send("ack");
     assert_eq!(
         raw.outline(),
-        "1[handshake_done, new_token, new_connection_id]; 1[ping]"
+        "1[ack, handshake_done, new_token, new_connection_id]; 1[ack, ping]"
     );
 }
 
@@ -487,7 +491,7 @@ fn window_and_pace() {
     raw.wait();
     let last = packets.last().unwrap().at;
     assert_eq!(raw.now - last, Duration::from_micros(67_500));
-    assert_eq!(raw.frames(), "stream 3 0 *1223, stream 3 1223 *1221");
+    assert_eq!(raw.frames(), "stream 3 0 *1217, stream 3 1217 *1215");
 }
 
 #[test]

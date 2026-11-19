@@ -355,8 +355,23 @@ fn a_server_goes_away_after_the_last_response() {
     raw.connection().finish(StreamId(4));
     assert_eq!(raw.frames(), "fin 4 0 #01030000d9");
     raw.send("ack");
-    assert_eq!(raw.frames(), "close 0x0");
+    assert_eq!(raw.frames(), "application_close 0x100");
     assert_eq!(raw.events(), "4 closed, closed: Local");
+}
+
+#[test]
+fn a_server_that_goes_away_rejects_requests_that_it_has_not_seen() {
+    let mut raw = Raw::http3(Client).connected_with("");
+    raw.write_http3(0, &format!("headers {GET}"), false);
+    raw.write_http3(4, "#01", false);
+    raw.write_http3(8, "#01", false);
+    raw.send("reset_stream 8 0x10c 1");
+    raw.forget();
+    raw.connection().go_away();
+    assert_eq!(raw.events(), "4 reset 0x10b, 4 closed");
+    let frames = "reset_stream 4 0x10b 0, stop_sending 4 0x10b, ";
+    assert!(raw.frames().starts_with(frames));
+    assert_eq!(raw.read_decoder(), "cancel 8, cancel 4");
 }
 
 #[test]
@@ -382,7 +397,7 @@ fn nothing_goes_away_without_http3_or_after_the_end() {
     let now = raw.now;
     raw.connection().close(now);
     raw.connection().go_away();
-    assert_eq!(raw.frames(), "close 0x0");
+    assert_eq!(raw.frames(), "application_close 0x100");
 
     let mut raw = Raw::http3(Client).exchange();
     raw.peer.polls = false;

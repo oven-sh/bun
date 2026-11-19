@@ -59,10 +59,11 @@ impl RangeSet {
         if first == after {
             return self.0.insert(first, new);
         }
-        let end = (self.0.drain(first + 1..after).next_back()).map_or(new.end, |last| last.end);
-        if let Some(range) = self.0.get_mut(first) {
-            *range = range.start.min(new.start)..range.end.max(new.end).max(end);
-        }
+        let start = self.0.get(first).map_or(new.start, |it| it.start);
+        let end = self.0.get(after - 1).map_or(new.end, |it| it.end);
+        self.0.drain(first + 1..after);
+        let merged = start.min(new.start)..end.max(new.end);
+        crate::with(self.0.get_mut(first), |it| *it = merged);
     }
 
     pub(crate) fn remove(&mut self, gone: Range<u64>) {

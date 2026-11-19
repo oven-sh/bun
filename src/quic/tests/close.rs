@@ -172,7 +172,7 @@ fn error_delivers_the_events_so_far() {
 
 #[test]
 fn first_reason_counts() {
-    let steps: [(Step, Step, &str, &str); 10] = [
+    let steps: [(Step, Step, &str, &str); 8] = [
         (
             |it| it.abort(Transport, 1, &[]),
             |it| it.abort(Application, 2, &[]),
@@ -208,18 +208,6 @@ fn first_reason_counts() {
             |it| it.send("close 2 0 -"),
             "",
             "closed by close 0x2 -",
-        ),
-        (
-            |it| it.send("stream 0 0 a, close 2 0 -"),
-            |it| it.abort(Transport, 1, &[]),
-            "",
-            "0 opened, 0 data a, 0 closed, closed by close 0x2 -",
-        ),
-        (
-            |it| it.send("stream 0 0 a, close 2 0 -"),
-            |it| it.connection().abort_silently(),
-            "",
-            "0 opened, 0 data a, 0 closed, closed by close 0x2 -",
         ),
         (
             |it| it.send("new_connection_id 1 1 raw-id-1 sixteen-bytes-xy, close 2 0 -"),
@@ -294,7 +282,7 @@ fn graceful_close_waits_for_congestion_control() {
     raw.advance(100);
     assert_eq!(
         raw.outline(),
-        "1[reset_stream, stop_sending]; 1[ping]; 1[close]"
+        "1[ack, reset_stream, stop_sending]; 1[ack, ping]; 1[close]"
     );
 }
 
@@ -330,7 +318,7 @@ fn server_closes_when_the_client_knows_that_it_goes_away() {
             raw.wait();
         }
         assert_eq!((raw.now - start).as_millis(), after);
-        assert_eq!(raw.close, Some((Transport, 0)));
+        assert_eq!(raw.close, Some((Application, 0x100)));
     }
 }
 
@@ -543,5 +531,52 @@ fn what_is_known_in_each_phase() {
         assert!(connection.is_ready() && connection.tls().is_none());
         assert_eq!(connection.peer_parameters().unwrap().initial_max_data, 77);
         assert!(*connection.addresses() == addresses && !connection.is_closing());
+    }
+}
+
+#[test]
+fn error_for_the_end_of_a_graceful_close() {
+    let mut raw = Raw::client().connected();
+    raw.request_packets("a");
+    raw.connection().finish(StreamId(3));
+    raw.connection().set_close_error(Transport, 1, b"a");
+    raw.close_gracefully();
+    raw.connection().set_close_error(Application, 2, b"b");
+    raw.forget();
+    raw.waits = false;
+    raw.send("ack");
+    raw.abort(Transport, 3, b"c");
+    raw.connection().set_close_error(Transport, 4, b"d");
+    assert_eq!(raw.frames(), "close 0x3");
+
+    let steps: [Step; 2] = [Raw::close_gracefully, |it| it.connection().go_away()];
+    for close in steps {
+        let mut raw = Raw::client().config(http3).connected_with("");
+        raw.connection().set_close_error(Application, 2, b"b");
+        close(&mut raw);
+        raw.process();
+        raw.send("ack");
+        assert_eq!(
+            (raw.close, &raw.reason[..]),
+            (Some((Application, 2)), &b"b"[..])
+        );
+    }
+}
+
+#[test]
+fn abort_after_the_close_of_the_peer_delivers_nothing_but_the_end() {
+    let aborts: [Step; 2] = [
+        |it| it.abort(Transport, 1, &[]),
+        |it| it.connection().abort_silently(),
+    ];
+    for abort in aborts {
+        let mut raw = Raw::client().connected();
+        raw.send("stream 0 0 a");
+        raw.forget();
+        raw.waits = false;
+        raw.send("stream 0 1 b, reset_stream 4 1 0, close 2 0 -");
+        abort(&mut raw);
+        assert_eq!(raw.events(), "0 closed, closed by close 0x2 -");
+        assert_eq!(raw.packets(), "");
     }
 }

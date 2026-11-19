@@ -25,7 +25,7 @@ pub(crate) enum Validation {
 
 pub(crate) struct Tokens {
     crypto: &'static dyn Crypto,
-    key: Box<dyn PacketKey>,
+    key: Option<Box<dyn PacketKey>>,
     /// A key is good for 2^32 random nonces.
     issued: u32,
     reset_secret: [u8; 32],
@@ -60,15 +60,11 @@ impl Scope<'_> {
     }
 }
 
-fn new_key(crypto: &dyn Crypto) -> Box<dyn PacketKey> {
-    crypto.packet_key(Cipher::Aes128GcmSha256, &crypto.random::<16>())
-}
-
 impl Tokens {
     pub(crate) fn new(crypto: &'static dyn Crypto) -> Self {
         Self {
             crypto,
-            key: new_key(crypto),
+            key: None,
             issued: 0,
             reset_secret: crypto.random(),
         }
@@ -89,14 +85,15 @@ impl Tokens {
     }
 
     fn seal(&mut self, kind: u8, now: Instant, scope: &Scope, id: &[u8]) -> Vec<u8> {
+        self.key.take_if(|_| self.issued == 0);
         self.issued = self.issued.wrapping_add(1);
-        if self.issued == 0 {
-            self.key = new_key(self.crypto);
-        }
+        let key = self.key.get_or_insert_with(|| {
+            (self.crypto).packet_key(Cipher::Aes128GcmSha256, &self.crypto.random::<16>())
+        });
         let nonce: [u8; NONCE_LEN] = self.crypto.random();
         let (ip, port) = scope.address(kind);
         let mut secret = [&now.as_micros().to_be_bytes()[..], &ip, &port, id].concat();
-        let tag = (self.key).seal(&nonce, &scope.associated_data(kind), &mut secret);
+        let tag = key.seal(&nonce, &scope.associated_data(kind), &mut secret);
         [&[kind][..], &nonce, &tag, &secret].concat()
     }
 
@@ -109,19 +106,18 @@ impl Tokens {
         let mut buffer = [0; 8 + 16 + 2 + ConnectionId::MAX_LEN];
         let secret = buffer.get_mut(..token.len())?;
         secret.copy_from_slice(token);
-        if !(self.key).open(&nonce, &scope.associated_data(kind), secret, &tag) {
+        if !(self.key.as_ref()?).open(&nonce, &scope.associated_data(kind), secret, &tag) {
             return None;
         }
         let mut secret = &*secret;
         let age = now - Instant::from_micros(u64::from_be_bytes(secret.array()?));
         let is_owner = (secret.array()?, secret.array()?) == scope.address(kind);
-        Some(match kind {
+        match kind {
             RETRY if is_owner && age <= RETRY_LIFETIME => {
-                Validation::Retry(ConnectionId::new(secret)?)
+                ConnectionId::new(secret).map(Validation::Retry)
             }
-            RETRY => Validation::InvalidRetry,
-            _ if is_owner && age <= NEW_TOKEN_LIFETIME => Validation::NewToken,
-            _ => Validation::Unknown,
-        })
+            RETRY => Some(Validation::InvalidRetry),
+            _ => (is_owner && age <= NEW_TOKEN_LIFETIME).then_some(Validation::NewToken),
+        }
     }
 }

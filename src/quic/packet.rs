@@ -30,9 +30,10 @@ pub(crate) struct Invariants<'a> {
 impl<'a> Invariants<'a> {
     pub(crate) fn read(mut input: &'a [u8]) -> Option<Self> {
         let id = |input: &mut &'a [u8]| input.u8().and_then(|len| input.bytes(len.into()));
+        let [first, version @ ..] = input.array::<5>()?;
         Some(Self {
-            first: input.u8()?,
-            version: u32::from_be_bytes(input.array()?),
+            first,
+            version: u32::from_be_bytes(version),
             destination: id(&mut input)?,
             source: id(&mut input)?,
             rest: input,
@@ -89,16 +90,12 @@ impl<'a> LongHeader<'a> {
         let mut rest = invariants.rest;
         let token = match kind {
             LongKind::Initial => rest.prefixed_bytes()?,
-            LongKind::Retry => rest.split_off(..rest.len().checked_sub(TAG_LEN)?)?,
+            LongKind::Retry => rest.split_last_chunk::<TAG_LEN>()?.0,
             LongKind::EarlyData | LongKind::Handshake => &[],
         };
-        let protected = match kind {
-            LongKind::Retry => rest,
-            _ => rest.prefixed_bytes()?,
-        };
-        let len = match kind {
-            LongKind::Retry => datagram.len(),
-            _ => datagram.len() - rest.len(),
+        let (protected_len, len) = match kind {
+            LongKind::Retry => (TAG_LEN, datagram.len()),
+            _ => (rest.prefixed_bytes()?.len(), datagram.len() - rest.len()),
         };
         Some(Self {
             version,
@@ -106,7 +103,7 @@ impl<'a> LongHeader<'a> {
             destination: ConnectionId::new(invariants.destination)?,
             source: ConnectionId::new(invariants.source)?,
             token,
-            number_offset: len - protected.len(),
+            number_offset: len - protected_len,
             len,
         })
     }
@@ -138,17 +135,16 @@ impl<'a> Sealed<'a> {
         key: &dyn HeaderKey,
         expected: u64,
     ) -> Option<Self> {
-        let [first_mask, mask @ ..] = key.mask(sample(packet, number_offset)?);
-        let first = packet.first_mut()?;
+        let (first, bytes, sample) = protected_parts(packet, number_offset)?;
+        let [first_mask, mask @ ..] = key.mask(sample);
         *first ^= first_mask & protected_bits(*first);
         let first = *first;
         let len = usize::from(first & 3) + 1;
         let unused_bits = 8 * (MAX_NUMBER_LEN - len);
-        let bytes = packet.get_mut(number_offset..)?.first_chunk_mut()?;
         let mask = u32::from_be_bytes(mask) >> unused_bits << unused_bits;
         let word = u32::from_be_bytes(*bytes) ^ mask;
         *bytes = word.to_be_bytes();
-        let (header, payload) = packet.split_at_mut_checked(number_offset + len)?;
+        let (header, payload) = packet.split_at_mut((number_offset + len).min(packet.len()));
         Some(Self {
             first,
             number: Some(expand_number(word >> unused_bits, len, expected))
@@ -174,9 +170,15 @@ fn protected_bits(first: u8) -> u8 {
     if first & LONG_HEADER != 0 { 0x0f } else { 0x1f }
 }
 
+/// The first byte, the room for the longest packet number, and the sample (RFC 9001 §5.4.2).
 #[inline]
-fn sample(packet: &[u8], number_offset: usize) -> Option<&[u8; SAMPLE_LEN]> {
-    packet.get(number_offset + MAX_NUMBER_LEN..)?.first_chunk()
+fn protected_parts(
+    packet: &mut [u8],
+    number_offset: usize,
+) -> Option<(&mut u8, &mut [u8; MAX_NUMBER_LEN], &[u8; SAMPLE_LEN])> {
+    let (before, rest) = packet.split_at_mut(number_offset.min(packet.len()));
+    let (number, rest) = rest.split_first_chunk_mut()?;
+    (before.first_mut().zip(rest.first_chunk())).map(|(first, sample)| (first, number, sample))
 }
 
 /// RFC 9000 §A.3.
@@ -280,27 +282,88 @@ impl Unsealed {
     /// `out` ends where [`Self::end`] left it. Nothing is left of the packet if there are no keys.
     #[inline]
     pub(crate) fn seal(&self, out: &mut [u8], keys: Option<&Keys>) {
-        if keys.and_then(|keys| self.try_seal(out, keys)).is_none() {
-            out.get_mut(self.start..).unwrap_or_default().fill(0);
+        let packet = out.get_mut(self.start..).unwrap_or_default();
+        if keys.and_then(|keys| self.try_seal(packet, keys)).is_none() {
+            packet.fill(0);
         }
     }
 
     #[inline]
-    fn try_seal(&self, out: &mut [u8], keys: &Keys) -> Option<()> {
-        if out.get(self.start)? & LONG_HEADER != 0 {
-            let length = two_byte_varint(out.len() - self.number_offset);
-            *out.get_mut(..self.number_offset)?.last_chunk_mut()? = length;
+    fn try_seal(&self, packet: &mut [u8], keys: &Keys) -> Option<()> {
+        let number_offset = self.number_offset - self.start;
+        if packet.first() >= Some(&LONG_HEADER) {
+            let length = two_byte_varint(packet.len() - number_offset);
+            let before = packet.get_mut(..number_offset);
+            crate::with(before.and_then(|it| it.last_chunk_mut()), |it| *it = length);
         }
-        let (before, rest) = out.split_at_mut_checked(self.payload_start)?;
-        let (payload, tag) = rest.split_last_chunk_mut()?;
-        *tag = (keys.payload).seal(self.number, before.get(self.start..)?, payload);
-        let [first_mask, mask @ ..] = keys.header.mask(sample(out, self.number_offset)?);
-        let first = out.get_mut(self.start)?;
-        *first ^= first_mask & protected_bits(*first);
-        let unused_bits = 8 * (self.number_offset + MAX_NUMBER_LEN - self.payload_start);
-        let bytes = out.get_mut(self.number_offset..)?.first_chunk_mut()?;
-        let mask = u32::from_be_bytes(mask) >> unused_bits << unused_bits;
-        *bytes = (u32::from_be_bytes(*bytes) ^ mask).to_be_bytes();
-        Some(())
+        let header_len = (self.payload_start - self.start).min(packet.len());
+        let (header, rest) = packet.split_at_mut(header_len);
+        let sealed = (rest.split_last_chunk_mut())
+            .map(|(payload, tag)| *tag = keys.payload.seal(self.number, header, payload));
+        let parts = protected_parts(packet, number_offset);
+        sealed.and(parts).map(|(first, bytes, sample)| {
+            let [first_mask, mask @ ..] = keys.header.mask(sample);
+            *first ^= first_mask & protected_bits(*first);
+            let unused_bits = 8 * (self.number_offset + MAX_NUMBER_LEN - self.payload_start);
+            let mask = u32::from_be_bytes(mask) >> unused_bits << unused_bits;
+            *bytes = (u32::from_be_bytes(*bytes) ^ mask).to_be_bytes();
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Unprotected;
+
+    impl HeaderKey for Unprotected {
+        fn mask(&self, _: &[u8; SAMPLE_LEN]) -> [u8; 5] {
+            [0; 5]
+        }
+    }
+
+    #[test]
+    fn numbers_are_as_long_as_it_takes() {
+        for (number, largest_acked, len) in [
+            (0x7ffe, None, 2),
+            (0x7fff, None, 3),
+            (0xac_5c02, Some(0xab_e8b3), 2),
+            (0xac_e8fe, Some(0xab_e8b3), 3),
+            (0x80_0000, Some(1), 3),
+            (0x80_0001, Some(1), 4),
+        ] {
+            assert_eq!(number_len(number, largest_acked), len);
+        }
+    }
+
+    #[test]
+    fn numbers_are_expanded_within_their_range() {
+        for (truncated, len, expected, number) in [
+            (0x9b32, 2, 0xa82f_30eb, Some(0xa82f_9b32)),
+            (0xff, 1, 0, Some(0xff)),
+            (0x00, 1, 0x17f, Some(0x100)),
+            (0x00, 1, 0x180, Some(0x200)),
+            (0xff, 1, 0x17f, Some(0x1ff)),
+            (0xff, 1, 0x17e, Some(0xff)),
+            (0x00, 1, MAX_VARINT, Some(MAX_VARINT - 0xff)),
+            (0xff, 1, MAX_VARINT + 1, Some(MAX_VARINT)),
+            (0x00, 1, MAX_VARINT + 1, None),
+        ] {
+            let mut packet = Vec::new();
+            Unsealed::short(&mut packet, 0, &ConnectionId::default(), truncated, len)
+                .end(&mut packet);
+            let sealed = Sealed::new(&mut packet, 1, &Unprotected, expected);
+            assert_eq!(sealed.map(|it| it.number), number);
+        }
+    }
+
+    #[test]
+    fn nothing_is_left_of_a_packet_without_keys() {
+        let mut out = vec![1];
+        let packet = Unsealed::short(&mut out, FIXED_BIT, &ConnectionId::default(), 1, 1);
+        packet.end(&mut out);
+        packet.seal(&mut out, None);
+        assert_eq!(out, [&[1][..], &[0; MIN_SENT_LEN]].concat());
     }
 }

@@ -229,7 +229,10 @@ impl TransportParameters {
                 self.version_information = Some(VersionInformation::read(value)?);
             }
             id::MIN_ACK_DELAY => self.min_ack_delay_micros = Some(value.varint()?),
-            _ => *self.integers().into_iter().find(|it| it.0 == id)?.1 = value.varint()?,
+            _ => {
+                let integer = self.integers().into_iter().find(|it| it.0 == id);
+                (integer.zip(value.varint())).map(|(it, value)| *it.1 = value)?;
+            }
         }
         Some(())
     }

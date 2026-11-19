@@ -50,3 +50,9 @@ pub use time::{Duration, Instant};
 pub use token_bucket::TokenBucket;
 pub use transport_parameters::{PreferredAddress, TransportParameters};
 pub use version::Version;
+
+/// For what is known to be there.
+#[inline]
+fn with<T>(it: Option<T>, then: impl FnOnce(T)) {
+    it.map(then).unwrap_or_default()
+}

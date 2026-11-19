@@ -27,17 +27,20 @@ impl Connection {
         (self.streams.get_mut(id)).filter(|it| is_open && !it.0.flags.contains(Flags::RELEASED))
     }
 
+    fn may_open(&self, direction: Direction) -> bool {
+        let is_refused = direction == Direction::Bidirectional && self.peer_go_away().is_some();
+        self.can_open_streams && self.ending == Ending::No && !is_refused
+    }
+
     pub fn available_streams(&self, direction: Direction) -> u64 {
-        let is_refused = direction == Direction::Bidirectional
-            && (self.http3.as_ref()).is_some_and(|it| it.peer_go_away.is_some());
-        match self.can_open_streams && self.ending == Ending::No && !is_refused {
+        match self.may_open(direction) {
             true => self.streams.table.available(direction),
             false => 0,
         }
     }
 
     pub fn open(&mut self, direction: Direction, context: Context) -> Option<StreamId> {
-        if self.available_streams(direction) == 0 {
+        if !self.may_open(direction) {
             return None;
         }
         let (id, stream) = self.streams.table.open(direction, None)?;
@@ -113,10 +116,10 @@ impl Connection {
 
     /// Gives up on reading.
     pub fn stop(&mut self, id: StreamId, code: u64) {
-        self.abandon_message(id);
         if let Some((stream, state)) = self.streams.get_mut(id)
             && !stream.flags.contains(Flags::RELEASED)
         {
+            stream.abandon_message(id, self.http3.as_deref_mut());
             state.stop(id, stream, code);
         }
     }
@@ -149,16 +152,6 @@ impl Connection {
         if let Some((stream, state)) = self.stream(id) {
             stream.flags.set(Flags::PAUSED, is_paused);
             state.mark_readable(id, stream);
-        }
-    }
-
-    pub(super) fn abandon_message(&mut self, id: StreamId) {
-        if let (Some(stream), Some(http3)) = (self.streams.table.get_mut(id), &mut self.http3)
-            && !stream.flags.contains(Flags::READ_DONE)
-            && let is_read_to_end = stream.is_read_to_end()
-            && let Role::Message(message) = &mut stream.role
-        {
-            message.abandon(id, is_read_to_end, http3);
         }
     }
 
@@ -228,14 +221,11 @@ impl Connection {
         if self.side.is_server() && is_unanswered(stream) {
             state.add_load(Load::Heavy);
         }
-        match (&mut stream.role, &mut self.http3) {
-            (Role::Message(_), _) if is_complete && self.side.is_client() => return Ok(()),
-            (Role::Typed(StreamType::Unknown(_) | StreamType::Ignored), _) => {}
-            (Role::Typed(_), _) => return Err(CRITICAL_STREAM_CLOSED),
-            (Role::Message(message), Some(http3)) if !stream.flags.contains(Flags::READ_DONE) => {
-                message.abandon(id, is_complete, http3);
-            }
-            _ => {}
+        match &stream.role {
+            Role::Message(_) if is_complete && self.side.is_client() => return Ok(()),
+            Role::Typed(StreamType::Unknown(_) | StreamType::Ignored) => {}
+            Role::Typed(_) => return Err(CRITICAL_STREAM_CLOSED),
+            _ => stream.abandon_message(id, self.http3.as_deref_mut()),
         }
         state.on_reset_stream(id, stream, code, final_size)?;
         self.streams.remove_if_finished(id);
@@ -380,16 +370,19 @@ fn read(
     mut reader: Option<Reader>,
     is_unblocked: bool,
 ) -> Result {
-    match try_read(stream, data, &mut reader, is_unblocked) {
+    let result = try_read(stream, data, &mut reader, is_unblocked);
+    if let (Err(Fault::Stream(_)), Role::Message(message), Some(reader)) =
+        (&result, &mut stream.role, reader)
+    {
+        message.abandon(id, false, reader.http3);
+    }
+    match result {
         Ok(()) => {
             state.credit(id, stream);
             state.mark_readable(id, stream);
         }
         Err(Fault::Connection(error)) => return Err(error),
         Err(Fault::Stream(code)) => {
-            if let (Role::Message(message), Some(reader)) = (&mut stream.role, reader) {
-                message.abandon(id, false, reader.http3);
-            }
             state.add_load(Load::Heavy);
             state.abort(id, stream, code);
         }

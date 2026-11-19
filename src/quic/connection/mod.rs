@@ -175,6 +175,7 @@ pub(crate) struct Remains {
     pub(crate) addresses: Addresses,
     pub(crate) farewell: Vec<u8>,
     pub(crate) lingers_for: Duration,
+    pub(crate) datagrams_received: u32,
 }
 
 impl Connection {
@@ -349,6 +350,7 @@ impl Connection {
                 true => self.settling_period(),
                 false => Duration::ZERO,
             },
+            datagrams_received: 0,
         }
     }
 

@@ -349,8 +349,11 @@ fn closing_cancels_what_is_unfinished() {
     raw.connection().close(now);
     let len = raw.streams[&4].len();
     let reset = format!("reset_stream 4 0x10c {len}");
-    let frames = format!("stop_sending 0 0x100, {reset}, stop_sending 4 0x100, close 0x0");
+    let frames = format!("stop_sending 0 0x100, {reset}, stop_sending 4 0x100, stream 6 1 @D");
     assert_eq!(raw.frames(), frames);
+    assert_eq!(raw.read_decoder(), "cancel 0, cancel 4");
+    raw.send("ack");
+    assert_eq!(raw.frames(), "application_close 0x100");
     assert_eq!(raw.events(), "0 closed, 4 closed, closed: Local");
 
     let mut raw = Raw::http3(Client).connected_with("");

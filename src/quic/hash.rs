@@ -34,3 +34,12 @@ impl Hasher for Seeded {
         self.0
     }
 }
+
+#[test]
+fn bytes_count_as_integers() {
+    let (mut bytes, mut integers) = (Seeded(1), Seeded(1));
+    bytes.write(&[2, 3]);
+    integers.write_u64(2);
+    integers.write_u64(3);
+    assert_eq!(bytes.finish(), integers.finish());
+}

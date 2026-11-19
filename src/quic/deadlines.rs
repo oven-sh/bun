@@ -1,4 +1,5 @@
 use crate::time::Instant;
+use crate::with;
 
 const ABSENT: u32 = u32::MAX;
 
@@ -62,15 +63,11 @@ impl Deadlines {
     }
 
     fn put(&mut self, at: usize, entry: (Instant, u32)) {
-        if let Some(it) = self.heap.get_mut(at) {
-            *it = entry;
-        }
+        with(self.heap.get_mut(at), |it| *it = entry);
         self.set_position(entry.1, at as u32);
     }
 
     fn set_position(&mut self, key: u32, at: u32) {
-        if let Some(it) = self.positions.get_mut(key as usize) {
-            *it = at;
-        }
+        with(self.positions.get_mut(key as usize), |it| *it = at);
     }
 }

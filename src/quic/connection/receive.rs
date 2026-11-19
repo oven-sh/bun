@@ -203,9 +203,7 @@ impl Connection {
             }
             let has_token = !header.token.is_empty();
             let header = header.without_token();
-            let Some(packet) = rest.split_off_mut(..header.len) else {
-                break;
-            };
+            let packet = rest.split_off_mut(..header.len).unwrap_or_default();
             let is_acceptable = match (header.kind, self.side.is_server()) {
                 (LongKind::Initial, true) => datagram_len >= MIN_DATAGRAM_LEN,
                 (LongKind::Initial, false) => !has_token,
@@ -303,7 +301,7 @@ impl Connection {
                     let timeout = self.config.handshake_timeout.max(self.idle_timeout);
                     (self.timers).set(Timer::Handshake, setup.started_at + timeout);
                 }
-                self.discard_space(now, SpaceId::Initial);
+                self.discard_space(now, |it| it.initial.take());
             }
         }
         let origin = Origin {
@@ -369,10 +367,10 @@ impl Connection {
                 let (first, number) = (it.first, it.number);
                 let generation = self.key_update.generation(first & KEY_PHASE != 0, number);
                 let key = match generation {
-                    Generation::Current => &keys.payload,
-                    _ => self.key_update.other_key(generation)?,
+                    Generation::Current => Some(&keys.payload),
+                    _ => self.key_update.other_key(generation),
                 };
-                let payload = it.open(key)?;
+                let payload = key.and_then(|key| it.open(key))?;
                 let packet = Opened {
                     first,
                     number,
@@ -467,18 +465,15 @@ impl Connection {
         }
         if self.is_confirmed() {
             self.setup = None;
-        } else if let Some(setup) = &mut self.setup {
-            setup.is_catching_up = false;
         }
+        crate::with(self.setup.as_mut(), |it| it.is_catching_up = false);
         Ok(())
     }
 
     /// Returns false for a duplicate.
     #[inline]
     fn process(&mut self, origin: &Origin, packet: &Opened, shared: &mut Shared) -> Result<bool> {
-        let Some(space) = self.spaces.get(origin.space) else {
-            return Ok(false);
-        };
+        let space = self.spaces.open(origin.space);
         if has_reserved_bits(packet.first) {
             return Err(Error::violation("reserved bits are set"));
         }
@@ -517,7 +512,7 @@ impl Connection {
         }
         if !(origin.is_current_path && self.candidates.is_empty()) && is_largest && !is_probing {
             if *origin.from != self.path.addresses && self.side.is_server() {
-                self.candidate(origin.now, origin.from, origin.destination, shared)?;
+                self.candidate(origin.now, origin.from, origin.destination, true, shared)?;
             }
             self.on_peer_moved(origin.now, origin.from, shared)?;
         }
@@ -527,10 +522,7 @@ impl Connection {
     /// RFC 9000 §13.2.1.
     #[inline]
     fn plan_ack(&mut self, now: Instant, id: SpaceId, order: &Order) {
-        let policy = &self.ack_policy;
-        let Some(space) = self.spaces.get_mut(id) else {
-            return;
-        };
+        let (policy, space) = (&self.ack_policy, self.spaces.open(id));
         if id != SpaceId::Data
             || space.received.unacked_eliciting >= policy.packet_tolerance
             || *order == Order::AfterGap
@@ -606,7 +598,10 @@ impl Connection {
                 self.streams.state.add_load(Load::Light);
                 let path = match *origin.from == self.path.addresses {
                     true => Some(&mut self.path),
-                    false => self.candidate(now, origin.from, origin.destination, shared)?,
+                    false => {
+                        let is_server = self.side.is_server();
+                        self.candidate(now, origin.from, origin.destination, is_server, shared)?
+                    }
                 };
                 if let Some(path) = path {
                     path.owed_response = Some(data);

@@ -1,6 +1,7 @@
 //! The integers and byte strings that packets and frames are made of (RFC 9000 §16).
 
 pub const MAX_VARINT: u64 = (1 << 62) - 1;
+const _: () = assert!(MAX_VARINT as usize as u64 == MAX_VARINT);
 
 /// Takes values off the front of a slice. `None` means that the slice is too short.
 pub(crate) trait Read<'a> {
@@ -37,7 +38,7 @@ impl<'a> Read<'a> for &'a [u8] {
 
     #[inline]
     fn bytes(&mut self, len: u64) -> Option<&'a [u8]> {
-        self.split_off(..usize::try_from(len).ok()?)
+        self.split_off(..len as usize)
     }
 
     #[inline]

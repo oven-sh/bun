@@ -198,10 +198,10 @@ impl Streams {
         if limit > state.send_limit {
             state.send_limit = limit;
             for id in core::mem::take(&mut state.stalled) {
-                if let Some(stream) = table.get_mut(id) {
+                crate::with(table.get_mut(id), |stream| {
                     stream.flags.remove(Flags::IN_STALLED);
                     state.mark_sendable(id, stream);
-                }
+                });
             }
         }
     }
@@ -223,23 +223,17 @@ impl Streams {
     pub(crate) fn poll_writable(&mut self) -> Option<Event> {
         let Self { table, state, .. } = self;
         while state.awaits_writes() {
-            let streams = state.writable.iter().map(|&id| (id, table.get(id)));
-            let mut waiting = (streams.enumerate())
-                .filter(|(_, it)| it.1.is_none_or(|it| it.write_round != state.write_round));
+            let ids = state.writable.iter().enumerate();
+            let mut waiting = (ids.filter_map(|(at, &id)| table.get(id).map(|it| (at, id, it))))
+                .filter(|(.., stream)| stream.write_round != state.write_round);
             let next = match state.has_priorities {
                 false => waiting.next(),
-                true => waiting.min_by_key(|&(at, (id, stream))| {
-                    stream.map(|stream| state.rank(id, stream, at as u64))
-                }),
+                true => waiting.min_by_key(|&(at, id, stream)| state.rank(id, stream, at as u64)),
             };
-            let Some((at, (id, _))) = next else {
+            let id = next.map(|it| it.0).and_then(|at| state.writable.remove(at));
+            let Some((id, stream)) = id.and_then(|id| table.get_mut(id).map(|it| (id, it))) else {
                 state.is_write_round_over = true;
                 return None;
-            };
-            state.writable.remove(at);
-            let stream = table.get_mut(id);
-            let Some(stream) = stream else {
-                continue;
             };
             stream.flags.remove(Flags::IN_WRITABLE);
             if stream.flags & (Flags::WANTS_WRITE | Flags::WRITE_DONE) != Flags::WANTS_WRITE {

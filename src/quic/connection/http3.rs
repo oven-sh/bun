@@ -19,13 +19,15 @@ const MAX_EARLY_PRIORITIES: usize = 128;
 
 impl Streams {
     pub(super) fn start_http3(&mut self, config: &Http3Config, side: Side) -> Option<Box<Http3>> {
-        let [control, decoder, encoder] = preambles(config, side).map(|(kind, preamble)| {
+        let ids = preambles(config, side).map(|(kind, preamble)| {
             let (id, stream) = self.table.open(Direction::Unidirectional, Some(kind))?;
             self.state.write(id, stream, &[&preamble]);
             Some(id)
         });
-        let ids = [control?, decoder?, encoder?];
-        Some(Box::new(Http3::new(config, ids)))
+        match ids {
+            [Some(a), Some(b), Some(c)] => Some(Box::new(Http3::new(config, [a, b, c]))),
+            _ => None,
+        }
     }
 
     /// Returns how much of the stream is waiting to be acknowledged.
@@ -123,17 +125,15 @@ impl Connection {
             Side::Client => http3_code::REQUEST_CANCELLED,
             Side::Server => http3_code::REQUEST_REJECTED,
         };
-        let streams = self.streams.table.iter_mut();
-        let mut ids: Vec<_> =
-            (streams.filter(|it| is_rejected(it.0, it.1)).map(|it| it.0)).collect();
-        ids.sort_unstable();
-        for id in ids {
-            self.abandon_message(id);
-            if let Some((stream, state)) = self.streams.get_mut(id) {
-                state.notify(id, stream, StreamEvent::Reset(http3_code::REQUEST_REJECTED));
-                state.reset(id, stream, code);
-                state.stop(id, stream, code);
-            }
+        let Streams { table, state, .. } = &mut self.streams;
+        let streams = table.iter_mut().filter(|it| is_rejected(it.0, it.1));
+        let mut streams: Vec<_> = streams.collect();
+        streams.sort_unstable_by_key(|it| it.0);
+        for (id, stream) in streams {
+            stream.abandon_message(id, self.http3.as_deref_mut());
+            state.notify(id, stream, StreamEvent::Reset(http3_code::REQUEST_REJECTED));
+            state.reset(id, stream, code);
+            state.stop(id, stream, code);
         }
     }
 
@@ -231,18 +231,21 @@ impl Connection {
         Ok(())
     }
 
-    fn on_control_frame(&mut self, frame: ControlFrame) -> Result {
-        match frame {
-            ControlFrame::GoAway(id) => return self.on_go_away(id),
-            ControlFrame::PriorityUpdate(id, it) => return self.on_priority_update(id, it),
-            ControlFrame::Origin(payload) => {
-                self.origins = self.origins.saturating_add(1);
-                if self.origins <= MAX_ORIGIN_FRAMES {
-                    self.emit(Event::Origin(payload));
+    fn read_control_stream(&mut self, mut data: &[u8]) -> Result {
+        let (side, has_priorities) = (self.side, self.config.has_priorities);
+        while let (Some(http3), Some(config)) = (&mut self.http3, &self.config.http3)
+            && let Some(frame) = (http3.control_reader).read(&mut data, side, has_priorities)?
+        {
+            match frame {
+                ControlFrame::GoAway(id) => self.on_go_away(id)?,
+                ControlFrame::PriorityUpdate(id, it) => self.on_priority_update(id, it)?,
+                ControlFrame::Origin(payload) => {
+                    self.origins = self.origins.saturating_add(1);
+                    if self.origins <= MAX_ORIGIN_FRAMES {
+                        self.emit(Event::Origin(payload));
+                    }
                 }
-            }
-            ControlFrame::Settings(settings) => {
-                if let (Some(http3), Some(config)) = (&mut self.http3, &self.config.http3) {
+                ControlFrame::Settings(settings) => {
                     http3.peer_accepts_datagrams = Some(settings.datagrams);
                     if config.encodes_with_dynamic_table {
                         let capacity = settings.max_table_capacity;
@@ -263,24 +266,26 @@ impl Connection {
         data: &[u8],
         shared: &mut Shared,
     ) -> Result {
-        kind = self.feed_typed(id, kind, data, shared)?;
-        while let Some(stream) = self.streams.table.get_mut(id)
-            && let Some((known, chunk)) = stream.take_kept()
-        {
-            kind = self.feed_typed(id, kind, chunk.get(known..).unwrap_or_default(), shared)?;
-        }
-        let Some((stream, state)) = self.streams.get_mut(id) else {
-            return Ok(());
-        };
-        stream.role = Role::Typed(kind);
-        match kind {
-            StreamType::Ignored => {
-                state.add_load(Load::Heavy);
-                state.stop(id, stream, http3_code::STREAM_CREATION_ERROR);
+        let mut len = data.len();
+        kind = self.feed_typed(kind, data, shared)?;
+        while let Some((stream, state)) = self.streams.get_mut(id) {
+            stream.advance(len);
+            if let Some((known, chunk)) = stream.take_kept() {
+                let data = chunk.get(known..).unwrap_or_default();
+                (len, kind) = (data.len(), self.feed_typed(kind, data, shared)?);
+                continue;
             }
-            _ if !stream.is_read_to_end() => state.credit(id, stream),
-            StreamType::Unknown(_) => state.finish_reading(id, stream),
-            _ => return Err(CRITICAL_STREAM_CLOSED),
+            stream.role = Role::Typed(kind);
+            match kind {
+                StreamType::Ignored => {
+                    state.add_load(Load::Heavy);
+                    state.stop(id, stream, http3_code::STREAM_CREATION_ERROR);
+                }
+                _ if !stream.is_read_to_end() => state.credit(id, stream),
+                StreamType::Unknown(_) => state.finish_reading(id, stream),
+                _ => return Err(CRITICAL_STREAM_CLOSED),
+            }
+            break;
         }
         self.streams.remove_if_finished(id);
         Ok(())
@@ -288,24 +293,18 @@ impl Connection {
 
     fn feed_typed(
         &mut self,
-        id: StreamId,
         mut kind: StreamType,
         mut data: &[u8],
         shared: &mut Shared,
     ) -> Result<StreamType> {
-        let (Some(stream), Some(http3)) = (self.streams.table.get_mut(id), &mut self.http3) else {
-            return Ok(kind);
-        };
-        stream.advance(data.len());
-        if let StreamType::Unknown(partial) = &mut kind
+        if let (StreamType::Unknown(partial), Some(http3)) = (&mut kind, &mut self.http3)
             && let Some(number) = partial.read(&mut data)
         {
             kind = http3.classify(number, self.side)?;
         }
-        match kind {
-            StreamType::Unknown(_) | StreamType::Ignored => {}
-            StreamType::Decoder => http3.encoder.read_decoder_stream(data)?,
-            StreamType::Encoder => {
+        match (kind, &mut self.http3) {
+            (StreamType::Decoder, Some(http3)) => http3.encoder.read_decoder_stream(data)?,
+            (StreamType::Encoder, Some(http3)) => {
                 (http3.decoder).read_encoder_stream(data, &mut shared.scratch)?;
                 while let Some(id) =
                     (self.http3.as_mut()).and_then(|it| it.decoder.next_unblocked())
@@ -313,15 +312,8 @@ impl Connection {
                     self.resume_reading(StreamId(id), true, shared)?;
                 }
             }
-            StreamType::Control => {
-                let (side, has_priorities) = (self.side, self.config.has_priorities);
-                while let Some(http3) = &mut self.http3
-                    && let Some(frame) =
-                        (http3.control_reader).read(&mut data, side, has_priorities)?
-                {
-                    self.on_control_frame(frame)?;
-                }
-            }
+            (StreamType::Control, _) => self.read_control_stream(data)?,
+            _ => {}
         }
         Ok(kind)
     }

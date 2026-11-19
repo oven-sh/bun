@@ -56,6 +56,16 @@ impl Spaces {
         }
     }
 
+    /// For one that has not been discarded. It is new if there was none.
+    #[inline]
+    pub(super) fn open(&mut self, id: SpaceId) -> &mut Space {
+        match id {
+            SpaceId::Initial => open(&mut self.initial),
+            SpaceId::Handshake => open(&mut self.handshake),
+            SpaceId::Data => &mut self.data,
+        }
+    }
+
     #[inline]
     pub(super) fn get_mut(&mut self, id: SpaceId) -> Option<&mut Space> {
         match id {
@@ -64,4 +74,9 @@ impl Spaces {
             SpaceId::Data => Some(&mut self.data),
         }
     }
+}
+
+#[cold]
+fn open(space: &mut Option<Box<Space>>) -> &mut Space {
+    space.get_or_insert_default()
 }

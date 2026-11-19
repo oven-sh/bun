@@ -114,7 +114,7 @@ fn what_is_lost_is_sent_again_with_the_new_keys() {
     raw.wait();
     let packet = raw.take().remove(0);
     assert_eq!(packet.first & 4, 4);
-    assert_eq!(packet.frames, ["stream 3 0 a"]);
+    assert_eq!(packet.frames, ["ack 0-3 +8437", "stream 3 0 a"]);
 }
 
 fn limited(raw: Raw, confidentiality: u64, integrity: u64) -> Raw {

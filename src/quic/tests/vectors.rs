@@ -355,10 +355,11 @@ fn packet_protection() {
             format!("{first} {version:08x} 08{SERVER_ID} 00 15 00 06000100 {tag}"),
             format!("43 {SERVER_ID} 2700bff3 01 {tag}"),
             with_id(&[packet.protected_header, packet.skipped, packet.sample].concat()),
+            format!("47 {SERVER_ID} 2700bff5 01 {tag}"),
         ] {
             raw.peer.receive(later, &from, &mut hex(&datagram));
         }
-        assert_eq!(raw.connection().stats().pings_received, 2);
+        assert_eq!(raw.connection().stats().pings_received, 3);
         assert!(lookup.results.borrow().values().all(|it| it.1));
     }
 }

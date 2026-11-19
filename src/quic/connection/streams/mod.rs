@@ -9,6 +9,8 @@ mod stream;
 use core::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
 
+use hashbrown::hash_map::Entry;
+
 pub(crate) use receive::Ready;
 pub(super) use send::WRITE_CHUNK;
 pub(crate) use stream::{Flags, Role, Stream};
@@ -237,13 +239,10 @@ impl Streams {
     #[inline]
     pub(super) fn remove_if_finished(&mut self, id: StreamId) {
         let Self { table, state, .. } = self;
-        let hashbrown::hash_map::Entry::Occupied(entry) = table.map.entry(id) else {
-            return;
+        let flags = match table.map.entry(id) {
+            Entry::Occupied(entry) if entry.get().is_finished() => entry.remove().flags,
+            _ => return,
         };
-        if !entry.get().is_finished() {
-            return;
-        }
-        let flags = entry.remove().flags;
         if flags.intersects(Flags::IN_WRITABLE | Flags::IN_STALLED) {
             state.writable.retain(|&it| it != id);
             state.stalled.retain(|&it| it != id);
@@ -298,31 +297,32 @@ impl Streams {
         if matches!(event, StreamEvent::Closed) {
             return self.state.removed.pop_front().map(|it| it.1);
         }
-        let stream = self.table.get_mut(id)?;
-        stream.flags.insert(Flags::ANNOUNCED);
-        Some(stream.context)
+        self.table.get_mut(id).map(|stream| {
+            stream.flags.insert(Flags::ANNOUNCED);
+            stream.context
+        })
     }
 
     pub(super) fn poll_closed(&mut self) -> Option<Event> {
-        loop {
-            let id = self.state.closing.pop_front()?;
-            if let Some(stream) = self.table.get_mut(id) {
-                stream.flags.insert(Flags::RELEASED);
-                if core::mem::take(&mut stream.held) > 0 {
-                    self.state.credit(id, stream);
-                }
-                let (context, is_known) = (stream.context, stream.flags.contains(Flags::ANNOUNCED));
-                self.table.unreleased -= 1;
-                if id.initiator() != self.table.side {
-                    self.table.counts_mut(id.direction()).remote_released += 1;
-                    self.state.owed |= self.table.owed_max_streams(id.direction());
-                }
-                self.remove_if_finished(id);
-                if is_known {
-                    return Some(Event::Stream(id, context, StreamEvent::Closed));
-                }
+        while let Some(id) = self.state.closing.pop_front()
+            && let Some(stream) = self.table.get_mut(id)
+        {
+            stream.flags.insert(Flags::RELEASED);
+            if core::mem::take(&mut stream.held) > 0 {
+                self.state.credit(id, stream);
+            }
+            let (context, is_known) = (stream.context, stream.flags.contains(Flags::ANNOUNCED));
+            self.table.unreleased -= 1;
+            if id.initiator() != self.table.side {
+                self.table.counts_mut(id.direction()).remote_released += 1;
+                self.state.owed |= self.table.owed_max_streams(id.direction());
+            }
+            self.remove_if_finished(id);
+            if is_known {
+                return Some(Event::Stream(id, context, StreamEvent::Closed));
             }
         }
+        None
     }
 
     pub(super) fn has_events(&self) -> bool {

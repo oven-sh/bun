@@ -6,7 +6,7 @@ use bun_quic::transport_code::FLOW_CONTROL_ERROR;
 
 use crate::harness::messages::GET;
 use crate::harness::raw::{RTT, Raw};
-use crate::harness::wire::{MAX, filler};
+use crate::harness::wire::{MAX, filler, groups};
 
 /// `streams` is for the bidirectional streams of the peer that is tested, for ours, and for unidirectional ones.
 fn with_windows(raw: Raw, connection: u64, streams: [u64; 3]) -> Raw {
@@ -57,13 +57,14 @@ fn takes_as_much_as_it_has_allowed() {
 fn gives_credit_for_what_has_been_read() {
     let mut raw = with_windows(Raw::client(), 1000, [0, 100, 0]);
     for (frames, expected) in [
-        ("stream 0 0 *10", ""),
-        ("stream 0 20 *80", ""),
-        ("stream 0 10 *10", "max_stream_data 0 200"),
+        ("stream 0 0 *25", ""),
+        ("stream 0 25 *1", "max_stream_data 0 126"),
+        ("stream 0 36 *90", ""),
+        ("stream 0 26 *10", "max_stream_data 0 226"),
         ("stream 0 0 *100", ""),
-        ("stream 0 100 *100", "max_stream_data 0 300"),
-        ("fin 0 200 *100", ""),
-        ("fin 4 0 *100, fin 8 0 *100, fin 12 0 *100", "max_data 1600"),
+        ("fin 0 126 *100", ""),
+        ("fin 4 0 *24", ""),
+        ("fin 8 0 *1", "max_data 1251"),
     ] {
         raw.send(frames);
         assert_eq!(raw.frames(), expected);
@@ -256,9 +257,9 @@ fn a_stream_that_has_ended_is_not_blocked() {
         }
         assert_eq!(raw.frames(), expected);
         raw.advance(9000);
-        let packets = raw.take();
-        let mut frames = packets.iter().flat_map(|it| &it.frames);
-        assert!(frames.all(|it| it == expected || it == "ping"));
+        let frames = raw.frames();
+        let (frames, expected) = (groups(&frames), groups(expected));
+        assert!((frames.iter()).all(|it| *it == expected[0] || *it == ["ping"]));
     }
 }
 

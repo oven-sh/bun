@@ -217,14 +217,27 @@ fn allows_more_streams_as_they_are_closed() {
         raw.send(&format!("fin {id} 0 a"));
     }
     raw.forget();
-    raw.send("ack, fin 44 0 a");
-    assert_eq!(raw.frames(), "fin 44 0 a");
+    raw.send("fin 44 0 a");
+    assert_eq!(raw.frames(), "max_streams_bidi 112, fin 44 0 a");
     raw.send("ack");
-    assert_eq!(raw.frames(), "max_streams_bidi 112");
+    assert_eq!(raw.frames(), "");
     raw.send("stream 444 0 -");
     assert_eq!(raw.error(), None);
     raw.send("stream 448 0 -");
     assert_eq!(raw.error(), Some((Transport, STREAM_LIMIT_ERROR)));
+
+    let raw = Raw::client().config(|it| it.parameters.initial_max_streams_bidi = 2);
+    let mut raw = raw.connected();
+    raw.peer.echoes = true;
+    for (frames, expected) in [
+        ("fin 0 0 a", "max_streams_bidi 3, fin 0 0 a"),
+        ("fin 4 0 a", "max_streams_bidi 4, fin 4 0 a"),
+        ("fin 8 0 a", "fin 8 0 a"),
+        ("ack", "max_streams_bidi 5"),
+    ] {
+        raw.send(frames);
+        assert_eq!(raw.frames(), expected);
+    }
 
     let most = 1 << 60;
     let raw = Raw::client().config(|it| it.parameters.initial_max_streams_uni = most);
@@ -307,16 +320,17 @@ fn stops_reading() {
         raw.send("stream 2 0 a");
         raw.connection().stop(StreamId(2), u64::MAX);
         raw.connection().stop(StreamId(2), 8);
-        assert_eq!(raw.frames(), "stop_sending 2 0x3fffffffffffffff");
+        let frames = "max_streams_uni 4, stop_sending 2 0x3fffffffffffffff";
+        assert_eq!(raw.frames(), frames);
         assert_eq!(raw.events(), "2 opened, 2 data a, 2 closed");
         raw.connection().stop(StreamId(2), 9);
         raw.wait();
-        assert_eq!(raw.frames(), "stop_sending 2 0x3fffffffffffffff, ping");
+        assert_eq!(raw.frames(), format!("{frames}, ping"));
         raw.send("stream 2 1 b");
         assert_eq!(raw.frames(), "");
         raw.send(end);
-        assert_eq!(raw.frames(), "max_streams_uni 4");
-        assert_eq!(raw.events(), "");
+        assert_eq!((raw.frames(), raw.events()), Default::default());
+        assert!(raw.connection().priority(StreamId(2)).is_none());
     }
 }
 
@@ -545,18 +559,20 @@ fn sends_again_what_is_lost() {
 #[test]
 fn what_was_sent_twice_can_outlast_its_stream() {
     type Action = fn(&mut Raw);
-    let cases: [(Action, &str); 3] = [
-        (|it| it.peer.send(2, b"a", true), "fin 2 0 a"),
+    let cases: [(Action, &str, &str); 3] = [
+        (|it| it.peer.send(2, b"a", true), "", "fin 2 0 a"),
         (
             |it| it.connection().reset(StreamId(2), 0),
+            "",
             "reset_stream 2 0x0 0",
         ),
         (
             |it| it.connection().stop(StreamId(3), 0),
+            "max_streams_uni 4, ",
             "stop_sending 3 0x0",
         ),
     ];
-    for (action, frame) in cases {
+    for (action, before, frame) in cases {
         for acks_both in [false, true] {
             let mut raw = Raw::server().connected();
             raw.peer.open(Unidirectional);
@@ -567,7 +583,7 @@ fn what_was_sent_twice_can_outlast_its_stream() {
             let first = raw.take()[0].number;
             raw.forget();
             raw.wait();
-            assert_eq!(raw.frames(), format!("{frame}, ping"));
+            assert_eq!(raw.frames(), format!("{before}{frame}, ping"));
             raw.send(&format!("ack {first}, fin 3 0 -"));
             if acks_both {
                 raw.send("ack");

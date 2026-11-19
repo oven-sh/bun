@@ -1,7 +1,7 @@
 //! RFC 9002 §5 and §6.
 
 use super::sent::{Control, Fate, Sent, SentFrame, SentPacket};
-use super::space::{Space, SpaceId};
+use super::space::{Space, SpaceId, Spaces};
 use super::streams::Flags;
 use super::timers::Timer;
 use super::{Connection, Phase};
@@ -163,7 +163,8 @@ impl Connection {
     fn detect_lost(&mut self, now: Instant, id: SpaceId) {
         let delay = self.rtt.loss_delay();
         let (mut at, mut lost_since) = (0, Instant::NEVER);
-        while let Some(space) = self.spaces.get_mut(id) {
+        loop {
+            let space = self.spaces.open(id);
             space.sent.loss_time = Instant::NEVER;
             let largest = space.sent.largest_acked.unwrap_or(0);
             let Some(packet) = (space.sent.packets.get_mut(at)).filter(|it| it.number < largest)
@@ -188,9 +189,7 @@ impl Connection {
                 }
             }
         }
-        if let Some(space) = self.spaces.get_mut(id) {
-            space.sent.remove_settled();
-        }
+        self.spaces.open(id).sent.remove_settled();
         if self.path.mtu.end_ack() {
             self.congestion.set_datagram_len(self.path.mtu.current);
         }
@@ -206,17 +205,13 @@ impl Connection {
         self.stats.packets_lost += 1;
         self.congestion.on_lost(&packet.flight);
         self.path.mtu.on_lost(&packet.flight);
-        if let Some(space) = self.spaces.get_mut(id) {
-            space.sent.remember_lost(packet.number);
-        }
+        self.spaces.open(id).sent.remember_lost(packet.number);
         true
     }
 
     /// RFC 9000 §13.3. Returns whether it is an MTU probe.
     fn requeue(&mut self, id: SpaceId, packet: &SentPacket, fate: Fate) -> bool {
-        let Some(space) = self.spaces.get_mut(id) else {
-            return false;
-        };
+        let space = self.spaces.open(id);
         let is_requeued = packet.fate == Fate::Probed;
         if !is_requeued {
             self.streams.state.owed |= packet.control;
@@ -254,9 +249,7 @@ impl Connection {
     /// For packets that cannot arrive, which says nothing about the network.
     pub(super) fn resend_all(&mut self, id: SpaceId) {
         let mut at = 0;
-        while let Some(space) = self.spaces.get_mut(id)
-            && let Some(packet) = space.sent.packets.get_mut(at)
-        {
+        while let Some(packet) = self.spaces.open(id).sent.packets.get_mut(at) {
             at += 1;
             let before = *packet;
             if before.is_in_flight() {
@@ -265,21 +258,19 @@ impl Connection {
                 self.requeue(id, &before, Fate::Lost);
             }
         }
-        if let Some(space) = self.spaces.get_mut(id) {
-            space.sent.remove_settled();
-            space.sent.loss_time = Instant::NEVER;
-            space.received.forget_sent_acks();
-        }
+        let space = self.spaces.open(id);
+        space.sent.remove_settled();
+        space.sent.loss_time = Instant::NEVER;
+        space.received.forget_sent_acks();
     }
 
     /// RFC 9002 §6.4.
-    pub(super) fn discard_space(&mut self, now: Instant, id: SpaceId) {
-        let space = match id {
-            SpaceId::Initial => self.spaces.initial.take(),
-            SpaceId::Handshake => self.spaces.handshake.take(),
-            SpaceId::Data => None,
-        };
-        if let Some(space) = space {
+    pub(super) fn discard_space(
+        &mut self,
+        now: Instant,
+        take: fn(&mut Spaces) -> Option<Box<Space>>,
+    ) {
+        if let Some(space) = take(&mut self.spaces) {
             for packet in space.sent.packets.iter().filter(|it| it.is_in_flight()) {
                 self.congestion.discard(&packet.flight);
             }
@@ -392,9 +383,8 @@ impl Connection {
             (Instant::NEVER, _) => {
                 let handshake =
                     (self.spaces.handshake.as_mut()).filter(|it| it.write_keys.is_some());
-                if let Some(space) = handshake.or(self.spaces.initial.as_mut()) {
-                    space.probes = 1;
-                }
+                let space = handshake.or(self.spaces.initial.as_mut());
+                crate::with(space, |it| it.probes = 1);
             }
             (_, SpaceId::Data) => self.probe(SpaceId::Data, PROBES.into()),
             _ => {

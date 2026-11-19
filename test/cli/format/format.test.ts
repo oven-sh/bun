@@ -11653,6 +11653,7 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
     [`configPrecedence = "mine"`, `Invalid --config-precedence value.`],
     ["semicolons = false", `Unknown key "semicolons" in [fmt]\n`],
     ["printwidth = 80", `Unknown key "printwidth" in [fmt]\n  Did you mean "printWidth"?`],
+    [`plugin = ["a"]`, `Unknown key "plugin" in [fmt]\n  Did you mean "plugins"?`],
     ["plugins = [1]", "expected string but received number"],
     // The key is read. Bun doesn't include this plugin, which could print the file differently.
     [
@@ -11686,8 +11687,8 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
     const answers = await Promise.all(
       flags.map(async flag => {
         const positive = flag.replace(/^no-/, "");
-        const key =
-          positive === "ignore-pattern" ? "ignorePatterns" : positive.replace(/-(\w)/g, (_, it) => it.toUpperCase());
+        const renamed: Record<string, string> = { "ignore-pattern": "ignorePatterns", plugin: "plugins" };
+        const key = renamed[positive] ?? positive.replace(/-(\w)/g, (_, it) => it.toUpperCase());
         // A value of a type that no key accepts, so an existing key reports what it expects.
         const { stderr } = await run({ "bunfig.toml": `[fmt]\n${key} = [[]]\n` }, ["--list-files"]);
         return [flag, /expected [\w ]+ but received array|cannot be set in bunfig\.toml/.test(stderr)];
@@ -11696,7 +11697,6 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
     // Prettier and oxfmt flags that aren't project settings, or that do nothing.
     expect(answers.filter(it => !it[1]).map(it => it[0])).toEqual([
       "parser",
-      "plugin",
       "jsx-bracket-same-line",
       "cache",
       "cache-location",

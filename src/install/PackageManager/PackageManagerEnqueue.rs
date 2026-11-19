@@ -888,6 +888,7 @@ fn enqueue_manifest_download(
         // request that was never sent.
         let reported = package_manager_real::ManifestFailure::already_reported();
         let _ = this.manifest_failures.insert(task_id, reported);
+        run_tasks::return_network_task(this, network_task);
         return Err(err.into());
     }
     enqueue_network_task(this, network_task);

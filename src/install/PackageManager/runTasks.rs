@@ -165,6 +165,10 @@ impl Drop for ReturnNetworkTask<'_> {
     }
 }
 
+pub(crate) fn return_network_task(manager: &mut PackageManager, task: *mut NetworkTask) {
+    drop(ReturnNetworkTask { manager, task })
+}
+
 /// Resolves the dependencies that waited for `task_id` to `pkg`, and fills in the package's name
 /// where a dependency did not know it. Entries that a linker queued stay in the task's list.
 pub(crate) fn resolve_waiters_of_appended_package(
@@ -227,9 +231,6 @@ pub(crate) fn run_tasks(
         if log_level.show_progress() && !has_updated_this_run.replace(true) {
             manager.set_node_name(manager.downloads_node(), name, emoji.as_bytes());
         }
-    };
-    let return_network_task = |manager: &mut PackageManager, task: *mut NetworkTask| {
-        drop(ReturnNetworkTask { manager, task })
     };
 
     let patch_tasks_batch = INBOX.patch_tasks.pop_batch();
@@ -690,6 +691,7 @@ pub(crate) fn run_tasks(
                         err,
                         &task.url_buf,
                     ) else {
+                        return_network_task(manager, task_ptr);
                         continue;
                     };
 
@@ -715,6 +717,7 @@ pub(crate) fn run_tasks(
 
                     let _ = manager.task_queue.remove(&task.task_id);
 
+                    return_network_task(manager, task_ptr);
                     continue;
                 };
 
@@ -736,6 +739,7 @@ pub(crate) fn run_tasks(
                         },
                         &task.url_buf,
                     ) else {
+                        return_network_task(manager, task_ptr);
                         continue;
                     };
 
@@ -775,6 +779,7 @@ pub(crate) fn run_tasks(
 
                     let _ = manager.task_queue.remove(&task.task_id);
 
+                    return_network_task(manager, task_ptr);
                     continue;
                 }
 
@@ -1685,6 +1690,7 @@ pub fn generate_network_task_for_tarball<'a>(
     if let Err(err) = network_task.for_tarball(extract_tarball, scope, authorization) {
         // No task will ever complete the dedupe entry, so a later enqueue would wait forever.
         this.mark_network_task_failed(task_id);
+        return_network_task(this, net_ptr);
         return Err(err);
     }
 

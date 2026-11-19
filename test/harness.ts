@@ -217,6 +217,22 @@ export function nodeExe(): string | null {
   return which("node") || null;
 }
 
+/**
+ * `nodeExe()`, or null when that Node.js is older than `version` or does not run. For a reference run whose expected
+ * output is that of a later release: the macOS CI hosts can have an older Node.js than the one Bun reports.
+ */
+export function nodeExeAtLeast(version: string): string | null {
+  const node = nodeExe();
+  if (!node) return null;
+  try {
+    const probe = spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
+    return probe.exitCode === 0 && Bun.semver.satisfies(probe.stdout.toString().trim(), `>=${version}`) ? node : null;
+  } catch {
+    // A file that cannot be started at all: a script whose interpreter is gone, a binary of another architecture.
+    return null;
+  }
+}
+
 let abiMatchingNode: Promise<string> | undefined;
 
 /**

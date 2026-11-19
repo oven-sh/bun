@@ -14,7 +14,7 @@ use crate::link::{KeyContext, LinkUnit};
 use crate::load::data_modules::parse_json;
 use crate::load::runtime_roots::{StartOfRun, builtins_used_at_start};
 use crate::load::runtime_types;
-use crate::load::sources::parsed_source;
+use crate::load::sources::{may_replace_evaluators, parsed_source};
 use crate::load::{PerProject, ProjectId, Sources};
 use crate::lower::{
     FileInputs, KnownHelpersLowered, LibraryFunctions, LoweredFile, LoweringInputs,
@@ -44,7 +44,7 @@ use bun_threading::Guarded;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Above this, the checker's types are freed once, halfway through the files. Nine in ten of them are read by no later file.
 const TEXT_BYTES_OF_ONE_PASS: u64 = 256 << 20;
@@ -198,7 +198,17 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
             ranges.lock().extend(unchecked);
         }
         let path = self.loaded.loaded.files().module(file).file_name();
-        let _work = current_work::working_on(current_work::Step::Lower, path);
+        current_work::working_on(current_work::Step::Lower, path, || {
+            self.lower_or_refuse(checker, file, parts)
+        })
+    }
+
+    fn lower_or_refuse(
+        &self,
+        checker: &mut Checker<'_, 's>,
+        file: FileId,
+        parts: &PartsOfVisit<'_, 's>,
+    ) -> Option<Option<LoweredUnit>> {
         let may_fail_where_loaded = self.may_fail_where_loaded(file);
         if let Some(sentence) = self.decided.refusal_of(file) {
             let lower = || self.lower_module_that_throws(checker, file, sentence);
@@ -677,7 +687,7 @@ impl Build<'_> {
     fn threads_to_lower(&self, files: &Files<'_>, files_to_lower: &[FileId]) -> NonZeroUsize {
         const SOURCE_BYTES_PER_THREAD: usize = 256 << 10;
         let texts = files_to_lower.iter();
-        let source_bytes: usize = texts.map(|&file| files.module(file).hir.text.len()).sum();
+        let source_bytes: usize = texts.map(|&file| files.hir(file).text.len()).sum();
         let useful = source_bytes.div_ceil(SOURCE_BYTES_PER_THREAD);
         let useful = NonZeroUsize::new(useful).unwrap_or(NonZeroUsize::MIN);
         match self.options.aot.thread_count {
@@ -763,6 +773,7 @@ impl Build<'_> {
                 checks_only_requested_paths: true,
                 takes_defaults_of_tsc: true,
                 takes_aot_sources_last: true,
+                shares_every_file: true,
                 declarations_of_last_resort: Some(runtime_types::PROMISED_TYPES_PATH),
                 ..Default::default()
             },
@@ -1042,6 +1053,8 @@ impl Build<'_> {
         library_functions.leave_out_declarations(bound_project.left_out.declarations.clone());
         let erases_types = self.options.aot.erases_types && project == ProjectId::Application;
         let lowering_roles = roles_for_lowering(&roles.roles, files, erases_types);
+        let may_replace_evaluators = project == ProjectId::Application
+            && may_replace_evaluators(files, loaded.can_load_code_at_run_time);
         let library = Library {
             project: LinkedProject {
                 files: loaded.project(ProjectId::Runtime).loaded.files(),
@@ -1050,6 +1063,7 @@ impl Build<'_> {
                 platform: self.platform,
                 library: None,
                 known_helpers: None,
+                may_replace_evaluators: false,
             },
             sources: &loaded.project(ProjectId::Runtime).sources,
         };
@@ -1063,6 +1077,7 @@ impl Build<'_> {
                 ProjectId::Runtime => None,
             },
             known_helpers: Some(&bound_project.known_helpers),
+            may_replace_evaluators,
         };
         let unreached_files: &[FileId] = match project {
             ProjectId::Application => &[],
@@ -1085,8 +1100,9 @@ impl Build<'_> {
                         || file.builtins.mentions_evaluator()
                         || file.builtins.loads_unknown_modules()
                 }));
+        let in_parallel = self.parallel_runner();
         let reads_source_paths =
-            project == ProjectId::Application && reads_source_paths(files, sources);
+            project == ProjectId::Application && reads_source_paths(files, sources, &in_parallel);
         let may_have_plugins = project == ProjectId::Application
             && !self.options.load.runs_tests
             && crate::load::contents::load_names::names_plugin(files);
@@ -1118,6 +1134,7 @@ impl Build<'_> {
             page_manifests: &page_manifests,
             reads_source_paths,
             may_have_plugins,
+            may_replace_evaluators,
             replaced_builtins: &loaded.contents.replaced_builtins,
             fixed_builtins: &loaded.contents.fixed_builtins,
             names_added_to_builtins: &loaded.contents.names_added_to_builtins,
@@ -1129,8 +1146,8 @@ impl Build<'_> {
     }
 }
 
-fn reads_source_paths(files: &Files<'_>, sources: &Sources) -> bool {
-    files.compiled_files().iter().any(|&file| {
+fn reads_source_paths(files: &Files<'_>, sources: &Sources, in_parallel: InParallel<'_>) -> bool {
+    let reads_source_path = |file: FileId| {
         if !sources.has_source_path(file) {
             return false;
         }
@@ -1145,7 +1162,16 @@ fn reads_source_paths(files: &Files<'_>, sources: &Sources) -> bool {
         }) || sites.any(|site| {
             matches!(site.kind, ImportSiteKind::RequireResolve(call) if !decisions.is_dead_expr(call))
         })
-    })
+    };
+    let is_found = AtomicBool::new(false);
+    let chunks: Vec<&[FileId]> = files.compiled_files().chunks(256).collect();
+    in_parallel(chunks.len(), &|chunk| {
+        let mut files = chunks[chunk].iter();
+        if !is_found.load(Ordering::Relaxed) && files.any(|&file| reads_source_path(file)) {
+            is_found.store(true, Ordering::Relaxed);
+        }
+    });
+    is_found.into_inner()
 }
 
 pub(super) fn may_fail_where_loaded(
@@ -1299,12 +1325,11 @@ fn incomplete_record_of(files: &Files<'_>, file: FileId) -> Incomplete {
 }
 
 fn is_well_formed(files: &Files<'_>, file: FileId) -> bool {
-    let module = files.module(file);
-    let hir = files.hir(file);
-    let mut classes = module.bound.class_symbol.iter();
+    let (hir, bound) = (files.hir(file), files.bound(file));
+    let mut classes = bound.class_symbol.iter();
     syntax_errors_of(hir).next().is_none()
         && !hir.ran_out_of_stack
-        && !classes.any(|&it| it.is_some() && module.bound.symbol(it).name == known::missing)
+        && !classes.any(|&it| it.is_some() && bound.symbol(it).name == known::missing)
 }
 
 fn with_position(mut sentence: Vec<u8>, (line, column): (u32, u32)) -> Vec<u8> {

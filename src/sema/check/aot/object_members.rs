@@ -8,7 +8,7 @@ use crate::atom::Atom;
 use crate::bind::Decl;
 use crate::hir::{ExprId, MemberKey};
 use crate::program::Sym;
-use crate::types::{IndexInfo, MapperId, Origin, PropSource, TypeData, TypeId};
+use crate::types::{IndexInfo, MapperId, Origin, Prop, PropSource, TypeData, TypeId};
 use smallvec::SmallVec;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -301,8 +301,18 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return Ok(Vec::new());
         };
         let props = &members.shape().props;
+        let is_assigned = |prop: &Prop| match prop.source {
+            PropSource::Symbol(symbol) => {
+                let declared = &self.c.bound(symbol.file).symbol(symbol.id).decls;
+                matches!(declared.first(), Some(Decl::Expando(_)))
+            }
+            _ => false,
+        };
+        if !props.iter().any(is_assigned) {
+            return Ok(Vec::new());
+        }
         let mut file = None;
-        let mut numbered = Vec::new();
+        let mut numbered = Vec::with_capacity(props.len());
         for (number, prop) in (0u32..).zip(props.iter()) {
             let assignment = match prop.source {
                 PropSource::Symbol(symbol) if file.is_none_or(|file| file == symbol.file) => {

@@ -22,7 +22,7 @@ This directory generates `build.ninja`. The scripts **describe** the build; ninj
 
 **Deps in our graph.** `BuildSpec` variants:
 
-- `direct` — list the dep's sources explicitly; each becomes a first-class `cc`/`cxx` edge in our graph and the `.o`s go straight into bun's link. Every C/C++ dep that is compiled (zlib, zstd, boringssl, mimalloc, … and a local WebKit checkout). Skips a sub-process configure entirely and lets LTO see across the dep boundary. `groups` are further flag sets (a cmake "target" each), `steps` are generators and target executables.
+- `direct` — list the dep's sources explicitly; each becomes a first-class `cc`/`cxx` edge in our graph and the `.o`s go straight into bun's link. Every C/C++ dep that is compiled (zstd, boringssl, mimalloc, … and a local WebKit checkout). Skips a sub-process configure entirely and lets LTO see across the dep boundary. `groups` are further flag sets (a cmake "target" each), `steps` are generators and target executables.
 - `cargo` — (rule kept for out-of-workspace cargo deps; none today — lolhtml and rust-argon2 are path dependencies compiled as units of bun's own Rust graph).
 - `prebuilt` — skip build entirely, download compiled `.a`/`.lib` (WebKit, nodejs-headers).
 
@@ -129,7 +129,7 @@ Build flags must come before exec args. `bun bd --asan=off test foo.ts` works; `
 
 Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune`), `globalFlags` (bun + all deps), `bunOnlyFlags` (just bun), `linkFlags`, `stripFlags`. Use `lang: "cxx"` to restrict to C++.
 
-**Bump a dependency** — edit the `commit` in `scripts/build/deps/<name>.ts`. See `deps/README.md` for adding/removing deps.
+**Bump a dependency** — edit the `commit` in `scripts/build/deps/<name>.ts`. See `deps/README.md` for adding/removing deps. For WebKit, edit `WEBKIT_VERSION` and run `bun run pin-webkit`: every download of a prebuilt is checked against `deps/webkit.sha256`, except one that `--webkit-version` asks for.
 
 **Iterate on a dependency from a local checkout** — `bun bd --local-deps=mimalloc=~/code/mimalloc …` builds that dep from the clone instead of the pinned tarball (no fetch, no patches; edits rebuild incrementally). Any `github-archive` dep the graph compiles (not lolhtml or rust-argon2 — cargo reads those via `Cargo.toml`); details in `deps/README.md`.
 
@@ -247,7 +247,7 @@ It is configured by `configureCodegen()`, not `configure()`, and resolves a `Cod
 | `error.ts`                     | `BuildError` with hint/file/cause, `assert()`                                                                                                                           |
 | `download.ts`                  | `downloadWithRetry()`, archive extraction                                                                                                                               |
 | `winsysroot.ts`                | Windows MSVC CRT + SDK sysroot (xwin): validates, adds case aliases, CI fetch                                                                                           |
-| `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads, `.h.in` substitution and the `forbidUndefined` symbol check                                                                 |
+| `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads and the `forbidUndefined` symbol check                                                                                       |
 | `verify-binary.ts`             | Build-time CLI: static scans of the linked executable (exports, dynamic deps, initializers, hardening, debug info) and the duplicate-definition scan of the link inputs |
 | `binary-expectations.ts`       | What each target's executable must look like for `verify-binary.ts`; serialized to `<exe>.verify.json` at configure                                                     |
 | `annotations.ts`               | Compiler output from a failed step, parsed into Buildkite annotations                                                                                                   |

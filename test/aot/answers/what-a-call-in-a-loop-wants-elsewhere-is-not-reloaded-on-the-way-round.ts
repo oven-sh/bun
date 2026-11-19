@@ -2,6 +2,7 @@
 // # for (..) { if (each(items[i], a, b, c)) .. }: what the loop reads and did not make lies in registers at its head. The call takes those registers, so the edge that comes round reloaded each value into its register,
 // # every turn. But the first to read some of them behind the head is the call itself, and it wants them in another register: nobody read the register that was reloaded; the value was moved, or loaded a second time.
 // # Such a value gets its slot ahead of the loop and the head lets go of it: it is loaded once a turn, into the register that the call wants. (`some`, `filter` and `map` of the library: two instructions a turn.)
+// # The callees lie under keys that nobody in sight knows: a written list of functions is entered function by function, and no such call is left.
 // # RUN(THREE): allocate f1:Body mechanisms=all
 // # REQUIRES(THREE): x86_64 as-written
 // # THREE: reload {{*}} -> r12
@@ -27,7 +28,9 @@ function handsFour(items: number[], each: any, a: unknown, b: unknown, c: unknow
 function whileCalls(each: any, a: unknown, b: unknown, c: unknown, limit: number) { let i = 0; while (i < limit && !each(i, a, b, c)) i++; return i; }
 function attempt(run: () => unknown) { try { return run(); } catch (error) { return (error as Error).name + ": " + (error as Error).message; } }
 const seen: string[] = [];
-const callees: any[] = [(x: number, a: number, b: number, c: number) => x + a + b + c > 12, (x: number) => x < 0, (x: number) => x === 1, (x: number) => x === 8, (x: number, a: unknown, b: unknown, c: unknown, d: unknown) => { seen.push([x, a, b, c, d].join("/")); return false; }, (x: number, a: string) => { if (x === 5) throw new RangeError(a + " at " + x); return false; }, (x: number, a: unknown, b: unknown, c: unknown) => { const made: unknown[] = []; for (let k = 0; k < 400; k++) made.push({ x, a, b, c, k }); return made.length < x; }];
+const named: any = JSON.parse("{}");
+[(x: number, a: number, b: number, c: number) => x + a + b + c > 12, (x: number) => x < 0, (x: number) => x === 1, (x: number) => x === 8, (x: number, a: unknown, b: unknown, c: unknown, d: unknown) => { seen.push([x, a, b, c, d].join("/")); return false; }, (x: number, a: string) => { if (x === 5) throw new RangeError(a + " at " + x); return false; }, (x: number, a: unknown, b: unknown, c: unknown) => { const made: unknown[] = []; for (let k = 0; k < 400; k++) made.push({ x, a, b, c, k }); return made.length < x; }].forEach((each: any, i: number) => { named["call " + i] = each; });
+const callees: any[] = JSON.parse("[0,1,2,3,4,5,6]").map((i: number) => named["call " + i]);
 for (const each of callees) report([attempt(() => handsThree(list, each, 1, 2, 3)), attempt(() => handsFour(list, each, "a", "b", "c", "d")), attempt(() => whileCalls(each, 2, 2, 2, 12)), attempt(() => handsThree([], each, 1, 2, 3)), attempt(() => handsFour([9], each, 1, 2, 3, 4)), attempt(() => whileCalls(each, 1, 1, 1, 0))].join());
 report(seen.length + " " + seen[0] + " " + seen[8] + " " + seen[seen.length - 1]);
 const kept = { a: { name: "a" }, b: [1, 2], c: "text" + list.length };

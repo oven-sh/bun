@@ -39,17 +39,16 @@ pub mod impl_ {
     #[derive(Debug, Clone, Copy)]
     pub struct Selectors;
 
-    impl super::parser::SelectorImpl for Selectors {
-        type AttrValue = CssString;
-        type Identifier = Ident;
+    impl<'bump> super::parser::SelectorImpl<'bump> for Selectors {
+        type AttrValue = CssString<'bump>;
+        type Identifier = Ident<'bump>;
         /// An identifier which could be a local name for use in CSS modules
-        type LocalIdentifier = IdentOrRef;
-        type LocalName = Ident;
-        type NamespacePrefix = Ident;
-        // TODO: lifetime — should borrow the parser input.
-        type NamespaceUrl = &'static [u8];
-        type NonTSPseudoClass = super::parser::PseudoClass;
-        type PseudoElement = super::parser::PseudoElement;
+        type LocalIdentifier = IdentOrRef<'bump>;
+        type LocalName = Ident<'bump>;
+        type NamespacePrefix = Ident<'bump>;
+        type NamespaceUrl = &'bump [u8];
+        type NonTSPseudoClass = super::parser::PseudoClass<'bump>;
+        type PseudoElement = super::parser::PseudoElement<'bump>;
         type VendorPrefix = VendorPrefix;
     }
 }

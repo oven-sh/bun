@@ -15,7 +15,7 @@ pub(crate) mod hoisted_mocks;
 pub(crate) mod host;
 pub(crate) mod import_functions;
 pub(crate) mod import_meta_glob;
-mod known_evaluations;
+pub(crate) mod known_evaluations;
 pub(crate) mod loader_aliases;
 pub(crate) mod loaders;
 pub(crate) mod locked_builtin_defines;
@@ -63,8 +63,9 @@ pub fn host_platform() -> Platforms {
     }
 }
 
+#[inline]
 pub(crate) fn is_host_path(path: &[u8]) -> bool {
-    path.starts_with(HOST_ROOT)
+    path.get(1) == Some(&HOST_ROOT[1]) && path.starts_with(HOST_ROOT)
 }
 
 pub(crate) fn is_in_node_modules(path: &[u8]) -> bool {

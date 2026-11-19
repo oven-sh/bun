@@ -1,5 +1,5 @@
 #![feature(inherent_associated_types)]
-#![feature(adt_const_params, allocator_api, thread_local)]
+#![feature(adt_const_params, thread_local)]
 #![cfg_attr(any(test, feature = "test_support"), feature(linkage))]
 #![allow(incomplete_features)] // inherent_associated_types — used only for the ThreadPool::Worker path
 #![allow(non_snake_case, non_upper_case_globals)]
@@ -98,10 +98,7 @@ pub use bundle_v2::{
     CompileResult, CompileResultForSourceMap, ContentHasher, EventLoop, ImportTracker, PartRange,
     StableRef, WrapKind, generic_path_with_pretty_initialized, target_from_hashbang,
 };
-pub use chunk::{
-    CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, bun_renamer,
-    cross_chunk_import,
-};
+pub use chunk::{CrossChunkImportItem, CrossChunkImportItemList, bun_renamer};
 pub use linker_graph::{
     ExportData, ImportData, JSMeta, RefImportData, ResolvedExports, TopLevelSymbolToParts,
     entry_point, js_meta,
@@ -123,8 +120,6 @@ pub mod DeferredBatchTask;
 pub mod Graph;
 pub mod IndexStringMap;
 pub mod PathToSourceIndexMap;
-
-pub mod BundleThread;
 
 pub mod ServerComponentParseTask;
 
@@ -227,9 +222,6 @@ pub mod linker_context {
     #[path = "postProcessJSChunk.rs"]
     pub mod post_process_js_chunk;
 
-    #[path = "prepareCssAstsForChunk.rs"]
-    pub mod prepare_css_asts_for_chunk;
-
     #[path = "renameSymbolsInChunk.rs"]
     pub(crate) mod rename_symbols_in_chunk;
 
@@ -244,12 +236,6 @@ pub mod linker_context {
 
     #[path = "StaticRouteVisitor.rs"]
     pub mod static_route_visitor;
-
-    // ── Re-exports so `crate::linker_context::{debug, LinkerContext, …}`
-    //    resolves at every submodule call-site.
-    pub use crate::linker_context_mod::{
-        ChunkMeta, GenerateChunkCtx, LinkerContext, PendingPartRange,
-    };
 }
 
 // ---------------------------------------------------------------------------
@@ -265,7 +251,7 @@ pub use defines::{Define, DefineDataExt, DefineExt};
 /// See `linker` module.
 pub use linker::Linker;
 /// See `linker_context_mod` module.
-pub use linker_context_mod::LinkerContext;
+pub(crate) use linker_context_mod::LinkerContext;
 /// See `linker_graph` module.
 pub use linker_graph::LinkerGraph;
 /// `EntryPoint::Kind` is an inherent associated type on the struct (not a
@@ -378,12 +364,6 @@ pub mod options {
     pub use crate::bake_types::Framework;
 }
 
-/// Re-export so `crate::RuntimeTranspilerCache` resolves for `transpiler::ParseOptions`
-/// and downstream callers (`jsc_hooks` / `RuntimeTranspilerStore`). The struct
-/// is canonical in `bun_js_parser`; the bundler-tier `disabled` lives on
-/// `RuntimeTranspilerCacheExt`.
-pub use cache::RuntimeTranspilerCacheExt;
-
 // ──────────────────────────────────────────────────────────────────────────
 // Re-export the canonical `bake_types` defs from
 // `bundle_v2` so there is exactly ONE nominal `Side`/`Graph`/`Framework` etc.
@@ -401,13 +381,12 @@ pub use bundle_v2::dispatch;
 // ── link-interfaces (must be at crate root so `$crate::__alias` resolves) ──
 // Re-exported through `bundle_v2::dispatch` for existing call sites.
 
-// Erased handle to `bake::DevServer`. The struct stores a `&'a mut [Chunk]`
-// it mutates through, hence `*mut`.
+// Erased handle to `bake::DevServer`.
 bun_dispatch::link_interface! {
     pub DevServerHandle[Bake] {
         fn barrel_needed_exports() -> *mut bun_collections::StringArrayHashMap<bun_collections::StringHashMap<()>>;
         fn log_for_resolution_failures(abs_path: &[u8], graph: bake_types::Graph) -> *mut bun_ast::Log;
-        fn finalize_bundle(bv2: *mut bundle_v2::BundleV2<'_>, result: *mut bundle_v2::DevServerOutput<'_>) -> Result<(), crate::Error>;
+        fn finalize_bundle(bv2: *mut bundle_v2::BundleV2<'_>, result: bundle_v2::DevServerOutput<'_>) -> Result<(), crate::Error>;
         fn handle_parse_task_failure(err: crate::Error, graph: bake_types::Graph, abs_path: &[u8], log: *const bun_ast::Log, bv2: *mut bundle_v2::BundleV2<'_>) -> Result<(), crate::Error>;
         fn put_or_overwrite_asset(path: *const (), contents: &[u8], content_hash: u64) -> Result<(), crate::Error>;
         fn track_resolution_failure(import_source: &[u8], specifier: &[u8], renderer: bake_types::Graph, loader: bun_ast::Loader) -> Result<(), crate::Error>;

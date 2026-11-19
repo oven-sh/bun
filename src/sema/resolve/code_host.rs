@@ -5,6 +5,7 @@ use super::{
 use crate::atom::Interner;
 use crate::bind::Bound;
 use crate::file_analysis::FileAnalysis;
+use crate::fold::Decisions;
 use crate::hir::{CallId, ExprId, File};
 use crate::hir_from_data::HostValue;
 use crate::json::Json;
@@ -244,8 +245,12 @@ pub trait CodeHost: Host {
         text: &[u8],
         atoms: &Interner<'s>,
     ) -> ParsedCode<'s> {
+        let options = ParseOptions {
+            keeps_comments: true,
+            ..request.options
+        };
         ParsedCode {
-            hir: self.parse(arena, request.path, text, atoms, request.options),
+            hir: self.parse(arena, request.path, text, atoms, options),
             host_values: &[],
             payload: None,
         }
@@ -281,7 +286,6 @@ pub trait CodeHost: Host {
         TreeChange::Unchanged
     }
 
-    /// The direct evals of a file with known evaluations that evaluate nothing else, sorted.
     fn find_settled_evals<'s>(
         &self,
         _hir: &File<'s>,
@@ -298,6 +302,7 @@ pub trait CodeHost: Host {
         _atoms: &Interner<'s>,
         _hir: &mut File<'s>,
         _bound: &Bound<'s>,
+        _decisions: &Decisions<'s>,
         _payload: &mut Option<HostPayload>,
     ) -> TreeChange {
         TreeChange::Unchanged

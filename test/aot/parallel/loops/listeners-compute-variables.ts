@@ -1,5 +1,4 @@
 // Listeners that a loop copies in compute variables of the file from themselves: the version of the loop carries the variables.
-// STATISTIC: CopiedVariablesCarried >= 1
 class Emitter { private readonly listeners: ((x: number) => void)[] = []; on(f: (x: number) => void): void { this.listeners.push(f); } emit(x: number): void { for (const f of this.listeners) f(x); } }
 const emitter = new Emitter();
 let seen = 0;

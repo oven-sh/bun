@@ -306,6 +306,7 @@ export function stepIterator(iterator: unknown, next: unknown): unknown {
     }
     return status === $generatorStepStatusCompleted ? $collectionIteratorClosedMark() : value;
   } else if (next === $nextOfStepsOverText) return stepOverText(iterator as StepsOverText);
+  else if (next === $regExpStringIteratorProtoNext && $isRegExpStringIterator(iterator)) return stepMatches(iterator);
   const result = $iteratorGenericNext(next, iterator);
   return result.done ? $collectionIteratorClosedMark() : result.value;
 }
@@ -361,16 +362,8 @@ export function stepIteratorInWay(iterator: unknown, way: unknown): unknown {
 }
 
 declare function $isRegExpStringIterator(value: unknown): boolean;
-declare function $getRegExpStringIteratorInternalField(iterator: unknown, field: number): unknown;
-declare function $putRegExpStringIteratorInternalField(iterator: unknown, field: number, value: unknown): void;
+declare function $stepMatchIterator(iterator: unknown): unknown;
 declare const $regExpStringIteratorProtoNext: unknown;
-declare const $regExpProtoExec: unknown;
-declare const $regExpStringIteratorFieldRegExp: number;
-declare const $regExpStringIteratorFieldString: number;
-declare const $regExpStringIteratorFieldFlags: number;
-declare const $regExpStringIteratorFlagGlobal: number;
-declare const $regExpStringIteratorFlagFullUnicode: number;
-declare const $regExpStringIteratorFlagDone: number;
 
 // `for (const match of s.matchAll(regExp))`, where the engine knows nothing of one of the two: as `next` of the iterator does it, but nobody sees the object that a call of it would answer with.
 $visibility = "Private";
@@ -385,45 +378,9 @@ export function stepMatchesInWay(iterator: unknown, way: unknown): unknown {
 }
 
 function stepMatches(iterator: unknown): unknown {
-  const flags: unknown = $getRegExpStringIteratorInternalField(iterator, $regExpStringIteratorFieldFlags);
-  if (typeof flags !== "number" || (flags & $regExpStringIteratorFlagDone) !== 0)
-    return $collectionIteratorClosedMark();
-  const matcher = $getRegExpStringIteratorInternalField(iterator, $regExpStringIteratorFieldRegExp) as RegExp;
-  const text = $getRegExpStringIteratorInternalField(iterator, $regExpStringIteratorFieldString) as string;
-  const exec: unknown = matcher.exec;
-  let match: unknown;
-  if (exec !== $regExpProtoExec && $isCallable(exec)) {
-    match = $call(exec, matcher, text);
-    if (match !== null && !$isObject(match)) $throwTypeError("The result of RegExp exec must be null or an object");
-  } else match = $call($regExpProtoExec, matcher, text);
-  const isGlobal = (flags & $regExpStringIteratorFlagGlobal) !== 0;
-  if (match === null || !isGlobal) {
-    $putRegExpStringIteratorInternalField(
-      iterator,
-      $regExpStringIteratorFieldFlags,
-      flags | $regExpStringIteratorFlagDone,
-    );
-    return match === null ? $collectionIteratorClosedMark() : match;
-  }
-  const found: unknown = (match as any)[0];
-  if ((typeof found === "string" ? found : $toString(found)) === "")
-    advancePastEmptyMatch(matcher, text, (flags & $regExpStringIteratorFlagFullUnicode) !== 0);
-  return match;
-}
-
-function advancePastEmptyMatch(matcher: any, text: string, isFullUnicode: boolean): void {
-  const at: number = $toLength(matcher.lastIndex);
-  if (isFullUnicode && at + 1 < text.length) {
-    const first = text.charCodeAt(at);
-    if (first >= 0xd800 && first <= 0xdbff) {
-      const second = text.charCodeAt(at + 1);
-      if (second >= 0xdc00 && second <= 0xdfff) {
-        matcher.lastIndex = at + 2;
-        return;
-      }
-    }
-  }
-  matcher.lastIndex = at + 1;
+  if (!$isRegExpStringIterator(iterator)) return $collectionIteratorClosedMark();
+  const match = $stepMatchIterator(iterator);
+  return match === null ? $collectionIteratorClosedMark() : match;
 }
 
 $visibility = "Private";

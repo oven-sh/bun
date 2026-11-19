@@ -57,7 +57,10 @@ pub use keys::{ClassSlot, FunctionKey, LayoutKey, PrivateStatePart, VariableKey}
 pub use name_class::classify_name;
 pub use packed_function::PackedFunction;
 pub use packed_layout::{PackScratch, PackedLayout};
-pub use parallel::{InParallel, drop_each, extend_from_boxes, for_each_mut, run_serially};
+pub use parallel::{
+    InParallel, collect_from_each, drop_each, extend_from_boxes, filter_each, for_each_mut,
+    run_serially,
+};
 #[cfg(any(test, feature = "ir_text"))]
 pub use print::{
     Printer, REWRITTEN_TYPE, print_function, print_program, print_program_held_to_engine,

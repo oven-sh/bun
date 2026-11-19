@@ -1,12 +1,12 @@
 # A store under a key that is one symbol as far as is seen lets its object escape. "As far as is seen" leaves out what came by escape alone, so a key of which nothing had been seen yet counted as a symbol:
 # here `this` of fill() is known by escape alone at first (the constructor goes through a table under a name nobody knows), `-10 - node[i]` is a number by escape alone, and the first look at
-# `empty[sub] = true` sent the local map out of sight for good. The next look said no; whether the first one came at all hung on the order of arrivals, and Link given more said more (FlowNotMonotonic).
+# `empty[sub] = node` sent the local map out of sight for good. The next look said no; whether the first one came at all hung on the order of arrivals, and Link given more said more (FlowNotMonotonic).
 # A key is a symbol as far as is seen only where a symbol has been seen. L1 = the map.
 # RUN: link layouts mechanisms=all
-# CHECK: layout L1 changes=[GainsProperty, ChangesPrototype] stays-with-compiled-code filled-under-computed-keys
+# CHECK: layout L1 changes=[GainsProperty] stays-with-compiled-code filled-under-computed-keys
 # -- source: a-key-of-which-nothing-is-seen-yet-is-no-symbol.js
 # function Codec() { this.tables = [[1, -11]]; }
-# Codec.prototype.fill = function (index) { var node = this.tables[index]; var empty = {}; for (var i = 0; i < 2; i++) { var sub = -10 - node[i]; if (!empty[sub]) empty[sub] = true; } return Object.keys(empty).length; };
+# Codec.prototype.fill = function (index) { var node = this.tables[index]; var empty = {}; for (var i = 0; i < 2; i++) { var sub = -10 - node[i]; if (!empty[sub]) empty[sub] = node; } return Object.keys(empty).length; };
 # const kinds = { codec: Codec };
 # function make(name) { return new kinds[name](); }
 # console.log(make(JSON.parse('"codec"')).fill(0));

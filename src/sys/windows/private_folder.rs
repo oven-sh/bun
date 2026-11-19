@@ -2,7 +2,9 @@
 
 use core::ffi::{c_int, c_void};
 use core::ptr::null_mut;
+use std::os::windows::io::{AsRawHandle as _, IntoRawHandle as _};
 
+use bun_core::WStr;
 use bun_windows_sys::externs as win32;
 use win32::{BOOL, DWORD, HANDLE};
 
@@ -71,32 +73,33 @@ unsafe extern "system" {
     fn LocalFree(memory: *mut c_void) -> *mut c_void;
 }
 
+/// What the system allocated with `LocalAlloc`.
+struct Local<T>(*mut T);
+
+impl<T> Drop for Local<T> {
+    fn drop(&mut self) {
+        // SAFETY: the system allocated it for this owner.
+        unsafe { LocalFree(self.0.cast()) };
+    }
+}
+
 struct User(Box<[u64; 16]>);
 
 impl User {
     fn current() -> Option<User> {
-        let mut token: HANDLE = null_mut();
-        // SAFETY: the pseudo-handle of this process; `token` is a valid out-param.
-        if unsafe {
-            win32::OpenProcessToken(win32::GetCurrentProcess(), win32::TOKEN_QUERY, &mut token)
-        } == 0
-        {
-            return None;
-        }
+        let token = super::process_token()?;
         let mut user = Box::new([0u64; 16]);
         let mut length: DWORD = 0;
         // SAFETY: `token` is open; the buffer is writable for the length given.
         let is_read = unsafe {
             win32::GetTokenInformation(
-                token,
+                token.as_raw_handle(),
                 TOKEN_USER,
                 user.as_mut_ptr().cast(),
                 size_of_val(&*user) as DWORD,
                 &mut length,
             )
         };
-        // SAFETY: `token` is open and not used again.
-        unsafe { win32::CloseHandle(token) };
         (is_read != 0).then_some(User(user))
     }
 
@@ -104,8 +107,10 @@ impl User {
         self.0[0] as usize as PSID
     }
 
-    fn trusts(&self, sid: PSID) -> bool {
-        // SAFETY: both are valid SIDs: one out of the token, one out of a descriptor that the system handed over.
+    /// # Safety
+    /// `sid` points to a valid SID.
+    unsafe fn trusts(&self, sid: PSID) -> bool {
+        // SAFETY: both are valid SIDs: one out of the token, the other by caller contract.
         unsafe {
             EqualSid(sid, self.sid()) != 0
                 || IsWellKnownSid(sid, LOCAL_SYSTEM) != 0
@@ -136,7 +141,11 @@ impl User {
                     &mut is_defaulted,
                 ) != 0
         };
-        if !is_read || owner.is_null() || is_present == 0 || dacl.is_null() || !self.trusts(owner) {
+        if !is_read || owner.is_null() || is_present == 0 || dacl.is_null() {
+            return false;
+        }
+        // SAFETY: `owner` is the SID of a descriptor that the system handed over.
+        if !unsafe { self.trusts(owner) } {
             return false;
         }
         // SAFETY: `dacl` is a valid ACL, which begins with this header.
@@ -148,21 +157,22 @@ impl User {
                 return false;
             }
             // SAFETY: an entry of either kind that is let through is a header, a mask and a SID.
-            let (kind, sid) = unsafe { ((*ace).kind, (&raw mut (*ace).sid).cast()) };
-            kind == ACCESS_DENIED_ACE || (kind == ACCESS_ALLOWED_ACE && self.trusts(sid))
+            unsafe {
+                let (kind, sid) = ((*ace).kind, (&raw mut (*ace).sid).cast());
+                kind == ACCESS_DENIED_ACE || (kind == ACCESS_ALLOWED_ACE && self.trusts(sid))
+            }
         })
     }
 
-    fn create(&self, path: *const u16) {
+    fn create(&self, path: &WStr) {
         let mut sid: *mut u16 = null_mut();
         // SAFETY: a valid SID and a valid out-param.
         if unsafe { ConvertSidToStringSidW(self.sid(), &mut sid) } == 0 {
             return;
         }
-        // SAFETY: the system wrote a NUL-terminated string, which is freed once it is copied.
-        let user = String::from_utf16_lossy(unsafe { bun_core::ffi::wstr_units(sid) });
-        // SAFETY: as above.
-        unsafe { LocalFree(sid.cast()) };
+        let sid = Local(sid);
+        // SAFETY: the system wrote a NUL-terminated string.
+        let user = String::from_utf16_lossy(unsafe { bun_core::ffi::wstr_units(sid.0) });
         let text: Vec<u16> =
             format!("O:{user}D:P(A;OICI;FA;;;{user})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)\0")
                 .encode_utf16()
@@ -180,16 +190,14 @@ impl User {
         {
             return;
         }
+        let descriptor = Local(descriptor);
         let mut attributes = win32::SECURITY_ATTRIBUTES {
             nLength: size_of::<win32::SECURITY_ATTRIBUTES>() as DWORD,
-            lpSecurityDescriptor: descriptor,
+            lpSecurityDescriptor: descriptor.0,
             bInheritHandle: 0,
         };
-        // SAFETY: `path` is NUL-terminated; the descriptor lives until it is freed on the next line.
-        unsafe {
-            win32::CreateDirectoryW(path, &mut attributes);
-            LocalFree(descriptor);
-        }
+        // SAFETY: `path` is NUL-terminated; `descriptor` outlives the call.
+        unsafe { win32::CreateDirectoryW(path.as_ptr(), &mut attributes) };
     }
 }
 
@@ -206,36 +214,27 @@ pub fn make_or_find(path: &[u8]) -> bool {
         return false;
     };
     let mut wide = bun_paths::w_path_buffer_pool::get();
-    let wide = bun_paths::string_paths::to_kernel32_path(&mut wide.0[..], path).as_ptr();
+    let wide = bun_paths::string_paths::to_kernel32_path(&mut wide.0[..], path);
     user.create(wide);
-    // SAFETY: `wide` is NUL-terminated.
-    let handle = unsafe {
-        win32::CreateFileW(
-            wide,
-            win32::FILE_LIST_DIRECTORY | win32::READ_CONTROL,
-            win32::FILE_SHARE_READ | win32::FILE_SHARE_WRITE,
-            null_mut(),
-            win32::OPEN_EXISTING,
-            win32::FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-            null_mut(),
-        )
-    };
-    if handle == win32::INVALID_HANDLE_VALUE {
+    let Ok(handle) = super::CreateFileW(
+        wide,
+        win32::FILE_LIST_DIRECTORY | win32::READ_CONTROL,
+        win32::FILE_SHARE_READ | win32::FILE_SHARE_WRITE,
+        win32::OPEN_EXISTING,
+        win32::FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+    ) else {
         return false;
-    }
-    let mut found: win32::BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
-    // SAFETY: `handle` is open and `found` is a valid out-param.
-    let is_read = unsafe { win32::GetFileInformationByHandle(handle, &mut found) };
-    let is_folder = is_read != 0
-        && found.dwFileAttributes
+    };
+    let is_folder = super::GetFileInformationByHandle(handle.as_raw_handle()).is_ok_and(|found| {
+        found.dwFileAttributes
             & (win32::FILE_ATTRIBUTE_DIRECTORY | win32::FILE_ATTRIBUTE_REPARSE_POINT)
-            == win32::FILE_ATTRIBUTE_DIRECTORY;
-    if !is_folder || !user.has_exclusive_access(handle) {
-        // SAFETY: `handle` is open and not used again.
-        unsafe { win32::CloseHandle(handle) };
+            == win32::FILE_ATTRIBUTE_DIRECTORY
+    });
+    if !is_folder || !user.has_exclusive_access(handle.as_raw_handle()) {
         return false;
     }
     // `handle` stays open on purpose: it does not share deletion, so nobody can put another folder in this one's place.
+    let _ = handle.into_raw_handle();
     verified_folders.push(path.to_vec());
     true
 }

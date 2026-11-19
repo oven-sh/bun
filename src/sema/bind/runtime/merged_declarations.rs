@@ -539,6 +539,12 @@ impl Declarations<'_, '_> {
             None if has_function => self.body_variable_symbols[&parameter],
             None => return,
         };
+        for &(decl, _) in &vars {
+            let decls = &mut self.bound.symbols[variable.idx()].decls;
+            if !decls.contains(&decl) {
+                decls.push(decl);
+            }
+        }
         let declarations = &mut self.bound.runtime.declarations;
         for (_, pat) in vars {
             declarations

@@ -13,7 +13,7 @@ use bun_bundler::Transpiler;
 use bun_core::{self, Global, Output};
 use bun_core::{ZBox, ZStr, strings};
 use bun_install::CommandLineArguments;
-use bun_install::dependency::VersionTag;
+use bun_install::dependency::{self, VersionTag};
 use bun_install::postinstall_optimizer;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
@@ -426,9 +426,9 @@ impl BunxCommand {
             use bun_paths::{platform::Auto, resolve_path::dirname, resolve_path::join_z};
             // `directories.bin` is relative to the package, not to `dir_fd`.
             let path = join_z::<Auto>(&[dirname::<Auto>(subpath_z.as_bytes()), dir_name]);
-            let bin_dir = bun_sys::openat(dir_fd, path, O::RDONLY | O::DIRECTORY, 0)?;
-            let _close_bin_dir = bun_sys::CloseOnDrop::new(bin_dir);
-            let mut iterator = bun_sys::dir_iterator::iterate(bin_dir);
+            let bin_dir = bun_sys::openat(dir_fd, path, O::RDONLY | O::DIRECTORY, 0)
+                .map(bun_sys::Dir::from_fd)?;
+            let mut iterator = bun_sys::dir_iterator::iterate(bin_dir.fd());
             let bin_in_dir = |name: &[u8]| package_bin(name, &[dir_name, b"/", name].concat());
             let mut first: Option<PackageBin> = None;
             while let Ok(Some(current)) = iterator.next() {
@@ -927,12 +927,8 @@ impl BunxCommand {
             b"tsc"
         } else if update_request.name == b"@anthropic-ai/claude-code" {
             b"claude"
-        } else if update_request.version.tag == VersionTag::Github {
-            update_request
-                .version
-                .github()
-                .repo
-                .slice(update_request.version_buf())
+        } else if let dependency::Value::Github(github) = &update_request.version.value {
+            github.repo.slice(update_request.version_buf())
         } else if let Some(index) = strings::last_index_of_char(update_request.name, b'/') {
             initial_bin_name_is_a_guess = true;
             &update_request.name[index + 1..]
@@ -941,7 +937,7 @@ impl BunxCommand {
         };
         bun_output::scoped_log!(bunx, "initial_bin_name: {}", BStr::new(initial_bin_name));
 
-        let mut this_transpiler_slot = ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
+        let mut this_transpiler_slot = None;
 
         let (this_transpiler, root_dir_info) = Run::configure_env_for_run(
             ctx,
@@ -1017,7 +1013,7 @@ impl BunxCommand {
             format!(
                 "{}@{}@{}",
                 BStr::new(initial_bin_name),
-                <&'static str>::from(update_request.version.tag),
+                <&'static str>::from(update_request.version.tag()),
                 hash(update_request.name).wrapping_add(hash(display_version)),
             )
         } else {
@@ -1073,7 +1069,6 @@ impl BunxCommand {
                 if !strings::eql_long(
                     strings::without_trailing_slash(segment),
                     strings::without_trailing_slash(&ignore_cwd),
-                    true,
                 ) {
                     if i > 0 {
                         new_path.push(DELIMITER);
@@ -1097,7 +1092,7 @@ impl BunxCommand {
         // An explicit dist-tag (`pkg@latest`, `pkg@next`) checks the registry on every run, except
         // with `--no-install`.
         let look_for_existing_bin =
-            opts.no_install || !is_versioned || update_request.version.tag != VersionTag::DistTag;
+            opts.no_install || !is_versioned || update_request.version.tag() != VersionTag::DistTag;
         let package_with_bin = opts.binary_name.is_none().then_some(result_package_name);
 
         let find_on_path = || {
@@ -1349,7 +1344,7 @@ impl BunxCommand {
             install_param.as_slice(),
             b"--no-summary",
         ];
-        if update_request.version.tag == VersionTag::DistTag || tree == Tree::Stale {
+        if update_request.version.tag() == VersionTag::DistTag || tree == Tree::Stale {
             // No manifest cache, so that @latest is fetched from the registry.
             args.push(b"--no-cache");
         }
@@ -1389,11 +1384,11 @@ impl BunxCommand {
             .map
             .put(b"BUN_INTERNAL_BUNX_HAS_COPY", has_copy)?;
 
-        let envp = env_loader.map.create_null_delimited_env_map()?;
+        let envp = env_loader.map.to_envp();
 
         let spawn_result = match proc_sync::spawn(&proc_sync::Options {
             argv: args.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
-            envp: Some(envp.as_ptr().cast::<*const ::core::ffi::c_char>()),
+            envp: Some(envp.as_list()),
             cwd: Box::<[u8]>::from(bunx_cache_dir),
             stderr: proc_sync::SyncStdio::Inherit,
             stdout: proc_sync::SyncStdio::Inherit,
@@ -1405,7 +1400,6 @@ impl BunxCommand {
                     bun_event_loop::MiniEventLoop::init_global(
                         // SAFETY: a reborrow through the live `env_loader`, not a second `env_mut()` aliasing it.
                         Some(unsafe { &mut *(env_loader as *mut _) }),
-                        None,
                     ),
                 ),
                 ..Default::default()

@@ -16,7 +16,6 @@ use crate::lower::{FileLowering, FunctionLowering};
 pub(in crate::lower) struct SelfTailLoop {
     header: BlockId,
     parameters: SmallVec<[(SymbolId, Atom); 4]>,
-    /// The calls that jump, sorted. The loop's variables are those that these change.
     calls: SmallVec<[ExprId; 4]>,
 }
 

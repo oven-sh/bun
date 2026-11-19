@@ -103,8 +103,6 @@ struct HttpContext {
     template<bool> friend struct TemplatedApp;
     template<bool> friend struct HttpResponse;
 private:
-    HttpContext() = default;
-
     /* Embedded list-head for accepted sockets. The vtable is `httpVTable` below;
      * SSL_CTX comes from the listener, not from here. */
     us_socket_group_t group{};
@@ -218,7 +216,7 @@ private:
          * onEnd() below decides whether to close right away (idle, or a
          * response the application is still producing) or to keep writing
          * response bytes already handed to uWS. Without this flag the loop
-         * (and openssl.c us_internal_ssl_on_end for TLS) force-closes the
+         * (and openssl.cpp us_internal_ssl_on_end for TLS) force-closes the
          * socket right after dispatching onEnd, discarding those bytes.
          * onEnd's defer and onWritable's close gate use hasFullyDrained(),
          * which accounts for the TLS ciphertext spill, so they are accurate
@@ -268,7 +266,8 @@ private:
                 httpContextData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
             }
             /* node:http: the body of a tunnel that started has had its last chunk from the parser. This close can come from inside that call. */
-            if(httpResponseData->inStream && (!IsNodeHttp || nodeHttpTunnelAfterBody)) {
+            /* Bun.serve ends the body from onAborted, once that is set. */
+            if(httpResponseData->inStream && (IsNodeHttp ? nodeHttpTunnelAfterBody : !httpResponseData->onAborted)) {
                 httpResponseData->inStream(reinterpret_cast<HttpResponse<SSL> *>(s), "", 0, true, httpResponseData->userData);
                 httpResponseData->inStream = nullptr;
             }
@@ -302,6 +301,8 @@ private:
             httpResponseData->onAborted((HttpResponse<SSL> *)s, httpResponseData->userData);
         }
 
+        /* A write from one of the callbacks corks again. */
+        ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
 
         /* Destruct the type onOpen<IsNodeHttp> constructed */
         if constexpr (IsNodeHttp) {
@@ -1172,19 +1173,15 @@ private:
 public:
     /* Construct a new HttpContext using specified loop. SSL_CTX is built and
      * owned by TemplatedApp; we only learn about it at listen() time. */
-    static HttpContext *create(Loop *loop, bool requestCert = false, bool rejectUnauthorized = false) {
-        HttpContext *httpContext = new HttpContext;
-        us_socket_group_init(&httpContext->group, (us_loop_t *) loop, &httpVTable<false>, httpContext);
+    HttpContext(Loop *loop, bool requestCert, bool rejectUnauthorized) {
+        us_socket_group_init(&group, (us_loop_t *) loop, &httpVTable<false>, this);
         if (requestCert && rejectUnauthorized) {
-            httpContext->data.flags.rejectUnauthorized = true;
+            data.flags.rejectUnauthorized = true;
         }
-        return httpContext;
     }
 
-    /* Destruct the HttpContext, it does not follow RAII */
-    void free() {
+    ~HttpContext() {
         us_socket_group_deinit(&group);
-        delete this;
     }
 
     void filter(MoveOnlyFunction<void(HttpResponse<SSL> *, int)> &&filterHandler) {

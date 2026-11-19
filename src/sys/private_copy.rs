@@ -1,37 +1,45 @@
 //! Maps a writable, copy-on-write copy of read-only bytes of this process's executable.
 
-use core::ffi::c_void;
+use crate::Mmap;
 
 /// Smaller files are copied.
 pub const MIN_MAPPED_BYTES: usize = 1 << 20;
 /// What an allocator gives a buffer. `Atomics` on a typed array over the bytes needs it.
 pub const ALIGNMENT: usize = 16;
 
+/// Readable and writable, and what is written stays in this process.
+pub struct PrivateCopy(Mmap);
+
+impl PrivateCopy {
+    /// As [`Mmap::into_raw`].
+    pub fn into_raw(self) -> core::ptr::NonNull<[u8]> {
+        self.0.into_raw()
+    }
+}
+
 /// `None` if the bytes have to be copied instead.
 #[cfg(target_os = "linux")]
-pub fn map(bytes: &[u8]) -> Option<core::ptr::NonNull<u8>> {
+pub fn map(bytes: &[u8]) -> Option<PrivateCopy> {
     use crate::{CloseOnDrop, O};
 
     // The writer aligns a file of `MIN_MAPPED_BYTES`. Another writer or an older layout may not have.
     let offset = offset_in_executable(bytes).filter(|it| it.is_multiple_of(ALIGNMENT))?;
-    let executable =
-        crate::open(bun_core::zstr!("/proc/self/exe"), O::RDONLY | O::CLOEXEC, 0).ok()?;
-    let _close = CloseOnDrop::new(executable);
-    let delta = offset % bun_alloc::page_size();
-    let base = crate::mmap(
-        core::ptr::null_mut(),
-        bytes.len() + delta,
+    let executable = crate::open(bun_core::zstr!("/proc/self/exe"), O::RDONLY | O::CLOEXEC, 0)
+        .map(CloseOnDrop::new)
+        .ok()?;
+    Mmap::new(
+        bytes.len(),
         libc::PROT_READ | libc::PROT_WRITE,
         libc::MAP_PRIVATE,
-        executable,
-        i64::try_from(offset - delta).ok()?,
+        executable.fd(),
+        i64::try_from(offset).ok()?,
     )
-    .ok()?;
-    core::ptr::NonNull::new(base.wrapping_add(delta))
+    .map(PrivateCopy)
+    .ok()
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn map(_bytes: &[u8]) -> Option<core::ptr::NonNull<u8>> {
+pub fn map(_bytes: &[u8]) -> Option<PrivateCopy> {
     None
 }
 
@@ -84,10 +92,4 @@ fn find_mapping_around(bytes: &[u8]) -> Option<Mapping> {
 #[cfg(target_os = "linux")]
 fn parse_hex(digits: &[u8]) -> Option<usize> {
     usize::from_str_radix(core::str::from_utf8(digits).ok()?, 16).ok()
-}
-
-/// `bytes` is what [`map`] returned for `len` bytes.
-pub extern "C" fn unmap(bytes: *mut c_void, len: *mut c_void) {
-    let delta = bytes.addr() % bun_alloc::page_size();
-    let _ = crate::munmap(bytes.cast::<u8>().wrapping_sub(delta), len.addr() + delta);
 }

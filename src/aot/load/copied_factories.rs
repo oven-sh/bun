@@ -4,11 +4,12 @@ use bun_core::StackCheck;
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{
     Binding, BindingInitializer, Bound, ClassOwner, CodeUnit, Decl, FnOwner, FunctionFlags, Parent,
-    ScopeId, SymbolId,
+    ScopeId, ScopeKind, SymbolId,
 };
+use bun_sema::fold::Decisions;
 use bun_sema::hir::{
     BinOp, CallId, Chain, ClassId, CopiedFactory, ExprId, ExprKind, File, FileBuilder, Flags,
-    FnBody, FnId, FnKind, MemberKey, PatKind, PropKey, PropKind, StmtId, StmtKind, UnOp,
+    FnBody, FnId, FnKind, MemberKey, NodeData, PatKind, PropKey, PropKind, StmtId, StmtKind, UnOp,
     end_of_expr,
 };
 use bun_sema::resolve::TreeChange;
@@ -39,11 +40,18 @@ struct CalledFactory {
     factory: FnId,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+struct CallScope {
+    innermost: ScopeId,
+    of_statement: ScopeId,
+}
+
 struct Finder<'a, 's> {
     hir: &'a File<'s>,
     bound: &'a Bound<'s>,
     atoms: &'a Interner<'s>,
     expressions: OnceCell<Vec<(u32, u32)>>,
+    appended: OnceCell<FxHashMap<(ScopeId, Atom), SmallVec<[SymbolId; 1]>>>,
 }
 
 impl Finder<'_, '_> {
@@ -392,35 +400,119 @@ impl Finder<'_, '_> {
         }
     }
 
+    fn find_last_declaration(&self, symbol: SymbolId) -> Option<FnId> {
+        let mut declarations = self.bound.symbol(symbol).decls.iter().rev();
+        declarations.find_map(|&declaration| match declaration {
+            Decl::Fn(function) if !matches!(self.hir[function].body, FnBody::None) => {
+                Some(function)
+            }
+            _ => None,
+        })
+    }
+
+    fn find_called_factory(&self, stored: &[FnId], call: ExprId) -> Option<FnId> {
+        let hir = self.hir;
+        let before = stored.partition_point(|&factory| hir[factory].start < hir[call].pos);
+        let called = stored[..before].last().or_else(|| stored.last());
+        called.copied()
+    }
+
+    fn find_named_symbols(&self) -> FxHashSet<SymbolId> {
+        let (hir, bound) = (self.hir, self.bound);
+        let expressions = (0..hir.exprs.len() as u32).map(ExprId);
+        let names = expressions.filter(|&it| matches!(hir[it].kind, ExprKind::Ident(_)));
+        names
+            .filter_map(|name| match bound.binding(name) {
+                Binding::Symbol(symbol) => Some(symbol),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn find_only_name(&self, function: FnId) -> Option<SymbolId> {
+        let (hir, bound) = (self.hir, self.bound);
+        let symbol = match bound.fns[function.idx()].owner {
+            FnOwner::Stmt(_) => bound.declared_symbol(Decl::Fn(function)).some()?,
+            FnOwner::Expr(expression) => {
+                let value = bound.outermost_type_assertion(hir, expression);
+                let Parent::VarInit(declaration) = bound.parent_of_expr(value) else {
+                    return None;
+                };
+                let pattern = hir[declaration].pat;
+                if !matches!(hir[pattern].kind, PatKind::Ident(_)) {
+                    return None;
+                }
+                bound.declared_symbol(Decl::Var(pattern)).some()?
+            }
+            FnOwner::None | FnOwner::Member(_) | FnOwner::Type(_) => return None,
+        };
+        let declared = bound.symbol(symbol);
+        let annex_b_functions = bound.runtime.annex_b_functions();
+        let has_other_names = declared.parent.is_some()
+            || declared.export_symbol.is_some()
+            || bound.is_visible_to_eval(symbol)
+            || bound.is_named_by_export(symbol)
+            || bound.runtime.is_named_implicitly(symbol)
+            || annex_b_functions.iter().any(|it| it.function == function);
+        (!has_other_names).then_some(symbol)
+    }
+
+    fn is_in_unnamed_function(&self, factory: FnId, named: &FxHashSet<SymbolId>) -> bool {
+        let bound = self.bound;
+        let mut inner = factory;
+        loop {
+            let around = bound.scopes[bound.fns[inner.idx()].scope.idx()].parent;
+            let CodeUnit::Function(outer) = bound.code_unit(around) else {
+                return false;
+            };
+            if (self.find_only_name(outer)).is_some_and(|symbol| !named.contains(&symbol)) {
+                return true;
+            }
+            inner = outer;
+        }
+    }
+
     fn find_place_of_factory(&self, factory: FnId) -> Option<Place> {
         match self.bound.fns[factory.idx()].owner {
-            FnOwner::Stmt(_) => Some(Place {
-                root: self.bound.declared_symbol(Decl::Fn(factory)).some()?,
-                names: SmallVec::new(),
-            }),
+            FnOwner::Stmt(_) => {
+                let root = self.bound.declared_symbol(Decl::Fn(factory)).some()?;
+                let is_last = self.find_last_declaration(root) == Some(factory);
+                is_last.then(|| Place {
+                    root,
+                    names: SmallVec::new(),
+                })
+            }
             FnOwner::Expr(expression) => self.find_holder(expression),
             FnOwner::None | FnOwner::Member(_) | FnOwner::Type(_) => None,
         }
     }
 
-    fn find_scope_evaluated_once(&self, expression: ExprId) -> Option<ScopeId> {
+    fn find_scope_evaluated_once(&self, expression: ExprId) -> Option<CallScope> {
         enum Node {
             Expression(ExprId),
             Statement(StmtId),
         }
         let (hir, bound) = (self.hir, self.bound);
         let mut innermost: Option<ScopeId> = None;
+        let mut of_statement: Option<ScopeId> = None;
         let mut node = Node::Expression(expression);
         loop {
             let parent = match node {
                 Node::Expression(expression) => bound.parent_of_expr(expression),
                 Node::Statement(statement) => {
-                    innermost.get_or_insert_with(|| bound.scope_of_stmt(statement));
+                    let scope = bound.scope_of_stmt(statement);
+                    innermost.get_or_insert(scope);
+                    of_statement.get_or_insert(scope);
                     bound.parent_of_stmt(statement)
                 }
             };
             node = match parent {
-                Parent::File => return innermost,
+                Parent::File => {
+                    return Some(CallScope {
+                        innermost: innermost?,
+                        of_statement: of_statement?,
+                    });
+                }
                 Parent::Expr(parent) => Node::Expression(parent.some()?),
                 Parent::VarInit(declaration) => {
                     Node::Statement(bound.var_stmt[declaration.idx()].some()?)
@@ -428,10 +520,13 @@ impl Finder<'_, '_> {
                 Parent::Prop(property) | Parent::PropKey(property) => {
                     Node::Expression(bound.prop_owner[property.idx()].some()?)
                 }
-                Parent::ClassExtends(class) => match bound.class_owner[class.idx()] {
-                    ClassOwner::Stmt(statement) => Node::Statement(statement.some()?),
-                    ClassOwner::Expr(expression) => Node::Expression(expression),
-                },
+                Parent::ClassExtends(class) => {
+                    innermost.get_or_insert_with(|| bound.class_scope[class.idx()]);
+                    match bound.class_owner[class.idx()] {
+                        ClassOwner::Stmt(statement) => Node::Statement(statement.some()?),
+                        ClassOwner::Expr(expression) => Node::Expression(expression),
+                    }
+                }
                 Parent::Stmt(statement) => match hir[statement.some()?].kind {
                     StmtKind::For { .. }
                     | StmtKind::ForIn { .. }
@@ -451,6 +546,7 @@ impl Finder<'_, '_> {
                     let FnOwner::Expr(callee) = bound.fns[function.idx()].owner else {
                         return None;
                     };
+                    innermost.get_or_insert_with(|| bound.fns[function.idx()].scope);
                     Node::Expression(callee)
                 }
                 _ => return None,
@@ -498,14 +594,50 @@ impl Finder<'_, '_> {
         places
     }
 
-    fn can_be_copied_into(&self, factory: FnId, scope: ScopeId) -> bool {
+    fn find_texts_with_own_this(
+        &self,
+        factory: FnId,
+        start: u32,
+        end: u32,
+    ) -> SmallVec<[(u32, u32); 8]> {
+        let (hir, bound) = (self.hir, self.bound);
+        let is_inside = |pos: u32| (start..end).contains(&pos);
+        let functions = hir.fns.iter().enumerate().filter_map(|(index, function)| {
+            let is_other = index != factory.idx() && function.kind != FnKind::Arrow;
+            if !is_other || !is_inside(function.start) {
+                return None;
+            }
+            let (start, end) = find_text(hir, bound, FnId(index as u32))?;
+            let key = match bound.fns[index].owner {
+                FnOwner::Member(member) => hir[member].key,
+                FnOwner::Expr(expression) => match bound.parent_of_expr(expression) {
+                    Parent::Prop(property) => hir[property].key,
+                    _ => PropKey::None,
+                },
+                FnOwner::None | FnOwner::Stmt(_) | FnOwner::Type(_) => PropKey::None,
+            };
+            match key {
+                PropKey::Computed(key) => Some((start.max(end_of_expr(hir, key)), end)),
+                PropKey::None | PropKey::Name(_) | PropKey::Private(_) => Some((start, end)),
+            }
+        });
+        let fields = hir.members.iter().filter_map(|member| {
+            let value = member.init.some()?;
+            let start = hir[value].pos;
+            is_inside(start).then(|| (start, end_of_expr(hir, value)))
+        });
+        functions.chain(fields).collect()
+    }
+
+    fn can_be_copied_into(&self, factory: FnId, call: CallScope) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let Some((start, end)) = find_text(hir, bound, factory) else {
             return false;
         };
+        let scope = call.innermost;
         let own_scope = bound.fns[factory.idx()].scope;
         let is_inside = |pos: u32| (start..end).contains(&pos);
-        let is_strict_around = bound.is_strict_scope(scope);
+        let is_strict_around = bound.is_strict_scope(call.of_statement);
         if hir[factory].is_strict != is_strict_around
             || (hir[factory].kind != FnKind::Arrow && bound.finds_itself(hir, factory))
             || hir.bigint_names.iter().any(|it| is_inside(it.0))
@@ -519,62 +651,133 @@ impl Finder<'_, '_> {
                 .known_evaluations
                 .iter()
                 .any(|it| is_inside(hir[hir[it.call].callee].pos))
+            || self.has_names_of_evals(own_scope, scope)
         {
             return false;
         }
-        let functions = hir.fns.iter().enumerate().filter_map(|(index, function)| {
-            let is_other = index != factory.idx() && function.kind != FnKind::Arrow;
-            (is_other && is_inside(function.start))
-                .then(|| find_text(hir, bound, FnId(index as u32)))?
-        });
-        let classes = hir.classes.iter().enumerate().filter_map(|(index, class)| {
-            let end = match bound.class_owner[index] {
-                ClassOwner::Expr(expression) => hir[expression].end,
-                ClassOwner::Stmt(statement) => hir[statement.some()?].loc.end,
-            };
-            is_inside(class.start).then_some((class.start, end))
-        });
-        let with_own_this: SmallVec<[(u32, u32); 8]> = functions.chain(classes).collect();
+        let with_own_this = self.find_texts_with_own_this(factory, start, end);
         let is_lexical = |pos: u32| !with_own_this.iter().any(|it| (it.0..it.1).contains(&pos));
         let is_arrow = hir[factory].kind == FnKind::Arrow;
         for id in self.expressions_within(start, end) {
             let expression = &hir[id];
-            let can_be_copied = match expression.kind {
+            let means_the_same = match expression.kind {
                 ExprKind::Ident(name) => match bound.binding(id) {
+                    _ if (bound.dynamic_lookup_scope(NodeData::Expr(id)))
+                        .is_some_and(|hiding| !self.is_inside(scope, hiding)) =>
+                    {
+                        false
+                    }
                     Binding::Symbol(symbol) => {
-                        let declaring = bound.symbol_scope(symbol);
-                        self.is_inside(declaring, own_scope)
-                            || self.is_found_from(scope, name, Some(declaring))
+                        self.is_inside(bound.symbol_scope(symbol), own_scope)
+                            || self.is_found_from(scope, name, Some(symbol))
                     }
                     Binding::Free => self.is_found_from(scope, name, None),
-                    Binding::Arguments(CodeUnit::Function(function)) => function != factory,
-                    Binding::Arguments(_) | Binding::CommonJs(_) => false,
+                    Binding::Arguments(CodeUnit::Function(function)) => {
+                        function != factory && is_inside(hir[function].start)
+                    }
+                    Binding::Arguments(CodeUnit::File | CodeUnit::FieldInitializer(_))
+                    | Binding::CommonJs(_) => false,
                 },
                 ExprKind::This | ExprKind::NewTarget(_) => !is_arrow || !is_lexical(expression.pos),
                 ExprKind::Super => !is_lexical(expression.pos),
+                ExprKind::PrivateIdentifier(_) => self.is_private_name_declared_in(id, start, end),
+                ExprKind::Dot { .. } => match hir.member_key(id) {
+                    Some((_, MemberKey::PrivateName(_))) => {
+                        self.is_private_name_declared_in(id, start, end)
+                    }
+                    _ => true,
+                },
+                ExprKind::Await(_) | ExprKind::Yield { .. } => true,
+                ExprKind::Missing
+                | ExprKind::Null
+                | ExprKind::True
+                | ExprKind::False
+                | ExprKind::Number(_)
+                | ExprKind::String(_)
+                | ExprKind::BigInt(_)
+                | ExprKind::Regex { .. }
+                | ExprKind::Template { .. }
+                | ExprKind::Array(_)
+                | ExprKind::Object(_)
+                | ExprKind::Fn(_)
+                | ExprKind::Class(_)
+                | ExprKind::Index { .. }
+                | ExprKind::Call(_)
+                | ExprKind::New(_)
+                | ExprKind::Unary { .. }
+                | ExprKind::Binary { .. }
+                | ExprKind::Assign { .. }
+                | ExprKind::Cond { .. }
+                | ExprKind::Spread(_)
+                | ExprKind::As { .. }
+                | ExprKind::Satisfies { .. }
+                | ExprKind::AsConst(_)
+                | ExprKind::NonNull(_)
+                | ExprKind::Instantiation { .. } => true,
                 ExprKind::TaggedTemplate(_)
                 | ExprKind::Jsx(_)
                 | ExprKind::JsxText(_)
                 | ExprKind::ImportCall { .. }
                 | ExprKind::ImportMeta => false,
-                _ => true,
             };
-            if !can_be_copied {
+            if !means_the_same {
                 return false;
             }
         }
         true
     }
 
-    fn is_found_from(&self, scope: ScopeId, name: Atom, declaring: Option<ScopeId>) -> bool {
+    fn is_private_name_declared_in(&self, reference: ExprId, start: u32, end: u32) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let Some(name) = bound.private_name_of_reference(reference) else {
+            return false;
+        };
+        (start..end).contains(&hir[bound.private_name(name).class].start)
+    }
+
+    fn has_names_of_evals(&self, own_scope: ScopeId, scope: ScopeId) -> bool {
         let bound = self.bound;
-        for around in self.scopes_around(scope) {
-            if Some(around) == declaring {
-                return true;
+        let mut around_call = self.scopes_around(scope);
+        around_call.any(|around| match bound.scopes[around.idx()].kind {
+            ScopeKind::Fn(function) => {
+                let flags = bound.function_flags(function);
+                flags.contains(FunctionFlags::HAS_DIRECT_EVAL)
+                    && !bound.is_strict_scope(around)
+                    && !self.is_inside(own_scope, around)
             }
-            if bound
-                .lookup(bound.scopes[around.idx()].locals, name)
-                .is_some()
+            _ => false,
+        })
+    }
+
+    fn find_appended(&self, scope: ScopeId, name: Atom) -> &[SymbolId] {
+        let bound = self.bound;
+        let all = self.appended.get_or_init(|| {
+            let mut all: FxHashMap<(ScopeId, Atom), SmallVec<[SymbolId; 1]>> = FxHashMap::default();
+            for (index, symbol) in bound.symbols.iter().enumerate() {
+                let id = SymbolId(index as u32);
+                if bound.is_appended_symbol(id) {
+                    all.entry((bound.symbol_scope(id), symbol.name))
+                        .or_default()
+                        .push(id);
+                }
+            }
+            all
+        });
+        all.get(&(scope, name)).map_or(&[][..], |it| &it[..])
+    }
+
+    fn is_found_from(&self, scope: ScopeId, name: Atom, symbol: Option<SymbolId>) -> bool {
+        let bound = self.bound;
+        let declaring = symbol.map(|it| bound.symbol_scope(it));
+        for around in self.scopes_around(scope) {
+            let appended = self.find_appended(around, name);
+            if Some(around) == declaring {
+                return appended.is_empty() || symbol.is_some_and(|it| appended.contains(&it));
+            }
+            if !appended.is_empty()
+                || bound
+                    .lookup(bound.scopes[around.idx()].locals, name)
+                    .is_some()
             {
                 return false;
             }
@@ -597,33 +800,43 @@ fn find_called_factories<'s>(
     atoms: &Interner<'s>,
     hir: &File<'s>,
     bound: &Bound<'s>,
+    decisions: &Decisions<'s>,
 ) -> Vec<(CalledFactory, FxHashMap<ExprId, ExprId>)> {
     let finder = Finder {
         hir,
         bound,
         atoms,
         expressions: OnceCell::new(),
+        appended: OnceCell::new(),
     };
-    let mut factories: FxHashMap<Place, FnId> = FxHashMap::default();
+    let mut factories: FxHashMap<Place, SmallVec<[FnId; 1]>> = FxHashMap::default();
     let mut created: FxHashMap<FnId, Created> = FxHashMap::default();
     for function in (0..hir.fns.len() as u32).map(FnId) {
-        if let Some(it) = finder.find_created(function)
+        if !decisions.is_dead_function(function)
+            && let Some(it) = finder.find_created(function)
             && let Some(place) = finder.find_place_of_factory(function)
         {
-            factories.insert(place, function);
+            factories.entry(place).or_default().push(function);
             created.insert(function, it);
         }
+    }
+    let mut named: Option<FxHashSet<SymbolId>> = None;
+    for stored in factories.values_mut().filter(|stored| stored.len() > 1) {
+        let named = named.get_or_insert_with(|| finder.find_named_symbols());
+        stored.retain(|&mut factory| !finder.is_in_unnamed_function(factory, named));
+        stored.sort_unstable_by_key(|&factory| hir[factory].start);
     }
     if factories.is_empty() {
         return Vec::new();
     }
-    let mut called: Vec<(CalledFactory, ScopeId)> = Vec::new();
+    let mut called: Vec<(CalledFactory, CallScope)> = Vec::new();
     for (index, expression) in hir.exprs.iter().enumerate() {
         if let ExprKind::Call(call) = expression.kind
             && hir[call].chain == Chain::No
             && let Some(place) = finder.find_place(hir[call].callee)
-            && let Some(&factory) = factories.get(&place)
+            && let Some(stored) = factories.get(&place)
             && let sequence = ExprId(index as u32)
+            && let Some(factory) = finder.find_called_factory(stored, sequence)
             && let Some(scope) = finder.find_scope_evaluated_once(sequence)
         {
             let called_factory = CalledFactory {
@@ -683,14 +896,14 @@ fn find_called_factories<'s>(
                 .any(|&read| (start..end).contains(&hir[read].pos))
         })
     };
-    let mut can_be_copied: FxHashMap<(FnId, ScopeId), bool> = FxHashMap::default();
+    let mut can_be_copied: FxHashMap<(FnId, CallScope), bool> = FxHashMap::default();
     called.retain(|(it, scope)| {
         (calls[&it.factory] > 1 || is_only_constructor(it) || is_passed_literal(it))
             && *can_be_copied
                 .entry((it.factory, *scope))
                 .or_insert_with(|| finder.can_be_copied_into(it.factory, *scope))
     });
-    let with_literals = |(it, _): (CalledFactory, ScopeId)| {
+    let with_literals = |(it, _): (CalledFactory, CallScope)| {
         let literals = finder.find_literals(&it);
         (it, literals)
     };
@@ -702,6 +915,7 @@ pub(crate) fn copy_factories<'s>(
     atoms: &Interner<'s>,
     hir: &mut File<'s>,
     bound: &Bound<'s>,
+    decisions: &Decisions<'s>,
 ) -> TreeChange {
     if !hir.copied_factories.is_empty()
         || hir.has_errors
@@ -711,7 +925,7 @@ pub(crate) fn copy_factories<'s>(
     {
         return TreeChange::Unchanged;
     }
-    let called = find_called_factories(atoms, hir, bound);
+    let called = find_called_factories(atoms, hir, bound, decisions);
     if called.is_empty() {
         return TreeChange::Unchanged;
     }

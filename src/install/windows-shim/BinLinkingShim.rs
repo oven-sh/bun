@@ -10,15 +10,15 @@
 //! [WSTR:program][u16:0][WSTR:args][u32:bin_path_byte_len][u32:arg_byte_len]
 //! - args always ends with a trailing space
 //!
-//! See `bun_shim_impl.rs` for more details on how this file is consumed.
+//! See `command_line.rs` and `bun_shim_impl.rs` for more details on how this file is consumed.
 //!
 //! ## `shim_standalone` feature
 //!
 //! This file is compiled by *two* crates: `bun_install` (the encoder/host —
-//! feature unset) and `bun_shim_impl` (the standalone PE — feature set). The
+//! feature unset) and `bun_shim_impl` (feature set, but for `tests.rs`). The
 //! standalone bin only needs `Flags`/`VersionFlag` for decoding, and must NOT
 //! see `EMBEDDED_EXECUTABLE_DATA` (it would `include_bytes!` its own output).
-//! Everything host-side is gated `#[cfg(not(feature = "shim_standalone"))]`.
+//! Everything host-side is gated `#[cfg(all(windows, not(feature = "shim_standalone")))]`.
 
 /// Random numbers are chosen for validation purposes
 /// These arbitrary numbers will probably not show up in the other fields.
@@ -127,10 +127,10 @@ const _: () = assert!(Flags::new(false, false, false, true, VersionFlag::V5).bit
 // shim crate `include_bytes!` its own output. Gate via inner module +
 // `pub use` so one `#[cfg]` covers the lot and visibility is preserved.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(not(feature = "shim_standalone"))]
+#[cfg(all(windows, not(feature = "shim_standalone")))]
 pub use host::*;
 
-#[cfg(not(feature = "shim_standalone"))]
+#[cfg(all(windows, not(feature = "shim_standalone")))]
 mod host {
     use super::{Flags, VersionFlag};
 

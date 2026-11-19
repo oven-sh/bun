@@ -15,7 +15,7 @@ use bun_paths::{self as path, AbsPath, SEP};
 use bun_semver::{ExternalString, String};
 #[cfg(not(windows))]
 use bun_sys::Mode;
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys::{self as sys, Fd};
 
 use crate::PackageID;
 use crate::bun_json::{Expr, ExprData};
@@ -557,7 +557,7 @@ pub(crate) struct NamesIterator<'a> {
     pub(crate) bin: Bin,
     pub(crate) i: usize,
     pub(crate) done: bool,
-    pub(crate) dir_iterator: Option<sys::dir_iterator::WrappedIterator>,
+    pub(crate) dir_iterator: Option<sys::dir_iterator::OwnedIterator>,
     pub(crate) package_name: String,
     /// Borrowed view of the destination `node_modules` directory fd; the
     /// caller owns the underlying `Dir`. Default is `Fd::INVALID`, which
@@ -586,9 +586,8 @@ impl<'a> NamesIterator<'a> {
             let joined = resolve_path::join_string_buf::<PlatformAuto>(&mut self.buf[..], &parts);
             let child_dir = sys::Dir::borrow(&dir)
                 .open_at(joined)
-                .map_err(Error::from)?
-                .into_raw();
-            self.dir_iterator = Some(sys::iterate_dir(child_dir));
+                .map_err(Error::from)?;
+            self.dir_iterator = Some(sys::dir_iterator::iterate_owned(child_dir));
         }
 
         let iter = self.dir_iterator.as_mut().unwrap();
@@ -601,8 +600,7 @@ impl<'a> NamesIterator<'a> {
             return Ok(Some(strings::copy(&mut self.buf[..], name)));
         }
         self.done = true;
-        let dir = self.dir_iterator.take().unwrap().dir();
-        dir.close();
+        self.dir_iterator = None;
         Ok(None)
     }
 
@@ -681,7 +679,7 @@ impl<'a> LinkOrder<'a> {
     /// Compares by package, because a hoisted package keeps the id of the first dependency that
     /// reached it.
     pub fn direct_packages(lockfile: &Lockfile) -> Result<DynamicBitSet, AllocError> {
-        let pkgs = lockfile.packages.slice();
+        let pkgs = &lockfile.packages;
         let mut direct = DynamicBitSet::init_empty(pkgs.len())?;
         for ((resolution, dependencies), resolutions) in pkgs
             .items_resolution()
@@ -779,6 +777,10 @@ pub fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
     {
         return true;
     }
+    // Normalizing can make any component the first.
+    if cfg!(windows) && strings::contains_char(target, b':') {
+        return true;
+    }
     path_climbs_out(target)
 }
 
@@ -820,19 +822,12 @@ fn bin_target_needs_resolved_containment_check(target: &[u8]) -> bool {
 pub struct Linker<'a> {
     pub bin: Bin,
 
-    /// Usually will be the same as `node_modules_path`.
-    /// Used to support native bin linking.
-    ///
-    /// This intentionally may alias `node_modules_path` (the common
-    /// case). A `&'a AbsPath` would
-    /// conflict with the `&'a mut AbsPath` borrow on `node_modules_path`, so
-    /// keep it as a raw pointer; the only read site dereferences it under a
-    /// SAFETY note in `build_target_package_dir`.
-    pub target_node_modules_path: *const AbsPath,
+    /// The folder that has `target_package_name` in it. `None` means `node_modules_path`.
+    pub target_node_modules_path: Option<&'a AbsPath>,
 
     /// Usually will be the same as `package_name`.
     /// Used to support native bin linking.
-    pub target_package_name: strings::StringOrTinyString,
+    pub target_package_name: &'a [u8],
 
     // Hash map of seen destination paths for this `node_modules/.bin` folder. PackageInstaller will reset it before
     // linking each tree.
@@ -841,7 +836,7 @@ pub struct Linker<'a> {
     pub node_modules_path: &'a mut AbsPath,
 
     /// Used for generating relative paths
-    pub package_name: strings::StringOrTinyString,
+    pub package_name: &'a [u8],
 
     pub global_bin_path: &'a ZStr,
 
@@ -849,7 +844,6 @@ pub struct Linker<'a> {
     pub extern_string_buf: &'a [ExternalString],
 
     pub abs_target_buf: &'a mut [u8],
-    pub abs_dest_buf: &'a mut [u8],
     pub rel_buf: &'a mut [u8],
 
     /// Whether `node_modules_path` is a symlink (see `LinkedNodeModules`). `None` means not checked
@@ -1413,13 +1407,10 @@ impl<'a> Linker<'a> {
 
     #[cfg(not(windows))]
     fn resolved_target_parent_escapes_package_dir(&self, abs_target: &ZStr) -> bool {
-        // SAFETY: `target_node_modules_path` is set at construction to either
-        // a caller-owned `AbsPath` or the same buffer as `node_modules_path`;
-        // both outlive `self` and are not mutated for the duration of this
-        // read.
+        let node_modules_path = (self.target_node_modules_path).unwrap_or(self.node_modules_path);
         let dest_dir_without_trailing_slash =
-            strings::without_trailing_slash(unsafe { (*self.target_node_modules_path).slice() });
-        let package_name = self.target_package_name.slice();
+            strings::without_trailing_slash(node_modules_path.slice());
+        let package_name = self.target_package_name;
 
         let mut package_dir_buf = path::path_buffer_pool::get();
         let buf = package_dir_buf.as_mut_slice();
@@ -1434,8 +1425,7 @@ impl<'a> Linker<'a> {
         off += 1;
         buf[off..off + package_name.len()].copy_from_slice(package_name);
         off += package_name.len();
-        buf[off] = 0;
-        let package_dir = ZStr::from_buf(&buf[..], off);
+        let package_dir = ZStr::nul_terminate(buf, off);
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
@@ -1487,19 +1477,14 @@ impl<'a> Linker<'a> {
         if rel_parent.is_empty() {
             return Some(false);
         }
-        let package_dir_fd = match sys::open_dir_absolute(package_dir_bytes) {
-            Ok(fd) => fd,
-            Err(_) => return Some(true),
+        let Ok(dir) = sys::open_dir_absolute(package_dir_bytes).map(sys::Dir::from_fd) else {
+            return Some(true);
         };
         let mut rel_buf = path::path_buffer_pool::get();
         let rel_z = resolve_path::z(rel_parent, &mut *rel_buf);
-        let opened = sys::openat2_beneath(package_dir_fd, rel_z, sys::O::PATH | sys::O::CLOEXEC, 0);
-        let _ = sys::close(package_dir_fd);
-        match opened {
-            Ok(fd) => {
-                let _ = sys::close(fd);
-                Some(false)
-            }
+        let opened = sys::openat2_beneath(dir.fd(), rel_z, sys::O::PATH | sys::O::CLOEXEC, 0);
+        match opened.map(sys::Dir::from_fd) {
+            Ok(_) => Some(false),
             Err(err) => match err.get_errno() {
                 sys::Errno::ENOSYS
                 | sys::Errno::EPERM
@@ -1514,7 +1499,7 @@ impl<'a> Linker<'a> {
     /// target into a different package than the one that declared the
     /// `bin` field (e.g. `@anthropic-ai/claude-code` -> `@anthropic-ai/claude-code-linux-x64`).
     fn is_native_binlink_redirect(&self) -> bool {
-        !strings::eql(self.target_package_name.slice(), self.package_name.slice())
+        !strings::eql(self.target_package_name, self.package_name)
     }
 
     /// Resolve the absolute target for a bin entry inside `package_dir`.
@@ -1574,8 +1559,8 @@ impl<'a> Linker<'a> {
             }
             let found = join_z_checked::<PlatformAuto>(package_dir, buf, &[candidate])
                 .filter(|abs| sys::exists_z(abs));
-            if let Some(len) = found.map(ZStr::len) {
-                return Some(ZStr::from_buf(buf, len));
+            if found.is_some() {
+                return found;
             }
         }
 
@@ -1586,14 +1571,11 @@ impl<'a> Linker<'a> {
     }
 
     /// Length of `<node_modules>/<package>/` in `abs_target_buf`, `None` if a NUL no longer fits.
-    pub(crate) fn build_target_package_dir(&mut self) -> Option<usize> {
-        // SAFETY: `target_node_modules_path` is set at construction to either
-        // a caller-owned `AbsPath` or the same buffer as `node_modules_path`;
-        // both outlive `self` and are not mutated for the duration of this
-        // read.
+    fn build_target_package_dir(&mut self) -> Option<usize> {
+        let node_modules_path = (self.target_node_modules_path).unwrap_or(self.node_modules_path);
         let dest_dir_without_trailing_slash =
-            strings::without_trailing_slash(unsafe { (*self.target_node_modules_path).slice() });
-        let package_name = self.target_package_name.slice();
+            strings::without_trailing_slash(node_modules_path.slice());
+        let package_name = self.target_package_name;
 
         let buf = &mut *self.abs_target_buf;
         if dest_dir_without_trailing_slash.len() + 1 + package_name.len() + 1 >= buf.len() {
@@ -1617,8 +1599,8 @@ impl<'a> Linker<'a> {
         Some(off)
     }
 
-    /// Length of the `.bin/` (or global bin) dir in `abs_dest_buf`, `None` if a NUL no longer fits.
-    pub(crate) fn build_destination_dir(&mut self, global: bool) -> Option<usize> {
+    /// Length of the `.bin/` (or global bin) dir in `buf`, `None` if a NUL no longer fits.
+    fn build_destination_dir(&self, global: bool, buf: &mut [u8]) -> Option<usize> {
         let dest_dir_without_trailing_slash = if global {
             strings::without_trailing_slash(self.global_bin_path.as_bytes())
         } else {
@@ -1626,7 +1608,6 @@ impl<'a> Linker<'a> {
         };
         let suffix_len = if global { b"/".len() } else { b"/.bin/".len() };
 
-        let buf = &mut *self.abs_dest_buf;
         if dest_dir_without_trailing_slash.len() + suffix_len >= buf.len() {
             return None;
         }
@@ -1647,27 +1628,28 @@ impl<'a> Linker<'a> {
         Some(off)
     }
 
-    /// `abs_dest_buf` starts with the `dir_len` bytes of the bin directory. If the name doesn't
-    /// fit, sets `err` and returns `None`.
-    fn append_dest<'b>(&mut self, dir_len: usize, name: &[u8]) -> Option<&'b ZStr> {
+    /// `buf` starts with the `dir_len` bytes of the bin directory. Sets `err` if `name` doesn't fit.
+    fn append_dest<'b>(
+        &mut self,
+        buf: &'b mut [u8],
+        dir_len: usize,
+        name: &[u8],
+    ) -> Option<&'b ZStr> {
         let len = dir_len + name.len();
-        if len >= self.abs_dest_buf.len() {
+        if len >= buf.len() {
             self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
             return None;
         }
-        self.abs_dest_buf[dir_len..len].copy_from_slice(name);
-        self.abs_dest_buf[len] = 0;
-        // SAFETY: the NUL was written above. Detached from `self` for `link_bin_or_create_shim`,
-        // which never touches `abs_dest_buf`; callers are done with it before the next call.
-        Some(unsafe { ZStr::from_raw(self.abs_dest_buf.as_ptr(), len) })
+        buf[dir_len..len].copy_from_slice(name);
+        Some(ZStr::nul_terminate(buf, len))
     }
 
     // target: what the symlink points to
     // destination: where the symlink exists on disk
-    pub fn link(&mut self, global: bool) {
+    pub fn link(&mut self, global: bool, abs_dest_buf: &mut [u8]) {
         let (Some(package_dir_len), Some(dest_dir_len)) = (
             self.build_target_package_dir(),
-            self.build_destination_dir(global),
+            self.build_destination_dir(global, abs_dest_buf),
         ) else {
             self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
             return;
@@ -1687,7 +1669,7 @@ impl<'a> Linker<'a> {
             if name.is_empty() || target.is_empty() || bin_target_escapes_package_dir(target) {
                 return true;
             }
-            let Some(abs_dest) = this.append_dest(dest_dir_len, name) else {
+            let Some(abs_dest) = this.append_dest(abs_dest_buf, dest_dir_len, name) else {
                 return false;
             };
             let Some(abs_target) = Self::resolve_bin_target(
@@ -1712,8 +1694,7 @@ impl<'a> Linker<'a> {
         match bin.tag {
             Tag::None => {}
             Tag::File => {
-                let package_name = self.package_name;
-                let name = Dependency::unscoped_package_name(package_name.slice());
+                let name = Dependency::unscoped_package_name(self.package_name);
                 link_named(self, name, bin.file().slice(string_buf));
             }
             Tag::NamedFile => {
@@ -1772,7 +1753,8 @@ impl<'a> Linker<'a> {
                         self.skipped_due_to_missing_bin = true;
                         continue;
                     };
-                    let Some(abs_dest) = self.append_dest(dest_dir_len, entry_name) else {
+                    let Some(abs_dest) = self.append_dest(abs_dest_buf, dest_dir_len, entry_name)
+                    else {
                         return;
                     };
                     self.link_bin_or_create_shim(abs_target, abs_dest, global, true);
@@ -1781,10 +1763,10 @@ impl<'a> Linker<'a> {
         }
     }
 
-    pub fn unlink(&mut self, global: bool) {
+    pub fn unlink(&mut self, global: bool, abs_dest_buf: &mut [u8]) {
         let (Some(package_dir_len), Some(dest_dir_len)) = (
             self.build_target_package_dir(),
-            self.build_destination_dir(global),
+            self.build_destination_dir(global, abs_dest_buf),
         ) else {
             self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
             return;
@@ -1795,8 +1777,8 @@ impl<'a> Linker<'a> {
         debug_assert!(bin.tag != Tag::None);
 
         // Returns false if the name doesn't fit.
-        let unlink_name = |this: &mut Self, name: &[u8]| -> bool {
-            let Some(abs_dest) = this.append_dest(dest_dir_len, name) else {
+        let mut unlink_name = |this: &mut Self, name: &[u8]| -> bool {
+            let Some(abs_dest) = this.append_dest(abs_dest_buf, dest_dir_len, name) else {
                 return false;
             };
             let package_dir = &this.abs_target_buf[0..package_dir_len];
@@ -1807,11 +1789,7 @@ impl<'a> Linker<'a> {
         match bin.tag {
             Tag::None => {}
             Tag::File => {
-                let package_name = self.package_name;
-                unlink_name(
-                    self,
-                    Dependency::unscoped_package_name(package_name.slice()),
-                );
+                unlink_name(self, Dependency::unscoped_package_name(self.package_name));
             }
             Tag::NamedFile => {
                 let name = normalized_bin_name(bin.named_file()[0].slice(string_buf));
@@ -1867,7 +1845,7 @@ impl<'a> Linker<'a> {
 /// The installers only link the bins of packages that the command names or installs. This links
 /// the bins of the remaining global packages, skipping any name that is already taken.
 pub(crate) fn link_free_global_bins(lockfile: &Lockfile, global_bin_path: &ZStr) {
-    let pkgs = lockfile.packages.slice();
+    let pkgs = &lockfile.packages;
     let (Some(dependencies), Some(resolutions)) = (
         pkgs.items_dependencies().first(),
         pkgs.items_resolutions().first(),
@@ -1914,18 +1892,10 @@ pub(crate) fn link_free_bins(
     global_bin_path: Option<&ZStr>,
     placed: &[(&[u8], crate::PackageID)],
 ) {
-    // Two copies of the same path, because the linker reads `target_node_modules_path` while it
-    // holds `node_modules_path` by `&mut`.
-    let abs_node_modules = || -> Option<AbsPath> {
-        let mut dir = AbsPath::init_top_level_dir();
-        dir.try_append(node_modules).ok()?;
-        Some(dir)
-    };
-    let (Some(target_node_modules_path), Some(mut node_modules_path)) =
-        (abs_node_modules(), abs_node_modules())
-    else {
+    let mut node_modules_path = AbsPath::init_top_level_dir();
+    if node_modules_path.try_append(node_modules).is_err() {
         return;
-    };
+    }
 
     let mut seen: StringHashMap<()> = StringHashMap::default();
     match global_bin_path {
@@ -1945,25 +1915,23 @@ pub(crate) fn link_free_bins(
         if bin.tag == Tag::None {
             continue;
         }
-        let package_name = strings::StringOrTinyString::init(folder);
         Linker {
             bin,
-            target_node_modules_path: &raw const target_node_modules_path,
-            target_package_name: package_name,
+            target_node_modules_path: None,
+            target_package_name: folder,
             seen: Some(&mut seen),
             node_modules_path: &mut node_modules_path,
-            package_name,
+            package_name: folder,
             global_bin_path: global_bin_path.unwrap_or(ZStr::EMPTY),
             string_buf: lockfile.buffers.string_bytes.as_slice(),
             extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
             abs_target_buf: abs_target_buf.as_mut_slice(),
-            abs_dest_buf: abs_dest_buf.as_mut_slice(),
             rel_buf: rel_buf.as_mut_slice(),
             is_behind_link: Some(false),
             err: None,
             skipped_due_to_missing_bin: false,
         }
-        .link(global_bin_path.is_some());
+        .link(global_bin_path.is_some(), abs_dest_buf.as_mut_slice());
     }
 }
 
@@ -2225,14 +2193,10 @@ pub(crate) fn link_conflicting_bins(
                 }
             },
         );
-        let package_name = strings::StringOrTinyString::init(
-            conflict
-                .alias
-                .slice(lockfile.buffers.string_bytes.as_slice()),
-        );
+        let package_name = (conflict.alias).slice(lockfile.buffers.string_bytes.as_slice());
         let mut linker = Linker {
             bin: lockfile.packages.items_bin()[conflict.package_id as usize],
-            target_node_modules_path: &raw const target_node_modules_path,
+            target_node_modules_path: Some(&target_node_modules_path),
             target_package_name: package_name,
             seen: Some(&mut seen),
             node_modules_path: &mut node_modules_path,
@@ -2241,13 +2205,12 @@ pub(crate) fn link_conflicting_bins(
             string_buf: lockfile.buffers.string_bytes.as_slice(),
             extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
             abs_target_buf: abs_target_buf.as_mut_slice(),
-            abs_dest_buf: abs_dest_buf.as_mut_slice(),
             rel_buf: rel_buf.as_mut_slice(),
             is_behind_link: None,
             err: None,
             skipped_due_to_missing_bin: false,
         };
-        linker.link(false);
+        linker.link(false, abs_dest_buf.as_mut_slice());
         if let Some(err) = linker.err {
             return Err(err);
         }

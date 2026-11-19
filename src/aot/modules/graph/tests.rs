@@ -135,6 +135,7 @@ fn unfinished_graph(file_count: usize, rows: Vec<FileRow>) -> ModuleGraph {
         folders_of_databases: Vec::new(),
         star_names_left_out: StarNamesLeftOut::default(),
         names_laid_on_object_prototype: Vec::new(),
+        enums_stored_into: OnceLock::new(),
     }
 }
 
@@ -415,6 +416,7 @@ fn computed_site_without_candidates_is_all() {
 fn member_binding_is_found_by_expression() {
     let imported_from = |file| AccessedModule {
         module: file_module(file),
+        name: known::default,
         is_imported: true,
     };
     let first = FileRow {
@@ -445,6 +447,7 @@ fn member_binding_is_found_by_expression() {
 fn required_member_of_commonjs_file_has_no_member_binding() {
     let accessed = |is_imported| AccessedModule {
         module: file_module(1),
+        name: known::default,
         is_imported,
     };
     let binding = ImportBinding::Synthetic(SyntheticExportId(0));

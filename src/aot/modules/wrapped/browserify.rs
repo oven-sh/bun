@@ -1,12 +1,15 @@
 use super::bootstrap::Bootstrap;
-use super::{Candidate, Finder, InnerModuleKind, SiteTime};
+use super::{Candidate, Finder, InnerModuleKind, SiteTime, ThisOfBody};
+use crate::builtins::runtime_uses::reaches_unknown_module_loader;
+use crate::builtins::{BuiltinId, Platforms, table};
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Decl, Parent, SymbolId};
+use bun_sema::bind::{Binding, CodeUnit, CommonJsVariable, Decl, Parent, SymbolId};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{
-    self, BinOp, Chain, ExprId, ExprKind, FnBody, FnId, FnKind, IdList, MemberKey, PropId, PropKey,
-    PropKind, StmtId, StmtKind, UnOp,
+    self, BinOp, Chain, ExprId, ExprKind, FnBody, FnId, FnKind, IdList, MemberKey, NodeData,
+    PatKind, PropId, PropKey, PropKind, StmtId, StmtKind, UnOp,
 };
+use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::util::FxHashMap;
 use smallvec::SmallVec;
 
@@ -20,6 +23,64 @@ struct Loader {
 type NamesOfBody = FxHashMap<Vec<u8>, u32>;
 
 impl Finder<'_, '_> {
+    pub(super) fn find_mentions_of_require(&self, platform: Platforms) -> Option<Vec<ExprId>> {
+        let (hir, bound) = (self.hir, self.bound);
+        let own_values =
+            [BuiltinId::ModuleRequire, BuiltinId::ModuleObject].map(table::canonical_id);
+        let mentioned = self.builtins.mentioned().iter().copied();
+        let others: Vec<BuiltinId> = mentioned
+            .filter(|&id| !own_values.contains(&table::canonical_id(id)))
+            .collect();
+        if reaches_unknown_module_loader(&others, &others, &others, platform) {
+            return None;
+        }
+        let sites = self.files.analysis(self.file).import_sites.iter();
+        let calls = sites.map(|site| match site.kind {
+            ImportSiteKind::Require(call) => Some(call),
+            _ => None,
+        });
+        let mut mentions: Vec<ExprId> = calls.collect::<Option<_>>()?;
+        for expression in (0..hir.exprs.len() as u32).map(ExprId) {
+            if !matches!(hir[expression].kind, ExprKind::Ident(_))
+                || !bound.is_evaluated_ident(expression)
+                || self.decisions.is_dead_expr(expression)
+            {
+                continue;
+            }
+            if bound
+                .dynamic_lookup_scope(NodeData::Expr(expression))
+                .is_some()
+            {
+                return None;
+            }
+            match bound.binding(expression) {
+                Binding::CommonJs(CommonJsVariable::Require) => mentions.push(expression),
+                Binding::CommonJs(CommonJsVariable::Module)
+                    if !self.is_exports_of(expression)
+                        && !self.is_operand_of_typeof(expression) =>
+                {
+                    return None;
+                }
+                Binding::Arguments(CodeUnit::File) => return None,
+                _ => {}
+            }
+        }
+        Some(mentions)
+    }
+
+    fn is_operand_of_typeof(&self, expression: ExprId) -> bool {
+        let Parent::Expr(parent) = self.bound.parent_of_expr(expression) else {
+            return false;
+        };
+        matches!(
+            self.hir[parent].kind,
+            ExprKind::Unary {
+                op: UnOp::Typeof,
+                ..
+            }
+        )
+    }
+
     fn statements_of(&self, function: FnId) -> SmallVec<[StmtId; 4]> {
         match self.hir[function].body {
             FnBody::Block(statements) => self.hir.ids(statements).collect(),
@@ -125,12 +186,25 @@ impl Finder<'_, '_> {
             ExprKind::Unary {
                 op: UnOp::Typeof,
                 operand,
-            } => matches!(self.hir[operand].kind, ExprKind::Ident(_)),
+            } => self.is_same_name(operand, right),
             _ => false,
         };
         let is_text = |side: ExprId| matches!(self.hir[side].kind, ExprKind::String(_));
-        matches!(self.hir[right].kind, ExprKind::Ident(_))
-            && ((looks_at_name(one) && is_text(other)) || (looks_at_name(other) && is_text(one)))
+        (looks_at_name(one) && is_text(other)) || (looks_at_name(other) && is_text(one))
+    }
+
+    fn is_same_name(&self, looked_at: ExprId, read: ExprId) -> bool {
+        let (ExprKind::Ident(name), ExprKind::Ident(read_name)) =
+            (self.hir[looked_at].kind, self.hir[read].kind)
+        else {
+            return false;
+        };
+        let binding = self.bound.binding(read);
+        let never_throws = match binding {
+            Binding::Symbol(symbol) => self.has_no_dead_zone(symbol),
+            Binding::CommonJs(_) | Binding::Arguments(_) | Binding::Free => true,
+        };
+        name == read_name && self.bound.binding(looked_at) == binding && never_throws
     }
 
     fn requires_by_names_of_body(&self, function: FnId, loader: &Loader) -> bool {
@@ -392,7 +466,11 @@ impl Finder<'_, '_> {
         let is_stable = [load, modules, cache, entries]
             .iter()
             .all(|&symbol| bound.is_stable_binding(symbol));
+        let takes_plain_parameters = hir[function].params.iter().all(|it| {
+            hir[it].default.is_none() && matches!(hir[hir[it].pat].kind, PatKind::Ident(_))
+        });
         is_stable
+            && takes_plain_parameters
             && hir[function].kind == FnKind::Decl
             && self.is_plain_function(function)
             && others.iter().all(looks_at_require)
@@ -466,12 +544,16 @@ impl Finder<'_, '_> {
             let is_in_empty_cache = (self.every_object_has)(id);
             let bytes = self.files.atoms.bytes(id).to_vec();
             if is_in_empty_cache
-                || !self.can_be_body(callback, InnerModuleKind::CommonJs)
+                || !self.can_be_body(callback, InnerModuleKind::CommonJs, ThisOfBody::Unknown)
                 || by_id.insert(bytes, index).is_some()
             {
                 return None;
             }
-            candidates.push(self.read_candidate(callback, [1, 2, 0])?);
+            let candidate = self.read_candidate(callback, [1, 2, 0])?;
+            if candidate.exposes_module_object {
+                return None;
+            }
+            candidates.push(candidate);
             let mut ids: FxHashMap<Vec<u8>, Option<Vec<u8>>> = FxHashMap::default();
             for property in names.iter() {
                 let (name, value) = self.read_named_value(property)?;
@@ -494,13 +576,38 @@ impl Finder<'_, '_> {
         Some((candidates, by_id, names_of_bodies))
     }
 
-    pub(super) fn find_bundle(&mut self) {
+    fn find_request_of_entry(&self, call: ExprId, entry: ExprId) -> Option<(ExprId, Option<FnId>)> {
         let (hir, bound) = (self.hir, self.bound);
-        for statement in hir.ids(hir.body) {
-            let StmtKind::Expr(call) = hir[statement].kind else {
-                continue;
-            };
-            if self.decisions.is_dead_stmt(statement) {
+        let request = match bound.parent_of_expr(call) {
+            Parent::Stmt(statement) if matches!(hir[statement].kind, StmtKind::Expr(_)) => call,
+            Parent::Expr(user) => {
+                let (callee, arguments) = self.read_call(user)?;
+                let &[id] = &arguments[..] else {
+                    return None;
+                };
+                let is_request = callee == call && self.read_id(id)? == self.read_id(entry)?;
+                is_request.then_some(user)?
+            }
+            _ => return None,
+        };
+        if self.decisions.is_dead_expr(request) {
+            return None;
+        }
+        match self.find_body_around(request)? {
+            Parent::File => Some((request, None)),
+            Parent::FnBody(around) if self.is_evaluated_once_at_top(around) => {
+                Some((request, Some(around)))
+            }
+            _ => None,
+        }
+    }
+
+    pub(super) fn find_bundle(&mut self) {
+        let hir = self.hir;
+        for call in (0..hir.exprs.len() as u32).map(ExprId) {
+            let has_three_arguments =
+                matches!(hir[call].kind, ExprKind::Call(site) if hir[site].args.len() == 3);
+            if !has_three_arguments {
                 continue;
             }
             let Some((callee, arguments)) = self.read_call(call) else {
@@ -511,18 +618,21 @@ impl Finder<'_, '_> {
             };
             let is_empty_cache =
                 matches!(hir[cache].kind, ExprKind::Object(properties) if properties.is_empty());
+            if !is_empty_cache {
+                continue;
+            }
             let Some(start) = self.find_start_function(callee) else {
                 continue;
             };
             let Some(&[entry]) = self.elements_of(entries).as_deref() else {
                 continue;
             };
-            if !is_empty_cache
-                || !self.is_start_function(start)
-                || bound.parent_of_expr(call) != Parent::Stmt(statement)
-            {
+            if !self.is_start_function(start) {
                 continue;
             }
+            let Some((request, enclosing)) = self.find_request_of_entry(call, entry) else {
+                continue;
+            };
             let first = self.candidates.len() as u32;
             let Some((mut candidates, by_id, names_of_bodies)) =
                 self.read_bodies_and_names(literal, first)
@@ -533,8 +643,12 @@ impl Finder<'_, '_> {
                 continue;
             };
             let entry = &mut candidates[(entry - first) as usize];
-            entry.sites.push(SiteTime::At(hir[call].pos));
-            entry.calls.push(call);
+            entry.sites.push(SiteTime::At(hir[request].pos));
+            entry.calls.push(request);
+            let bodies = match enclosing {
+                Some(_) => self.list_positions_of(&candidates),
+                None => Vec::new(),
+            };
             self.candidates.extend(candidates);
             self.bootstrap = Some(Bootstrap {
                 function: start,
@@ -542,12 +656,13 @@ impl Finder<'_, '_> {
                 modules: SymbolId::NONE,
                 cache: SymbolId::NONE,
                 literal,
-                call,
-                enclosing: None,
+                module_object: None,
+                call: request,
+                enclosing,
                 first_candidate: first,
                 candidates: by_id,
                 names_of_bodies,
-                bodies: Vec::new(),
+                bodies,
                 members: Vec::new(),
                 member_mentions: Vec::new(),
             });

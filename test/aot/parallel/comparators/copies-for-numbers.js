@@ -1,4 +1,5 @@
 // lodash's compareAscending: two numbers are compared by the copy at the call.
+// STATISTIC: ComparatorsInlinedForNumbers >= 1
 let asked = 0;
 function isSymbol(value) {
   return typeof value == "symbol" || (value != null && typeof value == "object" && ++asked > 0 && Object.prototype.toString.call(value) == "[object Symbol]");

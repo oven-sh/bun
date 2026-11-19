@@ -1,4 +1,4 @@
-use bun_sema::atom::known;
+use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Bound, ClassOwner, Decl, InitialState, Parent, PatParent, SymbolId};
 use bun_sema::check::aot::{ClassRef, FunctionRef, GaveUp, PositionTypes, declares_type_alone};
 use bun_sema::hir::{
@@ -101,14 +101,31 @@ fn list_written_out(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -> Option
     (value.is_some() && matches!(hir[value].kind, ExprKind::Array(_))).then_some(value)
 }
 
+/// `let Node = class Node {}`
+fn find_class_written_out(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -> Option<ClassId> {
+    let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()] else {
+        return None;
+    };
+    let value = hir[declaration].init.some()?;
+    match hir[hir.skip_type_assertions(value)].kind {
+        ExprKind::Class(class) => Some(class),
+        _ => None,
+    }
+}
+
 fn is_made_by_the_text_of_its_file(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -> bool {
     let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()] else {
         return false;
     };
     let value = hir[declaration].init;
-    if value.is_none() {
-        return false;
-    }
+    !value.is_none() && is_made_by_its_file(hir, bound, value)
+}
+
+pub(in crate::lower) fn is_made_by_its_file(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    value: ExprId,
+) -> bool {
     match hir[value].kind {
         ExprKind::Object(_) | ExprKind::Array(_) => true,
         ExprKind::Call(site) | ExprKind::New(site) => {
@@ -185,6 +202,36 @@ impl FileLowering<'_, '_, '_, '_> {
             true => position,
             false => DeclaredType::untyped(),
         }
+    }
+
+    fn expect_class_written_out(&mut self, file: FileId, pattern: PatId) -> Option<DeclaredType> {
+        let files = self.queries.files();
+        let class = find_class_written_out(files.hir(file), files.bound(file), pattern)?;
+        let key = self.find_lowered_constructor(ClassRef { file, class })?;
+        let function = self.reference_function(key);
+        let ty = self.fragment.types.intern_function(function);
+        let expected = DeclaredType::new(Mapped::expected(ty), None, PositionFlags::default());
+        Some(self.add_undefined(expected))
+    }
+
+    /// `let Node = class Node {}; exports.Node = Node = decorate(Node);`
+    pub(in crate::lower) fn expect_class_exported_as(
+        &mut self,
+        module: FileId,
+        name: Atom,
+    ) -> Option<DeclaredType> {
+        let files = self.queries.files();
+        let (hir, bound) = (files.hir(module), files.bound(module));
+        let scope = bound.scope_of_declaration(hir, Decl::File);
+        let symbol = bound.lookup(bound.scopes[scope.idx()].locals, name)?;
+        let mut declarations = bound.symbol(symbol).decls.iter();
+        let (Some(&Decl::Var(pattern)), None) = (declarations.next(), declarations.next()) else {
+            return None;
+        };
+        if bound.is_stable_binding(symbol) {
+            return None;
+        }
+        self.expect_class_written_out(module, pattern)
     }
 
     pub(super) fn compute_variable_position(&mut self, symbol: Sym) -> DeclaredType {
@@ -264,6 +311,13 @@ impl FileLowering<'_, '_, '_, '_> {
         );
         let is_stored_again = !files.bound(symbol.file).is_stable_binding(symbol.id);
         let written = self.queries.written_variable_type(symbol);
+        if is_stored_again
+            && declaring_file == self.file
+            && written.written().is_none()
+            && let Some(class) = self.expect_class_written_out(declaring_file, pattern)
+        {
+            return class;
+        }
         let is_read = !is_stored_again
             && !is_parameter
             && !self.is_checked()

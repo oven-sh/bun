@@ -10,15 +10,14 @@ use bun_ptr::{AsCtxPtr, RefPtr};
 
 use super::PostgresSQLConnection;
 use super::PostgresSQLStatement;
-use super::Signature;
 use super::command_tag_jsc::CommandTagJsc;
 use super::error_jsc::postgres_error_to_js;
 use super::postgres_request as PostgresRequest;
-use super::postgres_sql_statement::{ResultDescription, Status as StatementStatus, describe};
+use super::postgres_sql_statement::{ResultDescription, describe};
 use bun_sql::postgres::CommandTag;
 use bun_sql::postgres::any_postgres_error::AnyPostgresError;
+use bun_sql::postgres::pipeline::{self, Protocol};
 use bun_sql::postgres::postgres_types::ResultFormats;
-use bun_sql::shared::ConnectionFlags;
 use bun_sql::shared::SQLQueryResultMode as PostgresSQLQueryResultMode;
 
 bun_core::declare_scope!(Postgres, visible);
@@ -28,56 +27,29 @@ pub(crate) use crate::generated_bindgen::postgres_sql_query::js_PostgresSQLQuery
 // JS can re-enter any method, so they all take `&self` and the fields are cells.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct PostgresSQLQuery {
-    /// Shared with the connection's named-statement map (each holder owns one ref).
-    pub(crate) statement: JsCell<Option<RefPtr<PostgresSQLStatement>>>,
-    /// The connection whose queue it is in.
-    connection: JsCell<Option<RefPtr<PostgresSQLConnection>>>,
+    place: JsCell<Place>,
+    turn: Cell<u64>,
     pub(crate) query: BunString,
     undescribed: JsCell<Undescribed<ResultDescription>>,
 
     pub(crate) this_value: JsCell<JsRef>,
 
-    pub(crate) status: Cell<Status>,
-
     ref_count: Cell<u32>,
 
-    pub(crate) flags: Cell<Flags>,
-}
-
-impl Default for PostgresSQLQuery {
-    fn default() -> Self {
-        Self {
-            statement: JsCell::new(None),
-            connection: JsCell::new(None),
-            query: BunString::EMPTY,
-            undescribed: JsCell::new(Undescribed::default()),
-            this_value: JsCell::new(JsRef::empty()),
-            status: Cell::new(Status::Pending),
-            ref_count: Cell::new(1),
-            flags: Cell::new(Flags::default()),
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct Flags {
-    /// What its Bind asked for.
-    pub(crate) formats: ResultFormats,
     pub(crate) bigint: bool,
-    pub(crate) simple: bool,
-    /// Parse + Describe go out first and Bind waits for the server's parameter types.
-    pub(crate) describe_first: bool,
-    /// Its values are what `write_bind` sends. See `PostgresRequest::stage_parameters`.
-    pub(crate) staged: bool,
-    /// It failed while the server still answers it: its response is skipped until `ReadyForQuery`.
-    pub(crate) discard_response: bool,
-    pub(crate) cancel: Cancel,
-    /// Written by `PostgresSQLConnection::count` alone.
-    pub(crate) counter: RequestCounter,
-    /// The server refused its Bind because the statement was lost or stale, and it was written again.
-    pub(crate) retried: bool,
-    pub(crate) copy: CopyStream,
-    pub(crate) result_mode: PostgresSQLQueryResultMode,
+    simple: bool,
+    /// See `PostgresRequest::stage_parameters`.
+    pub(crate) staged: Cell<bool>,
+    /// What its Bind asked for.
+    pub(crate) formats: Cell<ResultFormats>,
+    pub(crate) copy: Cell<CopyStream>,
+    pub(crate) result_mode: Cell<PostgresSQLQueryResultMode>,
+}
+
+enum Place {
+    New,
+    Queued(RefPtr<PostgresSQLConnection>),
+    Ended,
 }
 
 /// The stream that `readable()` or `writable()` made for the request. See CopyStream.rs.
@@ -92,54 +64,13 @@ pub enum CopyStream {
     WritableOpen,
 }
 
-/// Of a request that is written.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Cancel {
-    No,
-    /// `cancel()` was called and no CancelRequest could be sent for it so far.
-    Wanted,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum RequestCounter {
-    None,
-    /// `PostgresSQLConnection::pending_requests`
-    Pending,
-    /// `PostgresSQLConnection::nonpipelinable_requests`
-    Nonpipelinable,
-    /// `PostgresSQLConnection::pipelined_requests`
-    Pipelined,
-}
-
-impl Default for Flags {
-    fn default() -> Self {
-        Self {
-            formats: ResultFormats::Text,
-            bigint: false,
-            simple: false,
-            describe_first: false,
-            staged: false,
-            discard_response: false,
-            cancel: Cancel::No,
-            counter: RequestCounter::None,
-            retried: false,
-            copy: CopyStream::None,
-            result_mode: PostgresSQLQueryResultMode::Objects,
-        }
+impl pipeline::Request for PostgresSQLQuery {
+    fn turn(&self) -> &Cell<u64> {
+        &self.turn
     }
 }
-
-pub use bun_sql::shared::query_status::Status;
 
 impl PostgresSQLQuery {
-    /// Read-modify-write the `Cell<Flags>` through `&self`.
-    #[inline]
-    pub(crate) fn update_flags(&self, f: impl FnOnce(&mut Flags)) {
-        let mut v = self.flags.get();
-        f(&mut v);
-        self.flags.set(v);
-    }
-
     /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
     #[inline]
     pub(crate) fn ref_guard(&self) -> RefPtr<Self> {
@@ -147,29 +78,17 @@ impl PostgresSQLQuery {
         unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
     }
 
-    /// Kept alive by the ref this query holds. All mutation is
-    /// single-JS-thread so the `&mut` is exclusive for the borrow's lifetime;
-    /// callers must not hold two results live simultaneously (the request
-    /// FIFO never does).
-    #[inline]
-    #[allow(clippy::mut_from_ref)] // intrusive pointer; see doc comment
-    pub(crate) fn statement_mut(&self) -> Option<&mut PostgresSQLStatement> {
-        // SAFETY: see doc comment.
-        self.statement
-            .get()
-            .as_ref()
-            .map(|p| unsafe { &mut *p.as_ptr() })
-    }
-
     #[inline]
     pub(crate) fn connection(&self) -> Option<RefPtr<PostgresSQLConnection>> {
-        self.connection.get().clone()
+        match self.place.get() {
+            Place::Queued(connection) => Some(connection.clone()),
+            Place::New | Place::Ended => None,
+        }
     }
 
     #[inline]
     pub(crate) fn leave_queue(&self) {
-        self.statement.set(None);
-        self.connection.set(None);
+        self.place.set(Place::Ended);
     }
 
     pub(crate) fn get_target(
@@ -190,55 +109,19 @@ impl PostgresSQLQuery {
         self.this_value.with_mut(|r| r.finalize());
     }
 
-    /// For a request that is owed no `ReadyForQuery`: its caller takes it out of the queue.
-    pub(crate) fn on_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
-        let err = self.kept_error().unwrap_or(err);
-        self.status.set(Status::Fail);
-        self.reject(err, global_object);
-    }
-
-    /// Rejects now. `status`, the counter and the queue head stay until its `ReadyForQuery`.
-    pub(crate) fn reject_in_flight(&self, err: JSValue, global_object: &JSGlobalObject) {
-        if self.is_rejected() {
-            return;
-        }
-        self.update_flags(|f| f.discard_response = true);
-        self.reject(err, global_object);
-    }
-
-    /// The server has ended it and says next what became of the transaction. User code hears of the
-    /// failure then, as it hears of a result.
-    pub(crate) fn reject_at_ready_for_query(&self, err: JSValue, global_object: &JSGlobalObject) {
-        if self.is_rejected() {
-            return;
-        }
-        self.update_flags(|f| f.discard_response = true);
+    /// In the place of the rows, until `ReadyForQuery`.
+    pub(crate) fn keep_error(&self, err: JSValue, global_object: &JSGlobalObject) {
         if let Some(this_value) = self.this_value.get().try_get() {
             js::pending_value_set_cached(this_value, global_object, err);
         }
     }
 
-    /// The `ReadyForQuery` of a request with `discard_response`.
-    pub(crate) fn end_rejected(&self, global_object: &JSGlobalObject) {
-        self.status.set(Status::Fail);
-        if let Some(err) = self.kept_error() {
-            self.reject(err, global_object);
-        }
-    }
-
-    /// What `reject_at_ready_for_query` put in the place of the rows. `reject` does nothing a second time.
-    fn kept_error(&self) -> Option<JSValue> {
-        if !self.flags.get().discard_response {
-            return None;
-        }
+    pub(crate) fn kept_error(&self) -> Option<JSValue> {
         js::pending_value_get_cached(self.this_value.get().try_get()?)
     }
 
-    pub(crate) fn is_rejected(&self) -> bool {
-        self.status.get() == Status::Fail || self.flags.get().discard_response
-    }
-
-    fn reject(&self, err: JSValue, global_object: &JSGlobalObject) {
+    /// Does nothing a second time.
+    pub(crate) fn reject(&self, err: JSValue, global_object: &JSGlobalObject) {
         let _guard = self.ref_guard();
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
@@ -248,11 +131,17 @@ impl PostgresSQLQuery {
             return;
         };
 
-        let vm = crate::jsc::VirtualMachine::get().as_mut();
-        let Some(function) = vm.sql_state().postgresql_context.on_query_reject_fn.get() else {
+        let vm = crate::jsc::VirtualMachine::get();
+        let Some(function) = vm
+            .sql_state()
+            .postgresql_context
+            .get()
+            .on_query_reject_fn
+            .get()
+        else {
             return;
         };
-        let event_loop = vm.event_loop_mut();
+        let event_loop = vm.event_loop();
         event_loop.run_callback(
             bun_event_loop::ContextId::NONE,
             function,
@@ -273,51 +162,33 @@ impl PostgresSQLQuery {
         js::target_set_cached(this_value, global_object, JSValue::ZERO);
     }
 
+    /// The last call has no `statement`: it ends the query and brings no result.
     pub(crate) fn on_result(
         &self,
         command_tag_str: &[u8],
         global_object: &JSGlobalObject,
-        is_last: bool,
-    ) {
+        statement: Option<&PostgresSQLStatement>,
+    ) -> JsResult<()> {
         let _guard = self.ref_guard();
-        self.status.set(if is_last {
-            Status::Success
-        } else {
-            Status::PartialResponse
-        });
+        let is_last = statement.is_none();
         let tag = CommandTag::init(command_tag_str);
-        let js_tag: JSValue = match tag.to_js_tag(global_object) {
-            Ok(v) => v,
-            Err(e) => {
-                let err = global_object.take_exception(e);
-                return if is_last {
-                    self.on_js_error(err, global_object)
-                } else {
-                    self.reject_in_flight(err, global_object)
-                };
-            }
-        };
+        let js_tag = tag.to_js_tag(global_object)?;
         js_tag.ensure_still_alive();
 
-        // The last call ends the query and brings no result.
-        let statement = match self.statement_mut().filter(|_| !is_last) {
-            Some(statement) if statement.is_named() => {
-                match statement.description(global_object, &self.query) {
-                    Ok(description) => description,
-                    Err(e) => {
-                        let err = global_object.take_exception(e);
-                        return self.reject_in_flight(err, global_object);
-                    }
-                }
+        let statement = match statement {
+            Some(statement) if statement.is_named() => statement.columns.with_mut(|columns| {
+                columns.description(global_object, &self.query, statement.described())
+            })?,
+            // The next result starts with no fields: a command without rows has no RowDescription.
+            Some(statement) => {
+                let result = (statement.take_described(), statement.columns.take().fields);
+                self.undescribed.with_mut(|results| results.push(result))
             }
-            Some(statement) => self
-                .undescribed
-                .with_mut(|results| results.push(statement.take_result())),
             None => JSValue::NULL,
         };
 
         let Some(this_value) = self.this_value.get().try_get() else {
-            return;
+            return Ok(());
         };
         let _last = scopeguard::guard((), |_| {
             if is_last {
@@ -326,14 +197,20 @@ impl PostgresSQLQuery {
             }
         });
         let Some(target_value) = self.get_target(global_object, is_last) else {
-            return;
+            return Ok(());
         };
 
-        let vm = crate::jsc::VirtualMachine::get().as_mut();
-        let Some(function) = vm.sql_state().postgresql_context.on_query_resolve_fn.get() else {
-            return;
+        let vm = crate::jsc::VirtualMachine::get();
+        let Some(function) = vm
+            .sql_state()
+            .postgresql_context
+            .get()
+            .on_query_resolve_fn
+            .get()
+        else {
+            return Ok(());
         };
-        let event_loop = vm.event_loop_mut();
+        let event_loop = vm.event_loop();
 
         event_loop.run_callback(
             bun_event_loop::ContextId::NONE,
@@ -350,6 +227,7 @@ impl PostgresSQLQuery {
                 statement,
             ],
         );
+        Ok(())
     }
 
     /// `result.statement` of the result for which `on_result` gave this number instead.
@@ -380,21 +258,23 @@ impl PostgresSQLQuery {
         let (values, pending_value) = (values.to_js(), pending_value.to_js());
         query_ctor_args::validate(global_this, &query, values, simple)?;
 
-        let ptr = bun_core::heap::into_raw(Box::new(PostgresSQLQuery::default()));
-
-        let this_value = js::to_js(ptr, global_this);
-        this_value.ensure_still_alive();
-
-        // SAFETY: ptr is exclusively owned here until returned to JS.
-        unsafe {
-            (*ptr).query = query;
-            (*ptr).this_value.set(JsRef::init_weak(this_value));
-            (*ptr).flags.set(Flags {
-                bigint,
-                simple,
-                ..Default::default()
-            });
-        }
+        let this = RefPtr::new(PostgresSQLQuery {
+            place: JsCell::new(Place::New),
+            turn: Cell::new(0),
+            query,
+            undescribed: JsCell::default(),
+            this_value: JsCell::new(JsRef::empty()),
+            ref_count: Cell::new(1),
+            bigint,
+            simple,
+            staged: Cell::new(false),
+            formats: Cell::new(ResultFormats::Text),
+            copy: Cell::new(CopyStream::None),
+            result_mode: Cell::new(PostgresSQLQueryResultMode::Objects),
+        });
+        let this = js::wrap(this, global_this);
+        let this_value = this.to_js();
+        this.this_value.set(JsRef::init_weak(this_value));
 
         js::binding_set_cached(this_value, global_this, values);
         js::pending_value_set_cached(this_value, global_this, pending_value);
@@ -429,7 +309,7 @@ impl PostgresSQLQuery {
                 );
             }
         };
-        self.update_flags(|f| f.result_mode = result_mode);
+        self.result_mode.set(result_mode);
         Ok(())
     }
 
@@ -449,22 +329,20 @@ impl PostgresSQLQuery {
 
         let this_value = this_value.to_js();
         let binding_value = js::binding_get_cached(this_value).unwrap_or_default();
-        let unnamed = connection
-            .flags
-            .get()
-            .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS);
         // Reading the values can run user code, so it comes before any look at the connection's state.
         let mut declared = Vec::new();
-        if !self.flags.get().simple {
-            declared = Signature::declared_types(global_object, binding_value)?;
-            let describe_first =
-                !unnamed || PostgresRequest::needs_parameter_types(global_object, binding_value)?;
-            self.update_flags(|f| f.describe_first = describe_first);
-            // The server takes what is written behind a COPY FROM STDIN for its data. Nothing is
-            // written behind a simple query, and the server takes no parameter in a COPY.
+        let mut protocol = Protocol::Simple;
+        if !self.simple {
+            declared = PostgresRequest::declared_types(global_object, binding_value)?;
+            let describe_first = connection.names_statements()
+                || PostgresRequest::needs_parameter_types(global_object, binding_value)?;
+            // What is written behind a COPY FROM STDIN is its data, and nothing is written behind a simple query.
             if self.is_copy_statement() {
                 declared.clear();
-                self.update_flags(|f| f.simple = true);
+            } else {
+                protocol = Protocol::Extended {
+                    describe_first: describe_first && !declared.is_empty(),
+                };
             }
         }
         if declared.len() > u16::MAX as usize {
@@ -474,15 +352,15 @@ impl PostgresSQLQuery {
                 AnyPostgresError::TooManyParameters,
             )));
         }
-        // That code can have called `cancel()`.
-        if self.status.get() != Status::Pending {
+        // That code can have called `cancel()` or `run()`.
+        if !matches!(self.place.get(), Place::New) {
             return Err(global_object.throw_value(connection.cancelled_error(None)));
         }
 
         // A connection that failed or closed answers nothing: a query queued on it would hold the
         // event loop for ever. The pool hears of a close through `onclose` and stops handing the
         // connection out, except a disposed `Bun.ModuleGraph`'s, which is told nothing.
-        if connection.status.get().is_closed() {
+        if connection.is_closed() {
             return Err(global_object.throw_value(postgres_error_to_js(
                 global_object,
                 Some(b"Connection closed"),
@@ -490,37 +368,10 @@ impl PostgresSQLQuery {
             )));
         }
 
-        let new_statement =
-            |id: Option<u64>| PostgresSQLStatement::new(Signature::new(&declared, id));
-        self.statement.set(Some(if self.flags.get().simple {
-            let mut s = PostgresSQLStatement::default();
-            // It has no Parse of its own: the Query message is the whole request.
-            s.status = StatementStatus::Parsing;
-            RefPtr::new(s)
-        } else if unnamed {
-            new_statement(None)
-        } else {
-            let query_str = self.query.to_utf8();
-            connection.statements.with_mut(|cache| {
-                cache.get(query_str.slice(), &declared).unwrap_or_else(|| {
-                    let statement = new_statement(Some(connection.take_prepared_statement_id()));
-                    cache.insert(query_str.slice(), statement.clone());
-                    statement
-                })
-            })
-        }));
-
-        connection
-            .requests
-            .with_mut(|q| q.push_back(self.ref_guard()));
-        connection.count(self, RequestCounter::Pending);
-        self.connection.set(Some(connection.ref_guard()));
+        connection.enqueue(self, &declared, protocol);
+        self.place.set(Place::Queued(connection.ref_guard()));
         // Request is enqueued: keep the event loop alive until the server responds.
-        connection.poll_ref.with_mut(|r| {
-            r.ref_(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ))
-        });
+        connection.poll_ref.ref_(bun_io::js_vm_ctx());
         self.this_value.with_mut(|r| r.upgrade(global_object));
         js::target_set_cached(this_value, global_object, query);
 
@@ -534,9 +385,8 @@ impl PostgresSQLQuery {
     pub fn cancel(&self, _: &mut JsScope<'_>) {
         match self.connection() {
             Some(connection) => connection.cancel(self),
-            // `run` has not queued it: it refuses a query that is not `Pending`.
-            None if self.status.get() == Status::Pending => self.status.set(Status::Fail),
-            None => {}
+            // `run` refuses it from here on.
+            None => self.place.set(Place::Ended),
         }
     }
 }

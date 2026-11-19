@@ -10,23 +10,18 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-thiserror.workspace = true
-bun_alloc.workspace = true
-bun_opaque.workspace = true
 bun_io.workspace = true
-strum.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
 bitflags.workspace = true
 bun_analytics.workspace = true
-bun_base64.workspace = true
 bun_boringssl.workspace = true
 bun_boringssl_sys.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
 bun_event_loop.workspace = true
+bun_http.workspace = true
 bun_jsc.workspace = true
 bun_ptr.workspace = true
-bun_sha_hmac.workspace = true
 bun_sql.workspace = true
 bun_uws.workspace = true

@@ -2,8 +2,11 @@
  * WebKit commit — determines prebuilt download URL + what to checkout
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
+ *
+ * After changing it, run `bun run pin-webkit`: webkit.sha256 pins the sha256
+ * of this version's tarballs, and a build refuses one that is not in there.
  */
-export const WEBKIT_VERSION = "6fc709c298409fe433a60f6aff328a45a8974532";
+export const WEBKIT_VERSION = "0befb64c5f30ae5af5137f31c1ebd4f7c3f908d4";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -84,13 +87,18 @@ function prebuiltSuffix(cfg: Config): string {
   return s;
 }
 
+export function webkitReleaseTag(version: string): string {
+  return version.startsWith("autobuild-") ? version : `autobuild-${version}`;
+}
+
+/** The sha256 of every tarball of `WEBKIT_VERSION`'s release. Written by scripts/pin-webkit.ts. */
+export const webkitSha256Sums: string = resolve(import.meta.dirname, "webkit.sha256");
+
 function prebuiltUrl(cfg: Config): string {
   const os = cfg.windows ? "windows" : cfg.darwin ? "macos" : cfg.freebsd ? "freebsd" : "linux";
   const arch = cfg.arm64 ? "arm64" : "amd64";
   const name = `bun-webkit-${os}-${arch}${prebuiltSuffix(cfg)}`;
-  const version = cfg.webkitVersion;
-  const tag = version.startsWith("autobuild-") ? version : `autobuild-${version}`;
-  return `https://github.com/oven-sh/WebKit/releases/download/${tag}/${name}.tar.gz`;
+  return `https://github.com/oven-sh/WebKit/releases/download/${webkitReleaseTag(cfg.webkitVersion)}/${name}.tar.gz`;
 }
 
 /** Name prefix shared by every prebuilt extraction dir of one WebKit version, across targets and variants. */
@@ -2210,6 +2218,10 @@ export const webkit: Dependency = {
         identity: `${cfg.webkitVersion}${prebuiltSuffix(cfg)}`,
         destDir: prebuiltDestDir(cfg),
       };
+      // Nothing pins what `--webkit-version` asks for.
+      if (webkitReleaseTag(cfg.webkitVersion) === webkitReleaseTag(WEBKIT_VERSION)) {
+        src.sha256sums = webkitSha256Sums;
+      }
       // macOS: bundled ICU headers conflict with system ICU.
       if (cfg.darwin) {
         src.rmAfterExtract = ["include/unicode"];

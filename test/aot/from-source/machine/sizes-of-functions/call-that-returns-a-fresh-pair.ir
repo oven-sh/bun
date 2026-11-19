@@ -12,7 +12,15 @@
 # -- end of source
 # The compiler before this one: 6 instructions, 1 of them patches.
 # When the bound was taken: steps: operations 6, patches 1, moves 3, unlikely or rare 0.
-# RUN(X64): steps most:9 f2 mechanisms=all-Inlining
+# Since functions return the fields of a fresh object the two come in two registers: no cell is allocated, and the two loads are two moves more (11).
+# RUN(MADE): walk f1 mechanisms=all-Inlining
+# MADE-NOT: = NewObject
+# RUN(PARTS): walk f2 mechanisms=all-Inlining
+# PARTS: [[pair]]: L0 @Void = CallDirect {{*}} function=f1
+# PARTS: = ResultAt [[pair]]
+# PARTS: = ResultAt [[pair]] index=1
+# PARTS-NOT: = GetSlot
+# RUN(X64): steps most:11 f2 mechanisms=all-Inlining
 # REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
 # X64-LABEL: unit f2:Body
-# X64-NEXT: steps: at most 9
+# X64-NEXT: steps: at most 11

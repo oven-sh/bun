@@ -719,31 +719,32 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             parts.count,
             &|checker, part| {
                 let _step = file_steps::count(FileStep::Lower);
-                let _work = current_work::working_on(current_work::Step::Lower, path);
-                let began_part = Instant::now();
-                let mut task = TaskState::new();
-                checker.share_indexes(file, indexes);
-                let outcome = checker.with_queries(file, &inputs.query_inputs(), |queries| {
-                    queries.take_over_inferred_types(indexes);
-                    lower_part(
-                        inputs,
-                        queries,
-                        file,
-                        &mut task,
-                        &shared,
-                        &parts,
-                        part,
-                        &beginnings[part],
-                    )
-                });
-                match outcome {
-                    Ok(part_lowered) => *lowered[part].lock() = Some(part_lowered),
-                    Err(NotInParts::Discarded) => {}
-                    Err(NotInParts::Shared) => {
-                        is_shared.store(true, Ordering::Relaxed);
+                current_work::working_on(current_work::Step::Lower, path, || {
+                    let began_part = Instant::now();
+                    let mut task = TaskState::new();
+                    checker.share_indexes(file, indexes);
+                    let outcome = checker.with_queries(file, &inputs.query_inputs(), |queries| {
+                        queries.take_over_inferred_types(indexes);
+                        lower_part(
+                            inputs,
+                            queries,
+                            file,
+                            &mut task,
+                            &shared,
+                            &parts,
+                            part,
+                            &beginnings[part],
+                        )
+                    });
+                    match outcome {
+                        Ok(part_lowered) => *lowered[part].lock() = Some(part_lowered),
+                        Err(NotInParts::Discarded) => {}
+                        Err(NotInParts::Shared) => {
+                            is_shared.store(true, Ordering::Relaxed);
+                        }
                     }
-                }
-                longest.fetch_max(began_part.elapsed().as_millis() as u64, Ordering::Relaxed);
+                    longest.fetch_max(began_part.elapsed().as_millis() as u64, Ordering::Relaxed);
+                });
             },
             &mut || self.define_remaining_layouts(),
         );

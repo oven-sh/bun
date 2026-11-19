@@ -317,11 +317,32 @@ pub(crate) fn lower_import_call(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     call: ExprId,
 ) -> ValueId {
+    let replaced = lowering.file.hir.replaced_evaluation(call);
+    match replaced.filter(|_| lowering.file.inputs.may_replace_evaluators) {
+        Some(replaced) => lowering.lower_in_place_of_evaluation(replaced, &mut |lowering| {
+            lower_written_import(lowering, call)
+        }),
+        None => lower_written_import(lowering, call),
+    }
+}
+
+fn lower_written_import(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    call: ExprId,
+) -> ValueId {
     let hir = lowering.file.hir;
     let ExprKind::ImportCall { args } = hir[call].kind else {
         unreachable!("lower_import_call takes an ImportCall");
     };
     let position = hir[call].pos;
+    if hir.replaces_evaluation(position) {
+        let callee = hir.replaced_callee_position(position);
+        lowering.set_position(callee);
+        if hir.text[callee as usize..].starts_with(b"eval") {
+            lowering.emit_test_of_replaced_callee(known::eval, BuiltinId::Eval);
+        }
+        lowering.builder.check_evaluation(false);
+    }
     let modules = lowering.file.inputs.modules;
     match modules.site_answer(lowering.file.file, ImportSiteKind::ImportCall(call)) {
         SiteAnswer::Module(module) => {
@@ -1375,6 +1396,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn emit_expected_callee(&mut self, expected: BuiltinId) -> ValueId {
+        if expected == BuiltinId::ModuleRequire
+            && let Some(require) = self.find_require_of_run()
+        {
+            return require;
+        }
         match table::entry(expected).scope {
             Scope::Module => {
                 let module = self.file.module_id();
@@ -1569,10 +1595,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             false => None,
         };
         let from_created_require = plan.is_from_created_require;
+        let requirer = match plan.records {
+            true => {
+                let file = ModuleRef::File(self.file.file);
+                self.file.fragment.declare_module(file)
+            }
+            false => referrer,
+        };
         if plan.records {
             self.builder.record_require(
                 module,
-                referrer,
+                requirer,
                 requirer_object,
                 from_created_require,
                 false,
@@ -1586,7 +1619,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let names_run = requirer_object.is_some();
             self.builder.record_require(
                 module,
-                referrer,
+                requirer,
                 requirer_object,
                 from_created_require,
                 names_run,
@@ -1676,12 +1709,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let done = self.create_block();
         for (_, form) in forms {
             let form = (self.file.fragment).declare_module(ModuleRef::File(form));
-            let namespace = (self.builder).require_module(form, referrer, specifier, None, true);
-            let is_held = self.builder.type_test(namespace, TypeTable::OBJECT);
-            self.builder.write_variable(answer, namespace);
+            let held = (self.builder).require_module(form, referrer, specifier, None, true);
+            let is_not_held = self.builder.type_test(held, TypeTable::UNDEFINED);
+            self.builder.write_variable(answer, held);
             let not_held = self.create_block();
             self.builder
-                .branch(is_held, Edge::to(done), Edge::to(not_held));
+                .branch(is_not_held, Edge::to(not_held), Edge::to(done));
 
             self.continue_in(not_held);
         }
@@ -2498,13 +2531,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         candidates: AnswersOfResolver<'_>,
     ) -> ValueId {
         let is_url = candidates.form != ResolvedForm::Path;
-        let text = match candidates.form {
-            ResolvedForm::UrlObject if !candidates.spelled_modules.is_empty() => {
+        let result = self.builder.create_variable(None);
+        let done = self.create_block();
+        let is_object =
+            candidates.form == ResolvedForm::UrlObject && !candidates.spelled_modules.is_empty();
+        let (text, specifier) = match load {
+            ComputedLoad::Import if is_object => {
+                let text = self.emit_text_of_imported_object(answer, result, done);
+                (text, text)
+            }
+            _ if is_object => {
                 let name = self.file.intern_bytes(b"href");
                 let name = PropertyName::Constant(self.file.text_key(name));
-                self.emit_get(answer, name)
+                (self.emit_get(answer, name), answer)
             }
-            _ => answer,
+            _ => (answer, answer),
         };
         let mut stands_for: FxHashMap<Vec<u8>, Option<ModuleRef>> = FxHashMap::default();
         for spelled in candidates.spelled_modules {
@@ -2516,8 +2557,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 }
             }
         }
-        let result = self.builder.create_variable(None);
-        let done = self.create_block();
         for spelled in candidates.spelled_modules {
             let answer_for_candidate =
                 self.emit_resolve_of_name(spelled.spelling, None, spelled.module, is_url);
@@ -2563,12 +2602,34 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
             self.continue_in(other);
         }
-        let loaded = self.emit_load_by_name(load, referrer, answer, candidates.known_of_name);
+        let loaded = self.emit_load_by_name(load, referrer, specifier, candidates.known_of_name);
         self.builder.write_variable(result, loaded);
         self.jump(done);
 
         self.continue_in(done);
         self.builder.read_variable(result)
+    }
+
+    fn emit_text_of_imported_object(
+        &mut self,
+        object: ValueId,
+        result: LocalVariable,
+        done: BlockId,
+    ) -> ValueId {
+        let converted = self.create_block();
+        let handler = self.begin_handler(BlockRole::CatchHandler, None);
+        let text = self.builder.to_string(object);
+        self.end_handler(handler);
+        self.jump(converted);
+
+        self.continue_in(handler.block());
+        let error = self.builder.catch_value();
+        let rejected = self.emit_settled_promise(BuiltinId::PromiseReject, error);
+        self.builder.write_variable(result, rejected);
+        self.jump(done);
+
+        self.continue_in(converted);
+        text
     }
 
     fn emit_load_by_name(

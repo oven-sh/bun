@@ -183,6 +183,38 @@ fn find_function(inputs: &ScanInputs<'_, '_>, callee: ExprId) -> Option<(Holder,
 
 /// `read` in `(read => read(path))(fs.readFileSync)` and `(read = fs.readFileSync) => read(path)`.
 fn find_function_passed(inputs: &ScanInputs<'_, '_>, callee: ExprId) -> Option<(Holder, Atom)> {
+    let FunctionsOfParameter { given, default } = find_functions_of_parameter(inputs, callee)?;
+    let reads = |&(holder, name): &(Holder, Atom)| reads_operand(holder, inputs.atoms.bytes(name));
+    match given {
+        Given::Function(function) => Some(function),
+        Given::Nothing => default,
+        Given::Unknown | Given::Another => default.filter(reads),
+    }
+}
+
+fn find_writing_default(inputs: &ScanInputs<'_, '_>, callee: ExprId) -> Option<(Holder, Atom)> {
+    let FunctionsOfParameter { given, default } = find_functions_of_parameter(inputs, callee)?;
+    let writes =
+        |&(holder, name): &(Holder, Atom)| !reads_operand(holder, inputs.atoms.bytes(name));
+    default.filter(|it| matches!(given, Given::Unknown) && writes(it))
+}
+
+enum Given {
+    Nothing,
+    Function((Holder, Atom)),
+    Another,
+    Unknown,
+}
+
+struct FunctionsOfParameter {
+    given: Given,
+    default: Option<(Holder, Atom)>,
+}
+
+fn find_functions_of_parameter(
+    inputs: &ScanInputs<'_, '_>,
+    callee: ExprId,
+) -> Option<FunctionsOfParameter> {
     let &ScanInputs { hir, bound, .. } = inputs;
     if !matches!(hir[callee].kind, ExprKind::Ident(_)) {
         return None;
@@ -194,9 +226,38 @@ fn find_function_passed(inputs: &ScanInputs<'_, '_>, callee: ExprId) -> Option<(
     }
     let no_names = |_: Atom| Vec::new();
     let passed = find_arguments_where_written(hir, bound, function, &no_names);
-    let passed = passed.and_then(|it| hir.ids(it).nth(place));
-    let mut functions = hir[parameter].default.some().into_iter().chain(passed);
-    functions.find_map(|it| find_function_named(inputs, hir.skip_type_assertions(it)))
+    let is_spread = |it: ExprId| matches!(hir[it].kind, ExprKind::Spread(_));
+    let passed = passed.filter(|it| !hir.ids(*it).take(place + 1).any(is_spread));
+    let find_named = |it: ExprId| find_function_named(inputs, hir.skip_type_assertions(it));
+    let is_undefined = |it: ExprId| {
+        let written = hir.skip_type_assertions(it);
+        find_constant(inputs, written) == Some(Constant::Undefined)
+            || is_free_name(hir, bound, written, &[known::undefined])
+    };
+    let given = match passed.map(|it| hir.ids(it).nth(place)) {
+        None => Given::Unknown,
+        Some(None) => Given::Nothing,
+        Some(Some(given)) if is_undefined(given) => Given::Nothing,
+        Some(Some(given)) => match find_named(given) {
+            Some(function) => Given::Function(function),
+            None => match hir[hir.skip_type_assertions(given)].kind {
+                ExprKind::Fn(_) | ExprKind::Class(_) => Given::Another,
+                _ => Given::Unknown,
+            },
+        },
+    };
+    let default = hir[parameter].default.some().and_then(find_named);
+    Some(FunctionsOfParameter { given, default })
+}
+
+fn reads_operand(holder: Holder, name: &[u8]) -> bool {
+    match holder {
+        Holder::Bun => name != b"write",
+        Holder::Fs | Holder::FsPromises => {
+            let mut changed = operands_changed_by_function_of_fs(name).iter();
+            !changed.any(|it| it.0 == 0)
+        }
+    }
 }
 
 /// `fs.readFileSync` in `const read = fs.readFileSync.bind(fs)`.
@@ -707,23 +768,23 @@ impl<'a, 's> TextsOfFile<'a, 's> {
         reads
     }
 
-    /// What the reads at `operands` read, for those of which the statements of the file tell.
+    /// What the reads at `operands` read, for those of which the statements of the file tell, and whether they read nothing else.
     pub(super) fn find_executed_reads(
         &self,
         operands: FxHashMap<ExprId, bool>,
-    ) -> FxHashMap<ExprId, SmallVec<[Atom; 2]>> {
+    ) -> FxHashMap<ExprId, (SmallVec<[Atom; 2]>, bool)> {
         let (names, asked) = (&self.written_names, &self.asked);
         let find = super::alternatives::find_executed_alternatives;
         let executed = find(&self.inputs, names, asked, operands);
         let text = |atom: Atom| self.inputs.atoms.bytes(atom);
-        let reads = executed.into_iter().map(|(operand, found)| {
+        let reads = executed.into_iter().map(|(operand, (found, are_all))| {
             let mut paths: SmallVec<[Atom; 2]> = SmallVec::new();
             for found in &found {
                 paths.extend(self.to_module_relative_paths(found));
             }
             paths.shared_sort_unstable_by_key(|it| text(*it));
             paths.dedup();
-            (operand, paths)
+            (operand, (paths, are_all))
         });
         reads.collect()
     }
@@ -1048,7 +1109,9 @@ impl<'a, 's> TextsOfFile<'a, 's> {
     }
 
     pub fn writes_second_operand_into_file(&self, callee: ExprId) -> bool {
-        let Some((holder, name)) = find_function(&self.inputs, callee) else {
+        let function = find_function(&self.inputs, callee)
+            .or_else(|| find_writing_default(&self.inputs, callee));
+        let Some((holder, name)) = function else {
             return false;
         };
         matches!(
@@ -1137,7 +1200,15 @@ pub(super) fn find_list_iterated_by_read(
     };
     let handed = hir.skip_type_assertions(hir.ids(args).next()?);
     // Almost every callback is written in place.
-    if matches!(hir[handed].kind, ExprKind::Fn(_)) || !is_list_walk(atoms.bytes(walk)) {
+    let is_literal = matches!(
+        hir[handed].kind,
+        ExprKind::Fn(_)
+            | ExprKind::String(_)
+            | ExprKind::Number(_)
+            | ExprKind::Object(_)
+            | ExprKind::Array(_)
+    );
+    if is_literal || !is_list_walk(atoms.bytes(walk)) {
         return None;
     }
     let (Holder::Fs, function) = find_function(inputs, handed)? else {
@@ -1150,6 +1221,7 @@ pub(super) fn find_list_iterated_by_read(
 #[derive(Default)]
 pub(super) struct FilePathOperands<'a> {
     pub(super) changed: SmallVec<[(ChangedPath, Option<&'a ImportedFileChanger>); 2]>,
+    pub(super) may_call_another_function: bool,
     pub(super) read: Option<ExprId>,
     /// The call doesn't read the contents of `read`.
     pub(super) is_query: bool,
@@ -1159,6 +1231,17 @@ pub(super) struct FilePathOperands<'a> {
     pub(super) made: Option<ExprId>,
     /// It becomes the working directory.
     pub(super) entered: Option<ExprId>,
+}
+
+impl FilePathOperands<'_> {
+    fn is_empty(&self) -> bool {
+        self.changed.is_empty()
+            && self.read.is_none()
+            && self.listed.is_none()
+            && self.created.is_none()
+            && self.made.is_none()
+            && self.entered.is_none()
+    }
 }
 
 /// What `callee` calls, and with which arguments: `fs.readFileSync.call(fs, path)` calls `fs.readFileSync` with what follows the first argument.
@@ -1206,13 +1289,12 @@ pub(super) fn find_file_path_operands<'a>(
     inputs: &ScanInputs<'a, '_>,
     callee: ExprId,
     args: IdList<ExprId>,
-) -> FilePathOperands<'a> {
+) -> Option<FilePathOperands<'a>> {
     let &ScanInputs { hir, atoms, .. } = inputs;
     let (callee, args) = find_called(inputs, callee, args);
-    let mut found = FilePathOperands::default();
     let written_name = match hir.member_key(callee) {
         Some((_, MemberKey::Name(name))) => Some(atoms.bytes(name)),
-        Some(_) => return found,
+        Some(_) => return None,
         None => None,
     };
     let may_be_named = |name: &[u8]| {
@@ -1234,8 +1316,9 @@ pub(super) fn find_file_path_operands<'a>(
         || written_name.is_none()
             && !matches!(hir[callee].kind, ExprKind::Ident(_) | ExprKind::Call(_))
     {
-        return found;
+        return None;
     }
+    let mut found = FilePathOperands::default();
     let may_be_chdir = match hir[callee].kind {
         ExprKind::Ident(name) => atoms.bytes(name) == b"chdir",
         _ => written_name == Some(b"chdir"),
@@ -1273,7 +1356,7 @@ pub(super) fn find_file_path_operands<'a>(
             found.changed.extend(given);
         }
         if !found.changed.is_empty() || written_name.is_some_and(|name| !may_be_named(name)) {
-            return found;
+            return Some(found);
         }
     }
     match find_function(inputs, callee) {
@@ -1321,6 +1404,21 @@ pub(super) fn find_file_path_operands<'a>(
             found.entered = found.listed;
         }
         None => {
+            match find_writing_default(inputs, callee) {
+                Some((Holder::Bun, _)) => {
+                    let target = operand(0);
+                    let path = target.and_then(|target| find_path_of_file_object(inputs, target));
+                    found.changed.extend(path.or(target).map(file));
+                }
+                Some((_, name)) => {
+                    let places = operands_changed_by_function_of_fs(atoms.bytes(name)).iter();
+                    let places =
+                        places.filter_map(|&(place, reach)| Some((operand(place)?, reach)));
+                    found.changed.extend(places.map(|it| changed(it.0, it.1)));
+                }
+                None => {}
+            }
+            found.may_call_another_function = !found.changed.is_empty();
             if let Some((object, MemberKey::Name(name))) = hir.member_key(callee) {
                 let name = atoms.bytes(name);
                 if is_method_of_file_that_changes_it(name) {
@@ -1334,5 +1432,5 @@ pub(super) fn find_file_path_operands<'a>(
             }
         }
     }
-    found
+    (!found.is_empty()).then_some(found)
 }

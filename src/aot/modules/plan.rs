@@ -5,6 +5,7 @@ use super::bindings::{
     AnswerMember, CopiedExports, Holder, ImportBinding, ModuleExport, ModuleRequest,
     SyntheticExportId, list_in_order_of_stars,
 };
+use super::commonjs_exports::AliasTarget;
 use super::failures::ModuleFailureId;
 use super::graph::{ModuleGraph, find};
 use super::imports::{MockedModules, NamedMember};
@@ -16,7 +17,7 @@ use super::test_run_evictions::{NamedByCopies, is_marked};
 use super::wrapped::InnerModuleKind;
 use crate::builtins::RuntimeModule;
 use crate::ir::generated::ModuleRequestKind;
-use crate::ir::parallel::{InParallel, for_each_mut};
+use crate::ir::parallel::{InParallel, for_each_mut, map_each};
 use crate::load::contents::load_names::{
     PathAlone, find_module_looked_up_in_cache, find_why_resolver_takes_name_for_path,
 };
@@ -29,9 +30,11 @@ use bun_sema::components::strongly_connected_components;
 use bun_sema::hir::{ExprId, FnId, ImportEqualsId, StmtId};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{FileId, Files, Sym};
+use bun_sema::resolve::ExternalKind;
 use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_sort_by_number::SortByNumber;
 use core::ops::Range;
+use smallvec::SmallVec;
 use std::borrow::Cow;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -84,6 +87,12 @@ pub enum Member {
     Undefined,
     Marker(bool),
     OnObject,
+}
+
+/// What a getter of a module's exports returns where every variable of `holders` is set. It throws elsewhere.
+pub struct MemberBehindGetters {
+    pub holders: SmallVec<[Sym; 2]>,
+    pub member: Member,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -328,6 +337,7 @@ pub(super) struct Plan {
     externals_imported_as_namespace: Vec<ModuleRef>,
     externals_named_by_mocks: Vec<ModuleRef>,
     absent_modules: Vec<ModuleRef>,
+    test_files_that_ask_loader: Vec<FileId>,
     may_be_mocked: Vec<bool>,
     is_named_by_mock: Vec<bool>,
     is_any_module_named_by_mock: bool,
@@ -390,6 +400,7 @@ impl Plan {
             externals_imported_as_namespace: Vec::new(),
             externals_named_by_mocks: Vec::new(),
             absent_modules: Vec::new(),
+            test_files_that_ask_loader: Vec::new(),
             may_be_mocked: vec![false; order.numbers.len()],
             is_named_by_mock: vec![false; order.numbers.len()],
             is_any_module_named_by_mock: false,
@@ -484,6 +495,10 @@ impl Plan {
 
     pub(super) fn set_absent_modules(&mut self, modules: Vec<ModuleRef>) {
         self.absent_modules = modules;
+    }
+
+    pub(super) fn set_test_files_that_ask_loader(&mut self, files: Vec<FileId>) {
+        self.test_files_that_ask_loader = files;
     }
 
     pub(super) fn set_names_of_mocks(&mut self, mocked: &MockedModules) {
@@ -682,11 +697,16 @@ impl ModuleGraph {
     fn finish_site(&self, site: StoredSite) -> Site {
         let shows_mark = self.shape(site.target) == Shape::EsModule
             && self.plan.has(&self.plan.is_namespace_seen, site.target);
+        let is_child_of_referrer = match (site.target, site.referrer) {
+            (ModuleRef::Inner { .. }, _) => false,
+            (_, ModuleRef::Inner { file, .. }) => self.keeps_module_object(ModuleRef::File(file)),
+            (_, referrer) => self.keeps_module_object(referrer),
+        };
         Site::Evaluate {
             target: site.target,
             is_bare: site.is_bare,
             records: shows_mark
-                || self.keeps_module_object(site.referrer)
+                || is_child_of_referrer
                 || self.keeps_module_object(site.target)
                 || (self.plan.is_every_require_seen && matches!(site.target, ModuleRef::File(_)))
                 || matches!(site.target, ModuleRef::File(file) if self.tracks_first_load(file)),
@@ -828,6 +848,51 @@ impl ModuleGraph {
         };
         let accessed = find(&row.accessed, access)?;
         self.finish_member(accessed.module, binding, accessed.is_imported)
+    }
+
+    pub fn member_behind_getters(
+        &self,
+        file: FileId,
+        access: ExprId,
+    ) -> Option<MemberBehindGetters> {
+        let accessed = find(&self.row(file).accessed, access)?;
+        let (mut module, mut name) = (accessed.module, accessed.name);
+        if accessed.is_imported
+            || self.shape(module) != Shape::Value
+            || !self.runs_body_once(ModuleRef::File(file))
+        {
+            return None;
+        }
+        let mut holders = SmallVec::new();
+        for _ in 0..=self.commonjs().module_count() {
+            let ModuleRef::Inner {
+                file: written_in, ..
+            } = module
+            else {
+                return None;
+            };
+            if written_in != file || !self.runs_body_once(module) {
+                return None;
+            }
+            let getter = self.commonjs().read_getter(module, name)?;
+            let (source, name_there) = match getter.target {
+                AliasTarget::Binding(symbol) => {
+                    let member = Member::Binding(symbol);
+                    return Some(MemberBehindGetters { holders, member });
+                }
+                AliasTarget::Member { module, name } => (module, name),
+            };
+            holders.push(Sym {
+                file,
+                id: getter.holder?,
+            });
+            match self.member(file, getter.returned)? {
+                Member::OnObject => (module, name) = (source, name_there),
+                Member::Copy(_) => return None,
+                member => return Some(MemberBehindGetters { holders, member }),
+            }
+        }
+        None
     }
 
     /// `limit` of `__export(lib, { limit: () => limit }); lib.limit`: the variables of the file that members name.
@@ -1130,6 +1195,14 @@ impl ModuleGraph {
         self.plan.absent_modules.contains(&module)
     }
 
+    pub fn is_found_by_loader_for_test_file(&self, module: ModuleRef, importer: FileId) -> bool {
+        matches!(module, ModuleRef::External { importer: asks, .. } if asks == importer)
+            && (self.plan.test_files_that_ask_loader)
+                .binary_search(&importer)
+                .is_ok()
+            && self.external_kind(module) != Some(ExternalKind::HostValue)
+    }
+
     pub fn is_made_by_mocks_alone(&self, module: ModuleRef) -> bool {
         let names = &self.plan.names_without_code_that_mocks_give;
         matches!(module, ModuleRef::External { specifier, type_attribute: None, .. } if names.contains(&specifier))
@@ -1298,6 +1371,10 @@ impl ModuleGraph {
         self.commonjs().name_sources(module)
     }
 
+    pub fn object_sources(&self, module: ModuleRef) -> &[ModuleRef] {
+        self.commonjs().object_sources(module)
+    }
+
     pub fn set_keeps_module_object(&mut self, module: ModuleRef) {
         self.plan.add(|plan| &mut plan.keeps_module_object, module);
         self.look_at(module);
@@ -1389,8 +1466,10 @@ impl ModuleGraph {
         let mut steps = StepClock::new(Stage::BindModules);
         self.settle_holders();
         steps.end("plan: holders");
-        let linked_files = self.find_linked_files(ModuleKind::CommonJs);
-        let data_files = self.find_linked_files(ModuleKind::Data);
+        let kinds = vec![ModuleKind::CommonJs, ModuleKind::Data];
+        let found = map_each(kinds, in_parallel, &|kind| self.find_linked_files(kind));
+        let [linked_files, data_files] = <[LinkedFiles; 2]>::try_from(found)
+            .unwrap_or_else(|_| unreachable!("as many as kinds"));
         steps.end("plan: linked files");
         let prefixes = self.collect_prefixes(&linked_files, in_parallel);
         steps.end("plan: prefixes");

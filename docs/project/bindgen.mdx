@@ -268,7 +268,7 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.null`                                         | `()`                             | `null` or `undefined`; only in a union                        |
 | `b.undefined`                                    | `()`                             | `undefined`; only in a union                                  |
 | `b.promisePtr("crate::T")`                       | `*mut T`                         | the context of a promise reaction; see below                  |
-| `b.nativePromiseContext("crate::T")`             | `Option<NonNull<T>>`             | the same, when it is a `NativePromiseContext` cell            |
+| `b.nativePromiseContext("crate::T")`             | `Option<RefPtr<T>>`              | the same, when it is a `NativePromiseContext` cell            |
 | `b.array(T)`                                     | `Vec<T>`                         | an array; `T` holds no JS value, which the GC would not see   |
 | `b.enumeration(values)`                          | a generated `enum`               | one of the strings                                            |
 | `b.dictionary(members)`                          | `&` a generated `struct`         | an object that is not an array                                |
@@ -585,7 +585,8 @@ task or sent to a thread. `JsLocal<'a, T>` is one known to be a `JSString`,
 What outlives a call:
 
 - one of a class's **`internalFields`** (below), which the GC visits;
-- a `Strong`, made with `Strong::create(value.to_js(), cx.global())` and read with `JsLocal::new(heap, strong.get())`. It is made, read and dropped on the JS thread.
+- a `Strong`, made with `Strong::create(value.to_js(), cx.global())` and read with `JsLocal::new(heap, strong.get())`. It is made, read and dropped on the JS thread;
+- a `StrongWrapper<T>`, made with `StrongWrapper::new(this_value, cx.global())` for a class without `mutates`. `strong.payload()` borrows the struct. It panics once the VM is closed.
 
 A list of values goes in a `MarkedArgumentBuffer`, never a `Vec` or a `Box`: the GC does
 not look inside heap allocations. The compiler does not check this one.
@@ -765,7 +766,7 @@ One class inherits from another as one WebIDL interface does:
 - `RecordableHistogram.prototype` inherits from `Histogram.prototype`, and `RecordableHistogram` from `Histogram`.
 - The subclass adds no fields. Its struct is the base's, so `record` is a method of `Histogram` in Rust, and no two
   members of a class and its subclasses have the same Rust function unless a `rustName` says so.
-  `js_RecordableHistogram::from_js(value)` is the struct if `value` is an instance of the subclass.
+  `js_RecordableHistogram::from_js(&value)` is the struct if `value` is an instance of the subclass.
 
 `js_RecordableHistogram::create(heap, payload)` makes an instance, and `create_wrapper(global, payload)` does for code
 that has no capability. `payload.into_js(heap)` makes an instance of the base.
@@ -780,10 +781,13 @@ base and not both.
 ### The receiver
 
 Every member takes `&self`, a setter too, and mutable state is in `Cell` and `JsCell`. The struct implements
-`bun_jsc::JsClass`, so `value.as_class_ref::<Glob>()` works, and `js_Glob::from_js(value)` is the struct if `value`
-is an instance. `js_Glob::from_js_direct(value)` returns `None` for an instance of a subclass or one with own
-properties, either of which may override a member. `wrapper.payload_ptr()` is the address of the struct, which
-never changes, and `payload.wrapper_value()` returns the object that owns the struct.
+`bun_jsc::JsClass`, so `value.as_class_ref::<Glob>()` works, and `js_Glob::from_js(&value)` is the struct if `value`
+is an instance. Both return a `WrapperGuard<'_, Glob>`, which borrows `value`, derefs to the struct and keeps the object
+visible to the GC's stack scan until it is dropped. `JsLocal::as_class_ref` does the same for an argument, with the
+lifetime of the call. `js_Glob::from_js_direct(&value)` returns `None` for an instance of a subclass or one with own
+properties, either of which may override a member. `value.is::<Glob>()` and `value.is_direct::<Glob>()` only test the
+class. `wrapper.payload_ptr()` is the address of the struct, which never changes, and `payload.wrapper_value()` returns
+the object that owns the struct.
 
 A member with `mutates: true` takes `&mut self`, and so does every setter of its class. JavaScript that ran
 during another member could call it on the same object, so no member of that class has `capability: "js"`. The class
@@ -887,35 +891,30 @@ js_ReadableSinkController::set_pipe_done(this_value, done);
 With `refCounted: true` the struct is a separate, refcounted heap allocation and the object holds one ref:
 
 ```ts
-export const CronJob = b.class({
-  rustPath: "crate::api::cron::CronJob",
+export const FetchSession = b.class({
+  rustPath: "crate::webcore::fetch::FetchSession",
   refCounted: true,
   finalize: true,
-  internalFields: ["callback", "pendingPromise", "cron"],
+  internalFields: ["checkServerIdentity"],
   proto: {
-    cron: { internalField: "cron" },
-    stop: { returns: b.self, passThis: true },
-    "@@dispose": { returns: b.self, passThis: true, rustName: "stop" },
+    close: {},
+    "@@dispose": { rustName: "close" },
   },
 });
 ```
 
 ```rust
-impl CronJob {
+impl FetchSession {
     pub(crate) fn finalize(&self) {
-        self.this_value.with_mut(|v| v.finalize());
-    }
-
-    pub(crate) fn stop<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
-        Self::self_stop(self.self_ref.get().this_ptr(), self.global.bun_vm());
-        this_value
+        self.this_value.with_mut(|r| r.finalize());
+        self.close();
     }
 }
 ```
 
 - The struct is intrusively refcounted: `bun_ptr::CellRefCounted`, `RefCounted` or `ThreadSafeRefCounted`.
 - `mutates: true` is an error.
-- `construct` returns a `*mut Self`, whose ref the object takes over.
+- `construct` returns a `RefPtr<Self>`, which the object takes over.
 - The pointer in the object never changes and is never null. A class with a closed or detached state tracks it in a
   field of its own.
 - `finalize` runs before the object's ref is dropped. `Drop` runs when the last ref is dropped, which can be much later.
@@ -924,13 +923,14 @@ impl CronJob {
 
 Native callbacks have no capability. What they need to reach the JS object takes the global object:
 
-| Function                         | What it does                                        |
-| -------------------------------- | --------------------------------------------------- |
-| `js_CronJob::to_js(ptr, global)` | makes the object, which takes over the caller's ref |
-| `js_CronJob::from_js(value)`     | the struct, if `value` is an instance               |
+| Function                                  | What it does                                       |
+| ----------------------------------------- | -------------------------------------------------- |
+| `js_FetchSession::to_js(session, global)` | makes the object, which takes over the `RefPtr`    |
+| `js_FetchSession::wrap(session, global)`  | the same, as a `WrapperGuard`, to go on using both |
+| `js_FetchSession::from_js(&value)`        | the struct, if `value` is an instance              |
+| `js_FetchSession::ref_from_js(value)`     | the same, as a new `RefPtr`                        |
 
-`CronJob::to_js_ptr(ptr, global)` is `to_js` as an `unsafe fn`, and `CronJob::to_js_nonnull(ptr, global)` takes a
-`NonNull`. The struct also implements `bun_jsc::JsClass`, so `value.as_class_ref::<CronJob>()` works. To get
+The struct also implements `bun_jsc::JsClass`, so `value.as_class_ref::<FetchSession>()` works. To get
 back to its JS object the struct stores a `JsRef`, and calls `finalize()` on it from the class's `finalize`.
 
 ### Memory
@@ -977,6 +977,8 @@ pub(crate) fn call_matcher<'a>(
 `callee` is the JS function that was called, and `arguments` is everything it was called with. The function takes its
 own arguments out of that list, so they're all `b.any`, the last one possibly `.variadic`. It also needs
 `capability: "js"`, `throws: true` and `returns: b.any`, and can't have overloads. The class can't be `refCounted`.
+The type of `matcher` is up to `call_matcher`. Every function of `proto` returns what `matcher` returns. It gets the
+first argument of `matcher` as `this_value`, which can be any `Copy` type whose `payload_ref()` gives `&Self`.
 
 ## What the compiler reads
 

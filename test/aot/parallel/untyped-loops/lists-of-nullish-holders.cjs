@@ -1,5 +1,4 @@
 // Loops copy elements into lists that are read off objects that may be null by their type: bn.js' split and iushrn. Unseen code hands over objects of other kinds.
-// STATISTIC: NullishHoldersReadInPreheaders >= 2
 "use strict";
 function Big(words, length) { this.negative = 0; this.words = null; this.length = 0; this.red = null; if (words) { this.words = words; this.length = length; } }
 Big.prototype.shift = function shift(s, extended) { if (extended) { for (var i = 0; i < s; i++) extended.words[i] = this.words[i]; extended.length = s; } return this; };

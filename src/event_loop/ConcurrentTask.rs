@@ -8,6 +8,9 @@
 //! If `auto_delete` is true, the task is automatically deallocated when it's finished.
 //! Otherwise, it's expected that the containing struct will deallocate the task.
 
+use std::sync::Arc;
+
+use bun_ptr::{AnyRefCounted, RefPtr};
 use bun_threading::UnboundedQueue;
 use bun_threading::unbounded_queue::{Link, Linked};
 
@@ -18,11 +21,7 @@ use bun_threading::unbounded_queue::{Link, Linked};
 // inherent-method call. Provide thin module-level forwarders so both spellings
 // work — the struct's inherent methods remain the canonical impls below.
 #[inline]
-pub fn create(task: Task) -> core::ptr::NonNull<ConcurrentTask> {
-    ConcurrentTask::create(task)
-}
-#[inline]
-pub fn create_from<T: Taskable>(task: *mut T) -> core::ptr::NonNull<ConcurrentTask> {
+pub fn create_from<T: Taskable>(task: *mut T) -> Box<ConcurrentTask> {
     ConcurrentTask::create_from(task)
 }
 
@@ -62,8 +61,7 @@ pub mod task_tag {
     }
     tags! {
         AnyTaskJob,               // bun_jsc::Job<C> (typed pool job, one erased tag)
-        AsyncModule,
-        BakeHotReloadEvent,       // bun.bake.DevServer.HotReloadEvent
+        BakePendingReloadEvent,   // bake::dev_server::PendingReloadEvent
         BundleV2DeferredBatchTask, // bun.bundle_v2.DeferredBatchTask
         BundleV2PluginResolve,    // bun.bundle_v2.Resolve (JS-thread hop)
         BundleV2PluginLoad,       // bun.bundle_v2.Load (JS-thread hop)
@@ -91,17 +89,12 @@ pub mod task_tag {
         HandledPromise,
         HotReloadTask,
         HTMLRewriterBackgroundPull,
-        WatchReloadTask,
         JSBundleCompletionTask,
         JSCDeferredWorkTask,
         NapiAsyncWork,            // napi_async_work
         NapiFinalizerTask,
         NativePromiseContextDeferredDerefTask,
-        NativeBrotli,
-        NativeZlib,
-        NativeZstd,
         Open,
-        PollPendingModulesTask,
         PosixSignalTask,
         MemoryPressureTask,
         ProcessWaiterThreadTask,
@@ -112,7 +105,8 @@ pub mod task_tag {
         RuntimeTranspilerStore,
         S3HttpDownloadStreamingTask,
         S3HttpSimpleTask,
-        S3UploadWriterCollected,  // MultiPartUpload (its `writer()` was collected before `end()`)
+        S3RefusedRequest,
+        S3UploadWriterCollected,  // NetworkSink (its `writer()` was collected before `end()`)
         SendQueueDeferred,        // bun_runtime::ipc::SendQueue (close / after-close hop)
         ServerAllConnectionsClosedTask,
         HTTPServerDeinit,
@@ -139,21 +133,22 @@ pub mod task_tag {
         ShellAsyncCpTask,
         StreamPending,
         ThreadSafeFunction,
+        ThreadSafeFunctionRefRequest,
         UvDnsPollFree,            // a closed c-ares uv_poll_t (windows)
         UvHandleClose,            // an addon's uv_close (posix)
         UvLoopDispatch,           // an addon's uv_async_send (posix)
+        UvWorkDone,               // work that an addon thread queued (posix)
         ValkeyDeferredClose,
-        ValkeyDeferredFailure,
         WindowsNamedPipeContext,
         Write,
         Writev,
     }
 }
 
-#[derive(Copy, Clone)]
+/// No `Drop`: a dropped task leaks what `from_boxed` took.
 pub struct Task {
-    pub tag: TaskTag,
-    pub ptr: *mut (),
+    tag: TaskTag,
+    ptr: *mut (),
     // [`Task::context`], in the padding `tag` leaves.
     context: ContextId,
 }
@@ -187,14 +182,14 @@ impl ContextId {
 
 /// What it takes to be queued as a [`Task`]: a tag, and how the task is
 /// freed when it will never run. Implement on every type that can be
-/// enqueued; the impl lives in whatever crate owns the type.
+/// enqueued by pointer; the impl lives in whatever crate owns the type.
 ///
 /// A queued task ends one of two ways: it runs (`bun_runtime::dispatch::
 /// run_task`), or its VM stops before running it —
 /// [`release_unrun`](Self::release_unrun), required here so no type can be
 /// queued without having decided it. (A *weak* poster — `JsPoster` — can also
 /// get its task back unqueued once the VM has closed; that task never entered
-/// a queue and is the poster's own to free: [`ConcurrentTask::release_refused`].)
+/// a queue and is the poster's own to free.)
 ///
 /// Re-exported from `bun_jsc` for ergonomics, but defined here (lowest tier on
 /// the hot-dispatch list, see PORTING.md §Dispatch) so that
@@ -230,6 +225,78 @@ pub trait Taskable {
     unsafe fn context(this: *const Self) -> ContextId;
 }
 
+/// As [`Taskable`], for a type that the queued [`Task`] owns.
+pub trait BoxedTask: 'static {
+    const TAG: TaskTag;
+    /// As [`Taskable::release_unrun`]. An empty body drops the box.
+    fn release_unrun(self: Box<Self>);
+    fn context(&self) -> ContextId;
+}
+
+/// As [`BoxedTask`], for a reference that the queued [`Task`] owns. `Self` names the task.
+pub trait RefTask: 'static {
+    const TAG: TaskTag;
+    type Ref: TaskRef;
+    /// As [`Taskable::release_unrun`]. An empty body drops the reference.
+    fn release_unrun(this: Self::Ref);
+    fn context(this: &Self::Ref) -> ContextId;
+}
+
+/// A counted reference, which waits in [`Task::ptr`].
+pub trait TaskRef {
+    fn into_raw(self) -> *mut ();
+    /// # Safety
+    /// `ptr` came from `into_raw`, and is not used afterwards.
+    unsafe fn from_raw(ptr: *mut ()) -> Self;
+}
+
+impl<T> TaskRef for Arc<T> {
+    fn into_raw(self) -> *mut () {
+        Arc::into_raw(self).cast_mut().cast()
+    }
+    unsafe fn from_raw(ptr: *mut ()) -> Self {
+        // SAFETY: fn contract.
+        unsafe { Arc::from_raw(ptr.cast()) }
+    }
+}
+
+impl<T: AnyRefCounted> TaskRef for RefPtr<T> {
+    fn into_raw(self) -> *mut () {
+        RefPtr::into_raw(self).cast()
+    }
+    unsafe fn from_raw(ptr: *mut ()) -> Self {
+        // SAFETY: fn contract.
+        unsafe { RefPtr::from_raw(ptr.cast()) }
+    }
+}
+
+/// What holds a task until a queue that can refuse it has taken it.
+pub trait IntoTask {
+    const TAG: TaskTag;
+    fn into_task(self) -> Task;
+}
+
+impl<T: Taskable> IntoTask for *mut T {
+    const TAG: TaskTag = T::TAG;
+    fn into_task(self) -> Task {
+        Task::init(self)
+    }
+}
+
+impl<T: BoxedTask> IntoTask for Box<T> {
+    const TAG: TaskTag = T::TAG;
+    fn into_task(self) -> Task {
+        Task::from_boxed(self)
+    }
+}
+
+impl<T: RefTask<Ref = Self>> IntoTask for Arc<T> {
+    const TAG: TaskTag = T::TAG;
+    fn into_task(self) -> Task {
+        Task::from_ref::<T>(self)
+    }
+}
+
 impl TaskTag {
     /// A bundle asks its plugins to resolve or load something.
     #[inline]
@@ -244,14 +311,22 @@ impl TaskTag {
 }
 
 impl Task {
-    /// For a tag whose `ptr` is not a `*mut T` (it packs an integer, or the payload is erased);
-    /// everything else goes through [`init`](Self::init).
     #[inline]
-    pub const fn new(tag: TaskTag, ptr: *mut (), context: ContextId) -> Task {
+    const fn new(tag: TaskTag, ptr: *mut (), context: ContextId) -> Task {
         Task { tag, ptr, context }
     }
 
-    /// Whose script the task continues: what its type's [`Taskable::context`] said when the task
+    #[inline]
+    pub const fn tag(&self) -> TaskTag {
+        self.tag
+    }
+
+    #[inline]
+    pub const fn ptr(&self) -> *mut () {
+        self.ptr
+    }
+
+    /// Whose script the task continues: what its type's `context` said when the task
     /// was made. The event loop checks it before it runs the task.
     #[inline]
     pub const fn context(&self) -> ContextId {
@@ -270,13 +345,32 @@ impl Task {
         Task::new(T::TAG, ptr.cast::<()>(), unsafe { T::context(ptr) })
     }
 
-    /// Build a [`Task`] from an owned `Box<T>`. The dispatch arm for `T::TAG`
-    /// is responsible for reclaiming the allocation (see
-    /// `bun_runtime::dispatch::run_task`). This is the typed entry point
-    /// callers use instead of open-coding `heap::alloc`.
     #[inline]
-    pub fn from_boxed<T: Taskable>(task: Box<T>) -> Task {
-        Task::init(bun_core::heap::into_raw(task))
+    pub fn from_boxed<T: BoxedTask>(task: Box<T>) -> Task {
+        let context = task.context();
+        Task::new(T::TAG, bun_core::heap::into_raw(task).cast(), context)
+    }
+
+    /// # Safety
+    /// `self` came from `from_boxed::<T>`, and no bitwise copy of it is used.
+    #[inline]
+    pub unsafe fn into_boxed<T: BoxedTask>(self) -> Box<T> {
+        debug_assert!(self.tag == T::TAG);
+        // SAFETY: fn contract.
+        unsafe { bun_core::heap::take(self.ptr.cast()) }
+    }
+
+    pub fn from_ref<T: RefTask>(task: T::Ref) -> Task {
+        let context = T::context(&task);
+        Task::new(T::TAG, task.into_raw(), context)
+    }
+
+    /// # Safety
+    /// `self` came from `from_ref::<T>`, and no bitwise copy of it is used.
+    pub unsafe fn into_ref<T: RefTask>(self) -> T::Ref {
+        debug_assert!(self.tag == T::TAG);
+        // SAFETY: fn contract.
+        unsafe { T::Ref::from_raw(self.ptr) }
     }
 }
 
@@ -334,37 +428,31 @@ unsafe impl Linked for ConcurrentTask {
 }
 pub type Queue = UnboundedQueue<ConcurrentTask>;
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum AutoDeinit {
-    ManualDeinit,
-    AutoDeinit,
-}
-
 impl ConcurrentTask {
-    /// The pointer is intrusive (linked into `Queue`), so this returns it raw rather than as a `Box`.
-    pub fn create(task: Task) -> core::ptr::NonNull<ConcurrentTask> {
-        bun_core::heap::alloc_nn(ConcurrentTask {
+    pub fn create(task: Task) -> Box<ConcurrentTask> {
+        Box::new(ConcurrentTask {
             task,
             next: Link::new(),
             auto_delete: true,
         })
     }
 
-    pub fn create_from<T: Taskable>(task: *mut T) -> core::ptr::NonNull<ConcurrentTask> {
+    pub fn create_from<T: Taskable>(task: *mut T) -> Box<ConcurrentTask> {
         bun_core::mark_binding!();
         Self::create(Task::init(task))
     }
 
-    pub fn from<T: Taskable>(
-        &mut self,
-        of: *mut T,
-        auto_deinit: AutoDeinit,
-    ) -> &mut ConcurrentTask {
+    pub fn create_boxed<T: BoxedTask>(task: Box<T>) -> Box<ConcurrentTask> {
+        Self::create(Task::from_boxed(task))
+    }
+
+    /// For a node that is a field of what it carries.
+    pub fn from<T: Taskable>(&mut self, of: *mut T) -> &mut ConcurrentTask {
         bun_core::mark_binding!();
         *self = ConcurrentTask {
             task: Task::init(of),
             next: Link::new(),
-            auto_delete: auto_deinit == AutoDeinit::AutoDeinit,
+            auto_delete: false,
         };
         self
     }
@@ -373,32 +461,15 @@ impl ConcurrentTask {
     /// heap-allocated (`create*`); an intrusive carrier stays with its container.
     ///
     /// # Safety
-    /// `this` came off a queue (or was never queued) and is not used afterwards.
+    /// `this` came off a queue and is not used afterwards.
     pub unsafe fn into_task(this: core::ptr::NonNull<ConcurrentTask>) -> Task {
         // SAFETY: fn contract.
         unsafe {
-            let (task, auto_delete) = (this.as_ref().task, this.as_ref().auto_delete());
-            if auto_delete {
+            let task = core::ptr::read(&raw const (*this.as_ptr()).task);
+            if this.as_ref().auto_delete {
                 drop(bun_core::heap::take(this.as_ptr()));
             }
             task
         }
-    }
-
-    /// A weak poster got `task` back because the target VM has closed: free
-    /// the carrier if it is a heap one (`create*`); an intrusive one belongs to
-    /// its container. What the task points at stays the poster's.
-    ///
-    /// # Safety
-    /// `task` was just refused and is not queued anywhere.
-    pub unsafe fn release_refused(task: core::ptr::NonNull<ConcurrentTask>) {
-        // SAFETY: fn contract.
-        let _ = unsafe { Self::into_task(task) };
-    }
-
-    /// Returns whether this task should be automatically deallocated after execution.
-    #[inline]
-    pub fn auto_delete(&self) -> bool {
-        self.auto_delete
     }
 }

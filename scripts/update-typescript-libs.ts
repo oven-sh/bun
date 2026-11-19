@@ -33,13 +33,23 @@ const names = readdirSync(from)
   .filter(name => /^lib(\.[a-z0-9]+)*\.d\.ts$/.test(name))
   .sort();
 const text = (name: string) => readFileSync(join(from, name));
-const frames = names.map(name => {
-  const dictionary = dictionaryOf(name);
-  return zstdCompressSync(text(name), {
-    dictionary: dictionary ? text(dictionaries[dictionary - 1]) : undefined,
-    pledgedSrcSize: text(name).length,
+const compress = (bytes: Buffer, dictionary?: Buffer) =>
+  zstdCompressSync(bytes, {
+    dictionary,
+    pledgedSrcSize: bytes.length,
     params: { [constants.ZSTD_c_compressionLevel]: 19, [constants.ZSTD_c_contentSizeFlag]: 1 },
   });
+// lib.dom.d.ts is the longest file of most programs. In frames of this length, which threads decompress side by side,
+// it is 311 KB instead of 267 KB.
+const frameLength = 256 * 1024;
+const frames = names.map(name => {
+  const [bytes, dictionary] = [text(name), dictionaryOf(name)];
+  if (dictionary) return compress(bytes, text(dictionaries[dictionary - 1]));
+  return Buffer.concat(
+    Array.from({ length: Math.ceil(bytes.length / frameLength) }, (_, i) =>
+      compress(bytes.subarray(i * frameLength, (i + 1) * frameLength)),
+    ),
+  );
 });
 
 const header = Buffer.alloc(4 + names.length * recordLength);

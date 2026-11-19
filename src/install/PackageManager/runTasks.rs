@@ -487,7 +487,8 @@ pub(crate) fn run_tasks(
                     // A dist-tag on the name of an unpublished workspace links the workspace, once
                     // `get_or_put_resolved_package` sees that the task has failed.
                     if metadata.status_code() == 404
-                        && !matches!(caller, Caller::ManifestCache)
+                        && (manager.task_queue.contains_key(&task.task_id)
+                            || !matches!(caller, Caller::ManifestCache))
                         && enqueue::has_linkable_workspace(
                             manager,
                             bun_semver::string::Builder::string_hash(name),

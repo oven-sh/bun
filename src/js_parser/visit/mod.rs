@@ -32,16 +32,19 @@ use bun_collections::VecExt;
 use crate::scan::scan_side_effects::SideEffects;
 use bun_ast::StrictModeKind;
 use bun_collections::HashMap;
-use core::ptr::NonNull;
+use core::{ops::Range, ptr::NonNull};
+use smallvec::SmallVec;
 
 // In the AST crate, ListManaged is arena-backed.
 type ListManaged<'bump, T> = BumpVec<'bump, T>;
 
-/// Visited JSX locations and the statements whose syntax can be discarded later.
+/// Track JSX locations by the statement payload that emits their syntax.
+/// A rewrite that moves syntax to another payload moves its locations with it.
 pub(crate) struct PreservedJsx<'a> {
     // Keeping indices stable while nested visitors invalidate locations.
     pub(crate) elements: BumpVec<'a, Option<bun_ast::Loc>>,
-    statements: HashMap<*const (), std::ops::Range<usize>>,
+    // Hoisted statements can separate the ranges of adjacent declarations.
+    statements: HashMap<*const (), SmallVec<[Range<usize>; 1]>>,
 }
 
 impl<'a> PreservedJsx<'a> {
@@ -53,23 +56,46 @@ impl<'a> PreservedJsx<'a> {
     }
 
     fn record_statement(&mut self, stmt: Stmt, start: usize) {
+        let end = self.elements.len();
+        if start == end {
+            return;
+        }
         if let Some(key) = stmt.data.payload_ptr() {
-            self.statements.insert(key, start..self.elements.len());
+            let ranges = self.statements.entry(key).or_default();
+            ranges.retain(|range| range.start < start || range.end > end);
+            ranges.push(start..end);
         }
     }
 
-    fn discard_statement(&mut self, stmt: Stmt) {
+    fn take_statement_ranges(&mut self, stmt: Stmt) -> Option<SmallVec<[Range<usize>; 1]>> {
+        if self.statements.is_empty() {
+            return None;
+        }
+        let key = stmt.data.payload_ptr()?;
+        self.statements.remove(&key)
+    }
+
+    fn move_statement(&mut self, from: Stmt, into: Stmt) {
         if self.statements.is_empty() {
             return;
         }
-        let Some(key) = stmt.data.payload_ptr() else {
+        let Some(key) = into.data.payload_ptr() else {
             return;
         };
-        let range = self.statements.remove(&key);
-        let Some(range) = range else {
+        let ranges = self.take_statement_ranges(from);
+        let Some(ranges) = ranges else {
             return;
         };
-        self.elements[range].fill(None);
+        self.statements.entry(key).or_default().extend(ranges);
+    }
+
+    fn discard_statement(&mut self, stmt: Stmt) {
+        let ranges = self.take_statement_ranges(stmt);
+        if let Some(ranges) = ranges {
+            for range in ranges {
+                self.elements[range].fill(None);
+            }
+        }
     }
 }
 
@@ -807,6 +833,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
             }
             StmtData::SLocal(mut st) => {
+                let jsx_start = self.preserved_jsx.elements.len();
+                let outlined_start = self.react_compiler_outlined_from_nested.len();
                 for dec in st.decls.slice_mut() {
                     self.visit_binding(dec.binding, None);
                     if let Some(val) = dec.value.as_mut() {
@@ -814,6 +842,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 st.kind = self.select_local_kind(st.kind);
+                if outlined_start == self.react_compiler_outlined_from_nested.len() {
+                    self.preserved_jsx.record_statement(stmt, jsx_start);
+                }
             }
             _ => {
                 self.panic("Unexpected stmt in visitForLoopInit", format_args!(""));

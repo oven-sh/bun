@@ -1077,6 +1077,19 @@ describe("bundler", () => {
         `,
         "1\n",
       ],
+      [
+        "pruned for-loop initializers and bindings",
+        `
+          function render() {
+            return [typeof counted, typeof key, typeof value].join(" ");
+            for (var counted = <Unused />; ; ) break;
+            for (var { key = <Unused /> } in {}) {}
+            for (var { value = <Unused /> } of []) {}
+          }
+          console.log(render());
+        `,
+        "undefined undefined undefined\n",
+      ],
     ])("runs with preserve after removing JSX in %s", async (_, source, expected) => {
       using dir = tempDir("jsx-discarded-code", { "in.jsx": source });
       await using proc = Bun.spawn({

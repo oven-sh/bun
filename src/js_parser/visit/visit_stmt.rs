@@ -2021,6 +2021,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         RelocateVarsMode::Normal,
                     );
                     if let Some(relocated) = relocate.stmt {
+                        p.preserved_jsx.move_statement(for_init, relocated);
                         data.init = Some(relocated);
                     }
                 }
@@ -2056,10 +2057,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let js_ast::binding::Data::BIdentifier(b_id) = decl.binding.data {
                             if let Some(val) = decl.value {
                                 let id_ref = b_id.r#ref;
-                                stmts.push(Stmt::assign(
+                                let assignment = Stmt::assign(
                                     Expr::init_identifier(id_ref, decl.binding.loc),
                                     val,
-                                ));
+                                );
+                                p.preserved_jsx.move_statement(data.init, assignment);
+                                stmts.push(assignment);
                                 decl.value = None;
                             }
                         }
@@ -2070,6 +2073,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         RelocateVarsMode::ForInOrForOf,
                     );
                     if let Some(relocated_stmt) = relocate.stmt {
+                        p.preserved_jsx.move_statement(data.init, relocated_stmt);
                         data.init = relocated_stmt;
                     }
                 }
@@ -2101,6 +2105,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         RelocateVarsMode::ForInOrForOf,
                     );
                     if let Some(relocated_stmt) = relocate.stmt {
+                        p.preserved_jsx.move_statement(data.init, relocated_stmt);
                         data.init = relocated_stmt;
                     }
                 }

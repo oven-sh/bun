@@ -363,6 +363,25 @@ impl Expect {
         false
     }
 
+    /// Called by C++ for the message of a failed match. Whether `value` is a matcher that the message may ask: one of the five kinds that compare with nothing that another value holds, and not of `expect.resolvesTo` or `expect.rejectsTo`, which read a promise.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Expect__diffMayAskMatcher(value: JSValue) -> bool {
+        let flags = if let Some(matcher) = value.as_class_ref::<ExpectAny>() {
+            matcher.flags
+        } else if let Some(matcher) = value.as_class_ref::<ExpectAnything>() {
+            matcher.flags
+        } else if let Some(matcher) = value.as_class_ref::<ExpectStringContaining>() {
+            matcher.flags
+        } else if let Some(matcher) = value.as_class_ref::<ExpectStringMatching>() {
+            matcher.flags
+        } else if let Some(matcher) = value.as_class_ref::<ExpectCloseTo>() {
+            matcher.flags
+        } else {
+            return false;
+        };
+        flags.promise() == Promise::None
+    }
+
     /// Called by C++ when matching with asymmetric matchers
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Expect_readFlagsAndProcessPromise(
@@ -2462,7 +2481,7 @@ unsafe extern "C" {
 }
 
 // Exports: handled by #[unsafe(no_mangle)] on:
-//   ExpectMatcherUtils_createSigleton, Expect_readFlagsAndProcessPromise, ExpectCustomAsymmetricMatcher__execute
+//   ExpectMatcherUtils_createSigleton, Expect_readFlagsAndProcessPromise, ExpectCustomAsymmetricMatcher__execute, Expect__diffMayAskMatcher
 
 #[cfg(test)]
 mod tests {

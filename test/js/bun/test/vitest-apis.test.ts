@@ -1090,6 +1090,71 @@ describe("expect.addEqualityTesters", () => {
     );
   });
 
+  // https://github.com/oven-sh/bun/issues/9089
+  // The diff of a failed toMatchObject() asks some matchers after the first mismatch. A tester is a function of the
+  // user, and the diff asks none.
+  describe("the diff of a toMatchObject that fails", () => {
+    const flaggedLines = (received: object, expected: object) =>
+      messageOf(() => expect(received).toMatchObject(expected))
+        .split("\n")
+        .filter(line => /^[-+] {3}/.test(line));
+    class Part {
+      constructor(public id: unknown) {}
+    }
+
+    test("asks the matchers after the first mismatch, and no tester", () => {
+      const calls = { before: 0, after: 0, tester: 0 };
+      const counted = (position: "before" | "after") =>
+        expect.any(
+          class Counted {
+            static [Symbol.hasInstance]() {
+              calls[position]++;
+              return true;
+            }
+          },
+        );
+      expect.addEqualityTesters([
+        (a, b) => {
+          if (!(a instanceof Part && b instanceof Part)) return undefined;
+          calls.tester++;
+          return true;
+        },
+      ]);
+      // The diff goes into the two parts, which the comparison hands to the tester.
+      expect(
+        flaggedLines(
+          { before: 1, a: 1, part: new Part(1), after: 1 },
+          { before: counted("before"), a: 2, part: new Part(counted("after")), after: counted("after") },
+        ),
+      ).toEqual(['-   "a": 2,', '+   "a": 1,']);
+      expect(calls).toEqual({ before: 1, after: 2, tester: 0 });
+      // The comparison asks the tester where it comes to the two parts.
+      flaggedLines({ part: new Part(1), a: 1 }, { part: new Part(1), a: 2 });
+      expect(calls.tester).toBe(1);
+    });
+
+    test("asks no tester that a getter registers after the first mismatch", () => {
+      let asked = 0;
+      let registered = false;
+      const received = {
+        a: 1,
+        get registers() {
+          if (!registered) {
+            registered = true;
+            expect.addEqualityTesters([() => (asked++, undefined)]);
+          }
+          return 1;
+        },
+        part: new Part(1),
+      };
+      const lines = flaggedLines(received, { a: 2, registers: expect.any(Number), part: new Part(expect.any(Number)) });
+      // Read before any assertion: toEqual() below asks the tester too.
+      const askedByTheCall = asked;
+      expect(lines).toEqual(['-   "a": 2,', '+   "a": 1,']);
+      expect({ registered, askedByTheCall }).toEqual({ registered: true, askedByTheCall: 0 });
+    });
+  });
+
   test("this.equals uses only the testers it is given", () => {
     class Box {
       constructor(public content: unknown) {}

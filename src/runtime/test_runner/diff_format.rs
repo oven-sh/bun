@@ -62,6 +62,19 @@ impl<'a> DiffFormatter<'a> {
             fmt_options,
             MatchedRows::default(),
         )?;
+        // The diff of a match that failed has a line that differs. If the rows take every such line away, the received value prints without them.
+        if !rows.is_empty() && received_buf == expected_buf {
+            received_buf.clear();
+            JestPrettyFormat::format(
+                MessageLevel::Debug,
+                global_this,
+                core::slice::from_ref(&received),
+                1,
+                &mut received_buf,
+                fmt_options,
+                MatchedRows::default(),
+            )?;
+        }
         Ok(DiffFormatter {
             received_string: Cow::Owned(trim_one_newline(received_buf)),
             expected_string: Cow::Owned(trim_one_newline(expected_buf)),

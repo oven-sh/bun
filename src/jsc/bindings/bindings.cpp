@@ -887,6 +887,22 @@ static NEVER_INLINE std::optional<bool> domNodesDequal(JSGlobalObject* globalObj
     return result.toBoolean(globalObject);
 }
 
+namespace Bun {
+bool oneAnswersByAsymmetricMatch(JSGlobalObject* globalObject, JSValue a, JSValue b)
+{
+    return oneMayHaveAsymmetricMatchMethod(globalObject, a, b) && !asymmetricMatchMethod(globalObject, a) != !asymmetricMatchMethod(globalObject, b);
+}
+
+std::optional<bool> askMatcherOfDiff(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* matcher, JSValue value)
+{
+    if (!diffMayAsk(matcher))
+        return std::nullopt;
+    auto result = matchAsymmetricMatcher(globalObject, matcher, value, scope);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    return result == AsymmetricMatcherResult::PASS;
+}
+}
+
 JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, uint64_t i)
 {
     if (obj->canGetIndexQuickly(i)) {
@@ -2561,6 +2577,12 @@ static bool matchesPrivateFieldOfCompiledClass(JSGlobalObject* globalObject, Thr
 }
 #endif
 
+// The walk for the diff must not ask a matcher again that said no, so the comparison leaves a record of it: the matcher beside itself, of which matchedRowsFrom() makes no row.
+static COLD NEVER_INLINE void recordMatcherThatSaidNo(Bun::DeepMatchState& state, JSObject* holder, JSObject* pattern, const Identifier& name, JSValue matcher)
+{
+    state.recordIfAsked(holder, pattern, name, matcher, matcher);
+}
+
 template<bool enableAsymmetricMatchers>
 bool Bun__deepMatch(
     JSValue objValue,
@@ -2655,6 +2677,8 @@ bool Bun__deepMatch(
             if (subsetPropCell && subsetPropCell->type() == JSC::JSType(JSDOMWrapperType)) {
                 switch (matchAsymmetricMatcher(globalObject, subsetProp, prop, throwScope)) {
                 case AsymmetricMatcherResult::FAIL:
+                    if (state.records) [[unlikely]]
+                        recordMatcherThatSaidNo(state, obj, subsetObj, property, subsetProp);
                     return false;
                 case AsymmetricMatcherResult::PASS:
                     state.recordIfAsked(obj, subsetObj, property, subsetProp, jsUndefined());
@@ -3663,7 +3687,15 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
     bool matched = Bun__deepMatch<true>(obj, subset, globalObject, scope, state, false);
     RETURN_IF_EXCEPTION(scope, false);
     if (rows) {
-        *rows = JSValue::encode(matched == rowsWhen ? Bun::matchedRowsFrom(globalObject, state, obj, subset) : JSValue());
+        JSValue matchedRows;
+        if (matched == rowsWhen) {
+            // The rows of a comparison that failed are for its diff, which also shows the matchers that pass after the first mismatch.
+            if (rowsWhen) [[likely]]
+                matchedRows = Bun::matchedRowsFrom(globalObject, state, obj, subset);
+            else
+                matchedRows = Bun::matchedRowsOfFailedMatch(globalObject, state, obj, subset);
+        }
+        *rows = JSValue::encode(matchedRows);
         RETURN_IF_EXCEPTION(scope, false);
     }
     return matched;

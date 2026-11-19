@@ -303,7 +303,7 @@ impl VueStatements {
         if is_only_an_expression || surely_prints_semicolon(file.body(), f) {
             return VueStatements::AsPrettier;
         }
-        // What follows `// prettier-ignore` is a copy of the source, which ends with a `;` or not, whatever is written
+        // What `// prettier-ignore` is for is a copy of the source, which ends with a `;` or not, whatever is written
         // after it.
         match f.comments().has_suppression_comments() {
             true => VueStatements::AsWritten,
@@ -313,7 +313,7 @@ impl VueStatements {
 }
 
 /// True if `text`, the value of an attribute, has a `;` for Vue, which decodes the character references first: one
-/// that doesn't end `&nbsp;` or `&#160;`.
+/// that doesn't end `&nbsp;` or `&#160;`. The parser of HTML has refused a `&name;` that isn't a character reference.
 fn has_semicolon_in_vue(text: &[u8]) -> bool {
     let mut rest = text;
     while let Some(at) = strings::index_of_char_usize(rest, b';') {

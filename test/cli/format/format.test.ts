@@ -3343,8 +3343,9 @@ describe.concurrent("bun fmt", () => {
 
       // Vue compiles a handler as statements only if its value has a `;`, and `(value)` as one expression otherwise:
       // line breaks don't separate statements (vuejs/core#8854). Each row is the HTML, what's printed without
-      // semicolons, and what Prettier 3.9.9 and oxfmt 0.72.0 print without them, which Vue 3 doesn't compile. The
-      // statements in a statement end as the options say.
+      // semicolons, and what Prettier 3.9.9 and oxfmt 0.72.0 print without them. Vue 3 doesn't compile that, except
+      // for the function and for `foo`, which it calls: with the `;` they're a declaration and a statement, which do
+      // nothing. The statements in a statement end as the options say.
       test.each([
         [
           button("@click", "customRange = null; timeMenuOpen = false"),
@@ -3406,7 +3407,6 @@ describe.concurrent("bun fmt", () => {
           button("@click", "a('&nbsp;');", "b()"),
           button("@click", "a('&nbsp;')", "b()"),
         ],
-        // `foo` alone is a function that Vue calls.
         [button("@click", "foo;;"), button("@click", "foo;"), button("@click", "foo")],
         // With a `;` in a string, what Prettier prints compiles. It isn't looked for.
         [button("@click", "a(';'); b()"), button("@click", "a(';');", "b()"), button("@click", "a(';')", "b()")],
@@ -3517,6 +3517,9 @@ describe.concurrent("bun fmt", () => {
         ["// prettier-ignore\na( 1 ); b( )", withoutSemicolons],
         ["switch (a) {\n// prettier-ignore\ncase 1: (b || c)()\n};", withoutSemicolons],
         [";if (a)\n// prettier-ignore\nb( )", withSemicolons],
+        ["while (x) {}; /* prettier-ignore */ a( 1 )", withSemicolons],
+        ["try {} /* prettier-ignore */ catch { b( ) };", withSemicolons],
+        ["switch (a) {\n// prettier-ignore\ncase 1: b( )\n};", withSemicolons],
       ])("leaves a handler as written if no statement can have the `;`: %j", async (value, args) => {
         const html = value.includes("\n") ? asWritten(value) : button("@click", value);
         await expectWritten(button("@click", value), html, args);
@@ -3602,6 +3605,12 @@ describe.concurrent("bun fmt", () => {
         await expectWritten(html, withThem, withSemicolons);
       });
 
+      test("a function is a function without the `;`, like Prettier", async () => {
+        // Vue 3 takes `x => a();;` for a function too, and what it compiles has the `;` in it, which isn't JavaScript.
+        const args = [...withoutSemicolons, "--arrow-parens=avoid"];
+        await expectWritten(button("@click", "x => a( );;"), button("@click", "x => a()"), args);
+      });
+
       test("keeps the `;` before the only statement like Prettier", async () => {
         await expectWritten(button("@click", ";(a  ||  b)( )"), button("@click", ";(a || b)()"), withoutSemicolons);
       });
@@ -3636,9 +3645,18 @@ describe.concurrent("bun fmt", () => {
           button("@click", "switch (a) {", "  case 1:", "    b();", "}"),
         ],
         [button("@click", "function f() { a(); };"), button("@click", "function f() {", "  a();", "}")],
+        // The `;` after a copy of the source, and the one in a statement that has no `prettier-ignore` in it.
         [
           button("@click", "// prettier-ignore\na( 1 ); b( )"),
           button("@click", "// prettier-ignore", "a( 1 );", "b();"),
+        ],
+        [
+          button("@click", "/* prettier-ignore */ a( 1 ); while (x) {}"),
+          button("@click", "/* prettier-ignore */ a( 1 );", "while (x) {}"),
+        ],
+        [
+          button("@click", "if (a) { b( 1 ); }; /* prettier-ignore */ { c( 1 ) }"),
+          button("@click", "if (a) {", "  b(1);", "}", "/* prettier-ignore */ { c( 1 ) }"),
         ],
       ])("prints statements like Prettier with semicolons: %j", async (html, written) => {
         await expectWritten(html, written, withSemicolons);

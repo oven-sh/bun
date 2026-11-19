@@ -178,11 +178,27 @@ fn semicolon_for_only_statement_in_html<'a>(
     Some(is_called_by_vue(expression))
 }
 
-/// True if `expression`, all of a Vue event handler, is a function or a path to one, which Vue calls. With a `;` after
-/// it, it's a statement.
+/// True if `expression`, all of a Vue event handler, is a function or a path to one, which Vue calls.
 #[inline(always)]
-pub(crate) fn is_called_by_vue(expression: Expr<'_>) -> bool {
-    // `unwrapVueEventBindingTsNode`
+fn is_called_by_vue(expression: Expr<'_>) -> bool {
+    let expression = without_vue_event_binding_typescript(expression);
+    match expression.kind() {
+        ExprKind::Fn(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } => true,
+        ExprKind::Ident(_) => expression.text() != b"undefined",
+        _ => false,
+    }
+}
+
+/// True if `expression`, all of a Vue event handler, is a path to a function, which Vue calls. With a `;` after it,
+/// it's a statement that calls nothing. A function is a function either way.
+pub(crate) fn is_path_called_by_vue(expression: Expr<'_>) -> bool {
+    let expression = without_vue_event_binding_typescript(expression);
+    !matches!(expression.kind(), ExprKind::Fn(_)) && is_called_by_vue(expression)
+}
+
+/// `unwrapVueEventBindingTsNode`
+#[inline(always)]
+fn without_vue_event_binding_typescript(expression: Expr<'_>) -> Expr<'_> {
     let mut expression = expression;
     while let ExprKind::As { expr, .. }
     | ExprKind::Satisfies { expr, .. }
@@ -192,11 +208,7 @@ pub(crate) fn is_called_by_vue(expression: Expr<'_>) -> bool {
     {
         expression = expr;
     }
-    match expression.kind() {
-        ExprKind::Fn(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } => true,
-        ExprKind::Ident(_) => expression.text() != b"undefined",
-        _ => false,
-    }
+    expression
 }
 
 #[inline(never)]

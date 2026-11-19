@@ -2,11 +2,11 @@
 
 use super::semicolon::OptionalSemicolon;
 use super::statements::{
-    expression_statement_needs_semicolon, follows_type_cast_comment, is_body, is_called_by_vue,
+    expression_statement_needs_semicolon, follows_type_cast_comment, is_body, is_path_called_by_vue,
 };
 use crate::ir::element::TextWidth;
 use crate::js::ast_nodes::node_as_ast_nodes;
-use crate::js::format::ends_with_terminator;
+use crate::js::format::{ends_with_terminator, is_copy_before_semicolon};
 use crate::js::sort_imports::ImportRun;
 use crate::js::trivia::comment_before_semicolon_keeps_its_line;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
@@ -198,7 +198,7 @@ impl<'a> Format<'a> for FormatSeparatedStatements<'a> {
             }
             let needs_semicolon = match (is_only, statement.kind()) {
                 // One of the empty statements around it has the `;`: `foo;;`
-                (true, StmtKind::Expr(expression)) => is_called_by_vue(expression),
+                (true, StmtKind::Expr(expression)) => is_path_called_by_vue(expression),
                 (true, _) => true,
                 (false, _) => statements.peek().is_some(),
             };
@@ -227,26 +227,39 @@ pub(crate) fn surely_prints_semicolon<'a>(
     statements: List<'a, Stmt<'a>>,
     f: &Formatter<'a>,
 ) -> bool {
-    // Anything can be under a `prettier-ignore` comment, and is a copy of the source then. So only the statements
-    // that aren't are asked, and not the statements in them.
+    // What a `prettier-ignore` comment is for is a copy of the source, and that can be any node.
     let has_copies = f.comments().has_suppression_comments();
     let mut inner = SmallVec::<[Stmt<'a>; 8]>::new();
     for statement in statements.iter() {
-        if !(has_copies && f.comments().is_ignored(statement.as_ast_nodes()))
-            && prints_own_semicolon(statement, &mut inner, f)
-        {
-            return true;
+        if has_copies && f.comments().is_ignored(statement.as_ast_nodes()) {
+            if is_copy_before_semicolon(statement, f) {
+                return true;
+            }
+            continue;
         }
-    }
-    if has_copies {
-        return false;
-    }
-    while let Some(statement) = inner.pop() {
         if prints_own_semicolon(statement, &mut inner, f) {
             return true;
         }
+        if has_copies && has_suppression_comment_in(statement.span(), f) {
+            inner.clear();
+        }
+        while let Some(statement) = inner.pop() {
+            if prints_own_semicolon(statement, &mut inner, f) {
+                return true;
+            }
+        }
     }
     false
+}
+
+/// True if a `prettier-ignore` comment is in `span`. If none is, and the node of `span` isn't ignored, no node in it
+/// is.
+fn has_suppression_comment_in(span: Span, f: &Formatter<'_>) -> bool {
+    f.file().comments_by_id().any(|comment| {
+        span.start <= comment.span().start
+            && comment.span().end <= span.end
+            && f.comments().is_suppression_comment(comment)
+    })
 }
 
 /// True if `statement` is printed with a `;` that isn't in a statement inside it. Those are added to `inner`.

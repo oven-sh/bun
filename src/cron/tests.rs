@@ -237,8 +237,9 @@ fn crontab_without_entry() {
 
 #[test]
 fn plist() {
+    let escaped = job("30 2 * * 1", b"/a&b/<bun>", b"/\"it's\"/\xff.ts");
     assert_eq!(
-        launchd::plist(&job("30 2 * * 1", b"/a&b/<bun>", b"/\"it's\"/\xff.ts")),
+        launchd::plist(&escaped, b"/var/a&b/T"),
         include_str!("tests/job.plist")
     );
     let dict = |keys: &[(&str, u8)]| {
@@ -280,7 +281,7 @@ fn plist() {
             ]),
         ),
     ] {
-        let plist = launchd::plist(&job(text, b"", b""));
+        let plist = launchd::plist(&job(text, b"", b""), b"");
         let (after, before) = ("<key>StartCalendarInterval</key>\n", "<key>StandardOutPath");
         assert_eq!(between(&plist, after, before), interval, "{text}");
     }

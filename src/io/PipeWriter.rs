@@ -809,7 +809,7 @@ impl WindowsPipeWriter {
             true => Ownership::Taken,
             false => Ownership::Borrowed,
         };
-        self.set_source(WriteSource::open(ev.loop_(), fd, ownership)?);
+        self.set_source(WriteSource::open(ev.loop_().port(), fd, ownership)?);
         sys::Result::Ok(())
     }
 
@@ -1308,7 +1308,7 @@ impl WindowsStreamingWriter {
         ev: EventLoopHandle,
         pipe: sys::File,
     ) -> sys::Result<()> {
-        self.start_with_pipe(handler, Pipe::from_exclusive(ev.loop_(), pipe));
+        self.start_with_pipe(handler, Pipe::from_exclusive(ev.loop_().port(), pipe));
         sys::Result::Ok(())
     }
 

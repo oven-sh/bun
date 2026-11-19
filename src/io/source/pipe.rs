@@ -9,7 +9,6 @@ use bun_ptr::{CellExt as _, OptionCellExt as _};
 use bun_sys::windows::named_pipe::{self, Kind};
 use bun_sys::windows::{self as w, NT_ERROR, NTSTATUS, Win32Error, Win32ErrorExt as _};
 use bun_sys::{self as sys, E, Fd, Tag};
-use bun_uws_sys::Loop;
 
 use super::Payload;
 use super::endpoint::{BUSY_SIZE, Endpoint, HasEndpoint, THREAD_SIZE};
@@ -98,11 +97,7 @@ impl Pipe {
     }
 
     /// For an end that this process has opened for overlapped I/O, and keeps to itself.
-    pub fn from_exclusive(loop_: &Loop, end: impl Into<sys::File>) -> Pipe {
-        Pipe::from_exclusive_on(loop_.port(), end)
-    }
-
-    pub(super) fn from_exclusive_on(port: &Rc<Port>, end: impl Into<sys::File>) -> Pipe {
+    pub fn from_exclusive(port: &Rc<Port>, end: impl Into<sys::File>) -> Pipe {
         let handle = Handle::new(end.into().into_raw());
         Pipe::exclusive(Rc::new(AsyncFile::exclusive(port, handle)))
     }
@@ -114,14 +109,14 @@ impl Pipe {
     }
 
     /// For an end of unknown origin. It owns `fd`, unless that turns out to be something else.
-    pub(super) fn open(loop_: &Loop, fd: Fd) -> Option<Pipe> {
+    pub(super) fn open(port: &Rc<Port>, fd: Fd) -> Option<Pipe> {
         let handle = fd.native();
         let kind = named_pipe::is_idle(handle).then(|| named_pipe::kind(handle));
-        (kind != Some(Kind::NotAPipe)).then(|| Pipe::foreign(loop_, fd, kind))
+        (kind != Some(Kind::NotAPipe)).then(|| Pipe::foreign(port, fd, kind))
     }
 
     /// The same for one whose first write has to start at once. It leaves `fd` alone if that is stdio.
-    pub fn open_duplex(loop_: &Loop, fd: Fd) -> sys::Result<Pipe> {
+    pub fn open_duplex(port: &Rc<Port>, fd: Fd) -> sys::Result<Pipe> {
         let handle = fd.native();
         let kind = match w::GetFileType(handle) {
             w::FILE_TYPE_PIPE => named_pipe::kind(handle),
@@ -134,11 +129,11 @@ impl Pipe {
             Some(_) => sys::dup(fd)?,
             None => fd,
         };
-        Ok(Pipe::foreign(loop_, owned, Some(kind)))
+        Ok(Pipe::foreign(port, owned, Some(kind)))
     }
 
-    fn foreign(loop_: &Loop, fd: Fd, kind: Option<Kind>) -> Pipe {
-        let pipe = Pipe::new(loop_.port(), Handle::new(fd), true);
+    fn foreign(port: &Rc<Port>, fd: Fd, kind: Option<Kind>) -> Pipe {
+        let pipe = Pipe::new(port, Handle::new(fd), true);
         if let Some(kind) = kind {
             pipe.0.set_kind(kind);
         }

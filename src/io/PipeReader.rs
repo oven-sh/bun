@@ -923,12 +923,12 @@ impl WindowsBufferedReader {
     }
 
     pub fn start_own_pipe(&self, ev: EventLoopHandle, pipe: sys::File) -> sys::Result<ReadResult> {
-        self.start_with_pipe(Pipe::from_exclusive(ev.loop_(), pipe))?;
+        self.start_with_pipe(Pipe::from_exclusive(ev.loop_().port(), pipe))?;
         sys::Result::Ok(ReadResult::Pending)
     }
 
     pub fn set_own_pipe(&self, ev: EventLoopHandle, pipe: sys::File) {
-        self.set_pipe(Pipe::from_exclusive(ev.loop_(), pipe));
+        self.set_pipe(Pipe::from_exclusive(ev.loop_().port(), pipe));
     }
 
     pub fn start_with_pipe(&self, pipe: Pipe) -> sys::Result<()> {
@@ -953,7 +953,7 @@ impl WindowsBufferedReader {
             false => Ownership::Borrowed,
         };
         let offset = (self.has_flag(ReaderFlags::USE_PREAD)).then(|| self.offset.get() as u64);
-        self.set_source(ReadSource::open(ev.loop_(), fd, ownership, offset)?);
+        self.set_source(ReadSource::open(ev.loop_().port(), fd, ownership, offset)?);
         self.start_with_current_source()?;
         sys::Result::Ok(ReadResult::Pending)
     }

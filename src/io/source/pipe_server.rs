@@ -11,7 +11,6 @@ use bun_ptr::OptionCellExt as _;
 use bun_sys::windows::{self as w, NT_ERROR, NTSTATUS, Win32Error, named_pipe};
 use bun_sys::windows_format::wide;
 use bun_sys::{self as sys, E, Tag};
-use bun_uws_sys::Loop;
 
 use super::Pipe;
 
@@ -51,7 +50,7 @@ enum Previous {
 
 impl PipeServer {
     pub fn listen(
-        loop_: &Loop,
+        port: &Rc<Port>,
         name: &[u8],
         on_connection: impl Fn(Pipe) + 'static,
     ) -> sys::Result<PipeServer> {
@@ -65,7 +64,7 @@ impl PipeServer {
             err => sys::Error::from_win32(err, Tag::listen),
         })?;
         let server = Rc::new(Server {
-            port: Rc::clone(loop_.port()),
+            port: Rc::clone(port),
             name,
             on_connection: Rc::new(on_connection),
             accepts: Default::default(),
@@ -163,20 +162,20 @@ thread_local! {
 
 impl PipeConnect {
     pub fn start(
-        loop_: &Loop,
+        port: &Rc<Port>,
         name: &[u8],
         done: impl FnOnce(sys::Result<Pipe>) + 'static,
     ) -> sys::Result<PipeConnect> {
         let name = wide_name(name, Tag::connect2)?;
-        let port = Rc::clone(loop_.port());
+        let its_port = Rc::clone(port);
         let done = move |result: Connected| {
-            let pipe = result.map(|handle| Pipe::from_exclusive_on(&port, handle));
+            let pipe = result.map(|handle| Pipe::from_exclusive(&its_port, handle));
             done(pipe.map_err(|err| sys::Error::from_win32(err, Tag::connect)));
         };
-        let line = match Line::find(loop_.port(), &name) {
+        let line = match Line::find(port, &name) {
             Some(line) => Ok(line),
             None => match named_pipe::connect(WStr::from_slice_with_nul(&name)) {
-                Err(Win32Error::PIPE_BUSY) => Line::new(loop_.port(), name).map_err(Err),
+                Err(Win32Error::PIPE_BUSY) => Line::new(port, name).map_err(Err),
                 result => Err(result),
             },
         };
@@ -186,7 +185,7 @@ impl PipeConnect {
                 _place: Some(line.join(Box::new(done))),
             },
             Err(result) => PipeConnect {
-                _result: Some(Request::defer(loop_.port(), move || done(result))),
+                _result: Some(Request::defer(port, move || done(result))),
                 _place: None,
             },
         })

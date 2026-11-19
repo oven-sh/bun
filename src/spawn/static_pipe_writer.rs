@@ -98,7 +98,10 @@ impl<S: Source> StaticPipeWriter<S> {
         #[cfg(windows)]
         {
             let (writer, source) = (&state.writer, Rc::<Shared<S>>::clone(&state.source));
-            writer.set_pipe(bun_io::Pipe::from_exclusive(event_loop.loop_(), file));
+            writer.set_pipe(bun_io::Pipe::from_exclusive(
+                event_loop.loop_().port(),
+                file,
+            ));
             writer.write_shared(state, source);
         }
         #[cfg(not(windows))]

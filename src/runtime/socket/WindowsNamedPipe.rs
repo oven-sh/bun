@@ -405,7 +405,7 @@ impl WindowsNamedPipe {
         owned_ctx: Option<boringssl::OwnedSslCtx>,
     ) -> bun_sys::Result<()> {
         self.init_tls_wrapper(ssl_options, owned_ctx).transpose()?;
-        let pipe = Pipe::open_duplex(self.vm.uws_loop(), fd)?;
+        let pipe = Pipe::open_duplex(self.vm.uws_loop().port(), fd)?;
 
         let _keep_alive = self.keep_alive();
         self.on_connect(Ok(pipe));
@@ -421,7 +421,7 @@ impl WindowsNamedPipe {
         self.init_tls_wrapper(ssl_options, owned_ctx).transpose()?;
 
         let context = self.keep_alive();
-        let connecting = PipeConnect::start(self.vm.uws_loop(), path, move |result| {
+        let connecting = PipeConnect::start(self.vm.uws_loop().port(), path, move |result| {
             context.named_pipe.connecting.take();
             context.named_pipe.on_connect(result);
         })?;

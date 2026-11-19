@@ -148,7 +148,7 @@ impl Channel {
         let fd = end.fd();
         #[cfg(windows)]
         {
-            let Ok(pipe) = Pipe::open_duplex(vm.uws_loop(), fd) else {
+            let Ok(pipe) = Pipe::open_duplex(vm.uws_loop().port(), fd) else {
                 return false;
             };
             pipe.read_ahead();
@@ -175,7 +175,7 @@ impl Channel {
     /// `adopt`, for the end that the coordinator keeps.
     pub(crate) fn adopt_own(&self, vm: &VirtualMachine, end: File) -> bool {
         #[cfg(windows)]
-        return self.adopt_pipe(Pipe::from_exclusive(vm.uws_loop(), end));
+        return self.adopt_pipe(Pipe::from_exclusive(vm.uws_loop().port(), end));
         #[cfg(not(windows))]
         self.adopt(vm, end)
     }

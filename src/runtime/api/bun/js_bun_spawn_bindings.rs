@@ -1361,7 +1361,7 @@ fn spawn_maybe_sync(
                 core::mem::replace(slot, ExtraPipe::Unavailable).into_owned()
             });
             let ipc_pipe = ipc_pipe.expect("Stdio::Ipc makes a pipe");
-            let ipc_pipe = bun_io::Pipe::from_exclusive(loop_handle.loop_(), ipc_pipe);
+            let ipc_pipe = bun_io::Pipe::from_exclusive(loop_handle.loop_().port(), ipc_pipe);
             ipc_err = ipc_data.windows_configure_server(ipc_pipe).err();
         }
         if ipc_err.is_none() {

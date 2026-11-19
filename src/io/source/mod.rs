@@ -9,9 +9,9 @@ mod pipe_server;
 
 use std::rc::Rc;
 
+use bun_iocp::Port;
 use bun_sys::windows::{self as w, HandleKind};
 use bun_sys::{self as sys, E, Fd, Tag};
-use bun_uws_sys::Loop;
 
 use crate::Owner;
 use crate::pipe_reader::ReadEvent;
@@ -65,7 +65,7 @@ enum Source {
 }
 
 impl Source {
-    fn open(loop_: &Loop, fd: Fd, ownership: Ownership) -> sys::Result<Source> {
+    fn open(port: &Rc<Port>, fd: Fd, ownership: Ownership) -> sys::Result<Source> {
         if w::is_missing(fd.native()) {
             return Err(sys::Error::from_code(E::BADF, Tag::open));
         }
@@ -73,11 +73,9 @@ impl Source {
         let is_kept_by_caller = ownership == Ownership::Borrowed || fd.stdio_tag().is_some();
         let owned = if is_kept_by_caller { sys::dup(fd)? } else { fd };
         Ok(match w::guess_handle(owned) {
-            HandleKind::Pipe if let Some(pipe) = Pipe::open(loop_, owned) => Source::Pipe(pipe),
-            HandleKind::Tty => {
-                Source::Console(Console::new(loop_.port(), sys::File::from_fd(owned)))
-            }
-            _ => Source::File(File::new(loop_.port(), owned, !is_kept_by_caller)),
+            HandleKind::Pipe if let Some(pipe) = Pipe::open(port, owned) => Source::Pipe(pipe),
+            HandleKind::Tty => Source::Console(Console::new(port, sys::File::from_fd(owned))),
+            _ => Source::File(File::new(port, owned, !is_kept_by_caller)),
         })
     }
 
@@ -115,12 +113,12 @@ impl From<Pipe> for ReadSource {
 impl ReadSource {
     /// `offset` is for a file on a disk, whose position is used without it.
     pub(crate) fn open(
-        loop_: &Loop,
+        port: &Rc<Port>,
         fd: Fd,
         ownership: Ownership,
         offset: Option<u64>,
     ) -> sys::Result<ReadSource> {
-        let source = Source::open(loop_, fd, ownership)?;
+        let source = Source::open(port, fd, ownership)?;
         if let (Source::File(file), Some(offset)) = (&source, offset) {
             file.set_offset(offset);
         }
@@ -199,8 +197,8 @@ impl From<Pipe> for WriteSource {
 }
 
 impl WriteSource {
-    pub(crate) fn open(loop_: &Loop, fd: Fd, ownership: Ownership) -> sys::Result<WriteSource> {
-        let source = Source::open(loop_, fd, ownership)?;
+    pub(crate) fn open(port: &Rc<Port>, fd: Fd, ownership: Ownership) -> sys::Result<WriteSource> {
+        let source = Source::open(port, fd, ownership)?;
         if let Source::Console(console) = &source {
             console.enable_escape_sequences();
         }

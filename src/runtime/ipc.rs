@@ -1879,7 +1879,7 @@ impl SendQueue {
             let (errno, tag) = (bun_sys::E::INVAL, bun_sys::Tag::open);
             return Err(bun_sys::Error::from_code(errno, tag));
         }
-        let pipe = Pipe::open_duplex(VirtualMachine::get().uws_loop(), pipe_fd)?;
+        let pipe = Pipe::open_duplex(VirtualMachine::get().uws_loop().port(), pipe_fd)?;
         pipe.read_ahead();
         if let Some(id) = pipe.peer_process_id().or_else(w::parent_process_id)
             && let Some(process) = w::open_older_process(id)

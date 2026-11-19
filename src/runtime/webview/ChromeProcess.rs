@@ -688,7 +688,7 @@ impl Endpoints {
         let pair = |direction| {
             let pair = pipe_pair(PipeMode::Overlapped, PipeMode::Synchronous, direction)
                 .map_err(|err| bun_sys::Error::from_win32(err, bun_sys::Tag::uv_pipe))?;
-            let ours = Pipe::from_exclusive(event_loop.loop_(), pair.ours);
+            let ours = Pipe::from_exclusive(event_loop.loop_().port(), pair.ours);
             // Pending commands keep the loop alive (Transport::updateKeepAlive), not the pipes.
             ours.update_ref(false);
             bun_sys::Result::Ok((ours, File::from(pair.theirs)))

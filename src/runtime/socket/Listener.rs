@@ -1595,7 +1595,7 @@ impl WindowsNamedPipeListeningContext {
         });
         //TODO: add readableAll and writableAll support if someone needs it
         let this = Rc::clone(&context);
-        let server = bun_io::PipeServer::listen(context.vm.uws_loop(), path, move |pipe| {
+        let server = bun_io::PipeServer::listen(context.vm.uws_loop().port(), path, move |pipe| {
             this.on_client_connect(pipe);
         });
         Ok(ListeningPipe {

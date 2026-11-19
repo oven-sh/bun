@@ -437,6 +437,7 @@ fn read_file(directory: Fd, name: &[u8], buffer: &mut Vec<u8>) -> Option<Vec<u8>
     let size = file.get_end_pos().ok()?.max(count);
     let mut all = Vec::new();
     all.try_reserve_exact(size.saturating_add(16)).ok()?;
+    bun_sema::util::prefault(all.spare_capacity_mut());
     all.extend_from_slice(&buffer[..count]);
     file.read_to_end_into(&mut all).ok()?;
     Some(all)
@@ -1590,7 +1591,11 @@ impl Host for Disk {
         atoms: &Interner<'s>,
         options: ParseOptions,
     ) -> hir::File<'s> {
-        bun_sema_parser::summarize(
+        let summarize = match options.keeps_comments {
+            true => bun_sema_parser::summarize,
+            false => bun_sema_parser::summarize_without_comments,
+        };
+        summarize(
             arena,
             path,
             self.script_kind(path),

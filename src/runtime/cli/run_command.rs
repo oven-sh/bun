@@ -2895,8 +2895,7 @@ impl RunCommand {
         Self::boot_and_handle_error(ctx, &absolute_script_path, None)
     }
 
-    /// Writes the path that [`Self::maybe_open_with_bun_js`] opens for `target` into `buf`:
-    /// absolute, relative to the working directory as it is, or joined to it for `..` and `~`.
+    /// The path that [`Self::maybe_open_with_bun_js`] opens for `target`, written into `buf`.
     fn script_path_to_open<'a>(target: &[u8], buf: &'a mut PathBuffer) -> Option<&'a ZStr> {
         let open_len: usize = if paths::is_absolute(target) {
             // `PosixToWinNormalizer::resolve_cwd` prepends the cwd drive

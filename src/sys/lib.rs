@@ -7039,18 +7039,11 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
     }
 }
 
-/// Linux names a descriptor `<old path> (deleted)` when the path it was opened by no longer leads
-/// to its file. The name of a file can end like that too.
+/// The end of the name that Linux gives a descriptor whose file lost the path it was opened by. The name of a file can end like that too.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 const UNLINKED_SUFFIX: &[u8] = b" (deleted)";
 
-/// The canonical path of `path`, which `fd` is an open descriptor of.
-///
-/// Use this and not [`get_fd_path`] when the answer is for the pathname. On Linux `fd` can have
-/// the name of an unlinked file while `path` exists, and then `realpath` resolves `path` by name:
-/// - Another process unlinked the file, or replaced it with a `rename`, after the open.
-/// - `path` is a bind mount of a file that was replaced or removed. Every open of it gives that
-///   name, and `st_nlink` is 0 although the file is there.
+/// The canonical path of `path`, which `fd` is open on: resolved by name when `fd` has the name of an unlinked file, as after a `rename` over `path`, or always for a bind mount of a replaced file (`st_nlink` is 0 there).
 #[inline]
 pub fn get_opened_path<'a>(
     fd: Fd,
@@ -7079,11 +7072,7 @@ pub fn get_opened_path_z<'a>(
     Ok(ZStr::nul_terminate(out, len))
 }
 
-/// [`get_opened_path`] for a caller that no longer has the pathname, for example because `out` held it.
-///
-/// `write_path` runs only when `fd` does not tell where the pathname leads. It writes the
-/// pathname into the buffer it gets. `None` means that the pathname does not fit. An error
-/// leaves `out` with no path in it.
+/// [`get_opened_path`] when `out` held the pathname: `write_path` writes it again for the lookup by name, or returns `None` if it does not fit. An error leaves no path in `out`.
 pub fn get_opened_path_with<'a>(
     fd: Fd,
     out: &'a mut bun_paths::PathBuffer,

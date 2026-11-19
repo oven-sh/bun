@@ -2293,25 +2293,28 @@ describe("undici", () => {
       await pool.close();
     });
 
-    it.each(["identity", "gzip"])("a collected %s fetch() body that got no data yet cancels its dispatch", async encoding => {
-      let cancelled = false;
-      const dispatcher = {
-        dispatch(_opts: any, handler: any) {
-          handler.onConnect(() => {
-            cancelled = true;
-          });
-          // Headers, and then the server goes silent.
-          handler.onHeaders(200, [Buffer.from("content-encoding"), Buffer.from(encoding)], () => {}, "OK");
-          return true;
-        },
-      };
-      const status = await (async () => (await undiciFetch("http://localhost:1/", { dispatcher } as any)).status)();
-      expect(status).toBe(200);
-      while (!cancelled) {
-        Bun.gc(true);
-        await new Promise(resolve => setImmediate(resolve));
-      }
-    });
+    it.each(["identity", "gzip"])(
+      "a collected %s fetch() body that got no data yet cancels its dispatch",
+      async encoding => {
+        let cancelled = false;
+        const dispatcher = {
+          dispatch(_opts: any, handler: any) {
+            handler.onConnect(() => {
+              cancelled = true;
+            });
+            // Headers, and then the server goes silent.
+            handler.onHeaders(200, [Buffer.from("content-encoding"), Buffer.from(encoding)], () => {}, "OK");
+            return true;
+          },
+        };
+        const status = await (async () => (await undiciFetch("http://localhost:1/", { dispatcher } as any)).status)();
+        expect(status).toBe(200);
+        while (!cancelled) {
+          Bun.gc(true);
+          await new Promise(resolve => setImmediate(resolve));
+        }
+      },
+    );
 
     it("request() and dispatch() serialize an array in query like undici", async () => {
       await using server = Bun.serve({ port: 0, fetch: req => new Response(new URL(req.url).search) });

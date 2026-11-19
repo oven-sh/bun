@@ -364,6 +364,9 @@ export function getFileUrl(filename: string, line?: number | string): string | u
   const baseUrl = getRepositoryUrl(cwd);
   const filePath = (cwd ? relative(cwd, filename) : filename).replace(/\\/g, "/");
   const commit = getCommit(cwd);
+  if (baseUrl === undefined || commit === undefined) {
+    return undefined;
+  }
   const url = new URL(`blob/${commit}/${filePath}`, `${baseUrl}/`).toString();
   return line === undefined ? url : `${url}#L${line}`;
 }

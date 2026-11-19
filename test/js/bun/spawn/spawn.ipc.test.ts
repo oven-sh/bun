@@ -752,6 +752,27 @@ describe.concurrent("the send queue", () => {
     expect(result).toEqual({ stdout: [`descriptors left ${row.descriptorsLeft}`], stderr: "", exitCode: 0 });
   });
 
+  it.each(["json", "advanced"])("closes a socket whose message the serializer rejects: %s", async serialization => {
+    const result = await runPair(
+      `
+        const { once } = require("node:events");
+        const server = await listen();
+        const socket = require("node:net").connect(server.address().port, "127.0.0.1");
+        const [[peer]] = await Promise.all([once(server, "connection"), once(socket, "connect")]);
+        try {
+          spawnChild({ serialization: "${serialization}" }).send({ get a() { throw new Error("rejected"); } }, socket);
+        } catch (error) {
+          console.log(error.message);
+        }
+        await once(peer.resume(), "end");
+        console.log("closed");
+        process.exit(0);
+      `,
+      `process.on("message", () => {});`,
+    );
+    expect(result).toEqual({ stdout: ["rejected", "closed"], stderr: "", exitCode: 0 });
+  });
+
   it("has the same number of GC roots for any number of callbacks", async () => {
     const result = await runPair(
       `

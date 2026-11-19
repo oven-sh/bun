@@ -1,6 +1,6 @@
 use core::time::Duration;
 
-use bun_threading::{Condvar, Guarded};
+use bun_threading::{Condvar, Guarded, WorkPool};
 
 /// A thread that is there while it has work. Not the work pool, which the program's blocking calls can fill up.
 pub struct OnDemandThread {
@@ -43,7 +43,8 @@ impl OnDemandThread {
             self.run(Self::LINGERS);
         });
         if spawned.is_err() {
-            self.run(Duration::ZERO);
+            // Never on the caller: `work` may block.
+            bun_core::handle_oom(WorkPool::go(self, |this| this.run(Duration::ZERO)));
         }
     }
 

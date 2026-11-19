@@ -43,7 +43,7 @@ impl ExportPayload {
             epoch,
         }
     }
-    pub fn is_parked(&self) -> bool {
+    fn is_parked(&self) -> bool {
         self.parked.load(Ordering::Acquire) != 0
     }
 
@@ -75,6 +75,7 @@ pub enum ExportResult {
 enum RetryFilter {
     Due,
     OlderThan(u64),
+    AllForTheLastTime,
 }
 
 #[derive(Clone, Copy)]
@@ -103,6 +104,10 @@ impl ExportAttempt {
 
     pub fn attempt(&self) -> u32 {
         self.attempt
+    }
+
+    pub fn is_process_closing(&self) -> bool {
+        self.processor.is_closing.load(Ordering::SeqCst)
     }
 
     /// The exporter's verdict.
@@ -157,13 +162,10 @@ pub trait Exporter: Send + Sync {
     /// Deliver `attempt.payload()` without blocking the caller; finish the
     /// attempt exactly once.
     fn export(self: Arc<Self>, attempt: ExportAttempt);
-    /// Synchronous best-effort delivery during process exit. Return once the
-    /// payload is sent or `deadline` passes.
-    fn export_blocking(
-        self: Arc<Self>,
-        payload: &Arc<ExportPayload>,
-        deadline: MonoInstant,
-    ) -> ExportResult;
+    /// For an exporter with an owner, whose event loop runs no more tasks.
+    fn export_now(&self, _payload: &ExportPayload) -> ExportResult {
+        ExportResult::Abandoned
+    }
     /// Identity of the VM (thread) this exporter is bound to, if any: a
     /// reconfigure on one thread leaves other threads' bound exporters alone.
     fn owner(&self) -> Option<OwnerKey> {
@@ -175,6 +177,8 @@ pub trait Exporter: Send + Sync {
     /// The calling thread runs no more tasks, and waits for no other event loop: finish every attempt that
     /// depends on one.
     fn finish_for_exit(&self) {}
+    /// The process has waited for as long as it does.
+    fn warn_of_unfinished(&self) {}
 }
 
 /// A payload an exporter handed back for a later attempt. Parked payloads
@@ -427,7 +431,7 @@ enum Taker {
     Reconfiguration,
     /// Its own exporters get the batch before the call returns.
     LeavingVm(OwnerKey),
-    /// Every exporter does.
+    /// No event loop is waited for.
     ClosingProcess,
 }
 
@@ -628,6 +632,10 @@ impl Processor {
                     }
                     older
                 }
+                RetryFilter::AllForTheLastTime => {
+                    q.iter_mut().for_each(|r| r.attempt = u32::MAX - 1);
+                    core::mem::take(&mut *q)
+                }
                 RetryFilter::Due => {
                     let now = MonoInstant::now();
                     let (due, later): (Vec<_>, Vec<_>) = q.drain(..).partition(|r| r.due <= now);
@@ -720,7 +728,7 @@ impl Processor {
         static EXPORTS: OnDemandThread = OnDemandThread::new(|| {
             let this = global();
             this.is_export_scheduled.store(false, Ordering::Release);
-            this.deliver_next(Taker::Schedule, MonoInstant::FAR_FUTURE);
+            this.deliver_next(Taker::Schedule);
         });
         if self.inflight() == 0 && !self.is_export_scheduled.swap(true, Ordering::AcqRel) {
             EXPORTS.wake();
@@ -778,9 +786,9 @@ impl Processor {
     }
 
     /// What is pending now, and nothing that comes meanwhile.
-    fn deliver_pending(&'static self, taker: Taker, deadline: MonoInstant) {
+    fn deliver_pending(&'static self, taker: Taker) {
         let target = self.pending.lock().flush();
-        while self.pending.lock().has_older_than(target) && self.deliver_next(taker, deadline) {}
+        while self.pending.lock().has_older_than(target) && self.deliver_next(taker) {}
     }
 
     /// Until every payload that another thread has taken is with its exporters. That takes encoding and posting.
@@ -792,7 +800,7 @@ impl Processor {
 
     /// Before the resource or the exporters change.
     pub fn hand_out_pending(&'static self) {
-        self.deliver_pending(Taker::Reconfiguration, MonoInstant::FAR_FUTURE);
+        self.deliver_pending(Taker::Reconfiguration);
         self.wait_for_handouts();
     }
 
@@ -830,7 +838,7 @@ impl Processor {
     }
 
     /// False if nothing was taken.
-    fn deliver_next(&'static self, taker: Taker, deadline: MonoInstant) -> bool {
+    fn deliver_next(&'static self, taker: Taker) -> bool {
         self.exporting.fetch_add(1, Ordering::SeqCst);
         let may_take = taker == Taker::ClosingProcess || !self.is_closing.load(Ordering::SeqCst);
         let Some((payload, exporters)) = may_take.then(|| self.take_payload(taker)).flatten()
@@ -846,7 +854,7 @@ impl Processor {
             exporters.into_iter().partition(|e| match taker {
                 Taker::Schedule | Taker::Reconfiguration => false,
                 Taker::LeavingVm(owner) => e.owner() == Some(owner),
-                Taker::ClosingProcess => true,
+                Taker::ClosingProcess => e.owner().is_some(),
             });
         for e in others {
             self.inflight.fetch_add(1, Ordering::AcqRel);
@@ -856,7 +864,7 @@ impl Processor {
         // A function may block, or end the process: nobody waits for it.
         self.finish_one();
         for e in blocking {
-            self.record_result(&payload, e.export_blocking(&payload, deadline));
+            self.record_result(&payload, e.export_now(&payload));
         }
         true
     }
@@ -935,10 +943,14 @@ impl Processor {
     }
 
     fn wait_idle(&self, deadline: MonoInstant, is_stuck: &dyn Fn() -> bool) {
-        let mut g = self.idle_lock.lock();
         while self.inflight() != 0 && !deadline.remaining().is_zero() && !is_stuck() {
-            let slice = deadline.remaining().min(Duration::from_millis(100));
-            let _ = (self.idle).timed_wait_guarded(&mut g, slice.as_nanos() as u64);
+            let now = MonoInstant::now();
+            (self.exporters_with_attempts().iter()).for_each(|e| e.tick(now));
+            let mut g = self.idle_lock.lock();
+            if self.inflight() != 0 {
+                let slice = deadline.remaining().min(Duration::from_millis(100));
+                let _ = (self.idle).timed_wait_guarded(&mut g, slice.as_nanos() as u64);
+            }
         }
     }
 
@@ -955,15 +967,13 @@ impl Processor {
     /// owned by `owner` (their event loop is about to disappear) and through
     /// the normal async path to everyone else.
     pub fn flush_for_owner(&'static self, owner: OwnerKey) {
-        let deadline =
-            MonoInstant::now() + Duration::from_millis(u64::from(self.config().export_timeout_ms));
         let finish_attempts = || {
             (self.exporters_with_attempts().iter())
                 .filter(|e| e.owner() == Some(owner))
                 .for_each(|e| e.finish_for_exit());
         };
         finish_attempts();
-        self.deliver_pending(Taker::LeavingVm(owner), deadline);
+        self.deliver_pending(Taker::LeavingVm(owner));
         self.wait_for_handouts();
         finish_attempts();
     }
@@ -987,17 +997,17 @@ impl Processor {
         for e in self.exporters_with_attempts() {
             e.finish_for_exit();
         }
-        self.deliver_pending(Taker::ClosingProcess, deadline);
+        self.deliver_pending(Taker::ClosingProcess);
         self.wait_idle(deadline, is_stuck);
-        // What was in flight may have been parked by now, and a worker may have left its last spans.
-        let parked = core::mem::take(&mut *self.retries.lock());
-        for mut r in parked {
-            self.give_room_back(&mut r);
-            let result = r.exporter.export_blocking(&r.payload, deadline);
-            r.payload.parked.fetch_sub(1, Ordering::AcqRel);
-            self.record_result(&r.payload, result);
+        // What failed gets one more try, and a worker may have left its last spans.
+        self.dispatch_retries(RetryFilter::AllForTheLastTime);
+        self.deliver_pending(Taker::ClosingProcess);
+        // A collector that hangs may have used up the time.
+        let grace = MonoInstant::now() + Duration::from_millis(250);
+        self.wait_idle(deadline.max(grace), is_stuck);
+        for e in self.exporters_with_attempts() {
+            e.warn_of_unfinished();
         }
-        self.deliver_pending(Taker::ClosingProcess, deadline);
     }
 
     pub fn pending_count(&self) -> u32 {

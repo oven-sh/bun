@@ -1672,11 +1672,12 @@ describe.concurrent("OTLP/HTTP exporter", () => {
 
   test("a collector that uses up the time at exit takes nothing from the other exporters", async () => {
     using hangs = Bun.serve({ port: 0, idleTimeout: 0, fetch: () => new Promise<Response>(() => {}) });
+    using healthy = collector();
     const { stdout, stderr } = await run(
       `let n = 0;
        Bun.otel.start({
-         exporters: [process.env.URL, "console", { export: spans => console.log((n += spans.length)) }],
-         batch: { timeoutMs: 100, maxExportBatchSize: 2 },
+         exporters: [process.env.URL, "${healthy.url}", "console", { export: spans => console.log((n += spans.length)) }],
+         batch: { timeoutMs: 1000, maxExportBatchSize: 2 },
        });
        for (let i = 0; i < 9; i++) Bun.otel.span("s", () => {});
        process.exit(0);`,
@@ -1685,5 +1686,26 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     const documents = stderr.split("\n").filter(line => line.startsWith("{"));
     expect(documents.flatMap(d => JSON.parse(d).resourceSpans[0].scopeSpans[0].spans)).toHaveLength(9);
     expect(stdout).toEndWith("9\n");
+    expect(healthy.spans()).toHaveLength(9);
+    expect(stderr).toContain(hangs.url.origin + "/v1/traces at exit failed: no response in time");
+  });
+
+  test.skipIf(isWindows)("a console that cannot write holds a self-kill up once, not for each batch", async () => {
+    using dir = tempDir("otel-stuck-kill", {});
+    mkfifo(join(String(dir), "fifo"), 0o600);
+    await using unread = await open(join(String(dir), "fifo"), "r+");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `Bun.otel.start({ exporters: ["console"], batch: { maxExportBatchSize: 1, timeoutMs: 600000 } });
+         for (let i = 0; i < 1000; i++) Bun.otel.span("s", { k: Buffer.alloc(1024, "a").toString() }, () => {});
+         process.kill(process.pid, "SIGTERM");`,
+      ],
+      env: cleanEnv,
+      stderr: unread.fd,
+    });
+    await proc.exited;
+    expect(proc.signalCode).toBe("SIGTERM");
   });
 });

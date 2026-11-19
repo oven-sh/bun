@@ -23,7 +23,7 @@ use bun_telemetry::processor::{
 };
 use bun_telemetry::thread::OnDemandThread;
 use bun_telemetry_cold::config::{Compression, ExporterConfig, OtlpExporterConfig};
-use bun_threading::{Condvar, Guarded};
+use bun_threading::Guarded;
 use bun_url::URL;
 
 use crate::context::Context;
@@ -66,6 +66,7 @@ struct Turns {
     taken: usize,
     waiting: VecDeque<ExportAttempt>,
     waiting_spans: u32,
+    unfinished_spans: u32,
 }
 
 impl Turns {
@@ -87,18 +88,6 @@ impl SendError {
         match self {
             SendError::Transport(_) | SendError::OutOfTime => true,
             SendError::Status { code, .. } => matches!(code, 408 | 429 | 502 | 503 | 504),
-        }
-    }
-
-    /// At exit there is no later.
-    fn is_worth_a_try_at_once(&self) -> bool {
-        match self {
-            SendError::Transport(_) => true,
-            SendError::Status {
-                code,
-                retry_after_seconds,
-            } => matches!(code, 502..=504) && retry_after_seconds.is_none(),
-            SendError::OutOfTime => false,
         }
     }
 }
@@ -229,12 +218,11 @@ impl OtlpHttpExporter {
         })
     }
 
-    fn send(self: Arc<Self>, payload: Arc<ExportPayload>, receiver: Receiver) {
+    fn send(self: Arc<Self>, attempt: ExportAttempt) {
         let aborted = Arc::new(AtomicBool::new(false));
         let request = bun_core::heap::into_raw(Box::new(Request {
             exporter: self,
-            payload,
-            receiver,
+            attempt,
             aborted: Arc::clone(&aborted),
             async_http_id: 0,
         }));
@@ -246,7 +234,7 @@ impl OtlpHttpExporter {
             URL::parse(&exporter.url),
             bun_core::handle_oom(exporter.headers.entries.clone()),
             exporter.headers.content.written_slice(),
-            &borrowed.payload.body,
+            &borrowed.attempt.payload().body,
             HTTPClientResultCallback::new_with_release(
                 request,
                 Request::on_result,
@@ -280,35 +268,26 @@ impl OtlpHttpExporter {
         HTTPThread::schedule([http]);
     }
 
-    fn send_blocking(
-        self: &Arc<Self>,
-        payload: &Arc<ExportPayload>,
-        deadline: MonoInstant,
-    ) -> Result<(), SendError> {
-        if deadline.remaining().is_zero() {
-            return Err(SendError::OutOfTime);
-        }
-        let deadline = deadline.min(MonoInstant::now() + self.timeout);
-        let outcome = Outcome::new();
-        let receiver = Receiver::BlockedThread(Arc::clone(&outcome));
-        Arc::clone(self).send(Arc::clone(payload), receiver);
-        outcome.wait(deadline, is_http_thread_stuck)
-    }
-
-    fn pass_turn(self: &Arc<Self>) {
+    fn pass_turn(self: &Arc<Self>, finished: &ExportPayload) {
         let mut turns = self.turns.lock();
+        turns.unfinished_spans -= finished.span_count;
         let Some(next) = turns.waiting.pop_front() else {
             turns.taken -= 1;
             return;
         };
         turns.waiting_spans -= next.payload().span_count;
         drop(turns);
-        Arc::clone(self).send(Arc::clone(next.payload()), Receiver::Processor(next));
+        Arc::clone(self).send(next);
     }
 
     fn failed(self: Arc<Self>, attempt: ExportAttempt, error: &SendError) {
-        if !error.is_retryable() || attempt.attempt() + 1 >= MAX_ATTEMPTS {
-            self.warn_once(attempt.payload(), "", error);
+        let is_closing = attempt.is_process_closing();
+        if !error.is_retryable()
+            || attempt.attempt() + 1 >= MAX_ATTEMPTS
+            || (is_closing && matches!(error, SendError::OutOfTime))
+        {
+            let when = if is_closing { " at exit" } else { "" };
+            self.warn_once(attempt.payload().span_count, when, error);
             return attempt.done(ExportResult::Failure);
         }
         let backoff = match error {
@@ -321,11 +300,10 @@ impl OtlpHttpExporter {
         attempt.retry_later(self, backoff);
     }
 
-    fn warn_once(&self, payload: &ExportPayload, when: &str, error: &SendError) {
+    fn warn_once(&self, spans: u32, when: &str, error: &SendError) {
         if !self.has_warned.swap(true, Ordering::Relaxed) {
             warn(format_args!(
-                "exporting {} span(s) to {}{when} failed: {error} (further export errors from this exporter are silenced; see Bun.otel.stats())",
-                payload.span_count,
+                "exporting {spans} span(s) to {}{when} failed: {error} (further export errors from this exporter are silenced; see Bun.otel.stats())",
                 bstr::BStr::new(&display_url(&self.url)),
             ));
         }
@@ -363,43 +341,9 @@ pub(crate) fn is_http_thread_stuck() -> bool {
     }
 }
 
-struct Outcome {
-    result: Guarded<Option<Result<(), SendError>>>,
-    arrived: Condvar,
-}
-
-impl Outcome {
-    fn new() -> Arc<Outcome> {
-        Arc::new(Outcome {
-            result: Guarded::new(None),
-            arrived: Condvar::new(),
-        })
-    }
-
-    fn set(&self, result: Result<(), SendError>) {
-        *self.result.lock() = Some(result);
-        self.arrived.notify_one();
-    }
-
-    fn wait(&self, deadline: MonoInstant, is_stuck: fn() -> bool) -> Result<(), SendError> {
-        let mut result = self.result.lock();
-        while result.is_none() && !deadline.remaining().is_zero() && !is_stuck() {
-            let slice = deadline.remaining().min(Duration::from_millis(100));
-            let _ = (self.arrived).timed_wait_guarded(&mut result, slice.as_nanos() as u64);
-        }
-        result.take().unwrap_or(Err(SendError::OutOfTime))
-    }
-}
-
-enum Receiver {
-    Processor(ExportAttempt),
-    BlockedThread(Arc<Outcome>),
-}
-
 struct Request {
     exporter: Arc<OtlpHttpExporter>,
-    payload: Arc<ExportPayload>,
-    receiver: Receiver,
+    attempt: ExportAttempt,
     aborted: Arc<AtomicBool>,
     async_http_id: u32,
 }
@@ -427,21 +371,18 @@ impl Request {
         let this = unsafe { bun_core::heap::take(this.cast::<Self>()) };
         let waiting = core::mem::take(&mut this.exporter.turns.lock().waiting);
         waiting.into_iter().for_each(ExportAttempt::abandoned);
-        match this.receiver {
-            Receiver::Processor(attempt) => attempt.abandoned(),
-            Receiver::BlockedThread(_) => {}
-        }
+        this.attempt.abandoned();
     }
 
     fn finish(self, result: Result<(), SendError>) {
         (self.exporter.in_flight.lock()).retain(|d| d.async_http_id != self.async_http_id);
-        if matches!(self.receiver, Receiver::Processor(_)) {
-            self.exporter.pass_turn();
-        }
-        match (self.receiver, result) {
-            (Receiver::Processor(attempt), Ok(())) => attempt.done(ExportResult::Success),
-            (Receiver::Processor(attempt), Err(error)) => self.exporter.failed(attempt, &error),
-            (Receiver::BlockedThread(outcome), result) => outcome.set(result),
+        self.exporter.pass_turn(self.attempt.payload());
+        match result {
+            Ok(()) => self.attempt.done(ExportResult::Success),
+            Err(_) if self.aborted.load(Ordering::Relaxed) => {
+                self.exporter.failed(self.attempt, &SendError::OutOfTime);
+            }
+            Err(error) => self.exporter.failed(self.attempt, &error),
         }
     }
 }
@@ -452,10 +393,12 @@ impl Exporter for OtlpHttpExporter {
         let mut turns = self.turns.lock();
         if turns.taken < Turns::MAX_TAKEN {
             turns.taken += 1;
+            turns.unfinished_spans += attempt.payload().span_count;
             drop(turns);
-            self.send(Arc::clone(attempt.payload()), Receiver::Processor(attempt));
+            self.send(attempt);
         } else if turns.waiting_spans < max_waiting {
             turns.waiting_spans += attempt.payload().span_count;
+            turns.unfinished_spans += attempt.payload().span_count;
             turns.waiting.push_back(attempt);
         } else {
             drop(turns);
@@ -470,23 +413,10 @@ impl Exporter for OtlpHttpExporter {
         }
     }
 
-    fn export_blocking(
-        self: Arc<Self>,
-        payload: &Arc<ExportPayload>,
-        deadline: MonoInstant,
-    ) -> ExportResult {
-        let result = match self.send_blocking(payload, deadline) {
-            Err(error) if error.is_worth_a_try_at_once() && !payload.is_parked() => {
-                self.send_blocking(payload, deadline)
-            }
-            result => result,
-        };
-        match result {
-            Ok(()) => ExportResult::Success,
-            Err(error) => {
-                self.warn_once(payload, " at exit", &error);
-                ExportResult::Failure
-            }
+    fn warn_of_unfinished(&self) {
+        let spans = self.turns.lock().unfinished_spans;
+        if spans != 0 {
+            self.warn_once(spans, " at exit", &SendError::OutOfTime);
         }
     }
 }
@@ -497,8 +427,7 @@ struct ConsoleExporter;
 struct ConsoleJob {
     /// The processor ticks it for as long as it is alive.
     _exporter: Arc<ConsoleExporter>,
-    payload: Arc<ExportPayload>,
-    receiver: Receiver,
+    attempt: ExportAttempt,
     deadline: MonoInstant,
     has_begun: bool,
 }
@@ -506,29 +435,12 @@ struct ConsoleJob {
 static CONSOLE_JOBS: Guarded<Vec<ConsoleJob>> = Guarded::new(Vec::new());
 
 impl ConsoleExporter {
-    fn enqueue(
-        self: Arc<Self>,
-        payload: Arc<ExportPayload>,
-        receiver: Receiver,
-        deadline: MonoInstant,
-    ) {
-        static WRITER: OnDemandThread = OnDemandThread::new(ConsoleExporter::write_all);
-        CONSOLE_JOBS.lock().push(ConsoleJob {
-            _exporter: self,
-            payload,
-            receiver,
-            deadline,
-            has_begun: false,
-        });
-        WRITER.wake();
-    }
-
     fn write_all() {
         loop {
             let mut jobs = CONSOLE_JOBS.lock();
             let Some(job) = jobs.first_mut() else { return };
             job.has_begun = true;
-            let payload = Arc::clone(&job.payload);
+            let payload = Arc::clone(job.attempt.payload());
             drop(jobs);
             let mut json = bun_telemetry_cold::otlp_json::to_json(&payload.body);
             json.push(b'\n');
@@ -540,44 +452,23 @@ impl ConsoleExporter {
 
     fn finish(which: &dyn Fn(&ConsoleJob) -> bool, result: ExportResult) {
         let finished: Vec<_> = (CONSOLE_JOBS.lock().extract_if(.., |job| which(job))).collect();
-        for job in finished {
-            match job.receiver {
-                Receiver::Processor(attempt) => attempt.done(result),
-                Receiver::BlockedThread(outcome) => outcome.set(match result {
-                    ExportResult::Success => Ok(()),
-                    _ => Err(SendError::OutOfTime),
-                }),
-            }
-        }
+        finished
+            .into_iter()
+            .for_each(|job| job.attempt.done(result));
     }
 }
 
 impl Exporter for ConsoleExporter {
     fn export(self: Arc<Self>, attempt: ExportAttempt) {
+        static WRITER: OnDemandThread = OnDemandThread::new(ConsoleExporter::write_all);
         let timeout = processor::global().config().export_timeout_ms;
-        let deadline = MonoInstant::now() + Duration::from_millis(timeout.into());
-        let payload = Arc::clone(attempt.payload());
-        self.enqueue(payload, Receiver::Processor(attempt), deadline);
-    }
-
-    fn export_blocking(
-        self: Arc<Self>,
-        payload: &Arc<ExportPayload>,
-        deadline: MonoInstant,
-    ) -> ExportResult {
-        let now = MonoInstant::now();
-        if (CONSOLE_JOBS.lock().first()).is_some_and(|stuck| now >= stuck.deadline) {
-            return ExportResult::Failure;
-        }
-        // A collector may have used up the time.
-        let deadline = deadline.max(now + Duration::from_millis(250));
-        let outcome = Outcome::new();
-        let receiver = Receiver::BlockedThread(Arc::clone(&outcome));
-        self.enqueue(Arc::clone(payload), receiver, deadline);
-        match outcome.wait(deadline, || false) {
-            Ok(()) => ExportResult::Success,
-            Err(_) => ExportResult::Failure,
-        }
+        CONSOLE_JOBS.lock().push(ConsoleJob {
+            _exporter: self,
+            attempt,
+            deadline: MonoInstant::now() + Duration::from_millis(timeout.into()),
+            has_begun: false,
+        });
+        WRITER.wake();
     }
 
     fn tick(&self, now: MonoInstant) {
@@ -828,11 +719,7 @@ impl Exporter for JsExporter {
     }
 
     /// No microtask runs: the queue also holds the program's, which `process.exit()` has cut off.
-    fn export_blocking(
-        self: Arc<Self>,
-        payload: &Arc<ExportPayload>,
-        _: MonoInstant,
-    ) -> ExportResult {
+    fn export_now(&self, payload: &ExportPayload) -> ExportResult {
         match (self.owner_state()).map(|state| self.deliver(state, payload)) {
             Some(Ok(Delivery::Settled(result))) => result,
             Some(Ok(Delivery::Pending(_))) => {

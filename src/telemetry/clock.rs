@@ -29,7 +29,8 @@ fn mono_ns() -> u64 {
 pub struct MonoInstant(u64);
 
 impl MonoInstant {
-    pub const FAR_FUTURE: MonoInstant = MonoInstant(u64::MAX);
+    #[cfg(test)]
+    pub(crate) const FAR_FUTURE: MonoInstant = MonoInstant(u64::MAX);
 
     #[inline]
     pub fn now() -> MonoInstant {

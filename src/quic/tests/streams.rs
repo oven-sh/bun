@@ -574,7 +574,7 @@ fn short_streams_pass_long_ones() {
 
 #[test]
 fn long_streams_are_not_passed_for_ever() {
-    for (has_priorities, expected) in [(false, 7), (true, 9)] {
+    for (has_priorities, expected) in [(false, 7), (true, 3)] {
         let mut raw = sending(has_priorities, 1_100_000);
         for _ in 0..20 {
             let id = raw.peer.open(Unidirectional);
@@ -585,6 +585,28 @@ fn long_streams_are_not_passed_for_ever() {
         let passed_by = ids(turns(&mut raw)).iter().position(|&it| it == 3);
         assert_eq!(passed_by, Some(expected));
     }
+}
+
+#[test]
+fn the_first_long_response_shares_the_path_with_the_short_ones() {
+    let mut raw = sending(true, 1_100_000);
+    let before = raw.streams[&3].len();
+    for _ in 0..3 {
+        let id = raw.peer.open(Unidirectional);
+        raw.peer.send(id, &filler(0, 1_500_000), true);
+    }
+    let mut finished = Vec::new();
+    while finished.len() < 4 {
+        raw.advance(RTT / 8);
+        raw.send("ack");
+        let frames = raw.frames();
+        let sent = raw.streams.values().map(Vec::len).sum::<usize>() - before;
+        let ends = groups(&frames).into_iter().filter(|it| it[0] == "fin");
+        finished.extend(ends.map(|it| (it[1].to_owned(), sent)));
+    }
+    assert!(finished.iter().map(|it| &it.0).eq(["3", "7", "11", "15"]));
+    let rest = 4_400_000 - before;
+    assert!((rest * 9 / 5..rest * 11 / 5).contains(&finished[0].1));
 }
 
 #[test]

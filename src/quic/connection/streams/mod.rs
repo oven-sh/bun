@@ -6,12 +6,12 @@ mod send;
 pub(super) mod send_buffer;
 mod stream;
 
-use core::cmp::Reverse;
-use std::collections::{BinaryHeap, VecDeque};
+use std::collections::VecDeque;
 
 use hashbrown::hash_map::Entry;
 
 pub(crate) use receive::Ready;
+use send::Line;
 pub(super) use send::WRITE_CHUNK;
 pub(crate) use stream::{Flags, Role, Stream};
 
@@ -108,15 +108,16 @@ pub(crate) struct State {
     write_round: u64,
     is_write_round_over: bool,
 
-    sendable: BinaryHeap<Reverse<(u64, StreamId)>>,
+    sendable: Line,
     turns: u64,
+    /// How many bytes have passed the long responses since one of them had its turn.
+    passed: u64,
     lost: VecDeque<StreamId>,
     /// They wait for MAX_DATA.
     stalled: Vec<StreamId>,
     owing: VecDeque<StreamId>,
     readable: VecDeque<StreamId>,
-    /// By rank.
-    writable: VecDeque<(u64, StreamId)>,
+    writable: Line,
     closing: VecDeque<StreamId>,
 }
 

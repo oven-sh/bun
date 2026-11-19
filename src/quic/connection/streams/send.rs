@@ -1,5 +1,5 @@
-use core::cmp::Reverse;
 use core::ops::Range;
+use std::collections::VecDeque;
 
 use super::stream::UNKNOWN_SIZE;
 use super::{Flags, State, Stream, Streams};
@@ -18,13 +18,31 @@ const TURN_LEN: u64 = 16 * 1024;
 const BULK_HANDICAP: u64 = 8;
 const BULK_LEN: u64 = 128 * 1024;
 const LITTLE: u64 = 2 * 1024;
-/// After how much a response that is not incremental takes turns all the same (RFC 9218 §10).
-const IN_ORDER_LEN: u64 = 1024 * 1024;
-/// The bits of a rank between those for the urgency and for whether the stream takes turns.
-const TURN_BITS: u64 = (1 << URGENCY_SHIFT) - 2;
-const URGENCY_SHIFT: u32 = 60;
+/// After how much a response that is not incremental shares the path all the same (RFC 9218 §10).
+const LONG_LEN: u64 = 1024 * 1024;
+/// A rank is made of the urgency, this bit, the turn, and whether the stream takes turns.
+const LONG: u64 = 1 << 59;
+const TURN_BITS: u64 = LONG - 2;
 /// A type and three integers.
 const MAX_OWED_FRAME_LEN: usize = 25;
+
+/// Streams by rank.
+pub(super) type Line = VecDeque<(u64, StreamId)>;
+
+#[inline]
+fn line_up(line: &mut Line, entry: (u64, StreamId)) {
+    match line.back() {
+        Some(last) if *last > entry => line.insert(line.partition_point(|it| *it < entry), entry),
+        _ => line.push_back(entry),
+    }
+}
+
+/// Where the first long response is that is as urgent as the first stream.
+fn first_long(line: &Line) -> Option<usize> {
+    let class = (line.front()?.0 / LONG) | 1;
+    let at = line.partition_point(|it| it.0 / LONG < class);
+    line.get(at).filter(|it| it.0 / LONG == class).map(|_| at)
+}
 
 impl State {
     /// How many bytes the application may write.
@@ -156,12 +174,8 @@ impl State {
         self.report_blocked(id, stream);
         if stream.mark(Flags::IN_WRITABLE) {
             self.turns += 1;
-            let entry = (self.rank(stream), id);
-            let at = match self.writable.back() {
-                Some(last) if *last > entry => self.writable.partition_point(|it| *it < entry),
-                _ => self.writable.len(),
-            };
-            self.writable.insert(at, entry);
+            let rank = self.rank(stream);
+            line_up(&mut self.writable, (rank, id));
             self.is_write_round_over = false;
         }
     }
@@ -193,15 +207,25 @@ impl State {
             return 0;
         }
         let is_past = |len| stream.send.sent() >= len && stream.send.unsent_len() > LITTLE;
-        let takes_turns =
-            !self.sends_in_order || stream.priority.is_incremental || is_past(IN_ORDER_LEN);
-        let turn = match takes_turns {
-            true => self.turns + u64::from(is_past(BULK_LEN)) * BULK_HANDICAP,
-            false => stream.first_turn,
+        let takes_turns = !self.sends_in_order || stream.priority.is_incremental;
+        let (turn, is_long) = match takes_turns {
+            true => (
+                self.turns + u64::from(is_past(BULK_LEN)) * BULK_HANDICAP,
+                false,
+            ),
+            false => (stream.first_turn, is_past(LONG_LEN)),
         };
-        (u64::from(stream.priority.urgency) + 1) << URGENCY_SHIFT
-            | turn << 1 & TURN_BITS
-            | u64::from(takes_turns)
+        let class = 2 * (u64::from(stream.priority.urgency) + 1) + u64::from(is_long);
+        (class * LONG) | turn << 1 & TURN_BITS | u64::from(takes_turns)
+    }
+
+    /// Where it is in `sendable`.
+    #[inline]
+    fn next_to_send(&self) -> usize {
+        match self.sends_in_order && self.passed >= TURN_LEN {
+            true => first_long(&self.sendable).unwrap_or(0),
+            false => 0,
+        }
     }
 
     #[inline]
@@ -209,13 +233,14 @@ impl State {
         if stream.mark(Flags::IN_SENDABLE) {
             self.turns += 1;
             stream.turn_end = stream.send.sent() + TURN_LEN;
-            self.sendable.push(Reverse((self.rank(stream), id)));
+            let rank = self.rank(stream);
+            line_up(&mut self.sendable, (rank, id));
         }
     }
 
     /// Whether there is something that other streams may depend on.
     pub(crate) fn has_urgent_frames(&self) -> bool {
-        !self.lost.is_empty() || self.sendable.peek().is_some_and(|it| it.0.0 == 0)
+        !self.lost.is_empty() || self.sendable.front().is_some_and(|it| it.0 == 0)
     }
 
     #[inline]
@@ -241,16 +266,17 @@ impl Streams {
     #[cold]
     fn apply_priorities(&mut self) {
         let Self { table, state, .. } = self;
-        let mut sendable = core::mem::take(&mut state.sendable).into_vec();
-        let mut writable = core::mem::take(&mut state.writable);
-        for (rank, id) in (sendable.iter_mut().map(|it| &mut it.0)).chain(&mut writable) {
-            let new = table.get(*id).map(|it| state.rank(it));
-            *rank = new
-                .filter(|it| (it ^ *rank) & !TURN_BITS != 0)
-                .unwrap_or(*rank);
+        let mut lines = [&mut state.sendable, &mut state.writable].map(core::mem::take);
+        for line in &mut lines {
+            for (rank, id) in &mut *line {
+                let new = table.get(*id).map(|it| state.rank(it));
+                *rank = new
+                    .filter(|it| (it ^ *rank) & !TURN_BITS != 0)
+                    .unwrap_or(*rank);
+            }
+            line.make_contiguous().sort_unstable();
         }
-        writable.make_contiguous().sort_unstable();
-        (state.sendable, state.writable) = (sendable.into(), writable);
+        [state.sendable, state.writable] = lines;
     }
 
     /// At most once for a stream until [`State::start_write_round`].
@@ -261,9 +287,15 @@ impl Streams {
         }
         let Self { table, state, .. } = self;
         while state.awaits_writes() {
-            let at = (state.writable.iter()).position(|it| {
-                (table.get(it.1)).is_some_and(|it| it.write_round != state.write_round)
-            });
+            let is_due = |it: &(u64, StreamId), max_unsent| {
+                table.get(it.1).is_some_and(|it| {
+                    it.write_round != state.write_round && it.send.unsent_len() <= max_unsent
+                })
+            };
+            let line = &state.writable;
+            let at = (first_long(line))
+                .filter(|&at| line.get(at).is_some_and(|it| is_due(it, WRITE_CHUNK)))
+                .or_else(|| line.iter().position(|it| is_due(it, u64::MAX)));
             let id = at.and_then(|at| state.writable.remove(at)).map(|it| it.1);
             let Some((id, stream)) = id.and_then(|id| table.get_mut(id).map(|it| (id, it))) else {
                 state.is_write_round_over = true;
@@ -327,9 +359,11 @@ impl Streams {
             }
             state.lost.pop_front();
         }
-        while let Some(&Reverse((_, id))) = state.sendable.peek() {
+        while let at = state.next_to_send()
+            && let Some(&(rank, id)) = state.sendable.get(at)
+        {
             let Some(stream) = table.get_mut(id) else {
-                state.sendable.pop();
+                state.sendable.remove(at);
                 continue;
             };
             let (start, written) = (stream.send.sent(), stream.send.end());
@@ -342,10 +376,17 @@ impl Streams {
             let now_sent = stream.send.sent();
             state.sent += now_sent - start;
             state.unsent -= now_sent - start;
+            let is_long = rank & LONG != 0;
+            if !is_long {
+                state.passed += now_sent - start;
+            }
             if now_sent < range.end && now_sent < stream.turn_end {
                 return;
             }
-            state.sendable.pop();
+            if is_long {
+                state.passed = 0;
+            }
+            state.sendable.remove(at);
             stream.flags.remove(Flags::IN_SENDABLE);
             if now_sent < range.end {
                 state.mark_sendable(id, stream);

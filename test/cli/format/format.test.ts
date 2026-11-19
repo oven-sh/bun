@@ -3566,13 +3566,13 @@ describe.concurrent("bun fmt", () => {
           button("@click", "a()", ";/** @type {T} */ (b).c()"),
           button("@click", "a();", "/** @type {T} */ (b).c();"),
         ],
-        // The one that is a statement where one is needed.
         // The one before or after a copy of the source.
         [
           button("@click", "a( 1 ); /* prettier-ignore */ [b].map( f )"),
           button("@click", "a(1)", "/* prettier-ignore */ ;[b].map( f )"),
           button("@click", "a(1);", "/* prettier-ignore */ [b].map( f )"),
         ],
+        // The one that is a statement where one is needed.
         [button("@click", "while (a);"), button("@click", "while (a);"), button("@click", "while (a);")],
         [
           button("@click", "while (a); b(); c()"),
@@ -3725,6 +3725,7 @@ describe.concurrent("bun fmt", () => {
         const text = inTemplate(handlers.map(handler => `<button @click="${handler}">x</button>`).join("\n  "));
         for (const args of [withSemicolons, withoutSemicolons]) {
           const first = await format({ "a.vue": text }, args, { reads: ["a.vue"] });
+          expect({ stdout: first.stdout, exitCode: first.exitCode }).toEqual({ stdout: "a.vue", exitCode: 0 });
           const written = first.files["a.vue"]!;
           const values = [...written.matchAll(/@click="([^"]*)"/g)].map(match => match[1]);
           expect(values.length).toBe(handlers.length);
@@ -3732,7 +3733,11 @@ describe.concurrent("bun fmt", () => {
           const lost = handlers.filter((_, i) => !values[i].replaceAll(/&\w+;/g, "").includes(";"));
           expect(lost).toEqual([]);
           const again = await format({ "a.vue": written }, args, { reads: ["a.vue"] });
-          expect(again.files["a.vue"]).toBe(written);
+          expect({ ...again.files, stdout: again.stdout, exitCode: again.exitCode }).toEqual({
+            "a.vue": written,
+            stdout: "",
+            exitCode: 0,
+          });
         }
       });
 

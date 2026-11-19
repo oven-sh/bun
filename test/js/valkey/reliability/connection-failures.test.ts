@@ -580,7 +580,6 @@ describe.skipIf(!isLinux).concurrent("Valkey: TCP keepalive", () => {
     return {
       port,
       sockets,
-      url: `${secure ? "rediss" : "redis"}://127.0.0.1:${port}`,
       async [Symbol.asyncDispose]() {
         for (const socket of sockets) socket.destroy();
         await new Promise(closed => server.close(closed));
@@ -607,10 +606,16 @@ describe.skipIf(!isLinux).concurrent("Valkey: TCP keepalive", () => {
     throw new Error(`the socket has data in flight (timer ${timers[0]})`);
   }
 
-  test.each(["redis", "rediss"])("is on for a %s:// connection", async scheme => {
+  // A hostname is still connecting when the dial returns: only the open event has its socket.
+  test.each([
+    ["redis", "127.0.0.1"],
+    ["redis", "localhost"],
+    ["rediss", "127.0.0.1"],
+    ["rediss", "localhost"],
+  ])("is on for a connection to %s://%s", async (scheme, host) => {
     const secure = scheme === "rediss";
     await using server = await respServer(secure);
-    const client = new RedisClient(server.url, secure ? { tls: { ca: tlsCert.cert } } : {});
+    const client = new RedisClient(`${scheme}://${host}:${server.port}`, secure ? { tls: { ca: tlsCert.cert } } : {});
     try {
       expect(await client.get("key")).toBe("value");
       expect(keepaliveSeconds(server.port)).toBeLessThanOrEqual(60);
@@ -621,7 +626,7 @@ describe.skipIf(!isLinux).concurrent("Valkey: TCP keepalive", () => {
 
   test("is on for the connection that replaces a dropped one", async () => {
     await using server = await respServer(false);
-    const client = new RedisClient(server.url);
+    const client = new RedisClient(`redis://127.0.0.1:${server.port}`);
     try {
       const reconnected = Promise.withResolvers<void>();
       let connects = 0;
@@ -1457,6 +1462,33 @@ describe("Valkey: Recovering After fail()", () => {
       const reconnected = client.connect();
       await second.listenUnix(socketPath);
       await reconnected;
+      expect(await client.ping()).toBe("PONG");
+      expect({ first: first.connections, second: second.connections }).toEqual({ first: 1, second: 1 });
+    } finally {
+      client.close();
+      await first.close();
+      await second.close();
+    }
+  });
+
+  test.skipIf(isWindows)("a reconnect that nothing waited for gives up, and the next command dials again", async () => {
+    using dir = tempDir("valkey-unix", {});
+    const socketPath = path.join(String(dir), "r.sock");
+    const first = helloServer();
+    const second = helloServer();
+    await first.listenUnix(socketPath);
+    const client = new RedisClient(`redis+unix://${socketPath}`, { maxRetries: 1 });
+    const gaveUp = Promise.withResolvers<Error>();
+    client.onclose = gaveUp.resolve;
+    try {
+      expect(await client.ping()).toBe("PONG");
+      // The server goes away while the client is idle, and stays away for longer than the retries last.
+      first.sockets[0].destroy();
+      await first.close();
+      expect((await gaveUp.promise).message).toBe("Max reconnection attempts reached");
+      expect(client.connected).toBe(false);
+
+      await second.listenUnix(socketPath);
       expect(await client.ping()).toBe("PONG");
       expect({ first: first.connections, second: second.connections }).toEqual({ first: 1, second: 1 });
     } finally {

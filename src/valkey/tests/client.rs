@@ -996,6 +996,143 @@ mod handshake {
             assert_eq!(it.log.last().unwrap(), expected, "{name}");
         }
     }
+
+    fn lose_every_redial(it: &mut Driver) {
+        while it.client.is_active() {
+            it.dial();
+            it.lost();
+        }
+    }
+
+    /// Connected, lost, and every redial lost: nothing waited for any of them.
+    fn parked(selected: Option<u32>) -> Driver {
+        let mut it = Driver::connected(Config {
+            max_retries: 1,
+            ..Config::default()
+        });
+        if let Some(database) = selected {
+            it.send(&format!("SELECT {database}"));
+            it.read("+OK\r\n");
+        }
+        it.lost();
+        lose_every_redial(&mut it);
+        assert_eq!(it.log.last().unwrap(), "closed [] RetriesUsedUp");
+        assert_eq!(it.client.rejection(), None);
+        it.log.clear();
+        it
+    }
+
+    #[test]
+    fn a_reconnect_that_gives_up_is_closed_only_if_something_waited() {
+        type Touch = fn(&mut Driver);
+        let nothing: Touch = |_| {};
+        let listen: Touch = |it| {
+            it.sent += 1;
+            let channel: Name = b"a".as_slice().into();
+            it.listeners
+                .entry(channel.clone())
+                .or_default()
+                .push(it.sent);
+            let _ = it.client.subscribe(&[channel], it.sent);
+            it.checkpoint();
+            it.flush();
+            it.read(&push("subscribe", "a"));
+        };
+        for (name, max_retries, before, during, gave_up, refusal) in [
+            (
+                "nothing",
+                2,
+                nothing,
+                nothing,
+                "closed [] RetriesUsedUp",
+                None,
+            ),
+            (
+                "a queued command",
+                2,
+                nothing,
+                (|it| it.send("GET k")) as Touch,
+                "closed [1] RetriesUsedUp",
+                Some("Connection has failed"),
+            ),
+            (
+                "connect()",
+                2,
+                nothing,
+                |it| it.client.connect(),
+                "closed [] RetriesUsedUp",
+                Some("Connection has failed"),
+            ),
+            (
+                "a listener",
+                2,
+                listen,
+                nothing,
+                "closed [] RetriesUsedUp",
+                Some("Connection has failed"),
+            ),
+            (
+                "no retry",
+                0,
+                nothing,
+                nothing,
+                "closed [] RetriesUsedUp",
+                Some("Connection has failed"),
+            ),
+        ] {
+            let mut it = Driver::connected(Config {
+                max_retries,
+                ..Config::default()
+            });
+            before(&mut it);
+            it.lost();
+            during(&mut it);
+            lose_every_redial(&mut it);
+            assert_eq!(it.log.last().unwrap(), gave_up, "{name}");
+            assert_eq!(it.client.rejection(), refusal, "{name}");
+            assert_eq!(
+                it.client.claim_and_dial().is_some(),
+                refusal.is_none(),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_next_command_of_a_parked_client_dials_as_a_reconnect() {
+        let mut it = parked(Some(5));
+        it.dial();
+        it.send("GET k");
+        it.start();
+        assert_eq!(it.take(), ["write HELLO 3 SELECT 5"]);
+        assert!(it.client.abandon_handshake(), "a timeout costs one retry");
+        it.lost();
+        lose_every_redial(&mut it);
+        assert_eq!(it.take(), ["retry in 50 []", "closed [2] RetriesUsedUp"]);
+        assert_eq!(it.client.rejection(), Some("Connection has failed"));
+
+        let mut it = parked(None);
+        it.dial();
+        it.lost();
+        lose_every_redial(&mut it);
+        assert_eq!(it.take(), ["retry in 50 []", "closed [] RetriesUsedUp"]);
+        assert_eq!(it.client.rejection(), None, "parked again");
+    }
+
+    #[test]
+    fn connect_and_close_of_a_parked_client() {
+        let mut it = parked(Some(5));
+        it.client.connect();
+        it.attempt = it.client.redial();
+        it.start();
+        assert_eq!(it.take(), ["write HELLO 3 SELECT 5"]);
+        assert!(!it.client.abandon_handshake(), "connect() asked");
+
+        let mut it = parked(None);
+        assert!(matches!(it.client.close(), Close::Nothing));
+        assert_eq!(it.client.rejection(), Some("Connection has failed"));
+        assert!(it.client.claim_and_dial().is_none());
+    }
 }
 
 mod pipeline {

@@ -44,6 +44,11 @@ impl Default for Config {
 enum State {
     /// Never dialed, or only by a [`Client::preconnect`] that failed.
     Idle,
+    /// A reconnect that nothing waited for used up its retries. The next command dials again, as a reconnect.
+    Parked {
+        /// What script selected, for the next handshake.
+        selected: Option<u32>,
+    },
     /// An event is still to come.
     Active(Active),
     /// Until [`Client::connect`].
@@ -364,7 +369,7 @@ impl<P> Client<P> {
     fn phase(&self) -> Option<&Phase> {
         match &self.state {
             State::Active(active) => Some(&active.phase),
-            State::Idle | State::Closed => None,
+            State::Idle | State::Parked { .. } | State::Closed => None,
         }
     }
 
@@ -457,7 +462,11 @@ impl<P> Client<P> {
     pub fn connect(&mut self) {
         let active = match &mut self.state {
             State::Idle => return,
-            State::Closed => return self.begin(Phase::Backoff, Purpose::ASKED),
+            State::Parked { selected } => {
+                let selected = *selected;
+                return self.begin(Phase::Backoff, Purpose::ASKED, selected);
+            }
+            State::Closed => return self.begin(Phase::Backoff, Purpose::ASKED, None),
             State::Active(active) => active,
         };
         active.purpose.claim();
@@ -478,6 +487,9 @@ impl<P> Client<P> {
     }
 
     pub fn close(&mut self) -> Close {
+        if let State::Parked { .. } = self.state {
+            self.state = State::Closed;
+        }
         let State::Active(active) = &mut self.state else {
             return Close::Nothing;
         };
@@ -512,17 +524,21 @@ impl<P> Client<P> {
     }
 
     fn leave_idle(&mut self, purpose: Purpose) -> Option<Attempt> {
-        matches!(self.state, State::Idle).then(|| {
-            self.begin(Phase::Dialing, purpose);
-            Attempt(())
-        })
+        let (purpose, selected) = match self.state {
+            State::Idle => (purpose, None),
+            // A timeout of this dial costs one retry, as it does for the reconnect that gave up.
+            State::Parked { selected } => (Purpose::Reconnect { retries: 0 }, selected),
+            State::Active(_) | State::Closed => return None,
+        };
+        self.begin(Phase::Dialing, purpose, selected);
+        Some(Attempt(()))
     }
 
-    fn begin(&mut self, phase: Phase, purpose: Purpose) {
+    fn begin(&mut self, phase: Phase, purpose: Purpose, selected: Option<u32>) {
         self.state = State::Active(Active {
             phase,
             purpose,
-            selected: None,
+            selected,
         });
     }
 
@@ -627,7 +643,7 @@ impl<P> Client<P> {
         self.tail = Tail::None;
 
         let (state, reason) = match &mut self.state {
-            State::Idle | State::Closed => (State::Closed, Reason::Final),
+            State::Idle | State::Parked { .. } | State::Closed => (State::Closed, Reason::Final),
             State::Active(active) => match (active.purpose, &active.phase) {
                 (Purpose::Preconnect, _) => (State::Idle, Reason::Final),
                 (_, Phase::Ending(End::Requested)) => (State::Closed, Reason::Requested),
@@ -636,7 +652,18 @@ impl<P> Client<P> {
                     if owner_is_gone || !self.config.enable_auto_reconnect {
                         (State::Closed, Reason::Final)
                     } else if retries >= self.config.max_retries {
-                        (State::Closed, Reason::RetriesUsedUp)
+                        let nothing_waits = matches!(active.purpose, Purpose::Reconnect { .. })
+                            && self.in_flight.is_empty()
+                            && self.queue.is_empty()
+                            && self.listeners.is_empty();
+                        let state = if nothing_waits {
+                            State::Parked {
+                                selected: active.selected,
+                            }
+                        } else {
+                            State::Closed
+                        };
+                        (state, Reason::RetriesUsedUp)
                     } else {
                         let retries = retries + 1;
                         active.purpose = match (active.purpose, phase) {

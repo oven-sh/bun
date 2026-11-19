@@ -528,7 +528,9 @@ function fetchDispatch(origin: URL, opts: any, handler: any, pending?: Set<Pendi
 
 // Like undici and Response.text(): a leading UTF-8 byte order mark is not part of the text.
 function utf8WithoutBOM(buf: Buffer) {
-  return buf.length > 2 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf ? buf.toString("utf8", 3) : buf.toString();
+  return buf.length > 2 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf
+    ? buf.toString("utf8", 3)
+    : buf.toString();
 }
 
 // dispatcher.request() body: a Readable with undici's body-mixin methods.

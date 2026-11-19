@@ -548,8 +548,8 @@ impl QuicSession {
         self.events.with_mut(|e| e.push_back(event));
         self.mark();
     }
-    pub(super) fn has_events(&self) -> bool {
-        !self.events.get().is_empty()
+    pub(super) fn needs_followup(&self) -> bool {
+        !self.events.get().is_empty() || !self.deferred_aborts.get().is_empty()
     }
     fn mark(&self) {
         if let Some(ep) = self.endpoint_ref() {
@@ -837,9 +837,8 @@ impl QuicSession {
         if self.finish_deferred_close() {
             self.schedule_process();
         }
-        if self.has_events()
+        if self.needs_followup()
             || self.pending_graceful.get().is_some()
-            || !self.deferred_aborts.get().is_empty()
             || !self.pending_tickets.get().is_empty()
             || !self.unclaimed_streams.get().is_empty()
         {

@@ -914,7 +914,7 @@ impl QuicEndpoint {
         if self.driver_pending.take() {
             self.drive_once();
         }
-        if self.marked_sessions().any(QuicSession::has_events) {
+        if self.marked_sessions().any(QuicSession::needs_followup) {
             self.plan_followup();
         }
     }

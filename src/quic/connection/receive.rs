@@ -26,8 +26,6 @@ use crate::time::{Duration, Instant};
 
 const MAX_COALESCED: usize = 8;
 const LOAD_WHILE_GOING_AWAY: u32 = 2000;
-/// While the peer is heard from.
-const MAX_PTO_COUNT: u32 = 4;
 const MAX_UNDECRYPTABLE: usize = 32;
 const MAX_UNDECRYPTABLE_LEN: usize = 48 * 1024;
 const UNVALIDATED_MAX_UNDECRYPTABLE_LEN: usize = 16 * 1024;
@@ -164,7 +162,9 @@ impl Connection {
                     };
                     self.timers.set(Timer::KeepAlive, now + pause);
                     self.has_sent_since_receiving = false;
-                    self.pto_count = self.pto_count.min(MAX_PTO_COUNT);
+                    if self.pto_count > 1 {
+                        self.on_sign_of_life();
+                    }
                     self.update_unsent_target();
                     self.streams.state.start_write_round();
                 }

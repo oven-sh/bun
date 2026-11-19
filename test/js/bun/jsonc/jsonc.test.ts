@@ -405,6 +405,91 @@ test("Bun.JSONC.parse rejects raw control characters and unterminated strings", 
   expect(() => Bun.JSONC.parse("[1, 2")).toThrow();
 });
 
+test("Bun.JSONC.parse rejects content after the root value", () => {
+  const messages: Record<string, string> = {};
+  for (const doc of [
+    '{ "a": 1 } extra',
+    '"a" "b"',
+    "[1] [2]",
+    '{ "a": 1 } }',
+    "1 2",
+    "true false",
+    '{"a":1},',
+    '{"a":1}\0',
+    '{"a":1} // c\n{"b":2}',
+    '{"a":1} /* c */ x',
+    '{"a":1} /* c',
+    '{"a":1} /',
+  ]) {
+    let thrown: unknown;
+    try {
+      Bun.JSONC.parse(doc);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown, `input: ${JSON.stringify(doc)}`).toBeInstanceOf(SyntaxError);
+    messages[doc] = (thrown as Error).message;
+  }
+  expect(messages).toMatchInlineSnapshot(`
+    {
+      "\\"a\\" \\"b\\"": "JSONC Parse error: Unexpected "b"",
+      "1 2": "JSONC Parse error: Unexpected 2",
+      "[1] [2]": "JSONC Parse error: Unexpected [",
+      "true false": "JSONC Parse error: Unexpected false",
+      "{ \\"a\\": 1 } extra": "JSONC Parse error: Unexpected extra",
+      "{ \\"a\\": 1 } }": "JSONC Parse error: Unexpected }",
+      "{\\"a\\":1}\\u0000": "JSONC Parse error: Unexpected \\x00",
+      "{\\"a\\":1} /": "JSONC Parse error: Unsupported syntax: Operators are not allowed in JSON",
+      "{\\"a\\":1} /* c": "JSONC Parse error: Expected "*/" to terminate multi-line comment",
+      "{\\"a\\":1} /* c */ x": "JSONC Parse error: Unexpected x",
+      "{\\"a\\":1} // c\\n{\\"b\\":2}": "JSONC Parse error: Unexpected {",
+      "{\\"a\\":1},": "JSONC Parse error: Unexpected ,",
+    }
+  `);
+});
+
+test("Bun.JSONC.parse accepts whitespace and comments after the root value", () => {
+  const tails = [
+    " ",
+    "\n",
+    "\t",
+    "\r\n",
+    " // c",
+    "// c\n",
+    " /* c */",
+    "/**/",
+    " /* a */ // b\n/* c */\n",
+    "\uFEFF",
+    "\u2028",
+    "\u2029",
+    "\u00A0",
+    "\v",
+    "\f",
+    "\u00A0// c\n\uFEFF/* d */\u2028",
+  ];
+  for (const tail of tails) {
+    const label = `tail: ${JSON.stringify(tail)}`;
+    expect(Bun.JSONC.parse('{"a":1}' + tail), label).toEqual({ a: 1 });
+    expect(Bun.JSONC.parse("[1,]" + tail), label).toEqual([1]);
+    expect(Bun.JSONC.parse('"s"' + tail), label).toBe("s");
+    expect(Bun.JSONC.parse("1" + tail), label).toBe(1);
+    expect(Bun.JSONC.parse("null" + tail), label).toBe(null);
+  }
+});
+
+test("Bun.JSONC.parse reads the whole tail after the root value, however long it is", () => {
+  // The structural index reads the input in 8 KiB windows; the result must not depend on which window the tail ends in.
+  for (const n of [100, 9000, 70000]) {
+    const blank = Buffer.alloc(n, " ").toString();
+    expect(Bun.JSONC.parse('{"a":1}' + blank), `${n} spaces`).toEqual({ a: 1 });
+    expect(Bun.JSONC.parse('{"a":1}' + blank + "/* c */"), `${n} spaces, closed comment`).toEqual({ a: 1 });
+    expect(Bun.JSONC.parse('{"a":1}' + blank + "// c"), `${n} spaces, line comment`).toEqual({ a: 1 });
+    expect(() => Bun.JSONC.parse('{"a":1}' + blank + "/* c"), `${n} spaces, open comment`).toThrow(SyntaxError);
+    expect(() => Bun.JSONC.parse('{"a":1}' + blank + "x"), `${n} spaces, x`).toThrow(SyntaxError);
+    expect(() => Bun.JSONC.parse('{"a":1}' + blank + "{}"), `${n} spaces, {}`).toThrow(SyntaxError);
+  }
+});
+
 test("Bun.JSONC.parse accepts single-quoted strings like the previous parser", () => {
   expect(Bun.JSONC.parse(`{'a': 'b"c'}`)).toEqual({ a: 'b"c' });
 });
@@ -612,11 +697,16 @@ describe("structural index window seams", () => {
     }
   });
 
-  test("closing brace at a window boundary followed by trailing garbage", () => {
+  test("closing brace at a window boundary followed by content after the root value", () => {
     for (const offset of [WINDOW - 1, WINDOW, 2 * WINDOW - 1, 2 * WINDOW]) {
-      const doc = docAt(offset, '{"k":1', "", "}", "@@@@");
-      expect(() => JSON.parse(doc)).toThrow();
-      expect(Bun.JSONC.parse(doc)).toEqual(Bun.JSONC.parse('{"k":1}@@@@'));
+      expectBothThrow(docAt(offset, '{"k":1', "", "}", "@@@@"));
+      expectBothThrow(docAt(offset, '{"k":1', "", "}", "}"));
+      expectBothThrow(docAt(offset, '{"k":1', "", "}", ' {"k":2}'));
+      expectAgree(docAt(offset, '{"k":1', "", "}", ""));
+      expectAgree(docAt(offset, '{"k":1', "", "}", " \n"));
+      for (const tail of ["// c", " /* c */", "\uFEFF"]) {
+        expect(Bun.JSONC.parse(docAt(offset, '{"k":1', "", "}", tail))).toEqual({ k: 1 });
+      }
     }
   });
 

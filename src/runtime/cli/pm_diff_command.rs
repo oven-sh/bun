@@ -1241,6 +1241,305 @@ fn patch_name(prefix: &[u8], path: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Decides what changed between the two sides of a file, and renders it.
+fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style) {
+    if change.semantic == Semantic::ModeOnly {
+        return;
+    }
+    let FileChange { path, old, new, .. } = *change;
+    change.binary = [old, new]
+        .iter()
+        .flatten()
+        .any(|side| is_binary(path, side));
+    // Because of the colon, this prefix can only start JSON, never a JavaScript program.
+    change.sourcemap = strings::ends_with(path, b".map")
+        && new.or(old).is_some_and(|b| b.starts_with(b"{\"version\":"));
+    if change.binary || change.sourcemap {
+        return;
+    }
+    if style.pretty {
+        if let (Some(o), Some(n)) = (old, new) {
+            if (strings::contains_char(o, b'\r') || strings::contains_char(n, b'\r'))
+                && strip_cr(o) == strip_cr(n)
+            {
+                change.semantic = Semantic::LineEndingsOnly;
+                return;
+            }
+        }
+    }
+    // Like `formatting only`, a terminal-view summary; piped output stays a complete patch.
+    if flags.ignore_space && style.pretty {
+        if let (Some(o), Some(n)) = (old, new) {
+            if collapse_whitespace(o) == collapse_whitespace(n) {
+                change.semantic = Semantic::WhitespaceOnly;
+                return;
+            }
+        }
+    }
+    let nopts = normalize::Options {
+        minify_syntax: flags.minify,
+        dce: false,
+        relayout: true,
+    };
+    // Readable JS is compared on the aggressive key and shown as written; minified JS is shown re-printed,
+    // so it gets the gentler display print.
+    let readable_js = matches!(normalize::kind_for(path), Some(normalize::Kind::Js(_)))
+        && !flags.unminify
+        && !old.is_some_and(normalize::looks_minified)
+        && !new.is_some_and(normalize::looks_minified);
+    let popts = if readable_js {
+        normalize::Options::KEY
+    } else {
+        nopts
+    };
+    // Canonical re-print: same parser and printer on both sides, so only meaning survives.
+    let (norm_old, norm_new) = match (flags.raw, readable_js, old, new) {
+        (true, ..) => (None, None),
+        // Both sides of readable JS are keyed together so their locals get lockstep names.
+        (false, true, Some(o), Some(n)) => match normalize::normalize_key_pair(path, o, n) {
+            Some((ko, kn)) => (Some(ko), Some(kn)),
+            None => (
+                normalize::normalize(path, o, popts),
+                normalize::normalize(path, n, popts),
+            ),
+        },
+        _ => (
+            old.and_then(|b| normalize::normalize(path, b, popts)),
+            new.and_then(|b| normalize::normalize(path, b, popts)),
+        ),
+    };
+    if !flags.raw && normalize::kind_for(path).is_some() {
+        let too_big = |b: Option<&[u8]>| b.is_some_and(|b| b.len() > normalize::MAX_BYTES);
+        if too_big(old) || too_big(new) {
+            change.not_normalized = Some("too large to normalize");
+        } else if (old.is_some() && norm_old.is_none()) || (new.is_some() && norm_new.is_none()) {
+            change.not_normalized = Some("not parsed");
+        }
+    }
+    if let Some(n) = &norm_new {
+        let old_imports: &[Vec<u8>] = norm_old.as_ref().map_or(&[], |o| o.imports.as_slice());
+        for imp in &n.imports {
+            if !old_imports.contains(imp) && !change.new_imports.contains(imp) {
+                change.new_imports.push(imp.clone());
+            }
+        }
+        let before = norm_old
+            .as_ref()
+            .map_or([0; normalize::SIGNALS.len()], |o| {
+                normalize::count_signals(&o.text)
+            });
+        let after = normalize::count_signals(&n.text);
+        for (i, (_, label)) in normalize::SIGNALS.iter().enumerate() {
+            if after[i] > before[i] {
+                change.signal_deltas.push((label, after[i] - before[i]));
+            }
+        }
+    }
+    // Equal re-prints prove the code is the same; comments and TypeScript types are not in the re-print, so
+    // those are checked separately before anything is called "formatting only".
+    let reprint_equal = matches!((&norm_old, &norm_new), (Some(a), Some(b)) if a.text == b.text);
+    let js_family = matches!(normalize::kind_for(path), Some(normalize::Kind::Js(_)));
+    change.formatting_only = reprint_equal && !js_family;
+    match (old, new, &norm_old, &norm_new) {
+        // Patch output must apply to the real files, so only the terminal view uses the re-print.
+        (Some(o), Some(n), Some(no), Some(nn))
+            if style.pretty
+                && (js_family || no.was_minified || nn.was_minified)
+                && (no.was_minified || nn.was_minified || flags.unminify) =>
+        {
+            // Minified: the original is one enormous line, so an un-minified re-print stands in as the source —
+            // locals renamed in lockstep, banner comment as written — and the folded key decides what changed.
+            change.semantic = Semantic::Normalized;
+            let renamed = if js_family {
+                normalize::normalize_minified_pair(path, o, n, nopts)
+            } else {
+                None
+            };
+            let (disp_o, disp_n) = match &renamed {
+                Some((co, cn)) => (co, cn),
+                None => (no, nn),
+            };
+            let (shown_o, shown_n) = (with_banner(o, disp_o), with_banner(n, disp_n));
+            let faithful = [(o, &shown_o), (n, &shown_n)].iter().all(|(raw, shown)| {
+                normalize::stands_for(path, raw, &shown.text, nopts, renamed.is_some())
+            });
+            let keys = if js_family && faithful {
+                normalize::normalize_key_pair(path, o, n)
+            } else {
+                None
+            };
+            match keys {
+                // A re-print that does not parse as the same file is not shown in the file's
+                // place. The raw text is diffed instead.
+                _ if !faithful => {
+                    change.semantic = Semantic::Text;
+                    unified_hunks(o, n, flags.context, style, change);
+                }
+                Some((mut ko, mut kn)) if !ko.map.is_empty() && !kn.map.is_empty() => {
+                    rebase_key_onto(&mut ko, &shown_o, disp_o);
+                    rebase_key_onto(&mut kn, &shown_n, disp_n);
+                    let projection = semantic::project(&shown_o.text, &shown_n.text, &ko, &kn);
+                    let same_key = ko.text == kn.text;
+                    if !same_key && shown_o.text == shown_n.text {
+                        // The code differs but the re-prints are identical, so only the raw
+                        // text can show the change.
+                        change.semantic = Semantic::Text;
+                        unified_hunks(o, n, flags.context, style, change);
+                    } else if !projection.holds(path, &shown_o.text, &shown_n.text, same_key) {
+                        change.origin = Some([shown_o.origin, shown_n.origin]);
+                        unified_hunks(&shown_o.text, &shown_n.text, flags.context, style, change);
+                    } else if projection
+                        .ops
+                        .iter()
+                        .any(|op| op.kind != Operation::Equal || op.affected)
+                    {
+                        change.hidden = projection.hidden;
+                        change.origin = Some([shown_o.origin, shown_n.origin]);
+                        render_ops(
+                            &projection.ops,
+                            flags.context,
+                            style,
+                            change,
+                            (false, false),
+                        );
+                    } else {
+                        change.semantic = Semantic::FormattingOnly;
+                        change.formatting_only = true;
+                    }
+                }
+                _ if shown_o.text == shown_n.text => {
+                    change.semantic = Semantic::FormattingOnly;
+                    change.formatting_only = true;
+                }
+                _ => {
+                    change.origin = Some([shown_o.origin, shown_n.origin]);
+                    unified_hunks(&shown_o.text, &shown_n.text, flags.context, style, change);
+                }
+            }
+        }
+        (Some(o), Some(n), Some(ko), Some(kn)) if style.pretty && js_family => {
+            // Readable code: decide on the aggressive canonical form, show the author's lines.
+            match (ko, kn) {
+                (ko, kn) if !ko.map.is_empty() && !kn.map.is_empty() => {
+                    let (old_v, new_v) = (view_bytes(o), view_bytes(n));
+                    let projection = semantic::project(&old_v, &new_v, ko, kn);
+                    let shown = projection
+                        .ops
+                        .iter()
+                        .any(|op| op.kind != Operation::Equal || op.affected);
+                    if !projection.holds(path, &old_v, &new_v, ko.text == kn.text) {
+                        unified_hunks(o, n, flags.context, style, change);
+                    } else if shown {
+                        change.semantic = Semantic::Projected;
+                        change.hidden = projection.hidden;
+                        render_ops(
+                            &projection.ops,
+                            flags.context,
+                            style,
+                            change,
+                            (false, false),
+                        );
+                    } else {
+                        change.semantic = Semantic::FormattingOnly;
+                        change.formatting_only = true;
+                    }
+                }
+                _ => unified_hunks(o, n, flags.context, style, change),
+            }
+        }
+        (Some(_), Some(_), Some(_), Some(_)) if style.pretty && reprint_equal => {
+            // JSON / CSS: no source map to project through; an identical re-print is formatting.
+            change.semantic = Semantic::FormattingOnly;
+        }
+        (Some(_), Some(_), Some(no), Some(nn)) if style.pretty => {
+            // JSON / CSS with a real change: the canonical prints are what is compared and shown, so a
+            // reformat around one edit is one edit.
+            change.semantic = Semantic::Reprinted;
+            unified_hunks(&no.text, &nn.text, flags.context, style, change);
+        }
+        (None, Some(n), _, _) => change.added = count_lines(n),
+        (Some(o), None, _, _) => change.removed = count_lines(o),
+        (Some(o), Some(n), _, _) => unified_hunks(o, n, flags.context, style, change),
+        (None, None, _, _) => unreachable!(),
+    }
+    if !flags.name_only
+        && !flags.stat
+        && change.hunks.is_empty()
+        && change.semantic == Semantic::Text
+        && (old.is_none() || new.is_none())
+    {
+        // Whole-file add/remove: render every line as +/- (a minified bundle in its readable re-print).
+        let readable = |raw: &[u8], norm: &Option<normalize::Normalized>| -> Vec<u8> {
+            let reprint = match norm {
+                Some(nz) if style.pretty && nz.was_minified => Some(with_banner(raw, nz).text),
+                _ => None,
+            };
+            reprint
+                .filter(|shown| normalize::stands_for(path, raw, shown, nopts, false))
+                .unwrap_or_else(|| raw.to_vec())
+        };
+        let body_owned;
+        let (op, body) = match (new, old) {
+            (Some(n), _) => {
+                body_owned = readable(n, &norm_new);
+                (Operation::Insert, body_owned.as_slice())
+            }
+            (None, Some(o)) => {
+                body_owned = readable(o, &norm_old);
+                (Operation::Delete, body_owned.as_slice())
+            }
+            (None, None) => unreachable!(),
+        };
+        if body.len() != new.or(old).map_or(0, <[u8]>::len) {
+            change.semantic = Semantic::Normalized;
+            let (raw, nz) = if op == Operation::Insert {
+                (new, &norm_new)
+            } else {
+                (old, &norm_old)
+            };
+            if let (Some(raw), Some(nz)) = (raw, nz) {
+                let origin = with_banner(raw, nz).origin;
+                change.origin = Some([origin.clone(), origin]);
+            }
+            if op == Operation::Insert {
+                change.added = count_lines(body)
+            } else {
+                change.removed = count_lines(body)
+            }
+        }
+        let n = count_lines(body);
+        let range = if new.is_some() {
+            (0, 0, 1, n)
+        } else {
+            (1, n, 0, 0)
+        };
+        // An empty file has no lines, and a hunk header without lines corrupts the patch.
+        if n > 0 {
+            style.hunk_header(&mut change.hunks, range, true);
+        }
+        let unterminated = !style.pretty && !body.is_empty() && !body.ends_with(b"\n");
+        for (i, line) in Lines(body).enumerate() {
+            style.line(
+                &mut change.hunks,
+                op,
+                i + 1,
+                i + 1,
+                line,
+                change.highlight,
+                None,
+                false,
+                change
+                    .origin
+                    .as_ref()
+                    .map(|[o, _]| o.get(i).copied().unwrap_or((0, 0))),
+            );
+        }
+        if unterminated {
+            change.hunks.extend_from_slice(NO_NEWLINE_MARKER);
+        }
+    }
+}
+
 fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
     let style = Style::detect(flags);
     let mut changes: Vec<FileChange> = Vec::new();
@@ -1268,328 +1567,22 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
         if old == new && mode_change.is_none() {
             continue;
         }
-        let mut change = FileChange {
+        changes.push(FileChange {
             path,
             highlight: style.pretty && is_js_like(path),
+            semantic: if old == new {
+                Semantic::ModeOnly
+            } else {
+                Semantic::Text
+            },
             old,
             new,
             mode_change,
             ..Default::default()
-        };
-        if old == new {
-            change.semantic = Semantic::ModeOnly;
-            changes.push(change);
-            continue;
-        }
-        change.binary = [old, new]
-            .iter()
-            .flatten()
-            .any(|side| is_binary(path, side));
-        // Because of the colon, this prefix can only start JSON, never a JavaScript program.
-        change.sourcemap = strings::ends_with(path, b".map")
-            && new.or(old).is_some_and(|b| b.starts_with(b"{\"version\":"));
-        if change.binary || change.sourcemap {
-            changes.push(change);
-            continue;
-        }
-        if style.pretty {
-            if let (Some(o), Some(n)) = (old, new) {
-                if (strings::contains_char(o, b'\r') || strings::contains_char(n, b'\r'))
-                    && strip_cr(o) == strip_cr(n)
-                {
-                    change.semantic = Semantic::LineEndingsOnly;
-                    changes.push(change);
-                    continue;
-                }
-            }
-        }
-        // Like `formatting only`, a terminal-view summary; piped output stays a complete patch.
-        if flags.ignore_space && style.pretty {
-            if let (Some(o), Some(n)) = (old, new) {
-                if collapse_whitespace(o) == collapse_whitespace(n) {
-                    change.semantic = Semantic::WhitespaceOnly;
-                    changes.push(change);
-                    continue;
-                }
-            }
-        }
-        let nopts = normalize::Options {
-            minify_syntax: flags.minify,
-            dce: false,
-            relayout: true,
-        };
-        // Readable JS is compared on the aggressive key and shown as written; minified JS is shown re-printed,
-        // so it gets the gentler display print.
-        let readable_js = matches!(normalize::kind_for(path), Some(normalize::Kind::Js(_)))
-            && !flags.unminify
-            && !old.is_some_and(normalize::looks_minified)
-            && !new.is_some_and(normalize::looks_minified);
-        let popts = if readable_js {
-            normalize::Options::KEY
-        } else {
-            nopts
-        };
-        // Canonical re-print: same parser and printer on both sides, so only meaning survives.
-        let (norm_old, norm_new) = match (flags.raw, readable_js, old, new) {
-            (true, ..) => (None, None),
-            // Both sides of readable JS are keyed together so their locals get lockstep names.
-            (false, true, Some(o), Some(n)) => match normalize::normalize_key_pair(path, o, n) {
-                Some((ko, kn)) => (Some(ko), Some(kn)),
-                None => (
-                    normalize::normalize(path, o, popts),
-                    normalize::normalize(path, n, popts),
-                ),
-            },
-            _ => (
-                old.and_then(|b| normalize::normalize(path, b, popts)),
-                new.and_then(|b| normalize::normalize(path, b, popts)),
-            ),
-        };
-        if !flags.raw && normalize::kind_for(path).is_some() {
-            let too_big = |b: Option<&[u8]>| b.is_some_and(|b| b.len() > normalize::MAX_BYTES);
-            if too_big(old) || too_big(new) {
-                change.not_normalized = Some("too large to normalize");
-            } else if (old.is_some() && norm_old.is_none()) || (new.is_some() && norm_new.is_none())
-            {
-                change.not_normalized = Some("not parsed");
-            }
-        }
-        if let Some(n) = &norm_new {
-            let old_imports: &[Vec<u8>] = norm_old.as_ref().map_or(&[], |o| o.imports.as_slice());
-            for imp in &n.imports {
-                if !old_imports.contains(imp) && !change.new_imports.contains(imp) {
-                    change.new_imports.push(imp.clone());
-                }
-            }
-            let before = norm_old
-                .as_ref()
-                .map_or([0; normalize::SIGNALS.len()], |o| {
-                    normalize::count_signals(&o.text)
-                });
-            let after = normalize::count_signals(&n.text);
-            for (i, (_, label)) in normalize::SIGNALS.iter().enumerate() {
-                if after[i] > before[i] {
-                    change.signal_deltas.push((label, after[i] - before[i]));
-                }
-            }
-        }
-        // Equal re-prints prove the code is the same; comments and TypeScript types are not in the re-print, so
-        // those are checked separately before anything is called "formatting only".
-        let reprint_equal =
-            matches!((&norm_old, &norm_new), (Some(a), Some(b)) if a.text == b.text);
-        let js_family = matches!(normalize::kind_for(path), Some(normalize::Kind::Js(_)));
-        change.formatting_only = reprint_equal && !js_family;
-        match (old, new, &norm_old, &norm_new) {
-            // Patch output must apply to the real files, so only the terminal view uses the re-print.
-            (Some(o), Some(n), Some(no), Some(nn))
-                if style.pretty
-                    && (js_family || no.was_minified || nn.was_minified)
-                    && (no.was_minified || nn.was_minified || flags.unminify) =>
-            {
-                // Minified: the original is one enormous line, so an un-minified re-print stands in as the source —
-                // locals renamed in lockstep, banner comment as written — and the folded key decides what changed.
-                change.semantic = Semantic::Normalized;
-                let renamed = if js_family {
-                    normalize::normalize_minified_pair(path, o, n, nopts)
-                } else {
-                    None
-                };
-                let (disp_o, disp_n) = match &renamed {
-                    Some((co, cn)) => (co, cn),
-                    None => (no, nn),
-                };
-                let (shown_o, shown_n) = (with_banner(o, disp_o), with_banner(n, disp_n));
-                let faithful = [(o, &shown_o), (n, &shown_n)].iter().all(|(raw, shown)| {
-                    normalize::stands_for(path, raw, &shown.text, nopts, renamed.is_some())
-                });
-                let keys = if js_family && faithful {
-                    normalize::normalize_key_pair(path, o, n)
-                } else {
-                    None
-                };
-                match keys {
-                    // A re-print that does not parse as the same file is not shown in the file's
-                    // place. The raw text is diffed instead.
-                    _ if !faithful => {
-                        change.semantic = Semantic::Text;
-                        unified_hunks(o, n, flags.context, style, &mut change);
-                    }
-                    Some((mut ko, mut kn)) if !ko.map.is_empty() && !kn.map.is_empty() => {
-                        rebase_key_onto(&mut ko, &shown_o, disp_o);
-                        rebase_key_onto(&mut kn, &shown_n, disp_n);
-                        let projection = semantic::project(&shown_o.text, &shown_n.text, &ko, &kn);
-                        let same_key = ko.text == kn.text;
-                        if !same_key && shown_o.text == shown_n.text {
-                            // The code differs but the re-prints are identical, so only the raw
-                            // text can show the change.
-                            change.semantic = Semantic::Text;
-                            unified_hunks(o, n, flags.context, style, &mut change);
-                        } else if !projection.holds(path, &shown_o.text, &shown_n.text, same_key) {
-                            change.origin = Some([shown_o.origin, shown_n.origin]);
-                            unified_hunks(
-                                &shown_o.text,
-                                &shown_n.text,
-                                flags.context,
-                                style,
-                                &mut change,
-                            );
-                        } else if projection
-                            .ops
-                            .iter()
-                            .any(|op| op.kind != Operation::Equal || op.affected)
-                        {
-                            change.hidden = projection.hidden;
-                            change.origin = Some([shown_o.origin, shown_n.origin]);
-                            render_ops(
-                                &projection.ops,
-                                flags.context,
-                                style,
-                                &mut change,
-                                (false, false),
-                            );
-                        } else {
-                            change.semantic = Semantic::FormattingOnly;
-                            change.formatting_only = true;
-                        }
-                    }
-                    _ if shown_o.text == shown_n.text => {
-                        change.semantic = Semantic::FormattingOnly;
-                        change.formatting_only = true;
-                    }
-                    _ => {
-                        change.origin = Some([shown_o.origin, shown_n.origin]);
-                        unified_hunks(
-                            &shown_o.text,
-                            &shown_n.text,
-                            flags.context,
-                            style,
-                            &mut change,
-                        );
-                    }
-                }
-            }
-            (Some(o), Some(n), Some(ko), Some(kn)) if style.pretty && js_family => {
-                // Readable code: decide on the aggressive canonical form, show the author's lines.
-                match (ko, kn) {
-                    (ko, kn) if !ko.map.is_empty() && !kn.map.is_empty() => {
-                        let (old_v, new_v) = (view_bytes(o), view_bytes(n));
-                        let projection = semantic::project(&old_v, &new_v, ko, kn);
-                        let shown = projection
-                            .ops
-                            .iter()
-                            .any(|op| op.kind != Operation::Equal || op.affected);
-                        if !projection.holds(path, &old_v, &new_v, ko.text == kn.text) {
-                            unified_hunks(o, n, flags.context, style, &mut change);
-                        } else if shown {
-                            change.semantic = Semantic::Projected;
-                            change.hidden = projection.hidden;
-                            render_ops(
-                                &projection.ops,
-                                flags.context,
-                                style,
-                                &mut change,
-                                (false, false),
-                            );
-                        } else {
-                            change.semantic = Semantic::FormattingOnly;
-                            change.formatting_only = true;
-                        }
-                    }
-                    _ => unified_hunks(o, n, flags.context, style, &mut change),
-                }
-            }
-            (Some(_), Some(_), Some(_), Some(_)) if style.pretty && reprint_equal => {
-                // JSON / CSS: no source map to project through; an identical re-print is formatting.
-                change.semantic = Semantic::FormattingOnly;
-            }
-            (Some(_), Some(_), Some(no), Some(nn)) if style.pretty => {
-                // JSON / CSS with a real change: the canonical prints are what is compared and shown, so a
-                // reformat around one edit is one edit.
-                change.semantic = Semantic::Reprinted;
-                unified_hunks(&no.text, &nn.text, flags.context, style, &mut change);
-            }
-            (None, Some(n), _, _) => change.added = count_lines(n),
-            (Some(o), None, _, _) => change.removed = count_lines(o),
-            (Some(o), Some(n), _, _) => unified_hunks(o, n, flags.context, style, &mut change),
-            (None, None, _, _) => unreachable!(),
-        }
-        if !flags.name_only
-            && !flags.stat
-            && change.hunks.is_empty()
-            && change.semantic == Semantic::Text
-            && (old.is_none() || new.is_none())
-        {
-            // Whole-file add/remove: render every line as +/- (a minified bundle in its readable re-print).
-            let readable = |raw: &[u8], norm: &Option<normalize::Normalized>| -> Vec<u8> {
-                let reprint = match norm {
-                    Some(nz) if style.pretty && nz.was_minified => Some(with_banner(raw, nz).text),
-                    _ => None,
-                };
-                reprint
-                    .filter(|shown| normalize::stands_for(path, raw, shown, nopts, false))
-                    .unwrap_or_else(|| raw.to_vec())
-            };
-            let body_owned;
-            let (op, body) = match (new, old) {
-                (Some(n), _) => {
-                    body_owned = readable(n, &norm_new);
-                    (Operation::Insert, body_owned.as_slice())
-                }
-                (None, Some(o)) => {
-                    body_owned = readable(o, &norm_old);
-                    (Operation::Delete, body_owned.as_slice())
-                }
-                (None, None) => unreachable!(),
-            };
-            if body.len() != new.or(old).map_or(0, <[u8]>::len) {
-                change.semantic = Semantic::Normalized;
-                let (raw, nz) = if op == Operation::Insert {
-                    (new, &norm_new)
-                } else {
-                    (old, &norm_old)
-                };
-                if let (Some(raw), Some(nz)) = (raw, nz) {
-                    let origin = with_banner(raw, nz).origin;
-                    change.origin = Some([origin.clone(), origin]);
-                }
-                if op == Operation::Insert {
-                    change.added = count_lines(body)
-                } else {
-                    change.removed = count_lines(body)
-                }
-            }
-            let n = count_lines(body);
-            let range = if new.is_some() {
-                (0, 0, 1, n)
-            } else {
-                (1, n, 0, 0)
-            };
-            // An empty file has no lines, and a hunk header without lines corrupts the patch.
-            if n > 0 {
-                style.hunk_header(&mut change.hunks, range, true);
-            }
-            let unterminated = !style.pretty && !body.is_empty() && !body.ends_with(b"\n");
-            for (i, line) in Lines(body).enumerate() {
-                style.line(
-                    &mut change.hunks,
-                    op,
-                    i + 1,
-                    i + 1,
-                    line,
-                    change.highlight,
-                    None,
-                    false,
-                    change
-                        .origin
-                        .as_ref()
-                        .map(|[o, _]| o.get(i).copied().unwrap_or((0, 0))),
-                );
-            }
-            if unterminated {
-                change.hunks.extend_from_slice(NO_NEWLINE_MARKER);
-            }
-        }
-        changes.push(change);
+        });
+    }
+    for change in &mut changes {
+        compare(change, flags, style);
     }
 
     if flags.json {

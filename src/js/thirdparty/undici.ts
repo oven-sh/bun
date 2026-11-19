@@ -10,8 +10,7 @@ const ObjectCreate = Object.create;
 const kEmptyObject = Object.freeze(ObjectCreate(null));
 
 // The loose overload keeps request()'s extra init fields accepted; the intersection keeps preconnect typed.
-const nativeFetch: typeof Bun.fetch & ((input: string | URL | Request, init?: object) => Promise<Response>) =
-  Bun.fetch;
+const nativeFetch: typeof Bun.fetch & ((input: string | URL | Request, init?: object) => Promise<Response>) = Bun.fetch;
 const bindings = $cpp("Undici.cpp", "createUndiciInternalBinding");
 const Response: typeof globalThis.Response = bindings[0];
 const Request: typeof globalThis.Request = bindings[1];

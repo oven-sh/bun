@@ -111,6 +111,12 @@ impl Connection {
         self.after_datagram(now, &from, len, result.map(|_| true), shared);
     }
 
+    /// It takes longer than anything else.
+    pub(crate) fn answer_hello(&mut self, now: Instant, shared: &mut Shared) {
+        let (from, result) = (self.path.addresses, self.read_hello(now, shared));
+        self.after_datagram(now, &from, 0, result.map(|()| true), shared);
+    }
+
     #[inline]
     fn after_datagram(
         &mut self,

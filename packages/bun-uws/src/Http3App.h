@@ -50,7 +50,7 @@ struct H3App {
         http3Context->getContextData()->router = decltype(http3Context->getContextData()->router){};
     }
     /* GOAWAY + drain. The engine itself is torn down in the destructor. */
-    void close() { http3Context->shutdown(); }
+    void close(void (*onDrained)(void *), void *user) { http3Context->shutdown(onDrained, user); }
     bool addServerNameWithOptions(const char *hostname, SocketContextOptions options) {
         us_bun_socket_context_options_t raw;
         memcpy(&raw, &options, sizeof(raw));

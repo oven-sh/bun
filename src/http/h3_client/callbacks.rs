@@ -82,12 +82,16 @@ fn on_stream_event(
     }
     let stream = stream_mut(stream_ptr);
     match event {
+        StreamEvent::Headers(_) | StreamEvent::Data { .. } if !stream.headers_sent => {
+            (stream.session_mut()).fail(stream, crate::Error::HTTP3ProtocolError);
+        }
         StreamEvent::Headers(fields) => {
             on_headers(stream, &fields);
             connection.recycle(fields);
         }
         StreamEvent::Data { data, is_last } => {
             stream.body_buffer = data;
+            stream.idle_seconds = 0;
             let progress = if is_last {
                 Progress::Complete
             } else {
@@ -136,5 +140,6 @@ fn on_headers(stream: &mut Stream, fields: &Fields) {
         }
     }
     stream.decoded_headers = headers;
+    stream.idle_seconds = 0;
     session.deliver(stream, Progress::Partial);
 }

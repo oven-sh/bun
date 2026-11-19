@@ -230,7 +230,7 @@ impl ClientSession {
         };
         // RFC 9110 §9.2.2: the origin may have acted on a request that was written.
         let replay_safe = !st.headers_sent || st.peer_rejected || client.method.is_idempotent();
-        if client.flags.h3_retried || st.is_streaming_body || !replay_safe {
+        if client.flags.h3_retried || st.is_streaming_body || st.headers_delivered || !replay_safe {
             self.cancel(stream);
             return client.fail(err);
         }
@@ -256,6 +256,20 @@ impl ClientSession {
         self.cancel(stream);
         if let Err(client) = ClientContext::as_mut(ctx).connect(client, port) {
             client.fail(err);
+        }
+    }
+
+    pub(crate) fn fail_idle_requests(&mut self, elapsed_seconds: u32) {
+        let streams: Vec<_> = self.pending.iter().map(AliasableBox::as_ptr).collect();
+        for stream in streams {
+            let st = stream_mut(stream);
+            let Some(client) = st.client.as_ref().filter(|_| !st.read_paused) else {
+                continue;
+            };
+            st.idle_seconds = st.idle_seconds.saturating_add(elapsed_seconds);
+            if (1..=st.idle_seconds).contains(&client.effective_idle_timeout_seconds()) {
+                self.fail(stream, crate::Error::Timeout);
+            }
         }
     }
 

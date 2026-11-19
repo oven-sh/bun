@@ -420,8 +420,9 @@ impl App {
         }
         Ok(())
     }
-    pub fn close(&mut self) {
-        c::uws_h3_app_close(self)
+    /// `on_drained` is called when there are no connections left, which can be before this returns.
+    pub fn close(&mut self, on_drained: extern "C" fn(*mut c_void), user: *mut c_void) {
+        c::uws_h3_app_close(self, on_drained, user)
     }
     pub fn clear_routes(&mut self) {
         c::uws_h3_app_clear_routes(self)
@@ -599,7 +600,11 @@ mod c {
             idle_timeout_s: u32,
         ) -> *mut App;
         pub(super) fn uws_h3_app_destroy(app: *mut App);
-        pub(super) safe fn uws_h3_app_close(app: &mut App);
+        pub(super) safe fn uws_h3_app_close(
+            app: &mut App,
+            on_drained: extern "C" fn(*mut c_void),
+            user: *mut c_void,
+        );
         pub(super) safe fn uws_h3_app_clear_routes(app: &mut App);
         pub(super) fn uws_h3_app_add_server_name(
             app: *mut App,

@@ -24,6 +24,11 @@ use super::sent::Control;
 /// How far ahead of what TLS has got CRYPTO frames can be (RFC 9000 §7.5).
 const CRYPTO_WINDOW: u64 = 64 * 1024;
 const UNVALIDATED_CRYPTO_WINDOW: u64 = 16 * 1024;
+const MAX_HELLO_LEN: usize = 16 * 1024;
+const CRYPTO_BUFFER_EXCEEDED: Error = Error::transport(
+    transport_code::CRYPTO_BUFFER_EXCEEDED,
+    "crypto buffer exceeded",
+);
 /// It leaves room for frames in an Initial packet.
 const MAX_TOKEN_LEN: usize = 1100;
 const MAX_TICKETS: u8 = 16;
@@ -52,6 +57,8 @@ pub(super) struct Setup {
     pub(super) is_validated_by_peer: bool,
     /// The parameters that early data is sent with.
     remembered: Option<TransportParameters>,
+    /// What a server has of the ClientHello message.
+    hello: Vec<u8>,
     /// Packets for which there are no keys yet.
     pub(super) undecryptable: Vec<Vec<u8>>,
     /// They are worth another try.
@@ -71,9 +78,16 @@ impl Setup {
             is_version_settled: false,
             is_validated_by_peer: false,
             remembered: None,
+            hello: Vec::new(),
             undecryptable: Vec::new(),
             can_read_more: false,
         }
+    }
+
+    /// RFC 8446 §4.
+    fn has_hello(&self) -> bool {
+        matches!(*self.hello, [_, a, b, c, ref body @ ..]
+            if body.len() >= u32::from_be_bytes([0, a, b, c]) as usize)
     }
 }
 
@@ -81,6 +95,8 @@ impl Setup {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Awaited {
     Hello,
+    /// For [`Connection::answer_hello`].
+    Turn,
     Finished,
 }
 
@@ -223,11 +239,19 @@ fn alert_error(alert: Alert) -> Error {
 
 impl Connection {
     pub(crate) fn awaited(&self) -> Option<Awaited> {
-        match (self.side, self.phase, &self.spaces.handshake) {
-            (Side::Server, Phase::Handshake, None) => Some(Awaited::Hello),
-            (Side::Server, Phase::Handshake, Some(_)) => Some(Awaited::Finished),
-            _ => None,
+        if self.side.is_client() || self.phase != Phase::Handshake || !self.is_receiving() {
+            return None;
         }
+        Some(match (&self.spaces.handshake, &self.setup) {
+            (Some(_), _) => Awaited::Finished,
+            (None, Some(setup)) if setup.has_hello() => Awaited::Turn,
+            (None, _) => Awaited::Hello,
+        })
+    }
+
+    pub(super) fn read_hello(&mut self, now: Instant, shared: &mut Shared) -> Result {
+        let hello = (self.setup.as_mut()).map(|it| core::mem::take(&mut it.hello));
+        self.continue_handshake(now, Level::Initial, &hello.unwrap_or_default(), shared)
     }
 
     fn handshake_space(&mut self) -> &mut Space {
@@ -346,18 +370,14 @@ impl Connection {
             }
             self.streams.state.add_load(Load::Heavy);
         }
-        let exceeded = Error::transport(
-            transport_code::CRYPTO_BUFFER_EXCEEDED,
-            "crypto buffer exceeded",
-        );
         if end > space.crypto_read + window {
-            return Err(exceeded);
+            return Err(CRYPTO_BUFFER_EXCEEDED);
         }
         let Some(known) = space.crypto_read.checked_sub(offset) else {
             return space
                 .crypto_early
                 .insert(offset, data)
-                .map_err(|_| exceeded);
+                .map_err(|_| CRYPTO_BUFFER_EXCEEDED);
         };
         self.read_crypto(
             now,
@@ -399,7 +419,24 @@ impl Connection {
         if let Some(setup) = &mut self.setup {
             setup.is_version_settled = true;
             setup.other_keys.take_if(|_| self.side.is_client());
+            if id == SpaceId::Initial && self.side.is_server() {
+                setup.hello.extend_from_slice(data);
+                return match setup.hello.len() {
+                    ..=MAX_HELLO_LEN => Ok(()),
+                    _ => Err(CRYPTO_BUFFER_EXCEEDED),
+                };
+            }
         }
+        self.continue_handshake(now, level, data, shared)
+    }
+
+    fn continue_handshake(
+        &mut self,
+        now: Instant,
+        level: Level,
+        data: &[u8],
+        shared: &mut Shared,
+    ) -> Result {
         let status = self.advance_tls(now, Some((level, data)))?;
         match (status, self.phase) {
             (Status::Complete, Phase::Handshake) => self.on_handshake_complete(now, shared),

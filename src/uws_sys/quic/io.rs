@@ -4,7 +4,7 @@ use core::ffi::c_int;
 use core::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV6};
 
 use bun_core::{Timespec, TimespecMockMode};
-use bun_quic::{Addresses, Batch, Endpoint, Instant};
+use bun_quic::{Addresses, Batch, Connection, Endpoint, Instant};
 
 use crate::udp;
 
@@ -87,12 +87,14 @@ struct Message {
 impl Message {
     fn segments(self) -> impl Iterator<Item = Self> {
         let (end, len) = (self.start + self.len, u32::from(self.segment_len));
-        (self.start..end).step_by(len as usize).map(move |start| Self {
-            start,
-            len: len.min(end - start),
-            segment_len: 0,
-            ..self
-        })
+        (self.start..end)
+            .step_by(len as usize)
+            .map(move |start| Self {
+                start,
+                len: len.min(end - start),
+                segment_len: 0,
+                ..self
+            })
     }
 }
 
@@ -194,17 +196,19 @@ impl Outbox {
         self.sent < self.messages.len()
     }
 
-    /// `binding` finds the one that has this address. `on_batch` is called before it is sent.
+    /// `binding` finds the one that has this address. `visit` is for [`Endpoint::poll_transmit`]. `on_batch` is
+    /// called before it is sent.
     pub fn flush(
         &mut self,
         endpoint: &mut Endpoint,
         binding: impl Fn(SocketAddr) -> Option<Binding>,
+        mut visit: impl FnMut(&Connection),
         mut on_batch: impl FnMut(&Batch),
     ) {
         while !self.is_blocked && (self.has_unsent() || endpoint.wants_to_transmit()) {
             if !self.has_unsent() {
                 self.batch.clear();
-                endpoint.poll_transmit(now(), &mut self.batch, DATAGRAMS_PER_BATCH);
+                endpoint.poll_transmit(now(), &mut self.batch, DATAGRAMS_PER_BATCH, &mut visit);
                 on_batch(&self.batch);
                 self.address(&binding);
             }
@@ -225,7 +229,8 @@ impl Outbox {
             };
             if bytes.len() <= segment_len {
                 message.segment_len = 0;
-            } else if self.has_failed_to_segment || !binding(to.local).is_some_and(|it| it.can_segment)
+            } else if self.has_failed_to_segment
+                || !binding(to.local).is_some_and(|it| it.can_segment)
             {
                 self.messages.extend(message.segments());
                 continue;

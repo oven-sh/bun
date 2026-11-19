@@ -313,7 +313,7 @@ impl Connection {
     }
 
     #[inline]
-    fn has_frames(&self) -> bool {
+    pub(super) fn has_frames(&self) -> bool {
         self.streams.state.has_frames()
             || !self.streams.state.owed.is_empty()
             || !self.datagrams.unsent.is_empty()
@@ -326,7 +326,12 @@ impl Connection {
     fn may_send(&mut self, now: Instant) -> bool {
         match self.congestion.permit(now) {
             Permit::Now => {
-                self.spaces.data.sent.packets.len() < MAX_TRACKED_PACKETS && !self.has_peer_moved()
+                let is_held_back = self.spaces.data.sent.packets.len() >= MAX_TRACKED_PACKETS
+                    || self.has_peer_moved();
+                if is_held_back {
+                    self.congestion.on_application_limited();
+                }
+                !is_held_back
             }
             Permit::Blocked => false,
             Permit::At(time) => {

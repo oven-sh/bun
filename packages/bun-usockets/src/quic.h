@@ -46,8 +46,9 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     struct us_loop_t *loop, const struct us_bun_socket_context_options_t *options, unsigned int idle_timeout_s,
     size_t max_header_size, const struct us_quic_callbacks_t *callbacks, void *user);
 
-/* Sends GOAWAY on every connection and accepts no more. The requests in flight are still served. */
-void us_quic_socket_context_shutdown(us_quic_socket_context_t *ctx);
+/* Sends GOAWAY on every connection and accepts no more. The requests in flight are still served.
+ * `on_drained` is called when there are no connections left, which can be before this returns. */
+void us_quic_socket_context_shutdown(us_quic_socket_context_t *ctx, void (*on_drained)(void *user), void *user);
 void us_quic_socket_context_free(us_quic_socket_context_t *ctx);
 
 /* Names match as on a TCP listener. */

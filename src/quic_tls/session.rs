@@ -59,6 +59,8 @@ unsafe extern "C" {
     safe fn SSL_CTX_get_options(ctx: &SSL_CTX) -> u32;
     fn SSL_CTX_set_session_cache_mode(ctx: &SSL_CTX, mode: c_int) -> c_int;
     fn SSL_CTX_sess_set_new_cb(ctx: &SSL_CTX, cb: extern "C" fn(&SSL, &SSL_SESSION) -> c_int);
+    safe fn SSL_get0_session_id_context(ssl: &SSL, len: &mut usize) -> *const u8;
+    safe fn SSL_SESSION_get0_id_context(session: &SSL_SESSION, len: &mut c_uint) -> *const u8;
     safe fn SSL_SESSION_to_bytes(
         session: &SSL_SESSION,
         data: &mut *mut u8,
@@ -168,6 +170,17 @@ impl Session {
     }
 }
 
+impl Session {
+    /// BoringSSL does not compare them before the server has replied.
+    fn has_context_of(&self, session: &SSL_SESSION) -> bool {
+        let (mut our_len, mut its_len) = (0, 0);
+        let ours = SSL_get0_session_id_context(self.ssl(), &mut our_len);
+        let its = SSL_SESSION_get0_id_context(session, &mut its_len);
+        // SAFETY: BoringSSL returns them with their lengths.
+        unsafe { bytes(ours, our_len) == bytes(its, its_len as usize) }
+    }
+}
+
 impl Drop for Session {
     fn drop(&mut self) {
         // SAFETY: we own it.
@@ -181,6 +194,7 @@ impl tls::Session for Session {
         // SAFETY: `ticket` is valid for its length, and the `SSL` takes its own reference.
         let is_set = unsafe {
             SSL_SESSION_from_bytes(ticket.as_ptr(), ticket.len(), ssl::SSL_get_SSL_CTX(ssl))
+                .filter(|session| self.has_context_of(SSL_SESSION::opaque_ref(session.as_ptr())))
                 .is_some_and(|session| ssl::SSL_set_session(ssl, session.as_ptr()) == 1)
         };
         ssl::ERR_clear_error();

@@ -343,6 +343,10 @@ impl TlsConfig {
                 }
             } else {
                 bun_quic_tls::enable_tickets(&owned);
+                let id = config.client_session_context();
+                if ssl::SSL_CTX_set_session_id_context(ctx, id.as_ptr(), id.len()) != 1 {
+                    return Err("failed to set the session ID context");
+                }
                 if ssl::SSL_CTX_set_alpn_protos(ctx, config.alpn.as_ptr(), config.alpn.len()) != 0 {
                     return Err("failed to set ALPN protocols");
                 }
@@ -373,6 +377,27 @@ impl TlsConfig {
             ssl::ERR_clear_error();
             Ok(owned)
         }
+    }
+
+    /// Who the peers of a session are, and how that has been established.
+    fn client_session_context(&self) -> [u8; bun_sha_hmac::SHA256::DIGEST] {
+        let mut hasher = bun_sha_hmac::SHA256::init();
+        hasher.update(&[self.verify_hostname.into()]);
+        for list in [
+            self.servername.as_slice(),
+            &self.certs_pem,
+            &self.ca_pem,
+            &self.crl_pem,
+        ] {
+            hasher.update(&list.len().to_ne_bytes());
+            for item in list {
+                hasher.update(&item.len().to_ne_bytes());
+                hasher.update(item);
+            }
+        }
+        let mut digest = [0; _];
+        hasher.r#final(&mut digest);
+        digest
     }
 
     /// Whether the protocols are HTTP/3, or `None` if only some of them are.

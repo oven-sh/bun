@@ -41,6 +41,8 @@ pub(super) struct Engine {
     /// Also the closed ones.
     sockets: RefCell<Vec<Rc<Socket>>>,
     is_processing: Cell<bool>,
+    /// When to call [`Application::on_processed`] at the latest.
+    pub(super) alarm: Cell<Option<Instant>>,
 }
 
 pub(super) struct Socket {
@@ -104,6 +106,7 @@ impl Engine {
             outbox: RefCell::default(),
             sockets: RefCell::default(),
             is_processing: Cell::new(false),
+            alarm: Cell::new(None),
         }
     }
 
@@ -147,7 +150,7 @@ impl Engine {
             !outbox.is_blocked() && (outbox.has_unsent() || endpoint.wants_to_transmit());
         match (can_send || endpoint.has_events()) && !self.is_processing() {
             true => Some(Instant::default()),
-            false => endpoint.timeout(),
+            false => endpoint.timeout().into_iter().chain(self.alarm.get()).min(),
         }
     }
 
@@ -157,7 +160,7 @@ impl Engine {
             let mut open = sockets.iter().filter_map(|it| it.binding.get());
             open.find(|it| it.has(local))
         };
-        (self.outbox.borrow_mut()).flush(&mut self.endpoint(), find, |_| {});
+        (self.outbox.borrow_mut()).flush(&mut self.endpoint(), find, |_| {}, |_| {});
     }
 
     pub(super) fn sockets(&self) -> Vec<Rc<Socket>> {

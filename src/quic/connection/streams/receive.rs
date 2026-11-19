@@ -148,6 +148,7 @@ impl State {
         if stream.mark(Flags::RESET_BY_PEER) && !stream.flags.contains(Flags::STOPPED) {
             self.notify(id, stream, StreamEvent::Reset(code));
         }
+        stream.held = 0;
         self.finish_reading(id, stream);
         Ok(())
     }
@@ -159,6 +160,7 @@ impl State {
             self.owe(id, stream, Flags::OWES_STOP_SENDING);
         }
         stream.flags.insert(Flags::STOPPED);
+        stream.held = 0;
         self.finish_reading(id, stream);
     }
 
@@ -176,10 +178,11 @@ impl State {
     #[inline]
     pub(crate) fn credit(&mut self, id: StreamId, stream: &mut Stream) {
         let is_discarding = stream.flags.contains(Flags::READ_DONE);
-        let consumed = match is_discarding {
+        let delivered = match is_discarding {
             true => stream.received,
-            false => stream.read - stream.ready.len() as u64 - stream.held,
+            false => stream.read - stream.ready.len() as u64,
         };
+        let consumed = delivered - stream.held;
         self.consumed += consumed - stream.consumed;
         stream.consumed = consumed;
         if !is_discarding

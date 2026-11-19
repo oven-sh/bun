@@ -293,12 +293,20 @@ impl Connection {
         (timeout * (1 << self.pto_count.min(16))).min(MAX_PROBE_TIMEOUT.max(timeout))
     }
 
+    /// For the end of what there is to send. Acknowledgments are not delayed for more than a packet.
+    #[inline]
+    fn expects_prompt_ack(&self) -> bool {
+        self.pto_count == 0
+            && self.spaces.data.sent.packets.len() > 1
+            && self.rtt.has_sample()
+            && !self.has_frames()
+    }
+
     fn probe_time(&self, id: SpaceId, space: &Space) -> Instant {
         let timeout = match id {
             _ if !space.sent.has_in_flight() => return Instant::NEVER,
             SpaceId::Data if self.phase != Phase::Confirmed => return Instant::NEVER,
-            // Acknowledgments are not delayed for more than a packet.
-            SpaceId::Data if self.pto_count == 0 && space.sent.packets.len() > 1 => {
+            SpaceId::Data if self.expects_prompt_ack() => {
                 (self.probe_timeout()).min((self.rtt.smoothed * 2).max(MIN_TAIL_TIMEOUT))
             }
             SpaceId::Data => self.probe_timeout(),

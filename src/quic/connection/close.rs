@@ -191,8 +191,13 @@ impl Connection {
         }
         if !self.is_ready || !state.has_frames() && !table.has_unacked_data() {
             self.send_close(now);
-        } else if !self.timers.is_set(Timer::Close) {
-            self.timers.set(Timer::Close, now + self.settling_period());
+        } else {
+            let patience = match table.has_undelivered_application_data() {
+                true => GRACE_PERIOD,
+                false => self.settling_period(),
+            };
+            let deadline = self.timers.get(Timer::Close).min(now + patience);
+            self.timers.set(Timer::Close, deadline);
         }
     }
 

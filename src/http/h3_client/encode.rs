@@ -159,7 +159,11 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: quic::Stream) {
         let mut locked = sb.lock();
         let buffer = &mut locked.buffer;
         let data_len = buffer.slice().len();
-        buffer.cursor += qs.write(buffer.slice());
+        let written = qs.write(buffer.slice());
+        buffer.cursor += written;
+        if written > 0 {
+            stream.idle_seconds = 0;
+        }
         let drained = buffer.is_empty();
         if drained {
             buffer.reset();
@@ -179,6 +183,7 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: quic::Stream) {
     }
 
     let body = stream.pending_body;
+    stream.idle_seconds = 0;
     stream.pending_body = bun_ptr::RawSlice::new(&body.slice()[qs.write(body.slice())..]);
     if stream.pending_body.is_empty() {
         stream.request_body_done = true;

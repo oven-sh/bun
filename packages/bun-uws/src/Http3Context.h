@@ -94,7 +94,7 @@ struct Http3Context {
         return us_quic_socket_context_listen(quic.get(), host, port, flags);
     }
 
-    void shutdown() { us_quic_socket_context_shutdown(quic.get()); }
+    void shutdown(void (*onDrained)(void *), void *user) { us_quic_socket_context_shutdown(quic.get(), onDrained, user); }
 
     bool addServerName(const char *hostname, us_bun_socket_context_options_t options) {
         return us_quic_socket_context_add_server_name(quic.get(), hostname, &options);

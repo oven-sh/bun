@@ -301,6 +301,9 @@ impl Streams {
             let id = self.state.closing.pop_front()?;
             if let Some(stream) = self.table.get_mut(id) {
                 stream.flags.insert(Flags::RELEASED);
+                if core::mem::take(&mut stream.held) > 0 {
+                    self.state.credit(id, stream);
+                }
                 let (context, is_known) = (stream.context, stream.flags.contains(Flags::ANNOUNCED));
                 self.table.unreleased -= 1;
                 self.remove_if_finished(id);
@@ -358,6 +361,10 @@ impl Table {
 
     pub(super) fn has_unacked_data(&self) -> bool {
         self.map.values().any(|stream| stream.has_unacked_data())
+    }
+
+    pub(super) fn has_undelivered_application_data(&self) -> bool {
+        (self.map.values()).any(|stream| !stream.is_internal() && stream.has_unacked_data())
     }
 
     /// How many streams can be opened.

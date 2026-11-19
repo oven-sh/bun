@@ -11,7 +11,7 @@ use crate::connection::handshake::Awaited;
 use crate::connection::{Connection, Introduction, Opened, Remains};
 use crate::crypto::{Crypto, InitialSecret, retry_tag};
 use crate::deadlines::Deadlines;
-use crate::error::transport_code;
+use crate::error::{Layer, transport_code};
 use crate::event::{CloseReason, Context, Event};
 use crate::frame::{Frame, kind};
 use crate::hash::{IdMap, KeyedMap, Seeded};
@@ -32,6 +32,8 @@ const MAX_REPLIES: usize = 256;
 /// RFC 9000 §10.3.
 const USUAL_RESET_LENS: Range<usize> = 43..62;
 const DATAGRAMS_PER_TURN: usize = 16;
+/// The other clients wait until the established connections have been served.
+const HELLOS_PER_PASS: usize = 2;
 /// RFC 9000 §7.2.
 const MIN_INITIAL_ID_LEN: usize = 8;
 
@@ -106,6 +108,17 @@ impl Queue {
             max_len,
         }
     }
+
+    fn pop(&mut self, awaited: Awaited, slots: &[Slot]) -> Option<Handle> {
+        core::iter::from_fn(|| self.handles.pop_front()).find(|it| it.awaits(awaited, slots))
+    }
+}
+
+impl Handle {
+    fn awaits(self, awaited: Awaited, slots: &[Slot]) -> bool {
+        (slots.get(self.slot as usize))
+            .is_some_and(|it| (it.generation, it.awaited) == (self.generation, Some(awaited)))
+    }
 }
 
 /// A datagram that is not for any of the connections.
@@ -130,6 +143,7 @@ pub struct Endpoint {
     free: Vec<u32>,
     connections: usize,
     awaiting_hello: Queue,
+    awaiting_turn: Queue,
     awaiting_finished: Queue,
     /// A client gives its token back when its address is validated. Without one it has to see to that first.
     unvalidated_clients: TokenBucket,
@@ -159,6 +173,7 @@ impl Endpoint {
             free: Vec::new(),
             connections: 0,
             awaiting_hello: Queue::new(1024),
+            awaiting_turn: Queue::new(1024),
             awaiting_finished: Queue::new(8192),
             unvalidated_clients: TokenBucket::new(100.0, 512.0),
             version_negotiations: TokenBucket::new(100.0, 200.0),
@@ -273,25 +288,26 @@ impl Endpoint {
         if let Some(slot) = self.slots.get_mut(handle.slot as usize) {
             slot.has_token = incoming.has_token;
         }
-        self.track_handshake(handle.slot);
+        self.track_handshake(now, handle.slot);
         handle
     }
 
     fn queue(&mut self, awaited: Awaited) -> (&mut Queue, &mut [Slot]) {
         match awaited {
             Awaited::Hello => (&mut self.awaiting_hello, &mut self.slots),
+            Awaited::Turn => (&mut self.awaiting_turn, &mut self.slots),
             Awaited::Finished => (&mut self.awaiting_finished, &mut self.slots),
         }
     }
 
     #[cold]
-    fn track_handshake(&mut self, index: u32) {
+    fn track_handshake(&mut self, now: Instant, index: u32) {
         let handle = self.handle(index);
         let Some(slot) = self.slots.get_mut(index as usize) else {
             return;
         };
         let (awaited, is_validated) = match &slot.tenant {
-            Tenant::Live(it) if !it.is_over() => (it.awaited(), it.is_validated()),
+            Tenant::Live(it) => (it.awaited(), it.is_validated()),
             _ => (None, false),
         };
         if is_validated && core::mem::take(&mut slot.has_token) {
@@ -308,21 +324,23 @@ impl Endpoint {
             return;
         };
         let (queue, slots) = self.queue(awaited);
-        let is_waiting = |it: &Handle| {
-            (slots.get(it.slot as usize)).is_some_and(|slot| {
-                (slot.generation, slot.awaited) == (it.generation, Some(awaited))
-            })
-        };
         queue.len += 1;
         queue.handles.push_back(handle);
         if queue.handles.len() > 2 * queue.len {
-            queue.handles.retain(is_waiting);
+            queue.handles.retain(|it| it.awaits(awaited, slots));
         }
         if queue.len > queue.max_len
-            && let Some(oldest) = core::iter::from_fn(|| queue.handles.pop_front()).find(is_waiting)
+            && let Some(oldest) = queue.pop(awaited, slots)
+            && let Some(connection) = self.get_mut(oldest)
         {
-            self.get_mut(oldest).map(Connection::abort_silently);
-            self.track_handshake(oldest.slot);
+            match awaited {
+                Awaited::Turn => {
+                    let code = transport_code::CONNECTION_REFUSED;
+                    connection.abort(now, Layer::Transport, code, &[]);
+                }
+                _ => connection.abort_silently(),
+            }
+            self.track_handshake(now, oldest.slot);
         }
     }
 
@@ -406,7 +424,7 @@ impl Endpoint {
                 enqueue(&mut self.with_events, &mut slot.may_have_events, index);
                 enqueue(&mut self.to_transmit, &mut slot.may_transmit, index);
                 if slot.awaited.is_some() {
-                    self.track_handshake(index);
+                    self.track_handshake(now, index);
                 }
             }
             Tenant::Gone { remains, .. } if from.peer != remains.addresses.peer => {}
@@ -604,7 +622,7 @@ impl Endpoint {
             remains,
             datagrams_received: 0,
         };
-        self.track_handshake(index);
+        self.track_handshake(now, index);
         match lingers_for.is_zero() {
             true => self.vacate(index),
             false => self.deadlines.set(index, now + lingers_for),
@@ -627,8 +645,14 @@ impl Endpoint {
         }
     }
 
-    /// Adds to `batch` until it has about `max_len` datagrams.
-    pub fn poll_transmit(&mut self, now: Instant, batch: &mut Batch, max_len: usize) {
+    /// Adds to `batch` until it has about `max_len` datagrams. `visit` gets the connections that may have changed.
+    pub fn poll_transmit(
+        &mut self,
+        now: Instant,
+        batch: &mut Batch,
+        max_len: usize,
+        mut visit: impl FnMut(&Connection),
+    ) {
         while batch.len() < max_len
             && let Some((addresses, datagram)) = self.replies.pop_front()
         {
@@ -650,6 +674,7 @@ impl Endpoint {
                     enqueue(&mut self.with_events, &mut slot.may_have_events, index);
                 }
                 bring_forward(&mut self.deadlines, index, connection);
+                visit(connection);
             }
         }
     }
@@ -661,6 +686,9 @@ impl Endpoint {
 
     /// When to call [`Self::handle_timeouts`].
     pub fn timeout(&mut self) -> Option<Instant> {
+        if self.awaiting_turn.len > 0 {
+            return Some(Instant::default());
+        }
         for &index in &self.to_transmit {
             if let Some(Tenant::Live(connection)) =
                 self.slots.get(index as usize).map(|it| &it.tenant)
@@ -684,6 +712,16 @@ impl Endpoint {
                     }
                 }
                 None => self.vacate(index),
+            }
+        }
+        for _ in 0..HELLOS_PER_PASS {
+            if let Some(handle) = self.awaiting_turn.pop(Awaited::Turn, &self.slots) {
+                if let Some((connection, shared)) = self.touch(handle)
+                    && connection.awaited() == Some(Awaited::Turn)
+                {
+                    connection.answer_hello(now, shared);
+                }
+                self.track_handshake(now, handle.slot);
             }
         }
     }

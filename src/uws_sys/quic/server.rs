@@ -90,7 +90,10 @@ struct Server {
     user: *mut c_void,
     headers: Cell<Vec<Header>>,
     is_closing: Cell<bool>,
+    on_drained: Cell<Option<(OnDrained, *mut c_void)>>,
 }
+
+type OnDrained = unsafe extern "C" fn(*mut c_void);
 
 std::thread_local! {
     /// The sockets that are closed when the handler that asked for it has returned.
@@ -144,6 +147,10 @@ impl Application for Server {
             }
             PENDING_CLOSES
                 .with_borrow_mut(|it| it.retain(|it| it.upgrade().is_some_and(|it| it.is_open())));
+        }
+        if is_drained && let Some((on_drained, user)) = self.on_drained.take() {
+            // SAFETY: they came together.
+            unsafe { on_drained(user) };
         }
     }
 }
@@ -251,16 +258,22 @@ extern "C" fn us_create_quic_socket_context(
         user,
         headers: Cell::default(),
         is_closing: Cell::new(false),
+        on_drained: Cell::new(None),
     });
     drivers::register(loop_, Rc::<Server>::clone(&server));
     Rc::into_raw(server)
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn us_quic_socket_context_shutdown(server: &Server) {
+extern "C" fn us_quic_socket_context_shutdown(
+    server: &Server,
+    on_drained: OnDrained,
+    user: *mut c_void,
+) {
     if server.is_closing.replace(true) {
         return;
     }
+    server.on_drained.set(Some((on_drained, user)));
     let now = now();
     (server.engine).for_each_connection(|connection| match connection.is_ready() {
         true => connection.go_away(),
@@ -281,6 +294,7 @@ extern "C" fn us_quic_socket_context_shutdown(server: &Server) {
 unsafe extern "C" fn us_quic_socket_context_free(server: *const Server) {
     // SAFETY: the caller's.
     let server = unsafe { Rc::from_raw(server) };
+    server.on_drained.set(None);
     drivers::unregister(server.engine.loop_, &*server);
     server.engine.sockets().iter().for_each(|it| it.close());
     (server.engine).for_each_connection(bun_quic::Connection::abort_silently);

@@ -8,7 +8,8 @@ use std::rc::Rc;
 use bun_boringssl_sys::{OwnedSslCtx, SSL};
 use bun_core::{ZBox, ZStr, zstr};
 use bun_quic::{
-    Addresses, Config, Context, Event, FieldLimits, Http3Config, Incoming, Instant, Side, Version,
+    Addresses, Config, Context, Duration, Event, FieldLimits, Http3Config, Incoming, Instant, Side,
+    Version,
 };
 use bun_quic_tls::Session;
 
@@ -41,6 +42,7 @@ pub struct Client {
     config: Rc<Config>,
     tls: OwnedSslCtx,
     on_event: fn(Connection, Context, Event),
+    on_alarm: fn(),
 }
 
 pub struct Origin<'a> {
@@ -88,12 +90,21 @@ impl Application for Client {
         (self.on_event)(connection, context, event);
     }
 
-    fn on_processed(&self) {}
+    fn on_processed(&self) {
+        if self.engine.alarm.get().is_some_and(|it| it <= now()) {
+            self.engine.alarm.set(None);
+            (self.on_alarm)();
+        }
+    }
 }
 
 impl Client {
     /// The loop keeps it.
-    pub fn new(loop_: &'static Loop, on_event: fn(Connection, Context, Event)) -> Option<Rc<Self>> {
+    pub fn new(
+        loop_: &'static Loop,
+        on_event: fn(Connection, Context, Event),
+        on_alarm: fn(),
+    ) -> Option<Rc<Self>> {
         let config = Config {
             versions: &[Version::V1],
             http3: Some(Http3Config {
@@ -108,7 +119,7 @@ impl Client {
                 field_overhead: 32,
                 advertises_max_field_section_size: true,
                 encodes_with_dynamic_table: true,
-                    ..Http3Config::default()
+                ..Http3Config::default()
             }),
             ..Config::client()
         };
@@ -117,9 +128,16 @@ impl Client {
             config: Rc::new(config),
             tls: us_quic_create_client_ssl_ctx()?,
             on_event,
+            on_alarm,
         });
         drivers::register(loop_, Rc::<Self>::clone(&client));
         Some(client)
+    }
+
+    /// Unless it is set already.
+    pub fn set_alarm(&self, secs: u32) {
+        let at = || Some(now() + Duration::from_secs(secs.into()));
+        self.engine.alarm.update(|it| it.or_else(at));
     }
 
     pub fn connect(&self, origin: &Origin, context: Context) -> Option<Connecting> {

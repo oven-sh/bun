@@ -329,6 +329,6 @@ impl VersionInformation {
         let available: Vec<_> = core::iter::from_fn(|| input.array())
             .map(u32::from_be_bytes)
             .collect();
-        (chosen != 0 && !available.contains(&0)).then_some(Self { chosen, available })
+        (chosen != 0 && available.iter().all(|&it| it > 0)).then_some(Self { chosen, available })
     }
 }

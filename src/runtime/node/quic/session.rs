@@ -1,7 +1,7 @@
 //! Node's `internalBinding('quic').Session` analog (node/src/quic/session.{h,cc}).
 
 use core::cell::Cell;
-use core::net::SocketAddr;
+use core::net::{IpAddr, SocketAddr};
 use core::ptr::null_mut;
 use std::collections::VecDeque;
 
@@ -12,8 +12,8 @@ use bun_jsc::{
 };
 use bun_quic::http3::{Fields, Header, Section};
 use bun_quic::{
-    Addresses, CloseReason, Connection, ConnectionId, Direction, Event, Handle, Layer, StreamEvent,
-    StreamId, TransportParameters, http3_code, transport_code,
+    Addresses, CloseReason, Connection, ConnectionId, Direction, Duration, Event, Handle, Instant,
+    Layer, StreamEvent, StreamId, TransportParameters, http3_code, transport_code,
 };
 use bun_uws::quic::io::now;
 
@@ -91,7 +91,7 @@ const HEADERS_UNSUPPORTED: u8 = 2;
 const DEFAULT_MAX_HEADER_PAIRS: u64 = 128;
 const DEFAULT_MAX_HEADER_LENGTH: u64 = 16384;
 
-const TICKET_DELIVERY_DELAY_NS: u64 = 500_000_000;
+const TICKET_DELIVERY_DELAY: Duration = Duration::from_millis(500);
 
 /// Indices into the session stats buffer — must match
 /// [`SESSION_STATS_FIELDS`] positions exactly (the JS layer reads the
@@ -303,7 +303,11 @@ pub(crate) struct QuicSession {
     /// Monotonic id assigned by `sendDatagram` (Node returns it as a BigInt).
     next_datagram_id: Cell<u64>,
     ticket_delivered: Cell<bool>,
-    pending_tickets: JsCell<VecDeque<(u64, Vec<u8>)>>,
+    pending_tickets: JsCell<VecDeque<(Instant, Vec<u8>)>>,
+    /// See [`QuicEndpoint::mark`].
+    pub(super) is_marked: Cell<bool>,
+    /// What it counts for in `maxConnectionsPerHost`.
+    pub(super) host: Cell<Option<IpAddr>>,
     close_after_streams: Cell<bool>,
     pending_local_bidi: JsCell<VecDeque<super::stream::Key>>,
     pending_local_uni: JsCell<VecDeque<super::stream::Key>>,
@@ -349,6 +353,8 @@ impl QuicSession {
             next_datagram_id: Cell::new(1),
             ticket_delivered: Cell::new(false),
             pending_tickets: JsCell::new(VecDeque::new()),
+            is_marked: Cell::new(false),
+            host: Cell::new(None),
             close_after_streams: Cell::new(false),
             pending_local_bidi: JsCell::new(VecDeque::new()),
             pending_local_uni: JsCell::new(VecDeque::new()),
@@ -530,6 +536,21 @@ impl QuicSession {
     }
     pub(super) fn push_event(&self, event: SessionEvent) {
         self.events.with_mut(|e| e.push_back(event));
+        self.mark();
+    }
+    pub(super) fn has_events(&self) -> bool {
+        !self.events.get().is_empty()
+    }
+    fn mark(&self) {
+        if let Some(ep) = self.endpoint_ref() {
+            ep.mark(self);
+        }
+    }
+    pub(super) fn on_activity(&self, conn: &Connection) {
+        self.refresh_conn_stats(conn);
+        if self.deferred_close.get().is_some() {
+            self.mark();
+        }
     }
     /// The `endpoint_js` Strong keeps it alive while this session holds the
     /// back-pointer; teardown nulls the pointer before that Strong is
@@ -556,6 +577,7 @@ impl QuicSession {
     }
     pub(super) fn defer_stream_abort(&self, id: StreamId, reset: Option<u64>, stop: Option<u64>) {
         let marker = self.write_marker.get();
+        self.mark();
         self.deferred_aborts.with_mut(|v| {
             if let Some(e) = v.iter_mut().find(|e| e.id == id) {
                 e.reset = e.reset.or(reset);
@@ -715,20 +737,10 @@ impl QuicSession {
             self.pending_tickets.with_mut(VecDeque::clear);
             return;
         }
-        let now = if self.streams.get().is_empty() {
-            now_ns()
-        } else {
-            u64::MAX
-        };
-        loop {
-            let blob = self.pending_tickets.with_mut(|q| {
-                if q.front().is_some_and(|(at, _)| *at <= now) {
-                    q.pop_front().map(|(_, b)| b)
-                } else {
-                    None
-                }
-            });
-            let Some(blob) = blob else { break };
+        let (now, has_streams) = (now(), !self.streams.get().is_empty());
+        while let Some((_, blob)) =
+            (self.pending_tickets).with_mut(|q| q.pop_front_if(|(at, _)| has_streams || *at <= now))
+        {
             if !self.has_listener(LISTENER_FLAG_SESSION_TICKET) {
                 continue;
             }
@@ -744,13 +756,16 @@ impl QuicSession {
                 );
             }
         }
-        if !self.pending_tickets.get().is_empty() {
-            self.schedule_process();
+        self.plan_ticket_delivery();
+    }
+
+    fn plan_ticket_delivery(&self) {
+        if let (Some(ep), Some(it)) = (self.endpoint_ref(), self.pending_tickets.get().front()) {
+            ep.plan_pass(it.0);
         }
     }
 
     pub(super) fn process_events(&self, global: &JSGlobalObject) {
-        self.get(|conn| self.refresh_conn_stats(conn));
         // Every callback below can run user JS that destroys this session
         // (dropping the wrapper Strong) and can trigger GC, so hold a Strong
         // for the duration -- `deliver_pending_tickets` touches `self` after.
@@ -788,6 +803,14 @@ impl QuicSession {
                     break;
                 }
             }
+        }
+        self.maybe_finish_deferred_close();
+        if self.has_events()
+            || self.pending_graceful.get().is_some()
+            || !self.deferred_aborts.get().is_empty()
+            || !self.pending_tickets.get().is_empty()
+        {
+            self.mark();
         }
     }
 
@@ -913,7 +936,7 @@ impl QuicSession {
                 }
                 if self.ticket_delivered.replace(true) {
                     self.pending_tickets
-                        .with_mut(|q| q.push_back((now_ns() + TICKET_DELIVERY_DELAY_NS, blob)));
+                        .with_mut(|q| q.push_back((now() + TICKET_DELIVERY_DELAY, blob)));
                     self.schedule_process();
                     return Ok(());
                 }
@@ -1479,7 +1502,7 @@ impl QuicSession {
         let endpoint = self.endpoint.get();
         if !endpoint.is_null() {
             // SAFETY: endpoint is alive (endpoint_js Strong still held).
-            unsafe { (*endpoint).unregister_session(core::ptr::from_ref(self).cast_mut()) };
+            unsafe { (*endpoint).unregister_session(self) };
         }
         if let Some(callback) = callbacks::get(global, "onSessionClose") {
             let vm = global.bun_vm();
@@ -1533,7 +1556,7 @@ impl QuicSession {
             // SAFETY: endpoint is alive (endpoint_js Strong held below). Its
             // `process()` re-validates against this set, so removing here is
             // what makes the pointer it snapshotted safe to skip.
-            unsafe { (*ep).unregister_session(core::ptr::from_ref(self).cast_mut()) };
+            unsafe { (*ep).unregister_session(self) };
         }
         self.endpoint_js.set(None);
         self.application_options_js.set(None);
@@ -1626,7 +1649,7 @@ impl QuicSession {
         })
     }
 
-    pub(super) fn maybe_finish_deferred_close(&self) {
+    fn maybe_finish_deferred_close(&self) {
         if self.deferred_close.get().is_none() || self.destroyed.get() {
             return;
         }
@@ -1655,6 +1678,7 @@ impl QuicSession {
             self.with_state(|s| s.graceful_close = 1);
             if self.conn.get().is_some() {
                 self.pending_graceful.set(Some(close));
+                self.mark();
                 if !self.endpoint_ref().is_some_and(|ep| ep.scope_held()) {
                     self.flush_pending_graceful();
                 }

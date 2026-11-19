@@ -8,7 +8,7 @@ use bun_jsc::{
     ArrayBuffer, JSGlobalObject, JSType, JSValue, JsCell, JsRef, JsResult, StringJsc, Strong,
 };
 use bun_quic::http3::{Header, Indexing, Priority};
-use bun_quic::{Connection, Direction, StreamEvent, StreamId, http3_code};
+use bun_quic::{CloseReason, Connection, Direction, StreamEvent, StreamId, http3_code};
 
 use super::endpoint::alloc_exposed_array_buffer;
 use super::session::{QuicSession, SessionEvent};
@@ -105,6 +105,8 @@ pub(super) struct Inbound {
     pub chunks: VecDeque<Vec<u8>>,
     pub ended: bool,
     pub errored: bool,
+    /// The connection ended first.
+    pub truncated: bool,
 }
 
 pub(crate) struct QuicStream {
@@ -566,6 +568,8 @@ impl QuicStream {
                 (PULL_STATUS_ERROR, None)
             } else if let Some(chunk) = inbound.chunks.pop_front() {
                 (PULL_STATUS_DATA, Some(chunk))
+            } else if inbound.ended && inbound.truncated {
+                (PULL_STATUS_ERROR, None)
             } else if inbound.ended {
                 (PULL_STATUS_EOS, None)
             } else {
@@ -911,6 +915,8 @@ impl QuicStream {
                 session.push_event(SessionEvent::StreamWake { stream });
             }
             StreamEvent::Closed => {
+                let is_lost = session.get(|it| !matches!(it.close_reason(), CloseReason::Local));
+                (self.inbound).with_mut(|it| it.truncated = !it.ended && is_lost == Some(true));
                 self.id.set(None);
                 session.push_event(SessionEvent::StreamClosed { stream });
             }

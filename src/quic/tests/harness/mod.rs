@@ -298,7 +298,7 @@ impl Network {
             self.peer(side).endpoint.handle_timeouts(now);
             self.peer(side).handle_events(now);
             let mut batch = Batch::default();
-            self.peer(side).endpoint.poll_transmit(now, &mut batch, 64);
+            (self.peer(side).endpoint).poll_transmit(now, &mut batch, 64, |_| {});
             for (addresses, bytes, segment_len) in batch.runs() {
                 for bytes in batch.bytes()[bytes].chunks(segment_len) {
                     self.transmit(Datagram {

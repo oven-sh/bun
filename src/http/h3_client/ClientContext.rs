@@ -17,6 +17,9 @@ use crate::http_thread::WriteMessageType;
 
 use crate::h3_client::h3_client;
 
+/// That of the timeouts of sockets, for which [`crate::normalize_idle_timeout_seconds`] makes up.
+const SWEEP_SECONDS: u32 = 4;
+
 pub(crate) struct ClientContext {
     pub(super) client: Rc<quic::Client>,
     sessions: Vec<RefPtr<ClientSession>>,
@@ -71,6 +74,7 @@ impl ClientContext {
     ) -> Result<(), InFlightRequest> {
         let hostname = bun_url::strip_ipv6_brackets(client.url.hostname);
         let reject = client.flags.reject_unauthorized;
+        self.client.set_alarm(SWEEP_SECONDS);
         for s in self.sessions.iter().map(RefPtr::as_ptr) {
             // sessions vec holds live ClientSession pointers; removed via
             // unregister() before destroy — `session_mut` centralises that
@@ -171,6 +175,20 @@ impl ClientContext {
         false
     }
 
+    fn sweep() {
+        let Some(this) = Self::get() else {
+            return;
+        };
+        // See `abort_by_http_id`.
+        let ctx = bun_ptr::BackRef::from(this);
+        for s in ctx.sessions.iter().map(RefPtr::as_ptr) {
+            session_mut(s).fail_idle_requests(SWEEP_SECONDS);
+        }
+        if ctx.sessions.iter().any(|it| !it.pending.is_empty()) {
+            ctx.client.set_alarm(SWEEP_SECONDS);
+        }
+    }
+
     /// Close the connections of fetch session `pool_id` that carry no request.
     pub(crate) fn close_idle_sessions(pool_id: u64) {
         let Some(this) = Self::get() else {
@@ -213,5 +231,5 @@ impl ClientContext {
 #[inline(never)]
 fn create_client() -> Option<Rc<quic::Client>> {
     bun_removable_features::removable_definition!(Http3, create_client);
-    quic::Client::new(UwsLoop::get(), callbacks::on_event)
+    quic::Client::new(UwsLoop::get(), callbacks::on_event, ClientContext::sweep)
 }

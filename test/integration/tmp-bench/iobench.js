@@ -10,8 +10,14 @@ import { once } from "node:events";
 const self = process.execPath,
   file = import.meta.path;
 const now = () => performance.now();
-const role = (name, args = [], options = {}) =>
-  Bun.spawn([process.env.ROLE_EXE || self, file, "--role", name, ...args], { stderr: "inherit", ...options });
+const k32 = process.env.CYCLES && require("bun:ffi").dlopen("kernel32.dll", { QueryProcessCycleTime: { args: ["i64", "ptr"], returns: "i32" }, OpenProcess: { args: ["u32", "i32", "u32"], returns: "i64" } }).symbols;
+const processes = [-1n];
+const megacycles = () => processes.reduce((sum, handle) => { const out = new BigUint64Array(1); k32.QueryProcessCycleTime(handle, out); return sum + Number(out[0]) / 1e6; }, 0);
+const role = (name, args = [], options = {}) => {
+  const child = Bun.spawn([process.env.ROLE_EXE || self, file, "--role", name, ...args], { stderr: "inherit", ...options });
+  if (k32) processes.push(k32.OpenProcess(0x1000, 0, child.pid));
+  return child;
+};
 const firstLine = async stream => {
   const r = stream.getReader();
   const { value } = await r.read();
@@ -285,6 +291,7 @@ const cases = {
       ],
     ]),
   ),
+  "fs.read one by one": ["/s", 1, async tmp => { const fd = fs.openSync(small(tmp), "r"), buf = Buffer.alloc(64); let n = 0; const t = now(); while (now() - t < 1500) await new Promise(r => fs.read(fd, buf, 0, 64, 0, r)), n++; return n / ((now() - t) / 1000); }],
   "setTimeout(1) lateness p50": [
     "ms",
     0,
@@ -743,7 +750,8 @@ else if (argv[0] === "--case") {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "iobench-"));
   try {
     small(tmp);
-    console.log(await cases[argv[1]][2](tmp));
+    const started = now(), value = await cases[argv[1]][2](tmp);
+    console.log(value, ...(k32 ? [megacycles(), now() - started] : []));
   } finally {
     try {
       fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3 });

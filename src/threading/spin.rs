@@ -13,6 +13,26 @@ const TRIAL: u16 = 8;
 const MAX_AWAKE: u16 = 512;
 const MAX_ASLEEP: u16 = 256;
 
+/// Temporary: `BUN_TMP_TUNE=0=1,3=4096` replaces defaults, to measure variants.
+pub fn tune(index: usize, default: u64) -> u64 {
+    static VALUES: LazyLock<[Option<u64>; 16]> = LazyLock::new(|| {
+        let mut values = [None; 16];
+        let text = bun_core::getenv_z(bun_core::zstr!("BUN_TMP_TUNE")).unwrap_or_default();
+        for pair in bun_core::strings::split(text, b",") {
+            if let Some((key, value)) = bun_core::strings::split_once_char(pair, b'=')
+                && let Ok(key) = bun_core::fmt::parse_int::<usize>(key, 10)
+            {
+                values[key] = bun_core::fmt::parse_int(value, 10).ok();
+            }
+        }
+        values
+    });
+    if cfg!(any(test, debug_assertions)) {
+        return default;
+    }
+    VALUES[index].unwrap_or(default)
+}
+
 pub fn has_other_cpu() -> bool {
     static ANSWER: LazyLock<bool> =
         LazyLock::new(|| std::thread::available_parallelism().is_ok_and(|count| count.get() > 1));
@@ -46,7 +66,7 @@ impl Spin {
 
     pub fn limit_ns(&self) -> u64 {
         if self.is_awake && has_other_cpu() {
-            AWAKE_NS
+            tune(1, AWAKE_NS)
         } else {
             0
         }
@@ -58,7 +78,7 @@ impl Spin {
         if ns > IDLE_NS {
             self.next_len_asleep = (self.next_len_asleep / 2).max(TRIAL);
         }
-        if ns > BUSY_NS {
+        if ns > tune(2, BUSY_NS) {
             return self.begin(false, self.next_len_asleep);
         }
         if self.waits == 0 {
@@ -72,7 +92,7 @@ impl Spin {
         if !self.is_awake {
             self.pace_asleep_ns = pace_ns;
             self.begin(true, TRIAL);
-        } else if pace_ns * 8 > self.pace_asleep_ns * 7 {
+        } else if pace_ns * tune(3, 8) > self.pace_asleep_ns * (tune(3, 8) - 1) {
             self.begin(false, self.next_len_asleep);
             self.next_len_asleep = (self.len * 2).min(MAX_ASLEEP);
         } else if self.len < MAX_AWAKE {

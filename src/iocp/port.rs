@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use bun_core::{Timespec, TimespecMockMode};
-use bun_threading::spin::{Spin, has_other_cpu};
+use bun_threading::spin::{Spin, has_other_cpu, tune};
 use bun_threading::{Condition, Guarded};
 use bun_windows_sys::Win32Error;
 
@@ -115,6 +115,8 @@ pub struct Port {
     /// When the last turn ended, or a wait for which nothing was ready.
     busy_since_ns: Cell<u64>,
     expects_more: Cell<bool>,
+    woke_at_ns: Cell<u64>,
+    flood: Cell<u64>,
     /// The time when it is deferred, and the key and context of the packet.
     delayed: RefCell<BinaryHeap<Reverse<(u64, usize, usize)>>>,
     holds: Cell<usize>,
@@ -151,6 +153,8 @@ impl Port {
             next_turn: RefCell::default(),
             busy_since_ns: Cell::new(now_ns()),
             expects_more: Cell::new(false),
+            woke_at_ns: Cell::new(0),
+            flood: Cell::new(0),
             delayed: RefCell::default(),
             holds: Cell::new(0),
             is_shut_down: Cell::new(false),
@@ -262,12 +266,34 @@ impl Port {
     /// Returns how many events there are at most. It neither allocates nor frees.
     pub fn wait(&self, timeout_ns: Option<u64>) -> usize {
         if self.next.get() == self.end.get() {
+            let pause_ns = tune(0, 0);
+            let mut start = 0;
+            if pause_ns > 0 {
+                if !self.has_received.get() || self.has_sent.get() {
+                    self.flood.set(0);
+                } else if self.flood.get() >= 4 {
+                    while now_ns() < self.woke_at_ns.get() + pause_ns {
+                        core::hint::spin_loop();
+                    }
+                }
+                start = now_ns();
+            }
             if timeout_ns == Some(0) || self.has_work() {
                 self.fill_batch(Timeout::Now);
+                if pause_ns > 0 {
+                    self.has_received.set(false);
+                    self.has_sent.set(false);
+                }
             } else {
                 self.shared.is_parked.store(true, Ordering::SeqCst);
                 self.park(timeout_ns);
                 self.shared.is_parked.store(false, Ordering::SeqCst);
+            }
+            if pause_ns > 0 {
+                let now = now_ns();
+                self.woke_at_ns.set(now);
+                let is_at_once = now - start < tune(4, 10_000);
+                (self.flood).update(|count| if is_at_once { count + 1 } else { 0 });
             }
         }
         self.undispatched()

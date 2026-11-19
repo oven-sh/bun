@@ -447,18 +447,21 @@ impl Round<'_> {
             let long = random.bytes(257, alphabet).repeat(len.div_ceil(257));
             for text in [self.text, &long[..400 + round % 1201], &long[..len]] {
                 let (text, crc) = (from.copy_of(text, offset), random.next() as u32);
-                let at = random.below(text.len());
-                let (start, end) = text.split_at(at);
+                // From 32 KB on, the kernels align their loads.
+                let splits = [random.below(text.len()), text.len().saturating_sub(32_768)];
                 digests.add("crc32", crc32(crc, text).into());
-                digests.same("crc32 in parts", crc32(crc32(crc, start), end).into());
+                for (start, end) in splits.map(|at| text.split_at(at)) {
+                    digests.same("crc32 in parts", crc32(crc32(crc, start), end).into());
+                }
                 digests.same("crc32_shared", crc32_shared(crc, shared(text)).into());
                 let (mut sum, room) = (crc, to.uninit(text.len(), offset));
                 let copy = copy_and_crc32(&mut sum, text, room.into());
                 digests.fails_unless(copy == text, "copy_and_crc32");
                 digests.same("copy_and_crc32", sum.into());
-                let (start, end) = text.split_at(at);
                 digests.add("adler32", adler32(1, text).into());
-                digests.same("adler32 in parts", adler32(adler32(1, start), end).into());
+                for (start, end) in splits.map(|at| text.split_at(at)) {
+                    digests.same("adler32 in parts", adler32(adler32(1, start), end).into());
+                }
                 digests.same("adler32_shared", adler32_shared(1, shared(text)).into());
                 let (mut sum, room) = (1, to.uninit(text.len(), offset));
                 let copy = copy_and_adler32(&mut sum, text, room.into());

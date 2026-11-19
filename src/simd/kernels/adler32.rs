@@ -1,5 +1,5 @@
 //! The Adler-32 of zlib, derived from libdeflate (LICENSE.md).
-use crate::{Byte, Copies, copy_then, split_after_last_line};
+use crate::{Byte, Copies, aligned, copy_then, unaligned_len};
 use bun_simd::{Isa, Out, SharedU8};
 
 const MODULUS: u32 = 65521;
@@ -11,15 +11,16 @@ const _: () = {
 };
 const SHORT: usize = 16;
 /// The most bytes for one call of `simd`.
-const PIECE: usize = 32768;
+const PIECE: usize = 65536;
 
 /// Continues `adler`, which is 1 for no bytes.
 #[inline]
 pub fn adler32(adler: u32, bytes: &[u8]) -> u32 {
     match bytes.len() {
         ..SHORT => by_bytes(adler, bytes),
+        _ if unaligned_len(bytes) > 0 => aligned(adler, bytes, adler32),
         SHORT..=PIECE => simd::update(adler, bytes),
-        _ => in_aligned_pieces(adler, bytes, adler32),
+        _ => in_pieces(adler, bytes, adler32),
     }
 }
 
@@ -27,8 +28,9 @@ pub fn adler32(adler: u32, bytes: &[u8]) -> u32 {
 pub fn adler32_shared(adler: u32, bytes: &[SharedU8]) -> u32 {
     match bytes.len() {
         ..SHORT => by_bytes(adler, bytes),
+        _ if unaligned_len(bytes) > 0 => aligned(adler, bytes, adler32_shared),
         SHORT..=PIECE => simd::update_shared(adler, bytes),
-        _ => in_aligned_pieces(adler, bytes, adler32_shared),
+        _ => in_pieces(adler, bytes, adler32_shared),
     }
 }
 
@@ -57,10 +59,10 @@ fn by_bytes(adler: u32, bytes: &[impl Byte]) -> u32 {
     reduced(high, low)
 }
 
+/// Their ends are aligned like that of `bytes`.
 #[inline(never)]
-fn in_aligned_pieces<B: Byte>(adler: u32, bytes: &[B], update: impl Fn(u32, &[B]) -> u32) -> u32 {
-    let (lines, rest) = split_after_last_line(bytes);
-    update(lines.rchunks(PIECE).rfold(adler, &update), rest)
+fn in_pieces<B>(adler: u32, bytes: &[B], update: impl Fn(u32, &[B]) -> u32) -> u32 {
+    bytes.rchunks(PIECE).rfold(adler, update)
 }
 
 #[inline(never)]

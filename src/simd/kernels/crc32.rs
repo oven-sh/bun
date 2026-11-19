@@ -1,5 +1,5 @@
 //! The CRC-32 of gzip, derived from libdeflate (LICENSE.md). The highest power of x is in the lowest bit.
-use crate::{Aligned, Byte, Copies, copy_then, split_after_last_line};
+use crate::{Aligned, Byte, Copies, aligned, copy_then, unaligned_len};
 use bun_simd::{Out, SharedU8, opaque};
 use core::array::from_fn;
 
@@ -27,15 +27,12 @@ const SHORT: usize = if IS_APPLE { 128 } else { 384 };
 /// Up to it, a table is.
 const TINY: usize = 4;
 
-/// From it on, aligned loads are worth a second call.
-const LONG: usize = 32768;
-
 #[inline]
 pub fn crc32(crc: u32, bytes: &[u8]) -> u32 {
     !match bytes.len() {
         ..SHORT if cfg!(target_arch = "aarch64") => instruction_simd::update(!crc, bytes),
         ..=TINY => by_small_steps(!crc, bytes),
-        LONG.. => aligned(!crc, bytes, folding_simd::update, crc32),
+        _ if unaligned_len(bytes) > 0 => !aligned(crc, bytes, crc32),
         _ => folding_simd::update(!crc, bytes),
     }
 }
@@ -45,20 +42,9 @@ pub fn crc32_shared(crc: u32, bytes: &[SharedU8]) -> u32 {
     !match bytes.len() {
         ..SHORT if cfg!(target_arch = "aarch64") => instruction_simd::update_shared(!crc, bytes),
         ..=TINY => by_small_steps(!crc, bytes),
-        LONG.. => aligned(!crc, bytes, folding_simd::update_shared, crc32_shared),
+        _ if unaligned_len(bytes) > 0 => !aligned(crc, bytes, crc32_shared),
         _ => folding_simd::update_shared(!crc, bytes),
     }
-}
-
-#[inline(never)]
-fn aligned<B: Byte>(
-    state: u32,
-    bytes: &[B],
-    update: impl Fn(u32, &[B]) -> u32,
-    crc32: impl Fn(u32, &[B]) -> u32,
-) -> u32 {
-    let (lines, rest) = split_after_last_line(bytes);
-    !crc32(!update(state, lines), rest)
 }
 
 /// Adds the copy to `crc`. Panics if it does not fit.

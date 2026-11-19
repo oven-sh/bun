@@ -614,6 +614,13 @@ fn whole_files(js: &[u8], json: &[u8], map: &[u8]) {
             "copy: adler32 {n}", copy_and_adler32(&mut opaque(1), opaque(&js[..n]), (&mut copy[..n]).into()).len();
         }
     }
+    for (n, past) in [(30016, 0), (30016, 3), (40000, 0), (40000, 3)] {
+        let bytes = &js[js.as_ptr().align_offset(64) + past..][..n];
+        time! {
+            "crc32 {n} at {past} in a cache line", crc32(opaque(0), opaque(bytes));
+            "adler32 {n} at {past} in a cache line", adler32(opaque(1), opaque(bytes));
+        }
+    }
     for n in [3, 7, 12, 30, 100, 200, 300, 65536] {
         let text = &js[..n];
         time! {

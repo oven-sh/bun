@@ -1583,7 +1583,9 @@ fn checksums() {
         false => (0..2600)
             // At 4097 and 4112, the last correction of the upper sum crosses 2^31.
             .chain([4096, 4097, 4112, 5503, 5504, 5505, 5552, 5553, 5900, 11_100])
-            .chain([32_767, 32_768, 32_769, 32_832, 65_536, 70_001, 140_001])
+            .chain([
+                32_767, 32_768, 65_535, 65_536, 65_537, 65_599, 70_001, 140_001,
+            ])
             .collect(),
     };
     let mut below = random();
@@ -1591,11 +1593,15 @@ fn checksums() {
         let any = (0..len + 63).map(|_| below(256) as u8).collect();
         for all in sample([any, vec![255; len + 63]], 2) {
             let start = below(64);
+            // Up to each place in a cache line, which decides where they are split.
+            let starts = match len {
+                32_768 | 65_599 => 0..=63,
+                _ => start..=start,
+            };
             from_shared(&all, |shared| {
-                // Up to each place in a cache line.
-                for end in start + len - if len == 32_832 { 63 } else { 0 }..=start + len {
-                    let (bytes, shared) = (&all[start..end], &shared[start..end]);
-                    let (len, spare) = (bytes.len(), below(2) * below(300));
+                for start in starts {
+                    let (bytes, shared) = (&all[start..][..len], &shared[start..][..len]);
+                    let spare = below(2) * below(300);
                     let crc = [0, below(1 << 31) as u32 * 2 + 1][len % 2];
                     let want = crc32_by_bits(crc, bytes);
                     check(len, want, || kernels::crc32(crc, bytes));
@@ -1624,8 +1630,10 @@ fn adler32_with_weights_of_one_sign() {
         .into_iter()
         .flat_map(|it| [(it, 0), (it, 255)])
     {
-        let bytes: Vec<u8> = (0..32768).map(|i| [first, !first][i / run % 2]).collect();
-        check(adler32_by_bytes(1, &bytes), || kernels::adler32(1, &bytes));
+        #[repr(align(64))]
+        struct NotSplit([u8; 65536]);
+        let NotSplit(bytes) = &NotSplit(from_fn(|i| [first, !first][i / run % 2]));
+        check(adler32_by_bytes(1, bytes), || kernels::adler32(1, bytes));
     }
 }
 

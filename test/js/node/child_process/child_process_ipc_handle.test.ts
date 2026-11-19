@@ -820,3 +820,25 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
     expect(exitCode).toBe(0);
   });
 });
+
+test.skipIf(!isWindows)("a UDP socket cannot be sent, as in Node.js", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const child = require("child_process").spawn(process.execPath, ["-e", "process.on('message', () => {})"], {
+         stdio: ["ignore", "inherit", "inherit", "ipc"],
+       });
+       const socket = require("dgram").createSocket("udp4").bind(0, "127.0.0.1", () => {
+         child.send("x", socket, error => {
+           console.log(error.code);
+           socket.close(), child.disconnect();
+         });
+       });`,
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  expect(await proc.stdout.text()).toBe("ENOTSUP\n");
+  expect(await proc.exited).toBe(0);
+});

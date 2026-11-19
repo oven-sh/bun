@@ -1313,6 +1313,11 @@ describe.concurrent("in a terminal", () => {
       expect(child.screen()).toContain("\u{1F600}y");
     });
 
+    it.each(["r+", "w", "w+"])("CONOUT$ can be opened with %j", async flags => {
+      await using child = await start(`fs.writeSync(fs.openSync("CONOUT$", "${flags}"), "opened"); await heard();`);
+      await child.shows("opened");
+    });
+
     it("a character can come in two writes", async () => {
       await using child = await start(`
         const sink = Bun.file(fs.openSync("CONOUT$", "r+")).writer(), bytes = Buffer.from("<\\u4e16>");

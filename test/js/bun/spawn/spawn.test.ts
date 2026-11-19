@@ -2865,3 +2865,9 @@ describe.concurrent.skipIf(!isWindows)("Windows children", () => {
     expect(result).toEqual({ sync: 0, async: 0, piped: "2\n", child: "ran" });
   });
 });
+
+it.skipIf(!isWindows)("resourceUsage() answers for a process that is running", async () => {
+  await using proc = spawn({ cmd: [bunExe(), "-e", "console.log(); setInterval(() => {}, 1000)"], env: bunEnv });
+  await proc.stdout.getReader().read();
+  expect(proc.resourceUsage()!.maxRSS).toBeGreaterThan(0);
+});

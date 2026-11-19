@@ -267,20 +267,16 @@ fn same_key(path: &[u8], old: &[u8], shown: &[u8], removed: &[u32], options: Opt
     }
 }
 
-/// Returns true if `shown`, a re-print of the file `raw` that's displayed in its place, still
-/// parses as the same file. If `renamed` is set, the names of locals may differ.
-pub(crate) fn stands_for(
-    path: &[u8],
-    raw: &[u8],
-    shown: &[u8],
-    options: Options,
-    renamed: bool,
-) -> bool {
-    if renamed {
-        return same_key(path, raw, shown, &[], options.without_source_map());
-    }
-    let print = |bytes: &[u8]| normalize(path, bytes, options.without_source_map());
-    matches!((print(raw), print(shown)), (Some(a), Some(b)) if a.text == b.text)
+/// Returns true if `shown`, which is displayed in place of a file, still parses as that file.
+/// `print` is what `normalize` returns for the file with `options`.
+pub(crate) fn stands_for(path: &[u8], print: &Normalized, shown: &[u8], options: Options) -> bool {
+    normalize(path, shown, options.without_source_map())
+        .is_some_and(|again| again.text == print.text)
+}
+
+/// Like `stands_for`, for a re-print of the file `raw` in which locals are renamed.
+pub(crate) fn stands_for_renamed(path: &[u8], raw: &[u8], shown: &[u8], options: Options) -> bool {
+    same_key(path, raw, shown, &[], options.without_source_map())
 }
 
 /// Keeps exported symbols from being renamed. An export's name is part of the module's interface.

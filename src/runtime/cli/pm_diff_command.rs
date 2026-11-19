@@ -1573,9 +1573,16 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style) {
                 None => (no, nn),
             };
             let (shown_o, shown_n) = (with_banner(o, disp_o), with_banner(n, disp_n));
-            let faithful = [(o, &shown_o), (n, &shown_n)].iter().all(|(raw, shown)| {
-                normalize::stands_for(path, raw, &shown.text, nopts, renamed.is_some())
-            });
+            let faithful =
+                [(o, no, &shown_o), (n, nn, &shown_n)]
+                    .iter()
+                    .all(|&(raw, print, shown)| {
+                        if renamed.is_some() {
+                            normalize::stands_for_renamed(path, raw, &shown.text, nopts)
+                        } else {
+                            normalize::stands_for(path, print, &shown.text, nopts)
+                        }
+                    });
             let keys = if js_family && faithful {
                 normalize::normalize_key_pair(path, o, n, normalize::Options::KEY)
             } else {
@@ -1682,38 +1689,22 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style) {
         && (old.is_none() || new.is_none())
     {
         // Whole-file add/remove: render every line as +/- (a minified bundle in its readable re-print).
-        let readable = |raw: &[u8], norm: &Option<normalize::Normalized>| -> Vec<u8> {
-            let reprint = match norm {
-                Some(nz) if style.pretty && nz.was_minified => Some(with_banner(raw, nz).text),
-                _ => None,
-            };
-            reprint
-                .filter(|shown| normalize::stands_for(path, raw, shown, nopts, false))
-                .unwrap_or_else(|| raw.to_vec())
-        };
-        let body_owned;
-        let (op, body) = match (new, old) {
-            (Some(n), _) => {
-                body_owned = readable(n, &norm_new);
-                (Operation::Insert, body_owned.as_slice())
-            }
-            (None, Some(o)) => {
-                body_owned = readable(o, &norm_old);
-                (Operation::Delete, body_owned.as_slice())
-            }
+        let (op, raw, norm) = match (new, old) {
+            (Some(n), _) => (Operation::Insert, n, &norm_new),
+            (None, Some(o)) => (Operation::Delete, o, &norm_old),
             (None, None) => unreachable!(),
         };
-        if body.len() != new.or(old).map_or(0, <[u8]>::len) {
+        let shown = match norm {
+            Some(norm) if style.pretty && norm.was_minified => Some(with_banner(raw, norm))
+                .filter(|shown| normalize::stands_for(path, norm, &shown.text, nopts)),
+            _ => None,
+        };
+        let body = shown.as_ref().map_or(raw, |shown| &shown.text);
+        if body.len() != raw.len() {
             change.semantic = Semantic::Normalized;
-            let (raw, nz) = if op == Operation::Insert {
-                (new, &norm_new)
-            } else {
-                (old, &norm_old)
-            };
-            if let (Some(raw), Some(nz)) = (raw, nz) {
-                let origin = with_banner(raw, nz).origin;
-                change.origin = Some([origin.clone(), origin]);
-            }
+            change.origin = shown
+                .as_ref()
+                .map(|shown| [shown.origin.clone(), shown.origin.clone()]);
             if op == Operation::Insert {
                 change.added = count_lines(body)
             } else {

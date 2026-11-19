@@ -1584,7 +1584,7 @@ fn checksums() {
             // At 4097 and 4112, the last correction of the upper sum crosses 2^31.
             .chain([4096, 4097, 4112, 5503, 5504, 5505, 5552, 5553, 5900, 11_100])
             .chain([
-                32_767, 32_768, 65_535, 65_536, 65_537, 65_599, 70_001, 140_001,
+                16_383, 16_384, 65_535, 65_536, 65_537, 65_599, 70_001, 140_001,
             ])
             .collect(),
     };
@@ -1595,14 +1595,14 @@ fn checksums() {
             let start = below(64);
             // Up to each place in a cache line, which decides where they are split.
             let starts = match len {
-                32_768 | 65_599 => 0..=63,
+                16_384 | 65_599 => 0..=63,
                 _ => start..=start,
             };
             from_shared(&all, |shared| {
                 for start in starts {
                     let (bytes, shared) = (&all[start..][..len], &shared[start..][..len]);
                     let spare = below(2) * below(300);
-                    let crc = [0, below(1 << 31) as u32 * 2 + 1][len % 2];
+                    let crc = [0, below(1 << 31) as u32 * 2 + 1][start % 2];
                     let want = crc32_by_bits(crc, bytes);
                     check(len, want, || kernels::crc32(crc, bytes));
                     check(len, want, || kernels::crc32_shared(crc, shared));

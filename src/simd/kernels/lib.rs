@@ -95,10 +95,13 @@ fn copy_then<'a>(
     copy
 }
 
-/// How many bytes `aligned` leaves for its second call, which short inputs are not worth.
+/// From it on, aligned loads are worth a second call.
+const LONG: usize = 16384;
+
+/// How many bytes `aligned` leaves for its second call.
 #[inline(always)]
 fn unaligned_len(bytes: &[impl Byte]) -> usize {
-    if bytes.len() < 32768 {
+    if bytes.len() < LONG {
         return 0;
     }
     cold_path();

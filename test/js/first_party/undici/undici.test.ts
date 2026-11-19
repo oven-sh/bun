@@ -2173,6 +2173,151 @@ describe("undici", () => {
       expect(results).toEqual(Object.fromEntries(Object.keys(bodies).map(encoding => [encoding, [encoding, true]])));
     });
 
+    it("fetch with a dispatcher decodes an empty, a truncated and a raw-deflate body like undici", async () => {
+      const text = Buffer.alloc(6000, "hello ").toString();
+      const gzip = zlib.gzipSync(text);
+      const bodies: Record<string, [string, Buffer[]]> = {
+        // A server may announce a coding and then send no bytes at all.
+        empty: ["gzip", []],
+        // "deflate" is the zlib format, but some servers send the raw deflate stream.
+        rawDeflate: ["deflate", [zlib.deflateRawSync(text)]],
+        // The connection closed early: the caller gets the bytes that arrived.
+        truncated: ["gzip", [gzip.subarray(0, gzip.length - 12)]],
+      };
+      const dispatcher = {
+        dispatch(opts: any, handler: any) {
+          const [encoding, chunks] = bodies[opts.path.slice(1)];
+          handler.onConnect(() => {});
+          handler.onHeaders(200, [Buffer.from("content-encoding"), Buffer.from(encoding)], () => {}, "OK");
+          for (const chunk of chunks) handler.onData(chunk);
+          handler.onComplete([]);
+          return true;
+        },
+      };
+      const read = async (name: string) =>
+        (await undiciFetch(`http://localhost:1/${name}`, { dispatcher } as any)).text();
+      const truncated = await read("truncated");
+      expect({ empty: await read("empty"), rawDeflate: (await read("rawDeflate")) === text }).toEqual({
+        empty: "",
+        rawDeflate: true,
+      });
+      expect(truncated.length).toBeGreaterThan(0);
+      expect(truncated.length).toBeLessThan(text.length);
+      expect(text.startsWith(truncated)).toBe(true);
+    });
+
+    it("fetch with a dispatcher rejects a response with more than five content codings, like undici", async () => {
+      let aborted = false;
+      const dispatcher = {
+        dispatch(_opts: any, handler: any) {
+          handler.onConnect(() => {
+            aborted = true;
+          });
+          handler.onHeaders(200, [Buffer.from("content-encoding"), Buffer.from("gzip,gzip,gzip,gzip,gzip,gzip")], () => {}, "");
+          return true;
+        },
+      };
+      await expect(undiciFetch("http://localhost:1/", { dispatcher } as any)).rejects.toThrow(
+        "too many content-encodings in response: 6, maximum allowed is 5",
+      );
+      expect(aborted).toBe(true);
+    });
+
+    it.each(["identity", "gzip"])("a %s fetch() body that is being read survives garbage collection", async encoding => {
+      const text = "chunk1chunk2chunk3chunk4";
+      const bytes = encoding === "gzip" ? zlib.gzipSync(text) : Buffer.from(text);
+      let aborted = false;
+      const dispatcher = {
+        dispatch(_opts: any, handler: any) {
+          handler.onConnect(() => {
+            aborted = true;
+          });
+          handler.onHeaders(200, [Buffer.from("content-encoding"), Buffer.from(encoding)], () => {}, "OK");
+          let sent = 0;
+          // A collection before every chunk, while the caller's read waits for it.
+          const next = () => {
+            Bun.gc(true);
+            if (sent < bytes.length) {
+              handler.onData(bytes.subarray(sent, (sent += 6)));
+              setImmediate(next);
+            } else {
+              handler.onComplete([]);
+            }
+          };
+          setImmediate(next);
+          return true;
+        },
+      };
+      // The Response is not kept: only the pending read holds the body.
+      expect(await (await undiciFetch("http://localhost:1/", { dispatcher } as any)).text()).toBe(text);
+      expect(aborted).toBe(false);
+    });
+
+    it("a fetch() body read through a Pool survives garbage collection", async () => {
+      const chunk = Buffer.alloc(65536, "a");
+      await using server = Bun.serve({
+        port: 0,
+        fetch() {
+          let sent = 0;
+          return new Response(
+            new ReadableStream({
+              pull(controller) {
+                Bun.gc(true);
+                if (sent++ < 8) controller.enqueue(chunk);
+                else controller.close();
+              },
+            }),
+          );
+        },
+      });
+      const pool = new Pool(`http://localhost:${server.port}`);
+      const reading = (async () => (await (await undiciFetch(server.url, { dispatcher: pool } as any)).bytes()).length)();
+      let read: number | undefined;
+      reading.then(length => {
+        read = length;
+      });
+      while (read === undefined) {
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      expect(read).toBe(8 * chunk.length);
+      await pool.close();
+    });
+
+    it("a collected fetch() body that got no data yet cancels its dispatch", async () => {
+      let cancelled = false;
+      const dispatcher = {
+        dispatch(_opts: any, handler: any) {
+          handler.onConnect(() => {
+            cancelled = true;
+          });
+          // Headers, and then the server goes silent.
+          handler.onHeaders(200, [], () => {}, "OK");
+          return true;
+        },
+      };
+      const status = await (async () => (await undiciFetch("http://localhost:1/", { dispatcher } as any)).status)();
+      expect(status).toBe(200);
+      while (!cancelled) {
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+    });
+
+    it("request() and dispatch() serialize an array in query like undici", async () => {
+      await using server = Bun.serve({ port: 0, fetch: req => new Response(new URL(req.url).search) });
+      const pool = new Pool(`http://localhost:${server.port}`);
+      const query = { ids: [1, 2], page: undefined, q: "a b" };
+      const viaPool = await (await pool.request({ path: "/", method: "GET", query })).body.text();
+      const viaRequest = await (await request(server.url.href, { query } as any)).body.text();
+      // node:querystring, as in undici: a key per array element, and an empty value for undefined.
+      expect({ viaPool, viaRequest }).toEqual({
+        viaPool: "?ids=1&ids=2&page=&q=a%20b",
+        viaRequest: "?ids=1&ids=2&page=&q=a%20b",
+      });
+      await pool.close();
+    });
+
     it("request() through a closed stock Agent rejects, like fetch()", async () => {
       const agent = new Agent();
       await agent.close();

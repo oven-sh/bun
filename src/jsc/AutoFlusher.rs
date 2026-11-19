@@ -8,7 +8,7 @@ use bun_ptr::OptionCellExt as _;
 
 use crate::virtual_machine::VirtualMachine;
 
-/// Its owner's entry in this thread's `DeferredTaskQueue`, and what it holds while it has one.
+/// Its owner's entry in a `DeferredTaskQueue` of this thread, and what it holds while it has one.
 pub struct AutoFlusher<Held = ()>(Cell<Option<Held>>);
 
 /// SAFETY: a value does not move while it is registered.
@@ -74,8 +74,10 @@ impl<Held> AutoFlusher<Held> {
 
     pub fn unregister(&self) {
         if let Some(_held) = self.0.take() {
-            let tasks = &VirtualMachine::get().event_loop().deferred_tasks;
-            let removed = tasks.unregister_task(NonNull::from(self).cast());
+            let (vm, this) = (VirtualMachine::get(), NonNull::from(self).cast());
+            // Not `event_loop()`: a macro can have started or returned since `register`.
+            let removed = vm.regular_event_loop.deferred_tasks.unregister_task(this)
+                || vm.macro_event_loop.deferred_tasks.unregister_task(this);
             debug_assert!(removed);
         }
     }

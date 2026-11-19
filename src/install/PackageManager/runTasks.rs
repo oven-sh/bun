@@ -1690,6 +1690,7 @@ pub fn generate_network_task_for_tarball<'a>(
     if let Err(err) = network_task.for_tarball(extract_tarball, scope, authorization) {
         // No task will ever complete the dedupe entry, so a later enqueue would wait forever.
         this.mark_network_task_failed(task_id);
+        let _ = this.task_queue.remove(&task_id);
         return_network_task(this, net_ptr);
         return Err(err);
     }

@@ -1302,6 +1302,31 @@ describe.concurrent("auto-install throws when it can't do something instead of e
     expect(exitCode).toBe(0);
   });
 
+  test("an invalid tarball URL, reported again by an import in every later turn of the event loop", async () => {
+    using registry = Bun.serve({
+      port: 0,
+      fetch() {
+        const version = { name: "ftp", version: "1.0.0", dist: { tarball: "ftp://127.0.0.1/ftp.tgz" } };
+        return Response.json({ name: "ftp", "dist-tags": { latest: "1.0.0" }, versions: { "1.0.0": version } });
+      },
+    });
+    const source = `
+      for (let i = 0; i < 4; i++) {
+        try {
+          require("ftp");
+        } catch (e) {
+          console.log(Bun.inspect(e).split("\\n").filter(line => line.startsWith("note: Expected tarball URL")).length);
+        }
+        await new Promise(resolve => setTimeout(resolve, 1));
+      }
+    `;
+    expect(await runWithRegistry(registry.url.origin, "index.js", source)).toEqual({
+      stdout: "1\n1\n1\n1\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("the response to a failed tarball download is freed", async () => {
     const body = Buffer.alloc(2 * 1024 * 1024, "x");
     let tarballs = 0;

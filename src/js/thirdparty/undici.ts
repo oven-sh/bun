@@ -1607,7 +1607,11 @@ function fetchViaDispatcher(dispatcher, input, init) {
             // Built before the promise settles so a non-constructible status rejects; the constructor cannot set url or redirected.
             const response = new Response(responseBody, { status: statusCode, statusText, headers: responseHeaders });
             if (responseBody) {
-              (abandonedBodies ??= new SafeFinalizationRegistry(runHeldValue)).register(responseBody, cancelBody, cancelBody);
+              (abandonedBodies ??= new SafeFinalizationRegistry(runHeldValue)).register(
+                responseBody,
+                cancelBody,
+                cancelBody,
+              );
             }
             settle(true, response);
             return true;

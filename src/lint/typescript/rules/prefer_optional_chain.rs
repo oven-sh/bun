@@ -139,7 +139,6 @@ impl<'a> Compared<'a> {
             | ExprKind::Number(_)
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
-            | ExprKind::Decimal(_)
             | ExprKind::Regex(_) => EsType::Literal,
             ExprKind::Template(_) => EsType::Template,
             ExprKind::TaggedTemplate(_) => EsType::TaggedTemplate,

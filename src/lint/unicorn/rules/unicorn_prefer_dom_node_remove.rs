@@ -21,7 +21,6 @@ fn is_non_dom_node(e: Expr) -> bool {
         | ExprKind::Null
         | ExprKind::Number(_)
         | ExprKind::BigInt(_)
-        | ExprKind::Decimal(_)
         | ExprKind::Regex(_)
         | ExprKind::String(_)
         | ExprKind::Unary { op: UnOp::Void, .. } => true,

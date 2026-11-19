@@ -470,7 +470,6 @@ impl FileLowering<'_, '_, '_, '_> {
             | ExprKind::This
             | ExprKind::Regex { .. }
             | ExprKind::Fn(_) => true,
-            _ if hir.decimal_literal(value).is_some() => true,
             ExprKind::Array(elements) => hir
                 .ids(elements)
                 .all(|element| self.evaluates_without_calls(element)),

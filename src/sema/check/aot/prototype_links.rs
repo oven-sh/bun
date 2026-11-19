@@ -473,7 +473,6 @@ impl EndFinder<'_, '_, '_> {
             ExprKind::Number(_)
                 | ExprKind::String(_)
                 | ExprKind::BigInt(_)
-                | ExprKind::Decimal(_)
                 | ExprKind::Template { .. }
                 | ExprKind::Regex { .. }
                 | ExprKind::True

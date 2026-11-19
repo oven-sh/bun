@@ -80,7 +80,6 @@ fn is_known_non_indexed_receiver(receiver: Expr) -> bool {
                 | ExprTag::Null
                 | ExprTag::Number
                 | ExprTag::BigInt
-                | ExprTag::Decimal
                 | ExprTag::Regex
                 | ExprTag::String
         ),

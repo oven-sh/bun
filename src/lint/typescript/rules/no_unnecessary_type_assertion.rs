@@ -442,7 +442,6 @@ fn is_conceptually_literal(node: Expr) -> bool {
             | ExprKind::Number(_)
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
-            | ExprKind::Decimal(_)
             | ExprKind::Regex(_)
             | ExprKind::Array(_)
             | ExprKind::Object(_)

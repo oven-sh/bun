@@ -30,8 +30,6 @@ pub enum ExprKind<'a> {
     /// an escape), the text between elements ([`Expr::is_jsx_text`]), and a tag name such as `a-b` or `a:b`.
     String(Name<'a>),
     BigInt(Name<'a>),
-    /// `1.5m`
-    Decimal(Name<'a>),
     Regex(Regex<'a>),
     Template(Template<'a>),
     /// The tag is the callee and the substitutions are the arguments.
@@ -156,7 +154,6 @@ impl<'a> Expr<'a> {
             },
             hir::ExprKind::JsxText(text) => ExprKind::String(file.name(text)),
             hir::ExprKind::BigInt(text) => ExprKind::BigInt(file.name(text)),
-            hir::ExprKind::Decimal(text) => ExprKind::Decimal(file.name(text)),
             hir::ExprKind::Regex { .. } => ExprKind::Regex(Regex { expr: self }),
             hir::ExprKind::Template { exprs } => ExprKind::Template(Template {
                 expr: self,
@@ -479,7 +476,6 @@ impl<'a> Expr<'a> {
             | kind(ExprTag::Number)
             | kind(ExprTag::String)
             | kind(ExprTag::BigInt)
-            | kind(ExprTag::Decimal)
             | kind(ExprTag::Regex)
             | kind(ExprTag::ImportMeta)
             | kind(ExprTag::NewTarget);

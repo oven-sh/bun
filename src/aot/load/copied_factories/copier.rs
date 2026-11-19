@@ -115,7 +115,6 @@ impl FunctionCopier<'_> {
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
             | ExprKind::Regex { .. }
-            | ExprKind::Decimal(_)
             | ExprKind::NewTarget(_)) => kind,
             ExprKind::Template { exprs } => return self.template(written, exprs),
             ExprKind::Array(list) => ExprKind::Array(self.expression_list(list)?),

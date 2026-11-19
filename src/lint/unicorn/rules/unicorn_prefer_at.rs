@@ -401,7 +401,6 @@ fn is_unsupported_at_receiver(expr: Expr) -> bool {
             | ExprTag::True
             | ExprTag::False
             | ExprTag::Null
-            | ExprTag::Decimal
             | ExprTag::Regex
     )
 }

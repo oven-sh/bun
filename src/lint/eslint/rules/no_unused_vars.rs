@@ -892,7 +892,6 @@ pub(crate) fn is_pure(e: Expr) -> bool {
             | ExprKind::Number(_)
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
-            | ExprKind::Decimal(_)
             | ExprKind::Regex(_)
             | ExprKind::Fn(_) => {}
             ExprKind::Template(template) if template.exprs().is_empty() => {}

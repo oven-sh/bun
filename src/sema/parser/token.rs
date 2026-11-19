@@ -13,7 +13,6 @@ pub(crate) enum T {
     NotText,
     Number,
     BigInt,
-    Decimal,
     String,
     JsxText,
     Regex,

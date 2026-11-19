@@ -231,7 +231,6 @@ impl Quiet<'_, '_> {
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
             | ExprKind::Regex { .. }
-            | ExprKind::Decimal(_)
             | ExprKind::ImportMeta
             | ExprKind::Fn(_) => true,
             ExprKind::Template { exprs } => exprs.is_empty(),

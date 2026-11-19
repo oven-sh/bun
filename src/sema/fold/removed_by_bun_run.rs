@@ -196,7 +196,6 @@ impl Folder<'_, '_> {
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
             | ExprKind::Regex { .. }
-            | ExprKind::Decimal(_)
             | ExprKind::Fn(_)
             | ExprKind::ImportMeta => true,
             ExprKind::This => {
@@ -231,7 +230,6 @@ impl Folder<'_, '_> {
                     push(&[operand]);
                 }
                 matches!(op, UnOp::Void | UnOp::Not | UnOp::Typeof)
-                    || op == UnOp::Minus && hir.is_decimal_token(operand)
             }
             ExprKind::Binary { op, left, right } => {
                 let is_decided_by_left = match op {

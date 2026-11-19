@@ -43,6 +43,7 @@ pub mod heap;
 
 pub mod current_work;
 pub mod debug;
+pub mod decimal_options;
 pub mod env;
 pub mod file_steps;
 #[cfg(windows)]

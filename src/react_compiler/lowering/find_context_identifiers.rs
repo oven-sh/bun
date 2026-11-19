@@ -535,7 +535,6 @@ impl<'a> ContextIdentifierVisitor<'a> {
             | Data::ERequireCallTarget
             | Data::ERequireResolveCallTarget
             | Data::ERegExp(_)
-            | Data::EDecimal(_)
             | Data::EMissing(_)
             | Data::EThis(_)
             | Data::ESuper(_)

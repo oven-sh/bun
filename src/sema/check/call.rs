@@ -1812,8 +1812,7 @@ impl<'p, 's> Checker<'p, 's> {
             | ExprKind::Number(_)
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
-            | ExprKind::Regex { .. }
-            | ExprKind::Decimal(_) => true,
+            | ExprKind::Regex { .. } => true,
             ExprKind::Template { exprs } => exprs.is_empty(),
             // `checkIdentifier` returns the declared type of a variable that's being assigned. A
             // declaration that comes earlier has been checked, so that type is resolved.

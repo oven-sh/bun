@@ -1375,10 +1375,6 @@ impl<'p, 'a> Walker<'p, 'a> {
                 self.byte(t | 16);
                 self.bytes(e.value.slice());
             }
-            Data::EDecimal(e) => {
-                self.byte(t | 26);
-                self.bytes(e.value.slice());
-            }
             Data::EBoolean(e) | Data::EBranchBoolean(e) => {
                 self.byte(t | 17);
                 self.byte(u8::from(e.value));

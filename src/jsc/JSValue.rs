@@ -2229,8 +2229,7 @@ impl JSValue {
     pub fn unwrap_boxed_primitive(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || JSC__JSValue__unwrapBoxedPrimitive(global, self))
     }
-    /// `unwrap_boxed_primitive` of the `space` argument of a `stringify()`. A `Decimal` is not an indent, like any
-    /// object that is not a Number or a String, but it is not to be written either, so it does not throw.
+    /// For the `space` argument of a `stringify()`, where a `Decimal` is ignored like any other object.
     pub fn unwrap_boxed_indent(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         if self.is_decimal() {
             return Ok(JSValue::UNDEFINED);

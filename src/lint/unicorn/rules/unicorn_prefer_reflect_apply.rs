@@ -32,7 +32,6 @@ fn is_literal_or_array_or_object(e: Expr) -> bool {
                 | ExprTag::Null
                 | ExprTag::Number
                 | ExprTag::BigInt
-                | ExprTag::Decimal
                 | ExprTag::Regex
                 | ExprTag::String
         )

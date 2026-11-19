@@ -1566,7 +1566,6 @@ pub(crate) const EXPR_TAGS: [ExprTag; ExprTag::COUNT] = {
         Number,
         String,
         BigInt,
-        Decimal,
         Regex,
         Template,
         TaggedTemplate,

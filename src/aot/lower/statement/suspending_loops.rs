@@ -54,7 +54,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     | ExprKind::TaggedTemplate(_)
                     | ExprKind::ImportCall { .. }
                     | ExprKind::Regex { .. }
-                    | ExprKind::Decimal(_)
                     | ExprKind::Array(_)
                     | ExprKind::Object(_)
                     | ExprKind::Jsx(_) => contents.can_be_repeated = false,

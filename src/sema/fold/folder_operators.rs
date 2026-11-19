@@ -96,10 +96,7 @@ impl<'s> Folder<'_, 's> {
                 self.conditions.insert(e, true);
                 Folded::UNKNOWN
             }
-            ExprKind::Regex { .. }
-            | ExprKind::Decimal(_)
-            | ExprKind::Fn(_)
-            | ExprKind::Class(_) => {
+            ExprKind::Regex { .. } | ExprKind::Fn(_) | ExprKind::Class(_) => {
                 self.conditions.insert(e, true);
                 Folded::UNKNOWN
             }
@@ -154,7 +151,7 @@ impl<'s> Folder<'_, 's> {
             ExprKind::Fn(function) if !self.hir.is_evaluated_function(function) => {
                 Some(known::function)
             }
-            ExprKind::Regex { .. } | ExprKind::Decimal(_) => Some(known::object),
+            ExprKind::Regex { .. } => Some(known::object),
             _ => None,
         };
         if op == UnOp::Typeof

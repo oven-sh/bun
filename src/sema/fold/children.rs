@@ -89,7 +89,6 @@ fn push_expr_children<S: Storage>(hir: &FileIn<S>, e: ExprId, stack: &mut Vec<Tr
         | ExprKind::String(_)
         | ExprKind::BigInt(_)
         | ExprKind::Regex { .. }
-        | ExprKind::Decimal(_)
         | ExprKind::JsxText(_)
         | ExprKind::ImportMeta
         | ExprKind::NewTarget(_) => {}

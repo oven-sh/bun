@@ -84,7 +84,6 @@ fn may_be_function(node: Expr) -> bool {
                 | ExprTag::Number
                 | ExprTag::String
                 | ExprTag::BigInt
-                | ExprTag::Decimal
                 | ExprTag::Regex
                 | ExprTag::Template
                 | ExprTag::Array

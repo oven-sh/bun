@@ -696,7 +696,6 @@ impl Finder<'_, '_> {
                 | ExprKind::String(_)
                 | ExprKind::BigInt(_)
                 | ExprKind::Regex { .. }
-                | ExprKind::Decimal(_)
                 | ExprKind::Template { .. }
                 | ExprKind::Array(_)
                 | ExprKind::Object(_)

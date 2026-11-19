@@ -139,7 +139,6 @@ fn compute_json_value<'s>(hir: &File<'_>, arena: &'s Arena) -> Option<DataValue<
             | ExprKind::Super
             | ExprKind::BigInt(_)
             | ExprKind::Regex { .. }
-            | ExprKind::Decimal(_)
             | ExprKind::Template { .. }
             | ExprKind::TaggedTemplate(_)
             | ExprKind::Fn(_)

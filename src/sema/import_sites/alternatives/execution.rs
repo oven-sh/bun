@@ -1816,7 +1816,6 @@ impl<'f, 'i, 'a, 's> Execution<'f, 'i, 'a, 's> {
                 Some(ways.map(|it| (it.0, Value::Unknown)).collect())
             }
             ExprKind::Regex { .. }
-            | ExprKind::Decimal(_)
             | ExprKind::ImportMeta
             | ExprKind::BigInt(_)
             | ExprKind::Super

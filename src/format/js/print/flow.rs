@@ -1586,7 +1586,6 @@ fn is_simple_match_pattern(pattern: Expr<'_>) -> bool {
         | ExprTag::False
         | ExprTag::Number
         | ExprTag::BigInt
-        | ExprTag::Decimal
         | ExprTag::String => true,
         ExprTag::Unary => pattern.unary_op() != Some(UnOp::Void),
         _ => false,

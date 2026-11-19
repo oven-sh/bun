@@ -61,7 +61,6 @@ impl PreferLiteralEnumMember {
                 | ExprKind::True
                 | ExprKind::False
                 | ExprKind::Null
-                | ExprKind::Decimal(_)
                 | ExprKind::Regex(_) => true,
                 ExprKind::Template(template) => template.exprs().is_empty(),
                 ExprKind::Unary {

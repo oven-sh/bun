@@ -147,7 +147,6 @@ impl<'f> Expander<'f, '_> {
             | ExprKind::Number(_)
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
-            | ExprKind::Decimal(_)
             | ExprKind::Regex(_) => {
                 self.push(b" ");
                 self.push(e.text());

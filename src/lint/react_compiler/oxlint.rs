@@ -808,7 +808,6 @@ fn creates_object(node: Node) -> bool {
                 | ExprTag::Object
                 | ExprTag::Jsx
                 | ExprTag::TaggedTemplate
-                | ExprTag::Decimal
                 | ExprTag::Regex
         ),
         _ => false,

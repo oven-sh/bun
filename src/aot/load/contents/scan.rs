@@ -154,7 +154,6 @@ impl ContentsScan<'_, '_> {
             | ExprKind::Number(_)
             | ExprKind::BigInt(_)
             | ExprKind::Regex { .. }
-            | ExprKind::Decimal(_)
             | ExprKind::TaggedTemplate(_)
             | ExprKind::Array(_)
             | ExprKind::Fn(_)

@@ -205,7 +205,7 @@ pub(super) fn compile(
             flags: destination.flags,
             runtime_options: RuntimeOptions {
                 jit_policy: compile_options.jit_policy,
-                uses_decimal: bun_ast::E::Decimal::is_enabled(),
+                decimal: bun_core::decimal_options::DecimalOptions::of_process(),
             },
             assets: &compile_options.assets,
             metafiles: [&metafiles[0], &metafiles[1]],

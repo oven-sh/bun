@@ -91,7 +91,6 @@ impl<'a> Node<'a> {
                 | ExprKind::Number(_)
                 | ExprKind::String(_)
                 | ExprKind::BigInt(_)
-                | ExprKind::Decimal(_)
                 | ExprKind::Regex(_)
                 | ExprKind::ImportMeta
                 | ExprKind::NewTarget => {}

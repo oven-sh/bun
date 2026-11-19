@@ -458,7 +458,6 @@ impl<'c, 'p, 's> Writer<'_, 'c, 'p, 's> {
             | ExprKind::False
             | ExprKind::BigInt(_)
             | ExprKind::Regex { .. }
-            | ExprKind::Decimal(_)
             | ExprKind::Template { .. }
             | ExprKind::Class(_)
             | ExprKind::Unary { .. }

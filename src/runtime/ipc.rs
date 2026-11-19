@@ -1,6 +1,7 @@
 use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
+use std::collections::VecDeque;
 
 use bun_jsc::JsCell;
 use bun_ptr::RefPtr;
@@ -896,7 +897,7 @@ const MAX_WRITE_LEN: usize = i32::MAX as usize;
 pub(crate) struct SendQueue {
     ref_count: Cell<u32>,
     root: Cell<Option<core::ptr::NonNull<SendQueue>>>,
-    pub(crate) queue: JsCell<Vec<SendHandle>>,
+    pub(crate) queue: JsCell<VecDeque<SendHandle>>,
     pub(crate) waiting_for_ack: JsCell<Option<SendHandle>>,
 
     pub(crate) retry_count: Cell<u32>,
@@ -1022,7 +1023,7 @@ impl SendQueue {
         let this = RefPtr::new(Self {
             ref_count: Cell::new(1),
             root: Cell::new(None),
-            queue: JsCell::new(Vec::new()),
+            queue: JsCell::new(VecDeque::new()),
             waiting_for_ack: JsCell::new(None),
             retry_count: Cell::new(0),
             keep_alive: KeepAlive::default(),
@@ -1261,7 +1262,7 @@ impl SendQueue {
                 }
                 handle_oom(last.data.write(&payload.list));
             } else {
-                queue.push(SendHandle {
+                queue.push_back(SendHandle {
                     data: payload,
                     handle,
                     callbacks: CallbackList::init(callback),
@@ -1408,7 +1409,19 @@ impl SendQueue {
         }
     }
 
-    fn continue_send(&self, global: &JSGlobalObject, reason: ContinueSendReason) {
+    fn continue_send(&self, global: &JSGlobalObject, mut reason: ContinueSendReason) {
+        while let Some(next) = self.send_next(global, reason) {
+            reason = next;
+        }
+        self.update_ref(global);
+    }
+
+    /// Returns the reason to go on with the next item, if there is one.
+    fn send_next(
+        &self,
+        global: &JSGlobalObject,
+        reason: ContinueSendReason,
+    ) -> Option<ContinueSendReason> {
         log!(
             "IPC continueSend: {}",
             match reason {
@@ -1419,8 +1432,7 @@ impl SendQueue {
         self.debug_log_message_queue();
 
         if self.write_in_progress.get() {
-            self.update_ref(global);
-            return; // write in progress
+            return None;
         }
 
         enum Next {
@@ -1430,7 +1442,7 @@ impl SendQueue {
         }
         let waiting_for_ack = self.waiting_for_ack.get().is_some();
         let next = self.queue.with_mut(|queue| {
-            let Some(first) = queue.first() else {
+            let Some(first) = queue.front() else {
                 return Next::Nothing; // nothing to send
             };
             if waiting_for_ack && !first.is_ack_nack() {
@@ -1445,7 +1457,7 @@ impl SendQueue {
             let to_send_len = first.data.list.len() - first.data.cursor;
             if to_send_len == 0 {
                 // item's length is 0, remove it and continue sending. this should rarely (never?) happen.
-                return Next::EmptyItem(queue.remove(0));
+                return queue.pop_front().map_or(Next::Nothing, Next::EmptyItem);
             }
             Next::Send(if first.data.cursor == 0 {
                 first.handle.as_ref().map(Handle::fd)
@@ -1458,32 +1470,30 @@ impl SendQueue {
                 if self.close_after_flush.get() && !waiting_for_ack && self.queue.get().is_empty() {
                     self.close_socket_next_tick(true);
                 }
-                self.update_ref(global);
+                None
             }
             Next::EmptyItem(itm) => {
                 itm.complete(global); // call the callback & deinit
                 log!("IPC call continueSend() from empty item");
-                self.continue_send(global, reason);
+                Some(reason)
             }
             Next::Send(fd) => {
                 debug_assert!(!self.write_in_progress.get());
                 self.write_in_progress.set(true);
-                self.write(fd);
-                // the write is queued. this._onWriteComplete() will be called when the write completes.
-                self.update_ref(global);
+                self.write(fd).then_some(ContinueSendReason::OnWritable)
             }
         }
     }
 
-    fn on_write_complete(&self, n: i32) {
+    /// Returns whether to write on.
+    fn on_write_complete(&self, n: i32) -> bool {
         log!("SendQueue#_onWriteComplete {}", n);
         self.debug_log_message_queue();
         if !self.write_in_progress.get() || self.queue.get().is_empty() {
             debug_assert!(false);
-            return;
+            return false;
         }
         self.write_in_progress.set(false);
-        let global_this = self.get_global_this();
 
         enum Done {
             AwaitAck,
@@ -1503,19 +1513,19 @@ impl SendQueue {
                 if first.handle.is_some() {
                     // the message was fully written, but it had a handle.
                     // we must wait for ACK or NACK before sending any more messages.
-                    let item = queue.remove(0);
+                    let item = queue.pop_front();
                     self.waiting_for_ack.with_mut(|w| {
                         if w.is_some() {
                             log!("[error] already waiting for ack. this should never happen.");
                         }
                         // shift the item off the queue and move it to waiting_for_ack
-                        *w = Some(item);
+                        *w = item;
                     });
                     Done::AwaitAck
                 } else {
                     // the message was fully sent, but there may be more items in the queue.
                     // shift the queue and try to send the next item immediately.
-                    Done::Completed(queue.remove(0))
+                    queue.pop_front().map_or(Done::Error, Done::Completed)
                 }
             } else if written > 0 && written < to_send_len {
                 // the item was partially sent; update the cursor and wait for writable to send the rest
@@ -1534,24 +1544,20 @@ impl SendQueue {
             }
         });
         match done {
-            Done::AwaitAck => {
-                self.continue_send(&global_this, ContinueSendReason::OnWritable);
-            }
+            Done::AwaitAck => true,
             Done::Completed(item) => {
-                item.complete(&global_this); // call the callback & deinit
-                self.continue_send(&global_this, ContinueSendReason::OnWritable);
+                item.complete(&self.get_global_this()); // call the callback & deinit
+                true
             }
-            Done::Capped => {
-                // The transport accepted all `MAX_WRITE_LEN` bytes, so it won't send a writable event.
-                self.continue_send(&global_this, ContinueSendReason::OnWritable);
-            }
-            Done::Partial | Done::NoProgress => {}
+            // The transport accepted all `MAX_WRITE_LEN` bytes, so it won't send a writable event.
+            Done::Capped => true,
+            Done::Partial | Done::NoProgress => false,
             Done::Error => {
                 // error. close socket.
                 self.close_socket(CloseReason::Failure, CloseFrom::User);
+                false
             }
         }
-        self.update_ref(&global_this);
     }
 
     pub(crate) fn write_version_packet(&self, global: &JSGlobalObject) {
@@ -1563,7 +1569,7 @@ impl SendQueue {
         let bytes = get_version_packet(self.mode);
         if !bytes.is_empty() {
             self.queue.with_mut(|queue| {
-                queue.push(SendHandle {
+                queue.push_back(SendHandle {
                     data: StreamBuffer::default(),
                     handle: None,
                     callbacks: CallbackList::None,
@@ -1659,8 +1665,8 @@ impl SendQueue {
     /// starts a write request. on posix, this always calls _onWriteComplete immediately. on windows, it may
     /// call _onWriteComplete later.
     ///
-    /// The outbound bytes are read from `queue[0]` *inside* this method.
-    fn write(&self, fd: Option<Fd>) {
+    /// The outbound bytes are read from `queue[0]` *inside* this method. Returns whether to write on.
+    fn write(&self, fd: Option<Fd>) -> bool {
         #[cfg(windows)]
         {
             let _ = fd;
@@ -1668,8 +1674,7 @@ impl SendQueue {
                 pipe.ref_(); // ref on write
                 pipe.as_stream()
             }) else {
-                self.on_write_complete(-1);
-                return;
+                return self.on_write_complete(-1);
             };
 
             let write_req_slice: Box<[u8]> = self.queue.with_mut(|queue| {
@@ -1708,16 +1713,16 @@ impl SendQueue {
                 if self.windows.get().try_close_after_write {
                     self.close_socket(CloseReason::Normal, CloseFrom::User);
                 }
-                return;
+                return false;
             }
             // write request is queued. it will call _onWriteComplete when it completes.
             (self.windows).with_mut(|w| w.windows_write = Some(write_req.into_raw()));
+            false
         }
         #[cfg(not(windows))]
         {
             let Some(socket) = self.get_socket() else {
-                self.on_write_complete(-1);
-                return;
+                return self.on_write_complete(-1);
             };
             let n: i32 = self.queue.with_mut(|queue| {
                 let first = &queue[0];
@@ -1730,7 +1735,7 @@ impl SendQueue {
                     socket.write(data)
                 }
             });
-            self.on_write_complete(n);
+            self.on_write_complete(n)
         }
     }
 
@@ -1758,7 +1763,12 @@ impl SendQueue {
         } else {
             i32::try_from(write_len).expect("int cast")
         };
-        this.on_write_complete(n);
+        let global = this.get_global_this();
+        if this.on_write_complete(n) {
+            this.continue_send(&global, ContinueSendReason::OnWritable);
+        } else {
+            this.update_ref(&global);
+        }
 
         if this.windows.get().try_close_after_write {
             this.close_socket(CloseReason::Normal, CloseFrom::User);

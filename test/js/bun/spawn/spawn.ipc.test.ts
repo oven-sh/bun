@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick, isDebug, isLinux, isWindows, tempDir } from "harness";
 import path from "path";
 
 // The receiver rejects a JSON line that's longer than the UTF-8 encoding of a max-length string can be.
@@ -695,5 +695,24 @@ describe.concurrent("the send queue", () => {
       `,
     );
     expect(result).toEqual({ stdout: ["a", "b", "c"], stderr: "", exitCode: 0 });
+  });
+
+  // The child uses descriptor 3 directly. Windows frames what goes through its pipe.
+  it.skipIf(isWindows)("writes a long backlog of replies without overflowing the stack", async () => {
+    const count = isDebug ? 4_000 : 100_000;
+    const result = await runPair(
+      `await spawnChild({ ipc: () => fs.writeFileSync("queued", "") }).exited;`,
+      `
+        // Each announces a handle that does not come, and is answered with a NACK.
+        write(Buffer.alloc(${count} * 22, '{"cmd":"NODE_HANDLE"}\\n'));
+        write('"last"\\n');
+        until("queued");
+        const buffer = Buffer.alloc(1 << 20);
+        let total = 0;
+        for (let n = 1; n && total < ${count} * 27; total += n) n = retry(() => fs.readSync(3, buffer));
+        console.log("replies", total / 27);
+      `,
+    );
+    expect(result).toEqual({ stdout: [`replies ${count}`], stderr: "", exitCode: 0 });
   });
 });

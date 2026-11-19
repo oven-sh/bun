@@ -1811,6 +1811,34 @@ describe.skipIf(!isLinux).concurrent("Bun.write() to a pipe that is full", () =>
     return file;
   }
 
+  // EPOLLERR
+  it("rejects with EPIPE when the reader leaves", async () => {
+    using dir = tempDir("bun-write-pipe", {});
+    using fifo = openFifo(String(dir));
+    const write = Bun.write(knownPipe(fifo.writer), data).catch(({ code, syscall }) => ({ code, syscall }));
+    await untilWatched(fifo.writer);
+    fifo.close(fifo.reader);
+    expect(await write).toEqual({ code: "EPIPE", syscall: "write" });
+  });
+
+  it("rejects with EPIPE when the reader leaves after it has read some", async () => {
+    using dir = tempDir("bun-write-pipe", {});
+    using fifo = openFifo(String(dir));
+    const write = Bun.write(knownPipe(fifo.writer), data).catch(({ code, syscall }) => ({ code, syscall }));
+    await untilWatched(fifo.writer);
+    const page = Buffer.alloc(65536);
+    for (let read = 0; read < 3 * page.length;) {
+      try {
+        read += fs.readSync(fifo.reader, page);
+      } catch (error) {
+        if (error.code !== "EAGAIN") throw error;
+      }
+    }
+    await untilWatched(fifo.writer);
+    fifo.close(fifo.reader);
+    expect(await write).toEqual({ code: "EPIPE", syscall: "write" });
+  });
+
   // The capacity of a pipe is fixed on Linux.
   it("waits for room after the last byte", async () => {
     using dir = tempDir("bun-write-pipe", {});

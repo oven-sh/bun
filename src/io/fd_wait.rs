@@ -212,12 +212,13 @@ enum Slot {
 type Slots = BTreeMap<Key, Slot>;
 
 /// IO thread: the kernel reported `key`.
-fn fire(key: Key, outcome: sys::Result<()>) {
+fn fire(key: Key, outcome: impl FnOnce(Fd, Interest) -> sys::Result<()>) {
     let mut slots = key.slots();
     match slots.remove(&key) {
         Some(Slot::Armed(interest, fd, resume)) => {
             drop(slots);
             let fd = fd.fired();
+            let outcome = outcome(fd.get(), interest);
             FdWait { key, interest, fd }.wake(outcome, resume);
         }
         Some(Slot::Cancelled) => drop(slots.insert(key, Slot::Cancelled)),
@@ -422,14 +423,27 @@ impl Poller {
                 e => bun_core::Output::panic(format_args!("epoll_wait: {:?}", e)),
             }
             for event in &events[..rc as usize] {
-                // EPOLLERR carries no errno, and reading SO_ERROR would clear it on the caller's socket.
-                let outcome = match event.events & EPOLL::ERR {
-                    0 => Ok(()),
-                    _ => Err(sys::Error::from_code(E::SUCCESS, sys::Tag::epoll_ctl)),
-                };
-                fire(Key(event.u64), outcome);
+                fire(Key(event.u64), |fd, interest| {
+                    match event.events & EPOLL::ERR {
+                        0 => Ok(()),
+                        _ => Err(pending_error(fd, interest)),
+                    }
+                });
             }
         }
+    }
+}
+
+/// EPOLLERR carries no errno, and reading SO_ERROR would clear it on the caller's socket.
+#[cfg(any(all(not(test), target_os = "linux"), target_os = "android"))]
+#[cold]
+fn pending_error(fd: Fd, interest: Interest) -> sys::Error {
+    if matches!(interest, Interest::Writable)
+        && sys::fstat(fd).is_ok_and(|stat| sys::S::ISFIFO(stat.st_mode as _))
+    {
+        sys::Error::from_code(E::EPIPE, sys::Tag::write)
+    } else {
+        sys::Error::from_code(E::SUCCESS, sys::Tag::epoll_ctl)
     }
 }
 
@@ -542,7 +556,7 @@ impl Poller {
                 .unwrap_or_else(|err| bun_core::Output::panic(format_args!("{err}")));
             for event in &events[..count] {
                 if event.filter != libc::EVFILT_USER {
-                    fire(Key(event.udata.addr() as u64), Ok(()));
+                    fire(Key(event.udata.addr() as u64), |_, _| Ok(()));
                 }
             }
         }
@@ -613,7 +627,7 @@ mod tests {
     }
 
     fn ready(key: Key) {
-        fire(key, Ok(()));
+        fire(key, |_, _| Ok(()));
         WorkPool::run();
     }
 
@@ -673,7 +687,7 @@ mod tests {
         let (wait, mut canceller) = new(1001);
         let key = wait.key;
         let ended = park(wait, 2);
-        fire(key, Ok(()));
+        fire(key, |_, _| Ok(()));
         canceller.cancel();
         ready(key);
         assert_eq!(all(ended), [E::ECANCELED]);
@@ -719,7 +733,9 @@ mod tests {
         let (wait, _canceller) = new(1005);
         let key = wait.key;
         let ended = park(wait, 2);
-        fire(key, Err(sys::Error::from_code(E::EPIPE, sys::Tag::write)));
+        fire(key, |_, _| {
+            Err(sys::Error::from_code(E::EPIPE, sys::Tag::write))
+        });
         WorkPool::run();
         assert_eq!(all(ended), [E::EPIPE]);
     }

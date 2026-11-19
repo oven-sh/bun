@@ -3,6 +3,7 @@ use std::borrow::Cow;
 
 use crate::Error;
 use crate::bun_fs as fs;
+use crate::bundle_v2::FileMap;
 use bun_alloc::AstAlloc;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
 use bun_ast::{Loc, Log, Range, Source};
@@ -56,14 +57,21 @@ pub(crate) struct HTMLScanner<'a> {
     pub import_records: Vec<ImportRecord<'static>>,
     pub log: &'a mut Log,
     pub source: &'a Source<'a>,
+    /// The in-memory files of `Bun.build({ files })`.
+    file_map: Option<&'a FileMap>,
 }
 
 impl<'a> HTMLScanner<'a> {
-    pub(crate) fn init(log: &'a mut Log, source: &'a Source<'a>) -> HTMLScanner<'a> {
+    pub(crate) fn init(
+        log: &'a mut Log,
+        source: &'a Source<'a>,
+        file_map: Option<&'a FileMap>,
+    ) -> HTMLScanner<'a> {
         HTMLScanner {
             import_records: Vec::new(),
             log,
             source,
+            file_map,
         }
     }
 }
@@ -151,8 +159,8 @@ impl Iterator for SrcsetUrls<'_> {
 }
 
 impl<'a> HTMLScanner<'a> {
-    /// The file that an optional `url` names, as written and then without its `?query#fragment`: relative to the page or, with a leading `/`, to the project root.
-    fn file_on_disk(&self, url: &[u8]) -> Option<Vec<u8>> {
+    /// The file that an optional `url` names, as written and then without its `?query#fragment`: an in-memory file, or a file on disk relative to the page or, with a leading `/`, to the project root.
+    fn file_of(&self, url: &[u8]) -> Option<Vec<u8>> {
         let (dir, rooted) = match url {
             [b'/', ..] => (fs::FileSystem::get().top_level_dir(), 1),
             _ => (
@@ -166,6 +174,13 @@ impl<'a> HTMLScanner<'a> {
             .into_iter()
             .take(if without_suffix == url.len() { 1 } else { 2 })
             .find_map(|end| {
+                // The record keeps the URL, so that the bundler finds the in-memory file as it does for any other import.
+                if self
+                    .file_map
+                    .is_some_and(|files| files.has(self.source.path.text(), &url[..end]))
+                {
+                    return Some(url[..end].to_vec());
+                }
                 // A URL of any length: a path that does not fit in the buffer names no file.
                 let mut file = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
                     dir,
@@ -194,7 +209,7 @@ impl<'a> HTMLScanner<'a> {
         optional: bool,
     ) -> Result<(), Error> {
         if optional {
-            let file = self.file_on_disk(url);
+            let file = self.file_of(url);
             if file.is_none() {
                 self.log.add_warning_fmt(
                     Some(self.source),
@@ -301,8 +316,9 @@ impl<'a> HTMLScanner<'a> {
 pub fn scan_import_records(
     log: &mut Log,
     source: &Source,
+    file_map: Option<&FileMap>,
 ) -> Result<Vec<ImportRecord<'static>>, Error> {
-    let mut scanner = HTMLScanner::init(log, source);
+    let mut scanner = HTMLScanner::init(log, source, file_map);
     scanner.scan(&source.contents)?;
     Ok(scanner.import_records)
 }

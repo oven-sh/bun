@@ -1015,15 +1015,23 @@ pub mod bv2_impl {
                     source_file: &[u8],
                     specifier: &[u8],
                 ) -> Option<bun_resolver::Result<'b>> {
+                    let key = self.find_key(source_file, specifier)?;
+                    Some(Self::result_for_key(arena.alloc_slice_copy(key)))
+                }
+
+                /// Whether `resolve` finds a file for `specifier`.
+                pub(crate) fn has(&self, source_file: &[u8], specifier: &[u8]) -> bool {
+                    self.find_key(source_file, specifier).is_some()
+                }
+
+                fn find_key(&self, source_file: &[u8], specifier: &[u8]) -> Option<&[u8]> {
                     if self.map.is_empty() {
                         return None;
                     }
 
-                    let dupe = |key: &[u8]| -> &'b [u8] { arena.alloc_slice_copy(key) };
-
                     // Direct key match. Return the map-owned key, not the parameter.
                     if let Some((key, _)) = self.get_key_value(specifier) {
-                        return Some(Self::result_for_key(dupe(key)));
+                        return Some(key);
                     }
 
                     // Also try joining a relative specifier against the importer's
@@ -1088,7 +1096,7 @@ pub mod bv2_impl {
                         }
                         let joined = &buf[0..joined_len];
                         if let Some((key, _)) = self.map.get_key_value(joined) {
-                            return Some(Self::result_for_key(dupe(key.as_ref())));
+                            return Some(key.as_ref());
                         }
                     }
 

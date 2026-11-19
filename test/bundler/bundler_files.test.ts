@@ -990,4 +990,68 @@ describe("bundler files option", () => {
     const script = result.outputs.find(output => output.path.endsWith(".js"))!;
     expect(await script.text()).not.toContain("// @bun");
   });
+
+  // `rel="shortcut icon"`, `og:image` and other optional URLs are followed only when their file
+  // exists. A file in `files` exists, and it wins over a file of the same name on disk.
+  test("an optional URL of an html page names a file in files", async () => {
+    using dir = tempDir("files-html-optional-url", {
+      "index.html": `<!doctype html><html><head>
+<link rel="icon" href="./required.png">
+<link rel="shortcut icon" href="./optional.png">
+<meta property="og:image" content="./optional.png?v=2">
+<link rel="mask-icon" href="./on-disk.svg">
+<link rel="apple-touch-startup-image" href="./missing.png">
+</head><body></body></html>`,
+      "on-disk.svg": "<svg>from disk</svg>",
+    });
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.html`],
+      outdir: `${dir}/out`,
+      files: {
+        [`${dir}/required.png`]: "required, from files",
+        [`${dir}/optional.png`]: "optional, from files",
+        [`${dir}/on-disk.svg`]: "<svg>from files</svg>",
+      },
+    });
+
+    expect(result.logs.map(log => [log.level, log.message])).toEqual([
+      ["warn", `Could not resolve: "./missing.png". The URL stays as written.`],
+    ]);
+    const html = await Bun.file(`${dir}/out/index.html`).text();
+    const urls = [...html.matchAll(/ (?:href|content)="([^"]*)"/g)].map(m => m[1]);
+    expect(urls).toEqual([
+      expect.stringMatching(/^\.\/required-\w+\.png$/),
+      expect.stringMatching(/^\.\/optional-\w+\.png$/),
+      expect.stringMatching(/^\.\/optional-\w+\.png\?v=2$/),
+      expect.stringMatching(/^\.\/on-disk-\w+\.svg$/),
+      "./missing.png",
+    ]);
+    const output = (url: string) => Bun.file(`${dir}/out/${url.replace(/\?.*/, "")}`).text();
+    expect(await Promise.all(urls.slice(0, 4).map(output))).toEqual([
+      "required, from files",
+      "optional, from files",
+      "optional, from files",
+      "<svg>from files</svg>",
+    ]);
+  });
+
+  test("an optional URL of an html page in files names a file in files", async () => {
+    const result = await Bun.build({
+      entrypoints: ["/app/index.html"],
+      files: {
+        "/app/index.html": `<!doctype html><link rel="shortcut icon" href="./favicon.ico"><meta property="og:image" content="/app/og.png">`,
+        "/app/favicon.ico": "icon, from files",
+        "/app/og.png": "og, from files",
+      },
+    });
+
+    expect(result.logs).toEqual([]);
+    const texts = await Promise.all(
+      result.outputs.filter(output => !/\.(html|js)$/.test(output.path)).map(output => output.text()),
+    );
+    expect(texts.sort()).toEqual(["icon, from files", "og, from files"]);
+    const html = await result.outputs.find(output => output.path.endsWith(".html"))!.text();
+    expect(html).not.toContain(`"./favicon.ico"`);
+    expect(html).not.toContain(`"/app/og.png"`);
+  });
 });

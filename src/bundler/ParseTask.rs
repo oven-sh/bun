@@ -792,6 +792,7 @@ pub mod parse_worker {
         unique_key_for_additional_file: &mut FileLoaderHash,
         has_any_css_locals: &AtomicU32,
         stylesheet: &mut Option<Box<bun_css::BundlerStyleSheet<'static>>>,
+        file_map: Option<&bundler::FileMap>,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
         use core::fmt::Write as _;
 
@@ -1186,7 +1187,7 @@ pub mod parse_worker {
                 ));
             }
             Loader::Html => {
-                let import_records = scan_import_records(log, source)?;
+                let import_records = scan_import_records(log, source, file_map)?;
 
                 // Reuse existing code for creating the AST
                 // because it handles the various Ref and other structs we
@@ -2493,6 +2494,7 @@ pub mod parse_worker {
                     &mut unique_key_for_additional_file,
                     &task_ctx.has_any_css_locals,
                     &mut stylesheet,
+                    task_ctx.file_map,
                 )
             } else if loader.is_css() {
                 get_empty_css_ast(log, transpiler, opts, bump, source, &mut stylesheet)

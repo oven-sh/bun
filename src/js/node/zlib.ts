@@ -537,8 +537,9 @@ function processChunk(self: $Node.ZlibBase, chunk: View, flushFlag: number, cb: 
   const handle = self._handle;
   if (!handle) return process.nextTick(cb);
 
-  if (chunk.byteLength > kMaxWriteLength) {
-    const bytes = new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+  const { byteLength } = chunk;
+  if (byteLength > kMaxWriteLength) {
+    const bytes = new Uint8Array(chunk.buffer, chunk.byteOffset, byteLength);
     const rest = () => {
       const hasEndedEarly = self._writeState[1] > 0;
       if (hasEndedEarly) cb();
@@ -550,7 +551,7 @@ function processChunk(self: $Node.ZlibBase, chunk: View, flushFlag: number, cb: 
   handle.buffer = chunk;
   handle.cb = cb;
   handle.availOutBefore = self._chunkSize - self._outOffset;
-  handle.availInBefore = chunk.byteLength;
+  handle.availInBefore = byteLength;
   handle.inOff = 0;
   handle.flushFlag = flushFlag;
 

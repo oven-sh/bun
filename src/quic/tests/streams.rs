@@ -535,6 +535,58 @@ fn urgent_streams_go_first() {
     assert_eq!(turns(&mut raw), expected);
 }
 
+/// With a stream that has sent `len` bytes, and has more.
+fn sending(has_priorities: bool, len: usize) -> Raw {
+    let raw = Raw::client().config(|it| it.has_priorities = has_priorities);
+    let mut raw = raw.with("max_stream_data_uni=9000000").connected();
+    let id = raw.peer.open(Unidirectional);
+    raw.peer.send(id, &filler(0, 4 * len), true);
+    while raw.streams.get(&id).is_none_or(|it| it.len() < len) {
+        raw.forget();
+        raw.advance(RTT);
+        raw.send("ack");
+    }
+    raw.forget();
+    raw
+}
+
+fn ids(turns: Vec<(u64, u64)>) -> Vec<u64> {
+    turns.into_iter().map(|it| it.0).collect()
+}
+
+#[test]
+fn short_streams_pass_long_ones() {
+    for (has_priorities, len, expected) in [
+        (false, 140_000, [7, 11, 3]),
+        (true, 140_000, [3, 7, 11]),
+        (true, 1_100_000, [7, 11, 3]),
+    ] {
+        let mut raw = sending(has_priorities, len);
+        for _ in 0..2 {
+            let id = raw.peer.open(Unidirectional);
+            raw.peer.send(id, &filler(0, 8_000), true);
+        }
+        raw.advance(RTT);
+        raw.send("ack");
+        assert_eq!(ids(turns(&mut raw)), expected, "{has_priorities} {len}");
+    }
+}
+
+#[test]
+fn long_streams_are_not_passed_for_ever() {
+    for (has_priorities, expected) in [(false, 7), (true, 9)] {
+        let mut raw = sending(has_priorities, 1_100_000);
+        for _ in 0..20 {
+            let id = raw.peer.open(Unidirectional);
+            raw.peer.send(id, &filler(0, 8_000), true);
+        }
+        raw.advance(RTT);
+        raw.send("ack");
+        let passed_by = ids(turns(&mut raw)).iter().position(|&it| it == 3);
+        assert_eq!(passed_by, Some(expected));
+    }
+}
+
 #[test]
 fn streams_of_a_client_take_turns_unless_one_is_more_urgent() {
     let raw = Raw::server().config(|it| it.has_priorities = true);

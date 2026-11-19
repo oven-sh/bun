@@ -23,7 +23,8 @@ const MAX_EARLY_PRIORITIES: usize = 128;
 impl Streams {
     pub(super) fn start_http3(&mut self, config: &Http3Config, side: Side) -> Option<Box<Http3>> {
         let ids = preambles(config, side).map(|(kind, preamble)| {
-            let (id, stream) = self.table.open(Direction::Unidirectional, Some(kind))?;
+            let (id, stream) =
+                (self.table).open(Direction::Unidirectional, Some(kind), &self.state)?;
             self.state.write(id, stream, &[&preamble]);
             Some(id)
         });

@@ -47,7 +47,7 @@ impl Connection {
         if !self.may_open(direction) {
             return None;
         }
-        let (id, stream) = self.streams.table.open(direction, None)?;
+        let (id, stream) = (self.streams.table).open(direction, None, &self.streams.state)?;
         stream.context = context;
         Some(id)
     }

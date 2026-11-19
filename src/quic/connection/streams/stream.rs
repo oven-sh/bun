@@ -67,6 +67,8 @@ pub(crate) struct Stream {
     pub(super) send_limit: u64,
     /// The limit that STREAM_DATA_BLOCKED has been sent for.
     pub(super) blocked_at: Option<u64>,
+    /// The turn in which it was opened.
+    pub(super) first_turn: u64,
     /// Up to where it is this stream's turn to send.
     pub(super) turn_end: u64,
     pub(crate) write_round: u64,
@@ -104,6 +106,7 @@ impl Stream {
             send: SendBuffer::default(),
             send_limit,
             blocked_at: None,
+            first_turn: 0,
             turn_end: 0,
             write_round: 0,
             reset_code: 0,

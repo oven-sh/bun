@@ -446,6 +446,7 @@ impl Table {
         &mut self,
         direction: Direction,
         kind: Option<StreamType>,
+        state: &State,
     ) -> Option<(StreamId, &mut Stream)> {
         let role = kind.map_or_else(|| self.application_role(direction), Role::Typed);
         let side = self.side;
@@ -461,7 +462,7 @@ impl Table {
             stream.flags.insert(Flags::READ_DONE);
             stream.final_size = 0;
         }
-        Some((id, self.insert(id, stream)))
+        Some((id, self.insert(id, stream, state)))
     }
 
     fn open_remote(&mut self, id: StreamId, state: &mut State) -> Result {
@@ -486,7 +487,7 @@ impl Table {
         flags.set(Flags::RELEASED, is_unwanted);
         let counts = self.counts(id.direction());
         let stream = Stream::new(role, flags, counts.remote_send, counts.remote_receive);
-        let stream = self.insert(id, stream);
+        let stream = self.insert(id, stream, state);
         match stream.role {
             Role::Message(_) if is_unwanted => {
                 state.abort(id, stream, http3_code::REQUEST_REJECTED);
@@ -500,7 +501,8 @@ impl Table {
         Ok(())
     }
 
-    fn insert(&mut self, id: StreamId, mut stream: Stream) -> &mut Stream {
+    fn insert(&mut self, id: StreamId, mut stream: Stream, state: &State) -> &mut Stream {
+        stream.first_turn = state.turns;
         if stream.is_internal() {
             stream.flags.insert(Flags::RELEASED);
         }

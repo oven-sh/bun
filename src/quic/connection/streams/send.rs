@@ -18,8 +18,11 @@ const TURN_LEN: u64 = 16 * 1024;
 const BULK_HANDICAP: u64 = 8;
 const BULK_LEN: u64 = 128 * 1024;
 const LITTLE: u64 = 2 * 1024;
-/// The part of a rank that tells streams of the same priority apart.
-const ORDER_BITS: u32 = 59;
+/// After how much a response that is not incremental takes turns all the same (RFC 9218 §10).
+const IN_ORDER_LEN: u64 = 1024 * 1024;
+/// The bits of a rank between those for the urgency and for whether the stream takes turns.
+const TURN_BITS: u64 = (1 << URGENCY_SHIFT) - 2;
+const URGENCY_SHIFT: u32 = 60;
 /// A type and three integers.
 const MAX_OWED_FRAME_LEN: usize = 25;
 
@@ -153,12 +156,12 @@ impl State {
         self.report_blocked(id, stream);
         if stream.mark(Flags::IN_WRITABLE) {
             self.turns += 1;
-            let rank = self.rank(id, stream, self.turns);
+            let entry = (self.rank(stream), id);
             let at = match self.writable.back() {
-                Some(last) if last.0 > rank => self.writable.partition_point(|it| it.0 < rank),
+                Some(last) if *last > entry => self.writable.partition_point(|it| *it < entry),
                 _ => self.writable.len(),
             };
-            self.writable.insert(at, (rank, id));
+            self.writable.insert(at, entry);
             self.is_write_round_over = false;
         }
     }
@@ -185,18 +188,20 @@ impl State {
 
     /// Less goes first.
     #[inline]
-    fn rank(&self, id: StreamId, stream: &Stream, turn: u64) -> u64 {
+    fn rank(&self, stream: &Stream) -> u64 {
         if stream.is_internal() {
             return 0;
         }
-        let takes_turns = !self.sends_in_order || stream.priority.is_incremental;
-        let class = 2 * u64::from(stream.priority.urgency) + u64::from(takes_turns) + 1;
-        let is_bulk = stream.send.sent() >= BULK_LEN && stream.send.unsent_len() > LITTLE;
-        let order = match takes_turns {
-            true => turn + u64::from(is_bulk) * BULK_HANDICAP,
-            false => id.index(),
+        let is_past = |len| stream.send.sent() >= len && stream.send.unsent_len() > LITTLE;
+        let takes_turns =
+            !self.sends_in_order || stream.priority.is_incremental || is_past(IN_ORDER_LEN);
+        let turn = match takes_turns {
+            true => self.turns + u64::from(is_past(BULK_LEN)) * BULK_HANDICAP,
+            false => stream.first_turn,
         };
-        class << ORDER_BITS | order & ((1 << ORDER_BITS) - 1)
+        (u64::from(stream.priority.urgency) + 1) << URGENCY_SHIFT
+            | turn << 1 & TURN_BITS
+            | u64::from(takes_turns)
     }
 
     #[inline]
@@ -204,8 +209,7 @@ impl State {
         if stream.mark(Flags::IN_SENDABLE) {
             self.turns += 1;
             stream.turn_end = stream.send.sent() + TURN_LEN;
-            let rank = self.rank(id, stream, self.turns);
-            self.sendable.push(Reverse((rank, id)));
+            self.sendable.push(Reverse((self.rank(stream), id)));
         }
     }
 
@@ -240,9 +244,9 @@ impl Streams {
         let mut sendable = core::mem::take(&mut state.sendable).into_vec();
         let mut writable = core::mem::take(&mut state.writable);
         for (rank, id) in (sendable.iter_mut().map(|it| &mut it.0)).chain(&mut writable) {
-            let new = table.get(*id).map(|it| state.rank(*id, it, state.turns));
+            let new = table.get(*id).map(|it| state.rank(it));
             *rank = new
-                .filter(|it| (it ^ *rank) >> ORDER_BITS != 0)
+                .filter(|it| (it ^ *rank) & !TURN_BITS != 0)
                 .unwrap_or(*rank);
         }
         writable.make_contiguous().sort_unstable();

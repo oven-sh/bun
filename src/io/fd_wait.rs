@@ -329,7 +329,7 @@ impl Idle {
             Self::Fired(_) => EPOLL::CTL_MOD,
         };
         match (poller.ctl(op, self.get(), events, key), self) {
-            (Err(err), this) => Err((this, err)),
+            (Err(err), this) => Err((this.forget(), err)),
             (Ok(()), Self::Fired(armed)) => Ok(armed),
             (Ok(()), Self::New(fd)) => Ok(Armed {
                 _entry: Entry(poller, fd.get()),
@@ -730,6 +730,23 @@ mod tests {
         assert!(entry(1002) == Some(key));
         ready(key);
         assert_eq!(all(ended), [E::SUCCESS]);
+    }
+
+    #[test]
+    fn a_job_whose_descriptor_was_reused_leaves_the_entry_of_the_next() {
+        let ((first, _first), (second, _second)) = (new(1006), new(1006));
+        let keys = (first.key, second.key);
+        let (sender, idle) = mpsc::channel();
+        first.park(move |woken| sender.send(woken.ok()).unwrap());
+        ready(keys.0);
+        ENTRIES.lock().remove(&1006);
+        let poller = IO.lock().poller().ok().unwrap();
+        let first = idle.recv().unwrap().unwrap();
+        first.arm(poller, Box::new(|woken| assert!(woken.is_err())));
+        second.arm(poller, Box::new(|woken| assert!(woken.is_ok())));
+        WorkPool::run();
+        assert!(entry(1006) == Some(keys.1));
+        ready(keys.1);
     }
 
     #[test]

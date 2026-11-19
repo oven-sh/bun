@@ -23,6 +23,7 @@ const DELIVERY_PERIOD: Duration = Duration::from_secs(30);
 /// One part in so many of what has been sent has to be acknowledged in a period.
 const DELIVERY_PARTS: u64 = 8;
 const PROBES: u8 = 2;
+const PROMPT_PROBE_TIMEOUTS: u32 = 2;
 const MAX_PTO_COUNT_IF_HEARD: u32 = 4;
 /// After how many timeouts in a row the size of the packets is suspected.
 const BLACK_HOLE_THRESHOLD: u32 = 2;
@@ -328,13 +329,12 @@ impl Connection {
         (timeout.max(MIN_PROBE_TIMEOUT) * (1 << self.pto_count.min(16))).min(MAX_PROBE_TIMEOUT)
     }
 
-    /// For the end of what there is to send. Acknowledgments are not delayed for more than a packet.
+    /// Acknowledgments are not usually delayed for more than a packet.
     #[inline]
     fn expects_prompt_ack(&self) -> bool {
-        self.pto_count == 0
+        self.pto_count < PROMPT_PROBE_TIMEOUTS
             && self.spaces.data.sent.packets.len() > 1
             && self.rtt.has_sample()
-            && !self.has_frames()
     }
 
     fn probe_time(&self, id: SpaceId, space: &Space) -> Instant {

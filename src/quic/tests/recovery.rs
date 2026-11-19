@@ -249,11 +249,11 @@ fn what_is_out_of_date_is_not_sent_again() {
 /// RFC 9002 §6.2.
 #[test]
 fn probe_timeout_backs_off() {
-    for (rtt, max_ack_delay, first) in [
-        (20, 25, 67_500),
-        (20, 0, 42_500),
-        (20, 1000, 1_042_500),
-        (0, 0, 10_000),
+    for (rtt, max_ack_delay, first, second) in [
+        (20, 25, 67_500, 80_000),
+        (20, 0, 42_500, 80_000),
+        (20, 1000, 1_042_500, 80_000),
+        (0, 0, 10_000, 20_000),
     ] {
         let raw = Raw::client().config(|it| {
             it.parameters.max_idle_timeout_millis = 0;
@@ -264,7 +264,10 @@ fn probe_timeout_backs_off() {
         for count in 0..70 {
             let start = raw.now;
             raw.wait();
-            let expected = (first << count.min(20)).min(60_000_000);
+            let expected = match count {
+                1 => second,
+                _ => (first << count.min(20)).min(60_000_000),
+            };
             assert_eq!(raw.now - start, Duration::from_micros(expected));
             assert_eq!(raw.frames(), "stream 3 0 a, ping");
         }
@@ -288,7 +291,7 @@ fn probe_timeout_backs_off_while_nothing_can_be_sent() {
 fn acknowledgment_ends_the_backoff() {
     let mut raw = Raw::client().connected();
     raw.request_packets("a");
-    for timeout in [67, 135] {
+    for timeout in [67, 80] {
         assert_eq!(raw.wait(), timeout);
         raw.forget();
     }
@@ -312,7 +315,7 @@ fn acknowledgment_of_acknowledgments_does_not_end_the_backoff() {
     raw.request_packets("b");
     raw.advance(30);
     raw.forget();
-    assert_eq!((lost, raw.wait()), (1, 22 + 135 - 30));
+    assert_eq!((lost, raw.wait()), (1, 22 + 80 - 30));
 }
 
 #[test]
@@ -351,7 +354,7 @@ fn probes_repeat_the_oldest_packets() {
     raw.wait();
     assert_eq!(
         raw.packets(),
-        "1[ack 0 +24375, stream 11 0 c, stream 3 0 a, stream 7 0 b]; 1[ack 0 +24375, ping]"
+        "1[ack 0 +17500, stream 11 0 c, stream 3 0 a, stream 7 0 b]; 1[ack 0 +17500, ping]"
     );
     let stats = raw.connection().stats();
     assert_eq!((stats.packets_lost, stats.packets_retransmitted), (0, 4));
@@ -372,16 +375,16 @@ fn what_a_probe_has_repeated_is_not_repeated_when_it_is_lost() {
 }
 
 #[test]
-fn end_of_a_flight_is_probed_sooner() {
-    for (rtt, max_ack_delay, first, second) in [
-        (20, 25, 40_000, 135_000),
-        (4, 25, 10_000, 67_000),
-        (4, 1, 10_000, 20_000),
+fn several_packets_are_probed_sooner() {
+    for (rtt, max_ack_delay, timeouts) in [
+        (20, 25, [40_000, 80_000, 270_000]),
+        (4, 25, [10_000, 20_000, 134_000]),
+        (4, 1, [10_000, 20_000, 40_000]),
     ] {
         let raw = Raw::client().with(&format!("max_ack_delay={max_ack_delay}"));
         let mut raw = raw.connected_over(rtt);
         raw.request_packets("ab");
-        for timeout in [first, second] {
+        for timeout in timeouts {
             let start = raw.now;
             raw.wait();
             raw.forget();
@@ -470,9 +473,10 @@ fn persistent_congestion() {
     for (algorithm, timeouts, ack, window) in [
         (Algorithm::Cubic, 1, "ack 3", INITIAL_WINDOW * 4 / 5),
         (Algorithm::Cubic, 2, "ack 5", INITIAL_WINDOW * 4 / 5),
-        (Algorithm::Cubic, 3, "ack 7", 2 * 1460),
-        (Algorithm::Cubic, 3, "ack 7 3", INITIAL_WINDOW * 4 / 5),
-        (Algorithm::Bbr, 3, "ack 7", 4 * 1460),
+        (Algorithm::Cubic, 3, "ack 7", INITIAL_WINDOW * 4 / 5),
+        (Algorithm::Cubic, 4, "ack 9", 2 * 1460),
+        (Algorithm::Cubic, 4, "ack 9 5", INITIAL_WINDOW * 4 / 5),
+        (Algorithm::Bbr, 4, "ack 9", 4 * 1460),
     ] {
         let mut raw = (Raw::client().config(|it| it.congestion = algorithm)).connected();
         raw.request_packets("a");
@@ -514,7 +518,7 @@ fn persistent_congestion_takes_three_probe_timeouts() {
         raw.now = start + Duration::from_micros(span);
         raw.request_packets("bcde");
         raw.advance(RTT);
-        raw.send("ack 7");
+        raw.send("ack 9");
         assert_eq!(raw.connection().stats().congestion_window, window);
     }
 }
@@ -554,7 +558,7 @@ fn window_and_pace() {
     raw.forget();
     raw.wait();
     let last = packets.last().unwrap().at;
-    assert_eq!(raw.now - last, Duration::from_micros(67_500));
+    assert_eq!(raw.now - last, Duration::from_millis(40));
     assert_eq!(raw.frames(), "stream 3 0 *1165, stream 3 1165 *1163");
 }
 

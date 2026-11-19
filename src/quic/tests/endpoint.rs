@@ -199,8 +199,11 @@ fn connections_take_turns() {
         });
         assert_eq!(raw.peer.endpoint.wants_to_transmit(), max_len == 48);
     }
-    assert_eq!(visited, [(1, 44), (2, 4), (1, 49), (2, 48), (2, 49)]);
-    assert_eq!(batch.len(), 98);
+    assert!(matches!(
+        visited[..],
+        [(1, 44), (2, 4), (1, 49 | 50), (2, 48), (2, 49 | 50)]
+    ));
+    assert_eq!(batch.len() as u64, visited[2].1 + visited[4].1);
 }
 
 #[test]

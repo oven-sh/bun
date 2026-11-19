@@ -866,6 +866,7 @@ impl QuicStream {
         });
         self.end_write_side();
         self.update(|conn, id| conn.reset(id, code));
+        self.is_known_to_peer.set(true);
         self.kick_write();
     }
 
@@ -875,6 +876,7 @@ impl QuicStream {
         }
         let code = error_code_arg(code.to_js());
         self.update(|conn, id| conn.stop(id, code));
+        self.is_known_to_peer.set(true);
         self.inbound.with_mut(|i| i.ended = true);
         self.with_state(|s| {
             s.read_ended = 1;
@@ -1014,6 +1016,9 @@ impl QuicStream {
 
     pub(super) fn on_event(&self, session: &QuicSession, event: StreamEvent) {
         let stream = self.key;
+        if !matches!(event, StreamEvent::Writable) {
+            self.is_known_to_peer.set(true);
+        }
         match event {
             StreamEvent::Opened => {}
             StreamEvent::Headers(fields) => {

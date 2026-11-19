@@ -3,6 +3,7 @@
 use super::Connection;
 use super::application::CRITICAL_STREAM_CLOSED;
 use super::streams::{Flags, Load, Role, Stream, Streams};
+use super::timers::Timer;
 use crate::config::Http3Config;
 use crate::endpoint::Shared;
 use crate::error::{Error, Result, http3_code};
@@ -12,8 +13,10 @@ use crate::http3::{
     priority_update_frame,
 };
 use crate::stream_id::{Direction, Side, StreamId};
+use crate::time::{Duration, Instant};
 
 const MAX_UNACKED_INSTRUCTIONS_LEN: u64 = 64 * 1024;
+const MAX_INSTRUCTION_DELAY: Duration = Duration::from_millis(5);
 const MAX_ORIGIN_FRAMES: u8 = 16;
 const MAX_EARLY_PRIORITIES: usize = 128;
 
@@ -84,18 +87,31 @@ impl Connection {
         true
     }
 
+    /// They are not worth a packet of their own, for a while.
     #[inline]
+    pub(super) fn bundle_qpack_instructions(&mut self, now: Instant) -> Result {
+        if (self.http3.as_mut()).is_none_or(|it| it.decoder.instructions().is_empty()) {
+            return Ok(());
+        }
+        if self.has_frames() {
+            return self.send_qpack_instructions();
+        }
+        let deadline = self.timers.get(Timer::Qpack);
+        (self.timers).set(Timer::Qpack, deadline.min(now + MAX_INSTRUCTION_DELAY));
+        Ok(())
+    }
+
     pub(super) fn send_qpack_instructions(&mut self) -> Result {
-        if let Some(http3) = &mut self.http3
-            && let instructions = http3.decoder.instructions()
-            && !instructions.is_empty()
-        {
+        self.timers.stop(Timer::Qpack);
+        let unacked = self.http3.as_mut().map(|http3| {
+            let instructions = http3.decoder.instructions();
             let unacked = (self.streams).write_internal(http3.decoder_stream, instructions);
             instructions.clear();
-            if unacked > MAX_UNACKED_INSTRUCTIONS_LEN {
-                let reason = "peer does not read the decoder stream";
-                return Err(Error::http3(http3_code::EXCESSIVE_LOAD, reason));
-            }
+            unacked
+        });
+        if unacked > Some(MAX_UNACKED_INSTRUCTIONS_LEN) {
+            let reason = "peer does not read the decoder stream";
+            return Err(Error::http3(http3_code::EXCESSIVE_LOAD, reason));
         }
         Ok(())
     }

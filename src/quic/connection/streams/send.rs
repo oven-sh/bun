@@ -10,10 +10,14 @@ use crate::frame::{kind, stream_flag};
 use crate::stream_id::StreamId;
 
 /// What a stream can take however much the others have.
-const MIN_UNSENT: u64 = 4 * 1024;
+const MIN_UNSENT: u64 = 8 * 1024;
 /// By how much what is unsent has to be below the target for the application to be asked for more.
 pub(in crate::connection) const WRITE_CHUNK: u64 = 32 * 1024;
 const TURN_LEN: u64 = 16 * 1024;
+/// By how many turns a stream gives way that has sent this much, and has more than a little to send.
+const BULK_HANDICAP: u64 = 8;
+const BULK_LEN: u64 = 128 * 1024;
+const LITTLE: u64 = 2 * 1024;
 /// The part of a rank that tells streams of the same priority apart.
 const ORDER_BITS: u32 = 59;
 /// A type and three integers.
@@ -195,7 +199,11 @@ impl State {
         }
         let takes_turns = !self.sends_in_order || stream.priority.is_incremental;
         let class = 2 * u64::from(stream.priority.urgency) + u64::from(takes_turns) + 1;
-        let order = if takes_turns { turn } else { id.index() };
+        let is_bulk = stream.send.sent() >= BULK_LEN && stream.send.unsent_len() > LITTLE;
+        let order = match takes_turns {
+            true => turn + u64::from(is_bulk) * BULK_HANDICAP,
+            false => id.index(),
+        };
         class << ORDER_BITS | order & ((1 << ORDER_BITS) - 1)
     }
 

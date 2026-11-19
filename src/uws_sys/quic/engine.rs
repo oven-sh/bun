@@ -62,10 +62,11 @@ impl<T: Application> Driver for T {
             return;
         }
         engine.endpoint().handle_timeouts(now());
+        engine.outbox.borrow_mut().start_pass();
         for _ in 0..MAX_ROUNDS {
             dispatch_events(self);
             engine.transmit();
-            if !engine.endpoint().has_events() {
+            if !engine.endpoint().has_events() || engine.outbox.borrow().is_pass_over() {
                 break;
             }
         }

@@ -1069,14 +1069,15 @@ impl QuicEndpoint {
         }
         let _send_scope = self.send_scope();
         self.quic().handle_timeouts(now());
+        self.outbox.borrow_mut().start_pass();
         for _ in 0..MAX_ROUNDS {
             self.collect_events();
             self.transmit();
-            if !self.quic().has_events() {
+            if !self.quic().has_events() || self.outbox.borrow().is_pass_over() {
                 break;
             }
         }
-        if self.quic().has_events() {
+        if self.quic().has_events() || self.outbox.borrow().is_pass_over() {
             self.plan_followup();
         }
         self.processing.set(false);

@@ -71,7 +71,7 @@ impl Raw {
 
     /// Instructions of one byte.
     pub(crate) fn read_decoder(&mut self) -> String {
-        self.process();
+        self.advance(5);
         let id = 1 << 2 | 2 | !self.side as u64;
         let read = self.read.insert(id, self.streams[&id].len()).unwrap_or(1);
         let instructions = self.streams[&id][read..].iter().map(|it| match it {

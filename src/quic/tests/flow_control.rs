@@ -390,7 +390,7 @@ fn takes_little_more_than_it_can_send() {
     let written = raw.connection().write(ids[0], &data);
     assert_eq!(written, Some(window + 65536));
     assert_eq!(raw.connection().write(ids[0], &data), Some(0));
-    assert_eq!(raw.connection().write(ids[1], &data), Some(4096));
+    assert_eq!(raw.connection().write(ids[1], &data), Some(8192));
     assert_eq!(raw.connection().write(ids[1], &data), Some(0));
     assert_eq!(raw.events(), "");
     raw.advance(RTT);

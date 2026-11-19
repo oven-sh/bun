@@ -56,7 +56,7 @@ enum Content {
 }
 
 impl Connection {
-    /// Returns whether there is more than `max_datagrams`.
+    /// Returns whether there may be more.
     pub(crate) fn transmit(
         &mut self,
         now: Instant,
@@ -71,7 +71,7 @@ impl Connection {
         }
         if self.is_receiving() {
             let len_before = batch.len();
-            let max_len = len_before + max_datagrams;
+            let max_len = len_before + max_datagrams.min(self.congestion.max_turn());
             if !self.candidates.is_empty() || self.path.owes_frames() {
                 self.probe_paths(now, batch);
             }
@@ -104,6 +104,12 @@ impl Connection {
         false
     }
 
+    /// When something was sent that has to be acknowledged.
+    #[inline]
+    pub(crate) fn last_sent_at(&self) -> Instant {
+        self.spaces.data.sent.last_at
+    }
+
     #[inline]
     fn prepare_to_transmit(&mut self, now: Instant) -> Result {
         if core::mem::take(&mut self.streams.state.made_progress) {
@@ -114,7 +120,7 @@ impl Connection {
         if self.phase == Phase::Handshake && self.timers.get(Timer::Loss) <= now {
             self.on_loss_timeout(now);
         }
-        self.send_qpack_instructions()?;
+        self.bundle_qpack_instructions(now)?;
         self.key_update.renew(&mut self.spaces.data, self.version)
     }
 

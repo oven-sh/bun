@@ -18,6 +18,8 @@ use crate::time::Instant;
 const SEGMENT: u64 = 1460;
 const INITIAL_WINDOW: u64 = 32 * SEGMENT;
 const MAX_WINDOW: u64 = 16 * 1024 * 1024;
+/// To lose this many packets in a row is what happens to a burst that is too long for a queue.
+const OVERFLOW_LEN: u64 = 3;
 const MICROS_PER_SECOND: u64 = 1_000_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +61,9 @@ struct Feedback {
     newest_acked: Option<Flight>,
     lost: u64,
     newest_lost: u64,
+    /// Up to the newest.
+    lost_in_a_row: u64,
+    is_overflow: bool,
     is_persistent_congestion: bool,
     /// What remains.
     in_flight: u64,
@@ -169,6 +174,12 @@ impl Controller {
         self.pacer.delay(now).map_or(Permit::Now, Permit::At)
     }
 
+    /// After how many packets to make way for other connections, which may share the queues.
+    #[inline]
+    pub(crate) fn max_turn(&self) -> usize {
+        self.pacer.max_turn()
+    }
+
     #[inline]
     pub(crate) fn on_sent(&mut self, now: Instant, len: u16, rtt: &Rtt) -> Flight {
         if self.in_flight == 0 {
@@ -244,8 +255,14 @@ impl Controller {
     #[inline]
     pub(crate) fn on_lost(&mut self, flight: &Flight) {
         if self.discard(flight) {
-            self.feedback.lost += u64::from(flight.len);
-            self.feedback.newest_lost = self.feedback.newest_lost.max(flight.sequence);
+            let feedback = &mut self.feedback;
+            if flight.sequence != feedback.newest_lost + 1 {
+                feedback.lost_in_a_row = 0;
+            }
+            feedback.lost_in_a_row += 1;
+            feedback.is_overflow |= feedback.lost_in_a_row == OVERFLOW_LEN;
+            feedback.lost += u64::from(flight.len);
+            feedback.newest_lost = feedback.newest_lost.max(flight.sequence);
         }
     }
 
@@ -274,6 +291,9 @@ impl Controller {
         }
         if feedback.lost > 0 {
             self.pacer.on_loss();
+        }
+        if feedback.is_overflow {
+            self.pacer.on_overflow();
         }
         match &mut self.model {
             Model::Cubic(cubic) => cubic.on_feedback(now, &feedback, rtt),

@@ -9,6 +9,7 @@ pub(super) enum Timer {
     Close,
     Loss,
     Ack,
+    Qpack,
     Pacing,
     KeepAlive,
     Blocked,
@@ -17,13 +18,14 @@ pub(super) enum Timer {
 }
 
 impl Timer {
-    pub(super) const ALL: [Self; 11] = [
+    pub(super) const ALL: [Self; 12] = [
         Self::Handshake,
         Self::Idle,
         Self::Progress,
         Self::Close,
         Self::Loss,
         Self::Ack,
+        Self::Qpack,
         Self::Pacing,
         Self::KeepAlive,
         Self::Blocked,

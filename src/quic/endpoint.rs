@@ -734,6 +734,10 @@ impl Endpoint {
                 None => self.vacate(index),
             }
         }
+        // What is sent last is the first to find a queue full.
+        (self.to_transmit.make_contiguous()).sort_by_key(|&index| {
+            (self.slots.at(index).connection.as_ref()).map(|it| it.last_sent_at())
+        });
         let mut turns = 0..HELLOS_PER_PASS;
         while turns.next().is_some()
             && let Some(handle) = self.awaiting_turn.pop(Awaited::Turn, &self.slots)

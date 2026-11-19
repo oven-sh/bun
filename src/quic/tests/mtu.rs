@@ -236,8 +236,8 @@ fn loss_of_what_was_sent_with_a_packet_that_got_through_raises_no_suspicion() {
 fn persistent_congestion() {
     for (is_probed, timeouts, pause, window) in [
         (true, 0, 300, 2 * 1472),
-        (true, 2, 10, 2 * 1460),
-        (false, 2, 10, 32 * 1460 * 4 / 5),
+        (true, 2, 100, 2 * 1460),
+        (false, 2, 100, 32 * 1460 * 4 / 5),
     ] {
         let raw = client().config(|it| it.congestion = Algorithm::Cubic);
         let mut raw = raw.warmed_up();

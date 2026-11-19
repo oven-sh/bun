@@ -7,6 +7,11 @@ use crate::time::{Duration, Instant};
 const BURST: u8 = 10;
 const MAX_QUANTUM: u64 = 64 * 1024;
 const MICROS_PER_HALVING: u64 = 512;
+const MAX_OVERFLOWS: u32 = 5;
+/// After how many without an overflow one is forgotten.
+const QUANTA_PER_OVERFLOW: u64 = 256;
+/// In packets.
+const CAUTIOUS_TURN: usize = 16;
 const FRACTION_BITS: u32 = 24;
 
 #[derive(Default)]
@@ -27,6 +32,9 @@ pub(super) struct Pacer {
     bonus: u64,
     /// Of the current one.
     rest: u64,
+    /// Of a queue on the path. Each one halves the bursts.
+    overflows: u32,
+    sent_since_overflow: u64,
 }
 
 impl Pacer {
@@ -37,9 +45,25 @@ impl Pacer {
         self.bonus = match rtt.has_sample() {
             true => MAX_QUANTUM >> (rtt.min.as_micros() / MICROS_PER_HALVING).min(63),
             false => 0,
-        };
+        }
+        .min(self.max_quantum());
         let steady = len.saturating_mul(GRANULARITY.as_micros()) / per.as_micros().max(1);
-        self.quantum = steady.saturating_add(self.bonus).clamp(1, MAX_QUANTUM);
+        self.quantum = steady
+            .saturating_add(self.bonus)
+            .clamp(1, self.max_quantum());
+    }
+
+    #[inline]
+    fn max_quantum(&self) -> u64 {
+        MAX_QUANTUM >> self.overflows
+    }
+
+    #[inline]
+    pub(super) fn max_turn(&self) -> usize {
+        match self.overflows {
+            0 => usize::MAX,
+            overflows => (CAUTIOUS_TURN >> overflows).max(1),
+        }
     }
 
     #[inline]
@@ -50,7 +74,7 @@ impl Pacer {
     /// Returns when to try again, if it is too early.
     #[inline]
     pub(super) fn delay(&mut self, now: Instant) -> Option<Instant> {
-        if self.rest == 0 && self.next <= now + GRANULARITY {
+        if self.rest == 0 && self.next <= now + GRANULARITY / (1 << self.overflows) {
             self.rest = self.quantum;
         }
         if self.rest > 0 {
@@ -79,6 +103,10 @@ impl Pacer {
             return;
         }
         self.rest = self.rest.saturating_sub(len.into());
+        self.sent_since_overflow += u64::from(len);
+        if self.sent_since_overflow > QUANTA_PER_OVERFLOW * self.max_quantum() {
+            (self.overflows, self.sent_since_overflow) = (self.overflows.saturating_sub(1), 0);
+        }
         if now > self.catch_up_until {
             self.next = self.next.max(now);
         }
@@ -89,5 +117,9 @@ impl Pacer {
 
     pub(super) fn on_loss(&mut self) {
         (self.burst_tokens, self.rest) = (0, 0);
+    }
+
+    pub(super) fn on_overflow(&mut self) {
+        (self.overflows, self.sent_since_overflow) = ((self.overflows + 1).min(MAX_OVERFLOWS), 0);
     }
 }

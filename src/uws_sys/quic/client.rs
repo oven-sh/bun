@@ -20,8 +20,6 @@ use crate::Loop;
 
 /// As for HTTP/2.
 const MAX_HEADER_SIZE: usize = 256 * 1024;
-/// So that the responses that are not being read do not hold up the others.
-const MAX_DATA: u64 = 1 << 30;
 
 unsafe extern "C" {
     safe fn us_quic_create_client_ssl_ctx() -> Option<OwnedSslCtx>;
@@ -104,7 +102,7 @@ impl Client {
         on_event: fn(Connection, Context, Event),
         on_alarm: fn(),
     ) -> Option<Rc<Self>> {
-        let mut config = Config {
+        let config = Config {
             versions: &[Version::V1],
             http3: Some(Http3Config {
                 kept_fields: FieldLimits {
@@ -122,7 +120,6 @@ impl Client {
             }),
             ..Config::client()
         };
-        config.parameters.initial_max_data = MAX_DATA;
         let tls = us_quic_create_client_ssl_ctx()?;
         Some(Rc::new_cyclic(|this| Self {
             engine: Engine::new(loop_, Weak::<Self>::clone(this), &[]),

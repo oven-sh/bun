@@ -406,6 +406,11 @@ impl Connection {
             Timer::Close => self.send_close(now),
             Timer::Loss => self.on_loss_timeout(now),
             Timer::Ack => self.spaces.data.received.is_ack_due = true,
+            Timer::Qpack => {
+                if let Err(error) = self.send_qpack_instructions() {
+                    self.fail(now, error);
+                }
+            }
             Timer::Pacing => {}
             Timer::KeepAlive => {
                 if self.keep_alive != KeepAlive::WhileStreamsAreOpen

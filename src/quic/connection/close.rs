@@ -267,7 +267,7 @@ impl Connection {
 
     /// Whether the peer may have dropped the connection by the time something new arrives.
     pub fn is_stale(&self, now: Instant) -> bool {
-        let margin = self.settling_period().max(self.idle_timeout / 16);
+        let margin = (self.settling_period()).clamp(self.idle_timeout / 16, self.idle_timeout / 2);
         self.pto_count >= MAX_UNANSWERED_PROBES || now + margin >= self.timers.get(Timer::Idle)
     }
 }

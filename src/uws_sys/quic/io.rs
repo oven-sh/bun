@@ -12,6 +12,8 @@ use crate::udp;
 pub const DATAGRAMS_PER_READ: c_int = 8;
 /// Two messages that are as long as UDP allows.
 const DATAGRAMS_PER_BATCH: usize = 88;
+/// After which the rest of the loop gets its turn, and the acknowledgments are read.
+const BATCHES_PER_PASS: usize = 4;
 /// All connections share it. Some systems refuse what is above their limit.
 const RECEIVE_BUFFER_SIZES: [c_int; 2] = [4 << 20, 1 << 20];
 
@@ -203,6 +205,7 @@ pub struct Outbox {
     /// How many of them are done with.
     sent: usize,
     is_blocked: bool,
+    batches_left: usize,
     /// Not every network device can do it.
     has_failed_to_segment: bool,
 }
@@ -219,6 +222,16 @@ impl Outbox {
     }
 
     #[inline]
+    pub fn start_pass(&mut self) {
+        self.batches_left = BATCHES_PER_PASS;
+    }
+
+    #[inline]
+    pub fn is_pass_over(&self) -> bool {
+        self.batches_left == 0
+    }
+
+    #[inline]
     pub(super) fn has_unsent(&self) -> bool {
         self.sent < self.messages.len()
     }
@@ -232,10 +245,13 @@ impl Outbox {
         mut visit: impl FnMut(&Connection),
         mut on_batch: impl FnMut(&Batch),
     ) {
-        while !self.is_blocked && (self.has_unsent() || endpoint.wants_to_transmit()) {
+        while !self.is_blocked
+            && (self.has_unsent() || endpoint.wants_to_transmit() && !self.is_pass_over())
+        {
             if !self.has_unsent() {
                 self.batch.clear();
                 endpoint.poll_transmit(now(), &mut self.batch, DATAGRAMS_PER_BATCH, &mut visit);
+                self.batches_left -= usize::from(self.batch.len() >= DATAGRAMS_PER_BATCH);
                 on_batch(&self.batch);
                 self.address(&binding);
             }

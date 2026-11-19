@@ -37,7 +37,7 @@ use crate::bake;
 use crate::bake::router::{self, FrameworkRouter, OpaqueFileId};
 use crate::server::html_bundle::HTMLBundleRoute;
 use crate::server::{PendingRequest, Served};
-use crate::timer::{EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::EventLoopTimerTag;
 use bun_ast::Loader;
 use bun_bundler::{self as bundler, BundleV2, Transpiler};
 use bun_http::{Method, MimeType};

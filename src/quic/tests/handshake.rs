@@ -260,8 +260,10 @@ fn a_server_repeats_its_flight() {
     raw.forget();
     assert_eq!(raw.wait(), 150);
     assert_eq!(raw.outline(), "I[crypto] H[crypto]");
-    raw.send_in(Initial, "hello");
-    assert_eq!(raw.packets(), "I[ack 0-1]");
+    for answer in ["I[ack, crypto] H[crypto]", "I[ack]"] {
+        raw.send_in(Initial, "hello");
+        assert_eq!(raw.outline(), answer);
+    }
     raw.advance(RTT);
     raw.send_in(Initial, "ack");
     assert_eq!(raw.wait(), 2 * RTT);

@@ -252,7 +252,7 @@ impl Connection {
             rtt: Rtt::default(),
             first_sample_at: Instant::NEVER,
             pto_count: 0,
-            may_probe_early: false,
+            may_probe_early: true,
             delivery: Default::default(),
             packet_threshold: recovery::INITIAL_PACKET_THRESHOLD,
             ack_policy: Default::default(),

@@ -15,7 +15,8 @@ pub(crate) const ACK_DELAY_EXPONENT: u64 = 3;
 struct SentAck {
     packet: u64,
     at: Instant,
-    largest: u64,
+    /// It has named everything below that has arrived.
+    end: u64,
 }
 
 /// Of an ack-eliciting packet among the others (RFC 9000 §13.2.1).
@@ -60,15 +61,14 @@ impl Received {
         if number >= self.expected {
             self.expected = number + 1;
             self.largest_at = now;
+        } else if is_eliciting {
+            self.reported = self.reported.min(number);
+            (self.sent_acks.iter_mut()).for_each(|it| it.end = it.end.min(number));
         }
         if !is_eliciting {
             return Order::Expected;
         }
         self.unacked_eliciting += 1;
-        if number < self.reported {
-            self.reported = number;
-            self.sent_acks.clear();
-        }
         let expected = self.expected_eliciting.max(self.floor);
         self.expected_eliciting = expected.max(number + 1);
         if number < expected {
@@ -118,7 +118,7 @@ impl Received {
             self.sent_acks.push_back(SentAck {
                 packet,
                 at: now,
-                largest,
+                end: top,
             });
         }
     }
@@ -134,7 +134,7 @@ impl Received {
         let mut largest_sent_at = None;
         while let Some(sent) = self.sent_acks.pop_front_if(|it| it.packet <= ack.largest) {
             if sent.packet >= ack.first_range().start {
-                self.reported = self.reported.max(sent.largest + 1);
+                self.reported = self.reported.max(sent.end);
             }
             largest_sent_at = (sent.packet == ack.largest).then_some(sent.at);
         }

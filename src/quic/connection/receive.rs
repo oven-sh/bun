@@ -525,6 +525,9 @@ impl Connection {
             let order = (space.received).insert(origin.now, packet.number, is_eliciting);
             if is_eliciting {
                 self.plan_ack(origin.now, origin.space, &order);
+                if origin.space == SpaceId::Initial {
+                    self.hurry_handshake();
+                }
             }
         }
         if !(origin.is_current_path && self.candidates.is_empty()) && is_largest && !is_probing {

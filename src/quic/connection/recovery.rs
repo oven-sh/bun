@@ -413,6 +413,18 @@ impl Connection {
         }
     }
 
+    /// For a client that goes on sending Initial packets (RFC 9002 §6.2.3).
+    #[cold]
+    pub(super) fn hurry_handshake(&mut self) {
+        if self.side.is_server()
+            && !self.spaces.open(SpaceId::Initial).crypto_send.is_acked()
+            && core::mem::take(&mut self.may_probe_early)
+        {
+            self.probe(SpaceId::Initial, usize::MAX);
+            self.probe(SpaceId::Handshake, usize::MAX);
+        }
+    }
+
     /// RFC 9002 §A.9.
     pub(super) fn on_loss_timeout(&mut self, now: Instant) {
         let (loss_time, id) = self.earliest(|_, space| space.sent.loss_time);

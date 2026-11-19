@@ -74,7 +74,7 @@ fn the_id_that_the_client_chose_leads_to_its_connection() {
     raw.forget();
     let id = std::mem::replace(&mut raw.destination, raw.original.clone());
     raw.send_in(Initial, "hello");
-    assert_eq!(raw.packets(), "I[ack 0-1]");
+    assert_eq!(raw.outline(), "I[ack, crypto] H[crypto]");
     assert_eq!(raw.peer.endpoint.connection_count(), 1);
     let late = raw.packet(Initial, "hello");
     raw.destination = id;

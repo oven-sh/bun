@@ -112,7 +112,7 @@ fn a_server_moves_to_the_version_that_it_prefers() {
         let advertised = raw.peer_parameter("version_information");
         assert_eq!(advertised, Some(format!("#{chosen:08x}{available}")));
         raw.send_in(Initial, "ping");
-        assert_eq!(raw.versions_of_packets(), [chosen]);
+        assert_eq!(raw.versions_of_packets(), [chosen; 2]);
         raw.version = chosen;
         raw.send_in(Initial, "ping");
         assert_eq!(raw.packets(), "I[ack 0-2]");

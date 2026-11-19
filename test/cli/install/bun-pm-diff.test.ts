@@ -664,6 +664,45 @@ diffme@1.0.0 → diffme@2.0.0
     expect(maxRSS).toBeLessThan(280 * 1024 * 1024);
   });
 
+  test("a deleted file is not parsed for a patch", async () => {
+    const line = "f([1, [2], 3], { a: [4], b: 5 });\n";
+    using dir = tempDir("pm-diff-deleted", {
+      "a/gone.js": Buffer.alloc(40_000 * line.length, line).toString(),
+      "a/same.txt": "",
+      "b/same.txt": "",
+    });
+    async function run(args: string[]) {
+      const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+        cmd: [bunExe(), "pm", "diff", ...args, "./a", "./b"],
+        cwd: String(dir),
+        env: { ...withoutAsanQuarantine(bunEnv), NO_COLOR: "1" },
+      });
+      expect(stderr).toBe("");
+      expect(stdout).toEndWith("\n0 files changed, 0 added, 1 removed  (+0 -40000 lines)\n");
+      expect(exitCode).toBe(0);
+      return maxRSS;
+    }
+    // Parsing it takes over 24 MiB on Linux x64.
+    expect((await run([])) - (await run(["--raw"]))).toBeLessThan((isASAN || isDebug ? 20 : 12) * 1024 * 1024);
+  });
+
+  // These print 60 MiB, which is too slow without optimizations, to a file through `sh`.
+  test.skipIf(isASAN || isDebug || isWindows).each([
+    ["many tokens", Buffer.alloc(2_000_000, Buffer.alloc(99, ";") + "\n"), 60],
+    ["one line that is not UTF-8", Buffer.alloc(21 * 1024 * 1024, 0xff), 100],
+  ])("the colored output is printed in parts: %s", async (_, added, mebibytes) => {
+    using dir = tempDir("pm-diff-colors", { "a/same.txt": "", "b/same.txt": "", "b/added.jsonc": added });
+    const { stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+      cmd: ["sh", "-c", 'exec "$0" pm diff ./a ./b > out', bunExe()],
+      cwd: String(dir),
+      env: { ...bunEnv, UV_THREADPOOL_SIZE: undefined, GOMAXPROCS: "2", NO_COLOR: undefined, FORCE_COLOR: "1" },
+    });
+    expect(stderr).toBe("");
+    expect(statSync(join(String(dir), "out")).size).toBeGreaterThan(60 * 1024 * 1024);
+    expect(exitCode).toBe(0);
+    expect(maxRSS).toBeLessThan(mebibytes * 1024 * 1024);
+  });
+
   test("identical sides say so", async () => {
     const { stdout, exitCode } = await diff(["diffme@2.0.0", "2.0.0"]);
     expect(stdout).toBe("diffme@2.0.0 → diffme@2.0.0\nNo differences (5 files)\n");
@@ -1146,6 +1185,59 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
     expect([together, ...alone].map(({ exitCode }) => exitCode)).toEqual(range(0, names.length + 1).fill(0));
   });
 
+  // From 256 KiB on, the two sides are parsed on a thread each.
+  const comments = (count: number) => Buffer.alloc(200 * count, `//${Buffer.alloc(197, "x")}\n`).toString();
+  const sum = (name: string, last: number) =>
+    `function sum(${name}) {\n  return ${name} + 1;\n}\nfunction last() {\n  return ${last};\n}\n`;
+  const nested = (last: number) => `export const f =\n${Buffer.alloc(300 * 8, "a =>\n   ").toString()}${last};\n`;
+  test.each([
+    ["a renamed local and an edit", sum("x", 1), sum("y", 2), "2 folded +1 -1"],
+    ["only a renamed local", sum("x", 1), sum("y", 1), "formatting only"],
+    ["an old side that is not parsed", sum("x", 1) + "(\n", sum("x", 1), "not parsed -1"],
+    ["a new side that is not parsed", sum("x", 1), sum("x", 1) + "(\n", "not parsed +1"],
+    ["scopes nested too deep to be renamed", nested(1), nested(2), "+1 -1"],
+  ])("a large file looks the same as a small one: %s", async (_, before, after, badge) => {
+    const [small, large] = await Promise.all(
+      [5, 1400].map(count => pretty({ "a/x.js": before + comments(count), "b/x.js": after + comments(count) })),
+    );
+    expect(large).toEqual(small);
+    expect(large.text.match(/\nx\.js ─+ (.*)\n/)?.[1]).toBe(badge);
+    expect(large.exitCode).toBe(0);
+  });
+
+  test("minified: a large file looks the same as a small one", async () => {
+    const [small, large] = await Promise.all(
+      [2000, 280_000].map(length => {
+        const text = Buffer.alloc(length, "x").toString();
+        return pretty({
+          "a/x.min.js": `!function(){${locals(range(0, 20), 0)}}();g("${text}");\n`,
+          "b/x.min.js": `!function(){${locals([900, ...range(0, 20)], 7)}}();g("${text}");\n`,
+        });
+      }),
+    );
+    expect(large).toEqual(small);
+    expect(changedIds(large.text)).toEqual(["+900"]);
+    expect(large.exitCode).toBe(0);
+  });
+
+  test("a comment that is removed right before an argument is a change", async () => {
+    const { text, exitCode } = await pretty({ "a/x.js": "f(/*c*/x);\n", "b/x.js": "f(x);\n" });
+    expect(changedLines(text)).toEqual(["    1 │- f(/*c*/x);", "    1 │+ f(x);"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a deleted file is still parsed for the terminal view", async () => {
+    const { text, exitCode } = await pretty({
+      "a/broken.js": "(\n",
+      "a/gone.min.js": `!function(){${locals(range(0, 20), 0)}}();\n`,
+      "a/same.txt": "",
+      "b/same.txt": "",
+    });
+    expect(text).toMatch(/\nbroken\.js ─+ not parsed deleted -1\n/);
+    expect(text).toMatch(/\ngone\.min\.js ─+ unminified deleted -42\n/);
+    expect(exitCode).toBe(0);
+  });
+
   test("--minify folds equivalent syntax; --unminify renames locals in lockstep even in readable files; -w", async () => {
     const files = {
       // Same program, different spellings: only --minify sees through it.
@@ -1355,6 +1447,80 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     expect(text).toContain("▲ terminal escape sequences in index.js (shown as ␛)\n");
     expect(text).toContain("▲ bidirectional text controls in auth.js (Trojan Source; shown as ‹U+202E›)\n");
     expect(exitCode).toBe(0);
+  });
+
+  test("long files are colored line by line, in order", async () => {
+    const names = ["f0.js", "f1.js", "f2.js"];
+    const numbers = Array.from({ length: 4000 }, (_, i) => i + 1);
+    const { raw, stderr, exitCode } = await pretty(
+      {
+        "a/same.txt": "",
+        "b/same.txt": "",
+        ...Object.fromEntries(names.map((name, i) => [`b/${name}`, numbers.map(n => `f(${i}, ${n});\n`).join("")])),
+      },
+      [],
+      { GOMAXPROCS: "8" },
+    );
+    const tint = `${ESC}[0m${ESC}[48;5;22m`;
+    const number = (n: number) => `${tint}${ESC}[33m${n}${tint}`;
+    expect(raw.split("\n").filter(line => line.includes("│"))).toEqual(
+      names.flatMap((_, i) =>
+        numbers.map(
+          n =>
+            `${ESC}[32m${String(n).padStart(5)} ${ESC}[0m${ESC}[2m│${tint}${ESC}[32m${ESC}[1m+ ${tint}` +
+            `f(${number(i)}, ${number(n)})${tint}${ESC}[2m;${tint}${ESC}[K${ESC}[0m`,
+        ),
+      ),
+    );
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
+
+  test("long lines and many short files are printed whole", async () => {
+    // Each of the four puts another byte of a character at the end of the first part.
+    const long = ["", "a", "aa", "aaa"].map(start => start + Buffer.alloc(4 * 20_000, "😀"));
+    const short = Array.from({ length: 400 }, (_, i) => `line ${i}`);
+    const files = [...long, ...short].map((line, i) => [`f${String(i).padStart(3, "0")}.txt`, line]);
+    const { text, stderr, exitCode } = await pretty(
+      {
+        "a/same.txt": "",
+        "b/same.txt": "",
+        ...Object.fromEntries(files.map(([name, line]) => [`b/${name}`, `${line}\n`])),
+      },
+      [],
+      { GOMAXPROCS: "8" },
+    );
+    const shown = text.split("\n").flatMap(
+      l =>
+        l
+          .match(/^(\S+) ─|│\+ (.*)/)
+          ?.slice(1)
+          .join("") ?? [],
+    );
+    expect(shown).toEqual(files.flat());
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
+
+  test("shift-out and shift-in bytes are drawn, and bytes that are not UTF-8 are replaced", async () => {
+    using dir = tempDir("pm-diff-bytes", {
+      "a/same.txt": "",
+      "b/same.txt": "",
+      "b/x.js": 'f("\x0f\x0e\x09\x0e");\n',
+      "b/y.txt": Buffer.from("\x0e\x01 caf\xe9\n", "latin1"),
+    });
+    await using p = Bun.spawn({
+      cmd: [bunExe(), "pm", "diff", "./a", "./b"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [bytes, stderr, exitCode] = await Promise.all([p.stdout.bytes(), p.stderr.text(), p.exited]);
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/\x1b\[[0-9;]*[mK]/g, "");
+    expect(text.split("\n").filter(line => line.includes("│"))).toEqual([
+      '    1 │+ f("^O^N\t^N");',
+      "    1 │+ ^N^A caf\ufffd",
+    ]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   });
 
   // ConPTY rewrites the process's output.
@@ -1976,6 +2142,43 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     expect(stderr).toBe("");
     expect(stdout.split("\n")).toContain("M index.js");
     expect(exitCode).toBe(0);
+  });
+
+  // From 256 KiB on, the two tarballs are unpacked on a thread each.
+  test.each([
+    ["whole.tar", "other.tar", ""],
+    ["short.tar", "whole.tar", "short.tar: blob.bin: failed to read archive data"],
+    ["whole.tar", "short.tar", "short.tar: blob.bin: failed to read archive data"],
+    ["short.tar", "junk.tar", "junk.tar: failed to read tarball"],
+    ["junk.tar", "short.tar", "short.tar: blob.bin: failed to read archive data"],
+    ["whole.tar", "petabyte.tar", "petabyte.tar: blob.bin: failed to read archive data"],
+  ])("large tarballs: %s and %s", async (left, right, error) => {
+    const tar = async (fill: number) =>
+      Buffer.from(await new Bun.Archive({ "package/blob.bin": Buffer.alloc(400 * 1024, fill) }).bytes());
+    const [whole, other] = [await tar(0), await tar(1)];
+    // The size is 2^50 in base 256. The checksum counts its own field as spaces.
+    const petabyte = Buffer.from(whole).fill(0, 124, 136).fill(" ", 148, 156);
+    petabyte[124] = 0x80;
+    petabyte[129] = 4;
+    const checksum = petabyte.subarray(0, 512).reduce((sum, byte) => sum + byte);
+    petabyte.write(checksum.toString(8).padStart(6, "0") + "\0", 148);
+    using dir = tempDir("pm-diff-tarballs", {
+      "whole.tar": whole,
+      "other.tar": other,
+      "short.tar": whole.subarray(0, 300 * 1024),
+      "junk.tar": Buffer.alloc(300 * 1024, "junk"),
+      "petabyte.tar": petabyte,
+    });
+    const { stdout, stderr, exitCode } = await diff([`./${left}`, `./${right}`, "--name-only"], String(dir));
+    expect({
+      changed: stdout.split("\n").filter(l => /^[AMD] /.test(l)),
+      stderr: normalizeBunSnapshot(stderr, String(dir)),
+      exitCode,
+    }).toEqual(
+      error
+        ? { changed: [], stderr: `error: <dir>/${error}`, exitCode: 1 }
+        : { changed: ["M blob.bin"], stderr: "", exitCode: 0 },
+    );
   });
 
   test("a tarball entry larger than 64 MiB is read whole", async () => {

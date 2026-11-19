@@ -25,6 +25,7 @@ use bun_threading::{Condvar, Guarded, ThreadPool, thread_pool};
 use bun_url::URL;
 
 use crate::cli::pm_diff_normalize as normalize;
+use crate::cli::pm_diff_normalize::{Otherwise, Pair};
 use crate::cli::pm_diff_semantic::Operation;
 use crate::cli::pm_diff_semantic::{self as semantic, Op};
 
@@ -1599,42 +1600,39 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style, threads:
         relayout: true,
         source_map: style.pretty,
     };
-    let renamed = match (old, new) {
-        (Some(o), Some(n)) if style.pretty && is_parsed && !readable_js => {
-            normalize::normalize_minified_pair(path, o, n, nopts, threads)
-        }
-        _ => None,
-    };
     let popts = if readable_js {
         normalize::Options {
             source_map: style.pretty && old.is_some() && new.is_some(),
             ..normalize::Options::KEY
         }
     } else {
-        normalize::Options {
-            source_map: style.pretty && renamed.is_none(),
-            ..nopts
-        }
+        nopts
     };
+    let mut renamed = None;
     // Canonical re-print: same parser and printer on both sides, so only meaning survives.
     let (norm_old, norm_new) = match (is_parsed, readable_js, old, new) {
         (false, ..) => (None, None),
         // Both sides of readable JS are keyed together so their locals get lockstep names.
         (true, true, Some(o), Some(n)) => {
-            match normalize::normalize_key_pair(path, o, n, popts, threads) {
-                Some((ko, kn)) => (Some(ko), Some(kn)),
-                None => (
-                    normalize::normalize(path, o, popts),
-                    normalize::normalize(path, n, popts),
-                ),
+            match normalize::normalize_key_pair(path, o, n, popts, Otherwise::PrintApart, threads) {
+                Pair::Renamed { old, new, .. } => (Some(old), Some(new)),
+                Pair::Apart { old, new } => (old, new),
             }
         }
-        // Two ASTs at once take no more memory than `renamed` does.
-        (_, _, Some(o), Some(n)) if renamed.is_some() => threads.join(
-            o.len().min(n.len()),
-            || normalize::normalize(path, o, popts),
-            || normalize::normalize(path, n, popts),
-        ),
+        (true, false, Some(o), Some(n)) if js_family && style.pretty => {
+            match normalize::normalize_minified_pair(path, o, n, nopts, threads) {
+                Pair::Renamed { old, new, .. } => {
+                    renamed = Some((old, new));
+                    let not_shown = nopts.without_source_map();
+                    threads.join(
+                        o.len().min(n.len()),
+                        || normalize::normalize(path, o, not_shown),
+                        || normalize::normalize(path, n, not_shown),
+                    )
+                }
+                Pair::Apart { old, new } => (old, new),
+            }
+        }
         _ => (
             old.and_then(|b| normalize::normalize(path, b, popts)),
             new.and_then(|b| normalize::normalize(path, b, popts)),
@@ -1696,11 +1694,10 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style, threads:
                             normalize::stands_for(path, print, &shown.text, nopts)
                         }
                     });
-            let keys = if js_family && faithful {
-                normalize::normalize_key_pair(path, o, n, normalize::Options::KEY, threads)
-            } else {
-                None
-            };
+            let keys = (js_family && faithful).then(|| {
+                let options = normalize::Options::KEY;
+                normalize::normalize_key_pair(path, o, n, options, Otherwise::GiveUp, threads)
+            });
             match keys {
                 // A re-print that does not parse as the same file is not shown in the file's
                 // place. The raw text is diffed instead.
@@ -1708,7 +1705,11 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style, threads:
                     change.semantic = Semantic::Text;
                     unified_hunks(o, n, flags.context, style, change);
                 }
-                Some((mut ko, mut kn)) if !ko.map.is_empty() && !kn.map.is_empty() => {
+                Some(Pair::Renamed {
+                    old: mut ko,
+                    new: mut kn,
+                    ..
+                }) if !ko.map.is_empty() && !kn.map.is_empty() => {
                     rebase_key_onto(&mut ko, &shown_o, disp_o);
                     rebase_key_onto(&mut kn, &shown_n, disp_n);
                     let (projection, _) =

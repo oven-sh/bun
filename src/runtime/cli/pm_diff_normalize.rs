@@ -85,7 +85,7 @@ impl Options {
         source_map: true,
     };
 
-    const fn without_source_map(self) -> Options {
+    pub(crate) const fn without_source_map(self) -> Options {
         Options {
             source_map: false,
             ..self
@@ -116,6 +116,28 @@ pub(crate) fn normalize(path: &[u8], bytes: &[u8], options: Options) -> Option<N
     Some(out)
 }
 
+pub(crate) enum Pair {
+    Renamed {
+        old: Normalized,
+        new: Normalized,
+        /// The names that were not renamed, such as those of globals and exports, sorted.
+        as_written: Vec<Vec<u8>>,
+    },
+    /// What `normalize` returns for each side, except that `old` may be `None` if `new` is.
+    Apart {
+        old: Option<Normalized>,
+        new: Option<Normalized>,
+    },
+}
+
+/// What to do with two sides whose locals cannot be renamed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Otherwise {
+    PrintApart,
+    /// Both sides of `Pair::Apart` are `None`.
+    GiveUp,
+}
+
 /// Both sides of a minified JS file, re-printed with mangled locals renamed in lockstep (see [`Namer`]).
 pub(crate) fn normalize_minified_pair(
     path: &[u8],
@@ -123,12 +145,10 @@ pub(crate) fn normalize_minified_pair(
     new: &[u8],
     options: Options,
     threads: Threads,
-) -> Option<(Normalized, Normalized)> {
-    let all_names = false;
-    let (mut o, mut n, _) = print_pair(path, old, new, [options; 2], all_names, Some(threads))?;
-    o.was_minified = true;
-    n.was_minified = true;
-    Some((o, n))
+) -> Pair {
+    let (all_names, otherwise) = (false, Otherwise::PrintApart);
+    let threads = Some(threads);
+    print_pair(path, old, new, [options; 2], all_names, otherwise, threads)
 }
 
 /// Both sides of a readable JS file printed as the comparison key: aggressive options plus every local renamed
@@ -139,57 +159,73 @@ pub(crate) fn normalize_key_pair(
     old: &[u8],
     new: &[u8],
     options: Options,
+    otherwise: Otherwise,
     threads: Threads,
-) -> Option<(Normalized, Normalized)> {
-    let all_names = true;
-    print_pair(path, old, new, [options; 2], all_names, Some(threads)).map(|(o, n, _)| (o, n))
+) -> Pair {
+    let (all_names, threads) = (true, Some(threads));
+    print_pair(path, old, new, [options; 2], all_names, otherwise, threads)
 }
 
-/// Returns the two prints and a sorted list of every name in them that was not renamed, such as the
-/// names of globals and exports. The two `options` may differ only in `source_map`. On one thread, `new` is
-/// parsed first.
+/// The two `options` may differ only in `source_map`. On one thread, `new` is parsed first.
 fn print_pair(
     path: &[u8],
     old: &[u8],
     new: &[u8],
     options: [Options; 2],
     all_names: bool,
+    otherwise: Otherwise,
     threads: Option<Threads>,
-) -> Option<(Normalized, Normalized, Vec<Vec<u8>>)> {
-    let Some(Kind::Js(loader)) = kind_for(path) else {
-        return None;
+) -> Pair {
+    let prints_apart = otherwise == Otherwise::PrintApart;
+    let one_by_one = || Pair::Apart {
+        old: prints_apart
+            .then(|| normalize(path, old, options[0]))
+            .flatten(),
+        new: prints_apart
+            .then(|| normalize(path, new, options[1]))
+            .flatten(),
     };
-    if old.len() > MAX_BYTES || new.len() > MAX_BYTES {
-        return None;
-    }
+    let fits = old.len().max(new.len()) <= MAX_BYTES;
+    let Some(Kind::Js(loader)) = kind_for(path).filter(|_| fits) else {
+        return one_by_one();
+    };
     let names = Arena::new();
-    let as_written = Cell::new(Vec::new());
-    let rename = &|o: Locals, n: Locals| {
+    let as_written = Cell::new(None);
+    let not_renamed = |side: Locals| prints_apart.then_some(side.symbols);
+    let symbols_for = |o: Locals, n: Locals| {
+        if o.nesting.max(n.nesting) > MAX_NESTING {
+            return [o, n].map(not_renamed);
+        }
         let mut namer = Namer::new(&names, [o, n], all_names);
-        namer.plan(Some(0), Some(0), 0, 0);
-        as_written.set(namer.taken);
-        (!namer.too_deep).then_some(namer.sides.map(|side| side.symbols))
+        namer.plan(Some(0), Some(0), 0);
+        as_written.set(Some(namer.taken));
+        namer.sides.map(|side| Some(side.symbols))
     };
     let on_two_threads = |threads: Threads| {
-        // A side that gives up drops its ends, which makes the other one give up.
-        let ((send_locals, locals), (send_renamed, renamed)) = (mpsc::channel(), mpsc::channel());
+        let ((send_locals, locals), (send_symbols, symbols)) = (mpsc::channel(), mpsc::channel());
         threads.try_join(
             old.len().min(new.len()),
             || {
                 let store = StoreScope::enter();
-                let printed = print_renamed(path, old, loader, options[0], move |o| {
-                    let [o, n] = rename(o, locals.recv().ok()?)?;
-                    send_renamed.send(n).ok()?;
-                    Some(o)
+                let printed = print_with(path, old, loader, options[0], |o| {
+                    let [o, n] = symbols_for(o, locals.recv().ok()?);
+                    send_symbols.send(n).expect("the other thread waits");
+                    o
                 });
                 drop(store);
-                printed.map(|printed| printed.decode(old))
+                let printed = printed.map(|printed| printed.decode(old));
+                // If `old` is not parsed, the other thread still waits for its symbols. Otherwise this waits for it to end.
+                if let Ok(n) = locals.recv() {
+                    (send_symbols.send(not_renamed(n))).expect("the other thread waits");
+                }
+                printed
             },
+            // Drops `send_locals` when it ends, which ends a wait for them.
             move || {
                 let store = StoreScope::enter();
-                let printed = print_renamed(path, new, loader, options[1], |n| {
+                let printed = print_with(path, new, loader, options[1], |n| {
                     send_locals.send(n).ok()?;
-                    renamed.recv().ok()
+                    symbols.recv().ok()?
                 });
                 drop(store);
                 printed.map(|printed| printed.decode(new))
@@ -199,14 +235,14 @@ fn print_pair(
     let on_this_thread = || {
         let store = StoreScope::enter();
         let mut printed_o = None;
-        let printed_n = print_renamed(path, new, loader, options[1], |n| {
-            let mut renamed_n = None;
-            printed_o = print_renamed(path, old, loader, options[0], |o| {
-                let [o, n] = rename(o, n)?;
-                renamed_n = Some(n);
-                Some(o)
+        let printed_n = print_with(path, new, loader, options[1], |n| {
+            let (mut n, mut symbols_n) = (Some(n), None);
+            printed_o = print_with(path, old, loader, options[0], |o| {
+                let [o, n] = symbols_for(o, n.take()?);
+                symbols_n = n;
+                o
             });
-            renamed_n
+            symbols_n.or_else(|| n.and_then(not_renamed))
         });
         drop(store);
         (
@@ -217,22 +253,39 @@ fn print_pair(
     let (o, n) = threads
         .and_then(on_two_threads)
         .unwrap_or_else(on_this_thread);
-    Some((o?, n?, as_written.into_inner()))
+    let apart = |print: Option<Normalized>, bytes: &[u8]| {
+        print.map(|print| Normalized {
+            was_minified: looks_minified(bytes),
+            ..print
+        })
+    };
+    match (o, n, as_written.into_inner()) {
+        (Some(old), Some(new), Some(as_written)) => Pair::Renamed {
+            old,
+            new,
+            as_written,
+        },
+        (o, n, None) => Pair::Apart {
+            old: apart(o, old),
+            new: apart(n, new),
+        },
+        // The printer gave up after the symbols were renamed.
+        _ => one_by_one(),
+    }
 }
 
-/// Parses a file, and prints it with the symbols that `rename` returns.
-fn print_renamed(
+/// Parses a file, and prints it with the symbols that `symbols_for` returns.
+fn print_with(
     path: &[u8],
     bytes: &[u8],
     loader: bun_ast::Loader,
     options: Options,
-    rename: impl FnOnce(Locals) -> Option<Vec<Symbol>>,
+    symbols_for: impl FnOnce(Locals) -> Option<Vec<Symbol>>,
 ) -> Option<Printed> {
     let arena = Arena::new();
     let source = bun_ast::Source::init_path_string(path, bytes);
     let mut ast = parse_js(&arena, &source, loader, options)?;
-    pin_exports(&mut ast);
-    let symbols = rename(Locals::take_from(&mut ast))?;
+    let symbols = symbols_for(Locals::take_from(&mut ast))?;
     print_js(&arena, ast, symbols, &source, options)
 }
 
@@ -255,8 +308,12 @@ fn same_key(
     threads: Option<Threads>,
 ) -> bool {
     let options = [options.without_source_map(), options];
-    let all_names = true;
-    let Some((old, shown, as_written)) = print_pair(path, old, shown, options, all_names, threads)
+    let (all_names, otherwise) = (true, Otherwise::GiveUp);
+    let Pair::Renamed {
+        old,
+        new: shown,
+        as_written,
+    } = print_pair(path, old, shown, options, all_names, otherwise, threads)
     else {
         return false;
     };
@@ -329,14 +386,6 @@ pub(crate) fn stands_for_renamed(
         options.without_source_map(),
         Some(threads),
     )
-}
-
-/// Keeps exported symbols from being renamed. An export's name is part of the module's interface.
-fn pin_exports(ast: &mut bun_ast::Ast<'_>) {
-    for export in ast.named_exports.values() {
-        let symbol = Namer::root(ast.symbols.as_slice(), export.ref_.inner_index() as usize);
-        ast.symbols.as_mut_slice()[symbol].set_must_not_be_renamed(true);
-    }
 }
 
 /// Most of the file's bytes sit on very long lines (a banner comment or a trailing source-map line aside).
@@ -574,13 +623,13 @@ struct Namer<'s> {
     /// Every name that is not renamed, such as a global or a long local, sorted. A renamed local is
     /// never given one of these names.
     taken: Vec<Vec<u8>>,
-    /// A scope was nested too deep to be renamed. Its original names were not checked against the
-    /// new names given to the scopes around it, so the renaming cannot be used.
-    too_deep: bool,
     scratch: Vec<u8>,
     /// Rename every local (the comparison key), not only mangled-looking ones (the un-minified display).
     all_names: bool,
 }
+
+/// `Namer::plan` recurses once per level, so locals are not renamed in files that nest deeper.
+const MAX_NESTING: u32 = 256;
 
 /// What `Namer` needs of one side. The strings in `symbols` live as long as the AST.
 struct Locals {
@@ -590,16 +639,22 @@ struct Locals {
     scopes: Vec<FlatScope>,
     /// The symbols that each scope declares, in source order. See `FlatScope::members`.
     members: Vec<u32>,
+    /// 0 if the module's scope is the only one.
+    nesting: u32,
+    exported: Vec<u32>,
 }
 
 impl Locals {
     fn take_from(ast: &mut bun_ast::Ast<'_>) -> Locals {
-        let (scopes, members) = flatten(&ast.module_scope);
+        let (scopes, members, nesting) = flatten(&ast.module_scope);
+        let exports = ast.named_exports.values().iter();
         Locals {
+            exported: exports.map(|export| export.ref_.inner_index()).collect(),
             profiles: super::pm_diff_profile::profiles(ast, ast.symbols.len()),
             symbols: take_symbols(ast),
             scopes,
             members,
+            nesting,
         }
     }
 }
@@ -625,7 +680,14 @@ fn count_bucket(n: u32) -> u64 {
 }
 
 impl<'s> Namer<'s> {
-    fn new(names: &'s Arena, sides: [Locals; 2], all_names: bool) -> Namer<'s> {
+    fn new(names: &'s Arena, mut sides: [Locals; 2], all_names: bool) -> Namer<'s> {
+        // An export's name is part of the module's interface. The printer reads this flag too, so only renamed sides get it.
+        for side in &mut sides {
+            for &exported in &side.exported {
+                let symbol = Self::root(&side.symbols, exported as usize);
+                side.symbols[symbol].set_must_not_be_renamed(true);
+            }
+        }
         // Locals the parser pinned (direct eval, `with`) keep their names, as globals do.
         let mut taken: Vec<&[u8]> = sides
             .iter()
@@ -640,7 +702,6 @@ impl<'s> Namer<'s> {
         taken.dedup();
         Namer {
             names,
-            too_deep: false,
             all_names,
             listed: sides.each_ref().map(|side| vec![false; side.symbols.len()]),
             taken: taken.into_iter().map(<[u8]>::to_vec).collect(),
@@ -667,6 +728,7 @@ impl<'s> Namer<'s> {
             profiles,
             scopes,
             members,
+            ..
         } = &self.sides[side];
         let Range { start, end } = scopes[scope as usize].members;
         let members = &members[start as usize..end as usize];
@@ -719,14 +781,8 @@ impl<'s> Namer<'s> {
             bun_ast::StoreStr::new(self.names.alloc_slice_copy(out));
     }
 
-    /// `depth` is the naming digit (only scopes that named something bump it); `level` is the real nesting.
-    fn plan(&mut self, old: Option<u32>, new: Option<u32>, depth: usize, level: usize) {
-        // `plan` recurses once per nesting level. Input nested deeper than this is pathological, so
-        // the callers give up on renaming it.
-        if level > 256 {
-            self.too_deep = true;
-            return;
-        }
+    /// `depth` is the naming digit (only scopes that named something bump it).
+    fn plan(&mut self, old: Option<u32>, new: Option<u32>, depth: usize) {
         let co = old.map_or(Vec::new(), |s| self.candidates(0, s));
         let cn = new.map_or(Vec::new(), |s| self.candidates(1, s));
         let mut index = 0;
@@ -759,7 +815,7 @@ impl<'s> Namer<'s> {
             children(&self.sides[0].scopes, old),
             children(&self.sides[1].scopes, new),
         ) {
-            self.plan(o, n, child_depth, level + 1);
+            self.plan(o, n, child_depth);
         }
     }
 }
@@ -779,11 +835,12 @@ struct FlatScope {
     weight: u32,
 }
 
-fn flatten(root: &bun_ast::Scope) -> (Vec<FlatScope>, Vec<u32>) {
+fn flatten(root: &bun_ast::Scope) -> (Vec<FlatScope>, Vec<u32>, u32) {
     let mut out: Vec<FlatScope> = Vec::new();
     let (mut members, mut own) = (Vec::new(), Vec::new());
-    let mut stack = vec![(root, 0)];
-    while let Some((scope, parent)) = stack.pop() {
+    let (mut stack, mut nesting) = (vec![(root, 0, 0)], 0);
+    while let Some((scope, parent, level)) = stack.pop() {
+        nesting = nesting.max(level);
         let at = out.len() as u32;
         own.extend((scope.members.values()).map(|m| (m.loc.start, m.ref_.inner_index())));
         own.extend(scope.generated.iter().map(|r| (i32::MAX, r.inner_index())));
@@ -798,7 +855,7 @@ fn flatten(root: &bun_ast::Scope) -> (Vec<FlatScope>, Vec<u32>) {
             scopes: 1,
             weight: scope.members.len() as u32,
         });
-        stack.extend(scope.children.iter().rev().map(|c| (&**c, at)));
+        stack.extend(scope.children.iter().rev().map(|c| (&**c, at, level + 1)));
     }
     for at in (1..out.len()).rev() {
         let (scopes, weight) = (out[at].scopes, out[at].weight);
@@ -806,7 +863,7 @@ fn flatten(root: &bun_ast::Scope) -> (Vec<FlatScope>, Vec<u32>) {
         out[parent].scopes += scopes;
         out[parent].weight += weight;
     }
-    (out, members)
+    (out, members, nesting)
 }
 
 fn children(scopes: &[FlatScope], of: Option<u32>) -> Vec<&FlatScope> {

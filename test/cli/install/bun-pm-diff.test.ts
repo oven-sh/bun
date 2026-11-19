@@ -1205,6 +1205,33 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
     expect(large.exitCode).toBe(0);
   });
 
+  test.each([
+    [256, "formatting only"],
+    [257, "+1 -1"],
+  ])("locals are matched in scopes nested 256 deep and no deeper (%d)", async (depth, badge) => {
+    const blocks = (name: string) =>
+      `${Buffer.alloc(2 * depth, "{\n")}let ${name} = g();\n${Buffer.alloc(2 * depth, "}\n")}`;
+    const { text, exitCode } = await pretty({ "a/x.js": blocks("x"), "b/x.js": blocks("y") });
+    expect(text.match(/\nx\.js ─+ (.*)\n/)?.[1]).toBe(badge);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    ["small", 5],
+    ["large", 1400],
+  ])("if the old side is not parsed, notes are about the new one with its own names (%s)", async (_, count) => {
+    // The two reads are printed as one destructuring, so `process.env` is not in the print.
+    const { text, exitCode } = await pretty({
+      "a/x.js": "(\n" + comments(count),
+      "b/x.js":
+        "export const process = g();\nconst a = process.env, b = process.argv;\n" +
+        "function f(fetch) {\n  fetch(a, b);\n}\n" +
+        comments(count),
+    });
+    expect(text.split("\n").filter(l => l.startsWith("  ▲ "))).toEqual(["  ▲ +1 fetch() (x.js)"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("minified: a large file looks the same as a small one", async () => {
     const [small, large] = await Promise.all(
       [2000, 280_000].map(length => {

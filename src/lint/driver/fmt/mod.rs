@@ -1522,7 +1522,9 @@ impl Run<'_> {
             Ok(scope) => scope,
             Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
         };
-        let language = language_of(configs, &scope, &path);
+        let view = configs.plugin_view(&scope, Some(&path));
+        let parser = configs.parser_for(&scope, &path);
+        let language = language_with(parser, &view, configs, &scope, &path);
         let is_ignored = ignored.ignores_file(&path, configs.config_ignores(&scope));
         let not_installed = match language == Language::Plugin {
             true => self.not_installed(configs, &scope, Some(&path)),
@@ -1552,7 +1554,6 @@ impl Run<'_> {
             }
             return self.out;
         }
-        let view = configs.plugin_view(&scope, Some(&path));
         if language == Language::Supported && !allows && view.has_missing() {
             let mut left = LeftForPlugins::default();
             left.add(&view);
@@ -2066,24 +2067,27 @@ impl Run<'_> {
             let Expanded::File(target) = it else {
                 return None;
             };
-            let language = language_of(configs, &target.scope, &target.path);
-            is_included(ignored, target).then_some(language)
+            let (scope, path) = (&*target.scope, &target.path[..]);
+            let view = configs.plugin_view(scope, Some(path));
+            let language =
+                language_with(configs.parser_for(scope, path), &view, configs, scope, path);
+            let lacks_plugins = !options.allow_unsupported && view.has_missing();
+            is_included(ignored, target).then_some((language, lacks_plugins))
         };
         let classified = configs.with_warnings_in_order(
             || pool.map(&expanded, &classify),
             || expanded.iter().map(classify).collect(),
         );
         for (index, it) in expanded.iter().zip(classified).enumerate() {
-            let (Expanded::File(target), Some(language)) = it else {
+            let (Expanded::File(target), Some((language, lacks_plugins))) = it else {
                 continue;
             };
-            let view = configs.plugin_view(&target.scope, Some(&target.path));
+            // Only a file that isn't formatted here asks again.
+            let view = || configs.plugin_view(&target.scope, Some(&target.path));
             // What must be installed before the project's own Prettier can format the file.
-            let needed = || [&b"prettier"[..]].into_iter().chain(view.packages());
+            let needed = || [&b"prettier"[..]].into_iter().chain(view().packages());
             match language {
-                Language::Supported if !options.allow_unsupported && view.has_missing() => {
-                    left_for_plugins.add(&view);
-                }
+                Language::Supported if lacks_plugins => left_for_plugins.add(&view()),
                 Language::Supported => work.push((index, target)),
                 Language::Plugin if needed().all(&mut has_package) => {
                     handed_over.push((index, target));

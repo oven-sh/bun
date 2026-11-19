@@ -19,7 +19,15 @@ use crate::{format_args, write};
 /// `;`, which is only printed where a statement is required: Prettier's `isMeaningfulEmptyStatement`.
 #[inline(never)]
 pub(crate) fn write_empty_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
-    if matches!(
+    if is_body(statement) {
+        write!(f, ";");
+    }
+}
+
+/// True if `statement` is what a statement's head is for: not a statement in a list of them.
+#[inline]
+pub(crate) fn is_body(statement: Stmt<'_>) -> bool {
+    matches!(
         statement.ast_parent(),
         AstNodes::DoWhileStatement(_)
             | AstNodes::IfStatement(_)
@@ -29,24 +37,12 @@ pub(crate) fn write_empty_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'
             | AstNodes::ForOfStatement(_)
             | AstNodes::WithStatement(_)
             | AstNodes::LabeledStatement(_)
-    ) {
-        write!(f, ";");
-    }
+    )
 }
 
 /// True if `statement` comes after the end of another statement, not after the head of one.
 fn can_follow_a_statement(statement: Stmt<'_>) -> bool {
-    !matches!(
-        statement.ast_parent(),
-        AstNodes::IfStatement(_)
-            | AstNodes::DoWhileStatement(_)
-            | AstNodes::WhileStatement(_)
-            | AstNodes::ForStatement(_)
-            | AstNodes::ForInStatement(_)
-            | AstNodes::ForOfStatement(_)
-            | AstNodes::WithStatement(_)
-            | AstNodes::LabeledStatement(_)
-    ) && statement.directive().is_none()
+    !is_body(statement) && statement.directive().is_none()
 }
 
 /// Without semicolons, true if a `(` printed before `e`, which [`expression_statement_needs_semicolon`] doesn't know
@@ -179,6 +175,13 @@ fn semicolon_for_only_statement_in_html<'a>(
     if in_html.is_inline_event_handler {
         return Some(false);
     }
+    Some(is_called_by_vue(expression))
+}
+
+/// True if `expression`, all of a Vue event handler, is a function or a path to one, which Vue calls. With a `;` after
+/// it, it's a statement.
+#[inline(always)]
+pub(crate) fn is_called_by_vue(expression: Expr<'_>) -> bool {
     // `unwrapVueEventBindingTsNode`
     let mut expression = expression;
     while let ExprKind::As { expr, .. }
@@ -189,12 +192,11 @@ fn semicolon_for_only_statement_in_html<'a>(
     {
         expression = expr;
     }
-    // A function, or a path to one, which Vue calls.
-    Some(match expression.kind() {
+    match expression.kind() {
         ExprKind::Fn(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } => true,
         ExprKind::Ident(_) => expression.text() != b"undefined",
         _ => false,
-    })
+    }
 }
 
 #[inline(never)]

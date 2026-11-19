@@ -954,7 +954,7 @@ fn write_ignored_statement_without_terminator<'a>(
 }
 
 /// True if `statement` ends with a `;` when semicolons are enabled.
-fn ends_with_terminator(statement: Stmt<'_>) -> bool {
+pub(crate) fn ends_with_terminator(statement: Stmt<'_>) -> bool {
     // The `;` after the declaration in the head of a loop is a separator.
     if is_in_head_of_for(statement) {
         return false;

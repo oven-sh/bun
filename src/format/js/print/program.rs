@@ -1,14 +1,19 @@
 //! The file, its `#!` line, directives, and lists of statements.
 
 use super::semicolon::OptionalSemicolon;
-use super::statements::{expression_statement_needs_semicolon, follows_type_cast_comment};
+use super::statements::{
+    expression_statement_needs_semicolon, follows_type_cast_comment, is_body, is_called_by_vue,
+};
 use crate::ir::element::TextWidth;
 use crate::js::ast_nodes::node_as_ast_nodes;
+use crate::js::format::ends_with_terminator;
 use crate::js::sort_imports::ImportRun;
 use crate::js::trivia::comment_before_semicolon_keeps_its_line;
+use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use crate::prelude::*;
 use crate::write;
+use smallvec::SmallVec;
 
 pub(crate) fn write_program<'a>(file: &'a File<'a>, f: &mut Formatter<'a>) {
     let source = file.text();
@@ -162,6 +167,144 @@ impl<'a> Format<'a> for FormatStatements<'a> {
             write!(f, empty_line());
         }
     }
+}
+
+/// The statements of a Vue event handler that has a `;`, with a `;` after each but the last, whatever `semicolons` is.
+/// The statements inside them end as `semicolons` says. `VueStatements` in `html/js.rs` says which handlers it's for:
+/// those where [`surely_prints_semicolon`] is false, so none of these statements has a `;` before it or at its end.
+///
+/// Vue compiles a handler as statements only if its value has a `;`, and as the expression `(value)` otherwise: line
+/// breaks don't separate statements there (vuejs/core#8854). Without semicolons, Prettier 3.9.9 and oxfmt 0.72.0 print
+/// `a = 1; b = 2` as `a = 1⏎b = 2` and `if (a) b();` as `if (a) b()`, which Vue 3 doesn't compile. What's printed here
+/// is what oxfmt prints since 0.77.0 (`FormatSeparatedStatements` in its `print/embedded/program.rs`): `a = 1;⏎b = 2`
+/// and `if (a) b();`. With semicolons all of them print `while (a) {};` as `while (a) {}`, which Vue 3 doesn't compile
+/// either. Here it keeps its `;` the same way.
+#[derive(Copy, Clone)]
+pub(crate) struct FormatSeparatedStatements<'a>(pub(crate) List<'a, Stmt<'a>>);
+
+impl<'a> Format<'a> for FormatSeparatedStatements<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        let mut statements = (self.0.iter())
+            .filter(|it| it.tag() != StmtTag::Empty)
+            .peekable();
+        let mut previous: Option<Stmt<'a>> = None;
+        while let Some(statement) = statements.next() {
+            let is_only = previous.is_none() && statements.peek().is_none();
+            // Code in HTML is never in the flavor of oxfmt, which has more rules for the line between two statements.
+            match previous.replace(statement) {
+                Some(previous) if is_next_line_empty_after(previous, f) => write!(f, empty_line()),
+                Some(_) => write!(f, hard_line_break()),
+                None => {}
+            }
+            let needs_semicolon = match (is_only, statement.kind()) {
+                // One of the empty statements around it has the `;`: `foo;;`
+                (true, StmtKind::Expr(expression)) => is_called_by_vue(expression),
+                (true, _) => true,
+                (false, _) => statements.peek().is_some(),
+            };
+            if !needs_semicolon {
+                write!(f, statement);
+                continue;
+            }
+            // `a() /* comment */; b()` is `a(); /* comment */`, as with semicolons.
+            let trailing = f.comments().of_node(statement.as_ast_nodes()).trailing;
+            write!(
+                f,
+                [
+                    FormatNodeWithoutTrailingComments(&statement),
+                    ";",
+                    FormatTrailingComments::Comments(trailing)
+                ]
+            );
+        }
+    }
+}
+
+/// True if what [`FormatStatements`] prints for `statements` has a `;` however the lines break. Only statements are
+/// looked at, and what says yes has to be a `;` that's always printed: a wrong yes leaves a Vue event handler with
+/// none, a wrong no only adds one after a `}`.
+pub(crate) fn surely_prints_semicolon<'a>(
+    statements: List<'a, Stmt<'a>>,
+    f: &Formatter<'a>,
+) -> bool {
+    // Anything can be under a `prettier-ignore` comment, and is a copy of the source then. So only the statements
+    // that aren't are asked, and not the statements in them.
+    let has_copies = f.comments().has_suppression_comments();
+    let mut inner = SmallVec::<[Stmt<'a>; 8]>::new();
+    for statement in statements.iter() {
+        if !(has_copies && f.comments().is_ignored(statement.as_ast_nodes()))
+            && prints_own_semicolon(statement, &mut inner, f)
+        {
+            return true;
+        }
+    }
+    if has_copies {
+        return false;
+    }
+    while let Some(statement) = inner.pop() {
+        if prints_own_semicolon(statement, &mut inner, f) {
+            return true;
+        }
+    }
+    false
+}
+
+/// True if `statement` is printed with a `;` that isn't in a statement inside it. Those are added to `inner`.
+fn prints_own_semicolon<'a>(
+    statement: Stmt<'a>,
+    inner: &mut SmallVec<[Stmt<'a>; 8]>,
+    f: &Formatter<'a>,
+) -> bool {
+    let has_semicolons = f.options().semicolons.is_always();
+    match statement.kind() {
+        // `for (;;)`
+        StmtKind::For { .. } => return true,
+        // `while (a);`
+        StmtKind::Empty => return is_body(statement),
+        // `;(b || c)()`: what `write_expression_statement` asks, and `write_semicolon_before_type_cast_comment`.
+        StmtKind::Expr(expression) if !has_semicolons => {
+            return expression_statement_needs_semicolon(statement, expression, f)
+                && (!follows_type_cast_comment(statement.span().start, f)
+                    || !(f.comments().of_node(statement.as_ast_nodes()).leading).is_empty());
+        }
+        StmtKind::DoWhile { body, .. } => {
+            inner.push(body);
+            return has_semicolons;
+        }
+        StmtKind::If { yes, no, .. } => {
+            inner.push(yes);
+            inner.extend(no);
+        }
+        StmtKind::ForIn { body, .. }
+        | StmtKind::ForOf { body, .. }
+        | StmtKind::While { body, .. }
+        | StmtKind::With { body, .. }
+        | StmtKind::Labeled { body, .. } => inner.push(body),
+        StmtKind::Block(statements) => inner.extend(statements.iter()),
+        StmtKind::Try {
+            block,
+            handler,
+            finalizer,
+            ..
+        } => {
+            inner.push(block);
+            inner.extend(handler);
+            inner.extend(finalizer);
+        }
+        StmtKind::Switch { cases, .. } => {
+            for case in cases.iter() {
+                inner.extend(case.body().iter());
+            }
+        }
+        StmtKind::Fn(func) if func.has_body() => {
+            if let FnBody::Block(statements) = func.body() {
+                inner.extend(statements.iter());
+            }
+        }
+        // None of these has a statement after its head, which `ends_with_terminator` would answer for.
+        _ => return has_semicolons && ends_with_terminator(statement),
+    }
+    false
 }
 
 /// `a ⏎ /* comment */; ⏎⏎ b`: see [`comment_before_semicolon_keeps_its_line`]. The comment is printed on its own line

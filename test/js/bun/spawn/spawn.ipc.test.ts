@@ -715,6 +715,38 @@ describe.concurrent("the send queue", () => {
     );
     expect(result).toEqual({ stdout: [`replies ${count}`], stderr: "", exitCode: 0 });
   });
+
+  // Linux only: reads /proc/self/fd.
+  it.skipIf(!isLinux).each([
+    { handle: "server", keepOpen: false, descriptorsLeft: 1 },
+    { handle: "socket", keepOpen: true, descriptorsLeft: 1 },
+    { handle: "socket", keepOpen: false, descriptorsLeft: 0 },
+  ])("releases a $handle (keepOpen: $keepOpen) if the channel closes while its message is serialized", async row => {
+    const result = await runPair(
+      `
+        const server = await listen();
+        const socket = require("node:net").connect(server.address().port, "127.0.0.1");
+        await require("node:events").once(socket, "connect");
+        const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+        const child = spawnChild({ onDisconnect });
+        const message = {
+          toJSON() {
+            child.disconnect();
+            runEventLoopUntil(Promise.all([disconnected, child.exited]));
+            return "late";
+          },
+        };
+        const inode = fd => fs.statSync("/proc/self/fd/" + fd, { throwIfNoEntry: false })?.ino;
+        const sentInode = inode(${row.handle}._handle.fd);
+        child.send(message, ${row.handle}, { keepOpen: ${row.keepOpen} });
+        await turn();
+        console.log("descriptors left", fs.readdirSync("/proc/self/fd").filter(fd => inode(fd) === sentInode).length);
+        process.exit(0);
+      `,
+      `process.on("message", () => {});`,
+    );
+    expect(result).toEqual({ stdout: [`descriptors left ${row.descriptorsLeft}`], stderr: "", exitCode: 0 });
+  });
 });
 
 // Linux only: what one write() sends has to arrive in one read.

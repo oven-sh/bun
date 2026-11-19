@@ -1573,14 +1573,23 @@ impl SendQueue {
             Err(_) => return SerializeAndSendResult::Failure,
         };
         debug_assert!(payload.list.len() == payload_length);
-        if self
+        if self.close_event_sent.get() {
+            // The queue was emptied for the last time, maybe while script serialized `value`.
+            let unsent = SendHandle {
+                data: payload,
+                handle,
+                callbacks: CallbackList::None,
+            };
+            unsent.abort_unsent(global);
+        } else if self
             .start_message(global, callback, handle, payload)
             .is_err()
         {
             return SerializeAndSendResult::Failure;
+        } else {
+            log!("IPC call continueSend() from serializeAndSend");
+            self.continue_send(global, ContinueSendReason::NewMessageAppended);
         }
-        log!("IPC call continueSend() from serializeAndSend");
-        self.continue_send(global, ContinueSendReason::NewMessageAppended);
 
         if indicate_backoff {
             return SerializeAndSendResult::Backoff;

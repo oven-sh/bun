@@ -186,8 +186,8 @@ async function request(
     throwOnError = false,
     body: inputBody,
     maxRedirections,
-    // dispatcher,
-  } = options;
+    dispatcher,
+  } = options as typeof options & { dispatcher?: any };
 
   // TODO: More validations
 
@@ -222,6 +222,24 @@ async function request(
 
   const followRedirects = maxRedirections != null && maxRedirections > 0;
 
+  const routed = dispatcher ?? globalDispatcher;
+  const routeOnly = routed != null && isRouteOnly(routed);
+  if (routed != null && !routeOnly && typeof routed.dispatch === "function") {
+    const target = typeof url === "string" ? new URL(url) : url;
+    const result: any = await Dispatcher.prototype.request.$call(routed, {
+      ...options,
+      origin: target.origin,
+      path: target.pathname + target.search,
+      method: method ?? "GET",
+      query: undefined,
+    });
+    if (throwOnError && result.statusCode >= 400 && result.statusCode < 600) {
+      result.body.destroy();
+      throw new Error(`Request failed with status code ${result.statusCode}`);
+    }
+    return result;
+  }
+
   const resp: Response & { trailers?: undefined } = await nativeFetch(url, {
     signal,
     mode: "cors",
@@ -231,6 +249,7 @@ async function request(
     redirect: followRedirects ? "follow" : "manual",
     maxRedirects: followRedirects ? maxRedirections : undefined,
     keepalive: !reset,
+    ...(routeOnly ? routed[kNativeInit]() : undefined),
   });
 
   const { status: statusCode, headers, trailers } = resp;
@@ -262,9 +281,6 @@ class MockClient {
   constructor() {}
 }
 class MockPool {
-  constructor() {}
-}
-class MockAgent {
   constructor() {}
 }
 
@@ -345,10 +361,21 @@ function bodyFromDispatchOpts(body) {
   return body;
 }
 
+function isControllerHandler(handler) {
+  return typeof handler.onRequestStart === "function" || typeof handler.onResponseStart === "function";
+}
+
+// Controller handlers may omit onResponseError, like undici; legacy handlers were validated to have an error callback.
+function handlerError(handler, controller, err) {
+  if (isControllerHandler(handler) && typeof handler.onResponseError === "function")
+    handler.onResponseError(controller, err);
+  else if (typeof handler.onError === "function") handler.onError(err);
+  else handler.onResponseError?.(controller, err);
+}
+
 // One fetch()-backed request driving legacy (onHeaders/onData) or v7 controller (onResponseStart/...) handler callbacks.
-function fetchDispatch(origin: URL, opts: any, handler: any, pending?: Set<PendingEntry>) {
-  const isControllerStyle =
-    typeof handler.onRequestStart === "function" || typeof handler.onResponseStart === "function";
+function fetchDispatch(origin: URL, opts: any, handler: any, pending?: Set<PendingEntry>, nativeInit?: object) {
+  const isControllerStyle = isControllerHandler(handler);
 
   const ac = new AbortController();
   let aborted = false;
@@ -430,11 +457,12 @@ function fetchDispatch(origin: URL, opts: any, handler: any, pending?: Set<Pendi
       maxRedirects: followRedirects ? maxRedirections : undefined,
       signal: ac.signal,
       keepalive: !opts.reset,
+      ...nativeInit,
     });
 
-    // fetch() already decompressed the body, so drop the encoding headers.
+    // fetch() already decoded an encoded body, so its encoding and encoded length no longer describe the bytes delivered.
     const responseHeaders = { __proto__: null, ...resp.headers.toJSON() };
-    if (method.toUpperCase() !== "HEAD") {
+    if (method.toUpperCase() !== "HEAD" && responseHeaders["content-encoding"] !== undefined) {
       delete responseHeaders["content-encoding"];
       delete responseHeaders["content-length"];
     }
@@ -465,8 +493,9 @@ function fetchDispatch(origin: URL, opts: any, handler: any, pending?: Set<Pendi
         }
         if (aborted) throw abortReason;
         const buf = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-        const ret = isControllerStyle ? handler.onResponseData?.(controller, buf) : handler.onData?.(buf);
-        if (ret === false) paused = true;
+        // Only a legacy onData pauses by returning false; a controller handler pauses through controller.pause().
+        if (isControllerStyle) handler.onResponseData?.(controller, buf);
+        else if (handler.onData?.(buf) === false) paused = true;
       }
     }
 
@@ -480,12 +509,12 @@ function fetchDispatch(origin: URL, opts: any, handler: any, pending?: Set<Pendi
       // Cancel the response body when a handler callback threw before the body loop.
       if (!aborted) ac.abort(err);
       try {
-        if (isControllerStyle && typeof handler.onResponseError === "function")
-          handler.onResponseError(controller, err);
-        else if (typeof handler.onError === "function") handler.onError(err);
-        else if (typeof handler.onResponseError === "function") handler.onResponseError(controller, err);
-      } catch {
-        // A throwing error callback must not become an unhandled rejection.
+        handlerError(handler, controller, err);
+      } catch (thrown) {
+        // A throwing error callback is the caller's bug: report it as an uncaught exception, like undici, not swallow it.
+        queueMicrotask(() => {
+          throw thrown;
+        });
       }
     })
     .finally(() => {
@@ -578,10 +607,11 @@ class Dispatcher extends EventEmitter {
     throw new Error("not implemented");
   }
 
-  request(opts, callback) {
+  request(opts, callback?) {
     if (callback === undefined) {
+      // Not this.request(): the top-level request() runs this on dispatchers that only have dispatch().
       return new Promise((resolve, reject) => {
-        this.request(opts, (err, data) => (err ? reject(err) : resolve(data)));
+        Dispatcher.prototype.request.$call(this, opts, (err, data) => (err ? reject(err) : resolve(data)));
       });
     }
     if (typeof callback !== "function") throw new InvalidArgumentError("invalid callback");
@@ -610,10 +640,12 @@ class Dispatcher extends EventEmitter {
         reqBody.destroy(err);
       }
     };
+    // undici defers the error callback, so a callback that throws is an uncaught exception and not a dispatch failure.
+    const fail = err => queueMicrotask(() => callback(err, { opaque }));
     if (signal?.aborted) {
       const err = signal.reason ?? new RequestAbortedError("Request aborted");
       destroyRequestBody(err);
-      queueMicrotask(() => callback(err, { opaque }));
+      fail(err);
       return;
     }
     const trailers = ObjectCreate(null);
@@ -684,7 +716,7 @@ class Dispatcher extends EventEmitter {
               "request completed without a response: onHeaders must be called before onComplete",
             );
             destroyRequestBody(err);
-            callback(err, { opaque });
+            fail(err);
             return;
           }
           if (rawTrailers && rawTrailers.length) Object.assign(trailers, headersFromRawHeaders(rawTrailers));
@@ -696,7 +728,7 @@ class Dispatcher extends EventEmitter {
           removeSignal();
           destroyRequestBody(err);
           if (body) body.destroy(err);
-          else callback(err, { opaque });
+          else fail(err);
         },
       });
     } catch (err) {
@@ -708,13 +740,15 @@ class Dispatcher extends EventEmitter {
       // Handler callbacks assign body inside the try; TS does not track that, so re-widen it here.
       const openBody = body as DispatchBodyReadable | null;
       if (openBody) openBody.destroy(err as Error);
-      else callback(err, { opaque });
+      else fail(err);
     }
   }
 }
 
 const kDispatch = Symbol("kDispatch");
 const kPending = Symbol("kPending");
+const kNativeInit = Symbol("kNativeInit");
+const kFetch = Symbol("kFetch");
 
 type PendingEntry = { abort: (reason?: Error) => void; done: Promise<void> };
 
@@ -777,8 +811,12 @@ class DispatcherBase extends Dispatcher {
 
   dispatch(opts, handler) {
     if (!handler || typeof handler !== "object") throw new InvalidArgumentError("handler must be an object");
-    if (typeof handler.onError !== "function" && typeof handler.onResponseError !== "function") {
-      // Matches undici: without an error callback, async failures would be unobservable.
+    if (
+      !isControllerHandler(handler) &&
+      typeof handler.onError !== "function" &&
+      typeof handler.onResponseError !== "function"
+    ) {
+      // Matches undici: a legacy handler without an error callback would make async failures unobservable.
       throw new InvalidArgumentError("invalid onError method");
     }
     try {
@@ -787,9 +825,7 @@ class DispatcherBase extends Dispatcher {
       if (this.#closed) throw new ClientClosedError("The client is closed");
       return this[kDispatch](opts, handler);
     } catch (err) {
-      // The guard above proves one of the two callbacks exists.
-      if (typeof handler.onError === "function") handler.onError(err);
-      else handler.onResponseError(null, err);
+      handlerError(handler, null, err);
       return false;
     }
   }
@@ -797,6 +833,55 @@ class DispatcherBase extends Dispatcher {
   [kDispatch](_opts?: any, _handler?: any): boolean {
     notImplemented();
   }
+
+  // Extra native fetch options when fetch() through this dispatcher equals native fetch; undefined means fetch() must dispatch().
+  [kNativeInit](): { proxy?: unknown } | undefined {
+    return undefined;
+  }
+
+  // fetch() through a route-only dispatcher: native fetch, tracked so close() waits for the headers and destroy() aborts it.
+  [kFetch](input, init): Promise<Response> {
+    try {
+      if (this.#destroyed) throw new ClientDestroyedError("The client is destroyed");
+      if (this.#closed) throw new ClientClosedError("The client is closed");
+      // Bun accepts a Request as init; its fields are prototype getters, so fold it into the input before spreading.
+      if (init instanceof Request) {
+        input = new Request(input, init as any);
+        init = kEmptyObject;
+      }
+      const ac = new AbortController();
+      const outer = init.signal ?? (input instanceof Request ? input.signal : undefined);
+      const merged = { ...init, signal: outer ? AbortSignal.any([outer, ac.signal]) : ac.signal };
+      // The caller's own proxy wins, and a unix socket request cannot go through a proxy.
+      const proxy = this[kNativeInit]()?.proxy;
+      if (proxy !== undefined && merged.proxy === undefined && merged.unix == null) merged.proxy = proxy;
+      const response = nativeFetch(input, merged);
+      const pending = this[kPending];
+      const entry: PendingEntry = { abort: reason => ac.abort(reason), done: response.then(noop, noop) };
+      pending.add(entry);
+      entry.done.then(() => pending.delete(entry));
+      return response;
+    } catch (err) {
+      return Promise.reject(err);
+    }
+  }
+}
+
+function noop() {}
+
+// True when fetch() through the dispatcher equals native fetch: a stock Agent or proxy agent whose dispatch() nobody overrode.
+function isRouteOnly(dispatcher) {
+  return (
+    dispatcher.dispatch === DispatcherBase.prototype.dispatch &&
+    typeof dispatcher[kNativeInit] === "function" &&
+    dispatcher[kNativeInit]() !== undefined
+  );
+}
+
+// Agent, ProxyAgent and EnvHttpProxyAgent route by opts.origin.
+function dispatchToOrigin(agent, opts, handler) {
+  if (!opts.origin) throw new InvalidArgumentError("opts.origin must be a non-empty string or URL.");
+  return fetchDispatch(parseOrigin(opts.origin), opts, handler, agent[kPending], agent[kNativeInit]());
 }
 
 class Agent extends DispatcherBase {
@@ -805,8 +890,11 @@ class Agent extends DispatcherBase {
   }
 
   [kDispatch](opts, handler) {
-    if (!opts.origin) throw new InvalidArgumentError("opts.origin must be a non-empty string or URL.");
-    return fetchDispatch(parseOrigin(opts.origin), opts, handler, this[kPending]);
+    return dispatchToOrigin(this, opts, handler);
+  }
+
+  [kNativeInit]() {
+    return kEmptyObject;
   }
 }
 
@@ -854,14 +942,55 @@ class Client extends DispatcherBase {
 }
 
 class ProxyAgent extends DispatcherBase {
-  constructor() {
+  #nativeInit;
+
+  constructor(opts) {
     super();
+    if (typeof opts === "string" || opts instanceof URL) opts = { uri: opts };
+    if (opts == null || typeof opts !== "object") throw new InvalidArgumentError("Proxy uri is mandatory");
+    const { uri, token, auth } = opts;
+    if (!uri || (typeof uri !== "string" && !(uri instanceof URL))) {
+      throw new InvalidArgumentError("Proxy uri is mandatory");
+    }
+    if (token != null && auth != null) {
+      throw new InvalidArgumentError("opts.auth cannot be used in combination with opts.token");
+    }
+    if (token != null && typeof token !== "string") throw new InvalidArgumentError("opts.token must be a string");
+    if (auth != null && typeof auth !== "string") throw new InvalidArgumentError("opts.auth must be a string");
+    const headers = { ...opts.headers };
+    if (token != null) headers["proxy-authorization"] = token;
+    else if (auth != null) headers["proxy-authorization"] = `Basic ${auth}`;
+    // Native fetch's `proxy` option does the proxying. Like undici, a ProxyAgent proxies every host, NO_PROXY or not.
+    this.#nativeInit = { proxy: { url: String(uri), headers, respectNoProxy: false } };
+  }
+
+  [kDispatch](opts, handler) {
+    return dispatchToOrigin(this, opts, handler);
+  }
+
+  [kNativeInit]() {
+    return this.#nativeInit;
   }
 }
 
+// Native fetch applies HTTP_PROXY, HTTPS_PROXY and NO_PROXY itself on every redirect hop, so this agent adds no option.
 class EnvHttpProxyAgent extends DispatcherBase {
-  constructor() {
+  constructor(opts?: { httpProxy?: string; httpsProxy?: string; noProxy?: string }) {
     super();
+    if (opts != null && (opts.httpProxy != null || opts.httpsProxy != null || opts.noProxy != null)) {
+      throw new InvalidArgumentError(
+        "EnvHttpProxyAgent's httpProxy, httpsProxy and noProxy options are not implemented in Bun. " +
+          "Set the HTTP_PROXY, HTTPS_PROXY and NO_PROXY environment variables, or use ProxyAgent.",
+      );
+    }
+  }
+
+  [kDispatch](opts, handler) {
+    return dispatchToOrigin(this, opts, handler);
+  }
+
+  [kNativeInit]() {
+    return kEmptyObject;
   }
 }
 
@@ -880,6 +1009,14 @@ class RetryAgent extends DispatcherBase {
     return this.#agent.dispatch(opts, handler);
   }
 
+  [kNativeInit]() {
+    return isRouteOnly(this.#agent) ? this.#agent[kNativeInit]() : undefined;
+  }
+
+  [kFetch](input, init) {
+    return this.#agent[kFetch](input, init);
+  }
+
   get closed() {
     return this.#agent.closed;
   }
@@ -896,6 +1033,9 @@ class RetryAgent extends DispatcherBase {
     return this.#agent.destroy(err, callback);
   }
 }
+
+// Interception is not implemented: a MockAgent sends its requests to the network like an Agent, as it always has in Bun.
+class MockAgent extends Agent {}
 
 class RetryHandler {
   constructor() {}
@@ -1129,28 +1269,31 @@ function buildConnector(_options: object = {}) {
   };
 }
 
-// fetch with { dispatcher } routes through dispatcher.dispatch(); miniflare relies on this to reach workerd.
+function isReplayableBody(body) {
+  return (
+    typeof body === "string" ||
+    body instanceof ArrayBuffer ||
+    ArrayBuffer.isView(body) ||
+    body instanceof Blob ||
+    body instanceof FormData ||
+    body instanceof URLSearchParams
+  );
+}
+
+// fetch through a dispatcher that is not route-only: every hop goes through dispatcher.dispatch(), as in undici.
 function fetchViaDispatcher(dispatcher, input, init) {
-  let url: URL, method: any, headers: any, body: any, signal: any, redirect: any;
+  let url: URL, method: string, headers: Headers, body: any, signal: any, redirect: any;
   // Input parsing failures reject the returned promise like WHATWG fetch, never throw synchronously.
   try {
-    if (input instanceof Request) {
-      url = new URL(input.url);
-      method = init.method ?? input.method;
-      headers = init.headers ?? input.headers;
-      body = init.body ?? input.body;
-      signal = init.signal ?? input.signal;
-      redirect = init.redirect ?? input.redirect ?? "follow";
-    } else {
-      url = input instanceof URL ? input : new URL(String(input));
-      method = init.method ?? "GET";
-      headers = init.headers;
-      body = init.body;
-      signal = init.signal;
-      redirect = init.redirect ?? "follow";
-    }
-    if (headers instanceof Headers) headers = headers.toJSON();
-    method = method ? String(method) : "GET";
+    const request = input instanceof Request ? input : undefined;
+    url = request ? new URL(request.url) : input instanceof URL ? input : new URL(String(input));
+    // Only http(s) is dispatched, like undici's scheme fetch; data:, blob:, file: and s3: URLs stay with native fetch.
+    if (url.protocol !== "http:" && url.protocol !== "https:") return nativeFetch(input, init);
+    method = String((init.method ?? request?.method) || "GET");
+    headers = new Headers(init.headers ?? request?.headers);
+    body = init.body ?? request?.body;
+    signal = init.signal ?? request?.signal;
+    redirect = init.redirect ?? request?.redirect ?? "follow";
     // WHATWG fetch normalizes only these six methods; others keep their case.
     const upper = method.toUpperCase();
     if (
@@ -1163,6 +1306,11 @@ function fetchViaDispatcher(dispatcher, input, init) {
     ) {
       method = upper;
     }
+    // The dispatch options carry only origin and path, so URL userinfo becomes Basic auth here, as native fetch does.
+    if ((url.username || url.password) && !headers.has("authorization")) {
+      const userinfo = `${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`;
+      headers.set("authorization", `Basic ${Buffer.from(userinfo).toString("base64")}`);
+    }
     // A pre-aborted signal rejects before the dispatcher is ever invoked, like WHATWG fetch.
     if (signal?.aborted) throw signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
   } catch (err) {
@@ -1170,10 +1318,10 @@ function fetchViaDispatcher(dispatcher, input, init) {
   }
 
   return new Promise((resolve, reject) => {
-    let resolved = false;
+    let settled = false;
+    let redirects = 0;
     let streamController: ReadableStreamDefaultController | null = null;
-    let resumeData: (() => void) | null = null;
-    let abortDispatch: ((reason?: Error) => void) | null = null;
+    let abortHop: ((reason?: Error) => void) | null = null;
     let onSignalAbort: (() => void) | null = null;
     const removeSignal = () => {
       if (!onSignalAbort) return;
@@ -1183,8 +1331,8 @@ function fetchViaDispatcher(dispatcher, input, init) {
     };
     const routeError = err => {
       removeSignal();
-      if (!resolved) {
-        resolved = true;
+      if (!settled) {
+        settled = true;
         // Null so a late onData cannot park the dispatcher on the orphaned stream's backpressure.
         streamController = null;
         reject(err);
@@ -1193,105 +1341,170 @@ function fetchViaDispatcher(dispatcher, input, init) {
         streamController = null;
       }
     };
-    try {
-      dispatcher.dispatch(
-        {
-          origin: url.origin,
-          path: url.pathname + url.search,
-          method,
-          headers,
-          body,
-          maxRedirections: redirect === "follow" ? 20 : 0,
-        },
-        {
-          onConnect: abort => {
-            // A late onConnect after the promise settled must not re-register the signal listener.
-            if (resolved) return;
-            abortDispatch = abort;
-            // onConnect may fire once per redirect/retry hop; drop the previous hop's listener first.
-            removeSignal();
-            // Wired here because DispatchOptions has no signal field; user dispatch() implementations never see it.
-            if (signal) {
-              onSignalAbort = () => abort(signal.reason);
-              if (signal.aborted) onSignalAbort();
-              else if (typeof signal.addEventListener === "function")
-                signal.addEventListener("abort", onSignalAbort, { once: true });
-              else if (typeof signal.on === "function") signal.on("abort", onSignalAbort);
-            }
+    // Applies the WHATWG redirect rules to the request state; throws when the redirect cannot be followed.
+    const redirectTo = (statusCode: number, location: string) => {
+      if (++redirects > 20) throw new TypeError("redirect count exceeded");
+      const next = new URL(location, url);
+      if (next.protocol !== "http:" && next.protocol !== "https:") {
+        throw new TypeError("URL scheme must be a HTTP(S) scheme");
+      }
+      if (
+        statusCode === 303
+          ? method !== "GET" && method !== "HEAD"
+          : (statusCode === 301 || statusCode === 302) && method === "POST"
+      ) {
+        method = "GET";
+        body = undefined;
+        headers.delete("content-encoding");
+        headers.delete("content-language");
+        headers.delete("content-location");
+        headers.delete("content-type");
+        headers.delete("content-length");
+      } else if (body != null && !isReplayableBody(body)) {
+        throw new TypeError(`Cannot follow the ${statusCode} redirect to ${next.origin}: a stream body cannot be sent twice`);
+      }
+      if (next.origin !== url.origin) {
+        headers.delete("authorization");
+        headers.delete("proxy-authorization");
+        headers.delete("cookie");
+        headers.delete("host");
+      }
+      url = next;
+    };
+    const dispatchHop = () => {
+      // False once this hop reached a terminal callback or a redirect replaced it; its later callbacks are ignored.
+      let live = true;
+      let resumeData: (() => void) | null = null;
+      const fail = err => {
+        if (!live) return;
+        live = false;
+        routeError(err);
+      };
+      try {
+        dispatcher.dispatch(
+          {
+            origin: url.origin,
+            path: url.pathname + url.search,
+            method,
+            headers: headers.toJSON(),
+            body,
+            // fetch follows redirects itself, one dispatch per hop, so every hop passes through the dispatcher.
+            maxRedirections: 0,
           },
-          onHeaders: (statusCode, rawHeaders, resume, statusText) => {
-            if (statusCode < 200) return true;
-            // onHeaders after the promise settled violates the dispatch contract; keep the first outcome.
-            if (resolved) return true;
-            if (
-              redirect === "error" &&
-              (statusCode === 301 ||
-                statusCode === 302 ||
-                statusCode === 303 ||
-                statusCode === 307 ||
-                statusCode === 308)
-            ) {
-              const err = new TypeError(`Redirect response '${statusCode}' received when redirect mode is 'error'`);
-              routeError(err);
-              abortDispatch?.(err);
-              return true;
-            }
-            resumeData = resume;
-            const responseHeaders: [string, string][] = [];
-            for (let i = 0; i + 1 < rawHeaders.length; i += 2) {
-              responseHeaders.push([String(rawHeaders[i]), String(rawHeaders[i + 1])]);
-            }
-            let responseBody: ReadableStream | null = null;
-            const nullBody = statusCode === 204 || statusCode === 205 || statusCode === 304;
-            if (!nullBody && method !== "HEAD") {
-              responseBody = new ReadableStream({
-                start(controller) {
-                  streamController = controller;
-                },
-                pull() {
-                  resumeData?.();
-                },
-                cancel(reason) {
+          {
+            onConnect: abort => {
+              if (!live || settled) return;
+              abortHop = abort;
+              // onConnect may fire once per retry; drop the previous listener first.
+              removeSignal();
+              // Wired here because DispatchOptions has no signal field; user dispatch() implementations never see it.
+              if (signal) {
+                onSignalAbort = () => abort(signal.reason);
+                if (signal.aborted) onSignalAbort();
+                else if (typeof signal.addEventListener === "function")
+                  signal.addEventListener("abort", onSignalAbort, { once: true });
+                else if (typeof signal.on === "function") signal.on("abort", onSignalAbort);
+              }
+            },
+            onHeaders: (statusCode, rawHeaders, resume, statusText) => {
+              // A second final onHeaders, or one after a terminal callback, violates the dispatch contract.
+              if (statusCode < 200 || !live || settled) return true;
+              if (
+                redirect !== "manual" &&
+                (statusCode === 301 ||
+                  statusCode === 302 ||
+                  statusCode === 303 ||
+                  statusCode === 307 ||
+                  statusCode === 308)
+              ) {
+                if (redirect === "error") {
+                  const err = new TypeError(`Redirect response '${statusCode}' received when redirect mode is 'error'`);
+                  const abort = abortHop;
+                  fail(err);
+                  abort?.(err);
+                  return true;
+                }
+                let location;
+                for (let i = 0; i + 1 < rawHeaders.length; i += 2) {
+                  if (String(rawHeaders[i]).toLowerCase() === "location") location = String(rawHeaders[i + 1]);
+                }
+                if (location !== undefined) {
+                  const abort = abortHop;
+                  try {
+                    redirectTo(statusCode, location);
+                  } catch (err) {
+                    fail(err);
+                    abort?.(err as Error);
+                    return true;
+                  }
+                  // undici drops the connection of a redirect response instead of reading its body.
+                  live = false;
                   removeSignal();
-                  streamController = null;
-                  abortDispatch?.(reason instanceof Error ? reason : undefined);
-                },
-              });
-            }
-            // Built before flipping resolved so a non-constructible status rejects; url/redirected stay unset (constructor limitation).
-            const response = new Response(responseBody, { status: statusCode, statusText, headers: responseHeaders });
-            resolved = true;
-            resolve(response);
-            return true;
+                  abortHop = null;
+                  abort?.();
+                  dispatchHop();
+                  return true;
+                }
+              }
+              resumeData = resume;
+              const responseHeaders: [string, string][] = [];
+              for (let i = 0; i + 1 < rawHeaders.length; i += 2) {
+                responseHeaders.push([String(rawHeaders[i]), String(rawHeaders[i + 1])]);
+              }
+              let responseBody: ReadableStream | null = null;
+              const nullBody = statusCode === 204 || statusCode === 205 || statusCode === 304;
+              if (!nullBody && method !== "HEAD") {
+                responseBody = new ReadableStream({
+                  start(controller) {
+                    streamController = controller;
+                  },
+                  pull() {
+                    resumeData?.();
+                  },
+                  cancel(reason) {
+                    removeSignal();
+                    streamController = null;
+                    abortHop?.(reason instanceof Error ? reason : undefined);
+                  },
+                });
+              }
+              // Built before flipping settled so a non-constructible status rejects; the constructor cannot set url or redirected.
+              const response = new Response(responseBody, { status: statusCode, statusText, headers: responseHeaders });
+              settled = true;
+              resolve(response);
+              return true;
+            },
+            onData: chunk => {
+              if (!live || !streamController) return true;
+              // Copy: the dispatch contract only guarantees the chunk during the callback.
+              streamController.enqueue(new Uint8Array(chunk));
+              return (streamController.desiredSize ?? 1) > 0;
+            },
+            onComplete: () => {
+              if (!live) return;
+              live = false;
+              removeSignal();
+              if (!settled) {
+                settled = true;
+                reject(
+                  new TypeError(
+                    `fetch failed for ${url.origin}: the dispatcher completed without calling onHeaders; onHeaders must be called before onComplete`,
+                  ),
+                );
+                return;
+              }
+              streamController?.close();
+              streamController = null;
+            },
+            onError: fail,
           },
-          onData: chunk => {
-            if (!streamController) return true;
-            // Copy: the dispatch contract only guarantees the chunk during the callback.
-            streamController.enqueue(new Uint8Array(chunk));
-            return (streamController.desiredSize ?? 1) > 0;
-          },
-          onComplete: () => {
-            removeSignal();
-            if (!resolved) {
-              resolved = true;
-              reject(
-                new TypeError(
-                  `fetch failed for ${url.origin}: the dispatcher completed without calling onHeaders; onHeaders must be called before onComplete`,
-                ),
-              );
-              return;
-            }
-            streamController?.close();
-            // Null so post-onComplete onData/onComplete become no-ops instead of throwing on a closed controller.
-            streamController = null;
-          },
-          onError: routeError,
-        },
-      );
-    } catch (err) {
-      // A dispatcher that throws synchronously after resolving must error the body, not vanish into the executor.
-      routeError(err);
-    }
+        );
+      } catch (err) {
+        // A dispatcher that throws synchronously after resolving must error the body, not vanish into the executor.
+        fail(err);
+      }
+    };
+    dispatchHop();
   });
 }
 
@@ -1299,6 +1512,7 @@ function fetch(input, init) {
   // Raw module-local on purpose: nativeFetch stays the fast path until setGlobalDispatcher() installs one.
   const dispatcher = init?.dispatcher ?? globalDispatcher;
   if (dispatcher && typeof dispatcher.dispatch === "function") {
+    if (isRouteOnly(dispatcher)) return dispatcher[kFetch](input, init ?? kEmptyObject);
     return fetchViaDispatcher(dispatcher, input, init ?? kEmptyObject);
   }
   return nativeFetch(input, init);

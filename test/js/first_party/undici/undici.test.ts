@@ -1,22 +1,27 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import diagnosticsChannel from "node:diagnostics_channel";
+import { once } from "node:events";
+import net from "node:net";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 // @ts-ignore undici 5's types don't declare ping()
 import {
   Agent,
   Client,
   Dispatcher,
+  EnvHttpProxyAgent,
   errors,
   getGlobalDispatcher,
   ping,
   Pool,
+  ProxyAgent,
   request,
   RetryAgent,
   fetch as undiciFetch,
   WebSocket as UndiciWebSocket,
 } from "undici";
 
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 import { createServer } from "../../../http-test-server";
 
@@ -858,16 +863,18 @@ describe("undici", () => {
       expect(trailers).toEqual({ "x-foo": "bar" });
     });
 
-    it("request(cb) does not invoke a throwing callback twice", async () => {
+    it("request(cb) defers the error callback, like undici", async () => {
       const pool = new Pool(hostUrl);
       await pool.close();
+      const { promise, resolve } = Promise.withResolvers<any>();
       let calls = 0;
-      expect(() =>
-        pool.request({ path: "/", method: "GET" }, () => {
-          calls++;
-          throw new Error("user callback threw");
-        }),
-      ).not.toThrow();
+      pool.request({ path: "/", method: "GET" }, (err: any) => {
+        calls++;
+        resolve(err);
+      });
+      // Not called inside request(): a callback that throws must not land in the dispatcher.
+      expect(calls).toBe(0);
+      expect((await promise).code).toBe("UND_ERR_DESTROYED");
       expect(calls).toBe(1);
     });
 
@@ -1595,6 +1602,503 @@ describe("undici", () => {
     it("new Pool() without an origin throws InvalidArgumentError", () => {
       expect(() => new (Pool as any)()).toThrow(errors.InvalidArgumentError);
     });
+
+    it("a controller handler's onResponseData return value does not pause the body", async () => {
+      const firstChunkSeen = Promise.withResolvers<void>();
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue(new TextEncoder().encode("a"));
+                // The second chunk exists only after the handler saw the first, so the body has two chunks.
+                await firstChunkSeen.promise;
+                controller.enqueue(new TextEncoder().encode("b"));
+                controller.close();
+              },
+            }),
+          ),
+      });
+      const pool = new Pool(`http://localhost:${server.port}`);
+      const body = await new Promise<string>((resolve, reject) => {
+        let text = "";
+        pool.dispatch({ path: "/", method: "GET" }, {
+          onRequestStart() {},
+          onResponseStart() {},
+          // undici ignores this return value; only controller.pause() pauses.
+          onResponseData(_controller: any, chunk: Buffer) {
+            text += chunk.toString();
+            firstChunkSeen.resolve();
+            return false;
+          },
+          onResponseEnd: () => resolve(text),
+          onResponseError: (_controller: any, err: Error) => reject(err),
+        } as any);
+      });
+      expect(body).toBe("ab");
+      await pool.close();
+    });
+
+    it("a controller handler may omit onResponseError, like undici", async () => {
+      const pool = new Pool(hostUrl);
+      const status = await new Promise<number>(resolve => {
+        let status = 0;
+        pool.dispatch({ path: "/get", method: "GET" }, {
+          onRequestStart() {},
+          onResponseStart(_controller: any, statusCode: number) {
+            status = statusCode;
+          },
+          onResponseData() {},
+          onResponseEnd: () => resolve(status),
+        } as any);
+      });
+      expect(status).toBe(200);
+      await pool.close();
+    });
+
+    it("keeps content-length unless fetch decoded the body", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          if (new URL(req.url).pathname === "/gzip") {
+            return new Response(Bun.gzipSync("hello"), { headers: { "content-encoding": "gzip" } });
+          }
+          return new Response("hello");
+        },
+      });
+      const pool = new Pool(`http://localhost:${server.port}`);
+      const plain = await pool.request({ path: "/plain", method: "GET" });
+      const gzip = await pool.request({ path: "/gzip", method: "GET" });
+      expect({
+        plainLength: plain.headers["content-length"],
+        plainText: await plain.body.text(),
+        gzipLength: gzip.headers["content-length"],
+        gzipEncoding: gzip.headers["content-encoding"],
+        gzipText: await gzip.body.text(),
+      }).toEqual({
+        plainLength: "5",
+        plainText: "hello",
+        gzipLength: undefined,
+        gzipEncoding: undefined,
+        gzipText: "hello",
+      });
+      await pool.close();
+    });
+
+    it("a throwing error callback is an uncaught exception, not a swallowed one", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { Pool } = require("undici");
+           process.on("uncaughtException", err => console.log("uncaught: " + err.message));
+           const refused = new Pool("http://127.0.0.1:1");
+           refused.dispatch({ path: "/", method: "GET" }, {
+             onConnect() {}, onHeaders() {}, onData() {}, onComplete() {},
+             onError() { throw new Error("from onError"); },
+           });
+           const closed = new Pool("http://127.0.0.1:1");
+           closed.close().then(() => closed.request({ path: "/", method: "GET" }, () => { throw new Error("from callback"); }));`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim().split("\n").sort(), stderr }).toEqual({
+        stdout: ["uncaught: from callback", "uncaught: from onError"],
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    it("fetch with a dispatcher sends every redirect hop through the dispatcher", async () => {
+      const seen: string[] = [];
+      await using target = Bun.serve({
+        port: 0,
+        fetch(req) {
+          const url = new URL(req.url);
+          seen.push(`${req.method} ${url.pathname} via=${req.headers.get("x-via")}`);
+          if (url.pathname === "/start") return new Response(null, { status: 302, headers: { location: "/end" } });
+          return new Response("done");
+        },
+      });
+      const pool = new Pool(`http://localhost:${target.port}`);
+      const hops: string[] = [];
+      const dispatcher = {
+        dispatch(opts: any, handler: any) {
+          hops.push(`${opts.origin}${opts.path} maxRedirections=${opts.maxRedirections}`);
+          return pool.dispatch({ ...opts, headers: { ...opts.headers, "x-via": "dispatcher" } }, handler);
+        },
+      };
+      // Nothing listens on the URL's port; only the dispatcher can answer either hop.
+      const res = await undiciFetch("http://localhost:1/start", { dispatcher } as any);
+      expect(await res.text()).toBe("done");
+      expect(hops).toEqual(["http://localhost:1/start maxRedirections=0", "http://localhost:1/end maxRedirections=0"]);
+      expect(seen).toEqual(["GET /start via=dispatcher", "GET /end via=dispatcher"]);
+      await pool.close();
+    });
+
+    it("fetch with a dispatcher applies the redirect rules to method, body and credentials", async () => {
+      const seen: any[] = [];
+      const dispatcher = {
+        dispatch(opts: any, handler: any) {
+          seen.push({
+            url: opts.origin + opts.path,
+            method: opts.method,
+            body: opts.body ?? null,
+            authorization: opts.headers.authorization ?? null,
+            type: opts.headers["content-type"] ?? null,
+          });
+          handler.onConnect(() => {});
+          if (opts.path === "/a") handler.onHeaders(307, [Buffer.from("location"), Buffer.from("/b")], () => {}, "");
+          else if (opts.path === "/b")
+            handler.onHeaders(303, [Buffer.from("Location"), Buffer.from("http://other.test/c")], () => {}, "");
+          else {
+            handler.onHeaders(200, [], () => {}, "OK");
+            handler.onData(Buffer.from("ok"));
+            handler.onComplete([]);
+          }
+          return true;
+        },
+      };
+      const res = await undiciFetch("http://first.test/a", {
+        dispatcher,
+        method: "POST",
+        body: "payload",
+        headers: { authorization: "Bearer t", "content-type": "text/plain" },
+      } as any);
+      expect(await res.text()).toBe("ok");
+      expect(seen).toEqual([
+        { url: "http://first.test/a", method: "POST", body: "payload", authorization: "Bearer t", type: "text/plain" },
+        // 307 keeps the method and the body.
+        { url: "http://first.test/b", method: "POST", body: "payload", authorization: "Bearer t", type: "text/plain" },
+        // 303 becomes a GET without a body, and the cross-origin hop loses the credentials.
+        { url: "http://other.test/c", method: "GET", body: null, authorization: null, type: null },
+      ]);
+    });
+
+    it("fetch with a dispatcher and redirect 'manual' returns the redirect response", async () => {
+      let dispatched = 0;
+      const dispatcher = {
+        dispatch(_opts: any, handler: any) {
+          dispatched++;
+          handler.onConnect(() => {});
+          handler.onHeaders(302, [Buffer.from("location"), Buffer.from("/next")], () => {}, "Found");
+          handler.onComplete([]);
+          return true;
+        },
+      };
+      const res = await undiciFetch("http://localhost:1/", { dispatcher, redirect: "manual" } as any);
+      expect({ status: res.status, location: res.headers.get("location"), dispatched }).toEqual({
+        status: 302,
+        location: "/next",
+        dispatched: 1,
+      });
+    });
+
+    it("fetch with a dispatcher stops after 20 redirects", async () => {
+      let dispatched = 0;
+      const dispatcher = {
+        dispatch(_opts: any, handler: any) {
+          dispatched++;
+          handler.onConnect(() => {});
+          handler.onHeaders(302, [Buffer.from("location"), Buffer.from("/again")], () => {}, "Found");
+          return true;
+        },
+      };
+      await expect(undiciFetch("http://localhost:1/", { dispatcher } as any)).rejects.toThrow(
+        "redirect count exceeded",
+      );
+      expect(dispatched).toBe(21);
+    });
+
+    it("fetch with a dispatcher sends URL credentials as Basic auth", async () => {
+      let authorization: string | undefined;
+      const dispatcher = {
+        dispatch(opts: any, handler: any) {
+          authorization = opts.headers.authorization;
+          handler.onConnect(() => {});
+          handler.onHeaders(200, [], () => {}, "OK");
+          handler.onComplete([]);
+          return true;
+        },
+      };
+      await undiciFetch("http://user:p%40ss@localhost:1/", { dispatcher } as any);
+      expect(authorization).toBe(`Basic ${Buffer.from("user:p@ss").toString("base64")}`);
+    });
+
+    it("fetch with a dispatcher leaves non-http(s) URLs to native fetch", async () => {
+      let dispatched = 0;
+      const dispatcher = {
+        dispatch() {
+          dispatched++;
+          return true;
+        },
+      };
+      const res = await undiciFetch("data:text/plain;base64,aGk=", { dispatcher } as any);
+      expect(await res.text()).toBe("hi");
+      expect(dispatched).toBe(0);
+    });
+
+    it("fetch through a stock Agent is native fetch", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          if (new URL(req.url).pathname === "/start") {
+            return new Response(null, { status: 302, headers: { location: "/end" } });
+          }
+          return new Response("hello");
+        },
+      });
+      const origin = `http://localhost:${server.port}`;
+      const agent = new Agent();
+      const res = await undiciFetch(`${origin}/start`, { dispatcher: agent } as any);
+      // A Response assembled from dispatch() callbacks has none of these.
+      expect({
+        url: res.url,
+        redirected: res.redirected,
+        length: res.headers.get("content-length"),
+        text: await res.text(),
+      }).toEqual({ url: `${origin}/end`, redirected: true, length: "5", text: "hello" });
+      await agent.close();
+      await expect(undiciFetch(`${origin}/end`, { dispatcher: agent } as any)).rejects.toBeInstanceOf(
+        errors.ClientDestroyedError,
+      );
+    });
+
+    it("destroy() aborts a fetch in flight through a stock Agent", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        // Never respond; the request can only finish by being aborted.
+        fetch: () => new Promise<Response>(() => {}),
+      });
+      const agent = new Agent();
+      const rejected = expect(
+        undiciFetch(`http://localhost:${server.port}/`, { dispatcher: agent } as any),
+      ).rejects.toHaveProperty("code", "UND_ERR_DESTROYED");
+      await agent.destroy();
+      await rejected;
+    });
+
+    it("fetch through an Agent subclass that overrides dispatch() calls the override", async () => {
+      let calls = 0;
+      class Counting extends Agent {
+        dispatch(opts: any, handler: any) {
+          calls++;
+          return super.dispatch(opts, handler);
+        }
+      }
+      const res = await undiciFetch(`${hostUrl}/get`, { dispatcher: new Counting() } as any);
+      expect(await res.json()).toEqual({ url: `${hostUrl}/get`, method: "GET" });
+      expect(calls).toBe(1);
+    });
+
+    it("request(url, { dispatcher }) routes through a custom dispatcher", async () => {
+      const seen: any[] = [];
+      const pool = new Pool(hostUrl);
+      const dispatcher = {
+        dispatch(opts: any, handler: any) {
+          seen.push({ origin: opts.origin, path: opts.path, method: opts.method });
+          return pool.dispatch(opts, handler);
+        },
+      };
+      // Nothing listens on the URL's port; only the dispatcher can answer.
+      const { statusCode, body } = await request("http://localhost:1/get", { dispatcher, query: { x: "1" } } as any);
+      expect(statusCode).toBe(200);
+      expect(((await body.json()) as { url: string }).url).toBe(`${hostUrl}/get?x=1`);
+      expect(seen).toEqual([{ origin: "http://localhost:1", path: "/get?x=1", method: "GET" }]);
+      await pool.close();
+    });
+  });
+});
+
+// A minimal HTTP proxy that answers absolute-form requests itself and records every request line and header it sees.
+async function recordingProxy() {
+  const seen: string[] = [];
+  const seenHeaders: Record<string, string>[] = [];
+  const server = net.createServer(socket => {
+    socket.once("data", data => {
+      const [line, ...rest] = data.toString("latin1").split("\r\n");
+      seen.push(line);
+      const headers: Record<string, string> = {};
+      for (const h of rest) {
+        const i = h.indexOf(":");
+        if (i > 0) headers[h.slice(0, i).toLowerCase()] = h.slice(i + 1).trim();
+      }
+      seenHeaders.push(headers);
+      socket.end("HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nPROXIED");
+    });
+    socket.on("error", () => {});
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  return {
+    seen,
+    seenHeaders,
+    url: `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`,
+    [Symbol.asyncDispose]: () => new Promise<void>(resolve => server.close(() => resolve())),
+  };
+}
+
+function recordingOrigin() {
+  const seen: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      seen.push(new URL(req.url).pathname);
+      return new Response("ORIGIN");
+    },
+  });
+  return { seen, url: `http://127.0.0.1:${server.port}`, [Symbol.asyncDispose]: () => server.stop(true) };
+}
+
+describe("undici ProxyAgent", () => {
+  it("fetch({ dispatcher: ProxyAgent }) goes through the proxy, not to the origin", async () => {
+    await using origin = recordingOrigin();
+    await using proxy = await recordingProxy();
+    const agent = new ProxyAgent(proxy.url);
+    const res = await undiciFetch(`${origin.url}/via-fetch`, { dispatcher: agent } as any);
+    expect(await res.text()).toBe("PROXIED");
+    expect({ proxy: proxy.seen, origin: origin.seen }).toEqual({
+      proxy: [`GET ${origin.url}/via-fetch HTTP/1.1`],
+      origin: [],
+    });
+    await agent.close();
+  });
+
+  it("request({ dispatcher: ProxyAgent }) goes through the proxy and sends the token to it", async () => {
+    await using origin = recordingOrigin();
+    await using proxy = await recordingProxy();
+    const agent = new ProxyAgent({ uri: proxy.url, token: "Bearer secret-token" });
+    const { statusCode, body } = await request(`${origin.url}/via-request`, { dispatcher: agent } as any);
+    expect({ statusCode, text: await body.text() }).toEqual({ statusCode: 200, text: "PROXIED" });
+    expect({ proxy: proxy.seen, token: proxy.seenHeaders[0]["proxy-authorization"], origin: origin.seen }).toEqual({
+      proxy: [`GET ${origin.url}/via-request HTTP/1.1`],
+      token: "Bearer secret-token",
+      origin: [],
+    });
+  });
+
+  it("ProxyAgent sends opts.headers and opts.auth to the proxy", async () => {
+    await using origin = recordingOrigin();
+    await using proxy = await recordingProxy();
+    const auth = Buffer.from("user:pass").toString("base64");
+    const agent = new ProxyAgent({ uri: proxy.url, headers: { "x-proxy-tenant": "acme" }, auth });
+    await (await undiciFetch(`${origin.url}/headers`, { dispatcher: agent } as any)).text();
+    expect({
+      tenant: proxy.seenHeaders[0]["x-proxy-tenant"],
+      authorization: proxy.seenHeaders[0]["proxy-authorization"],
+      origin: origin.seen,
+    }).toEqual({ tenant: "acme", authorization: `Basic ${auth}`, origin: [] });
+  });
+
+  it("proxyAgent.request() and a RetryAgent around a ProxyAgent go through the proxy", async () => {
+    await using origin = recordingOrigin();
+    await using proxy = await recordingProxy();
+    const agent = new ProxyAgent(proxy.url);
+    const { body } = await agent.request({ origin: origin.url, path: "/dispatch", method: "GET" });
+    const res = await undiciFetch(`${origin.url}/retry`, { dispatcher: new RetryAgent(agent) } as any);
+    expect({ dispatch: await body.text(), retry: await res.text() }).toEqual({ dispatch: "PROXIED", retry: "PROXIED" });
+    expect({ proxy: proxy.seen, origin: origin.seen }).toEqual({
+      proxy: [`GET ${origin.url}/dispatch HTTP/1.1`, `GET ${origin.url}/retry HTTP/1.1`],
+      origin: [],
+    });
+  });
+
+  it.skipIf(isWindows)("a unix socket request ignores the ProxyAgent", async () => {
+    await using proxy = await recordingProxy();
+    using dir = tempDir("undici-unix", {});
+    const unix = join(String(dir), "s.sock");
+    await using origin = Bun.serve({ unix, fetch: req => new Response("UNIX " + new URL(req.url).pathname) });
+    const res = await undiciFetch("http://localhost/over-unix", {
+      unix,
+      dispatcher: new ProxyAgent(proxy.url),
+    } as any);
+    expect({ text: await res.text(), proxy: proxy.seen }).toEqual({ text: "UNIX /over-unix", proxy: [] });
+  });
+
+  it("a global ProxyAgent proxies fetch and request, and ignores NO_PROXY", async () => {
+    await using origin = recordingOrigin();
+    await using proxy = await recordingProxy();
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Agent, MockAgent, ProxyAgent, fetch, request, setGlobalDispatcher } = require("undici");
+         const [origin, proxy] = process.argv.slice(1);
+         setGlobalDispatcher(new ProxyAgent(proxy));
+         const out = [];
+         out.push(await (await fetch(origin + "/global-fetch")).text());
+         out.push(await (await request(origin + "/global-request")).body.text());
+         // Bun accepts a Request as init; its fields must survive the proxy being added.
+         const init = new Request("http://ignored.invalid/", { method: "POST", headers: { "x-from-init": "yes" }, body: "b" });
+         out.push(await (await fetch(origin + "/request-as-init", init)).text());
+         out.push(await (await fetch(origin + "/explicit-agent", { dispatcher: new Agent() })).text());
+         // Interception is not implemented: a MockAgent behaves like an Agent.
+         setGlobalDispatcher(new MockAgent());
+         out.push(await (await fetch(origin + "/mock-agent")).text());
+         console.log(JSON.stringify(out));`,
+        origin.url,
+        proxy.url,
+      ],
+      env: { ...bunEnv, NO_PROXY: "127.0.0.1", no_proxy: "127.0.0.1" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify(["PROXIED", "PROXIED", "PROXIED", "ORIGIN", "ORIGIN"]),
+      stderr: "",
+    });
+    expect({ proxy: proxy.seen, fromInit: proxy.seenHeaders[2]?.["x-from-init"], origin: origin.seen }).toEqual({
+      proxy: [
+        `GET ${origin.url}/global-fetch HTTP/1.1`,
+        `GET ${origin.url}/global-request HTTP/1.1`,
+        `POST ${origin.url}/request-as-init HTTP/1.1`,
+      ],
+      fromInit: "yes",
+      origin: ["/explicit-agent", "/mock-agent"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("a global EnvHttpProxyAgent leaves the proxy environment variables to native fetch", async () => {
+    await using origin = recordingOrigin();
+    await using proxy = await recordingProxy();
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { EnvHttpProxyAgent, fetch, setGlobalDispatcher } = require("undici");
+         setGlobalDispatcher(new EnvHttpProxyAgent());
+         console.log(await (await fetch(process.argv[1])).text());`,
+        `${origin.url}/env`,
+      ],
+      env: { ...bunEnv, HTTP_PROXY: proxy.url, http_proxy: proxy.url, NO_PROXY: "", no_proxy: "" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "PROXIED", stderr: "" });
+    expect({ proxy: proxy.seen, origin: origin.seen }).toEqual({
+      proxy: [`GET ${origin.url}/env HTTP/1.1`],
+      origin: [],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("ProxyAgent and EnvHttpProxyAgent reject options they would otherwise drop", () => {
+    const uri = "http://127.0.0.1:1";
+    for (const arg of [undefined, {}, 123, "", { uri: "" }]) {
+      expect(() => new (ProxyAgent as any)(arg)).toThrow("Proxy uri is mandatory");
+    }
+    expect(() => new (ProxyAgent as any)({ uri, token: Buffer.from("t") })).toThrow(errors.InvalidArgumentError);
+    expect(() => new (ProxyAgent as any)({ uri, auth: 123 })).toThrow(errors.InvalidArgumentError);
+    expect(() => new ProxyAgent({ uri, token: "t", auth: "a" })).toThrow(errors.InvalidArgumentError);
+    expect(() => new EnvHttpProxyAgent({})).not.toThrow();
+    for (const opts of [{ httpProxy: uri }, { httpsProxy: uri }, { noProxy: "example.com" }]) {
+      expect(() => new EnvHttpProxyAgent(opts)).toThrow("not implemented");
+    }
   });
 });
 

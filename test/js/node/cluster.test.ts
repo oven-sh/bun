@@ -11,7 +11,10 @@ import {
   tempDirWithFiles,
   tls as tlsCerts,
 } from "harness";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import net from "node:net";
+import { text } from "node:stream/consumers";
 
 test.concurrent("cloneable and transferable equals", async () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -1531,4 +1534,41 @@ test.concurrent("require('cluster') does not throw when NODE_UNIQUE_ID is set af
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr }).toEqual({ stdout: "loaded\n", stderr: "" });
   expect(exitCode).toBe(0);
+});
+
+// The test writes the wire format of a POSIX socket to the channel. Windows frames what goes through its pipe.
+test.concurrent.skipIf(isWindows)("the channel closes while a worker replays the messages it queued", async () => {
+  using dir = tempDir("cluster-close-in-replay", {
+    "empty.js": "",
+    "index.js": `
+      process.on("message", () => {
+        process.on("internalMessage", ({ act }) => {
+          console.log(act);
+          if (act !== "second") return;
+          const { promise, resolve } = Promise.withResolvers();
+          process.once("disconnect", resolve);
+          // Bun.build() runs the event loop until the setup() of a plugin has settled.
+          Bun.build({ entrypoints: ["./empty.js"], plugins: [{ name: "wait", setup: () => promise }] });
+        });
+        require("node:cluster");
+        console.log("replayed");
+      });
+    `,
+  });
+  const proc = spawn(bunExe(), ["index.js"], {
+    env: { ...bunEnv, NODE_CHANNEL_FD: "3", NODE_CHANNEL_SERIALIZATION_MODE: "json", NODE_UNIQUE_ID: "1" },
+    cwd: String(dir),
+    stdio: ["ignore", "pipe", "pipe", "pipe"],
+  });
+  try {
+    const channel = proc.stdio[3] as net.Socket;
+    // ECONNRESET if the worker crashes, which its output says better.
+    channel.on("error", () => {}).resume();
+    channel.write('\x02{"act":"disconnect"}\n\x02{"act":"second"}\n\x02{"act":"third"}\n"load node:cluster"\n');
+    const [stdout, stderr, exit] = await Promise.all([text(proc.stdout!), text(proc.stderr!), once(proc, "exit")]);
+    expect({ stdout, stderr }).toEqual({ stdout: "disconnect\nsecond\nreplayed\n", stderr: "" });
+    expect(exit).toEqual([0, null]);
+  } finally {
+    proc.kill();
+  }
 });

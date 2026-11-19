@@ -55,7 +55,15 @@ pub(crate) fn on_internal_message_child<'a>(
     // TODO: we should not create two jsc.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
     singleton.worker = StrongOptional::create(worker.to_js(), global);
     singleton.cb = StrongOptional::create(callback.to_js(), global);
-    singleton.flush(global)
+    for message in core::mem::take(&mut singleton.messages) {
+        if !child_singleton().is_ready() {
+            break; // the channel closed
+        }
+        if let Some(message) = message.get() {
+            handle_internal_message_child(global, message, JSValue::NULL)?;
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn handle_internal_message_child(
@@ -65,7 +73,22 @@ pub(crate) fn handle_internal_message_child(
 ) -> JsResult<()> {
     bun_output::scoped_log!(IPC, "handleInternalMessageChild");
 
-    child_singleton().dispatch(message, handle, global)
+    // The listener can close the channel, which drops the singleton.
+    let singleton = child_singleton();
+    let Some((cb, worker)) = singleton.cb.get().zip(singleton.worker.get()) else {
+        // Queued messages drop their handle; the cluster listener is
+        // installed before any handle-bearing reply can arrive.
+        singleton.enqueue(message, global);
+        return Ok(());
+    };
+    global.bun_vm().event_loop().run_callback(
+        bun_event_loop::ContextId::NONE,
+        cb,
+        global,
+        worker,
+        &[message, handle],
+    );
+    Ok(())
 }
 
 pub(crate) fn send_helper_primary<'a>(

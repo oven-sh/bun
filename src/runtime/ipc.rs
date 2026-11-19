@@ -75,68 +75,6 @@ impl InternalMsgHolder {
             .push(bun_jsc::StrongOptional::create(message, global));
     }
 
-    pub(crate) fn dispatch(
-        &mut self,
-        message: JSValue,
-        handle: JSValue,
-        global: &JSGlobalObject,
-    ) -> JsResult<()> {
-        if !self.is_ready() {
-            // Queued messages drop their handle; the cluster listener is
-            // installed before any handle-bearing reply can arrive.
-            self.enqueue(message, global);
-            return Ok(());
-        }
-        self.dispatch_unsafe(message, handle, global)
-    }
-
-    fn dispatch_unsafe(
-        &mut self,
-        message: JSValue,
-        handle: JSValue,
-        global: &JSGlobalObject,
-    ) -> JsResult<()> {
-        let cb = self.cb.get().unwrap();
-        let worker = self.worker.get().unwrap();
-
-        let event_loop = global.bun_vm().event_loop();
-
-        event_loop.run_callback(
-            bun_event_loop::ContextId::NONE,
-            cb,
-            global,
-            worker,
-            &[message, handle],
-        );
-        Ok(())
-    }
-
-    pub(crate) fn flush(&mut self, global: &JSGlobalObject) -> JsResult<()> {
-        debug_assert!(self.is_ready());
-        let messages = core::mem::take(&mut self.messages);
-        // `&mut self` carries LLVM `noalias`, but
-        // `dispatch_unsafe` → `event_loop.run_callback` runs the JS IPC
-        // listener which can re-enter via a fresh `&mut Self` from the
-        // owner's JS wrapper and write `self.cb` / `self.worker` /
-        // `self.callbacks`. With the loop body inlined, LLVM was hoisting the
-        // `self.cb`/`self.worker` reads (at the top of `dispatch_unsafe`) out
-        // of the loop — ASM-verified PROVEN_CACHED. Launder so each iteration
-        // re-reads through an opaque pointer.
-        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        for strong in messages {
-            if let Some(message) = strong.get() {
-                // SAFETY: `this` is still live across re-entry — the IPC
-                // dispatcher is owned by the Subprocess/Worker which outlives
-                // this `flush` frame; `&mut *this` is the unique mutable view
-                // for this call.
-                unsafe { &mut *this }.dispatch_unsafe(message, JSValue::NULL, global)?;
-            }
-            // strong drops here (== `strong.deinit()`)
-        }
-        // messages Vec drops here (== `messages.deinit(bun.default_allocator)`)
-        Ok(())
-    }
-
     // `deinit` body only freed owned fields (Strongs, map, Vec). All of those impl Drop in
     // Rust, so no explicit Drop body is needed.
 }

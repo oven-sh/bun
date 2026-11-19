@@ -193,13 +193,13 @@ test.concurrent("explicit read(n) with no 'readable' listener still pulls from s
       process.stdin.on("end", () => {
         console.log(JSON.stringify({ chunks, readableEnded: process.stdin.readableEnded }));
       });
-      let spins = 0;
+      const deadline = Date.now() + 4000;
       function poll() {
         let chunk;
         while ((chunk = process.stdin.read(3)) !== null) chunks.push(chunk.toString());
         if (process.stdin.readableEnded) return;
         // Bounded so a regression fails with output instead of spinning forever.
-        if (++spins > 20000) {
+        if (Date.now() > deadline) {
           console.log(JSON.stringify({ chunks, readableEnded: false }));
           process.exit(1);
         }

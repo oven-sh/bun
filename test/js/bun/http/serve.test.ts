@@ -2253,6 +2253,162 @@ describe("response framing", () => {
       expect(HEAD).toEqual({ status: 200, contentLength: "999", transferEncoding: null, body: "" });
     });
 
+    // RFC 9110 8.6: a HEAD response MUST NOT carry a Content-Length unless it
+    // equals what GET would send. A null body does not say what that is, so
+    // only the handler's header can: with none, HEAD sends none.
+    // https://github.com/oven-sh/bun/issues/49300
+    it("HEAD answered with a null-body copy of the GET response sends no Content-Length", async () => {
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          const getResponse = new Response("<h1>Hello</h1>", { headers: { "Content-Type": "text/html" } });
+          return req.method === "HEAD" ? new Response(null, getResponse) : getResponse;
+        },
+      });
+      const [GET, HEAD] = [await rawRequest(server.port!, "GET"), await rawRequest(server.port!, "HEAD")];
+      expect({
+        GET: [GET.statusLine, GET.headers["content-type"], GET.headers["content-length"], GET.body],
+        HEAD: [HEAD.statusLine, HEAD.headers["content-type"], HEAD.headers["content-length"], HEAD.body],
+      }).toEqual({
+        GET: ["HTTP/1.1 200 OK", "text/html", "14", "<h1>Hello</h1>"],
+        HEAD: ["HTTP/1.1 200 OK", "text/html", undefined, ""],
+      });
+    });
+
+    describe("HEAD sends a Content-Length only when the GET length is known", () => {
+      let respond: () => Response;
+      it.each<[string, Partial<Serve.Options<any>>]>([
+        ["a sync fetch handler", { fetch: () => respond() }],
+        ["a resolved promise", { fetch: () => Promise.resolve(respond()) }],
+        [
+          "a pending promise",
+          { fetch: () => new Promise<Response>(resolve => setImmediate(() => resolve(respond()))) },
+        ],
+        // prettier-ignore
+        ["error()", { fetch: () => { throw new Error("boom"); }, error: () => respond() }],
+        ["a route function", { routes: { "/": () => respond() } }],
+        ["a GET route method", { routes: { "/": { GET: () => respond() } } }],
+      ])("from %s", async (_label, options) => {
+        const consumed = new Response("consumed");
+        await consumed.text();
+        using server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          development: false,
+          ...options,
+        } as Serve.Options<any>);
+        const responses: Record<string, () => Response> = {
+          "new Response()": () => new Response(),
+          "new Response(null, { headers })": () => new Response(null, { headers: { "Content-Type": "text/html" } }),
+          "new Response(null, otherResponse)": () => new Response(null, new Response("<h1>Hello</h1>")),
+          "new Response(null, { status: 404 })": () => new Response(null, { status: 404 }),
+          "Response.redirect()": () => Response.redirect("http://example.com/"),
+          "a consumed body": () => consumed,
+          "Content-Length: abc on a null body": () => new Response(null, { headers: { "Content-Length": "abc" } }),
+          "Content-Length: 14 on a null body": () => new Response(null, { headers: { "Content-Length": "14" } }),
+          'new Response("")': () => new Response(""),
+          "new Response(new Uint8Array(0))": () => new Response(new Uint8Array(0)),
+          'new Response("hi")': () => new Response("hi"),
+        };
+        const seen: Record<string, unknown> = {};
+        for (const label in responses) {
+          respond = responses[label];
+          const { headers, body } = await rawRequest(server.port!, "HEAD");
+          seen[label] = {
+            contentLength: headers["content-length"],
+            transferEncoding: headers["transfer-encoding"],
+            body,
+          };
+        }
+        const framed = (contentLength?: string) => ({ contentLength, transferEncoding: undefined, body: "" });
+        expect(seen).toEqual({
+          "new Response()": framed(),
+          "new Response(null, { headers })": framed(),
+          "new Response(null, otherResponse)": framed(),
+          "new Response(null, { status: 404 })": framed(),
+          "Response.redirect()": framed(),
+          "a consumed body": framed(),
+          "Content-Length: abc on a null body": framed(),
+          "Content-Length: 14 on a null body": framed("14"),
+          // An empty body is a known length: GET sends 0 too.
+          'new Response("")': framed("0"),
+          "new Response(new Uint8Array(0))": framed("0"),
+          'new Response("hi")': framed("2"),
+        });
+      });
+    });
+
+    // The body of an aborted fetch() is errored: GET answers 500, so HEAD has no length to report.
+    it("HEAD of a Response whose body errored sends no Content-Length", async () => {
+      const upstreamSockets: net.Socket[] = [];
+      const upstream = net.createServer(socket => {
+        upstreamSockets.push(socket);
+        socket.on("error", () => {});
+        // No Content-Length and no end: the body stays open until the fetch is aborted.
+        socket.once("data", () => socket.write("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nhello"));
+      });
+      upstream.listen(0, "127.0.0.1");
+      await once(upstream, "listening");
+      try {
+        using server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          development: false,
+          async fetch() {
+            const controller = new AbortController();
+            const response = await fetch(`http://127.0.0.1:${(upstream.address() as AddressInfo).port}/`, {
+              signal: controller.signal,
+            });
+            controller.abort();
+            return response;
+          },
+          error: error => new Response(error.name, { status: 500 }),
+        });
+        const [HEAD, GET] = [await rawRequest(server.port!, "HEAD"), await rawRequest(server.port!, "GET")];
+        expect({
+          HEAD: [HEAD.statusLine, HEAD.headers["content-length"], HEAD.headers["transfer-encoding"], HEAD.body],
+          GET: [GET.statusLine, GET.body],
+        }).toEqual({
+          HEAD: ["HTTP/1.1 200 OK", undefined, undefined, ""],
+          GET: ["HTTP/1.1 500 Internal Server Error", "AbortError"],
+        });
+      } finally {
+        for (const socket of upstreamSockets) socket.destroy();
+        upstream.close();
+      }
+    });
+
+    // RFC 9112 6.3 rule 1: a HEAD response ends at its header section, with or without a Content-Length.
+    it("a HEAD response with no Content-Length leaves the connection open for the next request", async () => {
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: req => (req.method === "HEAD" ? new Response(null) : new Response("tail")),
+      });
+      const received: Buffer[] = [];
+      const { promise: closed, resolve } = Promise.withResolvers<void>();
+      await using connection = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port!,
+        socket: { data: (_socket, data) => void received.push(data), close: () => resolve() },
+      });
+      const head = "HEAD / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+      connection.write(head + head + "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+      connection.flush();
+      await closed;
+      const raw = Buffer.concat(received).toString();
+      expect({
+        statuses: raw.match(/^HTTP\/1\.1 \d+/gm),
+        contentLengths: raw.match(/^content-length: \d+/gim),
+        tail: raw.slice(raw.lastIndexOf("\r\n\r\n") + 4),
+      }).toEqual({
+        statuses: ["HTTP/1.1 200", "HTTP/1.1 200", "HTTP/1.1 200"],
+        contentLengths: ["Content-Length: 4"],
+        tail: "tail",
+      });
+    });
+
     it("a body on a no-body status is dropped from HEAD's framing, same as GET", async () => {
       const { GET, HEAD } = await framing(() => new Response("body", { status: 204 }));
       expect(GET).toEqual({ status: 204, contentLength: null, transferEncoding: null, body: "" });

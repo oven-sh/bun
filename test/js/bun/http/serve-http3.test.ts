@@ -63,6 +63,9 @@ const server = serve({
     if (url.pathname === "/hop-headers") {
       return new Response("hi", { headers: { "transfer-encoding": "chunked", connection: "close", "keep-alive": "timeout=5", upgrade: "websocket", "proxy-connection": "x", te: "gzip", "x-kept": "1" } });
     }
+    if (url.pathname === "/null-body") {
+      return new Response(null, { headers: { "x-null": "1" } });
+    }
     if (url.pathname === "/hello") {
       return new Response("hello over h3", {
         headers: { "x-proto": "h3", "content-type": "text/plain" },
@@ -724,6 +727,19 @@ describe("Bun.serve HTTP/3 adversarial", () => {
       expect(res.status).toBe(200);
       expect(res.headers.get("content-length")).toBe("524288");
       expect((await res.bytes()).length).toBe(0);
+    });
+  });
+
+  // RFC 9110 8.6: a null body does not say what GET would send, so HEAD sends no content-length.
+  test("HEAD of a null-body Response has no content-length", async () => {
+    await withServer(async port => {
+      const res = await fetchH3(port, "/null-body", { method: "HEAD" });
+      expect({
+        status: res.status,
+        marker: res.headers.get("x-null"),
+        contentLength: res.headers.get("content-length"),
+        body: (await res.bytes()).length,
+      }).toEqual({ status: 200, marker: "1", contentLength: null, body: 0 });
     });
   });
 

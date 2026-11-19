@@ -504,6 +504,13 @@ test.concurrent.each(["REQUEST", "RESPONSE"])(
   },
 );
 
+test.each(["POST / HTTP/1.1", "HTTP/1.1 200 OK"])("an empty Transfer-Encoding is an error (%s)", head => {
+  const parser = new HTTPParser();
+  parser.initialize(head.startsWith("HTTP") ? HTTPParser.RESPONSE : HTTPParser.REQUEST, {});
+  const result = parser.execute(Buffer.from(`${head}\r\nTransfer-Encoding:\r\nContent-Length: 0\r\n\r\n`));
+  expect(result.code).toBe("HPE_INVALID_TRANSFER_ENCODING");
+});
+
 describe("parserOnHeaders maxHeaderPairs clamp (nodejs/node#61285)", () => {
   test("only fills remaining capacity instead of pushing the whole batch", () => {
     const parser = parsers.alloc();

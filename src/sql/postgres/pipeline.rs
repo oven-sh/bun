@@ -138,7 +138,8 @@ enum Reply {
 }
 
 /// Names a request of a [`Pipeline`]. Only `push` makes one, each greater than the last, so the queue is sorted.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[must_use]
 pub struct Turn(u64);
 
 pub struct Entry<R, E, C> {
@@ -236,7 +237,7 @@ pub enum OnCancel<T> {
 
 pub struct Pipeline<R, E, C> {
     queue: VecDeque<Entry<R, E, C>>,
-    next_turn: Turn,
+    pushed: u64,
     /// How many have their Bind or their Query written: the front of `queue`.
     written: usize,
     pipelining: bool,
@@ -252,7 +253,7 @@ impl<R, E, C> Pipeline<R, E, C> {
     pub fn new(pipelining: bool) -> Self {
         Pipeline {
             queue: VecDeque::new(),
-            next_turn: Turn(0),
+            pushed: 0,
             written: 0,
             pipelining,
             parsing: false,
@@ -271,8 +272,8 @@ impl<R, E, C> Pipeline<R, E, C> {
             // The Query message stands for its Parse.
             statement.state.set(State::Parsing { stored: false });
         }
-        let turn = self.next_turn;
-        self.next_turn.0 += 1;
+        let turn = Turn(self.pushed);
+        self.pushed += 1;
         self.queue.push_back(Entry {
             turn,
             request,
@@ -317,13 +318,16 @@ impl<R, E, C> Pipeline<R, E, C> {
     }
 
     /// `None`: it has left the queue.
-    fn position(&self, turn: Turn) -> Option<usize> {
-        self.queue.binary_search_by_key(&turn, Entry::turn).ok()
+    fn find(&mut self, turn: Turn) -> Option<(usize, &mut Entry<R, E, C>)> {
+        let position = self.queue.partition_point(|it| it.turn.0 < turn.0);
+        let entry = self.queue.get_mut(position).filter(|it| it.turn == turn)?;
+        Some((position, entry))
     }
 
-    pub fn is_live(&self, turn: Turn) -> bool {
-        let entry = self.position(turn).and_then(|it| self.queue.get(it));
-        entry.is_some_and(|entry| !entry.is_rejected())
+    /// `None`: it has left the queue, or user code has seen it rejected.
+    pub fn live(&mut self, turn: Turn) -> Option<&R> {
+        let (_, entry) = self.find(turn)?;
+        (!entry.is_rejected()).then_some(&entry.request)
     }
 
     /// What the backend is at work on.
@@ -390,14 +394,14 @@ impl<R, E, C> Pipeline<R, E, C> {
     }
 
     pub fn unqueue(&mut self, turn: Turn) -> Option<Entry<R, E, C>> {
-        let position = self.position(turn).filter(|it| *it >= self.written)?;
+        let written = self.written;
+        let (position, _) = self.find(turn).filter(|(it, _)| *it >= written)?;
         self.queue.remove(position)
     }
 
     /// `Some`: the host rejects it now. It keeps its place until its ReadyForQuery.
     pub fn reject(&mut self, turn: Turn) -> Option<&R> {
-        let position = self.position(turn)?;
-        let entry = self.queue.get_mut(position)?;
+        let (_, entry) = self.find(turn)?;
         entry.reply = match entry.reply {
             Reply::Deliver | Reply::Cancelling => Reply::Skip,
             Reply::OwesCancel { rejected: false } => Reply::OwesCancel { rejected: true },
@@ -532,8 +536,7 @@ impl<R, E, C> Pipeline<R, E, C> {
     }
 
     pub fn cancel(&mut self, turn: Turn) -> Option<OnCancel<Entry<R, E, C>>> {
-        let position = self.position(turn)?;
-        let entry = self.queue.get_mut(position)?;
+        let (position, entry) = self.find(turn)?;
         let rejected = match entry.reply {
             Reply::Deliver | Reply::Cancelling => false,
             Reply::OwesCancel { rejected } => rejected,

@@ -99,7 +99,7 @@ pub struct PostgresSQLConnection {
 
     backend_key_data: Cell<Option<protocol::BackendKeyData>>,
     /// Of a connection that only carries a CancelRequest, until it ends.
-    cancel_target: JsCell<Option<CancelTarget>>,
+    cancel_target: JsCell<Option<Seat>>,
 
     /// `us_ssl_ctx_t` built from `tls_config` at construct time. Applied via
     /// `us_socket_adopt_tls` when the server replies `S` to the SSLRequest.
@@ -841,15 +841,21 @@ struct ConnectParams<'a> {
     on_retire: Option<JSValue>,
     column_transform: Option<JSValue>,
     check_server_identity: Option<JSValue>,
-    cancel: Option<CancelTarget>,
+    cancel: Option<Seat>,
 }
 
-struct CancelTarget {
+/// A request in the queue of `session`.
+#[derive(Clone)]
+pub(crate) struct Seat {
     session: RefPtr<PostgresSQLConnection>,
     turn: Turn,
 }
 
-impl CancelTarget {
+impl Seat {
+    pub(crate) fn cancel(&self) {
+        self.session.cancel(self.turn);
+    }
+
     /// `None`: the backend has gone on to another request.
     fn cancel_request(&self) -> Option<[u8; 16]> {
         let session = &*self.session;
@@ -1107,11 +1113,11 @@ impl PostgresSQLConnection {
         .unwrap_or_else(|err| self.global().take_error(err))
     }
 
-    pub(crate) fn cancel(&self, request: &PostgresSQLQuery, turn: Turn) {
-        if !self.pipeline.get().is_live(turn) {
+    fn cancel(&self, turn: Turn) {
+        let Some(request) = self.pipeline.with_mut(|it| it.live(turn).cloned()) else {
             return;
-        }
-        request.cancel_copy(turn);
+        };
+        request.cancel_copy();
         match self.pipeline.with_mut(|it| it.cancel(turn)) {
             None => {}
             Some(OnCancel::Unqueued(entry)) => {
@@ -1217,7 +1223,7 @@ impl PostgresSQLConnection {
                 on_retire: None,
                 column_transform: None,
                 check_server_identity: self.check_server_identity_callback(),
-                cancel: Some(CancelTarget {
+                cancel: Some(Seat {
                     session: self.ref_guard(),
                     turn,
                 }),
@@ -1260,15 +1266,18 @@ impl PostgresSQLConnection {
         request: &PostgresSQLQuery,
         types: &[Option<Int4>],
         protocol: Protocol,
-    ) -> Turn {
+    ) -> Seat {
         let statement = match protocol {
             Protocol::Extended { .. } if self.names_statements() => self
                 .statements
                 .with_mut(|cache| cache.get_or_add(request.query.to_utf8().slice(), types)),
             _ => PostgresSQLStatement::new(None, declared(types), JsCell::default()),
         };
-        self.pipeline
-            .with_mut(|it| it.push(request.ref_guard(), statement, protocol))
+        let request = request.ref_guard();
+        Seat {
+            session: self.ref_guard(),
+            turn: (self.pipeline).with_mut(|it| it.push(request, statement, protocol)),
+        }
     }
 
     fn reject_in_flight(&self, turn: Turn, error: JSValue) {

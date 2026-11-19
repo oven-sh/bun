@@ -378,7 +378,7 @@ mod requests {
 
     fn prepared(pipelining: bool) -> (Pipeline, Statement) {
         let (mut pipeline, statement) = (Pipeline::new(pipelining), named(0));
-        push(&mut pipeline, '_', &statement);
+        let _ = push(&mut pipeline, '_', &statement);
         advance(&mut pipeline);
         read(&mut pipeline, &[DESCRIBED, EXECUTED].concat());
         ready(&mut pipeline);
@@ -388,10 +388,10 @@ mod requests {
     #[test]
     fn what_is_written_behind_what() {
         let (pipeline, statement) = (&mut Pipeline::new(true), named(1));
-        push(pipeline, 'a', &statement);
-        push(pipeline, 'b', &statement);
-        push_simple(pipeline, 'c');
-        push(pipeline, 'd', &statement);
+        let _ = push(pipeline, 'a', &statement);
+        let _ = push(pipeline, 'b', &statement);
+        let _ = push_simple(pipeline, 'c');
+        let _ = push(pipeline, 'd', &statement);
 
         assert_eq!(advance(pipeline), [('a', Parse)]);
         assert!(pipeline.executed().is_err());
@@ -421,28 +421,28 @@ mod requests {
     #[test]
     fn a_bind_waits_without_pipelining_or_without_room() {
         let (mut pipeline, statement) = prepared(false);
-        push(&mut pipeline, 'a', &statement);
-        push(&mut pipeline, 'b', &statement);
+        let _ = push(&mut pipeline, 'a', &statement);
+        let _ = push(&mut pipeline, 'b', &statement);
         assert_eq!(advance(&mut pipeline), [('a', Bind)]);
 
         let (mut pipeline, statement) = prepared(true);
-        push(&mut pipeline, 'a', &statement);
+        let _ = push(&mut pipeline, 'a', &statement);
         advance(&mut pipeline);
-        push(&mut pipeline, 'b', &statement);
+        let _ = push(&mut pipeline, 'b', &statement);
         assert!(pipeline.next(MAX_PIPELINE_SIZE).is_none());
     }
 
     /// What the cache does with `statement`, and what the next request that runs it writes.
     fn after_error(statement: &Statement, before: &[Read], kind: ErrorKind) -> (Cached, Wrote) {
         let pipeline = &mut Pipeline::new(true);
-        push(pipeline, 'a', statement);
+        let _ = push(pipeline, 'a', statement);
         advance(pipeline);
         read(pipeline, before);
         let OnError::Fail { keep_error, cached } = error(pipeline, kind) else {
             panic!("retried");
         };
         assert!(keep_error && pipeline.in_transaction());
-        push(pipeline, 'b', statement);
+        let _ = push(pipeline, 'b', statement);
         assert_eq!(ready(pipeline), Some('a'));
         (cached, advance(pipeline).remove(0).1)
     }
@@ -483,7 +483,7 @@ mod requests {
     #[test]
     fn a_stale_statement_is_retried_once() {
         let (mut pipeline, statement) = prepared(true);
-        push(&mut pipeline, 'a', &statement);
+        let _ = push(&mut pipeline, 'a', &statement);
         advance(&mut pipeline);
         let outcome = error(&mut pipeline, StaleStatement);
         assert!(matches!(outcome, OnError::Retry { cancelled: false }));
@@ -498,8 +498,8 @@ mod requests {
     #[test]
     fn a_stale_statement_is_not_retried_with_a_request_behind_it() {
         let (mut pipeline, statement) = prepared(true);
-        push(&mut pipeline, 'a', &statement);
-        push(&mut pipeline, 'b', &statement);
+        let _ = push(&mut pipeline, 'a', &statement);
+        let _ = push(&mut pipeline, 'b', &statement);
         advance(&mut pipeline);
         let outcome = error(&mut pipeline, StaleStatement);
         assert!(matches!(outcome, OnError::Fail { .. }));
@@ -510,7 +510,7 @@ mod requests {
         let (mut pipeline, statement) = prepared(false);
         let [a, b, c, d] = ['a', 'b', 'c', 'd'].map(|name| push(&mut pipeline, name, &statement));
         assert!(pipeline.pop().is_some() && pipeline.unqueue(c).is_some());
-        let live = [a, b, c, d].map(|turn| pipeline.is_live(turn));
+        let live = [a, b, c, d].map(|turn| pipeline.live(turn).is_some());
         assert_eq!(live, [false, true, false, true]);
         advance(&mut pipeline);
         assert!(pipeline.unqueue(b).is_none(), "written");
@@ -583,7 +583,7 @@ mod requests {
         pipeline.cancel(request);
         pipeline.on_cancel_dialed();
         pipeline.cancel(request);
-        assert!(pipeline.is_live(request) && pipeline.to_stop().is_none());
+        assert!(pipeline.live(request).is_some() && pipeline.to_stop().is_none());
         pipeline.on_cancel_ended();
         assert!(pipeline.to_stop().is_some());
     }
@@ -595,7 +595,7 @@ mod requests {
         pipeline.cancel(request);
         assert!(!pipeline.wrote(request, Step::Query));
 
-        push_simple(&mut pipeline, 'b');
+        let _ = push_simple(&mut pipeline, 'b');
         error(&mut pipeline, Canceled);
         assert_eq!(advance(&mut pipeline), [('b', Never)]);
     }

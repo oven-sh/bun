@@ -1,7 +1,7 @@
 //! The query's one callback, `copy(chunk)`, is called when the server enters copy mode, then with
 //! each chunk (out) or each time the socket has drained (in).
 
-use super::{PostgresSQLConnection, Socket};
+use super::{PostgresSQLConnection, Seat, Socket};
 use crate::jsc::{AutoFlush as _, JSValue, JsResult, js_error_to_postgres};
 use crate::postgres::PostgresSQLQuery;
 use crate::postgres::error_jsc::postgres_error_to_js;
@@ -10,10 +10,10 @@ use bun_core::String as BunString;
 use bun_core::strings;
 use bun_jsc::JSUint8Array;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_ptr::{ParentRef, RefPtr};
+use bun_ptr::ParentRef;
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::frontend;
-use bun_sql::postgres::pipeline::{MAX_PIPELINE_SIZE, Turn};
+use bun_sql::postgres::pipeline::MAX_PIPELINE_SIZE;
 use bun_sql::shared::ConnectionFlags;
 
 // The server ends the session for a longer message.
@@ -236,26 +236,25 @@ impl PostgresSQLQuery {
         starts_with_copy(&self.query)
     }
 
-    fn copy_connection(&self, open: CopyStream) -> Option<RefPtr<PostgresSQLConnection>> {
-        let (connection, turn) = self.queued()?;
-        let is_open = self.copy.get() == open
-            && (connection.pipeline.get().head())
-                .is_ok_and(|head| head.turn() == turn && !head.is_rejected());
-        is_open.then_some(connection)
+    fn copy_seat(&self, open: CopyStream) -> Option<Seat> {
+        self.seat().filter(|seat| {
+            let running = seat.session.pipeline.get().running(seat.turn);
+            self.copy.get() == open && running.is_some_and(|it| !it.is_rejected())
+        })
     }
 
     fn end_copy_in(&self, failure: Option<&[u8]>) {
-        if let Some(connection) = self.copy_connection(CopyStream::WritableOpen) {
+        if let Some(seat) = self.copy_seat(CopyStream::WritableOpen) {
             self.copy.set(CopyStream::None);
-            connection.write_copy_end(failure);
+            seat.session.write_copy_end(failure);
         }
     }
 
     /// A backend waiting for room in an unread socket ignores a CancelRequest.
-    pub(super) fn cancel_copy(&self, turn: Turn) {
-        if let Some(connection) = self.copy_connection(CopyStream::ReadableOpen) {
-            connection.set_reading(true);
-            connection.reject_in_flight(turn, connection.cancelled_error(None));
+    pub(super) fn cancel_copy(&self) {
+        if let Some(Seat { session, turn }) = self.copy_seat(CopyStream::ReadableOpen) {
+            session.set_reading(true);
+            session.reject_in_flight(turn, session.cancelled_error(None));
         }
     }
 
@@ -297,7 +296,8 @@ impl PostgresSQLQuery {
             ));
         };
         Ok(self
-            .copy_connection(CopyStream::WritableOpen)
+            .copy_seat(CopyStream::WritableOpen)
+            .map(|seat| seat.session)
             .is_none_or(|connection| connection.write_copy_chunk(bytes)))
     }
 
@@ -310,7 +310,11 @@ impl PostgresSQLQuery {
     }
 
     pub fn copy_resume(&self) {
-        if let Some(connection) = self.copy_connection(CopyStream::ReadableOpen) {
+        if let Some(Seat {
+            session: connection,
+            ..
+        }) = self.copy_seat(CopyStream::ReadableOpen)
+        {
             connection.set_reading(true);
         }
     }

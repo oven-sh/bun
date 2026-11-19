@@ -269,20 +269,25 @@ impl FdOp for ReadFile {
         Ok((fd, step))
     }
 
-    fn step(&mut self, fd: Fd, mut ready: bool) -> Result<Step, Box<SystemError>> {
+    fn step(&mut self, fd: Fd, ready: bool) -> Result<Step, Box<SystemError>> {
         let mut stack_buffer = [const { MaybeUninit::uninit() }; 64 * 1024];
         loop {
             let max = (self.max_length as usize).saturating_sub(self.buffer.len());
             if max == 0 {
                 break;
             }
-            if !core::mem::take(&mut ready) && self.must_wait(fd) {
+            if !ready && self.must_wait(fd) {
                 return Ok(Step::Wait);
             }
             match self.read_some(fd, max, &mut stack_buffer) {
                 Ok(0) => break,
+                // It may never end.
+                Ok(_) if self.could_block => return Ok(Step::Again),
                 Ok(_) => {}
-                Err(err) if err.get_errno() == bun_sys::E::EAGAIN => self.could_block = true,
+                Err(err) if err.get_errno() == bun_sys::E::EAGAIN => {
+                    self.could_block = true;
+                    return Ok(Step::Again);
+                }
                 Err(err) => {
                     let mut err = Box::<SystemError>::from(err);
                     err.path = self.path_for_error();

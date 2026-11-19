@@ -136,7 +136,7 @@ impl FdWait {
         self.fd.get()
     }
 
-    fn check_cancelled(&self) -> sys::Result<()> {
+    pub fn check_cancelled(&self) -> sys::Result<()> {
         match self.key.slots().get(&self.key) {
             Some(Slot::Cancelled) => Err(self.interest.cancelled()),
             _ => Ok(()),
@@ -686,11 +686,14 @@ mod tests {
 
         let (wait, mut canceller) = new(1001);
         let key = wait.key;
+        assert!(wait.check_cancelled().is_ok());
         let ended = park(wait, 2);
         fire(key, |_, _| Ok(()));
         canceller.cancel();
         ready(key);
         assert_eq!(all(ended), [E::ECANCELED]);
+        let fd = JobFd::Borrowed(Fd::from_native(1001));
+        assert!((FdWait::new(key, Interest::Readable, fd).check_cancelled()).is_err());
         drop(canceller);
         assert!(!key.slots().contains_key(&key));
     }

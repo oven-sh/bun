@@ -9,6 +9,7 @@ use bun_core::StackCheck;
 use bun_core::{CStrList, CStrRef, String as BunString, ZStr, strings};
 use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
 use bun_io::max_buf;
+use bun_jsc::ComptimeStringMapExt as _;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::spawn_sync_event_loop::TickState;
 use bun_jsc::{
@@ -53,11 +54,6 @@ impl JSValueSpawnExt for JSValue {
 #[inline]
 fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<SignalCode> {
     bun_sys_jsc::signal_code_jsc::from_js(val, global)
-}
-
-#[inline]
-fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> Option<IPC::SendQueueOwner> {
-    core::ptr::NonNull::new(ptr.cast::<SubprocessT<'static>>()).map(IPC::SendQueueOwner::Subprocess)
 }
 
 bun_output::declare_scope!(Subprocess, hidden);
@@ -377,7 +373,7 @@ fn spawn_maybe_sync(
     let cmd_value: JSValue;
     let mut detached = false;
     let mut args = args_;
-    let mut maybe_ipc_mode: Option<IPC::Mode> = None;
+    let mut maybe_ipc_mode: Option<bun_ipc::Mode> = None;
     let mut ipc_callback: JSValue = JSValue::ZERO;
     let mut extra_fds: Vec<SpawnOptionsStdio> = Vec::new();
     #[cfg(not(windows))]
@@ -491,7 +487,8 @@ fn spawn_maybe_sync(
                         maybe_ipc_mode = Some('ipc_mode: {
                             if let Some(mode_val) = args.get_truthy(cx.global(), "serialization")? {
                                 if mode_val.is_string() {
-                                    break 'ipc_mode match IPC::Mode::from_js(cx.global(), mode_val)?
+                                    break 'ipc_mode match IPC::MODE_MAP
+                                        .from_js(cx.global(), mode_val)?
                                     {
                                         Some(m) => m,
                                         None => {
@@ -508,7 +505,7 @@ fn spawn_maybe_sync(
                                     ));
                                 }
                             }
-                            break 'ipc_mode IPC::Mode::Advanced;
+                            break 'ipc_mode bun_ipc::Mode::Advanced;
                         });
 
                         ipc_callback = val.with_async_context_if_needed(cx.global());
@@ -926,8 +923,8 @@ fn spawn_maybe_sync(
             env_array.push(Some(pipe_env.into()));
 
             env_array.push(Some(CStrRef::from(match ipc_mode {
-                IPC::Mode::Json => c"NODE_CHANNEL_SERIALIZATION_MODE=json",
-                IPC::Mode::Advanced => c"NODE_CHANNEL_SERIALIZATION_MODE=advanced",
+                bun_ipc::Mode::Json => c"NODE_CHANNEL_SERIALIZATION_MODE=json",
+                bun_ipc::Mode::Advanced => c"NODE_CHANNEL_SERIALIZATION_MODE=advanced",
             })));
         }
     }
@@ -1146,7 +1143,7 @@ fn spawn_maybe_sync(
     //
     // Note: build
     // the struct once with its final field values, then fill in the
-    // address-dependent fields (maxbufs, ipc_data on Windows) afterward.
+    // address-dependent fields (maxbufs, ipc_data) afterward.
     let subprocess_ref = bun_ptr::RefPtr::new(SubprocessT {
         global_this: bun_ptr::BackRef::new(cx.global()),
         process,
@@ -1213,17 +1210,6 @@ fn spawn_maybe_sync(
         subprocess.stdout_maxbuf.set(new(max_buf::Kind::Stdout));
     }
 
-    #[cfg(windows)]
-    if !is_sync {
-        if let Some(ipc_mode) = maybe_ipc_mode {
-            subprocess.ipc_data.set(Some(IPC::SendQueue::new(
-                ipc_mode,
-                subprocess_ipc_owner(subprocess_ptr),
-                IPC::SocketUnion::Uninitialized,
-            )));
-        }
-    }
-
     let mut promise_for_stream: JSValue = JSValue::ZERO;
     let [stdin, stdout, stderr] = stdio;
     let stdin_stream = match &stdin {
@@ -1258,10 +1244,6 @@ fn spawn_maybe_sync(
             #[cfg(windows)]
             let _ = subprocess.try_kill(SignalCode::SIGKILL);
             subprocess.process().detach();
-            if let Some(ipc_data) = subprocess.ipc_data.take() {
-                // Nothing else holds it yet (no socket wired, no task scheduled).
-                ipc_data.detach();
-            }
             return Err(err);
         }
     }
@@ -1317,32 +1299,29 @@ fn spawn_maybe_sync(
         )
     });
 
-    // Note: Option (rather than an uninitialized value) since `IPC::Socket`
-    // is a tagged union (zeroed enum is UB) and it is only read on the
-    // assigned path.
-    #[cfg(unix)]
-    let mut posix_ipc_info: Option<IPC::Socket> = None;
-    #[cfg(unix)]
-    if !is_sync {
-        if let Some(mode) = maybe_ipc_mode {
-            let loop_ = jsc_vm.uws_loop();
-            let raw_socket = jsc_vm.rare_data().spawn_ipc_group(loop_).from_fd(
-                bun_uws::SocketKind::SpawnIpc,
-                None,
-                core::mem::size_of::<*mut IPC::SendQueue>() as core::ffi::c_int,
-                posix_ipc_fd.native(),
-                0,
-                true,
-            );
-            if !raw_socket.is_null() {
-                let socket = raw_socket;
-                subprocess.ipc_data.set(Some(IPC::SendQueue::new(
-                    mode,
-                    subprocess_ipc_owner(subprocess_ptr),
-                    IPC::SocketUnion::Uninitialized,
-                )));
-                posix_ipc_info = Some(IPC::Socket::from(socket));
-            }
+    #[cfg(windows)]
+    let mut ipc_result = Ok(());
+    if !is_sync && let Some(mode) = maybe_ipc_mode {
+        let idx = usize::try_from(ipc_channel).expect("int cast");
+        let owner = IPC::SendQueueOwner::Subprocess(subprocess_nn.into());
+        #[cfg(unix)]
+        if let Some(ipc_data) = IPC::SendQueue::open(mode, owner, posix_ipc_fd) {
+            subprocess.ipc_data.set(Some(ipc_data));
+            // uws owns the fd now (owns_fd=1).
+            subprocess.stdio_pipes.with_mut(|v| {
+                core::mem::replace(&mut v[idx], ExtraPipe::Unavailable).into_raw();
+            });
+        }
+        #[cfg(windows)]
+        {
+            // The IPC channel is always a `buffer` pipe on Windows.
+            let ipc_pipe = subprocess.stdio_pipes.with_mut(|pipes| pipes[idx].take());
+            let spawn::WindowsStdioResult::Buffer(ipc_pipe) = ipc_pipe else {
+                unreachable!("IPC channel stdio is not a buffer pipe");
+            };
+            let (ipc_data, result) = IPC::SendQueue::open(mode, owner, ipc_pipe);
+            subprocess.ipc_data.set(Some(ipc_data));
+            ipc_result = result;
         }
     }
 
@@ -1356,42 +1335,12 @@ fn spawn_maybe_sync(
         (out, None)
     };
 
+    #[cfg(windows)]
+    if let Err(err) = ipc_result {
+        return Err(cx.global().throw_value(err.to_js(cx.global())));
+    }
     if let Some(ipc_data) = subprocess.ipc() {
-        #[cfg(unix)]
-        {
-            if let Some(posix_ipc_info) = posix_ipc_info {
-                if let Some(ctx) = posix_ipc_info.ext::<*mut IPC::SendQueue>() {
-                    // SAFETY: `ctx` is the live ext-slot pointer returned by uSockets;
-                    // it stays valid for the socket's lifetime.
-                    unsafe { *ctx = ipc_data.as_ctx_ptr() };
-                    ipc_data.socket.set(IPC::SocketUnion::Open(posix_ipc_info));
-                }
-            }
-            // uws owns the fd now (owns_fd=1).
-            subprocess.stdio_pipes.with_mut(|v| {
-                let slot = &mut v[usize::try_from(ipc_channel).expect("int cast")];
-                core::mem::replace(slot, ExtraPipe::Unavailable).into_raw();
-            });
-        }
-        #[cfg(not(unix))]
-        {
-            let idx = usize::try_from(ipc_channel).expect("int cast");
-            // The IPC channel is always a `buffer` pipe on Windows.
-            let ipc_pipe = subprocess.stdio_pipes.with_mut(|pipes| pipes[idx].take());
-            let spawn::WindowsStdioResult::Buffer(ipc_pipe) = ipc_pipe else {
-                unreachable!("IPC channel stdio is not a buffer pipe");
-            };
-            // `windows_configure_server` stores the pointer in `uv_handle_t.data`
-            // for the pipe's lifetime, so it must be the allocation root
-            // (write provenance), never one re-derived from `&SendQueue`.
-            // SAFETY: `ipc_data` is the live SendQueue owned by `subprocess`.
-            if let Err(err) =
-                unsafe { IPC::SendQueue::windows_configure_server(ipc_data.as_ctx_ptr(), ipc_pipe) }
-            {
-                return Err(cx.global().throw_value(err.to_js(cx.global())));
-            }
-        }
-        ipc_data.write_version_packet(cx.global());
+        ipc_data.write_version_packet();
     }
 
     if matches!(subprocess.stdin.get(), Writable::Pipe(_)) && promise_for_stream == JSValue::ZERO {

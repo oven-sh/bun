@@ -3,17 +3,17 @@
 //! The VM records only a `PendingIpc { fd, advanced }` at env load; the
 //! channel itself (one per JS thread) lives here.
 
-use crate::ipc::{
-    self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,
-};
+use crate::ipc::{self as IPC, Handle, SendQueue, SerializeAndSendResult};
+use crate::node::node_cluster_binding as cluster;
+use bun_ipc::{Audience, Mode};
 use bun_jsc::bindgen::{JsLocal, JsScope};
 #[cfg(windows)]
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult, SysErrorJsc as _};
 use bun_ptr::RefPtr;
 
 use crate::generated_bindgen::ipc_host::{MessageTarget, ReceivedMessage};
-use crate::socket::Listener;
+use crate::socket::{Listener, listener::ListenerType};
 
 bun_core::define_scoped_log!(log, IPC, visible);
 
@@ -89,7 +89,7 @@ pub(crate) fn do_send(
     #[cfg(not(windows))]
     let _ = peer_pid;
 
-    let mut is_internal = IsInternal::External;
+    let mut audience = Audience::User;
     if handle.is_callable() {
         callback = handle;
         handle = JSValue::UNDEFINED;
@@ -101,12 +101,11 @@ pub(crate) fn do_send(
             .fast_get(global_object, bun_jsc::BuiltinName::internal)?
             .is_some_and(|v| v.to_boolean())
         {
-            is_internal = IsInternal::Internal;
+            audience = Audience::Cluster;
         }
     }
 
-    let connected = ipc.as_ref().is_some_and(|i| i.is_connected());
-    if !connected {
+    let Some(ipc_data) = ipc.filter(|ipc| ipc.is_connected()) else {
         let msg = match from {
             FromEnum::Process => "Channel closed",
             FromEnum::Subprocess => "Subprocess.send() can only be used if an IPC channel is open.",
@@ -121,9 +120,7 @@ pub(crate) fn do_send(
             )
             .to_js();
         return do_send_err(global_object, callback, ex, from);
-    }
-
-    let ipc_data = ipc.unwrap();
+    };
 
     if message.is_undefined() {
         return Err(global_object.throw_missing_arguments_value(&["message"]));
@@ -144,7 +141,7 @@ pub(crate) fn do_send(
     let original_message = message;
     if !handle.is_undefined_or_null() {
         let serialized_array: JSValue =
-            IPC::ipc_serialize(global_object, message, handle, options_)?;
+            bun_jsc::cpp::IPCSerialize(global_object, message, handle, options_)?;
         if serialized_array.is_undefined_or_null() {
             handle = JSValue::UNDEFINED;
         } else {
@@ -155,37 +152,20 @@ pub(crate) fn do_send(
         }
     }
 
-    let mut zig_handle: Option<Handle> = None;
+    let mut fd_to_send = None;
     let mut pause_target = JSValue::UNDEFINED;
-    #[cfg_attr(windows, allow(unused_mut, unused_variables))]
-    let mut dup_err: Option<bun_sys::Error> = None;
     if !handle.is_undefined_or_null() {
         if let Some(listener) = Listener::from_js(&handle) {
-            log!("got listener");
-            match listener.listener.get() {
-                crate::socket::listener::ListenerType::Uws(socket_uws) => {
-                    // may need to handle ssl case
-                    let fd = bun_opaque::opaque_deref_mut(socket_uws.as_ptr())
-                        .get_socket()
-                        .get_fd();
-                    #[cfg(not(windows))]
-                    match Handle::init_dup(fd, handle, false) {
-                        Ok(h) => zig_handle = Some(h),
-                        Err(e) => dup_err = Some(e),
-                    }
-                    #[cfg(windows)]
-                    {
-                        zig_handle = Some(Handle::init(fd, handle));
-                    }
-                }
-                #[cfg(windows)]
-                crate::socket::listener::ListenerType::NamedPipe(_named_pipe) => {}
-                crate::socket::listener::ListenerType::None => {}
+            if let ListenerType::Uws(socket_uws) = listener.listener.get() {
+                // may need to handle ssl case
+                let fd = bun_opaque::opaque_deref_mut(socket_uws.as_ptr())
+                    .get_socket()
+                    .get_fd();
+                fd_to_send = Some(fd);
             }
         } else if let Some(socket) = crate::socket::TCPSocket::from_js(&handle) {
             let fd = socket.socket.get().fd();
             if fd != bun_sys::Fd::INVALID {
-                log!("got tcp socket fd");
                 let keep_open = !options_.is_undefined_or_null()
                     && options_
                         .get(global_object, "keepOpen")?
@@ -193,35 +173,13 @@ pub(crate) fn do_send(
                 if !keep_open {
                     pause_target = handle;
                 }
-                #[cfg(not(windows))]
-                match Handle::init_dup(fd, handle, !keep_open) {
-                    Ok(h) => zig_handle = Some(h),
-                    Err(e) => dup_err = Some(e),
-                }
-                #[cfg(windows)]
-                {
-                    zig_handle = Some(if keep_open {
-                        Handle::init(fd, handle)
-                    } else {
-                        Handle::init_close_on_complete(fd, handle)
-                    });
-                }
+                fd_to_send = Some(fd);
             }
         } else if let Some(udp) = handle.as_class_ref::<crate::socket::UDPSocket>() {
-            if let Some(fd) = udp.native_fd() {
-                log!("got udp socket fd");
-                #[cfg(not(windows))]
-                match Handle::init_dup(fd, handle, false) {
-                    Ok(h) => zig_handle = Some(h),
-                    Err(e) => dup_err = Some(e),
-                }
-                #[cfg(windows)]
-                {
-                    zig_handle = Some(Handle::init(fd, handle));
-                }
-            }
+            fd_to_send = udp.native_fd();
         }
     }
+    let zig_handle = fd_to_send.map(|fd| Handle::new(fd, handle, !pause_target.is_undefined()));
     // serialize() already detached a non-keepOpen net.Socket; if it is not sent after all, close it
     // here (node: postSend on error). The handle's `close()`/`pause()` are calls of their own: what
     // one throws is reported (this host function is its landing frame), and the send goes on to
@@ -241,12 +199,14 @@ pub(crate) fn do_send(
         call_handle_method(global_object, target, "close")
     };
 
-    #[cfg(not(windows))]
-    if let Some(e) = dup_err {
-        use bun_jsc::SysErrorJsc as _;
-        close_detached(global_object, pause_target)?;
-        return do_send_err(global_object, callback, e.to_js(global_object), from);
-    }
+    #[cfg_attr(not(windows), expect(unused_mut))]
+    let mut zig_handle = match zig_handle.transpose() {
+        Ok(handle) => handle,
+        Err(e) => {
+            close_detached(global_object, pause_target)?;
+            return do_send_err(global_object, callback, e.to_js(global_object), from);
+        }
+    };
 
     #[cfg(windows)]
     if let Some(h) = &mut zig_handle {
@@ -265,7 +225,7 @@ pub(crate) fn do_send(
     }
 
     let status =
-        ipc_data.serialize_and_send(global_object, message, is_internal, callback, zig_handle);
+        ipc_data.serialize_and_send(global_object, message, audience, callback, zig_handle);
 
     if status != SerializeAndSendResult::Failure {
         call_handle_method(global_object, pause_target, "pause")?;
@@ -305,7 +265,7 @@ pub(crate) fn emit_handle_ipc_message<'a>(
     };
     match target {
         MessageTarget::Subprocess(subprocess) => {
-            subprocess.handle_ipc_message(&DecodedIPCMessage::Data(message), handle)?;
+            subprocess.handle_ipc_message(message, handle);
         }
         MessageTarget::Missing | MessageTarget::Ignored(_) => {}
         MessageTarget::ThisProcess => {
@@ -313,28 +273,15 @@ pub(crate) fn emit_handle_ipc_message<'a>(
             // sockets) are marked with cmd: "NODE_CLUSTER"; hand them straight to
             // the cluster's internal-message dispatcher instead of emitting a
             // process 'message' event, mirroring Node's NODE_-prefix routing.
-            if is_object {
-                if let Some(cmd) = message.get(global_this, "cmd")? {
-                    if cmd.is_string() {
-                        let cmd_str = cmd.to_bun_string(global_this)?;
-                        if cmd_str.eq_ascii(b"NODE_CLUSTER") {
-                            crate::node::node_cluster_binding::handle_internal_message_child(
-                                global_this,
-                                message,
-                                handle,
-                            )?;
-                            return Ok(());
-                        }
-                    }
-                }
-            }
-            let vm = global_this.bun_vm();
-            if get_ipc_instance(vm).is_none() {
-                // Channel already gone: a handle that finished adopting after EOF is still delivered, as in node.
-                Process__emitMessageEvent(global_this, message, handle);
+            if is_object
+                && let Some(cmd) = message.get(global_this, "cmd")?
+                && cmd.is_string()
+                && cmd.to_bun_string(global_this)?.eq_ascii(b"NODE_CLUSTER")
+            {
+                cluster::handle_internal_message_child(global_this, message, || handle);
                 return Ok(());
             }
-            IPCInstance::handle_ipc_message(&DecodedIPCMessage::Data(message), handle)?;
+            IPCInstance::handle_ipc_message(message, handle);
         }
     }
     Ok(())
@@ -400,38 +347,17 @@ impl IPCInstance {
         &self.data
     }
 
-    /// Dispatches a decoded IPC message (and optional handle) to the JS `process` listeners.
-    pub(crate) fn handle_ipc_message(message: &DecodedIPCMessage, handle: JSValue) -> JsResult<()> {
+    pub(crate) fn handle_ipc_message(message: JSValue, handle: JSValue) {
         let vm = bun_jsc::virtual_machine::VirtualMachine::get();
-        let global_this = vm.global();
-
-        match *message {
-            DecodedIPCMessage::Version(v) => {
-                bun_core::scoped_log!(IPC, "Parent IPC version is {}", v);
-            }
-            DecodedIPCMessage::Data(data) => {
-                bun_core::scoped_log!(IPC, "Received IPC message from parent");
-                let _entered = vm.enter_event_loop_scope();
-                Process__emitMessageEvent(global_this, data, handle);
-            }
-            DecodedIPCMessage::Internal(data) => {
-                bun_core::scoped_log!(IPC, "Received IPC internal message from parent");
-                let _entered = vm.enter_event_loop_scope();
-                crate::node::node_cluster_binding::handle_internal_message_child(
-                    global_this,
-                    data,
-                    handle,
-                )?;
-            }
-        }
-        Ok(())
+        let _entered = vm.enter_event_loop_scope();
+        Process__emitMessageEvent(vm.global(), message, handle);
     }
 
     /// Tears down the IPC channel and emits the disconnect events on `process`.
     pub(crate) fn handle_ipc_close() {
         bun_core::scoped_log!(IPC, "IPCInstance#handleIPCClose");
         let vm = bun_jsc::virtual_machine::VirtualMachine::get();
-        crate::jsc_hooks::ipc_child_singleton_deinit();
+        cluster::forget_child_listener();
         {
             let _entered = vm.enter_event_loop_scope();
             Process__emitDisconnectEvent(vm.global());
@@ -458,69 +384,30 @@ pub(crate) fn get_ipc_instance(
     let pending = vm.pending_ipc.take()?;
     let fd = pending.fd;
     let mode = if pending.advanced {
-        IPC::Mode::Advanced
+        Mode::Advanced
     } else {
-        IPC::Mode::Json
+        Mode::Json
     };
     bun_core::scoped_log!(IPC, "getIPCInstance {:?}", fd);
 
     vm.event_loop().ensure_waker();
 
     #[cfg(not(windows))]
-    let data = {
-        let loop_ = vm.uws_loop();
-        let group = vm.rare_data().spawn_ipc_group(loop_);
-
-        let data = SendQueue::new(
-            mode,
-            Some(IPC::SendQueueOwner::Instance),
-            IPC::SocketUnion::Uninitialized,
-        );
-
-        let Some(socket) = IPC::Socket::from_fd::<SendQueue>(
-            group,
-            bun_uws::SocketKind::SpawnIpc,
-            fd,
-            data.as_ptr(),
-            true,
-        ) else {
-            data.detach();
-            bun_core::warn!("Unable to start IPC socket");
-            return None;
-        };
-        socket.set_timeout(0);
-
-        data.socket.set(IPC::SocketUnion::Open(socket));
-
-        data
+    let Some(data) = SendQueue::open(mode, IPC::SendQueueOwner::Instance, fd) else {
+        bun_core::warn!("Unable to start IPC socket");
+        return None;
     };
 
     #[cfg(windows)]
-    let data = {
-        let data = SendQueue::new(
-            mode,
-            Some(IPC::SendQueueOwner::Instance),
-            IPC::SocketUnion::Uninitialized,
-        );
-        let send_queue: *mut SendQueue = data.as_ptr();
-
-        // `windows_configure_client` STORES the `*mut SendQueue` in
-        // `uv_handle_t.data` for the pipe's lifetime; `send_queue` is the
-        // allocation's root raw pointer.
-        // SAFETY: `send_queue` is the live SendQueue owned by `data`.
-        if let Err(_) = unsafe { SendQueue::windows_configure_client(send_queue, fd) } {
-            data.detach();
-            bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
-            return None;
-        }
-
-        data
+    let Ok(data) = SendQueue::open_inherited(mode, fd) else {
+        bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
+        return None;
     };
 
     let instance: &'static IPCInstance = Box::leak(Box::new(IPCInstance { data }));
     CHANNEL.set(Some(instance));
 
-    instance.data().write_version_packet(vm.global());
+    instance.data().write_version_packet();
 
     Some(instance)
 }

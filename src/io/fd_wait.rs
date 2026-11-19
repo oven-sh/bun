@@ -13,7 +13,7 @@ use bun_threading::WorkPool;
 #[cfg(all(test, target_os = "linux"))]
 use tests::WorkPool;
 
-bun_core::define_scoped_log!(log, Loop, visible);
+bun_core::define_scoped_log!(log, FdWait, hidden);
 
 #[derive(Clone, Copy)]
 pub enum Interest {

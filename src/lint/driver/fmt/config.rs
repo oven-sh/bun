@@ -347,6 +347,11 @@ pub(super) fn is_missing_plugin(name: &[u8]) -> bool {
     !is_built_in_plugin(name) && plugin_endings(name).is_none()
 }
 
+/// True if Prettier looks for the plugin `name` in `node_modules`. False for a path and for a `file:` URL.
+fn is_package(name: &[u8]) -> bool {
+    !name.starts_with(b".") && !paths::is_absolute(name) && !name.starts_with(b"file:")
+}
+
 /// `value` as Prettier shows it in a warning: `["a", 1]`, `{ a: true }`.
 pub(super) fn write_as_shown(out: &mut Vec<u8>, value: &Json) {
     let separate = |out: &mut Vec<u8>, index: usize| {
@@ -847,8 +852,7 @@ impl Plugins {
                 .map(<[u8]>::to_vec)
                 .collect(),
             packages: (plugins.iter().filter_map(Json::as_str))
-                .filter(|it| !it.starts_with(b".") && !it.starts_with(b"/"))
-                .filter(|it| !it.starts_with(b"file:"))
+                .filter(|it| is_package(it))
                 .map(<[u8]>::to_vec)
                 .collect(),
             endings: (plugins.iter())
@@ -1779,9 +1783,10 @@ impl<'c> Configs<'c> {
         scope: &'s Scope,
         path: Option<&[u8]>,
     ) -> impl Iterator<Item = &'s [u8]> + use<'s, 'c> {
+        let flags = self.options.plugins.iter().filter(|it| is_package(it));
         (self.plugins_for(scope, path).into_iter())
             .flat_map(|it| &it.packages)
-            .chain(&self.options.plugins)
+            .chain(flags)
             .map(|it| &it[..])
     }
 

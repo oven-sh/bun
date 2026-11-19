@@ -135,7 +135,9 @@ const PRETTIER_COMPAT: &[Param] = &[
     clap::param!(
         "--parser <name>                 Read every file with this parser. Without files, format standard input"
     ),
-    clap::param!("--plugin <name>...              Load these plugins"),
+    clap::param!(
+        "--plugin <name>...              Prettier plugins. The installed <b>prettier<r> formats the files of one that adds a language"
+    ),
     clap::param!(
         "--require-pragma                Only format files that start with a <b>@format<r> or <b>@prettier<r> comment"
     ),
@@ -271,6 +273,8 @@ pub struct Override {
     pub excluded: Vec<Vec<u8>>,
     /// Same format as [`Options::format`].
     pub format: Vec<(&'static [u8], Vec<u8>)>,
+    /// `None` without a `plugins` key. An empty list replaces the one of `[fmt]` with nothing.
+    pub plugins: Option<Vec<Vec<u8>>>,
 }
 
 impl Override {
@@ -650,6 +654,17 @@ impl Options {
                 if !paths::is_absolute(&portable) {
                     *it = paths::join_normalized(&directory, &portable);
                 }
+            }
+            let overrides = self.overrides.iter_mut();
+            let of_overrides = overrides.filter_map(|it| it.plugins.as_mut()).flatten();
+            let plugins = self.plugins.iter_mut().chain(of_overrides);
+            for it in plugins.filter(|it| it.starts_with(b".")) {
+                let joined = paths::join_normalized(&directory, &paths::from_native(it));
+                // A name without a leading `.` is a package, so `sub/plugin.js` becomes `./sub/plugin.js`.
+                *it = match joined.starts_with(b".") || paths::is_absolute(&joined) {
+                    true => joined,
+                    false => [&b"./"[..], &joined[..]].concat(),
+                };
             }
         }
         self

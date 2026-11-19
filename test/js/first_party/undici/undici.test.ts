@@ -2501,6 +2501,46 @@ describe("undici", () => {
       expect(exitCode).toBe(0);
     });
 
+    it("a deflate fetch() body that is read after its decoder finished is complete", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { fetch } = require("undici");
+           const zlib = require("node:zlib");
+           // More than the decoder hands over before it pauses, and less than it holds: it finishes with bytes inside.
+           const text = Buffer.alloc(100000, "hello world ").toString();
+           const responses = [];
+           for (const packed of [zlib.deflateSync(text), zlib.deflateRawSync(text)]) {
+             const dispatcher = {
+               dispatch(opts, handler) {
+                 handler.onConnect(() => {});
+                 handler.onHeaders(200, [Buffer.from("content-encoding"), Buffer.from("deflate")], () => {}, "OK");
+                 handler.onData(packed);
+                 handler.onComplete([]);
+                 return true;
+               },
+             };
+             responses.push(await fetch("http://localhost:1/", { dispatcher }));
+           }
+           // Runs when nothing is left to do, so the decoders are done. Only now the bodies are read.
+           process.once("beforeExit", async () => {
+             const lengths = [];
+             for (const response of responses) {
+               const read = await response.text().catch(err => String(err));
+               lengths.push(read === text ? "complete" : read.length);
+             }
+             console.log(JSON.stringify(lengths));
+           });`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: '["complete","complete"]', stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
     it("fetch with a dispatcher does not follow a 301 with a stream body, like undici", async () => {
       const paths: string[] = [];
       const dispatcher = {

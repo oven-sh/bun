@@ -1444,12 +1444,11 @@ class InflateStream extends Transform {
     super._read(size);
   }
 
-  // Not _flush: Transform would end the output at once, before the inflate gave its last bytes.
+  // Transform ends the output when this calls back, so it waits for the inflate, which may be paused with bytes inside.
   _final(callback) {
     const inflate = this.#inflate;
-    if (inflate === undefined) this.push(null);
-    else inflate.end();
-    callback();
+    if (inflate === undefined || inflate.readableEnded) return callback();
+    inflate.once("end", callback).end();
   }
 
   _destroy(err, callback) {

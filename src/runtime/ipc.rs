@@ -1118,6 +1118,7 @@ impl SendQueue {
 
     /// `task_tag::SendQueueDeferred` dispatch, under the task's ref: drain the pending flags.
     pub(crate) fn run_deferred(&self) {
+        let _alive = self.hold_owner();
         self.deferred_scheduled.set(false);
         if self.pending_close.get() {
             log!("SendQueue#closeSocketTask");

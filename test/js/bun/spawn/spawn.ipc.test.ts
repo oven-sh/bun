@@ -826,6 +826,26 @@ describe.concurrent.skipIf(isWindows)("a process.nextTick that runs the event lo
     );
     expect(result).toEqual({ stdout: ["disconnected", "collected garbage", "sent"], stderr: "", exitCode: 0 });
   });
+
+  it("when the close is reported", async () => {
+    const result = await runPair(
+      sendAndForget(`
+        const gone = exited;
+        const server = await listen();
+        (() => void spawnChild({ onExit, onDisconnect }).send("never acked", server, sent))();
+        server.close();
+      `),
+      `
+        retry(() => fs.readSync(3, Buffer.alloc(100)));
+        fs.closeSync(3);
+        until("in nextTick");
+      `,
+      {},
+      prelude,
+    );
+    expect(result.stdout.sort()).toEqual(["collected garbage", "disconnected", "sent"]);
+    expect(result).toMatchObject({ stderr: "", exitCode: 0 });
+  });
 });
 
 describe.concurrent.skipIf(!isLinux)("a message handler that runs the event loop", () => {

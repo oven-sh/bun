@@ -1,11 +1,12 @@
+import { dlopen, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { closeSync, openSync } from "fs";
-import { isWindows, tempDir } from "harness";
+import { closeSync, openSync, readSync, renameSync, writeSync } from "fs";
+import { isLinux, isWindows, libcPathForDlopen, tempDir } from "harness";
 import { join } from "path";
+import { openFifo, untilWatched } from "../io/fifo-helpers";
 
 // Reading a Bun.file() backed by a file descriptor goes through
-// ReadFile.runAsync -> getFd (opened_fd already set) -> runAsyncWithFD ->
-// resolveSizeAndLastModified, which derives total_size from fstat. That
+// ReadFile::open, which derives the expected size from fstat. That
 // computation previously used @intCast to u52 guarded by a dead @truncate,
 // so an abnormal fstat size could trip integerOutOfBounds. Triggering that
 // directly requires fstat to report > 4.5 PB which is not achievable here,
@@ -36,7 +37,7 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
     using dir = tempDir("bun-file-fd-read", { "fd-slice.txt": "0123456789" });
     const path = join(String(dir), "fd-slice.txt");
 
-    // total_size should come from fstat (10), not from the requested slice
+    // The expected size should come from fstat (10), not from the requested slice
     // end, so the initial buffer allocation stays small.
     expect(await withFd(path, fd => Bun.file(fd).slice(0, Number.MAX_SAFE_INTEGER).text())).toBe("0123456789");
     expect(await withFd(path, fd => Bun.file(fd).slice(2, 5).text())).toBe("234");
@@ -48,5 +49,81 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
 
     expect(await withFd(path, fd => Bun.file(fd).text())).toBe("");
     expect((await withFd(path, fd => Bun.file(fd).arrayBuffer())).byteLength).toBe(0);
+  });
+});
+
+test.skipIf(!isLinux)("an empty read of a FIFO by path stays open until its writer has written", async () => {
+  using dir = tempDir("bun-file-fd-read", {});
+  using fifo = openFifo(String(dir));
+  const text = Bun.file(fifo.path).slice(0, 0).text();
+  await untilWatched(fifo.reader);
+  fifo.close(fifo.reader);
+  expect(writeSync(fifo.writer, "x")).toBe(1);
+  expect(await text).toBe("");
+});
+
+test.skipIf(isWindows)("a file that was empty and is a silent FIFO now reads as empty", async () => {
+  using dir = tempDir("bun-file-fd-read", { file: "" });
+  using fifo = openFifo(String(dir));
+  const file = Bun.file(join(String(dir), "file"));
+  expect(file.size).toBe(0);
+  renameSync(fifo.path, file.name!);
+  expect(await file.text()).toBe("");
+});
+
+test.skipIf(isWindows)("a read of a pipe waits again after each chunk", async () => {
+  using dir = tempDir("bun-file-fd-read", {});
+  using fifo = openFifo(String(dir));
+  const text = Bun.file(fifo.reader).slice(0, 30).text();
+  for (let i = 0; i < 30; i++) {
+    // A writer that keeps up, and one that does not.
+    await Bun.sleep(i % 4);
+    writeSync(fifo.writer, "x");
+  }
+  expect(await text).toBe(Buffer.alloc(30, "x").toString());
+});
+
+describe.skipIf(!isLinux)("EPOLLERR while Bun.file(fd).text() waits for a socket", () => {
+  const [AF_INET, SOCK_STREAM, SOCK_DGRAM, SOL_SOCKET, SO_TIMESTAMPING] = [2, 1, 2, 1, 37];
+  const libc = () =>
+    dlopen(libcPathForDlopen(), {
+      socket: { args: ["i32", "i32", "i32"], returns: "i32" },
+      setsockopt: { args: ["i32", "i32", "i32", "ptr", "u32"], returns: "i32" },
+      connect: { args: ["i32", "ptr", "u32"], returns: "i32" },
+    }).symbols;
+
+  /** A socket that the event loop does not know. */
+  function connectTo(port: number, type: number) {
+    const fd = libc().socket(AF_INET, type, 0);
+    const address = new Uint8Array([AF_INET, 0, port >> 8, port & 255, 127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(libc().connect(fd, ptr(address), address.length)).toBe(0);
+    return { fd, [Symbol.dispose]: () => closeSync(fd) };
+  }
+
+  // read() has nothing to report here, and epoll never stops reporting it.
+  test("rejects when it stands for a message in the error queue", async () => {
+    const peer = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 });
+    try {
+      using socket = connectTo(peer.port, SOCK_DGRAM);
+      const timestampWhatIsSent = new Int32Array([(1 << 1) | (1 << 4)]);
+      expect(libc().setsockopt(socket.fd, SOL_SOCKET, SO_TIMESTAMPING, ptr(timestampWhatIsSent), 4)).toBe(0);
+      const text = Bun.file(socket.fd).text();
+      await untilWatched(socket.fd);
+      writeSync(socket.fd, "x");
+      await expect(text).rejects.toMatchObject({ syscall: "epoll_ctl" });
+    } finally {
+      peer.close();
+    }
+  });
+
+  test("leaves the pending error on the socket", async () => {
+    const accepted = Promise.withResolvers<Bun.Socket>();
+    using server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open: accepted.resolve, data() {} } });
+    using socket = connectTo(server.port, SOCK_STREAM);
+    const text = Bun.file(socket.fd).text();
+    await untilWatched(socket.fd);
+    (await accepted.promise).terminate();
+    await expect(text).rejects.toMatchObject({ syscall: "epoll_ctl" });
+    expect(() => readSync(socket.fd, Buffer.alloc(1))).toThrow(expect.objectContaining({ code: "ECONNRESET" }));
   });
 });

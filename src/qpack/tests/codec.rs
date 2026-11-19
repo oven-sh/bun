@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, VecDeque};
+use std::ops::Range;
 
 use bun_qpack::{Decoder, Encoder, Error, Indexing};
 
@@ -160,10 +161,7 @@ fn decode(
         if let Some(index) = next.static_index {
             assert_eq!(static_table().nth(index.into()).unwrap().0, next.name());
         }
-        all.push(Field {
-            never_index: next.never_index,
-            ..field(next.name(), next.value())
-        });
+        all.push(field(next.name(), next.value()));
         let start = kept.len();
         kept.extend([next.name(), next.value()].concat());
         assert_eq!(next.keep(), start);
@@ -172,7 +170,7 @@ fn decode(
     Ok(Some(all))
 }
 
-/// `[a=b, !never=indexed]`, `blocked` or `DecompressionFailed`
+/// `[a=b, c=d]`, `blocked` or `DecompressionFailed`
 fn show_on(decoder: &mut Decoder, stream_id: u64, section: &str) -> String {
     match decode(decoder, stream_id, &hex(section)) {
         Ok(Some(fields)) => format!("{fields:?}"),
@@ -708,14 +706,14 @@ mod field_sections {
             ("0000", "[]"),
             ("0000 c1 d1", "[:path=/, :method=GET]"),
             ("0000 51 0161", "[:path=a]"),
-            ("0000 71 0161", "[!:path=a]"),
+            ("0000 71 0161", "[:path=a]"),
             ("0000 51 811f", "[:path=a]"),
             ("0000 51 00", "[:path=]"),
             ("0000 51 80", "[:path=]"),
             ("0000 21 61 0162", "[a=b]"),
-            ("0000 31 61 0162", "[!a=b]"),
+            ("0000 31 61 0162", "[a=b]"),
             ("0000 29 1f 818f", "[a=b]"),
-            ("0000 39 1f 0162", "[!a=b]"),
+            ("0000 39 1f 0162", "[a=b]"),
             ("0000 21 61 00", "[a=]"),
             ("0000 22 4109 02 2000", "[A\\t= \\x00]"),
             ("0000 20 0161", "[=a]"),
@@ -729,10 +727,10 @@ mod field_sections {
             ("0500 80 81 82", "[d=3, c=2, b=1]"),
             ("0500 82 80 80", "[b=1, d=3, d=3]"),
             ("0500 40 0178", "[d=x]"),
-            ("0500 60 0178 42 00", "[!d=x, b=]"),
+            ("0500 60 0178 42 00", "[d=x, b=]"),
             ("0580 10 80", "[d=3, c=2]"),
             ("0582 12 11 10", "[d=3, c=2, b=1]"),
-            ("0582 02 0178 08 811f", "[d=x, !b=a]"),
+            ("0582 02 0178 08 811f", "[d=x, b=a]"),
             ("0583 13", "[d=3]"),
             ("0505 85", "[d=3]"),
             ("0400 80 81", "[c=2, b=1]"),
@@ -894,20 +892,47 @@ mod field_sections {
         let (count, max_entries) = (17_000, u32::MAX as usize / 32);
         let mut decoder = Decoder::new(u32::MAX, 0);
         feed(&mut decoder, &integer(0x20, 5, u32::MAX as usize)).unwrap();
-        for number in 0..count {
-            let value = raw(number.to_string().as_bytes());
-            feed(&mut decoder, &[hex("416e"), value].concat()).unwrap();
-        }
+        let add = |decoder: &mut Decoder, numbers: Range<usize>| {
+            for text in numbers.map(|number| number.to_string().into_bytes()) {
+                let instruction = [raw_with_prefix(0x40, 5, &text), raw(&text)];
+                feed(decoder, &instruction.concat()).unwrap();
+            }
+        };
+        add(&mut decoder, 0..count);
         for index in 0..count {
-            let entry = field("n", index.to_string());
-            let lines = [integer(0x80, 6, count - 1 - index), hex("40 00")];
+            let text = index.to_string();
+            let lines = [
+                integer(0x80, 6, count - 1 - index),
+                integer(0x40, 4, count - 1 - index),
+                hex("00 40 00"),
+            ];
             let section = [prefix(count, count, max_entries), lines.concat()].concat();
-            let expected = vec![entry.clone(), field("n", "")];
+            let expected = vec![field(&text, &text), field(&text, ""), field("16999", "")];
             assert_eq!(decode(&mut decoder, 0, &section), Ok(Some(expected)));
-            let lines = [integer(0x10, 4, index), integer(0x00, 3, index), raw(b"")];
-            let section = [prefix(index + 1, 0, max_entries), lines.concat()].concat();
-            let expected = vec![entry, field("n", "")];
-            assert_eq!(decode(&mut decoder, 0, &section), Ok(Some(expected)));
+            for pattern in [0x00, 0x08] {
+                let lines = [
+                    integer(0x10, 4, index),
+                    integer(pattern, 3, index),
+                    raw(b""),
+                ];
+                let section = [prefix(index + 1, 0, max_entries), lines.concat()].concat();
+                let expected = vec![field(&text, &text), field(&text, "")];
+                assert_eq!(decode(&mut decoder, 0, &section), Ok(Some(expected)));
+            }
+        }
+        let mut count = count;
+        for index in [
+            0, 30, 31, 62, 63, 158, 159, 190, 191, 16_414, 16_415, 16_446, 16_447,
+        ] {
+            let name = [integer(0x80, 6, index), raw(b"~")].concat();
+            for (instruction, value) in [(name, "~"), (integer(0x00, 5, index), "0")] {
+                add(&mut decoder, 0..index + 1);
+                feed(&mut decoder, &instruction).unwrap();
+                count += index + 2;
+                let section = [prefix(count, count, max_entries), hex("80")].concat();
+                let expected = vec![field("0", value)];
+                assert_eq!(decode(&mut decoder, 0, &section), Ok(Some(expected)));
+            }
         }
 
         for len in [
@@ -1336,7 +1361,10 @@ fn the_decoder_agrees_with_the_model() {
                 }
                 let expected = match model.section(&section) {
                     Ok(section) if section.required_insert_count > count => Ok(None),
-                    Ok(section) => Ok(Some(section.fields)),
+                    Ok(section) => {
+                        let fields = section.fields.iter();
+                        Ok(Some(fields.map(|it| field(&it.name, &it.value)).collect()))
+                    }
                     Err(_) => Err(Error::DecompressionFailed),
                 };
                 *if expected.is_ok() {
@@ -1423,8 +1451,17 @@ mod encoder {
         encoder
     }
 
-    /// Each step has what the decoder has sent, the fields, and the instructions and the section to expect.
-    /// Step `n` is on stream `n`.
+    /// With four entries of 34 bytes, from sections on the streams 100 to 103.
+    fn encoder_with_entries(max_capacity: u64, max_blocked_streams: u64) -> Encoder {
+        let mut encoder = encoder_with(max_capacity, max_blocked_streams);
+        for (stream_id, field) in (100..).zip(["~=~", "^=^", "$=$", "{={"]) {
+            encode(&mut encoder, stream_id, field);
+            encoder.read_decoder_stream(&hex("01")).unwrap();
+        }
+        encoder
+    }
+
+    /// Step `n` is on stream `n`: what the decoder has sent, the fields, the instructions and the section to expect.
     #[track_caller]
     fn check(mut encoder: Encoder, steps: &[(&str, &str, &str, &str)]) {
         for (stream_id, (received, fields, instructions, section)) in (0..).zip(steps) {
@@ -1608,16 +1645,12 @@ mod encoder {
         check(
             encoder_with(4096, 100),
             &[
-                ("", "?~=^ ?~=^ ?~=^", "", "0000 217e015e 217e015e 217e015e"),
-                ("", "!~=^ !~=^ !~=^", "", "0000 317e015e 317e015e 317e015e"),
                 ("", "!age=^ !age=^ ?age=^", "", "0000 72015e 72015e 52015e"),
-                (
-                    "",
-                    "~=^ !~=^ ?~=^ ?~=$",
-                    "417e015e",
-                    "0280 10 08015e 10 000124",
-                ),
-                ("", "!~=^ ?~=^ ?~=$", "", "0200 60015e 80 400124"),
+                ("", "?age=^ ?age=0 !age=0", "", "0000 52015e c2 728107"),
+                ("", "~=^ ~=$", "417e015e", "0280 10 000124"),
+                ("", "!~=^ ?~=^ ~=^", "", "0200 317e015e 217e015e 80"),
+                ("", "?$=^ ?$=^ ?$=", "", "0000 2124015e 2124015e 212400"),
+                ("", "!{=^ !{=^ !{=", "", "0000 317b015e 317b015e 317b00"),
             ],
         );
     }
@@ -1687,17 +1720,16 @@ mod encoder {
         let expected = (hex("417b 017b 417d 017d"), hex("0481 10 11"));
         assert_eq!(encode_with_credit(&mut encoder, 3, 38, "{={ }=}"), expected);
 
-        let mut encoder = encoder_with(170, 100);
-        encode(&mut encoder, 0, "~=~ ^=^ $=$ {={");
+        let mut encoder = encoder_with_entries(170, 100);
         let expected = (vec![], hex("0203 83"));
-        assert_eq!(encode_with_credit(&mut encoder, 1, 33, "~=~"), expected);
+        assert_eq!(encode_with_credit(&mut encoder, 1, 2, "~=~"), expected);
         let expected = (hex("03"), hex("0680 10"));
-        assert_eq!(encode_with_credit(&mut encoder, 2, 34, "~=~"), expected);
+        assert_eq!(encode_with_credit(&mut encoder, 2, 3, "~=~"), expected);
     }
 
-    /// Two entries fit.
     #[test]
     fn evicts_only_what_the_decoder_is_done_with() {
+        // Two entries fit.
         let fill = ("", "age=~ date=^^", "c2017e c6025e5e", "0381 10 11");
         let see = ("", "link={", "", "0000 5b017b");
         let add = |received| (received, "link={", "cb017b", "0480 10");
@@ -1706,41 +1738,48 @@ mod encoder {
         check(encoder_with(100, 9), &[fill, see, refuse("02"), add("80")]);
         check(encoder_with(100, 9), &[fill, see, refuse("02"), add("40")]);
         check(encoder_with(100, 9), &[fill, see, refuse("40"), add("01")]);
-        let refer = ("80", "?age=~ link={", "", "0201 81 5b017b");
-        check(encoder_with(100, 9), &[fill, see, refer, add("82")]);
-        let refer = ("80", "?date=^^ link={", "cb017b", "0480 80 10");
+        let refer = ("80", "age=~ link={", "01", "0480 10 5b017b");
         check(encoder_with(100, 9), &[fill, see, refer]);
+        let refer = ("80", "date=^^ link={", "cb017b", "0480 80 10");
+        check(encoder_with(100, 9), &[fill, see, refer]);
+
+        // One does.
+        let fill = ("", "~=~", "417e017e", "0280 10");
+        let add = ("80", "age=^ age=^", "c2015e", "0380 52015e 10");
+        check(encoder_with(68, 9), &[fill, add]);
+        let refer = ("80", "~=~ age=^ age=^", "", "0200 80 52015e 52015e");
+        check(encoder_with(68, 9), &[fill, refer]);
     }
 
-    /// Five entries fit, and the oldest of four is draining.
     #[test]
     fn renews_draining_entries() {
-        let inserted = "417e017e 415e015e 41240124 417b017b";
-        let fill = ("", "~=~ ^=^ $=$ {={", inserted, "0583 10 11 12 13");
+        for (field, instructions, section) in [
+            ("^=^", "", "0302 82"),
+            ("~=~", "03", "0680 10"),
+            ("~=$", "8300", "0680 00 0124"),
+        ] {
+            let steps = [("", field, instructions, section)];
+            check(encoder_with_entries(204, 9), &steps);
+        }
         check(
-            encoder_with(170, 9),
+            encoder_with_entries(204, 9),
             &[
-                fill,
-                ("", "?~=~ ^=^", "", "0302 83 82"),
                 ("", "~=~", "03", "0680 10"),
                 ("", "~=~ ^=^", "", "0600 80 83"),
             ],
         );
         check(
-            encoder_with(170, 9),
+            encoder_with_entries(204, 9),
             &[
-                fill,
-                ("", "?~=} !~=}", "", "0203 43017d 63017d"),
                 ("", "~=$", "8300", "0680 00 0124"),
                 ("", "~=^", "", "0600 40 015e"),
                 ("", "~=", "", "0600 80"),
             ],
         );
-        let block = ("80", "|=|", "417c017c", "0680 10");
+        let block = ("e4e5e6e7", "|=|", "417c017c", "0680 10");
         check(
-            encoder_with(170, 1),
+            encoder_with_entries(170, 1),
             &[
-                fill,
                 block,
                 ("", "^=^", "03", "0303 83"),
                 ("", "^=^", "", "0304 84"),
@@ -1748,9 +1787,8 @@ mod encoder {
             ],
         );
         check(
-            encoder_with(170, 1),
+            encoder_with_entries(170, 1),
             &[
-                fill,
                 block,
                 ("", "^=}", "8300", "0303 43017d"),
                 ("", "^={", "", "0304 44017b"),
@@ -1758,49 +1796,48 @@ mod encoder {
             ],
         );
         let oldest = ("", "~=~ ~=}", "", "0204 84 44017d");
-        check(encoder_with(170, 1), &[fill, block, oldest]);
+        check(encoder_with_entries(170, 1), &[block, oldest]);
     }
 
+    /// A quarter of the table, or three times the latest addition.
     #[test]
-    fn makes_room_for_what_is_worth_more() {
-        let large = format!("link={}", "~".repeat(60));
-        let plain = format!("5b3c{}", "7e".repeat(60));
-        let with = |first| format!("{first} {large}");
-        check(
-            encoder_with(140, 9),
-            &[
-                (
-                    "",
-                    "~=~ ^=^ $=$ {={",
-                    "417e017e 415e015e 41240124 417b017b",
-                    "0583 10 11 12 13",
-                ),
-                ("", &with("~=~"), "", &format!("0203 83 {plain}")),
-                ("", &with("~=~"), "", &format!("0203 83 {plain}")),
-                ("", &with("~=~"), "", &format!("0000 217e017e {plain}")),
-                (
-                    "808182",
-                    &with("~=~"),
-                    &format!("03 cb3c{}", "7e".repeat(60)),
-                    "0781 10 11",
-                ),
-            ],
-        );
+    fn keeps_room_to_renew_entries() {
+        for (max_capacity, count, is_draining) in [
+            (237, 4, true),
+            (238, 4, false),
+            (497, 11, true),
+            (498, 11, false),
+            (100, 1, false),
+        ] {
+            let mut encoder = encoder_with(max_capacity, 9);
+            let fields = (b'a'..)
+                .take(count)
+                .map(|name| format!("{}=~", char::from(name)));
+            encode(&mut encoder, 0, &Vec::from_iter(fields).join(" "));
+            let (instructions, _) = encode(&mut encoder, 4, "a=~");
+            assert_eq!(!instructions.is_empty(), is_draining, "{max_capacity}");
+        }
     }
 
     #[test]
     fn required_insert_counts_wrap_around() {
         for max_capacity in [40, 64, 100, 4096, 4097, 8192, 1 << 20, (1 << 62) - 1] {
-            let mut encoder = encoder_with(max_capacity, 1);
-            for count in 1..70_000 {
-                let value = count.to_string();
+            let (mut encoder, mut count) = (encoder_with(max_capacity, 1), 0);
+            for number in 0..70_000 {
+                let value = number.to_string();
                 let lines = [(&b"age"[..], value.as_bytes(), Allowed); 2];
-                let (_, section) = encode_lines(&mut encoder, 0, usize::MAX, &lines);
+                let (instructions, section) = encode_lines(&mut encoder, 0, usize::MAX, &lines);
+                // The odd value is mistaken for another.
+                if instructions.is_empty() {
+                    continue;
+                }
+                count += 1;
                 let expected = prefix(count, count - 1, max_capacity as usize / 32);
                 assert_eq!(section[..expected.len()], expected);
                 assert_eq!(section.last(), Some(&0x10));
                 encoder.read_decoder_stream(&hex("80")).unwrap();
             }
+            assert!(count > 69_900, "{count}");
         }
     }
 
@@ -1887,6 +1924,7 @@ mod encoder {
             ("80", false),
             ("00", false),
             ("01", false),
+            ("3f00", false),
         ] {
             let result = Encoder::new().read_decoder_stream(&hex(instructions));
             assert_eq!(result, is_valid.then_some(()).ok_or(Error::DecoderStream));
@@ -1903,21 +1941,224 @@ mod encoder {
     }
 
     #[test]
-    fn busy_connections_keep_adapting() {
-        let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new(4096, 100));
-        encoder.use_dynamic_table(4096, 100);
-        let mut in_flight = VecDeque::new();
-        for stream_id in 0..1000 {
-            let token = format!("{:02000}", stream_id / 100);
-            let fields = format!(":authority=bun.com x-id={stream_id} x-token={token} x-end=1");
-            let (instructions, section) = encode(&mut encoder, stream_id, &fields);
-            assert!(stream_id % 100 < 30 || instructions.len() + section.len() < 12);
-            feed(&mut decoder, &instructions).unwrap();
-            decode(&mut decoder, stream_id, &section).unwrap().unwrap();
-            in_flight.push_back(drain(decoder.instructions()));
-            if let Some(due) = in_flight.pop_front_if(|_| stream_id >= 10) {
+    fn many_entries_after_the_base() {
+        let names = Vec::from_iter((0..100).map(|number| format!("{number}= {number}=~")));
+        let (_, section) = encode(&mut encoder_with(4096, 1), 0, &names.join(" "));
+        let lines = (0..100).map(|at| [integer(0x10, 4, at), integer(0x00, 3, at), raw(b"~")]);
+        let lines = lines.flatten().flatten().collect();
+        assert_eq!(section, [prefix(100, 0, 128), lines].concat());
+    }
+
+    #[test]
+    fn remembers_as_many_fields_as_a_table_can_have() {
+        for (others, is_remembered) in [(127, true), (128, false)] {
+            let mut encoder = encoder_with(4096, 0);
+            let others = Vec::from_iter((0..others).map(|number| format!("age=-{number}")));
+            encode(&mut encoder, 0, &format!("age=~ {}", others.join(" ")));
+            let (instructions, _) = encode(&mut encoder, 4, "age=~");
+            assert_eq!(!instructions.is_empty(), is_remembered);
+        }
+    }
+
+    /// Returns the bytes sent for each of 1000 requests. `a=9~5` is a field of 9 bytes that change every 5 requests.
+    fn traffic(text: &str, capacity: u32, max_blocked: u32) -> Vec<usize> {
+        let items = Vec::from_iter(text.split_whitespace().map(|item| {
+            let mut numbers = BTreeMap::from([(b'~', 1000), (b'!', 999), (b'<', 1000)]);
+            numbers.extend(b"*#/".map(|symbol| (symbol, 1)));
+            numbers.extend(b"+>%".map(|symbol| (symbol, 0)));
+            for part in item.as_bytes()[1..].chunk_by(|_, next| next.is_ascii_digit()) {
+                let number = str::from_utf8(&part[1..]).unwrap().parse().unwrap();
+                numbers.insert(part[0], number);
+            }
+            (item.as_bytes()[0], numbers)
+        }));
+        let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new(capacity, max_blocked));
+        encoder.use_dynamic_table(capacity.into(), max_blocked.into());
+        feed(&mut decoder, &drain(encoder.instructions())).unwrap();
+        let (mut under_way, mut unread, mut lens) = (VecDeque::<Vec<u8>>::new(), None, vec![]);
+        for at in 0..1000 {
+            let (mut fields, mut max_under_way) = (vec![], 0);
+            let (mut credit, mut is_held) = (usize::MAX, false);
+            for (kind, numbers) in &items {
+                let [period, last_change, lines, names, more_name_len] =
+                    b"~!*#%".map(|symbol| numbers[&symbol]);
+                let [every, first, from, to] = b"/+><".map(|symbol| numbers[&symbol]);
+                match kind {
+                    _ if !(from..to).contains(&at) => {}
+                    b'^' => max_under_way = numbers[&b'='],
+                    b'$' => is_held = true,
+                    b'-' => credit = 0,
+                    _ => fields.extend((0..lines * names).filter_map(|line| {
+                        let name = line % names;
+                        let version = match period {
+                            1 => 100 * at + line,
+                            _ => at.min(last_change) / period,
+                        };
+                        let value = "~".repeat(numbers[&b'=']) + &version.to_string();
+                        let value = &value[value.len() - numbers[&b'=']..];
+                        let more = "~".repeat(more_name_len);
+                        (at % every == (first + name) % every).then(|| match kind {
+                            b'p' => field(":path", value),
+                            _ => field(format!("x-{}{name}{more}", *kind as char), value),
+                        })
+                    })),
+                }
+            }
+            for due in under_way.drain(..under_way.len().saturating_sub(max_under_way)) {
                 encoder.read_decoder_stream(&due).unwrap();
             }
+            let stream_id = at as u64;
+            let lines = fields
+                .iter()
+                .map(|it| (&it.name[..], &it.value[..], Allowed));
+            let (instructions, section) =
+                encode_lines(&mut encoder, stream_id, credit, &Vec::from_iter(lines));
+            lens.push(instructions.len() + section.len());
+            feed(&mut decoder, &instructions).unwrap();
+            let mut read = Vec::from_iter(unread.take_if(|_| !is_held));
+            if is_held && unread.is_none() {
+                unread = Some((stream_id, section, fields));
+            } else {
+                read.push((stream_id, section, fields));
+            }
+            for (stream_id, section, fields) in read {
+                assert_eq!(decode(&mut decoder, stream_id, &section), Ok(Some(fields)));
+            }
+            under_way.push_back(drain(decoder.instructions()));
+        }
+        lens
+    }
+
+    #[test]
+    fn makes_room_step_by_step() {
+        #[rustfmt::skip]
+        let cases: &[(&str, u32, u32, &[usize])] = &[
+            // An entry is let go once twice as much has been missed as that takes.
+            ("a=1 b=1<1 c=1<1 d=1<1 l=74>1 ^=1", 160, 9, &[30, 82, 82, 82, 82, 87, 84, 4, 4]),
+            ("a=1 b=1<1 c=1<1 d=1<1 l=75>1 ^=1", 160, 9, &[30, 83, 83, 83, 88, 85, 4, 4, 4]),
+            ("a=1 b=1<1 c=1<1 d=1<1 l=72>1 ^=2", 160, 9,
+                &[30, 80, 80, 80, 80, 80, 85, 85, 82, 4, 4]),
+            ("a=1 b=1<2 c=1<2 d=1<2 l=72>4 ^=1", 160, 0,
+                &[26, 50, 8, 3, 80, 80, 80, 80, 80, 80, 85, 163, 85, 4, 4, 4]),
+            ("a=1 b=1<2 c=1<2 d=1<2 l=72>4", 160, 0, &[26, 50, 3, 3, 80, 80, 80, 80, 163, 4, 4, 4]),
+            // It is repeated without that if there is room, or if no section refers to it.
+            ("a=1 l=40>3 ^=1", 160, 0, &[8, 14, 8, 48, 93, 49, 4, 4]),
+            ("a=1 b=1<1 c=1<1 d=1<1 l=72>1", 160, 9, &[30, 81, 81, 5, 4, 4]),
+            ("l=72>1 a=1 b=1<1 c=1<1 d=1<1", 160, 9, &[30, 81, 82, 4, 4, 4]),
+            // What saves two thirds as much or less makes way, unless it may be used more often.
+            ("a=1 b=1 c=1 d=1 l=60>1", 160, 9, &[30, 74, 71, 71, 87, 23, 22, 22]),
+            ("a=1 b=1 c=1 d=1 l=60*2>1", 160, 9, &[30, 139, 137, 88, 24, 23]),
+            ("a=28 b=28 l=60>1", 160, 9, &[70, 70, 69, 69, 69, 69, 102, 38]),
+            ("a=29 b=29 l=60>1", 160, 9, &[72, 70, 69, 69, 69, 69, 69, 69]),
+            ("a=1 b=1 c=1 d=1 l=60/3+1", 160, 9, &[30, 74, 6, 6, 71, 6, 6, 71, 6, 6, 71, 6]),
+            // There is no use in letting go of what a section refers to that is long overdue.
+            ("a=1 b=1<1 c=1<1 d=1<1 l=75>4 ^=2 $>2<999", 160, 9,
+                &[30, 3, 3, 3, 83, 83, 83, 83, 83, 88, 88, 88]),
+            ("a=1 b=1<1 c=1<1 d=1<1 l=75>5 ^=2 $>2<999", 160, 9,
+                &[30, 3, 3, 3, 3, 83, 83, 83, 83, 83, 83, 83]),
+            ("a=1<5 a=1>6 b=1<1 c=1<1 d=1<1 d=1>5<6 l=50>14 ^=2 $>5<999", 160, 9,
+                &[30, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 58, 58, 58, 58, 58, 58, 58, 63, 63, 60, 4, 4]),
+            ("a=40 b=1<1 c=1<1 d=1<1 l=80>1 ^=1 $>3<14", 200, 9,
+                &[69, 88, 88, 88, 88, 132, 132, 132, 132, 132, 88, 88, 88, 88, 88, 88, 88, 88, 88, 88, 132, 90, 4, 4]),
+        ];
+        for &(text, capacity, max_blocked, expected) in cases {
+            let lens = traffic(text, capacity, max_blocked);
+            assert_eq!(lens[..expected.len()], *expected, "{text} {capacity}");
+        }
+    }
+
+    /// With the most bytes for the average request and for one of the last 100, without and with blocked streams.
+    #[test]
+    fn follows_the_traffic() {
+        #[rustfmt::skip]
+        let cases = [
+            // Values change while others stay.
+            ("i=5~1 t=2000~100 e=1 ^=10", [(452, 472), (229, 251)]),
+            ("i=5~1 t=3600~100 e=1 ^=8", [(753, 696), (328, 371)]),
+            ("a=1300 b=700~500 c=200 d=1300 ^=2", [(50, 6), (22, 6)]),
+            ("a=1000 b=3000~500", [(33, 4), (15, 4)]),
+            ("a=700*2 b=3000~300!300 ^=2", [(66, 5), (30, 5)]),
+            ("t=8~1*30 b=3000~300!300 c=800 ^=2", [(353, 314), (328, 314)]),
+            ("s=50~100#30 ^=8", [(307, 317), (111, 118)]),
+            ("s=50~100#40 ^=8", [(616, 550), (326, 355)]),
+            ("a=107 b=634~26 c=296 d=559 e=530 ^=1", [(113, 110), (58, 59)]),
+            // Values that do not last are not worth much.
+            ("a=200~2 b=3600 c=1 ^=2", [(229, 210), (214, 210)]),
+            ("a=200~3 b=3600 c=1 ^=2", [(247, 210), (243, 210)]),
+            ("a=200~20 b=3600 c=1 ^=2", [(287, 370), (246, 254)]),
+            ("a=200~3 b=3600/3", [(248, 245), (143, 140)]),
+            ("a=200~3 b=3600/4 ^=1", [(258, 247), (194, 191)]),
+            ("a=2000 b=2000 c=10>100 ^=1", [(34, 19), (22, 19)]),
+            ("a=1000 b=2900 c=700>100<102", [(18, 4), (10, 4)]),
+            ("c=700>100<102 a=1000 b=2900", [(18, 4), (10, 4)]),
+            // Fields come and go.
+            ("a=1300 b=700~500>498<528 c=200 d=1300 ^=2", [(42, 5), (33, 5)]),
+            ("a=1300 b=700~500>498<560 c=200 d=1300 ^=2 ^=50>480 ^=0>560", [(64, 5), (51, 5)]),
+            ("a=700>567<592 b=1000 c=3000", [(34, 4), (26, 4)]),
+            ("a=50 b=3370>159<161 c=1544>341 ^=20", [(51, 4), (11, 4)]),
+            ("y=700 z=1 s=50#40>20<24 r=50#3>40<45 ^=8", [(24, 4), (9, 4)]),
+            ("a=700~2 p=3000>532 ^=2", [(927, 710), (720, 710)]),
+            ("a=700 b=2000*3 c=2000<400 ^=4", [(555, 6), (451, 6)]),
+            ("a=700 b=1000*5 c=2900<400 ^=4", [(2132, 8), (469, 8)]),
+            ("b=4000<10 s=30#20>10", [(39, 22), (30, 22)]),
+            ("x=600>500 a=1300 c=900 d=1300 e=300<10 ->480<520", [(319, 609), (311, 609)]),
+            // Names are worth something too.
+            ("s=40#10%20 u=8~1#10%20 d=80#18<50%20 n=8~1#10>100%20 ^=2", [(237, 220), (233, 220)]),
+            ("b=700/3+2 c=5~2#3%1000 ^=8", [(292, 257), (28, 24)]),
+            ("n=5~2#14%30 b=3000 ^=8", [(140, 101), (105, 101)]),
+            ("n=1%4100 c=3000~100", [(4203, 4203), (4170, 4173)]),
+            ("a=4100#2<100%1900 b=4100#2>100%1900", [(8470, 8210), (8523, 8210)]),
+            // Not everything fits.
+            ("a=1800 b=2800/2+1 ^=2", [(1415, 1405), (1407, 1405)]),
+            ("b=2500 k=1600#8/8 c=1000~10", [(2864, 2866), (1818, 1816)]),
+            ("s=30#90 ^=4", [(1122, 1107), (1110, 1107)]),
+            ("s=30#24 b=3000>100 ^=2", [(337, 330), (320, 330)]),
+            ("s=30#58 b=3000>100 ^=2", [(1458, 1558), (1431, 1558)]),
+            ("s=30#9 b=1500 w=2200>100 ^=2", [(215, 180), (186, 180)]),
+            ("s=30#24 b=3000/5", [(347, 330), (341, 330)]),
+            ("a=2000#3/3 ^=2", [(684, 665), (676, 665)]),
+            ("a=1000 b=1000 c=1000 m=1400>1 l=1400*8>1", [(2076, 2020), (2045, 2020)]),
+            // There are several kinds of request.
+            ("a=200~100!500 b=3600/2+1 ^=8", [(142, 4), (104, 4)]),
+            ("a=2000#2/3 c=10~300/3+2 ^=2", [(20, 8), (12, 8)]),
+            ("s=64#6 k=64#24/2 b=1500>100 l=100>400 ^=8", [(372, 297), (300, 258)]),
+            ("s=64#6 k=64#24/3 b=1500>100 l=100>400 ^=8", [(264, 159), (244, 176)]),
+            ("s=64#6 k=64#24/6 b=1500/3>100 l=100>400 ^=8", [(183, 95), (133, 84)]),
+            ("s=64#6 k=64#24/8 b=1500/4>100 l=100>400 ^=10", [(127, 72), (93, 72)]),
+            ("k=1000#3/3 b=1500>100 l=100>400 ^=2", [(336, 347), (321, 347)]),
+            ("k=1300#3/3 b=600>100 l=60>400 ^=3", [(600, 669), (588, 669)]),
+            ("s=100#14 a=700<300 b=700~150!150<300 c=390/5>300 d=320>300 e=250>300 ^=3", [(72, 19), (41, 19)]),
+            ("a=1500/4 z=2000<50 b=2200>100 ^=8", [(58, 4), (43, 4)]),
+            ("a=1/2 b=500~4/2 c=3000>100 ^=12", [(354, 257), (299, 257)]),
+            ("a=1/4 b=700~8/3+1 c=3000>100 ^=30", [(529, 236), (328, 236)]),
+            ("a=1#2/3 p=300~9/3 c=3500>100 ^=4", [(165, 108), (133, 245)]),
+            ("s=64#6 k=64#24/3 b=1500/3>100 ^=2", [(143, 134), (130, 133)]),
+            ("a=900 b=1220/5+3 c=830/5 d=36", [(14, 5), (9, 5)]),
+            // The peer holds something back.
+            ("u=120 a=450#2 p=12~3 ^=2 $>50<999", [(25, 19), (20, 19)]),
+            ("a=1100 u=120 p=200~4 ^=2 $>50<999", [(216, 207), (204, 207)]),
+            ("a=1100 u=120 p=200~4 $>50<999", [(209, 207), (201, 207)]),
+            ("a=1100 u=120 p=200~4 ^=2 $>50<700", [(231, 281), (198, 185)]),
+            ("a=1300 b=700~500 c=200 d=1300 ^=2 ->510", [(376, 709), (362, 709)]),
+            ("a=1300 b=700~500 c=200 d=1300 ^=2 ->511<600", [(113, 6), (93, 6)]),
+            ("a=1500 b=2000<50 c=2200>100 ^=1 $>102<999", [(2001, 2207), (1997, 2207)]),
+        ];
+        for (text, limits) in cases {
+            for (max_blocked, limit) in [0, 100].into_iter().zip(limits) {
+                let lens = traffic(text, 4096, max_blocked);
+                let mean = |lens: &[usize]| lens.iter().sum::<usize>().div_ceil(lens.len());
+                let actual = (mean(&lens), mean(&lens[900..]));
+                let is_within = actual.0 <= limit.0 && actual.1 <= limit.1;
+                assert!(is_within, "{text} {max_blocked}: {actual:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn busy_connections_settle() {
+        let lens = traffic("i=5~1 t=2000~100 e=1 ^=10", 4096, 100);
+        for period in lens.chunks(100) {
+            assert!(period[30..].iter().all(|&len| len < 12), "{period:?}");
         }
     }
 
@@ -1933,7 +2174,7 @@ mod encoder {
     fn keeps_its_obligations() {
         let mut random = Random(2);
         let (mut references, mut evictions) = (0, 0);
-        for _ in 0..300 {
+        for _ in 0..400 {
             let max_capacity = random.pick(&[32, 64, 100, 300, 1000, 4096, 100_000]);
             let max_blocked = random.pick(&[0, 1, 3, 100]);
             let (max_len, patience) = (random.pick(&[2, 30, 400]), random.pick(&[1, 5, 50, 1000]));
@@ -1943,7 +2184,7 @@ mod encoder {
                 random.pick(&[&name, static_name]).to_vec()
             }));
             names.dedup();
-            let values = Vec::from_iter((0..random.pick(&[2, 30])).map(|_| random.text(max_len)));
+            let mut values = vec![vec![]; random.pick(&[2, 30])];
 
             let mut encoder = Encoder::new();
             encoder.use_dynamic_table(max_capacity as u64, max_blocked as u64);
@@ -1954,8 +2195,13 @@ mod encoder {
             assert_eq!(model.capacity, max_capacity.min(4096));
             let mut known = Knowledge::default();
             for _ in 0..200 {
+                let at = random.below(values.len().max(10));
+                if let Some(value) = values.get_mut(at) {
+                    *value = random.text(max_len);
+                }
                 let lines = Vec::from_iter((0..random.below(12)).map(|_| -> Line<'_> {
-                    let indexing = random.pick(&[Allowed, Allowed, Allowed, Without, Never]);
+                    let indexing = random.pick(&[Allowed, Without, Never]);
+                    let indexing = random.pick(&[Allowed, Allowed, indexing]);
                     let name = &names[random.below(names.len())];
                     (name, &values[random.below(values.len())], indexing)
                 }));
@@ -1971,7 +2217,7 @@ mod encoder {
                 for entry in &model.entries[count..] {
                     assert!(lines.iter().any(|&(name, value, indexing)| {
                         (name, indexing == Allowed) == (&entry.name, true)
-                            && (value == entry.value || entry.value.is_empty())
+                            && (entry.value.is_empty() || value == entry.value)
                     }));
                 }
                 let section = model.section(&section).unwrap();

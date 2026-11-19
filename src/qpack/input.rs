@@ -81,8 +81,7 @@ impl<'a> Input<'a> {
     }
 }
 
-/// Calls `read` with the first byte and the rest of every instruction that is complete. None is longer than `max_len`.
-/// `partial` holds on to one that is not complete, which `read` has to leave without effect. Returns `None` if one is invalid.
+/// `read` has to leave an incomplete instruction without effect. It is kept in `partial`, up to `max_len`.
 #[inline(always)]
 pub(crate) fn read_instructions(
     partial: &mut Vec<u8>,

@@ -118,6 +118,10 @@ impl<T> DynamicTable<T> {
         self.size
     }
 
+    pub fn count(&self) -> usize {
+        self.entries.len()
+    }
+
     pub fn set_max_size(&mut self, max_size: usize) {
         self.max_size = max_size;
         self.evict_down_to(max_size);

@@ -19,7 +19,7 @@ pub enum Indexing {
 
 /// The state of one direction of a connection.
 pub struct Encoder {
-    table: SearchableTable<()>,
+    table: SearchableTable,
     /// Of those that the peer has asked for since the last block.
     smallest_size: Option<u32>,
     history: Option<Box<History>>,
@@ -137,7 +137,7 @@ impl Block<'_> {
         }
         literal::write(value, out);
         if let Some(hash) = to_insert {
-            encoder.table.insert(&name, value, hash, ());
+            encoder.table.insert(&name, value, hash);
         }
     }
 }

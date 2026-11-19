@@ -4,12 +4,11 @@ use crate::dynamic_table::{self, DynamicTable, Entry};
 use crate::{equal, wrapped, wrapped_mut};
 
 /// Chains the entries of a bucket, from the newest on. Evicted entries drop out as their numbers no longer lead anywhere.
-pub struct Links<T> {
+pub struct Links {
     field_hash: u32,
     name_hash: u32,
     older_by_field: u16,
     older_by_name: u16,
-    pub extra: T,
 }
 
 pub struct Name<'a> {
@@ -19,16 +18,16 @@ pub struct Name<'a> {
     pub hash: u32,
 }
 
-pub struct SearchableTable<T> {
+pub struct SearchableTable {
     /// Not to be added to but by [`Self::insert`].
-    pub entries: DynamicTable<Links<T>>,
+    pub entries: DynamicTable<Links>,
     next_number: u16,
     newest_by_field: [u16; 128],
     /// Without the names of the static table.
     newest_by_name: [u16; 32],
 }
 
-impl<T> SearchableTable<T> {
+impl SearchableTable {
     pub fn new() -> Self {
         Self {
             entries: DynamicTable::new(),
@@ -45,8 +44,8 @@ impl<T> SearchableTable<T> {
         &self,
         newest: u16,
         min_age: usize,
-        older: impl Fn(&Links<T>) -> u16,
-        matches: impl Fn(&Entry<Links<T>>) -> bool,
+        older: impl Fn(&Links) -> u16,
+        matches: impl Fn(&Entry<Links>) -> bool,
     ) -> Option<usize> {
         let (mut number, mut last_distance) = (newest, 0);
         loop {
@@ -98,7 +97,7 @@ impl<T> SearchableTable<T> {
     }
 
     #[inline(always)]
-    pub fn insert(&mut self, name: &Name<'_>, value: &[u8], field_hash: u32, extra: T) {
+    pub fn insert(&mut self, name: &Name<'_>, value: &[u8], field_hash: u32) {
         let number = self.next_number;
         self.next_number = number.wrapping_add(1);
         let newest = wrapped_mut(&mut self.newest_by_field, field_hash as usize);
@@ -116,7 +115,6 @@ impl<T> SearchableTable<T> {
             name_hash: name.hash,
             older_by_field,
             older_by_name,
-            extra,
         };
         self.entries.insert(table_name, value, links);
     }

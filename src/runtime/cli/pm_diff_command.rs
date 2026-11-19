@@ -1488,6 +1488,7 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style) {
     // Readable JS is compared on the aggressive key and shown as written; minified JS is shown re-printed,
     // so it gets the gentler display print.
     let readable_js = matches!(normalize::kind_for(path), Some(normalize::Kind::Js(_)))
+        && !flags.raw
         && !flags.unminify
         && !old.is_some_and(normalize::looks_minified)
         && !new.is_some_and(normalize::looks_minified);
@@ -1598,7 +1599,7 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style) {
                 Some((mut ko, mut kn)) if !ko.map.is_empty() && !kn.map.is_empty() => {
                     rebase_key_onto(&mut ko, &shown_o, disp_o);
                     rebase_key_onto(&mut kn, &shown_n, disp_n);
-                    let projection = semantic::project(&shown_o.text, &shown_n.text, &ko, &kn);
+                    let (projection, _) = semantic::project(&shown_o.text, &shown_n.text, &ko, &kn);
                     let same_key = ko.text == kn.text;
                     if !same_key && shown_o.text == shown_n.text {
                         // The code differs but the re-prints are identical, so only the raw
@@ -1642,13 +1643,13 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style) {
             match (ko, kn) {
                 (ko, kn) if !ko.map.is_empty() && !kn.map.is_empty() => {
                     let (old_v, new_v) = (view_bytes(o), view_bytes(n));
-                    let projection = semantic::project(&old_v, &new_v, ko, kn);
+                    let (projection, unfolded) = semantic::project(&old_v, &new_v, ko, kn);
                     let shown = projection
                         .ops
                         .iter()
                         .any(|op| op.kind != Operation::Equal || op.affected);
                     if !projection.holds(path, &old_v, &new_v, ko.text == kn.text) {
-                        unified_hunks(o, n, flags.context, style, change);
+                        render_ops(&unfolded, flags.context, style, change, (false, false));
                     } else if shown {
                         change.semantic = Semantic::Projected;
                         change.hidden = projection.hidden;

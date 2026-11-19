@@ -246,12 +246,13 @@ fn span(a: &[u8], b: &[u8]) -> (usize, usize) {
     (lo, a.len() - suffix)
 }
 
+/// Also returns the plain line diff, with nothing folded away.
 pub(crate) fn project<'a>(
     old: &'a [u8],
     new: &'a [u8],
     key_old: &Normalized,
     key_new: &Normalized,
-) -> Projection<'a> {
+) -> (Projection<'a>, Vec<Op<'a>>) {
     let (kco, kcn) = changed_lines(&key_old.text, &key_new.text);
     let so = Side::new(old, key_old, kco);
     let sn = Side::new(new, key_new, kcn);
@@ -411,5 +412,5 @@ pub(crate) fn project<'a>(
             }
         }
     }
-    Projection { ops, hidden }
+    (Projection { ops, hidden }, raw)
 }

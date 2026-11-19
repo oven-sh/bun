@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/tty.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 f5a36c4456f3cb2161f0a32cd243956551e8c3a6ee997ee5bf1656e29b80aa23.
+// Written against that file with the SHA-256 b19684beadd8bf50111a2b57d536456d39a52a2b514a5de2f8e6c87903aa6c87.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 // Hardcoded module "node:tty"
 
@@ -12,8 +12,8 @@ const {
   getWindowSize: _getWindowSize,
   rawModeStateSize,
 }: {
-  /** The errno, or 0. On Windows, for stdin: `(flag)`. */
-  setRawMode(fdOrFlag: number | boolean | null, flag?: boolean, state?: Uint8Array): number;
+  /** The errno, or 0. */
+  setRawMode(fd: number | null, flag: boolean, state: Uint8Array): number;
   isatty(fd: unknown): boolean;
   /** Fills `size` with [columns, rows]. */
   getWindowSize(fd: number | null, size: number[]): boolean;
@@ -37,7 +37,6 @@ declare global {
       isTTY: boolean;
       /** On `process.stdin`, which is a native readable. */
       $bunNativePtr?: $Bindgen.FileInternalReadableStreamSource;
-      $start(): void;
       [kRawModeState]?: Uint8Array;
       ref(): this;
       unref(): this;
@@ -104,43 +103,11 @@ const prototypeOfReadStream = {
     Prototype.setRawMode = function (this: $Node.TTYReadStream, flag: boolean) {
       flag = !!flag;
 
-      // On windows, this goes through the stream handle itself.
-      //
-      // On POSIX, I tried to use the same approach, but it didn't work reliably,
-      // so we just use the file descriptor and use termios APIs directly.
-      if (process.platform === "win32") {
-        // Special case for stdin, as its stream is constructed differently
-        if (this.fd === 0) {
-          const err = ttySetMode(flag);
-          if (err) {
-            this.emit("error", new Error("setRawMode failed with errno: " + err));
-            return this;
-          }
-        } else {
-          const handle = this.$bunNativePtr;
-          if (!handle) {
-            this.emit("error", new Error("setRawMode failed because it was called on something that is not a TTY"));
-            return this;
-          }
-
-          // If you call setRawMode before you call on('data'), the stream will
-          // not be constructed, leading to EBADF
-          // This corresponds to the `ensureConstructed` function in `native-readable.ts`
-          this.$start();
-
-          const err = handle.setRawMode(flag);
-          if (err) {
-            this.emit("error", err);
-            return this;
-          }
-        }
-      } else {
-        const state = (this[kRawModeState] ??= new Uint8Array(rawModeStateSize));
-        const err = ttySetMode(this.fd, flag, state);
-        if (err) {
-          this.emit("error", new Error("setRawMode failed with errno: " + err));
-          return this;
-        }
+      const state = (this[kRawModeState] ??= new Uint8Array(rawModeStateSize));
+      const err = ttySetMode(this.fd, flag, state);
+      if (err) {
+        this.emit("error", new Error("setRawMode failed with errno: " + err));
+        return this;
       }
 
       this.isRaw = flag;

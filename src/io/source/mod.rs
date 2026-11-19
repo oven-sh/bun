@@ -179,18 +179,6 @@ impl ReadSource {
     pub(crate) fn recycle(&self, buffer: Vec<u8>) {
         self.0.endpoint().recycle(buffer);
     }
-
-    pub(crate) fn set_raw_mode(&self, value: bool) -> sys::Result<()> {
-        let Source::Console(console) = &self.0 else {
-            return Err(sys::Error::from_code(E::NOTSUP, Tag::uv_tty_set_mode).with_fd(self.fd()));
-        };
-        let mode = if value {
-            console::Mode::Raw
-        } else {
-            console::Mode::Normal
-        };
-        console::set_mode(console.fd().native(), mode)
-    }
 }
 
 impl Drop for ReadSource {

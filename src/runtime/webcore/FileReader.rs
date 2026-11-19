@@ -11,7 +11,6 @@ use bun_sys::{self as sys, Fd};
 
 use crate::webcore::SinkHandle;
 use crate::webcore::blob;
-use crate::webcore::jsc::SysErrorJsc as _;
 use crate::webcore::jsc::bindgen::{JsLocal, JsScope};
 use crate::webcore::jsc::{self as jsc, EventLoopHandle, JSValue};
 use crate::webcore::jsc::{EnsureStillAlive, strong::Optional as Strong};
@@ -763,20 +762,6 @@ impl FileReader {
         }
     }
 
-    pub(crate) fn set_raw_mode(&self, _flag: bool) -> sys::Result<()> {
-        #[cfg(not(windows))]
-        {
-            panic!(
-                "FileReader.setRawMode must not be called on {}",
-                std::env::consts::OS
-            );
-        }
-        #[cfg(windows)]
-        {
-            self.reader.set_raw_mode(_flag)
-        }
-    }
-
     pub(crate) fn set_flowing(&self, flag: bool) {
         bun_core::scoped_log!(
             FileReader,
@@ -941,15 +926,6 @@ impl readable_stream::SourceContext for FileReader {
 }
 
 impl Source {
-    pub fn set_raw_mode(&self, cx: &mut JsScope<'_>, flag: JsLocal<'_>) -> JSValue {
-        let flag = flag.to_js();
-        debug_assert!(flag.is_boolean());
-        match self.context.set_raw_mode(flag == JSValue::TRUE) {
-            Ok(()) => JSValue::UNDEFINED,
-            Err(e) => e.to_js(cx.global()),
-        }
-    }
-
     pub fn set_flowing(&self, _: &mut JsScope<'_>, flag: JsLocal<'_>) {
         let flag = flag.to_js();
         debug_assert!(flag.is_boolean());

@@ -259,14 +259,14 @@ fn stop_line(input: &Input) {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum Mode {
+enum Mode {
     Normal,
     Raw,
     /// The console makes the escape sequences.
     RawVt,
 }
 
-pub(crate) fn set_mode(handle: HANDLE, mode: Mode) -> sys::Result<()> {
+fn set_mode(handle: HANDLE, mode: Mode) -> sys::Result<()> {
     const COOKED: u32 = w::ENABLE_ECHO_INPUT | w::ENABLE_LINE_INPUT | w::ENABLE_PROCESSED_INPUT;
     const VT: u32 = w::ENABLE_VIRTUAL_TERMINAL_INPUT;
 

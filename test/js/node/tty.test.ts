@@ -1296,6 +1296,10 @@ describe.concurrent("in a terminal", () => {
         "a writer on CONOUT$",
         `const sink = Bun.file("CONOUT$").writer(), write = bytes => (sink.write(bytes), sink.flush());`,
       ],
+      [
+        "a writer on a descriptor",
+        `const sink = Bun.file(fs.openSync("CONOUT$", "r+")).writer(), write = bytes => sink.write(bytes);`,
+      ],
       ["the shell", "const write = bytes => Bun.$`cat < ${Buffer.from(bytes)}`;"],
     ])("%s does not cut a long text inside a character", async (_, open) => {
       await using child = await start(`
@@ -1309,6 +1313,15 @@ describe.concurrent("in a terminal", () => {
       expect(child.screen()).toContain("\u{1F600}y");
     });
 
+    it("a character can come in two writes", async () => {
+      await using child = await start(`
+        const sink = Bun.file(fs.openSync("CONOUT$", "r+")).writer(), bytes = Buffer.from("<\\u4e16>");
+        sink.write(bytes.subarray(0, 2)), sink.write(bytes.subarray(2));
+        await heard();
+      `);
+      await child.shows("\u4e16>");
+    });
+
     it("a ReadStream on CONIN$ reads a line", async () => {
       await using child = await start(`${openConin} report(input); say("ready");`);
       expect(await child.next()).toBe("ready");
@@ -1318,8 +1331,15 @@ describe.concurrent("in a terminal", () => {
       await child.gets(text + "\r\n");
     });
 
-    // setRawMode() emits "called on something that is not a TTY".
-    it.todo("a ReadStream on CONIN$ goes into raw mode and can be destroyed", async () => {
+    it("a ReadStream on CONIN$ goes into raw mode", async () => {
+      await using child = await start(`${openConin} report(input.setRawMode(true)); say(input.isRaw);`);
+      expect(await child.next()).toBe(true);
+      child.type("k");
+      await child.gets("k");
+    });
+
+    // destroy() waits for the read.
+    it.todo("a ReadStream on CONIN$ can be destroyed", async () => {
       await using child = await start(`
         ${openConin}
         report(input.setRawMode(true));

@@ -958,16 +958,6 @@ impl WindowsBufferedReader {
         sys::Result::Ok(ReadResult::Pending)
     }
 
-    pub fn set_raw_mode(&self, value: bool) -> sys::Result<()> {
-        self.with_source(|source| source.set_raw_mode(value))
-            .unwrap_or_else(|| {
-                sys::Result::Err(sys::Error::from_code(
-                    sys::E::BADF,
-                    sys::Tag::uv_tty_set_mode,
-                ))
-            })
-    }
-
     fn start_reading(&self) {
         // A used-up limit stays paused: `start` has nothing to read and `unpause` reports it as EOF instead.
         if self.has_flag(ReaderFlags::IS_DONE)

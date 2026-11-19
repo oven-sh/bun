@@ -10,6 +10,8 @@ use crate::pipe_writer::WriteEvent;
 
 const IDLE_SIZE: usize = 8 * 1024;
 pub(super) const BUSY_SIZE: usize = 64 * 1024;
+/// For a read that has the way to a thread and back to make up for.
+pub(super) const THREAD_SIZE: usize = 1024 * 1024;
 
 /// What every kind of source keeps about its reader and its writer.
 pub(super) struct Endpoint {
@@ -66,9 +68,7 @@ impl Endpoint {
     }
 
     pub(super) fn recycle(&self, mut buffer: Vec<u8>) {
-        if (1..=bun_threading::spin::tune(12, 4 * BUSY_SIZE as u64) as usize)
-            .contains(&buffer.capacity())
-        {
+        if (1..=THREAD_SIZE).contains(&buffer.capacity()) {
             buffer.clear();
             self.spare.set(buffer);
         }

@@ -2,88 +2,82 @@
 
 use std::sync::LazyLock;
 
-/// Temporary: `BUN_TMP_TUNE=0=1,3=4096` replaces defaults, to measure variants.
-pub fn tune(index: usize, default: u64) -> u64 {
-    static VALUES: LazyLock<[Option<u64>; 16]> = LazyLock::new(|| {
-        let mut values = [None; 16];
-        let text = bun_core::getenv_z(bun_core::zstr!("BUN_TMP_TUNE")).unwrap_or_default();
-        for pair in bun_core::strings::split(text, b",") {
-            if let Some((key, value)) = bun_core::strings::split_once_char(pair, b'=')
-                && let Ok(key) = bun_core::fmt::parse_int::<usize>(key, 10)
-            {
-                values[key] = bun_core::fmt::parse_int(value, 10).ok();
-            }
-        }
-        values
-    });
-    if cfg!(test) {
-        return default;
-    }
-    VALUES[index].unwrap_or(default)
-}
-
-/// About what a sleep costs.
-const SHORT_NS: u64 = 10_000;
-/// Enough for another thread to wake up and answer. From then on neither has to sleep.
-const LONG_NS: u64 = 50_000;
+/// Enough for another thread to wake up and answer.
+const AWAKE_NS: u64 = 50_000;
 const BUSY_NS: u64 = 100_000;
 
-#[derive(Copy, Clone)]
-enum Next {
-    Short,
-    Long,
-    ShortAfterLong,
-    /// This many waits go without.
-    Nothing(u8),
-}
+/// How many waits a phase has.
+const TRIAL: u16 = 8;
+const MAX_AWAKE: u16 = 512;
+const MAX_ASLEEP: u16 = 256;
 
-/// How long a thread looks for work before it goes to sleep, from how the last waits went.
+/// Has a thread look for work before it goes to sleep, for as long as the work comes faster for it.
 #[derive(Copy, Clone)]
 pub struct Spin {
-    is_busy: bool,
-    next: Next,
-    rest: u8,
+    is_awake: bool,
+    /// The end of the first wait of this phase, which is still at the pace of the one before.
+    began_at_ns: u64,
+    waits: u16,
+    len: u16,
+    /// From one wait to the next, in the last phase asleep.
+    pace_asleep_ns: u64,
+    next_len_asleep: u16,
 }
 
 impl Spin {
     pub const fn new() -> Spin {
         Spin {
-            is_busy: false,
-            next: Next::Short,
-            rest: 0,
+            is_awake: false,
+            began_at_ns: 0,
+            waits: 0,
+            len: TRIAL,
+            pace_asleep_ns: 0,
+            next_len_asleep: TRIAL,
         }
     }
 
-    pub fn limit_ns(self) -> u64 {
+    pub fn limit_ns(&self) -> u64 {
         static HAS_OTHER_CPU: LazyLock<bool> = LazyLock::new(|| bun_sys::windows::cpu::count() > 1);
-        match self.next {
-            _ if !self.is_busy || !*HAS_OTHER_CPU || tune(11, 0) == 1 => 0,
-            Next::Short | Next::ShortAfterLong => SHORT_NS,
-            Next::Long => LONG_NS,
-            Next::Nothing(_) => 0,
+        if self.is_awake && *HAS_OTHER_CPU {
+            AWAKE_NS
+        } else {
+            0
         }
     }
 
     /// With the time asleep, if it came to that.
-    pub fn waited(&mut self, ns: u64) {
-        if !core::mem::replace(&mut self.is_busy, ns <= BUSY_NS) {
+    pub fn waited(&mut self, from_ns: u64, to_ns: u64) {
+        let ns = to_ns.saturating_sub(from_ns);
+        if ns > BUSY_NS {
+            return self.begin(false, self.next_len_asleep);
+        }
+        if self.waits == 0 {
+            self.began_at_ns = to_ns;
+        }
+        self.waits += 1;
+        let is_missed = self.is_awake && ns > AWAKE_NS;
+        if self.waits <= self.len && !is_missed {
             return;
         }
-        self.next = match self.next {
-            _ if ns <= SHORT_NS => {
-                self.rest /= 2;
-                Next::Short
+        let pace_ns = to_ns.saturating_sub(self.began_at_ns) / u64::from(self.len);
+        if !self.is_awake {
+            self.pace_asleep_ns = pace_ns;
+            self.begin(true, TRIAL);
+        } else if is_missed || pace_ns * 8 > self.pace_asleep_ns * 7 {
+            self.begin(false, self.next_len_asleep);
+            self.next_len_asleep = (self.len * 2).min(MAX_ASLEEP);
+        } else if self.len < MAX_AWAKE {
+            if self.len > TRIAL {
+                self.next_len_asleep = TRIAL;
             }
-            Next::Short | Next::Nothing(0) => Next::Long,
-            Next::Long if tune(1, 0) == 1 && ns <= LONG_NS => Next::Long,
-            Next::Long => Next::ShortAfterLong,
-            Next::ShortAfterLong => {
-                self.rest = (self.rest * 2 + 1).min(63);
-                // Two threads that take turns would keep missing each other.
-                Next::Nothing(self.rest + (ns / 128 % 4) as u8)
-            }
-            Next::Nothing(left) => Next::Nothing(left - 1),
-        };
+            self.begin(true, self.len * 4);
+        } else {
+            self.begin(false, TRIAL);
+        }
+    }
+
+    fn begin(&mut self, is_awake: bool, len: u16) {
+        (self.is_awake, self.len, self.waits) = (is_awake, len, 0);
     }
 }
 
@@ -91,22 +85,30 @@ impl Spin {
 mod tests {
     use super::*;
 
-    fn time_awake(waits: impl Iterator<Item = u64>) -> u64 {
-        let mut spin = Spin::new();
-        let awake = |ns: u64| {
-            let limit = spin.limit_ns();
-            spin.waited(ns);
-            limit.min(ns)
-        };
-        waits.map(awake).sum()
+    const WAKE_NS: u64 = 20_000;
+
+    /// The percentage of waits that start awake. `next` says when work comes for a wait that starts at a time.
+    fn awake(next: impl Fn(u64) -> u64) -> u64 {
+        let (mut spin, mut now, mut count) = (Spin::new(), 1, 0);
+        for _ in 0..10_000 {
+            let (from, comes) = (now + 5_000, next(now + 5_000));
+            let is_caught = spin.is_awake && comes - from <= AWAKE_NS;
+            count += u64::from(spin.is_awake);
+            now = comes + if is_caught { 0 } else { WAKE_NS };
+            spin.waited(from, now);
+        }
+        count / 100
     }
 
     #[test]
     fn stays_awake_only_where_it_pays() {
-        if bun_sys::windows::cpu::count() > 1 {
-            assert_eq!(time_awake([5_000; 1001].into_iter()), 5_000_000);
+        for answer_ns in [2_000, 20_000, 45_000] {
+            assert!(awake(|now| now + answer_ns) > 90);
         }
-        assert!(time_awake([40_000; 1000].into_iter()) < 1_500_000);
-        assert_eq!(time_awake([200_000; 1000].into_iter()), 0);
+        for pace_ns in [30_000, 40_000, 80_000] {
+            assert!(awake(|now| now.next_multiple_of(pace_ns)) < 6);
+        }
+        assert!(awake(|now| now + 60_000) < 2);
+        assert_eq!(awake(|now| now + 200_000), 0);
     }
 }

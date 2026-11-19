@@ -248,6 +248,13 @@ describe.skipIf(!isWindows)("Bun.write(destination, Bun.file())", () => {
     expect(readThree(source.fd)).toBe("345");
   });
 
+  test("from a descriptor to a path it sets the mode", async () => {
+    using dir = tempDir("bun-write-fd-mode", { source: "abc" });
+    using source = openFile(join(String(dir), "source"), "r");
+    expect(await Bun.write(join(String(dir), "copy"), Bun.file(source.fd), { mode: 0o444 })).toBe(3);
+    expect(fs.statSync(join(String(dir), "copy")).mode & 0o777).toBe(0o444);
+  });
+
   test("from a descriptor to a pipe it starts at the position", async () => {
     using dir = tempDir("bun-copy-fd-to-pipe", { source: "0123456789" });
     using source = openFile(join(String(dir), "source"), "r");

@@ -29,7 +29,6 @@ let dynamicallyAdjustChunkSize = (_?) => (
 
 interface NativeReadable extends $Node.Readable {
   $bunNativePtr: NativePtr | undefined;
-  $start?: typeof ensureConstructed;
   ref: typeof ref;
   unref: typeof unref;
   [kRefCount]: number;
@@ -83,10 +82,6 @@ function constructNativeReadable(readableStream: ReadableStream, options: $Node.
 
   stream.ref = ref;
   stream.unref = unref;
-  if (process.platform === "win32") {
-    // Only used by node:tty on Windows
-    stream.$start = ensureConstructed;
-  }
 
   // https://github.com/oven-sh/bun/pull/12801
   // https://github.com/oven-sh/bun/issues/9555

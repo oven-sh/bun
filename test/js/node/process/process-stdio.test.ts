@@ -642,8 +642,62 @@ describe.concurrent.skipIf(!isWindows).each([
     ["console.write()", `console.write(data)`],
     ["Bun.stdout.writer()", `const sink = Bun.stdout.writer(); sink.write(data); sink.end()`],
     ["fs.writeSync(1)", `for (let at = 0; at < data.length; ) at += require("fs").writeSync(1, data, at)`],
+    ["Bun.write()", `Bun.write(Bun.stdout, data)`],
+    ["the shell", "Bun.$`cat < ${data}`.then()"],
   ])("is written by %s", async (_, write) => {
     const script = `require("fs").writeFileSync("ready", ""); const data = Buffer.alloc(300000, "x"); ${write}`;
     expect(await run("write", script)).toEqual({ stdout: "300000\n", stderr: "", exitCode: 0 });
+  });
+});
+
+describe.concurrent.skipIf(!isWindows)("a TCP socket", () => {
+  async function run(slot: number, script: string) {
+    const { promise: received, resolve } = Promise.withResolvers<number>();
+    let count = 0;
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open: socket => void (slot === 0 && socket.end("from the peer")),
+        data: (_, data) => void (count += data.length),
+        close: () => resolve(count),
+      },
+    });
+    using dir = tempDir("socket-stdio", {
+      "child.js": script,
+      "main.js": `
+        const ws2 = require("bun:ffi").dlopen("ws2_32.dll", {
+          WSAStartup: { args: ["u16", "ptr"], returns: "i32" },
+          WSASocketW: { args: ["i32", "i32", "i32", "ptr", "u32", "u32"], returns: "i64" },
+          connect: { args: ["i64", "ptr", "i32"], returns: "i32" },
+        }).symbols;
+        ws2.WSAStartup(0x202, Buffer.alloc(512));
+        const windowsHandle = ws2.WSASocketW(2, 1, 6, null, 0, 0);
+        ws2.connect(windowsHandle, Buffer.from([2, 0, ${server.port >> 8}, ${server.port & 255}, 127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]), 16);
+        const { fd } = require("fs").createReadStream(null, { windowsHandle, autoClose: false });
+        const stdio = ["ignore", "inherit", "inherit"];
+        stdio[${slot}] = fd;
+        process.exitCode = await Bun.spawn([process.execPath, "child.js"], { stdio }).exited;
+      `,
+    });
+    await using proc = spawn({ cmd: [bunExe(), "main.js"], cwd: String(dir), env: bunEnv, stderr: "inherit" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { stdout, exitCode, received: await received };
+  }
+
+  test("is read by Bun.stdin.text()", async () => {
+    expect(await run(0, `console.log(await Bun.stdin.text());`)).toEqual({
+      stdout: "from the peer\n",
+      exitCode: 0,
+      received: 0,
+    });
+  });
+
+  test("is written by process.stdout", async () => {
+    expect(await run(1, `process.stdout.write(Buffer.alloc(300000))`)).toEqual({
+      stdout: "",
+      exitCode: 0,
+      received: 300000,
+    });
   });
 });

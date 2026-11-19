@@ -1522,3 +1522,8 @@ describe.skipIf(!isWindows)("lookup() on Windows", () => {
     );
   });
 });
+
+test.skipIf(!isWindows)("a name that is not ASCII is looked up in its ASCII form", async () => {
+  const wide = "localhost".replace(/./g, letter => String.fromCharCode(letter.charCodeAt(0) + 0xfee0));
+  expect(await dns.promises.lookup(wide)).toEqual(await dns.promises.lookup("localhost"));
+});

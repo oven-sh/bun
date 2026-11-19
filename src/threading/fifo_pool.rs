@@ -6,7 +6,8 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 use std::collections::VecDeque;
 use std::thread::JoinHandle;
-use std::time::Instant;
+
+use bun_core::{Timespec, TimespecMockMode};
 
 use crate::spin::Spin;
 use crate::thread_pool::Task;
@@ -26,7 +27,7 @@ struct State {
     is_spinning: bool,
     spin: Spin,
     /// When a thread last ran out of tasks.
-    idle_since: Option<Instant>,
+    idle_since: Option<u64>,
 }
 
 pub struct Config {
@@ -42,6 +43,10 @@ pub struct FifoPool {
     queued: Condition,
     /// For the one that is spinning.
     has_task: AtomicBool,
+}
+
+fn now_ns() -> u64 {
+    Timespec::now(TimespecMockMode::ForceRealTime).ns()
 }
 
 thread_local! {
@@ -146,14 +151,13 @@ impl FifoPool {
                     state.tasks.push_back(Queued(after));
                 }
             }
-            let (start, limit) = (Instant::now(), state.spin.limit_ns());
+            let (start, limit) = (now_ns(), state.spin.limit_ns());
             state.idle_since = Some(start);
             if limit > 0 && !state.is_spinning {
                 state.is_spinning = true;
                 self.has_task.store(false, Ordering::SeqCst);
                 drop(state);
-                let awake_until = start + Duration::from_nanos(limit);
-                while !self.has_task.load(Ordering::SeqCst) && Instant::now() < awake_until {
+                while !self.has_task.load(Ordering::SeqCst) && now_ns() < start + limit {
                     core::hint::spin_loop();
                 }
                 state = self.state.lock();
@@ -168,7 +172,7 @@ impl FifoPool {
                 return;
             }
             if let Some(since) = state.idle_since.take() {
-                state.spin.waited(since.elapsed().as_nanos() as u64);
+                state.spin.waited(since, now_ns());
             }
         }
     }

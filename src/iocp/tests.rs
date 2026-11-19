@@ -987,6 +987,33 @@ fn what_is_deferred_over_and_over_has_a_share_of_the_time() {
 }
 
 #[test]
+fn a_slow_turn_waits_a_moment_for_more() {
+    let port = Port::new().unwrap();
+    for (busy_ms, is_waited_for) in [(0, false), (50, true)] {
+        let has_come = Rc::new(Cell::new(false));
+        let (came, slot, next_port) = (
+            Rc::clone(&has_come),
+            Rc::new(Cell::new(None)),
+            Rc::clone(&port),
+        );
+        let next = Rc::clone(&slot);
+        let _first = Request::defer(&port, move || {
+            let (request, remote) = Request::remote(&next_port, move |()| came.set(true));
+            next.set(Some(request));
+            remote.complete(());
+            next_port.expect_more();
+        });
+        CLOCK_AHEAD.set(CLOCK_AHEAD.get() + Duration::from_millis(busy_ms));
+        turn(&port, Duration::ZERO);
+        assert_eq!(has_come.get(), is_waited_for);
+        run_until(&port, || has_come.get());
+    }
+    port.expect_more();
+    CLOCK_AHEAD.set(CLOCK_AHEAD.get() + Duration::from_millis(50));
+    assert_eq!(turn(&port, Duration::ZERO), 0);
+}
+
+#[test]
 fn a_thread_waits_for_writes_but_not_for_long() {
     let port = Port::new().unwrap();
     assert!(!port.wait_for_pending_writes());

@@ -913,3 +913,24 @@ describe.concurrent.each(pipeKinds)("stdin is a pipe from %s", kind => {
     expect(await child.result()).toEqual(printed("true false\n"));
   });
 });
+
+test("a file is read to its end with a pause after every chunk", async () => {
+  using dir = tempDir("stdin-file-pauses", { input: Buffer.alloc(1 << 20, "x") });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `let n = 0;
+       process.stdin.on("end", () => console.log(n)).on("data", chunk => {
+         n += chunk.length;
+         process.stdin.pause();
+         setTimeout(() => process.stdin.resume(), 1);
+       });`,
+    ],
+    env: bunEnv,
+    stdin: Bun.file(`${dir}/input`),
+    stderr: "inherit",
+  });
+  expect(await proc.stdout.text()).toBe(`${1 << 20}\n`);
+  expect(await proc.exited).toBe(0);
+});

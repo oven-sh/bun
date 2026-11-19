@@ -747,6 +747,34 @@ describe.concurrent("the send queue", () => {
     );
     expect(result).toEqual({ stdout: [`descriptors left ${row.descriptorsLeft}`], stderr: "", exitCode: 0 });
   });
+
+  it("has the same number of GC roots for any number of callbacks", async () => {
+    const result = await runPair(
+      `
+        const roots = () => require("bun:jsc").heapStats().protectedObjectCount;
+        const server = await listen();
+        const child = spawnChild();
+        const called = [];
+        child.send("handle", server);
+        for (let i = 0; i < 10; i++) child.send(i, () => called.push(i));
+        const before = roots();
+        for (let i = 10; i < 1000; i++) child.send(i, () => called.push(i));
+        console.log("new roots", roots() - before);
+        Bun.gc(true);
+        child.send("last");
+        await child.exited;
+        console.log("called", called.length, "in order", called.every((it, i) => it === i));
+        server.close();
+      `,
+      `
+        process.on("message", (message, handle) => {
+          handle?.close();
+          if (message === "last") process.disconnect();
+        });
+      `,
+    );
+    expect(result).toEqual({ stdout: ["new roots 0", "called 1000 in order true"], stderr: "", exitCode: 0 });
+  });
 });
 
 // Linux only: what one write() sends has to arrive in one read.
@@ -1019,5 +1047,42 @@ describe.concurrent.skipIf(!isLinux)("a received descriptor", () => {
       `,
     );
     expect(result).toEqual({ stdout: ["true"], stderr: "", exitCode: 0 });
+  });
+
+  it("is delivered while a callback of a disposed Bun.ModuleGraph runs the event loop", async () => {
+    const result = await runPair(
+      `
+        const done = Promise.withResolvers();
+        const child = spawnChild({
+          ipc(message, _, handle) {
+            console.log(message, handle?.constructor.name);
+            handle?.on("error", () => {});
+            if (message === "last") done.resolve();
+          },
+        });
+        const graph = new Bun.ModuleGraph();
+        const data = () => {
+          graph.dispose();
+          child.send("go");
+          runEventLoopUntil(done.promise);
+          child.disconnect();
+        };
+        const { port } = graph.run(() => Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data } }));
+        const client = await Bun.connect({ hostname: "127.0.0.1", port, socket: { data() {} } });
+        client.write("x");
+        await child.exited;
+      `,
+      `
+        const server = await listen();
+        process.on("message", () => {
+          const socket = require("node:net").connect(server.address().port, "127.0.0.1", () => {
+            process.send("socket", socket);
+            process.send("last");
+          });
+        });
+        process.on("disconnect", () => process.exit(0));
+      `,
+    );
+    expect(result).toEqual({ stdout: ["socket Socket", "last undefined"], stderr: "", exitCode: 0 });
   });
 });

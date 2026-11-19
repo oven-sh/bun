@@ -67,17 +67,19 @@ async function formatWithPrettier() {
   const ofFiles = usesConfig ? await prettier.resolveConfig(filepath, { config: configFile, editorconfig }) : null;
   let options = { ...ofFiles, ...flags };
   if (precedence === "file-override") options = { ...flags, ...ofFiles };
-  if (precedence === "prefer-file") options = ofFiles ?? flags;
+  // `prefer-file` with a configuration file: neither `flags` nor `plugins` is used.
+  const dropsFlags = precedence === "prefer-file" && Boolean(ofFiles);
+  if (dropsFlags) options = ofFiles;
   // The other side sends a file here for a plugin in either list, so both lists are loaded. Prettier's command line lets one
   // replace the other. `resolveConfig` returns a path in its list as the system writes it.
-  if (plugins.length > 0 && (precedence !== "prefer-file" || !ofFiles)) {
+  if (plugins.length > 0 && !dropsFlags) {
     const ofFlags = plugins.map(it => (nodePath.isAbsolute(it) ? nativePath(it, nodePath) : it));
     const ofConfig = ofFiles?.plugins ?? [];
     const both = precedence === "file-override" ? [...ofFlags, ...ofConfig] : [...ofConfig, ...ofFlags];
     options = { ...options, plugins: [...new Set(both)] };
   }
   try {
-    if (passThrough.length > 0) {
+    if (passThrough.length > 0 && !dropsFlags) {
       // Prettier ignores an option that it does not know, so a typo would pass unseen.
       const names = await optionNamesWith(prettier, options.plugins ?? []);
       const unknown = passThrough.find(it => !names.has(it));

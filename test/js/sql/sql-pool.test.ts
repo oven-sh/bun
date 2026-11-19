@@ -225,6 +225,7 @@ const mysqlDialect = {
   url: (host: string, port: number) => `mysql://root@${host}:${port}/bun_sql_test`,
   prefix: "ERR_MYSQL_",
   sessionId: "select connection_id() as id",
+  readsTable: "select 1 from mysql.db limit 1",
   endSession: (id: unknown) => `kill ${id}`,
   lock: (key: number) => `select get_lock('bun_pool_${key}', 60)`,
   unlock: (key: number) => `select release_lock('bun_pool_${key}')`,
@@ -238,6 +239,7 @@ const servers = [
     url: (host: string, port: number) => `postgres://bun_sql_test@${host}:${port}/bun_sql_test`,
     prefix: "ERR_POSTGRES_",
     sessionId: "select pg_backend_pid() as id",
+    readsTable: "select 1 from pg_class limit 1",
     endSession: (id: unknown) => `select pg_terminate_backend(${id})`,
     lock: (key: number) => `select pg_advisory_lock(${key})`,
     unlock: (key: number) => `select pg_advisory_unlock(${key})`,
@@ -355,7 +357,8 @@ for (const server of servers) {
         await using sql = await pool({ max: 4, onconnect: connected.hit });
         await sql.connect();
         await connected.reached(4);
-        const [one, two] = [await sql.reserve(), await sql.reserve()];
+        using one = await sql.reserve();
+        using two = await sql.reserve();
         const held = [await sessionId(one), await sessionId(two)];
         one.release();
         two.release();
@@ -569,6 +572,29 @@ for (const server of servers) {
         expect([...callers, await outcome(sql.commitDistributed(name))]).toEqual(Array(5).fill("resolved"));
       });
 
+      test("a query shares a busy connection before it gets the one with a prepared distributed transaction", async () => {
+        const connected = new Calls();
+        await using sql = await pool({ max: 3, onconnect: connected.hit });
+        await sql.connect();
+        await connected.reached(3);
+        await using held = await gate();
+        const name = `bun_pool_${(Math.random() * 2 ** 31) | 0}`;
+        const busy: PromiseLike<string>[] = [];
+        await sql.beginDistributed(name, async tx => {
+          await tx.unsafe("select 1");
+          // Two on one of the other connections, one on the other.
+          for (let i = 0; i < 3; i++) busy.push(outcome(held.wait(sql).execute()));
+        });
+        // An even share is two for each: the connection with one query can take it.
+        const query = outcome(sql.unsafe(server.readsTable).execute());
+        await held.open();
+        const outcomes = await Promise.all([...busy, query]);
+        // The other two are reserved, so the rollback gets the connection that has it.
+        using _first = await sql.reserve();
+        using _second = await sql.reserve();
+        expect([...outcomes, await outcome(sql.rollbackDistributed(name))]).toEqual(Array(5).fill("resolved"));
+      });
+
       test("a transaction by hand on a pool of one connection keeps it", async () => {
         await using sql = await pool({ max: 1 });
         const id = await sessionId(sql);
@@ -688,7 +714,7 @@ for (const server of servers) {
         await using held = await gate();
         // On the connection that logged in first: the reserved one is then the last of the two.
         const busy = outcome(held.wait(sql));
-        const first = await sql.reserve();
+        using first = await sql.reserve();
         const order: string[] = [];
         const second = sql.reserve().then(reserved => (order.push("reserve"), reserved));
         const query = sql.unsafe("select 1").then(() => order.push("query"));

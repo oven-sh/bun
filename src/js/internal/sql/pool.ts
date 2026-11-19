@@ -257,9 +257,9 @@ function closeTimeoutMs(options?: { timeout?: number }): number | undefined {
   return Math.min(seconds * 1000, 2 ** 31 - 1);
 }
 
-/// Fewest queries first, then no prepared distributed transaction: MariaDB refuses other statements beside one.
+/// One with a prepared distributed transaction comes last: MariaDB refuses other statements beside it.
 function rank(connection: PooledConnection): number {
-  return connection.queryCount * 2 + (connection.flags & PooledConnectionFlags.prepared ? 1 : 0);
+  return connection.queryCount + (connection.flags & PooledConnectionFlags.prepared ? 2 ** 30 : 0);
 }
 
 function idleFirst(a: PooledConnection, b: PooledConnection) {
@@ -752,10 +752,10 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       return found !== undefined && found.queryCount < limit ? found : null;
     }
     let found: PooledConnection | null = null;
-    let lowest = limit * 2;
+    let lowest = Infinity;
     for (let i = 0; i < connections.length; i++) {
       const connection = connections[i];
-      if (!isReady(connection)) {
+      if (!isReady(connection) || connection.queryCount >= limit) {
         continue;
       }
       const its = rank(connection);

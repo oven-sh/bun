@@ -38,7 +38,7 @@ describe("bun:sqlite", () => {
     insert.run("b");
     // .iterate(): one span for the execution, not one per row fetched
     expect([...db.prepare("SELECT name FROM t ORDER BY id").iterate()].length).toBe(2);
-    expect(() => db.query("SELECT * FROM missing").all()).toThrow();
+    expect(() => db.query("SELECT * FROM missing").all()).toThrow("no such table");
     // close(true) finalizes the outstanding prepare() statements so Windows can delete the file.
     db.close(true);
     const got = await collect("bun.sqlite");
@@ -180,7 +180,7 @@ describe("node:fs / Bun.file / Bun.write", () => {
     await collect(); // drop the spans tempDir() itself produced
     await fs.promises.readFile(inFile);
     fs.readFileSync(inFile, "utf8");
-    expect(() => fs.statSync(missing)).toThrow();
+    expect(() => fs.statSync(missing)).toThrow(expect.objectContaining({ code: "ENOENT" }));
     await new Promise<void>((res, rej) => fs.writeFile(outFile, "cb", e => (e ? rej(e) : res())));
     await Bun.write(outFile, "bunwrite");
     expect(await Bun.file(outFile).text()).toBe("bunwrite");
@@ -205,7 +205,7 @@ describe("node:fs / Bun.file / Bun.write", () => {
       instrumentations: { fs: "always" },
       exporters: [{ exportProtobuf: (b: Uint8Array) => (bytes = b) }],
     });
-    expect(() => fs.statSync(raw)).toThrow();
+    expect(() => fs.statSync(raw)).toThrow(expect.objectContaining({ code: "ENOENT" }));
     await Bun.otel.forceFlush();
     expect(bytes).toBeDefined();
     expect(Buffer.from(bytes!).includes(raw)).toBe(false);
@@ -243,8 +243,10 @@ describe("Bun.spawn", () => {
 });
 
 test("Bun.spawn of a command that is not found has a failed span", async () => {
-  for (const command of ["made-up-command -psecret", "/made-up/command -psecret"])
-    expect(() => Bun.otel.span("parent", () => Bun.spawn([command]))).toThrow();
+  for (const command of ["TOKEN=secret made-up-command -psecret", "/made-up/command -psecret"])
+    expect(() => Bun.otel.span("parent", () => Bun.spawn([command]))).toThrow(
+      expect.objectContaining({ code: "ENOENT" }),
+    );
   const got = await collect("bun.child_process");
   expect(got.map(s => [s.name, s.attributes["error.type"]])).toEqual([
     ["spawn made-up-command", "ENOENT"],

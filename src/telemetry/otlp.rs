@@ -345,20 +345,42 @@ pub fn redact_url(url: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     Cow::Owned(parts.concat())
 }
 
-/// `text` with [`redact_url`] applied to every URL in it.
+/// `text` without what [`redact_url`] takes out of a URL. Where one ends is not known: URLs may follow one another
+/// behind a quote, or lie in a query.
 pub fn redact_urls_in(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     use bun_core::strings;
     use std::borrow::Cow;
-    let (mut out, mut copied, mut at) = (Vec::new(), 0, 0);
-    while let Some(start) = strings::index_of(&text[at..], b"://").map(|i| at + i) {
-        at = strings::index_of_any(&text[start..], b" \t\r\n\"`<>")
-            .map_or(text.len(), |i| start + i);
-        // A password may have a `'`, so it only ends the URL at its end.
-        let end = start + strings::trim_right(&text[start..at], b"'),.;").len();
-        if let Cow::Owned(redacted) = redact_url(&text[start..end]) {
-            out.extend_from_slice(&text[copied..start]);
-            out.extend_from_slice(&redacted);
-            copied = end;
+    const SPACE: &[u8] = b" \t\r\n\"`<>";
+    let until = |from: usize, end: usize, any: &[u8]| {
+        strings::index_of_any(&text[from..end], any).map_or(end, |i| from + i)
+    };
+    let (mut out, mut copied, mut word_end) = (Vec::new(), 0, 0);
+    while let Some(first) = strings::index_of(&text[word_end..], b"://") {
+        let mut at = word_end + first;
+        word_end = until(at, text.len(), SPACE);
+        while at < word_end {
+            let rest = &text[at..word_end];
+            let secret = if rest.starts_with(b"://") {
+                let authority = &text[at + 3..until(at + 3, word_end, b"/?#")];
+                strings::last_index_of_char(authority, b'@')
+                    .map(|len| (at + 3..at + 3 + len, &b"REDACTED:REDACTED"[..]))
+            } else if matches!(rest[0], b'?' | b'&') {
+                (REDACTED_QUERY_KEYS.iter())
+                    .find(|key| {
+                        rest[1..].starts_with(key) && rest.get(1 + key.len()) == Some(&b'=')
+                    })
+                    .map(|key| at + key.len() + 2)
+                    .map(|value| (value..until(value, word_end, b"&#'),"), &b"REDACTED"[..]))
+            } else {
+                None
+            };
+            if let Some((range, replacement)) = secret {
+                out.extend_from_slice(&text[copied..range.start]);
+                out.extend_from_slice(replacement);
+                (copied, at) = (range.end, range.end);
+            } else {
+                at = until(at + 1, word_end, b":?&");
+            }
         }
     }
     if copied == 0 {
@@ -751,6 +773,30 @@ mod redact_tests {
 
     #[test]
     fn urls_in_a_text() {
+        for (text, redacted) in [
+            (
+                "'http://a/','http://u:p@b/'",
+                "'http://a/','http://REDACTED:REDACTED@b/'",
+            ),
+            (
+                "'http://a/?x=1','http://b/?sig=1'",
+                "'http://a/?x=1','http://b/?sig=REDACTED'",
+            ),
+            (
+                "http://a/?to=http://u:p@b/&sig=1&y",
+                "http://a/?to=http://REDACTED:REDACTED@b/&sig=REDACTED&y",
+            ),
+            ("http://a/?sig=", "http://a/?sig=REDACTED"),
+            (
+                "http://@a ://:// ?sig=1",
+                "http://REDACTED:REDACTED@a ://:// ?sig=1",
+            ),
+        ] {
+            assert_eq!(
+                &*super::redact_urls_in(text.as_bytes()),
+                redacted.as_bytes()
+            );
+        }
         assert_eq!(
             &*super::redact_urls_in(b"'ws://u:a'b@h/?sig=1', x"),
             b"'ws://REDACTED:REDACTED@h/?sig=REDACTED', x"

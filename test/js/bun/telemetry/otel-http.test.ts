@@ -560,10 +560,14 @@ describe("fetch", () => {
 
 describe("node:http", () => {
   test("a client request whose constructor throws was never sent and has no span", async () => {
-    expect(() => http.request({ host: "127.0.0.1", port: 1, headers: [["bad name!", "v"]] as any })).toThrow();
-    expect(() => http.request({ host: "127.0.0.1", port: 1, headers: ["bad name!", "v"] as any })).toThrow();
+    expect(() => http.request({ host: "127.0.0.1", port: 1, headers: [["bad name!", "v"]] as any })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_HTTP_TOKEN" }),
+    );
+    expect(() => http.request({ host: "127.0.0.1", port: 1, headers: ["bad name!", "v"] as any })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_HTTP_TOKEN" }),
+    );
     // throws after the headers were stored (option validation in the constructor tail)
-    expect(() => http.request({ host: "127.0.0.1", port: 1, uniqueHeaders: [null] } as any)).toThrow();
+    expect(() => http.request({ host: "127.0.0.1", port: 1, uniqueHeaders: [null] } as any)).toThrow(TypeError);
     // throws while the header array is scanned for an existing traceparent
     const hostile = new Proxy(["x-a", "1"], {
       get(t, k, r) {
@@ -1435,7 +1439,7 @@ describe("fetch client", () => {
     const req = fetch(server.url, { signal: ac.signal }).then(r => r.text());
     await hit;
     ac.abort();
-    await expect(req).rejects.toThrow();
+    await expect(req).rejects.toThrow(expect.objectContaining({ name: "AbortError" }));
     const [client] = byName(await collect(), "bun.http.client");
     expect([
       client.status.code,
@@ -1783,7 +1787,7 @@ test("a response body that fails half way fails the span of the server", async (
   const reader = (await fetch(server.url)).body!.getReader();
   await reader.read();
   resolve();
-  await expect(reader.closed).rejects.toThrow();
+  await expect(reader.closed).rejects.toThrow(expect.objectContaining({ code: "ECONNRESET" }));
   const [span] = await collect(1);
   expect([span.status, span.attributes["error.type"]]).toEqual([{ code: 2, message: "half way" }, "RangeError"]);
 });

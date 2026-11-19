@@ -484,7 +484,9 @@ describe("Bun.otel", () => {
       "with",
       "wrap",
     ]);
-    expect(() => (Bun.otel.span as any)("x", { a: 1 }, "not a function")).toThrow();
+    expect(() => (Bun.otel.span as any)("x", { a: 1 }, "not a function")).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
   });
 
   test("Bun.otel.wrap: name/length/this forwarded, span per call, errors and rejections recorded", async () => {
@@ -668,7 +670,7 @@ describe("Bun.otel", () => {
         Bun.otel.span("throws", () => {
           throw heir;
         }),
-      ).toThrow();
+      ).toThrow(RangeError);
       expect([heir.stack, inner.stack]).toEqual(["prepared", "prepared"]);
     } finally {
       Error.prepareStackTrace = prepareStackTrace;

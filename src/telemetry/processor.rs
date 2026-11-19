@@ -20,8 +20,7 @@ pub struct ExportPayload {
     /// spans are counted exported/dropped once, when the last one reports.
     pending: core::sync::atomic::AtomicU32,
     any_ok: core::sync::atomic::AtomicBool,
-    /// Exporters that currently have this payload parked for retry (its
-    /// spans count against the queue once while this is non-zero).
+    /// Exporters that have this payload parked for retry.
     parked: core::sync::atomic::AtomicU32,
     seq: u64,
     epoch: u64,
@@ -165,10 +164,6 @@ pub trait Exporter: Send + Sync {
     /// reconfigure on one thread leaves other threads' bound exporters alone.
     fn owner(&self) -> Option<OwnerKey> {
         None
-    }
-    /// It only has `export_blocking`.
-    fn is_synchronous(&self) -> bool {
-        false
     }
     /// Periodic housekeeping from [`Processor::tick`] (e.g. aborting an
     /// export that has outlived its timeout).
@@ -553,6 +548,7 @@ impl Processor {
             (self.retired.lock()).extend(replaced.map(|e| Arc::downgrade(&e)));
             list.extend(new);
         }
+        self.count_parked_spans();
     }
 
     /// Snapshot for calling into exporters. INVARIANT: no `Exporter` method is
@@ -581,11 +577,7 @@ impl Processor {
     ) {
         let (Backoff::Own(delay) | Backoff::AskedByServer(delay)) = backoff;
         let due = MonoInstant::now() + delay;
-        // Counted against the queue once, however many exporters park it.
-        if payload.parked.fetch_add(1, Ordering::AcqRel) == 0 {
-            self.parked_spans
-                .fetch_add(payload.span_count, Ordering::Relaxed);
-        }
+        payload.parked.fetch_add(1, Ordering::AcqRel);
         self.retries.lock().push(ParkedRetry {
             exporter,
             payload,
@@ -593,6 +585,7 @@ impl Processor {
             due,
             is_asked_by_server: matches!(backoff, Backoff::AskedByServer(_)),
         });
+        self.count_parked_spans();
         self.finish_one();
         // Wake forceFlush() waiters: a flush waiting on this payload sends it
         // again now (`hurry_retries_before`) instead of waiting out the backoff.
@@ -630,17 +623,28 @@ impl Processor {
             }
         };
         self.inflight.fetch_add(due.len(), Ordering::AcqRel);
+        self.count_parked_spans();
         for r in due {
-            self.unpark(&r.payload);
+            r.payload.parked.fetch_sub(1, Ordering::AcqRel);
             r.exporter.export(self.issue(r.payload, r.attempt));
         }
     }
 
-    fn unpark(&self, payload: &ExportPayload) {
-        if payload.parked.fetch_sub(1, Ordering::AcqRel) == 1 {
-            self.parked_spans
-                .fetch_sub(payload.span_count, Ordering::Relaxed);
+    /// Once, however many exporters park them. What a replaced exporter has left takes no room from the next.
+    fn count_parked_spans(&self) {
+        let retries = self.retries.lock();
+        let installed = self.exporters.read();
+        let mut seen = Vec::new();
+        let mut spans = 0;
+        for r in retries.iter() {
+            if installed.iter().any(|e| Arc::ptr_eq(e, &r.exporter))
+                && !seen.contains(&r.payload.seq)
+            {
+                seen.push(r.payload.seq);
+                spans += r.payload.span_count;
+            }
         }
+        self.parked_spans.store(spans, Ordering::Relaxed);
     }
 
     pub fn on_settle(&self, owner: OwnerKey, f: Box<dyn Fn() + Send + Sync>) {
@@ -825,29 +829,21 @@ impl Processor {
             self.drop_unexported(&payload);
         }
         payload.expect(exporters.len());
-        let (blocking, others): (Vec<_>, Vec<_>) = exporters.into_iter().partition(|e| {
-            e.is_synchronous()
-                || match taker {
-                    Taker::Schedule | Taker::Reconfiguration => false,
-                    Taker::LeavingVm(owner) => e.owner() == Some(owner),
-                    Taker::ClosingProcess => true,
-                }
-        });
+        let (blocking, others): (Vec<_>, Vec<_>) =
+            exporters.into_iter().partition(|e| match taker {
+                Taker::Schedule | Taker::Reconfiguration => false,
+                Taker::LeavingVm(owner) => e.owner() == Some(owner),
+                Taker::ClosingProcess => true,
+            });
         for e in others {
             self.inflight.fetch_add(1, Ordering::AcqRel);
             e.export(self.issue(Arc::clone(&payload), 0));
         }
         self.exporting.fetch_sub(1, Ordering::SeqCst);
         // A function may block, or end the process: nobody waits for it.
-        let runs_script = matches!(taker, Taker::LeavingVm(_) | Taker::ClosingProcess);
-        if runs_script {
-            self.finish_one();
-        }
+        self.finish_one();
         for e in blocking {
             self.record_result(&payload, e.export_blocking(&payload, deadline));
-        }
-        if !runs_script {
-            self.finish_one();
         }
         true
     }
@@ -982,9 +978,10 @@ impl Processor {
         self.wait_idle(deadline, is_stuck);
         // What was in flight may have been parked by now, and a worker may have left its last spans.
         let parked = core::mem::take(&mut *self.retries.lock());
+        self.count_parked_spans();
         for r in parked {
             let result = r.exporter.export_blocking(&r.payload, deadline);
-            self.unpark(&r.payload);
+            r.payload.parked.fetch_sub(1, Ordering::AcqRel);
             self.record_result(&r.payload, result);
         }
         self.deliver_pending(Taker::ClosingProcess, deadline);

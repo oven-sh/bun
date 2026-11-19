@@ -1548,13 +1548,75 @@ describe.concurrent("OTLP/HTTP exporter", () => {
         bunExe(),
         "-e",
         `Bun.otel.start({ exporters: ["console"], batch: { timeoutMs: 100 } });
-         for (let i = 0; i < 512; i++) Bun.otel.span("s", { k: Buffer.alloc(4096, "a").toString() }, () => {});
-         while (Bun.otel.stats().spansPending) await Bun.sleep(1);
+         for (let i = 0; i < 700; i++) Bun.otel.span("s", { k: Buffer.alloc(4096, "a").toString() }, () => {});
          process.exit(0);`,
       ],
       env: cleanEnv,
       stderr: unread.fd,
     });
     expect(await proc.exited).toBe(0);
+  });
+
+  test("more batches than may be in flight wait for their turn, and lose no attempt", async () => {
+    let inFlight = 0,
+      most = 0;
+    using slow = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        most = Math.max(most, ++inFlight);
+        await Promise.all([req.bytes(), Bun.sleep(20)]);
+        inFlight--;
+        return new Response();
+      },
+    });
+    const { stdout, exitCode } = await run(
+      `const options = { endpoint: process.env.URL, instrumentations: [], batch: { maxExportBatchSize: 1 } };
+       Bun.otel.start(options);
+       for (let i = 0; i < 30; i++) Bun.otel.span("s", () => {});
+       Bun.otel.start(options); // hands them all out
+       await Bun.otel.forceFlush();
+       const { spansExported, spansDropped } = Bun.otel.stats();
+       console.log(spansExported, spansDropped);`,
+      { URL: slow.url.href },
+    );
+    expect({ stdout, exitCode, most }).toEqual({ stdout: "30 0\n", exitCode: 0, most: 8 });
+  });
+
+  test("the documents of the console exporter do not mix, whoever writes them", async () => {
+    const { stderr, exitCode } = await run(
+      `const record = () => { for (let i = 0; i < 300; i++) Bun.otel.span("s", { k: Buffer.alloc(2048, "a").toString() }, () => {}); };
+       if (Bun.isMainThread) {
+         Bun.otel.start({ exporters: ["console"], batch: { maxExportBatchSize: 64 } });
+         record();
+         await new Promise(resolve => new Worker(import.meta.path).addEventListener("close", resolve));
+         record();
+         process.exit(0);
+       } else {
+         Bun.otel.start({ exporters: ["console", { export() {} }], batch: { maxExportBatchSize: 64 } });
+         record();
+       }`,
+      {},
+    );
+    const documents = stderr
+      .trimEnd()
+      .split("\n")
+      .map(line => JSON.parse(line));
+    expect(documents.flatMap(d => d.resourceSpans[0].scopeSpans[0].spans)).toHaveLength(900);
+    expect(exitCode).toBe(0);
+  });
+
+  test("what a replaced exporter has parked takes no room from the next", async () => {
+    using c = collector(() => new Response(null, { status: 429, headers: { "retry-after": "100" } }));
+    const { stdout } = await run(
+      `const batch = { maxQueueSize: 4 };
+       Bun.otel.start({ endpoint: process.env.URL, instrumentations: [], batch });
+       for (let i = 0; i < 4; i++) Bun.otel.span("old", () => {});
+       await Bun.otel.forceFlush();
+       Bun.otel.start({ exporters: [{ export: spans => console.log(spans[0].name) }], batch });
+       Bun.otel.span("new", () => {});
+       await Bun.otel.forceFlush();`,
+      { URL: c.url },
+    );
+    expect(stdout).toBe("new\n");
   });
 });

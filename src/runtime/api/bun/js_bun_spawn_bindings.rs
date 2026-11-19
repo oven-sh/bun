@@ -1820,11 +1820,13 @@ fn name_span(record: &mut Record, executable: &[u8]) {
     record.attr("process.executable.name", name);
 }
 
-/// What did not start may be a whole command line.
+/// What did not start may be a whole command line, with variables in front.
 #[inline]
 fn fail_span(span: NativeSpan, command: &[u8], failure: impl Outcome) {
     span.end_with(|r| {
-        name_span(r, strings::split(command, b" ").next().unwrap_or_default());
+        let mut words = strings::split(command, b" ");
+        let name = words.find(|word| !strings::contains_char(word, b'='));
+        name_span(r, name.unwrap_or_default());
         failure.record(r);
     });
 }

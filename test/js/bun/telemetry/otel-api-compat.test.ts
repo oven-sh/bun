@@ -340,6 +340,7 @@ describe("@opentelemetry/api", () => {
   test.concurrent.each([
     ["assigned back", `globalThis[key] = globalThis[key];`],
     ["deleted and restored", `const saved = globalThis[key]; delete globalThis[key]; globalThis[key] = saved;`],
+    ["made non-configurable", `Object.defineProperty(globalThis, key, { configurable: false });`],
     // These hold the words of registerGlobal(), and are not to be called a second time.
     ["read by a module", `(globalThis[key] = globalThis[key] ?? {}).version; // WORDS`],
     ["read by a field", `new (class { f = ((globalThis[key] = globalThis[key]).version, "WORDS"); })();`],
@@ -363,6 +364,43 @@ describe("@opentelemetry/api", () => {
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect({ stdout, exitCode }).toEqual({ stdout: "begins\ntrue 1.9.0\n", exitCode: 0 });
+  });
+
+  test.concurrent.each([
+    ["{ ...globalThis }", false],
+    ["Object.create(globalThis)", false],
+    ["new Proxy(globalThis, {})", false],
+    ["globalThis", false],
+    // Up to 1.4.0 the refusal does not name the version.
+    ["{ ...globalThis }", true],
+    [undefined, true],
+  ])("a logger registers in a context made of %s (older wording: %p)", async (sandbox, isOlder) => {
+    using dir = tempDir("otel-api-vm", {
+      "src/api.js": `
+        import { diag } from "@opentelemetry/api";
+        report(diag.setLogger({ error() {}, warn() {}, info() {}, debug() {}, verbose() {} }));
+      `,
+      "index.js": `
+        const vm = require("node:vm");
+        const text = require("node:fs").readFileSync("api.js", "utf8");
+        globalThis.report = console.log;
+        ${sandbox ? `vm.runInContext(text, vm.createContext(${sandbox}))` : `vm.runInThisContext(text)`};
+      `,
+    });
+    cpSync(apiPackageDir, path.join(String(dir), "src/node_modules/@opentelemetry/api"), { recursive: true });
+    const { outputs } = await Bun.build({ entrypoints: [path.join(String(dir), "src/api.js")], format: "iife" });
+    const text = await outputs[0].text();
+    const older = text.replace("does not match previously registered API v", "All versions must match ");
+    expect(older).not.toBe(text);
+    await Bun.write(path.join(String(dir), "api.js"), isOlder ? older : text);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: { ...bunEnv, BUN_OTEL: "1", OTEL_TRACES_EXPORTER: "none" },
+      cwd: String(dir),
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
   });
 
   test("an older copy that only reads the registry does not fix its version", async () => {

@@ -1,9 +1,14 @@
 //! Canonical re-printing for `bun pm diff`: parse a JS/CSS/JSON file and print it back in one fixed style so that
 //! formatting-only releases collapse to nothing and minified bundles become line-diffable.
 
+use super::pm_diff_command::Threads;
 use bun_alloc::Arena;
+use bun_ast::Symbol;
+use core::cell::Cell;
 use core::cmp::Ordering;
+use core::ops::Range;
 use std::collections::BTreeSet;
+use std::sync::mpsc;
 
 /// One source-map point: printed (line, col) came from original (line, col); all 0-based.
 #[derive(Clone, Copy)]
@@ -97,8 +102,9 @@ pub(crate) fn normalize(path: &[u8], bytes: &[u8], options: Options) -> Option<N
             let _store = StoreScope::enter();
             let arena = Arena::new();
             let source = bun_ast::Source::init_path_string(path, bytes);
-            let ast = parse_js(&arena, &source, loader, options)?;
-            print_js(&arena, ast, &source, options)
+            let mut ast = parse_js(&arena, &source, loader, options)?;
+            let symbols = take_symbols(&mut ast);
+            print_js(&arena, ast, symbols, &source, options)
         }
         Kind::Css => normalize_css(bytes),
         Kind::Json => normalize_json(path, bytes),
@@ -113,41 +119,10 @@ pub(crate) fn normalize_minified_pair(
     old: &[u8],
     new: &[u8],
     options: Options,
+    threads: Threads,
 ) -> Option<(Normalized, Normalized)> {
-    let Some(Kind::Js(loader)) = kind_for(path) else {
-        return None;
-    };
-    if old.len() > MAX_BYTES || new.len() > MAX_BYTES {
-        return None;
-    }
-    let _store = StoreScope::enter();
-    let (arena_o, arena_n) = (Arena::new(), Arena::new());
-    let source_o = bun_ast::Source::init_path_string(path, old);
-    let source_n = bun_ast::Source::init_path_string(path, new);
-    let mut ast_o = parse_js(&arena_o, &source_o, loader, options)?;
-    let mut ast_n = parse_js(&arena_n, &source_n, loader, options)?;
-    pin_exports(&mut ast_o);
-    pin_exports(&mut ast_n);
-    let profiles = [
-        super::pm_diff_profile::profiles(&ast_o, ast_o.symbols.len()),
-        super::pm_diff_profile::profiles(&ast_n, ast_n.symbols.len()),
-    ];
-    {
-        let all_names = false;
-        let mut namer = Namer::new(
-            [&arena_o, &arena_n],
-            [&ast_o.module_scope, &ast_n.module_scope],
-            [ast_o.symbols.as_mut_slice(), ast_n.symbols.as_mut_slice()],
-            profiles,
-            all_names,
-        );
-        namer.plan(Some(0), Some(0), 0, 0);
-        if namer.too_deep {
-            return None;
-        }
-    }
-    let mut o = print_js(&arena_o, ast_o, &source_o, options)?;
-    let mut n = print_js(&arena_n, ast_n, &source_n, options)?;
+    let all_names = false;
+    let (mut o, mut n, _) = print_pair(path, old, new, [options; 2], all_names, threads)?;
     o.was_minified = true;
     n.was_minified = true;
     Some((o, n))
@@ -161,54 +136,99 @@ pub(crate) fn normalize_key_pair(
     old: &[u8],
     new: &[u8],
     options: Options,
+    threads: Threads,
 ) -> Option<(Normalized, Normalized)> {
-    key_pair(path, old, new, [options; 2]).map(|(o, n, _)| (o, n))
+    let all_names = true;
+    print_pair(path, old, new, [options; 2], all_names, threads).map(|(o, n, _)| (o, n))
 }
 
-/// Returns the two comparison keys and a sorted list of every name in them that was not renamed,
-/// such as the names of globals and exports. The two `options` may differ only in `source_map`.
-fn key_pair(
+/// Returns the two prints and a sorted list of every name in them that was not renamed, such as the
+/// names of globals and exports. The two `options` may differ only in `source_map`.
+fn print_pair(
     path: &[u8],
     old: &[u8],
     new: &[u8],
     options: [Options; 2],
+    all_names: bool,
+    threads: Threads,
 ) -> Option<(Normalized, Normalized, Vec<Vec<u8>>)> {
+    /// With less text on either side, starting a thread costs more than it saves.
+    const MIN_BYTES_FOR_THREAD: usize = 256 << 10;
+
     let Some(Kind::Js(loader)) = kind_for(path) else {
         return None;
     };
     if old.len() > MAX_BYTES || new.len() > MAX_BYTES {
         return None;
     }
-    let _store = StoreScope::enter();
-    let (arena_o, arena_n) = (Arena::new(), Arena::new());
-    let source_o = bun_ast::Source::init_path_string(path, old);
-    let source_n = bun_ast::Source::init_path_string(path, new);
-    let mut ast_o = parse_js(&arena_o, &source_o, loader, options[0])?;
-    let mut ast_n = parse_js(&arena_n, &source_n, loader, options[1])?;
-    pin_exports(&mut ast_o);
-    pin_exports(&mut ast_n);
-    let profiles = [
-        super::pm_diff_profile::profiles(&ast_o, ast_o.symbols.len()),
-        super::pm_diff_profile::profiles(&ast_n, ast_n.symbols.len()),
-    ];
-    let as_written = {
-        let all_names = true;
-        let mut namer = Namer::new(
-            [&arena_o, &arena_n],
-            [&ast_o.module_scope, &ast_n.module_scope],
-            [ast_o.symbols.as_mut_slice(), ast_n.symbols.as_mut_slice()],
-            profiles,
-            all_names,
-        );
+    let names = Arena::new();
+    let as_written = Cell::new(Vec::new());
+    let rename = &|o: Locals, n: Locals| {
+        let mut namer = Namer::new(&names, [o, n], all_names);
         namer.plan(Some(0), Some(0), 0, 0);
-        if namer.too_deep {
-            return None;
-        }
-        namer.taken
+        as_written.set(namer.taken);
+        (!namer.too_deep).then_some(namer.sides.map(|side| side.symbols))
     };
-    let o = print_js(&arena_o, ast_o, &source_o, options[0])?;
-    let n = print_js(&arena_n, ast_n, &source_n, options[1])?;
-    Some((o, n, as_written))
+    let _store = StoreScope::enter();
+    let on_two_threads = || {
+        // A side that gives up drops its ends, which makes the other one give up.
+        let ((send_locals, locals), (send_renamed, renamed)) = (mpsc::channel(), mpsc::channel());
+        threads.join(
+            || {
+                print_renamed(path, old, loader, options[0], move |o| {
+                    let [o, n] = rename(o, locals.recv().ok()?)?;
+                    send_renamed.send(n).ok()?;
+                    Some(o)
+                })
+            },
+            move || {
+                let printed = {
+                    let _store = StoreScope::enter();
+                    print_renamed(path, new, loader, options[1], |n| {
+                        send_locals.send(n).ok()?;
+                        renamed.recv().ok()
+                    })
+                };
+                bun_ast::expr::data::Store::deinit();
+                bun_ast::stmt::data::Store::deinit();
+                printed
+            },
+        )
+    };
+    let on_this_thread = || {
+        let mut printed_n = None;
+        let printed_o = print_renamed(path, old, loader, options[0], |o| {
+            let mut renamed_o = None;
+            printed_n = print_renamed(path, new, loader, options[1], |n| {
+                let [o, n] = rename(o, n)?;
+                renamed_o = Some(o);
+                Some(n)
+            });
+            renamed_o
+        });
+        (printed_o, printed_n)
+    };
+    let (o, n) = (old.len().min(new.len()) >= MIN_BYTES_FOR_THREAD)
+        .then(on_two_threads)
+        .flatten()
+        .unwrap_or_else(on_this_thread);
+    Some((o?, n?, as_written.into_inner()))
+}
+
+/// Parses a file, and prints it with the symbols that `rename` returns.
+fn print_renamed(
+    path: &[u8],
+    bytes: &[u8],
+    loader: bun_ast::Loader,
+    options: Options,
+    rename: impl FnOnce(Locals) -> Option<Vec<Symbol>>,
+) -> Option<Normalized> {
+    let arena = Arena::new();
+    let source = bun_ast::Source::init_path_string(path, bytes);
+    let mut ast = parse_js(&arena, &source, loader, options)?;
+    pin_exports(&mut ast);
+    let symbols = rename(Locals::take_from(&mut ast))?;
+    print_js(&arena, ast, symbols, &source, options)
 }
 
 /// Returns true if `old` and `shown` have the same comparison key, which makes them the same
@@ -216,13 +236,28 @@ fn key_pair(
 ///
 /// `removed` lists the lines of `shown` (0-based, ascending) that the diff marks as removed. A name
 /// mismatch there is accepted, because such a line may still use a local's old name.
-pub(crate) fn same_program(path: &[u8], old: &[u8], shown: &[u8], removed: &[u32]) -> bool {
-    same_key(path, old, shown, removed, Options::KEY)
+pub(crate) fn same_program(
+    path: &[u8],
+    old: &[u8],
+    shown: &[u8],
+    removed: &[u32],
+    threads: Threads,
+) -> bool {
+    same_key(path, old, shown, removed, Options::KEY, threads)
 }
 
-fn same_key(path: &[u8], old: &[u8], shown: &[u8], removed: &[u32], options: Options) -> bool {
+fn same_key(
+    path: &[u8],
+    old: &[u8],
+    shown: &[u8],
+    removed: &[u32],
+    options: Options,
+    threads: Threads,
+) -> bool {
     let options = [options.without_source_map(), options];
-    let Some((old, shown, as_written)) = key_pair(path, old, shown, options) else {
+    let all_names = true;
+    let Some((old, shown, as_written)) = print_pair(path, old, shown, options, all_names, threads)
+    else {
         return false;
     };
     let (a, b) = (old.text.as_slice(), shown.text.as_slice());
@@ -279,8 +314,14 @@ pub(crate) fn stands_for(path: &[u8], print: &Normalized, shown: &[u8], options:
 }
 
 /// Like `stands_for`, for a re-print of the file `raw` in which locals are renamed.
-pub(crate) fn stands_for_renamed(path: &[u8], raw: &[u8], shown: &[u8], options: Options) -> bool {
-    same_key(path, raw, shown, &[], options.without_source_map())
+pub(crate) fn stands_for_renamed(
+    path: &[u8],
+    raw: &[u8],
+    shown: &[u8],
+    options: Options,
+    threads: Threads,
+) -> bool {
+    same_key(path, raw, shown, &[], options.without_source_map(), threads)
 }
 
 /// Keeps exported symbols from being renamed. An export's name is part of the module's interface.
@@ -374,9 +415,17 @@ fn newline_lines(text: &[u8]) -> Option<Vec<(u32, u32)>> {
     Some(starts)
 }
 
+fn take_symbols(ast: &mut bun_ast::Ast<'_>) -> Vec<Symbol> {
+    let arena = *ast.symbols.allocator();
+    core::mem::replace(&mut ast.symbols, bun_alloc::ArenaVec::new_in(arena))
+        .into_iter()
+        .collect()
+}
+
 fn print_js<'a>(
     arena: &'a Arena,
     mut ast: Box<bun_ast::Ast<'a>>,
+    symbols: Vec<Symbol>,
     source: &'a bun_ast::Source<'a>,
     options: Options,
 ) -> Option<Normalized> {
@@ -393,14 +442,9 @@ fn print_js<'a>(
         .map(|r| r.path.text.to_vec())
         .collect();
 
-    let chunk = core::cell::Cell::new(None);
+    let chunk = Cell::new(None);
     let mut printer = bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
-    let sym_arena = *ast.symbols.allocator();
-    let symbols = bun_ast::symbol::Map::init_with_one_list(
-        core::mem::replace(&mut ast.symbols, bun_alloc::ArenaVec::new_in(sym_arena))
-            .into_iter()
-            .collect(),
-    );
+    let symbols = bun_ast::symbol::Map::init_with_one_list(symbols);
     let print_opts = bun_js_printer::Options {
         minify_syntax: options.minify_syntax,
         require_ref: Some(ast.require_ref),
@@ -415,7 +459,7 @@ fn print_js<'a>(
         bun_js_printer::print_ast::<false, false>
     };
     print_ast(&mut printer, arena, &ast, symbols, source, print_opts).ok()?;
-    let mut text = printer.ctx.get_written().to_vec();
+    let mut text = printer.ctx.buffer.list;
 
     let mut map = Vec::new();
     if let Some(chunk) = chunk.into_inner() {
@@ -488,9 +532,9 @@ fn print_js<'a>(
 /// outer and sibling scopes are independent. Within a scope the two sides are aligned (LCS on symbol kind + use
 /// count) and matched symbols share an index, so inserting a function does not renumber everything after it.
 struct Namer<'s> {
-    arenas: [&'s Arena; 2],
-    scopes: [Vec<FlatScope<'s>>; 2],
-    symbols: [&'s mut [bun_ast::Symbol]; 2],
+    /// Holds the new names of both sides.
+    names: &'s Arena,
+    sides: [Locals; 2],
     /// Per side, per symbol: `candidates` has returned it, so no other scope names it too.
     listed: [Vec<bool>; 2],
     /// Every name that is not renamed, such as a global or a long local, sorted. A renamed local is
@@ -502,8 +546,28 @@ struct Namer<'s> {
     scratch: Vec<u8>,
     /// Rename every local (the comparison key), not only mangled-looking ones (the un-minified display).
     all_names: bool,
-    /// Per side, per symbol: name-free use-site profile hash (0 = unused / not computed).
-    profiles: [Vec<u64>; 2],
+}
+
+/// What `Namer` needs of one side. The strings in `symbols` live as long as the AST.
+struct Locals {
+    symbols: Vec<Symbol>,
+    /// Per symbol: name-free use-site profile hash (0 = unused / not computed).
+    profiles: Vec<u64>,
+    scopes: Vec<FlatScope>,
+    /// The symbols that each scope declares, in source order. See `FlatScope::members`.
+    members: Vec<u32>,
+}
+
+impl Locals {
+    fn take_from(ast: &mut bun_ast::Ast<'_>) -> Locals {
+        let (scopes, members) = flatten(&ast.module_scope);
+        Locals {
+            profiles: super::pm_diff_profile::profiles(ast, ast.symbols.len()),
+            symbols: take_symbols(ast),
+            scopes,
+            members,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -527,17 +591,11 @@ fn count_bucket(n: u32) -> u64 {
 }
 
 impl<'s> Namer<'s> {
-    fn new(
-        arenas: [&'s Arena; 2],
-        scopes: [&'s bun_ast::Scope; 2],
-        symbols: [&'s mut [bun_ast::Symbol]; 2],
-        profiles: [Vec<u64>; 2],
-        all_names: bool,
-    ) -> Namer<'s> {
+    fn new(names: &'s Arena, sides: [Locals; 2], all_names: bool) -> Namer<'s> {
         // Locals the parser pinned (direct eval, `with`) keep their names, as globals do.
-        let mut taken: Vec<&[u8]> = symbols
+        let mut taken: Vec<&[u8]> = sides
             .iter()
-            .flat_map(|symbols| symbols.iter())
+            .flat_map(|side| &side.symbols)
             .filter(|sym| {
                 sym.slot_namespace() == bun_ast::symbol::SlotNamespace::MustNotBeRenamed
                     || (!all_names && sym.original_name.len() > 2)
@@ -547,19 +605,17 @@ impl<'s> Namer<'s> {
         taken.sort_unstable();
         taken.dedup();
         Namer {
-            arenas,
-            scopes: scopes.map(flatten),
+            names,
             too_deep: false,
             all_names,
-            profiles,
-            listed: [vec![false; symbols[0].len()], vec![false; symbols[1].len()]],
+            listed: sides.each_ref().map(|side| vec![false; side.symbols.len()]),
             taken: taken.into_iter().map(<[u8]>::to_vec).collect(),
-            symbols,
+            sides,
             scratch: Vec::new(),
         }
     }
 
-    fn root(symbols: &[bun_ast::Symbol], mut i: usize) -> usize {
+    fn root(symbols: &[Symbol], mut i: usize) -> usize {
         for _ in 0..64 {
             let link = symbols[i].link.get();
             if !link.is_valid() || link.is_source_contents_slice() {
@@ -572,17 +628,16 @@ impl<'s> Namer<'s> {
 
     /// Members of `scope` on `side` that should get positional names, in source order.
     fn candidates(&mut self, side: usize, scope: u32) -> Vec<Candidate> {
-        let scope = self.scopes[side][scope as usize].scope;
-        let symbols = &*self.symbols[side];
-        let mut members: Vec<(i32, u32)> = scope
-            .members
-            .values()
-            .map(|m| (m.loc.start, m.ref_.inner_index()))
-            .collect();
-        members.extend(scope.generated.iter().map(|r| (i32::MAX, r.inner_index())));
-        members.sort_unstable();
+        let Locals {
+            symbols,
+            profiles,
+            scopes,
+            members,
+        } = &self.sides[side];
+        let Range { start, end } = scopes[scope as usize].members;
+        let members = &members[start as usize..end as usize];
         let mut out = Vec::with_capacity(members.len());
-        for (_, inner) in members {
+        for &inner in members {
             let i = Self::root(symbols, inner as usize);
             let sym = &symbols[i];
             if self.listed[side][i]
@@ -592,10 +647,7 @@ impl<'s> Namer<'s> {
                 continue;
             }
             self.listed[side][i] = true;
-            let profile = self.profiles[side]
-                .get(inner as usize)
-                .copied()
-                .unwrap_or(0);
+            let profile = profiles.get(inner as usize).copied().unwrap_or(0);
             out.push(Candidate {
                 symbol: i,
                 kind: sym.kind as u8,
@@ -629,8 +681,8 @@ impl<'s> Namer<'s> {
         {
             out.push(b'_');
         }
-        self.symbols[side][symbol].original_name =
-            bun_ast::StoreStr::new(self.arenas[side].alloc_slice_copy(out));
+        self.sides[side].symbols[symbol].original_name =
+            bun_ast::StoreStr::new(self.names.alloc_slice_copy(out));
     }
 
     /// `depth` is the naming digit (only scopes that named something bump it); `level` is the real nesting.
@@ -670,8 +722,8 @@ impl<'s> Namer<'s> {
         // Scopes that declare nothing (arg lists, plain blocks) do not use up a depth digit.
         let child_depth = depth + usize::from(index > 0);
         for (o, n) in pair_scopes(
-            children(&self.scopes[0], old),
-            children(&self.scopes[1], new),
+            children(&self.sides[0].scopes, old),
+            children(&self.sides[1].scopes, new),
         ) {
             self.plan(o, n, child_depth, level + 1);
         }
@@ -679,8 +731,9 @@ impl<'s> Namer<'s> {
 }
 
 /// A scope in a list of a file's scopes, in which the scopes inside it come directly after it.
-struct FlatScope<'a> {
-    scope: &'a bun_ast::Scope,
+struct FlatScope {
+    /// Its part of `Locals::members`.
+    members: Range<u32>,
     kind: bun_ast::scope::Kind,
     /// Its index in the list.
     at: u32,
@@ -692,13 +745,19 @@ struct FlatScope<'a> {
     weight: u32,
 }
 
-fn flatten(root: &bun_ast::Scope) -> Vec<FlatScope<'_>> {
+fn flatten(root: &bun_ast::Scope) -> (Vec<FlatScope>, Vec<u32>) {
     let mut out: Vec<FlatScope> = Vec::new();
+    let (mut members, mut own) = (Vec::new(), Vec::new());
     let mut stack = vec![(root, 0)];
     while let Some((scope, parent)) = stack.pop() {
         let at = out.len() as u32;
+        own.extend((scope.members.values()).map(|m| (m.loc.start, m.ref_.inner_index())));
+        own.extend(scope.generated.iter().map(|r| (i32::MAX, r.inner_index())));
+        own.sort_unstable();
+        let start = members.len() as u32;
+        members.extend(own.drain(..).map(|(_, symbol)| symbol));
         out.push(FlatScope {
-            scope,
+            members: start..members.len() as u32,
             kind: scope.kind,
             at,
             parent,
@@ -713,10 +772,10 @@ fn flatten(root: &bun_ast::Scope) -> Vec<FlatScope<'_>> {
         out[parent].scopes += scopes;
         out[parent].weight += weight;
     }
-    out
+    (out, members)
 }
 
-fn children<'f, 'a>(scopes: &'f [FlatScope<'a>], of: Option<u32>) -> Vec<&'f FlatScope<'a>> {
+fn children(scopes: &[FlatScope], of: Option<u32>) -> Vec<&FlatScope> {
     let mut out = Vec::new();
     if let Some(of) = of {
         let mut at = of + 1;
@@ -733,8 +792,8 @@ fn children<'f, 'a>(scopes: &'f [FlatScope<'a>], of: Option<u32>) -> Vec<&'f Fla
 /// good answer (small ones name positionally either way), so those are matched by kind and closest member count
 /// first; the rest are aligned in order by kind and member count, and what that leaves by kind alone.
 fn pair_scopes<'a>(
-    mut old: Vec<&'a FlatScope<'a>>,
-    mut new: Vec<&'a FlatScope<'a>>,
+    mut old: Vec<&'a FlatScope>,
+    mut new: Vec<&'a FlatScope>,
 ) -> Vec<(Option<u32>, Option<u32>)> {
     const BIG: u32 = 24;
     let mut out = Vec::new();
@@ -982,7 +1041,7 @@ fn normalize_json(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
     )
     .ok()?;
     Some(Normalized {
-        text: printer.ctx.get_written().to_vec(),
+        text: printer.ctx.buffer.list,
         map: Vec::new(),
         imports: Vec::new(),
         was_minified: false,

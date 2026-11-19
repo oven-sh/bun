@@ -1453,7 +1453,7 @@ fn compare_all(changes: &mut [FileChange<'_>], flags: DiffFlags, style: Style, h
     // If the OS cannot start the pool's first thread, what is scheduled on the pool never runs.
     if !pool.has_workers() {
         for file in files {
-            compare(file, flags, style);
+            compare(file, flags, style, helpers);
         }
         return;
     }
@@ -1508,7 +1508,7 @@ fn compare_all(changes: &mut [FileChange<'_>], flags: DiffFlags, style: Style, h
             }
             drop(queue);
             for file in part {
-                compare(file, flags, style);
+                compare(file, flags, style, helpers);
             }
             queue = shared.lock();
             let at = queue.running.iter().position(|&it| it == tokens);
@@ -1521,7 +1521,7 @@ fn compare_all(changes: &mut [FileChange<'_>], flags: DiffFlags, style: Style, h
 }
 
 /// Decides what changed between the two sides of a file, and renders it.
-fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style) {
+fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style, threads: Threads) {
     let FileChange { path, old, new, .. } = *change;
     let [old_binary, new_binary] = [old, new].map(|side| side.map(|side| is_binary(path, side)));
     change.binary = old_binary == Some(true) || new_binary == Some(true);
@@ -1578,13 +1578,15 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style) {
     let (norm_old, norm_new) = match (is_parsed, readable_js, old, new) {
         (false, ..) => (None, None),
         // Both sides of readable JS are keyed together so their locals get lockstep names.
-        (true, true, Some(o), Some(n)) => match normalize::normalize_key_pair(path, o, n, popts) {
-            Some((ko, kn)) => (Some(ko), Some(kn)),
-            None => (
-                normalize::normalize(path, o, popts),
-                normalize::normalize(path, n, popts),
-            ),
-        },
+        (true, true, Some(o), Some(n)) => {
+            match normalize::normalize_key_pair(path, o, n, popts, threads) {
+                Some((ko, kn)) => (Some(ko), Some(kn)),
+                None => (
+                    normalize::normalize(path, o, popts),
+                    normalize::normalize(path, n, popts),
+                ),
+            }
+        }
         _ => (
             old.and_then(|b| normalize::normalize(path, b, popts)),
             new.and_then(|b| normalize::normalize(path, b, popts)),
@@ -1633,7 +1635,7 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style) {
             // locals renamed in lockstep, banner comment as written — and the folded key decides what changed.
             change.semantic = Semantic::Normalized;
             let renamed = if js_family {
-                normalize::normalize_minified_pair(path, o, n, nopts)
+                normalize::normalize_minified_pair(path, o, n, nopts, threads)
             } else {
                 None
             };
@@ -1647,13 +1649,13 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style) {
                     .iter()
                     .all(|&(raw, print, shown)| {
                         if renamed.is_some() {
-                            normalize::stands_for_renamed(path, raw, &shown.text, nopts)
+                            normalize::stands_for_renamed(path, raw, &shown.text, nopts, threads)
                         } else {
                             normalize::stands_for(path, print, &shown.text, nopts)
                         }
                     });
             let keys = if js_family && faithful {
-                normalize::normalize_key_pair(path, o, n, normalize::Options::KEY)
+                normalize::normalize_key_pair(path, o, n, normalize::Options::KEY, threads)
             } else {
                 None
             };
@@ -1674,7 +1676,13 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style) {
                         // text can show the change.
                         change.semantic = Semantic::Text;
                         unified_hunks(o, n, flags.context, style, change);
-                    } else if !projection.holds(path, &shown_o.text, &shown_n.text, same_key) {
+                    } else if !projection.holds(
+                        path,
+                        &shown_o.text,
+                        &shown_n.text,
+                        same_key,
+                        threads,
+                    ) {
                         change.origin = Some([shown_o.origin, shown_n.origin]);
                         unified_hunks(&shown_o.text, &shown_n.text, flags.context, style, change);
                     } else if projection
@@ -1716,7 +1724,7 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style) {
                         .ops
                         .iter()
                         .any(|op| op.kind != Operation::Equal || op.affected);
-                    if !projection.holds(path, &old_v, &new_v, ko.text == kn.text) {
+                    if !projection.holds(path, &old_v, &new_v, ko.text == kn.text, threads) {
                         render_ops(&unfolded, flags.context, style, change, (false, false));
                     } else if shown {
                         change.semantic = Semantic::Projected;

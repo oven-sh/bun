@@ -2,6 +2,7 @@
 //! decided on the canonical form (so `1 + 1` vs `2`, quote style or a reformat is not a change, and a branch that
 //! became dead is), what is shown is the author's text (comments, types, JSX and names intact).
 
+use crate::cli::pm_diff_command::Threads;
 use crate::cli::pm_diff_normalize::{Normalized, same_program};
 use bun_text_diff as text_diff;
 
@@ -35,7 +36,14 @@ pub(crate) struct Projection<'a> {
 impl Projection<'_> {
     /// Checks all folded lines at once: the old side that the diff shows, which is `old` with the
     /// folded lines in `new`'s text, has to be the same program as `old`.
-    pub(crate) fn holds(&self, path: &[u8], old: &[u8], new: &[u8], same_key: bool) -> bool {
+    pub(crate) fn holds(
+        &self,
+        path: &[u8],
+        old: &[u8],
+        new: &[u8],
+        same_key: bool,
+        threads: Threads,
+    ) -> bool {
         let mut shown = Vec::with_capacity(old.len());
         let mut removed = Vec::new();
         let on_old_side =
@@ -50,7 +58,7 @@ impl Projection<'_> {
         if shown == new {
             return same_key;
         }
-        shown == old || same_program(path, old, &shown, &removed)
+        shown == old || same_program(path, old, &shown, &removed, threads)
     }
 }
 

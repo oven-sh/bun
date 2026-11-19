@@ -1,0 +1,22 @@
+# -- source: instanceof-up-a-row-of-functions-is-asked-of-the-object.js
+# function Base(a) { this.a = a; }
+# function Sub(b) { this.b = b; }
+# Sub.prototype = Object.create(Base.prototype);
+# function Stored(c) { this.c = c; }
+# Stored.prototype = {};
+# function isBase(x) { return x instanceof Base ? 10 : 20; }
+# function isStored(x) { return x instanceof Stored ? 10 : 20; }
+# sink(isBase(new Sub(1)) + isStored(new Stored(2)) + isBase(new Base(3)));
+# -- end of source
+# When `Sub.prototype = Object.create(Base.prototype)` and `Stored.prototype = {}` have run, against the objects that are made, nobody can tell: an object made in front of the store keeps its old parent for good.
+# The clock of start said "ahead of every object", both functions answered the constant 10, and through a hole in the clock that was wrong for the rest of the run, silently.
+# f4 = isBase, f5 = isStored
+# RUN: walk f4 mechanisms=all
+# CHECK: = InstanceOf
+# RUN(STORED): walk f5 mechanisms=all
+# STORED: = InstanceOf
+# RUN(LINK): link layouts mechanisms=all
+# LINK: layout L0 {{*}}prototype-object-settled
+# LINK-NOT: prototype-object-settled
+# RUN(ROW): link layouts mechanisms=all
+# ROW-NOT: linked-ahead

@@ -26,13 +26,11 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
     DROP USER IF EXISTS bun_sql_test;\n\
     CREATE USER bun_sql_test;\n\
     \n\
-    ALTER SYSTEM SET password_encryption = '"'"'md5'"'"';\n\
-    SELECT pg_reload_conf();\n\
+    SET password_encryption = '"'"'md5'"'"';\n\
     DROP USER IF EXISTS bun_sql_test_md5;\n\
     CREATE USER bun_sql_test_md5 WITH PASSWORD '"'"'bun_sql_test_md5'"'"';\n\
     \n\
-    ALTER SYSTEM SET password_encryption = '"'"'scram-sha-256'"'"';\n\
-    SELECT pg_reload_conf();\n\
+    SET password_encryption = '"'"'scram-sha-256'"'"';\n\
     DROP USER IF EXISTS bun_sql_test_scram;\n\
     CREATE USER bun_sql_test_scram WITH PASSWORD '"'"'bun_sql_test_scram'"'"';\n\
 EOSQL\n\

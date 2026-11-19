@@ -11,7 +11,7 @@
  * check every target once its std is installed.
  *
  * Usage:
- *   bun run rust:mordant               # lint; findings over the baseline are warnings
+ *   bun run rust:mordant               # lint; exits 101 when a crate is over the baseline
  *   bun run rust:mordant -p bun_paths  # extra args go to `cargo mordant`
  *   bun run rust:mordant:baseline      # regenerate mordant-baseline.toml
  */
@@ -28,7 +28,7 @@ const repo = resolve(import.meta.dirname, "..");
 // again for the few dozen arch gates.
 const TARGETS = ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc", "aarch64-apple-darwin"];
 
-// Mordant's nightly is older than rust-toolchain.toml's, so `#[allow]`s of
+// Mordant's nightly can be older than rust-toolchain.toml's, so `#[allow]`s of
 // lints added since then are unknown to it.
 const RUSTFLAGS = "-A unknown_lints";
 
@@ -56,7 +56,6 @@ if (run("rustup", ["target", "add", "--toolchain", toolchain, ...TARGETS]) !== 0
 
 const args = process.argv.slice(2);
 if (!args.includes("--baseline")) {
-  rmSync(join(repo, "target/mordant/over-baseline.txt"), { force: true });
   process.exit(mordant(TARGETS, ["--keep-going", ...args]));
 }
 

@@ -181,7 +181,7 @@ function createManticoreMock(opts: { deprecateEof: boolean; info?: string }) {
     let state: "waiting_auth" | "ready" = "waiting_auth";
     let buf = Buffer.alloc(0);
 
-    socket.on("data", data => {
+    socket.on("data", (data: Buffer) => {
       buf = Buffer.concat([buf, data]);
 
       // Process complete packets

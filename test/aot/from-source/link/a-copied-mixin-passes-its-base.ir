@@ -1,0 +1,17 @@
+# -- source: main.cjs
+# function mixin(S) { if (S === undefined) S = Object; return class Mixed extends S { total() { var t = 0; for (var i = 0; i < 4; i++) t += this.get(i, 1); return t; } }; }
+# class View extends mixin() { constructor(m) { super(); this.m = m; } get(i, j) { return this.m.get(j, i); } }
+# class M extends mixin(Array) { constructor(r) { super(r); for (var i = 0; i < r; i++) this[i] = [i, i / 2, i, i]; this.rows = r; } get(i, j) { return this[i][j]; } }
+# function sum(n) { var m = new M(4), t = 0; for (var i = 0; i < n; i++) t += m.get(i & 3, 1) + m.rows; return t; }
+# print(sum(8), new View(new M(4)).total(), new M(4).total());
+# -- end of source
+# Each call of the mixin gets a copy of it, entered where the callee is the mixin: the class extends what one of two calls returns. The instances are arrays, known by their structure.
+# RUN: walk f2 mechanisms=all
+# CHECK: HasStructureOfClass
+# CHECK: AreMembersUnchanged {{*}}key="get"
+# RUN(ANSWER): run-in-shell
+# ANSWER: 38 3.5 3
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 38 3.5 3
+# CHECKED-NEXT: exited with 0

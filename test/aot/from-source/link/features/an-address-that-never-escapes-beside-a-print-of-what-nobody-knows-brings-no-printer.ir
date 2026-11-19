@@ -1,0 +1,9 @@
+# the address is a site that Link follows and it never escapes: what JSON.parse() answers cannot be it
+# -- source: an-address-that-never-escapes-beside-a-print-of-what-nobody-knows-brings-no-printer.ts
+# const url = new URL("http://made.up/a"); console.log(JSON.parse("1")); console.log(`${url.pathname}`);
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by URL
+# RUN(NEVER): features
+# NEVER-NOT: by NativeNewCppFunctionStringWidthCppJsFunctionBunStringWidth

@@ -1,0 +1,29 @@
+# -- source: main.js
+# function times(m, at, v) { return m[at & 7] * v; }
+# function less(m, at, v) { return v - m[at & 7]; }
+# function plus(m, at, v) { return m[at & 7] + v; }
+# const view = new Float64Array([1.5, -2, 0, 4]), values = JSON.parse('[3, "4", null, [5]]');
+# for (const v of values) print(times(view, 0, v), times(view, 6, v), less(view, 1, v), less(view, 6, v), plus(view, 0, v), plus(view, 6, v));
+# -- end of source
+# An element of a view is a number, or undefined past the end. `*`, `-`, `/` turn both operands into numerics, and a number or undefined turns without running anything:
+# it is turned in front, and the operator stands beside ONE NUMBER: the other value is asked in line whether it is a number; the stub is the rare way. Both operands went boxed to the stub of the generic form.
+# `+` is left as it was: undefined + "x" is a text.
+# f1 = times, f2 = less, f3 = plus
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = GetTypedArrayElement
+# CHECK: number {{*}}= ToNumber
+# CHECK: = Mul {{*}}form=NumberAndValue
+# RUN(LESS): walk f2:Body mechanisms=all
+# LESS: = GetTypedArrayElement
+# LESS: number {{*}}= ToNumber
+# LESS: = Sub {{*}}form=NumberAndValue
+# RUN(PLUS): walk f3:Body mechanisms=all
+# PLUS: = GetTypedArrayElement
+# PLUS-NOT: = ToNumber
+# PLUS: = Add {{*}}form=Generic
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: 4.5 NaN 5 NaN 4.5 NaN
+# SHELL-NEXT: 6 NaN 6 NaN 1.54 undefined4
+# SHELL-NEXT: 0 NaN 2 NaN 1.5 NaN
+# SHELL-NEXT: 7.5 NaN 7 NaN 1.55 undefined5
+# SHELL-NEXT: exited with 0

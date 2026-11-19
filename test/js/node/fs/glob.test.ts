@@ -74,9 +74,13 @@ describe("fs.glob", () => {
 
   describe("invalid arguments", () => {
     it("throws if no callback is provided", () => {
+      // @ts-expect-error
       expect(() => fs.glob("*.txt")).toThrow(TypeError);
+      // @ts-expect-error
       expect(() => fs.glob("*.txt", undefined)).toThrow(TypeError);
+      // @ts-expect-error
       expect(() => fs.glob("*.txt", { cwd: tmp })).toThrow(TypeError);
+      // @ts-expect-error
       expect(() => fs.glob("*.txt", { cwd: tmp }, undefined)).toThrow(TypeError);
     });
   });
@@ -221,7 +225,7 @@ describe("fs.promises.glob", () => {
       const iter = fs.promises.glob("*.txt");
       expect(iter[Symbol.asyncIterator]).toBeDefined();
 
-      const paths = [];
+      const paths: string[] = [];
       for await (const path of iter) {
         paths.push(path);
       }

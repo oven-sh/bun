@@ -42,7 +42,7 @@ describe.concurrent("unmasked client frames", () => {
       },
     });
 
-    const socket = net.connect(server.port, "127.0.0.1");
+    const socket = net.connect(server.port!, "127.0.0.1");
     const closed = Promise.withResolvers<string>();
     const upgraded = Promise.withResolvers<void>();
     socket.on("close", () => {

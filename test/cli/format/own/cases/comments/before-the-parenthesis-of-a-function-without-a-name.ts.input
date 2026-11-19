@@ -1,0 +1,8 @@
+const a = async /* 1 */ (b) => b;
+const c = async /* 2 */ d => d;
+const e = <T,> /* 3 */ (f: T) => f;
+const g = async /* 4 */ function* () {};
+h(function /* 5 */ * () {});
+const i = <T,>
+// 6
+(j: T) => j;

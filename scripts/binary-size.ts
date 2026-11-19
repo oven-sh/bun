@@ -1,5 +1,5 @@
 // Measure stripped binary sizes for every release platform and compare them
-// against the latest finished `main` build ("canary").
+// against the latest `main` build that has published its own ("canary").
 //
 // CI mode (invoked from .buildkite/ci.ts after all *-build-bun jobs finish):
 //   bun scripts/binary-size.ts \
@@ -59,12 +59,6 @@ function agent(args: string[], opts: { quiet?: boolean } = {}): string | undefin
   return exitCode === 0 ? stdout.toString().trim() : undefined;
 }
 
-async function getSecret(name: string): Promise<string | undefined> {
-  const { exitCode, stdout } = Bun.spawnSync(["buildkite-agent", "secret", "get", name], { stderr: "ignore" });
-  if (exitCode !== 0) return undefined;
-  return stdout.toString().trim() || undefined;
-}
-
 // ─── Collect current build's sizes from meta-data ───
 // Each *-build-bun job sets `binary-size:<triplet>` after stripping
 // (scripts/build/ci.ts).
@@ -91,21 +85,18 @@ agent(["artifact", "upload", "binary-sizes.json"]);
 
 type Baseline = { label: string; href?: string; sizes: Sizes };
 
-const ghToken = (await getSecret("GITHUB_TOKEN")) ?? process.env.GITHUB_TOKEN;
-const ghHeaders: Record<string, string> = ghToken ? { Authorization: `Bearer ${ghToken}` } : {};
-
-async function githubJson<T>(path: string): Promise<T> {
-  const res = await fetch(`https://api.github.com/repos/oven-sh/bun/${path}`, { headers: ghHeaders });
-  if (!res.ok) throw new Error(`github ${path}: ${res.status}`);
-  return res.json() as Promise<T>;
+/** Newest first. From git and not GitHub's API, whose hourly quota CI shares and runs out of. */
+function recentMainCommits(): string[] {
+  const fetched = Bun.spawnSync(["git", "fetch", "--depth=15", "--filter=tree:0", "origin", "main"]);
+  if (fetched.exitCode !== 0) throw new Error(`git fetch origin main: ${fetched.stderr.toString().trim()}`);
+  return Bun.spawnSync(["git", "rev-list", "FETCH_HEAD"]).stdout.toString().trim().split("\n");
 }
 
+/** Buildkite redirects to the build of a commit without a token. */
 async function buildNumberForCommit(sha: string): Promise<number | undefined> {
-  const { statuses } = await githubJson<{ statuses: { context: string; target_url: string }[] }>(
-    `commits/${sha}/status`,
-  );
-  const bk = statuses.find(s => s.context.startsWith("buildkite/"));
-  const m = bk?.target_url.match(/\/builds\/(\d+)/);
+  const url = `https://buildkite.com/${org}/${pipeline}/builds/latest?branch=main&commit=${sha}`;
+  const res = await fetch(url, { redirect: "manual" });
+  const m = res.headers.get("location")?.match(/\/builds\/(\d+)/);
   return m ? parseInt(m[1], 10) : undefined;
 }
 
@@ -121,7 +112,7 @@ async function sizesFromBuild(n: number): Promise<{ sizes: Sizes; release?: bool
   return (await Bun.file(`${dir}/binary-sizes.json`).json()) as { sizes: Sizes; release?: boolean };
 }
 
-async function baselineFromCommit(sha: string, label: (n: number) => string): Promise<Baseline | undefined> {
+async function baselineFromCommit(sha: string): Promise<Baseline | undefined> {
   const n = await buildNumberForCommit(sha);
   if (!n || String(n) === String(buildNumber)) return;
   const record = await sizesFromBuild(n);
@@ -130,7 +121,7 @@ async function baselineFromCommit(sha: string, label: (n: number) => string): Pr
   // against release. Windows binaries differ by several MB between the two, so
   // a release build on main would otherwise trip every PR's threshold.
   if ((record.release ?? false) !== isRelease) return;
-  return { label: label(n), href: `https://buildkite.com/${org}/${pipeline}/builds/${n}`, sizes: record.sizes };
+  return { label: `main #${n}`, href: `https://buildkite.com/${org}/${pipeline}/builds/${n}`, sizes: record.sizes };
 }
 
 // Canary: walk recent main commits until one whose build has a matching
@@ -138,9 +129,8 @@ async function baselineFromCommit(sha: string, label: (n: number) => string): Pr
 console.log(`--- Fetching ${buildKind} baseline`);
 let canaryNote = "";
 const canary: Baseline | undefined = await (async () => {
-  const commits = await githubJson<{ sha: string }[]>("commits?sha=main&per_page=15");
-  for (const { sha } of commits) {
-    const b = await baselineFromCommit(sha, n => `main #${n}`);
+  for (const sha of recentMainCommits()) {
+    const b = await baselineFromCommit(sha);
     if (b) return b;
   }
   canaryNote = `no recent main ${buildKind} build has binary-sizes.json yet`;

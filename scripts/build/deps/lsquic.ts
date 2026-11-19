@@ -7,12 +7,12 @@
  * we ship the generated output as a patch so DirectBuild stays declarative.
  *
  * lsquic vendors xxhash (lsquic_xxhash.c) but never calls it directly —
- * it's only there for the ls-hpack/ls-qpack submodules, which we build
- * separately. We skip it to avoid duplicate XXH32/XXH64 with lshpack.
+ * it's only there for its submodules. lsqpack.c gets the copy it ships with.
  */
 
 import type { Dependency, DirectBuild } from "../source.ts";
-import { depBuildDir, depSourceDir } from "../source.ts";
+import { depSourceDir } from "../source.ts";
+import { lsxpackDefines } from "./lsqpack.ts";
 
 const LSQUIC_COMMIT = "f812ceb9529e26717df78c6064a2ff648b949f3e";
 
@@ -134,40 +134,61 @@ export const lsquic: Dependency = {
     // H3_CLOSED_CRITICAL_STREAM and closes the connection, which kills the
     // requests the graceful stop was draining. Reject only request streams.
     "patches/lsquic/goaway-accept-uni-streams.patch",
+    // lsquic_prq_destroy() only frees the free list. A stateless reset whose
+    // send failed is on the returned list, so destroying the engine leaks it.
+    "patches/lsquic/prq-free-returned-conns.patch",
+    // lsquic_conn_goaway_stream_id: on_goaway_received() does not pass the id
+    // of the GOAWAY, and a second GOAWAY with a lower id was not stored.
+    "patches/lsquic/goaway-stream-id.patch",
+    // A server's GOAWAY named the last request it accepted, which tells the
+    // client that this request was rejected. Name the one after it.
+    "patches/lsquic/goaway-first-rejected-id.patch",
+    // An Initial packet that carries a token left one byte for the token's
+    // length, which takes two from 64 bytes on. A client that refilled its
+    // ClientHello after a Retry could then fail the connection while it
+    // resized a packet that was one byte too large.
+    "patches/lsquic/initial-token-length.patch",
+    // send_headers_ietf() encoded every header block into 64 KB on the stack
+    // and failed for a larger one. Such a block gets a heap buffer, sized from
+    // the header list.
+    "patches/lsquic/large-header-block.patch",
+    // lsquic_http1x_if.c includes the header of ls-hpack, a submodule for gQUIC,
+    // only for the lsxpack_header.h behind it.
+    "patches/lsquic/http1x-lsxpack-include.patch",
   ],
 
-  fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],
+  fetchDeps: ["lsqpack", "boringssl"],
 
   build: cfg => {
     const boringssl = depSourceDir(cfg, "boringssl");
-    const lshpackSrc = depSourceDir(cfg, "lshpack");
     const lsqpackSrc = depSourceDir(cfg, "lsqpack");
-    const zlibBuild = depBuildDir(cfg, "zlib");
-    const zlibSrc = depSourceDir(cfg, "zlib");
-    const needCompatQueue = cfg.abi === "musl";
     const spec: DirectBuild = {
       kind: "direct",
-      sources: [...liblsquic.map(s => "src/liblsquic/" + s), lsqpackSrc + "/lsqpack.c"],
+      sources: [
+        ...liblsquic.map(s => "src/liblsquic/" + s),
+        lsqpackSrc + "/lsqpack.c",
+        lsqpackSrc + "/deps/xxhash/xxhash.c",
+      ],
       includes: [
         "include",
         "src/liblsquic",
         boringssl + "/include",
-        lshpackSrc,
-        lshpackSrc + "/deps/xxhash",
         lsqpackSrc,
-        ...(cfg.windows ? ["wincompat", lsqpackSrc + "/wincompat"] : []),
-        zlibBuild,
-        zlibSrc,
-        ...(needCompatQueue ? [lshpackSrc + "/compat/queue"] : []),
+        lsqpackSrc + "/deps/xxhash",
+        ...(cfg.windows ? ["wincompat"] : []),
+        // Holds only <sys/queue.h>, which ships with glibc and BSD libc but not musl or win32.
+        ...(cfg.windows || cfg.abi === "musl" ? [lsqpackSrc + "/wincompat"] : []),
       ],
       defines: {
+        ...lsxpackDefines,
         HAVE_BORINGSSL: 1,
         ...(cfg.windows ? { WIN32: 1, WIN32_LEAN_AND_MEAN: 1 } : {}),
         XXH_HEADER_NAME: "xxhash.h",
         // lsqpack.c defaults LS_QPACK_USE_LARGE_TABLES=1 internally; setting
-        // it here is defensive (mirrors lshpack.ts).
+        // it here keeps an upstream change of the default from silently
+        // disabling the bss-huff-tables patch.
         LS_QPACK_USE_LARGE_TABLES: 1,
-        LS_HPACK_BSS_LARGE_TABLES: 1,
+        LS_QPACK_BSS_LARGE_TABLES: 1,
         LSQPACK_ENC_LOGGER_HEADER: "lsquic_qpack_enc_logger.h",
         LSQPACK_DEC_LOGGER_HEADER: "lsquic_qpack_dec_logger.h",
         LSQUIC_DEBUG_NEXT_ADV_TICK: 0,

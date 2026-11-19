@@ -1,0 +1,25 @@
+# -- source: a-variable-is-held-against-the-other-copy-of-its-own-loop-alone.ts
+# declare function sink(value: unknown): void;
+# let ticks = 0;
+# let latest: any = 0;
+# function run(rows: number, cols: number, mark: any): number {
+#   let same = -1;
+#   for (let r = 0; r < rows; r++) {
+#     ticks++;
+#     latest = r;
+#     for (let c = 0; c < cols; c++) { if (latest === mark) same = c; latest = c < 3 ? c : mark; }
+#   }
+#   return same;
+# }
+# sink(run);
+# sink(String(run(6, 8, JSON.parse('"x"'))) + ticks + latest);
+# -- end of source
+# The outer loop is built twice: `ticks` is stepped by one. `latest` enters the inner loop as a number, and the inner loop has no other copy of its own. So nothing holds `latest` to a number there:
+# a test on the way round the inner loop could fail only into the other copy of the outer loop, with what the inner loop hands round. It did: three of six outer turns never ran.
+# f1 = run
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: testedType=number
+# CHECK: PutModuleVariable
+# CHECK-NOT: testedType=number

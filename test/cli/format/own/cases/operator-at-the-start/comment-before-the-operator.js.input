@@ -1,0 +1,6 @@
+x =
+  aaaa(1) ||
+  // c
+  compare(itemA.source.kind, itemB.source.kind) ||
+  // d
+  bbbb;

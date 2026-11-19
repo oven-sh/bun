@@ -1,0 +1,68 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`serializers > in a Map and a Set 1`] = `
+Map {
+  Money<1 A> => Set {
+    Money<2 B>,
+  },
+}
+`;
+
+exports[`serializers > last added wins 1`] = `override`;
+
+exports[`serializers > nested 1`] = `
+{
+  "list": [
+    Money<2 GBP>,
+  ],
+  "price": Money<1 USD>,
+}
+`;
+
+exports[`serializers > old api 1`] = `
+Old:
+  {
+    "v": 1,
+  }
+`;
+
+exports[`serializers > old api 2`] = `
+[
+  Old:
+    {
+        "v": 1,
+      },
+]
+`;
+
+exports[`serializers > printer 1`] = `
+Wrapper({
+  "a": [
+    1,
+    Money<3 JPY>,
+  ],
+})
+`;
+
+exports[`serializers > printer, nested 1`] = `
+{
+  "w": Wrapper({
+    "deep": Wrapper(1),
+  }),
+}
+`;
+
+exports[`serializers > strings 1`] = `no quotes`;
+
+exports[`serializers > strings 2`] = `
+multi
+line
+`;
+
+exports[`serializers > strings 3`] = `
+{
+  "s": in object,
+}
+`;
+
+exports[`serializers > top level 1`] = `Money<5 EUR>`;

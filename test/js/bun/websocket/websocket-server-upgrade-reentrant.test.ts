@@ -171,3 +171,136 @@ for (const via of ["data", "headers"] as const) {
     expect(exitCode).toBe(0);
   });
 }
+
+// When server.upgrade() runs while uws is dispatching a request, uws flags the
+// connection it's parsing as upgraded. It used to set that flag for ANY upgrade
+// during the dispatch, including one for a request from a different connection
+// (left pending by fetch() and upgraded later from another request's handler, or
+// from a microtask drained during it). uws then treated the connection being
+// parsed as closed: it dropped the rest of the read buffer (pipelined requests)
+// and skipped the post-parse bookkeeping.
+test("server.upgrade() of another connection's pending request doesn't drop pipelined requests", async () => {
+  let pendingUpgrade: { request: Request; resolve: (response: Response | undefined) => void } | undefined;
+  const upgradeRequestReceived = Promise.withResolvers<void>();
+  const websocketOpened = Promise.withResolvers<void>();
+
+  using server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(request, server) {
+      const { pathname } = new URL(request.url);
+      switch (pathname) {
+        case "/ws":
+          return new Promise<Response | undefined>(resolve => {
+            pendingUpgrade = { request, resolve };
+            upgradeRequestReceived.resolve();
+          });
+        case "/approve": {
+          const upgraded = server.upgrade(pendingUpgrade!.request);
+          pendingUpgrade!.resolve(undefined);
+          return new Response(upgraded ? "approved" : "upgrade failed");
+        }
+        default:
+          return new Response(pathname);
+      }
+    },
+    websocket: {
+      open() {
+        websocketOpened.resolve();
+      },
+      message() {},
+    },
+  });
+
+  const ws = new WebSocket(new URL("/ws", server.url).href.replace("http", "ws"));
+  const websocketFailed = (event: Event) => {
+    const error = new Error(`client WebSocket ${event.type}`);
+    upgradeRequestReceived.reject(error);
+    websocketOpened.reject(error);
+  };
+  ws.addEventListener("error", websocketFailed);
+  ws.addEventListener("close", websocketFailed);
+  await upgradeRequestReceived.promise;
+
+  // Send both requests in one write so the parser gets the second one in the
+  // same read as the one whose handler calls upgrade(). `Connection: close` on
+  // the second makes the server close the connection after responding. If the
+  // second request is dropped, the connection stays open instead.
+  const received: Buffer[] = [];
+  const connectionClosed = Promise.withResolvers<void>();
+  await Bun.connect({
+    hostname: server.hostname,
+    port: server.port,
+    socket: {
+      open(socket) {
+        socket.write(
+          "GET /approve HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n" +
+            "GET /second HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+        );
+      },
+      data(_socket, data) {
+        received.push(Buffer.from(data));
+      },
+      close() {
+        connectionClosed.resolve();
+      },
+      error(_socket, error) {
+        connectionClosed.reject(error);
+      },
+    },
+  });
+
+  await Promise.all([connectionClosed.promise, websocketOpened.promise]);
+  const responses = Buffer.concat(received).toString();
+  expect(responses.match(/HTTP\/1\.1 200 OK\r\n/g)).toHaveLength(2);
+  expect(responses).toEndWith("\r\n\r\n/second");
+  expect(responses).toContain("\r\n\r\napproved");
+
+  ws.removeEventListener("close", websocketFailed);
+  ws.close();
+});
+
+// uSockets won't adopt a socket into another context once it has sent its FIN. upgrade() used to hit
+// that only after destroying the HTTP state, then constructed the WebSocket state in a socket the HTTP
+// context still owned, so closing it ran the wrong destructor.
+test("rejects an upgrade on a socket that was already ended", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const http = require("node:http");
+      const net = require("node:net");
+      const { once } = require("node:events");
+      const { WebSocketServer } = require("ws");
+      const wss = new WebSocketServer({ noServer: true });
+      wss.on("headers", (headers, req) => req.socket.end());
+      const serverSocketClosed = Promise.withResolvers();
+      const server = http.createServer();
+      server.on("upgrade", (req, socket) => {
+        socket.on("error", () => {});
+        socket.on("close", serverSocketClosed.resolve);
+        wss.handleUpgrade(req, socket, Buffer.alloc(0), ws => ws.on("error", () => {}));
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const client = net.connect(server.address().port, "127.0.0.1");
+      client.on("error", () => {});
+      client.resume();
+      client.write(
+        "GET / HTTP/1.1\\r\\nHost: a\\r\\nConnection: Upgrade\\r\\nUpgrade: websocket\\r\\n" +
+          "Sec-WebSocket-Version: 13\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\n\\r\\n",
+      );
+      await once(client, "close");
+      await serverSocketClosed.promise;
+      server.close();
+      console.log("closed");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "closed\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});

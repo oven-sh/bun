@@ -1,12 +1,11 @@
 use core::cell::Cell;
-use core::ffi::c_char;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMapExt, GetOrPutResult, StringSet};
 use bun_core::{self, Output};
-use bun_core::{ZStr, strings};
+use bun_core::{CStringList, ZStr, strings};
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
 use bun_sys;
 use bun_url::URL;
@@ -145,7 +144,11 @@ pub struct Loader {
     /// only populated with files specified explicitly (e.g. --env-file arg)
     pub(crate) custom_files_loaded: StringSet,
 
+    /// Hides the `[Nms] ".env"` line and the `error loading .env file` lines.
     pub quiet: bool,
+
+    /// Hides the `[Nms] ".env"` line only.
+    pub quiet_loaded_files: bool,
 
     pub(crate) did_load_process: bool,
     pub(crate) reject_unauthorized: Cell<Option<bool>>,
@@ -161,6 +164,18 @@ static NODE_PATH_TO_USE_SET_ONCE: bun_core::RwLock<Option<Box<[u8]>>> = bun_core
 
 // PORTING.md §Concurrency: OnceLock — set once from CLI flag, read many.
 pub static HAS_NO_CLEAR_SCREEN_CLI_FLAG: OnceLock<bool> = OnceLock::new();
+
+/// Compares like [`HashTable`] keys, which are ASCII case-insensitive on Windows.
+fn is_ipc_channel_key(key: &[u8]) -> bool {
+    const KEYS: [&[u8]; 2] = [b"NODE_CHANNEL_FD", b"NODE_CHANNEL_SERIALIZATION_MODE"];
+    KEYS.iter().any(|&k| {
+        if cfg!(windows) {
+            strings::eql_case_insensitive_ascii(key, k, true)
+        } else {
+            strings::eql(key, k)
+        }
+    })
+}
 
 impl Loader {
     /// Shared "empty-ish" predicate for proxy env vars: an unset/empty value,
@@ -217,20 +232,15 @@ impl Loader {
         buf: &'b mut PathBuffer,
     ) -> Option<&'b ZStr> {
         // Check NODE or npm_node_execpath env var, but only use it if the file actually exists.
-        // NLL workaround: compute the length in an inner scope so the borrow of `buf` for the
-        // executable check ends before we either return a fresh borrow or fall through to `which`.
-        let env_len = self
+        if let Some(node) = self
             .get(b"NODE")
             .or_else(|| self.get(b"npm_node_execpath"))
             .filter(|n| !n.is_empty() && n.len() < MAX_PATH_BYTES)
-            .map(|node| {
-                buf[..node.len()].copy_from_slice(node);
-                buf[node.len()] = 0;
-                node.len()
-            });
-        if let Some(len) = env_len {
-            if bun_sys::is_executable_file_path(ZStr::from_buf(&buf[..], len)) {
-                return Some(ZStr::from_buf(&buf[..], len));
+        {
+            buf[..node.len()].copy_from_slice(node);
+            let node = ZStr::nul_terminate(buf, node.len());
+            if bun_sys::is_executable_file_path(node) {
+                return Some(node);
             }
         }
 
@@ -536,6 +546,7 @@ impl Loader {
             default_files_loaded: EnumSet::empty(),
             custom_files_loaded: StringSet::new(),
             quiet: false,
+            quiet_loaded_files: false,
             did_load_process: false,
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,
@@ -549,7 +560,23 @@ impl Loader {
             default_files_loaded: EnumSet::empty(),
             custom_files_loaded: self.custom_files_loaded.clone()?,
             quiet: false,
+            quiet_loaded_files: false,
             did_load_process: false,
+            reject_unauthorized: Cell::new(None),
+            aws_credentials: None,
+        })
+    }
+
+    /// Clones the loader for a macro VM. The clone remembers which files `self` loaded, so it only
+    /// reads the ones `self` skipped.
+    pub fn clone_loaded(&self) -> Result<Loader, AllocError> {
+        Ok(Loader {
+            map: self.map.clone_with_allocator()?,
+            default_files_loaded: self.default_files_loaded,
+            custom_files_loaded: self.custom_files_loaded.clone()?,
+            quiet: self.quiet,
+            quiet_loaded_files: self.quiet_loaded_files,
+            did_load_process: self.did_load_process,
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,
         })
@@ -560,15 +587,20 @@ impl Loader {
             return Ok(());
         }
 
-        let environ: &[*const c_char] = bun_sys::environ();
+        // SAFETY: copied below. Bun only calls `setenv` on the main thread, while it starts.
+        let environ = unsafe { bun_sys::environ() };
         self.map.map.ensure_total_capacity(environ.len())?;
-        for &_env in environ {
-            // SAFETY: environ entries are NUL-terminated C strings from the OS
-            let env = unsafe { bun_core::ffi::cstr(_env) }.to_bytes();
+        for entry in environ {
+            let env = entry.to_cstr().to_bytes();
             if let Some(i) = strings::index_of_char(env, b'=') {
                 let key = &env[..i as usize];
                 let value = &env[i as usize + 1..];
                 if !key.is_empty() {
+                    // Child processes don't inherit the IPC fd. `bun run` passes the fd on and
+                    // adds these variables back.
+                    if is_ipc_channel_key(key) {
+                        continue;
+                    }
                     self.map.put(key, value)?;
                 }
             } else {
@@ -619,7 +651,7 @@ impl Loader {
             }
         }
 
-        if !self.quiet && self.loaded_count() > loaded_before {
+        if !self.quiet && !self.quiet_loaded_files && self.loaded_count() > loaded_before {
             self.print_loaded(start);
         }
         Ok(())
@@ -1290,32 +1322,10 @@ pub struct Map {
 }
 
 impl Map {
-    /// Builds a NULL-terminated `K=V\0` envp array. Returns an owning struct so
-    /// dropping it frees the joined buffers (PORTING.md §Forbidden: no Box::leak).
-    pub fn create_null_delimited_env_map(&mut self) -> Result<NullDelimitedEnvMap, AllocError> {
-        let envp_count = self.map.count();
-        let mut storage: Vec<Box<[u8]>> = Vec::with_capacity(envp_count);
-        let mut envp_buf: Vec<*const c_char> = Vec::with_capacity(envp_count + 1);
-        {
-            let mut it = self.map.iterator();
-            while let Some(pair) = it.next() {
-                let klen = pair.key_ptr.len();
-                let vlen = pair.value_ptr.value.len();
-                let mut env_buf = vec![0u8; klen + vlen + 2].into_boxed_slice();
-                env_buf[..klen].copy_from_slice(pair.key_ptr);
-                env_buf[klen] = b'=';
-                env_buf[klen + 1..klen + 1 + vlen].copy_from_slice(&pair.value_ptr.value);
-                // env_buf[klen + 1 + vlen] = 0; (already zero-initialized)
-                envp_buf.push(env_buf.as_ptr().cast::<c_char>());
-                storage.push(env_buf);
-            }
-            debug_assert!(envp_buf.len() == envp_count);
-        }
-        envp_buf.push(core::ptr::null()); // sentinel
-        Ok(NullDelimitedEnvMap {
-            _storage: storage,
-            envp: envp_buf.into_boxed_slice(),
-        })
+    /// Builds a NULL-terminated `K=V\0` envp array.
+    pub fn to_envp(&self) -> CStringList {
+        let entries = (self.map.iter()).map(|(key, value)| [&**key, b"=", &value.value]);
+        CStringList::from_parts(entries)
     }
 
     /// Build a heap-allocated Windows environment block suitable for
@@ -1454,40 +1464,30 @@ impl Map {
             map: self.map.clone()?,
         })
     }
-}
 
-/// Owns the `K=V\0` strings backing a NULL-terminated envp array.
-/// Dropping this frees every entry (PORTING.md §Forbidden: no Box::leak).
-///
-/// LAYOUT NOTE: `envp` stores raw `*const c_char` (with a trailing
-/// `ptr::null()` sentinel), **not** `Option<*const c_char>`. Raw pointers are
-/// already nullable, so `Option<*const T>` is *not* niche-optimized — it is a
-/// 2-word `(tag, ptr)` pair. Casting `*const Option<*const c_char>` to
-/// `*const *const c_char` for `execve()` interleaves `Some`-discriminant
-/// `0x1` words between the real pointers and the kernel faults with `EFAULT`.
-/// The correct FFI representation is `*const c_char`, not
-/// `Option<*const c_char>`.
-pub struct NullDelimitedEnvMap {
-    _storage: Vec<Box<[u8]>>,
-    envp: Box<[*const c_char]>,
-}
-
-impl NullDelimitedEnvMap {
-    /// `[:null]?[*:0]const u8` — last element is `ptr::null()`.
-    #[inline]
-    pub fn as_slice(&self) -> &[*const c_char] {
-        &self.envp
-    }
-    /// Raw `*const ?[*:0]const u8` for FFI (`envp`-style).
-    #[inline]
-    pub fn as_ptr(&self) -> *const *const c_char {
-        self.envp.as_ptr()
-    }
-    /// The `KEY=VALUE` entries as C strings.
-    pub fn iter(&self) -> impl Iterator<Item = &core::ffi::CStr> {
-        self._storage.iter().map(|s| {
-            core::ffi::CStr::from_bytes_until_nul(s).expect("entries are built NUL-terminated")
-        })
+    /// The process's own (no `.env`), minus `git rev-parse --local-env-vars` except `GIT_CONFIG*`.
+    pub fn for_git_child() -> Result<Map, AllocError> {
+        const REPOSITORY_VARS: &[&[u8]] = &[
+            b"GIT_DIR",
+            b"GIT_WORK_TREE",
+            b"GIT_IMPLICIT_WORK_TREE",
+            b"GIT_INDEX_FILE",
+            b"GIT_NAMESPACE",
+            b"GIT_OBJECT_DIRECTORY",
+            b"GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            b"GIT_COMMON_DIR",
+            b"GIT_PREFIX",
+            b"GIT_GRAFT_FILE",
+            b"GIT_SHALLOW_FILE",
+            b"GIT_NO_REPLACE_OBJECTS",
+            b"GIT_REPLACE_REF_BASE",
+        ];
+        let mut loader = Loader::init();
+        loader.load_process()?;
+        for key in REPOSITORY_VARS {
+            loader.map.remove(key);
+        }
+        Ok(loader.map)
     }
 }
 

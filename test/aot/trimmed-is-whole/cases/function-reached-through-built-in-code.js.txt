@@ -1,0 +1,57 @@
+const given = process.argv[2] ?? "";
+const callee = function () {};
+function tell(run) {
+  try {
+    console.log(String(run()));
+  } catch (error) {
+    console.log("threw", String(error.name), String(error.code));
+  }
+}
+//// querystring-decode-makes-the-listeners-of-an-emitter
+import { EventEmitter } from "node:events";
+import querystring from "node:querystring";
+const made = querystring.decode("a=b", null, null, { decodeURIComponent: text => (text === "a" ? "_events" : callee) });
+tell(() => EventEmitter.prototype.emit.call(made, "constructor", "return 6 * 7"));
+//// querystring-parse-imported-by-name
+import { EventEmitter } from "node:events";
+import { parse } from "node:querystring";
+const made = parse("a=b", null, null, { decodeURIComponent: text => (text === "a" ? "_events" : callee) });
+tell(() => EventEmitter.prototype.emit.call(made, "constructor", "return 6 * 7"));
+//// the-emit-of-a-stream
+import querystring from "node:querystring";
+import { Readable } from "node:stream";
+const made = querystring.decode("a=b", null, null, { decodeURIComponent: text => (text === "a" ? "_events" : callee) });
+tell(() => Readable.prototype.emit.call(made, "constructor", "return 6 * 7"));
+//// the-headers-of-an-outgoing-message
+import http from "node:http";
+const message = new http.OutgoingMessage();
+message.setHeader("_events", callee);
+tell(() => message.emit.call(message.getHeaders(), "constructor", "return 6 * 7"));
+//// the-headers-of-an-incoming-message
+import http from "node:http";
+const message = new http.IncomingMessage(null);
+message.rawHeaders = ["_events", callee];
+tell(() => message.emit.call(message.headers, "constructor", "return 6 * 7"));
+//// util-_extend-on-an-emitter
+import { EventEmitter } from "node:events";
+import querystring from "node:querystring";
+import util from "node:util";
+const emitter = new EventEmitter();
+util._extend(emitter, querystring.decode("a=b", null, null, { decodeURIComponent: text => (text === "a" ? "_events" : callee) }));
+tell(() => emitter.emit("constructor", "return 6 * 7"));
+//// the-styles-of-util-inspect
+import querystring from "node:querystring";
+import util from "node:util";
+const parent = Reflect.getPrototypeOf(callee);
+util._extend(util.inspect, querystring.decode("a=b", null, null, { decodeURIComponent: text => (text === "a" ? "styles" : parent) }));
+const inspected = {
+  [Symbol.for("nodejs.util.inspect.custom")](depth, options) {
+    return String(options.stylize("return 6 * 7", "constructor")());
+  },
+};
+tell(() => util.inspect(inspected, { colors: true }));
+//// node-http-calls-a-method-of-the-socket
+import http from "node:http";
+callee.writable = true;
+tell(() => http.ClientRequest.prototype._deferToConnect.call({ socket: callee }, "constructor", ["return 6 * 7"]));
+tell(() => http.ClientRequest.prototype._deferToConnect.call({ socket: callee }, "constr" + given + "uctor", ["return 6 * 7"]));

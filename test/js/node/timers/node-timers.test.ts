@@ -1,6 +1,7 @@
 import jsc from "bun:jsc";
 import { describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, isWindows } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import path from "node:path";
 import { clearInterval, clearTimeout, promises, setImmediate, setInterval, setTimeout } from "node:timers";
 import { promisify } from "util";
@@ -33,7 +34,7 @@ it("node.js util.promisify(setTimeout) works", async () => {
 });
 
 it("node.js util.promisify(setInterval) works", async () => {
-  const setInterval = promisify(globalThis.setInterval);
+  const setInterval = promisify(globalThis.setInterval) as unknown as typeof promises.setInterval;
   var runCount = 0;
   const start = performance.now();
   for await (const run of setInterval(1)) {
@@ -46,25 +47,59 @@ it("node.js util.promisify(setInterval) works", async () => {
 });
 
 it("timers expose util.promisify.custom as a lazy accessor without loading node:util first", async () => {
-  // Matches Node's lib/timers.js: an enumerable, non-configurable getter that resolves to timers/promises.
+  // Matches Node's lib/timers.js: an enumerable, non-configurable, getter-only accessor that resolves to
+  // the timers/promises export of the same realm. A strict-mode write and Object.assign throw, a sloppy-mode
+  // write is a no-op. The same probe runs in the main thread and in a worker, before either loads a module.
+  const probe = `const probe = () => {
+    const sym = Symbol.for("nodejs.util.promisify.custom");
+    const timers = [setTimeout, setInterval, setImmediate];
+    const shape = fn => {
+      const d = Object.getOwnPropertyDescriptor(fn, sym);
+      return d && { get: typeof d.get, set: typeof d.set, enumerable: d.enumerable, configurable: d.configurable };
+    };
+    const before = timers.map(shape);
+    // new Function so that the directive is compiled as written, instead of going through the transpiler.
+    const write = (fn, body) => { try { new Function("fn", "sym", body)(fn, sym); return "no throw"; } catch (e) { return e.constructor.name; } };
+    const writes = timers.map(fn => ({
+      strict: write(fn, '"use strict"; fn[sym] = 1;'),
+      sloppy: write(fn, 'fn[sym] = 1;'),
+      assign: write(fn, 'Object.assign(fn, { [sym]: 1 });'),
+    }));
+    // Read after the writes, so this also proves they changed nothing.
+    const tp = require("node:timers/promises");
+    const same = [setTimeout[sym] === tp.setTimeout, setInterval[sym] === tp.setInterval, setImmediate[sym] === tp.setImmediate];
+    return { before, writes, same };
+  };`;
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
-      `const sym = Symbol.for("nodejs.util.promisify.custom");
-       const shape = fn => { const d = Object.getOwnPropertyDescriptor(fn, sym); return d && { get: typeof d.get, set: typeof d.set, enumerable: d.enumerable, configurable: d.configurable }; };
-       const before = [setTimeout, setInterval, setImmediate].map(shape);
-       const tp = require("node:timers/promises");
-       const same = [setTimeout[sym] === tp.setTimeout, setInterval[sym] === tp.setInterval, setImmediate[sym] === tp.setImmediate];
-       console.log(JSON.stringify({ before, same }));`,
+      `${probe}
+       const main = probe();
+       const { Worker } = require("node:worker_threads");
+       const worker = new Worker(${JSON.stringify(probe)} + 'require("node:worker_threads").parentPort.postMessage(probe());', {
+         eval: true,
+       });
+       let inWorker;
+       worker.once("message", result => { inWorker = result; });
+       worker.once("exit", workerExitCode => {
+         console.log(JSON.stringify({ main, inWorker, workerExitCode }));
+       });`,
     ],
     env: bunEnv,
     stdout: "pipe",
-    stderr: "inherit",
+    stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   const accessor = { get: "function", set: "undefined", enumerable: true, configurable: false };
-  expect(JSON.parse(stdout)).toEqual({ before: [accessor, accessor, accessor], same: [true, true, true] });
+  const rejected = { strict: "TypeError", sloppy: "no throw", assign: "TypeError" };
+  const expected = {
+    before: [accessor, accessor, accessor],
+    writes: [rejected, rejected, rejected],
+    same: [true, true, true],
+  };
+  expect(JSON.parse(stdout)).toEqual({ main: expected, inWorker: expected, workerExitCode: 0 });
   expect(exitCode).toBe(0);
 });
 
@@ -84,7 +119,7 @@ it("timers.promises === timers/promises", async () => {
   expect(ns.default).toBe(promises);
 });
 
-type TimerWithDestroyed = Timer & { _destroyed: boolean };
+type TimerWithDestroyed = NodeJS.Timeout & NodeJS.Immediate & { _destroyed: boolean };
 
 describe("_destroyed", () => {
   it("is false by default", () => {
@@ -193,8 +228,8 @@ describe("clear", () => {
   it("interval/timeout do not affect immediates", async () => {
     const mockedCb = mock();
     const immediate = setImmediate(mockedCb);
-    clearTimeout(immediate);
-    clearInterval(immediate);
+    clearTimeout(immediate as any);
+    clearInterval(immediate as any);
 
     await Bun.sleep(1);
     expect(mockedCb).toHaveBeenCalledTimes(1);
@@ -240,6 +275,70 @@ describe("clear", () => {
     // make sure we succeeded in making a UTF-16 string
     expect(jsc.jscDescribe(stringIdUtf16)).toContain("8Bit:(0)");
     clearTimeout(stringIdUtf16);
+  });
+});
+
+/** What `script` printed by the time its process ended by itself. */
+async function runToExit(script: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // A test that times out does not end its child.
+    timeout: 20_000,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+}
+const printed = (stdout: string) => ({ stdout: stdout + "\n", stderr: "", exitCode: 0, signalCode: null });
+
+describe.concurrent("Immediate.ref() holds the event loop only while the immediate is queued", () => {
+  it.each([
+    ["unref() and ref() in the callback", "const i = setImmediate(() => report(i.unref().ref()));"],
+    [
+      "process.unref() and process.ref() in the callback",
+      "const i = setImmediate(() => { process.unref(i); process.ref(i); report(i); });",
+    ],
+    [
+      "unref() in the queue, ref() in the callback",
+      "const i = setImmediate(() => report(i.ref())).unref(); setImmediate(() => {});",
+    ],
+    [
+      "ref() after the queue dropped it",
+      `const i = setImmediate(() => {}).unref(); process.once("beforeExit", () => report(i.ref()));`,
+    ],
+  ])("%s", async (_, script) => {
+    // The global keeps the collector from releasing a ref that leaked.
+    const report = `function report(i) { console.log((globalThis.kept = i).hasRef()); }`;
+    expect(await runToExit(report + script)).toEqual(printed("false"));
+  });
+
+  it("unref() and ref() in the queue", async () => {
+    const script = `
+      const i = setImmediate(() => console.log("ran"));
+      console.log("after unref:", i.unref().hasRef());
+      console.log("after ref:", i.ref().hasRef());`;
+    expect(await runToExit(script)).toEqual(printed("after unref: false\nafter ref: true\nran"));
+  });
+});
+
+describe.concurrent("writes to _repeat, _onTimeout and _idleTimeout in the first callback", () => {
+  it.each([
+    {
+      set: "setTimeout",
+      writes: "t._repeat = 1; t._onTimeout = null; clearTimeout(t); t._onTimeout = callback",
+      fires: 2,
+    },
+    { set: "setInterval", writes: "t._idleTimeout = undefined; t._repeat = null; t.refresh()", fires: 1 },
+    { set: "setInterval", writes: "t._idleTimeout = undefined; t.refresh(); t._repeat = null", fires: 1 },
+  ])("$set: $writes", async ({ set, writes, fires }) => {
+    const script = `
+      let fires = 0;
+      const callback = () => { if (++fires === 1) { ${writes} } else clearTimeout(t); };
+      const t = ${set}(callback, 1);
+      process.on("exit", () => console.log(fires));`;
+    expect(await runToExit(script)).toEqual(printed(String(fires)));
   });
 });
 
@@ -316,6 +415,45 @@ describe("_idleStart", () => {
   });
 });
 
+it.each([
+  ["Timeout", () => setTimeout(() => {}, 1000)],
+  ["Immediate", () => setImmediate(() => {})],
+] as const)("new %s() throws", (name, create) => {
+  using timer = create();
+  expect(timer.constructor.name).toBe(name);
+  // @ts-expect-error
+  expect(() => new timer.constructor()).toThrow(
+    expect.objectContaining({ name: "TypeError", code: "ERR_ILLEGAL_CONSTRUCTOR", message: "Illegal constructor" }),
+  );
+});
+
+describe("symbol-keyed methods", () => {
+  const timeout = setTimeout(() => {}, 1000);
+  const immediate = setImmediate(() => {});
+  clearTimeout(timeout);
+  clearImmediate(immediate);
+
+  it.each([
+    ["Timeout", Symbol.dispose, timeout],
+    ["Timeout", Symbol.toPrimitive, timeout],
+    ["Immediate", Symbol.dispose, immediate],
+    // Not in Node.
+    ["Immediate", Symbol.toPrimitive, immediate],
+  ] as const)(
+    "%s.prototype[%p] has no name and no parameters, and is writable, configurable and not enumerable",
+    (name, symbol, timer) => {
+      const { value, ...attributes } = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(timer), symbol)!;
+      expect({ name: value.name, length: value.length, ...attributes }).toEqual({
+        name: "",
+        length: 0,
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      });
+    },
+  );
+});
+
 describe.each(["with", "without"])("setImmediate %s timers running", mode => {
   // TODO(@190n) #17901 did not fix this for Windows
   it.todoIf(isWindows && mode == "with")(
@@ -340,4 +478,87 @@ describe.each(["with", "without"])("setImmediate %s timers running", mode => {
 
 it("should defer microtasks when an exception is thrown in an immediate", async () => {
   expect(await bunRun(["run", path.join(import.meta.dir, "timers-immediate-exception-fixture.js")])).toSpawn();
+});
+
+it("a promise assigned to _onTimeout resolves to undefined, not the timer's arguments", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const results = [];
+        const thenable = { get then() { results.push("then was read"); } };
+        for (const args of [[], [1], [thenable], [1, 2], [1, 2, 3]]) {
+          const { promise } = Promise.withResolvers();
+          setTimeout(() => {}, 1, ...args)._onTimeout = promise;
+          const value = await promise;
+          results.push(Object.prototype.toString.call(value));
+        }
+        console.log(results.join());
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: Array(5).fill("[object Undefined]").join() + "\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+it("_onTimeout is the callback inside AsyncLocalStorage.run()", () => {
+  const callback = () => {};
+  const timer = new AsyncLocalStorage().run(1, () => setTimeout(callback, 100_000, 1, 2));
+  try {
+    expect((timer as any)._onTimeout).toBe(callback);
+  } finally {
+    clearTimeout(timer);
+  }
+});
+
+it("timers/promises clears its timers with the globals that were there when it set them", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const live = new Set();
+        const set = () => {
+          const timer = { ref: () => timer, unref: () => timer, hasRef: () => true };
+          live.add(timer);
+          return timer;
+        };
+        const clear = timer => void live.delete(timer);
+        Object.assign(globalThis, { setTimeout: set, setInterval: set, setImmediate: set });
+        Object.assign(globalThis, { clearTimeout: clear, clearInterval: clear, clearImmediate: clear });
+
+        const promises = require("node:timers/promises");
+        const counts = [];
+        for (const start of [promises.setTimeout, promises.setImmediate]) {
+          const controller = new AbortController();
+          const options = { signal: controller.signal };
+          const aborted = (start === promises.setTimeout ? start(1000, null, options) : start(null, options)).catch(() => {});
+          counts.push(live.size);
+          controller.abort();
+          await aborted;
+          counts.push(live.size);
+        }
+        const iterator = promises.setInterval(1000)[Symbol.asyncIterator]();
+        iterator.next();
+        counts.push(live.size);
+        await iterator.return();
+        counts.push(live.size);
+        console.log(counts.join());
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1,0,1,0,1,0\n", stderr: "", exitCode: 0 });
 });

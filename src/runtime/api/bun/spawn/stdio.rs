@@ -1,9 +1,5 @@
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_collections::VecExt;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys::{self as sys, Fd};
 
 // `bun.jsc.WebCore` lives in this crate (not `bun_jsc`); alias so the body can
 // say `webcore::ReadableStream` / `webcore::body::Value`.
@@ -30,16 +26,6 @@ use sys::Stdio as FdStdio;
 // `const log = bun.sys.syslog;`
 bun_output::define_scoped_log!(log, SYS, visible);
 
-/// Payload of `Stdio::Capture`.
-#[derive(Clone, Copy)]
-pub(crate) struct Capture {
-    // BACKREF: raw pointer to a capture buffer owned by the shell interpreter.
-    // The shell keeps the buffer alive for the lifetime
-    // of the spawned process; this struct never frees it.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) buf: *mut Vec<u8>,
-}
-
 /// Payload of `Stdio::Dup2`.
 #[derive(Clone, Copy)]
 pub(crate) struct Dup2 {
@@ -52,14 +38,14 @@ pub(crate) struct Dup2 {
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Stdio {
     Inherit,
-    Capture(Capture),
+    Capture,
     Ignore,
     Fd(Fd),
     Dup2(Dup2),
     Path(PathLike<'static>),
     Blob(webcore::blob::Any),
-    #[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
-    Memfd(Fd),
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    Memfd(sys::File),
     Pipe,
     /// Like `Pipe` at indices >= 3, but the parent end of the socketpair is
     /// stored as `ExtraPipe::UnownedFd` so `Subprocess::finalize_streams`
@@ -105,22 +91,13 @@ impl Stdio {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn byte_slice(&self) -> &[u8] {
         match self {
-            // SAFETY: `buf` is a live backref owned by the caller (shell); the
-            // returned slice borrows `self` and the caller guarantees the
-            // Vec<u8> outlives this Stdio.
-            Self::Capture(c) => unsafe { (*c.buf).slice() },
             Self::Blob(blob) => blob.slice(),
             _ => &[],
         }
     }
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn can_use_memfd(&self) -> bool {
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        {
-            return false;
-        }
-
-        #[cfg(any(target_os = "linux", target_os = "android"))]
         match self {
             Self::Blob(blob) => !blob.needs_to_read_file(),
             Self::Memfd(_) => true,
@@ -130,75 +107,60 @@ impl Stdio {
         }
     }
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn use_memfd(&mut self, index: u32) -> bool {
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        {
-            let _ = index;
+        use crate::api::bun_process::spawn_sys;
+        if !spawn_sys::can_use_memfd() {
             return false;
         }
+        let label: &core::ffi::CStr = match index {
+            0 => c"spawn_stdio_stdin",
+            1 => c"spawn_stdio_stdout",
+            2 => c"spawn_stdio_stderr",
+            _ => c"spawn_stdio_memory_file",
+        };
 
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            use crate::api::bun_process::spawn_sys;
-            if !spawn_sys::can_use_memfd() {
-                return false;
-            }
-            let label: &core::ffi::CStr = match index {
-                0 => c"spawn_stdio_stdin",
-                1 => c"spawn_stdio_stdout",
-                2 => c"spawn_stdio_stderr",
-                _ => c"spawn_stdio_memory_file",
-            };
+        let Ok(fd) = spawn_sys::memfd_create(label.into(), spawn_sys::MemfdFlag::CrossProcess)
+        else {
+            return false;
+        };
+        let memfd = sys::File::from_fd(fd);
 
-            let fd = match spawn_sys::memfd_create(label, spawn_sys::MemfdFlag::CrossProcess) {
-                Ok(fd) => fd,
-                Err(_) => return false,
-            };
+        let mut remain = self.byte_slice();
 
-            let mut remain = self.byte_slice();
+        if !remain.is_empty() {
+            // Hint at the size of the file
+            let _ = sys::ftruncate(fd, i64::try_from(remain.len()).expect("int cast"));
+        }
 
-            if !remain.is_empty() {
-                // Hint at the size of the file
-                let _ = sys::ftruncate(fd, i64::try_from(remain.len()).expect("int cast"));
-            }
+        // Dump all the bytes in there
+        let mut written: i64 = 0;
+        while !remain.is_empty() {
+            match sys::pwrite(fd, remain, written) {
+                Err(err) => {
+                    if err.get_errno() == sys::E::EAGAIN {
+                        continue;
+                    }
 
-            // Dump all the bytes in there
-            let mut written: i64 = 0;
-            while !remain.is_empty() {
-                match sys::pwrite(fd, remain, written) {
-                    Err(err) => {
-                        if err.get_errno() == sys::E::EAGAIN {
-                            continue;
-                        }
-
-                        bun_core::debug_warn!(
-                            "Failed to write to memfd: {}",
-                            bstr::BStr::new(err.name()),
-                        );
-                        fd.close();
+                    bun_core::debug_warn!(
+                        "Failed to write to memfd: {}",
+                        bstr::BStr::new(err.name()),
+                    );
+                    return false;
+                }
+                Ok(result) => {
+                    if result == 0 {
+                        bun_core::debug_warn!("Failed to write to memfd: EOF");
                         return false;
                     }
-                    Ok(result) => {
-                        if result == 0 {
-                            bun_core::debug_warn!("Failed to write to memfd: EOF");
-                            fd.close();
-                            return false;
-                        }
-                        written += i64::try_from(result).expect("int cast");
-                        remain = &remain[result..];
-                    }
+                    written += i64::try_from(result).expect("int cast");
+                    remain = &remain[result..];
                 }
             }
-
-            // Note: reshaped for borrowck — `remain` borrows `*self`, so we
-            // must drop it before mutating `self`. Shadowing ends the borrow here.
-            let _ = remain;
-
-            // Assigning to `*self` drops the previous variant via `Drop`
-            // (and closes a prior `.memfd`).
-            *self = Stdio::Memfd(fd);
-            true
         }
+
+        *self = Stdio::Memfd(memfd);
+        true
     }
 
     pub(crate) fn to_sync(&mut self, i: u32) {
@@ -208,30 +170,7 @@ impl Stdio {
         }
     }
 
-    /// On windows this function allocates a `*mut uv::Pipe` (via `heap::alloc`);
-    /// the caller must transfer ownership (e.g. into `WindowsStdioResult::Buffer`
-    /// via `heap::take`) or free it with `close_and_destroy`.
     pub(crate) fn as_spawn_option(&mut self, i: i32) -> Result {
-        // `SpawnOptionsStdio` is already a cfg-gated alias to PosixStdio /
-        // WindowsStdio; only three variant *constructors* differ in arity
-        // between targets, so spell those per-cfg and share the rest.
-        #[cfg(not(windows))]
-        fn buffer() -> SpawnOptionsStdio {
-            SpawnOptionsStdio::Buffer
-        }
-        #[cfg(windows)]
-        fn buffer() -> SpawnOptionsStdio {
-            SpawnOptionsStdio::Buffer(create_zeroed_pipe())
-        }
-        #[cfg(not(windows))]
-        fn ipc() -> SpawnOptionsStdio {
-            SpawnOptionsStdio::Ipc
-        }
-        #[cfg(windows)]
-        fn ipc() -> SpawnOptionsStdio {
-            SpawnOptionsStdio::Ipc(create_zeroed_pipe())
-        }
-
         let result = match self {
             Self::Blob(blob) => 'brk: {
                 let fd = FdStdio::from_int(i).map(FdStdio::fd);
@@ -279,25 +218,23 @@ impl Stdio {
                     return ResultT::Err(ToSpawnOptsError::BlobUsedAsOut);
                 }
 
-                buffer()
+                SpawnOptionsStdio::Buffer
             }
             Self::Dup2(d) => SpawnOptionsStdio::Dup2(ProcessDup2 {
                 out: d.out,
                 to: d.to,
             }),
-            Self::Capture(_) | Self::Pipe | Self::ReadableStream(_) => buffer(),
+            Self::Capture | Self::Pipe | Self::ReadableStream(_) => SpawnOptionsStdio::Buffer,
             #[cfg(not(windows))]
             Self::SocketFd => SpawnOptionsStdio::SocketFd,
             // Windows extra-stdio is a libuv pipe handle (no raw-fd ownership
             // to transfer), so `socket-fd` behaves identically to `pipe` there.
             #[cfg(windows)]
-            Self::SocketFd => buffer(),
-            Self::Ipc => ipc(),
+            Self::SocketFd => SpawnOptionsStdio::Buffer,
+            Self::Ipc => SpawnOptionsStdio::Ipc,
             Self::Fd(fd) => SpawnOptionsStdio::Pipe(*fd),
-            #[cfg(not(windows))]
-            Self::Memfd(fd) => SpawnOptionsStdio::Pipe(*fd),
-            #[cfg(windows)]
-            Self::Memfd(_) => panic!("This should never happen"),
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            Self::Memfd(memfd) => SpawnOptionsStdio::Pipe(memfd.handle()),
             Self::Path(pathlike) => {
                 SpawnOptionsStdio::Path(pathlike.slice().to_vec().into_boxed_slice())
             }
@@ -309,15 +246,10 @@ impl Stdio {
 
     pub(crate) fn is_piped(&self) -> bool {
         match self {
-            Self::Capture(_) | Self::Blob(_) | Self::Pipe | Self::ReadableStream(_) => true,
+            Self::Capture | Self::Blob(_) | Self::Pipe | Self::ReadableStream(_) => true,
             Self::Ipc => cfg!(windows),
             _ => false,
         }
-    }
-
-    #[cfg(not(windows))]
-    pub(crate) fn borrows_caller_fd(&self) -> bool {
-        matches!(self, Self::Fd(_))
     }
 
     fn extract_body_value(
@@ -505,9 +437,6 @@ impl Stdio {
             *out_stdio = Stdio::Fd(fd);
             return Ok(());
         } else if let Some(blob) = value.as_class_ref::<webcore::Blob>() {
-            // `as_class_ref` is the safe shared-borrow downcast (centralised
-            // deref proof in `JSValue`); the JS wrapper roots the payload while
-            // `value` is on the stack. `dupe()` only bumps the store refcount.
             return out_stdio.extract_blob(cx.global(), webcore::blob::Any::Blob(blob.dupe()), i);
         } else if let Some(req) = value.as_class_ref::<webcore::Request>() {
             return Self::extract_body_value(out_stdio, cx, i, req.get_body_value(), is_sync);
@@ -656,43 +585,4 @@ impl Stdio {
         *self = Stdio::Blob(blob);
         Ok(())
     }
-}
-
-impl Stdio {
-    /// Move the memfd out (ownership passes to the caller); `self` becomes `Ignore`.
-    pub(crate) fn take_memfd(&mut self) -> Option<Fd> {
-        let Stdio::Memfd(fd) = *self else { return None };
-        // Don't run Drop on the old value: it would close `fd`.
-        let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Stdio::Ignore));
-        Some(fd)
-    }
-}
-
-impl Drop for Stdio {
-    fn drop(&mut self) {
-        match self {
-            Self::Blob(blob) => {
-                blob.detach();
-            }
-            Self::Memfd(fd) => {
-                fd.close();
-            }
-            Self::ReadableStream(_) => {
-                // ReadableStream cleanup is handled by the subprocess
-            }
-            _ => {}
-        }
-    }
-}
-
-/// Allocate a zero-initialized uv.Pipe. Zero-init ensures `pipe.loop` is null
-/// for pipes that never reach `uv_pipe_init`, so `closeAndDestroy` can tell
-/// whether `uv_close` is needed.
-#[cfg(windows)]
-fn create_zeroed_pipe() -> *mut uv::Pipe {
-    // `bun.new` → heap::alloc(Box::new(..)). WindowsSpawnOptions.Stdio.{buffer,ipc}
-    // store the pipe as a raw FFI-owned `*mut uv::Pipe` so `spawn_process_windows`
-    // can transfer sole ownership into `WindowsStdioResult::Buffer` via
-    // `heap::take` without aliasing a live `Box` (which would double-free).
-    bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()))
 }

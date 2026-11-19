@@ -3,7 +3,9 @@ use core::ptr::NonNull;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue, JsResult, VM, host_fn};
+use bun_core::ffi::FfiSlice;
 use bun_core::{EncodedSlice, String as BunString, StringPointer};
+use bun_http_types::ETag::{HeaderEntryColumns as _, Headers};
 use bun_uws::ResponseKind;
 
 bun_opaque::opaque_ffi! {
@@ -27,26 +29,27 @@ unsafe extern "C" {
         arg1: &JSGlobalObject,
     ) -> *mut FetchHeaders;
     fn WebCore__FetchHeaders__copyTo(
-        arg0: *mut FetchHeaders,
+        arg0: &FetchHeaders,
         arg1: *mut StringPointer,
         arg2: *mut StringPointer,
-        arg3: *mut u8,
+        arg3: u32,
+        arg4: *mut u8,
+        arg5: u32,
     );
-    safe fn WebCore__FetchHeaders__count(arg0: &FetchHeaders, arg1: &mut u32, arg2: &mut u32);
+    safe fn WebCore__FetchHeaders__count(
+        arg0: &FetchHeaders,
+        arg1: &mut u32,
+        arg2: &mut u32,
+    ) -> bool;
     safe fn WebCore__FetchHeaders__createEmpty() -> *mut FetchHeaders;
-    // safe: `arg0`/`arg1` are opaque handles to C++-owned request structs
-    // (PicoHeaders / uWS HttpRequest); never dereferenced as Rust data — same
-    // round-trip contract as `Zig__GlobalObject__resetModuleRegistryMap`.
-    safe fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: *const c_void)
-    -> *mut FetchHeaders;
-    safe fn WebCore__FetchHeaders__createFromUWS(arg1: *mut c_void) -> *mut FetchHeaders;
-    fn WebCore__FetchHeaders__createValueNotJS(
-        arg0: *const JSGlobalObject,
-        arg1: *mut StringPointer,
-        arg2: *mut StringPointer,
-        arg3: *const EncodedSlice,
-        arg4: u32,
+    // safe: C++ asserts that `names` and `values` pair up and lie within `buf`.
+    safe fn WebCore__FetchHeaders__createFromHeaders(
+        names: FfiSlice<'_, StringPointer>,
+        values: FfiSlice<'_, StringPointer>,
+        buf: FfiSlice<'_>,
     ) -> *mut FetchHeaders;
+    // safe: `arg1` is an opaque handle to a C++-owned uWS HttpRequest, never dereferenced here.
+    safe fn WebCore__FetchHeaders__createFromUWS(arg1: *mut c_void) -> *mut FetchHeaders;
     // safe: `FetchHeaders` is an `opaque_ffi!` ZST handle; `&mut` is ABI-identical
     // to a non-null `*mut` and the C++ refcount decrement is interior to the cell.
     safe fn WebCore__FetchHeaders__deref(arg0: &mut FetchHeaders);
@@ -69,6 +72,11 @@ unsafe extern "C" {
         kind: ResponseKind,
         arg2: *mut c_void,
     );
+    safe fn WebCore__FetchHeaders__toUWSResponseForWebSocketUpgrade(
+        arg0: &mut FetchHeaders,
+        ssl: bool,
+        arg1: *mut c_void,
+    );
     safe fn WebCore__FetchHeaders__createFromH3(arg0: *mut c_void) -> *mut FetchHeaders;
 
     safe fn WebCore__FetchHeaders__createFromJS(
@@ -82,12 +90,6 @@ unsafe extern "C" {
         value: &BunString,
         global: &JSGlobalObject,
     );
-}
-
-#[repr(C)]
-struct PicoHeaders {
-    ptr: *const c_void,
-    len: usize,
 }
 
 // The 4 forwarding wrappers below pass *mut StringPointer/*mut u8 straight to
@@ -126,21 +128,6 @@ impl FetchHeaders {
         self.put(name_, value, global)
     }
 
-    /// `fill` validates every name/value pair and throws on an invalid one.
-    pub fn create(
-        global: &JSGlobalObject,
-        names: *mut StringPointer,
-        values: *mut StringPointer,
-        buf: &EncodedSlice,
-        count_: u32,
-    ) -> JsResult<NonNull<FetchHeaders>> {
-        // SAFETY: forwarding caller-provided buffers to C++; `global` is an opaque ZST handle
-        // passed by address only.
-        crate::call_null_is_throw(global, || unsafe {
-            WebCore__FetchHeaders__createValueNotJS(global, names, values, buf, count_)
-        })
-    }
-
     pub fn is_empty(&mut self) -> bool {
         WebCore__FetchHeaders__isEmpty(self)
     }
@@ -159,21 +146,23 @@ impl FetchHeaders {
         WebCore__FetchHeaders__toUWSResponse(self, kind, uws_response)
     }
 
+    /// For the 101 response of an HTTP/1 WebSocket upgrade. Skips headers that `upgrade()` writes.
+    pub fn to_uws_response_for_websocket_upgrade(&mut self, ssl: bool, uws_response: *mut c_void) {
+        WebCore__FetchHeaders__toUWSResponseForWebSocketUpgrade(self, ssl, uws_response)
+    }
+
     pub fn create_empty() -> NonNull<FetchHeaders> {
         NonNull::new(WebCore__FetchHeaders__createEmpty())
             .expect("WebCore__FetchHeaders__createEmpty returned null")
     }
 
-    pub fn create_from_pico_headers<T>(pico_headers_list: &[T]) -> NonNull<FetchHeaders> {
-        let out = PicoHeaders {
-            ptr: pico_headers_list.as_ptr().cast::<c_void>(),
-            len: pico_headers_list.len(),
-        };
-        // `out` lives across the call; C++ copies the headers synchronously.
-        NonNull::new(WebCore__FetchHeaders__createFromPicoHeaders_(
-            std::ptr::from_ref(&out).cast::<c_void>(),
+    pub fn create_from_headers(headers: &Headers) -> NonNull<FetchHeaders> {
+        NonNull::new(WebCore__FetchHeaders__createFromHeaders(
+            headers.entries.items_name().into(),
+            headers.entries.items_value().into(),
+            headers.buf.as_slice().into(),
         ))
-        .expect("WebCore__FetchHeaders__createFromPicoHeaders_ returned null")
+        .expect("WebCore__FetchHeaders__createFromHeaders returned null")
     }
 
     /// `value`'s tag carries its encoding, and a `WTFStringImpl`-tagged value
@@ -225,7 +214,7 @@ impl FetchHeaders {
         Some(str)
     }
 
-    pub fn fast_has_(&mut self, name_: u8) -> bool {
+    pub fn fast_has_(&self, name_: u8) -> bool {
         WebCore__FetchHeaders__fastHas_(self, name_)
     }
 
@@ -256,8 +245,11 @@ impl FetchHeaders {
         WebCore__FetchHeaders__toJS(self, global_this)
     }
 
-    pub fn count(&mut self, names: &mut u32, buf_len: &mut u32) {
-        WebCore__FetchHeaders__count(self, names, buf_len)
+    /// Returns the header count and the total size of all names and values in bytes, or `None` if
+    /// the size exceeds `u32::MAX`.
+    pub fn count(&self) -> Option<(u32, u32)> {
+        let (mut names, mut buf_len) = (0, 0);
+        WebCore__FetchHeaders__count(self, &mut names, &mut buf_len).then_some((names, buf_len))
     }
 
     pub fn clone_this(
@@ -273,9 +265,27 @@ impl FetchHeaders {
         WebCore__FetchHeaders__deref(self)
     }
 
-    pub fn copy_to(&mut self, names: *mut StringPointer, values: *mut StringPointer, buf: *mut u8) {
-        // SAFETY: caller guarantees names/values/buf are sized per a prior `count()` call
-        unsafe { WebCore__FetchHeaders__copyTo(self, names, values, buf) }
+    /// Aborts if `names`, `values` or `buf` is smaller than what `count()` reported.
+    pub fn copy_to(
+        &self,
+        names: &mut [StringPointer],
+        values: &mut [StringPointer],
+        buf: &mut [u8],
+    ) {
+        // Clamping a longer slice is fine because C++ writes at most `u32::MAX` entries or bytes.
+        let columns = u32::try_from(names.len().min(values.len())).unwrap_or(u32::MAX);
+        let buf_len = u32::try_from(buf.len()).unwrap_or(u32::MAX);
+        // SAFETY: C++ asserts that it writes at most `columns` entries and `buf_len` bytes.
+        unsafe {
+            WebCore__FetchHeaders__copyTo(
+                self,
+                names.as_mut_ptr(),
+                values.as_mut_ptr(),
+                columns,
+                buf.as_mut_ptr(),
+                buf_len,
+            )
+        }
     }
 }
 

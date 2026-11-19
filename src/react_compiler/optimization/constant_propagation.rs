@@ -26,15 +26,16 @@
 
 use crate::collections::IdMap;
 use crate::diagnostics::JsString;
+use crate::hir::assert_terminal_blocks_exist::assert_terminal_successors_exist;
 use crate::hir::cfg_utils::{
-    get_reverse_postordered_blocks, mark_instruction_ids, mark_predecessors,
-    remove_dead_do_while_statements, remove_unnecessary_try_catch, remove_unreachable_for_updates,
+    mark_instruction_ids, mark_predecessors, remove_dead_do_while_statements,
+    remove_unnecessary_try_catch, remove_unreachable_for_updates, reverse_postorder_blocks,
 };
 use crate::hir::environment::Environment;
 use crate::hir::{
     BinaryOperator, BlockKind, FloatValue, FunctionId, GotoVariant, HirFunction, IdentifierId,
-    InstructionValue, NonLocalBinding, Phi, Place, PrimitiveValue, PropertyLiteral, SourceLocation,
-    Terminal, UnaryOperator, UpdateOperator, format_js_number,
+    Instruction, InstructionValue, NonLocalBinding, Phi, Place, PrimitiveValue, PropertyLiteral,
+    SourceLocation, Terminal, UnaryOperator, UpdateOperator,
 };
 use crate::ssa::enter_ssa::placeholder_function;
 
@@ -85,6 +86,10 @@ fn constant_propagation_impl(
     env: &mut Environment,
     constants: &mut Constants,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     loop {
         let have_terminals_changed = apply_constant_propagation(func, env, constants);
         if !have_terminals_changed {
@@ -94,7 +99,9 @@ fn constant_propagation_impl(
          * If terminals have changed then blocks may have become newly unreachable.
          * Re-run minification of the graph (incl reordering instruction ids)
          */
-        func.body.blocks = get_reverse_postordered_blocks(&func.body, &func.instructions);
+        if let Err(invariant) = reverse_postorder_blocks(&mut func.body) {
+            return env.record_diagnostic(invariant);
+        }
         remove_unreachable_for_updates(&mut func.body);
         remove_dead_do_while_statements(&mut func.body);
         remove_unnecessary_try_catch(&mut func.body);
@@ -119,11 +126,16 @@ fn constant_propagation_impl(
          * Finally, merge together any blocks that are now guaranteed to execute
          * consecutively
          */
-        merge_consecutive_blocks(func, &mut env.functions);
+        if let Err(invariant) = merge_consecutive_blocks(func, &mut env.functions) {
+            env.record_diagnostic(invariant);
+            break;
+        }
 
-        // TODO: port assertConsistentIdentifiers(fn) and assertTerminalSuccessorsExist(fn)
-        // from TS HIR validation. These are debug assertions that verify structural
-        // invariants after the CFG cleanup helpers run.
+        // TODO: port assertConsistentIdentifiers(fn).
+        if let Err(invariant) = assert_terminal_successors_exist(func) {
+            env.record_diagnostic(invariant);
+            break;
+        }
     }
 }
 
@@ -134,10 +146,8 @@ fn apply_constant_propagation(
 ) -> bool {
     let mut has_changes = false;
 
-    let block_ids: Vec<_> = func.body.blocks.keys().copied().collect();
-    for block_id in block_ids {
-        let block = &func.body.blocks[&block_id];
-
+    let instructions = &mut func.instructions;
+    for block in func.body.blocks.values_mut() {
         // Initialize phi values if all operands have the same known constant value
         let phi_updates: Vec<(IdentifierId, Constant)> = block
             .phis
@@ -151,27 +161,23 @@ fn apply_constant_propagation(
             constants.insert(id, value);
         }
 
-        let block = &func.body.blocks[&block_id];
-        let instr_ids = block.instructions.clone();
-        let block_kind = block.kind;
-        let instr_count = instr_ids.len();
+        let instr_count = block.instructions.len();
 
-        for (i, instr_id) in instr_ids.iter().enumerate() {
-            if block_kind == BlockKind::Sequence && i == instr_count - 1 {
+        for (i, instr_id) in block.instructions.iter().enumerate() {
+            if block.kind == BlockKind::Sequence && i == instr_count - 1 {
                 /*
                  * evaluating the last value of a value block can break order of evaluation,
                  * skip these instructions
                  */
                 continue;
             }
-            let result = evaluate_instruction(constants, func, env, *instr_id);
+            let instr = &mut instructions[instr_id.0 as usize];
+            let result = evaluate_instruction(constants, instr, env);
             if let Some(value) = result {
-                let lvalue_id = func.instructions[instr_id.0 as usize].lvalue.identifier;
-                constants.insert(lvalue_id, value);
+                constants.insert(instr.lvalue.identifier, value);
             }
         }
 
-        let block = &func.body.blocks[&block_id];
         match &block.terminal {
             Terminal::If {
                 test,
@@ -182,10 +188,7 @@ fn apply_constant_propagation(
                 ..
             } => {
                 let test_value = read(constants, test);
-                if let Some(Constant::Primitive {
-                    value: ref prim, ..
-                }) = test_value
-                {
+                if let Some(Constant::Primitive { value: prim, .. }) = test_value {
                     has_changes = true;
                     let target_block_id = if is_truthy(prim) {
                         *consequent
@@ -198,7 +201,7 @@ fn apply_constant_propagation(
                         id: *id,
                         loc: *loc,
                     };
-                    func.body.blocks.get_mut(&block_id).unwrap().terminal = terminal;
+                    block.terminal = terminal;
                 }
             }
             Terminal::Unsupported { .. }
@@ -278,11 +281,9 @@ fn evaluate_phi(phi: &Phi, constants: &Constants) -> Option<Constant> {
 
 fn evaluate_instruction(
     constants: &mut Constants,
-    func: &mut HirFunction,
+    instr: &mut Instruction,
     env: &mut Environment,
-    instr_id: crate::hir::InstructionId,
 ) -> Option<Constant> {
-    let instr = &func.instructions[instr_id.0 as usize];
     match &instr.value {
         InstructionValue::Primitive { value, loc } => Some(Constant::Primitive {
             value: value.clone(),
@@ -298,10 +299,7 @@ fn evaluate_instruction(
             loc,
         } => {
             let prop_value = read(constants, property);
-            if let Some(Constant::Primitive {
-                value: ref prim, ..
-            }) = prop_value
-            {
+            if let Some(Constant::Primitive { value: prim, .. }) = prop_value {
                 match prim {
                     PrimitiveValue::String(s) if s.as_bytes().is_some_and(is_valid_identifier) => {
                         let object = object.clone();
@@ -309,23 +307,21 @@ fn evaluate_instruction(
                         let new_property = PropertyLiteral::String(crate::hir::StoreStr::new(
                             bun_ast::data_store_dupe_str(s.as_bytes().expect("guarded")),
                         ));
-                        func.instructions[instr_id.0 as usize].value =
-                            InstructionValue::PropertyLoad {
-                                object,
-                                property: new_property,
-                                loc,
-                            };
+                        instr.value = InstructionValue::PropertyLoad {
+                            object,
+                            property: new_property,
+                            loc,
+                        };
                     }
                     PrimitiveValue::Number(n) => {
                         let object = object.clone();
                         let loc = *loc;
                         let new_property = PropertyLiteral::Number(*n);
-                        func.instructions[instr_id.0 as usize].value =
-                            InstructionValue::PropertyLoad {
-                                object,
-                                property: new_property,
-                                loc,
-                            };
+                        instr.value = InstructionValue::PropertyLoad {
+                            object,
+                            property: new_property,
+                            loc,
+                        };
                     }
                     PrimitiveValue::Null
                     | PrimitiveValue::Undefined
@@ -342,10 +338,7 @@ fn evaluate_instruction(
             loc,
         } => {
             let prop_value = read(constants, property);
-            if let Some(Constant::Primitive {
-                value: ref prim, ..
-            }) = prop_value
-            {
+            if let Some(Constant::Primitive { value: prim, .. }) = prop_value {
                 match prim {
                     PrimitiveValue::String(s) if s.as_bytes().is_some_and(is_valid_identifier) => {
                         let object = object.clone();
@@ -354,26 +347,24 @@ fn evaluate_instruction(
                         let new_property = PropertyLiteral::String(crate::hir::StoreStr::new(
                             bun_ast::data_store_dupe_str(s.as_bytes().expect("guarded")),
                         ));
-                        func.instructions[instr_id.0 as usize].value =
-                            InstructionValue::PropertyStore {
-                                object,
-                                property: new_property,
-                                value: store_value,
-                                loc,
-                            };
+                        instr.value = InstructionValue::PropertyStore {
+                            object,
+                            property: new_property,
+                            value: store_value,
+                            loc,
+                        };
                     }
                     PrimitiveValue::Number(n) => {
                         let object = object.clone();
                         let store_value = value.clone();
                         let loc = *loc;
                         let new_property = PropertyLiteral::Number(*n);
-                        func.instructions[instr_id.0 as usize].value =
-                            InstructionValue::PropertyStore {
-                                object,
-                                property: new_property,
-                                value: store_value,
-                                loc,
-                            };
+                        instr.value = InstructionValue::PropertyStore {
+                            object,
+                            property: new_property,
+                            value: store_value,
+                            loc,
+                        };
                     }
                     PrimitiveValue::Null
                     | PrimitiveValue::Undefined
@@ -446,17 +437,14 @@ fn evaluate_instruction(
         } => match operator {
             UnaryOperator::Not => {
                 let operand = read(constants, value);
-                if let Some(Constant::Primitive {
-                    value: ref prim, ..
-                }) = operand
-                {
+                if let Some(Constant::Primitive { value: prim, .. }) = operand {
                     let negated = !is_truthy(prim);
                     let loc = *loc;
                     let result = Constant::Primitive {
                         value: PrimitiveValue::Boolean(negated),
                         loc,
                     };
-                    func.instructions[instr_id.0 as usize].value = InstructionValue::Primitive {
+                    instr.value = InstructionValue::Primitive {
                         value: PrimitiveValue::Boolean(negated),
                         loc,
                     };
@@ -477,7 +465,7 @@ fn evaluate_instruction(
                         value: PrimitiveValue::Number(FloatValue::new(negated)),
                         loc,
                     };
-                    func.instructions[instr_id.0 as usize].value = InstructionValue::Primitive {
+                    instr.value = InstructionValue::Primitive {
                         value: PrimitiveValue::Number(FloatValue::new(negated)),
                         loc,
                     };
@@ -501,12 +489,12 @@ fn evaluate_instruction(
             if let (
                 Some(Constant::Primitive { value: lhs, .. }),
                 Some(Constant::Primitive { value: rhs, .. }),
-            ) = (&lhs_value, &rhs_value)
+            ) = (lhs_value, rhs_value)
             {
                 let result = evaluate_binary_op(*operator, lhs, rhs);
                 if let Some(ref prim) = result {
                     let loc = *loc;
-                    func.instructions[instr_id.0 as usize].value = InstructionValue::Primitive {
+                    instr.value = InstructionValue::Primitive {
                         value: prim.clone(),
                         loc,
                     };
@@ -525,7 +513,7 @@ fn evaluate_instruction(
         } => {
             let object_value = read(constants, object);
             if let Some(Constant::Primitive {
-                value: PrimitiveValue::String(ref s),
+                value: PrimitiveValue::String(s),
                 ..
             }) = object_value
             {
@@ -538,11 +526,10 @@ fn evaluate_instruction(
                             value: PrimitiveValue::Number(FloatValue::new(len)),
                             loc,
                         };
-                        func.instructions[instr_id.0 as usize].value =
-                            InstructionValue::Primitive {
-                                value: PrimitiveValue::Number(FloatValue::new(len)),
-                                loc,
-                            };
+                        instr.value = InstructionValue::Primitive {
+                            value: PrimitiveValue::Number(FloatValue::new(len)),
+                            loc,
+                        };
                         return Some(result);
                     }
                 }
@@ -565,7 +552,7 @@ fn evaluate_instruction(
                 }
                 let loc = *loc;
                 let value = PrimitiveValue::String(JsString::from_wtf8_bytes(&result));
-                func.instructions[instr_id.0 as usize].value = InstructionValue::Primitive {
+                instr.value = InstructionValue::Primitive {
                     value: value.clone(),
                     loc,
                 };
@@ -587,7 +574,7 @@ fn evaluate_instruction(
             for sub_expr in subexprs {
                 let sub_expr_value = read(constants, sub_expr);
                 let sub_prim = match sub_expr_value {
-                    Some(Constant::Primitive { ref value, .. }) => value,
+                    Some(Constant::Primitive { value, .. }) => value,
                     _ => return None,
                 };
 
@@ -597,7 +584,11 @@ fn evaluate_instruction(
                         result.extend_from_slice(if *b { b"true" } else { b"false" })
                     }
                     PrimitiveValue::Number(n) => {
-                        result.extend_from_slice(format_js_number(n.value()).as_bytes())
+                        let mut buffer = [0; 124];
+                        result.extend_from_slice(bun_core::fmt::FormatDouble::dtoa(
+                            &mut buffer,
+                            n.value(),
+                        ))
                     }
                     PrimitiveValue::String(s) => match s.as_bytes() {
                         Some(b) => result.extend_from_slice(b),
@@ -613,26 +604,21 @@ fn evaluate_instruction(
 
             let loc = *loc;
             let value = PrimitiveValue::String(JsString::from_wtf8_bytes(&result));
-            func.instructions[instr_id.0 as usize].value = InstructionValue::Primitive {
+            instr.value = InstructionValue::Primitive {
                 value: value.clone(),
                 loc,
             };
             Some(Constant::Primitive { value, loc })
         }
         InstructionValue::LoadLocal { place, .. } => {
-            let place_value = read(constants, place);
-            if let Some(ref constant) = place_value {
-                // Replace the LoadLocal with the constant value (including the constant's original loc)
-                func.instructions[instr_id.0 as usize].value =
-                    constant.clone().into_instruction_value();
-            }
-            place_value
+            let constant = read(constants, place)?.clone();
+            // Replace the LoadLocal with the constant value (including the constant's original loc)
+            instr.value = constant.clone().into_instruction_value();
+            Some(constant)
         }
         InstructionValue::StoreLocal { lvalue, value, .. } => {
-            let place_value = read(constants, value);
-            if let Some(ref constant) = place_value {
-                let lvalue_id = lvalue.place.identifier;
-                constants.insert(lvalue_id, constant.clone());
+            if let Some(constant) = read(constants, value).cloned() {
+                constants.insert(lvalue.place.identifier, constant);
             }
             // Not in upstream: see `PostfixUpdate`.
             None
@@ -669,7 +655,7 @@ fn evaluate_instruction(
                     if let InstructionValue::StartMemoize {
                         deps: Some(ref mut deps),
                         ..
-                    } = func.instructions[instr_id.0 as usize].value
+                    } = instr.value
                     {
                         if let crate::hir::ManualMemoDependencyRoot::NamedLocal {
                             constant, ..
@@ -738,8 +724,8 @@ fn apply_update(operation: UpdateOperator, value: f64) -> f64 {
     }
 }
 
-fn read(constants: &Constants, place: &Place) -> Option<Constant> {
-    constants.get(place.identifier).cloned()
+fn read<'a>(constants: &'a Constants, place: &Place) -> Option<&'a Constant> {
+    constants.get(place.identifier)
 }
 
 // =============================================================================

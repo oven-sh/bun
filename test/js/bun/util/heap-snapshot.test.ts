@@ -4,6 +4,8 @@ import { bunEnv, bunExe } from "harness";
 import path from "node:path";
 import { parseHeapSnapshot, summarizeByType } from "./heap";
 
+type InspectorSnapshot = Bun.HeapSnapshot & { type: "Inspector" };
+
 describe("Native types report their size correctly", () => {
   it("FormData", () => {
     var formData = new FormData();
@@ -20,7 +22,7 @@ describe("Native types report their size correctly", () => {
     expect(afterBlob2).toBeGreaterThan(afterBlob + 1024 * 1024 * 2);
 
     const snapshot = Bun.generateHeapSnapshot();
-    const parsed = parseHeapSnapshot(snapshot);
+    const parsed = parseHeapSnapshot(snapshot as InspectorSnapshot);
     const summariesList = Array.from(summarizeByType(parsed));
     const summariesMap = new Map(summariesList.map(summary => [summary.name, summary]));
 
@@ -39,7 +41,7 @@ describe("Native types report their size correctly", () => {
     globalThis.request = request;
 
     const snapshot = Bun.generateHeapSnapshot();
-    const parsed = parseHeapSnapshot(snapshot);
+    const parsed = parseHeapSnapshot(snapshot as InspectorSnapshot);
     const summariesList = Array.from(summarizeByType(parsed));
     const summariesMap = new Map(summariesList.map(summary => [summary.name, summary]));
 
@@ -58,7 +60,7 @@ describe("Native types report their size correctly", () => {
     globalThis.response = response;
 
     const snapshot = Bun.generateHeapSnapshot();
-    const parsed = parseHeapSnapshot(snapshot);
+    const parsed = parseHeapSnapshot(snapshot as InspectorSnapshot);
     const summariesList = Array.from(summarizeByType(parsed));
     const summariesMap = new Map(summariesList.map(summary => [summary.name, summary]));
 
@@ -92,7 +94,7 @@ describe("Native types report their size correctly", () => {
     url.search = searchParams.toString();
 
     const snapshot = Bun.generateHeapSnapshot();
-    const parsed = parseHeapSnapshot(snapshot);
+    const parsed = parseHeapSnapshot(snapshot as InspectorSnapshot);
     const summariesList = Array.from(summarizeByType(parsed));
     const summariesMap = new Map(summariesList.map(summary => [summary.name, summary]));
 
@@ -112,7 +114,7 @@ describe("Native types report their size correctly", () => {
     expect(after).toBeGreaterThan(original + 1000 * 2);
 
     const snapshot = Bun.generateHeapSnapshot();
-    const parsed = parseHeapSnapshot(snapshot);
+    const parsed = parseHeapSnapshot(snapshot as InspectorSnapshot);
     const summariesList = Array.from(summarizeByType(parsed));
     const summariesMap = new Map(summariesList.map(summary => [summary.name, summary]));
 
@@ -136,7 +138,7 @@ describe("Native types report their size correctly", () => {
     globalThis.headers = headers;
 
     const snapshot = Bun.generateHeapSnapshot();
-    const parsed = parseHeapSnapshot(snapshot);
+    const parsed = parseHeapSnapshot(snapshot as InspectorSnapshot);
     const summariesList = Array.from(summarizeByType(parsed));
     const summariesMap = new Map(summariesList.map(summary => [summary.name, summary]));
 
@@ -192,7 +194,7 @@ describe("Native types report their size correctly", () => {
     expect(after).toBeGreaterThan(original + 1024 * 128);
 
     const snapshot = Bun.generateHeapSnapshot();
-    const parsed = parseHeapSnapshot(snapshot);
+    const parsed = parseHeapSnapshot(snapshot as InspectorSnapshot);
     const summariesList = Array.from(summarizeByType(parsed));
     const summariesMap = new Map(summariesList.map(summary => [summary.name, summary]));
 
@@ -221,4 +223,26 @@ describe("CommonJS Module cached slots are visible in heap snapshots", () => {
     expect(targetsByName["children"]).toContain("Array");
     expect(exitCode).toBe(0);
   });
+});
+
+it("console.takeHeapSnapshot() can be called repeatedly", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        for (let i = 0; i < 3; i++) {
+          console.takeHeapSnapshot();
+          Bun.gc(true);
+        }
+        console.error("OK");
+      `,
+    ],
+    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("OK\n");
+  expect(exitCode).toBe(0);
 });

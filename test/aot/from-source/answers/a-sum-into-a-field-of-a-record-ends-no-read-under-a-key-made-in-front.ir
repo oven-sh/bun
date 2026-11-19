@@ -1,0 +1,19 @@
+# -- source: main.cjs
+# const data = JSON.parse('{"rows":[1,2,3,4,5,6,7,8,9,10,11,12]}'), w = JSON.parse('"rows"');
+# const acc = { total: 0 };
+# function row(acc) { for (let i = 0; i < data[w].length; i++) { acc.total = acc.total + data[w][i]; } return acc.total; }
+# print(row(acc), row(acc));
+# -- end of source
+# The read under a key that runs no code answers for a plain object of the host alone: it never reads a slot of a record or an instance of the program. It said that it read ObjectFields, so every typed store by name
+# ended what was remembered of the row, and a loop that sums into a field read generically in every turn.
+# `acc.total = acc.total + data[w][i]`, holder and key consts out of JSON.parse: 34,269 > 9,532 instructions three hundred turns, plain Bun 4,034.
+# RUN(EVENT): compile InvariantKeyReadsHoisted mechanisms=all
+# EVENT: statistic InvariantKeyReadsHoisted 2
+# RUN(CHECKED): compile InvariantKeyReadsHoisted mechanisms=all testing=CheckProofsAtRunTime
+# CHECKED: statistic InvariantKeyReadsHoisted 2
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 78 156
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 78 156
+# HELD-NEXT: exited with 0

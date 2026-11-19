@@ -4,10 +4,13 @@
 
 #include "JavaScriptCore/IteratorOperations.h"
 #include "JavaScriptCore/JSArrayBufferView.h"
+#include "JavaScriptCore/JSMap.h"
+#include "JavaScriptCore/JSMapIterator.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/ArrayConstructor.h"
 #include "libusockets.h"
+#include "bun-usockets/src/crypto/sni_tree.h"
 
 #include "ZigGlobalObject.h"
 #include "ErrorCode.h"
@@ -65,6 +68,12 @@ JSC_DEFINE_HOST_FUNCTION(getBundledRootCertificates, (JSC::JSGlobalObject * glob
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::objectConstructorFreeze(globalObject, rootCertificates)));
 }
 
+JSC_DEFINE_HOST_FUNCTION(loadExtraCACertificates, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    us_get_root_extra_cert_instances();
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(getExtraCACertificates, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -77,27 +86,24 @@ JSC_DEFINE_HOST_FUNCTION(getExtraCACertificates, (JSC::JSGlobalObject * globalOb
 
     JSC::MarkedArgumentBuffer args;
     for (auto i = 0; i < size; i++) {
-        BIO* bio = BIO_new(BIO_s_mem());
+        auto bio = ncrypto::BIOPointer::NewMem();
         if (!bio) {
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
 
-        if (PEM_write_bio_X509(bio, sk_X509_value(root_extra_cert_instances, i)) != 1) {
-            BIO_free(bio);
+        if (PEM_write_bio_X509(bio.get(), sk_X509_value(root_extra_cert_instances, i)) != 1) {
             return throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "X509 to PEM conversion"_str);
         }
 
         char* bioData = nullptr;
-        long bioLen = BIO_get_mem_data(bio, &bioData);
+        long bioLen = BIO_get_mem_data(bio.get(), &bioData);
         if (bioLen <= 0 || !bioData) {
-            BIO_free(bio);
             return throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Reading PEM data"_str);
         }
 
         auto str = WTF::String::fromUTF8(std::span { bioData, static_cast<size_t>(bioLen) });
         args.append(JSC::jsString(vm, str));
-        BIO_free(bio);
     }
 
     if (args.hasOverflowed()) {
@@ -128,31 +134,27 @@ JSC_DEFINE_HOST_FUNCTION(getSystemCACertificates, (JSC::JSGlobalObject * globalO
     if (size < 0) size = 0; // no parsed certificates on this platform
 
     for (auto i = 0; i < size; i++) {
-        BIO* bio = BIO_new(BIO_s_mem());
+        auto bio = ncrypto::BIOPointer::NewMem();
         if (!bio) {
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
         X509* cert = sk_X509_value(root_system_cert_instances, i);
         if (!cert) {
-            BIO_free(bio);
             continue;
         }
-        if (!PEM_write_bio_X509(bio, cert)) {
-            BIO_free(bio);
+        if (!PEM_write_bio_X509(bio.get(), cert)) {
             continue;
         }
 
         char* bioData;
-        long bioLen = BIO_get_mem_data(bio, &bioData);
+        long bioLen = BIO_get_mem_data(bio.get(), &bioData);
         if (bioLen <= 0) {
-            BIO_free(bio);
             continue;
         }
 
         auto str = WTF::String::fromUTF8(std::span { bioData, static_cast<size_t>(bioLen) });
         args.append(JSC::jsString(vm, str));
-        BIO_free(bio);
     }
 
     if (args.hasOverflowed()) {
@@ -179,7 +181,7 @@ static int noPasswordCallback(char*, int, int, void*)
 // because forEachInIterable drives the iterator protocol and a tampered
 // %ArrayIteratorPrototype%.next can detach an earlier element between pass-1
 // callbacks.
-using CACertInput = std::variant<WTF::CString, JSC::JSArrayBufferView*>;
+using CACertInput = std::variant<WTF::UTF8CString, JSC::JSArrayBufferView*>;
 
 JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -234,7 +236,7 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
 
     for (auto& in : inputs) {
         std::span<const uint8_t> bytes;
-        if (auto* utf8 = std::get_if<WTF::CString>(&in)) {
+        if (auto* utf8 = std::get_if<WTF::UTF8CString>(&in)) {
             bytes = { reinterpret_cast<const uint8_t*>(utf8->data()), utf8->length() };
         } else {
             auto* view = std::get<JSC::JSArrayBufferView*>(in);
@@ -280,7 +282,9 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
     }
     if (parseError) {
         // Reuse the shared ERR_OSSL_<LIB>_<REASON> decoration path
-        // (library/function/reason/code + opensslErrorStack), same as node:crypto.
+        // (library/function/reason/code), same as node:crypto. Node's
+        // LoadCertsFromBIO pops its errors, so there is no opensslErrorStack.
+        ERR_clear_error();
         throwCryptoError(globalObject, scope, parseError);
         return {};
     }
@@ -298,19 +302,77 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
     RELEASE_AND_RETURN(scope, JSValue::encode(array));
 }
 
-// Rust side is #[host_fn(export = ...)] which emits extern "sysv64" on
-// win-x64; BUN_DECLARE_HOST_FUNCTION carries SYSV_ABI so both sides agree.
-BUN_DECLARE_HOST_FUNCTION(Bun__getTLSDefaultCiphers);
-BUN_DECLARE_HOST_FUNCTION(Bun__setTLSDefaultCiphers);
-
-JSC_DEFINE_HOST_FUNCTION(getDefaultCiphers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// (names: Map<string, T>, servername: string) => T | undefined, matched by the tree a listener keeps its names in.
+JSC_DEFINE_HOST_FUNCTION(selectServerName, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return Bun__getTLSDefaultCiphers(globalObject, callFrame);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* names = dynamicDowncast<JSC::JSMap>(callFrame->argument(0));
+    JSValue servernameValue = callFrame->argument(1);
+    if (!names || !servernameValue.isString()) return JSValue::encode(jsUndefined());
+    // The SNI bytes reach JS decoded as Latin-1.
+    Latin1CString servername = servernameValue.toWTFString(globalObject).latin1();
+    RETURN_IF_EXCEPTION(scope, {});
+
+    sni_node<size_t> tree;
+    JSC::MarkedArgumentBuffer values;
+    auto* iterator = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), names, JSC::IterationKind::Entries);
+    JSValue name, value;
+    while (iterator->nextKeyValue(globalObject, name, value)) {
+        auto* string = name.isString() ? asString(name) : nullptr;
+        if (!string) continue;
+        auto view = string->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        // No ClientHello can carry a NUL.
+        if (view->contains('\0')) continue;
+        values.append(value);
+        if (values.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
+        tree.add(view->utf8().legacyCStringPointer(), values.size());
+    }
+    auto* selected = tree.find(byteCast<char>(servername.spanIncludingNullTerminator()).data());
+    return JSValue::encode(selected ? values.at(*selected - 1) : jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(setDefaultCiphers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// (hash: ArrayBufferView) => void, where hash is the SHA-256 of a DER SubjectPublicKeyInfo.
+JSC_DEFINE_HOST_FUNCTION(addBlockedSPKIForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return Bun__setTLSDefaultCiphers(globalObject, callFrame);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* hash = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->argument(0));
+    if (!hash) return ERR::INVALID_ARG_TYPE(scope, globalObject, "SPKI hash must be a buffer"_s);
+    if (hash->byteLength() != SHA256_DIGEST_LENGTH) return ERR::OUT_OF_RANGE(scope, globalObject, "SPKI hash must be 32 bytes"_s);
+    us_add_blocked_spki_for_testing(static_cast<const uint8_t*>(hash->vector()));
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(clearBlockedSPKIsForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    us_clear_blocked_spkis_for_testing();
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(putBoringSSLErrorForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    OPENSSL_PUT_ERROR(BN, BN_R_BITS_TOO_SMALL);
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(takeBoringSSLErrorQueueForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSArray* errors = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, {});
+    while (uint32_t error = ERR_get_error()) {
+        char message[256];
+        ERR_error_string_n(error, message, sizeof(message));
+        errors->putDirectIndex(globalObject, errors->length(), jsString(vm, String::fromUTF8(message)));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return JSValue::encode(errors);
 }
 
 } // namespace Bun

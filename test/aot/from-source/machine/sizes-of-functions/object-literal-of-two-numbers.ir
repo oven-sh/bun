@@ -1,0 +1,16 @@
+# f1 = make
+# -- source: object-literal-of-two-numbers.ts
+# type Point = { x: number; y: number };
+# function make(x: number, y: number): Point {
+#   return { x, y };
+# }
+# declare const input: any;
+# const point = make(+input, +input);
+# (globalThis as any).answer = [point, point.x + point.y];
+# -- end of source
+# The compiler before this one: 7 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 29, patches 3, moves 4, unlikely or rare 0.
+# RUN(X64): steps most:33 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 33

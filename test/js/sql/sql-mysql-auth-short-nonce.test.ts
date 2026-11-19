@@ -4,62 +4,51 @@
 // All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
 // Buffer.alloc frame construction here.
 //
-// Regression: mysql_native_password.scramble() sliced nonce[0..8] and
-// nonce[8..20] with no length check. A malicious server can send an
-// AuthSwitchRequest whose plugin_data is shorter than 20 bytes, which flows
-// straight into scramble() as the nonce — OOB read (panic under safety
-// checks, silent heap over-read in release). With the fix the client rejects
-// with ERR_MYSQL_MISSING_AUTH_DATA before touching the buffer.
+// Every plugin works on a nonce of 20 bytes.
 
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
 import {
   listeningServer,
   mysqlAuthSwitchRequest,
+  mysqlErrPacket,
   mysqlHandshakeV10,
   mysqlRawPacket,
   mysqlReadPackets,
 } from "./wire-frames";
 
-test("MySQL: AuthSwitchRequest with a short mysql_native_password nonce is rejected, not OOB-read", async () => {
+test.each(
+  ["mysql_native_password", "caching_sha2_password", "sha256_password"].flatMap(plugin =>
+    [0, 4, 19].map(length => [plugin, length] as const),
+  ),
+)("MySQL: AuthSwitchRequest to %s with a nonce of %d bytes is rejected", async (plugin, length) => {
   let sawAuthSwitchResponse = false;
-
-  // Advertise caching_sha2_password in the initial handshake so the client has
-  // to follow the AuthSwitchRequest path to reach mysql_native_password.scramble()
-  // with the server-controlled plugin_data.
-  const greeting = mysqlHandshakeV10({ authPlugin: "caching_sha2_password" });
 
   const { server, port } = await listeningServer(socket => {
     let buffered = Buffer.alloc(0);
     let sentAuthSwitch = false;
-    socket.write(greeting);
-    socket.on("data", chunk => {
-      buffered = Buffer.concat([buffered, chunk]);
-      while (buffered.length >= 4) {
-        const len = buffered[0] | (buffered[1] << 8) | (buffered[2] << 16);
-        if (buffered.length < 4 + len) break;
-        const seq = buffered[3];
-        buffered = buffered.subarray(4 + len);
+    socket.write(mysqlHandshakeV10({ authPlugin: "caching_sha2_password" }));
+    socket.on("data", (chunk: Buffer) => {
+      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), seq => {
         if (!sentAuthSwitch) {
-          // Reply to HandshakeResponse41 with the short-nonce AuthSwitch: only 4
-          // bytes of plugin_data — well under the 20 bytes scramble() slices.
           sentAuthSwitch = true;
-          socket.write(mysqlAuthSwitchRequest(seq + 1, "mysql_native_password", Buffer.alloc(4, 0x63)));
+          socket.write(mysqlAuthSwitchRequest(seq + 1, plugin, Buffer.alloc(length, 0x63)));
         } else {
-          // Pre-fix release builds OOB-read garbage into the scramble and
-          // still send an AuthSwitchResponse; reaching here means the
-          // length check did not fire. Close so the client does not hang.
+          // Refuse it so the client does not hang.
           sawAuthSwitchResponse = true;
-          socket.end();
+          socket.end(mysqlErrPacket(seq + 1, 1045, "28000", "Access denied"));
         }
-      }
+      });
     });
     socket.on("error", () => {});
   });
 
   try {
-    // Non-empty password so scramble() proceeds past the empty-password early return.
-    await using sql = new SQL({ url: `mysql://root:pw@127.0.0.1:${port}/db`, max: 1 });
+    await using sql = new SQL({
+      url: `mysql://root:pw@127.0.0.1:${port}/db`,
+      max: 1,
+      allowPublicKeyRetrieval: true,
+    });
     const err = await sql`select 1`.then(
       () => ({ code: "UNEXPECTED_SUCCESS" }),
       e => ({ code: e?.code ?? String(e) }),
@@ -81,7 +70,7 @@ test("MySQL: an AuthSwitchRequest frame declaring a zero-length payload is rejec
     let buffered = Buffer.alloc(0);
     let replied = false;
     socket.write(greeting);
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), seq => {
         if (!replied) {
           replied = true;
@@ -99,7 +88,7 @@ test("MySQL: an AuthSwitchRequest frame declaring a zero-length payload is rejec
       e => ({ code: e?.code ?? String(e) }),
     );
 
-    expect(err).toEqual({ code: "ERR_MYSQL_INVALID_AUTH_SWITCH_REQUEST" });
+    expect(err).toEqual({ code: "ERR_MYSQL_MALFORMED_PACKET" });
   } finally {
     await new Promise<void>(r => server.close(() => r()));
   }

@@ -6392,7 +6392,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         // An interior undefined must not shift the later arguments into its place.
         expect(() => redis.mset(other, undefined as any, "b")).toThrow("string or buffer");
-        expect(() => redis.copy(src, undefined as any, dst)).toThrow("string or buffer");
+        expect(() => redis.copy(src, undefined as any, dst as any)).toThrow("string or buffer");
         // The new commands follow the same rule, optional argument or not.
         expect(() => redis.flushdb(undefined as any)).toThrow("string or buffer");
         expect(() => redis.bitop("AND", dst, undefined as any, src)).toThrow("string or buffer");
@@ -6452,8 +6452,8 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         const key = "stream:" + randomUUIDv7();
 
-        const id1 = await redis.xadd(key, "*", "field", "v1");
-        const id2 = await redis.xadd(key, "*", "field", "v2", "other", "x");
+        const id1 = (await redis.xadd(key, "*", "field", "v1"))!;
+        const id2 = (await redis.xadd(key, "*", "field", "v2", "other", "x"))!;
         expect(typeof id1).toBe("string");
         expect(id1).toMatch(/^\d+-\d+$/);
 
@@ -6816,7 +6816,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const subscriber = await ctx.newSubscriberClient(connectionType);
         const patterns = [`${testChannel()}*`, `${testChannel()}*`];
 
-        const subscribed = subscriber.psubscribe(...patterns);
+        const subscribed = (subscriber as any).psubscribe(...patterns);
         const gotA = subscriber.get(keyA);
         const gotB = subscriber.get(keyB);
 
@@ -6830,25 +6830,25 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(await subscriber.send("PING", [])).toBe("PONG");
         expect(subscriber.connected).toBe(true);
 
-        await subscriber.punsubscribe(...patterns);
+        await (subscriber as any).punsubscribe(...patterns);
       });
 
       test("punsubscribe with an undefined pattern throws and keeps every pattern subscribed", async () => {
         const subscriber = await ctx.newSubscriberClient(connectionType);
         const prefixA = `pattern-a:${randomUUIDv7()}:`;
         const prefixB = `pattern-b:${randomUUIDv7()}:`;
-        await subscriber.psubscribe(`${prefixA}*`, `${prefixB}*`);
+        await (subscriber as any).psubscribe(`${prefixA}*`, `${prefixB}*`);
         expect(await ctx.redis.publish(`${prefixA}1`, testMessage())).toBe(1);
         expect(await ctx.redis.publish(`${prefixB}1`, testMessage())).toBe(1);
 
         // A bare PUNSUBSCRIBE would drop both patterns, so an undefined pattern
         // has to be rejected before anything is sent.
-        expect(() => subscriber.punsubscribe(undefined as any)).toThrow("string or buffer");
-        expect(() => subscriber.psubscribe(undefined as any)).toThrow("string or buffer");
+        expect(() => (subscriber as any).punsubscribe(undefined as any)).toThrow("string or buffer");
+        expect(() => (subscriber as any).psubscribe(undefined as any)).toThrow("string or buffer");
         expect(await ctx.redis.publish(`${prefixA}2`, testMessage())).toBe(1);
         expect(await ctx.redis.publish(`${prefixB}2`, testMessage())).toBe(1);
 
-        await subscriber.punsubscribe(`${prefixA}*`);
+        await (subscriber as any).punsubscribe(`${prefixA}*`);
         expect(await ctx.redis.publish(`${prefixA}3`, testMessage())).toBe(0);
         expect(await ctx.redis.publish(`${prefixB}3`, testMessage())).toBe(1);
       });
@@ -6857,11 +6857,11 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const subscriber = await ctx.newSubscriberClient(connectionType);
         const prefixA = `pattern-a:${randomUUIDv7()}:`;
         const prefixB = `pattern-b:${randomUUIDv7()}:`;
-        await subscriber.psubscribe(`${prefixA}*`, `${prefixB}*`);
+        await (subscriber as any).psubscribe(`${prefixA}*`, `${prefixB}*`);
         expect(await ctx.redis.publish(`${prefixA}1`, testMessage())).toBe(1);
         expect(await ctx.redis.publish(`${prefixB}1`, testMessage())).toBe(1);
 
-        await subscriber.punsubscribe();
+        await (subscriber as any).punsubscribe();
         expect(await ctx.redis.publish(`${prefixA}2`, testMessage())).toBe(0);
         expect(await ctx.redis.publish(`${prefixB}2`, testMessage())).toBe(0);
       });
@@ -7500,7 +7500,7 @@ describe("RedisClient argument validation", () => {
         () => client.xadd("stream", "*", "field", null as any),
         () => client.lcs("a", null as any),
         () => client.mset("a", undefined as any, "b"),
-        () => client.copy("src", undefined as any, "dst"),
+        () => client.copy("src", undefined as any, "dst" as any),
         () => client.flushdb(undefined as any),
         () => client.bitop("AND", "dest", undefined as any, "src"),
         // Commands taking a key followed by more arguments must not skip a hole after the key either.
@@ -7508,9 +7508,9 @@ describe("RedisClient argument validation", () => {
         () => client.xdel("stream", undefined as any, "0-1"),
         () => client.pfcount("hll", null as any),
         () => client.sort("list", null as any, "DESC"),
-        () => client.punsubscribe(undefined as any),
-        () => client.punsubscribe("news.*", undefined as any),
-        () => client.psubscribe(undefined as any),
+        () => (client as any).punsubscribe(undefined as any),
+        () => (client as any).punsubscribe("news.*", undefined as any),
+        () => (client as any).psubscribe(undefined as any),
       ]) {
         expect(syncThrow(call)).toMatchObject({ message: expect.stringContaining("string or buffer") });
       }

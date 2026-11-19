@@ -1,0 +1,71 @@
+# a field that the plan has no room for is a property like one that no layout lists: stored, read, listed, copied, looked for and deleted as in plain JavaScript
+# `s0` has a slot in `owner` and none in `other`, where order() creates it between two fields that have slots
+# -- source: main.js
+# let kept, keptAlone;
+# function own(o) { o.s0 = 1; o.s0 = "x"; o.s1 = 1; o.s1 = "x"; o.s2 = 1; o.s2 = "x"; }
+# function fill(flag) {
+#     const owner = { a: 1 }, other = { b: 1 };
+#     own(owner);
+#     const either = flag ? owner : other, value = flag ? 1 : "x";
+#     either.s0 = value; either.s0 = value; either.s1 = value; either.s1 = value; either.s2 = value; either.s2 = value;
+#     either.k00 = value; either.k00 = value; either.k01 = value; either.k01 = value; either.k02 = value; either.k02 = value; either.k03 = value; either.k03 = value; either.k04 = value; either.k04 = value; either.k05 = value; either.k05 = value; either.k06 = value; either.k06 = value; either.k07 = value; either.k07 = value; either.k08 = value; either.k08 = value; either.k09 = value; either.k09 = value; either.k10 = value; either.k10 = value; either.k11 = value; either.k11 = value; either.k12 = value; either.k12 = value; either.k13 = value; either.k13 = value; either.k14 = value; either.k14 = value; either.k15 = value; either.k15 = value; either.k16 = value; either.k16 = value; either.k17 = value; either.k17 = value; either.k18 = value; either.k18 = value; either.k19 = value; either.k19 = value; either.k20 = value; either.k20 = value; either.k21 = value; either.k21 = value; either.k22 = value; either.k22 = value; either.k23 = value; either.k23 = value; either.k24 = value; either.k24 = value; either.k25 = value; either.k25 = value; either.k26 = value; either.k26 = value; either.k27 = value; either.k27 = value; either.k28 = value; either.k28 = value; either.k29 = value; either.k29 = value; either.k30 = value; either.k30 = value; either.k31 = value; either.k31 = value; either.k32 = value; either.k32 = value; either.k33 = value; either.k33 = value; either.k34 = value; either.k34 = value; either.k35 = value; either.k35 = value; either.k36 = value; either.k36 = value; either.k37 = value; either.k37 = value; either.k38 = value; either.k38 = value; either.k39 = value; either.k39 = value; either.k40 = value; either.k40 = value; either.k41 = value; either.k41 = value; either.k42 = value; either.k42 = value; either.k43 = value; either.k43 = value; either.k44 = value; either.k44 = value; either.k45 = value; either.k45 = value; either.k46 = value; either.k46 = value; either.k47 = value; either.k47 = value; either.k48 = value; either.k48 = value; either.k49 = value; either.k49 = value; either.k50 = value; either.k50 = value; either.k51 = value; either.k51 = value; either.k52 = value; either.k52 = value; either.k53 = value; either.k53 = value; either.k54 = value; either.k54 = value; either.k55 = value; either.k55 = value; either.k56 = value; either.k56 = value; either.k57 = value; either.k57 = value; either.k58 = value; either.k58 = value; either.k59 = value; either.k59 = value; either.k60 = value; either.k60 = value; either.k61 = value; either.k61 = value; either.k62 = value; either.k62 = value; either.k63 = value; either.k63 = value; either.k64 = value; either.k64 = value; either.k65 = value; either.k65 = value; either.k66 = value; either.k66 = value; either.k67 = value; either.k67 = value; either.k68 = value; either.k68 = value; either.k69 = value; either.k69 = value; either.k70 = value; either.k70 = value; either.k71 = value; either.k71 = value; either.k72 = value; either.k72 = value; either.k73 = value; either.k73 = value; either.k74 = value; either.k74 = value; either.k75 = value; either.k75 = value; either.k76 = value; either.k76 = value; either.k77 = value; either.k77 = value; either.k78 = value; either.k78 = value; either.k79 = value; either.k79 = value; either.k80 = value; either.k80 = value; either.k81 = value; either.k81 = value; either.k82 = value; either.k82 = value; either.k83 = value; either.k83 = value;
+#     let sum = 0;
+#     sum = sum + either.k00; sum = sum + either.k01; sum = sum + either.k02; sum = sum + either.k03; sum = sum + either.k04; sum = sum + either.k05; sum = sum + either.k06; sum = sum + either.k07; sum = sum + either.k08; sum = sum + either.k09; sum = sum + either.k10; sum = sum + either.k11; sum = sum + either.k12; sum = sum + either.k13; sum = sum + either.k14; sum = sum + either.k15; sum = sum + either.k16; sum = sum + either.k17; sum = sum + either.k18; sum = sum + either.k19; sum = sum + either.k20; sum = sum + either.k21; sum = sum + either.k22; sum = sum + either.k23; sum = sum + either.k24; sum = sum + either.k25; sum = sum + either.k26; sum = sum + either.k27; sum = sum + either.k28; sum = sum + either.k29; sum = sum + either.k30; sum = sum + either.k31; sum = sum + either.k32; sum = sum + either.k33; sum = sum + either.k34; sum = sum + either.k35; sum = sum + either.k36; sum = sum + either.k37; sum = sum + either.k38; sum = sum + either.k39; sum = sum + either.k40; sum = sum + either.k41; sum = sum + either.k42; sum = sum + either.k43; sum = sum + either.k44; sum = sum + either.k45; sum = sum + either.k46; sum = sum + either.k47; sum = sum + either.k48; sum = sum + either.k49; sum = sum + either.k50; sum = sum + either.k51; sum = sum + either.k52; sum = sum + either.k53; sum = sum + either.k54; sum = sum + either.k55; sum = sum + either.k56; sum = sum + either.k57; sum = sum + either.k58; sum = sum + either.k59; sum = sum + either.k60; sum = sum + either.k61; sum = sum + either.k62; sum = sum + either.k63; sum = sum + either.k64; sum = sum + either.k65; sum = sum + either.k66; sum = sum + either.k67; sum = sum + either.k68; sum = sum + either.k69; sum = sum + either.k70; sum = sum + either.k71; sum = sum + either.k72; sum = sum + either.k73; sum = sum + either.k74; sum = sum + either.k75; sum = sum + either.k76; sum = sum + either.k77; sum = sum + either.k78; sum = sum + either.k79; sum = sum + either.k80; sum = sum + either.k81; sum = sum + either.k82; sum = sum + either.k83;
+#     sum = sum + either.s0; sum = sum + either.s1; sum = sum + either.s2;
+#     kept = either;
+#     return sum;
+# }
+# function late(o) {
+#     o.m00 = 1; o.m00 = "x"; o.m01 = 1; o.m01 = "x"; o.m02 = 1; o.m02 = "x"; o.m03 = 1; o.m03 = "x"; o.m04 = 1; o.m04 = "x"; o.m05 = 1; o.m05 = "x"; o.m06 = 1; o.m06 = "x"; o.m07 = 1; o.m07 = "x"; o.m08 = 1; o.m08 = "x"; o.m09 = 1; o.m09 = "x"; o.m10 = 1; o.m10 = "x"; o.m11 = 1; o.m11 = "x"; o.m12 = 1; o.m12 = "x"; o.m13 = 1; o.m13 = "x"; o.m14 = 1; o.m14 = "x"; o.m15 = 1; o.m15 = "x"; o.m16 = 1; o.m16 = "x"; o.m17 = 1; o.m17 = "x"; o.m18 = 1; o.m18 = "x"; o.m19 = 1; o.m19 = "x"; o.m20 = 1; o.m20 = "x"; o.m21 = 1; o.m21 = "x"; o.m22 = 1; o.m22 = "x"; o.m23 = 1; o.m23 = "x"; o.m24 = 1; o.m24 = "x"; o.m25 = 1; o.m25 = "x"; o.m26 = 1; o.m26 = "x"; o.m27 = 1; o.m27 = "x"; o.m28 = 1; o.m28 = "x"; o.m29 = 1; o.m29 = "x"; o.m30 = 1; o.m30 = "x"; o.m31 = 1; o.m31 = "x"; o.m32 = 1; o.m32 = "x"; o.m33 = 1; o.m33 = "x"; o.m34 = 1; o.m34 = "x"; o.m35 = 1; o.m35 = "x"; o.m36 = 1; o.m36 = "x"; o.m37 = 1; o.m37 = "x"; o.m38 = 1; o.m38 = "x"; o.m39 = 1; o.m39 = "x"; o.m40 = 1; o.m40 = "x"; o.m41 = 1; o.m41 = "x"; o.m42 = 1; o.m42 = "x"; o.m43 = 1; o.m43 = "x"; o.m44 = 1; o.m44 = "x"; o.m45 = 1; o.m45 = "x"; o.m46 = 1; o.m46 = "x"; o.m47 = 1; o.m47 = "x"; o.m48 = 1; o.m48 = "x"; o.m49 = 1; o.m49 = "x"; o.m50 = 1; o.m50 = "x"; o.m51 = 1; o.m51 = "x"; o.m52 = 1; o.m52 = "x"; o.m53 = 1; o.m53 = "x"; o.m54 = 1; o.m54 = "x"; o.m55 = 1; o.m55 = "x"; o.m56 = 1; o.m56 = "x"; o.m57 = 1; o.m57 = "x"; o.m58 = 1; o.m58 = "x"; o.m59 = 1; o.m59 = "x"; o.m60 = 1; o.m60 = "x"; o.m61 = 1; o.m61 = "x"; o.m62 = 1; o.m62 = "x"; o.m63 = 1; o.m63 = "x"; o.m64 = 1; o.m64 = "x"; o.m65 = 1; o.m65 = "x"; o.m66 = 1; o.m66 = "x"; o.m67 = 1; o.m67 = "x"; o.m68 = 1; o.m68 = "x"; o.m69 = 1; o.m69 = "x"; o.m70 = 1; o.m70 = "x"; o.m71 = 1; o.m71 = "x"; o.m72 = 1; o.m72 = "x"; o.m73 = 1; o.m73 = "x"; o.m74 = 1; o.m74 = "x"; o.m75 = 1; o.m75 = "x"; o.m76 = 1; o.m76 = "x"; o.m77 = 1; o.m77 = "x"; o.m78 = 1; o.m78 = "x"; o.m79 = 1; o.m79 = "x"; o.m80 = 1; o.m80 = "x"; o.m81 = 1; o.m81 = "x"; o.m82 = 1; o.m82 = "x"; o.m83 = 1; o.m83 = "x";
+#     let sum = 0;
+#     sum = sum + o.m00; sum = sum + o.m01; sum = sum + o.m02; sum = sum + o.m03; sum = sum + o.m04; sum = sum + o.m05; sum = sum + o.m06; sum = sum + o.m07; sum = sum + o.m08; sum = sum + o.m09; sum = sum + o.m10; sum = sum + o.m11; sum = sum + o.m12; sum = sum + o.m13; sum = sum + o.m14; sum = sum + o.m15; sum = sum + o.m16; sum = sum + o.m17; sum = sum + o.m18; sum = sum + o.m19; sum = sum + o.m20; sum = sum + o.m21; sum = sum + o.m22; sum = sum + o.m23; sum = sum + o.m24; sum = sum + o.m25; sum = sum + o.m26; sum = sum + o.m27; sum = sum + o.m28; sum = sum + o.m29; sum = sum + o.m30; sum = sum + o.m31; sum = sum + o.m32; sum = sum + o.m33; sum = sum + o.m34; sum = sum + o.m35; sum = sum + o.m36; sum = sum + o.m37; sum = sum + o.m38; sum = sum + o.m39; sum = sum + o.m40; sum = sum + o.m41; sum = sum + o.m42; sum = sum + o.m43; sum = sum + o.m44; sum = sum + o.m45; sum = sum + o.m46; sum = sum + o.m47; sum = sum + o.m48; sum = sum + o.m49; sum = sum + o.m50; sum = sum + o.m51; sum = sum + o.m52; sum = sum + o.m53; sum = sum + o.m54; sum = sum + o.m55; sum = sum + o.m56; sum = sum + o.m57; sum = sum + o.m58; sum = sum + o.m59; sum = sum + o.m60; sum = sum + o.m61; sum = sum + o.m62; sum = sum + o.m63; sum = sum + o.m64; sum = sum + o.m65; sum = sum + o.m66; sum = sum + o.m67; sum = sum + o.m68; sum = sum + o.m69; sum = sum + o.m70; sum = sum + o.m71; sum = sum + o.m72; sum = sum + o.m73; sum = sum + o.m74; sum = sum + o.m75; sum = sum + o.m76; sum = sum + o.m77; sum = sum + o.m78; sum = sum + o.m79; sum = sum + o.m80; sum = sum + o.m81; sum = sum + o.m82; sum = sum + o.m83;
+#     return sum;
+# }
+# function make() { const alone = { c: 1 }; keptAlone = alone; return late(alone); }
+# function order(flag) {
+#     const owner = { a: 1 }, other = { b: 1 };
+#     const either = flag ? owner : other;
+#     either.k00 = 1; either.s0 = 2; either.k01 = 3;
+#     print(Object.keys(either)); print(JSON.stringify(either)); print(Object.keys({ ...either }));
+#     print("s0" in either); print("s1" in either); print(delete either.s0); print(either.s0); print(Object.keys(either));
+# }
+# for (let i = 0; i < 2; i = i + 1) { const first = i === 0; print(fill(first)); print(make()); order(first); }
+# kept.a + keptAlone.c;
+# -- end of source
+# RUN: run-in-shell
+# CHECK: 87
+# CHECK-NEXT: 0xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# CHECK-NEXT: a,k00,s0,k01
+# CHECK-NEXT: {"a":1,"k00":1,"s0":2,"k01":3}
+# CHECK-NEXT: a,k00,s0,k01
+# CHECK-NEXT: true
+# CHECK-NEXT: false
+# CHECK-NEXT: true
+# CHECK-NEXT: undefined
+# CHECK-NEXT: a,k00,k01
+# CHECK-NEXT: 0xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# CHECK-NEXT: 0xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# CHECK-NEXT: b,k00,s0,k01
+# CHECK-NEXT: {"b":1,"k00":1,"s0":2,"k01":3}
+# CHECK-NEXT: b,k00,s0,k01
+# CHECK-NEXT: true
+# CHECK-NEXT: false
+# CHECK-NEXT: true
+# CHECK-NEXT: undefined
+# CHECK-NEXT: b,k00,k01
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+# REPEAT: i = 0..2
+# END REPEAT
+# REPEAT: i = 0..83
+# END REPEAT
+# REPEAT: i = 0..83
+# END REPEAT
+# REPEAT: i = 0..2
+# END REPEAT
+# REPEAT: i = 0..83
+# END REPEAT
+# REPEAT: i = 0..83
+# END REPEAT
+# REPEAT: i = 0..2
+# END REPEAT

@@ -1,0 +1,28 @@
+# -- source: main.ts
+# function run(n: number): number { let sum = 0; for (let i = 0; i < n; i++) sum = (sum + new Point(i, 2).sum()) | 0; return sum; }
+# function attempt(n: number): number { try { return run(n); } catch (error) { return -1; } }
+# const turns: number = JSON.parse("3");
+# print(attempt(0), attempt(turns));
+# class Point { x: number; y: number; constructor(x: number, y: number) { this.x = x; this.y = y; } sum(): number { return this.x + this.y; } }
+# print(attempt(0), attempt(turns));
+# declare function print(...values: unknown[]): void;
+# -- end of source
+# All in the loop is proven: the object is never made, the method is copied. What was left in each turn is the check of the dead zone of `Point`, whose value nobody reads.
+# A variable of a body that runs once never goes back into its dead zone: it is asked once, in front of the loop. Where it is empty the other copy runs, which stands first in the text and is built for its size:
+# it checks in its turn, and throws where the program does. This program never sees that: Bun moves the declaration of such a class in front of the statements of its module, with or without --aot.
+# The two tests beside this one enter their loops in a dead zone.
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetModuleVariable
+# CHECK-NEXT: = TypeTest {{*}}testedType=absent
+# CHECK-NEXT: Branch
+# CHECK: frequency=Rare isLoopHead=true
+# CHECK: = CheckInitialized {{*}}name="Point"
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: = CheckInitialized
+# CHECK-NOT: = GetModuleVariable
+# CHECK: Return
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 0 9
+# ANSWERS-NEXT: 0 9

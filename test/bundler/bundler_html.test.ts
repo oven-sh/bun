@@ -1,6 +1,7 @@
 import { describe, expect } from "bun:test";
 import { isWindows } from "harness";
-import { itBundled } from "./expectBundled";
+import path from "node:path";
+import { type BundlerTestBundleAPI, itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   // Basic test for bundling HTML with JS and CSS
@@ -1033,6 +1034,21 @@ body {
     },
   });
 
+  itBundled("html/image-inlined-by-stylesheet", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<link rel="stylesheet" href="./style.css"><img src="./logo.png">`,
+      "/style.css": `body { background: url("./logo.png"); }`,
+      "/logo.png": "png bytes",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const src = api.readFile("out/index.html").match(/<img src="(.*?)">/)![1];
+      expect(src).toMatch(/^\.\/logo-\w+\.png$/);
+      expect(api.readFile("out/" + src)).toBe("png bytes");
+    },
+  });
+
   // Test that sourcemap comments are not included in HTML and CSS files
   itBundled("html/no-sourcemap-comments", {
     outdir: "out/",
@@ -1187,6 +1203,114 @@ body {
     },
   });
 
+  const stylesheetOf = (api: { readFile(path: string): string }, page: string) =>
+    api.readFile("out/" + api.readFile("out/" + page).match(/href="(.*?\.css)"/)![1]);
+
+  // The import orders of the two pages differ only in the media query of a layer list.
+  itBundled("html/SeparateCSSWhenImportConditionsDiffer", {
+    outdir: "out/",
+    minifyWhitespace: true,
+    files: {
+      "/first.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./r0.css" />
+    <link rel="stylesheet" href="./r1.css" />
+  </head>
+  <body><div class="x"></div></body>
+</html>`,
+      "/second.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./f1.css" />
+    <link rel="stylesheet" href="./r0.css" />
+    <link rel="stylesheet" href="./r1.css" />
+  </head>
+  <body><div class="x"></div></body>
+</html>`,
+      "/r0.css": `@import "./f1.css" screen;\n@layer a { .x { color: green } }`,
+      "/r1.css": `@import "./f1.css";\n.r1 { color: blue }`,
+      "/f1.css": `@layer b { .x { color: red } }`,
+    },
+    entryPoints: ["/first.html", "/second.html"],
+    onAfterBundle(api) {
+      const rest = `@layer a{.x{color:green}}@layer b{.x{color:red}}.r1{color:#00f}\n`;
+      // Without screen media the layer order is a, b on the first page. It is b, a on the second page.
+      expect({ first: stylesheetOf(api, "first.html"), second: stylesheetOf(api, "second.html") }).toEqual({
+        first: `@media screen{@layer b;}` + rest,
+        second: `@layer b;` + rest,
+      });
+    },
+  });
+
+  // The import orders of the two pages differ only in the names of a layer list: "x.y, z" and "x, yz".
+  itBundled("html/SeparateCSSWhenLayerNamesDiffer", {
+    outdir: "out/",
+    minifyWhitespace: true,
+    files: {
+      "/first.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./a.css" />
+    <link rel="stylesheet" href="./d.css" />
+    <link rel="stylesheet" href="./c.css" />
+  </head>
+  <body><div class="box"></div></body>
+</html>`,
+      "/second.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./b.css" />
+    <link rel="stylesheet" href="./d.css" />
+    <link rel="stylesheet" href="./c.css" />
+  </head>
+  <body><div class="box"></div></body>
+</html>`,
+      "/a.css": `@layer x.y, z;\n.a { color: blue }`,
+      "/b.css": `@layer x, yz;\n.b { color: blue }`,
+      "/c.css": `@import "./a.css";\n@import "./b.css";\n.c { color: blue }`,
+      "/d.css": `@layer z { .box { color: red } }\n@layer yz { .box { color: green } }`,
+    },
+    entryPoints: ["/first.html", "/second.html"],
+    onAfterBundle(api) {
+      const rest =
+        `@layer z{.box{color:red}}@layer yz{.box{color:green}}` +
+        `@layer x.y,z;.a{color:#00f}@layer x,yz;.b{color:#00f}.c{color:#00f}\n`;
+      // The layer "yz" wins on the first page. The layer "z" wins on the second page.
+      expect({ first: stylesheetOf(api, "first.html"), second: stylesheetOf(api, "second.html") }).toEqual({
+        first: `@layer x.y,z;` + rest,
+        second: `@layer x,yz;` + rest,
+      });
+    },
+  });
+
+  // With CSS chunking on, a CSS entry point and the stylesheet of a page get the same hash for different import orders.
+  itBundled("html/SeparateCSSForCSSEntryPointProduction", {
+    outdir: "out/",
+    production: true,
+    files: {
+      "/page.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./r.css" />
+    <link rel="stylesheet" href="./s.css" />
+  </head>
+  <body><div class="s"></div></body>
+</html>`,
+      "/r.css": `@layer a { .r { color: red } }`,
+      "/m.css": `@layer b { .m { color: blue } }`,
+      "/s.css": `@import "./r.css" print;\n@import "./m.css";\n@import "./r.css";\n.s { color: green }`,
+    },
+    entryPoints: ["/page.html", "/s.css"],
+    onAfterBundle(api) {
+      const rest = `@layer b{.m{color:#00f}}@layer a{.r{color:red}}.s{color:green}\n`;
+      expect({ page: stylesheetOf(api, "page.html"), entry: api.readFile("out/s.css") }).toEqual({
+        page: `@layer a;` + rest,
+        entry: `@media print{@layer a;}` + rest,
+      });
+    },
+  });
+
   // Test manifest.json is copied as an asset and link href is rewritten
   itBundled("html/manifest-json", {
     outdir: "out/",
@@ -1229,6 +1353,99 @@ body {
     },
   });
 
+  // The same rule applies when the reference is resolved through an onResolve
+  // plugin instead of by the bulk resolution pass: the resolver runs after the
+  // callback declines, or the callback returns the path itself.
+  const manifestViaPluginFiles = {
+    "/index.html": `<!DOCTYPE html><link rel="manifest" href="./manifest.json" /><script src="./app.js"></script>`,
+    "/app.js": "console.log('hello')",
+  };
+  function expectManifestCopied(api: BundlerTestBundleAPI) {
+    const htmlContent = api.readFile("out/index.html");
+    expect(htmlContent).not.toContain('manifest.json"');
+    const manifestMatch = htmlContent.match(/href="(?:\.\/|\/)?(manifest-[a-zA-Z0-9]+\.json)"/);
+    expect(manifestMatch).not.toBeNull();
+    expect(api.readFile("out/" + manifestMatch![1])).toBe('{"name":"My App"}');
+    // The page's script is still bundled, not copied.
+    expect(htmlContent).toMatch(/src="(?:\.\/|\/)?[^"]+\.js"/);
+  }
+
+  itBundled("html/manifest-json-onresolve-declines", () => {
+    const declined: string[] = [];
+    return {
+      outdir: "out/",
+      files: {
+        ...manifestViaPluginFiles,
+        "/manifest.json": '{"name":"My App"}',
+      },
+      entryPoints: ["/index.html"],
+      plugins(builder) {
+        builder.onResolve({ filter: /manifest\.json$/ }, args => {
+          declined.push(args.path);
+          return undefined;
+        });
+      },
+      onAfterBundle(api) {
+        expect(declined).toEqual(["./manifest.json"]);
+        expectManifestCopied(api);
+      },
+    };
+  });
+
+  itBundled("html/manifest-json-onresolve-path", ({ root }) => ({
+    outdir: "out/",
+    files: {
+      ...manifestViaPluginFiles,
+      // Only reachable through the plugin: index.html references ./manifest.json.
+      "/generated/manifest.json": '{"name":"My App"}',
+    },
+    entryPoints: ["/index.html"],
+    plugins(builder) {
+      builder.onResolve({ filter: /manifest\.json$/ }, () => ({
+        path: path.join(root, "generated", "manifest.json"),
+      }));
+    },
+    onAfterBundle: expectManifestCopied,
+  }));
+
+  // The HTML references manifest.json as an asset (file loader) while the script
+  // imports it as JSON. These are two modules; the script must not end up with
+  // the asset's output path in place of the parsed object.
+  itBundled("html/manifest-json-also-imported-as-json", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="manifest" href="./manifest.json" />
+  </head>
+  <body>
+    <script src="./app.js"></script>
+  </body>
+</html>`,
+      "/manifest.json": JSON.stringify({ name: "My App" }),
+      "/app.js": /* js */ `
+        import manifest from "./manifest.json";
+        console.log(manifest.name);
+      `,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const htmlContent = api.readFile("out/index.html");
+
+      const manifestMatch = htmlContent.match(/href="(?:\.\/|\/)?(manifest-[a-zA-Z0-9]+\.json)"/);
+      expect(manifestMatch).not.toBeNull();
+      expect(api.readFile("out/" + manifestMatch![1])).toBe(JSON.stringify({ name: "My App" }));
+
+      const scriptMatch = htmlContent.match(/src="(?:\.\/|\/)?([^"]+\.js)"/);
+      expect(scriptMatch).not.toBeNull();
+      const js = api.readFile("out/" + scriptMatch![1]);
+      expect(js).toContain('"My App"');
+      expect(js).not.toContain(manifestMatch![1]);
+    },
+  });
+
   // Test that other non-JS/CSS file types referenced via URL imports are copied as assets
   itBundled("html/xml-asset", {
     outdir: "out/",
@@ -1255,6 +1472,31 @@ body {
       // The webmanifest reference should be rewritten to a hashed filename
       expect(htmlContent).not.toContain("site.webmanifest");
       expect(htmlContent).toMatch(/href=".*\.webmanifest"/);
+    },
+  });
+
+  // lol-html doesn't infer end tags, so every <p> is open until </body>.
+  itBundled("html/many-unclosed-elements", {
+    outdir: "out/",
+    backend: "cli",
+    files: {
+      "/index.html": Buffer.concat([
+        Buffer.from(`<!DOCTYPE html><html><head><script src="./script.js"></script></head><body>\n`),
+        Buffer.alloc(70_000 * "<p>x".length, "<p>x"),
+        Buffer.from(`\n</body></html>`),
+      ]),
+      "/script.js": "console.log('Hello World')",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const pieces = api.readFile("out/index.html").split("<p>x");
+      // Check the count first. If elements are missing, the diff below is huge.
+      expect(pieces.length - 1).toBe(70_000);
+      expect({ head: pieces[0], between: pieces.slice(1, -1).join(""), tail: pieces.at(-1)!.trim() }).toEqual({
+        head: expect.stringMatching(/<script type="module" crossorigin src="\.\/index-[a-z0-9]+\.js">/),
+        between: "",
+        tail: "</body></html>",
+      });
     },
   });
 });

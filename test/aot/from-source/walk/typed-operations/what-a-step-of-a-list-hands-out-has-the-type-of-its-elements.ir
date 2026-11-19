@@ -1,0 +1,23 @@
+# `for (const account of accounts) sum += account.balance`: the walk steps the list by index, and what the step hands out has the type that Link proves of it, as `accounts[i]` has: no test of the shape, no read by name. The look at the loop says the same, so the sum goes round as a number.
+# f1 = make, f2 = total, f3 = owners
+# -- source: what-a-step-of-a-list-hands-out-has-the-type-of-its-elements.ts
+# declare function print(value: unknown): void;
+# interface Account { balance: number; owner: string; open: boolean }
+# function make(i: number): Account { return { balance: i, owner: "o" + i, open: (i & 1) === 0 }; }
+# function total(accounts: Account[]): number { let sum = 0; for (const account of accounts) sum += account.balance; return sum; }
+# function owners(accounts: Account[]): string { let text = ""; for (const account of accounts) { if (!account.open) continue; text += account.owner; } return text; }
+# const list: Account[] = [make(1), make(2), make(3), make(4)];
+# print(total(list)); print(owners(list)); list[1] = make(20); print(total(list));
+# -- end of source
+# RUN(ONE): walk f2 mechanisms=all
+# ONE-LABEL: code f2:Body
+# ONE-NOT: number|string|bigint
+# ONE: undefined|L0 {{*}} = GetArrayElement
+# ONE: = GetSlot {{*}} key="balance"
+# ONE-NOT: = ShapeTest
+# ONE-NOT: = PropGet
+# RUN(TWO): walk f3 mechanisms=all
+# TWO-LABEL: code f3:Body
+# TWO: undefined|L0 {{*}} = GetArrayElement
+# TWO-NOT: = ShapeTest
+# TWO-NOT: = PropGet

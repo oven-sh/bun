@@ -1,0 +1,6 @@
+// A program that runs for a while: Bun.serve with sessions by cookies.
+const sessions = new Map<string, { n: number }>(); let made = 0;
+const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(req) { const cookie = Object.fromEntries((req.headers.get("cookie") ?? "").split("; ").filter(Boolean).map(p => p.split("="))); let id = cookie.sid; const headers = new Headers({ "x-method": req.method, vary: "cookie" }); if (!id || !sessions.has(id)) { id = "s" + ++made; sessions.set(id, { n: 0 }); headers.append("set-cookie", `sid=${id}; Path=/; HttpOnly`); headers.append("set-cookie", "seen=1; Max-Age=60"); } const s = sessions.get(id)!; s.n++; return new Response(`${id}:${s.n}:${req.headers.get("accept-language") ?? "-"}`, { headers }); } });
+const jar: string[] = []; const got: string[] = [];
+for (let i = 0; i < 1000; i++) { const who = i % 10; const r = await fetch(server.url, { method: i % 7 ? "GET" : "PUT", headers: { ...(jar[who] ? { cookie: jar[who] } : {}), "accept-language": ["en", "de", "fr"][i % 3] } }); const set = r.headers.getSetCookie(); if (set.length) jar[who] = set.map(c => c.split(";")[0]).join("; "); const text = await r.text(); if (i % 111 === 0 || i === 999) got.push(text + r.headers.get("x-method") + set.length); }
+console.log(got.join(" "), made, [...sessions.values()].map(s => s.n).join()); server.stop(true);

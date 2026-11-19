@@ -1,9 +1,12 @@
 #include "root.h"
 #include "sliceAnsi.h"
 #include "ANSIHelpers.h"
+#include "StringSizeLimit.h"
+#include "VectorSizeLimit.h"
 
 #include <wtf/text/WTFString.h>
 #include <wtf/text/StringBuilder.h>
+#include <wtf/text/MakeString.h>
 #include <wtf/Vector.h>
 
 // Native exports (implemented in stringWidth.cpp) for visible width and grapheme break
@@ -530,9 +533,9 @@ static const Char* parseEscapeSequence(const Char* start, const Char* end)
     return nullptr;
 }
 
-// Parse hyperlink: ESC]8;...;url TERMINATOR
+// Parse hyperlink: ESC]8;...;url TERMINATOR. `code` is a view of the whole sequence in the input.
 template<typename Char>
-static const Char* parseHyperlink(const Char* start, const Char* end, bool& isOpen, StringBuilder& codeBuilder, String& closePrefix, String& terminator)
+static const Char* parseHyperlink(const Char* start, const Char* end, bool& isOpen, std::span<const Char>& code, String& closePrefix, String& terminator)
 {
     const Char* it = start;
     bool isEscOsc = false;
@@ -568,8 +571,7 @@ static const Char* parseHyperlink(const Char* start, const Char* end, bool& isOp
         if (*p == 0x07) {
             // BEL terminator
             isOpen = (p > uriStart); // empty URI = close
-            for (const Char* q = start; q <= p; ++q)
-                codeBuilder.append(static_cast<UChar>(*q));
+            code = std::span { start, static_cast<size_t>(p + 1 - start) };
             if (isEscOsc) {
                 closePrefix = "\x1b]8;;"_s;
             } else {
@@ -587,8 +589,7 @@ static const Char* parseHyperlink(const Char* start, const Char* end, bool& isOp
         if (*p == 0x1b && p + 1 < end && *(p + 1) == '\\') {
             // ESC\ terminator (ST)
             isOpen = (p > uriStart);
-            for (const Char* q = start; q <= p + 1; ++q)
-                codeBuilder.append(static_cast<UChar>(*q));
+            code = std::span { start, static_cast<size_t>(p + 2 - start) };
             if (isEscOsc) {
                 closePrefix = "\x1b]8;;"_s;
             } else {
@@ -603,8 +604,7 @@ static const Char* parseHyperlink(const Char* start, const Char* end, bool& isOp
         if (*p == 0x9c) {
             // C1 ST terminator
             isOpen = (p > uriStart);
-            for (const Char* q = start; q <= p; ++q)
-                codeBuilder.append(static_cast<UChar>(*q));
+            code = std::span { start, static_cast<size_t>(p + 1 - start) };
             if (isEscOsc) {
                 closePrefix = "\x1b]8;;"_s;
             } else {
@@ -705,13 +705,13 @@ static const Char* parseControlString(const Char* start, const Char* end)
 
 // Try to parse an ANSI sequence at position. Returns type and end pointer.
 template<typename Char>
-static const Char* tryParseAnsi(const Char* start, const Char* end, TokenType& type, bool& isSgr, bool& isCanonicalSgr, bool& isHyperlinkOpen, StringBuilder& hyperlinkCodeBuilder, String& hyperlinkClosePrefix, String& hyperlinkTerminator)
+static const Char* tryParseAnsi(const Char* start, const Char* end, TokenType& type, bool& isSgr, bool& isCanonicalSgr, bool& isHyperlinkOpen, std::span<const Char>& hyperlinkCode, String& hyperlinkClosePrefix, String& hyperlinkTerminator)
 {
     Char c = *start;
 
     // Try hyperlink first (for ESC and C1 OSC)
     if (c == 0x1b || c == 0x9d) {
-        const Char* hlEnd = parseHyperlink(start, end, isHyperlinkOpen, hyperlinkCodeBuilder, hyperlinkClosePrefix, hyperlinkTerminator);
+        const Char* hlEnd = parseHyperlink(start, end, isHyperlinkOpen, hyperlinkCode, hyperlinkClosePrefix, hyperlinkTerminator);
         if (hlEnd) {
             type = TokenType::Hyperlink;
             return hlEnd;
@@ -803,7 +803,7 @@ static size_t computeTotalWidth(std::span<const Char> input, size_t asciiPrefix,
         if (ANSI::isEscapeCharacter(*p) || *p == 0x9c) {
             TokenType type;
             bool a, b, c;
-            StringBuilder d;
+            std::span<const Char> d;
             String e, f;
             if (const Char* after = tryParseAnsi(p, dataEnd, type, a, b, c, d, e, f)) {
                 p = after;
@@ -856,11 +856,11 @@ static size_t computeTotalWidth(std::span<const Char> input, size_t asciiPrefix,
 // The only lookahead: a tiny buffer for ANSI seen between consecutive visible
 // chars, because "is the next visible char a continuation?" decides whether
 // that ANSI is inside a cluster (emit unfiltered) or past-end (filter to
-// close-only). The buffer holds at most a few short spans (typically 0-1).
+// close-only). The input decides how many spans the buffer holds (typically 0-1): std::nullopt means it cannot grow.
 //
 // `end == SIZE_MAX` means unbounded (endD was +Inf) — we emit to EOF.
 template<typename Char>
-static WTF::String emitSliceStreaming(
+static std::optional<WTF::String> emitSliceStreaming(
     std::span<const Char> input, size_t asciiPrefix,
     size_t start, size_t end,
     StringView ellipsis, size_t ellipsisWidth,
@@ -872,12 +872,15 @@ static WTF::String emitSliceStreaming(
     const Char* const dataEnd = data + input.size();
     const bool endUnbounded = (end == SIZE_MAX);
 
-    StringBuilder result;
-    result.reserveCapacity(input.size());
+    // Only the input and the ellipsis can put a 16-bit character into the result.
+    const bool canUpconvert = sizeof(Char) == 2 || !ellipsis.is8Bit();
+    StringBuilder result { OverflowPolicy::RecordOverflow };
+    result.reserveCapacity(canUpconvert ? cappedStringBuilderReserve(input.size()) : static_cast<unsigned>(input.size()));
 
     SgrStyleState activeStyles;
     bool activeHyperlink = false;
-    String activeHyperlinkClosePrefix, activeHyperlinkTerminator, activeHyperlinkCode;
+    String activeHyperlinkClosePrefix, activeHyperlinkTerminator;
+    std::span<const Char> activeHyperlinkCode;
 
     // Column where the NEXT new cluster starts. Correct at all breaks.
     size_t position = 0;
@@ -891,8 +894,7 @@ static WTF::String emitSliceStreaming(
 
     // Pending ANSI: sequences seen since the last visible char. Flushed when
     // the NEXT visible char reveals whether they're inside a continuation
-    // (flush all) or past a break (filter close-only). Tiny: at most a few
-    // spans between adjacent visible chars.
+    // (flush all) or past a break (filter close-only). Usually 0-1 spans, but the input decides how many.
     struct Pending {
         const Char* start;
         const Char* end;
@@ -901,7 +903,7 @@ static WTF::String emitSliceStreaming(
     };
     Vector<Pending, 4> pending;
     // Captured hyperlink parse state per pending Hyperlink entry (indexed separately).
-    Vector<std::tuple<String, String, String>, 2> pendingHl; // code, closePrefix, terminator
+    Vector<std::tuple<std::span<const Char>, String, String>, 2> pendingHl; // code, closePrefix, terminator
 
     auto flushPending = [&](bool filterCloseOnly) {
         size_t hlIdx = 0;
@@ -1232,7 +1234,7 @@ static WTF::String emitSliceStreaming(
         if (ANSI::isEscapeCharacter(*p) || *p == 0x9c) {
             TokenType type = TokenType::Character;
             bool isSgr = false, isCanon = false, hlOpen = false;
-            StringBuilder hlCode;
+            std::span<const Char> hlCode;
             String hlCP, hlTerm;
             const Char* after = tryParseAnsi(p, dataEnd, type, isSgr, isCanon, hlOpen, hlCode, hlCP, hlTerm);
             if (after) {
@@ -1244,7 +1246,7 @@ static WTF::String emitSliceStreaming(
                     case TokenType::Hyperlink:
                         if (hlOpen) {
                             activeHyperlink = true;
-                            activeHyperlinkCode = hlCode.toString();
+                            activeHyperlinkCode = hlCode;
                             activeHyperlinkClosePrefix = hlCP;
                             activeHyperlinkTerminator = hlTerm;
                         } else
@@ -1254,9 +1256,10 @@ static WTF::String emitSliceStreaming(
                         break;
                     }
                 } else {
-                    pending.append(Pending { p, after, type, hlOpen });
-                    if (type == TokenType::Hyperlink)
-                        pendingHl.append(std::make_tuple(hlCode.toString(), hlCP, hlTerm));
+                    if (pending.size() >= Bun::maxVectorSize<Pending>() || !pending.tryAppend(Pending { p, after, type, hlOpen })) [[unlikely]]
+                        return std::nullopt;
+                    if (type == TokenType::Hyperlink && !pendingHl.tryAppend(std::make_tuple(hlCode, hlCP, hlTerm))) [[unlikely]]
+                        return std::nullopt;
                 }
                 p = after;
                 continue;
@@ -1337,11 +1340,14 @@ walkDone:;
     }
     if (needEndEllipsis) result.append(ellipsis);
     activeStyles.emitCloseCodes(result);
+    if (result.hasOverflowed() || exceedsStringLimit(result.length())) [[unlikely]]
+        return std::nullopt;
     return result.toString();
 }
 
+// std::nullopt: out of memory. A null String: the caller reuses the input string.
 template<typename Char>
-static WTF::String sliceAnsiImpl(std::span<const Char> input, double startD, double endD, StringView ellipsis, size_t ellipsisWidth, bool ambiguousIsWide)
+static std::optional<WTF::String> sliceAnsiImpl(std::span<const Char> input, double startD, double endD, StringView ellipsis, size_t ellipsisWidth, bool ambiguousIsWide)
 {
     if (input.empty())
         return emptyString();
@@ -1397,9 +1403,10 @@ static WTF::String sliceAnsiImpl(std::span<const Char> input, double startD, dou
             if (doEnd) en -= ellipsisWidth;
             if (!doStart && !doEnd) return ellipsis.toString();
             StringView content(std::span { data + st, en - st });
-            if (doStart && doEnd) return makeString(ellipsis, content, ellipsis);
-            if (doStart) return makeString(ellipsis, content);
-            return makeString(content, ellipsis);
+            auto joined = tryMakeString(doStart ? ellipsis : StringView(), content, doEnd ? ellipsis : StringView());
+            if (joined.isNull() || exceedsStringLimit(joined.length())) [[unlikely]]
+                return std::nullopt;
+            return joined;
         }
         return WTF::String(std::span { data + st, en - st });
     }
@@ -1537,19 +1544,23 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionBunSliceAnsi, (JSC::JSGlobalObject * globalOb
             : Bun__visibleWidthExcludeANSI_utf16(reinterpret_cast<const uint16_t*>(ellipsis.span16().data()), ellipsis.length(), ambiguousIsWide);
     }
 
-    WTF::String result;
+    std::optional<WTF::String> result;
     if (view->is8Bit()) {
         result = sliceAnsiImpl<Latin1Character>(view->span8(), startD, endD, ellipsis, ellipsisWidth, ambiguousIsWide);
     } else {
         result = sliceAnsiImpl<UChar>(view->span16(), startD, endD, ellipsis, ellipsisWidth, ambiguousIsWide);
     }
 
+    if (!result) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
     // null → no-op fast path hit: return the input JSString unchanged (zero-copy).
-    if (result.isNull())
+    if (result->isNull())
         return JSC::JSValue::encode(jsString);
-    if (result.isEmpty())
+    if (result->isEmpty())
         return JSC::JSValue::encode(JSC::jsEmptyString(vm));
-    return JSC::JSValue::encode(JSC::jsString(vm, result));
+    return JSC::JSValue::encode(JSC::jsString(vm, WTF::move(*result)));
 }
 
 } // namespace Bun

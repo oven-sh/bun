@@ -75,9 +75,9 @@ struct SecretsJobOptions {
     };
 
     Operation op;
-    CString service; // UTF-8 encoded, thread-safe
-    CString name; // UTF-8 encoded, thread-safe
-    CString password; // UTF-8 encoded, thread-safe (only for SET)
+    UTF8CString service; // thread-safe
+    UTF8CString name; // thread-safe
+    UTF8CString password; // thread-safe (only for SET)
     bool allowUnrestrictedAccess = false; // Controls security vs headless access (only for SET)
     Secrets::Persist persist; // Windows only (only for SET)
 
@@ -86,7 +86,7 @@ struct SecretsJobOptions {
     std::optional<WTF::Vector<uint8_t>> resultPassword;
     bool deleted = false;
 
-    SecretsJobOptions(Operation op, CString&& service, CString&& name, CString&& password, bool allowUnrestrictedAccess, Secrets::Persist persist)
+    SecretsJobOptions(Operation op, UTF8CString&& service, UTF8CString&& name, UTF8CString&& password, bool allowUnrestrictedAccess, Secrets::Persist persist)
         : op(op)
         , service(service)
         , name(name)
@@ -115,7 +115,7 @@ struct SecretsJobOptions {
         }
     }
 
-    static SecretsJobOptions* fromJS(JSGlobalObject* globalObject, ArgList args, Operation operation)
+    static std::unique_ptr<SecretsJobOptions> fromJS(JSGlobalObject* globalObject, ArgList args, Operation operation)
     {
         auto& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -261,7 +261,7 @@ struct SecretsJobOptions {
             RELEASE_AND_RETURN(scope, nullptr);
         }
 
-        RELEASE_AND_RETURN(scope, new SecretsJobOptions(operation, service.utf8(), name.utf8(), password.utf8(), allowUnrestrictedAccess, persist));
+        RELEASE_AND_RETURN(scope, makeUnique<SecretsJobOptions>(operation, service.utf8(), name.utf8(), password.utf8(), allowUnrestrictedAccess, persist));
     }
 };
 
@@ -345,12 +345,13 @@ void Bun__SecretsJobOptions__deinit(SecretsJobOptions* opts)
 }
 
 // Native binding exports
-void Bun__Secrets__scheduleJob(JSGlobalObject* global, CallFrame* callFrame, SecretsJobOptions* opts, EncodedJSValue promise);
+void Bun__Secrets__scheduleJob(JSGlobalObject* global, SecretsJobOptions* opts, EncodedJSValue promise);
 
 } // extern "C"
 
 JSC_DEFINE_HOST_FUNCTION(secretsGet, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Secrets, secretsGet);
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -359,33 +360,35 @@ JSC_DEFINE_HOST_FUNCTION(secretsGet, (JSGlobalObject * globalObject, CallFrame* 
         return JSValue::encode(jsUndefined());
     }
 
-    auto* options = SecretsJobOptions::fromJS(globalObject, ArgList(callFrame), SecretsJobOptions::GET);
+    auto options = SecretsJobOptions::fromJS(globalObject, ArgList(callFrame), SecretsJobOptions::GET);
     RETURN_IF_EXCEPTION(scope, {});
     ASSERT(options);
 
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    Bun__Secrets__scheduleJob(globalObject, callFrame, options, JSValue::encode(promise));
+    Bun__Secrets__scheduleJob(globalObject, options.release(), JSValue::encode(promise));
 
     return JSValue::encode(promise);
 }
 
 JSC_DEFINE_HOST_FUNCTION(secretsSet, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Secrets, secretsSet);
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    SecretsJobOptions* options = SecretsJobOptions::fromJS(globalObject, ArgList(callFrame), SecretsJobOptions::SET);
+    auto options = SecretsJobOptions::fromJS(globalObject, ArgList(callFrame), SecretsJobOptions::SET);
     RETURN_IF_EXCEPTION(scope, {});
     ASSERT(options);
 
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    Bun__Secrets__scheduleJob(globalObject, callFrame, options, JSValue::encode(promise));
+    Bun__Secrets__scheduleJob(globalObject, options.release(), JSValue::encode(promise));
 
     return JSValue::encode(promise);
 }
 
 JSC_DEFINE_HOST_FUNCTION(secretsDelete, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Secrets, secretsDelete);
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -394,12 +397,12 @@ JSC_DEFINE_HOST_FUNCTION(secretsDelete, (JSGlobalObject * globalObject, CallFram
         return JSValue::encode(jsUndefined());
     }
 
-    auto* options = SecretsJobOptions::fromJS(globalObject, ArgList(callFrame), SecretsJobOptions::DELETE_OP);
+    auto options = SecretsJobOptions::fromJS(globalObject, ArgList(callFrame), SecretsJobOptions::DELETE_OP);
     RETURN_IF_EXCEPTION(scope, {});
     ASSERT(options);
 
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    Bun__Secrets__scheduleJob(globalObject, callFrame, options, JSValue::encode(promise));
+    Bun__Secrets__scheduleJob(globalObject, options.release(), JSValue::encode(promise));
 
     return JSValue::encode(promise);
 }

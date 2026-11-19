@@ -1,0 +1,23 @@
+{
+  "_id": "two-level-nest",
+  "name": "two-level-nest",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "two-level-nest",
+      "version": "1.0.0",
+      "dependencies": {
+        "one-fixed-dep": "1.0.0",
+        "no-deps": "1.1.0"
+      },
+      "_id": "two-level-nest@1.0.0",
+      "dist": {
+        "integrity": "sha512-jio/5WGgbE5FhOJXoxmeVwhLtPaZOOCSIp5sIK/nfIMJpglHG/F8GrbYtdBa60djB/vRJx3sF+ouDLvYfBwqjQ==",
+        "shasum": "584fd25e8a93fc5e0e8d0888778386a59b7ee159",
+        "tarball": "http://localhost:4873/two-level-nest/-/two-level-nest-1.0.0.tgz"
+      }
+    }
+  }
+}

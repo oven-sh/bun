@@ -8,7 +8,7 @@
 //! reference test vectors — verified against the reference (and across every
 //! dispatch target) by `test/js/bun/util/hash.test.js`, which runs in CI.
 //!
-//! `HashObject.rs` exposes these via `hash_wrap` with a `(seed, bytes)`
+//! `HashObject.rs` exposes these, which have a `(seed, bytes)`
 //! signature (seed first, unlike Murmur/CityHash).
 
 pub struct XxHash32;

@@ -1,0 +1,4 @@
+( /* prettier-ignore */ a<b>);
+x = /* prettier-ignore */ (new a);
+f(((new a /* prettier-ignore */ )));
+x = [/* prettier-ignore */ (a<b>), c];

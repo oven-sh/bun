@@ -1,0 +1,18 @@
+# -- source: main.js
+# const other = { age: 40 };
+# function Base(name) { this.name = name; }
+# function Made(name, age) { var _this = Base.call(this, name) || this; _this.age = age; return _this; }
+# function Swapped() { this.age = 1; return other; }
+# function Plain() { this.age = 3; return 5; }
+# function run(count) { var total = 0; for (var i = 0; i < count; i++) { var d = new Made("rex", i & 7); total = (total + d.age) | 0; } return total; }
+# print(run(10), new Swapped().age, new Plain().age);
+# -- end of source
+# `return _this` is how a compiler to ES5 ends every constructor below another. What comes back is proven to be an object, so it is what the construction gives:
+# a test that is known to pass, and a join of the object with itself behind it, would give the object a new name, and what the walk knows of the object that it has just made would be lost with the old one.
+# RUN: walk f5 mechanisms=all
+# CHECK-LABEL: code f5:Body
+# CHECK-NOT: : true @Boolean = TypeTest
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 29 40 3
+# RUN(CALLS): run-in-shell mechanisms=all-Inlining
+# CALLS: 29 40 3

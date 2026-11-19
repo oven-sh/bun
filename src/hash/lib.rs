@@ -7,7 +7,7 @@
 //!
 //! | JS name        | Rust entry point                              | seed → output |
 //! |----------------|-----------------------------------------------|---------------|
-//! | `adler32`      | [`Adler32::hash`] (no seed)                   | — → u32       |
+//! | `adler32`      | `bun_highway::adler32` (no seed)              | — → u32       |
 //! | `cityHash32`   | [`CityHash32::hash`] (no seed)                | — → u32       |
 //! | `cityHash64`   | [`CityHash64::hash_with_seed`]                | u64 → u64     |
 //! | `xxHash32`     | [`XxHash32::hash`]                            | u32 → u32     |
@@ -18,16 +18,14 @@
 //! | `murmur64v2`   | [`Murmur2_64::hash_with_seed`]                | u64 → u64     |
 //! | `rapidhash`    | [`RapidHash::hash`]                           | u64 → u64     |
 //!
-//! `wyhash` lives in `bun_wyhash`; `crc32` is provided by `bun_zlib`.
+//! `wyhash` lives in `bun_wyhash`; `crc32` is provided by `bun_highway`.
 
 #![allow(clippy::many_single_char_names)]
-pub mod adler32;
 pub mod cityhash;
 pub mod murmur;
 pub mod rapidhash;
 pub mod xxhash;
 
-pub use adler32::Adler32;
 pub use cityhash::{CityHash32, CityHash64};
 pub use murmur::{Murmur2_32, Murmur2_64, Murmur3_32};
 pub use rapidhash::RapidHash;

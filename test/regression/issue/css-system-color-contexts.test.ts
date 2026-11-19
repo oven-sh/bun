@@ -60,7 +60,7 @@ test("CSS system colors in various contexts should not crash", () => {
     try {
       const result = cssInternals._test(css, css);
       console.log(`Result: ${result ? "parsed" : "failed"}`);
-    } catch (error) {
+    } catch (error: any) {
       console.log(`Error: ${error.message}`);
 
       // Check if this is the specific crash we're looking for

@@ -1,6 +1,6 @@
 import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isLinux, isPosix, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, type DirectoryTree, isLinux, isPosix, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import { isAbsolute, join } from "path";
 
@@ -339,7 +339,7 @@ for (const [name, copy] of impls) {
         "from/b.txt": "b",
       });
 
-      const filter = jest.fn((src: string) => true);
+      const filter = jest.fn<(src: string, dest: string) => boolean>((src: string) => true);
 
       let prev = process.cwd();
       process.chdir(String(basename));
@@ -607,7 +607,7 @@ describe.skipIf(isWindows).each(["cp", "cpSync"] as const)(
 test.skipIf(!isPosix)(
   "fs.promises.cp recursive does not free parent task while subtasks are in flight after an error",
   async () => {
-    const files: Record<string, string | object> = {};
+    const files: DirectoryTree = {};
     // Enough siblings so several SingleTasks are running on the thread pool
     // when the failing one errors.
     for (let i = 0; i < 32; i++) files[`src/f${i}.txt`] = "x";
@@ -654,6 +654,46 @@ test.skipIf(!isPosix)(
     expect(exitCode).toBe(0);
   },
 );
+
+describe.skipIf(!isPosix).concurrent("fs.promises.cp recursive rejects an empty destination with ENOENT", () => {
+  test.each([
+    ["src is a directory", `fs.mkdirSync("src");`],
+    // Outside macOS, JavaScript copies directories itself, so `src` becomes one after its last check.
+    [
+      "src becomes a directory",
+      `fs.writeFileSync("src", "x");
+      proto.isFile = () => {
+        proto.isFile = isFile;
+        fs.rmSync("src");
+        fs.mkdirSync("src");
+        return true;
+      };`,
+    ],
+  ])("%s", async (_, createSrc) => {
+    using dir = tempDir("cp-empty-dest", { file: "x" });
+    const script = `
+      import fs from "node:fs";
+      let proto = fs.lstatSync("file", { bigint: true });
+      while (!Object.hasOwn(proto, "isFile")) proto = Object.getPrototypeOf(proto);
+      const { isFile } = proto;
+      const results = new Set();
+      for (let i = 0; i < 20; i++) {
+        await fs.promises.cp("file", "earlier");
+        fs.rmSync("earlier");
+        ${createSrc}
+        results.add(await fs.promises.cp("src", "", { recursive: true }).then(() => "copied", err => err.code));
+        fs.rmdirSync("src");
+        results.add(fs.readdirSync(".").join());
+        fs.rmSync("earlier", { recursive: true, force: true });
+      }
+      console.log(JSON.stringify([...results]));
+    `;
+    // The earlier path is in a buffer of the thread that copied to it.
+    expect(await bunRun(["--cwd", String(dir), "-e", script], { UV_THREADPOOL_SIZE: "2" })).toSpawn(
+      '["ENOENT","file"]',
+    );
+  });
+});
 
 test.skipIf(!isLinux)("fs.cp and fs.copyFile create the destination with the source file's mode", async () => {
   using dir = tempDir("cp-dest-mode", {});

@@ -44,3 +44,4 @@ For worker/subprocess-shaped changes, spawn a subprocess (still `-e`) so worker 
   output against `node`.
 - MessagePort's `.on/.off` are added by requiring `worker_threads` — plain `new MessageChannel()` ports only have `addEventListener` until then.
 - The debug+asan build is 10-100× slower than release; large-allocation stress tests can time out locally while passing in CI.
+- Locally, run only the test files you touched. Leave neighbouring files, whole directories and repeat-for-stability loops to CI.

@@ -1,0 +1,23 @@
+# A counter that nothing bounds is an integer up to 2 ** 53, where one more changes nothing. Its step was made in integers, converted to a number for that one rounding and converted back: two conversions on the way from one turn to the next.
+# The number is the integer rounded and lies among the exact integers: so the integer is it, or lies one beyond the bound: it is held there by a comparison of integers.
+# -- source: an-integer-that-comes-back-from-a-number-is-held-at-the-bound-of-exact-integers.ts
+# declare function hidden(): number;
+# declare function say(x: number): void;
+# function hits(turns: number): number { let x = 9007199254740989, met = 0; for (let i = 0; i < turns; i++) { if (++x === 9007199254740992) met++; } return met; }
+# function low(turns: number): number { let x = -9007199254740989, met = 0; for (let i = 0; i < turns; i++) { if (--x === -9007199254740992) met++; } return met; }
+# say(hits(hidden())); say(low(hidden())); say(hits(hidden())); say(low(hidden()));
+# -- end of source
+# RUN: emit f1:Body f2:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK: Int64 {{*}} = Add(
+# CHECK: Int32 {{*}}Than(@
+# CHECK-NEXT: Int64 {{*}} = Select(
+# CHECK-LABEL: unit f2:Body
+# CHECK: Int64 {{*}} = Add(
+# CHECK: Int32 {{*}}Than(@
+# CHECK-NEXT: Int64 {{*}} = Select(
+# RUN(SHELL): run-in-shell const turns = [2, 2, 9, 9]; globalThis.hidden = () => turns.shift(); globalThis.say = (x) => print(String(x));
+# SHELL: 0
+# SHELL-NEXT: 0
+# SHELL-NEXT: 7
+# SHELL-NEXT: 7

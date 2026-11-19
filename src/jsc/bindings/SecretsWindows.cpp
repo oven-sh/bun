@@ -2,6 +2,7 @@
 
 #if OS(WINDOWS)
 
+#include "OutPtr.h"
 #include "Secrets.h"
 #include <wtf/text/WTFString.h>
 #include <wtf/NeverDestroyed.h>
@@ -64,19 +65,19 @@ static CredentialFramework* credentialFramework()
 }
 
 // Convert CString to Windows wide string
-static std::vector<wchar_t> cstringToWideChar(const CString& str)
+static std::vector<wchar_t> cstringToWideChar(const UTF8CString& str)
 {
-    if (!str.data()) {
+    if (str.isNull()) {
         return std::vector<wchar_t>(1, L'\0');
     }
 
-    int wideLength = MultiByteToWideChar(CP_UTF8, 0, str.data(), -1, nullptr, 0);
+    int wideLength = MultiByteToWideChar(CP_UTF8, 0, str.legacyCStringPointer(), -1, nullptr, 0);
     if (wideLength == 0) {
         return std::vector<wchar_t>(1, L'\0');
     }
 
     std::vector<wchar_t> result(wideLength);
-    MultiByteToWideChar(CP_UTF8, 0, str.data(), -1, result.data(), wideLength);
+    MultiByteToWideChar(CP_UTF8, 0, str.legacyCStringPointer(), -1, result.data(), wideLength);
     return result;
 }
 
@@ -99,13 +100,13 @@ static String wideCharToString(const wchar_t* wide)
 
 static String getWindowsErrorMessage(DWORD errorCode)
 {
-    wchar_t* errorBuffer = nullptr;
+    std::unique_ptr<wchar_t[], decltype([](wchar_t* buffer) { LocalFree(buffer); })> errorBuffer;
     FormatMessageW(
         FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
         nullptr,
         errorCode,
         MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-        (LPWSTR)&errorBuffer,
+        reinterpret_cast<LPWSTR>(static_cast<LPWSTR*>(outPtr(errorBuffer))),
         0,
         nullptr);
 
@@ -113,12 +114,11 @@ static String getWindowsErrorMessage(DWORD errorCode)
     if (errorBuffer) {
         // FormatMessageW appends a trailing CRLF; strip it so the JS-level
         // error.message stays single-line (matches Darwin/Linux backends).
-        size_t len = wcslen(errorBuffer);
+        size_t len = wcslen(errorBuffer.get());
         while (len > 0 && (errorBuffer[len - 1] == L'\r' || errorBuffer[len - 1] == L'\n')) {
             errorBuffer[--len] = L'\0';
         }
-        errorMessage = wideCharToString(errorBuffer);
-        LocalFree(errorBuffer);
+        errorMessage = wideCharToString(errorBuffer.get());
     }
 
     return errorMessage;
@@ -154,7 +154,7 @@ static DWORD toCredPersist(Persist persist)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-Error setPassword(const CString& service, const CString& name, CString&& password, bool allowUnrestrictedAccess, Persist persist)
+Error setPassword(const UTF8CString& service, const UTF8CString& name, UTF8CString&& password, bool allowUnrestrictedAccess, Persist persist)
 {
     Error err;
 
@@ -177,7 +177,7 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
     }
 
     // Create target name as "service/name"
-    String targetName = makeString(String::fromUTF8(service.data()), "/"_s, String::fromUTF8(name.data()));
+    String targetName = makeString(String::fromUTF8(service.span()), "/"_s, String::fromUTF8(name.span()));
     auto targetNameUtf8 = targetName.utf8();
     auto targetNameWide = cstringToWideChar(targetNameUtf8);
     auto nameNameWide = cstringToWideChar(name);
@@ -196,12 +196,12 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
 
     // Best-effort scrub of plaintext from memory.
     if (password.length())
-        SecureZeroMemory(const_cast<char*>(password.data()), password.length());
+        SecureZeroMemory(const_cast<char*>(password.legacyCStringPointer()), password.length());
 
     return err;
 }
 
-std::optional<WTF::Vector<uint8_t>> getPassword(const CString& service, const CString& name, Error& err)
+std::optional<WTF::Vector<uint8_t>> getPassword(const UTF8CString& service, const UTF8CString& name, Error& err)
 {
     err = Error {};
 
@@ -212,12 +212,12 @@ std::optional<WTF::Vector<uint8_t>> getPassword(const CString& service, const CS
         return std::nullopt;
     }
 
-    String targetName = makeString(String::fromUTF8(service.data()), "/"_s, String::fromUTF8(name.data()));
+    String targetName = makeString(String::fromUTF8(service.span()), "/"_s, String::fromUTF8(name.span()));
     auto targetNameUtf8 = targetName.utf8();
     auto targetNameWide = cstringToWideChar(targetNameUtf8);
 
-    PCREDENTIALW cred = nullptr;
-    if (!framework->CredReadW(targetNameWide.data(), CRED_TYPE_GENERIC, 0, &cred)) {
+    std::unique_ptr<CREDENTIALW, decltype(framework->CredFree)> cred { nullptr, framework->CredFree };
+    if (!framework->CredReadW(targetNameWide.data(), CRED_TYPE_GENERIC, 0, outPtr(cred))) {
         DWORD errorCode = GetLastError();
         updateError(err, errorCode);
         return std::nullopt;
@@ -233,12 +233,10 @@ std::optional<WTF::Vector<uint8_t>> getPassword(const CString& service, const CS
             cred->CredentialBlobSize));
     }
 
-    framework->CredFree(cred);
-
     return result;
 }
 
-bool deletePassword(const CString& service, const CString& name, Error& err)
+bool deletePassword(const UTF8CString& service, const UTF8CString& name, Error& err)
 {
     err = Error {};
 
@@ -249,7 +247,7 @@ bool deletePassword(const CString& service, const CString& name, Error& err)
         return false;
     }
 
-    String targetName = makeString(String::fromUTF8(service.data()), "/"_s, String::fromUTF8(name.data()));
+    String targetName = makeString(String::fromUTF8(service.span()), "/"_s, String::fromUTF8(name.span()));
     auto targetNameUtf8 = targetName.utf8();
     auto targetNameWide = cstringToWideChar(targetNameUtf8);
 

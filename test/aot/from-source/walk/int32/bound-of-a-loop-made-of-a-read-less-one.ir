@@ -1,0 +1,11 @@
+# `i <= point[key] - 1`: what bounds the variable is made of a read out of an int32 under one of two names. The other side of a relation is judged by what it is made of, as the value that enters a promise is: the step has room.
+# Once only the value itself was looked at: "i++ might not be an int32". Unseen for `point.x - 1`: there the walk has the range by itself.
+# f1 = lessOne
+# -- source: bound-of-a-loop-made-of-a-read-less-one.ts
+# declare function sink(...values: unknown[]): void;
+# class Point { x: Bun.int32 = 7; y: Bun.int32 = 12; }
+# function lessOne(point: Point, key: "x" | "y"): Bun.int32 { let last: Bun.int32 = 0; for (let i: Bun.int32 = 0; i <= point[key] - 1; i++) last = i; return last; }
+# sink(lessOne);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK: code f1:Body

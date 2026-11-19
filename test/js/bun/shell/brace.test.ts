@@ -1,6 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { join } from "node:path";
 
 describe("$.braces", () => {
   test("no-op", () => {
@@ -74,6 +75,33 @@ describe("$.braces", () => {
     });
   });
 
+  test.skipIf(!isASAN || isWindows)("long text in a nested group does not leak", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          // Out of the module loader's stack, whose leaks are suppressed.
+          await new Promise(resolve => setImmediate(resolve));
+          console.log(Bun.$.braces("{a,{a text that is too long to be inline,b}}").join());
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+      },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "a,a text that is too long to be inline,b\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("very deeply nested", () => {
     // The innermost `{17}` has no comma, so it is literal (bash 5.2).
     const result = $.braces(`{1,{2,{3,{4,{5,{6,{7,{8,{9,{10,{11,{12,{13,{14,{15,{16,{17}}}}}}}}}}}}}}}}}`);
@@ -118,8 +146,8 @@ console.log(JSON.stringify(Bun.$.braces("{" + inner)));`,
 
   test("empty string", () => {
     expect($.braces("")).toEqual([""]);
-    expect($.braces("", { parse: true })).toBeString();
-    expect($.braces("", { tokenize: true })).toBeString();
+    expect(($.braces as any)("", { parse: true })).toBeString();
+    expect(($.braces as any)("", { tokenize: true })).toBeString();
   });
 
   test("unicode", () => {
@@ -331,5 +359,36 @@ describe("comma-less brace group is literal (bash 5.2)", () => {
       stderr: "bun: no matches found: {x},*.txt\n",
       exitCode: 1,
     });
+  });
+});
+
+describe("$.braces arguments", () => {
+  test("input is ToString", () => {
+    expect($.braces(12 as any)).toEqual(["12"]);
+    expect($.braces({ toString: () => "a{b,c}" } as any)).toEqual(["ab", "ac"]);
+  });
+
+  test("a word with nothing to expand comes back as it was", () => {
+    expect($.braces("a\ud800b")).toEqual(["a\ud800b"]);
+  });
+
+  test("options are an object, null or undefined", () => {
+    for (const options of [undefined, null, {}, [], () => {}]) {
+      expect($.braces("a{b,c}", options as any)).toEqual(["ab", "ac"]);
+    }
+    for (const options of [5, "s", true, Symbol("s")]) {
+      expect(() => $.braces("a{b,c}", options as any)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: "BracesOptions must be an object",
+        }),
+      );
+    }
+  });
+
+  test("an argument that was not passed is undefined", () => {
+    expect(($.braces as any)()).toEqual(["undefined"]);
+    expect($.braces(undefined as any)).toEqual(["undefined"]);
   });
 });

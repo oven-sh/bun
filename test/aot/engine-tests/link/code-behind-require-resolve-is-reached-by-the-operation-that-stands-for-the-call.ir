@@ -1,0 +1,31 @@
+# console.log(require.resolve(name))
+# The front end writes ResolveDynamic in the place of the call, so no operation names the function, and the host carries the operation out with requireResolve() of the library.
+# If the operation brought nothing into reach, a program that is closed would stop there with "A built-in function was not compiled into this executable".
+# `createElement` shows that the program is closed.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+# CHECK: function f2 unreached
+
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="/$bun/js/builtins/CommonJS.ts" displayPath="/$bun/js/builtins/CommonJS.ts" flags=[IsLibrary]
+entry module=m0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+runtimefunction id=CommonJSRequireResolve function=f1
+runtimefunction id=DecoratorsCreateElement function=f2
+function f0 name="main" module=m0 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Integer integer=0
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="name" [isFreeName]
+    v4 = ResolveDynamic v3 referrer=m0
+    Return
+}
+function f1 name="requireResolve" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=CommonJSRequireResolve thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}
+function f2 name="createElement" module=m1 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=DecoratorsCreateElement thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

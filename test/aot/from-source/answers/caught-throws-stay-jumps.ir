@@ -1,0 +1,17 @@
+# -- source: main.ts
+# declare function print(...values: any[]): void;
+# const list: any = JSON.parse("[" + Array.from({ length: 24 }, (_, k) => (k % 3 ? k : -k)).join() + "]");
+# function plus(v: any) { if (v < 0) throw new Error("negative"); return v + 1; }
+# function ignored(n: number) {
+#   let total = 0;
+#   for (let turn = 0; turn < n; turn++) for (let i = 0; i < 24; i++) { const v = list[i]; try { total = (total + plus(v)) | 0; } catch (error) { total--; } }
+#   return total;
+# }
+# print(ignored(3));
+# -- end of source
+# A throw whose handler reads nothing of it and runs no other code is a jump to the handler, in the typed version of a loop too: 36 instructions a throw, and 760 where the iteration restarted there in the generic version, which throws.
+# The restarts are those of the guards on the list and its elements; with one at the throw they were one more.
+# RUN(COUNT): compile IterationRestartsEmitted mechanisms=all
+# COUNT: statistic IterationRestartsEmitted 3
+# RUN(ANSWER): run-in-shell mechanisms=all
+# ANSWER: 606

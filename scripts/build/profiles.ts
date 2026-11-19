@@ -168,13 +168,13 @@ export const profiles = {
     assertions: true,
   },
 
-  /** CI: deps + C++ + Rust + link on one agent; libbun-*.a and the dep libs are uploaded as artifacts. */
+  /** CI: a release build on one agent; build.ts packages and uploads the zips (scripts/build/ci.ts). */
   "ci-build": {
     buildType: "Release",
-    mode: "archive-link",
     ci: true,
     buildkite: true,
     webkit: "prebuilt",
+    trimmable: true,
   },
 } as const satisfies Record<string, PartialConfig>;
 

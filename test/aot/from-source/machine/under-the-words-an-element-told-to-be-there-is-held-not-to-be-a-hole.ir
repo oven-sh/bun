@@ -1,0 +1,27 @@
+# Fault injection, testing=IgnoreFreshArrayEscapes: the walk assumes that a call does nothing to an array whose allocation the walk has seen.
+# So an element that was present before the call counts as proven to be present after it.
+# A read that is proven to find its element has no branch on the hole, so the raw word is passed on as a value.
+# The hole of an array of doubles reads as NaN, and the hole of an array of int32 values reads as no value at all.
+# With --aot-harden=ignore-told-ranges (testing=CheckBoundsAtRunTime), the emitter checks that the word is not a hole. If it is, the process crashes with a named error.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime
+# RIGHT: number 2.5 undefined undefined false 3
+# RIGHT-NEXT: exited with 0
+# RUN(UNHELD): run-in-shell mechanisms=all testing=IgnoreFreshArrayEscapes
+# UNHELD: number 2.5 number NaN false 3
+# UNHELD-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=IgnoreFreshArrayEscapes,CheckBoundsAtRunTime
+# HELD: bun: internal AOT error:
+# HELD: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const which: string = JSON.parse('"poke"');
+# const doers: Record<string, (list: number[]) => unknown> = { none(list) { return list; }, size(list) { return list.length; }, poke(list) { delete list[1]; return list; } };
+# function run(): void {
+#   const list = [1.5, 2.5, 3.5];
+#   const before = list[1];
+#   doers[which]!(list);
+#   const behind = list[1];
+#   print(typeof before, before, typeof behind, behind, 1 in list, list.length);
+# }
+# run();
+# -- end of source

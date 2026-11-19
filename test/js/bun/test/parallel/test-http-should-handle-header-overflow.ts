@@ -20,7 +20,7 @@ await once(server, "listening");
 
 const socket = createConnection((server.address() as AddressInfo).port, "localhost", () => {
   socket.write(
-    `GET / HTTP/1.1\r\nHost: localhost:${server.address().port}\r\nConnection: close\r\nBig-Header: ` +
+    `GET / HTTP/1.1\r\nHost: localhost:${(server.address() as AddressInfo).port}\r\nConnection: close\r\nBig-Header: ` +
       "a".repeat(http.maxHeaderSize) + // will overflow because of host and connection headers
       "\r\n\r\n",
   );

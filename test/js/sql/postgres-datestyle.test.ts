@@ -5,10 +5,16 @@
 // in the StartupMessage (as libpq clients, node-postgres and postgres.js do) so
 // the server always sends the ISO form the decoder expects, regardless of
 // postgresql.conf / ALTER DATABASE / ALTER ROLE defaults.
-import { SQL } from "bun";
+import { randomUUIDv7, SQL } from "bun";
 import { expect, test } from "bun:test";
 import { describeWithContainer } from "harness";
-import { listeningServer, pgAuthenticationOk, pgParameterStatus, pgReadyForQuery } from "./wire-frames";
+import {
+  listeningServer,
+  pgAuthenticationOk,
+  pgParameterStatus,
+  pgParseStartupMessage,
+  pgReadyForQuery,
+} from "./wire-frames";
 
 // ---------------------------------------------------------------------------
 // Protocol-level: the StartupMessage must carry DateStyle=ISO so server-side
@@ -28,12 +34,7 @@ test("StartupMessage pins DateStyle=ISO so server-side datestyle defaults cannot
   try {
     await using sql = new SQL({ url: `postgres://u@127.0.0.1:${port}/db`, max: 1, connectionTimeout: 5 });
     await sql.connect();
-    const bytes = await startup.promise;
-    // StartupMessage body is key\0value\0 pairs after the 8-byte header.
-    const body = bytes.subarray(8).toString("latin1");
-    const params: Record<string, string> = {};
-    const parts = body.split("\0");
-    for (let i = 0; i + 1 < parts.length && parts[i] !== ""; i += 2) params[parts[i]] = parts[i + 1];
+    const { params } = pgParseStartupMessage(await startup.promise)!;
     // client_encoding was already pinned; DateStyle must be too.
     expect(params.client_encoding).toBe("UTF8");
     expect(params.DateStyle).toMatch(/^ISO\b/);
@@ -42,28 +43,23 @@ test("StartupMessage pins DateStyle=ISO so server-side datestyle defaults cannot
   }
 });
 
-// ---------------------------------------------------------------------------
-// End-to-end against a real server: force a non-ISO default on the database,
-// reconnect, and read a date back. Without DateStyle in the StartupMessage the
-// server honours the ALTER DATABASE default and emits `03/04/2026`, which the
-// old decode path turns into 4 March (or null for day > 12).
-// ---------------------------------------------------------------------------
+// A role of its own: a default on the database would reach every other client of the shared server.
 describeWithContainer("postgres", { image: "postgres_plain" }, container => {
-  test("database-level non-ISO DateStyle default does not corrupt date values", async () => {
+  test("a role's non-ISO DateStyle default does not corrupt date values", async () => {
     await container.ready;
-    const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
-    {
-      await using setup = new SQL({ url, max: 1 });
-      await setup.unsafe(`ALTER DATABASE bun_sql_test SET datestyle = 'SQL, DMY'`);
-    }
+    const url = (user: string) => `postgres://${user}@${container.host}:${container.port}/bun_sql_test`;
+    const role = "datestyle_" + randomUUIDv7("hex").replaceAll("-", "");
+    await using admin = new SQL({ url: url("postgres"), max: 1 });
+    await admin`CREATE ROLE ${admin(role)} LOGIN`;
     try {
-      await using sql = new SQL({ url, max: 1 });
+      await admin`ALTER ROLE ${admin(role)} SET datestyle = 'SQL, DMY'`;
+      await using sql = new SQL({ url: url(role), max: 1 });
       const [[style], [row], ext] = await Promise.all([
         sql`select current_setting('datestyle') as ds`.simple(),
         sql`select '2026-04-03'::date as d, '2026-07-22'::date as d2`.simple(),
         sql`select '2026-04-03'::date as d`,
       ]);
-      // DateStyle in the startup packet overrides the database default.
+      // DateStyle in the startup packet overrides the role's default.
       expect(style.ds).toMatch(/^ISO\b/);
       expect({
         d: row.d.toISOString(),
@@ -75,8 +71,7 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
         ext: "2026-04-03T00:00:00.000Z",
       });
     } finally {
-      await using cleanup = new SQL({ url, max: 1 });
-      await cleanup.unsafe(`ALTER DATABASE bun_sql_test RESET datestyle`);
+      await admin`DROP ROLE ${admin(role)}`;
     }
   });
 });

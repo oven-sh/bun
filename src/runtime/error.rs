@@ -70,14 +70,8 @@ pub enum Error {
     MissingShell,
     #[error("NotFound")]
     NotFound,
-    #[error("InvalidRoot")]
-    InvalidRoot,
     #[error("EmptyKey")]
     EmptyKey,
-    #[error("ExpectedObject")]
-    ExpectedObject,
-    #[error("FormatFailed")]
-    FormatFailed,
     #[error("SelfExePathFailed")]
     SelfExePathFailed,
     #[error("SpawnFailed")]
@@ -100,8 +94,6 @@ pub enum Error {
     UpgradeFailedBecauseOfMissingExecutableDir,
     #[error("NoBinFound")]
     NoBinFound,
-    #[error("NeedToInstall")]
-    NeedToInstall,
     #[error("PathTooLong")]
     PathTooLong,
     #[error("AssertionError")]
@@ -116,10 +108,6 @@ pub enum Error {
     CouldntReadCurrentDirectory,
     #[error("FailedToGetTempPath")]
     FailedToGetTempPath,
-    #[error("UnexpectedCreatingStdin")]
-    UnexpectedCreatingStdin,
-    #[error("UnableToEncode")]
-    UnableToEncode,
     #[error("InvalidHeaderName")]
     InvalidHeaderName,
     #[error("FormatError")]
@@ -128,10 +116,6 @@ pub enum Error {
     ReadError,
     #[error("OpenError")]
     OpenError,
-    #[error("UnexpectedPendingResolution")]
-    UnexpectedPendingResolution,
-    #[error("AsyncModule")]
-    AsyncModule,
     #[error("BlobNotFound")]
     BlobNotFound,
     #[error("InvalidRoutePattern")]
@@ -244,11 +228,7 @@ pub enum Error {
     #[error(transparent)]
     Clap(#[from] bun_clap::Error),
     #[error(transparent)]
-    Zlib(#[from] bun_zlib::ZlibError),
-    #[error(transparent)]
     Http(#[from] bun_http::Error),
-    #[error(transparent)]
-    Hpack(#[from] bun_http::lshpack::HpackError),
     #[error(transparent)]
     JsPrinter(#[from] bun_js_printer::Error),
     #[error(transparent)]
@@ -282,11 +262,12 @@ impl From<bun_uws::ssl_wrapper::InitError> for Error {
     }
 }
 
-impl From<bun_libarchive::Error> for Error {
-    fn from(e: bun_libarchive::Error) -> Self {
+impl From<bun_archive::Error> for Error {
+    fn from(e: bun_archive::Error) -> Self {
         match e {
-            bun_libarchive::Error::Sys(s) => Self::Sys(s),
-            bun_libarchive::Error::Alloc(a) => Self::Alloc(a),
+            bun_archive::Error::Sys(s) => Self::Sys(s),
+            bun_archive::Error::Alloc(a) => Self::Alloc(a),
+            bun_archive::Error::LeavesDestination(e) => Self::Sys(e.into()),
             _ => Self::Unexpected,
         }
     }
@@ -342,7 +323,6 @@ impl From<Error> for bun_uws_sys::Error {
 }
 
 impl Error {
-    #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
             Self::SnapshotFailed => "SnapshotFailed",
@@ -380,10 +360,7 @@ impl Error {
             Self::UnrecognizedCommand => "UnrecognizedCommand",
             Self::MissingShell => "MissingShell",
             Self::NotFound => "NotFound",
-            Self::InvalidRoot => "InvalidRoot",
             Self::EmptyKey => "EmptyKey",
-            Self::ExpectedObject => "ExpectedObject",
-            Self::FormatFailed => "FormatFailed",
             Self::SelfExePathFailed => "SelfExePathFailed",
             Self::SpawnFailed => "SpawnFailed",
             Self::PipeStartFailed => "PipeStartFailed",
@@ -397,7 +374,6 @@ impl Error {
                 "UpgradeFailedBecauseOfMissingExecutableDir"
             }
             Self::NoBinFound => "NoBinFound",
-            Self::NeedToInstall => "NeedToInstall",
             Self::PathTooLong => "PathTooLong",
             Self::AssertionError => "AssertionError",
             Self::ModuleNotFound => "ModuleNotFound",
@@ -405,14 +381,10 @@ impl Error {
             Self::ThreadSpawnFailed => "ThreadSpawnFailed",
             Self::CouldntReadCurrentDirectory => "CouldntReadCurrentDirectory",
             Self::FailedToGetTempPath => "FailedToGetTempPath",
-            Self::UnexpectedCreatingStdin => "UnexpectedCreatingStdin",
-            Self::UnableToEncode => "UnableToEncode",
             Self::InvalidHeaderName => "InvalidHeaderName",
             Self::FormatError => "FormatError",
             Self::ReadError => "ReadError",
             Self::OpenError => "OpenError",
-            Self::UnexpectedPendingResolution => "UnexpectedPendingResolution",
-            Self::AsyncModule => "AsyncModule",
             Self::BlobNotFound => "BlobNotFound",
             Self::InvalidRoutePattern => "InvalidRoutePattern",
             Self::InvalidRequest => "InvalidRequest",
@@ -468,9 +440,7 @@ impl Error {
             Self::JsLexer(e) => <&'static str>::from(e),
             Self::StdFmt(_) => "FmtError",
             Self::Clap(e) => e.name(),
-            Self::Zlib(e) => <&'static str>::from(e),
             Self::Http(e) => e.name(),
-            Self::Hpack(e) => <&'static str>::from(e),
             Self::JsPrinter(e) => e.name(),
             Self::Sourcemap(e) => e.name(),
             Self::StandaloneGraph(e) => e.name(),

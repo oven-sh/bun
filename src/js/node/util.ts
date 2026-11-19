@@ -12,17 +12,69 @@ const { resistStopPropagation, ErrnoException } = require("internal/shared");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
 const { deprecate } = require("internal/util/deprecate");
 
-const internalErrorName = $newRustFunction("node_util_binding.rs", "internalErrorName", 1);
-const internalErrorEntries = $newRustFunction("node_util_binding.rs", "internalErrorEntries", 0);
-const parseEnv = $newRustFunction("node_util_binding.rs", "parseEnv", 1);
+const internalErrorName: (err: number) => string = $bindgen("node_util_binding.bind.ts", "internalErrorName");
+const internalErrorEntries: () => { code: number; name: string }[] = $bindgen(
+  "node_util_binding.bind.ts",
+  "internalErrorEntries",
+);
+const parseEnv: (content: string) => Record<string, string> = $bindgen("node_util_binding.bind.ts", "parseEnv");
 
 const NumberIsSafeInteger = Number.isSafeInteger;
 const ObjectKeys = Object.keys;
 const ObjectGetOwnPropertyNames = Object.getOwnPropertyNames;
-const { uncurryThis, SafeMap } = require("internal/primordials");
-const RegExpPrototypeExec = uncurryThis(RegExp.prototype.exec);
+const { SafeMap } = require("internal/primordials");
+const RegExpPrototypeExec = RegExp.prototype.exec;
 
-var cjs_exports;
+type InspectModule = $BunModules["internal/util/inspect"];
+
+interface UtilModule {
+  _errnoException: typeof _errnoException;
+  _extend: typeof _extend;
+  callbackify: typeof callbackify;
+  convertProcessSignalToExitCode: typeof convertProcessSignalToExitCode;
+  debug: typeof debuglog;
+  debuglog: typeof debuglog;
+  deprecate: typeof deprecate;
+  format: InspectModule["format"];
+  styleText: typeof styleText;
+  formatWithOptions: InspectModule["formatWithOptions"];
+  getCallSites: typeof getCallSites;
+  getSystemErrorMap: typeof getSystemErrorMap;
+  getSystemErrorName: typeof getSystemErrorName;
+  getSystemErrorMessage: typeof getSystemErrorMessage;
+  inherits: typeof inherits;
+  inspect: InspectModule["inspect"];
+  isDeepStrictEqual: typeof isDeepStrictEqual;
+  promisify: typeof promisify;
+  setTraceSigInt: typeof setTraceSigInt;
+  stripVTControlCharacters: InspectModule["stripVTControlCharacters"];
+  toUSVString: typeof toUSVString;
+  aborted: typeof aborted;
+  types: typeof types;
+  parseEnv: typeof parseEnv;
+  parseArgs: typeof parseArgs;
+  TextDecoder: typeof TextDecoder;
+  TextEncoder: typeof TextEncoder;
+  MIMEType: typeof MIMEType;
+  MIMEParams: typeof MIMEParams;
+  diff: typeof diff;
+  isArray: typeof $isArray;
+  isBoolean: typeof isBoolean;
+  isBuffer: typeof isBuffer;
+  isNull: typeof isNull;
+  isNullOrUndefined: typeof isNullOrUndefined;
+  isNumber: typeof isNumber;
+  isString: typeof isString;
+  isSymbol: typeof isSymbol;
+  isUndefined: typeof isUndefined;
+  isRegExp: typeof isRegExp;
+  isObject: typeof isObject;
+  isDate: typeof isDate;
+  isError: typeof isError;
+  isFunction: typeof isFunction;
+  isPrimitive: typeof isPrimitive;
+  log: typeof log;
+}
 
 function isBuffer(value) {
   return Buffer.isBuffer(value);
@@ -36,16 +88,11 @@ function isFunction(value) {
 // https://github.com/nodejs/node/blob/main/lib/internal/util/comparisons.js
 const { isDeepStrictEqual } = require("internal/util/comparisons");
 
-const parseArgs = $newRustFunction("parse_args.rs", "parseArgs", 1);
+const parseArgs = $bindgen("parse_args.bind.ts", "parseArgs");
 
-let utl;
-function lazyInspectModule() {
-  return (utl ??= require("internal/util/inspect"));
-}
-
-var debugs = {};
+var debugs: Record<string, (...args: unknown[]) => void> = {};
 var debugEnvRegex = /^$/;
-const NODE_DEBUG = process.env.NODE_DEBUG;
+const NODE_DEBUG = Bun.env.NODE_DEBUG;
 if (NODE_DEBUG) {
   debugEnv = NODE_DEBUG;
   debugEnv = debugEnv
@@ -55,10 +102,10 @@ if (NODE_DEBUG) {
     .toUpperCase();
   debugEnvRegex = new RegExp("^" + debugEnv + "$", "i");
 }
-var debugEnv;
+var debugEnv: string;
 // Emits a warning when the user enables NODE_DEBUG=http or NODE_DEBUG=http2,
 // like Node.js's internal/util/debuglog.
-function emitWarningIfNeeded(set) {
+function emitWarningIfNeeded(set: string) {
   if ("HTTP" === set || "HTTP2" === set) {
     process.emitWarning(
       "Setting the NODE_DEBUG environment variable " +
@@ -71,14 +118,16 @@ function emitWarningIfNeeded(set) {
   }
 }
 
-function debuglog(set) {
+/** Node also takes a callback that is given the logger once it is made. It is ignored here. */
+function debuglog(set: string, callback?: (fn: (...args: unknown[]) => void) => void): (...args: unknown[]) => void;
+function debuglog(set: string) {
   set = set.toUpperCase();
   if (!debugs[set]) {
     if (debugEnvRegex.test(set)) {
       var pid = process.pid;
       emitWarningIfNeeded(set);
       debugs[set] = function () {
-        var msg = lazyInspectModule().format.$apply(cjs_exports, arguments);
+        var msg = require("internal/util/inspect").format.$apply(undefined, arguments as unknown as unknown[]);
         console.error("%s %d: %s", set, pid, msg);
       };
     } else {
@@ -130,7 +179,7 @@ function isPrimitive(arg) {
     typeof arg === "undefined"
   );
 }
-function pad(n) {
+function pad(n: number) {
   return n < 10 ? "0" + n.toString(10) : n.toString(10);
 }
 var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -140,7 +189,11 @@ function timestamp() {
   return [d.getDate(), months[d.getMonth()], time].join(" ");
 }
 var log = function log() {
-  console.log("%s - %s", timestamp(), lazyInspectModule().format.$apply(cjs_exports, arguments));
+  console.log(
+    "%s - %s",
+    timestamp(),
+    require("internal/util/inspect").format.$apply(undefined, arguments as unknown as unknown[]),
+  );
 };
 var inherits = function inherits(ctor, superCtor) {
   if (ctor === undefined || ctor === null) {
@@ -178,7 +231,7 @@ interface FalsyValueRejectionError extends Error {
   reason?: unknown;
 }
 
-function callbackifyOnRejected(reason, cb) {
+function callbackifyOnRejected(reason: unknown, cb: (reason: unknown) => void) {
   if (!reason) {
     var newReason: FalsyValueRejectionError = new Error("Promise was rejected with a falsy value");
     newReason.reason = reason;
@@ -187,7 +240,7 @@ function callbackifyOnRejected(reason, cb) {
   }
   return cb(reason);
 }
-function callbackify(original) {
+function callbackify(original: (this: unknown, ...args: unknown[]) => Promise<unknown>) {
   const { validateFunction } = require("internal/validators");
   validateFunction(original, "original");
 
@@ -238,20 +291,25 @@ const kHexStyleCacheMax = 256;
 // Matches #RGB or #RRGGBB
 const hexColorRegExp = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
-let styleCache;
-let hexStyleCache;
-let lazyStreamUtils;
-let lazyUtilColors;
+interface TextStyle {
+  __proto__: null;
+  openSeq: string;
+  closeSeq: string;
+  keepClose?: boolean;
+}
+
+let styleCache: Record<string, TextStyle> | undefined;
+let hexStyleCache: Map<string, TextStyle> | undefined;
 
 function getHexStyleCache() {
-  hexStyleCache ??= new SafeMap();
+  hexStyleCache ??= new SafeMap() as Map<string, TextStyle>;
   return hexStyleCache;
 }
 
 function getStyleCache() {
   if (styleCache === undefined) {
-    styleCache = { __proto__: null };
-    const colors = lazyInspectModule().inspect.colors;
+    styleCache = { __proto__: null } as unknown as Record<string, TextStyle>;
+    const colors = require("internal/util/inspect").inspect.colors;
     for (const key of ObjectGetOwnPropertyNames(colors)) {
       const codes = colors[key];
       if (codes) {
@@ -269,8 +327,8 @@ function getStyleCache() {
   return styleCache;
 }
 
-function hexToRgb(hex) {
-  let hexStr;
+function hexToRgb(hex: string) {
+  let hexStr: string;
   if (hex.length === 4) {
     hexStr = hex[1] + hex[1] + hex[2] + hex[2] + hex[3] + hex[3];
   } else if (hex.length === 7) {
@@ -282,24 +340,24 @@ function hexToRgb(hex) {
   return Buffer.from(hexStr, "hex");
 }
 
-function getHexStyle(hex) {
+function getHexStyle(hex: string) {
   const cache = getHexStyleCache();
   const cached = cache.get(hex);
   if (cached !== undefined) return cached;
   const rgb = hexToRgb(hex);
-  const style = {
+  const style: TextStyle = {
     __proto__: null,
     openSeq: kEscape + `38;2;${rgb[0]};${rgb[1]};${rgb[2]}` + kEscapeEnd,
     closeSeq: kHexCloseSeq,
   };
   if (cache.size >= kHexStyleCacheMax) {
-    cache.delete(cache.keys().next().value);
+    cache.delete(cache.keys().next().value!);
   }
   cache.set(hex, style);
   return style;
 }
 
-function replaceCloseCode(str, closeSeq, openSeq, keepClose) {
+function replaceCloseCode(str: string, closeSeq: string, openSeq: string, keepClose: boolean | undefined) {
   const closeLen = closeSeq.length;
   let index = str.indexOf(closeSeq);
   if (index === -1) return str;
@@ -337,7 +395,7 @@ function styleText(format, text, options) {
 
     if (format[0] === "#") {
       let hexStyle = getHexStyleCache().get(format);
-      if (hexStyle === undefined && RegExpPrototypeExec(hexColorRegExp, format) !== null) {
+      if (hexStyle === undefined && RegExpPrototypeExec.$call(hexColorRegExp, format) !== null) {
         hexStyle = getHexStyle(format);
       }
       if (hexStyle !== undefined) {
@@ -356,13 +414,11 @@ function styleText(format, text, options) {
   let skipColorize;
   if (validateStream) {
     const stream = options?.stream ?? process.stdout;
-    lazyStreamUtils ??= require("internal/streams/utils");
-    const { isNodeStream, isReadableStream, isWritableStream } = lazyStreamUtils;
+    const { isNodeStream, isReadableStream, isWritableStream } = require("internal/streams/utils");
     if (!isReadableStream(stream) && !isWritableStream(stream) && !isNodeStream(stream)) {
       throw $ERR_INVALID_ARG_TYPE("stream", ["ReadableStream", "WritableStream", "Stream"], stream);
     }
-    lazyUtilColors ??= require("internal/util/colors");
-    skipColorize = !lazyUtilColors.shouldColorize(stream);
+    skipColorize = !require("internal/util/colors").shouldColorize(stream);
   }
 
   const formatArray = $isJSArray(format) ? format : [format];
@@ -377,7 +433,7 @@ function styleText(format, text, options) {
     if (typeof key === "string" && key[0] === "#") {
       let hexStyle = getHexStyleCache().get(key);
       if (hexStyle === undefined) {
-        if (RegExpPrototypeExec(hexColorRegExp, key) === null) {
+        if (RegExpPrototypeExec.$call(hexColorRegExp, key) === null) {
           throw $ERR_INVALID_ARG_VALUE("format", key, "must be a valid hex color (#RGB or #RRGGBB)");
         }
         if (skipColorize) continue;
@@ -393,7 +449,7 @@ function styleText(format, text, options) {
 
     const style = cache[key];
     if (style === undefined) {
-      validateOneOf(key, "format", ObjectGetOwnPropertyNames(lazyInspectModule().inspect.colors));
+      validateOneOf(key, "format", ObjectGetOwnPropertyNames(require("internal/util/inspect").inspect.colors));
     }
     openCodes += style.openSeq;
     closeCodes = style.closeSeq + closeCodes;
@@ -506,10 +562,9 @@ let uvErrmap: Map<number, [string, string]> | undefined;
 function getUvErrmap() {
   if (uvErrmap === undefined) {
     uvErrmap = new Map();
-    const flat = internalErrorEntries();
-    for (let i = 0; i < flat.length; i += 2) {
-      const code = flat[i];
-      const name = flat[i + 1];
+    const entries = internalErrorEntries();
+    for (let i = 0; i < entries.length; i++) {
+      const { code, name } = entries[i];
       if (!uvErrmap.has(code)) uvErrmap.set(code, [name, uvErrorMessages[name] ?? name]);
     }
   }
@@ -548,13 +603,12 @@ interface CallSiteObject {
   column: number;
 }
 
-function prepareCallSites(_err, callSites) {
+function prepareCallSites(_err: Error, callSites: NodeJS.CallSite[]) {
   const result: CallSiteObject[] = [];
   for (let i = 0; i < callSites.length; i++) {
     const callSite = callSites[i];
-    // CallSite#getColumnNumber() is 0-based here but 1-based in V8, and node
-    // exposes the column under both names.
-    const columnNumber = (callSite.getColumnNumber() ?? 0) + 1;
+    // node exposes the column under both names.
+    const columnNumber = callSite.getColumnNumber() ?? 0;
     result.push({
       functionName: callSite.getFunctionName() ?? "",
       scriptId: `${callSite.getScriptId()}`,
@@ -572,6 +626,10 @@ function validateSourceMapOption(options) {
   if (sourceMap !== undefined) {
     validateBoolean(sourceMap, "options.sourceMap");
   }
+}
+
+function diff(actual, expected) {
+  return require("internal/util/diff").diff(actual, expected);
 }
 
 function getCallSites(frameCount = 10, options) {
@@ -699,7 +757,7 @@ function setTraceSigInt(enable) {
   // is accepted as a no-op on the main thread.
 }
 
-cjs_exports = {
+var cjs_exports: UtilModule = {
   // This is in order of `node --print 'Object.keys(util)'`
   _errnoException,
   // _exceptionWithHostPort,
@@ -710,14 +768,14 @@ cjs_exports = {
   debuglog,
   deprecate,
   get format() {
-    return lazyInspectModule().format;
+    return require("internal/util/inspect").format;
   },
   set format(value) {
     Object.defineProperty(cjs_exports, "format", { value, writable: true, enumerable: true, configurable: true });
   },
   styleText,
   get formatWithOptions() {
-    return lazyInspectModule().formatWithOptions;
+    return require("internal/util/inspect").formatWithOptions;
   },
   set formatWithOptions(value) {
     Object.defineProperty(cjs_exports, "formatWithOptions", {
@@ -733,7 +791,7 @@ cjs_exports = {
   getSystemErrorMessage,
   inherits,
   get inspect() {
-    return lazyInspectModule().inspect;
+    return require("internal/util/inspect").inspect;
   },
   set inspect(value) {
     Object.defineProperty(cjs_exports, "inspect", { value, writable: true, enumerable: true, configurable: true });
@@ -742,7 +800,7 @@ cjs_exports = {
   promisify,
   setTraceSigInt,
   get stripVTControlCharacters() {
-    return lazyInspectModule().stripVTControlCharacters;
+    return require("internal/util/inspect").stripVTControlCharacters;
   },
   set stripVTControlCharacters(value) {
     Object.defineProperty(cjs_exports, "stripVTControlCharacters", {
@@ -763,6 +821,7 @@ cjs_exports = {
   TextEncoder,
   MIMEType,
   MIMEParams,
+  diff,
 
   // Deprecated in Node.js 22, removed in 23
   isArray: $isArray,

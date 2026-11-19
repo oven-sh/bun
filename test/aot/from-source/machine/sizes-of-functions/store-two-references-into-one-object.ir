@@ -1,0 +1,20 @@
+# f1 = fill
+# -- source: store-two-references-into-one-object.ts
+# type Fork = { left: Fork | null; right: Fork | null };
+# function fill(fork: Fork, left: Fork, right: Fork): void {
+#   fork.left = left;
+#   fork.right = right;
+# }
+# declare const input: any;
+# const first: Fork = { left: null, right: null };
+# const second: Fork = { left: null, right: null };
+# fill(first, second, input ? first : second);
+# fill(second, input ? first : second, first);
+# (globalThis as any).answer = [first.left, first.right, second.left, second.right];
+# -- end of source
+# The compiler before this one: 5 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 11, patches 0, moves 1, unlikely or rare 7.
+# RUN(X64): steps most:12 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 12

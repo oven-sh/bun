@@ -527,6 +527,31 @@ describe("bundler", () => {
     },
   });
 
+  // The automatic runtime passes a lone spread object directly as props.
+  {
+    const config = { a: 1, nested: { list: [2, "three", { four: null }] } };
+    const withChild = { ...config, children: "kid" };
+    itBundled("jsx/SpreadOfObjectDefineKeepsOtherUses", {
+      files: {
+        "/index.jsx": /* jsx */ `
+          import { inOtherFile } from "./other.jsx";
+          const before = CONFIG;
+          const spread = <div {...CONFIG} />;
+          const child = <div {...CONFIG}>kid</div>;
+          console.log(JSON.stringify([before, spread.props, child.props, CONFIG, inOtherFile]));
+        `,
+        "/other.jsx": /* jsx */ `
+          const child = <a {...CONFIG}>kid</a>;
+          export const inOtherFile = [child.props, CONFIG];
+        `,
+        ...helpers,
+      },
+      target: "bun",
+      define: { CONFIG: JSON.stringify(config) },
+      run: { stdout: JSON.stringify([config, config, withChild, config, [withChild, config]]) },
+    });
+  }
+
   // The classic transform reads the first member of the factory and fragment
   // member lists. A factory or fragment option whose text has no identifier
   // in it ("." or "..") must keep the list that was configured before it,
@@ -1360,6 +1385,197 @@ describe("bundler", () => {
         expect(dead).not.toContain("react");
         expect(dead).not.toContain("unused");
       },
+    });
+  });
+
+  describe.concurrent("a hook call in a method, with React Fast Refresh", () => {
+    const prelude = /* js */ `
+      globalThis.$RefreshSig$ = () => fn => fn;
+      globalThis.$RefreshReg$ = () => {};
+      function useThing() { return 1; }
+    `;
+    const signatures = (file: string) =>
+      file.match(/(\$RefreshSig\$|createSignatureFunctionForTransform)\(\)/g)?.length ?? 0;
+
+    for (const ext of ["tsx", "jsx"]) {
+      itBundled(`jsx/FastRefreshClassStatementMethods.${ext}`, {
+        files: {
+          [`/index.${ext}`]: /* js */ `
+            ${prelude}
+            class C {
+              constructor() { this.c = useThing(); }
+              m() { return useThing(); }
+              get g() { return useThing(); }
+              set s(v) { this.v = v + useThing(); }
+              static t() { return useThing(); }
+              #p() { return useThing(); }
+              p() { return this.#p(); }
+            }
+            const c = new C();
+            c.s = 1;
+            console.log(c.c, c.m(), c.g, c.v, C.t(), c.p());
+          `,
+        },
+        backend: "cli",
+        reactFastRefresh: true,
+        onAfterBundle(api) {
+          expect(signatures(api.readFile("out.js"))).toBe(0);
+        },
+        run: { stdout: "1 1 1 2 1 1" },
+      });
+
+      itBundled(`jsx/FastRefreshClassExpressionMethod.${ext}`, {
+        files: {
+          [`/index.${ext}`]: /* js */ `
+            ${prelude}
+            const C = class { m() { return useThing(); } };
+            console.log(new C().m());
+          `,
+        },
+        backend: "cli",
+        reactFastRefresh: true,
+        onAfterBundle(api) {
+          expect(signatures(api.readFile("out.js"))).toBe(0);
+        },
+        run: { stdout: "1" },
+      });
+
+      itBundled(`jsx/FastRefreshObjectMethodKeepsSuper.${ext}`, {
+        files: {
+          [`/index.${ext}`]: /* js */ `
+            ${prelude}
+            const o = { __proto__: { m() { return 1; } }, m() { return super.m() + useThing(); } };
+            console.log(o.m());
+          `,
+        },
+        backend: "cli",
+        reactFastRefresh: true,
+        onAfterBundle(api) {
+          expect(signatures(api.readFile("out.js"))).toBe(0);
+        },
+        run: { stdout: "2" },
+      });
+    }
+
+    // Like react-refresh's Babel plugin, so that a component keeps its state when its module runs again.
+    itBundled("jsx/FastRefreshRegistersWrappedComponents", {
+      files: {
+        "/index.tsx": /* js */ `
+          import { Other, other } from "./other";
+          const memo = (f?: any) => ({ memo: f }), forwardRef = memo, createContext = (_: string) => ({});
+          const React = { memo };
+          const globals: any = globalThis;
+          globals.$RefreshSig$ = () => (t: unknown) => t;
+          globals.$RefreshReg$ = () => {};
+          function useThing() { return 1; }
+          const Memo = memo(function Memo() { return useThing(); });
+          const Fwd = forwardRef((props: unknown, ref: unknown) => null);
+          const Both = memo(forwardRef((props: unknown, ref: unknown) => null));
+          const Dotted = React.memo(() => null);
+          const Plain = () => null;
+          const Wrapped = memo(Plain);
+          const Imported = memo(Other);
+          const NotImported = memo(other);
+          const Theme = createContext("none");
+          const Total = Math.max(1, 2);
+          const Nothing = memo();
+          const lower = memo(() => null);
+          console.log([Memo, Fwd, Both, Dotted, Plain, Wrapped, Imported, NotImported, Theme, Total, Nothing, lower].length);
+        `,
+        "/other.ts": `export const Other = 1; export const other = 2;`,
+      },
+      backend: "cli",
+      reactFastRefresh: true,
+      onAfterBundle(api) {
+        const registered = [...api.readFile("out.js").matchAll(/:(\w+)"\);/g)].map(m => m[1]);
+        expect(registered).toEqual(["Memo", "Fwd", "Both", "Dotted", "Plain", "Wrapped", "Imported"]);
+      },
+      run: { stdout: "12" },
+    });
+
+    for (const [value, registers] of [
+      ["memo(() => null)", true],
+      ["React.memo(Plain)", true],
+      ["memo(forwardRef(() => null))", true],
+      ["memo(Other)", true],
+      ["createContext('none')", false],
+      ["Plain", false],
+    ] as const) {
+      itBundled(`jsx/FastRefreshDefaultExportOf ${value}`, {
+        files: {
+          "/index.tsx": /* js */ `
+            import { Other } from "./other";
+            const memo = (f?: any) => ({ memo: f }), forwardRef = memo, createContext = (_: string) => ({});
+            const React = { memo };
+            const Plain = () => null;
+            console.log([Other, memo, forwardRef, createContext, React, Plain].length);
+            export default ${value};
+          `,
+          "/other.ts": `export const Other = 1;`,
+        },
+        backend: "cli",
+        reactFastRefresh: true,
+        onAfterBundle(api) {
+          expect(api.readFile("out.js").includes(`:default");`)).toBe(registers);
+        },
+      });
+    }
+
+    // Each component gets its own signature binding, in the scope its `var` is
+    // declared in. Two siblings used to share one name under minification.
+    itBundled("jsx/FastRefreshSiblingSignaturesAreDistinct", {
+      files: {
+        "/index.tsx": /* js */ `
+          const calls = [];
+          let next = 0;
+          globalThis.$RefreshSig$ = () => {
+            const id = next++;
+            return t => (t ? t : calls.push(id));
+          };
+          globalThis.$RefreshReg$ = () => {};
+          function useThing() { return 1; }
+          function A() { return useThing(); }
+          function B() { return useThing(); }
+          function make() {
+            function C() { return useThing(); }
+            function D() { return useThing(); }
+            if (useThing()) { function E() { return useThing(); } return [C, D, E]; }
+          }
+          const [C, D, E] = make();
+          A(); B(); C(); D(); E();
+          console.log(JSON.stringify(calls));
+        `,
+      },
+      backend: "cli",
+      reactFastRefresh: true,
+      minifyIdentifiers: true,
+      onAfterBundle(api) {
+        expect(signatures(api.readFile("out.js"))).toBe(6);
+      },
+      run: { stdout: "[2,0,1,3,4,5]" },
+    });
+
+    // The call in the method counts for neither function. The one in the function inside it does.
+    itBundled("jsx/FastRefreshFunctionsAroundAndInsideAMethod", {
+      files: {
+        "/index.tsx": /* js */ `
+          ${prelude}
+          function Around() {
+            return { m() { useThing(); return function Inside() { return useThing(); }; } };
+          }
+          console.log(Around().m()());
+        `,
+        "/node_modules/react-refresh/runtime.js": /* js */ `
+          export const createSignatureFunctionForTransform = () => fn => fn;
+          export const register = () => {};
+        `,
+      },
+      backend: "api",
+      reactFastRefresh: true,
+      onAfterBundle(api) {
+        expect(signatures(api.readFile("out.js"))).toBe(1);
+      },
+      run: { stdout: "1" },
     });
   });
 });

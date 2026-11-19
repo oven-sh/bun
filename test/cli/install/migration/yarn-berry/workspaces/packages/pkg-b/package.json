@@ -1,0 +1,13 @@
+{
+  "name": "pkg-b",
+  "version": "2.0.0",
+  "dependencies": {
+    "a-dep": "^1.0.1"
+  },
+  "devDependencies": {
+    "pkg-a": "workspace:*"
+  },
+  "peerDependencies": {
+    "no-deps": "*"
+  }
+}

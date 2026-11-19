@@ -73,4 +73,7 @@ struct node_module {
 
 extern "C" BUN_EXPORT void node_module_register(void* mod);
 
+// Runs the entry point of a module queued by node_module_register, with moduleObject as `module`. Throws on failure.
+void executePendingV8Module(Zig::GlobalObject* globalObject, node_module* mod, JSC::JSObject* moduleObject);
+
 } // namespace node

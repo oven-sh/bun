@@ -1,0 +1,17 @@
+# -- source: typed-arrays-under-unknown-starts.js
+# globalThis.held = new Map([["options", { quote: new Uint8Array([2, 3]) }]]);
+# const parser = {
+#   options: globalThis.held.get("options"),
+#   isQuote: function (buf, pos) { const { quote } = this.options; if (quote === null) return false; const l = quote.length; for (let i = 0; i < l; i++) { if (quote[i] !== buf[pos + i]) return false; } return true; },
+# };
+# globalThis.held.set("parser", parser);
+# const found = globalThis.held.get("parser"), bytes = new Uint8Array([1, 2, 3, 4]);
+# print(found.isQuote(bytes, 1), found.isQuote(bytes, 2), found.isQuote(bytes, "1"), found.isQuote([1, 2, 3], 1), found.isQuote("1234", 1));
+# -- end of source
+# The key is a sum of a counter and of a start that nobody knows. The loop is versioned for arrays and for typed arrays, and the preheader asks whether the start is a number.
+# f1 = isQuote
+# RUN(BYTES): walk f1:Body mechanisms=all
+# BYTES: = GetTypedArrayElement
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: true false false true false
+# ANSWERS-NEXT: exited with 0

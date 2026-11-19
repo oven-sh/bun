@@ -6,13 +6,13 @@ use bun_collections::bit_set::Range;
 use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 
+use crate::lockfile::override_map::OverrideRule;
 use crate::lockfile::package::PackageColumns as _;
-use crate::lockfile::{LoadResult, Lockfile, Package, PackageIndexEntry};
+use crate::lockfile::{LoadResult, Lockfile, Package, PackageIndexEntry, print_log_errors};
 use crate::package_manager::Options::{Enable, LogLevel};
-use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
 use crate::{
-    Dependency, DependencyID, DependencyVersionTag, Features, GetJsonResult, PackageID,
-    PackageManager, ResolutionTag, dependency, invalid_package_id,
+    Dependency, DependencyID, Features, GetJsonResult, PackageID, PackageManager, ResolutionTag,
+    dependency, invalid_package_id,
 };
 
 struct Pass<'a> {
@@ -20,7 +20,13 @@ struct Pass<'a> {
     groups: &'a [Vec<PackageID>],
     group_of: &'a [u32],
     pinned: &'a DynamicBitSet,
-    edges: Vec<Vec<(DependencyID, bool)>>,
+    /// Versions that no dependency may move onto. See `dedupe_lockfile`.
+    closed: &'a DynamicBitSet,
+    /// For `collapse_appended`: dependencies on loaded packages (ids below this) and the
+    /// dependencies of the root and workspaces don't move.
+    frozen_below: Option<PackageID>,
+    /// For each group, every dependency with the package that owns it.
+    edges: Vec<Vec<(DependencyID, PackageID)>>,
     candidates: Vec<PackageID>,
     edge_count: usize,
     sat: DynamicBitSet,
@@ -42,15 +48,19 @@ impl<'a> Pass<'a> {
         groups: &'a [Vec<PackageID>],
         group_of: &'a [u32],
         pinned: &'a DynamicBitSet,
-        max_candidates: usize,
+        closed: &'a DynamicBitSet,
+        frozen_below: Option<PackageID>,
         max_edges: usize,
     ) -> Pass<'a> {
         let package_count = lockfile.packages.len();
+        let max_candidates = groups.iter().map(Vec::len).max().unwrap_or(0);
         Pass {
             lockfile,
             groups,
             group_of,
             pinned,
+            closed,
+            frozen_below,
             edges: vec![Vec::new(); groups.len()],
             candidates: Vec::with_capacity(max_candidates),
             edge_count: 0,
@@ -72,8 +82,17 @@ impl<'a> Pass<'a> {
     fn cover(&mut self) -> usize {
         let n = self.candidates.len();
         let m = self.edge_count;
-        self.required.copy_into(&mut self.chosen);
-        self.covered.unmanaged.set_all(false);
+        self.chosen.copy_from(&self.required);
+        self.covered.set_all(false);
+        // `count[c]` is how many uncovered edges candidate `c` satisfies. `mark_covered` updates it.
+        self.count.clear();
+        self.count.resize(n, 0);
+        for e in 0..m {
+            let row = e * n;
+            for c in 0..n {
+                self.count[c] += self.sat.is_set(row + c) as u32;
+            }
+        }
         let mut uncovered = m;
         let mut size = 0;
         for c in 0..n {
@@ -83,17 +102,6 @@ impl<'a> Pass<'a> {
             }
         }
         while uncovered > 0 {
-            self.count.clear();
-            self.count.resize(n, 0);
-            for e in 0..m {
-                if self.covered.is_set(e) {
-                    continue;
-                }
-                let row = e * n;
-                for c in 0..n {
-                    self.count[c] += self.sat.is_set(row + c) as u32;
-                }
-            }
             let mut best: Option<usize> = None;
             for c in 0..n {
                 if self.chosen.is_set(c) || self.count[c] == 0 {
@@ -117,9 +125,13 @@ impl<'a> Pass<'a> {
     fn mark_covered(&mut self, c: usize, mut uncovered: usize) -> usize {
         let n = self.candidates.len();
         for e in 0..self.edge_count {
-            if !self.covered.is_set(e) && self.sat.is_set(e * n + c) {
+            let row = e * n;
+            if !self.covered.is_set(e) && self.sat.is_set(row + c) {
                 self.covered.set(e);
                 uncovered -= 1;
+                for other in 0..n {
+                    self.count[other] -= self.sat.is_set(row + other) as u32;
+                }
             }
         }
         uncovered
@@ -131,32 +143,50 @@ impl<'a> Pass<'a> {
         (0..n).find(|&c| self.survivors.is_set(c) && self.sat.is_set(row + c))
     }
 
+    // For `collapse_appended`: a bundled dependency doesn't vote and doesn't keep its target.
+    fn counts(&self, dep: &Dependency) -> bool {
+        self.frozen_below.is_none() || !dep.behavior.is_bundled()
+    }
+
+    // Like `placement`, but prefers a version that stays no matter what else is resolved
+    // (`required`).
+    fn anchored_placement(&self, e: usize) -> Option<usize> {
+        let n = self.candidates.len();
+        let row = e * n;
+        (0..n)
+            .find(|&c| self.required.is_set(c) && self.sat.is_set(row + c))
+            .or_else(|| self.placement(e))
+    }
+
     // Keeps the fewest versions that satisfy every group edge owned by `voters` and re-points only edges whose version is dropped; `voted` records who voted.
     fn vote(&mut self, cur: &[PackageID], live: &DynamicBitSet) -> Vec<PackageID> {
         let lockfile = self.lockfile;
         let groups = self.groups;
         let group_of = self.group_of;
         let pinned = self.pinned;
+        let closed = self.closed;
         let buf = lockfile.buffers.string_bytes.as_slice();
         let pkg_res = lockfile.packages.items_resolution();
         let dep_slices = lockfile.packages.items_dependencies();
         let deps = lockfile.buffers.dependencies.as_slice();
+        let is_direct = |owner: PackageID| {
+            matches!(
+                pkg_res[owner as usize].tag,
+                ResolutionTag::Root | ResolutionTag::Workspace
+            )
+        };
 
         for edges in &mut self.edges {
             edges.clear();
         }
-        self.voted.unmanaged.set_all(false);
+        self.voted.set_all(false);
         for (pkg_id, slice) in dep_slices.iter().enumerate() {
             if !self.voters.is_set(pkg_id) {
                 continue;
             }
-            let direct = matches!(
-                pkg_res[pkg_id].tag,
-                ResolutionTag::Root | ResolutionTag::Workspace
-            );
             for dep_id in slice.begin() as usize..slice.end() as usize {
                 let target = cur[dep_id];
-                if target == invalid_package_id {
+                if target == invalid_package_id || !self.counts(&deps[dep_id]) {
                     continue;
                 }
                 let Some(&g) = group_of.get(target as usize) else {
@@ -165,7 +195,7 @@ impl<'a> Pass<'a> {
                 if g == u32::MAX {
                     continue;
                 }
-                self.edges[g as usize].push((dep_id as DependencyID, direct));
+                self.edges[g as usize].push((dep_id as DependencyID, pkg_id as PackageID));
                 self.voted.set(pkg_id);
             }
         }
@@ -192,12 +222,13 @@ impl<'a> Pass<'a> {
                 },
                 false,
             );
-            self.movable.unmanaged.set_all(false);
+            self.movable.set_all(false);
             self.cur_c.clear();
             self.cur_c.resize(m, 0);
-            self.required.unmanaged.set_all(false);
+            self.required.set_all(false);
+            let mut can_move = false;
 
-            for (e, &(dep_id, _)) in edges.iter().enumerate() {
+            for (e, &(dep_id, owner)) in edges.iter().enumerate() {
                 let dep = &deps[dep_id as usize];
                 let target = cur[dep_id as usize];
                 let cur_c = self
@@ -208,7 +239,11 @@ impl<'a> Pass<'a> {
                 self.cur_c[e] = cur_c;
                 let row = e * n;
 
-                let range = if pinned.is_set(target as usize) || dep.behavior.is_bundled() {
+                let frozen = self
+                    .frozen_below
+                    .is_some_and(|below| is_direct(owner) || target < below);
+                let range = if pinned.is_set(target as usize) || frozen || dep.behavior.is_bundled()
+                {
                     None
                 } else {
                     effective_npm_range(lockfile, dep_id, dep)
@@ -219,24 +254,66 @@ impl<'a> Pass<'a> {
                         self.required.set(cur_c);
                     }
                     Some(range) => {
-                        self.movable.set(e);
-                        let query = &range.npm().version;
-                        for c in 0..n {
-                            let id = self.candidates[c];
-                            if query.satisfies(pkg_res[id as usize].npm().version, buf, buf) {
-                                self.sat.set(row + c);
+                        let query = &range.npm.version;
+                        // The candidates are sorted, so the ones that an exact version can match
+                        // are next to each other.
+                        let in_question = match query.get_exact_version() {
+                            Some(exact) => {
+                                let exact = (exact.major, exact.minor, exact.patch);
+                                let number = |&c: &PackageID| {
+                                    let version = pkg_res[c as usize].npm().version;
+                                    (version.major, version.minor, version.patch)
+                                };
+                                let start = self.candidates.partition_point(|c| number(c) > exact);
+                                let same = self.candidates[start..]
+                                    .partition_point(|c| number(c) == exact);
+                                start..start + same
                             }
+                            None => 0..n,
+                        };
+                        for c in in_question {
+                            let id = self.candidates[c] as usize;
+                            if (c == cur_c || !closed.is_set(id))
+                                && query.satisfies(pkg_res[id].npm().version, buf, buf)
+                            {
+                                self.sat.set(row + c);
+                                self.movable.set(e);
+                                can_move |= c != cur_c;
+                            }
+                        }
+                        // No version is in range. An unmet peer follows the others (see
+                        // `installed_peer_target`).
+                        if !self.movable.is_set(e) && dep.behavior.is_peer() {
+                            self.movable.set(e);
+                            can_move = true;
+                            for c in 0..n {
+                                if c == cur_c || !closed.is_set(self.candidates[c] as usize) {
+                                    self.sat.set(row + c);
+                                }
+                            }
+                        } else if !self.movable.is_set(e) {
+                            self.sat.set(row + cur_c);
+                            self.required.set(cur_c);
                         }
                     }
                 }
             }
 
+            // No edge of this group accepts a version other than the one it already has.
+            if !can_move {
+                self.edges[g] = edges;
+                continue;
+            }
+
             let base_size = self.cover();
-            self.chosen.copy_into(&mut self.survivors);
+            self.survivors.copy_from(&self.chosen);
 
             self.protected.clear();
-            for (e, &(_, direct)) in edges.iter().enumerate() {
-                if !direct || !self.movable.is_set(e) || self.survivors.is_set(self.cur_c[e]) {
+            for (e, &(_, owner)) in edges.iter().enumerate() {
+                if !is_direct(owner)
+                    || !self.movable.is_set(e)
+                    || self.survivors.is_set(self.cur_c[e])
+                {
                     continue;
                 }
                 if self.placement(e).is_some_and(|p| p > self.cur_c[e]) {
@@ -253,18 +330,29 @@ impl<'a> Pass<'a> {
                     }
                     self.required.set(k);
                     if self.cover() == base_size {
-                        self.chosen.copy_into(&mut self.survivors);
+                        self.survivors.copy_from(&self.chosen);
                     } else {
                         self.required.unset(k);
                     }
                 }
             }
 
-            for (e, &(dep_id, _)) in edges.iter().enumerate() {
-                if !self.movable.is_set(e) || self.survivors.is_set(self.cur_c[e]) {
+            for (e, &(dep_id, owner)) in edges.iter().enumerate() {
+                if !self.movable.is_set(e) {
                     continue;
                 }
-                if let Some(p) = self.placement(e) {
+                // Only in `collapse_appended`. When this dependency of a new package was resolved, it
+                // could only share the versions that the dependencies resolved before it had added.
+                let placed_early = self.frozen_below.is_some_and(|below| owner >= below)
+                    && !deps[dep_id as usize].behavior.is_peer();
+                let placement = if placed_early {
+                    self.anchored_placement(e)
+                } else if self.survivors.is_set(self.cur_c[e]) {
+                    continue;
+                } else {
+                    self.placement(e)
+                };
+                if let Some(p) = placement {
                     next[dep_id as usize] = self.candidates[p];
                 }
             }
@@ -275,19 +363,19 @@ impl<'a> Pass<'a> {
 
     // Packages the pass itself removes must not vote (pnpm/pnpm#9213): shrink voters until the outcome agrees.
     fn settle(&mut self, cur: &[PackageID], live: &DynamicBitSet) -> Vec<PackageID> {
-        live.copy_into(&mut self.voters);
+        self.voters.copy_from(live);
         let mut best: Option<Vec<PackageID>> = None;
         loop {
             let next = self.vote(cur, live);
-            let after = reachable(self.lockfile, &next);
-            if !after.unmanaged.subset_of(&self.voters.unmanaged) {
+            let after = reachable(self.lockfile, &next, self.frozen_below);
+            if !after.subset_of(&self.voters) {
                 return best.unwrap_or(next);
             }
-            self.voted.unmanaged.set_exclude(&after.unmanaged);
+            self.voted.set_exclude(&after);
             if self.voted.count() == 0 {
                 return next;
             }
-            self.voters.unmanaged.set_exclude(&self.voted.unmanaged);
+            self.voters.set_exclude(&self.voted);
             best = Some(next);
         }
     }
@@ -346,7 +434,7 @@ fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
 
-fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
+fn dedupe_lockfile(lockfile: &mut Lockfile, frozen_below: Option<PackageID>) -> Report {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
     let checked = pkg_res.len();
@@ -355,7 +443,6 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
     let mut groups: Vec<Vec<PackageID>> = Vec::new();
     let mut group_of: Vec<u32> = vec![u32::MAX; pkg_res.len()];
     let mut pinned = DynamicBitSet::init_empty(pkg_res.len()).unwrap_or_oom();
-    let mut max_candidates = 0;
 
     if has_patches {
         for id in 0..pkg_res.len() {
@@ -378,7 +465,9 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
             .copied()
             .filter(|&id| pkg_res[id as usize].tag == ResolutionTag::Npm)
             .collect();
-        if candidates.len() < 2 {
+        if candidates.len() < 2
+            || frozen_below.is_some_and(|below| candidates.iter().all(|&id| id < below))
+        {
             continue;
         }
         index_sort::sort_indices(&mut candidates, &mut |a, b| {
@@ -391,7 +480,6 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
         for &id in &candidates {
             group_of[id as usize] = groups.len() as u32;
         }
-        max_candidates = max_candidates.max(candidates.len());
         groups.push(candidates);
     }
 
@@ -413,12 +501,13 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
     }
     let max_edges = edge_counts.iter().copied().max().unwrap_or(0) as usize;
 
-    let initial = reachable(lockfile, &lockfile.buffers.resolutions);
+    let initial = reachable(lockfile, &lockfile.buffers.resolutions, frozen_below);
     let patched: Vec<PackageID> = (0..pkg_res.len())
         .filter(|&p| pinned.is_set(p) && initial.is_set(p))
         .map(|p| p as PackageID)
         .collect();
     let mut kept: Vec<(PackageID, Vec<PackageID>)> = Vec::new();
+    let mut closed = DynamicBitSet::init_empty(pkg_res.len()).unwrap_or_oom();
 
     // Walked over the original resolutions: pinning every removed version that led to the orphan keeps those paths intact on the re-run.
     let (cur, live) = loop {
@@ -430,17 +519,42 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
                 &groups,
                 &group_of,
                 &pinned,
-                max_candidates,
+                &closed,
+                frozen_below,
                 max_edges,
             );
             loop {
                 cur = pass.settle(&cur, &live);
-                let after = reachable(lockfile, &cur);
-                if after.unmanaged.eql(&live.unmanaged) {
+                let after = reachable(lockfile, &cur, frozen_below);
+                if after.eql(&live) {
                     break;
                 }
                 live = after;
             }
+        }
+
+        // One held only by edges that moved onto it won on the vote of a package the move removed.
+        let mut held = DynamicBitSet::init_empty(pkg_res.len()).unwrap_or_oom();
+        for (owner, slice) in lockfile.packages.items_dependencies().iter().enumerate() {
+            if !live.is_set(owner) {
+                continue;
+            }
+            for dep_id in slice.begin() as usize..slice.end() as usize {
+                let target = lockfile.buffers.resolutions[dep_id] as usize;
+                let bundled = lockfile.buffers.dependencies[dep_id].behavior.is_bundled();
+                if target < pkg_res.len() && !(bundled && frozen_below.is_some()) {
+                    held.set(target);
+                }
+            }
+        }
+        let closed_before = closed.count();
+        for &v in groups.iter().flatten() {
+            if live.is_set(v as usize) && !held.is_set(v as usize) {
+                closed.set(v as usize);
+            }
+        }
+        if closed.count() != closed_before {
+            continue;
         }
 
         let orphaned: Vec<PackageID> = patched
@@ -510,6 +624,7 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
         .filter(|&id| initial.is_set(id as usize) && !live.is_set(id as usize))
         .collect();
     if removed.is_empty() {
+        lockfile.buffers.resolutions = cur;
         return Report {
             rows: Vec::new(),
             kept,
@@ -584,13 +699,34 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
     }
 }
 
+/// A `dependency::Version` that is an npm range.
+pub(crate) struct NpmRange {
+    pub literal: bun_semver::String,
+    pub npm: dependency::NpmInfo,
+}
+
 pub(crate) fn effective_npm_range(
     lockfile: &Lockfile,
     dep_id: DependencyID,
     dep: &Dependency,
-) -> Option<dependency::Version> {
-    effective_version(lockfile, dep_id, dep)
-        .filter(|version| version.tag == DependencyVersionTag::Npm)
+) -> Option<NpmRange> {
+    let dependency::Version { literal, value } = effective_version(lockfile, dep_id, dep)?;
+    match value {
+        dependency::Value::Npm(npm) => Some(NpmRange { literal, npm }),
+        _ => None,
+    }
+}
+
+/// Like the resolver, never overrides a `workspace:` edge.
+pub(crate) fn applied_override<'a>(
+    lockfile: &'a Lockfile,
+    dep_id: DependencyID,
+    dep: &Dependency,
+) -> Option<OverrideRule<'a>> {
+    if dep.behavior.is_workspace() {
+        return None;
+    }
+    lockfile.overrides.lookup(lockfile, dep_id, dep.name_hash)
 }
 
 pub(crate) fn effective_version(
@@ -598,37 +734,48 @@ pub(crate) fn effective_version(
     dep_id: DependencyID,
     dep: &Dependency,
 ) -> Option<dependency::Version> {
-    let mut version = if dep.behavior.is_workspace()
-        || (dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().is_alias)
-    {
-        dep.version.clone()
-    } else {
-        lockfile
-            .overrides
-            .get(lockfile, dep_id, dep.name_hash)
-            .unwrap_or_else(|| dep.version.clone())
-    };
-    if version.tag == DependencyVersionTag::Catalog {
-        version = lockfile
-            .catalogs
-            .get(lockfile, *version.catalog(), dep.name)?
-            .version;
-    }
-    Some(version)
+    version_under(lockfile, dep, applied_override(lockfile, dep_id, dep))
 }
 
-// Optional-peer edges are followed too: with an in-sync package.json `clean` runs with `keep_optional_peer_targets`.
-fn reachable(lockfile: &Lockfile, resolutions: &[PackageID]) -> DynamicBitSet {
+/// Like `effective_version`, but picks the rule the way yarn does (`OverrideMap::lookup_as_yarn`).
+pub(crate) fn effective_version_as_yarn(
+    lockfile: &Lockfile,
+    dep_id: DependencyID,
+    dep: &Dependency,
+) -> Option<dependency::Version> {
+    let rule = (lockfile.overrides).lookup_as_yarn(lockfile, dep_id, dep.name_hash);
+    version_under(lockfile, dep, rule)
+}
+
+fn version_under(
+    lockfile: &Lockfile,
+    dep: &Dependency,
+    rule: Option<OverrideRule<'_>>,
+) -> Option<dependency::Version> {
+    // A rule's `catalog:` names the catalog entry of its key, as in the resolver.
+    lockfile.resolve_catalog_dependency(rule.map_or(dep, OverrideRule::dep))
+}
+
+// `collapse_appended` skips bundled dependencies, because sharing a package that ships in a tarball
+// would cost a download.
+fn reachable(
+    lockfile: &Lockfile,
+    resolutions: &[PackageID],
+    frozen_below: Option<PackageID>,
+) -> DynamicBitSet {
     crate::lockfile::reachable::packages(
         lockfile,
         resolutions,
-        crate::lockfile::reachable::Options::all(0),
+        crate::lockfile::reachable::Options {
+            bundled: frozen_below.is_none(),
+            ..crate::lockfile::reachable::Options::all(0)
+        },
     )
 }
 
 pub fn dedupe_before_install(
     manager: &mut PackageManager,
-    load_result: &LoadResult<'_>,
+    load_result: &LoadResult,
 ) -> crate::Result<()> {
     let quiet = manager.options.log_level == LogLevel::Silent;
 
@@ -641,17 +788,10 @@ pub fn dedupe_before_install(
             Global::exit(1);
         }
         LoadResult::Err(cause) => {
-            if crate::migration::reported_unsupported_lockfile_version(cause) {
-                Global::exit(1);
-            }
             if !quiet {
-                Output::err_generic(
-                    "failed to {s} lockfile: {s}",
-                    (cause.step.verb(), cause.value.name()),
-                );
-                print_log_errors(manager.log_mut());
+                cause.report(manager.log_mut());
             }
-            Global::crash();
+            Global::exit(1);
         }
         LoadResult::Ok(_) => {}
     }
@@ -675,17 +815,10 @@ pub fn dedupe_before_install(
     Ok(())
 }
 
-fn print_log_errors(log: &bun_ast::Log) {
-    if log.has_errors() {
-        let _ = log.print(core::ptr::from_mut(Output::error_writer()));
-    }
-}
-
 fn package_json_declares_dependencies(manager: &mut PackageManager) -> crate::Result<bool> {
     let quiet = manager.options.log_level == LogLevel::Silent;
     let log = manager.log_mut();
-    // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
-    let path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
+    let path: &[u8] = manager.root_package_json_path.as_bytes();
     let (source, json) =
         match manager
             .workspace_package_json_cache
@@ -704,7 +837,7 @@ fn package_json_declares_dependencies(manager: &mut PackageManager) -> crate::Re
     let mut lockfile = Lockfile::default();
     let mut root = Package::default();
     let mut resolver: () = ();
-    if let Err(err) = root.parse_with_json::<()>(
+    if let Err(err) = root.parse_with_json(
         &mut lockfile,
         manager,
         log,
@@ -855,7 +988,7 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
         refuse_out_of_date(manager);
     }
 
-    let report = dedupe_lockfile(&mut manager.lockfile);
+    let report = dedupe_lockfile(&mut manager.lockfile, None);
     if report.rows.is_empty() {
         report_already_deduplicated(manager, &report);
     }
@@ -901,4 +1034,24 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
         .options
         .enable
         .set(Enable::FORCE_SAVE_LOCKFILE, true);
+}
+
+/// Runs after resolution. Collapses the versions that were appended in this session onto the fewest
+/// versions that satisfy their dependents.
+pub fn collapse_appended(manager: &mut PackageManager) {
+    let lockfile = &mut *manager.lockfile;
+    let frozen_below = lockfile.loaded_package_count;
+    if lockfile.packages.len() as PackageID <= frozen_below {
+        return;
+    }
+    let report = dedupe_lockfile(lockfile, Some(frozen_below));
+    for row in &report.rows {
+        bun_output::scoped_log!(
+            PackageManager,
+            "collapsed {}@{} onto {}",
+            BStr::new(&row.name),
+            BStr::new(&row.from),
+            BStr::new(&row.to)
+        );
+    }
 }

@@ -1,0 +1,64 @@
+# Bun.serve({ routes: { "/": (request, self) => self } }); setImmediate(() => {})
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f5 unreached
+# CHECK-NOT: function f6 unreached
+
+layout L0 fields=[{key="routes" declared={type=anything}}]
+layout L1 fields=[{key="/" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/Glob.ts" displayPath="/$bun/js/builtins/Glob.ts" flags=[IsLibrary]
+module m2 path="/$bun/js/builtins/JSBufferPrototype.ts" displayPath="/$bun/js/builtins/JSBufferPrototype.ts" flags=[IsLibrary]
+module m3 path="/$bun/js/builtins/Peek.ts" displayPath="/$bun/js/builtins/Peek.ts" flags=[IsLibrary]
+module m4 path="/$bun/js/builtins/UtilInspect.ts" displayPath="/$bun/js/builtins/UtilInspect.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=GlobScan function=f2
+runtimefunction id=JSBufferPrototypeToJSON function=f3
+runtimefunction id=PeekPeek function=f5
+runtimefunction id=UtilInspectStylizeWithNoColor function=f6
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="setImmediate" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(SetImmediate) flags=[IsExpected]}
+    v3 = NewClosure function=f1
+    v4 = Call v2, -, v3 calleeName="setImmediate"
+    v5 = Builtin builtin=Bun
+    v6 = PropGet v5 key="serve"
+    v7 = Convert v6 declared={type=builtin(BunServe) flags=[IsExpected]}
+    v8 = NewClosure function=f4
+    v9 = Convert v8 declared={type=anything flags=[IsExpected]}
+    v10 = NewObject layout=L1
+    PropDefine v10, v9 key="/"
+    v12 = FinishObject v10
+    v13 = NewObject -, v12 layout=L0 fields=[0]
+    v14 = FinishObject v13
+    v15 = Call v7, v5, v14 calleeKey="serve" calleeName="Bun.serve"
+    Return v15
+}
+function f1 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="scan" module=m1 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=GlobScan thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="toJSON" module=m2 kind=Method role=Library flags=[HasExplicitName] enclosingRuntimeFunction=JSBufferPrototypeToJSON thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f4 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}
+function f5 name="peek" module=m3 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=PeekPeek thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f6 module=m4 kind=Method role=Library length=1 enclosingRuntimeFunction=UtilInspectStylizeWithNoColor thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

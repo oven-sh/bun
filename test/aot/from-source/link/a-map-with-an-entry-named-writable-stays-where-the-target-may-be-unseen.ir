@@ -1,0 +1,18 @@
+# -- source: a-map-with-an-entry-named-writable-stays-where-the-target-may-be-unseen.js
+# let hits = 0, kept = 0;
+# const accessors = { first: { get() { hits++; return this.n + 1; } }, writable: { get() { return 2; }, set(v) { kept = v; } } };
+# const internals = { kept: undefined, other: 1 };
+# function Writer(n) { this.n = n; }
+# const box = JSON.parse("{}"); box.w = Writer;
+# Object.defineProperties(Writer.prototype, accessors);
+# internals.kept = accessors;
+# print(new Writer(3).first, hits, typeof kept);
+# -- end of source
+# The function has been stored into an object that nobody sees, so its prototype may have been replaced, and the target of the definition may be an unseen object. There the handler of the definition read the MAP as a
+# descriptor, found a field named writable that holds no flag, gave up, and handed the map to unseen code. The built-in keeps neither the map nor its descriptors: the map stays.
+# RUN(MAP): link why-gone L3
+# MAP: why-gone L3: it has not gone
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS: "kept" proven=undefined|L3
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 4 1 number

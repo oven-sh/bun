@@ -1,0 +1,10 @@
+# This is the passing control of a-sweep-that-turns-a-branch-that-decides-into-a-jump-stops-the-build-by-name.ir.
+# Without the fault the same source passes both runs of the verifier and prints what it prints when the shell runs the source itself.
+# -- source: main.js
+# function fill(to, x) { for (let i = 0; i < to.length; i++) to[i] = x | 0; return to; }
+# print(fill([1.5, 2.5, 3.5].slice(), 7).join() + " " + fill([1, 2, 3].slice(), 7).join());
+# -- end of source
+# OPTIONS: check=Validate
+# RUN: run-in-shell mechanisms=all
+# CHECK: 7,7,7 7,7,7
+# CHECK: exited with 0

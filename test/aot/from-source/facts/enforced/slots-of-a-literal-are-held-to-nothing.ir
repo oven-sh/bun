@@ -1,0 +1,13 @@
+# the slots of a literal are held to nothing, whatever is written of its fields: a literal fills them where it is made, with whatever stands there, and a test in front of each allocation costs more than the reads gain
+# f1 = make
+# -- source: slots-of-a-literal-are-held-to-nothing.ts
+# declare function sink(...values: unknown[]): void;
+# interface Point { x: number; on: boolean; tag: string; run: () => void }
+# function make(x: number, on: boolean, tag: string, run: () => void): Point { return { x, on, tag, run }; }
+# sink(make);
+# -- end of source
+# RUN: facts enforced mechanisms=all
+# CHECK-NOT: field
+# CHECK: counts fields
+# RUN(NEVER): facts enforced mechanisms=all
+# NEVER-NOT: differs-from-table

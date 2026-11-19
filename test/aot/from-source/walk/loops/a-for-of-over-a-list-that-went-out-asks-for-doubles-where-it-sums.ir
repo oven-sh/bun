@@ -1,0 +1,12 @@
+# -- source: main.cjs
+# "use strict";
+# const list = []; for (let i = 0; i < 64; i++) list.push(i + 0.5);
+# if (process.argv.length > 99) console.log(list);
+# function sum(t) { let s = t & 1; for (const x of list) s += x; return s; }
+# sink(sum);
+# -- end of source
+# The list went out: nobody knows its contents. What the step hands out is added to a number: the list is asked for doubles in front.
+# f1 = sum
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = HasArrayStorage {{*}} arrayStorage=Double

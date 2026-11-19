@@ -10,9 +10,10 @@
 // Kept in its own file so the happy-path image.test.ts stays readable.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, gcTick, isASAN, rss, tempDir } from "harness";
+import { bunEnv, bunExe, emptyProcessMaxRSS, gcTick, isASAN, isDebug, rss, runFixtureMaxRSS, tempDir } from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
+import { linesAtATime } from "./png-golden/check";
 
 // Several tests below force `backend = "bun"` to reach the static decoders
 // regardless of platform; restore after every test so a throw can't leak the
@@ -384,6 +385,39 @@ describe("hostile header dimensions", () => {
     const vp8 = Buffer.from([0x30, 0x01, 0x00, 0x9d, 0x01, 0x2a, 0xff, 0x3f, 0xff, 0x3f, 0, 0, 0, 0]);
     expect(await survives(new Bun.Image(Buffer.concat([riff, vp8])).bytes())).toBe("rejected");
   });
+
+  test("GIF metadata() reports the size of the frame that is decoded", async () => {
+    Bun.Image.backend = "bun";
+    // 1×1 logical screen, 16383×16383 frame.
+    const bigFrame = Buffer.from("47494638396101000100800000000000255b0d2c00000000ff3fff3f0002022c003b", "hex");
+    expect(await new Bun.Image(bigFrame).metadata()).toEqual({ width: 16383, height: 16383, format: "gif" });
+    await expect(new Bun.Image(bigFrame, { maxPixels: 64 }).metadata()).rejects.toThrow(/maxPixels/);
+    // 65535×65535 logical screen, 4×4 frame.
+    const bigScreen = Buffer.from(bigFrame);
+    bigScreen.writeUInt16LE(65535, 6);
+    bigScreen.writeUInt16LE(65535, 8);
+    bigScreen.writeUInt16LE(4, 24);
+    bigScreen.writeUInt16LE(4, 26);
+    expect(await new Bun.Image(bigScreen, { maxPixels: 64 }).metadata()).toEqual({
+      width: 4,
+      height: 4,
+      format: "gif",
+    });
+    expect((await rgbaOf(bigScreen)).length).toBe(4 * 4 * 4);
+    // Only the start of a file still reports the logical screen.
+    expect(await new Bun.Image(Buffer.from("GIF89a\x02\x00\x03\x00\x00\x00\x00", "binary")).metadata()).toEqual({
+      width: 2,
+      height: 3,
+      format: "gif",
+    });
+  });
+
+  test("a path with a null byte is rejected like Bun.file() rejects it", () => {
+    using dir = tempDir("image-null-byte-path", { "image": tinyPng });
+    expect(() => new Bun.Image(join(String(dir), "image\0.png"))).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+  });
 });
 
 // ─── 4. malformed PNG chunk structure ────────────────────────────────────────
@@ -397,7 +431,7 @@ describe("malformed PNG structure", () => {
     expect(await survives(new Bun.Image(buf).bytes())).toBe("rejected");
   });
 
-  test("IHDR CRC mismatch is tolerated (spng default ignores CRC)", async () => {
+  test("IHDR CRC mismatch is tolerated (checksums are skipped on decode)", async () => {
     const buf = Buffer.from(tinyPng);
     buf[29] ^= 0xff;
     expect(await new Bun.Image(buf).metadata()).toEqual({ width: 2, height: 2, format: "png" });
@@ -439,6 +473,73 @@ describe("malformed PNG structure", () => {
     const meta = await new Bun.Image(png).metadata();
     expect(meta.width).toBe(8);
   });
+
+  test("a color profile that inflates to too much is left out", async () => {
+    const withProfile = (size: number) => {
+      const iccp = Buffer.concat([Buffer.from("icc\0\0"), zlib.deflateSync(Buffer.alloc(size))]);
+      return Buffer.concat([tinyPng.subarray(0, 33), pngChunk("iCCP", iccp), tinyPng.subarray(33)]);
+    };
+    const hasProfile = async (png: Uint8Array) =>
+      Buffer.from(await new Bun.Image(png, { maxPixels: 64 }).png().bytes()).includes("iCCP");
+    const tooMuch = withProfile(32 << 20);
+    expect(await rgbaOf(tooMuch)).toStrictEqual(await rgbaOf(tinyPng));
+    expect(await hasProfile(tooMuch)).toBe(false);
+    expect(await hasProfile(withProfile(1 << 20))).toBe(true);
+  });
+
+  // 1 GiB of RGBA, the most the default maxPixels allows, and one row more than are inflated before any is looked at.
+  const firstRows = (line: number) => (linesAtATime(line) + 1) * line;
+  test.concurrent.each([
+    ["1-bit", 16383, 16383, 1, 0, 0, firstRows(1 + 2048)],
+    // Narrow, because the seven rows between two of the first pass are written with them: 16 MiB.
+    ["1-bit, interlaced", 8, Math.floor(16383 ** 2 / 8), 1, 0, 1, firstRows(1 + 1)],
+    ["RGBA", 16383, 16383, 8, 6, 0, firstRows(1 + 16383 * 4)],
+    ["RGB", 16383, 16383, 8, 2, 0, firstRows(1 + 16383 * 3)],
+    ["RGB, interlaced", 16383, 16383, 8, 2, 1, firstRows(1 + 2048 * 3)],
+    // A row of 512 MiB, and only its filter type.
+    ["one very wide row", 1 << 26, 1, 16, 6, 0, 1],
+  ])("memory is written to as the rows come, not when the header does: %s", async (_, ...args) => {
+    const [width, height, depth, colorType, interlace, bytes] = args;
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(width, 0);
+    ihdr.writeUInt32BE(height, 4);
+    ihdr.set([depth, colorType, 0, 0, interlace], 8);
+    const png = Buffer.concat([
+      tinyPng.subarray(0, 8),
+      pngChunk("IHDR", ihdr),
+      pngChunk("IDAT", zlib.deflateSync(Buffer.alloc(bytes))),
+    ]);
+    const fixture = `
+      const png = Buffer.from("${png.toString("base64")}", "base64");
+      console.log(JSON.stringify(await new Bun.Image(png).png().bytes().then(() => "decoded", e => e.code)));
+    `;
+    const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
+      runFixtureMaxRSS(fixture, "ERR_IMAGE_DECODE_FAILED"),
+      emptyProcessMaxRSS(),
+    ]);
+    expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 64);
+  });
+
+  // 448 MiB of it in a file of 450 KB.
+  test.concurrent("a color profile is not inflated beyond its limit", async () => {
+    const fixture = `
+      const zlib = require("node:zlib");
+      const tiny = Buffer.from("${Buffer.from(tinyPng).toString("base64")}", "base64");
+      const piece = zlib.deflateRawSync(Buffer.alloc(1 << 20), { finishFlush: zlib.constants.Z_SYNC_FLUSH });
+      const start = Buffer.from("key\\0\\0\\x78\\x9c", "latin1");
+      const data = Buffer.concat([start, ...Array(448).fill(piece), zlib.deflateRawSync(""), Buffer.alloc(4)]);
+      const head = Buffer.alloc(8);
+      head.writeUInt32BE(data.length);
+      head.write("iCCP", 4);
+      const png = Buffer.concat([tiny.subarray(0, 33), head, data, Buffer.alloc(4), tiny.subarray(33)]);
+      console.log(JSON.stringify(await new Bun.Image(png).png().bytes().then(() => "decoded", e => e.code)));
+    `;
+    const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
+      runFixtureMaxRSS(fixture, "decoded"),
+      emptyProcessMaxRSS(),
+    ]);
+    expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 64);
+  });
 });
 
 // ─── 5. malformed JPEG / EXIF ────────────────────────────────────────────────
@@ -477,12 +578,11 @@ describe("malformed JPEG", () => {
   });
 });
 
-// ─── 5b. JPEG that libjpeg decodes with a warning ────────────────────────────
+// ─── 5b. JPEG that djpeg decodes with a warning ──────────────────────────────
 //
-// libjpeg finishes these decodes and only warns (djpeg: exit status 2, whole
-// image written), so Bun.Image returns the pixels. A fatal error (djpeg: exit
-// status 1) rejects, also when a warning came first: TurboJPEG returns -1 for
-// both, and after a fatal error the output rows were never written.
+// djpeg finishes these decodes and only warns (exit status 2, whole image
+// written), so Bun.Image returns the pixels. What is a fatal error for it (exit
+// status 1) rejects, also when a warning came first.
 
 const warnW = 96;
 const warnH = 64;
@@ -563,9 +663,9 @@ function countPixels(rgba: Uint8Array, pixel: [number, number, number, number]):
 }
 
 /**
- * libjpeg writes 255 into every alpha byte it outputs. A row it never wrote shows up here
+ * The decoder writes 255 into every alpha byte it outputs. A row it never wrote shows up here
  * only if the allocator did not hand back a block that held a decoded image before, so in
- * this process the check is a cheap extra. "commits no byte that libjpeg did not write"
+ * this process the check is a cheap extra. "commits no byte that was not written"
  * below runs it where every new allocation is filled with another byte.
  */
 function everyAlphaOpaque(rgba: Uint8Array): boolean {
@@ -573,7 +673,7 @@ function everyAlphaOpaque(rgba: Uint8Array): boolean {
   return true;
 }
 
-describe.each(["baseline", "progressive"] as const)("%s JPEG that libjpeg decodes with a warning", kind => {
+describe.each(["baseline", "progressive"] as const)("%s JPEG that djpeg decodes with a warning", kind => {
   const clean = warnJpegs[kind];
   const cleanRgba = warnRgba[kind];
   const markers = jpegMarkers(clean);
@@ -584,9 +684,9 @@ describe.each(["baseline", "progressive"] as const)("%s JPEG that libjpeg decode
   const scanStart = markers[firstSos].end;
   const scanEnd = markers[firstSos + 1].offset;
   const junk = (n: number) => new Array<number>(n).fill(0);
-  const sof5 = [0xff, 0xc5]; // differential sequential DCT: libjpeg's fatal JERR_SOF_UNSUPPORTED
+  const sof5 = [0xff, 0xc5]; // differential sequential DCT, which is not supported
   const decodeFailed = { code: "ERR_IMAGE_DECODE_FAILED" };
-  const metadata = { width: warnW, height: warnH, format: "jpeg" };
+  const metadata: Bun.Image.Metadata = { width: warnW, height: warnH, format: "jpeg" };
 
   test("fixture layout", () => {
     expect([clean[eoi], clean[eoi + 1], eoi]).toEqual([0xff, 0xd9, clean.length - 2]);
@@ -621,13 +721,13 @@ describe.each(["baseline", "progressive"] as const)("%s JPEG that libjpeg decode
     expect(Buffer.compare(await small(insertBytes(clean, eoi, junk(16))), await small(clean))).toBe(0);
   });
 
-  // "Premature end of JPEG file": libjpeg acts as if EOI were there. All the scan data is present.
+  // "Premature end of JPEG file": the decoder acts as if EOI were there. All the scan data is present.
   test("EOI removed decodes to the clean file's pixels", async () => {
     expect(Buffer.compare(await rgbaOf(clean.subarray(0, eoi)), cleanRgba)).toBe(0);
   });
 
-  // The same warning, but scan data is missing. libjpeg decodes what it has and
-  // fills the rest, so the output is complete and the pixels are not.
+  // The same warning, but scan data is missing. What there is gets decoded and the
+  // rest filled, so the output is complete and the pixels are not.
   test("truncated at 95%: the output is complete and the pixels differ", async () => {
     const rgba = await rgbaOf(clean.subarray(0, cutInsideScanData(markers, Math.floor(clean.length * 0.95))));
     expect({
@@ -646,8 +746,7 @@ describe.each(["baseline", "progressive"] as const)("%s JPEG that libjpeg decode
     expect(partlyWritten).toEqual([]);
   });
 
-  // TurboJPEG keeps its warning flag after a fatal error. In the progressive file the fatal
-  // error comes before any row is written, so to accept it would return heap garbage.
+  // In the progressive file the fatal error comes before any row is written.
   test("warning, then a fatal error after the first scan: rejects", async () => {
     expect(Buffer.compare(await rgbaOf(insertBytes(clean, scanEnd, junk(16))), cleanRgba)).toBe(0);
     const warnThenFatal = insertBytes(clean, scanEnd, [...junk(16), ...sof5]);
@@ -667,7 +766,7 @@ describe.each(["baseline", "progressive"] as const)("%s JPEG that libjpeg decode
     expect(await new Bun.Image(unsupportedSof).metadata()).toEqual(metadata);
     await expect(new Bun.Image(unsupportedSof).png().bytes()).rejects.toMatchObject(decodeFailed);
 
-    // DQT segment length one byte short: JERR_BAD_LENGTH in the header parse.
+    // DQT segment length one byte short.
     const badDqt = Buffer.from(clean);
     badDqt[firstDqt + 3] -= 1;
     await expect(new Bun.Image(badDqt).metadata()).rejects.toMatchObject(decodeFailed);
@@ -677,7 +776,7 @@ describe.each(["baseline", "progressive"] as const)("%s JPEG that libjpeg decode
 
 describe("JPEG truncated inside its scan data", () => {
   // A baseline file loses whole MCU rows from the bottom.
-  test("baseline: the rows above the cut are intact and the rest is libjpeg's grey", async () => {
+  test("baseline: the rows above the cut are intact and the rest is grey", async () => {
     const clean = warnJpegs.baseline;
     const [[scanStart, scanEnd]] = scanRanges(jpegMarkers(clean));
     const rgba = await rgbaOf(clean.subarray(0, scanStart + Math.floor((scanEnd - scanStart) / 2)));
@@ -702,14 +801,12 @@ describe("JPEG truncated inside its scan data", () => {
   });
 });
 
-// Each of these warns and then hits a fatal error, which TurboJPEG reports as a warning
-// unless the fatal exit clears its warning flag. One test per function that clears it.
 describe("JPEG that warns and then fails", () => {
   const decodeFailed = { code: "ERR_IMAGE_DECODE_FAILED" };
 
-  // tj3Decompress8, the way a real file gets there: a progressive download that stops inside
-  // the DHT or the SOS after the first scan. "Premature end of JPEG file", then "Bogus Huffman
-  // table definition" or "Invalid component ID 255 in SOS", before any row is written.
+  // The way a real file gets there: a progressive download that stops inside the DHT or the
+  // SOS after the first scan. "Premature end of JPEG file", then "Bogus Huffman table
+  // definition" or "Invalid component ID 255 in SOS", before any row is written.
   test("a progressive file cut inside the segments after its first scan rejects", async () => {
     const clean = warnJpegs.progressive;
     const markers = jpegMarkers(clean);
@@ -721,9 +818,7 @@ describe("JPEG that warns and then fails", () => {
     await expect(new Bun.Image(clean.subarray(0, sos.offset + 5)).png().bytes()).rejects.toMatchObject(decodeFailed);
   });
 
-  // tj3DecompressHeader. Its fatal exits through libjpeg leave the dimensions unset, which
-  // rejects on its own. "Could not determine colorspace of JPEG image" comes after they are
-  // set: a 2-component frame, built from the baseline fixture's SOF0 and SOS.
+  // No colorspace has two components. The frame is built from the baseline fixture's SOF0 and SOS.
   test("a header that warns and then fails the colorspace check rejects in metadata()", async () => {
     const clean = warnJpegs.baseline;
     const markers = jpegMarkers(clean);
@@ -752,12 +847,10 @@ describe("JPEG that warns and then fails", () => {
 
 // ─── 5c. lossless JPEG (SOF3) ────────────────────────────────────────────────
 //
-// TurboJPEG refuses a cropping region for a lossless stream, and libjpeg
-// ignores the scaling factor for one, so the DCT-scaled decode path has to
-// fall back to the source size. A narrow fixture is what makes the two
-// disagree: the row-width check inside the library catches a wider one first.
-// Bun's encoder writes baseline or progressive only, so the bytes are an
-// encode by TurboJPEG itself (TJPARAM_LOSSLESS, PSV 1), 2x64, one gradient.
+// A lossless stream has no DCT to scale, so it is decoded at the source size
+// whatever size the pipeline asks for. Bun's encoder writes baseline or
+// progressive only, so the bytes are an encode by TurboJPEG (TJPARAM_LOSSLESS,
+// PSV 1), 2x64, one gradient.
 const losslessJpeg = Buffer.from(
   "/9j/7gAOQWRvYmUAZAAAAAAA/8MAEQgAQAACA1IRAEcRAEIRAP/EABwAAAMBAQEBAQEAAAAAAAAAAAADCAQFAgEGB//aAAwDUgBHAEIAAQAAn+" +
     "f/AON3+cMZxL/NIzrX+ckYm/z6MRf48Zuv8xDObf54Gab/ABAz9Vf5zhhf5mGeb/PIzl3+NGar/PYzXf5yxnMv87IzpX+PGfob/Pgx1/mMYi/x" +
@@ -782,9 +875,7 @@ describe("lossless JPEG", () => {
     expect(await rgbaOf(headerWarning)).toEqual(await rgbaOf(losslessJpeg));
   });
 
-  // A decode that asks libjpeg for a scaling factor it ignores writes more rows
-  // than the buffer holds, so a build without the fix dies here. Run it in a
-  // child, or it takes the whole test file with it.
+  // In a child, so that a crash cannot take the whole test file with it.
   test("a scaled decode stays inside the buffer", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -817,8 +908,7 @@ describe("lossless JPEG", () => {
   });
 });
 
-// TurboJPEG also refuses a cropping region for sampling factors outside its table. Here the
-// luma is 3x1, which libjpeg decodes and, unlike a lossless stream, also scales. The bytes are
+// The luma is 3x1, which is rare but, unlike a lossless stream, can be scaled. The bytes are
 // `cjpeg -quality 90 -sample 3x1,1x1,1x1` of a 24x16 gradient: Bun's encoder writes 4:2:0 only.
 const unknownSubsamplingJpeg = Buffer.from(
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGB" +
@@ -834,7 +924,7 @@ const unknownSubsamplingJpeg = Buffer.from(
   "base64",
 );
 
-describe("JPEG with sampling factors TurboJPEG cannot classify", () => {
+describe("JPEG with unusual sampling factors", () => {
   test("the SOF0 luma factors are 3x1", async () => {
     const sof0 = unknownSubsamplingJpeg.indexOf(Buffer.from([0xff, 0xc0]));
     expect([...unknownSubsamplingJpeg.subarray(sof0 + 10, sof0 + 12)]).toEqual([1, 0x31]);
@@ -859,12 +949,11 @@ describe("JPEG with sampling factors TurboJPEG cannot classify", () => {
 
 // The decoder's output buffer is uninitialised capacity, so an accepted decode must not
 // leave a byte of it unwritten. ASAN can fill every new allocation with a chosen byte:
-// an alpha byte that libjpeg never wrote then reads as that byte, whatever the block held
+// an alpha byte that was never written then reads as that byte, whatever the block held
 // before. The child decodes under that fill, and this process reads the alpha back.
-test.skipIf(!isASAN)("an accepted JPEG decode commits no byte that libjpeg did not write", async () => {
+test.skipIf(!isASAN)("an accepted JPEG decode commits no byte that was not written", async () => {
   type Case = { name: string; kind: string; cut?: number; insert?: [number, number[]]; resize?: [number, number] };
   const cases: Case[] = [
-    // TurboJPEG refuses a cropping region for these two, so the decoder sizes the buffer itself.
     { name: "lossless resized to 2x50", kind: "lossless", resize: [2, 50] },
     { name: "unknown subsampling resized to 12x8", kind: "unknownSubsampling", resize: [12, 8] },
   ];
@@ -881,7 +970,6 @@ test.skipIf(!isASAN)("an accepted JPEG decode commits no byte that libjpeg did n
     cases.push({
       name: `${kind} junk and SOF5 after the first scan`,
       kind,
-      // 16 junk bytes: libjpeg swallows a few without a warning.
       insert: [scanEnd, [...new Array<number>(16).fill(0), 0xff, 0xc5]],
     });
   }
@@ -960,9 +1048,8 @@ describe("lossless roundtrip", () => {
   function lcg(n: number) {
     return (Math.imul(n, 1664525) + 1013904223) >>> 0;
   }
-  // Alpha is forced to ≥1: WebPEncodeLosslessRGBA calls
-  // WebPCleanupTransparentArea which zeroes RGB under α=0 (a documented
-  // libwebp size optimisation, not a Bun bug). PNG preserves RGB under α=0;
+  // Alpha is forced to ≥1: the lossless WebP encoder is free to change RGB
+  // under α=0 (a size optimisation, as in libwebp). PNG preserves RGB under α=0;
   // WebP-lossless does not. The α=0 case is asserted separately below.
   let s = seed;
   const noise = makePng(w, h, () => {
@@ -993,7 +1080,7 @@ describe("lossless roundtrip", () => {
     expect(Buffer.compare(await rgbaOf(back), ref)).toBe(0);
   });
 
-  test("WebP-lossless zeroes RGB under α=0 (documented libwebp behaviour)", async () => {
+  test("WebP-lossless zeroes RGB under α=0 (as libwebp does)", async () => {
     const one = makePng(1, 1, () => [123, 45, 200, 0]);
     const wp = await new Bun.Image(one).webp({ lossless: true }).bytes();
     const back = await rgbaOf(wp);
@@ -1057,7 +1144,7 @@ describe("memory hygiene", () => {
     for (let i = 0; i < 10_000; i++) {
       try {
         new Bun.Image(tinyPng, {
-          get maxPixels() {
+          get maxPixels(): number {
             throw new Error("x");
           },
         });
@@ -1124,7 +1211,7 @@ describe("hostile option objects", () => {
   });
 
   test("detached ArrayBuffer input", async () => {
-    const ab = tinyPng.buffer.slice(tinyPng.byteOffset, tinyPng.byteOffset + tinyPng.byteLength);
+    const ab = tinyPng.buffer.slice(tinyPng.byteOffset, tinyPng.byteOffset + tinyPng.byteLength) as ArrayBuffer;
     structuredClone(ab, { transfer: [ab] }); // detaches `ab`
     // Constructor sees byteLength 0; must reject, not read freed memory.
     expect(await survives(new Bun.Image(ab).metadata())).toBe("rejected");
@@ -1139,7 +1226,7 @@ describe("hostile option objects", () => {
   });
 
   test("detach AFTER construction rejects the next terminal", async () => {
-    const ab = tinyPng.buffer.slice(tinyPng.byteOffset, tinyPng.byteOffset + tinyPng.byteLength);
+    const ab = tinyPng.buffer.slice(tinyPng.byteOffset, tinyPng.byteOffset + tinyPng.byteLength) as ArrayBuffer;
     const img = new Bun.Image(ab);
     expect((await img.metadata()).width).toBe(2);
     structuredClone(ab, { transfer: [ab] }); // detach between calls
@@ -1173,6 +1260,7 @@ describe("hostile option objects", () => {
     // The borrow-not-copy contract means a cross-thread store between header
     // parse and full decode could re-shape the implied output behind a guard
     // that's already passed; refuse SAB so the contract is enforceable.
+    // @ts-expect-error
     expect(() => new Bun.Image(sab)).toThrow(/shared/);
     expect(() => new Bun.Image(new Uint8Array(sab))).toThrow(/shared/);
   });
@@ -1220,6 +1308,92 @@ describe("concurrent terminals on one Image", () => {
     const out = await p;
     expect(out[0]).toBe(0xff);
     expect(out[1]).toBe(0xd8); // still JPEG
+  });
+
+  // An input over ~1 KB is borrowed, so the pool thread reads bytes that the JS thread can still
+  // write. The docs forbid that write. It can corrupt the image, but it must not crash.
+  const raceFixture = (setup: string) => `
+    const bmp = (w, h, c) => {
+      const b = Buffer.alloc(54 + w * h * 4);
+      b.write("BM");
+      b.writeUInt32LE(b.length, 2);
+      b.writeUInt32LE(54, 10);
+      b.writeUInt32LE(40, 14);
+      b.writeInt32LE(w, 18);
+      b.writeInt32LE(-h, 22);
+      b.writeUInt16LE(1, 26);
+      b.writeUInt16LE(32, 28);
+      b.fill(Buffer.from([c, c, c, 255]), 54);
+      return b;
+    };
+    const webp = async (w, h, c) => Buffer.from(await new Bun.Image(bmp(w, h, c)).webp({ lossless: true }).bytes());
+    ${setup}
+    let settled = 0;
+    for (let round = 0; round < 8; round++) {
+      const jobs = [];
+      for (let i = 0; i < 32; i++) jobs.push(new Bun.Image(input).png().bytes().catch(() => {}).then(() => settled++));
+      let done = false;
+      const all = Promise.all(jobs).then(() => (done = true));
+      while (!done) {
+        const until = performance.now() + 4;
+        do {
+          for (let k = 0; k < 64; k++) rewrite();
+        } while (performance.now() < until);
+        await new Promise(r => setImmediate(r));
+      }
+      await all;
+    }
+    console.log(settled);
+  `;
+  test.concurrent.each([
+    [
+      // The size of the output has to be the size that was reported.
+      "dimensions",
+      `
+      const input = new Uint8Array(2048);
+      const small = new Uint8Array(2048), large = new Uint8Array(2048);
+      small.set(await webp(16, 16, 1));
+      large.set(await webp(200, 211, 2));
+      const rewrite = () => { input.set(large); input.set(small); };
+      input.set(large);
+      `,
+    ],
+    [
+      // The chunks are walked once for the image and once for the profile.
+      // The filler chunks widen the gap between the two walks.
+      "ICCP tag",
+      `
+      const chunk = (tag, payload) => {
+        const h = Buffer.alloc(8);
+        h.write(tag, 0, "latin1");
+        h.writeUInt32LE(payload.length, 4);
+        return Buffer.concat([h, payload, Buffer.alloc(payload.length & 1)]);
+      };
+      const body = Buffer.concat([
+        Buffer.from("WEBP"),
+        chunk("VP8X", Buffer.from([0x20, 0, 0, 0, 31, 0, 0, 31, 0, 0])),
+        chunk("ICCP", Buffer.alloc(512, 7)),
+        Buffer.alloc(4096 * 10, chunk("FILL", Buffer.alloc(2))),
+        (await webp(32, 32, 9)).subarray(12),
+      ]);
+      const head = Buffer.alloc(8);
+      head.write("RIFF");
+      head.writeUInt32LE(body.length, 4);
+      const input = new Uint8Array(Buffer.concat([head, body]));
+      const at = Buffer.from(input.buffer).indexOf("ICCP");
+      const ICCP = Buffer.from("ICCP"), JUNK = Buffer.from("JUNK");
+      const rewrite = () => { input.set(JUNK, at); input.set(ICCP, at); };
+      `,
+    ],
+  ])("doesn't crash when the %s of a WebP input is rewritten while a pipeline is pending", async (_, setup) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", raceFixture(setup)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: stderr.slice(-3000), exitCode }).toEqual({ stdout: "256\n", stderr: "", exitCode: 0 });
   });
 });
 

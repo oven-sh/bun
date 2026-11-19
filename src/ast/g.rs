@@ -5,7 +5,7 @@ use crate::binding::Binding as BindingNodeIndex;
 use crate::expr::Expr as ExprNodeIndex;
 use crate::stmt::Stmt;
 use crate::ts as TypeScript;
-use crate::{ExprData, ExprNodeList, LocRef, StmtNodeList, StoreSlice, StoreStr, flags};
+use crate::{ExprData, LocRef, StmtNodeList, StoreSlice, StoreStr, flags};
 
 /// Downstream crates address the flag enum via `G::FnFlags::IsExport` etc.;
 /// re-export the enum + set type here.
@@ -53,9 +53,10 @@ pub struct ExportStarAlias {
     pub original_name: StoreStr,
 }
 
+#[derive(Clone, Copy)]
 pub struct Class {
     pub class_keyword: crate::Range,
-    pub ts_decorators: ExprNodeList,
+    pub ts_decorators: StoreSlice<ExprNodeIndex>,
     pub class_name: Option<LocRef>,
     pub extends: Option<ExprNodeIndex>,
     pub body_loc: crate::Loc,
@@ -63,13 +64,20 @@ pub struct Class {
     pub properties: StoreSlice<Property>,
     pub has_decorators: bool,
     pub should_lower_standard_decorators: bool,
+    /// `useDefineForClassFields: false` turned the instance fields into
+    /// assignments in the constructor.
+    pub assigns_fields_in_constructor: bool,
+    /// What the body reads the class name as when standard (TC39) class
+    /// decorators are lowered: the lowering assigns the decorated class to it.
+    /// `Ref::NONE` otherwise, including for TypeScript experimental decorators.
+    pub inner_class_ref: Ref,
 }
 
 impl Default for Class {
     fn default() -> Self {
         Self {
             class_keyword: crate::Range::NONE,
-            ts_decorators: bun_alloc::AstAlloc::vec(),
+            ts_decorators: StoreSlice::EMPTY,
             class_name: None,
             extends: None,
             body_loc: crate::Loc::EMPTY,
@@ -77,6 +85,8 @@ impl Default for Class {
             properties: StoreSlice::EMPTY,
             has_decorators: false,
             should_lower_standard_decorators: false,
+            assigns_fields_in_constructor: false,
+            inner_class_ref: Ref::NONE,
         }
     }
 }
@@ -122,6 +132,18 @@ impl Class {
     }
 }
 
+pub(crate) fn deep_clone_decorators(
+    decorators: &[ExprNodeIndex],
+    bump: &bun_alloc::Arena,
+    stack_check: bun_core::StackCheck,
+) -> crate::Result<StoreSlice<ExprNodeIndex>> {
+    let mut clones = bun_alloc::ArenaVec::with_capacity_in(decorators.len(), bump);
+    for decorator in decorators {
+        clones.push(decorator.deep_clone_no_detach(bump, stack_check)?);
+    }
+    Ok(clones.into())
+}
+
 // invalid shadowing if left as Comment
 pub struct Comment {
     pub loc: crate::Loc,
@@ -133,6 +155,7 @@ pub struct ClassStaticBlock {
     pub loc: crate::Loc,
 }
 
+#[derive(Clone, Copy)]
 pub struct Property {
     /// This is used when parsing a pattern that uses default values:
     ///
@@ -150,7 +173,7 @@ pub struct Property {
     // Arena-owned. `StoreRef` centralises the raw-pointer deref so the
     // accessors below stay safe.
     pub class_static_block: Option<crate::StoreRef<ClassStaticBlock>>,
-    pub ts_decorators: ExprNodeList,
+    pub ts_decorators: StoreSlice<ExprNodeIndex>,
     // Key is optional for spread
     pub key: Option<ExprNodeIndex>,
 
@@ -169,7 +192,7 @@ impl Default for Property {
             kind: PropertyKind::Normal,
             flags: flags::PROPERTY_NONE,
             class_static_block: None,
-            ts_decorators: bun_alloc::AstAlloc::vec(),
+            ts_decorators: StoreSlice::EMPTY,
             key: None,
             value: None,
             ts_metadata: TypeScript::Metadata::MNone,
@@ -198,7 +221,8 @@ impl Property {
     pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
-    ) -> core::result::Result<Property, bun_alloc::AllocError> {
+        stack_check: bun_core::StackCheck,
+    ) -> crate::Result<Property> {
         let mut class_static_block: Option<crate::StoreRef<ClassStaticBlock>> = None;
         if let Some(csb_ref) = self.class_static_block_ref() {
             let new_block: &mut ClassStaticBlock = bump.alloc(ClassStaticBlock {
@@ -209,25 +233,22 @@ impl Property {
         }
         Ok(Property {
             initializer: match self.initializer {
-                Some(init) => Some(init.deep_clone(bump)?),
+                Some(init) => Some(init.deep_clone_no_detach(bump, stack_check)?),
                 None => None,
             },
             kind: self.kind,
             flags: self.flags,
             class_static_block,
-            // Vec<Expr> per-element deep clone.
-            ts_decorators: self
-                .ts_decorators
-                .try_deep_clone_with(|e| e.deep_clone(bump))?,
+            ts_decorators: deep_clone_decorators(&self.ts_decorators, bump, stack_check)?,
             key: match self.key {
-                Some(key) => Some(key.deep_clone(bump)?),
+                Some(key) => Some(key.deep_clone_no_detach(bump, stack_check)?),
                 None => None,
             },
             value: match self.value {
-                Some(value) => Some(value.deep_clone(bump)?),
+                Some(value) => Some(value.deep_clone_no_detach(bump, stack_check)?),
                 None => None,
             },
-            ts_metadata: self.ts_metadata.clone(),
+            ts_metadata: self.ts_metadata,
         })
     }
 }
@@ -246,6 +267,7 @@ pub enum PropertyKind {
     AutoAccessor,
 }
 
+#[derive(Clone, Copy)]
 pub struct FnBody {
     pub loc: crate::Loc,
     pub stmts: StmtNodeList,
@@ -266,6 +288,7 @@ impl FnBody {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct Fn {
     pub name: Option<LocRef>,
     pub open_parens_loc: crate::Loc,
@@ -301,29 +324,28 @@ impl Fn {
     pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
-    ) -> core::result::Result<Fn, bun_alloc::AllocError> {
+        stack_check: bun_core::StackCheck,
+    ) -> crate::Result<Fn> {
         let src_args: &[Arg] = self.args.slice();
         let args: &mut [Arg] = bump.alloc_slice_fill_default::<Arg>(src_args.len());
         for i in 0..args.len() {
-            args[i] = src_args[i].deep_clone(bump)?;
+            args[i] = src_args[i].deep_clone(bump, stack_check)?;
         }
         Ok(Fn {
             name: self.name,
             open_parens_loc: self.open_parens_loc,
             args: StoreSlice::new_mut(args),
-            body: FnBody {
-                loc: self.body.loc,
-                stmts: self.body.stmts,
-            },
+            body: self.body,
             arguments_ref: self.arguments_ref,
             flags: self.flags,
-            return_ts_metadata: self.return_ts_metadata.clone(),
+            return_ts_metadata: self.return_ts_metadata,
         })
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct Arg {
-    pub ts_decorators: ExprNodeList,
+    pub ts_decorators: StoreSlice<ExprNodeIndex>,
     pub binding: BindingNodeIndex,
     pub default: Option<ExprNodeIndex>,
 
@@ -336,7 +358,7 @@ pub struct Arg {
 impl Default for Arg {
     fn default() -> Self {
         Self {
-            ts_decorators: bun_alloc::AstAlloc::vec(),
+            ts_decorators: StoreSlice::EMPTY,
             binding: BindingNodeIndex::default(),
             default: None,
             is_typescript_ctor_field: false,
@@ -349,19 +371,17 @@ impl Arg {
     pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
-    ) -> core::result::Result<Arg, bun_alloc::AllocError> {
+        stack_check: bun_core::StackCheck,
+    ) -> crate::Result<Arg> {
         Ok(Arg {
-            // Vec<Expr> per-element deep clone.
-            ts_decorators: self
-                .ts_decorators
-                .try_deep_clone_with(|e| e.deep_clone(bump))?,
+            ts_decorators: deep_clone_decorators(&self.ts_decorators, bump, stack_check)?,
             binding: self.binding,
             default: match self.default {
-                Some(d) => Some(d.deep_clone(bump)?),
+                Some(d) => Some(d.deep_clone_no_detach(bump, stack_check)?),
                 None => None,
             },
             is_typescript_ctor_field: self.is_typescript_ctor_field,
-            ts_metadata: self.ts_metadata.clone(),
+            ts_metadata: self.ts_metadata,
         })
     }
 }

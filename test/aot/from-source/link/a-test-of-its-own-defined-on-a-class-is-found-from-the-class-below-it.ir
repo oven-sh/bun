@@ -1,0 +1,19 @@
+# Other extends Tagged, so `o instanceof Other` finds Tagged's test on the way up the class objects, and that test changes what it is handed. A class beside the two is not touched.
+# -- source: main.js
+# class Tagged {}
+# class Other extends Tagged { constructor() { super(); this.x = 1; } m() { return this.x; } }
+# class Third { constructor() { this.y = 2; } }
+# Object.defineProperty(Tagged, Symbol.hasInstance, { value: (v) => { v.x = "text"; return false; } });
+# const o = new Other(), t = new Third();
+# print(o instanceof Other, o.m(), typeof o.x, t instanceof Third, t.y);
+# -- end of source
+# RUN: link fields mechanisms=all
+# CHECK-NOT: field {{*}} "x" proven=i32
+# CHECK: field {{*}} "y" proven=int[0, 2147483647]
+# CHECK-NOT: field {{*}} "x" proven=i32
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: false text string true 2
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: false text string true 2
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: false text string true 2

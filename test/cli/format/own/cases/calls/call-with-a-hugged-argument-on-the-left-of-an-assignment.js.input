@@ -1,0 +1,3 @@
+streamInfo.lookupArray(["greeting", "streamedFriends"]).state.streamPosition = 1;
+streamInfo.lookupArray(["greeting", "streamedFriends"]).state.streamPositio = a1;
+streamInfo.lookupArrayyyyyyyyyyyyyyyyyyyyyyyyyyyy(greeting).state.streamPosition = 1;

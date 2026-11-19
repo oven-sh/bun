@@ -149,7 +149,7 @@ impl PackageManifestMap {
                 let demote = matches!(
                     value_ptr,
                     Value::Manifest(m)
-                        if needs_extended_manifest && !m.pkg.has_extended_manifest
+                        if needs_extended_manifest && !m.pkg.has_extended_manifest()
                 );
                 if demote {
                     let Value::Manifest(m) = core::mem::replace(value_ptr, Value::NotFound) else {
@@ -180,7 +180,7 @@ impl PackageManifestMap {
                     .ok()
                     .flatten()
                     {
-                        if needs_extended_manifest && !manifest.pkg.has_extended_manifest {
+                        if needs_extended_manifest && !manifest.pkg.has_extended_manifest() {
                             let value_ptr = vac.insert(Value::Expired(manifest));
                             if let Some(expiry) = is_expired {
                                 *expiry = true;
@@ -195,7 +195,11 @@ impl PackageManifestMap {
                         if ctx.accept_expired
                             || (ctx.enable_manifest_cache_control
                                 && manifest.pkg.public_max_age
-                                    > ctx.timestamp_for_manifest_cache_control)
+                                    > ctx.timestamp_for_manifest_cache_control
+                                && !npm::registry::expires_too_late(
+                                    manifest.pkg.public_max_age,
+                                    ctx.timestamp_for_manifest_cache_control,
+                                ))
                         {
                             let value_ptr = vac.insert(Value::Manifest(manifest));
                             let Value::Manifest(m) = value_ptr else {

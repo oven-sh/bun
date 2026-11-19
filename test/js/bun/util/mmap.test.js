@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, gcTick, isWindows, tempDir, tmpdirSync } from "harness";
-import { truncateSync, writeFileSync } from "node:fs";
+import { statSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "path";
 
 // TODO: We do not support mmap() on Windows. Maybe we can add it later.
@@ -207,11 +207,116 @@ console.log(JSON.stringify(out));`,
   });
 
   it("mmap rejects non-object options", () => {
-    expect(() => Bun.mmap(path, 256)).toThrow("Expected options to be an object");
-    expect(() => Bun.mmap(path, "foo")).toThrow("Expected options to be an object");
-    expect(() => Bun.mmap(path, true)).toThrow("Expected options to be an object");
+    for (const options of [256, "foo", true, 1n, Symbol()]) {
+      expect(() => Bun.mmap(path, options)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: "MMapOptions must be an object",
+        }),
+      );
+    }
     expect(() => Bun.mmap(path, undefined)).not.toThrow();
     expect(() => Bun.mmap(path, null)).not.toThrow();
+  });
+
+  it("mmap rejects a path that is not a string", () => {
+    for (const notAPath of [undefined, null, 1, {}, [], Buffer.from(path), new URL("file://" + path)]) {
+      expect(() => Bun.mmap(notAPath)).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: "path must be a string" }),
+      );
+    }
+    // The path is looked at first.
+    expect(() => Bun.mmap(1, 1)).toThrow("path must be a string");
+  });
+
+  it("mmap rejects a path with a null byte, as Bun.file and node:fs do", () => {
+    for (const withNull of [path + "\0", path + "\0x", "\0", "\0" + path]) {
+      const expected = expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_VALUE",
+        message: `The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received ${JSON.stringify(withNull)}`,
+      });
+      expect(() => Bun.mmap(withNull)).toThrow(expected);
+      expect(() => Bun.file(withNull)).toThrow(expected);
+    }
+  });
+
+  it("mmap takes offset and size as a BigInt too", () => {
+    const text = options => Buffer.from(Bun.mmap(path, options)).toString();
+    const whole = text();
+    expect(text({ size: 2n })).toBe(whole.slice(0, 2));
+    expect(text({ size: Object(2n) })).toBe(whole.slice(0, 2));
+    expect(text({ size: { valueOf: () => 2n } })).toBe(whole.slice(0, 2));
+    expect(text({ offset: 1n })).toBe(whole.slice(1));
+    expect(text({ offset: 1n, size: 2n })).toBe(whole.slice(1, 3));
+    expect(text({ offset: 0n, size: statSync(path, { bigint: true }).size })).toBe(whole);
+    // More than the file holds is all of it: nothing wraps.
+    for (const size of [2n ** 32n + 2n, 2n ** 63n, 2n ** 64n + 2n, 10n ** 400n]) expect(text({ size })).toBe(whole);
+    for (const offset of [2n ** 32n + 1n, 2n ** 64n + 1n]) expect(() => Bun.mmap(path, { offset })).toThrow("EINVAL");
+    expect(() => Bun.mmap(path, { size: 0n })).toThrow("EINVAL");
+    for (const member of ["size", "offset"]) {
+      for (const value of [-1n, -(2n ** 64n) + 1n]) {
+        expect(() => Bun.mmap(path, { [member]: value })).toThrow(`${member} must be a non-negative integer`);
+      }
+    }
+  });
+
+  it("mmap converts offset and size to numbers and drops the fraction", () => {
+    const text = options => Buffer.from(Bun.mmap(path, options)).toString();
+    const whole = text();
+    expect(text({ size: 2 })).toBe(whole.slice(0, 2));
+    expect(text({ size: 2.9 })).toBe(whole.slice(0, 2));
+    expect(text({ size: "2" })).toBe(whole.slice(0, 2));
+    expect(text({ size: { valueOf: () => 2 } })).toBe(whole.slice(0, 2));
+    expect(text({ offset: 1.9 })).toBe(whole.slice(1));
+    expect(text({ offset: -0.9 })).toBe(whole);
+    expect(text({ offset: NaN })).toBe(whole);
+    expect(text({ offset: {} })).toBe(whole);
+    expect(text({ size: "4294967298" })).toBe(whole);
+    expect(() => Bun.mmap(path, { offset: "4294967297" })).toThrow("EINVAL");
+    // More than the file holds is all of it.
+    expect(text({ size: 2 ** 53 })).toBe(whole);
+    expect(text({ size: 2 ** 64 })).toBe(whole);
+    expect(text({ size: Infinity })).toBe(whole);
+    expect(() => Bun.mmap(path, { size: NaN })).toThrow("EINVAL");
+    expect(() => Bun.mmap(path, { offset: Infinity })).toThrow("EINVAL");
+    expect(() => Bun.mmap(path, { offset: -Infinity })).toThrow("offset must be a non-negative integer");
+    for (const member of ["size", "offset"]) {
+      expect(() => Bun.mmap(path, { [member]: Symbol() })).toThrow(
+        expect.objectContaining({ name: "TypeError", message: "Cannot convert a symbol to a number" }),
+      );
+    }
+  });
+
+  it("mmap reads its options in order, each once, and not from Object.prototype", () => {
+    const log = [];
+    const options = {};
+    for (const [member, value] of Object.entries({ offset: 0, size: 2, sync: false, shared: true })) {
+      Object.defineProperty(options, member, {
+        get() {
+          log.push(member);
+          return value;
+        },
+      });
+    }
+    expect(Bun.mmap(path, options).length).toBe(2);
+    expect(log).toEqual(["shared", "sync", "size", "offset"]);
+
+    expect(Bun.mmap(path, Object.create({ size: 2 })).length).toBe(2);
+    expect(Bun.mmap(path, Object.assign([], { size: 2 })).length).toBe(2);
+    expect(
+      Bun.mmap(
+        path,
+        Object.assign(() => {}, { size: 2 }),
+      ).length,
+    ).toBe(2);
+    Object.prototype.size = 2;
+    try {
+      expect(Bun.mmap(path, {}).length).toBe(Bun.mmap(path).length);
+    } finally {
+      delete Object.prototype.size;
+    }
   });
 
   it("mmap handles non-number offset/size without crashing", () => {

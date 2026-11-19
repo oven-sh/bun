@@ -1,0 +1,19 @@
+# f1 = commas
+# -- source: count-a-character-by-char-at.ts
+# function commas(text: string): number {
+#   let count = 0;
+#   for (let i = 0; i < text.length; i++) if (text.charAt(i) === ",") count++;
+#   return count;
+# }
+# declare const input: any;
+# (globalThis as any).answer = commas(input);
+# -- end of source
+# The compiler before this one: 6 instructions, 1 of them patches, a turn of the written loop steps by 1 ; 27 instructions, 8 of them patches.
+# When the bound was taken: loop: operations 43, patches 8, moves 0, unlikely 6 ; loop: operations 12, patches 2, moves 0, unlikely 3.
+# Since the turns are laid out once for each width of the text a second loop of eight turns stands between the two, for wide texts: operations 43, patches 8, moves 0, unlikely 6.
+# RUN(X64): loops most:43,43,12 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 43
+# X64-NEXT: loop: at most 43
+# X64-NEXT: loop: at most 12

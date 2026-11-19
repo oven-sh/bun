@@ -1,0 +1,26 @@
+# -- source: main.cjs
+# "use strict";
+# function add(a, b) { return (a + b) | 0; }
+# class Names { get add() { return add; } }
+# const names = new Names();
+# function called(t) { let s = 0; for (let i = 0; i < t + 3; i++) s = (s + names.add(i, t)) | 0; return s; }
+# print(called(1), called(2));
+# -- end of source
+# f1 = add, f2 = called, f3 = Names, f4 = get add
+# `names.add(i, t)`, add a getter of the CLASS. A read by name enters such a getter in Link; the call by name went to unseen code at `case MethodKind::Getter`: the receiver went with it, the class was lost with all its proofs,
+# and the walk read and called by stubs. The call enters the getter as the read does (this, what it throws) and calls what the getter returns, with the receiver as this.
+# Here the getter runs no code that anybody could see and its answer is proven: nothing of it is left in the loop but add itself, walked in line.
+# RUN(LAYOUT): link layouts mechanisms=all
+# LAYOUT: layout L0 changes=[]
+# RUN(CALL): link calls mechanisms=all
+# CALL: call f2 {{*}}-> f1
+# RUN(CALLED): walk f2 mechanisms=all
+# CALLED: frame 1 callee=f1
+# CALLED: = Add {{*}}form=Integers
+# CALLED-NOT: = PropGet
+# RUN(ANSWER): run-in-shell
+# ANSWER: 10 20
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 10 20
+# CHECKED-NEXT: exited with 0

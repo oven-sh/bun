@@ -1,6 +1,8 @@
 use super::super::load::default_project;
-use super::support::{TestProgram, check_whole_files, disk, with_program};
-use crate::{Diagnostic, host};
+use super::support::{
+    TestProgram, check_request, check_whole_files, disk, project_disk, with_program,
+};
+use crate::{Diagnostic, Projects, Request, host};
 use bstr::ByteSlice;
 use bun_core::strings;
 use bun_sema::atom::Interner;
@@ -204,6 +206,62 @@ fn two_files_share_one_options() {
             assert!(is_shared, "{path}");
         }
     });
+}
+
+#[test]
+fn reference_graphs_are_reused_across_requested_files() {
+    for (extension, allow_js, includes_javascript) in [
+        ("ts", false, false),
+        ("js", true, false),
+        ("js", false, true),
+    ] {
+        let paths: Vec<String> = (0..32)
+            .map(|index| format!("c/source{index}.{extension}"))
+            .collect();
+        let root = format!(
+            r#"{{ "compilerOptions": {{ "allowJs": {allow_js} }}, "include": ["c"], "references": [{{ "path": "./b" }}] }}"#
+        );
+        let middle = format!(
+            r#"{{ "compilerOptions": {{ "allowJs": {allow_js} }}, "include": ["../c"], "references": [{{ "path": "../c" }}] }}"#
+        );
+        let leaf = format!(
+            r#"{{ "compilerOptions": {{ "allowJs": {allow_js} }}, "include": ["*.{extension}"] }}"#
+        );
+        let mut files = vec![
+            (CONFIG, root.as_str()),
+            ("b/tsconfig.json", middle.as_str()),
+            ("c/tsconfig.json", leaf.as_str()),
+        ];
+        files.extend(paths.iter().map(|path| (path.as_str(), "export {};")));
+        let disk = project_disk(&files, 1);
+        let request = Request {
+            are_entry_points: includes_javascript,
+            ..check_request()
+        };
+        let mut projects = Projects {
+            includes_javascript,
+            ..Projects::default()
+        };
+        for path in &paths {
+            let owner = projects.find_project_with(
+                &disk,
+                &request,
+                &project_path(CONFIG),
+                &project_path(path),
+                true,
+            );
+            assert_eq!(
+                owner,
+                Some(project_path("c/tsconfig.json")),
+                "{extension}, allowJs={allow_js}, entry point={includes_javascript}: {path}"
+            );
+        }
+        // A and B redirect to C for every file. Rebuilding their graphs per file is the regression.
+        assert_eq!(
+            projects.reference_graphs_built, 2,
+            "{extension}, allowJs={allow_js}, entry point={includes_javascript}"
+        );
+    }
 }
 
 #[test]

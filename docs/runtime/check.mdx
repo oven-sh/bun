@@ -342,10 +342,12 @@ error: No tsconfig.json in '/home/me/app' or above it. Below it:
   packages/server/tsconfig.json
   packages/web/tsconfig.json
 To check one: bun check -p packages/server/tsconfig.json
-To check everything below this directory: bun check .
+To select files below this directory: bun check .
 ```
 
-`bun check .` checks every TypeScript file below the current directory. Bun checks each file once, with the `tsconfig.json` that [the rules for a file](#some-files-or-directories) choose. Files with no `tsconfig.json` get the [default compiler options](#without-a-tsconfigjson).
+`bun check .` discovers projects below the current directory and checks the files those projects list. If a project has no listed files to check in its part of the directory, Bun checks files there that `exclude` does not rule out. For example, `include: [".gen/**/*"]` selects `.gen/a.ts` without adding an unlisted `scripts/s.ts`.
+
+Bun checks each selected file once, with the `tsconfig.json` that [the rules for a file](#some-files-or-directories) choose. A file with no `tsconfig.json` uses the [default compiler options](#without-a-tsconfigjson).
 
 In this run, Bun does not look for a `tsconfig.json` in `node_modules` or in a directory whose name starts with a dot. For a file in such a directory, such as `.next/types/routes.ts` in a Next.js app, the nearest `tsconfig.json` is the nearest one outside that directory.
 

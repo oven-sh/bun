@@ -1970,14 +1970,15 @@ struct Projects {
     /// under `allowJs`.
     includes_javascript: bool,
     with_javascript: FxHashMap<Vec<u8>, ListedFiles>,
-    // Keep one graph, rather than every ancestor's copy of its descendants' roots.
-    searched: Option<OwnerReferences>,
+    // A linter asks about many files in the same graph. Cache reference paths per candidate,
+    // while each project's roots stay in the shared per-project caches.
+    searched: FxHashMap<Vec<u8>, OwnerReferences>,
+    #[cfg(test)]
+    reference_graphs_built: usize,
 }
 
 struct OwnerReferences {
-    config: Vec<u8>,
-    projects: Vec<ReferencedProject>,
-    sources: FxHashSet<Vec<u8>>,
+    projects: Arc<[Vec<u8>]>,
     valid: bool,
 }
 
@@ -2152,70 +2153,77 @@ impl Projects {
             return false;
         }
         let is_case_sensitive = disk.is_case_sensitive();
-        if !self
-            .searched
-            .as_ref()
-            .is_some_and(|it| is_same_path(&it.config, config, is_case_sensitive))
-        {
+        let candidate = to_path(config, is_case_sensitive);
+        if !self.searched.contains_key(&*candidate) {
             let Some(root) = self.load(disk, request, config) else {
                 return false;
             };
             if root.references.is_empty() {
                 return false;
             }
+            let root = root.clone();
+            #[cfg(test)]
+            {
+                self.reference_graphs_built += 1;
+            }
             // Reference membership must use the candidate's command-line options, or JavaScript roots can appear to
             // belong only to the parent. Actual reference checking applies its own override policy.
             let mut graph = Graph::new(disk, request, overriding_options(request, false));
-            graph.create_build_tasks(root.clone());
+            graph.create_build_tasks(root);
             graph.setup_build_tasks(config);
             let reads_sources = request.plan_options.reads_sources_of_references && !request.build;
             let valid = graph.errors.is_empty() || reads_sources;
-            let sources = graph
+            let references: Vec<Vec<u8>> = graph
                 .projects
-                .iter()
-                .filter(|it| !is_same_path(&it.project.config_path, config, is_case_sensitive))
-                .flat_map(|it| &it.project.files)
-                .map(|file| to_path(file, is_case_sensitive).into_owned())
+                .into_iter()
+                .filter_map(|it| {
+                    let project = it.project;
+                    let path = project.config_path.clone();
+                    if is_same_path(&path, config, is_case_sensitive) {
+                        return None;
+                    }
+                    self.loaded.entry(path.clone()).or_insert(Ok(project));
+                    Some(path)
+                })
                 .collect();
-            self.searched = Some(OwnerReferences {
-                config: config.to_vec(),
-                projects: graph.projects,
-                sources,
-                valid,
-            });
+            self.searched.insert(
+                candidate.clone().into_owned(),
+                OwnerReferences {
+                    projects: references.into(),
+                    valid,
+                },
+            );
         }
-        let Some(searched) = &self.searched else {
-            return false;
-        };
+        let searched = &self.searched[&*candidate];
         if !searched.valid {
             return false;
         }
-        if listed == Listed::AsConfigured {
-            return searched
-                .sources
-                .contains(&*to_path(file, is_case_sensitive));
-        }
-        let references = searched
-            .projects
-            .iter()
-            .filter(|it| !is_same_path(&it.project.config_path, config, is_case_sensitive));
-        // A hypothetical allowJs owner must include the path, not merely share its directory.
-        let references: Vec<Vec<u8>> = references
-            .filter(|it| {
-                let options = &it.project.options;
-                let base = dirname::<Posix>(&it.project.config_path);
-                config::matched_include_spec(&options.include_specs, base, file, is_case_sensitive)
-                    .is_some()
+        let references = Arc::clone(&searched.projects);
+        let path = to_path(file, is_case_sensitive);
+        references.iter().any(|config| {
+            if listed == Listed::WithJavaScript {
+                let Some(project) = self.loaded.get(config).and_then(|it| it.as_ref().ok()) else {
+                    return false;
+                };
+                let options = &project.options;
+                let base = dirname::<Posix>(config);
+                // A hypothetical allowJs owner must include the path, not merely share its directory.
+                let includes = config::matched_include_spec(
+                    &options.include_specs,
+                    base,
+                    file,
+                    is_case_sensitive,
+                )
+                .is_some()
                     || options.file_specs.iter().any(|(text, path)| {
                         !text.is_empty() && is_same_path(path, file, is_case_sensitive)
-                    })
-            })
-            .map(|it| it.project.config_path.clone())
-            .collect();
-        let path = to_path(file, is_case_sensitive);
-        references
-            .iter()
-            .any(|it| self.lists(disk, request, it, Listed::WithJavaScript, &path))
+                    });
+                if !includes {
+                    return false;
+                }
+            }
+            self.lists(disk, request, config, listed, &path)
+        })
     }
 
     /// `findOrCreateDefaultConfiguredProjectWorker` below `config`, not above it: the first that reads `file` itself.
@@ -2425,7 +2433,7 @@ fn no_project_here(cwd: &[u8], below: &[Vec<u8>]) -> Diagnostic {
     }
     text.extend_from_slice(b"\nTo check one: bun check -p ");
     text.extend_from_slice(&relative(&below[0]));
-    text.extend_from_slice(b"\nTo check everything below this directory: bun check .");
+    text.extend_from_slice(b"\nTo select files below this directory: bun check .");
     without_code(&[&text])
 }
 

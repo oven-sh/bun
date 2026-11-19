@@ -432,7 +432,7 @@ fn fold_options<'s>(
     }
 }
 
-fn check_request() -> Request<'static> {
+pub(super) fn check_request() -> Request<'static> {
     Request {
         cwd: PROJECT,
         project: None,

@@ -23994,7 +23994,7 @@ describe.concurrent("--check", () => {
           packages/server/tsconfig.json
           packages/web/tsconfig.json
         To check one: bun check -p packages/server/tsconfig.json
-        To check everything below this directory: bun check ."
+        To select files below this directory: bun check ."
       `);
         expect(exitCode).toBe(1);
       },

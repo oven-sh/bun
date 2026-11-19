@@ -24,7 +24,7 @@
 import assert from "assert";
 import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, emptyProcessMaxRSS, isASAN, isDebug, runFixtureMaxRSS } from "harness";
 import util from "util";
 // const context = require('vm').runInNewContext; // TODO: Use a vm polyfill
 
@@ -612,6 +612,50 @@ describe("util", () => {
         [-1, "a"],
         [-1, "b"],
       ]);
+    });
+
+    it("breaks ties as Node does where one side runs out before the other", () => {
+      const operations = (actual, expected) => util.diff(actual, expected).map(([kind, value]) => kind + value);
+      expect(operations("ab", "bcab")).toEqual(["-1b", "-1c", "0a", "0b"]);
+      expect(operations("abcabba", "cbabac")).toEqual(["1a", "1b", "0c", "-1b", "0a", "0b", "1b", "0a", "-1c"]);
+      expect(operations("aab", "bbbaaab")).toEqual(["-1b", "-1b", "-1b", "0a", "0a", "-1a", "0b"]);
+      expect(operations("bbbaaab", "aab")).toEqual(["1b", "1b", "1b", "0a", "0a", "1a", "0b"]);
+      expect(operations("aaaa", "aa")).toEqual(["0a", "0a", "1a", "1a"]);
+      expect(util.diff([], ["a", "b"])).toEqual([
+        [-1, "a"],
+        [-1, "b"],
+      ]);
+      expect(util.diff(["a", "b"], [])).toEqual([
+        [1, "a"],
+        [1, "b"],
+      ]);
+    });
+
+    it.concurrent("takes little memory for large inputs with many differences", async () => {
+      // Keeping every diagonal of every level would take 320 MB for the first call and 512 MB for each of the others.
+      const fixture = `
+        import util from "node:util";
+        const lines = (length, name) => Array.from({ length }, (_, i) => name + i);
+        const edited = lines(20_000, "line");
+        for (let i = 0; i < edited.length; i += 40) edited[i] = "edited" + i;
+        const large = lines(8_000, "line");
+        const counts = [
+          util.diff(lines(20_000, "line"), edited),
+          util.diff(large, []),
+          util.diff([], large),
+        ].map(result => [1, 0, -1].map(kind => result.filter(entry => entry[0] === kind).length));
+        process.stdout.write(JSON.stringify(counts));
+      `;
+      const [maxRSS, emptyMaxRSS] = await Promise.all([
+        runFixtureMaxRSS(fixture, [
+          [500, 19_500, 500],
+          [8_000, 0, 0],
+          [0, 0, 8_000],
+        ]),
+        emptyProcessMaxRSS(),
+      ]);
+      const megabytes = (maxRSS - emptyMaxRSS) / 1024 / 1024;
+      expect(megabytes).toBeLessThan(isASAN || isDebug ? 200 : 100);
     });
 
     it("returns an empty array for the same value", () => {

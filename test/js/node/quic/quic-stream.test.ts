@@ -772,7 +772,7 @@ describe("a stream that is created and dropped before it is used", () => {
     return { server, client };
   };
   const until = async (done: () => boolean) => {
-    for (const deadline = Date.now() + 5000; Date.now() < deadline && !done(); ) await Bun.sleep(1);
+    for (const deadline = Date.now() + 5000; Date.now() < deadline && !done();) await Bun.sleep(1);
     return done();
   };
 

@@ -857,6 +857,50 @@ describe.concurrent.skipIf(!hasDecimal)("literals", () => {
     120_000,
   );
 
+  test.skipIf(!!unsupported).each([[[]], [["--aot-references", "wide"]], ...(canTrim ? [[["--trim"]]] : [])])(
+    "--aot %j computes with Decimals in place, and calls what is none",
+    async flags => {
+      const source = `
+        class Line {
+          constructor(price, quantity) { this.price = price; this.quantity = quantity; }
+          total() { return this.price.multiply(new Decimal(this.quantity)); }
+        }
+        function invoice(lines, parts) {
+          let sum = 0m;
+          const texts = [];
+          for (const line of lines) {
+            const total = line.total();
+            sum = total.greaterThan(500m) ? sum.add(total.multiply(95m).divide(100m).round(2)) : sum.add(total);
+            if (line.quantity === 9) texts.push(total.toFixed({ digits: 1 }), total.negate());
+          }
+          Bun.gc(true);
+          return [sum, sum.divide(parts).round(2, "ceil"), texts.length, texts.at(-2), texts.at(-1)].join();
+        }
+        const lines = Array.from({ length: 20000 }, (_, i) => new Line(new Decimal((i * 7919 % 100003) + "e-2"), 1 + i % 9));
+        console.log(invoice(lines, 7m));
+        class Free extends Decimal {}
+        Object.assign(Free.prototype, { ["multi" + "ply"]: () => 0m });
+        console.log(invoice([new Line(new Free(5), 9)], 1m));
+        try { invoice(lines, 7); } catch (error) { console.log(error.name); }
+        Reflect.set(Decimal.prototype, "round", () => 1m);
+        console.log(invoice(lines.slice(0, 20), 7m));
+      `;
+      const result = await compileAndRun(["--aot", ...flags], { "main.js": source }, env);
+      expect(result).toEqual({
+        stdout: [
+          "47532015.16,6790287.88,4444,4634.5,-4634.46",
+          "0,0,2,0.0,-0",
+          "TypeError",
+          "1221.11,1,4,3115.8,-3115.8",
+          "",
+        ].join("\n"),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
+
   test.skipIf(!!unsupported)(
     "--aot without the variable leaves it to the run whether the global is there",
     async () => {

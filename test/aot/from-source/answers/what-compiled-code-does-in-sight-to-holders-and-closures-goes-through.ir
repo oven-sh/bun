@@ -1,0 +1,57 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# class Base { weigh() { return "base"; } }
+# class Shown extends Base {
+#     count = 1;
+#     twice() { return this.count * 2; }
+#     get label() { return "label " + this.count; }
+#     set label(text: string) { this.count = text.length; }
+#     static get kind() { return "kind"; }
+#     static set kind(text: string) { }
+#     static make() { return new Shown(); }
+# }
+# const kept = Shown.make();
+# print(kept.twice(), kept.weigh(), kept.label, Shown.kind);
+# Shown.prototype.twice = function () { return this.count * 3; };
+# Shown.prototype.weigh = function () { return "own"; };
+# Shown.make = function () { return kept; };
+# (Shown as any).extra = "laid";
+# print(kept.twice(), kept.weigh(), new Base().weigh(), Shown.make() === kept, (Shown as any).extra);
+# Object.freeze(Shown.prototype);
+# print(Object.isFrozen(Shown.prototype), kept.twice());
+# function plain(first: number) { return first + 1; }
+# (plain as any).mark = "laid";
+# print((plain as any).mark, plain.call(null, 1));
+# class Above { run() { return "run"; } static make() { return "make"; } }
+# class Middle extends Above {}
+# class Below extends Middle {}
+# function layOnClassObject(value: () => string) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; Below.make = value; return work; }
+# function layOnPrototypeObject(value: () => string) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; Below.prototype.run = value; return work; }
+# const low = new Below();
+# new Middle(); new Above();
+# layOnClassObject(Above.make);
+# layOnPrototypeObject(Above.prototype.run);
+# print(low.run(), Below.make(), typeof Middle.make, new Above().run(), Above.make());
+# Middle.make = Middle.make;
+# Middle.prototype.run = Middle.prototype.run;
+# print(new Middle().run(), Middle.make(), low.run(), Below.make());
+# -- end of source
+# Nothing leaves compiled code here, and every change is one that Link reads: a method stored over, a method of the class above hidden by a store, a static method stored over, a new name on the class object, the prototype object frozen, a name laid on a closure.
+# The last rows store a method that is found above on a class below, under its own name. The node of the member still holds that one function, so Link leaves the member as it is and nothing escapes, and every lookup still finds the function.
+# None of it is ruled out, so none of it ends the process.
+# RUN: run-in-shell
+# CHECK: 2 base label 1 kind
+# CHECK-NEXT: 3 own base true laid
+# CHECK-NEXT: true 3
+# CHECK-NEXT: laid 2
+# CHECK-NEXT: run make function run make
+# CHECK-NEXT: run make run make
+# CHECK-NEXT: exited with 0
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: 2 base label 1 kind
+# CALLED-NEXT: 3 own base true laid
+# CALLED-NEXT: true 3
+# CALLED-NEXT: laid 2
+# CALLED-NEXT: run make function run make
+# CALLED-NEXT: run make run make
+# CALLED-NEXT: exited with 0

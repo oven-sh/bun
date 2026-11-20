@@ -4,6 +4,8 @@ const js = { capability: "js", throws: true } as const;
 const objectIfOpen = { returns: b.any.returning("object", "undefined"), ...js } as const;
 const certificate = { returns: b.any.returning("Buffer", "undefined"), ...js } as const;
 const address = { returns: b.any.returning("SocketAddress", "undefined"), capability: "js" } as const;
+// The state lies in a buffer that the library reads through a DataView.
+const writesState = { writes: ["TypedArrayElements", "ExternalState"] } as const;
 
 /** `internalBinding("quic").Endpoint` of Node. */
 export const QuicEndpoint = b.class({
@@ -14,7 +16,7 @@ export const QuicEndpoint = b.class({
     closeGracefully: { capability: "js", passThis: true },
     connect: { ...objectIfOpen, args: { address: b.any, options: b.any, sessionTicket: b.any }, passThis: true },
     listen: { ...js, args: { options: b.any }, passThis: true },
-    markBusy: { args: { busy: b.bool.loose } },
+    markBusy: { args: { busy: b.bool.loose }, ...writesState },
     releaseSocket: { capability: "js" },
     setSNIContexts: { ...js, args: { entries: b.any, replace: b.any } },
   },
@@ -48,7 +50,7 @@ export const QuicStream = b.class({
     endWrite: { capability: "js" },
     getPriority: { returns: b.u32 },
     getReader: { returns: b.self, passThis: true },
-    initStreamingSource: {},
+    initStreamingSource: writesState,
     pull: { ...js, args: { callback: b.any } },
     resetStream: { args: { code: b.any }, capability: "js" },
     sendHeaders: { ...js, args: { kind: b.any, headers: b.any, flags: b.any }, returns: b.any.returning("boolean") },

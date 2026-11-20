@@ -1,13 +1,11 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="member"
 // CHECK: b0([[parameter]]: anything):
-// CHECK: [[convertedParameter]] = Convert [[parameter]] declared={type=undefined|null|number|string|symbol|bigint|L{{*}} flags=[IsExpected]}
-// CHECK-NEXT: [[old]] = PropGet [[convertedParameter]] key="p"
+// CHECK: [[old]] = PropGet [[parameter]] key="p"
 // CHECK-NEXT: [[incremented]] = Increment [[old]]
-// CHECK-NEXT: PropSet [[convertedParameter]], [[incremented]] key="p"
+// CHECK-NEXT: PropSet [[parameter]], [[incremented]] key="p"
 // CHECK-LABEL: function {{*}}name="memberCall"
-// CHECK: [[made]] = Call {{*}}calleeName="o"
-// CHECK-NEXT: [[object]] = Convert [[made]] declared={type=undefined|null|number|string|symbol|bigint|L{{*}} flags=[IsExpected]}
+// CHECK: [[object]] = Call {{*}}calleeName="o"
 // CHECK-NEXT: [[before]] = PropGet [[object]] key="p"
 // CHECK-NEXT: [[decremented]] = Decrement [[before]]
 // CHECK-NEXT: PropSet [[object]], [[decremented]] key="p"

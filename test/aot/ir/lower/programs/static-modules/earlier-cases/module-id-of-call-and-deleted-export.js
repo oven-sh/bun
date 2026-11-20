@@ -26,73 +26,53 @@ exports.loaded = typeof module.loaded;
 
 // GENERATED: show
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_1]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow flags=[IsSloppy] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|function):
 // CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b4():
+// CHECK-NEXT: b1() handler=b2():
 // CHECK-NEXT: v2 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
 // CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
 // CHECK-NEXT: v5 = PropGet v4 key="log"
 // CHECK-NEXT: v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v7 = Data data=[[d_2]]
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|Array<never> flags=[IsExpected]}
-// CHECK-NEXT: v9 = PropGet v8 key="concat"
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|[[f_3]] flags=[IsExpected]}
-// CHECK-NEXT: v11 = Call v1 calleeName="f"
-// CHECK-NEXT: v12 = Call v10, v8, v11 calleeKey="concat" calleeName="concat"
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|Array<never> flags=[IsExpected]}
-// CHECK-NEXT: v14 = PropGet v13 key="map"
-// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|[[f_4]] flags=[IsExpected]}
-// CHECK-NEXT: v16 = Builtin builtin=String
-// CHECK-NEXT: v17 = Call v15, v13, v16 calleeKey="map" calleeName="map"
-// CHECK-NEXT: v18 = Convert v17 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
-// CHECK-NEXT: v19 = PropGet v18 key="join"
-// CHECK-NEXT: v20 = Convert v19 declared={type=undefined|null|[[f_5]] flags=[IsExpected]}
-// CHECK-NEXT: v21 = String string=" "
-// CHECK-NEXT: v22 = Call v20, v18, v21 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v23 = Convert v22 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v24 = Call v6, v4, v0, v23 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Jump -> next b13()
-// CHECK-NEXT: b4() role=CatchHandler:
-// CHECK-NEXT: v25 = CatchValue
-// CHECK-NEXT: v26 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v27 = PropGet v26 key="console" [isFreeName]
-// CHECK-NEXT: v28 = Convert v27 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v29 = PropGet v28 key="log"
-// CHECK-NEXT: v30 = Convert v29 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v31 = String string="threw"
-// CHECK-NEXT: v32 = ToBoolean v25
-// CHECK-NEXT: Branch v32 -> taken b5(| 0), notTaken b7(| 0)
-// CHECK-NEXT: b5(v33):
-// CHECK-NEXT: Jump -> next b6()
-// CHECK-NEXT: b6():
-// CHECK-NEXT: v34 = PropGet v33 key="constructor"
-// CHECK-NEXT: v35 = Convert v34 declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b8(v35, v33)
-// CHECK-NEXT: b7(v36):
-// CHECK-NEXT: Jump -> next b8(v36, v36)
-// CHECK-NEXT: b8(v37, v38):
-// CHECK-NEXT: v39 = ToBoolean v37
-// CHECK-NEXT: Branch v39 -> taken b9(| 0), notTaken b11(| 0)
-// CHECK-NEXT: b9(v40):
-// CHECK-NEXT: Jump -> next b10()
-// CHECK-NEXT: b10():
-// CHECK-NEXT: v41 = PropGet v38 key="constructor"
-// CHECK-NEXT: v42 = Convert v41 declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: v43 = PropGet v42 key="name"
-// CHECK-NEXT: v44 = Convert v43 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b12(v44)
-// CHECK-NEXT: b11(v45):
-// CHECK-NEXT: Jump -> next b12(v45)
-// CHECK-NEXT: b12(v46):
-// CHECK-NEXT: v47 = Call v30, v28, v0, v31, v46 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b13()
-// CHECK-NEXT: b13():
-// CHECK-NEXT: v48 = Undefined
-// CHECK-NEXT: Return v48
+// CHECK-NEXT: v7 = Data data=[[d_1]]
+// CHECK-NEXT: v8 = PropGet v7 key="concat"
+// CHECK-NEXT: v9 = Call v1 calleeName="f"
+// CHECK-NEXT: v10 = Call v8, v7, v9 calleeKey="concat" calleeName="concat"
+// CHECK-NEXT: v11 = PropGet v10 key="map"
+// CHECK-NEXT: v12 = Builtin builtin=String
+// CHECK-NEXT: v13 = Call v11, v10, v12 calleeKey="map" calleeName="map"
+// CHECK-NEXT: v14 = PropGet v13 key="join"
+// CHECK-NEXT: v15 = String string=" "
+// CHECK-NEXT: v16 = Call v14, v13, v15 calleeKey="join" calleeName="join"
+// CHECK-NEXT: v17 = Call v6, v4, v0, v16 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: Jump -> next b8()
+// CHECK-NEXT: b2() role=CatchHandler:
+// CHECK-NEXT: v18 = CatchValue
+// CHECK-NEXT: v19 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v20 = PropGet v19 key="console" [isFreeName]
+// CHECK-NEXT: v21 = Convert v20 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v22 = PropGet v21 key="log"
+// CHECK-NEXT: v23 = Convert v22 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+// CHECK-NEXT: v24 = String string="threw"
+// CHECK-NEXT: v25 = ToBoolean v18
+// CHECK-NEXT: Branch v25 -> taken b3(| 0), notTaken b6(| 0)
+// CHECK-NEXT: b3(v26):
+// CHECK-NEXT: v27 = PropGet v18 key="constructor"
+// CHECK-NEXT: v28 = ToBoolean v27
+// CHECK-NEXT: Branch v28 -> taken b4(| 0), notTaken b5(| 0)
+// CHECK-NEXT: b4(v29):
+// CHECK-NEXT: v30 = PropGet v18 key="constructor"
+// CHECK-NEXT: v31 = PropGet v30 key="name"
+// CHECK-NEXT: Jump -> next b7(v31)
+// CHECK-NEXT: b5(v32):
+// CHECK-NEXT: Jump -> next b7(v32)
+// CHECK-NEXT: b6(v33):
+// CHECK-NEXT: Jump -> next b7(v33)
+// CHECK-NEXT: b7(v34):
+// CHECK-NEXT: v35 = Call v23, v21, v0, v24, v34 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: Jump -> next b8()
+// CHECK-NEXT: b8():
+// CHECK-NEXT: v36 = Undefined
+// CHECK-NEXT: Return v36
 // CHECK-NEXT: }

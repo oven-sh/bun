@@ -1,0 +1,10 @@
+"use strict";
+const take = process.argv[2] === "take";
+const N = Object.create(null);
+const said = [typeof N.toString, "toString" in N, typeof N.valueOf, N.hasOwnProperty === undefined, typeof N.constructor];
+N.toString = function () { return "mine"; };
+if (take) N.valueOf = 1;
+if (take) N.hasOwnProperty = 2;
+if (take) N.constructor = 3;
+said.push(N.toString(), typeof N.valueOf, "valueOf" in N, N.hasOwnProperty === undefined, typeof N.constructor, Object.keys(N).join("+"));
+console.log(said.join());

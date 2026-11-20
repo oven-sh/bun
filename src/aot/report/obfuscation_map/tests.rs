@@ -1,5 +1,6 @@
 use bstr::{BString, ByteSlice};
 use bun_base64::vlq::decode;
+use bun_sema_driver::host::from_native;
 
 use super::*;
 use crate::engine::testing::ResultRecords;
@@ -9,6 +10,8 @@ use crate::report::ModuleSource;
 use crate::report::testing::{
     DEPENDENCY, LINE_1_COLUMN_5, LINE_2_COLUMN_14, PROGRAM, RUNTIME, ReportFixture,
 };
+
+const MODULE_WITHOUT_SOURCE: u32 = 9;
 
 fn unlocated(function: u32, site: u32) -> Site {
     Site {
@@ -55,7 +58,6 @@ fn decode_fields(segment: &[u8]) -> Vec<i32> {
     fields
 }
 
-// Per segment: the function, then as many of site, source, line, column and name as it has fields.
 fn decode_sites(mappings: &[u8]) -> Vec<(usize, Vec<i32>)> {
     let mut original = [0; 4];
     let mut sites = Vec::new();
@@ -105,8 +107,8 @@ fn map_of(records: &[ObfuscatedSiteRecord], text: &[u8]) -> BString {
         file_name: b"app",
         debug_id: None,
     };
-    let map = fixture.with_input(|input| write(input.engine, input.names, input.texts, executable));
-    BString::from(map)
+    let map = fixture.with_input(|input| write(input.engine, input.texts, executable));
+    BString::from(map.expect("no file has changed"))
 }
 
 fn texts() -> SourceTexts {
@@ -270,6 +272,41 @@ fn record_without_text_is_not_located() {
 }
 
 #[test]
+fn map_of_a_file_edited_since_it_was_compiled_is_refused() {
+    let name = format!("bun-aot-obfuscation-map-{}.ts", std::process::id());
+    let path = std::env::temp_dir().join(name);
+    let path_on_disk = from_native(path.to_str().expect("the path is text").as_bytes());
+    let compiled = b"first;\nsecond;\n";
+    let records = [record(0, 0, 0, 7)];
+    let fixture = ReportFixture::new(ResultRecords {
+        obfuscated_sites: &records,
+        ..ResultRecords::default()
+    });
+    let executable = Executable {
+        file_name: b"app",
+        debug_id: None,
+    };
+    let write_map = |on_disk: &str| {
+        std::fs::write(&path, on_disk).expect("the folder for temporary files takes a file");
+        let source = ModuleSource::new_on_disk(b"/p/a.ts", &path_on_disk, compiled);
+        let texts = SourceTexts::new(vec![Some(source)]);
+        let map = fixture.with_input(|input| write(input.engine, &texts, executable));
+        map.map(BString::from)
+            .map_err(|changed| BString::from(changed.path))
+    };
+    let as_compiled = write_map("first;\nsecond;\n").expect("the file is as it was compiled");
+    assert!(
+        as_compiled.contains_str(r#""sourcesContent":["first;\nsecond;\n"]"#),
+        "{as_compiled}"
+    );
+    for edited in ["first;\nthird!;\n", "first;\n"] {
+        let refused = write_map(edited).expect_err("the file is not what was compiled");
+        assert!(refused.ends_with(b"p/a.ts"), "{refused}");
+    }
+    std::fs::remove_file(&path).expect("the file is there");
+}
+
+#[test]
 fn map_without_sites_has_empty_lists() {
     assert_eq!(
         map_of(&[], b""),
@@ -286,7 +323,7 @@ fn map_lists_sources_names_and_mappings() {
         record(2, 1, DEPENDENCY, 0),
         named(record(0, 5, PROGRAM, LINE_2_COLUMN_14), 0, 6),
         named(record(0, 0, PROGRAM, LINE_1_COLUMN_5), 0, 6),
-        record(0, 3, RUNTIME, 0),
+        record(0, 3, MODULE_WITHOUT_SOURCE, 0),
     ];
     assert_eq!(
         map_of(&records, b"double"),
@@ -300,16 +337,38 @@ fn map_lists_sources_names_and_mappings() {
 }
 
 #[test]
+fn short_name_is_listed_as_it_is_written() {
+    let records = [
+        named(record(0, 0, 0, 0), 0, 2),
+        named(record(1, 0, 0, 7), 2, 3),
+    ];
+    let fixture = ReportFixture::new(ResultRecords {
+        text: b"Ddmap",
+        obfuscated_sites: &records,
+        ..ResultRecords::default()
+    });
+    let mut texts = texts();
+    texts.set_written_names(b"cr\0NotFound\0Dd\0handler\0".to_vec());
+    let executable = Executable {
+        file_name: b"app",
+        debug_id: None,
+    };
+    let map = fixture.with_input(|input| write(input.engine, &texts, executable));
+    let map = BString::from(map.expect("no file has changed"));
+    assert!(map.contains_str(r#""names":["handler","map"]"#), "{map}");
+}
+
+#[test]
 fn named_function_without_text_has_a_line_of_its_own() {
     let records = [
         named(record(0, 0, PROGRAM, LINE_1_COLUMN_5), 0, 6),
         named(record(0, 1, ABSENT_WORD, 0), 6, 3),
-        named(record(0, 2, RUNTIME, 9), 9, 8),
+        named(record(0, 2, MODULE_WITHOUT_SOURCE, 9), 9, 8),
         record(0, 3, ABSENT_WORD, 0),
     ];
     let map = map_of(&records, b"doublemapreadFile");
     assert!(
-        map.contains_str(r#""sources":["src/a.ts","native","node:fs"],"#),
+        map.contains_str(r#""sources":["src/a.ts","native",""],"#),
         "{map}"
     );
     assert!(map.contains_str(r#"export {};\n",null,null],"#), "{map}");
@@ -332,15 +391,25 @@ fn named_function_without_text_has_a_line_of_its_own() {
 }
 
 #[test]
+fn site_in_empty_text_is_at_its_start() {
+    let map = map_of(&[named(record(0, 0, RUNTIME, 9), 0, 8)], b"readFile");
+    assert!(map.contains_str(r#""sources":["node:fs"],"#), "{map}");
+    assert!(
+        map.contains_str(r#""names":["readFile"],"mappings":"AAAAA","#),
+        "{map}"
+    );
+}
+
+#[test]
 fn map_has_the_debug_id_in_both_spellings() {
     let fixture = ReportFixture::new(ResultRecords::default());
     let executable = Executable {
         file_name: b"app",
         debug_id: Some(b"5f0c2a9e-41d7-b386-0e9d-4c17a2f3b658"),
     };
-    let map = fixture.with_input(|input| write(input.engine, input.names, input.texts, executable));
+    let map = fixture.with_input(|input| write(input.engine, input.texts, executable));
     assert!(
-        BString::from(map).starts_with(
+        BString::from(map.expect("no file has changed")).starts_with(
             concat!(
                 r#"{"version":3,"file":"app","debugId":"5f0c2a9e-41d7-b386-0e9d-4c17a2f3b658","#,
                 r#""debug_id":"5f0c2a9e-41d7-b386-0e9d-4c17a2f3b658","sources":"#,
@@ -360,7 +429,6 @@ fn function_mappings(starts: &[FunctionStart]) -> BString {
     BString::from(out)
 }
 
-// As Metro's reader does it: lines count from one, and a `;` sets the column back to zero.
 fn decode_function_mappings(mappings: &[u8]) -> Vec<[i32; 3]> {
     let (mut line, mut name) = (1, 0);
     let mut starts = Vec::new();

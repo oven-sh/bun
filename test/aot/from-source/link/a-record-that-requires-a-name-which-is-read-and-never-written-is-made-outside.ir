@@ -1,0 +1,17 @@
+# -- source: main.ts
+# interface Pair { kind: string; left: number[]; right: number[] }
+# declare function print(value: unknown): void;
+# function lengths(pair: Pair): number { return pair.left.length * 10 + pair.right.length; }
+# const listeners: any[] = [{ kind: "idle", run: lengths }];
+# const pair: any = JSON.parse('{"kind":"pair","left":[1,2,3],"right":[4]}');
+# print(listeners[0].run(pair));
+# -- end of source
+# The author requires `left` and `right` of a Pair, the function reads them, and nobody in the program writes them: the pairs come from outside. A name that nobody writes is not asked for when the layouts that may be a record are
+# gathered (a phantom brand is required and never written), so a Pair used to be every literal of the program that has a `kind`: the function began with a test for those shapes, took left and right for undefined behind it,
+# and the real pair went the rare way all through. A name that is required, never written AND READ says that the record is made outside: it has no layout of the program for a member, and its type says nothing.
+# f1 = lengths
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: ShapeTest
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 31
+# RIGHT-NEXT: exited with 0

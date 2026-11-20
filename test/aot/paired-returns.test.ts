@@ -34,12 +34,14 @@ const displacementOfAdr = (word: number) =>
   word >>> 31 ? undefined : (((((word >>> 5) & 0x7ffff) << 2) | ((word >>> 29) & 3)) ^ 0x100000) - 0x100000;
 const registerOfBranch = (word: number) => (word >>> 5) & 31;
 
-/** `map` is what the build wrote: T rows name the stubs, TN rows those that never return, C rows their copies, F rows the functions. */
+/**
+ * `map` is what the build wrote. A T row names a stub and a TN row one that never returns, each by its place in the code: every copy of the
+ * stubs has rows of its own. An F row has the place of a function.
+ */
 function unpairedReturns(data: Buffer, map: string) {
   const code = findCode(data);
   const names = new Map<number, string>();
   const neverReturn = new Set<number>();
-  const copies: number[] = [];
   const functions: number[] = [];
   for (const line of map.split(/\r?\n/)) {
     const [kind, first, second] = line.split("\t");
@@ -47,11 +49,12 @@ function unpairedReturns(data: Buffer, map: string) {
       const known = names.get(Number(first));
       if (known === undefined || second!.length < known.length) names.set(Number(first), second!);
     } else if (kind === "TN") neverReturn.add(Number(first));
-    else if (kind === "C") copies.push(Number(first));
     else if (kind === "F") functions.push(Number(second));
   }
   const offsets = [...names.keys()].sort((a, b) => a - b);
-  const size = functions.reduce((end, at) => (at > copies[0]! && at < end ? at : end), code.size) - copies[0]!;
+  // A copy begins with the stub that the first copy begins with, and ends where the next function begins.
+  const copies = offsets.filter(offset => names.get(offset) === names.get(offsets[0]!));
+  const endOf = (copy: number) => functions.reduce((end, at) => (at > copy && at < end ? at : end), code.size);
   const at = (offset: number) => {
     const stub = offsets.findLast(begin => begin <= offset)!;
     return `${names.get(stub)}+${offset - stub}`;
@@ -59,30 +62,33 @@ function unpairedReturns(data: Buffer, map: string) {
 
   const found = new Set<string>();
   for (const copy of copies) {
-    const words = Array.from({ length: size >> 2 }, (_, index) => data.readUInt32LE(code.offset + copy + 4 * index));
+    const words = Array.from({ length: (endOf(copy) - copy) >> 2 }, (_, index) =>
+      data.readUInt32LE(code.offset + copy + 4 * index),
+    );
     if (!words.includes(RET)) found.add("no stub returns with ret");
     if (!words.some(isBlr)) found.add("no stub calls with blr");
     words.forEach((word, index) => {
       if (isAdrToLinkRegister(word)) {
         // A stub that never returns is handed the address that it reports.
         const next = words[index + 1];
-        const reports = next !== undefined && isB(next) && neverReturn.has(4 * (index + 1) + displacementOfB(next));
+        const reports =
+          next !== undefined && isB(next) && neverReturn.has(copy + 4 * (index + 1) + displacementOfB(next));
         // A tail call that takes the place of frames below it hands its callee the address behind the call that the oldest of
         // them was entered by: that call left the address behind.
         const displacement = displacementOfAdr(word);
         const before = displacement === undefined ? undefined : words[index + (displacement >> 2) - 1];
         const isBehindCall = before !== undefined && (isBl(before) || isBlr(before));
-        if (!reports && !isBehindCall) found.add(`${at(4 * index)} computes x30`);
+        if (!reports && !isBehindCall) found.add(`${at(copy + 4 * index)} computes x30`);
       } else if (
         isBr(word) &&
         words
           .slice(Math.max(0, index - 3), index)
           .some(earlier => isCopyOfLinkRegister(earlier) && (earlier & 31) === registerOfBranch(word))
       )
-        found.add(`${at(4 * index)} returns with br x${registerOfBranch(word)}`);
+        found.add(`${at(copy + 4 * index)} returns with br x${registerOfBranch(word)}`);
     });
   }
-  return { stubs: offsets.length, copies: copies.length, found: [...found] };
+  return { stubs: offsets.length / copies.length, copies: copies.length, found: [...found] };
 }
 
 test.skipIf(process.arch !== "arm64")(

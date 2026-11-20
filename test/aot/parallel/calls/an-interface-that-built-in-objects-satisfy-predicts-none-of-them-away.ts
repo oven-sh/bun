@@ -1,5 +1,6 @@
 // What is declared of a parameter is a layout, and strings and lists of every kind are handed in: each of them reads its length without a call of the run time.
 // COUNT: operation:operationAOTGetByIdAndCache = 0
+// COUNT: operation:operationAOTFillSiteAnswers = 0
 interface Counted {
   length: number;
 }

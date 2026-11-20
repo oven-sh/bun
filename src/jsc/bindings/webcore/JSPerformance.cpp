@@ -23,8 +23,6 @@
 
 #include "ErrorCode.h"
 #include "EventNames.h"
-#include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
@@ -40,8 +38,7 @@
 #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
-// #include "JSDOMWindowBase.h"
-#include "JSDOMWrapperCache.h"
+#include "JSDOMPrototype.h"
 #include "JSEventListener.h"
 
 #include "JSPerformanceEntry.h"
@@ -49,23 +46,14 @@
 #include "JSPerformanceMarkOptions.h"
 #include "JSPerformanceMeasure.h"
 #include "JSPerformanceMeasureOptions.h"
-// #include "JSPerformanceNavigation.h"
 #include "JSPerformanceTiming.h"
 
 #include "ScriptExecutionContext.h"
-#include "WebCoreJSClientData.h"
-// #include "WebCoreOpaqueRootInlines.h"
-#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
 #include <variant>
 #include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
-#include <wtf/URL.h>
 
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
 #include <JavaScriptCore/FrameTracers.h>
@@ -88,11 +76,8 @@ static JSC_DECLARE_HOST_FUNCTION(jsPerformancePrototypeFunction_clearMarks);
 static JSC_DECLARE_HOST_FUNCTION(jsPerformancePrototypeFunction_measure);
 static JSC_DECLARE_HOST_FUNCTION(jsPerformancePrototypeFunction_clearMeasures);
 
-static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceConstructor);
-
 // Attributes
 
-static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceConstructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsPerformance_timeOrigin);
 static JSC_DECLARE_CUSTOM_GETTER(jsPerformance_timing);
 static JSC_DECLARE_CUSTOM_GETTER(jsPerformance_onresourcetimingbufferfull);
@@ -145,56 +130,15 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_markResourceTiming, (JSG
 
 // -- end copied --
 
-class JSPerformancePrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSPerformancePrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSPerformancePrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSPerformancePrototype))) JSPerformancePrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSPerformancePrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSPerformancePrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSPerformancePrototype, JSPerformancePrototype::Base);
-
+using JSPerformancePrototype = JSDOMPrototype<JSPerformance>;
 using JSPerformanceDOMConstructor = JSDOMConstructorNotConstructable<JSPerformance>;
 
 template<> const ClassInfo JSPerformanceDOMConstructor::s_info = { "Performance"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceDOMConstructor) };
 
-template<> JSValue JSPerformanceDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    return JSEventTarget::getConstructor(vm, &globalObject);
-}
-
-template<> void JSPerformanceDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    initializeBaseProperties(vm, 0, "Performance"_s, JSPerformance::prototype(vm, globalObject));
-}
-
 /* Hash table for prototype */
 
 static const HashTableValue JSPerformancePrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceConstructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSPerformancePrototype::constructorGetter, 0 } },
     { "timeOrigin"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformance_timeOrigin, 0 } },
     { "timing"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformance_timing, 0 } },
     { "onresourcetimingbufferfull"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformance_onresourcetimingbufferfull, setJSPerformance_onresourcetimingbufferfull } },
@@ -215,9 +159,9 @@ static const HashTableValue JSPerformancePrototypeTableValues[] = {
     { "markResourceTiming"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformancePrototypeFunction_markResourceTiming, 7 } },
 };
 
-const ClassInfo JSPerformancePrototype::s_info = { "Performance"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformancePrototype) };
+template<> const ClassInfo JSPerformancePrototype::s_info = { "Performance"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformancePrototype) };
 
-void JSPerformancePrototype::finishCreation(VM& vm)
+template<> void JSPerformancePrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSPerformance::info(), JSPerformancePrototypeTableValues, *this);
@@ -226,18 +170,11 @@ void JSPerformancePrototype::finishCreation(VM& vm)
 
 const ClassInfo JSPerformance::s_info = { "Performance"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformance) };
 
-JSPerformance::JSPerformance(Structure* structure, JSDOMGlobalObject& globalObject, Ref<Performance>&& impl)
-    : JSEventTarget(structure, globalObject, WTF::move(impl))
-{
-}
-
 size_t JSPerformance::estimatedSize(JSCell* cell, VM& vm)
 {
     JSPerformance* thisObject = uncheckedDowncast<JSPerformance>(cell);
     return Base::estimatedSize(cell, vm) + thisObject->wrapped().memoryCost();
 }
-
-// static_assert(!std::is_base_of<ActiveDOMObject, Performance>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 
 void JSPerformance::finishCreation(VM& vm)
 {
@@ -260,29 +197,12 @@ void JSPerformance::finishCreation(VM& vm)
 
 JSObject* JSPerformance::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSPerformancePrototype::createStructure(vm, &globalObject, JSEventTarget::prototype(vm, globalObject));
-    structure->setMayBePrototype(true);
-    return JSPerformancePrototype::create(vm, &globalObject, structure);
-}
-
-JSObject* JSPerformance::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSPerformance>(vm, globalObject);
+    return JSPerformancePrototype::create(vm, globalObject, JSEventTarget::prototype(vm, globalObject));
 }
 
 JSValue JSPerformance::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSPerformanceDOMConstructor, DOMConstructorID::Performance>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSPerformancePrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSPerformance::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
 static inline JSValue jsPerformance_timeOriginGetter(JSGlobalObject& lexicalGlobalObject, JSPerformance& thisObject)
@@ -556,46 +476,14 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_clearMeasures, (JSGlobal
     return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_clearMeasuresBody>(*lexicalGlobalObject, *callFrame, "clearMeasures");
 }
 
-JSC::GCClient::IsoSubspace* JSPerformance::subspaceForImpl(JSC::VM& vm)
+bool JSPerformance::isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason) const
 {
-    return WebCore::subspaceForImpl<JSPerformance, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformance, m_subspaceForPerformance));
-}
-
-void JSPerformance::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSPerformance>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
-    Base::analyzeHeap(cell, analyzer);
-}
-
-bool JSPerformanceOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    auto* jsPerformance = uncheckedDowncast<JSPerformance>(handle.slot()->asCell());
-    ScriptExecutionContext* owner = WTF::getPtr(jsPerformance->wrapped().scriptExecutionContext());
+    ScriptExecutionContext* owner = WTF::getPtr(wrapped().scriptExecutionContext());
     if (!owner)
         return false;
     if (reason) [[unlikely]]
         *reason = "Reachable from ScriptExecutionContext"_s;
-    return visitor.containsOpaqueRoot(&jsPerformance->wrapped());
-}
-
-void JSPerformanceOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsPerformance = static_cast<JSPerformance*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsPerformance->wrapped(), jsPerformance);
-}
-
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<Performance>&& impl)
-{
-    return createWrapper<Performance>(globalObject, WTF::move(impl));
-}
-
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Performance& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
+    return visitor.containsOpaqueRoot(&wrapped());
 }
 
 }

@@ -8,8 +8,7 @@ import { compareSpellings, functionsByOrder, storedProgram } from "./same-code-i
 
 const programs = [
   "classes-and-closures/own-accessor-hides-a-getter-and-a-setter.ts",
-  "commonjs/function-given-members-object-define.cjs",
-  "commonjs/members-are-named-as-packages-name-them.cjs",
+  "commonjs/members-that-a-file-lays-under-written-and-listed-names.cjs",
   "language/members-named-every-place-name-can-stand.ts",
   "language/patterns-take-members-by-name.js",
 ];
@@ -40,6 +39,15 @@ describe("respell-property-names", () => {
       strings: 'a["b"]["c"]?.["d"](e?.["f"]);',
       computed: 'a["b"]["c"]?.["d"](e?.["f"]);',
       templates: "a[`b`][`c`]?.[`d`](e?.[`f`]);",
+    });
+  });
+
+  test("what is updated is never named by a template", () => {
+    expect(inEach("a.b += a.c; a[`b`]++; --super.d; (a.e as number) ||= 1; a.f = 2;")).toEqual({
+      names: "a.b += a.c; a.b++; --super.d; (a.e as number) ||= 1; a.f = 2;",
+      strings: 'a["b"] += a["c"]; a["b"]++; --super["d"]; (a["e"] as number) ||= 1; a["f"] = 2;',
+      computed: 'a["b"] += a["c"]; a["b"]++; --super["d"]; (a["e"] as number) ||= 1; a["f"] = 2;',
+      templates: 'a["b"] += a[`c`]; a["b"]++; --super["d"]; (a["e"] as number) ||= 1; a[`f`] = 2;',
     });
   });
 

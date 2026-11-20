@@ -1,0 +1,20 @@
+# f1 = weigh
+# -- source: object-that-escapes-on-one-path.ts
+# type Point = { x: number; y: number };
+# const odd: Point[] = [];
+# function weigh(x: number, y: number): number {
+#   const point = { x, y };
+#   if (x < 0) odd.push(point);
+#   return point.x + point.y;
+# }
+# declare const input: any;
+# for (let turn = 0; turn < 2; turn++) {
+#   (globalThis as any).answer = [weigh(+input, +input), odd];
+# }
+# -- end of source
+# The compiler before this one: 21 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 53, patches 4, moves 4, unlikely or rare 17.
+# RUN(X64): steps most:57 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 57

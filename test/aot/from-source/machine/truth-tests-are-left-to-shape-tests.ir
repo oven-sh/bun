@@ -1,0 +1,15 @@
+# The truth of a value that is asked for its structure next is left to the structure's test: an object of the expected class is asked for nothing else.
+# RUN(EVENT): compile TruthTestsDeferredToShapeTests mechanisms=all
+# EVENT: statistic TruthTestsDeferredToShapeTests 1
+# -- source: truths.ts
+# class Branch { leaves: number; age: number; from: Branch | undefined; constructor(age: number) { this.age = age; this.leaves = age * 6; this.from = undefined; } }
+# class Twig extends Branch { bud: string; constructor(age: number) { super(age); this.bud = "green"; } }
+# declare function grown(branch: Branch): Branch;
+# declare function sink(...values: unknown[]): void;
+# function shade(branch: Branch): number {
+#     const under = grown(branch);
+#     if (under && under.age > 40) return under.leaves * 2;
+#     return 3;
+# }
+# sink(shade, Branch, Twig, new Twig(1), new Branch(2));
+# -- end of source

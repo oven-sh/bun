@@ -20,11 +20,9 @@ use bun_bundler::{BundleV2, Transpiler};
 use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
 use bun_core::PathBuffer as CorePathBuffer;
 use bun_core::strings;
-use bun_core::{self, Global, Output, env_var, fmt as bun_fmt};
+use bun_core::{self, Global, Output, ZBox, env_var, fmt as bun_fmt};
 #[cfg(not(windows))]
-use bun_core::{ZBox, ZStr, getenv_z};
-#[cfg(not(windows))]
-use bun_jsc as jsc;
+use bun_core::{ZStr, getenv_z};
 #[cfg(windows)]
 use bun_jsc::EventLoopHandle;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -64,7 +62,7 @@ pub(crate) struct Result<'a> {
 #[optimize(size)]
 pub(crate) fn filter<'a>(
     ctx: &Command::Context,
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     test_files: &'a mut [Interned],
     changed_since: &[u8],
 ) -> core::result::Result<Result<'a>, crate::Error> {
@@ -125,15 +123,11 @@ pub(crate) fn filter<'a>(
     // transpiler because BundleV2.init takes ownership of the allocator and
     // log, and we want the runtime transpiler left untouched for actually
     // executing tests afterward.
-    //
-    // `BundleV2::scan_module_graph_from_cli` takes
-    // `&'a mut Transpiler<'a>` (invariant), so the arena, log, and transpiler
-    // are process-lifetime. Route through the shared CLI arena.
     let arena: &'static Arena = crate::cli::cli_arena();
     let log: &'static mut bun_ast::Log = arena.alloc(bun_ast::Log::new());
 
-    let scan_transpiler: &'static mut Transpiler<'static> = arena.alloc(
-        match Transpiler::init(arena, log, ctx.args.clone(), Some(vm.transpiler.env)) {
+    let mut scan_transpiler =
+        match Transpiler::init(arena, log, ctx.args.clone(), Some(vm.transpiler.get().env)) {
             Ok(t) => t,
             Err(err) => {
                 Output::err_generic(
@@ -142,8 +136,7 @@ pub(crate) fn filter<'a>(
                 );
                 Global::exit(1);
             }
-        },
-    );
+        };
     scan_transpiler.options.target = bun_ast::Target::Bun;
     // Do not follow bare specifiers into node_modules; changes there are not
     // considered local edits.
@@ -164,12 +157,12 @@ pub(crate) fn filter<'a>(
 
     // Stack-owned Mini loop so its tasks/concurrent_tasks queues drop at
     // scope exit; the arena bulk-free skips Drop.
-    let mut event_loop = bun_event_loop::AnyEventLoop::init();
+    let event_loop = bun_event_loop::AnyEventLoop::init();
 
-    let mut bundle = match BundleV2::scan_module_graph_from_cli(
-        scan_transpiler,
+    let bundle = match BundleV2::scan_module_graph_from_cli(
+        &mut scan_transpiler,
         arena,
-        Some(core::ptr::NonNull::from(&mut event_loop)),
+        Some(core::ptr::NonNull::from(&event_loop)),
         &entry_points,
     ) {
         Ok(b) => b,
@@ -223,7 +216,12 @@ pub(crate) fn filter<'a>(
         }
         // All scanned entry points are absolute, and the resolver emits
         // absolute file paths as well.
-        path_to_index.put_assume_capacity(path_text, u32::try_from(idx).unwrap());
+        let first = bun_core::handle_oom(path_to_index.get_or_put(path_text));
+        if first.found_existing {
+            // One file under two `with { type }` loaders is two modules. An entry point is enqueued first.
+            continue;
+        }
+        *first.value_ptr = u32::try_from(idx).unwrap();
         // Copy out of the bundler's arena so the caller can use these paths
         // after the BundleV2 heap is gone.
         graph_files.push(Box::<[u8]>::from(path_text));
@@ -256,14 +254,10 @@ pub(crate) fn filter<'a>(
     let mut affected = bun_core::handle_oom(DynamicBitSet::init_empty(sources.len()));
     let mut queue: Vec<u32> = Vec::new();
 
-    {
-        for changed_path in changed_files.keys() {
-            if let Some(&idx) = path_to_index.get(changed_path.as_ref()) {
-                if !affected.is_set(idx as usize) {
-                    affected.set(idx as usize);
-                    queue.push(idx);
-                }
-            }
+    for (idx, source) in sources.iter().enumerate() {
+        if source.path.is_file() && changed_files.contains(source.path.text) {
+            affected.set(idx);
+            queue.push(u32::try_from(idx).unwrap());
         }
     }
 
@@ -299,14 +293,8 @@ pub(crate) fn filter<'a>(
     // `to_ast()` materializes `Vec<Symbol>` / `Vec<Part>` / `Vec<ImportRecord>` on the
     // global heap and the slab-only `MultiArrayList` drop never frees them, so
     // release the graph columns and the bundler-owned worker pool now that
-    // everything needed has been copied out above. The scan transpiler itself
-    // is in the CLI arena (the `&'a mut Transpiler<'a>` invariant forces a
-    // `'static` borrow), so its Drop never runs either; free its heap-backed
-    // options through the borrow `bundle` still holds.
-    bundle.deinit_without_freeing_arena();
-    // SAFETY: `bundle.transpiler` is the arena-backed `&'static mut` noted
-    // above — its `Drop` never runs, so `deinit` cannot lead to a double-drop.
-    unsafe { bundle.transpiler.deinit() };
+    // everything needed has been copied out above.
+    drop(bundle);
 
     Ok(Result {
         test_files: &mut test_files[0..write],
@@ -317,22 +305,18 @@ pub(crate) fn filter<'a>(
 }
 
 #[cfg(not(windows))]
-const TRIGGER_FILE_ENV_VAR_Z: &ZStr =
-    ZStr::from_static(b"BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE\0");
+const TRIGGER_FILE_ENV_VAR_Z: &ZStr = bun_core::zstr!("BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE");
 
 /// Make sure the trigger-file env var is set (generating a fresh temp
-/// path if this is the first process in the --watch chain) and wire up
-/// the hot-reloader collector to record changed paths. The collector
-/// and the path string intentionally live for the rest of the process;
-/// --watch exec()s on reload so nothing accumulates across restarts.
-pub(crate) fn init_watch_trigger() {
+/// path if this is the first process in the --watch chain) and return the path.
+pub(crate) fn init_watch_trigger() -> Option<ZBox> {
     #[cfg(windows)]
     {
         // Windows --watch restarts via TerminateProcess + parent
         // respawn with the parent's (unchanged) env, so a setenv in
         // the first child would not reach subsequent children. Fall
         // back to re-querying git on each restart there for now.
-        return;
+        return None;
     }
 
     #[cfg(not(windows))]
@@ -367,16 +351,7 @@ pub(crate) fn init_watch_trigger() {
             fresh
         };
 
-        // Process-lifetime singletons — store in the CLI arena so the borrows
-        // are legitimately `&'static`.
-        let arena = crate::cli::cli_arena();
-        let set: &'static mut StringSet = arena.alloc(StringSet::new());
-        // Written once on the main thread before the watcher thread starts;
-        // after that only the watcher thread touches these. See doc on
-        // `hot_reloader::WATCH_CHANGED_PATHS`.
-        let _ = jsc::hot_reloader::WATCH_CHANGED_TRIGGER_FILE.set(arena.alloc(path).as_zstr());
-        let _ = jsc::hot_reloader::WATCH_CHANGED_PATHS
-            .set(jsc::hot_reloader::WatchChangedPaths::new(set));
+        Some(path)
     }
 }
 
@@ -593,7 +568,7 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
         windows: spawn_sync::WindowsOptions {
             // `init` takes the erased `*mut ()` event-loop pointer
             // directly, so unwrap it here.
-            loop_: EventLoopHandle::init(VirtualMachine::get().event_loop().cast()),
+            loop_: EventLoopHandle::init(VirtualMachine::get().event_loop_ptr()),
             ..Default::default()
         },
         ..Default::default()

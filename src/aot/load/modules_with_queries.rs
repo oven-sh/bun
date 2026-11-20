@@ -1,20 +1,13 @@
-//! `import "./a.ts?fresh=1"`: `bun run` reads `a.ts` and makes one more module of it, which it knows as the path of the file with the query behind it.
-//! The build gives each such module a path of its own, beside the file and with the ending of its name, so that whatever goes by the folder or
-//! by the name of a file says of the module what it says of the file.
-
-use bun_ast::Loader;
 use bun_core::fmt::hex_byte_lower;
 use bun_core::strings;
 use bun_sema::util::ShardedMap;
 
-use crate::module_keys::loader_by_query;
-
-/// How the `?` that every query begins with is written in the path of a module.
 const START_OF_QUERY: &[u8] = b"%3f";
 
 pub(crate) struct ModuleWithQuery {
     pub file: Vec<u8>,
     pub query: Vec<u8>,
+    pub wrapper: Option<Vec<u8>>,
 }
 
 #[derive(Default)]
@@ -25,15 +18,38 @@ pub(crate) struct ModulesWithQueries {
 impl ModulesWithQueries {
     pub(crate) fn add(&self, file: &[u8], query: &[u8]) -> Vec<u8> {
         debug_assert!(query.starts_with(b"?"));
-        let path = create_path(file, query);
+        let mut path = create_path(file, query);
+        let constructor = find_worker_constructor(query);
+        if constructor.is_some() {
+            path.extend_from_slice(b".mjs");
+        }
         if self.modules.get_ref(path.as_slice()).is_none() {
             let module = ModuleWithQuery {
                 file: file.to_vec(),
                 query: query.to_vec(),
+                wrapper: constructor.map(|constructor| write_worker_wrapper(file, constructor)),
             };
             self.modules.insert_ref(path.clone(), module);
         }
         path
+    }
+
+    pub(crate) fn add_text(&self, file: &[u8], specifier: &[u8], text: Vec<u8>) {
+        let (query, path) = create_path_of_text(file, specifier);
+        if self.modules.get_ref(path.as_slice()).is_none() {
+            let module = ModuleWithQuery {
+                file: file.to_vec(),
+                query,
+                wrapper: Some(text),
+            };
+            self.modules.insert_ref(path, module);
+        }
+    }
+
+    pub(crate) fn find_text(&self, file: &[u8], specifier: &[u8]) -> Option<Vec<u8>> {
+        let (_, path) = create_path_of_text(file, specifier);
+        let is_made = self.modules.get_ref(path.as_slice()).is_some();
+        is_made.then_some(path)
     }
 
     pub(crate) fn find(&self, path: &[u8]) -> Option<&ModuleWithQuery> {
@@ -43,14 +59,54 @@ impl ModulesWithQueries {
         }
     }
 
-    pub(crate) fn loader_by_query(&self, path: &[u8]) -> Option<Loader> {
-        loader_by_query(&self.find(path)?.query)
+    pub(crate) fn text_in_place_of_file(&self, path: &[u8]) -> Option<&[u8]> {
+        self.find(path)?.wrapper.as_deref()
     }
 
-    /// The file whose text the module at `path` runs.
     pub(crate) fn file_behind<'p>(&'p self, path: &'p [u8]) -> &'p [u8] {
         self.find(path).map_or(path, |module| &module.file)
     }
+}
+
+pub(crate) fn has_vite_suffix(query: &[u8]) -> bool {
+    let parameters = query.strip_prefix(b"?").unwrap_or(query);
+    strings::split(parameters, b"&")
+        .any(|it| matches!(it, b"raw" | b"url" | b"worker" | b"sharedworker"))
+}
+
+pub(crate) fn find_worker_constructor(query: &[u8]) -> Option<&'static str> {
+    let parameters = query.strip_prefix(b"?").unwrap_or(query);
+    let mut constructors = strings::split(parameters, b"&").filter_map(|it| match it {
+        b"worker" => Some("Worker"),
+        b"sharedworker" => Some("SharedWorker"),
+        _ => None,
+    });
+    let asks_for_path = strings::split(parameters, b"&").any(|it| it == b"url");
+    constructors.next().filter(|_| !asks_for_path)
+}
+
+fn write_worker_wrapper(file: &[u8], constructor: &str) -> Vec<u8> {
+    let name = strings::basename_posix(file);
+    let quote = |text: Vec<u8>| {
+        bun_core::fmt::format_json_string_utf8(&text, Default::default()).to_string()
+    };
+    let named = match strings::index_of_any(name, b"#%\\").is_some() {
+        true => format!("import.meta.dir + {}", quote([b"/", name].concat())),
+        false => format!(
+            "new URL({}, import.meta.url)",
+            quote([b"./", name].concat())
+        ),
+    };
+    format!(
+        "export default function WorkerWrapper(options) {{\n  return new {constructor}({named}, {{ type: \"module\", name: options?.name }});\n}}\n"
+    )
+    .into_bytes()
+}
+
+fn create_path_of_text(file: &[u8], specifier: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let query = [b"?", specifier].concat();
+    let path = [&create_path(file, &query)[..], b".mjs"].concat();
+    (query, path)
 }
 
 fn create_path(file: &[u8], query: &[u8]) -> Vec<u8> {
@@ -59,7 +115,6 @@ fn create_path(file: &[u8], query: &[u8]) -> Vec<u8> {
     let stem_end = name_start + strings::index_of_char_usize(name, b'.').unwrap_or(name.len());
     let mut path = Vec::with_capacity(file.len() + 3 * query.len());
     path.extend_from_slice(&file[..stem_end]);
-    // Two queries that differ in the case of a letter are two modules, on a disk that does not tell the two cases apart too.
     for &byte in query {
         if matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-') {
             path.push(byte);
@@ -106,24 +161,63 @@ mod tests {
     }
 
     #[test]
-    fn only_raw_alone_asks_for_text() {
+    fn a_worker_by_its_suffix_runs_a_wrapper_in_place_of_the_file() {
         let modules = ModulesWithQueries::default();
-        let loader = |query: &[u8]| modules.loader_by_query(&modules.add(b"/p/a.ts", query));
-        assert_eq!(loader(b"?raw"), Some(Loader::Text));
-        for query in [
-            &b"?"[..],
-            b"?RAW",
-            b"?raw=1",
-            b"?raw&x",
-            b"?x&raw",
-            b"?raw#x",
-            b"?raw?raw",
-            b"?text",
-            b"?url",
+        let wrapper = modules.add(b"/p/lib/job.ts", b"?worker");
+        assert_eq!(wrapper, b"/p/lib/job%3fworker.ts.mjs");
+        let text = modules.text_in_place_of_file(&wrapper).unwrap();
+        let text = core::str::from_utf8(text).unwrap();
+        let start = "new Worker(new URL(\"./job.ts\", import.meta.url), {";
+        assert!(text.contains(start), "{text}");
+        let odd = modules.add(b"/p/lib/a#b.ts", b"?sharedworker");
+        let text = modules.text_in_place_of_file(&odd).unwrap();
+        let text = core::str::from_utf8(text).unwrap();
+        let start = "new SharedWorker(import.meta.dir + \"/a#b.ts\", {";
+        assert!(text.contains(start), "{text}");
+        assert_eq!(modules.file_behind(&wrapper), b"/p/lib/job.ts");
+        let again = modules.add(b"/p/lib/job.ts", b"?again");
+        assert_eq!(modules.text_in_place_of_file(&again), None);
+        assert_eq!(modules.text_in_place_of_file(b"/p/lib/job.ts"), None);
+        for (query, constructor) in [
+            (&b"?worker"[..], Some("Worker")),
+            (b"?x=1&worker", Some("Worker")),
+            (b"?worker&raw", Some("Worker")),
+            (b"?sharedworker", Some("SharedWorker")),
+            (b"?sharedworker&worker", Some("SharedWorker")),
+            (b"?worker&sharedworker", Some("Worker")),
+            (b"?worker&url", None),
+            (b"?url&sharedworker", None),
+            (b"?workers", None),
+            (b"?raw", None),
         ] {
-            assert_eq!(loader(query), None);
+            assert_eq!(find_worker_constructor(query), constructor);
         }
-        assert_eq!(modules.loader_by_query(b"/p/a.ts"), None);
-        assert_eq!(modules.loader_by_query(b"/p/b%3fraw.ts"), None);
+    }
+
+    #[test]
+    fn a_suffix_among_the_parameters_asks_for_something_else() {
+        for query in [&b"?raw"[..], b"?raw&x", b"?x&raw", b"?url", b"?x&url"] {
+            assert!(has_vite_suffix(query));
+        }
+        for query in [
+            &b"?worker"[..],
+            b"?x&worker",
+            b"?sharedworker",
+            b"?worker&url",
+        ] {
+            assert!(has_vite_suffix(query));
+        }
+        for query in [&b"?"[..], b"?RAW", b"?raw=1", b"?text", b"?url=1", b"?x=1"] {
+            assert!(!has_vite_suffix(query));
+        }
+        for query in [
+            &b"?WORKER"[..],
+            b"?worker=1",
+            b"?workers",
+            b"?inline",
+            b"?init",
+        ] {
+            assert!(!has_vite_suffix(query));
+        }
     }
 }

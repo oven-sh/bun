@@ -1,18 +1,18 @@
 // RUN: link
 // CHECK: layout [[class]] kind=Instance name="C" module=[[entry]]
 // CHECK: layout [[record]] module=[[entry]] {{*}}fields=[{key="x"
-// CHECK: variable {{*}}name="a" module=[[entry]] declared={type=undefined|null|absent|[[class]] site=
-// CHECK: variable {{*}}name="b" module=[[entry]] declared={type=undefined|null|absent|[[record]] site=
+// CHECK: variable {{*}}name="a" module=[[entry]] declared={type=undefined|null|absent|[[class]]
+// CHECK: variable {{*}}name="b" module=[[entry]] declared={type=undefined|null|absent|[[record]]
 // CHECK: module [[entry]] path=
 
 // RUN(FUNCTIONS): lower
 // FUNCTIONS-NOT: type=undefined|null|object
 // FUNCTIONS: = NewClass {{*}}layout=[[class]]
 // FUNCTIONS-NOT: type=undefined|null|object
-// FUNCTIONS: [[a]] = Convert {{*}}declared={type=undefined|null|[[class]] site=
+// FUNCTIONS: [[a]] = Convert {{*}}declared={type=undefined|null|[[class]]
 // FUNCTIONS-NEXT: PutModuleVariable [[a]]
 // FUNCTIONS-NOT: type=undefined|null|object
-// FUNCTIONS: [[b]] = Convert {{*}}declared={type=undefined|null|L{{*}} site=
+// FUNCTIONS: [[b]] = Convert {{*}}declared={type=undefined|null|L{{*}}
 // FUNCTIONS-NEXT: PutModuleVariable [[b]]
 // FUNCTIONS-NOT: type=undefined|null|object
 

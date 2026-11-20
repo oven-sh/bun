@@ -1,0 +1,47 @@
+# -- source: main.cjs
+# function sum() { var s = 0; for (var i = 0; i < arguments.length; i++) s += arguments[i]; return s; }
+# function target(x) { return this.k + x; }
+# function forwards(x) { return target.apply(box, arguments); }
+# function wrap(fn) { return function () { calls++; return fn.apply(this, arguments); }; }
+# function sliced() { return Array.prototype.slice.call(arguments).length; }
+# function drive(t) { var s = 0; for (var i = 0; i < 4; i++) s += sum(i, t) + forwards(i) + wrapped(i) + sliced(i, t, i); return s; }
+# function shape(x) { return typeof x === "string" ? "text " + x : x + 1; }
+# function relay(a) { return a.callee("relayed", false); }
+# function handsOn() { if (arguments[1]) return relay(arguments); return shape(arguments[0]); }
+# function byName() { if (arguments[1]) return arguments.callee("by name", false); return shape(arguments[0]); }
+# function byKey() { if (arguments[1]) return arguments[names[0]]("by key", false); return shape(arguments[0]); }
+# function mapped(x) { arguments[0] = x + 1; return x; }
+# function driveRoads(t) { return [handsOn(t, false), handsOn(t, true), byName(t, false), byName(t, true), byKey(t, false), byKey(t, true), mapped(t)].join(); }
+# var box = { k: 3 }, calls = 0, wrapped = wrap(function (x) { return x + 1; }), names = JSON.parse('["callee"]');
+# print(drive(1));
+# print(drive(2), calls);
+# print(driveRoads(1));
+# print(driveRoads(2));
+# -- end of source
+# f1 = sum, f2 = target, f3 = forwards, f11 = wrap, f4 = sliced, f12 = drive, f5 = shape, f6 = relay, f7 = handsOn, f8 = byName, f9 = byKey, f10 = mapped, f13 = driveRoads
+# A function of sloppy code that names `arguments` takes itself along: the object holds it under the name `callee`. It holds it as it holds anything else: whoever reads that name, or any name, or gets hold of the object, gets the function; a read under a number, `length`, and what apply and slice.call take out of the list do not.
+# So such a function is followed like any other: Link knows its callers, and the walk copies its body into them: nothing of the four is left in the loop of drive(): no call, no list, no arguments object.
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1 callers-known
+# RUN(COPIED): walk f12 mechanisms=all
+# COPIED-LABEL: code f12:Body
+# COPIED-NOT: CallDirect
+# COPIED-NOT: CreateMappedArguments
+# COPIED-NOT: NewArray
+# A function that reaches its parameters through the object is walked in its own unit, as before.
+# RUN(MAPPED): walk f13 mechanisms=all
+# MAPPED-LABEL: code f13:Body
+# MAPPED: function=f10
+# Each road to the callee calls it with a text where the callers in sight hand it a number.
+# RUN: run-in-shell
+# CHECK: 50
+# CHECK-NEXT: 54 8
+# CHECK-NEXT: 2,text relayed,2,text by name,2,text by key,2
+# CHECK-NEXT: 3,text relayed,3,text by name,3,text by key,3
+# CHECK-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 50
+# CHECKED-NEXT: 54 8
+# CHECKED-NEXT: 2,text relayed,2,text by name,2,text by key,2
+# CHECKED-NEXT: 3,text relayed,3,text by name,3,text by key,3
+# CHECKED-NEXT: exited with 0

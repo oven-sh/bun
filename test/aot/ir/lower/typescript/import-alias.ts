@@ -1,10 +1,12 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}kind=Module
+// CHECK: PropSet {{*}}key="b"
 // CHECK: [[a]] = PropGet {{*}}key="a"
 // CHECK: = PropGet [[a]] key="b"
 // CHECK-COUNT-2: = Call {{*}}calleeName="use"
 
 // RUN(OUTER): lower
+// OUTER: PropSet {{*}}key="b"
 // OUTER-COUNT-1: = PropGet {{*}}key="a"
 // OUTER-NOT: = PropGet {{*}}key="a"
 

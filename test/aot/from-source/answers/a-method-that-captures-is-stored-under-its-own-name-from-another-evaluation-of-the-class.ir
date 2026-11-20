@@ -1,0 +1,22 @@
+# -- source: main.js
+# function build(tag) {
+#   let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0;
+#   return class Box { say() { return tag; } static make() { return tag * 10; } };
+# }
+# const First = build(1), Second = build(2);
+# function lay() { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; First.prototype.say = Second.prototype.say; First.make = Second.make; return work; }
+# function use(box, turns) { let sum = 0; for (let i = 0; i < turns; i++) sum += box.say() + First.make(); return sum; }
+# const kept = new First(); new Second();
+# print(use(kept, 3));
+# lay();
+# print(use(kept, 3), new Second().say(), Second.make());
+# -- end of source
+# What is stored over each member is a closure of the very function that the class declares under the name, made by another evaluation: it captures another `tag`. One function is all that is known of the member, so the closure has to be read where it is called.
+# RUN: run-in-shell
+# CHECK: 33
+# CHECK-NEXT: 66 2 20
+# CHECK-NEXT: exited with 0
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: 33
+# CALLED-NEXT: 66 2 20
+# CALLED-NEXT: exited with 0

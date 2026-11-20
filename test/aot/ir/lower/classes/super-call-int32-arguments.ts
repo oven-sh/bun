@@ -3,7 +3,7 @@
 // CHECK: b0([[callee]]: function, [[newTarget]]: anything, [[parameter]]: i32, [[ratio]]: number):
 // CHECK: [[parent]] = GetSuperBase
 // CHECK-NOT: Convert
-// CHECK: [[count]] = Convert [[parameter]] declared={type=i32 site=w{{*}} flags=[IsInt32Promise]} @
+// CHECK: [[count]] = Convert [[parameter]] declared={type=i32} @
 // CHECK-NEXT: = SuperConstruct [[parent]], [[newTarget]], [[count]], [[ratio]] layout=
 
 /// <reference path="./imports/bun.d.ts" />

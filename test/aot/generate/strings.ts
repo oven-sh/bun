@@ -240,8 +240,6 @@ console.log("1,2;3,4,5;x6;".replace(/\\d+(?:,\\d+)*;/g, "[$&]"), "a,b , c".split
       "union-discriminants-compared-with-literals",
       "untyped-arguments",
     ]),
-    "characters-outside-loops-untyped.json": `{ "skipInVariant": { "validate-collecting": "it allocates so much that it runs for minutes where every allocation collects, and a run is killed after 90 seconds" } }
-`,
     "literal-chains-every-representation-1-untyped.json": `{
   "env": {
     "JSC_useDollarVM": "1"
@@ -253,8 +251,6 @@ console.log("1,2;3,4,5;x6;".replace(/\\d+(?:,\\d+)*;/g, "[$&]"), "a,b , c".split
     "JSC_useDollarVM": "1"
   }
 }
-`,
-    "searches-outside-loops-untyped.json": `{ "skipInVariant": { "validate-collecting": "it allocates so much that it runs for minutes where every allocation collects, and a run is killed after 90 seconds" } }
 `,
     "constants-in-hot-and-cold-code.ts": text(
       `const seen = new Set<string>();

@@ -2,8 +2,7 @@
 // CHECK-LABEL: function {{*}}name="f"{{*}}flags=[TakesCallee, HasExplicitName]
 // CHECK: b0([[callee]]: function):
 // CHECK-NOT: NewClosure
-// CHECK: [[read]] = [[cast]] [[callee]]
-// CHECK: Return [[read]]
+// CHECK: Return [[callee]]
 // CHECK-LABEL: function {{*}}name="h"{{*}}flags=[HasExplicitName]
 // CHECK: b0():
 

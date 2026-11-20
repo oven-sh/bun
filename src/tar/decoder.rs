@@ -3,7 +3,7 @@
 use crate::error::{Error, Result};
 use crate::gzip::{self, Progress};
 use crate::output::Output as _;
-use crate::reader::{Entry, Event, Options, Poll, Reader};
+use crate::reader::{Dialect, Entry, Event, Options, Poll, Reader};
 
 // https://github.com/libarchive/libarchive/blob/27cbc7827172698143e440801fc0ba39ccb4f1f5/libarchive/archive_read_support_filter_gzip.c#L306
 const BLOCK: usize = 64 * 1024;
@@ -25,11 +25,11 @@ struct Layer {
 }
 
 impl Layer {
-    fn new() -> Result<Self> {
+    fn new(dialect: Dialect) -> Result<Self> {
         let mut out = Vec::new();
         out.try_reserve_exact(BLOCK)?;
         Ok(Self {
-            gzip: gzip::Decoder::new()?,
+            gzip: gzip::Decoder::new(dialect),
             out,
             pos: 0,
             done: false,
@@ -53,7 +53,7 @@ impl Decoder {
     pub fn new(options: Options, gzip: bool) -> Result<Self> {
         let mut layers = Vec::new();
         if gzip {
-            layers.push(Layer::new()?);
+            layers.push(Layer::new(options.dialect)?);
         }
         Ok(Self {
             layers,
@@ -63,6 +63,11 @@ impl Decoder {
 
     pub fn entry(&self) -> &Entry {
         self.tar.entry()
+    }
+
+    /// See [`Reader::skipped_header`].
+    pub fn skipped_header(&self) -> bool {
+        self.tar.skipped_header()
     }
 
     /// See [`Reader::skip_entry`].
@@ -217,6 +222,11 @@ impl Decoder {
                         len,
                     };
                 }
+                Poll::EndOfArchive
+                    if layer.gzip.left_data_for_npm() && !self.tar.found_end_marker() =>
+                {
+                    return Err(Error::DataBehindGzip);
+                }
                 other => break other,
             }
             let (used, ready) = self.refill(
@@ -262,13 +272,17 @@ impl<'a> MemoryDecoder<'a> {
             decoder: Decoder::new(options, false)?,
             holes: 0,
         };
+        let max_layers = match options.dialect {
+            Dialect::General => MAX_LAYERS,
+            Dialect::Npm => 1,
+        };
         loop {
             let rest = data.get(this.pos..).unwrap_or_default();
             let layers = &mut this.decoder.layers;
             if !gzip::starts_like_header(layers.last().map_or(rest, Layer::unread)) {
                 break;
             }
-            layers.push(Layer::new()?);
+            layers.push(Layer::new(options.dialect)?);
             let top = layers.len().saturating_sub(1);
             let (used, is_gzip) = this.decoder.read_first_header(top, rest)?;
             this.pos = this.pos.saturating_add(used);
@@ -276,7 +290,7 @@ impl<'a> MemoryDecoder<'a> {
                 this.decoder.layers.pop();
                 break;
             }
-            if top >= MAX_LAYERS {
+            if top >= max_layers {
                 return Err(Error::TooManyLayers);
             }
             let rest = data.get(this.pos..).unwrap_or_default();
@@ -294,6 +308,10 @@ impl<'a> MemoryDecoder<'a> {
 
     pub fn entry(&self) -> &Entry {
         self.decoder.entry()
+    }
+
+    pub fn skipped_header(&self) -> bool {
+        self.decoder.skipped_header()
     }
 
     pub fn skip_entry(&mut self) {

@@ -73,7 +73,7 @@ impl Tree {
 }
 
 // max number of node_modules folders
-pub(crate) const MAX_DEPTH: usize = (MAX_PATH_BYTES / b"node_modules".len()) + 1;
+const MAX_DEPTH: usize = MAX_PATH_BYTES / b"node_modules".len();
 
 /// Parent-id stack for [`relative_path_and_depth`] (32 KB on Windows, so not zeroed).
 pub(crate) type DepthBuf = [MaybeUninit<Id>; MAX_DEPTH];
@@ -105,7 +105,7 @@ impl Tree {
         }
         (deps.get(self.dependency_id as usize)).is_some_and(|dep| {
             dep.behavior.is_workspace()
-                && dep.version.tag == crate::dependency::VersionTag::Workspace
+                && dep.version.tag() == crate::dependency::VersionTag::Workspace
         }) && !(trees[self.parent as usize].dependencies)
             .get(hoisted_dependencies)
             .contains(&self.dependency_id)
@@ -207,7 +207,7 @@ pub struct Iterator<'a, const PATH_STYLE: IteratorPathStyle> {
 pub struct IteratorNext<'a> {
     pub relative_path: &'a ZStr,
     pub dependencies: &'a [DependencyID],
-    pub(crate) tree_id: Id,
+    pub tree_id: Id,
 
     /// depth of the node_modules folder in the tree
     ///
@@ -341,24 +341,20 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
 
     if tree.id > 0 {
         let buf = string_buf;
-        let mut depth_buf_len: usize = 1;
+        let mut ids = bun_core::vec::BorrowedBuf::from(&mut depth_buf[..]);
 
         while parent_id > 0 && (parent_id as usize) < trees.len() {
-            if depth_buf_len == MAX_DEPTH {
-                path_buf[path_written] = 0;
-                return (ZStr::from_buf(path_buf, path_written), 0);
+            if ids.len() == ids.capacity() {
+                return (ZStr::nul_terminate(path_buf, path_written), 0);
             }
-            depth_buf[depth_buf_len].write(parent_id);
+            ids.unfilled().append(&[parent_id]);
             parent_id = trees[parent_id as usize].parent;
-            depth_buf_len += 1;
         }
 
-        depth_buf_len -= 1;
-
-        depth = depth_buf_len;
-        while depth_buf_len > 0 {
+        depth = ids.len();
+        for (i, &id) in ids.filled().iter().rev().enumerate() {
             if PATH_STYLE == IteratorPathStyle::PkgPath {
-                if depth_buf_len != depth {
+                if i != 0 {
                     if path_written + 1 >= MAX_PATH_BYTES {
                         path_too_long();
                     }
@@ -373,9 +369,6 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
                 path_written += 1;
             }
 
-            // SAFETY: the parent walk above wrote `depth_buf[1..=depth]` and
-            // `1 <= depth_buf_len <= depth`.
-            let id = unsafe { depth_buf[depth_buf_len].assume_init() };
             let mut name = trees[id as usize].folder_name(dependencies, buf);
             let mut is_workspace_path = false;
             // The tree of an unlinked workspace package is a child of the root tree, so this is the
@@ -386,9 +379,10 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
                     path_written = 2;
                 } else {
                     let member = &dependencies[trees[id as usize].dependency_id as usize];
-                    name = bun_core::strings::without_trailing_slash(
-                        member.version.workspace().slice(buf),
-                    );
+                    let crate::dependency::Value::Workspace(path) = &member.version.value else {
+                        unreachable!("checked by `is_unlinked_member`");
+                    };
+                    name = bun_core::strings::without_trailing_slash(path.slice(buf));
                     path_written = 0;
                     // A workspace can be outside the project, e.g. `../shared`.
                     is_workspace_path = true;
@@ -417,12 +411,9 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
                     .copy_from_slice(b"node_modules");
                 path_written += b"/node_modules".len();
             }
-
-            depth_buf_len -= 1;
         }
     }
-    path_buf[path_written] = 0;
-    let rel = ZStr::from_buf(path_buf, path_written);
+    let rel = ZStr::nul_terminate(path_buf, path_written);
 
     (rel, depth)
 }
@@ -604,7 +595,7 @@ impl PeerProbes {
         }
 
         let is_probed = |peer: &Dependency| {
-            peer.behavior.is_peer() && peer.version.tag == crate::dependency::VersionTag::Npm
+            peer.behavior.is_peer() && peer.version.tag() == crate::dependency::VersionTag::Npm
         };
         let with_peers = self.1.get_or_insert_with(|| {
             let lists = lockfile.packages.items_resolutions();
@@ -1252,9 +1243,9 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     pub(crate) fn clean(&mut self) -> Result<CleanResult, AllocError> {
         let mut total: u32 = 0;
 
-        let mut slice = self.list.to_owned_slice();
-        let mut trees: Vec<Tree> = slice.items_tree().to_vec();
-        let dependencies: &mut [DependencyIDList] = slice.items_dependencies_mut();
+        let mut list = core::mem::take(&mut self.list);
+        let mut trees: Vec<Tree> = list.items_tree().to_vec();
+        let dependencies: &mut [DependencyIDList] = list.items_dependencies_mut();
 
         for tree in &trees {
             total += tree.dependencies.len;
@@ -1297,8 +1288,6 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
             tree.dependencies.len = len;
         }
 
-        slice.deinit_owned();
-
         Ok(CleanResult { trees, dep_ids })
     }
 }
@@ -1326,7 +1315,7 @@ pub(crate) fn is_filtered_dependency_or_workspace(
         return !dep.behavior.is_optional_peer();
     }
 
-    let pkgs = lockfile.packages.slice();
+    let pkgs = &lockfile.packages;
     let pkg_names = pkgs.items_name();
     let pkg_metas = pkgs.items_meta();
     let pkg_resolutions = pkgs.items_resolution();
@@ -1479,7 +1468,7 @@ impl Tree {
         // Copied out, so that neither keeps `builder` borrowed.
         let lockfile_ref = builder.lockfile;
         let lockfile: &Lockfile = lockfile_ref.get();
-        let pkgs = lockfile.packages.slice();
+        let pkgs = &lockfile.packages;
         let pkg_resolutions = pkgs.items_resolution();
         let dependencies: &[Dependency] = builder.dependencies;
 
@@ -1871,13 +1860,14 @@ impl Tree {
                 let range = (builder.lockfile().catalogs).resolve_range(builder.buf(), dependency);
                 let resolution: &Resolution =
                     &builder.lockfile().packages.items_resolution()[res_id as usize];
-                range.tag == crate::dependency::VersionTag::Npm
-                    && resolution.tag == crate::resolution::Tag::Npm
-                    && (range.npm().version).satisfies(
-                        resolution.npm().version,
-                        builder.buf(),
-                        builder.buf(),
-                    )
+                range.try_npm().is_some_and(|range| {
+                    resolution.tag == crate::resolution::Tag::Npm
+                        && (range.version).satisfies(
+                            resolution.npm().version,
+                            builder.buf(),
+                            builder.buf(),
+                        )
+                })
             };
             // Every platform installs such a dependency, unless an option like `--omit` skips it.
             let is_always_linked =
@@ -1888,12 +1878,8 @@ impl Tree {
                 // registry version. Their hoisted linker linked the workspace.
                 if METHOD == BuilderMethod::Filter
                     && dep.behavior.is_workspace()
-                    && dependency.version.tag == crate::dependency::VersionTag::DistTag
-                    && (dependency.version.dist_tag().name).eql(
-                        dependency.name,
-                        builder.buf(),
-                        builder.buf(),
-                    )
+                    && let crate::dependency::Value::DistTag(dist_tag) = &dependency.version.value
+                    && (dist_tag.name).eql(dependency.name, builder.buf(), builder.buf())
                 {
                     return HoistDependencyResult::Hoisted; // 1
                 }

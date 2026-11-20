@@ -17,13 +17,13 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Config } from "./config.ts";
+import { linksWithLld, type Config } from "./config.ts";
 import {
   overridesDarwinAllocator,
   replacedLibcAllocationSymbols,
   replacedOperatorNewSymbols,
 } from "./deps/mimalloc.ts";
-import { definesLibcFunctions, libcFunctionsScriptPath, versionScriptPath } from "./flags.ts";
+import { definesLibcFunctions, libcFunctionsScriptPath, rustLtoInLink, versionScriptPath } from "./flags.ts";
 
 export type BinaryFormat = "elf" | "macho" | "pe";
 
@@ -123,6 +123,7 @@ export interface BinaryExpectations {
    *
    * A match means that something reachable calls it: find the caller. In the
    * engine it belongs under `#if ASSERT_ENABLED`, in Rust behind the feature.
+   * It also has what LTO has to inline: see `inlinedSymbols()`.
    */
   forbiddenSymbols?: string[];
   elf?: {
@@ -257,7 +258,7 @@ function runtimeInitializers(cfg: Config): string[] {
       "_GLOBAL__sub_I_wlocale_inst.cc",
     );
   }
-  if (cfg.arm64 && (gnu || musl)) {
+  if (cfg.arm64 && (cfg.linux || cfg.freebsd)) {
     // Rust std's aarch64 outline-atomics (LSE) probe.
     initializers.push("_R*3std3sys18configure_builtins13RUST_LSE_INIT*");
   }
@@ -333,6 +334,10 @@ function forbiddenImports(cfg: Config): string[] {
     // from the shared libstdc++/libc++ legitimately).
     forbidden.push("__cxa_guard_*");
   }
+  if (cfg.linux && cfg.abi === "gnu") {
+    // glibc loads libgcc_s for it at its first use, which a hardened program refuses.
+    forbidden.push("pthread_exit");
+  }
   return forbidden;
 }
 
@@ -342,7 +347,7 @@ function forbiddenImports(cfg: Config): string[] {
  * static-build carve-out the way WTF's export macros do), so every bmalloc.lib
  * member the link pulls carries `-export:` directives. Remove once
  * oven-sh/WebKit builds bmalloc with BEXPORT empty (`-DBEXPORT=`); the export
- * check then holds bun.exe to the Node-API / V8 / libuv / llhttp set alone.
+ * check then holds bun.exe to the Node-API / V8 / libuv set alone.
  *
  * The 23 names, from `llvm-readobj --coff-exports` on a released
  * bun-windows-x64 bun.exe: 22 MSVC-mangled members of namespace bmalloc
@@ -358,15 +363,13 @@ const PREBUILT_BMALLOC_DLLEXPORTS = {
 };
 
 /**
- * The Windows `.bin/` shim (src/install/windows-shim): `bun install` writes a copy of it next to every package
- * binary, and it runs on every `bun run` of one. It is freestanding: no CRT, no allocator, no formatting machinery,
- * raw NT calls. Everything here is that property stated as a check.
+ * Code that only the AoT compiler's tests use. Bun hands the engine the program as bytes, so nothing in Bun reads or
+ * writes IR text: in WebKit the lexer, parser and printer of IR text are sources of testaot alone, and in bun_aot the
+ * printer is behind the `ir_text` feature. The rest is declared in the engine's own headers but defined under WebKit's
+ * aot/tests/, which only testaot links: the printer and parser of the walk's Code, the parser of summaries, and the
+ * procedures that the back end's tests build and run.
  */
-/**
- * The AoT compiler's IR as text: Bun hands the engine the program as bytes, so the engine's lexer and parser and the
- * printers of both sides serve tests alone (sources of testaot in WebKit, the feature `ir_text` of bun_aot).
- */
-function symbolsOfIRText(cfg: Config): string[] | undefined {
+function testOnlySymbols(cfg: Config): string[] | undefined {
   if (cfg.assertions) return undefined;
   return [
     "*3JSC3AOT5Typed5Lexer*",
@@ -376,15 +379,23 @@ function symbolsOfIRText(cfg: Config): string[] | undefined {
     "*3JSC3AOT5Typed12parseVariant*",
     "*3JSC3AOT5Typed18WireProgramBuilder*",
     "*3JSC3AOT5Typed9IRPrinter*",
-    "*3JSC3AOT5Typed*14SolvesCompared*",
     "*3JSC3AOT5Typed11printFields*",
     "*3JSC3AOT5Typed12printVariant*",
     "*3JSC3AOT5Typed12printProgram*",
     "*3JSC3AOT5Typed13printFunction*",
+    "*3JSC3AOT5Typed9printBody*",
     "*3JSC3AOT5Typed10printValue*",
-    "*3JSC3AOT5Typed9printType*",
+    "*3JSC3AOT5Typed15printTerminator*",
+    // Only the overload that takes a Program: the one that takes a TypeReader (ir/AOTTypeText.h) is the library's.
+    "*3JSC3AOT5Typed9printTypeERN3WTF11PrintStreamERKNS1_7ProgramE*",
     "*3JSC3AOT5Typed11printString*",
     "*3JSC3AOT5Typed16printPropertyKey*",
+    "*3JSC3AOT5Typed9printCode*",
+    "*3JSC3AOT5Typed9parseCode*",
+    "*3JSC3AOT5Typed10walkToText*",
+    "*3JSC3AOT5Typed14parseSummaries*",
+    "*3JSC3AOT7Machine13TestProcedure*",
+    "*3JSC3AOT7Machine20buildRandomProcedure*",
     "*builtinTableRuntimeFunctionTokens*",
     "*7bun_aot2ir5print*",
     "*7bun_aot2ir10print_body*",
@@ -395,6 +406,19 @@ function symbolsOfIRText(cfg: Config): string[] | undefined {
   ];
 }
 
+/**
+ * An `always_inline` C++ function that only Rust calls. It stays behind if the CPU features of the two halves do not
+ * let LTO inline it: rustCpuTargetFlags() in rust.ts.
+ */
+function inlinedSymbols(cfg: Config): string[] {
+  return cfg.lto && rustLtoInLink(cfg) && linksWithLld(cfg) && !cfg.hardened ? ["*highway_brotli_short_codes"] : [];
+}
+
+/**
+ * The Windows `.bin/` shim (src/install/windows-shim): `bun install` writes a copy of it next to every package
+ * binary, and it runs on every `bun run` of one. It is freestanding: no CRT, no allocator, no formatting machinery,
+ * raw NT calls. Everything here is that property stated as a check.
+ */
 export function shimExpectations(): BinaryExpectations {
   return {
     format: "pe",
@@ -472,7 +496,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
     ...(cfg.abi === "android" ? ["liblog.so"] : []),
   ];
   const staticInitializers = cfg.asan ? undefined : runtimeInitializers(cfg);
-  const forbiddenSymbols = symbolsOfIRText(cfg);
+  const forbiddenSymbols = testOnlySymbols(cfg)?.concat(inlinedSymbols(cfg));
 
   switch (format) {
     case "elf": {
@@ -592,14 +616,11 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
           // Node-API and the V8 / node C++ embedder API are exported from the
           // source with __declspec(dllexport) (NAPI_EXTERN, BUN_EXPORT), the
           // C++ ones under their MSVC-mangled names; symbols.def adds libuv.
-          // llhttp_*: node.exe exports llhttp's C API (its header dllexports
-          // on _WIN32) and so does bun.exe, from the same header.
           patterns: [
             "napi_*",
             "node_api_*",
             "?*@v8@@*",
             "?*@node@@*",
-            "llhttp_*",
             ...PREBUILT_BMALLOC_DLLEXPORTS.patterns,
             // The debug WebKit prebuilt's libpas exports its system-heap entry
             // points the same way (`-export:` directives in the archive

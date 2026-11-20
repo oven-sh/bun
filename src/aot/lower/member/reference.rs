@@ -8,7 +8,6 @@ use crate::ir::{StringId, TypeTable, ValueId, VariableId};
 use crate::lower::scope::{self, IdentifierTarget};
 use crate::lower::{FunctionLowering, commonjs, expression};
 
-// A variable that may still hold `undefined` where a member of it is named, and the name of that member.
 #[derive(Copy, Clone)]
 pub(in crate::lower) struct Holder {
     pub(in crate::lower) value: ValueId,
@@ -34,12 +33,10 @@ pub(in crate::lower) enum Reference {
         object: ValueId,
         access: ExprId,
     },
-    // What a module has under a name, or `module.exports`.
     ModuleVariable {
         variable: VariableId,
         holder: Option<Holder>,
     },
-    // Nobody can see what is stored there.
     Discarded {
         holder: Option<Holder>,
     },
@@ -64,7 +61,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         match hir[target].kind {
             ExprKind::Ident(_) => match self.file.decisions().decision(target) {
                 Decision::GlobalPath(path) => {
-                    let member = self.lower_global_path_holder(path);
+                    let member = self.lower_global_path_holder(target, path);
                     match member.holder {
                         Some(object) => Reference::Property {
                             object,
@@ -146,23 +143,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         name: PropertyName,
         conversion: KeyConversion,
     ) -> PropertyName {
-        let key = match (conversion, name) {
-            (KeyConversion::AtAccess, _) | (KeyConversion::Once, PropertyName::Constant(_)) => {
-                return name;
-            }
-            (KeyConversion::Once, PropertyName::Computed(key)) => key,
+        if conversion == KeyConversion::AtAccess {
+            return name;
+        }
+        self.builder
+            .require_object_coercible(object, NullishAccess::Update, None);
+        let PropertyName::Computed(key) = name else {
+            return name;
         };
         let result = self.builder.create_variable(None);
         let join = self.create_block();
         let split = self.split_on_type(key, TypeTable::OBJECT);
 
         self.builder.switch_to(split.taken);
-        // JSC records no place for the test.
-        let position = self.position();
-        self.set_position_to_last_recorded();
-        self.builder
-            .require_object_coercible(object, NullishAccess::Update, None);
-        self.set_position(position);
         let converted = self.builder.to_property_key(split.taken_value);
         self.builder.write_variable(result, converted);
         self.jump(join);
@@ -205,13 +198,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // JSC stores the member to the object, and records the store.
-    fn record_store_to_object(&mut self) {
-        if !self.builder.is_at_last_recorded_position() {
-            self.builder.record_position(self.position());
-        }
-    }
-
     pub(in crate::lower) fn put_reference(
         &mut self,
         reference: &Reference,
@@ -235,6 +221,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 access: Some(access),
             } => {
                 let converted = self.convert_to_member(access, value, source);
+                self.report_at_member(access);
                 self.emit_set(object, name, converted);
                 return converted;
             }
@@ -254,12 +241,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.emit_private_set(object, access, value, source);
             }
             Reference::ModuleVariable { variable, holder } => {
-                self.record_store_to_object();
                 self.test_holder(holder, NullishAccess::Write);
                 self.builder.put_module_variable(variable, value);
             }
             Reference::Discarded { holder } => {
-                self.record_store_to_object();
                 self.test_holder(holder, NullishAccess::Write);
             }
             Reference::Invalid => {}
@@ -288,16 +273,19 @@ fn lower_member_reference(
         lowering.set_position(hir[target].pos);
         return reference;
     }
+    let is_printed_as_template = matches!(hir[target].kind, ExprKind::Dot { .. })
+        && hir.is_written_in_brackets(target)
+        && hir.text[hir.name_pos(target) as usize] == b'`'
+        && !lowering.file.inputs.options.removable.minifies_syntax();
     let conversion = match member {
+        MemberKey::Name(_) if is_printed_as_template => conversion,
         MemberKey::Name(_) | MemberKey::PrivateName(_) => KeyConversion::AtAccess,
-        MemberKey::Computed(key) => {
-            let constant = expression::find_constant(lowering.file, key)
-                .or_else(|| expression::find_constant_outside_dead_zone(lowering.file, key));
-            match constant {
-                Some(_) => KeyConversion::AtAccess,
-                None => conversion,
-            }
+        MemberKey::Computed(key)
+            if expression::is_printed_as_number_or_text(lowering.file, key) =>
+        {
+            KeyConversion::AtAccess
         }
+        MemberKey::Computed(_) => conversion,
     };
     if matches!(hir[object].kind, ExprKind::Super) {
         let (home_kind, home) = lowering.get_home_object();

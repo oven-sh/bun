@@ -6,4 +6,11 @@ export type * from "../../../vendor/WebKit/Source/JavaScriptCore/aot/builtins/ge
 const engineModule: typeof import("../../../vendor/WebKit/Source/JavaScriptCore/aot/builtins/generator/check.ts") =
   await import(engineFile("builtins/generator/check.ts"));
 
-export const { checkFieldsHoldingOnlyWhatIsStored, checkModel, checkMutability, checkSchemaWords } = engineModule;
+export const {
+  checkFieldsHoldingOnlyWhatIsStored,
+  checkModel,
+  checkMutability,
+  checkPlacesHoldingWhatIsThrown,
+  checkResultAdmitsWhatRecordsBring,
+  checkSchemaWords,
+} = engineModule;

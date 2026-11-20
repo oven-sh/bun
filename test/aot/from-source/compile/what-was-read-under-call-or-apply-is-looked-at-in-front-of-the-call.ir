@@ -1,0 +1,23 @@
+# -- source: main.ts
+# declare function id(x: any): any;
+# function kept(callee: any, list: any): any { const result = callee.apply(null, list); return [result]; }
+# function last(callee: any, list: any): any { return callee.apply(null, list); }
+# function called(f: any, one: any): any { const result = f.call(null, one); return [result]; }
+# function other(o: any, list: any): any { const result = o.run(null, list); return [result]; }
+# id(kept); id(last); id(called); id(other);
+# -- end of source
+# No guess is opened, so each call is a call of what was read. Function.prototype.call and apply refuse a receiver that is no function, and apply a list that is none: in there the frame on top is theirs,
+# and the error could not say how the program writes the call. So what was read under `call` or `apply` is looked at in front of the call, wherever the call stands:
+# a closure as it was created is neither of the two; anything else goes to the stub, on a rare way. The read is not left to the stub that reads and calls.
+# RUN(KEPT): emit f1 mechanisms=none
+# KEPT: Void {{*}} = Patch(
+# KEPT: = Load8S({{*}}AOTSlimClosure_word
+# RUN(LAST): emit f2 mechanisms=none
+# LAST: Void {{*}} = Patch(
+# LAST: = Load8S({{*}}AOTSlimClosure_word
+# RUN(CALLED): emit f3 mechanisms=none
+# CALLED: Void {{*}} = Patch(
+# CALLED: = Load8S({{*}}AOTSlimClosure_word
+# Under any other name one stub reads and calls, as ever.
+# RUN(OTHER): emit f4 mechanisms=none
+# OTHER-NOT: = Load8S(

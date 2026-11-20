@@ -9,4 +9,4 @@ mod options;
 mod run;
 
 pub(super) use options::{Options, compile};
-pub(crate) use run::ImportRun;
+pub(crate) use run::{ImportRun, PrintedImport, UnchangedImports};

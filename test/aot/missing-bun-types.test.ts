@@ -5,14 +5,13 @@ import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness";
 import { join } from "path";
 import { slot, spawned } from "./harness/commands";
-import { startsAtAnyEntryPoint } from "./harness/separate-programs";
-import { beforeAll, describe, test } from "./supported";
+import { describe, test } from "./supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
 const buildTimeout = 300_000;
 
-async function build(folder: string) {
-  const command = [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", "app"];
+async function build(folder: string, ...flags: string[]) {
+  const command = [bunExe(), "build", "--compile", "--aot", ...flags, "main.ts", "--outfile", "app"];
   const { stderr, exitCode, signal } = await spawned(command, folder, env);
   const lines = stderr.split("\n");
   const codes = (label: string) =>
@@ -35,7 +34,10 @@ async function check(folder: string, ...flags: string[]) {
 }
 
 async function run(folder: string, how: "compiled" | "plain") {
-  const command = how === "compiled" ? [join(folder, isWindows ? "app.exe" : "app")] : [bunExe(), "run", "main.ts"];
+  const command =
+    how === "plain"
+      ? [bunExe(), "run", "main.ts"]
+      : (startedThrough.get(folder) ?? [join(folder, isWindows ? "app.exe" : "app")]);
   const { stdout, exitCode, signal } = await spawned(command, folder, bunEnv);
   return { stdout, exitCode, signal };
 }
@@ -92,11 +94,17 @@ const classesNotToMake: [string, string][] = [
 
 const nameOf = (base: string) => base.replace(/<.*/, "");
 
+// TypeScript's library for browsers, which is in where no tsconfig.json says otherwise, declares these with constructors that take a type argument or that answer
+// different types. TypeScript refuses a class below them that gives none, and for the first two also `new` of that class. The lines say so, and they run.
+const refusedAsBase = ["CustomEvent", "MessageEvent", "ReadableStream"];
+const refusedWhereMade = ["CustomEvent", "MessageEvent"];
+const markedIn = (refused: string[], base: string) => (refused.includes(base) ? "  // @ts-expect-error\n" : "");
+
 const oneClassBelowEach =
   classesToStandBelow
     .map(
       ([base, given, shown]) =>
-        `{\n  class Below extends ${base} {}\n  const made = new Below(${given});\n  console.log("${nameOf(base)}", made instanceof ${nameOf(base)}, ${shown});\n}\n`,
+        `{\n${markedIn(refusedAsBase, base)}  class Below extends ${base} {}\n${markedIn(refusedWhereMade, base)}  const made = new Below(${given});\n  console.log("${nameOf(base)}", made instanceof ${nameOf(base)}, ${shown});\n}\n`,
     )
     .join("") +
   classesNotToMake
@@ -112,6 +120,12 @@ const provided: Record<
   { files: Record<string, string>; checkSays: string[]; warnings?: string[]; prints: string }
 > = {
   "console": { files: { "main.ts": `console.log("ran");\n` }, checkSays: ["TS2584"], prints: "ran\n" },
+  // TypeScript says TS2709 where its library for browsers declares the namespace. Here the declaration is one that Bun brings, and what rests on those stops no build.
+  "a global that is no class, as a type": {
+    files: { "main.ts": `const memory: WebAssembly | undefined = undefined;\nconsole.log(memory);\n` },
+    checkSays: ["TS2304", "TS2584"],
+    prints: "undefined\n",
+  },
   "the module bun": {
     files: { "main.ts": `import { version } from "bun";\nconsole.log(typeof version);\n` },
     checkSays: ["TS2307", "TS2584"],
@@ -225,14 +239,13 @@ server.stop(true);
   "what Bun adds to classes that TypeScript's library for browsers declares": {
     files: {
       "main.ts": `const blob = new Blob(['{"a":1}']);
-const stream = new ReadableStream({ start(controller) { controller.enqueue("x"); controller.close(); } });
-console.log((await blob.json()).a, new Headers({ a: "1" }).toJSON().a, await stream.text());
+console.log((await blob.json()).a, new Headers({ a: "1" }).toJSON().a);
 console.write("written\\n");
 `,
       "tsconfig.json": "{}",
     },
     checkSays: [],
-    prints: "1 1 x\nwritten\n",
+    prints: "1 1\nwritten\n",
   },
   "what Bun adds to the constructor of errors": {
     files: {
@@ -274,6 +287,8 @@ console.log(Packet.from("ab").length, Object.getPrototypeOf(Packet) === Buffer);
   "arguments for a class without a constructor below each class of the language, of the web and of Node.js": {
     files: { "main.ts": oneClassBelowEach },
     checkSays: [],
+    // Of the class below Worker: the build cannot tell which files its instances start from.
+    warnings: ["TS100082"],
     prints: `Map true a
 Set true true
 WeakMap true 1
@@ -579,12 +594,11 @@ console.log(global, ofBun, ofTheWeb, ofAModule);
     files: {
       "main.ts": `const port = parseInt(process.env.A_NAME_THAT_NOBODY_SETS);
 const length: number = process.argv.length.toString();
-const blob = new Blob(["{}"]);
-console.log(port, typeof length, blob.notThere, Buffer.from("ab", "utf8", "more").length);
+console.log(port, typeof length, Buffer.from("ab", "utf8", "more").length);
 `,
     },
     checkSays: [],
-    prints: "NaN string undefined 2\n",
+    prints: "NaN string 2\n",
   },
   "a loop that awaits what a class below a stream of Node.js yields": {
     files: {
@@ -645,8 +659,17 @@ export function twice(n: number): number { return n * 2; }
 
 const stillErrors: [string, string, string[]][] = [
   ["a name that nothing provides", `console.log(notDeclaredAnywhere);\n`, ["TS2304"]],
-  ["a name that only a browser provides", `console.log(document.title);\n`, ["TS2584"]],
   ["a name that is nearly one of Bun's", `consle.log("typo");\n`, ["TS2552"]],
+  [
+    "a member that neither Bun's declarations nor TypeScript's library for browsers give a stream",
+    `const stream = new ReadableStream({ start(controller) { controller.close(); } });\nconsole.log(await stream.words());\nexport {};\n`,
+    ["TS2339"],
+  ],
+  [
+    "a member that neither Bun's declarations nor TypeScript's library for browsers give a blob",
+    `const blob = new Blob(["{}"]);\nconsole.log(blob.notThere);\n`,
+    ["TS2339"],
+  ],
   ["a type error", `const port: number = "3000";\nconsole.log(port);\n`, ["TS2322"]],
   [
     "a member that neither an interface nor the program's own interface above it has",
@@ -725,11 +748,6 @@ const stillErrors: [string, string, string[]][] = [
     ["TS2339", "TS2339"],
   ],
   [
-    "a global that is no class, used as a type",
-    `const memory: WebAssembly | undefined = undefined;\nconsole.log(memory);\n`,
-    ["TS2749"],
-  ],
-  [
     "one mistake alone, beside the whole of Bun, however it is reached, where the program's own type is expected",
     `import * as all from "bun";\nimport whole from "bun";\ninterface Wanted { main: string; plugin: unknown }\nconst wrong: number = "text";\nconst list: (Wanted | undefined)[] = [Bun, globalThis.Bun, Reflect.get(globalThis, "Bun"), all, whole, (await import("bun")).default];\nconsole.log(wrong, list.length);\n`,
     ["TS2322"],
@@ -741,19 +759,6 @@ const stillErrors: [string, string, string[]][] = [
   ],
 ];
 
-// The programs that a build goes on with are entry points of one executable. Each is compiled as it is when it is built alone, under the tsconfig.json of its own folder.
-// Whether the declarations that Bun brings along hold is decided for a build, so the programs that do not fit them have an executable of their own.
-const doNotFit = new Set([
-  "modules of Bun and of Node.js",
-  "members of Bun and of import.meta, by destructuring and in types",
-  "what Bun adds to classes that TypeScript's library for browsers declares",
-  "arguments for a class without a constructor below each class of the language, of the web and of Node.js",
-  "arguments for a class without a constructor below a class of a module, however the module is reached",
-  "type arguments for what has no declaration",
-  "what Bun provides in ways that its declarations do not allow",
-  "a package in TypeScript that uses what Bun provides in ways that its declarations do not allow",
-]);
-
 // What is asked here is asked of the type checker and of what reads its answers, so the executables hold no built-in module, which makes the builds fifteen times cheaper.
 // A program that uses one is built, and only plain Bun runs it. On Windows a function of the library makes process.env.
 const usesABuiltInModule = (files: Record<string, string>) =>
@@ -763,71 +768,105 @@ const usesABuiltInModule = (files: Record<string, string>) =>
     ),
   );
 
-for (const fits of [true, false])
-  describe.skipIf(!startsAtAnyEntryPoint)(
-    "without Bun's type declarations a build goes on where a program uses",
-    () => {
-      const rows = Object.entries(provided)
-        .filter(([what]) => doNotFit.has(what) !== fits)
-        .map(([what, row], index) => ({ what, folder: `p${index}`, ...row }));
-      const dir = tempDir(
-        "aot-missing-bun-types",
-        Object.fromEntries(
-          rows.flatMap(({ folder, files }) => Object.entries(files).map(([file, text]) => [`${folder}/${file}`, text])),
-        ),
-      );
-      afterAll(() => dir[Symbol.dispose]());
-      let said: Awaited<ReturnType<typeof spawned>>;
-      beforeAll(async () => {
-        const entryPoints = rows.map(({ folder }) => `./${folder}/main.ts`);
-        const flags = ["--aot-separate-programs", "--root=.", "--no-builtin-modules"];
-        said = await spawned(
-          [bunExe(), "build", "--compile", "--aot", ...flags, ...entryPoints, "--outfile", "app"],
-          String(dir),
-          env,
-        );
-      }, buildTimeout);
+describe("without Bun's type declarations a build goes on where a program uses", () => {
+  for (const [what, { files, checkSays, warnings = [], prints }] of Object.entries(provided)) {
+    test.concurrent(
+      what,
+      () =>
+        slot(async () => {
+          using dir = tempDir("aot-missing-bun-types", files);
+          const cwd = String(dir);
+          if (checkSays.length) {
+            expect(await check(cwd)).toMatchObject({ errors: checkSays, exitCode: 1 });
+            expect((await check(cwd, "--aot")).exitCode).toBe(0);
+          }
+          const expected = { stdout: prints, exitCode: 0, signal: null };
+          expect(await run(cwd, "plain")).toEqual(expected);
+          expect(await build(cwd, "--no-builtin-modules")).toEqual({ ...built, warnings });
+          if (!usesABuiltInModule(files)) expect(await run(cwd, "compiled")).toEqual(expected);
+        }),
+      buildTimeout,
+    );
+  }
+});
 
-      test("the build", () => {
-        const lines = said.stderr.split("\n");
-        expect({
-          errors: lines.filter(line => line.startsWith("error: ")),
-          warnings: lines.flatMap(line => /^warn: (TS\d+): /.exec(line)?.[1] ?? []),
-          exitCode: said.exitCode,
-          signal: said.signal,
-        }).toEqual({
+// The programs below that a build goes on with import modules of Node.js, and a build compiles what its program reaches of those: up to twenty seconds of a processor each.
+// So they are one program with one build: its main.ts starts the one that the first argument names and takes the name out of the arguments. None of them fits the declarations
+// that Bun brings along, which is decided for a build. An error or a warning is held against the program in whose folder it stands.
+// No model for programs that are run for their answers: joining programs can hide a miscompilation. These pin builds that the type checker wrongly refused, which a joined build repeats.
+// What a build finds in one of them holds for all, so only those stand together of which a build finds the same alone: that no code can run which it has not seen. The report of the
+// joined build is held to that. The one that hands the whole of node:process on, process.dlopen with it, has a build of its own.
+const together: Record<string, Record<string, string>> = {};
+const startedThrough = new Map<string, string[]>();
+let folderOfAll: Disposable | undefined;
+afterAll(() => folderOfAll?.[Symbol.dispose]());
+let builtTogether: ReturnType<typeof buildAll> | undefined;
+async function buildAll() {
+  const names = Object.keys(together);
+  const starts = names.map(name => `  ${name}: () => import("./${name}/main"),\n`);
+  const dir = tempDir("aot-missing-bun-types", {
+    ...Object.fromEntries(
+      names.flatMap(name => Object.entries(together[name]).map(([file, text]) => [`${name}/${file}`, text])),
+    ),
+    "main.ts": `const programs: Record<string, () => Promise<unknown>> = {\n${starts.join("")}};\nawait programs[process.argv.splice(2, 1)[0]]();\n`,
+  });
+  folderOfAll = dir;
+  const root = String(dir);
+  for (const name of names) startedThrough.set(join(root, name), [join(root, isWindows ? "app.exe" : "app"), name]);
+  const command = [bunExe(), "build", "--compile", "--aot", "--explain=trim", "main.ts", "--outfile", "app"];
+  const { stderr, exitCode, signal } = await spawned(command, root, env);
+  const onUnseenCode = stderr.split("\n").filter(line => /^aot: trim: (blocked by |the compiler can)/.test(line));
+  const said = Array.from(
+    stderr.matchAll(/^(error|warn): (TS\d+): .*(?:\n +at (.*):\d+:\d+$)?/gm),
+    ([, label, code, file]) => ({
+      label,
+      code,
+      // What names no place is said of them all.
+      folder: file?.slice(root.length + 1).split(/[\\/]/)[0],
+    }),
+  );
+  const codes = (label: string, folder: string) =>
+    said.flatMap(line => (line.label === label && (line.folder ?? folder) === folder ? line.code : [])).sort();
+  return { root, codes, exitCode, signal, onUnseenCode };
+}
+function goesOn(
+  name: string,
+  files: Record<string, string>,
+  judge: (dir: string) => Promise<void>,
+  company: "together" | "alone" = "together",
+) {
+  if (company === "alone")
+    return test(
+      name,
+      () =>
+        slot(async () => {
+          using dir = tempDir("aot-missing-bun-types", files);
+          expect(await build(String(dir))).toEqual(built);
+          await judge(String(dir));
+        }),
+      buildTimeout,
+    );
+  const folder = `p${Object.keys(together).length}`;
+  together[folder] = files;
+  test(
+    name,
+    () =>
+      slot(async () => {
+        const { root, codes, exitCode, signal, onUnseenCode } = await (builtTogether ??= buildAll());
+        expect({ errors: codes("error", folder), warnings: codes("warn", folder) }).toEqual({
           errors: [],
-          warnings: rows.flatMap(({ warnings = [] }) => warnings),
+          warnings: [],
+        });
+        expect({ exitCode, signal, onUnseenCode }).toEqual({
           exitCode: 0,
           signal: null,
+          onUnseenCode: ["aot: trim: the compiler can see every API this program uses"],
         });
-      });
-
-      for (const { what, folder, files, checkSays, prints } of rows) {
-        test.concurrent(
-          what,
-          () =>
-            slot(async () => {
-              const cwd = join(String(dir), folder);
-              if (checkSays.length) {
-                expect(await check(cwd)).toMatchObject({ errors: checkSays, exitCode: 1 });
-                expect((await check(cwd, "--aot")).exitCode).toBe(0);
-              }
-              const expected = { stdout: prints, exitCode: 0, signal: null };
-              expect(await run(cwd, "plain")).toEqual(expected);
-              if (usesABuiltInModule(files)) return;
-              const executable = join(String(dir), isWindows ? "app.exe" : "app");
-              const { stdout, exitCode, signal } = await spawned([executable], cwd, {
-                ...bunEnv,
-                BUN_AOT_START_AT: `${folder}/main.ts`,
-              });
-              expect({ stdout, exitCode, signal }).toEqual(expected);
-            }),
-          buildTimeout,
-        );
-      }
-    },
+        await judge(join(root, folder));
+      }),
+    buildTimeout,
   );
+}
 
 describe.concurrent("without Bun's type declarations", () => {
   test.each(stillErrors)(
@@ -842,26 +881,46 @@ describe.concurrent("without Bun's type declarations", () => {
     buildTimeout,
   );
 
-  test(
+  goesOn(
     "the whole of Bun goes where the program's own type is expected, in a program that does not fit Bun's declarations",
+    {
+      "main.ts": `interface Wanted { main: string; version: string }\nconst odd: number = Bun.version;\nconst found: Wanted | undefined = globalThis.Bun;\nconst direct: Wanted = Bun;\nconsole.log(typeof odd, typeof found?.main, direct.version === Bun.version);\n`,
+    },
+    async dir => {
+      expect(await run(String(dir), "compiled")).toEqual(await run(String(dir), "plain"));
+    },
+  );
+
+  // Reflect.get() is a function of the library, and the key is a parameter there: the read counts as one of any member of the global object.
+  const readByReflect = `interface Wanted { main: string; version: string }\nconst odd: number = Bun.version;\nconst found: Wanted | undefined = Reflect.get(globalThis, "Bun");\nconsole.log(typeof odd, typeof found?.main);\n`;
+  goesOn(
+    "the whole of Bun that Reflect.get() reads off the global object goes where the program's own type is expected",
+    { "main.ts": readByReflect },
+    async dir => {
+      expect(await run(String(dir), "compiled")).toEqual(await run(String(dir), "plain"));
+    },
+    "alone",
+  );
+  test.failing(
+    "a build sees all that can run where Reflect.get() reads Bun off the global object: 13 lines say what blocks it, for 0",
     () =>
       slot(async () => {
-        using dir = tempDir("aot-missing-bun-types", {
-          "main.ts": `interface Wanted { main: string; version: string }\nconst odd: number = Bun.version;\nconst found: Wanted | undefined = Reflect.get(globalThis, "Bun");\nconst direct: Wanted = Bun;\nconsole.log(typeof odd, typeof found?.main, direct.version === Bun.version);\n`,
-        });
-        expect(await build(String(dir))).toEqual(built);
-        expect(await run(String(dir), "compiled")).toEqual(await run(String(dir), "plain"));
+        using dir = tempDir("aot-missing-bun-types", { "main.ts": readByReflect });
+        const command = [bunExe(), "build", "--compile", "--aot", "--explain=trim", "main.ts", "--outfile", "app"];
+        const { stderr, exitCode } = await spawned(command, String(dir), env);
+        expect({
+          onUnseenCode: stderr.split("\n").filter(line => /^aot: trim: (blocked by |the compiler can)/.test(line)),
+          exitCode,
+        }).toEqual({ onUnseenCode: ["aot: trim: the compiler can see every API this program uses"], exitCode: 0 });
       }),
     buildTimeout,
   );
 
   // `declare module "node:fs";` is all that stands in for the module then, and TypeScript finds no `Stats` in that.
-  test(
+  goesOn(
     "a type named through a module of Node.js or through NodeJS is any, in a program that does not fit Bun's declarations",
-    () =>
-      slot(async () => {
-        using dir = tempDir("aot-missing-bun-types", {
-          "main.ts": `import * as fs from "node:fs";
+    {
+      "main.ts": `import * as fs from "node:fs";
 import path from "node:path";
 import type * as http from "node:http";
 import events = require("node:events");
@@ -901,27 +960,24 @@ clearTimeout(timer);
 console.log(stats.isDirectory(), again === stats, typeof stats[key], parsed.base, handle, listener, mine.size, options.extra);
 console.log(typeof current.pid, table.a, new Bus() instanceof events.EventEmitter, typeof later, typeof odd, process.env.A_NAME_THAT_NOBODY_SETS);
 `,
-          "again.ts": `export * as fs from "node:fs";\n`,
-        });
-        expect(await build(String(dir))).toEqual(built);
-        const expected = {
-          stdout: "true true number b.txt undefined undefined 1 2\nnumber b true function string undefined\n",
-          exitCode: 0,
-          signal: null,
-        };
-        expect(await run(String(dir), "plain")).toEqual(expected);
-        expect(await run(String(dir), "compiled")).toEqual(expected);
-      }),
-    buildTimeout,
+      "again.ts": `export * as fs from "node:fs";\n`,
+    },
+    async dir => {
+      const expected = {
+        stdout: "true true number b.txt undefined undefined 1 2\nnumber b true function string undefined\n",
+        exitCode: 0,
+        signal: null,
+      };
+      expect(await run(String(dir), "plain")).toEqual(expected);
+      expect(await run(String(dir), "compiled")).toEqual(expected);
+    },
   );
 
   // No table of the run time has a name that is a type alone. The build has seen the program with Bun's declarations by then: what had a declaration there is Bun's.
-  test(
+  goesOn(
     "a global of Bun or of Node.js that is a type alone is any, in a program that does not fit Bun's declarations",
-    () =>
-      slot(async () => {
-        using dir = tempDir("aot-missing-bun-types", {
-          "main.ts": `function later(handler: () => void, timeout: number, ...args: any[]): number | ReturnType<typeof setTimeout> {
+    {
+      "main.ts": `function later(handler: () => void, timeout: number, ...args: any[]): number | ReturnType<typeof setTimeout> {
   return setTimeout(handler, timeout, ...args);
 }
 interface Failure extends ErrnoException {
@@ -950,17 +1006,16 @@ const failure: Failure = Object.assign(new Error("gone"), { code: "ENOENT", atte
 console.log(decode(bytes), bytes.length, table.a, sizes.hex, counts.b, typeof file.size, server, controller);
 console.log(explain(failure), typeof later);
 `,
-        });
-        expect(await build(String(dir))).toEqual(built);
-        const expected = {
-          stdout: "hi 2 1 2 2 number null undefined\nENOENT after 3 function\n",
-          exitCode: 0,
-          signal: null,
-        };
-        expect(await run(String(dir), "plain")).toEqual(expected);
-        expect(await run(String(dir), "compiled")).toEqual(expected);
-      }),
-    buildTimeout,
+    },
+    async dir => {
+      const expected = {
+        stdout: "hi 2 1 2 2 number null undefined\nENOENT after 3 function\n",
+        exitCode: 0,
+        signal: null,
+      };
+      expect(await run(String(dir), "plain")).toEqual(expected);
+      expect(await run(String(dir), "compiled")).toEqual(expected);
+    },
   );
 
   test(
@@ -982,9 +1037,10 @@ console.log(odd, encoding, wrong, list, neitherIsThis, [1].lenght);
     buildTimeout,
   );
 
-  // Bun declares "*.txt", so with its declarations nothing is said at the import. Without them the project's own files and options count.
+  // Bun declares "*.txt", so nothing is said at the import, as TypeScript says nothing there with Bun's declarations installed. That the text is no "declared" rests on
+  // that declaration, which stops no build. `bun check`, which brings no declarations, says what TypeScript says without them.
   test(
-    "a declaration beside a text file that tsconfig.json does not allow stops the build, in a program that does not fit Bun's declarations",
+    "a declaration beside a text file that tsconfig.json does not allow stops no build, in a program that does not fit Bun's declarations",
     () =>
       slot(async () => {
         const options = {
@@ -1004,13 +1060,16 @@ console.log(typeof declared, encoding);
           "note.d.txt.ts": `declare const text: "declared";\nexport default text;\n`,
           "tsconfig.json": JSON.stringify({ compilerOptions: options }),
         });
-        expect(await build(String(dir))).toEqual({ errors: ["TS6263"], warnings: [], exitCode: 1, signal: null });
+        expect(await check(String(dir))).toMatchObject({ errors: ["TS2304", "TS6263"], exitCode: 1 });
+        expect(await build(String(dir))).toEqual(built);
+        const expected = { stdout: "string utf8\n", exitCode: 0, signal: null };
+        expect(await run(String(dir), "compiled")).toEqual(expected);
         await Bun.write(
           join(String(dir), "tsconfig.json"),
           JSON.stringify({ compilerOptions: { ...options, allowArbitraryExtensions: true } }),
         );
+        expect(await check(String(dir))).toMatchObject({ errors: ["TS2304"], exitCode: 1 });
         expect(await build(String(dir))).toEqual(built);
-        const expected = { stdout: "string utf8\n", exitCode: 0, signal: null };
         expect(await run(String(dir), "plain")).toEqual(expected);
         expect(await run(String(dir), "compiled")).toEqual(expected);
       }),
@@ -1019,12 +1078,10 @@ console.log(typeof declared, encoding);
 
   // `any` says nothing of the control flow, so what stands in for Bun's declarations then still says which functions never return
   // and which say what their argument is.
-  test(
+  goesOn(
     "process.exit, an assertion and a type predicate of Node.js narrow, in a program that does not fit Bun's declarations",
-    () =>
-      slot(async () => {
-        using dir = tempDir("aot-missing-bun-types", {
-          "main.ts": `import assert, { AssertionError, fail, ok, strict, strictEqual } from "node:assert";
+    {
+      "main.ts": `import assert, { AssertionError, fail, ok, strict, strictEqual } from "node:assert";
 import strictly from "assert/strict";
 import old = require("assert");
 import current, { argv, exit } from "node:process";
@@ -1109,10 +1166,10 @@ process.exit = () => {
 };
 console.log(typeof leaves());
 `,
-        });
-        expect(await build(String(dir))).toEqual(built);
-        const expected = {
-          stdout: `string x more 4 xyz
+    },
+    async dir => {
+      const expected = {
+        stdout: `string x more 4 xyz
 xyzw xy xy [ 3, [ 1 ], null ]
 [ 4, "TEXT", "r", 1, 3 ] [ 2020, 5, 1, "e", "W" ]
 true utf-8 number undefined
@@ -1120,22 +1177,20 @@ true utf-8 number undefined
 stays
 undefined
 `,
-          exitCode: 0,
-          signal: null,
-        };
-        expect(await run(String(dir), "plain")).toEqual(expected);
-        expect(await run(String(dir), "compiled")).toEqual(expected);
-      }),
-    buildTimeout,
+        exitCode: 0,
+        signal: null,
+      };
+      expect(await run(String(dir), "plain")).toEqual(expected);
+      expect(await run(String(dir), "compiled")).toEqual(expected);
+    },
+    "alone",
   );
 
   // A class of the run time is `any` then. Where the answer is yes the value is `any` too, and where it is no nothing is known of it.
-  test(
+  goesOn(
     "Buffer.isBuffer and the other predicates about a class of the run time narrow, in a program that does not fit Bun's declarations",
-    () =>
-      slot(async () => {
-        using dir = tempDir("aot-missing-bun-types", {
-          "main.ts": `import buffer, { Buffer as Named, type TranscodeEncoding } from "node:buffer";
+    {
+      "main.ts": `import buffer, { Buffer as Named, type TranscodeEncoding } from "node:buffer";
 import * as wholeBuffer from "buffer";
 import oldBuffer = require("buffer");
 import { createSecretKey } from "node:crypto";
@@ -1236,10 +1291,10 @@ console.log(new Line() instanceof Socket, new Wire() instanceof Socket, Object.g
 console.log(wholeOfTheModule === whole, address, options, named, kept.length, typeof net.createServer, net.isIP("::1"));
 console.log(buffer.constants.MAX_LENGTH > 0, typeof wholeBuffer.kMaxLength, typeof oldBuffer.Blob, typeof wholeNet.connect);
 `,
-        });
-        expect(await build(String(dir))).toEqual(built);
-        const expected = {
-          stdout: `string 61 string object 97 1
+    },
+    async dir => {
+      const expected = {
+        stdout: `string 61 string object 97 1
 3 97 [ "YQ==", "a", 97, 97 ] [ 3, 3, 3, 3 ]
 61 3 2 3
 61undefined none
@@ -1259,21 +1314,18 @@ true null {
 } utf8 1 function 6
 true number function function
 `,
-          exitCode: 0,
-          signal: null,
-        };
-        expect(await run(String(dir), "plain")).toEqual(expected);
-        expect(await run(String(dir), "compiled")).toEqual(expected);
-      }),
-    buildTimeout,
+        exitCode: 0,
+        signal: null,
+      };
+      expect(await run(String(dir), "plain")).toEqual(expected);
+      expect(await run(String(dir), "compiled")).toEqual(expected);
+    },
   );
 
-  test(
+  goesOn(
     "such a predicate narrows where it is taken out of its holder by a pattern or under brackets",
-    () =>
-      slot(async () => {
-        using dir = tempDir("aot-missing-bun-types", {
-          "main.ts": `import net from "node:net";
+    {
+      "main.ts": `import net from "node:net";
 import { types } from "node:util";
 const odd: number = process.argv.length.toString();
 const { isBuffer, isEncoding: knows, poolSize } = Buffer;
@@ -1308,22 +1360,21 @@ console.log(typeof odd, typeof poolSize, byAPattern(Buffer.from("a")), byAPatter
 console.log(underBrackets(Buffer.from("a")), underBrackets("abc"), ofOtherHolders(list), ofOtherHolders(1));
 console.log(handedOn(["abc", Buffer.from("a"), new Uint8Array(2)]));
 `,
-        });
-        expect(await build(String(dir))).toEqual(built);
-        const plain = await run(String(dir), "plain");
-        expect(plain).toMatchObject({ exitCode: 0, signal: null });
-        expect(plain.stdout).toStartWith("string number 61 string HEX number\n");
-        expect(await run(String(dir), "compiled")).toEqual(plain);
-      }),
-    buildTimeout,
+    },
+    async dir => {
+      const plain = await run(String(dir), "plain");
+      expect(plain).toMatchObject({ exitCode: 0, signal: null });
+      expect(plain.stdout).toStartWith("string number 61 string HEX number\n");
+      expect(await run(String(dir), "compiled")).toEqual(plain);
+    },
   );
 
-  test(
-    "a guard narrows where the class of the run time stands deeper in its type, behind a type parameter, or where nobody writes the guard down",
-    () =>
-      slot(async () => {
-        using dir = tempDir("aot-missing-bun-types", {
-          "main.ts": `import { EventEmitter } from "node:events";
+  // TypeScript infers no predicate from `x instanceof Buffer` for a `string | Uint8Array`: where the answer is no, bytes are left that may be a Buffer.
+  // So the four lines of nobodyWritesItDown() are type errors with Bun's declarations and without them, they rest on no declaration that Bun brings, and they say so.
+  goesOn(
+    "a guard narrows where the class of the run time stands deeper in its type or behind a type parameter, and where nobody writes the guard down the lines say that none does",
+    {
+      "main.ts": `import { EventEmitter } from "node:events";
 const odd: number = process.argv.length.toString();
 interface Holder { held: string | Uint8Array; name: string }
 function holdsBytes(holder: Holder): holder is Holder & { held: Buffer } {
@@ -1348,9 +1399,13 @@ function writtenAsAny(x: string | number): unknown {
 const isBytes = (x: string | Uint8Array) => x instanceof Buffer;
 function nobodyWritesItDown(list: (string | Uint8Array)[]): unknown[] {
   return [
+    // @ts-expect-error
     list.filter(x => x instanceof Buffer).map(x => x.toString("hex")),
+    // @ts-expect-error
     list.filter(isBytes).map(x => x.readUInt8(0)),
+    // @ts-expect-error
     list.map(x => (isBytes(x) ? x.toString("latin1") : x.length)),
+    // @ts-expect-error
     list.find(x => x instanceof Buffer)?.toString("hex"),
   ];
 }
@@ -1362,23 +1417,20 @@ console.log(typeof odd, deeper({ held: Buffer.from("a"), name: "n" }), deeper({ 
 console.log(behindAParameter(Buffer.from("a")), behindAParameter("abc"), ofTheProgramsOwnClass(new Own()), ofTheProgramsOwnClass("ab"), writtenAsAny("a"));
 console.log(nobodyWritesItDown(["abc", Buffer.from("a"), new Uint8Array(2)]), keepsItsMembers({ a: 1, b: "b" }));
 `,
-        });
-        expect(await build(String(dir))).toEqual(built);
-        const plain = await run(String(dir), "plain");
-        expect(plain).toMatchObject({ exitCode: 0, signal: null });
-        expect(plain.stdout).toStartWith("string n61 nstring\n");
-        expect(await run(String(dir), "compiled")).toEqual(plain);
-      }),
-    buildTimeout,
+    },
+    async dir => {
+      const plain = await run(String(dir), "plain");
+      expect(plain).toMatchObject({ exitCode: 0, signal: null });
+      expect(plain.stdout).toStartWith("string n61 nstring\n");
+      expect(await run(String(dir), "compiled")).toEqual(plain);
+    },
   );
 
-  test(
+  goesOn(
     "a predicate of the program's own about a class of the run time narrows, in a program that does not fit Bun's declarations",
-    () =>
-      slot(async () => {
-        using dir = tempDir("aot-missing-bun-types", {
-          "main.ts": `import { EventEmitter } from "node:events";
-import * as http from "node:http";
+    {
+      "main.ts": `import { EventEmitter } from "node:events";
+import * as net from "node:net";
 import { Socket } from "node:net";
 type Guard = (x: unknown) => x is URL;
 interface Tells {
@@ -1392,8 +1444,8 @@ function assertBytes(x: unknown): asserts x is Buffer {
   if (!Buffer.isBuffer(x)) throw new TypeError("no bytes");
 }
 const isEmitter = (x: unknown): x is EventEmitter => x instanceof EventEmitter;
-function isServer(x: unknown): x is http.Server {
-  return x instanceof http.Server;
+function isServer(x: unknown): x is net.Server {
+  return x instanceof net.Server;
 }
 const isURL: Guard = (x): x is URL => x instanceof URL;
 const tells: Tells = { isSocket: (x): x is Socket => x instanceof Socket };
@@ -1430,13 +1482,13 @@ function picked(list: (string | Uint8Array)[], holder: Holder): unknown[] {
   return [list.filter(isBytes).map(it => it.toString("hex")), isEmitter(holder.held) ? holder.held.listenerCount("a") : typeof holder.held];
 }
 console.log(typeof odd, hex(Buffer.from("a")), hex("a"), hex(new Uint8Array(2)), asserted(Buffer.from("b")), refused("b"));
-console.log(told(new EventEmitter(), new Blob(["abc"])), told(http.createServer(), "y"), told(new URL("http://host/"), {}));
+console.log(told(new EventEmitter(), new Blob(["abc"])), told(net.createServer(), "y"), told(new URL("http://host/"), {}));
 console.log(told(new Socket(), "z"), picked(["a", Buffer.from("a"), new Uint8Array(1)], new Holder(new EventEmitter())), picked([], new Holder(1)));
 `,
-        });
-        expect(await build(String(dir))).toEqual(built);
-        const expected = {
-          stdout: `string 61 A 2 62 no bytes
+    },
+    async dir => {
+      const expected = {
+        stdout: `string 61 A 2 62 no bytes
 [ 0, "object", "object", "object", 3 ] [ 0, false, "object", "object", "y" ] [ "object", "object",
   "host", "object", "[object Object]"
 ]
@@ -1446,13 +1498,12 @@ console.log(told(new Socket(), "z"), picked(["a", Buffer.from("a"), new Uint8Arr
   [], "number"
 ]
 `,
-          exitCode: 0,
-          signal: null,
-        };
-        expect(await run(String(dir), "plain")).toEqual(expected);
-        expect(await run(String(dir), "compiled")).toEqual(expected);
-      }),
-    buildTimeout,
+        exitCode: 0,
+        signal: null,
+      };
+      expect(await run(String(dir), "plain")).toEqual(expected);
+      expect(await run(String(dir), "compiled")).toEqual(expected);
+    },
   );
 
   test.each([
@@ -1490,12 +1541,10 @@ console.log(told(new Socket(), "z"), picked(["a", Buffer.from("a"), new Uint8Arr
     buildTimeout,
   );
 
-  test(
+  goesOn(
     "instanceof a class that Bun provides narrows, in a program that does not fit Bun's declarations",
-    () =>
-      slot(async () => {
-        using dir = tempDir("aot-missing-bun-types", {
-          "main.ts": `import assert, { AssertionError } from "node:assert";
+    {
+      "main.ts": `import assert, { AssertionError } from "node:assert";
 import * as events from "node:events";
 import { EventEmitter } from "node:events";
 import stream = require("node:stream");
@@ -1575,10 +1624,10 @@ show(
 );
 show(below(new Mine()), below(new EventEmitter()), below(url));
 `,
-        });
-        expect(await build(String(dir))).toEqual(built);
-        const expected = {
-          stdout: `["string",["http://host/path",-1,-1],["no",2,-1],["no",-1,0],["no",-1,-1]]
+    },
+    async dir => {
+      const expected = {
+        stdout: `["string",["http://host/path",-1,-1],["no",2,-1],["no",-1,0],["no",-1,-1]]
 [[0,"no","no","no"],[0,"function","no","no"],[-1,"no","ERR_ASSERTION","no"],[-1,"no","no","host"]]
 [["http://host/path","host",-1,"/path"],["no","no",0,"no"],0,-1]
 [["no object","headers b","url http://host/r","blob 3","search c","other"]]
@@ -1586,13 +1635,12 @@ show(below(new Mine()), below(new EventEmitter()), below(url));
 ["assertion ERR_ASSERTION","dom DataCloneError","error far","thrown","nothing"]
 [7,0,-1]
 `,
-          exitCode: 0,
-          signal: null,
-        };
-        expect(await run(String(dir), "plain")).toEqual(expected);
-        expect(await run(String(dir), "compiled")).toEqual(expected);
-      }),
-    buildTimeout,
+        exitCode: 0,
+        signal: null,
+      };
+      expect(await run(String(dir), "plain")).toEqual(expected);
+      expect(await run(String(dir), "compiled")).toEqual(expected);
+    },
   );
 
   test.each([
@@ -1640,12 +1688,10 @@ show(below(new Mine()), below(new EventEmitter()), below(url));
   );
 
   // A name that comes out of `declare module "node:fs";` is the module itself to TypeScript: a value and a namespace, no type.
-  test(
+  goesOn(
     "what a file of the program exports again from a module of Node.js is any, in a program that does not fit Bun's declarations",
-    () =>
-      slot(async () => {
-        using dir = tempDir("aot-missing-bun-types", {
-          "main.ts": `import * as named from "./named";
+    {
+      "main.ts": `import * as named from "./named";
 import * as whole from "./whole";
 import * as outer from "./outer";
 import { existsSync, own, type Dirent } from "./whole";
@@ -1683,27 +1729,26 @@ const asked = { url: "/a" } as Asked;
 const wanted: Wanted = { host: "localhost", retries: 2 };
 console.log(sized.isDirectory(), sized.extra, asked.url, asked.user, wanted.host, wanted.retries);
 `,
-          "named.ts": `import { Stats as Imported } from "node:fs";
+      "named.ts": `import { Stats as Imported } from "node:fs";
 export { Imported };
 export { Stats, Stats as FileStats, statSync } from "node:fs";
 export type { Stats as TypeOnly } from "node:fs";
 export type { RequestListener } from "node:http";
 export { EventEmitter } from "node:events";
 `,
-          "whole.ts": `export * from "node:fs";\nexport const own = 1;\n`,
-          "outer.ts": `export * as named from "./named";\nexport { Stats } from "./named";\nexport * from "./whole";\n`,
-        });
-        expect(await build(String(dir))).toEqual(built);
-        const expected = {
-          stdout:
-            "true true\nnumber 0 true string\ntrue true undefined true true 1 1\ntrue undefined /a undefined localhost 2\n",
-          exitCode: 0,
-          signal: null,
-        };
-        expect(await run(String(dir), "plain")).toEqual(expected);
-        expect(await run(String(dir), "compiled")).toEqual(expected);
-      }),
-    buildTimeout,
+      "whole.ts": `export * from "node:fs";\nexport const own = 1;\n`,
+      "outer.ts": `export * as named from "./named";\nexport { Stats } from "./named";\nexport * from "./whole";\n`,
+    },
+    async dir => {
+      const expected = {
+        stdout:
+          "true true\nnumber 0 true string\ntrue true undefined true true 1 1\ntrue undefined /a undefined localhost 2\n",
+        exitCode: 0,
+        signal: null,
+      };
+      expect(await run(String(dir), "plain")).toEqual(expected);
+      expect(await run(String(dir), "compiled")).toEqual(expected);
+    },
   );
 
   test.each([
@@ -1913,6 +1958,7 @@ test(
       expect(await build(String(bare))).toEqual(built);
       using dir = tempDir("aot-installed-bun-types", {
         "main.ts": main,
+        "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, types: ["bun"] } }),
         "node_modules/@types/bun/package.json": JSON.stringify({
           name: "@types/bun",
           version: "1.0.0",

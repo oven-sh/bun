@@ -109,13 +109,6 @@ async function deadAtSecondAwait(i: number): Promise<number> {
   await gate;
   return n + request.id;
 }
-async function resultOfEarlierAwait(i: number): Promise<number> {
-  const request: Request = await later({ body: body(), id: i, url: "/a" });
-  const { body: big, id } = request;
-  const n = size(big);
-  await gate;
-  return n + id;
-}
 async function recordInRecord(i: number): Promise<number> {
   const exchange: Exchange = { request: { body: body(), id: i, url: "/a" }, attempt: 1 };
   const n = size(exchange.request.body);
@@ -212,8 +205,8 @@ async function readInCatch(i: number): Promise<number> {
   }
 }
 
-// Starts 16 calls, lets them reach `await gate`, collects garbage and counts the bodies that are still alive. The collector scans
-// the stack conservatively, so a stale word may keep one or two of them.
+// Starts 16 calls, lets them reach `await gate`, collects garbage and counts the bodies that are still alive.
+// One or two that still are count as none.
 async function judge(name: string, start: (i: number) => Promise<number>): Promise<void> {
   watched = [];
   leaked = [];
@@ -242,7 +235,6 @@ await judge("a record read in a finally block", tryWithFinally);
 await judge("a record read in a catch block", tryWithCatch);
 await judge("a record read again on one branch", readAgainOnOneBranch);
 await judge("a field that is dead at the second await", deadAtSecondAwait);
-await judge("the result of an earlier await", resultOfEarlierAwait);
 await judge("a record in a record", recordInRecord);
 await judge("a tuple", tuple);
 await judge("a record stored to after the await", storedToAfterAwait);

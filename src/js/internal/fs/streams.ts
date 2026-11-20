@@ -1,98 +1,40 @@
 // fs.ReadStream and fs.WriteStream are lazily loaded to avoid importing 'node:stream' until required
+import type { FileSink } from "bun";
 const { Readable, Writable, finished } = require("node:stream");
 const fs = require("node:fs");
 const { read, write, fsync, writev } = fs;
-const fileHandles = require("internal/fs/file_handles");
-type FileHandleInternals = NonNullable<typeof fileHandles.internals>;
-type FileHandle = $Node.FileHandle;
-type FileSink = $Node.FileSink;
+const { FileHandle, kRef, kUnref, kFd } = (require("node:fs/promises") as any).$data as {
+  FileHandle: { new (): FileHandle };
+  readonly kRef: unique symbol;
+  readonly kUnref: unique symbol;
+  readonly kFd: unique symbol;
+};
+type FileHandle = import("node:fs/promises").FileHandle & {
+  on(event: any, listener: any): FileHandle;
+};
+type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStream, "path" | "_write" | "_writev"> & {
+  fd: number | null;
+  // null / undefined only for the internal fast-path WriteStream, which is given a FileSink and no path.
+  path: string | null | undefined;
+  _write: import("node:fs").WriteStream["_write"] | null;
+  _writev: import("node:fs").WriteStream["_writev"] | null;
+  _writableState?: { ending: boolean; destroyed: boolean };
+  flags: string;
+  mode: number;
+  start: number;
+  end: number;
+  pos: number | undefined;
+  bytesRead: number;
+  flush: boolean;
+  open: () => void;
+  autoClose: boolean;
+  /**
+   * true = path must be opened
+   * sink = FileSink
+   */
+  [kWriteStreamFastPath]?: undefined | true | FileSink;
+};
 type FD = number;
-type ErrorCallback = (error?: Error | null) => void;
-
-/** `node:fs`, the `fs` option of a stream, or the operations of a `FileHandle`. */
-interface StreamFs {
-  open?(
-    path: string | null | undefined,
-    flags: string | number,
-    mode: number,
-    callback: (error: Error | null, fd?: number) => void,
-  ): void;
-  read?(
-    fd: number | null,
-    buffer: Buffer,
-    offset: number,
-    length: number,
-    position: number | undefined,
-    callback: (error: Error | null, bytesRead?: number, buffer?: Buffer) => void,
-  ): void;
-  write?(
-    fd: number | null,
-    buffer: Buffer,
-    offset: number,
-    length: number,
-    position: number | undefined,
-    callback: (error: Error | null, bytesWritten?: number, buffer?: Buffer) => void,
-  ): void;
-  writev?(
-    fd: number | null,
-    buffers: Buffer[],
-    position: number | undefined,
-    callback: (error: Error | null, bytesWritten?: number, buffers?: Buffer[]) => void,
-  ): void;
-  fsync?(fd: number, callback: ErrorCallback): void;
-  close?(fd: number, callback: ErrorCallback): void;
-}
-
-interface FileStreamOptions extends $Node.ReadableOptions, $Node.WritableOptions {
-  fd?: number | FileHandle | null;
-  fs?: StreamFs | null;
-  flags?: string | number;
-  mode?: number;
-  autoClose?: boolean;
-  start?: number;
-  end?: number;
-  flush?: boolean | null;
-  /** A raw Win32 `HANDLE`, wrapped in a file descriptor the stream owns. Windows only. */
-  windowsHandle?: bigint | null;
-  $fastPath?: boolean;
-}
-
-declare global {
-  namespace $Node {
-    /** What `fs.ReadStream` and `fs.WriteStream` share. */
-    interface FileStreamFields {
-      fd: number | null;
-      // null / undefined only for the internal fast-path WriteStream, which is given a FileSink and no path.
-      path: string | null | undefined;
-      flags: string | number;
-      mode: number;
-      start: number | undefined;
-      pos: number | undefined;
-      autoClose: boolean;
-      readonly pending: boolean;
-      flush?: boolean;
-      open(): void;
-      close(callback?: ErrorCallback): void;
-      [kFs]: StreamFs;
-      [kIsPerformingIO]: boolean;
-      /** true: the path must be opened; a sink: a FileSink. */
-      [kWriteStreamFastPath]?: undefined | true | FileSink;
-    }
-
-    interface ReadStream extends Readable, FileStreamFields {
-      end: number;
-      bytesRead: number;
-    }
-
-    interface WriteStream extends Writable, FileStreamFields {
-      flush: boolean;
-      bytesWritten: number;
-      destroySoon: Writable["end"];
-      [kWriteMonkeyPatchDefense]?: boolean;
-    }
-  }
-}
-type FileStream = $Node.ReadStream | $Node.WriteStream;
 
 const { validateInteger, validateInt32, validateFunction } = require("internal/validators");
 
@@ -106,31 +48,12 @@ const kIoDone = Symbol("kIoDone");
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
 const kFs = Symbol("kFs");
 
-let FileHandle: FileHandleInternals["FileHandle"] | undefined;
-let kRef: FileHandleInternals["kRef"];
-let kUnref: FileHandleInternals["kUnref"];
-let kFd: FileHandleInternals["kFd"];
-let fileHandlePrototypeRead: FileHandle["read"];
-let fileHandlePrototypeWrite: FileHandle["write"];
-let fileHandlePrototypeFsync: undefined;
-let fileHandlePrototypeWritev: FileHandle["writev"];
-
-function takeFileHandleInternals(internals: FileHandleInternals) {
-  FileHandle = internals.FileHandle;
-  kRef = internals.kRef;
-  kUnref = internals.kUnref;
-  kFd = internals.kFd;
-  ({
-    read: fileHandlePrototypeRead,
-    write: fileHandlePrototypeWrite,
-    fsync: fileHandlePrototypeFsync,
-    writev: fileHandlePrototypeWritev,
-  } = FileHandle.prototype as FileHandle & { fsync?: undefined });
-}
-
-const { internals } = fileHandles;
-if (internals) takeFileHandleInternals(internals);
-else fileHandles.whenLoaded = takeFileHandleInternals;
+const {
+  read: fileHandlePrototypeRead,
+  write: fileHandlePrototypeWrite,
+  fsync: fileHandlePrototypeFsync,
+  writev: fileHandlePrototypeWritev,
+} = FileHandle.prototype;
 
 const fileHandleStreamFs = (fh: FileHandle) => ({
   // try to use the basic fs.read/write/fsync if available, since they are less
@@ -139,14 +62,7 @@ const fileHandleStreamFs = (fh: FileHandle) => ({
   read:
     fh.read === fileHandlePrototypeRead
       ? read
-      : function (
-          fd: number | null,
-          buf: Buffer,
-          offset: number,
-          length: number,
-          pos: number | undefined,
-          cb: (error: Error | null, bytesRead?: number, buffer?: Buffer) => void,
-        ) {
+      : function (fd, buf, offset, length, pos, cb) {
           return fh.read(buf, offset, length, pos).then(
             ({ bytesRead, buffer }) => cb(null, bytesRead, buffer),
             err => cb(err, 0, buf),
@@ -155,14 +71,7 @@ const fileHandleStreamFs = (fh: FileHandle) => ({
   write:
     fh.write === fileHandlePrototypeWrite
       ? write
-      : function (
-          fd: number | null,
-          buffer: Buffer,
-          offset: number,
-          length: number,
-          position: number | undefined,
-          cb: (error: Error | null, bytesWritten?: number, buffer?: Buffer) => void,
-        ) {
+      : function (fd, buffer, offset, length, position, cb) {
           return fh.write(buffer, offset, length, position).then(
             ({ bytesWritten, buffer }) => cb(null, bytesWritten, buffer),
             err => cb(err, 0, buffer),
@@ -172,19 +81,19 @@ const fileHandleStreamFs = (fh: FileHandle) => ({
   fsync:
     fh.sync === fileHandlePrototypeFsync
       ? fsync
-      : function (fd: number, cb: ErrorCallback) {
+      : function (fd, cb) {
           return fh.sync().then(() => cb(), cb);
         },
   close: streamFileHandleClose.bind(fh),
 });
 
-function streamFileHandleClose(this: FileHandle, fd: FD, cb: ErrorCallback) {
+function streamFileHandleClose(this: FileHandle, fd: FD, cb: (err?: any) => void) {
   $assert(this[kFd] == fd, "fd mismatch");
   this[kUnref]();
   this.close().then(() => cb(), cb);
 }
 
-function getValidatedPath(p: string | URL | null | undefined): string {
+function getValidatedPath(p: any) {
   if (typeof p !== "string") {
     const path = require("internal/url").toPathIfFileURL(p);
     if (typeof path !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
@@ -193,17 +102,14 @@ function getValidatedPath(p: string | URL | null | undefined): string {
   return require("node:path").resolve(p);
 }
 
-function copyObject<T extends object>(source: T): T {
-  const target = {} as T;
+function copyObject(source) {
+  const target = {};
   // Node tests for prototype lookups, so { ...source } will not work.
   for (const key in source) target[key] = source[key];
   return target;
 }
 
-function getStreamOptions(
-  options: FileStreamOptions | string | null | undefined,
-  defaultOptions: FileStreamOptions = {},
-): FileStreamOptions {
+function getStreamOptions(options, defaultOptions = {}) {
   if (options == null || typeof options === "function") {
     return defaultOptions;
   }
@@ -231,11 +137,7 @@ function getStreamOptions(
 }
 
 // https://github.com/nodejs/node/blob/98dbf6070e8439e530f1678b11962a0f3719e1f6/lib/internal/fs/streams.js#L169
-function validateWindowsHandle(
-  windowsHandle: unknown,
-  fd: FileStreamOptions["fd"],
-  customFs: FileStreamOptions["fs"],
-): asserts windowsHandle is bigint {
+function validateWindowsHandle(windowsHandle: unknown, fd, customFs): asserts windowsHandle is bigint {
   if (fd != null) {
     throw $ERR_INCOMPATIBLE_OPTION_PAIR('Option "windowsHandle" cannot be used in combination with option "fd"');
   }
@@ -252,13 +154,9 @@ function validateWindowsHandle(
   }
 }
 
-function ReadStream(
-  this: $Node.ReadStream,
-  path: string | URL | null | undefined,
-  options?: FileStreamOptions | string | null,
-): void {
+function ReadStream(this: FSStream, path, options): void {
   if (!(this instanceof ReadStream)) {
-    return new ReadStream(path, options) as any;
+    return new ReadStream(path, options);
   }
 
   options = copyObject(getStreamOptions(options));
@@ -291,9 +189,9 @@ function ReadStream(
     } else {
       validateInt32(fd, "fd", 0, 2147483647);
     }
-    this.fd = fd as number;
+    this.fd = fd;
     this[kFs] = customFs || fs;
-  } else if (typeof fd === "object" && FileHandle !== undefined && fd instanceof FileHandle) {
+  } else if (typeof fd === "object" && fd instanceof FileHandle) {
     if (options.fs) {
       throw $ERR_METHOD_NOT_IMPLEMENTED("FileHandle with fs");
     }
@@ -347,10 +245,10 @@ $toClass(ReadStream, "ReadStream", Readable);
 const readStreamPrototype = ReadStream.prototype;
 
 Object.defineProperty(readStreamPrototype, "autoClose", {
-  get(this: $Node.ReadStream) {
+  get() {
     return this._readableState.autoDestroy;
   },
-  set(this: $Node.ReadStream, val: boolean) {
+  set(val) {
     this._readableState.autoDestroy = val;
   },
 });
@@ -358,7 +256,7 @@ Object.defineProperty(readStreamPrototype, "autoClose", {
 const streamNoop = function open() {
   // noop
 };
-function streamConstruct(this: FileStream, callback: ErrorCallback) {
+function streamConstruct(this: FSStream, callback: (e?: any) => void) {
   const { fd } = this;
   if (typeof fd === "number") {
     callback();
@@ -367,19 +265,19 @@ function streamConstruct(this: FileStream, callback: ErrorCallback) {
   const fastPath = this[kWriteStreamFastPath];
   if (this.open !== streamNoop) {
     // Backwards compat for monkey patching open().
-    const orgEmit = this.emit;
-    this.emit = function (this: FileStream, ...args: [type: $Node.EventName, ...args: unknown[]]) {
+    const orgEmit: any = this.emit;
+    this.emit = function (...args) {
       if (args[0] === "open") {
         this.emit = orgEmit;
         callback();
         orgEmit.$apply(this, args);
       } else if (args[0] === "error") {
         this.emit = orgEmit;
-        callback(args[1] as Error);
+        callback(args[1]);
       } else {
         orgEmit.$apply(this, args);
       }
-    } as typeof orgEmit;
+    } as any;
     this.open();
   } else {
     if (fastPath) {
@@ -389,11 +287,11 @@ function streamConstruct(this: FileStream, callback: ErrorCallback) {
       return;
     }
 
-    this[kFs].open!(this.path, this.flags, this.mode, (err, fd) => {
+    this[kFs].open(this.path, this.flags, this.mode, (err, fd) => {
       if (err) {
         callback(err);
       } else {
-        this.fd = fd!;
+        this.fd = fd;
         callback();
         this.emit("open", this.fd);
         this.emit("ready");
@@ -406,7 +304,7 @@ readStreamPrototype.open = streamNoop;
 
 readStreamPrototype._construct = streamConstruct;
 
-readStreamPrototype._read = function (this: $Node.ReadStream, n: number) {
+readStreamPrototype._read = function (n) {
   n = this.pos !== undefined ? $min(this.end - this.pos + 1, n) : $min(this.end - this.bytesRead + 1, n);
 
   if (n <= 0) {
@@ -417,7 +315,7 @@ readStreamPrototype._read = function (this: $Node.ReadStream, n: number) {
   const buf = Buffer.allocUnsafeSlow(n);
 
   this[kIsPerformingIO] = true;
-  this[kFs].read!(this.fd, buf, 0, n, this.pos, (er, bytesRead, buf) => {
+  this[kFs].read(this.fd, buf, 0, n, this.pos, (er, bytesRead, buf) => {
     this[kIsPerformingIO] = false;
 
     // Tell ._destroy() that it's safe to close the fd now.
@@ -427,20 +325,20 @@ readStreamPrototype._read = function (this: $Node.ReadStream, n: number) {
     }
 
     if (er) {
-      require("internal/streams/destroy").errorOrDestroy(this as $Node.Readable, er);
-    } else if (bytesRead! > 0) {
+      require("internal/streams/destroy").errorOrDestroy(this, er);
+    } else if (bytesRead > 0) {
       if (this.pos !== undefined) {
-        this.pos += bytesRead!;
+        this.pos += bytesRead;
       }
 
-      this.bytesRead += bytesRead!;
+      this.bytesRead += bytesRead;
 
-      if (bytesRead !== buf!.length) {
+      if (bytesRead !== buf.length) {
         // Slow path. Shrink to fit.
         // Copy instead of slice so that we don't retain
         // large backing buffer for small reads.
-        const dst = Buffer.allocUnsafeSlow(bytesRead!);
-        buf!.copy(dst, 0, 0, bytesRead);
+        const dst = Buffer.allocUnsafeSlow(bytesRead);
+        buf.copy(dst, 0, 0, bytesRead);
         buf = dst;
       }
 
@@ -451,7 +349,7 @@ readStreamPrototype._read = function (this: $Node.ReadStream, n: number) {
   });
 };
 
-readStreamPrototype._destroy = function (this: $Node.ReadStream, err: Error | null, cb: ErrorCallback) {
+readStreamPrototype._destroy = function (this: FSStream, err, cb) {
   // Usually for async IO it is safe to close a file descriptor
   // even when there are pending operations. However, due to platform
   // differences file IO is implemented using synchronous operations
@@ -459,29 +357,29 @@ readStreamPrototype._destroy = function (this: $Node.ReadStream, err: Error | nu
   // to close while used in a pending read or write operation. Wait for
   // any pending IO (kIsPerformingIO) to complete (kIoDone).
   if (this[kIsPerformingIO]) {
-    this.once(kIoDone, (er: Error | null) => close(this, err || er, cb));
+    this.once(kIoDone, er => close(this, err || er, cb));
   } else {
     close(this, err, cb);
   }
 };
 
-readStreamPrototype.close = function (this: $Node.ReadStream, cb?: ErrorCallback) {
-  if (typeof cb === "function") finished(this as $Node.Readable, cb);
+readStreamPrototype.close = function (cb) {
+  if (typeof cb === "function") finished(this, cb);
   this.destroy();
 };
 
 Object.defineProperty(readStreamPrototype, "pending", {
-  get(this: $Node.ReadStream) {
+  get() {
     return this.fd == null;
   },
   configurable: true,
 });
 
-function close(stream: FileStream, err: Error | null | undefined, cb: ErrorCallback) {
-  const fastPath = stream[kWriteStreamFastPath];
+function close(stream, err, cb) {
+  const fastPath: FileSink | true = stream[kWriteStreamFastPath];
   if (fastPath && fastPath !== true) {
     stream.fd = null;
-    const maybePromise = fastPath.end(err!);
+    const maybePromise = fastPath.end(err);
     thenIfPromise(maybePromise, () => {
       cb(err);
     });
@@ -491,7 +389,7 @@ function close(stream: FileStream, err: Error | null | undefined, cb: ErrorCallb
   if (stream.fd == null) {
     cb(err);
   } else if (stream.flush) {
-    stream[kFs].fsync!(stream.fd, flushErr => {
+    stream[kFs].fsync(stream.fd, flushErr => {
       closeAfterSync(stream, err || flushErr, cb);
     });
   } else {
@@ -499,23 +397,19 @@ function close(stream: FileStream, err: Error | null | undefined, cb: ErrorCallb
   }
 }
 
-function closeAfterSync(stream: FileStream, err: Error | null | undefined, cb: ErrorCallback) {
-  stream[kFs].close!(stream.fd!, er => {
+function closeAfterSync(stream, err, cb) {
+  stream[kFs].close(stream.fd, er => {
     cb(er || err);
   });
   stream.fd = null;
 }
 
-function WriteStream(
-  this: $Node.WriteStream,
-  path: string | URL | null | undefined,
-  options?: FileStreamOptions | string | null,
-): void {
+function WriteStream(this: FSStream, path: string | null | undefined, options?: any): void {
   if (!(this instanceof WriteStream)) {
-    return new WriteStream(path, options) as any;
+    return new WriteStream(path, options);
   }
 
-  let fastPath = (options as FileStreamOptions | null | undefined)?.$fastPath;
+  let fastPath = options?.$fastPath;
 
   options = copyObject(getStreamOptions(options));
 
@@ -532,7 +426,7 @@ function WriteStream(
     // Internal $fastPath callers (writableFromFileSink) discard .path; do not
     // resolve it - path.resolve("") needs process.cwd(), which throws when
     // the cwd has been deleted (Node still spawns children in that state).
-    this.path = fastPath ? (path as string | null | undefined) : getValidatedPath(path);
+    this.path = fastPath ? path : getValidatedPath(path);
     const { flags, mode } = options;
     this.flags = flags === undefined ? "w" : flags;
     this.mode = mode === undefined ? 0o666 : mode;
@@ -549,9 +443,9 @@ function WriteStream(
     } else {
       validateInt32(fd, "fd", 0, 2147483647);
     }
-    this.fd = fd as number;
+    this.fd = fd;
     this[kFs] = customFs || fs;
-  } else if (typeof fd === "object" && FileHandle !== undefined && fd instanceof FileHandle) {
+  } else if (typeof fd === "object" && fd instanceof FileHandle) {
     if (options.fs) {
       throw $ERR_METHOD_NOT_IMPLEMENTED("FileHandle with fs");
     }
@@ -575,8 +469,8 @@ function WriteStream(
       throw $ERR_INVALID_ARG_TYPE("options.fs.write", "function", write);
     }
     // It's enough to override either, in which case only one will be used.
-    if (!write) this._write = null!;
-    if (!writev) this._writev = null!;
+    if (!write) this._write = null;
+    if (!writev) this._writev = null;
   } else {
     this._writev = undefined;
     $assert(this[kFs].write, "assuming user does not delete fs.write!");
@@ -603,10 +497,10 @@ function WriteStream(
   // descriptor is the common case, and node's tty.WriteStream accepts one. Fall
   // back to the general path there, which surfaces the failure at write time the
   // way node does, rather than throwing from the constructor.
-  let fastWriter: FileSink | undefined;
+  let fastWriter;
   if (fastPath && fd != null) {
     try {
-      fastWriter = Bun.file(fd as number).writer() as FileSink;
+      fastWriter = Bun.file(fd).writer();
     } catch {
       fastPath = false;
     }
@@ -617,7 +511,7 @@ function WriteStream(
     this[kWriteStreamFastPath] = fd != null ? fastWriter : true;
     this._write = underscoreWriteFast;
     this._writev = undefined;
-    this.write = writeFast;
+    this.write = writeFast as any;
     this._final = finalFast;
     if (fd != null) {
       // Already-open fd (stdio): skip the async _construct round-trip so the
@@ -647,17 +541,8 @@ const writeStreamPrototype = WriteStream.prototype;
 writeStreamPrototype.open = streamNoop;
 writeStreamPrototype._construct = streamConstruct;
 
-function writeAll(
-  this: $Node.WriteStream,
-  data: Buffer,
-  size: number,
-  pos: number | undefined,
-  cb: ErrorCallback,
-  retries = 0,
-) {
-  if (IS_COMPILED_AHEAD_OF_TIME && this[kFs] == null)
-    throw new TypeError(`${this[kFs]} is not an object (evaluating 'size')`);
-  this[kFs].write!(this.fd, data, 0, size, pos, (er, bytesWritten, buffer) => {
+function writeAll(data, size, pos, cb, retries = 0) {
+  this[kFs].write(this.fd, data, 0, size, pos, (er, bytesWritten, buffer) => {
     // No data currently available and operation should be retried later.
     if (er?.code === "EAGAIN") {
       er = null;
@@ -668,33 +553,26 @@ function writeAll(
       return cb(er || $ERR_STREAM_DESTROYED("write"));
     }
 
-    this.bytesWritten += bytesWritten!;
+    this.bytesWritten += bytesWritten;
 
     retries = bytesWritten ? 0 : retries + 1;
-    size -= bytesWritten!;
-    if (pos !== undefined) pos += bytesWritten!;
+    size -= bytesWritten;
+    if (pos !== undefined) pos += bytesWritten;
 
     // Try writing non-zero number of bytes up to 5 times.
     if (retries > 5) {
       // cb($ERR_SYSTEM_ERROR('write failed'));
       cb(new Error("write failed"));
     } else if (size) {
-      writeAll.$call(this, buffer!.slice(bytesWritten), size, pos, cb, retries);
+      writeAll.$call(this, buffer.slice(bytesWritten), size, pos, cb, retries);
     } else {
       cb();
     }
   });
 }
 
-function writevAll(
-  this: $Node.WriteStream,
-  chunks: Buffer[],
-  size: number,
-  pos: number | undefined,
-  cb: ErrorCallback,
-  retries = 0,
-) {
-  this[kFs].writev!(this.fd, chunks, this.pos, (er, bytesWritten, buffers) => {
+function writevAll(chunks, size, pos, cb, retries = 0) {
+  this[kFs].writev(this.fd, chunks, this.pos, (er, bytesWritten, buffers) => {
     // No data currently available and operation should be retried later.
     if (er?.code === "EAGAIN") {
       er = null;
@@ -705,18 +583,18 @@ function writevAll(
       return cb(er || $ERR_STREAM_DESTROYED("writev"));
     }
 
-    this.bytesWritten += bytesWritten!;
+    this.bytesWritten += bytesWritten;
 
     retries = bytesWritten ? 0 : retries + 1;
-    size -= bytesWritten!;
-    pos! += bytesWritten!;
+    size -= bytesWritten;
+    pos += bytesWritten;
 
     // Try writing non-zero number of bytes up to 5 times.
     if (retries > 5) {
       // cb($ERR_SYSTEM_ERROR('writev failed'));
       cb(new Error("writev failed"));
     } else if (size) {
-      writevAll.$call(this, [(Buffer.concat(buffers!) as Buffer).slice(bytesWritten)], size, pos, cb, retries);
+      writevAll.$call(this, [Buffer.concat(buffers).slice(bytesWritten)], size, pos, cb, retries);
     } else {
       cb();
     }
@@ -724,14 +602,14 @@ function writevAll(
 }
 
 // Like Writable's afterWrite: no 'drain' once the stream is ending or destroyed.
-function emitDrain(stream: $Node.WriteStream) {
+function emitDrain(stream: FSStream) {
   const state = stream._writableState;
   if (state === undefined || !(state.ending || state.destroyed)) {
     stream.emit("drain");
   }
 }
 
-function _write(this: $Node.WriteStream, data: Buffer, encoding: string, cb: ErrorCallback) {
+function _write(data, encoding, cb) {
   const fileSink = this[kWriteStreamFastPath];
 
   if (fileSink && fileSink !== true) {
@@ -766,7 +644,7 @@ function _write(this: $Node.WriteStream, data: Buffer, encoding: string, cb: Err
 }
 writeStreamPrototype._write = _write;
 
-function underscoreWriteFast(this: $Node.WriteStream, data: Buffer, encoding: string, cb: ErrorCallback) {
+function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) {
   let fileSink = this[kWriteStreamFastPath];
   if (!fileSink) {
     // When the fast path is disabled, the write function gets reset.
@@ -775,7 +653,8 @@ function underscoreWriteFast(this: $Node.WriteStream, data: Buffer, encoding: st
   }
   try {
     if (fileSink === true) {
-      fileSink = this[kWriteStreamFastPath] = Bun.file(this.path!).writer() as FileSink;
+      fileSink = this[kWriteStreamFastPath] = Bun.file(this.path!).writer();
+      // @ts-expect-error
       this.fd = fileSink._getFd();
     }
 
@@ -798,12 +677,12 @@ function underscoreWriteFast(this: $Node.WriteStream, data: Buffer, encoding: st
     }
   } catch (e) {
     if (cb) process.nextTick(cb, e);
-    require("internal/streams/destroy").errorOrDestroy(this, e as Error, true);
+    require("internal/streams/destroy").errorOrDestroy(this, e, true);
     return false;
   }
 }
 
-function finalFast(this: $Node.WriteStream, cb: ErrorCallback) {
+function finalFast(this: FSStream, cb: (err?: any) => void) {
   const fileSink = this[kWriteStreamFastPath];
   if (!fileSink || fileSink === true) {
     cb(null);
@@ -816,41 +695,23 @@ function finalFast(this: $Node.WriteStream, cb: ErrorCallback) {
       return;
     }
   } catch (err) {
-    cb(err as Error);
+    cb(err);
     return;
   }
   cb(null);
 }
 
-// How the engine's "is not a function" names what it found.
-function describeForError(value: unknown): string {
-  if (typeof value === "string") return `"${value}"`;
-  if (typeof value !== "object" || value === null) return String(value);
-  const name = value.constructor?.name;
-  return "an instance of " + (typeof name === "string" && name !== "" ? name : "Object");
-}
-
 // This function implementation is not correct.
 const writablePrototypeWrite = Writable.prototype.write;
 const kWriteMonkeyPatchDefense = Symbol("!");
-function writeFast(
-  this: $Node.WriteStream,
-  data: any,
-  encoding?: string | null | ErrorCallback,
-  cb?: ErrorCallback,
-): boolean {
-  // The engine's errors quote the source of the expression that failed. A compiled frame has none, so what they say of a receiver that is no stream is written out.
-  if (IS_COMPILED_AHEAD_OF_TIME && this == null)
-    throw new TypeError(`${this} is not an object (evaluating 'kWriteMonkeyPatchDefense')`);
-  if (this[kWriteMonkeyPatchDefense]) return writablePrototypeWrite.$call(this, data, encoding as string, cb);
+function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
+  if (this[kWriteMonkeyPatchDefense]) return writablePrototypeWrite.$call(this, data, encoding, cb);
 
   // After end()/destroy() the Writable contract requires write() to fail with
   // ERR_STREAM_WRITE_AFTER_END / ERR_STREAM_DESTROYED and not reach the sink.
   const state = this._writableState;
-  if (IS_COMPILED_AHEAD_OF_TIME && state === null)
-    throw new TypeError("null is not an object (evaluating 'kWriteMonkeyPatchDefense')");
   if (state !== undefined && (state.ending || state.destroyed)) {
-    return writablePrototypeWrite.$call(this, data, encoding as string, cb);
+    return writablePrototypeWrite.$call(this, data, encoding, cb);
   }
 
   if (typeof encoding === "function") {
@@ -885,17 +746,7 @@ function writeFast(
       return true; // No backpressure
     }
   } else {
-    let result: any;
-    if (IS_COMPILED_AHEAD_OF_TIME) {
-      const write: any = this._write;
-      if (typeof write !== "function")
-        throw new TypeError(
-          `this._write is not a function. (In 'this._write(data, encoding, cb)', 'this._write' is ${describeForError(write)})`,
-        );
-      result = write.$call(this, data, encoding, cb);
-    } else {
-      result = this._write(data, encoding!, cb);
-    }
+    const result: any = this._write!(data, encoding, cb);
     if (this.write === writeFast) {
       this.write = writablePrototypeWrite;
     } else {
@@ -905,13 +756,13 @@ function writeFast(
   }
 }
 
-writeStreamPrototype._writev = function (this: $Node.WriteStream, data: $Node.ChunkToWrite[], cb: ErrorCallback) {
+writeStreamPrototype._writev = function (data, cb) {
   const len = data.length;
-  const chunks: Buffer[] = new Array(len);
+  const chunks = new Array(len);
   let size = 0;
 
   for (let i = 0; i < len; i++) {
-    const chunk = data[i].chunk as Buffer;
+    const chunk = data[i].chunk;
     chunks[i] = chunk;
     size += chunk.length;
   }
@@ -948,10 +799,10 @@ writeStreamPrototype._writev = function (this: $Node.WriteStream, data: $Node.Ch
   }
 };
 
-writeStreamPrototype._destroy = function (this: $Node.WriteStream, err: Error | null, cb: ErrorCallback) {
+writeStreamPrototype._destroy = function (err, cb) {
   const sink = this[kWriteStreamFastPath];
   if (sink && sink !== true) {
-    const end = sink.end(err!);
+    const end = sink.end(err);
     if ($isPromise(end)) {
       end.then(() => cb(err), cb);
       return;
@@ -964,13 +815,13 @@ writeStreamPrototype._destroy = function (this: $Node.WriteStream, err: Error | 
   // to close while used in a pending read or write operation. Wait for
   // any pending IO (kIsPerformingIO) to complete (kIoDone).
   if (this[kIsPerformingIO]) {
-    this.once(kIoDone, (er: Error | null) => close(this, err || er, cb));
+    this.once(kIoDone, er => close(this, err || er, cb));
   } else {
     close(this, err, cb);
   }
 };
 
-writeStreamPrototype.close = function (this: $Node.WriteStream, cb?: ErrorCallback) {
+writeStreamPrototype.close = function (this: FSStream, cb) {
   if (cb) {
     if (this.closed) {
       process.nextTick(cb);
@@ -994,22 +845,22 @@ writeStreamPrototype.close = function (this: $Node.WriteStream, cb?: ErrorCallba
 writeStreamPrototype.destroySoon = writeStreamPrototype.end;
 
 Object.defineProperty(writeStreamPrototype, "autoClose", {
-  get(this: $Node.WriteStream) {
+  get() {
     return this._writableState.autoDestroy;
   },
-  set(this: $Node.WriteStream, val: boolean) {
+  set(val) {
     this._writableState.autoDestroy = val;
   },
 });
 
 Object.defineProperty(writeStreamPrototype, "pending", {
-  get(this: $Node.WriteStream) {
+  get() {
     return this.fd === null;
   },
   configurable: true,
 });
 
-function thenIfPromise<T>(maybePromise: Promise<T> | T, cb: ErrorCallback) {
+function thenIfPromise<T>(maybePromise: Promise<T> | T, cb: any) {
   $assert(typeof cb === "function", "cb is not a function");
   if ($isPromise(maybePromise)) {
     maybePromise.then(() => cb(null), cb);
@@ -1018,11 +869,11 @@ function thenIfPromise<T>(maybePromise: Promise<T> | T, cb: ErrorCallback) {
   }
 }
 
-function writableFromFileSink(fileSink: FileSink) {
+function writableFromFileSink(fileSink: any) {
   $assert(typeof fileSink === "object", "fileSink is not an object");
   $assert(typeof fileSink.write === "function", "fileSink.write is not a function");
   $assert(typeof fileSink.end === "function", "fileSink.end is not a function");
-  const w: $Node.WriteStream = new WriteStream("", { $fastPath: true });
+  const w = new WriteStream("", { $fastPath: true });
   $assert(w[kWriteStreamFastPath] === true, "fast path not enabled");
   w[kWriteStreamFastPath] = fileSink;
   w.path = undefined;

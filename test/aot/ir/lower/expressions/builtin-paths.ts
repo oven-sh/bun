@@ -20,11 +20,9 @@
 // CHECK: = Builtin builtin=MathMax
 // CHECK-NOT: PropGet
 // CHECK-LABEL: function {{*}}name="mathPi"
-// CHECK-NOT: builtin=MathPI
-// CHECK: = Builtin builtin=Math @
-// CHECK-NOT: builtin=MathPI
-// CHECK: = PropGet {{*}}key="PI"
-// CHECK-NOT: builtin=MathPI
+// CHECK-NOT: PropGet
+// CHECK: = Double number=3.141592653589793 @
+// CHECK-NOT: PropGet
 // CHECK-LABEL: function {{*}}name="mathRandom"
 // CHECK: = Builtin builtin=Math @
 // CHECK: [[randomRead]] = PropGet {{*}}key="random"
@@ -39,8 +37,7 @@
 // CHECK: b0([[parameter]]: anything):
 // CHECK-NOT: Builtin
 // CHECK-NOT: builtin(
-// CHECK: [[receiver]] = Convert [[parameter]] declared={type=undefined|null|number|string|symbol|bigint|L{{*}} flags=[IsExpected]}
-// CHECK-NEXT: = PropGet [[receiver]] key="max"
+// CHECK: = PropGet [[parameter]] key="max"
 // CHECK-NOT: Builtin
 // CHECK-NOT: builtin(
 // CHECK-LABEL: function {{*}}name="symbolIterator"

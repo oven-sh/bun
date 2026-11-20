@@ -13,8 +13,6 @@ export default family("substrings carried across iterations", [
   },
   ...Array.from({ length: 200 }, (_, index) => ({
     name: `seed ${index + 1}.`,
-    flags:
-      index % 8 === 5 ? ["--aot-heat=everything-is-hot"] : index % 8 === 6 ? ["--aot-heat=everything-is-cold"] : [],
     make: () =>
       index % 2 === 1
         ? { file: "main.ts", text: generate(new Random(index + 1), true) }

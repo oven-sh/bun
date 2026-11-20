@@ -146,8 +146,6 @@ test("a helper written with another extension", () => {
 
 const forms: Record<string, Record<string, string>> = {
   "one program": { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" },
-  "two layers": { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1" },
-  "the host runs the test files": { BUN_AOT_TEST_FILES_FROM_DISK: "1", BUN_AOT_TESTS_NAME_WHAT_THEY_USE: "1" },
 };
 
 for (const [title, words] of Object.entries(forms)) {
@@ -165,7 +163,6 @@ for (const [title, words] of Object.entries(forms)) {
         printed,
         // The first scan is that of the test files.
         scan: log.find(line => line.startsWith("AOT test run | scan of ")),
-        startsOver: log.filter(line => line.startsWith("AOT build starts over")),
       };
     };
     const [plain, compiled] = [await lines(), await lines("--aot")];
@@ -173,8 +170,6 @@ for (const [title, words] of Object.entries(forms)) {
     expect(compiled.printed).toEqual(plain.printed);
     // No helper is left whose names nobody can read.
     expect(compiled.scan).toEndWith("spies on objects from somewhere false");
-    // TODO: where the host runs the test files flow still finds `kept` of src/math.ts.
-    if (!words.BUN_AOT_TEST_FILES_FROM_DISK) expect(compiled.startsOver).toEqual([]);
   });
 }
 

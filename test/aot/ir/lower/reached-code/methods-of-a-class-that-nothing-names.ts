@@ -1,15 +1,15 @@
 // RUN: link
 // CHECK-LABEL: function {{*}}name="Used"
-// CHECK-NOT: LeftOutOfExecutable
+// CHECK-NOT: OmittedFromExecutable
 // CHECK: Return
 // CHECK-LABEL: function {{*}}name="double"
-// CHECK-NOT: LeftOutOfExecutable
+// CHECK-NOT: OmittedFromExecutable
 // CHECK: Return
 // CHECK-LABEL: function {{*}}name="Registered"
-// CHECK-NOT: LeftOutOfExecutable
+// CHECK-NOT: OmittedFromExecutable
 // CHECK: Return
 // CHECK-LABEL: function {{*}}name="create"
-// CHECK-NOT: LeftOutOfExecutable
+// CHECK-NOT: OmittedFromExecutable
 // CHECK: Return
 
 // RUN(ABSENT): link

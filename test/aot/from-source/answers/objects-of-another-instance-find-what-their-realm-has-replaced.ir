@@ -1,0 +1,32 @@
+# Two instances of the image in one heap, in a build that admits replaced built-ins. The second replaces every method and getter of its realm that a stub answers for; its objects find the new ones, whoever calls.
+# -- source: main.js
+# import { make, asks, spoil } from "./kit.js";
+# register(make, asks, spoil);
+# -- source: kit.js
+# export function make() { const key = {}; return { key, list: [3, 1, 2], map: new Map([[1, "one"]]), set: new Set([1]), weakMap: new WeakMap([[key, "held"]]), weakSet: new WeakSet([key]), view: new Uint8Array(5) }; }
+# export const asks = {
+#   "list.includes": all => all.list.includes(1), "list.indexOf": all => all.list.indexOf(1), "list.join": all => all.list.join("+"), "list.pop": all => all.list.pop(), "list.push": all => all.list.push(9),
+#   "list.shift": all => all.list.shift(), "list.slice": all => all.list.slice(1), "list.sort": all => all.list.sort(), "list.splice": all => all.list.splice(0, 1), "list.toString": all => all.list.toString(), "list.unshift": all => all.list.unshift(9),
+#   "map.get": all => all.map.get(1), "map.has": all => all.map.has(1), "map.set": all => all.map.set(2, "two"), "map.delete": all => all.map.delete(1), "map.clear": all => all.map.clear(), "map.size": all => all.map.size,
+#   "set.add": all => all.set.add(2), "set.has": all => all.set.has(1), "set.delete": all => all.set.delete(1), "set.clear": all => all.set.clear(), "set.size": all => all.set.size,
+#   "weakMap.get": all => all.weakMap.get(all.key), "weakMap.has": all => all.weakMap.has(all.key), "weakMap.set": all => all.weakMap.set(all.key, 1), "weakSet.has": all => all.weakSet.has(all.key),
+# };
+# export function spoil() {
+#   Array.prototype.includes = function () { return "their list.includes"; }; Array.prototype.indexOf = function () { return "their list.indexOf"; }; Array.prototype.join = function () { return "their list.join"; };
+#   Array.prototype.pop = function () { return "their list.pop"; }; Array.prototype.push = function () { return "their list.push"; }; Array.prototype.shift = function () { return "their list.shift"; };
+#   Array.prototype.slice = function () { return "their list.slice"; }; Array.prototype.sort = function () { return "their list.sort"; }; Array.prototype.splice = function () { return "their list.splice"; };
+#   Array.prototype.toString = function () { return "their list.toString"; }; Array.prototype.unshift = function () { return "their list.unshift"; };
+#   Map.prototype.get = function () { return "their map.get"; }; Map.prototype.has = function () { return "their map.has"; }; Map.prototype.set = function () { return "their map.set"; };
+#   Map.prototype.delete = function () { return "their map.delete"; }; Map.prototype.clear = function () { return "their map.clear"; };
+#   Object.defineProperty(Map.prototype, "size", { get() { return "their map.size"; }, configurable: true });
+#   Set.prototype.add = function () { return "their set.add"; }; Set.prototype.has = function () { return "their set.has"; }; Set.prototype.delete = function () { return "their set.delete"; }; Set.prototype.clear = function () { return "their set.clear"; };
+#   Object.defineProperty(Set.prototype, "size", { get() { return "their set.size"; }, configurable: true });
+#   WeakMap.prototype.get = function () { return "their weakMap.get"; }; WeakMap.prototype.has = function () { return "their weakMap.has"; }; WeakMap.prototype.set = function () { return "their weakMap.set"; };
+#   WeakSet.prototype.has = function () { return "their weakSet.has"; };
+# }
+# -- end of source
+# OPTIONS: several-realms admit=ReplacedBuiltins
+# RUN: run-in-shell (function () { "use strict"; const second = createGlobalObject(); const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => { second.runCompiledEntryPoint(entry); return start(entry); }; const kitOf = f => ({ make: f[0], asks: f[1], spoil: f[2] }); const kits = { }; const finish = () => { if (!kits.first || !kits.second) return; const a = kits.first, b = kits.second; const names = Object.keys(a.asks); const said = (kit, name, all) => { try { return String(kit.asks[name](all)); } catch (error) { return "throws " + error.name + ": " + error.message; } }; for (let turn = 0; turn < 3; turn++) for (const name of names) { said(a, name, a.make()); said(a, name, b.make()); said(b, name, a.make()); said(b, name, b.make()); } const early = { }; for (const name of names) early[name] = [b.make(), b.make(), a.make(), a.make()]; const asMade = { }; for (const name of names) asMade[name] = said(a, name, a.make()); b.spoil(); let right = 0, asked = 0; const hold = (label, got, expected) => { asked++; if (got === expected) right++; else print(label + ": " + got + " and not " + expected); }; for (const name of names) { hold("we ask theirs " + name, said(a, name, early[name][0]), "their " + name); hold("they ask theirs " + name, said(b, name, early[name][1]), "their " + name); hold("we ask ours " + name, said(a, name, early[name][2]), asMade[name]); hold("they ask ours " + name, said(b, name, early[name][3]), asMade[name]); } print(right + " of " + asked); }; globalThis.register = (...f) => { kits.first = kitOf(f); finish(); }; second.register = (...f) => { kits.second = kitOf(f); finish(); }; })();
+# CHECK: 104 of 104
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the shell cannot run the source itself

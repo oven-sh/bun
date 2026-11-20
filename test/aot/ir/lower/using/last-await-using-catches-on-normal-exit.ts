@@ -1,4 +1,5 @@
 // RUN: lower
+// OPTIONS: builtin-modules
 // CHECK-LABEL: function {{*}}name="asynchronous"
 // CHECK: role=CatchHandler
 // CHECK-NEXT: [[normalError]] = CatchValue

@@ -123,6 +123,17 @@ impl SideEffects {
         expr: Expr,
     ) -> Option<Expr> {
         if !p.options.features.dead_code_elimination {
+            // The parser made every directive an `S::Directive`, so this string is not one. It
+            // prints as a template literal: as a string at the head of a body it would be one.
+            // The mark goes on a copy, because an inlined constant shares its node.
+            if let ExprData::EString(string) = expr.data
+                && !string.prefer_template
+                && !p.options.keep_directives
+            {
+                let mut copy = string.shallow_clone();
+                copy.prefer_template = true;
+                return Some(p.new_expr(copy, expr.loc));
+            }
             return Some(expr);
         }
         if !p.stack_check.is_safe_to_recurse() || p.reported_stack_overflow.get() {
@@ -378,9 +389,7 @@ impl SideEffects {
                             }
                         }
 
-                        // G::Property is not Copy (Vec ts_decorators field), so swap
-                        // so the kept property lands at `end` without cloning.
-                        e_object.properties.slice_mut().swap(end, j);
+                        e_object.properties.copy_within(j..=j, end);
                         end += 1;
                     }
                     e_object.properties.shrink_retaining_capacity(end);
@@ -640,7 +649,7 @@ impl SideEffects {
                     return false;
                 }
 
-                local.decls = G::DeclList::move_from_list(decls);
+                local.decls = bun_alloc::AstAlloc::vec_from_iter(decls);
                 true
             }
 

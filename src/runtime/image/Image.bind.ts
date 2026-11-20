@@ -1,10 +1,15 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 
 /** Chainable mutators — record an op and return `this`. */
 const chainable = { returns: b.self, passThis: true } as const;
 const chainableWithOptions = { ...chainable, args: { options: b.any }, capability: "js", throws: true } as const;
 /** Terminal async ops — run decode → pipeline → encode on the work pool. */
 const terminal = { returns: b.any.returning("Promise"), capability: "js", throws: true, passThis: true } as const;
+const settlingWith = (value: table.TableType) => ({
+  ...terminal,
+  returns: b.any.returning(table.instance("Promise").holding({ value, reason: table.any }).spec),
+});
 
 export const Image = b.class({
   rustPath: "crate::image::Image",
@@ -20,11 +25,11 @@ export const Image = b.class({
   internalFields: ["sourceJS"],
   proto: {
     avif: chainableWithOptions,
-    blob: terminal,
-    buffer: terminal,
-    bytes: terminal,
+    blob: settlingWith(table.instance("Blob")),
+    buffer: settlingWith(table.instance("Buffer")),
+    bytes: settlingWith(table.instance("Uint8Array")),
     /** toBase64() with the `data:{mime};base64,` prefix. */
-    dataurl: terminal,
+    dataurl: settlingWith(table.string),
     flip: chainable,
     flop: chainable,
     heic: chainableWithOptions,
@@ -34,7 +39,7 @@ export const Image = b.class({
     metadata: terminal,
     modulate: chainableWithOptions,
     /** ThumbHash rendered as a PNG data: URL of at most 32px. */
-    placeholder: { ...terminal, args: { format: b.any }, length: 0 },
+    placeholder: { ...settlingWith(table.string), args: { format: b.any }, length: 0 },
     png: chainableWithOptions,
     resize: {
       ...chainable,
@@ -44,9 +49,9 @@ export const Image = b.class({
       length: 2,
     },
     rotate: { ...chainable, args: { degrees: b.any }, capability: "js", throws: true },
-    toBase64: terminal,
+    toBase64: settlingWith(table.string),
     /** Sharp-compat alias for `buffer()`; same native fn, no overhead. */
-    toBuffer: { ...terminal, rustName: "buffer" },
+    toBuffer: { ...settlingWith(table.instance("Buffer")), rustName: "buffer" },
     webp: chainableWithOptions,
     width: { getter: b.i32, pure: true },
     /** Encode → fs.writeFile, both off-thread; resolves bytes-written. */

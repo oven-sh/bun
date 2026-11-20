@@ -1,0 +1,24 @@
+# main.cjs: module.exports = function parse(n) { return n }. What lies on a function is followed as what lies on a plain object is: nothing was laid on this one, so each of the host's looks finds nothing.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN(LINK): link functions variables lookups mechanisms=all
+# LINK: function f1 {{*}}callers-known
+# LINK: variable g0 {{*}}writers-known
+# LINK: lookup entry-hands-host-nothing
+# RUN(FEATURES): features
+# FEATURES-NOT: by BunServe
+
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe namesLookedFor=["fetch", "app"]}, {exportName="then"}]
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="file" module=m0 kind=CommonJsModule results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = Integer integer=1
+    v3 = Call v0, -, v2 calleeName="parse"
+    Return
+}
+function f1 name="parse" module=m0 length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

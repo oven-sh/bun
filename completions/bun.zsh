@@ -802,9 +802,11 @@ _bun_compile_completion() {
         '--compile-exec-argv[Prepend arguments to the executable'"'"'s execArgv]:compile-exec-argv' \
         '--disallow-code-generation-from-strings[In the executable, eval() and new Function() throw]' \
         '--explain[List the code that compiled to a slow path]' \
-        '--aot-log-type-mismatches[Log every value that does not match its declared type]' \
         '--aot-huge-heap[Remove the 32 GB heap limit per thread]' \
         '--aot-allow-code-from-disk[Let import() and require() load code from disk at run time]' \
+        '--aot-harden[Make a bug in the compiler harder to turn into a memory bug]:aot-harden' \
+        '--aot-order[Lay the executable out by order files that runs of it wrote]:aot-order:_files' \
+        '--aot-record-order[Build an executable that writes an order file when it runs]' \
         '--obfuscate[Strip function names and source locations from the executable and write them to a source map]' \
         '--compile-inspector[Let a debugger attach to the executable]' \
         '--compile-in-place[Keep modules at their paths on disk. The executable only runs on the machine that built it]' \
@@ -833,7 +835,8 @@ _bun_check_completion() {
         '--no-pretty[One line per error]' \
         '--all[Show every error]' \
         '--threads[Number of threads]:threads' \
-        '--timing[Print load and check times]' \
+        '--no-follow-imports[Report only the errors of the files you name]' \
+        '--timing[Print load and check times, and the slowest files]' \
         '--cwd[Set the working directory]:cwd:_files -/' \
         '--no-script[Run the type checker even if the project has a check script]' \
         '--aot[Also report the errors bun compile would report for these entry points]' \

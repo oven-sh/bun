@@ -1,6 +1,10 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 19
+// CHECK-LABEL: function {{*}}name="say"
+// CHECK-LABEL: function {{*}}name="seven"
+// CHECK-LABEL: function {{*}}name="both"
+// CHECK-LABEL: function {{*}}name="setHook"
 
 // FILE: main.ts
 // A module whose exported setter nobody calls and nobody names, and whose namespace object goes through then, catch or finally and gets away behind them, in one way a file: the setter is found all the same, and what it stores is called.
@@ -164,62 +168,3 @@ export function unrelated(): number { return 5; }
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: say seven both setHook
-// CHECK-LABEL: function {{*}}name="say"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}, {type=Array site=[[w_2]] flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="lines"
-// CHECK-NEXT: v4 = PropGet v3 key="push"
-// CHECK-NEXT: v5 = String string=": "
-// CHECK-NEXT: v6 = Add v0, v5
-// CHECK-NEXT: v7 = PropGet v1 key="map"
-// CHECK-NEXT: v8 = Builtin builtin=String
-// CHECK-NEXT: v9 = Call v7, v1, v8 calleeKey="map" calleeName="values.map"
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|Array<undefined|null|string> site=[[w_4]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v11 = PropGet v10 key="join"
-// CHECK-NEXT: v12 = String string=" | "
-// CHECK-NEXT: v13 = Call v11, v10, v12 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|string site=[[w_4]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v15 = Add v6, v14
-// CHECK-NEXT: v16 = Call v4, v3, v15 calleeKey="push" calleeName="lines.push"
-// CHECK-NEXT: v17 = Convert v16 declared={type=number site=[[w_5]]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v18 = Undefined
-// CHECK-NEXT: Return v18
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="seven"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=[[w_6]]}] functionTypes={{*}}[[f_7]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Integer integer=7
-// CHECK-NEXT: v1 = Convert v0 declared={type=number site=[[w_6]]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="both"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_8]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v2 = String string="set"
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_9]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="hookWord"
-// CHECK-NEXT: v5 = Add v2, v4
-// CHECK-NEXT: v6 = ElemGet v1, v5
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_10]]
-// CHECK-NEXT: v9 = Call v7, v1, v8
-// CHECK-NEXT: ReturnCall v9
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="setHook"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_11]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Undefined
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

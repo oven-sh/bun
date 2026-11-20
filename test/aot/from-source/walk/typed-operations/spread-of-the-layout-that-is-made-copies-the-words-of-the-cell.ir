@@ -1,0 +1,47 @@
+# -- source: spread-of-the-layout-that-is-made-copies-the-words-of-the-cell.ts
+# declare function sink(...values: unknown[]): void;
+# type State = { a: number; b?: string; c?: number };
+# type Named = { name: string; size?: number };
+# function again(state: State) { return { ...state }; }
+# function changed(state: State, a: number) { return { ...state, a }; }
+# function wider(named: Named, more: boolean) { return { ...named, more }; }
+# function without(state: State) { const { a, ...others } = state; return others; }
+# sink(again, changed, wider, without, { a: 1 } as State, { name: "n" } as Named);
+# -- end of source
+# A source of the layout of the literal itself hands over the words of its cell: one operation, whichever of the keys the source has and in whatever order it got them, as long for three fields as for three hundred.
+# It fills the empty object that is written. Where it refuses (another shape, a key outside the fields, a field outside its slot, an integrity level) the copy as written fills the same object.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: b0([[state]]:
+# CHECK: [[made]]: [[layout]] {{*}} = NewObject layout=[[layout]]
+# CHECK: [[shape]]: boolean {{*}} = ShapeTest [[state]] layouts={{*}}[[layout]]]
+# CHECK: frequency=Unlikely
+# CHECK: CopyDataProperties [[made]], [[state]]
+# CHECK: = TryCopyFields [[made]], {{*}} layout=[[layout]]
+# RUN(ONE): walk f1 mechanisms=all
+# ONE-COUNT-1: = NewObject
+# ONE-NOT: = NewObject
+# RUN(NOLOADS): walk f1 f2 mechanisms=all
+# NOLOADS-NOT: HasKeyOrder
+# NOLOADS-NOT: GetSlot
+# What is written behind the spread is stored into the same object
+# RUN(CHANGED): walk f2 mechanisms=all
+# CHANGED-LABEL: code f2:Body
+# CHANGED: [[made]]: [[layout]] {{*}} = NewObject layout=[[layout]]
+# CHANGED: = TryCopyFields [[made]],
+# CHANGED: PutSlotOrAdd [[made]], {{*}}key="a"
+# Of another layout the fields are loaded one by one behind a test for the one order that lists them all. Where the source says that objects leave a field out, few have that order: the copy stays as written.
+# The literal that is made fits Named too: it is not what Named is written as, so its words are not asked for either
+# RUN(OTHER): walk f3 mechanisms=all
+# OTHER-LABEL: code f3:Body
+# OTHER-NOT: ShapeTest
+# OTHER-NOT: TryCopyFields
+# OTHER: CopyDataProperties
+# A rest leaves keys out, so the words are not the properties
+# RUN(REST): walk f4 mechanisms=all
+# REST-LABEL: code f4:Body
+# REST-NOT: TryCopyFields
+# REST: CopyDataProperties {{*}}excludedKeys=["a"]
+# RUN(WITHHELD): walk f1 mechanisms=all-Guesses
+# WITHHELD-NOT: TryCopyFields
+# WITHHELD: CopyDataProperties

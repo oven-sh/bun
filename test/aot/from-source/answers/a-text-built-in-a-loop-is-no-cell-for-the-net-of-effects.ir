@@ -1,0 +1,13 @@
+# -- source: main.js
+# const n = (value) => Number(globalThis.nothingOfThisName ?? value);
+# function apart(start) { const made = { first: start, second: 2, third: 3 }; let all = ""; for (const [key, value] of Object.entries(made)) all += key + typeof value; return all; }
+# for (const start of [n(1), n(5)]) print(apart(start));
+# -- end of source
+# The text is built in the frame: the builder is kept as a cell and is none of the heap. The net under effects passes it by: it hashed it as an object where the byte in the place of a cell's type said so,
+# which a build with assertions does not let pass.
+# RUN: run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
+# CHECK: firstnumbersecondnumberthirdnumber
+# CHECK-NEXT: firstnumbersecondnumberthirdnumber
+# CHECK-NEXT: exited with 0
+# RUN(WALK): walk f1:Body mechanisms=all
+# WALK: = StackStringBuilderAppend

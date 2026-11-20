@@ -23,6 +23,7 @@ use crate::embedded::Framework;
 use crate::gitignore::{self, Files, GitIgnores};
 use crate::print_config::object;
 use crate::run::{Environment, Fatal};
+use crate::walk::AwaitTurn;
 use crate::{Linter, eslintrc, evaluate, fs, native, paths, rulesdir};
 use bun_core::strings;
 use bun_lint::context::Severity;
@@ -1875,7 +1876,10 @@ impl<'l> Loader<'l> {
             |it| it.1,
         );
         let json = match syntax {
-            Syntax::Program => evaluate::evaluate(self.environment, evaluate::ESLINT, path)?,
+            Syntax::Program => {
+                let built_in = self.linter.registry().rules_that_replace_packages();
+                evaluate::evaluate_with(self.environment, evaluate::ESLINT, path, &built_in)?
+            }
             Syntax::Json => {
                 let text = self.options.pipes.read(path).map_err(|error| {
                     Fatal(
@@ -1911,8 +1915,8 @@ impl<'l> Loader<'l> {
             return Err(Fatal([HAS_NO_LINT_FIELD, path].concat()));
         }
         // A file with any other name is classified by its content.
-        let flavor = known.map_or_else(
-            || match (&json, syntax) {
+        let flavor = known.map_or(
+            match (&json, syntax) {
                 (Json::Object(_), Syntax::Json) => Flavor::Oxlint,
                 _ => Flavor::Eslint,
             },
@@ -2760,6 +2764,7 @@ impl<'l> Loader<'l> {
         directory: &[u8],
         names: impl Iterator<Item = &'n [u8]>,
         inherited: &Arc<Loaded>,
+        await_turn: AwaitTurn<'_>,
     ) -> Found {
         let has_single_config = self.has_one_configuration() && !self.is_eslint_8_command_line();
         if has_single_config || self.options.disable_nested_config || !self.applies_in(directory) {
@@ -2767,9 +2772,13 @@ impl<'l> Loader<'l> {
         }
         // Config files apply from here down, including the ones in parent directories.
         if !self.applies_in(paths::dirname(directory)) {
-            return self.for_directory(directory);
+            return match await_turn() {
+                true => self.for_directory(directory),
+                false => Ok(Arc::clone(inherited)),
+            };
         }
         let picked = match self.pick(directory, names) {
+            (Some(_), _) if !await_turn() => return Ok(Arc::clone(inherited)),
             // The directory is below an oxlint config, which wins.
             (Some(name), _)
                 if self.tool().is_none()
@@ -2809,7 +2818,8 @@ impl<'l> Loader<'l> {
             (_, true)
                 if is_legacy()
                     && self.flat_config != Some(true)
-                    && eslintrc::has_eslintrc_file(directory) =>
+                    && eslintrc::has_eslintrc_file(directory)
+                    && await_turn() =>
             {
                 self.legacy(Some(directory))
             }

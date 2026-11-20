@@ -1,0 +1,14 @@
+# `if (list[i & 7] > 3) .. else if (list[i & 7] > 1) ..`: the second read is answered by what the first has found. Where proofs are checked at run time such a read is built once more, without the answers of the state, to hold memory against what was remembered:
+# behind a row in front of the loop that read would test for itself, and the look at the loop has counted on no other code. It is left out there
+# It was "an access in a loop does what the look at the loop has not counted on"
+# OPTIONS: check=Validate testing=CheckProofsAtRunTime
+# f1 = onSomeWays
+# -- source: element-read-twice-in-a-turn-is-not-read-again-to-check-what-is-remembered.ts
+# declare function sink(...values: unknown[]): void;
+# function onSomeWays(list: number[]): number { let t = 0; for (let i = 0; i < 5000; i++) { if (list[i & 7] > 3) t += i & 255; else if (list[i & 7] > 1) t -= 1000000007; } return t; }
+# sink(onSomeWays([0, 1, 2, 3, 4, 5, 6, 7]), onSomeWays([2.5, NaN, 9, -1, 4, 2, 0, 8]));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = HasArrayStorage
+# CHECK: = GetArrayElement {{*}}level=Proven

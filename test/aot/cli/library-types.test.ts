@@ -1,8 +1,11 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
+import { runTool, testaot } from "../engine/testaot";
+import { without } from "../harness/capabilities";
 import { built, slot, spawned } from "../harness/commands";
-import { describe, printIR, test, writesProgramInto } from "../harness/printed-ir";
+import { withProgramOutput } from "../harness/flags";
+import { describe, test } from "../supported";
 
 const program = {
   "app.ts": `
@@ -18,29 +21,36 @@ emitter.emit("value", 6);
 `,
 };
 
-function headersOf(dump: string, name: string) {
-  return dump.split("\n").filter(line => line.startsWith("function ") && line.includes(` name="${name}" `));
+const programFile = "program.aot";
+
+function headersOf(lines: string[], name: string) {
+  return lines.filter(line => line.startsWith("function ") && line.includes(` name="${name}" `));
 }
 
-async function dumpFunction(folder: string, name: string) {
-  const command = [bunExe(), "build", "--compile", "--aot", writesProgramInto(folder), "app.ts", "--outfile", "app"];
+// No Bun prints IR. Every Bun writes the program that its front end hands to the engine, and testaot prints it.
+async function buildAndPrintProgram(folder: string) {
+  const writesProgram = withProgramOutput(join(folder, programFile));
+  const command = [bunExe(), "build", "--compile", "--aot", writesProgram, "app.ts", "--outfile", "app"];
   built(await spawned(command, folder, { ...bunEnv, NO_COLOR: "1" }));
-  return headersOf(await printIR(folder, { until: "Select", functionName: name }), name);
+  const { lines, stderr, exitCode } = await runTool([testaot!, "print", programFile], folder);
+  expect({ stderr, exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
+  return lines;
 }
 
 describe("declared types of Bun's own modules", () => {
-  test(
+  test.skipIf(!!without("testaot"))(
     "are kept, as the program's are",
     () =>
       slot(async () => {
         using dir = tempDir("aot-library-types", program);
         const folder = String(dir);
+        const lines = await buildAndPrintProgram(folder);
 
-        const library = (await dumpFunction(folder, "emit")).filter(line => line.includes(" role=Library "));
+        const library = headersOf(lines, "emit").filter(line => line.includes(" role=Library "));
         expect(library.length).toBeGreaterThan(0);
         expect(library.some(header => header.includes("IsChecked"))).toBe(true);
 
-        const own = await dumpFunction(folder, "sum");
+        const own = headersOf(lines, "sum");
         expect(own.length).toBeGreaterThan(0);
         expect(own.some(header => header.includes("IsChecked"))).toBe(true);
 

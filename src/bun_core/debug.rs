@@ -283,7 +283,7 @@ fn caller_of_compiled_frame(
     } else {
         fp
     };
-    let caller_pc = load(place_of_record.checked_add(WORD)?)?;
+    let caller_pc = strip_return_address_signature(load(place_of_record.checked_add(WORD)?)?);
     let caller_sp = place_of_record.checked_add(2 * WORD + frame.bytes_above_return_address)?;
     Some((caller_pc, caller_sp, caller_fp))
 }
@@ -325,9 +325,118 @@ fn caller_of_faulting_stub(
     None
 }
 
+static HOLDS_COMPILED_CODE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// For whoever takes up a compiled program.
+pub fn note_compiled_code() {
+    HOLDS_COMPILED_CODE.store(true, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether a call instruction ends at `address`.
+#[cfg(target_arch = "x86_64")]
+fn is_behind_call(address: usize, mut load: impl FnMut(usize) -> Option<usize>) -> bool {
+    const OPCODE_OF_NEAR_CALL: u8 = 0xe8;
+    const OPCODE_OF_GROUP_5: u8 = 0xff;
+    let Some(bytes) = load(address - core::mem::size_of::<usize>()).map(usize::to_le_bytes) else {
+        return false;
+    };
+    let calls_through =
+        |length: usize| bytes[8 - length] == OPCODE_OF_GROUP_5 && bytes[9 - length] >> 3 & 7 == 2;
+    bytes[3] == OPCODE_OF_NEAR_CALL || [2, 3, 4, 6, 7].into_iter().any(calls_through)
+}
+
+/// The registers of the caller of native code that keeps a frame record, given its own: (pc, sp, fp).
+#[cfg(target_arch = "x86_64")]
+fn caller_by_frame_record(
+    sp: usize,
+    fp: usize,
+    mut load: impl FnMut(usize) -> Option<usize>,
+) -> Option<(usize, usize, usize)> {
+    const WORD: usize = core::mem::size_of::<usize>();
+    if fp < sp || !fp.is_multiple_of(WORD) {
+        return None;
+    }
+    let caller_fp = load(fp)?;
+    if caller_fp != 0 && caller_fp <= fp {
+        return None;
+    }
+    Some((
+        load(fp.checked_add(WORD)?)?,
+        fp.checked_add(2 * WORD)?,
+        caller_fp,
+    ))
+}
+
+/// Through how many frames the registers of one lead, that one counted, up to `most`.
+#[cfg(target_arch = "x86_64")]
+fn number_of_frames_from(
+    (mut pc, mut sp, mut fp): (usize, usize, usize),
+    most: usize,
+    mut load: impl FnMut(usize) -> Option<usize>,
+) -> usize {
+    let mut frames = 1;
+    while frames < most {
+        let caller = match compiled_frame_at_return_address(pc) {
+            Some(frame) => caller_of_compiled_frame(frame, sp, fp, &mut load),
+            None => caller_by_frame_record(sp, fp, &mut load),
+        };
+        let Some(caller) = caller else { break };
+        (pc, sp, fp) = caller;
+        frames += 1;
+    }
+    frames
+}
+
+/// The registers in the lowest frame of compiled code above `sp`: (pc, sp, fp). For code that faulted and keeps no frame record,
+/// as glibc's raise() under abort(). The native frames between are lost. What compiled code calls saves the frame pointer first.
+/// `load` answers `None` where nothing is mapped, so the search ends with the stack.
+///
+/// A slot that native code has not written since an earlier, deeper call still holds the return address and the frame pointer of
+/// that call. The frames that those name are gone. Followed, they end in whatever has been written over them, or they join the
+/// frames that are there further up and pass the lowest ones by. So each word that may be the one is followed, and the one that
+/// leads through the most frames is taken: every frame that is there lies on the way from the lowest. Of two that lead through as
+/// many the upper one is taken: what is left over lies below what is there.
+#[cfg(target_arch = "x86_64")]
+fn lowest_compiled_frame(
+    sp: usize,
+    mut load: impl FnMut(usize) -> Option<usize>,
+) -> Option<(usize, usize, usize)> {
+    const WORD: usize = core::mem::size_of::<usize>();
+    const WORDS_SEARCHED: usize = 8192;
+    const MOST_FOLLOWED: usize = 16;
+    const MOST_FRAMES_FOLLOWED: usize = 256;
+    if !sp.is_multiple_of(WORD) {
+        return None;
+    }
+    let mut best: Option<(usize, (usize, usize, usize))> = None;
+    let mut followed = 0;
+    for place in (1..WORDS_SEARCHED).map(|index| sp.wrapping_add(index * WORD)) {
+        let Some(word) = load(place) else { break };
+        if compiled_frame_at_return_address(word).is_none() || !is_behind_call(word, &mut load) {
+            continue;
+        }
+        let Some(fp) = load(place - WORD) else { break };
+        let found = (word, place + WORD, fp);
+        let frames = number_of_frames_from(found, MOST_FRAMES_FOLLOWED, &mut load);
+        // Where the stack is deeper than is followed nothing tells two apart, and the lower one stays.
+        if best.is_none_or(|(most, _)| {
+            frames > most || (frames == most && frames < MOST_FRAMES_FOLLOWED)
+        }) {
+            best = Some((frames, found));
+        }
+        followed += 1;
+        if followed == MOST_FOLLOWED {
+            break;
+        }
+    }
+    best.map(|(_, found)| found)
+}
+
 /// Code compiled with `-mbranch-protection=pac-ret` (an addon, a system
 /// library, Bun itself) saves its return addresses signed, in the bits above
-/// the address. An address without a signature stays as it is.
+/// the address. So does a compiled program where JavaScriptCore has
+/// `ENABLE(RETURN_ADDRESS_SIGNING)`. An address without a signature stays as it is.
 #[inline(always)]
 pub fn strip_return_address_signature(#[allow(unused_mut)] mut address: usize) -> usize {
     #[cfg(target_arch = "aarch64")]
@@ -382,6 +491,22 @@ impl StackIterator {
     }
 
     pub fn next(&mut self) -> Option<usize> {
+        #[cfg(target_arch = "x86_64")]
+        if HOLDS_COMPILED_CODE.load(core::sync::atomic::Ordering::Relaxed)
+            && let (true, Some((_, sp))) = (self.is_at_fault, self.returned_to)
+        {
+            return self.caller().or_else(|| {
+                let ma = &mut self.ma;
+                let (pc, sp, fp) = lowest_compiled_frame(sp, |address| ma.load_usize(address))?;
+                self.fp = fp;
+                self.returned_to = Some((pc, sp));
+                Some(pc)
+            });
+        }
+        self.caller()
+    }
+
+    fn caller(&mut self) -> Option<usize> {
         if let Some((pc, sp)) = self.returned_to {
             let is_at_fault = core::mem::take(&mut self.is_at_fault);
             if let Some(frame) = compiled_frame_at_return_address(pc) {
@@ -413,6 +538,14 @@ impl StackIterator {
 
         // Sanity check.
         if fp == 0 || fp % core::mem::align_of::<usize>() != 0 {
+            return None;
+        }
+        // A frame record lies in its frame, so not below the stack pointer. Code that keeps none has anything in the register: glibc's
+        // raise() has the id of the thread there, which every eighth time is aligned, and is an address in the image of a
+        // compiled executable, which is loaded low.
+        if HOLDS_COMPILED_CODE.load(core::sync::atomic::Ordering::Relaxed)
+            && self.returned_to.is_some_and(|(_, sp)| fp < sp)
+        {
             return None;
         }
         let new_fp = self.ma.load_usize(fp)?;
@@ -505,7 +638,7 @@ pub(crate) fn capture_current(first_address: Option<usize>, out: &mut [usize]) -
 }
 
 #[cfg(windows)]
-pub fn with_current_context<R>(run: impl FnOnce(usize, usize) -> R) -> R {
+pub fn with_current_context<R>(run: impl FnOnce(usize, &bun_windows_sys::CONTEXT) -> R) -> R {
     unsafe extern "system" {
         fn RtlCaptureContext(context: *mut bun_windows_sys::CONTEXT);
     }
@@ -519,40 +652,39 @@ pub fn with_current_context<R>(run: impl FnOnce(usize, usize) -> R) -> R {
     let pc = context.Rip;
     #[cfg(target_arch = "aarch64")]
     let pc = context.Pc;
-    run(pc as usize, &raw const context as usize)
+    run(pc as usize, &context)
 }
 
 /// Capture a faulting thread's call stack from the fault context. `pc` is the
-/// exact faulting instruction (`ExceptionAddress` / `mcontext` PC) and becomes
-/// frame 0.
+/// exact faulting instruction (`ExceptionAddress`) and becomes frame 0.
 ///
-/// POSIX: walk frame pointers from `fp` (the saved frame pointer register).
-/// No trimming is needed — the walk starts on the faulting stack, so the
-/// signal handler's own frames (on the altstack) are never in the chain.
-///
-/// Windows: `fp` is the `*const CONTEXT` the VEH received (`EXCEPTION_POINTERS
-/// ::ContextRecord`). The walk is `RtlLookupFunctionEntry` + `RtlVirtualUnwind`
+/// The walk is `RtlLookupFunctionEntry` + `RtlVirtualUnwind`
 /// seeded from that context, so it starts at the fault frame and the handler's
 /// own frames are never in the chain. `rbp` is not a reliable frame pointer
 /// across the prebuilt JavaScriptCore/LLInt code, so an fp-walk would derail;
 /// `.pdata` is always emitted, so the Rtl unwinder works everywhere.
-pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
+#[cfg(windows)]
+pub fn capture_from_context(
+    pc: usize,
+    context: Option<&bun_windows_sys::CONTEXT>,
+    out: &mut [usize],
+) -> usize {
     if out.is_empty() {
         return 0;
     }
     out[0] = pc;
     let mut n = 1usize;
-    #[cfg(windows)]
-    {
-        use bun_windows_sys::{CONTEXT, UNW_FLAG_NHANDLER, ntdll};
-        if fp == 0 {
-            // No CONTEXT available (should not happen for a real VEH fault).
-            return n;
-        }
-        // SAFETY: `fp` is `EXCEPTION_POINTERS::ContextRecord` from the kernel;
-        // valid for the duration of the handler. Copy so RtlVirtualUnwind can
-        // mutate freely without touching the kernel's record.
-        let mut ctx: CONTEXT = unsafe { *(fp as *const CONTEXT) };
+    if let Some(context) = context {
+        use bun_windows_sys::{UNW_FLAG_NHANDLER, ntdll};
+        // Copy so RtlVirtualUnwind can mutate freely without touching the kernel's record.
+        let mut ctx = *context;
+        let load = |address: usize| {
+            // An aligned word lies in one page, which is all that `is_valid_memory` looks at.
+            if !address.is_multiple_of(core::mem::size_of::<usize>()) {
+                return None;
+            }
+            MemoryAccessor {}.load_usize(address)
+        };
         // Termination: on x64 RtlVirtualUnwind sets Pc = 0 at the end of the
         // chain; on ARM64 it can leave the CONTEXT entirely unchanged, so a
         // step that changed neither Pc nor Sp is also terminal. An Sp-only or
@@ -581,13 +713,6 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
                 let frame_pointer = ctx.Rbp;
                 #[cfg(target_arch = "aarch64")]
                 let frame_pointer = ctx.Fp;
-                let load = |address: usize| {
-                    if address % core::mem::size_of::<usize>() != 0 || !is_valid_memory(address) {
-                        return None;
-                    }
-                    // SAFETY: the word is aligned, so it lies in the one page that is_valid_memory found committed and readable.
-                    Some(unsafe { *(address as *const usize) })
-                };
                 let Some((caller_pc, caller_sp, caller_fp)) = caller_of_compiled_frame(
                     compiled_frame,
                     control_sp as usize,
@@ -615,15 +740,10 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
                 // so `Sp` is correctly left unchanged here.
                 #[cfg(target_arch = "x86_64")]
                 {
-                    if ctx.Rsp & 7 != 0 || !is_valid_memory(ctx.Rsp as usize) {
+                    let Some(return_address) = load(ctx.Rsp as usize) else {
                         break;
-                    }
-                    // SAFETY: is_valid_memory confirmed the page at `Rsp` is
-                    // committed and readable (not reserved/guard/noaccess),
-                    // and `Rsp` is 8-aligned.
-                    unsafe {
-                        ctx.Rip = *(ctx.Rsp as *const u64);
-                    }
+                    };
+                    ctx.Rip = return_address as u64;
                     ctx.Rsp += 8;
                 }
                 #[cfg(target_arch = "aarch64")]
@@ -663,10 +783,6 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
             n += 1;
         }
     }
-    #[cfg(not(windows))]
-    {
-        n += walk(StackIterator::init(fp), &mut out[n..]);
-    }
     n
 }
 
@@ -685,7 +801,7 @@ fn walk(mut it: StackIterator, out: &mut [usize]) -> usize {
     n
 }
 
-/// As `capture_from_context`, with the stack pointer at the fault. On x86-64 many frames of ahead-of-time compiled code have no
+/// Walks frame pointers from the registers at the fault, and `pc` becomes frame 0. On x86-64 many frames of ahead-of-time compiled code have no
 /// frame record: where the fault lies in one, the frame-pointer chain starts at a caller far up the stack, and the callers in
 /// between are found from the stack pointer and the tables. `behind_pc` lies behind the start of the instruction at `pc` and
 /// not behind its end: the tables are asked about return addresses.
@@ -700,7 +816,8 @@ pub fn capture_from_fault(
     if out.is_empty() {
         return 0;
     }
-    out[0] = pc;
+    // Without FEAT_FPAC a return address that fails to authenticate gets bits in that place, and the return to it faults.
+    out[0] = strip_return_address_signature(pc);
     let mut it = StackIterator::init(fp);
     if cfg!(target_arch = "x86_64") {
         it.returned_to = Some((behind_pc, sp));

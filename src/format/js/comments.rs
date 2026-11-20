@@ -47,7 +47,7 @@ impl CommentExt for Comment<'_> {
 }
 
 /// `content` is the text between `/*` and `*/`.
-fn is_indentable_text(content: &[u8]) -> bool {
+pub(crate) fn is_indentable_text(content: &[u8]) -> bool {
     let mut lines = bun_core::strings::split_crlf_lines(content)
         .skip(1)
         .peekable();

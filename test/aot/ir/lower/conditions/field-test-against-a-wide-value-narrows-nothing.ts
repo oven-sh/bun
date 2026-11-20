@@ -1,7 +1,7 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="anyValue"
 // CHECK: [[anyTest]] = StrictEq
-// CHECK-NEXT: Branch [[anyTest]] -> taken {{*}}(| 1), notTaken {{*}}(| 1)
+// CHECK-NEXT: Branch [[anyTest]] -> taken {{*}}(), notTaken {{*}}()
 // CHECK-NOT: NarrowByField
 // CHECK-LABEL: function {{*}}name="callResult"
 // CHECK: [[callTest]] = StrictEq
@@ -14,16 +14,16 @@
 // CHECK-LABEL: function {{*}}name="unitValue"
 // CHECK: = PropGet [[unitHolder]] key="kind"
 // CHECK: [[unitTest]] = StrictEq
-// CHECK-NEXT: Branch [[unitTest]] -> taken [[unitTaken]](| 0, 1), notTaken {{*}}(| 0, 1)
-// CHECK: [[unitTaken]]([[unitRead]], [[unitWanted]]):
+// CHECK-NEXT: Branch [[unitTest]] -> taken [[unitTaken]](| 0), notTaken {{*}}(| 0)
+// CHECK: [[unitTaken]]([[unitRead]]):
 // CHECK-NEXT: = NarrowByField [[unitHolder]], [[unitRead]] key="kind"
 // CHECK-LABEL: function {{*}}name="wideEnum"
 // CHECK: [[enumTest]] = StrictEq
-// CHECK-NEXT: Branch [[enumTest]] -> taken {{*}}(| 1), notTaken {{*}}(| 1)
+// CHECK-NEXT: Branch [[enumTest]] -> taken {{*}}(), notTaken {{*}}()
 // CHECK-NOT: NarrowByField
 // CHECK-LABEL: function {{*}}name="wideNumber"
 // CHECK: [[numberTest]] = StrictEq
-// CHECK-NEXT: Branch [[numberTest]] -> taken {{*}}(| 1), notTaken {{*}}(| 1)
+// CHECK-NEXT: Branch [[numberTest]] -> taken {{*}}(), notTaken {{*}}()
 // CHECK-NOT: NarrowByField
 
 declare function pick(): K;

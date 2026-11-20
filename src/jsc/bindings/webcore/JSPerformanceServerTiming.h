@@ -20,71 +20,25 @@
 
 #pragma once
 
-#include "JSDOMWrapper.h"
+#include "JSDOMInterface.h"
 #include "PerformanceServerTiming.h"
-#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 
-class JSPerformanceServerTiming : public JSDOMWrapper<PerformanceServerTiming> {
+class JSPerformanceServerTiming final : public JSDOMInterface<JSPerformanceServerTiming, PerformanceServerTiming> {
 public:
-    using Base = JSDOMWrapper<PerformanceServerTiming>;
-    static JSPerformanceServerTiming* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<PerformanceServerTiming>&& impl)
-    {
-        auto& vm = JSC::getVM(globalObject);
-        JSPerformanceServerTiming* ptr = new (NotNull, JSC::allocateCell<JSPerformanceServerTiming>(vm)) JSPerformanceServerTiming(structure, *globalObject, WTF::move(impl));
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
-    static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
-    static PerformanceServerTiming* toWrapped(JSC::VM&, JSC::JSValue);
-    static void destroy(JSC::JSCell*);
+    using JSDOMInterface::JSDOMInterface;
 
     DECLARE_INFO;
+    static constexpr auto subspaceSlots = BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformanceServerTiming, m_subspaceForPerformanceServerTiming);
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
-    }
-
+    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return subspaceForImpl(vm);
-    }
-    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
-    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-
-protected:
-    JSPerformanceServerTiming(JSC::Structure*, JSDOMGlobalObject&, Ref<PerformanceServerTiming>&&);
-
-    DECLARE_DEFAULT_FINISH_CREATION;
+    bool isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor&, ASCIILiteral*) const { return false; }
 };
-
-class JSPerformanceServerTimingOwner final : public JSC::WeakHandleOwner {
-public:
-    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
-};
-
-inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, PerformanceServerTiming*)
-{
-    static NeverDestroyed<JSPerformanceServerTimingOwner> owner;
-    return &owner.get();
-}
-
-JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, PerformanceServerTiming&);
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, PerformanceServerTiming* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<PerformanceServerTiming>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<PerformanceServerTiming>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
 template<> struct JSDOMWrapperConverterTraits<PerformanceServerTiming> {
     using WrapperClass = JSPerformanceServerTiming;
-    using ToWrappedReturnType = PerformanceServerTiming*;
 };
 
 } // namespace WebCore

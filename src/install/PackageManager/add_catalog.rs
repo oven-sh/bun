@@ -26,8 +26,7 @@ use super::add_remove_with_filter::{
 };
 use super::options::LogLevel;
 use super::package_json_editor::{self as PackageJSONEditor, EditOptions};
-use super::update_package_json_and_install::save_entry;
-use super::workspace_package_json_cache::MapEntry;
+use super::update_package_json_and_install::{package_json_entry_or_crash, save_entry};
 use super::{PackageManager, Subcommand, UpdateRequest};
 
 type ExprDisabler = bun_ast::expr::Disabler;
@@ -295,7 +294,7 @@ fn request_literal(request: &UpdateRequest) -> &[u8] {
 
 /// `bun add foo` parses as a DistTag with an empty literal, so the tag alone cannot tell a bare name from `foo@latest`.
 fn has_explicit_version(request: &UpdateRequest) -> bool {
-    request.version.tag != dependency::Tag::Uninitialized && !request_literal(request).is_empty()
+    request.version.tag() != dependency::Tag::Uninitialized && !request_literal(request).is_empty()
 }
 
 fn collect_root_entries(root: &Expr, group: &[u8], out: &mut Vec<RootEntry>) {
@@ -375,7 +374,7 @@ pub(crate) fn prepare(manager: &mut PackageManager, updates: &[UpdateRequest]) {
                 }
                 Global::crash();
             }
-            if request.version.tag == dependency::Tag::Workspace {
+            if request.version.tag() == dependency::Tag::Workspace {
                 Output::err_generic(
                     "--catalog cannot add a workspace package, but got \"{s}@{s}\"",
                     (BStr::new(request.name), BStr::new(request_literal(request))),
@@ -964,14 +963,15 @@ fn other_users_of(
 
 pub(crate) fn edit_root_entry_before_install(
     manager: &mut PackageManager,
-    root_package_json: &mut MapEntry,
+    root: Expr,
+    path: &[u8],
 ) -> Result<(), crate::Error> {
     if manager.catalog_add.adds.is_empty() {
         return Ok(());
     }
-    let root = root_package_json.root;
     edit_root_before_install(manager, &root)?;
-    save_entry(root_package_json, root, manager.log_mut());
+    let log = manager.log_mut();
+    save_entry(package_json_entry_or_crash(manager, log, path), root, log);
     Ok(())
 }
 
@@ -1004,8 +1004,10 @@ pub(crate) fn edit_root_after_install(
             .iter()
             .zip(lockfile.buffers.resolutions.iter())
         {
-            if dep.version.tag != dependency::Tag::Catalog
-                || pkg_id == INVALID_PACKAGE_ID
+            let dependency::Value::Catalog(catalog) = &dep.version.value else {
+                continue;
+            };
+            if pkg_id == INVALID_PACKAGE_ID
                 || (pkg_id as usize) >= resolutions.len()
                 || resolutions[pkg_id as usize].tag != resolution::Tag::Npm
             {
@@ -1014,7 +1016,7 @@ pub(crate) fn edit_root_after_install(
             let Some(i) = adds.iter().position(|add| {
                 matches!(add.outcome, Outcome::Seeded)
                     && add.name_hash == dep.name_hash
-                    && CatalogMap::same_name(dep.version.catalog().slice(buf), &add.group)
+                    && CatalogMap::same_name(catalog.slice(buf), &add.group)
             }) else {
                 continue;
             };
@@ -1064,13 +1066,13 @@ pub(crate) fn edit_root_after_install(
                 let Some(seed) = lockfile.catalogs.find(buf, &add.group, &add.name) else {
                     continue;
                 };
-                let target = match seed.version.tag {
-                    dependency::Tag::DistTag => seed.version.dist_tag().name,
+                let target = match &seed.version.value {
+                    dependency::Value::DistTag(dist_tag) => dist_tag.name,
                     // With `--exact`, a range the user typed is also replaced by the exact version.
-                    dependency::Tag::Npm
+                    dependency::Value::Npm(npm)
                         if exact && matches!(add.candidate, Candidate::Explicit(_)) =>
                     {
-                        seed.version.npm().name
+                        npm.name
                     }
                     _ => continue,
                 };

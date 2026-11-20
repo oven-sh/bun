@@ -1,0 +1,3 @@
+// What is printed is what plain Bun prints.
+if (process.argv[2] === "never") Array.prototype.indexOf.call({ length: 2 ** 53 - 1 }, 1);
+console.log(new RegExp(process.argv[3] ?? "a").test("a"));

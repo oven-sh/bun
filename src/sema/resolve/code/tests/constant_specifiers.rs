@@ -122,6 +122,109 @@ fn claimed_external_kind_is_unchanged() {
     assert_eq!(kind_of("./addon.node"), host_value);
 }
 
+fn packages_left_outside() -> MemoryHost {
+    let files = MemoryHost::new(&[
+        ("/p/package.json", r#"{"name": "app"}"#),
+        ("/p/a.ts", ""),
+        ("/p/node_modules/outside/index.js", ""),
+        ("/p/node_modules/outside/inner.js", ""),
+        ("/p/node_modules/@scope/outside/lib/a.js", ""),
+        ("/p/node_modules/inside/index.js", ""),
+        ("/store/linked/package.json", r#"{"name": "linked"}"#),
+        ("/store/linked/index.js", ""),
+    ]);
+    let names = ["app", "outside", "@scope/outside", "linked"];
+    names.into_iter().fold(files, |host, name| {
+        host.claim(name, external(name, ExternalKind::UncompiledCode))
+    })
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn path_into_package_left_outside() {
+    let host = packages_left_outside();
+    with_resolver(&host, &bun_run(), |resolver| {
+        let leads_outside = |importer, path| {
+            let request = import_request(importer, path);
+            let found = find_file(resolver, &request);
+            resolver.leads_into_package_left_outside(&request, found.path)
+        };
+        for path in [
+            "./node_modules/outside/index.js",
+            "./node_modules/outside/inner",
+            "/p/node_modules/outside/index.js",
+            "./node_modules/@scope/outside/lib/a.js",
+            "../store/linked/index.js",
+        ] {
+            assert!(leads_outside("/p/main.ts", path), "{path}");
+        }
+        let inside = "./node_modules/inside/index.js";
+        assert!(!leads_outside("/p/main.ts", inside));
+        assert!(!leads_outside("/p/main.ts", "./a.ts"));
+        let index = "/p/node_modules/outside/index.js";
+        assert!(!leads_outside(index, "./inner.js"));
+    });
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn one_of_a_few_paths_into_package_left_outside() {
+    let host = packages_left_outside();
+    let request = ComputedCodeRequest {
+        prefix: b"",
+        suffix: b"",
+        importer: b"/p/main.ts",
+        directory: b"/p",
+        kind: Import,
+        form: CodeImportForm::Dynamic,
+        site: Default::default(),
+    };
+    let paths: [(&[u8], Option<&[u8]>); 2] = [
+        (b"./a.ts", None),
+        (b"./node_modules/outside/index.js", None),
+    ];
+    with_resolver(&host, &bun_run(), |resolver| {
+        let ComputedResolution::Candidates { candidates, .. } =
+            resolver.resolve_alternative_code(&request, &paths)
+        else {
+            panic!("every path is known");
+        };
+        let a = find_file(resolver, &import_request("/p/main.ts", "./a.ts"));
+        assert_eq!(candidates, [ComputedCandidate::File(a)]);
+    });
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn start_of_path_into_package_left_outside() {
+    let host = packages_left_outside();
+    with_resolver(&host, &bun_run(), |resolver| {
+        let candidates_under = |prefix: &[u8]| {
+            let request = ComputedCodeRequest {
+                prefix,
+                suffix: b"",
+                importer: b"/p/main.ts",
+                directory: b"/p",
+                kind: Import,
+                form: CodeImportForm::Dynamic,
+                site: Default::default(),
+            };
+            let ComputedResolution::Candidates { candidates, .. } =
+                resolver.resolve_computed_code(&request)
+            else {
+                panic!("the folder is known");
+            };
+            candidates
+        };
+        assert!(candidates_under(b"./node_modules/outside/").is_empty());
+        assert!(candidates_under(b"./node_modules/@scope/outside/lib/").is_empty());
+        let inside = "./node_modules/inside/index.js";
+        let inside = find_file(resolver, &import_request("/p/main.ts", inside));
+        let found = candidates_under(b"./node_modules/inside/");
+        assert!(found.contains(&ComputedCandidate::File(inside)));
+    });
+}
+
 #[test]
 #[cfg_attr(miri, ignore)]
 fn external_kind_of_imports_target_is_unchanged() {
@@ -368,7 +471,6 @@ fn symlinks_resolve_to_real_paths() {
     assert_eq!(import(&host, "./a.ts"), "/p/a.ts");
 }
 
-// Where letter case does not count, the real path of `Foo.ts` is `foo.ts`, and `bun run` runs the module as `Foo.ts`.
 #[test]
 #[cfg_attr(miri, ignore)]
 fn path_from_resolver_of_host_is_kept() {

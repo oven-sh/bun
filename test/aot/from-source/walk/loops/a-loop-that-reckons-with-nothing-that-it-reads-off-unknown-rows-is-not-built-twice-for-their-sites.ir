@@ -1,0 +1,24 @@
+# -- source: a-loop-that-reckons-with-nothing-that-it-reads-off-unknown-rows-is-not-built-twice-for-their-sites.ts
+# declare function print(value: unknown): void;
+# declare function id(value: any): any;
+# const rows = JSON.parse('[{"name":"a","done":true,"price":0.5},{"name":"b","done":false,"price":1.5},{"name":"c","done":true,"price":2.5}]');
+# function lastDone(): unknown { let last = null; for (const row of rows) if (row.done) last = row.name; return last; }
+# function paid(): number { let sum = 0; for (const row of rows) if (row.done) sum += row.price; return sum; }
+# print(id(lastDone)());
+# print(id(paid)());
+# -- end of source
+# LIBRARY: own
+# f1 = lastDone, f2 = paid. A second copy of a loop costs the build its operations once more. Where a read off an unknown row is reckoned with, the copy keeps the sum raw and the list's storage in front: half the instructions.
+# Where the turns only test a flag and keep a name it saves a fifth: that loop is walked once, as before. In `paid` one read is reckoned with, so every read of the loop asks its site, the flag's too.
+# RUN(ONCE): walk f1 mechanisms=all
+# ONCE-LABEL: code f1:Body
+# ONCE-NOT: = GetValueAtSiteOrAbsent
+# RUN(TWICE): walk f2 mechanisms=all
+# TWICE-LABEL: code f2:Body
+# TWICE: = GetValueAtSiteOrAbsent {{*}}key="done"
+# TWICE: = GetValueAtSiteOrAbsent {{*}}key="price"
+# TWICE: = Add {{*}}form=Numbers
+# RUN: run-in-shell mechanisms=all
+# CHECK: c
+# CHECK-NEXT: 3
+# CHECK-NEXT: exited with 0

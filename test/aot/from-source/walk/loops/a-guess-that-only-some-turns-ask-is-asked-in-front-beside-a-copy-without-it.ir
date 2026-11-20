@@ -1,0 +1,8 @@
+# -- source: main.js
+# class Matrix { constructor(modules) { this.size = modules.length; this.modules = modules; } runs() { const { size, modules } = this; let score = 0; const line = get => { for (let i = 1; i <= size; i++) { if (i < size && get(i) === get(i - 1)) score++; } }; for (let i = 0; i < size; i++) line(k => modules[i][k]); return score; } }
+# globalThis.kept = Matrix;
+# -- end of source
+# `get(i)` stands behind `i < size &&`: not every turn asks whether `modules` is a list. The closure is copied into the loop only while the turn is walked, so no look in front of the loop sees its reads. The guess is asked in front of the typed copy all the same: where it fails, the loop goes on in ONE more typed copy, which is walked without such guesses, not in the closed copy.
+# The inner loop has three heads: the copy with the guesses in front, the copy beside it, the closed copy; with the two of the loop around that is five.
+# RUN(HEADS): walk f2 mechanisms=all
+# HEADS-COUNT-5: isLoopHead=true

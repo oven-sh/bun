@@ -118,10 +118,8 @@ const crossed = held.flatMap(holds =>
 export const inOne = 20;
 const laidOut = [
   { isTyped: true, flags: [] },
-  { isTyped: true, flags: ["--aot-heat=everything-is-hot"] },
   { isTyped: true, flags: ["--aot-erase-types"] },
   { isTyped: false, flags: [] },
-  { isTyped: false, flags: ["--aot-heat=everything-is-hot"] },
 ];
 const inOneBuild = Math.ceil(crossed.length / inOne);
 export const programs = laidOut.length * inOneBuild;

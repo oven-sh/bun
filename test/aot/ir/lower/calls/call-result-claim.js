@@ -6,8 +6,7 @@
 // CHECK-LABEL: function {{*}}name="writtenResult"
 // CHECK-NOT: site=
 // CHECK: [[result]] = Call {{*}}calleeName="parse"
-// CHECK-NEXT: [[convertedResult]] = Convert [[result]] declared={type=undefined|null|number|string|symbol|bigint|L{{*}} flags=[IsExpected]}
-// CHECK-NEXT: = PropGet [[convertedResult]] key="port"
+// CHECK-NEXT: = PropGet [[result]] key="port"
 // CHECK-NOT: site=
 
 export function anyResult(untyped) {

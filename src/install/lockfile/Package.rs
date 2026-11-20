@@ -1876,7 +1876,9 @@ impl Diff {
     }
 
     /// `to` is about to replace `from_id`. Its dependencies keep the resolutions that `generate`
-    /// would let the root's dependencies keep.
+    /// would let the root's dependencies keep. A bundled one keeps none: `to` was read again, so
+    /// its turn binds it to what `to` ships (`take_next_turn`), and the package that bun.lock had
+    /// for it goes.
     pub(crate) fn keep_resolutions(pm: &mut PackageManager, from_id: PackageID, to: &Package) {
         if from_id >= pm.lockfile.loaded_package_count {
             return;
@@ -1889,6 +1891,9 @@ impl Diff {
             let lockfile = &*pm.lockfile;
             let buf = lockfile.buffers.string_bytes.as_slice();
             let to_dep = &lockfile.buffers.dependencies[to_i];
+            if to_dep.behavior.is_bundled() {
+                continue;
+            }
             let kept = Self::locked_for(lockfile, from, to_dep, |from_dep, locked| {
                 (lockfile.packages.items_resolution().get(locked as usize))
                     .is_some_and(|resolution| resolution.tag != ResolutionTag::Folder)
@@ -1926,6 +1931,7 @@ impl Diff {
     }
 
     /// A dependency in `to` that `refreshes_in_place` keeps the package of the same one in `from`.
+    /// A bundled one keeps none, as in `keep_resolutions`, and no source is read for it again.
     pub(crate) fn keep_while_refreshing(
         pm: &mut PackageManager,
         declarer: PackageID,
@@ -1939,6 +1945,7 @@ impl Diff {
             let to_dep = &lockfile.buffers.dependencies[to_i as usize];
             if lockfile.buffers.resolutions[to_i as usize] != invalid_package_id
                 || !enqueue::may_refresh_in_place(to_dep)
+                || to_dep.behavior.is_bundled()
             {
                 continue;
             }

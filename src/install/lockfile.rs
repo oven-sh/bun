@@ -2479,8 +2479,10 @@ impl Lockfile {
             .is_set_allow_out_of_bound(id as usize, false)
     }
 
-    /// See `Scratch::refreshing`.
+    /// See `Scratch::refreshing`. Never a bundled dependency: the resolver reads no source for
+    /// one, so nothing would end the refresh.
     pub(crate) fn mark_refreshing(&mut self, id: DependencyID) {
+        debug_assert!(!self.buffers.dependencies[id as usize].behavior.is_bundled());
         let rows = self.buffers.dependencies.len();
         let refreshing = &mut self.scratch.refreshing;
         if refreshing.bit_length() < rows {

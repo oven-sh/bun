@@ -559,6 +559,14 @@ pub fn install_with_manager(
                     }
 
                     for row in extension_rows {
+                        // A package that a rule extends has all of its unresolved rows in here.
+                        let owner = manager.lockfile.get_parent_pkg_of_dependency(row);
+                        let dependency = &manager.lockfile.buffers.dependencies[row as usize];
+                        if owner.is_some_and(|owner| {
+                            is_held_by_bundle(&manager.lockfile, owner, dependency)
+                        }) {
+                            continue;
+                        }
                         manager.lockfile.buffers.resolutions[row as usize] = invalid_package_id;
                         enqueue_row(manager, row);
                     }
@@ -1630,7 +1638,16 @@ fn report_lockfile_load_error(
     Ok(())
 }
 
-/// Root first, so that later rows dedupe onto what its rows append. Rows in no list are skipped.
+/// Returns true for a dependency that the resolver does not bind: a bundled one, and any
+/// dependency of a package that a tarball ships. What the tarball ships decides what they are
+/// bound to, so nothing resolves one again, and a lockfile keeps them as it has them. That holds
+/// for a lockfile of Bun 1.4 and older too, whose bundled dependencies are at registry versions.
+fn is_held_by_bundle(lockfile: &Lockfile, owner: PackageID, dependency: &Dependency) -> bool {
+    dependency.behavior.is_bundled() || lockfile.packages.items_meta()[owner as usize].is_shipped()
+}
+
+/// Root first, so that later rows dedupe onto what its rows append. Rows in no list are skipped,
+/// and so are those that `is_held_by_bundle`.
 fn reresolve_owned_rows(
     manager: &mut PackageManager,
     pinned_rows: &DynamicBitSet,
@@ -1639,10 +1656,12 @@ fn reresolve_owned_rows(
     // Resolving appends packages and dependencies, so only walk the lists that exist now.
     let lists: Vec<lockfile::DependencySlice> =
         manager.lockfile.packages.items_dependencies().to_vec();
-    for list in lists {
+    for (owner, list) in lists.into_iter().enumerate() {
         for dep_id in list.begin()..list.end() {
+            let dependency = &manager.lockfile.buffers.dependencies[dep_id as usize];
             if pinned_rows.is_set_allow_out_of_bound(dep_id as usize, false)
-                || !selects(&manager.lockfile.buffers.dependencies[dep_id as usize])
+                || !selects(dependency)
+                || is_held_by_bundle(&manager.lockfile, owner as PackageID, dependency)
             {
                 continue;
             }
@@ -1661,12 +1680,14 @@ fn enqueue_row(manager: &mut PackageManager, row: DependencyID) {
 }
 
 /// Runs once everything else is resolved, because a dependency that `clean` is going to discard
-/// must not send a request to the registry.
+/// must not send a request to the registry. A bundled dependency stays as bun.lock has it: see
+/// `is_held_by_bundle`.
 #[cold]
 #[inline(never)]
 fn reresolve_links_to_dropped_workspaces(manager: &mut PackageManager) -> bool {
     let rows: Vec<DependencyID> = {
         let lockfile: &Lockfile = &manager.lockfile;
+        let dependencies = lockfile.buffers.dependencies.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
         let pkg_resolutions = lockfile.packages.items_resolution();
         let root_edges = lockfile.packages.items_resolutions()[0].get(resolutions);
@@ -1685,6 +1706,7 @@ fn reresolve_links_to_dropped_workspaces(manager: &mut PackageManager) -> bool {
                     .get(target as usize)
                     .is_some_and(|resolution| resolution.tag == ResolutionTag::Workspace)
                     && !root_edges.contains(&target)
+                    && !is_held_by_bundle(lockfile, owner as PackageID, &dependencies[row as usize])
                     && reached
                         .get_or_insert_with(|| {
                             reachable::packages(lockfile, resolutions, reachable::Options::all(0))
@@ -1762,10 +1784,13 @@ fn enqueue_named_updates(
         // The root's link to a workspace has no version to update. Other dependencies on that name
         // can only link to the workspace while it stays resolved. The differ has just resolved a row
         // that is at an appended package, and the package's download finds it through that row.
+        // A package that a tarball ships has no other version: it is the copy in that tarball, for
+        // every dependency that is bound to it.
         if package_id == invalid_package_id
             || package_id >= manager.lockfile.loaded_package_count
             || dependency.behavior.is_bundled()
             || dependency.behavior.is_workspace()
+            || manager.lockfile.packages.items_meta()[package_id as usize].is_shipped()
         {
             continue;
         }
@@ -2379,12 +2404,13 @@ fn rebind_to_cleaned_lockfile(manager: &mut PackageManager, before_first_clean: 
 }
 
 /// Returns the rows that resolve to a version that their `overrides` rule does not allow, each
-/// with the package it resolves to.
+/// with the package it resolves to. No rule moves a row off the copy that a tarball ships.
 #[inline(never)]
 fn rows_outside_overrides(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let names = lockfile.packages.items_name();
     let resolutions = lockfile.packages.items_resolution();
+    let metas = lockfile.packages.items_meta();
     (lockfile.buffers.dependencies.iter())
         .zip(lockfile.buffers.resolutions.iter())
         .enumerate()
@@ -2394,6 +2420,7 @@ fn rows_outside_overrides(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)>
                 && !dependency.behavior.is_optional_peer()
                 && (package_id as usize) < resolutions.len()
                 && resolutions[package_id as usize].tag == ResolutionTag::Npm
+                && !metas[package_id as usize].is_shipped()
                 && crate::dedupe::applied_override(lockfile, row as DependencyID, dependency)
                     .is_some()
                 && crate::dedupe::effective_version(lockfile, row as DependencyID, dependency)

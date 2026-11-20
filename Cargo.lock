@@ -812,7 +812,6 @@ name = "bun_http_jsc"
 version = "0.0.0"
 dependencies = [
  "bstr",
- "bun_alloc",
  "bun_analytics",
  "bun_base64",
  "bun_boringssl",
@@ -820,7 +819,6 @@ dependencies = [
  "bun_core",
  "bun_deflate",
  "bun_errno",
- "bun_highway",
  "bun_http",
  "bun_http1",
  "bun_http_types",
@@ -844,6 +842,7 @@ dependencies = [
  "bun_alloc",
  "bun_collections",
  "bun_core",
+ "bun_highway",
  "bun_url",
  "enumset",
  "strum",

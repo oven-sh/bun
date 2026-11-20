@@ -2,9 +2,19 @@ import { TCPSocketListener } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
+import { constants, deflateRawSync } from "node:zlib";
 import { WebSocket } from "ws";
 import { openOrFailure } from "./proxy-test-utils";
-import { createPeer, encodeFrame, OP, type RawSocket, response101 } from "./raw-peer";
+import {
+  closePayload,
+  createPeer,
+  encodeFrame,
+  OP,
+  type RawSocket,
+  response101,
+  showBytes,
+  syncPrefix,
+} from "./raw-peer";
 
 const hostname = process.env.HOST || "127.0.0.1";
 const port = parseInt(process.env.PORT || "0");
@@ -540,6 +550,404 @@ describe("data received while a handshake listener spins the event loop", () => 
     } finally {
       ws.terminate();
     }
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/48524
+describe("data received while a frame's listener spins the event loop", () => {
+  const deflate = (text: string, sentBefore = "") =>
+    deflateRawSync(text, { finishFlush: constants.Z_SYNC_FLUSH, dictionary: Buffer.from(sentBefore) }).subarray(0, -4);
+  const split = (bytes: Buffer, at: number) => [bytes.subarray(0, at), bytes.subarray(at)];
+  const text = (payload: string | Buffer, fin = true) => encodeFrame(OP.text, payload, { fin });
+  const ping = (payload: string | Buffer) => encodeFrame(OP.ping, payload);
+  const compressed = (payload: string) => encodeFrame(OP.text, deflate(payload), { rsv1: true });
+  const fragment = (payload: string) => encodeFrame(OP.continuation, payload, { fin: false });
+  const lastFragment = (payload: string | Buffer) => encodeFrame(OP.continuation, payload);
+
+  const tls = { rejectUnauthorized: false };
+
+  // A whole handshake takes more ticks than bytes written before it to an open connection.
+  async function barrier(url: string) {
+    expect(await openOrFailure(new NativeWebSocket(url + "/barrier", { tls }))).toBe("open");
+  }
+
+  // `Bun.build()` ticks the event loop until a plugin's `setup()` settles.
+  function spinThroughBarrier(url: string) {
+    let result = "did not spin";
+    const setup = () =>
+      barrier(url).then(
+        () => void (result = "returns"),
+        error => void (result = `barrier: ${error.message}`),
+      );
+    Bun.build({ entrypoints: ["./none.js"], plugins: [{ name: "spin", setup }] }).catch(() => {});
+    return result;
+  }
+
+  const splitAroundReturn = (bytes: Buffer, at: number) => ({
+    during: bytes.subarray(0, at),
+    after: bytes.subarray(at),
+  });
+
+  // One read each. `before` ends with the frame whose listener spins, `during` is read in it, `after` once it returned.
+  const allCases: {
+    name: string;
+    before: Buffer[];
+    during: Buffer;
+    after?: Buffer;
+    events: string[];
+    frames?: string[];
+    onEveryClient?: true;
+  }[] = [
+    {
+      name: "a payload in two reads, then a whole frame",
+      before: split(text("first"), 4),
+      during: text("second"),
+      events: ['text "first"', 'text "second"', "returns"],
+    },
+    {
+      name: "a 16-bit length in two reads, then a whole frame",
+      before: split(text(Buffer.alloc(200, "a")), 3),
+      during: text("second"),
+      events: ["text 200 bytes", 'text "second"', "returns"],
+    },
+    {
+      name: "a compressed payload in two reads, then a compressed frame",
+      onEveryClient: true,
+      before: split(compressed("first"), 5),
+      during: compressed("second"),
+      events: ['text "first"', 'text "second"', "returns"],
+    },
+    {
+      name: "a Ping in two reads, then a whole frame",
+      before: split(ping("first"), 4),
+      during: text("second"),
+      events: ['ping "first"', 'text "second"', "returns"],
+      frames: ['pong "first"'],
+    },
+    {
+      name: "a payload in two reads, then a whole frame and a Close frame",
+      onEveryClient: true,
+      before: split(text("first"), 4),
+      during: Buffer.concat([text("second"), encodeFrame(OP.close, closePayload(1000))]),
+      events: ['text "first"', 'text "second"', "returns"],
+      frames: ["close 1000", "EOF"],
+    },
+    {
+      name: "a whole frame, then part of a payload",
+      before: [text("first")],
+      ...splitAroundReturn(text("second"), 5),
+      events: ['text "first"', "returns", 'text "second"'],
+    },
+    {
+      name: "a whole frame, then the first fragment of a binary message",
+      before: [text("first")],
+      during: encodeFrame(OP.binary, "sec", { fin: false }),
+      after: lastFragment("ond"),
+      events: ['text "first"', "returns", 'binary "second"'],
+    },
+    {
+      name: "a whole frame, then the first fragment of a compressed message",
+      before: [text("first")],
+      during: encodeFrame(OP.binary, deflate("second").subarray(0, 3), { fin: false, rsv1: true }),
+      after: lastFragment(deflate("second").subarray(3)),
+      events: ['text "first"', "returns", 'binary "second"'],
+    },
+    {
+      name: "a fragmented message, then the first fragment of another",
+      before: [Buffer.concat([text("fir", false), lastFragment("st")])],
+      during: text("sec", false),
+      after: lastFragment("ond"),
+      events: ['text "first"', "returns", 'text "second"'],
+    },
+    {
+      name: "a whole Ping, then part of a Ping",
+      onEveryClient: true,
+      before: [ping("first")],
+      ...splitAroundReturn(ping("second"), 5),
+      events: ['ping "first"', "returns", 'ping "second"'],
+      frames: ['pong "first"', 'pong "second"'],
+    },
+  ];
+
+  // Not concurrent: a listener that spins would run the other tests inside it.
+  describe.each([
+    { api: "WebSocket", secure: false, everyCase: true },
+    { api: "WebSocket", secure: true },
+    { api: "ws", secure: false },
+    { api: "ws", secure: true },
+  ])("$api, secure: $secure", ({ api, secure, everyCase }) => {
+    // Each listener call writes the next of `during`, if any, and spins until the client has read it.
+    async function connect(during: (Buffer | undefined)[], with101 = Buffer.alloc(0)) {
+      let connection!: RawSocket;
+      const peer = await createPeer({
+        secure,
+        respond(request) {
+          if (request.head.startsWith("GET /barrier ")) return response101(request);
+          connection = request;
+          const response = response101(request, ["Sec-WebSocket-Extensions: permessage-deflate"]);
+          return Buffer.concat([Buffer.from(response), with101]);
+        },
+      });
+      const seen: string[] = [];
+      const opened = Promise.withResolvers<unknown>();
+      const returned = Promise.withResolvers<void>();
+      const failed = Promise.withResolvers<never>();
+      const fail = (error: unknown) => {
+        opened.reject(error);
+        failed.reject(error);
+      };
+      failed.promise.catch(() => {});
+      const record = (type: string, data: string | Buffer) => {
+        if (type === "ping" && String(data).startsWith(syncPrefix)) return;
+        seen.push(`${type} ${showBytes(Buffer.from(data))}`);
+        const bytes = during.shift();
+        if (!bytes) return;
+        try {
+          connection.write(bytes);
+          seen.push(spinThroughBarrier(peer.url));
+          if (during.length === 0) returned.resolve();
+        } catch (error) {
+          returned.reject(error);
+        }
+      };
+
+      let ws: NativeWebSocket | WebSocket;
+      if (api === "ws") {
+        ws = new WebSocket(peer.url, tls);
+        ws.on("message", (data, isBinary) => record(isBinary ? "binary" : "text", data as Buffer));
+        ws.on("ping", data => record("ping", data));
+      } else {
+        ws = new NativeWebSocket(peer.url, { tls });
+        ws.onmessage = ({ data }) => record(typeof data === "string" ? "text" : "binary", data);
+        ws.addEventListener("ping" as any, ({ data }: MessageEvent) => record("ping", data));
+      }
+      ws.onopen = opened.resolve;
+      ws.onerror = (event: any) => {
+        seen.push(`error ${event.message.replace(/^.* failed: /, "")}`);
+        fail(new Error(seen.join(", ")));
+      };
+      ws.onclose = (event: any) => fail(new Error(`${seen.join(", ")}, close ${event.code}`));
+      const dispose = () => {
+        ws.terminate();
+        return peer[Symbol.asyncDispose]();
+      };
+      await opened.promise.catch(error => dispose().then(() => Promise.reject(error)));
+      return {
+        url: peer.url,
+        connection,
+        seen,
+        returned: returned.promise,
+        failed: failed.promise,
+        [Symbol.asyncDispose]: dispose,
+      };
+    }
+
+    const cases = allCases.filter(({ onEveryClient }) => everyCase || onEveryClient);
+    test.each(cases)("$name", async ({ before, during, after, events, frames = [] }) => {
+      await using client = await connect([during]);
+      const { url, connection, seen, returned, failed } = client;
+      for (const bytes of before.slice(0, -1)) {
+        connection.write(bytes);
+        await barrier(url);
+      }
+      connection.write(before.at(-1)!);
+      await Promise.race([returned, failed]);
+      if (after) connection.write(after);
+      await barrier(url);
+      expect(seen).toEqual(events);
+      expect(await connection.roundTrip()).toEqual(frames);
+    });
+
+    if (!everyCase) return;
+
+    // With the 101, because no other read overwrites those bytes.
+    test.each([
+      { name: "a header", ...splitAroundReturn(text("third"), 2), third: 'text "third"', frames: [] },
+      { name: "part of a payload", ...splitAroundReturn(text("third"), 4), third: 'text "third"', frames: [] },
+      {
+        name: "part of a Ping",
+        ...splitAroundReturn(ping("third"), 4),
+        third: 'ping "third"',
+        frames: ['pong "third"'],
+      },
+    ])("$name while a frame is left of the first read", async ({ during, after, third, frames }) => {
+      await using client = await connect([during], Buffer.concat([text("first"), text("second")]));
+      await Promise.race([client.returned, client.failed]);
+      client.connection.write(after);
+      await barrier(client.url);
+      expect(client.seen).toEqual(['text "first"', "returns", 'text "second"', third]);
+      expect(await client.connection.roundTrip()).toEqual(frames);
+    });
+
+    test.each([
+      {
+        name: "in a Ping listener inside the message",
+        read: [text("a", false), ping("p"), fragment("b")],
+        event: 'ping "p"',
+        frames: ['pong "p"', "close 1002"],
+      },
+      {
+        name: "in a listener before the message (pin)",
+        read: [text("second"), text("a", false)],
+        event: 'text "second"',
+        frames: ["close 1002"],
+      },
+    ])("fails on a last fragment $name, an earlier fragment left of the read", async ({ read, event, frames }) => {
+      await using client = await connect([undefined, lastFragment("c")], text("first"));
+      await barrier(client.url);
+      client.connection.write(Buffer.concat(read));
+      await client.returned;
+      expect(client.seen).toEqual(['text "first"', event, "error Protocol error - unexpected opcode: 0", "returns"]);
+      expect(await client.connection.remainingFrames()).toEqual(frames);
+    });
+
+    test("a fragment in a Ping listener inside the message, a Ping left of the read (pin)", async () => {
+      const read = Buffer.concat([text("a", false), ping("p"), ping("q")]);
+      await using client = await connect([fragment("b")], read);
+      await Promise.race([client.returned, client.failed]);
+      client.connection.write(lastFragment("c"));
+      await barrier(client.url);
+      expect(client.seen).toEqual(['ping "p"', "returns", 'ping "q"', 'text "abc"']);
+    });
+
+    test("a last fragment in a Ping listener inside the message, two Pings left of the read", async () => {
+      const read = Buffer.concat([text("a", false), ping("p"), ping("q"), ping("r")]);
+      await using client = await connect([lastFragment("b")], read);
+      await Promise.race([client.returned, client.failed]);
+      client.connection.write(text("last"));
+      await barrier(client.url);
+      expect(client.seen).toEqual(['ping "p"', 'text "ab"', "returns", 'ping "q"', 'ping "r"', 'text "last"']);
+    });
+
+    test("fails on a compressed message in a Ping listener inside the one it refers to (pin)", async () => {
+      const [first, second] = ["0123456789abcdefghij", "klmnopqrstuvwxyzABCD"];
+      const [start, end] = split(deflate(second), 5);
+      const read = [encodeFrame(OP.text, start, { fin: false, rsv1: true }), ping("p"), lastFragment(end)];
+      const repeat = encodeFrame(OP.text, deflate(second, first + second), { rsv1: true });
+      await using client = await connect([undefined, repeat], compressed(first));
+      await barrier(client.url);
+      client.connection.write(Buffer.concat(read));
+      await client.returned;
+      expect(client.seen).toEqual([
+        `text "${first}"`,
+        'ping "p"',
+        "error Protocol error - unexpected opcode: 1",
+        "returns",
+      ]);
+      expect(await client.connection.remainingFrames()).toEqual(['pong "p"', "close 1002"]);
+    });
+
+    test("two listeners wait for the same later message (pin)", async () => {
+      await using peer = await createPeer({
+        respond: request => Buffer.concat([Buffer.from(response101(request)), text("first"), text("second")]),
+      });
+      const seen: string[] = [];
+      const third = Promise.withResolvers<void>();
+      const done = Promise.withResolvers<void>();
+      const ws = new NativeWebSocket(peer.url);
+      const connection = peer.connection();
+      ws.onerror = ws.onclose = event => {
+        third.resolve();
+        done.reject(new Error(`${seen.join(", ")}, ${event.type}`));
+      };
+      ws.onmessage = ({ data }) => {
+        seen.push(data);
+        if (data === "third") return third.resolve();
+        const setup = async () => {
+          if (data === "first") (await connection).write(text("third"));
+          await third.promise;
+        };
+        Bun.build({ entrypoints: ["./none.js"], plugins: [{ name: "spin", setup }] }).catch(() => {});
+        seen.push(`${data} returns`);
+        if (data === "second") done.resolve();
+      };
+      try {
+        await done.promise;
+        expect(seen).toEqual(["first", "third", "first returns", "second", "second returns"]);
+      } finally {
+        ws.terminate();
+      }
+    });
+
+    // The first frame is long, so that the reads made in the listener do not overwrite what follows it.
+    test("fails, with no corrupt message, on the end of a payload that looks like a frame", async () => {
+      const [header, payload] = split(text(Buffer.alloc(4000, "a")), 4);
+      const [start, end] = split(text("ab\u00c1\u0001x"), 5);
+      expect(end).toEqual(text("x"));
+      await using client = await connect([end]);
+      client.connection.write(header);
+      await barrier(client.url);
+      client.connection.write(Buffer.concat([payload, start]));
+      await client.returned;
+      await barrier(client.url);
+      expect(client.seen).toEqual([
+        "text 4000 bytes",
+        'text "x"',
+        "returns",
+        "error Protocol error - unexpected opcode: 0",
+      ]);
+      expect(await client.connection.remainingFrames()).toEqual(["close 1002"]);
+    });
+
+    test("fails on the end of a payload that looks like a frame, then a Close, in a Ping listener inside the message (pin)", async () => {
+      const [start, end] = split(lastFragment(Buffer.concat([Buffer.from("ab"), text("x")])), 4);
+      expect(end).toEqual(text("x"));
+      const close = encodeFrame(OP.close, Buffer.from([0x03, 0xe8]));
+      await using client = await connect([Buffer.concat([end, close])]);
+      client.connection.write(Buffer.concat([text(Buffer.alloc(4000, "a"), false), ping("p"), start]));
+      await client.returned;
+      expect(client.seen).toEqual(['ping "p"', "error Protocol error - unexpected opcode: 1", "returns"]);
+      expect(await client.connection.remainingFrames()).toEqual(['pong "p"', "close 1002"]);
+    });
+  });
+
+  test("part of a Ping whose rest looks like the header of a longer Ping", async () => {
+    const { during, after } = splitAroundReturn(ping(Buffer.from("616289647879", "hex")), 4);
+    let connection!: RawSocket;
+    await using peer = await createPeer({
+      respond(request) {
+        const path = request.head.split(" ")[1];
+        if (path === "/during") connection.write(during);
+        if (path === "/after") connection.write(after);
+        if (path !== "/") return response101(request);
+        connection = request;
+        return Buffer.concat([Buffer.from(response101(request)), text("first")]);
+      },
+    });
+    const script = `
+      const url = ${JSON.stringify(peer.url)};
+      const handshake = path => new Promise((resolve, reject) => {
+        const socket = new WebSocket(url + path);
+        socket.onopen = () => (socket.terminate(), resolve());
+        socket.onerror = event => reject(event.error);
+      });
+      const ws = new WebSocket(url);
+      ws.onerror = event => console.log("error", event.message);
+      ws.onmessage = ({ data }) => {
+        console.log("text", data);
+        let result = "did not spin";
+        const setup = async () => {
+          await handshake("/during");
+          await handshake("/barrier");
+          result = "returns";
+        };
+        Bun.build({ entrypoints: ["./none.js"], plugins: [{ name: "spin", setup }] }).catch(() => {});
+        console.log(result);
+        handshake("/after");
+      };
+      ws.addEventListener("ping", ({ data }) => {
+        console.log("ping", data.toString("hex"));
+        ws.terminate();
+      });
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "text first\nreturns\nping 616289647879\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(await connection.remainingFrames()).toEqual(["pong 0x616289647879"]);
   });
 });
 

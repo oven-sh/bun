@@ -217,14 +217,4 @@ template<typename T> struct CrossThreadCopierBase<false, false, WebCore::Excepti
     }
 };
 
-template<> struct CrossThreadCopierBase<false, false, WebCore::ExceptionOr<void>> {
-    typedef WebCore::ExceptionOr<void> Type;
-    static Type copy(const Type& source)
-    {
-        if (source.hasException())
-            return crossThreadCopy(source.exception());
-        return {};
-    }
-};
-
 }

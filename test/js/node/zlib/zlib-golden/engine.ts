@@ -69,9 +69,10 @@ export class Engine {
    * results are its own, so the next member comes from a new object then, as the message of the refusal says.
    */
   reset() {
+    const { error } = this;
     this.#stream.reset();
     if (this.#mode === "Gzip" && this.error?.startsWith("ERR_ZLIB_INCOMPLETE_FRAME ")) {
-      this.error = undefined;
+      this.error = error;
       this.refusedResets++;
       this.#stream.close();
       this.#stream = this.#open();

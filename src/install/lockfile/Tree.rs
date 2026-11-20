@@ -1081,12 +1081,22 @@ impl LinkedRows<'_> {
     /// and `older_layout_can_differ`. Names are resolved as Node does, so this runs after hoisting.
     fn walk(&mut self) -> (Option<RowMap>, bool) {
         let (dependencies, trees, lists) = (self.dependencies, self.trees, self.resolution_lists);
+        let lockfile = self.lockfile;
+        let pkg_metas = lockfile.packages.items_meta();
+        // As in `process_subtree`, only the bundled rows of a shipped package are folders.
+        let has_no_folder = |pkg_id: PackageID, dep_id: DependencyID| {
+            pkg_metas[pkg_id as usize].is_shipped()
+                && !dependencies[dep_id as usize].behavior.is_bundled()
+        };
 
         // Indexed by dependency id. Each dependency belongs to exactly one package.
         let mut left_out = vec![false; dependencies.len()];
         let mut any_left_out = false;
         for (pkg_id, list) in lists.iter().enumerate() {
             for dep_id in list.begin()..list.end() {
+                if has_no_folder(pkg_id as PackageID, dep_id) {
+                    continue;
+                }
                 let out = self.leaves_out(dep_id, pkg_id as PackageID);
                 left_out[dep_id as usize] = out;
                 any_left_out |= out && self.resolutions[dep_id as usize] != invalid_package_id;
@@ -1118,7 +1128,10 @@ impl LinkedRows<'_> {
             'dep: for dep_id in list.begin()..list.end() {
                 let dep = &dependencies[dep_id as usize];
                 let target = self.resolutions[dep_id as usize];
-                if target == invalid_package_id || (!shipped && left_out[dep_id as usize]) {
+                if target == invalid_package_id
+                    || (!shipped && left_out[dep_id as usize])
+                    || has_no_folder(pkg_id, dep_id)
+                {
                     continue;
                 }
 
@@ -1470,7 +1483,11 @@ impl Tree {
         let lockfile: &Lockfile = lockfile_ref.get();
         let pkgs = &lockfile.packages;
         let pkg_resolutions = pkgs.items_resolution();
+        let pkg_metas = pkgs.items_meta();
         let dependencies: &[Dependency] = builder.dependencies;
+        // The folders below a shipped package are the ones its tarball holds, and each of them is
+        // a bundled row. Its other rows are bound inside the bundle and get no folder.
+        let owner_is_shipped = pkg_metas[parent_pkg_id as usize].is_shipped();
 
         builder.sort_buf.clear();
         builder
@@ -1492,6 +1509,9 @@ impl Tree {
 
         'dep: for sort_idx in 0..builder.sort_buf.len() {
             let dep_id = builder.sort_buf[sort_idx];
+            if owner_is_shipped && !dependencies[dep_id as usize].behavior.is_bundled() {
+                continue;
+            }
             let bound_by_version = builder.bind_peer(dep_id);
             let pkg_id = builder.resolutions[dep_id as usize];
             let dependency = &dependencies[dep_id as usize];
@@ -1591,6 +1611,18 @@ impl Tree {
 
             match hoisted {
                 HoistDependencyResult::DependencyLoop | HoistDependencyResult::Hoisted => continue,
+
+                // A shipped package exists only where its bundler's tarball has it, and only a
+                // bundled row places it. A peer that shares the copy from one place of its package
+                // gets no copy of it at another.
+                HoistDependencyResult::Contested { .. }
+                | HoistDependencyResult::ResolveReplace { .. }
+                | HoistDependencyResult::Placement { bundled: false, .. }
+                    if pkg_id != invalid_package_id
+                        && pkg_metas[pkg_id as usize].is_shipped() =>
+                {
+                    continue;
+                }
 
                 HoistDependencyResult::Served(res_id) => {
                     // A dependency has one resolution, however many times its package is placed.
@@ -2193,7 +2225,12 @@ pub fn served_peers(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
         None
     };
 
+    let pkg_metas = lockfile.packages.items_meta();
     let mut visit = |pkg_id: PackageID, from: Id| {
+        // The rows of a shipped package are bound inside its bundle.
+        if pkg_metas[pkg_id as usize].is_shipped() {
+            return;
+        }
         let deps = pkg_dependencies[pkg_id as usize];
         for dep_id in deps.begin()..deps.end() {
             let dep = &dependencies[dep_id as usize];

@@ -92,6 +92,24 @@ describe("assert.partialDeepStrictEqual", () => {
     const arr = [[]];
     assert.partialDeepStrictEqual([arr], arr);
   });
+
+  test("RegExps are compared by source and flags, however the pattern was written", () => {
+    assert.partialDeepStrictEqual(new RegExp("a/b"), /a\/b/);
+    assert.partialDeepStrictEqual(
+      { route: new RegExp("^/users/(\\d+)$"), name: "user" },
+      { route: /^\/users\/(\d+)$/ },
+    );
+    assert.partialDeepStrictEqual(new RegExp("a\nb\u2028c"), /a\nb\u2028c/);
+    assert.partialDeepStrictEqual(new RegExp(""), /(?:)/);
+    assert.partialDeepStrictEqual(Object.assign(new RegExp("a/b"), { extra: 1 }), /a\/b/);
+
+    const throws = (actual, expected) =>
+      expect(() => assert.partialDeepStrictEqual(actual, expected)).toThrow(assert.AssertionError);
+    throws(new RegExp("a/b", "g"), /a\/b/i);
+    throws(new RegExp("a/b"), /a[/]b/);
+    throws(Object.assign(new RegExp("a/b", "g"), { lastIndex: 1 }), /a\/b/g);
+    throws(new RegExp("a/b"), Object.assign(/a\/b/, { extra: 1 }));
+  });
 });
 
 describe("AssertionError diff rendering", () => {

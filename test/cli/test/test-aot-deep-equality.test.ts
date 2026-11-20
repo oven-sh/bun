@@ -51,7 +51,13 @@ test("under bun test --aot, matchers that compare deeply answer for typed object
   using expectedDir = tempDir("test-aot-deep-equality", files);
   using actualDir = tempDir("test-aot-deep-equality", files);
   const [expected, actual] = await Promise.all([rowsOf(String(expectedDir), false), rowsOf(String(actualDir), true)]);
-  expect(expected.rows.length).toBe(88);
+  expect(expected.rows.length).toBe(92);
+  expect(expected.rows.filter(row => row.startsWith("ROW RegExp:"))).toEqual([
+    "ROW RegExp: a literal and the same text made at run time: TT TT TT TT TT Tf",
+    "ROW RegExp: a literal and its source made at run time with no backslash before a slash: TT TT TT TT TT Tf",
+    "ROW RegExp: a literal and new RegExp(source, flags): TT TT TT TT TT Tf",
+    "ROW RegExp: a literal and another source made at run time: ff ff TT ff TT fT",
+  ]);
   expect(actual).toEqual(expected);
   expect(actual.exitCode).toBe(0);
 });

@@ -1,3 +1,4 @@
+import { jscDescribe } from "bun:jsc";
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
 import assert from "node:assert";
 import { createSecretKey } from "node:crypto";
@@ -50,6 +51,71 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     const b = new FakeMap();
     expect(deepEquals(a, b)).toBe(false);
     expect(deepEquals(b, a)).toBe(false);
+  });
+
+  it("RegExps are equal when source and flags are equal, however the pattern was written", () => {
+    const in16Bit = (text: string) => new TextDecoder("utf-16le").decode(Buffer.from(text, "utf16le"));
+    expect(jscDescribe(new RegExp(in16Bit("w\\/n")).source)).toContain("8Bit:(0)");
+    expect(jscDescribe(new RegExp("w/n").source)).toContain("8Bit:(1)");
+    expect({
+      escapedSlash: deepEquals(new RegExp("a/b"), /a\/b/),
+      escapedSlashReversed: deepEquals(/a\/b/, new RegExp("a/b")),
+      lineTerminators: deepEquals(new RegExp("a\nb\r\u2028\u2029c"), /a\nb\r\u2028\u2029c/),
+      empty: deepEquals(new RegExp(""), /(?:)/),
+      wide: deepEquals(new RegExp("日/本"), new RegExp("日\\/本")),
+      wideAndNarrow: deepEquals(new RegExp(in16Bit("w\\/n")), new RegExp("w/n")),
+      narrowAndWide: deepEquals(new RegExp("w/n"), new RegExp(in16Bit("w\\/n"))),
+      nested: deepEquals({ routes: [new RegExp("^/users/(\\d+)$")] }, { routes: [/^\/users\/(\d+)$/] }),
+      otherFlags: deepEquals(new RegExp("a/b", "g"), /a\/b/i),
+      otherSource: deepEquals(new RegExp("a/b"), /a[/]b/),
+      slashInClass: deepEquals(new RegExp("[a/]"), /[a\/]/),
+      startOfTheOther: deepEquals(/foo/, /foobar/),
+      emptyAndOther: deepEquals(new RegExp(""), /a/),
+      wideOtherSource: deepEquals(new RegExp("日/本"), new RegExp("日/本語")),
+      wideAndNarrowOtherUnit: deepEquals(new RegExp(in16Bit("w\\/n")), new RegExp("w/m")),
+      wideAndNarrowStartOfTheOther: deepEquals(new RegExp(in16Bit("w\\/n")), new RegExp("w/nn")),
+    }).toEqual({
+      escapedSlash: true,
+      escapedSlashReversed: true,
+      lineTerminators: true,
+      empty: true,
+      wide: true,
+      wideAndNarrow: true,
+      narrowAndWide: true,
+      nested: true,
+      otherFlags: false,
+      otherSource: false,
+      slashInClass: false,
+      startOfTheOther: false,
+      emptyAndOther: false,
+      wideOtherSource: false,
+      wideAndNarrowOtherUnit: false,
+      wideAndNarrowStartOfTheOther: false,
+    });
+  });
+
+  it("RegExps made from every short text are equal exactly when their sources are", () => {
+    const units = ["/", "\\", "\n", "\r", "\u2028", "\u2029", "n", "r", "u", "[", "]", "a"];
+    const regexps: RegExp[] = [];
+    for (const text of ["", ...units, ...units.flatMap(first => units.map(second => first + second))]) {
+      try {
+        regexps.push(new RegExp(text));
+      } catch {}
+    }
+    let sameSourceFromTwoTexts = 0;
+    const wrong: string[] = [];
+    for (const a of regexps) {
+      for (const b of regexps) {
+        const sameSource = a.source === b.source;
+        if (sameSource && a !== b) sameSourceFromTwoTexts++;
+        if (deepEquals(a, b) !== sameSource) wrong.push(`${a} and ${b}`);
+      }
+    }
+    expect({ regexps: regexps.length, sameSourceFromTwoTexts, wrong }).toEqual({
+      regexps: 124,
+      sameSourceFromTwoTexts: 18,
+      wrong: [],
+    });
   });
 
   // we may change this in the future

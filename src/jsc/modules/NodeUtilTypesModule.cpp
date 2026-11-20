@@ -1,4 +1,5 @@
 #include "BunClientData.h"
+#include "BunRegExpEquality.h"
 #include "GeneratedResolveMessage.h"
 #include "JSDOMURL.h"
 #include "JSDOMWrapper.h"
@@ -805,8 +806,7 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
             return false;
         auto* actualRegExp = uncheckedDowncast<JSC::RegExpObject>(actual.asCell());
         auto* expectedRegExp = uncheckedDowncast<JSC::RegExpObject>(expected.asCell());
-        if (actualRegExp->regExp()->pattern() != expectedRegExp->regExp()->pattern()
-            || actualRegExp->regExp()->flags() != expectedRegExp->regExp()->flags())
+        if (!Bun::regExpsHaveSameSourceAndFlags(actualRegExp->regExp(), expectedRegExp->regExp()))
             return false;
         // node also compares lastIndex strictly (comparisons.js isRegExp arm).
         bool lastIndexEqual = JSC::sameValue(globalObject, actualRegExp->getLastIndex(), expectedRegExp->getLastIndex());

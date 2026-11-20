@@ -2297,7 +2297,8 @@ impl ExpectMatcherUtils {
         }
 
         if expected_type != "string" {
-            return Self::diff_text(global_this, &DiffFormatter::new(global_this, received, expected, false)?);
+            let diff = DiffFormatter::with_matched_rows(global_this, received, expected, false, MatchedRows::default())?;
+            return Self::diff_text(global_this, &diff);
         }
         let (expected, received) = (expected.to_bun_string(global_this)?, received.to_bun_string(global_this)?);
         let (expected, received) = (expected.to_utf8(), received.to_utf8());

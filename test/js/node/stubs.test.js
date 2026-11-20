@@ -109,6 +109,11 @@ describe("v8.getHeapStatistics", () => {
         return;
       }
       expect(stats[key]).toBeNumber();
+      if (key === "external_memory") {
+        // 0 until the first collection, unless an array buffer is alive.
+        expect(stats[key]).toBeGreaterThanOrEqual(0);
+        return;
+      }
       expect(stats[key]).toBePositive();
     });
   }

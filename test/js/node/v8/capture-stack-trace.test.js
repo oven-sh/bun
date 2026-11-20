@@ -1946,9 +1946,9 @@ test.concurrent.each([
     "formatted inner",
   ],
   [
-    "v8.getHeapStatistics() in Error.prepareStackTrace, error from an arrow that has returned",
-    `import v8 from "node:v8";
-     Error.prepareStackTrace = (err, callSites) => { v8.getHeapStatistics(); return "formatted " + callSites[1].getFunctionName(); };
+    "bun:jsc heapStats() in Error.prepareStackTrace, error from an arrow that has returned",
+    `import { heapStats } from "bun:jsc";
+     Error.prepareStackTrace = (err, callSites) => { heapStats(); return "formatted " + callSites[1].getFunctionName(); };
      async function handler() {
        const e = (() => { try { return new Error("request failed"); } finally {} })();
        await 1;

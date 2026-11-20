@@ -2,6 +2,7 @@ use std::collections::{BTreeSet, VecDeque};
 use std::ops::RangeInclusive;
 
 use super::bandwidth_sampler::BandwidthSampler;
+use super::pacer::MAX_OVERFLOWS;
 use super::trial::Trial;
 use super::windowed_filter::WindowedMax;
 use super::*;
@@ -646,7 +647,7 @@ fn bursts_get_longer_as_far_as_it_makes_no_difference() {
 }
 
 #[test]
-fn longer_bursts_are_compared_with_the_best_so_far() {
+fn losses_at_first_do_not_excuse_longer_bursts() {
     let quanta = Periods::new().run(4, |len| match len {
         2 => (110, 30),
         4 => (110, 1),
@@ -740,8 +741,8 @@ fn judge(trial: &mut Trial, now: &mut Instant, acked: u64, lost: u64, starts_cyc
         ..Feedback::default()
     };
     *now = *now + millis(1000);
-    trial.update(*now, &feedback, starts_cycle, true);
-    trial.spared
+    trial.update(*now, &feedback, Some(starts_cycle), trial.max_overflows());
+    MAX_OVERFLOWS - trial.max_overflows()
 }
 
 #[test]
@@ -754,7 +755,12 @@ fn longer_bursts_are_judged_by_whole_cycles() {
         &[
             (2000, 20, true, 1),
             (2000, 141, true, 2),
-            (2000, 142, true, 1),
+            (2000, 201, true, 3),
+        ],
+        &[
+            (2000, 20, true, 1),
+            (2000, 141, true, 2),
+            (2000, 202, true, 1),
         ],
         &[(2000, 0, true, 1), (1, 121, false, 1), (1, 1, false, 0)],
         &[
@@ -762,12 +768,11 @@ fn longer_bursts_are_judged_by_whole_cycles() {
             (2000, 0, true, 2),
             (1500, 0, true, 1),
             (1500, 0, true, 1),
-            (1500, 0, true, 1),
             (1500, 0, true, 0),
         ],
     ] {
         let (mut trial, mut now) = (Trial::default(), START);
-        judge(&mut trial, &mut now, 0, 0, true);
+        judge(&mut trial, &mut now, 1024, 0, true);
         for &(acked, lost, starts_cycle, spared) in steps {
             let judged = judge(&mut trial, &mut now, acked, lost, starts_cycle);
             assert_eq!(judged, spared, "{steps:?}");
@@ -777,24 +782,13 @@ fn longer_bursts_are_judged_by_whole_cycles() {
 
 #[test]
 fn longer_bursts_are_tried_less_and_less_often() {
-    let (mut trial, mut now) = (Trial::default(), START);
+    let (mut trial, mut now, mut spared) = (Trial::default(), START, 0);
     let tries = (0..220).filter(|_| {
-        let acked = if trial.spared > 0 { 1500 } else { 2000 };
-        judge(&mut trial, &mut now, acked, 0, true) > 0
+        let acked = if spared > 0 { 1500 } else { 2000 };
+        spared = judge(&mut trial, &mut now, acked, 0, true);
+        spared > 0
     });
-    assert!(tries.eq([1, 11, 29, 63, 129, 195]));
-}
-
-#[test]
-fn longer_bursts_are_judged_by_cycles_without_interruptions() {
-    let (mut trial, mut now) = (Trial::default(), START);
-    judge(&mut trial, &mut now, 0, 0, true);
-    trial.interrupt();
-    for spared in [0, 1] {
-        assert_eq!(judge(&mut trial, &mut now, 2000, 0, true), spared);
-    }
-    now = now - millis(1000);
-    assert_eq!(judge(&mut trial, &mut now, 2000, 0, true), 2);
+    assert!(tries.eq([1, 10, 27, 60, 125, 190]));
 }
 
 #[test]
@@ -808,20 +802,19 @@ fn bbr_tries_longer_bursts_while_the_path_is_the_limit() {
             .feedback(0, 1)
             .feedback(800, 99)
     };
-    let cases: [(u64, Step, Step, usize); 6] = [
-        (200, |_| {}, |_| {}, 8),
-        (200, |it| _ = it.run_dry(), |_| {}, 1),
-        (200, |_| {}, |it| _ = it.wait(millis(100)), 1),
-        (200, |_| {}, share, 1),
+    let cases: [(u64, Step, Step, usize); 5] = [
+        (150, |_| {}, |_| {}, 8),
+        (150, |it| _ = it.run_dry(), |_| {}, 1),
+        (150, share, |_| {}, 1),
         (1000, |_| {}, |_| {}, usize::MAX),
         (1000, |_| {}, lose, 1),
     ];
     for (segments, always, at_last, max_turn) in cases {
         let mut sender = Sender::new(Algorithm::Bbr);
         sender.rounds_of(segments, 10, millis(10));
-        for round in 0..=60 {
+        for round in 0..=70 {
             always(&mut sender);
-            if round == 60 {
+            if round == 70 {
                 at_last(&mut sender);
             }
             sender.send(segments).wait(millis(11));

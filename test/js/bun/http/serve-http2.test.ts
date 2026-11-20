@@ -771,7 +771,7 @@ describe("Bun.serve http2 over a unix socket", () => {
     const sock = join(String(dir), "h2.sock");
     await using server = Bun.serve({
       unix: sock,
-      http2: true as any,
+      http2: true,
       fetch: req => new Response("unix:" + new URL(req.url).pathname),
     });
     const session = http2.connect("http://localhost", {

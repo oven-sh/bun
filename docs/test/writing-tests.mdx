@@ -92,8 +92,8 @@ The process does not end for:
 
 - a test or hook with a timeout of `0`
 - code at the top level of a test file or of a `--preload` script, and `describe()` callbacks, which have no timeout
-- a test that a debugger has paused
-- a test that waits for the reader of its output, as in `bun test | less`
+- a test that a debugger has paused, and any test while a native debugger or tracer such as `gdb`, `lldb` or `strace` is attached to the process
+- a test that waits for the reader of its output, as in `bun test | less`. The time that a test spends in a write to stdout or stderr does not count toward the 5 seconds, so a test that prints in a loop ends later.
 - `bun test --watch`, which prints a warning. A change to a file starts the tests again.
 
 The default timeout for each test is 5000ms (5 seconds) unless you override it with this timeout option or `jest.setTimeout()`.

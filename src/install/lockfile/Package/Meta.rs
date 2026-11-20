@@ -14,7 +14,10 @@ use crate::lockfile_real::StringBuilder as LockfileStringBuilder;
 #[derive(Clone, Copy)]
 pub struct Meta {
     pub(crate) origin: Origin,
-    pub(crate) _padding_origin: u8,
+    /// Shouldn't be used directly. Use `Meta.is_shipped()` and `Meta.mark_shipped()` instead.
+    ///
+    /// Stored in what used to be padding, so an older `bun.lockb` reads back as 0 (not shipped).
+    pub(crate) shipped: u8,
 
     pub(crate) arch: Architecture,
     pub(crate) os: OperatingSystem,
@@ -39,6 +42,9 @@ pub struct Meta {
     pub(crate) _padding_integrity: [u8; 2],
 }
 
+// `bun.lockb` stores `Meta` byte for byte.
+const _: () = assert!(core::mem::size_of::<Meta>() == 88);
+
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub enum HasInstallScript {
@@ -52,7 +58,7 @@ impl Default for Meta {
     fn default() -> Self {
         Self {
             origin: Origin::Npm,
-            _padding_origin: 0,
+            shipped: 0,
             arch: Architecture::ALL,
             os: OperatingSystem::ALL,
             libc: Libc::NONE,
@@ -89,6 +95,20 @@ impl Meta {
         self.has_install_script == HasInstallScript::Old
     }
 
+    /// Whether the package was read from the `node_modules` of a package that bundles it. Such a
+    /// package exists only inside that folder and is never the same package as another one, so
+    /// the lockfile's name index does not hold it.
+    #[inline]
+    pub fn is_shipped(&self) -> bool {
+        self.shipped != 0
+    }
+
+    /// Call before the package is appended to a lockfile: appending is what leaves a shipped
+    /// package out of the name index.
+    pub fn mark_shipped(&mut self) {
+        self.shipped = 1;
+    }
+
     // The only concrete builder type used in install is the lockfile
     // `StringBuilder`, so take it directly instead of a placeholder trait that
     // nothing implements.
@@ -116,6 +136,7 @@ impl Meta {
             os: self.os,
             libc: self.libc,
             origin: self.origin,
+            shipped: self.shipped,
             has_install_script: self.has_install_script,
             ..Meta::default()
         }

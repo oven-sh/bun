@@ -148,6 +148,9 @@ pub struct Lockfile {
 
     /// name -> PackageID || [*]PackageID
     /// Not for iterating.
+    ///
+    /// Holds no shipped package (`Meta::is_shipped`), so no lookup by name returns one: it exists
+    /// only inside its bundler's folder, and two with the same name and version are two packages.
     pub(crate) package_index: PackageIndexMap,
     pub string_pool: StringPool,
     pub(crate) scratch: Scratch,
@@ -2610,16 +2613,25 @@ impl Lockfile {
 
         entry.as_slice().iter().copied().find(|&id| {
             debug_assert!((id as usize) < resolutions.len());
+            debug_assert!(!self.packages.items_meta()[id as usize].is_shipped());
             !skipped(id)
                 && (resolutions[id as usize].eql(resolution, buf, buf) || try_satisfies_dedupe(id))
         })
     }
 
-    /// Appends `pkg` to `this.packages`, and adds to `this.package_index`.
+    /// Appends `pkg` to `this.packages`, and adds to `this.package_index`. A shipped package is
+    /// always appended, and no package is merged with one.
     pub(crate) fn append_package_dedupe(
         &mut self,
         pkg: &mut Package,
     ) -> Result<PackageID, AllocError> {
+        if pkg.meta.is_shipped() {
+            let new_id: PackageID = PackageID::try_from(self.packages.len()).expect("int cast");
+            pkg.meta.id = new_id;
+            self.packages.append(*pkg)?;
+            return Ok(new_id);
+        }
+
         let entry = self.package_index.get_or_put(pkg.name_hash)?;
         let buf = self.buffers.string_bytes.as_slice();
 
@@ -2644,11 +2656,16 @@ impl Lockfile {
         Ok(new_id)
     }
 
+    /// Adds the package `id`, which `packages` already holds, to `package_index`. A shipped
+    /// package is left out.
     pub(crate) fn get_or_put_id(
         &mut self,
         id: PackageID,
         name_hash: PackageNameHash,
     ) -> Result<(), AllocError> {
+        if self.packages.items_meta()[id as usize].is_shipped() {
+            return Ok(());
+        }
         let gpe = self.package_index.get_or_put(name_hash)?;
         if gpe.found_existing {
             gpe.value_ptr.insert(
@@ -2681,7 +2698,10 @@ impl Lockfile {
         self.packages.append(package)?;
         self.get_or_put_id(id, name_hash)?;
 
-        debug_assert!(self.get_package_id(name_hash, None, &resolution).is_some());
+        debug_assert!(
+            package.meta.is_shipped()
+                || self.get_package_id(name_hash, None, &resolution).is_some()
+        );
 
         Ok(package)
     }

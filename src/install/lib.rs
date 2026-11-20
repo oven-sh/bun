@@ -950,6 +950,9 @@ pub struct ExtractData {
     /// Used for HTTPS/local tarball dependencies where the hash
     /// is not available from a registry manifest.
     pub(crate) integrity: Integrity,
+    /// What the package ships in its own `node_modules`, read by the task that extracted it.
+    /// `None` if the package has no bundled dependencies, or if nothing asked for them.
+    pub(crate) bundle: Option<Box<bundle::BundleContents>>,
 }
 
 /// `path` is an owned, growable buffer. An earlier draft modelled it as a

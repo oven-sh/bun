@@ -22,6 +22,7 @@ use bun_spawn::{ProcessHandle, Rusage, SpawnOptions, Status};
 use bun_sys::Fd;
 use bun_threading::thread_pool as ThreadPool;
 
+use crate::bundle::BundleContents;
 use crate::cache_publish::UnfinishedEntry;
 use crate::install::{ExtractData, ExtractDataJson};
 use crate::package_manager::directories::CacheDirectory;
@@ -393,19 +394,38 @@ fn strip_node_modules(checkout: &bun_sys::Dir) -> bun_sys::Maybe<()> {
 
 /// The caller must initialize an AST store on this thread first.
 pub(crate) fn bundles_dependencies(package_dir: &bun_sys::Dir) -> bool {
-    let Ok(contents) = read_package_json_in(package_dir) else {
-        return false;
-    };
-    let source = bun_ast::Source::init_path_string("package.json", &contents[..]);
-    crate::bun_json::ParsedJson::parse_package_json(&source, &mut bun_ast::Log::init()).is_ok_and(
-        |parsed| {
-            let root = &parsed.root;
-            // Either `true` or a non-empty list of names. `as_array` returns `None` for `[]`.
-            (root.get(b"bundleDependencies"))
-                .or_else(|| root.get(b"bundledDependencies"))
-                .is_some_and(|field| field.as_bool() == Some(true) || field.as_array().is_some())
-        },
-    )
+    read_package_json_in(package_dir)
+        .is_ok_and(|contents| text_names_bundled_dependencies(&contents))
+}
+
+/// `contents` is the text of a package.json. The caller must initialize an AST store on this
+/// thread first.
+fn text_names_bundled_dependencies(contents: &[u8]) -> bool {
+    let source = bun_ast::Source::init_path_string("package.json", contents);
+    crate::bun_json::ParsedJson::parse_package_json(&source, &mut bun_ast::Log::init())
+        .is_ok_and(|parsed| names_bundled_dependencies(&parsed.root))
+}
+
+/// Returns true if a package.json names bundled dependencies: either `true` or a non-empty list of
+/// names.
+pub(crate) fn names_bundled_dependencies(package_json: &bun_ast::Expr) -> bool {
+    // `as_array` returns `None` for `[]`.
+    (package_json.get(b"bundleDependencies"))
+        .or_else(|| package_json.get(b"bundledDependencies"))
+        .is_some_and(|field| field.as_bool() == Some(true) || field.as_array().is_some())
+}
+
+/// Reads what the checkout in `package_dir` ships in its `node_modules`, if its package.json,
+/// whose text is `json`, names bundled dependencies. Only for a pool worker: it resets the
+/// thread's AST store.
+fn read_bundle(package_dir: &bun_sys::Dir, json: &[u8]) -> Option<Box<BundleContents>> {
+    // A file without an escape spells either key out, so most files are not parsed here.
+    if !strings::contains(json, b"bundle") && !strings::contains_char(json, b'\\') {
+        return None;
+    }
+    crate::initialize_mini_store();
+    text_names_bundled_dependencies(json)
+        .then(|| Box::new(crate::bundle::read_bundle(package_dir, None)))
 }
 
 /// Reads the `package.json` in a package's folder, without following a symlink.
@@ -474,6 +494,7 @@ fn read_package_json(
         .dirname_store()
         .append(json_path)?;
 
+    let bundle = read_bundle(package_dir, &json_buf);
     Ok(ExtractData {
         url,
         resolved,
@@ -481,6 +502,7 @@ fn read_package_json(
             path: path.into(),
             buf: json_buf,
         }),
+        bundle,
         ..Default::default()
     })
 }

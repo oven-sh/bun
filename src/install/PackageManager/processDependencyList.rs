@@ -513,13 +513,14 @@ impl PackageManager {
     }
 
     /// Keeps a downloaded package until `append_next_remote_package` adds it to the lockfile.
-    /// Until then the manifests that its dependencies need are requested.
+    /// Until then the manifests that its dependencies need are requested. The task is done with
+    /// `data`, so what it read of the package's bundle is moved out of it.
     #[cold]
     pub(crate) fn keep_arrived_package(
         &mut self,
         task_id: Task::Id,
         resolution: &Resolution,
-        data: &ExtractData,
+        data: &mut ExtractData,
     ) {
         if let Some(json) = &data.json {
             let source = bun_ast::Source::init_path_string(&json.path[..], &json.buf[..]);
@@ -545,6 +546,7 @@ impl PackageManager {
                 buf: json.buf.clone(),
             }),
             integrity: data.integrity,
+            bundle: data.bundle.take(),
         };
         let arrived = ArrivedPackage {
             resolution: *resolution,

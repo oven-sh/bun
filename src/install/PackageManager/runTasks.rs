@@ -1686,6 +1686,8 @@ pub fn generate_network_task_for_tarball<'a>(
         } else {
             b""
         },
+        reads_bundle: package.resolution.tag == bun_install::ResolutionTag::Npm
+            && this.is_bundler(package),
     };
 
     if let Err(err) = network_task.for_tarball(extract_tarball, scope, authorization) {

@@ -2917,6 +2917,7 @@ fn enqueue_local_tarball(
             skip_verify: false,
             in_trusted_dependencies: false,
             github_resolved: b"",
+            reads_bundle: false,
         },
         source: Task::TarballSource::Local {
             path: tarball_path,

@@ -41,6 +41,10 @@ pub struct ExtractTarball {
     pub(crate) github_resolved: &'static [u8],
     /// For an npm resolution. `None` is the default registry.
     pub(crate) registry: Option<FolderCacheKey>,
+    /// The package has bundled dependencies, so the task also reads what it ships in its own
+    /// `node_modules` into `ExtractData::bundle`. Only set for an npm package: a GitHub or tarball
+    /// package says so in the package.json that the task reads anyway.
+    pub(crate) reads_bundle: bool,
 }
 
 impl ExtractTarball {
@@ -622,30 +626,37 @@ impl ExtractTarball {
                     }
                 }
             }
+            let mut reads_bundle = self.reads_bundle;
             if let Some(buf) = &json_buf {
                 crate::initialize_mini_store();
                 // Its locations borrow `buf`.
                 let mut json_log = bun_ast::Log::init();
-                if let Err(err) = crate::bun_json::ParsedJson::parse_package_json(
+                match crate::bun_json::ParsedJson::parse_package_json(
                     &bun_ast::Source::init_path_string("package.json", &buf[..]),
                     &mut json_log,
                 ) {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "expected \"package.json\" of \"{}\" to be a JSON file: {}: {}",
-                            bun_fmt::for_terminal(bstr::BStr::new(name)),
-                            err.name(),
-                            bun_fmt::escape_control_chars(
-                                json_log
-                                    .msgs
-                                    .first()
-                                    .map_or(&b"syntax error"[..], |msg| &msg.data.text[..]),
+                    Ok(parsed) => {
+                        reads_bundle |= self.resolution.tag != ResolutionTag::Npm
+                            && crate::git_runner::names_bundled_dependencies(&parsed.root);
+                    }
+                    Err(err) => {
+                        log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "expected \"package.json\" of \"{}\" to be a JSON file: {}: {}",
+                                bun_fmt::for_terminal(bstr::BStr::new(name)),
+                                err.name(),
+                                bun_fmt::escape_control_chars(
+                                    json_log
+                                        .msgs
+                                        .first()
+                                        .map_or(&b"syntax error"[..], |msg| &msg.data.text[..]),
+                                ),
                             ),
-                        ),
-                    );
-                    return Err(crate::Error::InstallFailed);
+                        );
+                        return Err(crate::Error::InstallFailed);
+                    }
                 }
             }
 
@@ -731,6 +742,12 @@ impl ExtractTarball {
 
             let ret_json_path = FileSystem::get().dirname_store().append(json_path)?;
 
+            // Read from the cache folder: the copy that this install links, whoever published it.
+            let bundle = reads_bundle.then(|| {
+                crate::initialize_mini_store();
+                Box::new(crate::bundle::read_bundle(&final_dir, None))
+            });
+
             Ok(ExtractData {
                 url: url.into(),
                 resolved: resolved.into(),
@@ -738,6 +755,7 @@ impl ExtractTarball {
                     path: ret_json_path.into(),
                     buf: json_buf.unwrap_or_default(),
                 }),
+                bundle,
                 ..Default::default()
             })
         })

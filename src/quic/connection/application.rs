@@ -119,6 +119,9 @@ impl Connection {
             match &stream.role {
                 Role::Message(message) if !message.has_sent_headers => {
                     state.reset(id, stream, http3_code::REQUEST_CANCELLED);
+                    if self.side.is_client() {
+                        self.stop(id, http3_code::REQUEST_CANCELLED);
+                    }
                 }
                 _ => state.finish(id, stream),
             }

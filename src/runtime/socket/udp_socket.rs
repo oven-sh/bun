@@ -687,7 +687,7 @@ impl UDPSocket {
                     ))
                 };
                 let sys_err = SystemError {
-                    errno: err,
+                    errno: -err,
                     code: BunString::static_(code),
                     message,
                     syscall: BunString::static_(syscall),

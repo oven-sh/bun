@@ -57,6 +57,14 @@ fn return_scratch(scratch: Box<Scratch>) {
     });
 }
 
+/// For a parse that may begin while the thread is in another.
+pub(crate) fn with_scratch<R>(then: impl FnOnce(&mut Scratch) -> R) -> R {
+    let mut scratch = take_scratch();
+    let result = then(&mut scratch);
+    return_scratch(scratch);
+    result
+}
+
 /// How many parses succeeded, and how many texts the parser without recovery rejected, by reason.
 #[derive(Default)]
 pub struct Counts {
@@ -97,6 +105,10 @@ struct ParseSettings<'a> {
     skips_function_blocks: bool,
     /// `Options::reads_module_statements_alone`
     reads_module_statements_alone: bool,
+    /// `Options::drops_comments`
+    drops_comments: bool,
+    /// `Options::may_use_helpers`
+    may_use_helpers: bool,
 }
 
 /// True if `path` ends in `.json` and no `script_kind` overrides that.
@@ -143,6 +155,7 @@ fn parse_file(
 ) -> Box<FileBuilder> {
     // This is a different text than the last one, possibly at the same address.
     scratch.stops.forget();
+    bun_sema::util::prefault(scratch.stops.reserve(text));
     let is_named = |names: [&[u8]; 2]| names.iter().any(|it| how.path.ends_with(it));
     let as_script = ParseSettings {
         dialect: Dialect {
@@ -278,6 +291,8 @@ fn parse_file_as(
         ignores_pure_comments: how.ignores_pure_comments,
         skips_function_blocks: how.skips_function_blocks,
         reads_module_statements_alone: how.reads_module_statements_alone,
+        drops_comments: how.drops_comments,
+        may_use_helpers: how.may_use_helpers,
     };
     let once = |options, scratch: &mut Scratch| match atoms {
         Some(atoms) => crate::parse(text, options, atoms, scratch),
@@ -424,6 +439,9 @@ fn parse_into_arena<'s>(
     atoms: &dyn Intern,
 ) -> File<'s> {
     let mut file = parse_file(scratch, how, text, Some(atoms));
+    if how.drops_comments {
+        file.comments.clear();
+    }
     let mut in_arena = Summary::InPlace(&mut file).into_arena(memory);
     if in_arena.kind == FileKind::Json {
         bun_sema::json::validate_json(&mut in_arena, text);
@@ -448,6 +466,48 @@ pub fn summarize<'s>(
     every_file_is_a_module: bool,
     reads_as_bun_run: bool,
 ) -> File<'s> {
+    let flags = [
+        experimental_decorators,
+        every_file_is_a_module,
+        reads_as_bun_run,
+        false,
+    ];
+    summarize_for_checker(arena, path, script_kind, text, atoms, flags)
+}
+
+/// [`summarize`] without `hir::File::comments`.
+pub fn summarize_without_comments<'s>(
+    arena: &'s Arena,
+    path: &[u8],
+    script_kind: Option<ScriptKind>,
+    text: &[u8],
+    atoms: &Interner<'s>,
+    experimental_decorators: bool,
+    every_file_is_a_module: bool,
+    reads_as_bun_run: bool,
+) -> File<'s> {
+    let flags = [
+        experimental_decorators,
+        every_file_is_a_module,
+        reads_as_bun_run,
+        true,
+    ];
+    summarize_for_checker(arena, path, script_kind, text, atoms, flags)
+}
+
+fn summarize_for_checker<'s>(
+    arena: &'s Arena,
+    path: &[u8],
+    script_kind: Option<ScriptKind>,
+    text: &[u8],
+    atoms: &Interner<'s>,
+    [
+        experimental_decorators,
+        every_file_is_a_module,
+        reads_as_bun_run,
+        drops_comments,
+    ]: [bool; 4],
+) -> File<'s> {
     let how = ParseSettings {
         dialect: Dialect::default(),
         path,
@@ -461,11 +521,10 @@ pub fn summarize<'s>(
         ignores_pure_comments: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
+        drops_comments,
+        may_use_helpers: true,
     };
-    SCRATCH.with_borrow_mut(|all| {
-        let scratch = all[0].get_or_insert_default();
-        parse_into_arena(scratch, how, (arena, atoms.session()), text, atoms)
-    })
+    with_scratch(|scratch| parse_into_arena(scratch, how, (arena, atoms.session()), text, atoms))
 }
 
 /// [`summarize`] for a caller that reads of a TypeScript file only which files it names and whether it is a module: the tree holds the `import` and `export` statements in front alone, or else the functions have empty bodies wherever their blocks could be stepped over.
@@ -499,6 +558,8 @@ pub fn summarize_top_level<'s>(
         ignores_pure_comments: false,
         skips_function_blocks: true,
         reads_module_statements_alone: true,
+        drops_comments: false,
+        may_use_helpers: false,
     };
     let file = SCRATCH.with_borrow_mut(|all| {
         let scratch = all[0].get_or_insert_default();
@@ -557,6 +618,8 @@ pub fn summarize_in<'s>(
         ignores_pure_comments: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
+        drops_comments: false,
+        may_use_helpers: false,
     };
     SCRATCH.with_borrow_mut(|all| {
         parse_into_arena(all[0].get_or_insert_default(), how, memory, text, atoms)
@@ -651,6 +714,8 @@ pub fn with_summary_in_place<'s, R>(
         ignores_pure_comments: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
+        drops_comments: false,
+        may_use_helpers: false,
     };
     // `then` may parse another text.
     let mut scratch = take_scratch();

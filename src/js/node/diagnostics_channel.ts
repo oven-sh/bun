@@ -30,28 +30,33 @@ type Traced = (...args: any[]) => unknown;
 /** One object: `markActive` and `maybeMarkInactive` move it from one prototype to the other. */
 type AnyChannel = Channel | ActiveChannel;
 
-// TODO: https://github.com/nodejs/node/blob/fb47afc335ef78a8cef7eac52b8ee7f045300696/src/node_util.h#L13
+// #strong is only written, and get() stays deref(), as in Node: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util.js#L865-L896
 class WeakReference<T extends WeakKey> extends WeakRef<T> {
   #refs = 0;
+  // oxlint-disable-next-line no-unused-private-class-members
+  #strong: T | undefined = undefined;
 
   get() {
     return this.deref();
   }
 
   incRef() {
-    return ++this.#refs;
+    if (++this.#refs === 1) this.#strong = this.deref();
+    return this.#refs;
   }
 
   decRef() {
-    return --this.#refs;
+    if (--this.#refs === 0) this.#strong = undefined;
+    return this.#refs;
   }
 }
 
 // Can't delete when weakref count reaches 0 as it could increment again.
 // Only GC can be used as a valid time to clean up the channels map.
 class WeakRefMap extends SafeMap {
-  #finalizers = new SafeFinalizationRegistry(key => {
-    this.delete(key);
+  // A newer channel may own the key by the time the finalizer runs.
+  #finalizers = new SafeFinalizationRegistry<ChannelName>(key => {
+    if (!this.has(key)) this.delete(key);
   });
 
   set(key: ChannelName, value: AnyChannel) {
@@ -61,6 +66,10 @@ class WeakRefMap extends SafeMap {
 
   get(key: ChannelName) {
     return (super.get(key) as WeakReference<AnyChannel> | undefined)?.get();
+  }
+
+  has(key: ChannelName) {
+    return !!this.get(key);
   }
 
   incRef(key: ChannelName) {

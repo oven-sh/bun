@@ -245,3 +245,18 @@ fn a_branch_that_is_a_function_has_no_count_beside_that_of_the_function() {
         ]
     );
 }
+
+#[test]
+fn the_arms_of_a_conditional_object_spread_count() {
+    let fragment = lower(
+        "export function spreads(a: boolean) {
+  return { ...(a ? { two: 2 } : {}), ...(a && { three: 3 }), four: 4 };
+}
+",
+    );
+    let functions = fragment.functions.iter();
+    let blocks = functions.flat_map(|(_, function)| function.body.blocks());
+    let values = blocks.flat_map(|block| block.values());
+    let counts = values.filter(|value| value.opcode == Opcode::CountExecution);
+    assert_eq!(counts.count(), 5);
+}

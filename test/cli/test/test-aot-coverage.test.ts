@@ -86,6 +86,36 @@ export function makers(flag, given = () => {
     };
   return [chosen, given];
 }
+
+export function spreads(a, b) {
+  const extra = { four: 4 };
+  return {
+    ...{
+      one: 1,
+    },
+    ...(a
+      ? {
+          two: 2,
+        }
+      : {}),
+    ...(a && {
+      three: 3,
+    }),
+    ...(a && (b
+      ? {
+          five: 5,
+        }
+      : {
+          six: 6,
+        })),
+    ...(b
+      ? {
+          seven: 7,
+        }
+      : extra),
+    ...extra,
+  };
+}
 `,
   "constants.js": `const STEP = 3;
 const FIRST = 4;
@@ -200,7 +230,7 @@ function unused() {
 module.exports = { used, unused };
 `,
   "first.test.js": `import { expect, test } from "bun:test";
-import { pick, loops, chain, byKind, makers } from "./branches.js";
+import { pick, loops, chain, byKind, makers, spreads } from "./branches.js";
 import { callsWhatThrows, catches, waits, neverResumed } from "./throws.js";
 import common from "./common.cjs";
 import { besideWhatIsFolded, folded, foldedInOneBranch, printedBehindWhatFollows, steps } from "./constants.js";
@@ -215,6 +245,8 @@ test("branches", () => {
   expect(byKind("c")).toBe(2);
   expect(common.used()).toBe(1);
   expect(makers(true).length).toBe(2);
+  expect(spreads(true, false)).toEqual({ one: 1, two: 2, three: 3, six: 6, four: 4 });
+  expect(spreads(false, true)).toEqual({ one: 1, seven: 7, four: 4 });
   expect(steps(1, 0) + steps(1, 0)).toBe(6);
   expect(steps(0, 1)).toBe("second");
   expect(folded(1).length + folded(2).length).toBe(10);

@@ -27,7 +27,9 @@ use crate::known_helpers::StateOwner;
 use crate::lower::class::ClassElement;
 use crate::lower::module::LibraryFunctionForm;
 use crate::lower::positions::is_made_by_its_file;
-use crate::lower::{CheckerTypeId, FileLowering, NameOfHeir, SourceKind, class, known_call, module};
+use crate::lower::{
+    CheckerTypeId, FileLowering, NameOfHeir, SourceKind, class, known_call, module,
+};
 use crate::modules::{InnerModuleKind, ModuleRef};
 
 type Supertypes = SmallVec<[LayoutId; 4]>;

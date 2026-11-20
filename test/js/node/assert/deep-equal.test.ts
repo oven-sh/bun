@@ -71,6 +71,40 @@ function withOwnConstructor(prototype: object | null, constructor: unknown) {
   return Object.create(prototype, { constructor: { value: constructor } });
 }
 
+class TypeErrorSubclass extends TypeError {}
+
+class NamedByGetter extends Error {
+  get name() {
+    return this.constructor.name;
+  }
+}
+class NotFound extends NamedByGetter {}
+class Forbidden extends NamedByGetter {}
+
+// The name is a hidden property of the prototype, two prototypes up from an instance of the subclass.
+class NamedA extends Error {}
+class NamedB extends Error {}
+withHiddenProperty(NamedA.prototype, "name", "A");
+withHiddenProperty(NamedB.prototype, "name", "B");
+class SubclassOfNamedA extends NamedA {}
+class SubclassOfNamedB extends NamedB {}
+
+// The assignment makes an enumerable property of the prototype.
+class NamedByAssignment extends Error {}
+NamedByAssignment.prototype.name = "NamedByAssignment";
+class SubclassOfNamedByAssignment extends NamedByAssignment {}
+
+class MessageGetterA extends Error {
+  get message() {
+    return "A";
+  }
+}
+class MessageGetterB extends Error {
+  get message() {
+    return "B";
+  }
+}
+
 function seventyProperties<T extends Record<string, unknown>>(object: T): T {
   for (let i = 0; i < 70; i++) (object as Record<string, unknown>)["k" + i] = i;
   return object;
@@ -703,6 +737,133 @@ const cases: Case[] = [
     strict: false,
     loose: false,
   },
+  // `name` and `message` are read as properties: from any prototype, and through getters.
+  {
+    name: "a TypeError subclass instance and a TypeError",
+    a: () => new TypeErrorSubclass("x"),
+    b: () => new TypeError("x"),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "a TypeError and a TypeError subclass instance",
+    a: () => new TypeError("x"),
+    b: () => new TypeErrorSubclass("x"),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "instances of two classes that a getter on their base names",
+    a: () => new NotFound("x"),
+    b: () => new Forbidden("x"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "an instance of a class that a getter names and an Error",
+    a: () => new NotFound("x"),
+    b: () => new Error("x"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "errors with different names two prototypes up",
+    a: () => new SubclassOfNamedA("x"),
+    b: () => new SubclassOfNamedB("x"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "an error with its name two prototypes up and an instance of the class that holds the name",
+    a: () => new SubclassOfNamedA("x"),
+    b: () => new NamedA("x"),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "an error with an assigned name two prototypes up and an instance of the class that holds the name",
+    a: () => new SubclassOfNamedByAssignment("x"),
+    b: () => new NamedByAssignment("x"),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "an instance of a class with an assigned prototype name and an instance of its subclass",
+    a: () => new NamedByAssignment("x"),
+    b: () => new SubclassOfNamedByAssignment("x"),
+    strict: false,
+    loose: true,
+  },
+  // The walk over the enumerable properties of two Errors takes an inherited name for an own one.
+  {
+    name: "an error with an assigned prototype name and one of its class with that name as its own",
+    a: () => new NamedByAssignment("x"),
+    b: () => Object.assign(new NamedByAssignment("x"), { name: "NamedByAssignment" }),
+    strict: false,
+    loose: false,
+    strictBug: "reports equal",
+    looseBug: "reports equal",
+  },
+  {
+    name: "an error with an assigned name two prototypes up and one of its class with that name as its own",
+    a: () => new SubclassOfNamedByAssignment("x"),
+    b: () => Object.assign(new SubclassOfNamedByAssignment("x"), { name: "NamedByAssignment" }),
+    strict: false,
+    loose: false,
+    strictBug: "reports equal",
+    looseBug: "reports equal",
+  },
+  {
+    name: "an error with an assigned name two prototypes up and an Error with that name as its own",
+    a: () => new SubclassOfNamedByAssignment("x"),
+    b: () => Object.assign(new Error("x"), { name: "NamedByAssignment" }),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "an Error with no message and an Error with an empty message",
+    a: () => new Error(),
+    b: () => new Error(""),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "errors with different messages from getters",
+    a: () => new MessageGetterA(),
+    b: () => new MessageGetterB(),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "an error with a message getter and an Error with that message",
+    a: () => new MessageGetterA(),
+    b: () => new Error("A"),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "errors with hidden names that are different objects",
+    a: () => withHiddenProperty(new Error("x"), "name", { a: 1 }),
+    b: () => withHiddenProperty(new Error("x"), "name", { a: 2 }),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "an Error with a hidden undefined name and an Error",
+    a: () => withHiddenProperty(new Error("x"), "name", undefined),
+    b: () => new Error("x"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "errors with the hidden names 1 and '1'",
+    a: () => withHiddenProperty(new Error("x"), "name", 1),
+    b: () => withHiddenProperty(new Error("x"), "name", "1"),
+    strict: false,
+    loose: true,
+    looseBug: "reports not equal",
+  },
 
   // Map and Set.
   {
@@ -1209,9 +1370,86 @@ describe("util.isDeepStrictEqual", () => {
       expect(util.isDeepStrictEqual(new String("a"), new S("a"), true as any)).toBe(true);
     });
 
+    test("ignores the Error subclass distinction, and still compares name and message", () => {
+      const withoutPrototypes = new (assert as any).Assert({ skipPrototype: true });
+      const equalWithoutPrototypes: [Thunk, Thunk][] = [
+        [() => new TypeErrorSubclass("x"), () => new TypeError("x")],
+        [() => new TypeError("x"), () => new TypeErrorSubclass("x")],
+        [() => new SubclassOfNamedA("x"), () => new NamedA("x")],
+        [() => new SubclassOfNamedByAssignment("x"), () => new NamedByAssignment("x")],
+        [() => new MessageGetterA(), () => new Error("A")],
+      ];
+      for (const [a, b] of equalWithoutPrototypes) {
+        assert.strictEqual(util.isDeepStrictEqual(a(), b()), false);
+        assert.strictEqual(util.isDeepStrictEqual(a(), b(), true as any), true);
+        assert.strictEqual(
+          caught(() => withoutPrototypes.deepStrictEqual(a(), b())),
+          null,
+        );
+        assert.strictEqual(caught(() => withoutPrototypes.notDeepStrictEqual(a(), b()))?.code, "ERR_ASSERTION");
+      }
+      const neverEqual: [Thunk, Thunk][] = [
+        [() => new NotFound("x"), () => new Forbidden("x")],
+        [() => new SubclassOfNamedA("x"), () => new SubclassOfNamedB("x")],
+        [() => new MessageGetterA(), () => new MessageGetterB()],
+      ];
+      for (const [a, b] of neverEqual) {
+        assert.strictEqual(util.isDeepStrictEqual(a(), b(), true as any), false);
+        assert.strictEqual(caught(() => withoutPrototypes.deepStrictEqual(a(), b()))?.code, "ERR_ASSERTION");
+      }
+    });
+
     test("does not leak into assert.deepStrictEqual", () => {
       expect(() => assert.deepStrictEqual(new Foo(42), new Bar(42))).toThrow();
     });
+  });
+});
+
+describe("the message and the name of two Errors", () => {
+  const entryPoints: [string, (a: unknown, b: unknown) => void][] = [
+    ["assert.deepEqual", (a, b) => assert.deepEqual(a, b)],
+    ["assert.deepStrictEqual", (a, b) => assert.deepStrictEqual(a, b)],
+    ["util.isDeepStrictEqual", (a, b) => assert.strictEqual(util.isDeepStrictEqual(a, b), true)],
+  ];
+
+  test.each(entryPoints)("%s reads a hidden getter of each once per side, the message first", (_name, equal) => {
+    const log: string[] = [];
+    class Logged extends Error {
+      #id: string;
+      constructor(id: string) {
+        super();
+        this.#id = id;
+      }
+      get message() {
+        log.push(`${this.#id}.message`);
+        return "m";
+      }
+      get name() {
+        log.push(`${this.#id}.name`);
+        return "n";
+      }
+    }
+    equal(new Logged("a"), new Logged("b"));
+    assert.deepStrictEqual(log, ["a.message", "b.message", "a.name", "b.name"]);
+  });
+
+  test.each(entryPoints)("%s reads an enumerable getter of each once per side", (_name, equal) => {
+    const reads: Record<string, number> = {};
+    const counted = (id: string, value: string): PropertyDescriptor => ({
+      enumerable: true,
+      configurable: true,
+      get() {
+        reads[id] = (reads[id] ?? 0) + 1;
+        return value;
+      },
+    });
+    const make = (id: string) =>
+      Object.defineProperties(new Error("x"), {
+        message: counted(`${id}.message`, "x"),
+        name: counted(`${id}.name`, "n"),
+      });
+    equal(make("a"), make("b"));
+    assert.deepStrictEqual(reads, { "a.message": 1, "b.message": 1, "a.name": 1, "b.name": 1 });
   });
 });
 

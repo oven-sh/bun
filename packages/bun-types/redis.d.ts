@@ -70,7 +70,7 @@ declare module "bun" {
      * console.log(await redis.get("hello"));
      * ```
      */
-    constructor(url?: string, options?: RedisOptions);
+    constructor(url?: string | URL, options?: RedisOptions);
 
     /**
      * Whether the client is connected to the Redis server

@@ -11014,7 +11014,11 @@ declare module "bun" {
    * The structure of Bun's lockfile, `bun.lock`
    */
   type BunLockFile = {
-    lockfileVersion: 0 | 1 | 2;
+    /**
+     * - `3` is written when `overrides` has scoped rules.
+     * - `4` is written when `packages` has an entry for a package that the tarball of another package ships (see `bundled` in {@link BunLockFilePackageInfo}).
+     */
+    lockfileVersion: 0 | 1 | 2 | 3 | 4;
     workspaces: {
       [workspace: string]: BunLockFileWorkspacePackage;
     };
@@ -11053,6 +11057,12 @@ declare module "bun" {
      * git         -> [ "name@git+repo", INFO, .bun-tag string (TODO: remove this) ]
      * github      -> [ "name@github:user/repo", INFO, .bun-tag string (TODO: remove this) ]
      * ```
+     *
+     * With `lockfileVersion` 4, a package that the tarball of another package ships in its `node_modules` (`bundleDependencies`) has the npm form with an empty registry and an empty integrity:
+     * ```
+     * bundled     -> [ "name@version", "", { ...INFO, "bundled": true }, "" ]
+     * ```
+     * Its key is the path of the folder in the tarball and its version is the one in the tarball. It is not downloaded.
      */
     packages: {
       [pkg: string]: BunLockFilePackageArray;
@@ -11065,7 +11075,11 @@ declare module "bun" {
     optionalDependencies?: Record<string, string>;
     peerDependencies?: Record<string, string>;
     optionalPeers?: string[];
-    /** Names in `optionalDependencies` that did not resolve, listed when another package in the lockfile has the name */
+    /**
+     * Names in `optionalDependencies` that did not resolve, listed when another package in the lockfile has the name.
+     *
+     * With `lockfileVersion` 4, also the names in `bundleDependencies` that the tarball of the package does not ship.
+     */
     unresolved?: string[];
     bin?: string | Record<string, string>;
     binDir?: string;
@@ -11080,6 +11094,12 @@ declare module "bun" {
     os?: string | string[];
     cpu?: string | string[];
     hasInstallScript?: true;
+    /**
+     * The package is in the `node_modules` that the tarball of the package above it ships (`bundleDependencies`).
+     *
+     * With `lockfileVersion` 4, an entry `["name@version", "", { ..., "bundled": true }, ""]` is the package that the tarball ships: it has no registry and no integrity.
+     * An entry with an integrity, or in a file with an earlier `lockfileVersion`, names a version from the registry.
+     */
     bundled?: true;
   };
 

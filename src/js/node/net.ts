@@ -3437,6 +3437,7 @@ Server.prototype.listen = function listen(port, hostname, backlogArg) {
   let readableAll = false;
   let writableAll = false;
   let fd;
+  let hostDefaulted = false;
   if (isPipeName(port)) {
     path = port;
     hostname = undefined;
@@ -3550,6 +3551,7 @@ Server.prototype.listen = function listen(port, hostname, backlogArg) {
       exclusive = true;
     }
     var clusterHost: string | null | undefined = typeof hostname === "string" && hostname.length > 0 ? hostname : null;
+    hostDefaulted = !hostname && fd === undefined;
     hostname = hostname || "::";
   }
 
@@ -3592,31 +3594,33 @@ Server.prototype.listen = function listen(port, hostname, backlogArg) {
       queryAddressType = isIP(clusterHost) || 4;
     }
 
-    const listenOn = host =>
-      listenInCluster(
-        this,
-        queryAddress,
-        queryPort,
-        queryAddressType,
-        backlog,
-        fd,
-        exclusive,
-        ipv6Only,
-        reusePort,
-        readableAll,
-        writableAll,
-        flags,
-        path,
-        host,
-        tls,
-        contexts,
-      );
-    try {
-      listenOn(hostname);
-    } catch (err: any) {
-      // No host and no IPv6 in the kernel: https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2127-L2139
-      if (queryAddress !== null || err?.code !== "EAFNOSUPPORT") throw err;
-      listenOn((hostname = "0.0.0.0"));
+    for (;;) {
+      try {
+        listenInCluster(
+          this,
+          queryAddress,
+          queryPort,
+          queryAddressType,
+          backlog,
+          fd,
+          exclusive,
+          ipv6Only,
+          reusePort,
+          readableAll,
+          writableAll,
+          flags,
+          path,
+          hostname,
+          tls,
+          contexts,
+        );
+        break;
+      } catch (err: any) {
+        // https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2127-L2139. libuv reports EADDRINUSE later, from listen().
+        if (!hostDefaulted || err?.syscall !== "listen" || err.code === "EADDRINUSE") throw err;
+        hostDefaulted = false;
+        hostname = "0.0.0.0";
+      }
     }
   } catch (err) {
     const address = path ?? (fd === undefined ? hostname : null);

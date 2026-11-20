@@ -331,7 +331,8 @@ function emitListenErrorNextTick(self, err) {
 function emitListenError(server, err, port, host, socketPath, fd) {
   const { listenException } = require("internal/net/errors");
   if (fd !== undefined) err = listenException(err, null);
-  else err = socketPath ? listenException(err, socketPath, -1) : listenException(err, host ?? "::", port);
+  else if (socketPath) err = listenException(err, socketPath, -1);
+  else err = listenException(err, host || err?.address, port);
   process.nextTick(emitListenErrorNextTick, server, err);
 }
 
@@ -895,7 +896,7 @@ Server.prototype.listen = function () {
     // listenInCluster
 
     if (isPrimary) {
-      server[kRealListen](tls, port, host, socketPath, reusePort, ipv6Only, fd);
+      listenHere(server, tls, port, host, socketPath, reusePort, ipv6Only, fd);
       return this;
     }
 
@@ -934,7 +935,7 @@ Server.prototype.listen = function () {
     });
 
     if (exclusive) {
-      server[kRealListen](tls, port, host, socketPath, true, ipv6Only, fd);
+      listenHere(server, tls, port, host, socketPath, true, ipv6Only, fd);
       return this;
     }
     server[kClusterPendingBind] = listeningId;
@@ -943,7 +944,7 @@ Server.prototype.listen = function () {
       server[kClusterPendingBind] = undefined;
       if (cluster.worker?.exitedAfterDisconnect) return;
       try {
-        server[kRealListen](tls, port, host, socketPath, true, ipv6Only, fd);
+        listenHere(server, tls, port, host, socketPath, true, ipv6Only, fd);
         server[kClusterHandle] = track();
       } catch (err) {
         emitListenError(server, err, port, host, socketPath, fd);
@@ -955,6 +956,20 @@ Server.prototype.listen = function () {
 
   return this;
 };
+
+// https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2127-L2139. libuv reports EADDRINUSE later, from listen().
+function listenHere(server, tls, port, host, socketPath, reusePort, ipv6Only, fd) {
+  if (host || socketPath || fd !== undefined) {
+    server[kRealListen](tls, port, host, socketPath, reusePort, ipv6Only, fd);
+    return;
+  }
+  try {
+    server[kRealListen](tls, port, host, socketPath, reusePort, ipv6Only, fd, "::");
+  } catch (err: any) {
+    if (err?.syscall !== "listen" || err.code === "EADDRINUSE") throw err;
+    server[kRealListen](tls, port, host, socketPath, reusePort, ipv6Only, fd, "0.0.0.0");
+  }
+}
 
 // net.Server's listenInCluster, always `sharedOnly` like its TLS servers: Bun.serve can't take connections the primary accepted.
 function listenInCluster(server, tls, port, host, socketPath, ipv6Only, fd) {
@@ -1005,7 +1020,16 @@ function listenInCluster(server, tls, port, host, socketPath, ipv6Only, fd) {
   });
 }
 
-Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, ipv6Only, fd?: number) {
+Server.prototype[kRealListen] = function (
+  tls,
+  port,
+  host,
+  socketPath,
+  reusePort,
+  ipv6Only,
+  fd?: number,
+  wildcard?: string,
+) {
   {
     // What the first connection and the first request need, so that neither waits for it.
     loadNet(tls);
@@ -1030,7 +1054,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
       tls,
       port,
-      hostname: host,
+      hostname: wildcard ?? host,
       unix: socketPath,
       fd,
       reusePort,
@@ -1334,7 +1358,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     if (this._unref) handle.unref();
 
     // A tick, not a timer, as in node: a timer never fires on its own under jest.useFakeTimers().
-    process.nextTick(emitListeningNextTick, this, handle.hostname, handle.port);
+    process.nextTick(emitListeningNextTick, this, wildcard ? "localhost" : handle.hostname, handle.port);
   }
 };
 

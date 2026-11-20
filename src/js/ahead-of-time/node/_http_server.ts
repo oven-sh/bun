@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 f093e09b98cf32d6bb0b2d277b0658c775cf1dc229b81a7a0079e7bcab142826.
+// Written against that file with the SHA-256 0a6e5110e45157e318343b842c1ba28ca07231606e93ef0b0c95322d472c5191.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -504,7 +504,8 @@ function emitListenError(
 ) {
   const { listenException } = require("internal/net/errors");
   if (fd !== undefined) err = listenException(err, null);
-  else err = socketPath ? listenException(err, socketPath, -1) : listenException(err, host ?? "::", port as number);
+  else if (socketPath) err = listenException(err, socketPath, -1);
+  else err = listenException(err, host || (err as any)?.address, port as number);
   process.nextTick(emitListenErrorNextTick, server, err);
 }
 
@@ -1329,7 +1330,7 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
     // listenInCluster
 
     if (isPrimary) {
-      server[kRealListen](tls, port as number | undefined, host, socketPath, reusePort, ipv6Only, fd);
+      listenHere(server, tls, port as number | undefined, host, socketPath, reusePort, ipv6Only, fd);
       return this;
     }
 
@@ -1369,7 +1370,7 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
       });
 
       if (exclusive) {
-        server[kRealListen](tls, port as number | undefined, host, socketPath, true, ipv6Only, fd);
+        listenHere(server, tls, port as number | undefined, host, socketPath, true, ipv6Only, fd);
         return this;
       }
       server[kClusterPendingBind] = listeningId;
@@ -1378,7 +1379,7 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
         server[kClusterPendingBind] = undefined;
         if (cluster!.worker?.exitedAfterDisconnect) return;
         try {
-          server[kRealListen](tls, port as number | undefined, host, socketPath, true, ipv6Only, fd);
+          listenHere(server, tls, port as number | undefined, host, socketPath, true, ipv6Only, fd);
           server[kClusterHandle] = track();
         } catch (err) {
           emitListenError(server, err, port as number | undefined, host, socketPath, fd);
@@ -1391,6 +1392,29 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
 
   return this;
 };
+
+// https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2127-L2139. libuv reports EADDRINUSE later, from listen().
+function listenHere(
+  server: $Node.HttpServer,
+  tls: $Node.HttpServerTLSOptions | null,
+  port: number | string | undefined,
+  host: string | undefined,
+  socketPath: string | undefined,
+  reusePort: boolean,
+  ipv6Only: boolean,
+  fd: number | undefined,
+) {
+  if (host || socketPath || fd !== undefined) {
+    server[kRealListen](tls, port, host, socketPath, reusePort, ipv6Only, fd);
+    return;
+  }
+  try {
+    server[kRealListen](tls, port, host, socketPath, reusePort, ipv6Only, fd, "::");
+  } catch (err: any) {
+    if (err?.syscall !== "listen" || err.code === "EADDRINUSE") throw err;
+    server[kRealListen](tls, port, host, socketPath, reusePort, ipv6Only, fd, "0.0.0.0");
+  }
+}
 
 // net.Server's listenInCluster, always `sharedOnly` like its TLS servers: Bun.serve can't take connections the primary accepted.
 function listenInCluster(
@@ -1466,6 +1490,7 @@ Server.prototype[kRealListen] = function (
   reusePort: boolean,
   ipv6Only: boolean,
   fd?: number,
+  wildcard?: string,
 ) {
   {
     // What the first connection and the first request need, so that neither waits for it.
@@ -1779,7 +1804,7 @@ Server.prototype[kRealListen] = function (
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
       tls: tls as any,
       port,
-      hostname: host,
+      hostname: wildcard ?? host,
       unix: socketPath,
       fd,
       reusePort,
@@ -1876,7 +1901,7 @@ Server.prototype[kRealListen] = function (
     if (this._unref) handle.unref();
 
     // A tick, not a timer, as in node: a timer never fires on its own under jest.useFakeTimers().
-    process.nextTick(emitListeningNextTick, this, handle.hostname, handle.port);
+    process.nextTick(emitListeningNextTick, this, wildcard ? "localhost" : handle.hostname, handle.port);
   }
 };
 

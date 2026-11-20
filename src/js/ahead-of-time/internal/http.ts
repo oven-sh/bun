@@ -500,6 +500,7 @@ declare global {
         reusePort: boolean,
         ipv6Only: boolean,
         fd?: number,
+        wildcard?: string,
       ): void;
       [kLeaveHttp](socket: HttpServerSocket, request: IncomingMessage): void;
     }

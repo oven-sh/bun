@@ -740,6 +740,7 @@ Bun provides the `vi` object for tests written for Vitest. Where Vitest and Jest
 - `vi.restoreAllMocks()` keeps the recorded calls of the spies it restores.
 - `fn.mock` is still the same object after `mockClear()`.
 - `getMockImplementation()` returns what the next call runs, so a `mockReturnValueOnce()` that is still waiting comes first.
+- `getMockName()` of a `vi.fn()` mock is `"vi.fn()"`. A `vi.spyOn()` spy is named after the function it replaces, not after the property key: its `name` and `getMockName()` are that function's `name`, or `"Mock"` if the function has none. A mock that `vi.mockObject()` makes gets its `name` the same way. These are the names of Vitest 4 and 5. Vitest 3 and older name a spy on a function without a name `"spy"`.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, vi } from "bun:test";
@@ -807,6 +808,9 @@ test("lazy import", async () => {
 - A factory that uses `importOriginal` is called after the original module is evaluated, not before, so after the factories that don't use it. A factory that declares the parameter counts as using it, so the original is evaluated even if the factory never calls it.
 - `export * from` a mocked module re-exports the original's export names if the factory uses `importOriginal`. Names the factory adds aren't re-exported, and names it leaves out are re-exported as `undefined`.
 - If two files import each other and both have hoisted calls, they wait on each other and the run fails with an error that names both files. Keep the hoisted calls in only one of them.
+- A spy or an automock takes the `name` that the function it replaces has in Bun. Where the function has another `name` under Vitest, the mock's name differs too. `path.join.name` is `"bound join"` in Bun, so `vi.spyOn(path, "join").getMockName()` is `"bound join"`. An anonymous default export is not named `__vite_ssr_export_default__`, the name that Vite's transform gives it.
+- If the `name` of the function is an object, the mock is named `"Mock"`. Vitest converts the object to a string, which calls into it. For a function of an RPC client that answers every property with another function, that call sends a request or throws.
+- An instance of a class that `vi.mockObject()` or an automock replaced keeps the class's name and has no `constructor` mock of its own, and the mocks of its methods have the methods' names. In Vitest, a snapshot of the instance starts with `Mock {` and lists a `constructor` mock, and the mocks of its methods are named `"Mock"`. With `{ spy: true }`, the mocks of the methods have the same names in both.
 
 ## Implementation Details
 

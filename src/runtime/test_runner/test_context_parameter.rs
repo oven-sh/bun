@@ -94,7 +94,6 @@ impl ContextParameter {
         let source = bun_ast::Source::init_path_string(&b"function.js"[..], text);
         let mut options = bun_js_parser::ParserOptions::init(Default::default(), loader);
         options.features.no_macros = true;
-        options.suppress_warnings_about_weird_code = true;
         let define = bun_js_parser::Define::default();
         let mut log = bun_ast::Log::init();
         bun_js_parser::Parser::init(options, &mut log, &source, &define, &arena)

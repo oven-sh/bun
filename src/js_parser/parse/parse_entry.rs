@@ -101,7 +101,6 @@ pub fn parse_only_text<R>(
     options.features.no_macros = true;
     options.features.top_level_await = top_level_await;
     options.jsc_builtin_syntax = jsc_builtin_syntax;
-    options.suppress_warnings_about_weird_code = true;
     let define = Define::default();
     let mut log = bun_ast::Log::init();
     let parser = Parser::init(options, &mut log, &source, &define, &arena).ok()?;
@@ -135,7 +134,6 @@ pub struct Options<'a> {
     pub keep_directives: bool,
     pub preserve_unused_imports_ts: bool,
     pub use_define_for_class_fields: bool,
-    pub suppress_warnings_about_weird_code: bool,
     pub features: RuntimeFeatures,
 
     pub tree_shaking: bool,
@@ -210,7 +208,6 @@ impl<'a> Options<'a> {
             keep_directives: self.keep_directives,
             preserve_unused_imports_ts: self.preserve_unused_imports_ts,
             use_define_for_class_fields: self.use_define_for_class_fields,
-            suppress_warnings_about_weird_code: self.suppress_warnings_about_weird_code,
             features: RuntimeFeatures {
                 react_fast_refresh: f.react_fast_refresh,
                 react_compiler: f.react_compiler,
@@ -333,7 +330,6 @@ impl<'a> Options<'a> {
             keep_directives: false,
             preserve_unused_imports_ts: false,
             use_define_for_class_fields: true,
-            suppress_warnings_about_weird_code: true,
             features: RuntimeFeatures::default(),
             tree_shaking: false,
             bundle: false,

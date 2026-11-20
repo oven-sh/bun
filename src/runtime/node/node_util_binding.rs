@@ -60,6 +60,12 @@ pub(crate) fn ecanceled_error_code() -> i32 {
     -UV_E::CANCELED
 }
 
+/// Whether `Command::which()` classified this process as `node` (argv[0] ends in `node`).
+pub(crate) fn is_running_as_node() -> bool {
+    // Relaxed: stored once in `Command::which()` during single-threaded startup.
+    crate::cli::PRETEND_TO_BE_NODE.load(core::sync::atomic::Ordering::Relaxed)
+}
+
 /// `extractedSplitNewLines` for ASCII/Latin1 strings.
 /// Returns `undefined` if param is utf8 or utf16 and not fully ascii.
 ///

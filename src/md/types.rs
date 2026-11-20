@@ -184,6 +184,9 @@ pub struct SpanDetail<'a> {
     /// Permissive www autolink: prepend "http://" to href
     pub autolink_www: bool,
     pub reference: Reference,
+    /// Em and Strong: the runs of the span are ones that CommonMark and micromark pair differently, or are next to
+    /// such runs. See `compat::rule_of_three_counts_what_is_left`.
+    pub is_kept_as_written: bool,
 }
 
 /// How a link or an image says where it goes.
@@ -211,6 +214,7 @@ impl<'a> Default for SpanDetail<'a> {
             permissive_autolink: false,
             autolink_www: false,
             reference: Reference::None,
+            is_kept_as_written: false,
         }
     }
 }

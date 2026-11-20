@@ -94,14 +94,6 @@ void CryptoErrorList::capture()
     }
 }
 
-std::optional<WTF::String> CryptoErrorList::pop_back()
-{
-    if (errors_.empty()) return std::nullopt;
-    WTF::String error = errors_.back();
-    errors_.pop_back();
-    return error;
-}
-
 // ============================================================================
 DataPointer DataPointer::Alloc(size_t len)
 {
@@ -256,11 +248,6 @@ BignumPointer::~BignumPointer()
 void BignumPointer::reset(BIGNUM* bn)
 {
     bn_.reset(bn);
-}
-
-void BignumPointer::reset(const unsigned char* data, size_t len)
-{
-    reset(BN_bin2bn(data, len, nullptr));
 }
 
 BIGNUM* BignumPointer::release()
@@ -2917,12 +2904,6 @@ bool CipherCtxPointer::isCcmMode() const
 {
     if (!ctx_) return false;
     return getMode() == EVP_CIPH_CCM_MODE;
-}
-
-bool CipherCtxPointer::isWrapMode() const
-{
-    if (!ctx_) return false;
-    return getMode() == EVP_CIPH_WRAP_MODE;
 }
 
 bool CipherCtxPointer::isChaCha20Poly1305() const

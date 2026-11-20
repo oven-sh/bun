@@ -255,7 +255,17 @@ export const ExpectMatcherContext = b.class({
 /** `this.utils` in a matcher of `expect.extend()`. Its functions are own properties, which ignore `this`. */
 export const ExpectMatcherUtils = b.class({
   rustPath: "crate::test_runner::ExpectMatcherUtils",
-  internalFields: ["equalityTesters", "equals", "state", "snapshotSerializers", "toSatisfy"],
+  internalFields: [
+    "equalityTesters",
+    "equals",
+    "state",
+    "snapshotSerializers",
+    "toSatisfy",
+    "iterableEqualityWithStack",
+    "subsetEqualityWithContext",
+    "askedTester",
+    "registeredTesters",
+  ],
 });
 
 /** Ignores `this`, so a matcher can destructure it or pass it around like in Jest. */
@@ -289,6 +299,29 @@ export const printWithType = b.fn({
   args: { name: b.any, value: b.any, print: b.any },
 });
 export const diff = b.fn({ ...utility("diff", "diff"), args: { expected: b.any, received: b.any } });
+/** The testers of Jest's own matchers. Each leaves itself, the callee, out of the testers for the members. */
+export const iterableEquality = b.fn({
+  ...utility("iterableEquality", "iterable_equality"),
+  passCallee: true,
+  args: { a: b.any, b: b.any, customTesters: b.any },
+});
+export const subsetEquality = b.fn({
+  ...utility("subsetEquality", "subset_equality"),
+  passCallee: true,
+  args: { object: b.any, subset: b.any, customTesters: b.any },
+});
+/** What a call of the two adds to the testers for the members: one of these, bound to all but the last two arguments. */
+export const iterableEqualityWithStack = b.fn({
+  ...utility("iterableEqualityWithStack", "iterable_equality_with_stack"),
+  passThis: true,
+  passCallee: true,
+  args: { testers: b.any, aStack: b.any, bStack: b.any, a: b.any, b: b.any },
+});
+export const subsetEqualityWithContext = b.fn({
+  ...utility("subsetEqualityWithContext", "subset_equality_with_context"),
+  passCallee: true,
+  args: { testers: b.any, seen: b.any, object: b.any, subset: b.any },
+});
 
 const typeAssertion = { length: 1, rustName: "type_assertion" } as const;
 /** A matcher can follow it, as it can follow a `typeProperty`. */

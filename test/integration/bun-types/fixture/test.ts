@@ -695,6 +695,10 @@ declare module "bun:test" {
 }
 expect.extend({
   toBeWithinRange(received: unknown, floor: unknown, ceiling: unknown) {
+    const { iterableEquality, subsetEquality } = this.utils;
+    expectType(iterableEquality(received, floor)).is<boolean | undefined>();
+    expectType(subsetEquality(received, floor, this.customTesters)).is<boolean | undefined>();
+    expectType(this.equals(received, floor, [...this.customTesters, this.utils.iterableEquality, subsetEquality])).is<boolean>();
     return { pass: true, message: () => this.utils.matcherHint("toBeWithinRange", received, floor) };
   },
 });

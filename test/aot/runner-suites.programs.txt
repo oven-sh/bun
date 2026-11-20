@@ -321,6 +321,7 @@ test/bundler/bundler_compile.test.ts: bundler > compile/ImportDeferBytecode+cjs
 test/bundler/bundler_compile.test.ts: bundler > compile/ImportDeferBytecode+esm
 test/bundler/bundler_compile.test.ts: bundler > compile/ImportMetaMain
 test/bundler/bundler_compile.test.ts: bundler > compile/NoAutoInstall
+test/bundler/bundler_compile.test.ts: bundler > compile/NoSourceMapNonAsciiSource
 test/bundler/bundler_compile.test.ts: bundler > compile/NonAsciiChunkReadsBackAsUTF8
 test/bundler/bundler_compile.test.ts: bundler > compile/ReactSSR+bytecode+cjs+minify
 test/bundler/bundler_compile.test.ts: bundler > compile/ReactSSR+bytecode+esm

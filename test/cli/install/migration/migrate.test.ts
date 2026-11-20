@@ -1527,6 +1527,68 @@ describe("package-lock.json migration fixes", () => {
     expect(fs.existsSync(join(String(dir), "node_modules/alias/index.js"))).toBeTrue();
   });
 
+  // The migration takes the committish of package-lock.json as the tag of the
+  // package. npm writes a commit there. A lockfile that npm did not write can
+  // have a ref, and the text after the last `-` of a ref is no commit. bun.lock
+  // saves the ref whole, so an install with an empty cache asks GitHub for it
+  // again.
+  test.concurrent("a github ref from package-lock.json installs again from the saved bun.lock", async () => {
+    const ref = "release-20240115";
+    const tgz = githubTarball("User-repo-0123456", {
+      "package.json": JSON.stringify({ name: "tagged", version: "2.0.1" }),
+    });
+    const requests: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        requests.push(pathname);
+        if (pathname !== `/repos/user/repo/tarball/${ref}`) return new Response("Not Found", { status: 404 });
+        return new Response(tgz, { headers: { "content-type": "application/gzip" } });
+      },
+    });
+    const spec = `git+https://github.com/user/repo#${ref}`;
+    using dir = synthetic("npm-migrate-github-ref", {
+      "package.json": JSON.stringify({ name: "gh-ref", dependencies: { tagged: spec } }),
+      "package-lock.json": npmLock("gh-ref", {
+        "": { name: "gh-ref", dependencies: { tagged: spec } },
+        "node_modules/tagged": {
+          version: "2.0.1",
+          resolved: `git+ssh://git@github.com/user/repo.git#${ref}`,
+        },
+      }),
+    });
+    const install = async (cache: string, ...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", ...args],
+        env: {
+          ...bunEnv,
+          BUN_INSTALL_CACHE_DIR: join(String(dir), cache),
+          GITHUB_API_URL: `http://localhost:${server.port}`,
+        },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+
+    const migrating = await install(".bun-cache");
+    expect(migrating.stderr).toContain("Saved lockfile");
+    expect(migrating.exitCode).toBe(0);
+    const { lock } = await readLock(dir);
+    expect(lock.packages.tagged.slice(0, 3)).toEqual([`tagged@github:user/repo#${ref}`, {}, ref]);
+
+    fs.rmSync(join(String(dir), "node_modules"), { recursive: true, force: true });
+    expect(await install(".empty-cache", "--frozen-lockfile")).toEqual({
+      stdout: expect.stringContaining("1 package installed"),
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(requests).toEqual([`/repos/user/repo/tarball/${ref}`, `/repos/user/repo/tarball/${ref}`]);
+  });
+
   // A git resolution is written to bun.lock as "git+" + the repository URL, so a
   // dependency on a plain git:// host comes back as "git+git://...". The lockfile
   // parser has to accept that spelling, otherwise every later install throws the

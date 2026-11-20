@@ -107,7 +107,7 @@ pub(crate) fn locked_scp_like(repo: &[u8]) -> Option<Vec<u8>> {
 pub(crate) const MAX_RESOLVED_TAG_LEN: usize = 256;
 
 /// `resolved` is the `.bun-tag` value persisted to the lockfile (a commit SHA for
-/// `git`, or `<owner>-<repo>-<sha>` for `github`). It is concatenated into a cache
+/// `git`, or the root folder of the tarball for `github`). It is concatenated into a cache
 /// directory name and passed to `git checkout`, so it must be a single safe path
 /// component: no separators, no NUL, and no leading `-` that git would parse as an
 /// option.
@@ -117,9 +117,26 @@ pub(crate) fn is_safe_resolved_tag(resolved: &[u8]) -> bool {
         && resolved[0] != b'-'
         && resolved != b"."
         && resolved != b".."
-        && resolved
-            .iter()
-            .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+        && is_tag_text(resolved)
+}
+
+/// True when `text` has only the bytes that a `resolved` tag can have.
+pub(crate) fn is_tag_text(text: &[u8]) -> bool {
+    text.iter()
+        .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+}
+
+/// True for all the digits of a commit: 40 hex digits, or 64 in a sha256 repository.
+fn is_full_commit(text: &[u8]) -> bool {
+    matches!(text.len(), 40 | 64) && text.iter().all(u8::is_ascii_hexdigit)
+}
+
+/// `resolved` from its last `-`: the end of the label, patch key and store name of a package.
+fn resolved_tail(resolved: &[u8]) -> &[u8] {
+    match strings::last_index_of_char(resolved, b'-') {
+        Some(i) => &resolved[i + 1..],
+        None => resolved,
+    }
 }
 
 /// The name of the root folder in GitHub's tarball of `commit`. A fresh install records that name
@@ -140,8 +157,12 @@ pub trait RepositoryExt: Sized {
     fn fmt_store_path<'a>(&'a self, label: &'a str, string_buf: &'a [u8])
     -> StorePathFormatter<'a>;
     fn fmt<'a>(&'a self, label: &'a str, buf: &'a [u8]) -> Formatter<'a>;
-    /// The commit in `resolved` (`<owner>-<repo>-<commit>` for GitHub).
-    fn resolved_commit<'a>(&'a self, buf: &'a [u8]) -> &'a [u8];
+    /// The commit that `resolved` names, when it names one.
+    fn resolved_commit<'a>(&'a self, buf: &'a [u8]) -> Option<&'a [u8]>;
+    /// The ref that a download of this package asks for: its commit, else its committish.
+    fn pinned_ref<'a>(&'a self, buf: &'a [u8]) -> &'a [u8];
+    /// A copy that prints `pinned_ref` after the `#`, for text that is read back as a ref.
+    fn pinned(&self, buf: &[u8]) -> Repository;
     /// The ssh form of a git URL; `None` for an explicit `http(s)://` URL.
     fn try_ssh(url: &[u8]) -> Option<Vec<u8>>;
     /// The https form of a git URL, or `None` when it has none.
@@ -234,11 +255,36 @@ impl RepositoryExt for Repository {
         }
     }
 
-    fn resolved_commit<'a>(&'a self, buf: &'a [u8]) -> &'a [u8] {
+    fn resolved_commit<'a>(&'a self, buf: &'a [u8]) -> Option<&'a [u8]> {
         let resolved = self.resolved.slice(buf);
-        match strings::last_index_of_char(resolved, b'-') {
-            Some(i) => &resolved[i + 1..],
-            None => resolved,
+        // Gitea names the root of a tarball after the repository.
+        if resolved.eq_ignore_ascii_case(self.repo.slice(buf)) {
+            return None;
+        }
+        // A row from another lockfile has its committish as `resolved`, and that is a ref.
+        if resolved == self.committish.slice(buf) {
+            return is_full_commit(resolved).then_some(resolved);
+        }
+        // GitHub names the root `<owner>-<repo>-<7 hex>` after the repository's current names.
+        let tail = resolved_tail(resolved);
+        let is_short = tail.len() == 7
+            && tail.len() < resolved.len()
+            && tail.iter().all(u8::is_ascii_hexdigit);
+        (is_short || is_full_commit(tail)).then_some(tail)
+    }
+
+    fn pinned_ref<'a>(&'a self, buf: &'a [u8]) -> &'a [u8] {
+        self.resolved_commit(buf)
+            .unwrap_or_else(|| self.committish.slice(buf))
+    }
+
+    fn pinned(&self, buf: &[u8]) -> Repository {
+        match self.resolved_commit(buf) {
+            Some(_) => *self,
+            None => Repository {
+                resolved: Default::default(),
+                ..*self
+            },
         }
     }
 
@@ -345,7 +391,7 @@ impl<'a> fmt::Display for StorePathFormatter<'a> {
 
         if !self.repo.resolved.is_empty() {
             writer.write_str("+")?; // this would be '#' but it's not valid on windows
-            let resolved = self.repo.resolved_commit(self.string_buf);
+            let resolved = resolved_tail(self.repo.resolved.slice(self.string_buf));
             write!(writer, "{}", bun_semver::string::fmt_store_path(resolved))?;
         } else if !self.repo.committish.is_empty() {
             writer.write_str("+")?; // this would be '#' but it's not valid on windows
@@ -385,7 +431,7 @@ impl<'a> fmt::Display for Formatter<'a> {
 
         if !self.repository.resolved.is_empty() {
             writer.write_str("#")?;
-            let resolved = self.repository.resolved_commit(self.buf);
+            let resolved = resolved_tail(self.repository.resolved.slice(self.buf));
             write!(writer, "{}", BStr::new(resolved))?;
         } else if !self.repository.committish.is_empty() {
             writer.write_str("#")?;

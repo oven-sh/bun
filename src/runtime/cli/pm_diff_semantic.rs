@@ -2,6 +2,8 @@
 //! decided on the canonical form (so `1 + 1` vs `2`, quote style or a reformat is not a change, and a branch that
 //! became dead is), what is shown is the author's text (comments, types, JSX and names intact).
 
+use std::collections::BTreeSet;
+
 use crate::cli::pm_diff_command::Threads;
 use crate::cli::pm_diff_normalize::{Normalized, same_program};
 use bun_text_diff as text_diff;
@@ -302,17 +304,17 @@ pub(crate) fn project<'a>(
             .collect();
         // A line may fold away when the key vouches for it, it is only punctuation, or (having no image at all —
         // a directive, a lone comment) it loosely equals an image-less line on the other side.
-        let unseen_old: Vec<Vec<u8>> = dels
+        let unseen_old: BTreeSet<Vec<u8>> = dels
             .iter()
             .filter(|d| so.no_image(d.old_no - 1) && !trivial(d.text))
             .map(|d| loose(d.text))
             .collect();
-        let unseen_new: Vec<Vec<u8>> = ins
+        let unseen_new: BTreeSet<Vec<u8>> = ins
             .iter()
             .filter(|n| sn.no_image(n.new_no - 1) && !trivial(n.text))
             .map(|n| loose(n.text))
             .collect();
-        let ok = |side: &Side, line0: usize, text: &[u8], others: &[Vec<u8>]| {
+        let ok = |side: &Side, line0: usize, text: &[u8], others: &BTreeSet<Vec<u8>>| {
             if side.no_image(line0) {
                 trivial(text) || others.contains(&loose(text))
             } else {

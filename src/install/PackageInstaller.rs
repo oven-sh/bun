@@ -2285,7 +2285,6 @@ impl<'a> PackageInstaller<'a> {
                             ),
                             copy,
                             skip_delete,
-                            random: bun_core::fast_random(),
                             resolution_tag: resolution.tag,
                             result: Default::default(),
                         });

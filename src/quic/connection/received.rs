@@ -6,9 +6,12 @@ use crate::frame::{Ack, kind};
 use crate::range_set::RangeSet;
 use crate::time::Instant;
 
-const MAX_RANGES: usize = 256;
+const MAX_RANGES: usize = 1024;
 /// After the first. They are counted in one byte.
 const MAX_RANGES_IN_FRAME: usize = 63;
+/// So many of them are those at the top, and so many those below a packet that was late.
+const TOP_RANGES: usize = 31;
+const RANGES_BELOW_LATE: usize = 8;
 const MAX_TRACKED_ACKS: usize = 16;
 pub(super) const ACK_DELAY_EXPONENT: u64 = 3;
 
@@ -42,6 +45,7 @@ pub(super) struct Received {
     expected_eliciting: u64,
     /// Since the last ACK frame.
     pub(super) unacked_eliciting: u64,
+    lowest_late: Option<u64>,
     pub(super) is_ack_due: bool,
     sent_acks: VecDeque<SentAck>,
 }
@@ -63,6 +67,7 @@ impl Received {
             self.largest_at = now;
         } else if is_eliciting {
             self.reported = self.reported.min(number);
+            self.lowest_late = Some(self.lowest_late.map_or(number, |it| it.min(number)));
             (self.sent_acks.iter_mut()).for_each(|it| it.end = it.end.min(number));
         }
         if !is_eliciting {
@@ -101,8 +106,14 @@ impl Received {
         let count_at = out.len();
         out.push(0);
         out.varint(first_range);
+        // What is left out has been acknowledged before.
+        let above_late = (self.lowest_late.take()).map_or(0, |it| self.ranges.count_above(it));
+        let omitted = (above_late + RANGES_BELOW_LATE).saturating_sub(MAX_RANGES_IN_FRAME);
         let (mut count, mut above) = (0, start);
-        for range in ranges.take(MAX_RANGES_IN_FRAME) {
+        let chosen = (ranges.enumerate())
+            .filter(|(at, _)| !(TOP_RANGES..TOP_RANGES + omitted).contains(at))
+            .take(MAX_RANGES_IN_FRAME);
+        for (_, range) in chosen {
             let (gap, len) = (above - range.end - 1, range.end - range.start - 1);
             if out.len() + varint_len(gap) + varint_len(len) > end {
                 break;

@@ -51,6 +51,11 @@ impl RangeSet {
         self.0.get(at).is_some_and(|range| range.start <= value)
     }
 
+    /// The number of ranges that start after `value`.
+    pub(crate) fn count_above(&self, value: u64) -> usize {
+        self.0.len() - self.0.partition_point(|range| range.start <= value)
+    }
+
     #[inline]
     pub(crate) fn insert(&mut self, new: Range<u64>) {
         if new.is_empty() {

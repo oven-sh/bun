@@ -123,6 +123,21 @@ fn reordering_raises_the_packet_threshold() {
     }
 }
 
+#[test]
+fn packet_threshold_has_no_limit() {
+    let mut raw = Raw::client().connected();
+    for (len, frames) in [(400, "stream 3 0 a"), (300, "")] {
+        let late = raw.received[2].last().unwrap() + 1;
+        raw.request_packets(&"a".repeat(len));
+        raw.advance(RTT);
+        raw.received[2].remove(&late);
+        raw.send("ack");
+        assert_eq!(raw.frames(), frames);
+        raw.received[2].insert(late);
+        raw.send("ack");
+    }
+}
+
 /// RFC 9000 §13.3.
 #[test]
 fn what_is_lost_is_sent_again() {

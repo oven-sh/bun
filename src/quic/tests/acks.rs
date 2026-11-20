@@ -75,6 +75,30 @@ fn packets_out_of_order_are_acknowledged_at_once() {
 }
 
 #[test]
+fn late_packets_are_acknowledged_however_many_gaps_follow() {
+    let even = |from: u64, count| {
+        let numbers = (0..count).map(|it| format!(" {}", from - 2 * it));
+        numbers.collect::<String>()
+    };
+    for (late, below) in [(1891, 9), (1889, 8), (101, 8)] {
+        let mut raw = Raw::client().connected();
+        for number in 1..=1000 {
+            raw.send_as(2 * number, "ping");
+        }
+        raw.forget();
+        raw.send_as(late, "ping");
+        let (top, above) = (even(2000, 32), even(late + 63 - 2 * below, 31 - below));
+        let (range, below) = (format!("{}-{}", late - 1, late + 1), even(late - 3, below));
+        assert_eq!(raw.packets(), format!("1[ack{top}{above} {range}{below}]"));
+        raw.send_as(2002, "ping");
+        assert!(
+            raw.packets()
+                .starts_with(&format!("1[ack{}", even(2002, 50)))
+        );
+    }
+}
+
+#[test]
 fn packets_that_do_not_ask_for_it_are_not_acknowledged() {
     for raw in Raw::both() {
         let mut raw = raw.connected();

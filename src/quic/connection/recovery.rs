@@ -13,7 +13,6 @@ use crate::packet::MIN_DATAGRAM_LEN;
 use crate::time::{Duration, Instant};
 
 pub(super) const INITIAL_PACKET_THRESHOLD: u64 = 3;
-const MAX_PACKET_THRESHOLD: u64 = 256;
 /// In round trips.
 const MAX_LATENESS: u64 = 4;
 const PERSISTENT_CONGESTION_THRESHOLD: u64 = 3;
@@ -63,7 +62,7 @@ impl Connection {
         let late = space.sent.find_late(oldest, ack.ranges());
         if let Some(late) = &late {
             let distance = previous_largest.unwrap_or(0).saturating_sub(late.number) + 1;
-            self.packet_threshold = (self.packet_threshold.max(distance)).min(MAX_PACKET_THRESHOLD);
+            self.packet_threshold = self.packet_threshold.max(distance);
             self.rtt.on_late(now - late.at);
             self.congestion.on_late(late.len);
         }

@@ -153,4 +153,29 @@ bench("Object.fromEntries(headers)", function () {
   return Object.fromEntries(big);
 });
 
+// Names that are not in Bun's table of known header names, of different lengths, next to two names that are.
+const customNames = Array.from(
+  { length: 64 },
+  (_, i) => `X-Custom-${"abcdefghijklmnopqrstuvwxyz".slice(0, 1 + ((i * 7) % 19))}-${i}`,
+);
+for (const count of [1, 3, 8, 32, 64]) {
+  const names = customNames.slice(0, count);
+  const init = { "Content-Type": "text/plain", "Content-Length": "123" };
+  for (const name of names) init[name] = "Hello World";
+
+  bench(`new Headers(2 known names + ${count} custom)`, () => new Headers(init));
+
+  bench(`Header.append (${count} custom)`, () => {
+    const headers = new Headers();
+    for (const name of names) headers.append(name, "Hello World");
+    return headers;
+  });
+
+  bench(`Header.set (${count} custom)`, () => {
+    const headers = new Headers();
+    for (const name of names) headers.set(name, "Hello World");
+    return headers;
+  });
+}
+
 await run();

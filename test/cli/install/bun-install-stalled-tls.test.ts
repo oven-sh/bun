@@ -11,8 +11,9 @@
 // few seconds rather than the 5-minute default.
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
 import * as net from "node:net";
+import { join } from "node:path";
 
 // Accepts connections and never writes a byte.
 async function silentServer() {
@@ -167,6 +168,71 @@ test.concurrent(
     } finally {
       for (const s of sockets) s.destroy();
       await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  },
+  60_000,
+);
+
+// https://github.com/oven-sh/bun/issues/49261
+// With the default idle timeout of 5 minutes: the handshake has a shorter timeout of its own.
+test.concurrent(
+  "bun install retries a TLS handshake that gets no answer without waiting for the idle timeout",
+  async () => {
+    using origin = Bun.serve({
+      port: 0,
+      tls: tlsCert,
+      fetch: () => new Response(Bun.file(join(import.meta.dir, "bar-0.0.2.tgz"))),
+    });
+    // The first connection never gets an answer to its ClientHello. Later ones reach the origin.
+    let connects = 0;
+    const sockets = new Set<net.Socket>();
+    const front = net.createServer(client => {
+      sockets.add(client);
+      client.on("close", () => sockets.delete(client));
+      client.on("error", () => {});
+      if (++connects === 1) return;
+      const upstream = net.connect(origin.port!, "localhost", () => client.pipe(upstream).pipe(client));
+      upstream.on("error", () => client.destroy());
+      client.on("close", () => upstream.destroy());
+    });
+    await new Promise<void>(resolve => front.listen(0, "127.0.0.1", resolve));
+    const port = (front.address() as net.AddressInfo).port;
+
+    try {
+      using dir = tempDir("install-handshake-retry", {
+        "package.json": JSON.stringify({
+          name: "x",
+          version: "1.0.0",
+          dependencies: { bar: `https://localhost:${port}/bar-0.0.2.tgz` },
+        }),
+        "ca.pem": tlsCert.cert,
+        "bunfig.toml": Bun.TOML.stringify({ install: { cache: false, cafile: "ca.pem" } }),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        // The default, whatever the harness sets.
+        env: { ...bunEnv, BUN_CONFIG_HTTP_IDLE_TIMEOUT: undefined },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        // Well under the idle timeout, which a handshake waited for before.
+        timeout: 40_000,
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect({
+        messages: stderr.split("\n").filter(line => /^(warn|error):/.test(line)),
+        connects,
+        exitCode,
+        signalCode: proc.signalCode,
+      }).toEqual({
+        messages: ["warn: registry requests failed, retrying"],
+        connects: 2,
+        exitCode: 0,
+        signalCode: null,
+      });
+    } finally {
+      for (const s of sockets) s.destroy();
+      await new Promise<void>(resolve => front.close(() => resolve()));
     }
   },
   60_000,

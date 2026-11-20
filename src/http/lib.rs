@@ -301,14 +301,21 @@ pub static OVERRIDDEN_DEFAULT_USER_AGENT: std::sync::OnceLock<&'static [u8]> =
     std::sync::OnceLock::new();
 
 /// Idle timeout for HTTP client sockets, in seconds. The timer is armed in
-/// `on_open` (so it covers the TLS handshake) and re-armed on writes and on
-/// body-phase reads; response-header reads do not re-arm it, so it is an
-/// absolute deadline for the header block to complete (undici `headersTimeout`
-/// semantics). 0 disables the timer (matching `disable_timeout = true`).
+/// `on_open` and re-armed on writes and on body-phase reads; response-header
+/// reads do not re-arm it, so it is an absolute deadline for the header block
+/// to complete (undici `headersTimeout` semantics). 0 disables the timer
+/// (matching `disable_timeout = true`).
 /// Overridable via `BUN_CONFIG_HTTP_IDLE_TIMEOUT`. Default is 5 minutes.
 /// `HTTPThread::on_start` stores it padded for the timer-wheel sweep (see
 /// [`normalize_idle_timeout_seconds`]).
 pub(crate) static IDLE_TIMEOUT_SECONDS: AtomicU32 = AtomicU32::new(300);
+
+/// What a TLS handshake gets in place of [`IDLE_TIMEOUT_SECONDS`], in seconds:
+/// Go's `TLSHandshakeTimeout` default. undici's `connect.timeout` has the same
+/// value and also covers the TCP connect, which has no timer here.
+/// `HTTPThread::on_start` stores it padded, or stores the idle timeout when
+/// `BUN_CONFIG_HTTP_IDLE_TIMEOUT` is set: only the default is this short.
+pub(crate) static TLS_HANDSHAKE_TIMEOUT_SECONDS: AtomicU32 = AtomicU32::new(10);
 
 /// Safe accessor for [`IDLE_TIMEOUT_SECONDS`].
 #[inline]
@@ -1711,9 +1718,12 @@ impl<'a> HTTPClient<'a> {
 
     /// Runs once per request: for a new connection via [`Self::on_connect`],
     /// and for a socket reused from the pool via `HTTPContext::connect`.
+    /// `timeout_seconds` is what the socket waits on next: a TLS handshake,
+    /// or the request.
     pub(crate) fn on_open<const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
+        timeout_seconds: c_uint,
     ) -> ControlFlow<NextStep> {
         if cfg!(debug_assertions) {
             if let Some(proxy) = &self.http_proxy {
@@ -1725,14 +1735,10 @@ impl<'a> HTTPClient<'a> {
         self.register_abort_tracker::<IS_SSL>(socket);
         bun_core::scoped_log!(fetch, "Connected {} \n", BStr::new(self.url.href));
 
-        // Arm the idle timer immediately so a stalled TLS handshake (server
-        // accepts TCP but never answers ClientHello, or a NAT/middlebox silently
-        // drops the flow under load) eventually fails with error.Timeout instead
-        // of leaving the request — and for `bun install`, the whole process —
-        // blocked in epoll_wait forever. Previously the first `set_timeout` call
-        // was inside `on_writable`, which only runs *after* the handshake
-        // completes. See https://github.com/oven-sh/bun/issues/30325.
-        self.set_timeout(&socket);
+        // Armed here and not in `on_writable`, which only runs after the TLS
+        // handshake: a peer that accepts TCP and never answers the ClientHello
+        // must fail the request with `Timeout` (#30325).
+        socket.set_timeout(timeout_seconds);
 
         if self.signals.get(signals::Field::Aborted) {
             return self.close_and_abort::<IS_SSL>(socket);
@@ -1753,7 +1759,7 @@ impl<'a> HTTPClient<'a> {
         &mut self,
         socket: HttpSocket<IS_SSL>,
     ) -> ControlFlow<NextStep> {
-        self.on_open::<IS_SSL>(socket)?;
+        self.on_open::<IS_SSL>(socket, self.effective_idle_timeout_seconds())?;
         if IS_SSL {
             return self.first_call::<IS_SSL>(socket);
         }
@@ -1865,7 +1871,16 @@ impl<'a> HTTPClient<'a> {
             let _ = socket.set_keep_alive(true, 60);
         }
 
-        self.on_open::<IS_SSL>(socket)?;
+        // uSockets starts the TLS handshake when the open callback returns;
+        // `Handler::on_handshake` puts the idle timeout back.
+        self.on_open::<IS_SSL>(
+            socket,
+            if IS_SSL {
+                self.handshake_timeout_seconds()
+            } else {
+                self.effective_idle_timeout_seconds()
+            },
+        )?;
         if IS_SSL {
             self.configure_tls::<IS_SSL>(socket);
         }
@@ -3355,6 +3370,8 @@ impl<'a> HTTPClient<'a> {
         start_payload: &[u8],
     ) -> ControlFlow<NextStep> {
         bun_core::scoped_log!(fetch, "startProxyHandshake");
+        // `ProxyTunnel`'s `on_handshake` puts the idle timeout back.
+        socket.set_timeout(self.handshake_timeout_seconds());
         // if we have options we pass them (ca, reject_unauthorized, etc) otherwise use the default
         let ssl_options = self.tls_props.clone();
         ProxyTunnel::start::<IS_SSL>(self, socket, ssl_options.as_deref(), start_payload)
@@ -3412,6 +3429,10 @@ impl<'a> HTTPClient<'a> {
                 return self.close_and_fail::<IS_SSL>(err, socket);
             }
         };
+        if should_continue != ShouldContinue::Finished && self.is_reading_connect_reply() {
+            // Arms the timeout of the origin's TLS handshake.
+            return self.start_proxy_handshake::<IS_SSL>(socket, to_read);
+        }
         // Headers complete: start the body-idle window fresh (see [`IDLE_TIMEOUT_SECONDS`]).
         self.set_timeout(&socket);
 
@@ -3429,10 +3450,6 @@ impl<'a> HTTPClient<'a> {
             // if is not we ignore the content_length
             self.state.content_length = Some(0);
             return self.progress_update::<IS_SSL>(socket);
-        }
-
-        if self.is_reading_connect_reply() {
-            return self.start_proxy_handshake::<IS_SSL>(socket, to_read);
         }
 
         self.store_metadata(response);
@@ -3640,6 +3657,18 @@ impl<'a> HTTPClient<'a> {
         }
         self.idle_timeout_seconds
             .unwrap_or_else(idle_timeout_seconds)
+    }
+
+    /// What to arm while a TLS handshake is pending, in seconds (0 =
+    /// disabled): [`Self::effective_idle_timeout_seconds`], with
+    /// [`TLS_HANDSHAKE_TIMEOUT_SECONDS`] as the default.
+    #[inline]
+    pub(crate) fn handshake_timeout_seconds(&self) -> c_uint {
+        if self.flags.disable_timeout {
+            return 0;
+        }
+        self.idle_timeout_seconds
+            .unwrap_or_else(|| TLS_HANDSHAKE_TIMEOUT_SECONDS.load(Ordering::Relaxed))
     }
 
     pub(crate) fn set_timeout<S: SocketTimeout>(&self, socket: &S) {

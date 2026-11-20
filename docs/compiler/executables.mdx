@@ -1224,6 +1224,18 @@ codesign -vvv --verify ./myapp
 
 ---
 
+## Binary hardening on Linux
+
+A standalone executable is a copy of a Bun runtime with your app attached: the one that runs `bun build`, or the one that `--target` or `--compile-executable-path` selects. Its ELF properties are that runtime's, and `bun build` has no flag that changes them. A scanner such as `checksec` reports these for an executable made from the Linux release of Bun:
+
+- Full RELRO and `BIND_NOW`. The loader resolves every import at start and then maps the GOT and the other data in the `PT_GNU_RELRO` segment read-only.
+- A non-executable stack and no segment that is both writable and executable.
+- No PIE. The runtime is a fixed-address (`ET_EXEC`) executable. Position-independent code costs binary size and start-up time, so the release is linked at a fixed address. ASLR still applies to the heap, the stack, the memory of the JIT and the shared libraries.
+
+A Bun built from source with `bun run build:release --hardened=on` (Linux x64 with glibc) is a position-independent executable with more hardening on. An executable compiled from it has the same properties.
+
+---
+
 ## Code splitting
 
 Standalone executables support code splitting. Use `--compile` with `--splitting` to create an executable that loads code-split chunks at runtime.

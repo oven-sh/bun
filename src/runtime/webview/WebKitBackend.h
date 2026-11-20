@@ -75,6 +75,8 @@ JSC::JSPromise* evaluate(JSC::JSGlobalObject*, JSWebView*, const WTF::String& sc
 JSC::JSPromise* screenshot(JSC::JSGlobalObject*, JSWebView*, ScreenshotFormat, uint8_t quality);
 JSC::JSPromise* click(JSC::JSGlobalObject*, JSWebView*, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount);
 JSC::JSPromise* clickSelector(JSC::JSGlobalObject*, JSWebView*, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount);
+JSC::JSPromise* mouseMove(JSC::JSGlobalObject*, JSWebView*, float x, float y);
+JSC::JSPromise* hover(JSC::JSGlobalObject*, JSWebView*, const WTF::String& selector, uint32_t timeout);
 JSC::JSPromise* type(JSC::JSGlobalObject*, JSWebView*, const WTF::String& text);
 JSC::JSPromise* press(JSC::JSGlobalObject*, JSWebView*, WebViewProto::VirtualKey, uint8_t modifiers, const WTF::String& character);
 JSC::JSPromise* scroll(JSC::JSGlobalObject*, JSWebView*, double dx, double dy);

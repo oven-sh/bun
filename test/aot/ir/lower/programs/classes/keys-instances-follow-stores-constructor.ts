@@ -12,35 +12,35 @@ function show(title: string, object: object): void {
   );
 }
 
-interface Leaf { pos: number; end: number; kind: number; id: number; flags: number; parent: Leaf | undefined; note?: string }
-function Leaf(this: Leaf, kind: number, pos: number, end: number) {
-  this.pos = pos;
-  this.end = end;
-  this.kind = kind;
-  this.id = 0;
-  this.flags = 0;
-  this.parent = undefined;
+interface Leaf { hue: number; spots: number; branch: Leaf | undefined; till: number; from: number; mark: number; note?: string }
+function Leaf(this: Leaf, hue: number, from: number, till: number) {
+  this.hue = hue;
+  this.spots = 0;
+  this.branch = undefined;
+  this.till = till;
+  this.from = from;
+  this.mark = 0;
 }
-interface Token { kind: number; flags: number; pos: number; text?: string; end: number }
-function Token(this: Token, kind: number, pos: number, end: number) {
-  this.kind = kind;
-  this.flags = kind & 1;
-  this.pos = pos;
-  if (kind > 2) this.text = "t" + kind;
-  this.end = end;
+interface Bud { hue: number; spots: number; from: number; text?: string; till: number }
+function Bud(this: Bud, hue: number, from: number, till: number) {
+  this.hue = hue;
+  this.spots = hue & 1;
+  this.from = from;
+  if (hue > 2) this.text = "t" + hue;
+  this.till = till;
 }
-const allocator = {
-  getLeafConstructor: () => Leaf as unknown as new (kind: number, pos: number, end: number) => Leaf,
-  getTokenConstructor: () => Token as unknown as new (kind: number, pos: number, end: number) => Token,
+const makers = {
+  leafMaker: () => Leaf as unknown as new (hue: number, from: number, till: number) => Leaf,
+  budMaker: () => Bud as unknown as new (hue: number, from: number, till: number) => Bud,
 };
-function makeLeaf(kind: number, pos: number, end: number): Leaf {
-  return new (allocator.getLeafConstructor())(kind, pos, end);
+function makeLeaf(hue: number, from: number, till: number): Leaf {
+  return new (makers.leafMaker())(hue, from, till);
 }
-function makeToken(kind: number, pos: number, end: number): Token {
-  return new (allocator.getTokenConstructor())(kind, pos, end);
+function makeBud(hue: number, from: number, till: number): Bud {
+  return new (makers.budMaker())(hue, from, till);
 }
 function sumOfLeaf(leaf: Leaf): number {
-  return leaf.kind * 1000 + leaf.flags * 100 + leaf.pos * 10 + leaf.end + leaf.id + (leaf.parent ? leaf.parent.kind : 0);
+  return leaf.hue * 1000 + leaf.spots * 100 + leaf.from * 10 + leaf.till + leaf.mark + (leaf.branch ? leaf.branch.hue : 0);
 }
 
 class Point {
@@ -63,65 +63,65 @@ class Point3 extends Point {
 
 let total = 0;
 for (let i = 0; i < 2000; i++) {
-  const parent = makeLeaf(i % 7, i, i + 1);
+  const branch = makeLeaf(i % 7, i, i + 1);
   const leaf = makeLeaf(i % 5, i, i + 2);
-  leaf.parent = parent;
-  leaf.flags |= i & 3;
-  total += sumOfLeaf(leaf) + makeToken(i % 5, i, i + 1).end;
+  leaf.branch = branch;
+  leaf.spots |= i & 3;
+  total += sumOfLeaf(leaf) + makeBud(i % 5, i, i + 1).till;
 }
 lines.push("total " + total);
 
 show("leaf", makeLeaf(1, 2, 3));
-show("token without text", makeToken(1, 2, 3));
-show("token with text", makeToken(3, 2, 3));
+show("bud without text", makeBud(1, 2, 3));
+show("bud with text", makeBud(3, 2, 3));
 show("point", new Point(1, 2));
 show("point with label", new Point(1, 2, "p"));
 show("point3", new Point3(1, 2, 3));
 
 const again = makeLeaf(4, 5, 6);
-delete (again as Partial<Leaf>).kind;
-show("kind deleted", again);
-lines.push("kind reads " + String(again.kind) + " " + ("kind" in again) + " " + sumOfLeaf(again));
-again.kind = 9;
-show("kind added again", again);
+delete (again as Partial<Leaf>).hue;
+show("hue deleted", again);
+lines.push("hue reads " + String(again.hue) + " " + ("hue" in again) + " " + sumOfLeaf(again));
+again.hue = 9;
+show("hue added again", again);
 lines.push("sum " + sumOfLeaf(again));
 
 const late = makeLeaf(1, 1, 1);
 late.note = "late";
-delete (late as Partial<Leaf>).pos;
-late.pos = 7;
-show("a late field, then pos again", late);
+delete (late as Partial<Leaf>).from;
+late.from = 7;
+show("a late field, then from again", late);
 
 const other = makeLeaf(2, 2, 2);
-(other as unknown as { flags: unknown }).flags = "many";
-show("flags holds a string", other);
-lines.push("flags reads " + String((other as unknown as { flags: unknown }).flags));
+(other as unknown as { spots: unknown }).spots = "many";
+show("spots holds a string", other);
+lines.push("spots reads " + String((other as unknown as { spots: unknown }).spots));
 
 const redefined = makeLeaf(3, 3, 3);
-Object.defineProperty(redefined, "kind", { get: () => 42, enumerable: true, configurable: true });
-show("kind is an accessor", redefined);
+Object.defineProperty(redefined, "hue", { get: () => 42, enumerable: true, configurable: true });
+show("hue is an accessor", redefined);
 lines.push("sum " + sumOfLeaf(redefined));
-Object.defineProperty(redefined, "flags", { value: 5, enumerable: false, writable: true, configurable: true });
-show("flags is not enumerable", redefined);
+Object.defineProperty(redefined, "spots", { value: 5, enumerable: false, writable: true, configurable: true });
+show("spots is not enumerable", redefined);
 lines.push("sum " + sumOfLeaf(redefined));
 
 const taken: number[] = [];
-Object.defineProperty(Leaf.prototype, "flags", { set(value: number) { taken.push(value); }, get() { return -1; }, configurable: true });
+Object.defineProperty(Leaf.prototype, "spots", { set(value: number) { taken.push(value); }, get() { return -1; }, configurable: true });
 const underSetter = makeLeaf(5, 5, 5);
-show("made under a setter for flags", underSetter);
-lines.push("flags reads " + underSetter.flags + ", own " + Object.hasOwn(underSetter, "flags") + ", taken " + taken.join(",") + ", sum " + sumOfLeaf(underSetter));
-delete (Leaf.prototype as Partial<Leaf>).flags;
-lines.push("behind the setter flags reads " + String(underSetter.flags) + ", sum " + sumOfLeaf(underSetter));
-underSetter.flags = 1;
-show("flags stored later", underSetter);
+show("made under a setter for spots", underSetter);
+lines.push("spots reads " + underSetter.spots + ", own " + Object.hasOwn(underSetter, "spots") + ", taken " + taken.join(",") + ", sum " + sumOfLeaf(underSetter));
+delete (Leaf.prototype as Partial<Leaf>).spots;
+lines.push("behind the setter spots reads " + String(underSetter.spots) + ", sum " + sumOfLeaf(underSetter));
+underSetter.spots = 1;
+show("spots stored later", underSetter);
 show("made behind the setter", makeLeaf(5, 5, 5));
 
-Object.defineProperty(Leaf.prototype, "id", { value: 77, writable: false, configurable: true });
+Object.defineProperty(Leaf.prototype, "mark", { value: 77, writable: false, configurable: true });
 let stopped: Leaf | undefined;
 let holder: Leaf | undefined;
-function Watched(this: Leaf, kind: number) {
+function Watched(this: Leaf, hue: number) {
   holder = this;
-  Leaf.call(this, kind, 1, 2);
+  Leaf.call(this, hue, 1, 2);
 }
 Watched.prototype = Object.create(Leaf.prototype);
 try {
@@ -131,15 +131,15 @@ try {
 }
 lines.push("stopped is " + String(stopped));
 try {
-  new (Watched as unknown as new (kind: number) => Leaf)(6);
+  new (Watched as unknown as new (hue: number) => Leaf)(6);
 } catch (error) {
   lines.push("watched: " + (error as Error).constructor.name);
 }
 show("left half made", holder!);
-lines.push("id reads " + holder!.id + ", flags " + String(holder!.flags) + ", sum " + sumOfLeaf(holder!));
-delete (Leaf.prototype as Partial<Leaf>).id;
-show("made behind the read-only id", makeLeaf(6, 6, 6));
-show("watched", new (Watched as unknown as new (kind: number) => Leaf)(7));
+lines.push("mark reads " + holder!.mark + ", spots " + String(holder!.spots) + ", sum " + sumOfLeaf(holder!));
+delete (Leaf.prototype as Partial<Leaf>).mark;
+show("made behind the read-only mark", makeLeaf(6, 6, 6));
+show("watched", new (Watched as unknown as new (hue: number) => Leaf)(7));
 
 class Other {}
 show("another new.target", Reflect.construct(Leaf, [8, 8, 8], Other));
@@ -148,7 +148,7 @@ const onPlainObject = { first: 1 } as unknown as Leaf;
 Leaf.call(onPlainObject, 9, 9, 9);
 show("called on a plain object", onPlainObject);
 const twice = makeLeaf(1, 1, 1);
-delete (twice as Partial<Leaf>).end;
+delete (twice as Partial<Leaf>).till;
 Leaf.call(twice, 2, 2, 2);
 show("constructed twice", twice);
 
@@ -172,7 +172,7 @@ lines.push("seen early " + seenEarly);
 
 const frozen = Object.freeze(makeLeaf(1, 2, 3));
 try {
-  (frozen as Leaf).kind = 5;
+  (frozen as Leaf).hue = 5;
 } catch (error) {
   lines.push("frozen: " + (error as Error).constructor.name);
 }
@@ -182,5 +182,5 @@ lines.push("sum " + sumOfLeaf(frozen));
 console.log(lines.join("\n"));
 
 // CHECK-LABEL: function {{*}}name="Early"
-// CHECK-LABEL: function {{*}}name="getLeafConstructor"
+// CHECK-LABEL: function {{*}}name="leafMaker"
 // CHECK-LABEL: function {{*}}name="Point3"

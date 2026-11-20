@@ -87,8 +87,10 @@ std::optional<bool> areCompiledPairsEqual(JSC::JSGlobalObject* globalObject, JSC
     return true;
 }
 
+using CompareCompiledObjects = bool (*)(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject*, JSC::JSObject*);
+
 // std::nullopt: the caller compares by its generic path, or an exception is pending.
-template<bool isStrict, typename CompareValues>
+template<bool isStrict, CompareCompiledObjects compareWhatIsNotListed, typename CompareValues>
 std::optional<bool> compareCompiledObjectProperties(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2, bool sameIsEqual, const CompareValues& compareValues)
 {
     JSC::VM& vm = globalObject->vm();
@@ -96,6 +98,13 @@ std::optional<bool> compareCompiledObjectProperties(JSC::JSGlobalObject* globalO
     namespace PropertyWalk = JSC::AOT::PropertyWalk;
     if (PropertyWalk::appendDifferingValues(o1, o2, sameIsEqual ? PropertyWalk::IdenticalValues::Skip : PropertyWalk::IdenticalValues::Append, pairs))
         return areCompiledPairsEqual(globalObject, scope, pairs, sameIsEqual, compareValues);
+
+    if constexpr (compareWhatIsNotListed != nullptr) {
+        bool isSame = compareWhatIsNotListed(globalObject, scope, o1, o2);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        if (!isSame)
+            return false;
+    }
 
     OwnEnumerableProperties properties1;
     OwnEnumerableProperties properties2;

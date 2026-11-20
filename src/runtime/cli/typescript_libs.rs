@@ -46,12 +46,12 @@ fn dictionary(index: usize) -> Option<&'static [u8]> {
 }
 
 fn decompress_frames(mut frames: &[u8]) -> Option<Vec<u8>> {
-    let len = bun_zstd::get_decompressed_size(frames);
+    let len = bun_zstd::decompressed_size(frames)?;
     let mut text = Vec::with_capacity(len);
     let (mut room, mut parts) = (&mut text.spare_capacity_mut()[..len], Vec::new());
     while !frames.is_empty() {
         let (first, rest) = bun_zstd::split_first_frame(frames)?;
-        let (to, left) = room.split_at_mut_checked(bun_zstd::get_decompressed_size(first))?;
+        let (to, left) = room.split_at_mut_checked(bun_zstd::decompressed_size(first)?)?;
         parts.push(Guarded::new((first, to, false)));
         (frames, room) = (rest, left);
     }

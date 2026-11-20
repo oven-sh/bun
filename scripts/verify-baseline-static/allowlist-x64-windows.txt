@@ -825,6 +825,15 @@ bun::N_AVX3_DL::CopyAndAdler32       [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AV
 
 
 # ----------------------------------------------------------------------------
+# Bun zstd encoder (src/jsc/bindings/highway_zstd.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (3 symbols)
+# ----------------------------------------------------------------------------
+bun::N_AVX3_DL::CountGroups     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+bun::N_AVX3_DL::ZstdCountBytes  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI2, BMI1, BMI2]
+bun::N_AVX3_DL::ZstdWriteCodes  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]
+
+
+# ----------------------------------------------------------------------------
 # Bun Brotli (src/brotli).
 # Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (8 symbols)
 # ----------------------------------------------------------------------------
@@ -999,6 +1008,15 @@ memchr::arch::x86_64::memchr::memrchr_raw::find_avx2               [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr10memchr_raw6detect   [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr2_raw6detect  [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr3_raw6detect  [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# Bun zstd (src/zstd).
+# Gate: is_x86_feature_detected! in with_bmi2() (src/highway/lib.rs), its only caller.
+# (1 generic function, in both forms)
+# ----------------------------------------------------------------------------
+_RINvNv<rust-hash>11bun_highway9with_bmi24bmi2<generic-args>  [BMI1, BMI2, LZCNT]
+bun_highway::with_bmi2::bmi2<generic-args>                    [BMI1, BMI2, LZCNT]
 
 
 # ----------------------------------------------------------------------------

@@ -305,7 +305,9 @@ impl Finder<'_, '_> {
 
     pub(super) fn can_expose_module_object(&self, candidate: usize) -> bool {
         let callback = self.candidates[candidate].module.callback;
-        let Some(module_object) = self.bootstrap.as_ref().and_then(|it| it.module_object) else {
+        let owner = self.bootstrap.as_ref();
+        let owner = owner.filter(|it| candidate >= it.first_candidate as usize);
+        let Some(module_object) = owner.and_then(|it| it.module_object) else {
             return false;
         };
         let mut returns = self.bound.ids(self.bound.fns[callback.idx()].returns);

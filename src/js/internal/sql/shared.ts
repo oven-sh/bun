@@ -4,6 +4,7 @@ const PublicArray = Array;
 const {
   Query,
   SQLQueryFlags,
+  queryOf,
   symbols: { _strings, _values, _flags },
 } = require("internal/sql/query");
 
@@ -406,7 +407,12 @@ class QueryBuilder {
     return quote + name.replaceAll(quote, quote + quote).replaceAll(".", quote + "." + quote) + quote;
   }
 
-  fragment(query: QueryType<any, any>) {
+  /** `value` passed `instanceof Query`. So does an object that inherits from `Query.prototype` and from no query. */
+  fragment(value: object) {
+    const query = queryOf(value);
+    if (query === undefined) {
+      throw new SyntaxError("Invalid query: SQL Fragment cannot be executed or was misused");
+    }
     const strings = query[_strings];
     const values = query[_values];
     if (typeof strings !== "string") {

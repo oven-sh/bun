@@ -719,7 +719,8 @@ class WASI {
     // ("..", absolute paths) or through a symlink that already exists on the
     // host filesystem.
     const RESOLVE_PATH = (stats: WASIFileDescriptor, guestPath: string) => {
-      if (!stats.path) {
+      // An empty path is not the directory of the descriptor. Node answers EINVAL for it since uvwasi 0.0.23 (nodejs/uvwasi#325): https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/path_resolver.c#L457-L460
+      if (!stats.path || guestPath.length === 0) {
         throw new WASIError(WASI_EINVAL);
       }
       // WASI paths are always interpreted relative to the directory fd.
@@ -1526,6 +1527,10 @@ class WASI {
         }
         this.refreshMemory();
         const op: string = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
+        // The link target is the one guest path that does not go through RESOLVE_PATH.
+        if (op.length === 0) {
+          return WASI_EINVAL;
+        }
         const np: string = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
         fs.symlinkSync(op, RESOLVE_PATH(stats, np));
         return WASI_ESUCCESS;

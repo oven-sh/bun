@@ -96,7 +96,7 @@ const mostMappedBytes: Record<string, number> = { "": 70_150_000, "--trim": 27_3
 // And with oven-sh/WebKit#1036, from 26,919,547 and 1%.
 // And with oven-sh/WebKit#1040, from 29,515,694, with the room it had.
 // And behind oven-sh/bun#48714, from 30,813,843.
-// And with oven-sh/WebKit#1004, whose code for Decimal adds about 63,000 to 30,858,269, with the room it had.
+// And with oven-sh/WebKit#1004, from 30,900,000: its code for Decimal takes about 62,000.
 const mostBytesOfCompiler = 30_960_000;
 
 const importsItsArguments = `

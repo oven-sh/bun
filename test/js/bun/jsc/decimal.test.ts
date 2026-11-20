@@ -644,6 +644,62 @@ describe.concurrent("an executable", () => {
     120_000,
   );
 
+  test.skipIf(!!unsupported)(
+    "--aot leaves alone what was kept of a running total",
+    async () => {
+      const totals = `
+        declare const Decimal: any;
+        const step = new Decimal("1.25");
+        function* sums(limit: number): Generator<number, number, any> {
+          let sum = 0;
+          for (let i = 0; i < limit; i++) sum += Number(yield sum) || 1;
+          return sum;
+        }
+        function besideGenerator(held: any, total: any) {
+          const kept: any[] = [];
+          for (let round = 0; round < 4; round++) {
+            kept.push(total);
+            const it = sums(round);
+            held.y = held.inner.z;
+            while (true) {
+              if (it.next(held.x++).done) break;
+              total = total.add(step);
+            }
+          }
+          return [...kept, total].join();
+        }
+        console.log(besideGenerator(JSON.parse('{"x":3,"y":2,"inner":{"z":3}}'), new Decimal(1)));
+        console.log(besideGenerator({ x: 1, y: 2, inner: { z: 1 } }, new Decimal(2)));
+
+        class Settings { static text = "ab".repeat(2); }
+        function besideReads(at: number, total: any) {
+          const kept: any[] = [], seen: number[] = [];
+          for (let round = 0; round < 3; round++) {
+            kept.push(total);
+            for (let i = 0; i < 8; i++) {
+              seen.push(Settings.text.length);
+              if (i === at % 8) {
+                total = total.add(step);
+                "x".replace(/x/, () => (Settings.text = "b"));
+              }
+              seen.push(Settings.text.indexOf("b"));
+            }
+          }
+          return [...kept, total].join() + " " + seen.slice(0, 6).join("");
+        }
+        const unseen: any = new Map([["read", besideReads]]);
+        console.log(unseen.get("read")(1, new Decimal(3)));
+      `;
+      const sources = { "main.js": `import "./totals.ts";`, "totals.ts": totals };
+      expect(await compileAndRun(["--aot"], sources, env)).toEqual({
+        stdout: "1,1,2.25,4.75,8.5\n2,2,3.25,5.75,9.5\n3,4.25,5.5,6.75 414010\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
+
   test.skipIf(!!unsupported || locksEnvironment)(
     "--aot without the variable leaves it to the run whether the global is there",
     async () => {

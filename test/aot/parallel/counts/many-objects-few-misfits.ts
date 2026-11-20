@@ -5,7 +5,7 @@ class Thing {
   name: string;
   constructor(name: string) { this.id = 0; this.name = name; }
 }
-function idOf(t: Thing): number { if (!t.id) { t.id = nextId; nextId++; } return t.id; }
+function idOf(t: Thing): number { return t.id || (t.id = nextId++); }
 function isLater(a: Thing, b: Thing): boolean { return idOf(a) > idOf(b); }
 function keyOf(t: Thing): string { return "#" + t.id; }
 function half(t: Thing): number { return t.id / 2; }

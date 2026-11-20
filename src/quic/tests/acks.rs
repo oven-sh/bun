@@ -3,7 +3,7 @@ use bun_quic::Layer::Transport;
 use bun_quic::transport_code::PROTOCOL_VIOLATION;
 
 use crate::harness::raw::Kind::{Handshake, Initial};
-use crate::harness::raw::Raw;
+use crate::harness::raw::{RTT, Raw};
 
 /// RFC 9000 §13.2.1.
 #[test]
@@ -18,6 +18,29 @@ fn every_second_packet_is_acknowledged_at_once() {
         assert_eq!(raw.packets(), "1[ack 0-5 +625]");
         raw.advance(1000);
         assert_eq!(raw.packets(), "");
+    }
+}
+
+#[test]
+fn fewer_packets_are_acknowledged_at_once_the_more_there_are() {
+    let mut raw = Raw::client().connected();
+    for (packets, tolerance) in [
+        (24, 2),
+        (26, 2),
+        (82, 3),
+        (200, 9),
+        (30, 10),
+        (10, 3),
+        (10, 2),
+    ] {
+        let mut acks = 0;
+        for _ in 0..packets {
+            raw.send("ping");
+            acks += raw.take().len();
+        }
+        assert_eq!(acks, packets / tolerance, "{packets}");
+        raw.advance(RTT + 1);
+        raw.forget();
     }
 }
 

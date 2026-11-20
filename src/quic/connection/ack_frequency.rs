@@ -13,6 +13,9 @@ pub(super) const MAX_FRAME_LEN: usize = 2 + 8 + 2 + 4 + 1;
 
 const MIN_TOLERANCE: u64 = 2;
 const MAX_TOLERANCE: u64 = 150;
+/// For a peer that has not asked for one (RFC 9000 §13.2.2).
+const MAX_OWN_TOLERANCE: u64 = 10;
+const OWN_ACKS_PER_ROUND_TRIP: u64 = 8;
 const ROUND_TRIPS_PER_UPDATE: u64 = 3;
 const MIN_TIME_PER_UPDATE: Duration = Duration::from_millis(1);
 const PROPORTIONAL_GAIN: f32 = 0.8;
@@ -25,6 +28,9 @@ pub(super) struct Policy {
     pub(super) max_delay: Duration,
     pub(super) ignores_order: bool,
     next_sequence: u64,
+    /// How many packets have arrived since when.
+    arrived: u64,
+    since: Instant,
 }
 
 impl Default for Policy {
@@ -35,11 +41,25 @@ impl Default for Policy {
             max_delay: MAX_ACK_DELAY,
             ignores_order: false,
             next_sequence: 0,
+            arrived: 0,
+            since: Instant::default(),
         }
     }
 }
 
 impl Policy {
+    #[inline]
+    pub(super) fn on_packet(&mut self, now: Instant, rtt: Duration) {
+        self.arrived += 1;
+        let elapsed = now - self.since;
+        if elapsed > rtt && self.next_sequence == 0 {
+            let per_round_trip = self.arrived * rtt.as_micros() / elapsed.as_micros();
+            self.packet_tolerance =
+                (per_round_trip / OWN_ACKS_PER_ROUND_TRIP).clamp(MIN_TOLERANCE, MAX_OWN_TOLERANCE);
+            (self.arrived, self.since) = (0, now);
+        }
+    }
+
     pub(super) fn update(
         &mut self,
         sequence: u64,
@@ -56,6 +76,7 @@ impl Policy {
                 max_delay,
                 ignores_order,
                 next_sequence: sequence + 1,
+                ..*self
             };
         }
         Ok(())

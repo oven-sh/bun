@@ -646,6 +646,33 @@ describe("css", () => {
   });
 });
 
+// `bun build --no-bundle` links no other file. A url() prints as written, and
+// `composes .. from` compiles to nothing, like a local `composes`.
+test.concurrent.each([
+  ["css-module/NoBundleKeepsUrl", `.card { background: url(./img.png) }`, `background: url("./img.png");`],
+  [
+    "css-module/NoBundleDropsComposesFrom",
+    `.card { composes: base from "./base.module.css"; color: red }`,
+    `color: red;`,
+  ],
+])("%s", async (_name, css, declaration) => {
+  using dir = tempDir("css-module-no-bundle-records", { "styles.module.css": css });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--no-bundle", "styles.module.css"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const hash = stdout.match(/\.card_([A-Za-z0-9_-]+)\s*\{/)?.[1];
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: `.card_${hash} {\n  ${declaration}\n}\n`,
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // `bun build --no-bundle` prints a module file with no link step. Class
 // symbols have no final name there, so the printer hashes the original name
 // like it does for keyframes.

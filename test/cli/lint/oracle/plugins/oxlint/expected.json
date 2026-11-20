@@ -6010,6 +6010,54 @@
   "a.ts:9:30+15 typescript(no-unsafe-assignment)",
   "a.ts:9:35+8 typescript(no-unsafe-assignment)"
  ],
+ "no-unsafe-assignment/the-name-of-a-shorthand-property": [
+  "a.ts:10:9+1 typescript(no-unsafe-assignment)",
+  "a.ts:11:67+1 typescript(no-unsafe-assignment)",
+  "a.ts:4:14+1 typescript(no-unsafe-assignment)",
+  "a.ts:5:17+1 typescript(no-unsafe-assignment)",
+  "a.ts:5:17+1 typescript(no-unsafe-assignment)",
+  "a.ts:6:23+1 typescript(no-unsafe-assignment)",
+  "a.ts:6:23+1 typescript(no-unsafe-assignment)",
+  "a.ts:7:24+1 typescript(no-unsafe-assignment)",
+  "a.ts:7:24+1 typescript(no-unsafe-assignment)",
+  "a.ts:8:26+6 typescript(no-unsafe-assignment)",
+  "a.ts:8:26+6 typescript(no-unsafe-assignment)"
+ ],
+ "no-unsafe-assignment/a-target-in-parentheses": [
+  "a.ts:10:20+11 typescript(no-unsafe-assignment)",
+  "a.ts:10:20+11 typescript(no-unsafe-assignment)",
+  "a.ts:13:10+1 typescript(no-unsafe-assignment)",
+  "a.ts:5:15+1 typescript(no-unsafe-assignment)",
+  "a.ts:6:27+1 typescript(no-unsafe-assignment)",
+  "a.ts:6:27+1 typescript(no-unsafe-assignment)",
+  "a.ts:7:29+1 typescript(no-unsafe-assignment)",
+  "a.ts:7:29+1 typescript(no-unsafe-assignment)",
+  "a.ts:8:36+1 typescript(no-unsafe-assignment)",
+  "a.ts:8:36+1 typescript(no-unsafe-assignment)",
+  "a.ts:9:16+1 typescript(no-unsafe-assignment)",
+  "a.ts:9:16+1 typescript(no-unsafe-assignment)"
+ ],
+ "no-unsafe-assignment/a-pattern-with-a-type-annotation": [
+  "a.ts:2:27+2 typescript(no-unsafe-assignment)",
+  "a.ts:3:31+2 typescript(no-unsafe-assignment)",
+  "a.ts:4:80+2 typescript(no-unsafe-assignment)",
+  "a.ts:6:32+2 typescript(no-unsafe-assignment)",
+  "a.ts:7:85+2 typescript(no-unsafe-assignment)"
+ ],
+ "no-unsafe-assignment/a-shorthand-default-outside-a-pattern": [
+  "a.ts:10:8+1 typescript(no-unsafe-assignment)",
+  "a.ts:11:8+1 typescript(no-unsafe-assignment)",
+  "a.ts:12:8+1 typescript(no-unsafe-assignment)",
+  "a.ts:13:9+1 typescript(no-unsafe-assignment)",
+  "a.ts:14:13+1 typescript(no-unsafe-assignment)",
+  "a.ts:15:9+1 typescript(no-unsafe-assignment)",
+  "a.ts:16:4+1 typescript(no-unsafe-assignment)",
+  "a.ts:17:8+1 typescript(no-unsafe-assignment)",
+  "a.ts:18:12+1 typescript(no-unsafe-assignment)",
+  "a.ts:18:8+1 typescript(no-unsafe-assignment)",
+  "a.ts:20:8+1 typescript(no-unsafe-assignment)",
+  "a.ts:22:8+1 typescript(no-unsafe-assignment)"
+ ],
  "tsconfig/extensions": [
   "x01-plain/a/use.cts:1:8+3 import(no-named-as-default)",
   "x01-plain/a/use.d.ts:1:8+3 import(no-named-as-default)",

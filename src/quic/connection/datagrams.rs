@@ -61,6 +61,7 @@ impl Connection {
         }
         if self.datagrams.undelivered_len < MAX_UNDELIVERED_LEN {
             self.datagrams.undelivered_len += data.len() + OVERHEAD;
+            self.streams.state.made_progress = true;
             let data = data.to_vec();
             self.emit(Event::Datagram { data, is_early });
         }
@@ -76,6 +77,7 @@ impl Connection {
 
     /// `id` comes back in the event that tells what became of it.
     pub fn send_datagram(&mut self, id: u64, data: Vec<u8>) {
+        self.streams.state.made_progress = true;
         self.datagrams.unsent.push_back((id, data));
     }
 

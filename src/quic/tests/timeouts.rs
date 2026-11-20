@@ -285,15 +285,20 @@ fn keep_alive_counts_from_the_last_packet() {
 #[test]
 fn application_that_neither_reads_nor_writes() {
     type Step = fn(&mut Raw);
-    let cases: [(Step, u64); 4] = [
+    let cases: [(Step, u64); 6] = [
         (|_| {}, 5000 - 2 * RTT - 1000),
         (|it| it.send("stream 0 0 a"), 5000),
         (|it| it.send("fin 0 0 -"), 5000),
         (|it| it.request_packets("a"), 5000),
+        (|it| it.send("datagram a"), 5000),
+        (|it| it.connection().send_datagram(1, vec![0]), 5000),
     ];
     for (step, timeout) in cases {
-        let mut raw = Raw::client().config(|it| it.progress_timeout = Duration::from_secs(5));
-        raw = raw.connected();
+        let raw = Raw::client().config(|it| {
+            it.progress_timeout = Duration::from_secs(5);
+            it.parameters.max_datagram_frame_size = 100;
+        });
+        let mut raw = raw.with("max_datagram_frame_size=100").connected();
         raw.advance(1000);
         step(&mut raw);
         assert_eq!(raw.wait_for_the_end(), timeout);
@@ -320,7 +325,10 @@ fn progress_timeout_that_is_set_later() {
     raw.advance(1000);
     let now = raw.now;
     (raw.connection()).set_progress_timeout(now, Duration::from_secs(5));
-    assert_eq!(raw.wait_for_the_end(), 5000);
+    raw.advance(1000);
+    let now = raw.now;
+    (raw.connection()).set_progress_timeout(now, Duration::from_secs(5));
+    assert_eq!(raw.wait_for_the_end(), 4000);
     assert_eq!(raw.error(), Some((Transport, APPLICATION_ERROR)));
 }
 

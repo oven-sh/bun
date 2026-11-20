@@ -241,7 +241,7 @@ impl Connection {
 
     /// In place of [`Config::progress_timeout`](crate::Config::progress_timeout).
     pub fn set_progress_timeout(&mut self, now: Instant, timeout: Duration) {
-        if self.is_receiving() {
+        if self.is_receiving() && self.progress_timeout != timeout {
             self.progress_timeout = timeout;
             self.restart_progress_timer(now);
         }

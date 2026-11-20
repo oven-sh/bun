@@ -1978,6 +1978,12 @@ impl QuicSession {
                 reason,
             } => ((*layer).into(), *code, reason.clone()),
             _ if self.self_close.get().is_some() => return None,
+            // See `expect_end`.
+            CloseReason::Error {
+                layer: Layer::Transport,
+                code: transport_code::APPLICATION_ERROR,
+                ..
+            } => (CloseType::Idle, 0, Vec::new()),
             CloseReason::Error {
                 layer,
                 code,

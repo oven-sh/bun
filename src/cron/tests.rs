@@ -216,6 +216,10 @@ fn crontab_entry() {
         crontab::entry(&job("@weekly", b"/x/bun", b"/a b/\xff.ts")),
         "# bun-cron: my_Job-1\n0 0 * * 0 '/x/bun' run --cron-title=my_Job-1 --cron-period='0 0 * * 0' '/a b/\u{fffd}.ts'\n"
     );
+    assert_eq!(
+        crontab::entry(&job("@weekly", br"/x\\y/bun", br"/a\b.ts")),
+        "# bun-cron: my_Job-1\n0 0 * * 0 '/x\\''\\''y/bun' run --cron-title=my_Job-1 --cron-period='0 0 * * 0' '/a\\''b.ts'\n"
+    );
 }
 
 #[test]

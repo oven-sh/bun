@@ -6659,7 +6659,7 @@ pub fn darwin_user_temp_dir(out: &mut bun_paths::PathBuffer) -> Option<&[u8]> {
     // libc falls back to `$TMPDIR` and to `/var/tmp`.
     let st = stat(&bun_core::ZBox::from_bytes(dir)).ok()?;
     let is_private = st.st_uid == c::getuid() && st.st_mode & 0o077 == 0;
-    is_private.then(|| dir.strip_suffix(b"/").unwrap_or(dir))
+    is_private.then(|| bun_paths::without_trailing_sep(dir))
 }
 
 /// fd → absolute path. Linux: readlink `/proc/self/fd/N`;

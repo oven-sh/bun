@@ -3,10 +3,13 @@ use bun_core::strings;
 
 use crate::{Registration, Title};
 
-/// The marker line and the job's line. The paths are not escaped: the caller refuses `'` and `%` in them.
+/// The marker line and the job's line. The caller refuses `'` and `%` in the paths.
 pub fn entry(job: &Registration<'_>) -> String {
     let (title, schedule) = (&job.title, &job.schedule);
-    let (exe, script) = (BStr::new(job.exe), BStr::new(job.script));
+    // Debian's cron reads `\\` as `\` and cronie does not, so no `\` is left next to another.
+    let [exe, script] =
+        [job.exe, job.script].map(|path| strings::replace_owned(path, b"\\", b"\\''"));
+    let (exe, script) = (BStr::new(&exe), BStr::new(&script));
     format!(
         "# bun-cron: {title}\n{schedule} '{exe}' run --cron-title={title} --cron-period='{schedule}' '{script}'\n"
     )

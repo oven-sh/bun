@@ -243,9 +243,11 @@ fn resolve_target(
     let (pkg, folder, other_folders) = if is_path {
         let folder = path_argument_from_root(lockfile, workspace_package_id, argument);
         let (name, version) = read_name_and_version(manager, &folder);
+        if is_shipped_folder(lockfile, &folder) {
+            crash_bundled(&name);
+        }
         let pkg = match package_for_folder(lockfile, string_hash(&name), &version) {
             Ok(pkg) => pkg,
-            Err(_) if ships_package(lockfile, string_hash(&name), &version) => crash_bundled(&name),
             Err(err) => folder_lookup_error(err, command, &folder, &name, &version),
         };
         if !installed.is_set(pkg.meta.id as usize) {
@@ -420,22 +422,108 @@ pub(crate) fn package_for_folder(
     }
 }
 
-/// Whether a package that bundles dependencies ships `name@version` in its tarball. That is not
-/// a package that `package_for_folder` finds: `Lockfile::package_index` holds no shipped package.
-fn ships_package(lockfile: &Lockfile, name_hash: u64, version: &[u8]) -> bool {
+/// Whether `folder` came out of the tarball of the package whose `node_modules` holds it: the
+/// lockfile binds a bundled row of that package to a shipped package (`Meta::is_shipped`), or that
+/// package is such a folder itself. The folder's own name and version don't tell, because the
+/// registry's package of that name and version is another package and may be installed as well.
+fn is_shipped_folder(lockfile: &Lockfile, folder: &[u8]) -> bool {
+    let Ok(mut real) = resolve_links(folder) else {
+        return false;
+    };
+    if cfg!(windows) {
+        resolve_path::slashes_to_posix_in_place(&mut real[..]);
+    }
+    is_shipped_place(lockfile, &real)
+}
+
+/// `is_shipped_folder` for a path that has its symlinks resolved and `/` as its separator.
+fn is_shipped_place(lockfile: &Lockfile, folder: &[u8]) -> bool {
+    let Some((holder_folder, name)) = split_installed_folder(folder) else {
+        return false;
+    };
+    if is_shipped_place(lockfile, holder_folder) {
+        return true;
+    }
+
+    let Some((holder_name, holder_version)) = try_read_name_and_version(holder_folder) else {
+        return false;
+    };
+    let Some(holders) = lockfile.package_index.get(&string_hash(&holder_name)) else {
+        return false;
+    };
     let strbuf = lockfile.buffers.string_bytes.as_slice();
-    let name_hashes = lockfile.packages.items_name_hash();
-    let resolutions = lockfile.packages.items_resolution();
-    let mut resolution_label = Vec::new();
-    (lockfile.packages.items_meta().iter().enumerate()).any(|(id, meta)| {
-        meta.is_shipped()
-            && name_hashes[id] == name_hash
-            && without_build_tag(print_resolution_label(
-                &mut resolution_label,
-                &resolutions[id],
-                strbuf,
-            )) == without_build_tag(version)
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let metas = lockfile.packages.items_meta();
+    let pkg_resolutions = lockfile.packages.items_resolution();
+    let pkg_rows = lockfile.packages.items_dependencies();
+    // An install puts what it extracts in a `node_modules`. The root or a workspace can have the
+    // name of such a package, and is not one.
+    let is_extracted = split_installed_folder(holder_folder).is_some();
+    let mut label = Vec::new();
+    holders.as_slice().iter().any(|&holder| {
+        let resolution = &pkg_resolutions[holder as usize];
+        let is_holder = match resolution.tag {
+            ResolutionTag::Folder => true,
+            // As in `package_for_folder`, only an npm package's label is a version.
+            ResolutionTag::Npm => {
+                is_extracted
+                    && holder_version.as_deref().map(without_build_tag)
+                        == Some(without_build_tag(print_resolution_label(
+                            &mut label, resolution, strbuf,
+                        )))
+            }
+            _ => is_extracted,
+        };
+        if !is_holder {
+            return false;
+        }
+        let rows = pkg_rows[holder as usize];
+        (rows.begin()..rows.end()).any(|row| {
+            let dependency = &dependencies[row as usize];
+            dependency.behavior.is_bundled()
+                && dependency.name.slice(strbuf) == name
+                && (resolutions.get(row as usize))
+                    .and_then(|&id| metas.get(id as usize))
+                    .is_some_and(|meta| meta.is_shipped())
+        })
     })
+}
+
+/// Splits `<holder>/node_modules/<name>` into the holder's folder and the name, which has a scope
+/// if the folder has one. `None` for a path that is not the folder of a package in a
+/// `node_modules`.
+fn split_installed_folder(folder: &[u8]) -> Option<(&[u8], &[u8])> {
+    use resolve_path::dirname;
+    let mut node_modules = dirname::<platform::Posix>(folder);
+    if strings::starts_with_char(bun_paths::basename(node_modules), b'@') {
+        node_modules = dirname::<platform::Posix>(node_modules);
+    }
+    if bun_paths::basename(node_modules) != b"node_modules" {
+        return None;
+    }
+    Some((
+        dirname::<platform::Posix>(node_modules),
+        folder.get(node_modules.len() + 1..)?,
+    ))
+}
+
+/// `read_name_and_version` for a folder that may not be a package: `None` if its package.json
+/// cannot be read or has no name. A local folder often has no version.
+fn try_read_name_and_version(folder: &[u8]) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
+    let mut spill = Vec::new();
+    let package_json_path =
+        resolve_path::join_z_spill::<platform::Auto>(&mut spill, &[folder, b"package.json"]);
+    let source = bun_ast::to_source(package_json_path, Default::default()).ok()?;
+    initialize_store();
+    let parsed = JSON::ParsedJson::parse_package_json(&source, &mut bun_ast::Log::init()).ok()?;
+    let string_property = |property: &'static str| -> Option<Vec<u8>> {
+        match &parsed.root.get(property.as_bytes())?.data {
+            bun_ast::ExprData::EString(s) => Some(s.data.slice().to_vec()),
+            _ => None,
+        }
+    };
+    Some((string_property("name")?, string_property("version")))
 }
 
 fn folder_lookup_error(

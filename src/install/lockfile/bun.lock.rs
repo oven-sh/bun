@@ -196,11 +196,21 @@ impl Stringifier {
     /// (off-registry npm tarball without a supported integrity, unsafe git
     /// `.bun-tag`); that decision must not depend on the writer's `~/.npmrc`.
     ///
+    /// `needs_v4` is what the writer's walk of `packages` found: the entry of a shipped package
+    /// (`Meta::is_shipped`), or a bundled dependency that an entry names in "unresolved". Every
+    /// earlier version reads those as registry packages, so such a file is stamped v4 whatever
+    /// was loaded and whatever else it holds, and the walk below meets no shipped package. No
+    /// other file is stamped v4: one loaded at v4 that has neither left is walked like a fresh one.
+    ///
     /// Walks the package tree the same way the writer does — only packages that
     /// are actually serialized are considered, not every entry in the in-memory
     /// `pkg_resolutions` buffer (migration can leave pruned/unreferenced entries
     /// there that never reach the written `packages` object).
-    fn version_to_write(lockfile: &BinaryLockfile) -> Version {
+    fn version_to_write(lockfile: &BinaryLockfile, needs_v4: bool) -> Version {
+        if needs_v4 {
+            return Version::V4;
+        }
+
         let loaded = lockfile.text_lockfile_version;
         let has_scoped = lockfile.overrides.has_scoped();
         if !has_scoped && !loaded.at_least(Version::V3) {
@@ -309,24 +319,44 @@ impl Stringifier {
 
         // Optional dependencies that did not resolve, although the tree has a package of the same
         // name. They are written as "unresolved" so that loading does not resolve them to it.
+        // An entry of `packages` also lists each bundled dependency that its tarball lacks
+        // (`lacks_bundled_folder`), because nothing else may resolve it either.
         let placed_rows = lockfile.buffers.hoisted_dependencies.as_slice();
-        let any_unresolved = (resolution_buf.iter().zip(deps_buf))
-            .any(|(&id, dep)| id == invalid_package_id && dep.behavior.is_optional());
-        let unresolved_names = |dep_ids: &[DependencyID]| -> Vec<String> {
-            if !any_unresolved {
+        let mut any_unresolved_optional = false;
+        let mut any_lacks_bundled_folder = false;
+        for (&id, dep) in resolution_buf.iter().zip(deps_buf) {
+            if id != invalid_package_id {
+                continue;
+            }
+            if dep.behavior.is_optional() {
+                any_unresolved_optional = true;
+            } else if lacks_bundled_folder(dep) {
+                any_lacks_bundled_folder = true;
+            }
+        }
+        let unresolved_names_in = |dep_ids: &[DependencyID], lists_bundled: bool| -> Vec<String> {
+            let lists_bundled = lists_bundled && any_lacks_bundled_folder;
+            if !any_unresolved_optional && !lists_bundled {
                 return Vec::new();
             }
             (dep_ids.iter().map(|&id| id as usize))
                 .filter(|&id| resolution_buf[id] == invalid_package_id)
                 .map(|id| &deps_buf[id])
-                .filter(|dep| dep.behavior.is_optional())
                 .filter(|dep| {
-                    (placed_rows.iter())
-                        .any(|&row| deps_buf[row as usize].name_hash == dep.name_hash)
+                    if dep.behavior.is_optional() {
+                        (placed_rows.iter())
+                            .any(|&row| deps_buf[row as usize].name_hash == dep.name_hash)
+                    } else {
+                        lists_bundled && lacks_bundled_folder(dep)
+                    }
                 })
                 .map(|dep| dep.name)
                 .collect()
         };
+        // The root and the workspaces install what they bundle, so theirs are ordinary rows.
+        let unresolved_names = |dep_ids: &[DependencyID]| unresolved_names_in(dep_ids, false);
+        let unresolved_names_of_entry =
+            |dep_ids: &[DependencyID]| unresolved_names_in(dep_ids, true);
 
         let mut pkg_map: PkgMap<()> = PkgMap::init();
 
@@ -369,12 +399,102 @@ impl Stringifier {
             pkgs_iter.reset();
         }
 
+        // dependencies, relative path, depth
+        let mut tree_sort_buf: Vec<(Box<[DependencyID]>, Box<[u8]>, usize)> = Vec::new();
+
+        // Whether `packages` gets what only `Version::V4` reads as it is: the entry of a shipped
+        // package, or the name of a bundled dependency in "unresolved". The root and a workspace
+        // are written there without their dependencies.
+        let mut needs_v4 = false;
+        let names_bundled_dependency = |pkg_id: PackageID| -> bool {
+            let tag = pkg_resolutions[pkg_id as usize].tag;
+            let rows = pkg_dep_lists[pkg_id as usize];
+            !matches!(tag, ResolutionTag::Root | ResolutionTag::Workspace)
+                && tag.belongs_in_lockfile()
+                && (rows.begin()..rows.end()).map(|id| id as usize).any(|id| {
+                    resolution_buf[id] == invalid_package_id && lacks_bundled_folder(&deps_buf[id])
+                })
+        };
+
+        // find trusted and patched dependencies. also overrides
+        while let Some(node) = pkgs_iter.next(None) {
+            tree_sort_buf.push((
+                Box::<[DependencyID]>::from(node.dependencies),
+                Box::<[u8]>::from(node.relative_path.as_bytes()),
+                node.depth,
+            ));
+
+            for &dep_id in node.dependencies {
+                let pkg_id = resolution_buf[dep_id as usize];
+                if pkg_id == invalid_package_id {
+                    continue;
+                }
+
+                let pkg_name = pkg_names[pkg_id as usize];
+                let pkg_name_hash = pkg_name_hashes[pkg_id as usize];
+                let res = &pkg_resolutions[pkg_id as usize];
+                let dep = &deps_buf[dep_id as usize];
+
+                needs_v4 = needs_v4
+                    || pkg_metas[pkg_id as usize].is_shipped()
+                    || (any_lacks_bundled_folder && names_bundled_dependency(pkg_id));
+
+                if lockfile.patched_dependencies.count() > 0 {
+                    use std::io::Write;
+                    let _ = write!(&mut temp_buf, "{}@", bstr::BStr::new(pkg_name.slice(buf)));
+                    match res.tag {
+                        ResolutionTag::Workspace => {
+                            if let Some(workspace_version) =
+                                lockfile.workspace_versions.get(&pkg_name_hash)
+                            {
+                                let _ = write!(&mut temp_buf, "{}", workspace_version.fmt(buf));
+                            }
+                        }
+                        _ => {
+                            let _ = write!(
+                                &mut temp_buf,
+                                "{}",
+                                res.fmt(buf, bun_core::fmt::PathSep::Posix)
+                            );
+                        }
+                    }
+
+                    let name_and_version = temp_buf.as_slice();
+                    let name_and_version_hash = StringBuilder::string_hash(name_and_version);
+
+                    if let Some(patch) = lockfile.patched_dependencies.get(&name_and_version_hash) {
+                        found_patched_dependencies.insert(
+                            name_and_version_hash,
+                            (Box::<[u8]>::from(name_and_version), patch.path),
+                        );
+                    }
+
+                    temp_buf.clear();
+                }
+
+                // intentionally not checking default trusted dependencies
+                if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
+                    let (name, name_hash) =
+                        res.trusted_name((dep.name, dep.name_hash), (pkg_name, pkg_name_hash));
+                    if let Some(trusted_name) =
+                        trusted_dependencies.get(&(name_hash as TruncatedPackageNameHash))
+                    {
+                        if **trusted_name == *name.slice(buf) {
+                            found_trusted_dependencies.insert(name_hash, name);
+                        }
+                    }
+                }
+            }
+        }
+
+        pkgs_iter.reset();
+
         let mut _indent: u32 = 0;
         let indent = &mut _indent;
         writer.write_all(b"{\n")?;
         Self::inc_indent(writer, indent)?;
         {
-            let lockfile_version = Self::version_to_write(lockfile);
+            let lockfile_version = Self::version_to_write(lockfile, needs_v4);
             writeln!(writer, "\"lockfileVersion\": {},", lockfile_version as u32)?;
             Self::write_indent(writer, *indent)?;
 
@@ -436,80 +556,6 @@ impl Stringifier {
             writer.write_byte(b'\n')?;
             Self::dec_indent(writer, indent)?;
             writer.write_all(b"},\n")?;
-
-            // dependencies, relative path, depth
-            let mut tree_sort_buf: Vec<(Box<[DependencyID]>, Box<[u8]>, usize)> = Vec::new();
-
-            // find trusted and patched dependencies. also overrides
-            while let Some(node) = pkgs_iter.next(None) {
-                tree_sort_buf.push((
-                    Box::<[DependencyID]>::from(node.dependencies),
-                    Box::<[u8]>::from(node.relative_path.as_bytes()),
-                    node.depth,
-                ));
-
-                for &dep_id in node.dependencies {
-                    let pkg_id = resolution_buf[dep_id as usize];
-                    if pkg_id == invalid_package_id {
-                        continue;
-                    }
-
-                    let pkg_name = pkg_names[pkg_id as usize];
-                    let pkg_name_hash = pkg_name_hashes[pkg_id as usize];
-                    let res = &pkg_resolutions[pkg_id as usize];
-                    let dep = &deps_buf[dep_id as usize];
-
-                    if lockfile.patched_dependencies.count() > 0 {
-                        use std::io::Write;
-                        let _ = write!(&mut temp_buf, "{}@", bstr::BStr::new(pkg_name.slice(buf)));
-                        match res.tag {
-                            ResolutionTag::Workspace => {
-                                if let Some(workspace_version) =
-                                    lockfile.workspace_versions.get(&pkg_name_hash)
-                                {
-                                    let _ = write!(&mut temp_buf, "{}", workspace_version.fmt(buf));
-                                }
-                            }
-                            _ => {
-                                let _ = write!(
-                                    &mut temp_buf,
-                                    "{}",
-                                    res.fmt(buf, bun_core::fmt::PathSep::Posix)
-                                );
-                            }
-                        }
-
-                        let name_and_version = temp_buf.as_slice();
-                        let name_and_version_hash = StringBuilder::string_hash(name_and_version);
-
-                        if let Some(patch) =
-                            lockfile.patched_dependencies.get(&name_and_version_hash)
-                        {
-                            found_patched_dependencies.insert(
-                                name_and_version_hash,
-                                (Box::<[u8]>::from(name_and_version), patch.path),
-                            );
-                        }
-
-                        temp_buf.clear();
-                    }
-
-                    // intentionally not checking default trusted dependencies
-                    if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
-                        let (name, name_hash) =
-                            res.trusted_name((dep.name, dep.name_hash), (pkg_name, pkg_name_hash));
-                        if let Some(trusted_name) =
-                            trusted_dependencies.get(&(name_hash as TruncatedPackageNameHash))
-                        {
-                            if **trusted_name == *name.slice(buf) {
-                                found_trusted_dependencies.insert(name_hash, name);
-                            }
-                        }
-                    }
-                }
-            }
-
-            pkgs_iter.reset();
 
             index_sort::sort_slice_by(&mut tree_sort_buf, |l, r| {
                 l.2.cmp(&r.2).then_with(|| strings::order(&l.1, &r.1))
@@ -741,7 +787,7 @@ impl Stringifier {
                                 writer,
                                 dep.behavior,
                                 deps_buf,
-                                &unresolved_names,
+                                &unresolved_names_of_entry,
                                 &pkg_deps_sort_buf,
                                 pkg_meta,
                                 pkg_bin,
@@ -3510,6 +3556,15 @@ pub(crate) fn rebind_peers_to_printed_packages(
 /// Edges a fresh install may itself leave unresolved, so bun.lock lists them without a package.
 pub(crate) fn may_stay_unresolved(dep: &Dependency) -> bool {
     dep.behavior.intersects(Behavior::OPTIONAL | Behavior::PEER)
+}
+
+/// For an unresolved dependency of a package that is neither the root nor a workspace: whether it
+/// is a bundled one, whose folder the tarball of the package lacks. The entry of the package
+/// names it in "unresolved", which `Version::V4` reads as a bundled dependency that nothing
+/// resolves. An optional one is read as it was before that version, so it is listed by the rule
+/// for optional dependencies. A row of no dependency group has no name in the entry to mark.
+fn lacks_bundled_folder(dep: &Dependency) -> bool {
+    dep.behavior.is_bundled() && !dep.behavior.is_optional() && dep.behavior != Behavior::BUNDLED
 }
 
 fn dependency_resolution_failure(

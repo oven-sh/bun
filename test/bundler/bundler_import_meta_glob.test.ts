@@ -57,6 +57,22 @@ describe("bundler", () => {
     run: { validate: allCases.run.validate },
   });
 
+  // `bun build` runs two directories above the file, and a pattern that starts with `!**` sees neither of them.
+  itBundled("import-meta-glob/ExcludingGlobstarStartsBelowTheSharedDirectory", {
+    entryPoints: ["/above/proj/entry.ts"],
+    files: {
+      "/above/proj/dir/a.ts": `export default "a";`,
+      "/above/proj/dir/sub/b.ts": `export default "b";`,
+      "/above/proj/entry.ts": `
+        const found = import.meta.glob(
+          ["./dir/**/*.ts", "!**/above/**", "!**/proj/**", "!**/dir/**", "!**/sub/**"],
+          { eager: true, import: "default" },
+        );
+        console.log(JSON.stringify(found));`,
+    },
+    run: { stdout: `{"./dir/a.ts":"a"}` },
+  });
+
   itBundled("import-meta-glob/LazyEntriesAreChunks", {
     entryPoints: ["/entry.ts"],
     files: {

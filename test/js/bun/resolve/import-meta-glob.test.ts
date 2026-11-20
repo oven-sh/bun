@@ -71,6 +71,8 @@ const inSpecialDirectory: Case[] = [
   ['import.meta.glob("../../../dir/[ab].ts")', [["../../../dir/a.ts", "lazy", A], ["../../../dir/b.ts", "lazy", B]]],
   ['import.meta.glob("/src/*/*/*/p.ts")', [["/src/[id]/(group)/{x}/p.ts", "lazy", {"default":"p"}]]],
   ['import.meta.glob(["./*.ts", "!./p.ts"])', [["./q.ts", "lazy", {"default":"q"}]]],
+  // Vite's JavaScript transform escapes the glob syntax of this directory for tinyglobby, and then keeps q.ts. rolldown does not.
+  ['import.meta.glob(["./*.ts", "!**/q.ts"])', [["./p.ts", "lazy", {"default":"p"}]]],
   ['import.meta.glob("./p.ts", { base: "../" })', []],
 ];
 table("in a directory whose name has glob syntax", inSpecialDirectory, async () => {
@@ -143,6 +145,7 @@ const packageImports: Case[] = [
   ['import.meta.glob("#dir/*.ts")', [["/src/dir/Upper.ts", "lazy", {"default":"upper"}], ["/src/dir/a.ts", "lazy", A], ["/src/dir/b.ts", "lazy", B], ["/src/dir/c.ts", "lazy", C], ["/src/dir/skip.ts", "lazy", {"default":"skip"}]]],
   ['import.meta.glob("#one")', [["/src/dir/a.ts", "lazy", A]]],
   ['import.meta.glob("#dir/**/d.ts")', [["/src/dir/sub/d.ts", "lazy", {"default":"sub/d"}]]],
+  ['import.meta.glob(["#dir/*.ts", "!**/dir/a.ts"])', [["/src/dir/Upper.ts", "lazy", {"default":"upper"}], ["/src/dir/a.ts", "lazy", A], ["/src/dir/b.ts", "lazy", B], ["/src/dir/c.ts", "lazy", C], ["/src/dir/skip.ts", "lazy", {"default":"skip"}]]],
 ];
 table('package.json "imports"', packageImports, async () => {
   using dir = tempDir("import-meta-glob", tree);
@@ -373,6 +376,7 @@ describe.concurrent("import.meta.glob", () => {
 
   test.each([
     [`"./${"a/".repeat(60_000)}*.ts"`, "The glob pattern is too long"],
+    [`["./dir/*.ts", "!**/../${"a/".repeat(60_000)}a.ts"]`, "The glob pattern is too long"],
     [`"./*.ts", { base: "./${"a/".repeat(60_000)}" }`, 'The "import.meta.glob" option "base" is too long'],
   ])("a pattern or base that is too long", async (args, message) => {
     expect(
@@ -481,6 +485,82 @@ describe.concurrent("import.meta.glob", () => {
   test("a pattern that starts with ** is searched from the project root", async () => {
     expect(await runEntry(`console.log(JSON.stringify(Object.keys(import.meta.glob("**/[dq].ts"))));`)).toEqual({
       stdout: `["/src/[id]/(group)/{x}/q.ts","/src/dir/sub/d.ts"]`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a pattern that starts with !** excludes from the project root when another one starts with **", async () => {
+    expect(
+      await runEntry(
+        `console.log(JSON.stringify([
+           Object.keys(import.meta.glob(["**/[dq].ts", "!**/proj/**"])),
+           Object.keys(import.meta.glob(["**/[dq].ts", "!**/dir/**"])),
+         ]));`,
+      ),
+    ).toEqual({
+      stdout: `[["/src/[id]/(group)/{x}/q.ts","/src/dir/sub/d.ts"],["/src/[id]/(group)/{x}/q.ts"]]`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a pattern that starts with !** only sees a path below the directory the including patterns share", async () => {
+    using dir = tempDir("import-meta-glob", {
+      "above/proj/dir/a.ts": "",
+      "above/proj/dir/sub/b.ts": "",
+      "above/proj/dir.v2/c.ts": "",
+      "above/proj/entry.ts": `console.log(JSON.stringify([
+        Object.keys(import.meta.glob(["./dir/**/*.ts", "!**/above/**", "!**/proj/**", "!**/dir/**", "!**/sub/**"])),
+        // Vite's JavaScript transform takes "dir.v2" for a file name and starts one directory higher. rolldown 1.3 does not.
+        Object.keys(import.meta.glob(["./dir.v2/*.ts", "!**/dir.v2/**"])),
+      ]));`,
+    });
+    // The directory Bun runs in is not an input.
+    const results = await Promise.all(
+      ["", "above", "above/proj", "above/proj/dir/sub"].map(async cwd => {
+        const { stdout, stderr, exitCode } = await run(join(String(dir), cwd), [
+          join(String(dir), "above/proj/entry.ts"),
+        ]);
+        return { cwd, stdout: stdout.trim(), stderr, exitCode };
+      }),
+    );
+    const expected = { stdout: `[["./dir/a.ts"],["./dir.v2/c.ts"]]`, stderr: "", exitCode: 0 };
+    expect(results).toEqual([
+      { cwd: "", ...expected },
+      { cwd: "above", ...expected },
+      { cwd: "above/proj", ...expected },
+      { cwd: "above/proj/dir/sub", ...expected },
+    ]);
+  });
+
+  test("the order of the patterns does not move the directory they share", async () => {
+    // Both patterns of a pair are in "node_modules", so the files in it are not skipped.
+    using dir = tempDir("import-meta-glob", {
+      "node_modules/x.ts": "",
+      "node_modules/by-path.ts": `console.log(JSON.stringify([
+        Object.keys(import.meta.glob(["../node_modules/x.*", "./x.*"])),
+        Object.keys(import.meta.glob(["./x.*", "../node_modules/x.*"])),
+        Object.keys(import.meta.glob(["../node_modules/x.*", "./x.*", "!**/node_modules/**"])),
+        Object.keys(import.meta.glob(["./x.*", "../node_modules/x.*", "!**/node_modules/**"])),
+      ]));`,
+      "node_modules/from-root.ts": `export default [
+        Object.keys(import.meta.glob(["**/x.*", "./x.*"])),
+        Object.keys(import.meta.glob(["./x.*", "**/x.*"])),
+      ];`,
+      // After process.chdir() the directory Bun runs in ends with a separator.
+      "node_modules/after-chdir.ts": `process.chdir(process.cwd());
+        console.log(JSON.stringify((await import("./from-root.ts")).default));`,
+    });
+    const cwd = join(String(dir), "node_modules");
+    const [byPath, afterChdir] = await Promise.all([run(cwd, ["by-path.ts"]), run(cwd, ["after-chdir.ts"])]);
+    expect({ ...byPath, stdout: byPath.stdout.trim() }).toEqual({
+      stdout: `[["./x.ts"],["./x.ts"],["./x.ts"],["./x.ts"]]`,
+      stderr: "",
+      exitCode: 0,
+    });
+    expect({ ...afterChdir, stdout: afterChdir.stdout.trim() }).toEqual({
+      stdout: `[["/x.ts"],["/x.ts"]]`,
       stderr: "",
       exitCode: 0,
     });

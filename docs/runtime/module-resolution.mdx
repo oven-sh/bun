@@ -451,6 +451,8 @@ A pattern starts with one of these:
 - `/` or `**`, relative to the directory Bun runs in
 - An alias from `paths` in `tsconfig.json` or `imports` in `package.json`
 
+A pattern that starts with `!**` only sees the part of a path below the directory that the patterns without `!` share. In the example above, that directory is `pages`. With `["./pages/admin/*.tsx", "!**/admin/users.tsx"]` it is `admin`, so `users.tsx` stays. To exclude a file by its path, write `!./pages/admin/users.tsx`.
+
 Dotfiles, `node_modules` and the file itself aren't matched. Parentheses are literal characters, so write alternatives as `{a,b}`, not `(a|b)` or `@(a|b)`.
 
 | Option       | Description                                                                                                                  |

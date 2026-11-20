@@ -177,12 +177,18 @@ pub fn is_glob(text: &[u8]) -> bool {
                 Some(b'[') => Some(&mut squares),
                 _ => None,
             };
-            // The `\\` and one UTF-16 unit.
-            index += match at(index + 1) {
-                None | Some(0..0xC0) => 2,
-                Some(0xE0..0xF0) => 4,
-                Some(_) => 3,
+            // The `\\` and one UTF-16 unit. Only the continuation bytes that are there count.
+            let more = match at(index + 1) {
+                None | Some(0..0xC0) => 0,
+                Some(0xE0..0xF0) => 2,
+                Some(_) => 1,
             };
+            index += 2;
+            let rest = text.get(index..).unwrap_or_default();
+            let continuations = rest.iter().take(more);
+            index += continuations
+                .take_while(|it| matches!(it, 0x80..0xC0))
+                .count();
             if let Some(found) = closes.and_then(|it| it.index_from(text, index)) {
                 index = found + 1;
             }
@@ -257,4 +263,25 @@ pub fn glob_parent(pattern: &[u8]) -> Vec<u8> {
         at += 1;
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_glob_reads_what_follows_an_escaped_byte_that_is_not_utf8() {
+        // `\xe9` announces a character of three bytes, `\xc3` one of two and `\xf0` one of four.
+        assert!(is_glob(b"\\\xe9*.js"));
+        assert!(is_glob(b"a\\\xc3*"));
+        assert!(is_glob(b"\\\xf0{a,b}"));
+        assert!(!is_glob(b"\\\xe9.js"));
+        // A whole character is one step, as it is for the package.
+        assert!(is_glob("\\\u{e9}*".as_bytes()));
+        assert!(is_glob("\\\u{9000}!".as_bytes()));
+        // The package steps over one UTF-16 unit, so the `!` isn't right after the escape.
+        assert!(!is_glob("\\\u{1f600}!".as_bytes()));
+        assert!(!is_glob("\\\u{9000}\\*".as_bytes()));
+        assert!(!is_glob("\\\u{1f600}\\*".as_bytes()));
+    }
 }

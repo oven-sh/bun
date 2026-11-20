@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isASAN, isDebug, isLinux } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux } from "harness";
 
 describe("Bun.JSONL.parseChunk on UTF-8 bytes", () => {
   const pieces = [
@@ -63,21 +63,39 @@ describe("Bun.JSONL.parseChunk on UTF-8 bytes", () => {
 
   test.skipIf(!isLinux || process.arch !== "x64" || isDebug || isASAN)(
     "one character outside ASCII does not make a long text several times as slow",
-    () => {
-      const line = (last: string) =>
-        new TextEncoder().encode(
-          JSON.stringify("the quick brown fox jumps over the lazy dog. ".repeat(180000) + last) + "\n",
-        );
-      const fastestOf = (bytes: Uint8Array) => {
-        let fastest = Infinity;
-        for (let run = 0; run < 15; run++) {
+    async () => {
+      const program = `
+        const text = "the quick brown fox jumps over the lazy dog. ".repeat(60000) + "\\u2014";
+        const bytes = new TextEncoder().encode(JSON.stringify(text) + "\\n");
+        const decoder = new TextDecoder();
+        const inChunk = () => Bun.JSONL.parseChunk(bytes).values;
+        const inTwoSteps = () => [JSON.parse(decoder.decode(bytes))];
+        const timeOf = parse => {
           const began = performance.now();
-          expect(Bun.JSONL.parseChunk(bytes).values.length).toBe(1);
-          fastest = Math.min(fastest, performance.now() - began);
+          parse();
+          return performance.now() - began;
+        };
+        let chunk = Infinity;
+        let twoSteps = Infinity;
+        for (let run = 0; run < 25; run++) {
+          chunk = Math.min(chunk, timeOf(inChunk));
+          twoSteps = Math.min(twoSteps, timeOf(inTwoSteps));
         }
-        return fastest;
-      };
-      expect(fastestOf(line("\u2014")) / fastestOf(line(""))).toBeLessThan(4.5);
+        console.log(JSON.stringify({ chunk, twoSteps, same: inChunk()[0] === text }));
+      `;
+      // Both sides decode the bytes to 16 bits a character and parse that text. Bun 1.3.14 takes at least 2.8 times as long.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", program],
+        env: { ...bunEnv, MIMALLOC_PURGE_DELAY: "100000" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const { chunk, twoSteps, same } = JSON.parse(stdout);
+      expect(chunk / twoSteps).toBeLessThan(2.25);
+      expect(same).toBe(true);
+      expect(exitCode).toBe(0);
     },
   );
 });

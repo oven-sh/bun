@@ -2,6 +2,8 @@
 const http = require("node:http");
 const net = require("node:net");
 
+// Runs the event loop that many times: jobs, errors that nobody handles and what has arrived run each time, and no clock decides.
+const spinEventLoop = async (count = 20) => { while (count-- > 0) await new Promise(done => setImmediate(done)); };
 let heard = [];
 process.on("uncaughtException", error => heard.push(error.message));
 
@@ -73,16 +75,19 @@ function run(place, kind) {
       const client = net.connect(server.address().port, "127.0.0.1");
       let answers = 0;
       client.on("error", () => {});
-      client.on("data", () => {
-        if (++answers === 1) setTimeout(() => client.write(kinds[kind].text), 30);
+      client.on("data", async () => {
+        const answer = ++answers;
+        await spinEventLoop();
+        if (answer === 1) client.write(kinds[kind].text);
+        if (answer !== 2) return;
+        client.destroy();
+        server.close(async () => {
+          await spinEventLoop();
+          resolve(`answers ${answers} . heard [${heard.join()}]${threw} . read ${row.reads > 0}`);
+        });
+        server.closeAllConnections();
       });
       client.write(kinds[kind].text);
-      setTimeout(() => {
-        client.destroy();
-        server.close();
-        server.closeAllConnections();
-        setTimeout(() => resolve(`answers ${answers} . heard [${heard.join()}]${threw} . read ${row.reads > 0}`), 30);
-      }, 160);
     });
   });
 }

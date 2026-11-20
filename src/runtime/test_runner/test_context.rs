@@ -1,26 +1,25 @@
 //! Vitest's test context. A test shares one with its hooks, and keeps it across retries and repeats.
 
-use core::ptr::NonNull;
+use core::cell::Cell;
 use std::rc::Rc;
 
 use bun_core::String as BunString;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
     self as jsc, AbortSignal, CommonAbortReason, JSFunction, JSGlobalObject, JSHostFn,
-    JSPromise, JSValue, JsCell, JsClass as _, JsResult, Strong, StringJsc as _, bun_string_jsc,
+    JSPromise, JSValue, JsClass as _, JsResult, Strong, StringJsc as _, WrapperGuard, bun_string_jsc,
 };
 use bun_paths::resolve_path;
+use bun_ptr::CellExt as _;
 use bun_resolver::fs::FileSystem;
 
 use super::bun_test::js_fns::Signature;
 use super::bun_test::{
-    Around, AroundPhase, BaseScope, BunTest, BunTestPtr, BunTestPtrWeak, DescribeScope, EntryData,
-    ExecutionEntry, Only, Phase, RefDataValue, ScopeMode,
+    BaseScope, BunTest, BunTestPtr, BunTestPtrWeak, EntryData, Only, Phase, RefDataValue, ScopeId, ScopeMode,
 };
 use super::execution::{ExecutionSequence, Result as ExecutionResult};
 use super::expect::Expect;
 use super::expect::expect_deferred::ExpectDeferred;
-use super::jest::FileColumns as _;
 use super::scope_functions::{CallbackMode, FunctionKind, ParseArgumentsCfg, parse_arguments};
 use super::test_context_parameter::{ContextParameter, TEXT_LEFT_OUT};
 use crate::generated_bindgen::scope_functions::{CallbackOrOptions, DescriptionOrCallback};
@@ -44,9 +43,7 @@ pub(crate) struct TestContext {
     buntest: BunTestPtrWeak,
     group_index: usize,
     sequence_index: usize,
-    /// `BunTest::extra_execution_entries` owns the entries.
-    deferred: JsCell<Vec<(Deferred, NonNull<ExecutionEntry>)>>,
-    fixtures: JsCell<Vec<usize>>,
+    fixtures: Cell<Vec<usize>>,
 }
 
 pub(crate) use crate::generated_bindgen::test_context::js_TestContext as js;
@@ -87,45 +84,42 @@ impl TestContext {
             buntest: Rc::downgrade(buntest),
             group_index,
             sequence_index,
-            deferred: JsCell::new(Vec::new()),
-            fixtures: JsCell::new(Vec::new()),
+            fixtures: Cell::default(),
         }
         .to_js(global)
     }
 
     pub(crate) fn has_fixture(&self, definition: usize) -> bool {
-        self.fixtures.get().contains(&definition)
+        self.fixtures.with_taken(|fixtures| fixtures.contains(&definition))
     }
 
     pub(crate) fn add_fixture(&self, definition: usize) {
-        self.fixtures.with_mut(|fixtures| fixtures.push(definition));
+        self.fixtures.with_taken(|fixtures| fixtures.push(definition));
     }
 
     pub(crate) fn remove_fixture(&self, definition: usize) {
-        self.fixtures.with_mut(|fixtures| fixtures.retain(|&fixture| fixture != definition));
+        self.fixtures.with_taken(|fixtures| fixtures.retain(|&fixture| fixture != definition));
     }
 
-    fn of_call<'a>(global: &JSGlobalObject, this_value: JsLocal<'a>) -> JsResult<&'a TestContext> {
-        match TestContext::from_js(this_value.to_js()) {
-            // SAFETY: the wrapper owns the payload, and the frame keeps the wrapper alive.
-            Some(this) => Ok(unsafe { &*this }),
-            None => Err(global.throw_type_error(format_args!("Expected this to be a test context"))),
-        }
+    fn of_call<'a>(global: &JSGlobalObject, this_value: JsLocal<'a>) -> JsResult<WrapperGuard<'a, TestContext>> {
+        this_value.as_class_ref().ok_or_else(|| global.throw_type_error(format_args!("Expected this to be a test context")))
     }
 
-    fn sequence(&self) -> Option<(BunTestPtr, NonNull<ExecutionSequence>)> {
+    /// `buntest` is `self.buntest`.
+    fn sequence<'a>(&self, buntest: &'a BunTest) -> Option<&'a ExecutionSequence> {
+        let execution = &buntest.execution;
+        execution.groups().get(self.group_index)?.sequences(execution).get(self.sequence_index)
+    }
+
+    fn running<'a>(&self, buntest: &'a BunTest, this_value: JSValue) -> Option<&'a ExecutionSequence> {
+        let sequence = self.sequence(buntest)?;
+        (buntest.phase.get() == Phase::Execution && sequence.context.get() == Some(this_value)).then_some(sequence)
+    }
+
+    /// `None` if the test has finished.
+    fn with_running<R>(&self, this_value: JSValue, f: impl FnOnce(&BunTest, &ExecutionSequence) -> R) -> Option<R> {
         let buntest = self.buntest.upgrade()?;
-        let execution = &mut buntest.get().execution;
-        let start = execution.groups.get(self.group_index)?.sequence_start;
-        let sequence = NonNull::from(execution.sequences.get_mut(start + self.sequence_index)?);
-        Some((buntest, sequence))
-    }
-
-    fn running(&self, this_value: JSValue) -> Option<(BunTestPtr, NonNull<ExecutionSequence>)> {
-        let (buntest, sequence) = self.sequence()?;
-        // SAFETY: points into `buntest.execution.sequences`, which `buntest` keeps alive.
-        let context = unsafe { sequence.as_ref() }.context.as_ref()?.get();
-        (buntest.phase == Phase::Execution && context == this_value).then_some((buntest, sequence))
+        Some(f(&buntest, self.running(&buntest, this_value)?))
     }
 
     fn throw_finished(global: &JSGlobalObject, name: &str) -> jsc::JsError {
@@ -134,52 +128,23 @@ impl TestContext {
 
     /// Lets `expect()` attribute a call to this test even when other tests run concurrently.
     fn state_data(&self, this_value: JSValue) -> Option<RefDataValue> {
-        let (_buntest, sequence) = self.running(this_value)?;
-        // SAFETY: as in `running`.
-        let sequence = unsafe { sequence.as_ref() };
-        Some(RefDataValue::Execution {
+        self.with_running(this_value, |_, sequence| RefDataValue::Execution {
             group_index: self.group_index,
             entry_data: Some(EntryData {
                 sequence_index: self.sequence_index,
-                entry: sequence.active_entry.map_or(core::ptr::null(), |entry| entry.as_ptr().cast_const().cast()),
-                attempt: sequence.attempt,
+                entry: sequence.active_entry.get(),
+                attempt: sequence.attempt.get(),
             }),
         })
     }
 
-    pub(crate) fn defer(&self, buntest: &mut BunTest, when: Deferred, callback: JSValue, timeout: u32) {
-        let gets_context = matches!(when, Deferred::OnTestFinished | Deferred::OnTestFailed);
-        let entry = buntest.create_vitest_entry(callback, timeout, gets_context);
-        if when == Deferred::Around {
-            // SAFETY: just allocated.
-            unsafe { (*entry.as_ptr()).around = Some((Around::Each, AroundPhase::TearDown)) };
-        }
-        self.deferred.with_mut(|deferred| deferred.push((when, entry)));
-    }
-
     /// Returns false if the test has finished.
     pub(crate) fn defer_fixture(&self, this_value: JSValue, tear_down: JSValue, timeout: u32) -> bool {
-        let Some((buntest, sequence)) = self.running(this_value) else {
-            return false;
-        };
-        // SAFETY: as in `running`.
-        let when = if unsafe { sequence.as_ref() }.is_before_run_test() { Deferred::AroundFixture } else { Deferred::Fixture };
-        self.defer(buntest.get(), when, tear_down, timeout);
-        true
-    }
-
-    pub(crate) fn take_deferred(&self, attempt_failed: bool) -> Option<NonNull<ExecutionEntry>> {
-        self.deferred.with_mut(|deferred| {
-            loop {
-                let next = (0..deferred.len()).rev().min_by_key(|&index| deferred[index].0)?;
-                let (when, entry) = deferred.remove(next);
-                if when != Deferred::OnTestFailed || attempt_failed {
-                    return Some(entry);
-                }
-                // SAFETY: owned by `BunTest::extra_execution_entries`, which outlives the sequence.
-                unsafe { (*entry.as_ptr()).callback = None };
-            }
+        self.with_running(this_value, |buntest, sequence| {
+            let when = if sequence.is_before_run_test(buntest) { Deferred::AroundFixture } else { Deferred::Fixture };
+            sequence.defer(buntest, when, tear_down, timeout);
         })
+        .is_some()
     }
 
     fn result(this_value: JSValue, global: &JSGlobalObject) -> JSValue {
@@ -194,16 +159,15 @@ impl TestContext {
     pub(crate) fn sync_result(
         this_value: JSValue,
         global: &JSGlobalObject,
+        buntest: &BunTest,
         sequence: &ExecutionSequence,
     ) -> JsResult<()> {
-        let (Some(result), Some(test)) = (js::result_get_cached(this_value), sequence.test_entry) else {
+        let (Some(result), Some(test)) = (js::result_get_cached(this_value), sequence.test(buntest)) else {
             return Ok(());
         };
-        // SAFETY: owned by the describe tree, which outlives the sequence.
-        let test = unsafe { test.as_ref() };
-        result.put(global, b"state", ascii(global, sequence.state())?);
-        result.put(global, b"retryCount", JSValue::from(test.retry_count - sequence.remaining_retry_count));
-        result.put(global, b"repeatCount", JSValue::from(test.repeat_count - sequence.remaining_repeat_count));
+        result.put(global, b"state", ascii(global, sequence.state(buntest))?);
+        result.put(global, b"retryCount", JSValue::from(test.retry_count - sequence.remaining_retry_count.get()));
+        result.put(global, b"repeatCount", JSValue::from(test.repeat_count - sequence.remaining_repeat_count.get()));
         Ok(())
     }
 
@@ -235,37 +199,34 @@ impl TestContext {
     }
 
     pub(crate) fn abort_signal(this_value: JSValue, global: &JSGlobalObject) {
-        if let Some(signal) = js::signal_get_cached(this_value).and_then(AbortSignal::from_js) {
-            // SAFETY: the wrapper in the cached slot keeps the signal alive.
-            unsafe { &*signal }.signal(global, CommonAbortReason::Timeout);
+        if let Some(signal) = js::signal_get_cached(this_value).as_ref().and_then(AbortSignal::from_js) {
+            signal.signal(global, CommonAbortReason::Timeout);
         }
     }
 
     pub(crate) fn get_task(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let (this_value, global) = (this_value.to_js(), cx.global());
-        let Some((buntest, sequence)) = self.sequence() else {
+        let Some(buntest) = self.buntest.upgrade() else {
             return Ok(JSValue::UNDEFINED);
         };
-        // SAFETY: as in `running`.
-        let sequence = unsafe { sequence.as_ref() };
-        let Some(test) = sequence.test_entry else {
+        let buntest: &BunTest = &buntest;
+        let Some(sequence) = self.sequence(buntest) else {
             return Ok(JSValue::UNDEFINED);
         };
-        // SAFETY: owned by the describe tree, which `buntest` keeps alive.
-        let test = unsafe { test.as_ref() };
+        let Some(test) = sequence.test(buntest) else {
+            return Ok(JSValue::UNDEFINED);
+        };
         let name = test.base.name.as_deref().unwrap_or(b"");
-        let buntest = buntest.get();
-        let root: *mut DescribeScope = &raw mut *buntest.collection.root_scope;
 
         let task = JSValue::create_empty_object(global, 16);
-        let id = format!("{}_{}_{}", buntest.file_id, self.group_index, self.sequence_index);
+        let id = format!("{}_{}_{}", buntest.file.id, self.group_index, self.sequence_index);
         task.put(global, b"id", bun_string_jsc::create_utf8_for_js(global, id.as_bytes())?);
         task.put(global, b"type", ascii(global, "test")?);
         task.put(global, b"name", bun_string_jsc::create_utf8_for_js(global, name)?);
         put_full_names(global, task, buntest, &test.base)?;
         task.put(global, b"mode", ascii(global, mode(&test.base))?);
-        task.put(global, b"file", suite_task(global, buntest, root)?);
-        if let Some(parent) = test.base.parent.filter(|&parent| parent != root) {
+        task.put(global, b"file", suite_task(global, buntest, ScopeId::ROOT)?);
+        if let Some(parent) = test.base.parent.filter(|&parent| parent != ScopeId::ROOT) {
             task.put(global, b"suite", suite_task(global, buntest, parent)?);
         }
         if test.base.mode == ScopeMode::Fails {
@@ -281,7 +242,7 @@ impl TestContext {
         task.put(global, b"annotations", Self::annotations(this_value, global)?);
         task.put(global, b"result", Self::result(this_value, global));
         task.put_non_enumerable(global, b"context", this_value);
-        Self::sync_result(this_value, global, sequence)?;
+        Self::sync_result(this_value, global, buntest, sequence)?;
         Ok(task)
     }
 
@@ -297,10 +258,7 @@ impl TestContext {
     pub(crate) fn get_signal(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let (this_value, global) = (this_value.to_js(), cx.global());
         let signal = AbortSignal::create(global);
-        if let Some((_buntest, sequence)) = self.running(this_value)
-            // SAFETY: as in `running`.
-            && unsafe { sequence.as_ref() }.result.is_timeout()
-        {
+        if self.with_running(this_value, |_, sequence| sequence.result.get().is_timeout()) == Some(true) {
             js::signal_set_cached(this_value, global, signal);
             Self::abort_signal(this_value, global);
         }
@@ -374,13 +332,12 @@ impl TestContext {
             },
         )?;
         let this = Self::of_call(global, this_value)?;
-        let Some((buntest, _sequence)) = this.running(this_value.to_js()) else {
-            return Err(Self::throw_finished(global, name));
-        };
-        if let Some(callback) = args.callback {
-            this.defer(buntest.get(), when, callback, args.options.timeout);
-        }
-        Ok(())
+        this.with_running(this_value.to_js(), |buntest, sequence| {
+            if let Some(callback) = args.callback {
+                sequence.defer(buntest, when, callback, args.options.timeout);
+            }
+        })
+        .ok_or_else(|| Self::throw_finished(global, name))
     }
 }
 
@@ -447,20 +404,18 @@ pub(crate) fn skip(
     }
     let this = TestContext::of_call(global, this_value)?;
     let this_value = this_value.to_js();
-    let Some((_buntest, sequence)) = this.running(this_value) else {
-        return Err(TestContext::throw_finished(global, "skip"));
-    };
-    // SAFETY: as in `running`; nothing else borrows the sequence while a callback of it is on the stack.
-    let sequence = unsafe { &mut *sequence.as_ptr() };
-    sequence.result = ExecutionResult::Skip;
-    let result = TestContext::result(this_value, global);
-    result.put(global, b"pending", JSValue::TRUE);
-    let note = if condition.is_string() { condition } else { note };
-    if !note.is_undefined() {
-        result.put(global, b"note", note);
-    }
-    TestContext::sync_result(this_value, global, sequence)?;
-    Err(global.throw(format_args!("test is skipped; abort execution")))
+    this.with_running(this_value, |buntest, sequence| {
+        sequence.result.set(ExecutionResult::Skip);
+        let result = TestContext::result(this_value, global);
+        result.put(global, b"pending", JSValue::TRUE);
+        let note = if condition.is_string() { condition } else { note };
+        if !note.is_undefined() {
+            result.put(global, b"note", note);
+        }
+        TestContext::sync_result(this_value, global, buntest, sequence)?;
+        Err(global.throw(format_args!("test is skipped; abort execution")))
+    })
+    .unwrap_or_else(|| Err(TestContext::throw_finished(global, "skip")))
 }
 
 pub(crate) fn defer_hook<'a>(
@@ -491,7 +446,7 @@ pub(crate) fn annotate(
     let (message, kind, attachment) = (message.to_js(), kind.to_js(), attachment.to_js());
     let this = TestContext::of_call(global, this_value)?;
     let this_value = this_value.to_js();
-    if this.running(this_value).is_none() {
+    if this.with_running(this_value, |_, _| ()).is_none() {
         return Err(TestContext::throw_finished(global, "annotate"));
     }
     let (kind, attachment) = if kind.is_object() { (JSValue::UNDEFINED, kind) } else { (kind, attachment) };
@@ -509,10 +464,9 @@ pub(crate) fn annotate(
 #[optimize(size)]
 pub(crate) fn get_current_test(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
     let global = cx.global();
-    let Some(strong) = super::bun_test::clone_active_strong() else {
+    let Some(buntest) = super::bun_test::clone_active_strong() else {
         return Ok(JSValue::UNDEFINED);
     };
-    let buntest = strong.get();
     let running = match buntest.get_current_state_data() {
         RefDataValue::Execution { group_index, entry_data: None } => {
             RefDataValue::Execution { group_index, entry_data: buntest.execution.on_stack.get() }
@@ -527,7 +481,7 @@ pub(crate) fn get_current_test(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
     if sequence.test_entry.is_none() {
         return Ok(JSValue::UNDEFINED);
     }
-    let context = sequence.context(global, &strong, group_index, entry_data.sequence_index);
+    let context = sequence.context(global, &buntest, group_index, entry_data.sequence_index);
     Ok(context.get(global, "task")?.unwrap_or(JSValue::UNDEFINED))
 }
 
@@ -546,21 +500,13 @@ fn mode(base: &BaseScope) -> &'static str {
     match base.mode {
         ScopeMode::Skip | ScopeMode::FilteredOut => "skip",
         ScopeMode::Todo => "todo",
-        ScopeMode::Normal | ScopeMode::Failing | ScopeMode::Fails if base.only == Only::Yes => "only",
+        ScopeMode::Normal | ScopeMode::Failing | ScopeMode::Fails if base.only.get() == Only::Yes => "only",
         ScopeMode::Normal | ScopeMode::Failing | ScopeMode::Fails => "run",
     }
 }
 
-fn file_path(buntest: &BunTest) -> &'static [u8] {
-    let Some(reporter) = buntest.reporter else {
-        return b"";
-    };
-    // SAFETY: the reporter outlives every BunTest.
-    unsafe { reporter.as_ref() }.jest.files.items_source()[buntest.file_id as usize].path.text
-}
-
 fn file_name(buntest: &BunTest) -> Vec<u8> {
-    let mut name = resolve_path::relative(FileSystem::instance().top_level_dir(), file_path(buntest)).to_vec();
+    let mut name = resolve_path::relative(FileSystem::instance().top_level_dir(), buntest.file.path).to_vec();
     resolve_path::platform_to_posix_in_place::<u8>(&mut name);
     name
 }
@@ -573,12 +519,8 @@ fn put_full_names(
     base: &BaseScope,
 ) -> JsResult<()> {
     let mut names: Vec<&[u8]> = Vec::new();
-    let mut next = Some(base);
-    while let Some(base) = next {
-        names.extend(base.name.as_deref());
-        // SAFETY: a parent outlives its children.
-        next = base.parent.map(|parent| unsafe { &(*parent).base });
-    }
+    names.extend(base.name.as_deref());
+    names.extend(buntest.scopes_from(base.parent).filter_map(|scope| scope.base.name.as_deref()));
     names.reverse();
     task.put(global, b"fullTestName", bun_string_jsc::create_utf8_for_js(global, &names.join(&b" > "[..]))?);
     let file_name = file_name(buntest);
@@ -591,36 +533,33 @@ fn put_full_names(
 #[optimize(size)]
 pub(crate) fn suite_task(
     global: &JSGlobalObject,
-    buntest: &mut BunTest,
-    scope: *mut DescribeScope,
+    buntest: &BunTest,
+    scope: ScopeId,
 ) -> JsResult<JSValue> {
-    let root: *mut DescribeScope = &raw mut *buntest.collection.root_scope;
-    // SAFETY: `scope` is in `buntest`'s describe tree, or is the preload hook scope above it.
-    let scope = if unsafe { (*scope).base.parent.is_none() } { root } else { scope };
-    // SAFETY: as above; the borrow ends before the recursive calls.
-    if let Some(task) = unsafe { &(*scope).task } {
+    let scope = match buntest.scope(scope) {
+        preload if preload.base.parent.is_none() => buntest.scope(ScopeId::ROOT),
+        scope => scope,
+    };
+    if let Some(task) = scope.task.get() {
         return Ok(task.get());
     }
-    let task = JSValue::create_empty_object(global, 10);
-    // SAFETY: as above.
-    unsafe { (*scope).task = Some(Strong::create(task, global)) };
-    // SAFETY: as above.
-    let base = unsafe { &(*scope).base };
+    let task = scope.task.get_or_init(|| Strong::create(JSValue::create_empty_object(global, 10), global)).get();
+    let base = &scope.base;
     task.put(global, b"type", ascii(global, "suite")?);
     task.put(global, b"mode", ascii(global, mode(base))?);
     task.put(global, b"meta", JSValue::create_empty_object_with_null_prototype(global));
-    if scope == root {
+    if scope.id == ScopeId::ROOT {
         let name = bun_string_jsc::create_utf8_for_js(global, &file_name(buntest))?;
         task.put(global, b"name", name);
         task.put(global, b"fullName", name);
-        task.put(global, b"filepath", bun_string_jsc::create_utf8_for_js(global, file_path(buntest))?);
+        task.put(global, b"filepath", bun_string_jsc::create_utf8_for_js(global, buntest.file.path)?);
         task.put(global, b"file", task);
         return Ok(task);
     }
     task.put(global, b"name", bun_string_jsc::create_utf8_for_js(global, base.name.as_deref().unwrap_or(b""))?);
     put_full_names(global, task, buntest, base)?;
-    task.put(global, b"file", suite_task(global, buntest, root)?);
-    if let Some(parent) = base.parent.filter(|&parent| parent != root) {
+    task.put(global, b"file", suite_task(global, buntest, ScopeId::ROOT)?);
+    if let Some(parent) = base.parent.filter(|&parent| parent != ScopeId::ROOT) {
         task.put(global, b"suite", suite_task(global, buntest, parent)?);
     }
     Ok(task)

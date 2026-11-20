@@ -18,7 +18,8 @@
 #   const out: unknown[] = [];
 #   const divisor = (by & 7) + 1;
 #   let held: number | undefined = undefined;
-#   for (let turn = 0; turn !== turns; turn++) {
+#   for (let left = turns; left > 0; left--) {
+#     const turn = turns - left;
 #     if (held !== undefined && -1 < held && held <= 1000) out.push((held / divisor) | 0); else out.push("none");
 #     held = (low | 0) + ((add + turn * step) | 0);
 #   }

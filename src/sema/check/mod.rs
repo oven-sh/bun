@@ -73,6 +73,7 @@ mod related;
 mod related_expected;
 pub mod services;
 mod shape;
+pub mod shared_indexes;
 mod shortcuts;
 mod signature_links;
 mod sink;
@@ -96,7 +97,7 @@ use crate::atom::{Atom, Atoms, known};
 use crate::bind::{AssignmentKind, AssignmentTarget, Bound, ModuleInstanceState, SymFlags};
 use crate::hir::{self, *};
 use crate::local::MaybeLocal;
-use crate::program::{FileId, Files, ModuleCell, Sym};
+use crate::program::{FileId, Files, ModuleCell, ModuleTrees, Sym};
 use crate::session::{Arena, ArenaBox, Session};
 use crate::session::{ArenaVec, vec_from_iter_in};
 use crate::table::{At, Bases, Buffered, ById, ByIdIndirect, ByKey, ByNode, ByNodeIndirect};
@@ -292,10 +293,10 @@ pub struct Program<'s> {
     exporting_modules_stopped_at: std::sync::atomic::AtomicU32,
     #[cfg(any(test, feature = "test_support"))]
     modules_searched_for_exports: std::sync::atomic::AtomicUsize,
-    aot_symbols: std::sync::OnceLock<aot::ProgramSymbols>,
+    aot_symbols: aot::ProgramSymbols,
     aot_store_indexes: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::StoreIndex<'s>>]>,
     aot_written_stores: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::WrittenStores<'s>>]>,
-    aot_prototype_links: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::PrototypeLinks<'s>>]>,
+    aot_prototype_links: std::sync::OnceLock<&'s [aot::LinksOfFile<'s>]>,
     pub files: &'s Files<'s>,
     pub types: TypeStore<'s>,
 
@@ -600,44 +601,54 @@ type Rechecked = (
     FxHashMap<(FileId, PropId), TypeId>,
 );
 
-/// For each file: whether it is a leaf, and how many nodes of each kind it has.
-pub type NodeCounts = Vec<(bool, [usize; 10])>;
+/// What a `Program` reads from the trees of all files, before the first task.
+pub struct ProgramInputs {
+    /// For each file: whether it is a leaf, and how many nodes of each kind it has.
+    node_counts: Vec<(bool, [usize; 10])>,
+    aot_symbols: aot::ProgramSymbols,
+}
 
-impl<'s> Program<'s> {
-    pub fn new(session: &'s Session, files: &'s Files<'s>) -> Program<'s> {
-        Program::with_node_counts(session, files, &Program::count_nodes(files))
-    }
-
-    /// While every file still has its tree.
-    pub fn count_nodes(files: &Files<'_>) -> NodeCounts {
+impl ProgramInputs {
+    pub fn read(files: &Files<'_>) -> ProgramInputs {
         // The counts are read in one pass because the modules are far apart in memory.
         let counts = files.modules.iter().map(|m| {
+            let ModuleTrees { hir, bound, .. } = m.trees();
             let counts = [
-                m.hir.exprs.len(),
-                m.hir.types.len(),
-                m.hir.fns.len(),
-                m.hir.pats.len(),
-                m.hir.props.len(),
-                m.hir.params.len(),
-                m.hir.enum_members.len(),
-                m.bound.scopes.len(),
-                m.hir.type_params.len(),
-                m.bound.symbols.len(),
+                hir.exprs.len(),
+                hir.types.len(),
+                hir.fns.len(),
+                hir.pats.len(),
+                hir.props.len(),
+                hir.params.len(),
+                hir.enum_members.len(),
+                bound.scopes.len(),
+                hir.type_params.len(),
+                bound.symbols.len(),
             ];
             (m.is_leaf, counts)
         });
-        counts.collect()
+        ProgramInputs {
+            node_counts: counts.collect(),
+            aot_symbols: aot::ProgramSymbols::resolve(files),
+        }
+    }
+}
+
+impl<'s> Program<'s> {
+    pub fn new(session: &'s Session, files: &'s Files<'s>) -> Program<'s> {
+        Program::with_inputs(session, files, &ProgramInputs::read(files))
     }
 
     #[allow(
-        clippy::large_stack_frames,
+        clippy::large_unopt_stack_frames,
         reason = "every table is made here and moved into the program, each with its chunks' addresses in line; runs once per program, close to the bottom of the stack"
     )]
-    pub fn with_node_counts(
+    pub fn with_inputs(
         session: &'s Session,
         files: &'s Files<'s>,
-        counts: &NodeCounts,
+        inputs: &ProgramInputs,
     ) -> Program<'s> {
+        let counts = &inputs.node_counts;
         // Nothing that mentions a leaf file's node is published, so the shared part has no capacity
         // for those nodes, and `Bases::at` returns `None` for them.
         let bases = |kind: usize| {
@@ -688,7 +699,7 @@ impl<'s> Program<'s> {
             exporting_modules_stopped_at: std::sync::atomic::AtomicU32::new(u32::MAX),
             #[cfg(any(test, feature = "test_support"))]
             modules_searched_for_exports: Default::default(),
-            aot_symbols: Default::default(),
+            aot_symbols: inputs.aot_symbols,
             aot_store_indexes: Default::default(),
             aot_written_stores: Default::default(),
             aot_prototype_links: Default::default(),
@@ -867,7 +878,7 @@ impl<'s> Program<'s> {
             left_frame: None,
             files: self.files,
             modules: &self.files.modules,
-            visited_module: std::cell::Cell::new((FileId(u32::MAX), None)),
+            visited_trees: std::cell::Cell::new((FileId(u32::MAX), None)),
             variance_type_parameter: Atom::NONE,
             auto_array_type: self.auto_array_type,
             stack: Vec::new(),
@@ -891,6 +902,7 @@ impl<'s> Program<'s> {
             this_types: Default::default(),
             this_types_in_progress: Vec::new(),
             thisless_members: Default::default(),
+            recent_symbol_types: Default::default(),
             flow_type_skips: Default::default(),
             instantiated_symbol_links: Default::default(),
             late_binding: Vec::new(),
@@ -1073,6 +1085,8 @@ impl<'s> Program<'s> {
             unions_less_a_member: Default::default(),
             unions_without_member: Default::default(),
             subsets_of_unions: Default::default(),
+            unions_with_empty_member: Default::default(),
+            unions_with_global_object: Default::default(),
             have_same_members: Default::default(),
             unions_of_large_unions: Default::default(),
             grown_signatures: Default::default(),
@@ -1090,8 +1104,11 @@ impl<'s> Program<'s> {
             fns_around: Default::default(),
             this_containers_around: Default::default(),
             spread_indices_of_many: Default::default(),
+            functions_typed_with_literals: Default::default(),
             times_cut_short: std::cell::Cell::new(0),
             exprs_by_kind: [None, None],
+            alias_declarations: Default::default(),
+            shared_indexes: None,
             provisional_shapes: Default::default(),
             provisional: Default::default(),
             taint_events: Vec::new(),
@@ -1759,13 +1776,82 @@ impl ThislessMembers {
     }
 }
 
+const RECENT_SYMBOL_TYPES: usize = 512;
+
+#[derive(Copy, Clone)]
+struct RecentSymbolType {
+    symbol: Sym,
+    /// `View::snapshot_of` the symbol's file when it was looked up.
+    snapshot: u32,
+    /// `RecentSymbolTypes::visit` at that time.
+    visit: u32,
+    ty: TypeId,
+}
+
+/// FOR SPEED. What `Program::symbol_types` has returned for symbols of files that the task isn't visiting. It returns the
+/// same again during the visit, as long as the task sees the same commits in the symbol's file.
+struct RecentSymbolTypes {
+    entries: Box<[RecentSymbolType; RECENT_SYMBOL_TYPES]>,
+    /// Counts the visits, from 1 on.
+    visit: u32,
+}
+
+impl Default for RecentSymbolTypes {
+    fn default() -> Self {
+        let free = RecentSymbolType {
+            symbol: NO_MEMBER,
+            snapshot: 0,
+            visit: 0,
+            ty: TypeId::NEVER,
+        };
+        RecentSymbolTypes {
+            entries: Box::new([free; RECENT_SYMBOL_TYPES]),
+            visit: 1,
+        }
+    }
+}
+
+impl RecentSymbolTypes {
+    fn begin_visit(&mut self) {
+        self.visit += 1;
+    }
+
+    #[inline]
+    fn index_of(symbol: Sym) -> usize {
+        let mixed = symbol.id.0 ^ symbol.file.0.wrapping_mul(0x9E37_79B1);
+        mixed as usize % RECENT_SYMBOL_TYPES
+    }
+
+    #[inline]
+    fn get(&self, symbol: Sym, snapshot: u32) -> Option<TypeId> {
+        let entry = &self.entries[Self::index_of(symbol)];
+        let is_known =
+            entry.symbol == symbol && entry.snapshot == snapshot && entry.visit == self.visit;
+        is_known.then_some(entry.ty)
+    }
+
+    #[inline]
+    fn put(&mut self, symbol: Sym, snapshot: u32, ty: TypeId) {
+        self.entries[Self::index_of(symbol)] = RecentSymbolType {
+            symbol,
+            snapshot,
+            visit: self.visit,
+            ty,
+        };
+    }
+
+    fn forget(&mut self, symbol: Sym) {
+        self.entries[Self::index_of(symbol)].visit = 0;
+    }
+}
+
 // The fields are laid out as declared: small ones that most accesses touch first, where x86-64 reaches them with a
 // one-byte offset.
 #[repr(C)]
 pub struct Checker<'p, 's> {
     files: &'p Files<'s>,
     modules: &'s [ModuleCell<'s>],
-    visited_module: std::cell::Cell<(FileId, Option<&'s crate::program::Module<'s>>)>,
+    visited_trees: std::cell::Cell<(FileId, Option<&'s ModuleTrees<'s>>)>,
     pub p: &'p Program<'s>,
     /// The arena of the thread that runs the task. It's for the records the task creates, which may
     /// be published. Everything else that a task allocates is on the regular heap.
@@ -1821,6 +1907,7 @@ pub struct Checker<'p, 's> {
     this_types: FxHashMap<Sym, bool>,
     /// See `is_thisless_for_this_mapper`.
     thisless_members: ThislessMembers,
+    recent_symbol_types: RecentSymbolTypes,
     /// See `skip_ancestors_without_flow_constraint`.
     flow_type_skips: FxHashMap<(FileId, Node), FlowTypeSkip>,
     /// `links.resolvedType` of instantiated symbols, by target and mapper. Only contains the ones that differ from what
@@ -1906,6 +1993,10 @@ pub struct Checker<'p, 's> {
     unions_without_member: FxHashMap<(TypeId, TypeId), TypeId>,
     /// `isTypeSubsetOfUnion` of unions of `unions::MANY_MEMBERS` or more.
     subsets_of_unions: FxHashMap<(TypeId, TypeId), bool>,
+    /// `isEmptyObjectType` of unions of `unions::MANY_MEMBERS` or more, asked while the members of no type were being resolved.
+    unions_with_empty_member: FxHashMap<TypeId, bool>,
+    /// Whether a union of `unions::MANY_MEMBERS` or more has the global `Object`.
+    unions_with_global_object: FxHashMap<TypeId, bool>,
     /// Whether two different unions of `unions::MANY_MEMBERS` or more have the same members.
     have_same_members: FxHashMap<(TypeId, TypeId), bool>,
     /// `unionOfUnionTypes`, for `UnionReductionLiteral`, where one of the two has `unions::MANY_MEMBERS` or more: the lower id first.
@@ -1914,6 +2005,9 @@ pub struct Checker<'p, 's> {
     grown_signatures: FxHashMap<SigId, (SigId, SigId)>,
     /// `spread_indices` of the array literals and the calls with many elements or arguments.
     spread_indices_of_many: FxHashMap<(FileId, ExprId), Option<(usize, usize)>>,
+    /// The first function in each object literal whose signature requests the literal's type.
+    /// See `check_containing_object_literal_cached`.
+    functions_typed_with_literals: FxHashMap<(FileId, ExprId), Option<FnId>>,
     /// Non-cacheable query results, kept for reuse while the computation that made them
     /// non-cacheable is in flight. See `cache_provisionally`.
     provisional: FxHashMap<Query, Provisional>,
@@ -2000,7 +2094,12 @@ pub struct Checker<'p, 's> {
     checked_type_references: (Option<FileId>, Vec<u64>),
     /// A file, and which of its expressions `prepare_ancestors` has processed.
     prepared_exprs: (FileId, Vec<bool>),
-    exprs_by_kind: [Option<(FileId, std::rc::Rc<hir::ExprsByKind>)>; 2],
+    exprs_by_kind: [Option<(FileId, std::sync::Arc<hir::ExprsByKind>)>; 2],
+    /// `symbols_of_alias_declarations` of the last file that was asked about.
+    alias_declarations:
+        std::cell::RefCell<Option<(FileId, std::sync::Arc<errors_aliases::AliasDeclarations>)>>,
+    /// Of the large file whose parts several checkers ask about.
+    shared_indexes: Option<(FileId, std::sync::Arc<shared_indexes::SharedIndexes<'s>>)>,
     /// See `provisional_shape`, which returns a reference to one and pushes the next.
     provisional_shapes: crate::util::memory::LocalVec<shape::Resolved<'s>>,
     /// The innermost resolution that was in progress at the rejection. The frame at `unwind_to`
@@ -2623,30 +2722,32 @@ impl<'p, 's> Checker<'p, 's> {
     // ───────────────────────────── access ─────────────────────────────
 
     #[inline]
-    fn module(&self, file: FileId) -> &'s crate::program::Module<'s> {
-        match self.visited_module.get() {
-            (visited, Some(module)) if visited == file => module,
-            _ => self.look_up_module(file),
+    fn module_trees(&self, file: FileId) -> &'s ModuleTrees<'s> {
+        match self.visited_trees.get() {
+            (visited, Some(trees)) if visited == file => trees,
+            _ => self.look_up_trees(file),
         }
     }
 
     #[inline(never)]
-    fn look_up_module(&self, file: FileId) -> &'s crate::program::Module<'s> {
-        let module: &'s crate::program::Module<'s> = &self.modules[file.idx()];
-        if self.task.file == Some(file) {
-            self.visited_module.set((file, Some(module)));
-        }
-        module
+    fn look_up_trees(&self, file: FileId) -> &'s ModuleTrees<'s> {
+        self.modules[file.idx()].trees()
+    }
+
+    /// Call where `task` begins to visit `file`.
+    fn note_visited_trees(&self, file: FileId) {
+        self.visited_trees
+            .set((file, Some(self.look_up_trees(file))));
     }
 
     #[inline]
     pub fn hir(&self, file: FileId) -> &'p hir::File<'s> {
-        &self.module(file).hir
+        &self.module_trees(file).hir
     }
 
     #[inline]
     pub fn bound(&self, file: FileId) -> &'p Bound<'s> {
-        &self.module(file).bound
+        &self.module_trees(file).bound
     }
 
     #[inline]
@@ -4580,15 +4681,15 @@ impl<'p, 's> Checker<'p, 's> {
     /// Returns the expressions of `file` grouped by kind, for callers that need a few kinds and would
     /// otherwise iterate over all expressions. It's built once per file. The handle doesn't borrow
     /// `self`, so this works: `let index = self.exprs_by_kind(file); for &e in index.of(ExprTag::Call)`.
-    pub(crate) fn exprs_by_kind(&mut self, file: FileId) -> std::rc::Rc<hir::ExprsByKind> {
+    pub(crate) fn exprs_by_kind(&mut self, file: FileId) -> std::sync::Arc<hir::ExprsByKind> {
         for (of, index) in self.exprs_by_kind.iter().flatten() {
             if *of == file {
-                return std::rc::Rc::clone(index);
+                return std::sync::Arc::clone(index);
             }
         }
-        let index = std::rc::Rc::new(hir::ExprsByKind::new(self.hir(file)));
+        let index = self.shared_exprs_by_kind(file);
         let is_visited = self.task.file == Some(file);
-        self.exprs_by_kind[usize::from(is_visited)] = Some((file, std::rc::Rc::clone(&index)));
+        self.exprs_by_kind[usize::from(is_visited)] = Some((file, std::sync::Arc::clone(&index)));
         index
     }
 

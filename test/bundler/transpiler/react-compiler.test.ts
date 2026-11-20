@@ -673,6 +673,29 @@ describe("bundler", () => {
     });
   }
 
+  // A function that is outlined from an expression goes into the statement list around that expression, not into the
+  // body of another function of the same expression, and not into a directive prologue.
+  for (const [name, host, args] of [
+    ["ADirective", `function host(x) { return [COMPILED, function plain() { "use strict"; }][0]; }`, ""],
+    ["AStatement", `function host(x) { return [COMPILED, function plain() { return x; }][0]; }`, ""],
+    ["ADefault", `function host(render = COMPILED) { "first"; "second"; return render; }`, ""],
+  ]) {
+    itBundled(`react-compiler/OutlinedFunctionBeside${name}`, {
+      files: {
+        "/entry.js": /* js */ `
+          const memo = f => f;
+          ${host.replace("COMPILED", `memo((props) => { "use memo"; return props.items.map(i => i + 1); })`)}
+          console.log(host()({ items: [1, 2] }).join());
+        `,
+        "/node_modules/react/compiler-runtime.js": `exports.c = n => Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      },
+      reactCompiler: true,
+      target: "bun",
+      backend: "cli",
+      run: { stdout: "2,3" },
+    });
+  }
+
   // A later declarator that reads an earlier declarator in the same
   // `const a = x, b = f(a)` statement is a plain left-to-right read, not a
   // forward reference. Upstream's BlockStatement hoisting only emits a
@@ -962,6 +985,85 @@ describe("bundler", () => {
     run: { stdout: `{"k":"x"}, {"k":"x"}, {"k":"x"}` },
     onAfterBundle(api) {
       expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // A preserved legal comment ahead of an opt-out directive does not end the
+  // directive prologue, at the module level or inside a function body.
+  itBundled("react-compiler/OptOutDirectiveAfterLegalComment", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        /*! @license MIT */
+        "use no memo";
+        export function Hello({ name }) {
+          return <div>Hello {name}</div>;
+        }
+      `,
+      "/fn.jsx": /* jsx */ `
+        export function Hello({ name }) {
+          /*! @license MIT */
+          "use no memo";
+          return <div>Hello {name}</div>;
+        }
+      `,
+    },
+    entryPoints: ["/entry.jsx", "/fn.jsx"],
+    outdir: "/out",
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      for (const file of ["/out/entry.js", "/out/fn.js"]) {
+        const out = api.readFile(file);
+        expect(out).toContain("@license MIT");
+        expect(out).not.toContain("react/compiler-runtime");
+        expect(out).not.toMatch(/\b_c\(\d+\)/);
+      }
+    },
+  });
+
+  // A directive is not a statement in upstream's tree. An arrow whose body holds
+  // only a directive is still a default value that the compiler can reorder.
+  itBundled("react-compiler/DefaultValueArrowWithADirectiveMinifySyntax", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function WithDirective(props) {
+          const { cb = () => { "worklet"; } } = props;
+          return <div onClick={cb}>{props.a}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    minifySyntax: true,
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/\b_c\(\d+\)/);
+      expect(out).toContain('"worklet"');
+    },
+  });
+
+  // The memo cache is declared after the directives of the component. A
+  // directive that follows another statement is no directive.
+  itBundled("react-compiler/DirectivesStayAheadOfTheMemoCache", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Component(props) {
+          "use memo";
+          "use strict";
+          const x = [props.a];
+          return <div>{x}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(
+        /function Component\(props\) \{\n  "use memo";\n  "use strict";\n  let \$ = _c\(\d+\);/,
+      );
     },
   });
 

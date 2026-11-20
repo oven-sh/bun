@@ -5,7 +5,7 @@
 # function keep(box: Box): number { holder.inner = box; return 1; }
 # function make(list: number[]): number {
 #   let n = 0;
-#   for (const i of list) { const box = { lid: i, rim: i + 1 }; n += keep(box); }
+#   for (const i of list) { const box = { lid: n, rim: n + 1 }; n += keep(box); }
 #   return n;
 # }
 # print(make([0, 1, 2]));

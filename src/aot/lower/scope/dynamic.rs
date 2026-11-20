@@ -8,7 +8,7 @@ use super::lexical_owners::{ScopeObjectSearch, find_container_binding, for_each_
 use super::{BindingRef, ScopeSlot, bindings};
 use crate::builtins::{Mutability, Resolved};
 use crate::ir::generated::{ECMAMode, RuntimeErrorKind};
-use crate::ir::{BlockId, Edge, LocalVariable, PropertyKeyId, TypeTable, ValueId};
+use crate::ir::{BlockId, Edge, LocalVariable, PropertyKeyId, TypeTable, ValueId, VariableKey};
 use crate::load::test_runner_names::name_asked_of_scope_objects;
 use crate::lower::FunctionLowering;
 use crate::lower::member::PropertyName;
@@ -122,12 +122,23 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 objects.push(stored);
             }
         });
+        let missing = self.builder.undefined();
         for stored in objects {
             let is_with = matches!(stored, BindingRef::Slot(_, ScopeSlot::WithObject));
+            let next = self.create_block();
+            if !is_with {
+                // A direct eval of the file that isn't compiled declares the variables of evals.
+                let mark = VariableKey::EvaluationMark(self.file.file);
+                let mark = self.file.ensure_variable(mark);
+                let has_evaluated = self.builder.get_module_variable(mark);
+                let search = self.create_block();
+                self.builder
+                    .branch(has_evaluated, Edge::to(search), Edge::to(next));
+                self.continue_in(search);
+            }
             let object = self.get_stored(stored);
             let has_binding = self.builder.scope_has_binding(object, key);
             let hit = self.create_block();
-            let next = self.create_block();
             self.builder
                 .branch(has_binding, Edge::to(hit), Edge::to(next));
             self.continue_in(hit);
@@ -141,7 +152,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.jump(found);
             self.continue_in(next);
         }
-        let missing = self.builder.undefined();
         self.builder.write_variable(holder, missing);
         self.builder.write_variable(with_base, missing);
         self.jump(found);

@@ -47,6 +47,8 @@ bitflags::bitflags! {
     }
 }
 
+/// The signatures of a type before they are instantiated. Most questions about a function type are about the declarations of
+/// its signatures, which instantiating them doesn't change, and it creates types.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct FunctionSignatures<'c> {
     pub declared: &'c [SigId],

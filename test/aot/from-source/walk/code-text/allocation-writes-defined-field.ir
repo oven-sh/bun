@@ -10,16 +10,15 @@
 # RUN(LINK): link fields mechanisms=all
 # LINK: field L1.0 "host" {{*}}form=read-only.not-enumerable.not-configurable.
 # RUN: verify-code mechanisms=all
-# CHECK: {{*}}f2 Body b0 v3 (NewObject): an allocation writes a field that only definitions may write: L1.field0 "host"
+# CHECK: {{*}}f2 Body b0 v2 (NewObject): an allocation writes a field that only definitions may write: L1.field0 "host"
 # RUN(WALKED): walk f2 mechanisms=all
 # WALKED: NewObject {{*}} layout=L1 fields=[1]
 # -- code
 # code f2:Body {
 #   v0: "defined" @JSValue = String string="defined"
 #   b0(v1: int[0, 2147483647] @Int32) entry=0:
-#     v2: int[0, 2147483647] @OptionalInt64 = Box v1
-#     v3: L1 @Cell = NewObject -, v0, v2 layout=L1 fields=[0, 1] traits=[mayCollect, mayTouchMemory]
-#     v4: L1 @JSValue = Box v3
-#     Return v4
+#     v2: L1 @Cell = NewObject -, v0, v1 layout=L1 fields=[0, 1] traits=[mayCollect, mayTouchMemory]
+#     v3: L1 @JSValue = Box v2
+#     Return v3
 # }
 # -- end of code

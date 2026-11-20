@@ -232,6 +232,9 @@ pub(super) fn check_instance_of_expression(
     right: ExprId,
 ) {
     let l = c.type_of_expr(file, left);
+    if l == TypeId::SILENT_NEVER || c.type_of_expr(file, right) == TypeId::SILENT_NEVER {
+        return;
+    }
     if !c.is_any(l) && c.is_all_assignable_to_primitives(l) {
         c.error(file, c.hir(file).child(left), 2358, &[]);
     }

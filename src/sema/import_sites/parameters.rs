@@ -115,7 +115,25 @@ pub fn find_parameter_named(
     path.is_empty().then_some((function, place))
 }
 
+/// Resolves `mention` to a parameter, or to a variable that object patterns in the parameter list bind. Returns the function, the parameter's index and the key path.
 pub(super) fn find_parameter_key_path(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    mention: ExprId,
+) -> Option<(FnId, usize, SmallVec<[Atom; 2]>)> {
+    let Binding::Symbol(parameter) = bound.binding(mention) else {
+        return None;
+    };
+    let found = find_parameter_place(hir, bound, mention)?;
+    let is_settled = matches!(
+        bound.binding_stability(parameter),
+        BindingStability::Stable | BindingStability::NotInitializedOnce
+    ) && bound.stores_to(parameter).is_empty();
+    is_settled.then_some(found)
+}
+
+/// As `find_parameter_key_path()`, also for a parameter that is assigned.
+pub(super) fn find_parameter_place(
     hir: &File<'_>,
     bound: &Bound<'_>,
     mention: ExprId,
@@ -146,16 +164,12 @@ pub(super) fn find_parameter_key_path(
     path.reverse();
     let function = bound.param_fn[id.idx()];
     let place = hir[function].params.iter().position(|it| it == id)?;
-    let is_settled = matches!(
-        bound.binding_stability(parameter),
-        BindingStability::Stable | BindingStability::NotInitializedOnce
-    ) && bound.stores_to(parameter).is_empty()
-        && !bound.is_visible_to_eval(parameter)
+    let is_plain = !bound.is_visible_to_eval(parameter)
         && bound
             .dynamic_lookup_scope(NodeData::Expr(mention))
             .is_none()
         && !hir[id].flags.contains(Flags::REST);
-    is_settled.then_some((function, place, path))
+    is_plain.then_some((function, place, path))
 }
 
 fn finds_itself(
@@ -179,7 +193,7 @@ fn finds_itself(
     written.any(|ident| bound.is_evaluated_ident(ident) && bound.binding(ident) == own_name)
 }
 
-fn find_name_of(
+pub(super) fn find_name_of(
     hir: &File<'_>,
     bound: &Bound<'_>,
     function: FnId,
@@ -226,7 +240,7 @@ pub(super) fn find_only_name_of(
     is_only_name.then_some(name)
 }
 
-fn find_arguments_where_written(
+pub(super) fn find_arguments_where_written(
     hir: &File<'_>,
     bound: &Bound<'_>,
     function: FnId,
@@ -268,20 +282,22 @@ pub fn find_values_passed_for(
     mention: ExprId,
     find_written: FindWritten<'_>,
 ) -> Option<SmallVec<[ExprId; 4]>> {
+    let place = find_parameter_key_path(hir, bound, mention)?;
     let (values, path, _) =
-        find_values_passed_for_pattern(hir, bound, decisions, mention, find_written, false)?;
+        find_values_passed_for_pattern(hir, bound, decisions, place, find_written, false)?;
     path.is_empty().then_some(values)
 }
 
 type ValuesPassed = (SmallVec<[ExprId; 4]>, SmallVec<[Atom; 2]>, bool);
 
+type ParameterPlace = (FnId, usize, SmallVec<[Atom; 2]>);
+
+/// What the call with `arguments` passes for a parameter, with the parameter's default.
 pub(super) fn find_values_passed_by_call(
     hir: &File<'_>,
-    bound: &Bound<'_>,
-    mention: ExprId,
+    (function, index, path): ParameterPlace,
     arguments: IdList<ExprId>,
 ) -> Option<ValuesPassed> {
-    let (function, index, path) = find_parameter_key_path(hir, bound, mention)?;
     let default = hir[hir[function].params.iter().nth(index)?].default;
     let mut passed = hir.ids(arguments).take(index + 1);
     let is_spread = |it: ExprId| matches!(hir[it].kind, ExprKind::Spread(_));
@@ -298,14 +314,13 @@ pub(super) fn find_values_passed_for_pattern(
     hir: &File<'_>,
     bound: &Bound<'_>,
     decisions: &Decisions<'_>,
-    mention: ExprId,
+    (function, index, path): ParameterPlace,
     find_written: FindWritten<'_>,
     may_be_exported: bool,
 ) -> Option<ValuesPassed> {
-    let (function, index, path) = find_parameter_key_path(hir, bound, mention)?;
     let Some(name) = find_only_name_of(hir, bound, function, find_written, may_be_exported) else {
         let arguments = find_arguments_where_written(hir, bound, function, find_written)?;
-        return find_values_passed_by_call(hir, bound, mention, arguments);
+        return find_values_passed_by_call(hir, (function, index, path), arguments);
     };
     let place = (function, index);
     let (values, is_left_out) =
@@ -313,6 +328,7 @@ pub(super) fn find_values_passed_for_pattern(
     Some((values, path, is_left_out))
 }
 
+/// What the calls of `name` pass for one parameter of its function, with the parameter's default, and whether a call leaves it out.
 pub(super) fn find_values_passed_under_name(
     hir: &File<'_>,
     bound: &Bound<'_>,

@@ -1,13 +1,16 @@
-use bun_sema::bind::{CodeUnit, CommonJsVariable, ScopeId};
-use bun_sema::hir::{FnBody, FnId};
+use bun_sema::bind::{Binding, CodeUnit, CommonJsVariable, ScopeId, SymbolId};
+use bun_sema::check::aot::ObjectMemberKind;
+use bun_sema::fold::{Constant, FoldedValue};
+use bun_sema::hir::{ExprId, ExprKind, FnBody, FnId, PropKey};
 use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
 
 use super::variables::{BodyForm, WRAPPER_PARAMETERS, emit_entry_value};
 use crate::builtins::resolve::reads_what_wrapper_hands_in;
-use crate::ir::generated::{Function, FunctionFlags, FunctionKind};
-use crate::ir::{DeclaredType, FunctionId, FunctionKey, ValueId};
+use crate::ir::generated::{ECMAMode, Function, FunctionFlags, FunctionKind, FunctionSyntax};
+use crate::ir::{DeclaredType, FunctionId, FunctionKey, PropertyKeyId, TypeTable, ValueId};
 use crate::lower::function::{self, EntryArguments};
+use crate::lower::member::PropertyName;
 use crate::lower::scope::{BindingForm, BindingRef, ScopeSlot};
 use crate::lower::{FileLowering, FunctionLowering, convert, module, object};
 use crate::modules::ModuleRef;
@@ -39,7 +42,11 @@ impl FileLowering<'_, '_, '_, '_> {
         let key = FunctionKey::WrappedModuleBody(self.file);
         let wrapped = self.declare_function(key, create_wrapped_header);
         let own_module = ModuleRef::File(self.file);
+        let may_run_as_original = self.inputs.modules.may_run_as_original(self.file);
         let mut lowering = FunctionLowering::begin(self, function);
+        if may_run_as_original {
+            lowering.emit_run_as_original(wrapped);
+        }
         lowering.note_first_load();
         let first_exports = lowering.emit_first_exports(own_module);
         let first_exports = first_exports.unwrap_or_else(|| lowering.builder.undefined());
@@ -82,6 +89,34 @@ impl FileLowering<'_, '_, '_, '_> {
         })
     }
 
+    fn find_require_of_body(&self, callback: FnId) -> Option<(SymbolId, SymbolId)> {
+        let wrapped = self.inputs.modules.wrapped();
+        let parameter = wrapped
+            .of_callback(self.file, callback)?
+            .require_parameter?;
+        Some((parameter, wrapped.require_function(self.file)?))
+    }
+
+    pub(in crate::lower) fn declare_module_request(&mut self, call: ExprId) -> FunctionId {
+        let file = self.file;
+        let key = FunctionKey::ModuleRequest { file, call };
+        self.declare_function(key, |file| {
+            let position = file.hir[call].pos;
+            let mut header = function::create_header(file, key, FunctionKind::Arrow, position);
+            header.flags |= FunctionFlags::IS_HIDDEN_IN_STACK_TRACES;
+            header.syntax |= FunctionSyntax::IS_SHOWN_AS_NATIVE_CODE;
+            header
+        })
+    }
+
+    pub(in crate::lower) fn lower_module_request(&mut self, function: FunctionId, call: ExprId) {
+        let mut lowering = FunctionLowering::begin(self, function);
+        lowering.set_position(lowering.file.hir[call].pos);
+        let exports = lowering.emit_requested_module(call);
+        lowering.emit_return(exports, None);
+        lowering.finish();
+    }
+
     pub(in crate::lower) fn lower_inner_module_body(
         &mut self,
         function: FunctionId,
@@ -91,8 +126,25 @@ impl FileLowering<'_, '_, '_, '_> {
         let module = module.expect("the function is the callback of an inner module");
         let scope = self.bound.fns[callback.idx()].scope;
         let [exports_name, module_name] = self.inner_parameters(callback);
+        let inner = self
+            .inputs
+            .modules
+            .wrapped()
+            .of_callback(self.file, callback);
+        let reads_this = inner.is_some_and(|inner| inner.reads_this);
+        let exports_variable = inner.and_then(|inner| inner.exports_variable);
+        let module_variable = inner.and_then(|inner| inner.module_variable);
+        let id = inner.and_then(|inner| inner.id);
         let mut lowering = FunctionLowering::begin(self, function);
-        let first_exports = lowering.emit_first_exports(module);
+        let (first_exports, module_object) = match module_variable {
+            Some(_) => lowering.emit_module_object(module, id),
+            None => (lowering.emit_first_exports(module), None),
+        };
+        if reads_this {
+            let first_exports =
+                first_exports.expect("exports that the body reads as `this` are whole");
+            lowering.scopes.entry_this = Some(first_exports);
+        }
         let mut entry_values = EntryValues::new();
         for (symbol, is_exports) in [(exports_name, true), (module_name, false)] {
             let Some(symbol) = symbol else {
@@ -108,6 +160,24 @@ impl FileLowering<'_, '_, '_, '_> {
             };
             entry_values.push((BindingRef::Symbol(symbol), value));
         }
+        if let Some(variable) = exports_variable
+            && lowering.file.scopes.form(variable) == BindingForm::Stored
+        {
+            let first_exports = first_exports.expect("exports that a variable holds are whole");
+            entry_values.push((BindingRef::Symbol(variable), first_exports));
+        }
+        if let (Some(variable), Some(module_object)) = (module_variable, module_object)
+            && lowering.file.scopes.form(variable) == BindingForm::Stored
+        {
+            entry_values.push((BindingRef::Symbol(variable), module_object));
+        }
+        if let Some((parameter, function)) = lowering.file.find_require_of_body(callback)
+            && lowering.file.scopes.form(parameter) == BindingForm::Stored
+        {
+            let name = lowering.file.bound.symbol(function).name;
+            let value = lowering.get_binding(Binding::Symbol(function), name);
+            entry_values.push((BindingRef::Symbol(parameter), value));
+        }
         entry_values.shared_sort_by_key(|entry| entry.0);
         entry_values.dedup_by_key(|entry| entry.0);
         lowering.allocate_scope(scope, &entry_values);
@@ -117,11 +187,113 @@ impl FileLowering<'_, '_, '_, '_> {
             FnBody::Expr(value) => lowering.lower_taken_value_for_effect(value),
             FnBody::None => {}
         }
+        if module_variable.is_some() {
+            lowering.emit_mark_of_module(module);
+        }
         module::finish_body(lowering, Some(scope));
     }
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
+    /// Where the run time runs the file as the original of its mock, it passes what a wrapper function gets. Nothing of
+    /// the file's own run changes.
+    fn emit_run_as_original(&mut self, wrapped: FunctionId) {
+        let module = self.file.module_id();
+        let exports = self.builder.original_argument(module, 0);
+        let own_run = self.create_block();
+        let split = self.split_on_type(exports, TypeTable::UNDEFINED);
+        self.builder.switch_to(split.taken);
+        self.jump(own_run);
+        self.builder.switch_to(split.not_taken);
+        let exports = split.not_taken_value;
+        let mut values: SmallVec<[ValueId; 5]> = SmallVec::new();
+        values.push(exports);
+        for index in 1..WRAPPER_PARAMETERS.len() as u32 {
+            values.push(self.builder.original_argument(module, index));
+        }
+        let arguments = EntryArguments {
+            this: Some(exports),
+            new_target: None,
+            parameters: &values,
+        };
+        self.emit_direct_call(wrapped, arguments);
+        let undefined = self.builder.undefined();
+        self.emit_return(undefined, None);
+        self.continue_in(own_run);
+    }
+
+    /// The exports and the object of a module whose object escapes: the variable of the exports holds the object.
+    fn emit_module_object(
+        &mut self,
+        module: ModuleRef,
+        id: Option<Constant>,
+    ) -> (Option<ValueId>, Option<ValueId>) {
+        let file = self.file.file;
+        let form = self.file.inputs.modules.wrapped().module_object(file);
+        let variable = self.file.ensure_whole_exports_variable(module);
+        let (Some(form), Some(variable)) = (form, variable) else {
+            unreachable!("the exports of a module whose object escapes are whole");
+        };
+        let hir = self.file.hir;
+        let ExprKind::Object(properties) = hir[form.literal].kind else {
+            unreachable!("the runtime writes an object literal");
+        };
+        let layout = match module {
+            ModuleRef::Inner { callback, .. } => self.file.inner_module_exports_layout(callback),
+            _ => self.file.untyped_layout(&[]),
+        };
+        let builder = self.begin_object(layout);
+        let first_exports = object::finish_object(self, builder);
+        let mut keys: SmallVec<[(PropertyKeyId, ObjectMemberKind); 4]> = SmallVec::new();
+        for property in properties.iter() {
+            let PropKey::Name(name) = hir[property].key else {
+                unreachable!("every key of the literal is a name");
+            };
+            keys.push((self.file.name_key(name), ObjectMemberKind::Field));
+        }
+        let layout = self.file.untyped_layout(&keys);
+        let mut builder = self.begin_object(layout);
+        for (property, &(key, _)) in properties.iter().zip(&keys) {
+            let value = hir[property].value;
+            let constant = match self.file.decisions().constant(hir, value) {
+                FoldedValue::Constant(constant) => Some(constant),
+                _ => id,
+            };
+            let value = match hir[value].kind {
+                ExprKind::Object(_) => first_exports,
+                _ => self.emit_constant(constant.unwrap_or(Constant::Undefined)),
+            };
+            self.add_property(&mut builder, PropertyName::Constant(key), value, None);
+        }
+        let module_object = object::finish_object(self, builder);
+        self.builder.put_module_variable(variable, module_object);
+        (Some(first_exports), Some(module_object))
+    }
+
+    /// `module.loaded = true`
+    fn emit_mark_of_module(&mut self, module: ModuleRef) {
+        let form = self
+            .file
+            .inputs
+            .modules
+            .wrapped()
+            .module_object(self.file.file);
+        let Some((form, mark)) = form.and_then(|form| Some((form, form.mark?))) else {
+            return;
+        };
+        let Some(variable) = self.file.ensure_whole_exports_variable(module) else {
+            return;
+        };
+        let object = self.builder.get_module_variable(variable);
+        let mode = match form.is_mark_strict {
+            true => ECMAMode::Strict,
+            false => ECMAMode::Sloppy,
+        };
+        let name = PropertyName::Constant(self.file.name_key(mark));
+        let value = self.builder.boolean(true);
+        self.emit_set_in_mode(object, name, value, mode);
+    }
+
     fn emit_first_exports(&mut self, module: ModuleRef) -> Option<ValueId> {
         let variable = self.file.ensure_whole_exports_variable(module)?;
         let layout = match module {
@@ -132,6 +304,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     return None;
                 }
                 self.file.module_exports_layout(file)
+            }
+            ModuleRef::Inner { callback, .. } => {
+                Some(self.file.inner_module_exports_layout(callback))
             }
             _ => None,
         };
@@ -216,6 +391,7 @@ fn create_wrapped_header(file: &mut FileLowering<'_, '_, '_, '_>) -> Function {
     let mut header = function::create_header(file, key, FunctionKind::Plain, 0);
     header.flags |= file.scopes.entry_flags(FunctionKey::ModuleBody(file.file));
     header.flags |= FunctionFlags::HAS_THIS;
+    header.syntax |= FunctionSyntax::IS_WRAPPED_MODULE_BODY;
     if !file.hir.is_strict {
         header.flags |= FunctionFlags::IS_SLOPPY;
     }

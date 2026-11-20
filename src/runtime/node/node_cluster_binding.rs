@@ -32,7 +32,7 @@ pub(crate) static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>>
 ///
 /// Centralises the `RacyCell<Option<_>> → &mut InternalMsgHolder` deref so the
 /// three host-fn callers stay safe at the call site (PORTING.md §Global mutable
-/// state — same shape as `cron::vm_mut`). Callers must be on the JS thread and
+/// state). Callers must be on the JS thread and
 /// must not hold the borrow across a re-entrant `child_singleton()` call.
 #[inline]
 fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
@@ -217,7 +217,7 @@ pub(crate) fn handle_internal_message_primary(
         return Ok(());
     }
 
-    let event_loop = global.bun_vm().event_loop_mut();
+    let event_loop = global.bun_vm().event_loop();
 
     // TODO: investigate if "ack" and "seq" are observable and if they're not, remove them entirely.
     if let Some(p) = message.get(global, "ack")? {
@@ -267,40 +267,42 @@ pub(crate) fn handle_internal_message_primary(
 //
 
 pub(crate) fn set_ref(enabled: bool) {
-    let vm = VirtualMachine::get().as_mut();
-    vm.channel_ref_overridden = true;
+    let vm = VirtualMachine::get();
+    vm.channel_ref_overridden.set(true);
     if enabled {
-        vm.channel_ref.ref_(bun_io::js_vm_ctx());
+        vm.channel_ref.ref_(vm.loop_ctx());
     } else {
-        vm.channel_ref.unref(bun_io::js_vm_ctx());
+        vm.channel_ref.unref(vm.loop_ctx());
     }
 }
 
 // HOST_EXPORT(Bun__refChannelUnlessOverridden, c)
 pub(crate) fn ref_channel_unless_overridden(global: &JSGlobalObject) {
-    let vm = global.bun_vm().as_mut();
-    if !vm.channel_ref_overridden {
-        vm.channel_ref.ref_(bun_io::js_vm_ctx());
+    let vm = global.bun_vm();
+    if !vm.channel_ref_overridden.get() {
+        vm.channel_ref.ref_(vm.loop_ctx());
     }
 }
 
 // HOST_EXPORT(Bun__unrefChannelUnlessOverridden, c)
 pub(crate) fn unref_channel_unless_overridden(global: &JSGlobalObject) {
-    let vm = global.bun_vm().as_mut();
-    if !vm.channel_ref_overridden {
-        vm.channel_ref.unref(bun_io::js_vm_ctx());
+    let vm = global.bun_vm();
+    if !vm.channel_ref_overridden.get() {
+        vm.channel_ref.unref(vm.loop_ctx());
     }
 }
 
 pub(crate) fn channel_ignore_one_disconnect_event_listener() {
-    let vm = VirtualMachine::get().as_mut();
-    vm.channel_ref_should_ignore_one_disconnect_event_listener = true;
+    let vm = VirtualMachine::get();
+    vm.channel_ref_should_ignore_one_disconnect_event_listener
+        .set(true);
 }
 
 // HOST_EXPORT(Bun__shouldIgnoreOneDisconnectEventListener, c)
 pub(crate) fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObject) -> bool {
     let vm = global.bun_vm();
     vm.channel_ref_should_ignore_one_disconnect_event_listener
+        .get()
 }
 
 pub(crate) fn cluster_raw_bind<'a>(
@@ -603,37 +605,14 @@ pub(crate) fn cluster_raw_bind<'a>(
                 let mut hints: libc::addrinfo = bun_core::ffi::zeroed();
                 hints.ai_family = family;
                 hints.ai_socktype = socktype;
-                let mut res: *mut libc::addrinfo = core::ptr::null_mut();
-                // SAFETY: `addr_z` is NUL-terminated; out-params are live locals.
-                let rc = unsafe {
-                    libc::getaddrinfo(
-                        addr_z.as_ptr().cast(),
-                        core::ptr::null(),
-                        &raw const hints,
-                        &raw mut res,
-                    )
-                };
-                if rc != 0 || res.is_null() {
+                let host = bun_core::ZStr::from_buf(&addr_z, addr_bytes.len());
+                let list = bun_dns::AddrInfoList::lookup(Some(host), None, Some(&hints));
+                let Some(first) = list.iter().flat_map(|list| list.addresses()).next() else {
                     return Ok(BindResult::Errno(-(libc::EINVAL)));
-                }
-                // SAFETY: rc == 0 and res was null-checked; ai_addr/ai_addrlen describe a sockaddr of
-                // the hinted family, which fits in `ss`.
-                unsafe {
-                    let ai = &*res;
-                    core::ptr::copy_nonoverlapping(
-                        ai.ai_addr.cast::<u8>(),
-                        (&raw mut ss).cast::<u8>(),
-                        ai.ai_addrlen as usize,
-                    );
-                    libc::freeaddrinfo(res);
-                    if family == libc::AF_INET6 {
-                        (*(&raw mut ss).cast::<libc::sockaddr_in6>()).sin6_port =
-                            (port as u16).to_be();
-                    } else {
-                        (*(&raw mut ss).cast::<libc::sockaddr_in>()).sin_port =
-                            (port as u16).to_be();
-                    }
-                }
+                };
+                let mut address = bun_dns::Address::from_bytes(first);
+                address.set_port(port as u16);
+                ss = address.into_storage();
             }
             ss_len = if family == libc::AF_INET6 {
                 core::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t

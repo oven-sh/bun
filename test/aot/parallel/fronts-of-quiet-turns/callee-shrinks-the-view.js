@@ -3,5 +3,5 @@ function cut(b) { b.buffer.resize(20); }
 function set(b, n, words, buffer) { b.n = n; b.words = words; b.buffer = buffer; return b; }
 function make() { const buffer = new ArrayBuffer(40, { maxByteLength: 40 }); const words = new Int32Array(buffer); words.fill(1); words[3] = 7; return set({ n: 10, words, buffer }, 10, words, buffer); }
 let t = 0; for (let k = 0; k < 100; k++) t += scan(make()); console.log(t);
-// STATISTIC: LoopReloadBlocksEmitted >= 1
-// STATISTIC: ReloadingBackEdgesEmitted >= 1
+// STATISTIC: LoopReloadBlocksEmitted = 0
+// STATISTIC: ReloadingBackEdgesEmitted = 0

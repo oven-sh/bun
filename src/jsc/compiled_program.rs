@@ -183,8 +183,9 @@ fn find_without_plugins(
     unsafe extern "C" {
         safe fn Bun__AOT__setPluginsSilent(are_silent: bool);
     }
-    // SAFETY: the VM of this thread is live, and nothing else holds its resolver's options here.
-    let options = unsafe { &mut (*global.bun_vm_ptr()).transpiler.resolver.opts };
+    let transpiler = global.bun_vm().transpiler.as_ptr();
+    // SAFETY: nothing else holds the resolver's options here.
+    let options = unsafe { &mut (*transpiler).resolver.opts };
     let installs = core::mem::replace(
         &mut options.global_cache,
         bun_resolver::GlobalCache::disable,
@@ -199,7 +200,7 @@ fn find_without_plugins(
     );
     Bun__AOT__setPluginsSilent(false);
     // SAFETY: as above.
-    unsafe { (*global.bun_vm_ptr()).transpiler.resolver.opts.global_cache = installs };
+    unsafe { (*transpiler).resolver.opts.global_cache = installs };
     match found {
         Ok(Ok(found)) => Some(found),
         _ => None,
@@ -943,11 +944,11 @@ fn sentence_of_variables_never_read(names: &[&[u8]]) -> Option<String> {
 /// A setting that would be ignored is not lost without a word. By its name alone: so is one with an empty value.
 #[cfg(bun_locked_environment)]
 pub fn refuse_variables_that_are_never_read() {
-    let names: Vec<&[u8]> = bun_sys::environ()
+    // SAFETY: at startup, and nothing here changes the environment.
+    let names: Vec<&[u8]> = unsafe { bun_sys::environ() }
         .iter()
-        .filter_map(|&entry| {
-            // SAFETY: an entry of the environment ends with a NUL and lives as long as the process.
-            let entry = unsafe { core::ffi::CStr::from_ptr(entry) };
+        .filter_map(|entry| {
+            let entry = entry.to_cstr();
             let bytes = entry.to_bytes();
             let end = bun_core::strings::index_of_char_usize(bytes, b'=').unwrap_or(bytes.len());
             let name = &bytes[..end];
@@ -1038,7 +1039,7 @@ pub extern "C" fn Bun__AOT__isLoadedSynchronously(
 ) -> bool {
     let vm = global.bun_vm();
     vm.is_test_entry_point(path)
-        || !vm.transpiler_store.enabled
+        || !vm.transpiler_store.enabled.get()
         || crate::node_compile_cache::is_enabled()
 }
 
@@ -1048,8 +1049,8 @@ pub extern "C" fn Bun__AOT__setResolvesForCodeFromDisk(
     global: &JSGlobalObject,
     value: bool,
 ) -> bool {
-    let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
-    core::mem::replace(&mut resolver.resolves_for_code_from_disk, value)
+    (global.bun_vm().transpiler)
+        .with_mut(|t| core::mem::replace(&mut t.resolver.resolves_for_code_from_disk, value))
 }
 
 /// BunCompiledModules.cpp
@@ -1096,6 +1097,7 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
             Err(error) => exit_with(identity_error_sentence(error)),
         };
         let _ = IDENTITY.set(identity);
+        bun_crash_handler::keep_own_segments();
         use_image_on_this_thread(program);
         Bun__AOT__takePagesForTablesOfFirstThread();
         #[cfg(not(bun_hardened))]
@@ -1117,6 +1119,8 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
         if is_verbose {
             settings_for_debugging::print_image_summary(program.image.len());
         }
+        #[cfg(not(bun_locked_environment))]
+        settings_for_debugging::record_order();
         bun_analytics::features::aot.fetch_add(1, Ordering::Relaxed);
     });
 }
@@ -1128,6 +1132,8 @@ mod settings_for_debugging {
 
     unsafe extern "C" {
         safe fn Bun__AOT__setVerbose(is_verbose: bool);
+        fn Bun__AOT__startOrderRecording(path: *const core::ffi::c_char) -> super::Bytes;
+        safe fn Bun__AOT__recordsOrder() -> bool;
     }
 
     pub(super) fn image_summary(
@@ -1144,11 +1150,43 @@ mod settings_for_debugging {
         bun_core::Output::flush();
     }
 
+    pub(super) fn record_order() {
+        if !Bun__AOT__recordsOrder() {
+            return;
+        }
+        let Some(path) = bun_core::env_var::BUN_AOT_ORDER_OUT.get_not_empty() else {
+            return;
+        };
+        let pid = std::process::id().to_string();
+        let path = bun_core::strings::replace_owned(path, b"%p", pid.as_bytes());
+        let Ok(path) = std::ffi::CString::new(path) else {
+            return;
+        };
+        // SAFETY: `path` ends with a NUL and outlives the call. The sentence is a literal.
+        let failure = unsafe { Bun__AOT__startOrderRecording(path.as_ptr()) };
+        if failure.len != 0 {
+            // SAFETY: as above.
+            let sentence = unsafe { core::slice::from_raw_parts(failure.ptr, failure.len) };
+            bun_core::Output::err_generic(
+                "BUN_AOT_ORDER_OUT: nothing is recorded: {}",
+                (bstr::BStr::new(sentence),),
+            );
+            bun_core::Output::flush();
+        }
+    }
+
     pub(super) fn set_verbose() -> bool {
         let is_verbose = bun_core::env_var::BUN_AOT_VERBOSE.get().unwrap_or(false);
         Bun__AOT__setVerbose(is_verbose);
         is_verbose
     }
+}
+
+pub(crate) fn finish_order_recording() {
+    unsafe extern "C" {
+        safe fn Bun__AOT__finishOrderRecording();
+    }
+    Bun__AOT__finishOrderRecording();
 }
 
 fn identity_error_sentence(error: IdentityError) -> &'static str {

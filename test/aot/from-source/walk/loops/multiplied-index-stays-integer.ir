@@ -1,4 +1,4 @@
-# `place` comes round as `2 * place + 1`, that plus one, or itself, and the product is held below a length: the first guess is that it lies between 0 and 2^32 - 2.
+# `place` comes round as `2 * place + 1`, that plus one, or itself, and the product is held below a length: the first guess is that it is an int32.
 # No turn turns it into a double and no back edge asks for an int32. The typed copy asks the list once in front.
 # A sum held below a length needs no such guess (sum), and a counter that goes down to a constant is bounded by no length (down).
 # -- source: main.js
@@ -9,7 +9,7 @@
 # -- end of source
 # RUN(SIFT): walk f1:Body mechanisms=all
 # SIFT-LABEL: code f1:Body
-# SIFT: int[0, 4294967294] @Int64) {{*}}isLoopHead=true
+# SIFT: i32 @Int32) isInLoop=true isLoopHead=true
 # SIFT-NOT: int|whole
 # SIFT-NOT: testedType=i32
 # SIFT: = PutDoubleIndex

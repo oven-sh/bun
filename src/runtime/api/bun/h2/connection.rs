@@ -158,6 +158,36 @@ enum BlockDisposition {
     Refused,
 }
 
+/// The fields of a decoded header block, in the layout H2HeadersMaterializer.cpp reads.
+#[derive(Default)]
+pub(crate) struct HeaderFields {
+    /// Name bytes then value bytes, in field order.
+    packed: Vec<u8>,
+    /// Per field: [nameLen | (never_index << 31), valueLen].
+    meta: Vec<[u32; 2]>,
+}
+
+impl HeaderFields {
+    const NEVER_INDEX: u32 = 0x8000_0000;
+
+    fn clear(&mut self) {
+        self.packed.clear();
+        self.meta.clear();
+    }
+
+    fn push(&mut self, name: &[u8], value: &[u8], never_index: bool) {
+        self.packed.extend_from_slice(name);
+        self.packed.extend_from_slice(value);
+        let flag = if never_index { Self::NEVER_INDEX } else { 0 };
+        self.meta
+            .push([name.len() as u32 | flag, value.len() as u32]);
+    }
+
+    pub(crate) fn as_parts(&self) -> (&[u8], &[[u32; 2]]) {
+        (&self.packed, &self.meta)
+    }
+}
+
 pub(crate) struct Feed {
     pub consumed: usize,
     pub fatal: bool,
@@ -214,9 +244,7 @@ impl RateLimit {
 }
 
 /// What the connection engine calls back into the embedder (the JSC binding) for. Methods take
-/// `&self`: the JSC binding (H2FrameParser) is fully interior-mutable (Cell/JsCell) and its host
-/// functions receive `&Self`, so it can own the `Connection` and pass itself as the sink without an
-/// ownership cycle.
+/// `&self`: JS can reach the H2FrameParser, which owns the `Connection`, during a callback.
 pub(crate) trait Sink {
     fn write(&self, bytes: &[u8]) -> WriteResult;
     /// A locally-detected connection error: the GOAWAY (when one applies) is already on the wire.
@@ -254,10 +282,15 @@ pub(crate) trait Sink {
     }
     /// A SETTINGS entry with an id outside the standard registry (node's remoteCustomSettings).
     fn on_remote_custom_setting(&self, _id: u16, _value: u32) {}
-    /// One decoded header field. `name`/`value` alias a shared buffer — copy before returning.
-    fn on_header(&self, _stream_id: u32, _name: &[u8], _value: &[u8], _never_index: bool) {}
     /// The header block for `stream_id` is complete. `end_stream` = the HEADERS carried END_STREAM.
-    fn on_headers_complete(&self, _stream_id: u32, _end_stream: bool, _flags: u8) {}
+    fn on_headers_complete(
+        &self,
+        _stream_id: u32,
+        _fields: &HeaderFields,
+        _end_stream: bool,
+        _flags: u8,
+    ) {
+    }
     /// A DATA payload (padding already stripped).
     fn on_data(&self, _stream_id: u32, _data: &[u8]) {}
     /// The stream half/fully closed; `state` is the `stream::State` integer.
@@ -269,7 +302,7 @@ pub(crate) trait Sink {
     /// peer-sent resets so the embedder can budget rejections (maxSessionRejectedStreams).
     fn on_stream_rejected(&self, _stream_id: u32) {}
     /// A server PUSH_PROMISE reserved `promised_id` on behalf of `parent_id`. Fires before the
-    /// promised request's on_header/on_headers_complete (which use `promised_id`).
+    /// promised request's on_headers_complete (which uses `promised_id`).
     fn on_push_promise(&self, _parent_id: u32, _promised_id: u32) {}
     /// RFC 7838 ALTSVC.
     fn on_altsvc(&self, _stream_id: u32, _origin: &[u8], _value: &[u8]) {}
@@ -360,6 +393,8 @@ pub(crate) struct Connection {
     header_block_in_flight: Option<HeaderBlockInFlight>,
     /// The fragments of the current header block; kept (emptied) across blocks for its capacity.
     header_block: Vec<u8>,
+    /// What `header_block` decoded to; kept across blocks for its capacity.
+    header_fields: HeaderFields,
     /// In-progress partial DATA frame streamed incrementally. nghttp2 delivers DATA in
     /// chunks as bytes arrive (node emits 'data' for a partial frame); buffering until the
     /// frame completes would stall consumers behind a peer that trickles one large frame.
@@ -412,6 +447,7 @@ impl Connection {
             streams: HashMap::new(),
             header_block_in_flight: None,
             header_block: Vec::new(),
+            header_fields: HeaderFields::default(),
             data_in_flight: None,
             terminated: false,
             obq_ack_pending: 0,
@@ -1218,7 +1254,7 @@ impl Connection {
         self.finish_header_block(sink, &inflight.meta)
     }
 
-    /// Decode the assembled header block (HPACK) and dispatch each field, then finalize. The whole
+    /// Decode the assembled header block (HPACK) and collect its fields, then finalize. The whole
     /// block is always decoded so the connection-scoped HPACK table stays in sync (§4.3). Works for
     /// both a normal HEADERS block and a PUSH_PROMISE block (`meta.push_parent` set).
     fn finish_header_block(&mut self, sink: &impl Sink, meta: &HeaderBlockMeta) -> bool {
@@ -1230,12 +1266,12 @@ impl Connection {
             is_request,
             disposition,
         } = *meta;
-        // Surface the push reservation before its request headers so the embedder can create the
-        // pushed stream object that the on_header calls populate.
+        // Surface the push reservation before its request headers.
         if let Some(parent) = push_parent {
             sink.on_push_promise(parent.get(), target);
         }
         let block = std::mem::take(&mut self.header_block);
+        self.header_fields.clear();
         let mut off = 0usize;
         let mut fatal = false;
         // RFC 9113 §10.5.1: enforce SETTINGS_MAX_HEADER_LIST_SIZE (uncompressed size: name + value
@@ -1402,7 +1438,7 @@ impl Connection {
                     if malformed {
                         continue;
                     }
-                    sink.on_header(target, h.name, h.value, h.never_index);
+                    self.header_fields.push(h.name, h.value, h.never_index);
                 }
                 Err(_) => {
                     // §4.3: a header-block decoding error is a connection COMPRESSION_ERROR.
@@ -1509,7 +1545,7 @@ impl Connection {
         {
             s.recv_final_headers = true;
         }
-        sink.on_headers_complete(target, end_stream, flags);
+        sink.on_headers_complete(target, &self.header_fields, end_stream, flags);
         if end_stream {
             let state = self.streams.get(&target).map(|s| s.state as u8);
             if let Some(state) = state {
@@ -2263,12 +2299,22 @@ mod tests {
         fn on_stream_open(&self, id: u32) {
             self.opens.borrow_mut().push(id);
         }
-        fn on_header(&self, id: u32, name: &[u8], value: &[u8], _never: bool) {
-            self.headers
-                .borrow_mut()
-                .push((id, name.to_vec(), value.to_vec()));
-        }
-        fn on_headers_complete(&self, id: u32, end_stream: bool, _flags: u8) {
+        fn on_headers_complete(
+            &self,
+            id: u32,
+            fields: &HeaderFields,
+            end_stream: bool,
+            _flags: u8,
+        ) {
+            let (mut bytes, meta) = fields.as_parts();
+            for &[name_len, value_len] in meta {
+                let (name, rest) = bytes.split_at((name_len & !HeaderFields::NEVER_INDEX) as usize);
+                let (value, rest) = rest.split_at(value_len as usize);
+                self.headers
+                    .borrow_mut()
+                    .push((id, name.to_vec(), value.to_vec()));
+                bytes = rest;
+            }
             self.headers_done.borrow_mut().push((id, end_stream));
         }
         fn on_data(&self, id: u32, data: &[u8]) {

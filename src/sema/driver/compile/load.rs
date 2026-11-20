@@ -7,7 +7,7 @@ use crate::{
     Libs, default_compiler_options, diagnostic_from_config_error, host, use_pool_for_lowering,
 };
 use bun_sema::check::aot::{FileOrigin, containers_completed_by_bun_types};
-use bun_sema::check::{NodeCounts, Program};
+use bun_sema::check::{Program, ProgramInputs};
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::FileKind;
 use bun_sema::json::Json;
@@ -84,6 +84,8 @@ pub fn load_program<'s>(
     let brings_bun_types =
         is_application && !has_bun_types_installed && take_bun_types_of_host(host, options);
     let has_bun_types = has_bun_types_installed || brings_bun_types;
+    // A folder without a tsconfig.json is read as under the one that `bun init` writes. With the library of the DOM in sight
+    // Bun's declarations leave to it what they declare themselves otherwise, the `text()` of a stream among it.
     let is_read_as_after_bun_init =
         is_application && has_bun_types && project.config_path.is_empty();
     if is_read_as_after_bun_init && !options.specifies_lib {
@@ -192,8 +194,8 @@ pub fn load_program<'s>(
     free_unread_leaves(files, host);
     steps.end("free the leaves that nothing reads, settle the texts");
     let checker_session = session.keep(SessionSlot::new());
-    let node_counts = Program::count_nodes(files);
-    let program = make_checker(session, checker_session, files, &node_counts);
+    let program_inputs = ProgramInputs::read(files);
+    let program = make_checker(session, checker_session, files, &program_inputs);
     steps.end("count nodes, make the checker");
     let config_path = &project.config_path;
     let problems = ConfigError::from_problems(host, session, config_path, files.program_problems());
@@ -238,7 +240,7 @@ pub fn load_program<'s>(
         program,
         files,
         checker_session,
-        node_counts,
+        program_inputs,
         is_checker_freed: AtomicBool::new(false),
         cycles_entered: Default::default(),
         origins,
@@ -252,17 +254,17 @@ pub fn load_program<'s>(
     })
 }
 
+/// Makes the checker's program in a frame of its own. The program is large and is moved into the
+/// arena once, so nothing of it lies on the stack under the rest of `load_program`.
 #[inline(never)]
 fn make_checker<'s>(
     session: &'s Session,
     checker_session: &'s SessionSlot,
     files: &'s Files<'s>,
-    node_counts: &NodeCounts,
+    inputs: &ProgramInputs,
 ) -> &'s UnsafeCell<Program<'s>> {
-    let program = Program::with_node_counts(checker_session.session(), files, node_counts);
-    let program = session.arena().alloc(program);
-    program.find_symbols_of_compiler();
-    UnsafeCell::from_mut(program)
+    let program = Program::with_inputs(checker_session.session(), files, inputs);
+    UnsafeCell::from_mut(session.arena().alloc(program))
 }
 
 fn find_files_that_only_lead_from(files: &Files<'_>, excluded: &[Vec<u8>]) -> Vec<FileId> {
@@ -293,7 +295,7 @@ fn find_files_that_only_lead_from(files: &Files<'_>, excluded: &[Vec<u8>]) -> Ve
 fn free_unread_leaves(files: &Files<'_>, host: &dyn CodeHost) {
     let is_unread = |&file: &FileId| {
         let module = files.module(file);
-        let is_source = matches!(module.hir.kind, FileKind::Ts | FileKind::Tsx);
+        let is_source = matches!(module.facts.kind, FileKind::Ts | FileKind::Tsx);
         module.is_leaf && is_source && !files.is_compiled(file)
     };
     let file_ids: Vec<FileId> = (0..files.modules.len())
@@ -359,12 +361,26 @@ impl<'a> FileFinder<'a> {
     }
 
     pub fn find_entry_point(&self, specifier: &[u8]) -> Option<Vec<u8>> {
+        self.find_entry_point_as(specifier, CodeImportForm::Static)
+    }
+
+    /// No plugin is asked.
+    pub fn find_entry_point_on_disk(&self, specifier: &[u8]) -> Option<Vec<u8>> {
+        self.find_entry_point_as(specifier, CodeImportForm::Macro)
+    }
+
+    /// A plugin that fails stops no build: the file is left out.
+    pub fn find_guessed_entry_point(&self, specifier: &[u8]) -> Option<Vec<u8>> {
+        self.find_entry_point_as(specifier, CodeImportForm::Guess)
+    }
+
+    fn find_entry_point_as(&self, specifier: &[u8], form: CodeImportForm) -> Option<Vec<u8>> {
         let resolution = self.resolver.resolve_code(&CodeRequest {
             specifier,
             importer: b"",
             directory: &self.code.working_directory,
             kind: CodeImportKind::EntryPoint,
-            form: CodeImportForm::Static,
+            form,
         });
         match resolution {
             CodeResolution::File(file) if file.host_module.is_none() => Some(file.path.to_vec()),

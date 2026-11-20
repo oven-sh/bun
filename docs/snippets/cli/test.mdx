@@ -15,6 +15,11 @@ bun test <patterns>
   <a href="/compiler/debugging#run-your-tests-compiled">Run your tests compiled</a>
 </ParamField>
 
+<ParamField path="--no-compile-function-source" type="boolean">
+  With <code>--aot</code>: don't embed function source code. <code>fn.toString()</code> returns{" "}
+  <code>[native code]</code>
+</ParamField>
+
 <ParamField path="--timeout" type="number" default="5000">
   Set the per-test timeout in milliseconds (default 5000)
 </ParamField>

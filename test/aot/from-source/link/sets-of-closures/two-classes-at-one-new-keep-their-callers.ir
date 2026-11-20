@@ -9,8 +9,8 @@
 # RUN: link functions fields layouts mechanisms=all
 # CHECK: function f1 callers-known {{*}}result=L0
 # CHECK: function f2 callers-known {{*}}result=L1
-# CHECK: field L0.0 "k" proven=i32 writers-known written-at-construction-alone
-# CHECK: field L1.0 "k" proven=i32 writers-known written-at-construction-alone
+# CHECK: field L0.0 "k" proven=int[0, 2147483647] writers-known written-at-construction-alone
+# CHECK: field L1.0 "k" proven=int[0, 2147483647] writers-known written-at-construction-alone
 # CHECK: layout L0 changes=[] stays-with-compiled-code
 # CHECK: layout L1 changes=[] stays-with-compiled-code
 # The construction has two callees: no row names one, and neither takes what a walk leaves at a call.

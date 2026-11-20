@@ -2,7 +2,7 @@
 
 pub mod memory;
 
-pub use memory::{AppendVec, LocalVec};
+pub use memory::{AppendVec, LocalVec, SmallLocalVec};
 
 use crate::table::Alloc;
 use bun_collections::index_sort;

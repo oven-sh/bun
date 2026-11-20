@@ -12,23 +12,6 @@ pub(crate) fn has_written_top_level_await(hir: &File<'_>) -> bool {
     hir.has_top_level_await() && has_await_below(hir, &Decisions::default(), roots, Sought::Written)
 }
 
-/// Returns the position of the first statement of the file that holds a top-level `await`.
-pub(crate) fn find_first_top_level_await(hir: &File<'_>, decisions: &Decisions<'_>) -> Option<u32> {
-    if !hir.has_top_level_await() {
-        return None;
-    }
-    let mut statements = hir.ids(hir.body);
-    let first = statements.find(|&statement: &StmtId| {
-        has_await_below(
-            hir,
-            decisions,
-            vec![TreeNode::Stmt(statement)],
-            Sought::Live,
-        )
-    });
-    first.map(|statement| hir[statement].start)
-}
-
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Sought {
     Live,

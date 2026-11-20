@@ -1,5 +1,5 @@
 // Callbacks that are written in place and copied in loops read and store captured variables, for several elements, in every order; before its declaration too.
-// STATISTIC: ListCallbacksCopiedWithCalls >= 4
+// STATISTIC: ArrayCallbacksInlinedWithCalls >= 4
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

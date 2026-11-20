@@ -62,15 +62,17 @@ type Program = {
 const programs: Record<string, Program> = {
   "private": {
     files: {
-      "main.js": `
+      "main.js": `console.log(require("./private.js").hasOwn.call({ a: 1 }, "a"));`,
+      "private.js": `
         "use strict";
         const originalDefProp = Object.defineProperty;
         function defProp(obj, name, value) {
           try { originalDefProp.call(Object, obj, name, { value }); } catch { obj[name] = value; }
         }
         function makeSafeToCall(fun) { defProp(fun, "call", fun.call); defProp(fun, "apply", fun.apply); return fun; }
-        const hasOwn = makeSafeToCall(Object.prototype.hasOwnProperty);
-        console.log(hasOwn.call({ a: 1 }, "a"));`,
+        exports.hasOwn = makeSafeToCall(Object.prototype.hasOwnProperty);
+        const originalGetOPNs = Object.getOwnPropertyNames;
+        Object.getOwnPropertyNames = function getOwnPropertyNames(object) { return originalGetOPNs(object); };`,
     },
     plain: "true\n",
   },

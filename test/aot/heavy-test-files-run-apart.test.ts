@@ -19,9 +19,15 @@ const fileThatTakes = (name: string, milliseconds: number, before = "") => `
     appendFileSync(process.env.TRAIL, "end ${name}\\n");
   });`;
 
+// With a sanitizer a light file takes longer to start than the heavy one sleeps.
+const waitFor = (name = "") =>
+  name &&
+  `const { readFileSync } = require("node:fs");
+    while (!readFileSync(process.env.TRAIL, "utf8").includes("start ${name}\\n")) await Bun.sleep(5);`;
+
 const startOf = (code: string) => `Bun.spawnSync([process.execPath, "-e", ${JSON.stringify(code)}]);`;
 
-type Measured = { milliseconds: number; megabytes?: number };
+type Measured = { milliseconds: number; megabytes?: number; waitsFor?: string };
 
 async function trailOf(records: { [name: string]: Measured }, words: string, ...flags: string[]) {
   const names = Object.keys(records);
@@ -30,7 +36,12 @@ async function trailOf(records: { [name: string]: Measured }, words: string, ...
       names.flatMap(name => (of(records[name]) === undefined ? [] : [[`${name}.test.js`, of(records[name])]])),
     );
   using dir = tempDir("heavy-test-files-run-apart", {
-    ...Object.fromEntries(names.map(name => [`${name}.test.js`, fileThatTakes(name, records[name].milliseconds)])),
+    ...Object.fromEntries(
+      names.map(name => [
+        `${name}.test.js`,
+        fileThatTakes(name, records[name].milliseconds, waitFor(records[name].waitsFor)),
+      ]),
+    ),
     "timings.json": JSON.stringify({
       version: 1,
       files: table(it => it.milliseconds),
@@ -85,7 +96,7 @@ test("as long as a heavy file is left, the others get what fits beside it", asyn
   const trail = await trailOf(
     {
       a: { milliseconds: 1600, megabytes: 900 },
-      heavy: { milliseconds: 1500, megabytes: 3000 },
+      heavy: { milliseconds: 1500, megabytes: 3000, waitsFor: "b" },
       b: { milliseconds: 90, megabytes: 862 },
       c: { milliseconds: 80, megabytes: 400 },
       d: { milliseconds: 70 },

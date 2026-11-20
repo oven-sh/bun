@@ -1,7 +1,7 @@
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, CodeUnit, CommonJsVariable, Decl, InitialState, ScopeId, SymbolId};
+use bun_sema::bind::{Binding, CodeUnit, CommonJsVariable, InitialState, ScopeId, SymbolId};
 use bun_sema::check::aot::FunctionRef;
-use bun_sema::hir::{ExprId, ExprKind, FnId, MemberKey, PatKind, PropKey, PropKind, StmtId};
+use bun_sema::hir::{Chain, ExprId, ExprKind, FnId, MemberKey, PropKey, PropKind, StmtId};
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
@@ -9,14 +9,17 @@ use super::variables::BodyForm;
 use crate::builtins::Resolved;
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::NullishAccess;
-use crate::ir::{FunctionKey, ModuleId, TypeTable, ValueId, VariableId, VariableKey};
+use crate::ir::{
+    BlockId, FunctionKey, ModuleId, TypeId, TypeTable, ValueId, VariableId, VariableKey,
+};
 use crate::lower::captures::Capture;
 use crate::lower::member::{Holder, PropertyName, Reference};
 use crate::lower::scope::{BindingForm, BindingRef, Storage};
 use crate::lower::{FileLowering, FunctionLowering, member, module};
 use crate::modules::{
     DescribedPart, ImportBinding, Member, ModuleRef, Shape, Site, SyntheticExportId, View,
-    WrittenDescriptor, find_literal_exported_under_name,
+    WrittenDescriptor, find_arguments_of_assign, find_literal_exported_under_name,
+    find_parts_of_object,
 };
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -59,7 +62,14 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn reads_exports_from_module_object(&self, module: ModuleRef) -> bool {
-        self.inputs.modules.commonjs().uses_module_object(module)
+        let modules = self.inputs.modules;
+        match module {
+            ModuleRef::Inner { file, callback } => modules
+                .wrapped()
+                .of_callback(file, callback)
+                .is_some_and(|inner| inner.module_variable.is_some()),
+            _ => modules.commonjs().uses_module_object(module),
+        }
     }
 
     pub(in crate::lower) fn find_view(&self, expression: ExprId) -> Option<View> {
@@ -80,20 +90,21 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn inner_parameter(&self, callback: FnId, index: usize) -> Option<SymbolId> {
-        let parameter = self.hir[callback].params.iter().nth(index)?;
-        let pattern = self.hir[parameter].pat;
-        let PatKind::Ident(_) = self.hir[pattern].kind else {
-            return None;
-        };
-        Some(self.bound.declared_symbol(Decl::Param(pattern)))
+    pub(in crate::lower) fn is_literal_of_bodies(&self, expression: ExprId) -> bool {
+        let wrapped = self.inputs.modules.wrapped();
+        wrapped.is_literal_of_bodies(self.file, expression)
     }
 
     pub(super) fn inner_parameters(&self, callback: FnId) -> [Option<SymbolId>; 2] {
-        [
-            self.inner_parameter(callback, 0),
-            self.inner_parameter(callback, 1),
-        ]
+        match self
+            .inputs
+            .modules
+            .wrapped()
+            .of_callback(self.file, callback)
+        {
+            Some(inner) => [inner.exports_parameter, inner.module_parameter],
+            None => [None, None],
+        }
     }
 
     fn names_symbol(&self, name: ExprId, symbol: Option<SymbolId>) -> bool {
@@ -110,16 +121,19 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     pub(in crate::lower) fn find_destructured_module(&self, source: ExprId) -> Option<ModuleRef> {
-        let call = self.skip_type_syntax(source);
-        let ExprKind::Call(_) = self.hir[call].kind else {
-            return None;
-        };
+        let source = self.skip_type_syntax(source);
         let modules = self.inputs.modules;
-        match modules.site(self.file, call)? {
-            Site::Evaluate { target, .. } if !modules.is_site_read_as_value(self.file, call) => {
-                Some(target)
-            }
-            Site::Evaluate { .. } | Site::AsToday => None,
+        match self.hir[source].kind {
+            ExprKind::Ident(_) => modules.module_of_destructured_holder(self.file, source),
+            ExprKind::Call(_) => match modules.site(self.file, source)? {
+                Site::Evaluate { target, .. }
+                    if !modules.is_site_read_as_value(self.file, source) =>
+                {
+                    Some(target)
+                }
+                Site::Evaluate { .. } | Site::AsToday => None,
+            },
+            _ => None,
         }
     }
 }
@@ -131,6 +145,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let own_file = ModuleRef::File(file.file);
         if modules.inner_modules(file.file).is_empty() {
             return own_file;
+        }
+        if let FunctionKey::ModuleRequest { call, .. } = self.key {
+            return modules.find_requester(file.file, call).unwrap_or(own_file);
         }
         let mut next = file.top_scope_of(self.key);
         while let Some(scope) = next {
@@ -274,12 +291,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let placement = self.file.scopes.placement(binding);
         match placement.map(|placement| placement.storage) {
-            Some(Storage::Field { .. } | Storage::Variable(_)) => true,
+            Some(Storage::Field { .. } | Storage::Variable(_) | Storage::Instance { .. }) => true,
             Some(Storage::Local) | None => false,
         }
     }
 
-    fn lower_root(&mut self, access: ExprId) -> Option<Holder> {
+    pub(in crate::lower) fn lower_root(&mut self, access: ExprId) -> Option<Holder> {
         let hir = self.file.hir;
         let mut root = access;
         let mut first_key = None;
@@ -327,13 +344,25 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    fn check_holder(&mut self, access: ExprId, holder: Option<Holder>) {
+        if holder.is_some() {
+            self.report_at_member(access);
+            self.test_holder(holder, NullishAccess::Read);
+        }
+    }
+
     pub(in crate::lower) fn check_member_root(&mut self, access: ExprId) {
         let holder = self.lower_root(access);
-        self.test_holder(holder, NullishAccess::Read);
+        self.check_holder(access, holder);
     }
 
     pub(in crate::lower) fn lower_export_member(&mut self, access: ExprId) -> Option<ValueId> {
         let member = self.file.inputs.modules.member(self.file.file, access)?;
+        if member == Member::OnObject
+            && let Some((value, _)) = self.lower_member_behind_getters(access)
+        {
+            return Some(value);
+        }
         let namespace = match (member, self.find_receiver_view(access)) {
             (Member::OnObject, Some(View::Namespace(module))) => Some(module),
             (Member::OnObject, Some(View::Exports(_)) | None) => return None,
@@ -341,16 +370,95 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         let position = self.file.hir[access].pos;
         let holder = self.lower_root(access);
+        self.check_holder(access, holder);
+        self.set_position(position);
         let Some(module) = namespace else {
-            self.set_position(position);
-            self.test_holder(holder, NullishAccess::Read);
             return emit_member_read(self, member);
         };
-        self.test_holder(holder, NullishAccess::Read);
         let (_, key) = self.file.hir.member_key(access)?;
         let object = self.emit_evaluated_namespace(module);
         let name = self.lower_member_key(key);
         Some(member::emit_member_read(self, access, object, name))
+    }
+
+    fn has_module_variable(&self, symbol: SymbolId) -> bool {
+        let placement = self.file.scopes.placement(BindingRef::Symbol(symbol));
+        placement.is_some_and(|it| matches!(it.storage, Storage::Variable(_)))
+    }
+
+    /// `barrel.f`, where the exports have the getter `() => a.f` for good, and the exports. The getter throws while its
+    /// variable `a` is unset: the read as written throws the same error there.
+    pub(in crate::lower) fn lower_member_behind_getters(
+        &mut self,
+        access: ExprId,
+    ) -> Option<(ValueId, ValueId)> {
+        let own_file = self.file.file;
+        let found = (self.file.inputs.modules).member_behind_getters(own_file, access)?;
+        let is_outside_chain = matches!(
+            self.file.hir[access].kind,
+            ExprKind::Dot {
+                chain: Chain::No,
+                ..
+            } | ExprKind::Index {
+                chain: Chain::No,
+                ..
+            }
+        );
+        let is_held_in_variables = found
+            .holders
+            .iter()
+            .all(|it| self.has_module_variable(it.id))
+            && match found.member {
+                Member::Binding(symbol) if symbol.file == own_file => {
+                    self.has_module_variable(symbol.id)
+                }
+                _ => true,
+            };
+        if !is_outside_chain || !is_held_in_variables {
+            return None;
+        }
+        let (object, _) = self.file.hir.member_key(access)?;
+        let object = self.file.skip_type_syntax(object);
+        let may_be_undefined = matches!(self.file.hir[object].kind, ExprKind::Ident(_))
+            && match self.file.bound.binding(object) {
+                Binding::Symbol(holder) => {
+                    self.file.bound.initial_state(holder) == InitialState::Undefined
+                }
+                Binding::CommonJs(_) | Binding::Arguments(_) | Binding::Free => true,
+            };
+        let (base, property) = member::lower_member_operands(self, access, None);
+        self.set_position(self.file.hir[access].pos);
+        if !may_be_undefined && found.holders.is_empty() {
+            return Some((emit_member_read(self, found.member)?, base));
+        }
+        let as_written = self.create_unlikely_block();
+        if may_be_undefined {
+            self.leave_if_unset(base, TypeTable::UNDEFINED, as_written);
+        }
+        for &holder in &found.holders {
+            let variable = self.file.ensure_variable(VariableKey::Symbol(holder));
+            let held = self.builder.get_module_variable(variable);
+            let unset = match self.file.bound.initial_state(holder.id) {
+                InitialState::Undefined => TypeTable::UNDEFINED,
+                InitialState::Uninitialized | InitialState::Initialized => TypeTable::ABSENT,
+            };
+            self.leave_if_unset(held, unset, as_written);
+        }
+        let value = emit_member_read(self, found.member)?;
+        let done = self.create_block();
+        self.jump(done);
+        self.continue_in(as_written);
+        let thrown = member::emit_member_read(self, access, base, property);
+        self.builder.throw(thrown);
+        self.continue_in(done);
+        Some((value, base))
+    }
+
+    fn leave_if_unset(&mut self, value: ValueId, unset: TypeId, exit: BlockId) {
+        let split = self.split_on_type(value, unset);
+        self.builder.switch_to(split.taken);
+        self.jump(exit);
+        self.builder.switch_to(split.not_taken);
     }
 
     fn emit_evaluated_namespace(&mut self, module: ModuleRef) -> ValueId {
@@ -415,7 +523,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             module @ ModuleRef::Inner { callback, .. } => {
                 let object = file.skip_type_syntax(object);
                 let names_exports = is_named_exports
-                    && file.names_symbol(object, file.inner_parameter(callback, 1));
+                    && file.names_symbol(object, file.inner_parameters(callback)[1]);
                 names_exports.then_some(module)
             }
             module @ ModuleRef::File(_) => {
@@ -439,7 +547,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let module = self.current_module();
         let is_mention = match (module, file.hir[expression].kind) {
             (ModuleRef::Inner { callback, .. }, ExprKind::Ident(_)) => {
-                file.names_symbol(expression, file.inner_parameter(callback, 0))
+                file.names_symbol(expression, file.inner_parameters(callback)[0])
             }
             (ModuleRef::File(_), ExprKind::Ident(_)) => {
                 let names_exports = file.bound.binding(expression)
@@ -582,10 +690,34 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let literal = self.file.skip_type_syntax(literal);
         let named = find_literal_exported_under_name(hir, self.file.bound, literal);
         let literal = named.map_or(literal, |(written, _)| written);
-        let ExprKind::Object(properties) = hir[literal].kind else {
+        let parts = find_parts_of_object(hir, self.file.builtins, literal);
+        self.try_lower_exported_parts(module, literal, &parts)
+    }
+
+    fn try_lower_exported_parts(
+        &mut self,
+        module: ModuleRef,
+        written_at: ExprId,
+        parts: &[ExprId],
+    ) -> bool {
+        let hir = self.file.hir;
+        let commonjs = self.file.inputs.modules.commonjs();
+        let of = self.file.file;
+        let is_literal = |part: ExprId| matches!(hir[part].kind, ExprKind::Object(_));
+        let mut calls = parts.iter().filter(|&&part| !is_literal(part));
+        if parts.is_empty() || !calls.all(|&part| commonjs.find_names_of_spread(of, part).is_some())
+        {
             return false;
-        };
-        let has_plain_keys = properties.iter().all(|property| {
+        }
+        let literals = parts.iter().filter_map(|&part| match hir[part].kind {
+            ExprKind::Object(properties) => Some(properties),
+            _ => None,
+        });
+        let has_plain_keys = literals.flat_map(|it| it.iter()).all(|property| {
+            if hir[property].kind == PropKind::Spread {
+                let required = hir.skip_type_assertions(hir[property].value);
+                return commonjs.find_names_of_spread(of, required).is_some();
+            }
             matches!(hir.runtime_property_key(property), PropKey::Name(_))
                 && matches!(
                     hir[property].kind,
@@ -596,12 +728,44 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return false;
         }
         let mut stores: SmallVec<[(SyntheticExportId, ValueId); 8]> = SmallVec::new();
-        for id in properties.iter() {
+        // Object.assign() copies what its arguments are behind the last of them.
+        let mut copied: SmallVec<[(usize, ExprId); 4]> = SmallVec::new();
+        let pieces = parts.iter().flat_map(|&part| {
+            let properties = match hir[part].kind {
+                ExprKind::Object(properties) => Some(properties),
+                _ => None,
+            };
+            let call = properties.is_none().then_some(Err(part));
+            let properties = properties.into_iter().flat_map(|it| it.iter()).map(Ok);
+            call.into_iter().chain(properties)
+        });
+        for piece in pieces {
+            let id = match piece {
+                Ok(id) => id,
+                Err(required) => {
+                    self.set_position(hir[required].pos);
+                    if matches!(hir[required].kind, ExprKind::Call(_)) {
+                        self.lower_expression_for_effect(required);
+                    }
+                    copied.push((stores.len(), required));
+                    continue;
+                }
+            };
             let property = hir[id];
+            self.set_position(property.pos);
+            let required = hir.skip_type_assertions(property.value);
+            if property.kind == PropKind::Spread
+                && commonjs.find_names_of_spread(of, required).is_some()
+            {
+                if matches!(hir[required].kind, ExprKind::Call(_)) {
+                    self.lower_expression_for_effect(required);
+                }
+                self.read_names_of_spread(module, required, &mut stores);
+                continue;
+            }
             let PropKey::Name(name) = hir.runtime_property_key(id) else {
                 unreachable!("every key of the literal is a name");
             };
-            self.set_position(property.pos);
             let member = self.file.inputs.modules.member_named(module, name);
             let Some(Member::Variable(export)) = member else {
                 if property.kind != PropKind::Method {
@@ -618,11 +782,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             };
             stores.push((export, value));
         }
+        let mut added = 0;
+        for (place, required) in copied {
+            let place = place + added;
+            let behind: SmallVec<[(SyntheticExportId, ValueId); 8]> =
+                stores.drain(place..).collect();
+            self.read_names_of_spread(module, required, &mut stores);
+            added += stores.len() - place;
+            stores.extend(behind);
+        }
         let mut is_last = FxHashSet::default();
         stores.reverse();
         stores.retain(|store| is_last.insert(store.0));
         stores.reverse();
-        self.set_position(hir[literal].pos);
+        self.set_position(hir[written_at].pos);
         for (export, value) in stores {
             let key = VariableKey::SyntheticExport(export);
             let variable = self.file.ensure_variable(key);
@@ -631,7 +804,42 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         true
     }
 
+    fn read_names_of_spread(
+        &mut self,
+        module: ModuleRef,
+        required: ExprId,
+        stores: &mut SmallVec<[(SyntheticExportId, ValueId); 8]>,
+    ) {
+        let modules = self.file.inputs.modules;
+        let commonjs = modules.commonjs();
+        let Some((source, names)) = commonjs.find_names_of_spread(self.file.file, required) else {
+            return;
+        };
+        for &name in names {
+            if let Some(Member::Variable(export)) = modules.member_named(module, name) {
+                let member = commonjs.member_named(source, name);
+                let member = member.expect("what is spread under a name that is read is bound");
+                let value = emit_member_read(self, member);
+                let value = value
+                    .expect("the names of what is spread are kept where those of the literal are");
+                stores.push((export, value));
+            }
+        }
+    }
+
     pub(in crate::lower) fn try_lower_exports_statement(&mut self, expression: ExprId) -> bool {
+        let (of, hir) = (self.file.file, self.file.hir);
+        let call = self.file.skip_type_syntax(expression);
+        if self
+            .file
+            .inputs
+            .modules
+            .commonjs()
+            .is_assignment_to_exports(of, call)
+        {
+            let arguments = find_arguments_of_assign(hir, self.file.builtins, call);
+            return self.try_lower_exported_parts(ModuleRef::File(of), call, &arguments[1..]);
+        }
         let store = self.find_exports_store(expression);
         store.is_some_and(|(module, value)| self.try_lower_exported_literal(module, value))
     }
@@ -647,10 +855,18 @@ pub(in crate::lower) fn emit_module_value(
         }
         Shape::EsModule => Some(lowering.emit_evaluated_namespace(module)),
         Shape::Value | Shape::AsToday if lowering.file.reads_exports_from_module_object(module) => {
-            let module = lowering.file.fragment.declare_module(module);
-            let object = lowering
-                .builder
-                .module_builtin(BuiltinId::ModuleObject, module);
+            let object = match module {
+                ModuleRef::Inner { .. } => {
+                    let variable = lowering.file.ensure_exports_variable(module)?;
+                    lowering.builder.get_module_variable(variable)
+                }
+                _ => {
+                    let module = lowering.file.fragment.declare_module(module);
+                    lowering
+                        .builder
+                        .module_builtin(BuiltinId::ModuleObject, module)
+                }
+            };
             Some(lowering.emit_named_read(object, known::exports))
         }
         Shape::Value | Shape::AsToday => {
@@ -683,7 +899,7 @@ fn emit_member_read(
                 lowering.get_binding(Binding::Symbol(symbol.id), name)
             } else {
                 let name = lowering.file.intern_atom(name);
-                lowering.emit_variable_read(VariableKey::Symbol(symbol), name)
+                lowering.emit_exported_variable_read(symbol, name, None)
             }
         }
         Member::Undefined | Member::Marker(false) => lowering.builder.undefined(),

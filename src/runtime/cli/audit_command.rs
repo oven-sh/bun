@@ -280,7 +280,7 @@ fn build_dependency_tree(
 ) -> Result<StringHashMap<Vec<Box<[u8]>>>, bun_alloc::AllocError> {
     let mut dependency_tree: StringHashMap<Vec<Box<[u8]>>> = StringHashMap::default();
 
-    let packages = pm.lockfile.packages.slice();
+    let packages = &pm.lockfile.packages;
     let pkg_names = packages.items_name();
     let pkg_dependencies = packages.items_dependencies();
     let pkg_resolutions = packages.items_resolutions();
@@ -440,7 +440,7 @@ fn collect_packages_for_audit(
     });
 
     let options = &pm.options;
-    let packages = pm.lockfile.packages.slice();
+    let packages = &pm.lockfile.packages;
     let pkg_names = packages.items_name();
     let pkg_name_hashes = packages.items_name_hash();
     let pkg_resolutions = packages.items_resolution();
@@ -644,7 +644,6 @@ fn send_audit_request(
     body: &[u8],
     echo_json: bool,
 ) -> Result<Result<Box<[u8]>, SkipReason>, bun_alloc::AllocError> {
-    libdeflate::load();
     let mut compressor = libdeflate::OwnedCompressor::new(6).ok_or(bun_alloc::AllocError)?;
 
     let mut compressed_body = Vec::new();
@@ -668,7 +667,7 @@ fn send_audit_request(
     .into_bytes();
 
     let mut response_buf = MutableString::init(1024)?;
-    let mut req = pm.registry_request(
+    let req = pm.registry_request(
         http::Method::POST,
         URL::parse(&url_str),
         headers.entries,
@@ -678,7 +677,7 @@ fn send_audit_request(
     // A registry URL that is not http(s) is a configuration error, not a registry without an audit endpoint.
     let mut is_fatal = registry.is_default;
     // This POST is safe to retry, because it changes nothing on the registry.
-    let reason = match pm.send_with_retries(&mut req, &mut response_buf) {
+    let reason = match pm.send_with_retries(req, &mut response_buf) {
         Ok(res) if res.status_code() >= 400 => SkipReason::Status(res.status_code()),
         Ok(_) => {
             let response = response_buf.list.as_slice();
@@ -760,7 +759,7 @@ fn find_dependency_paths(
 
     let root_id = pm.root_package_id.get(&pm.lockfile, pm.workspace_name_hash);
 
-    let packages = pm.lockfile.packages.slice();
+    let packages = &pm.lockfile.packages;
     let dependencies = pm.lockfile.buffers.dependencies.as_slice();
     let buf = pm.lockfile.buffers.string_bytes.as_slice();
     let pkg_names = packages.items_name();

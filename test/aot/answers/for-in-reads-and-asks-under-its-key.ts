@@ -1,6 +1,7 @@
 // answers: without-library
 // # a read and two questions under the key of a for-in, on the object that is enumerated, stand behind one test of the enumerator: ordinary objects, compiled ones, what stands below another object, getters, traps, and an object that a turn changes between the step and the use
-// # f1 = sum, f2 = has, f3 = owns, f4 = changed, f5 = other, f11 = tell
+// # f1 = sum, f2 = has, f3 = owns, f4 = changed, f5 = other, f11 = elements
+// # The array has a function of its own: where an array is expected the step gives its index and the element is read by that.
 // # RUN(FORM): walk f1 f2 f3 f4 mechanisms=all
 // # FORM-LABEL: code f1:Body
 // # FORM: = EnumeratorGetByVal
@@ -22,6 +23,7 @@ function has(o: any) { let text = ""; for (const k in o) text += k + (k in o ? "
 function owns(o: any) { let text = ""; for (const k in o) text += k + (Object.hasOwn(o, k) ? "+" : "-"); return text; }
 function changed(o: any, change: (o: any, k: string) => void) { let text = ""; for (const k in o) { change(o, k); text += k + "=" + o[k] + (k in o ? "+" : "-") + (Object.hasOwn(o, k) ? "+" : "-") + ","; } return text; }
 function other(o: any, p: any) { let text = ""; for (const k in o) text += k + "=" + p[k] + (k in p ? "+" : "-") + ","; return text; }
+function elements(o: any) { let text = ""; for (const k in o) text += k + "=" + o[k] + ","; return text; }
 function tell(f: () => unknown) { try { report(f()); } catch (e) { report((e as Error).name); } }
 class Pair { first = 1; second = 2; }
 function below() { const o = Object.create({ up: "above", a: "hidden" }); o.a = 1; o.b = 2; return o; }
@@ -36,7 +38,7 @@ tell(() => sum(below()));
 tell(() => sum(getters()));
 tell(() => sum(trapped()));
 tell(() => sum(many()));
-tell(() => sum([5, 6]));
+tell(() => elements([5, 6]));
 tell(() => sum("ab"));
 tell(() => sum(undefined));
 tell(() => has({ a: 1, b: undefined }));

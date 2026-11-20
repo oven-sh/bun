@@ -8,7 +8,6 @@
 #include "ExtendedDOMIsoSubspaces.h"
 #include <JavaScriptCore/FastMallocAlignedMemoryAllocator.h>
 #include <JavaScriptCore/HeapInlines.h>
-#include <JavaScriptCore/IsoHeapCellType.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/SimpleMarkingConstraint.h>
 #include <JavaScriptCore/SubspaceInlines.h>
@@ -25,11 +24,7 @@
 
 #include "JSDOMWrapper.h"
 #include <JavaScriptCore/DeferredWorkTimer.h>
-#include "NodeVM.h"
-#include "../../runtime/bake/BakeGlobalObject.h"
-#include "napi_handle_scope.h"
-#include "NativePromiseContext.h"
-#include "ModuleGraph.h"
+#include "ConsoleObject.h"
 #include "StrongRootBlock.h"
 #include "IsolatedModuleCache.h"
 
@@ -39,13 +34,7 @@ using namespace JSC;
 RefPtr<JSC::SourceProvider> createBuiltinsSourceProvider();
 
 JSHeapData::JSHeapData(Heap& heap)
-    : m_heapCellTypeForJSWorkerGlobalScope(JSC::IsoHeapCellType::Args<Zig::GlobalObject>())
-    , m_heapCellTypeForNodeVMGlobalObject(JSC::IsoHeapCellType::Args<Bun::NodeVMGlobalObject>())
-    , m_heapCellTypeForBakeGlobalObject(JSC::IsoHeapCellType::Args<Bake::GlobalObject>())
-    , m_heapCellTypeForHandleScopeImpl(JSC::IsoHeapCellType::Args<Bun::HandleScopeImpl>())
-    , m_heapCellTypeForNativePromiseContext(JSC::IsoHeapCellType::Args<Bun::NativePromiseContext>())
-    , m_heapCellTypeForJSModuleGraph(JSC::IsoHeapCellType::Args<Bun::JSModuleGraph>())
-    , m_domConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMConstructorBase)
+    : m_domConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMConstructorBase)
     , m_domNamespaceObjectSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMObject)
     , m_subspaces(makeUnique<ExtendedDOMIsoSubspaces>())
 
@@ -62,6 +51,7 @@ JSVMClientData::JSVMClientData(VM& vm, RefPtr<JSC::SourceProvider> sourceProvide
     , m_builtinNames(vm)
     , m_builtinFunctions(makeUnique<JSBuiltinFunctions>(vm, sourceProvider, m_builtinNames))
     , m_heapData(JSHeapData::ensureHeapData(vm.heap))
+    , m_consoleClient(makeUniqueRef<Bun::ConsoleObject>())
     , CLIENT_ISO_SUBSPACE_INIT(m_domConstructorSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_domNamespaceObjectSpace)
     , m_clientSubspaces(makeUnique<ExtendedDOMClientIsoSubspaces>())
@@ -110,8 +100,6 @@ JSVMClientData::~JSVMClientData()
     ASSERT(m_sqliteDatabases.isEmpty());
 
     m_normalWorld = nullptr;
-    if (vmHandle)
-        Bun__VmHandle__release(std::exchange(vmHandle, nullptr));
 }
 void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
 {
@@ -120,8 +108,8 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
     clientData->bunVM = bunVM;
     clientData->m_isWorkerVM = !!worker;
     clientData->m_isNodeWorkerVM = worker && worker->options().kind == WorkerOptions::Kind::Node;
-    clientData->vmHandle = Bun__VmHandle__retain(bunVM);
-    clientData->vmHandleState = Bun__VmHandle__stateAddress(clientData->vmHandle);
+    clientData->vmHandle = adoptRef(Bun__VmHandle__retain(bunVM));
+    clientData->vmHandleState = Bun__VmHandle__stateAddress(clientData->vmHandle.get());
     vm->deferredWorkTimer->onAddPendingWork = [clientData](Ref<JSC::DeferredWorkTimer::Ticket>&& ticket, JSC::DeferredWorkTimer::WorkType kind) -> void {
         Bun::JSCTaskScheduler::onAddPendingWork(clientData, WTF::move(ticket), kind);
     };
@@ -194,7 +182,7 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
     clientData->builtinFunctions().exportNames();
 }
 
-JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM& vm, const SubspaceForInit& init, SubspaceSlots slots, JSC::HeapCellType& (*getCustomHeapCellType)(JSHeapData&))
+JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM& vm, const SubspaceForInit& init, SubspaceSlots slots, const JSC::HeapCellType& (*getCustomHeapCellType)())
 {
     auto& clientData = *downcast<JSVMClientData>(vm.clientData);
     auto& clientSlot = *reinterpret_cast<JSC::GCClient::IsoSubspace**>(reinterpret_cast<uint8_t*>(&clientData.clientSubspaces()) + slots.clientOffset);
@@ -209,7 +197,7 @@ JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM& vm, const SubspaceForIn
         const JSC::HeapCellType* cellType;
         switch (init.cellType) {
         case SubspaceForInit::CellType::Custom:
-            cellType = &getCustomHeapCellType(heapData);
+            cellType = &getCustomHeapCellType();
             break;
         case SubspaceForInit::CellType::Destructible:
             cellType = &heap.destructibleObjectHeapCellType;

@@ -5,9 +5,10 @@ use super::answers::{
 use super::queries::Queries;
 use super::type_shape::{ShapeKind, TypeShape};
 use crate::atom::Atom;
+use crate::bind::Decl;
 use crate::hir::{ExprId, MemberKey};
 use crate::program::Sym;
-use crate::types::{IndexInfo, MapperId, Origin, PropSource, TypeData, TypeId};
+use crate::types::{IndexInfo, MapperId, Origin, Prop, PropSource, TypeData, TypeId};
 use smallvec::SmallVec;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -70,19 +71,22 @@ fn replace_written_type(lookup: MemberLookup, written: WrittenType) -> MemberLoo
 }
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
+    /// The type whose members `ty` has: the declared type of `this`, or what is left of a union whose other members
+    /// are `never`. `(A | B) & A` is `A | (B & A)`.
     #[inline]
-    pub(super) fn declared_type_of_this(&mut self, ty: TypeId) -> TypeId {
-        if let TypeData::ThisParam(symbol) = self.c.data(ty) {
-            return self.c.declared_type(*symbol);
+    pub(super) fn resolve_object_type(&mut self, ty: TypeId) -> TypeId {
+        match self.c.data(ty) {
+            TypeData::ThisParam(symbol) => self.c.declared_type(*symbol),
+            TypeData::Union(_) => self.c.reduced(ty),
+            _ => ty,
         }
-        ty
     }
 
     pub(super) fn compute_object_members(
         &mut self,
         ty: TypeId,
     ) -> Result<&'c [ObjectMember], GaveUp> {
-        let ty = self.declared_type_of_this(ty);
+        let ty = self.resolve_object_type(ty);
         let shape = self.type_shape(ty)?;
         if !shape.has_members() {
             return Ok(&[]);
@@ -107,7 +111,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         &mut self,
         ty: TypeId,
     ) -> Result<Vec<CheckedMember>, GaveUp> {
-        let ty = self.declared_type_of_this(ty);
+        let ty = self.resolve_object_type(ty);
         let shape = self.type_shape(ty)?;
         if !shape.has_members() {
             return Ok(Vec::new());
@@ -133,8 +137,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         instance: TypeId,
         base: TypeId,
     ) -> Result<Option<(Vec<MemberTypedOtherwise>, Option<MethodsAbove>)>, GaveUp> {
-        let instance = self.declared_type_of_this(instance);
-        let base = self.declared_type_of_this(base);
+        let instance = self.resolve_object_type(instance);
+        let base = self.resolve_object_type(base);
         let (&TypeData::Ref { target: class, .. }, &TypeData::Ref { target: above, .. }) =
             (self.c.data(instance), self.c.data(base))
         else {
@@ -268,7 +272,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         &mut self,
         ty: TypeId,
     ) -> Result<&'c [ListedMember], GaveUp> {
-        let ty = self.declared_type_of_this(ty);
+        let ty = self.resolve_object_type(ty);
         let shape = self.type_shape(ty)?;
         if !shape.has_members() {
             return Ok(&[]);
@@ -290,12 +294,66 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Ok(self.list(&list))
     }
 
+    /// The place of each property in the order in which plain stores create them, by its number. Empty: the order of the numbers.
+    pub(super) fn compute_creation_places(&mut self, ty: TypeId) -> Result<Vec<u32>, GaveUp> {
+        let ty = self.resolve_object_type(ty);
+        let Some(members) = self.c.members(ty) else {
+            return Ok(Vec::new());
+        };
+        let props = &members.shape().props;
+        let is_assigned = |prop: &Prop| match prop.source {
+            PropSource::Symbol(symbol) => {
+                let declared = &self.c.bound(symbol.file).symbol(symbol.id).decls;
+                matches!(declared.first(), Some(Decl::Expando(_)))
+            }
+            _ => false,
+        };
+        if !props.iter().any(is_assigned) {
+            return Ok(Vec::new());
+        }
+        let mut file = None;
+        let mut numbered = Vec::with_capacity(props.len());
+        for (number, prop) in (0u32..).zip(props.iter()) {
+            let assignment = match prop.source {
+                PropSource::Symbol(symbol) if file.is_none_or(|file| file == symbol.file) => {
+                    match self
+                        .c
+                        .bound(symbol.file)
+                        .symbol(symbol.id)
+                        .decls
+                        .iter()
+                        .next()
+                    {
+                        Some(&Decl::Expando(assignment)) => {
+                            file = Some(symbol.file);
+                            Some(assignment)
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            numbered.push((number, assignment));
+        }
+        let Some(file) = file else {
+            return Ok(Vec::new());
+        };
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        let ordered =
+            bound.move_inner_assignments_first(hir, numbered, |&(_, assignment)| assignment);
+        let mut places = vec![0; ordered.len()];
+        for (place, (number, _)) in (0u32..).zip(ordered) {
+            places[number as usize] = place;
+        }
+        Ok(places)
+    }
+
     pub(super) fn compute_listed_member_types(
         &mut self,
         ty: TypeId,
         member: ListedMember,
     ) -> PositionTypes {
-        let ty = self.declared_type_of_this(ty);
+        let ty = self.resolve_object_type(ty);
         let members = self.c.members(ty);
         let Some(members) = members else {
             debug_assert!(false, "a listed member belongs to a type with members");
@@ -318,7 +376,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         ty: TypeId,
         member: ListedMember,
     ) -> bool {
-        let ty = self.declared_type_of_this(ty);
+        let ty = self.resolve_object_type(ty);
         let Some(members) = self.c.members(ty) else {
             return true;
         };
@@ -347,7 +405,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         &mut self,
         ty: TypeId,
     ) -> Result<&'c [IndexSignature], GaveUp> {
-        let ty = self.declared_type_of_this(ty);
+        let ty = self.resolve_object_type(ty);
         if !self.type_shape(ty)?.has_members() {
             return Ok(&[]);
         }

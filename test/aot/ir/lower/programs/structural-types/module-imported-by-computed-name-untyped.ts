@@ -208,12 +208,7 @@ export const count = "texts";
 // CHECK-NEXT: PropDefine v5, v1 key="p"
 // CHECK-NEXT: PropDefine v5, v2 key="n"
 // CHECK-NEXT: v8 = Undefined
-// CHECK-NEXT: v9 = TypeTest v8 testedType=object
-// CHECK-NEXT: Branch v9 -> taken b1(| 0), notTaken b2(v5)
-// CHECK-NEXT: b1(v10):
-// CHECK-NEXT: Jump -> next b2(v10)
-// CHECK-NEXT: b2(v11):
-// CHECK-NEXT: Return v11
+// CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="all"
 // CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_9]]} results=[{type=number}] {

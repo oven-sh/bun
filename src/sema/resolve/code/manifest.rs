@@ -78,6 +78,18 @@ impl<'h> Resolver<'h> {
         ancestors(directory).find_map(|ancestor| self.code_manifest(ancestor))
     }
 
+    fn nearest_named_manifest(&self, directory: &[u8]) -> Option<&'h CodeManifest<'h>> {
+        let by_directory = &self.code_state().named_manifests;
+        if let Some(&known) = by_directory.get_ref(directory) {
+            return known;
+        }
+        let nearest = ancestors(directory).find_map(|ancestor| {
+            let manifest = self.code_manifest(ancestor);
+            manifest.filter(|manifest| !manifest.name.is_empty())
+        });
+        *by_directory.insert_ref(self.keep(directory), nearest)
+    }
+
     pub(super) fn module_type_manifest(&self, directory: &[u8]) -> Option<&'h CodeManifest<'h>> {
         let directory = strings::without_trailing_slash(directory);
         if directory.len() == root_length(directory) || !self.is_dir(directory) {
@@ -107,7 +119,17 @@ impl<'h> Resolver<'h> {
         if !path.starts_with(b"/") {
             return None;
         }
-        let manifest = ancestors(dirname::<Posix>(path))
+        let directory = dirname::<Posix>(path);
+        let by_directory = &self.code_state().aot_package_directories;
+        if let Some(&known) = by_directory.get_ref(directory) {
+            return known;
+        }
+        let found = self.find_aot_package_directory(directory);
+        *by_directory.insert_ref(self.keep(directory), found)
+    }
+
+    fn find_aot_package_directory(&self, directory: &[u8]) -> Option<&'h [u8]> {
+        let manifest = ancestors(directory)
             .take_while(|&ancestor| strings::basename_posix(ancestor) != b"node_modules")
             .find_map(|ancestor| {
                 self.code_manifest(ancestor)
@@ -133,12 +155,8 @@ impl<'h> Resolver<'h> {
         if !path.starts_with(b"/") {
             return DeclaredSideEffects::Unspecified;
         }
-        let named_manifest = |ancestor| {
-            let manifest = self.code_manifest(ancestor);
-            manifest.filter(|manifest| !manifest.name.is_empty())
-        };
         let directory = dirname::<Posix>(path);
-        let declared = match ancestors(directory).find_map(named_manifest) {
+        let declared = match self.nearest_named_manifest(directory) {
             Some(manifest) => manifest.side_effects,
             None => DeclaredSideEffects::Unspecified,
         };
@@ -181,6 +199,7 @@ impl<'h> Resolver<'h> {
             .unwrap_or(declared)
     }
 
+    /// The file that "main" names in `manifest`, if an import of its directory takes `module` for "module".
     fn find_main_beside_module(
         &self,
         manifest: &CodeManifest<'h>,

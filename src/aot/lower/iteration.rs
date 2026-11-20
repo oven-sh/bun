@@ -150,6 +150,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             true => IteratorKind::Async,
             false => IteratorKind::Sync,
         };
+        self.file.intern_keys_of_written_list(expr);
         let iterable = self.lower_loop_subject(statement, expr);
         self.set_position(self.file.loop_head_position(statement, left));
         self.quote_head_of_loop_if_next_fails(left, expr);

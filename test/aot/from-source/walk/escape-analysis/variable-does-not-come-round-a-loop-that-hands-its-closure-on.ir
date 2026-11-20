@@ -1,5 +1,5 @@
 # -- source: variable-does-not-come-round-a-loop-that-hands-its-closure-on.js
-# function twice(v, f) { let work = 0; for (let j = 0; j < 2; j++) work += j; f(null, v); f(null, v + work); }
+# function twice(v, f) { let work = 0; for (let j = 0; j < v; j++) work += j; f(null, v); f(null, v + work); }
 # function run(n) { let total = 0; let failed = 0; function done(err, v) { if (err) failed++; else total += v; } for (let i = 0; i < n; i++) twice(i, done); return total + failed; }
 # print(run(5) + 1);
 # print(run(5) + 1);

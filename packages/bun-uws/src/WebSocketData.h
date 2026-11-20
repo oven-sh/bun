@@ -48,12 +48,12 @@ private:
     } compressionStatus;
 
     /* We might have a dedicated compressor */
-    DeflationStream *deflationStream = nullptr;
+    std::unique_ptr<DeflationStream> deflationStream;
     /* And / or a dedicated decompressor */
-    InflationStream *inflationStream = nullptr;
+    std::unique_ptr<InflationStream> inflationStream;
 
     /* We could be a subscriber */
-    Subscriber *subscriber = nullptr;
+    std::unique_ptr<Subscriber> subscriber;
 public:
     using OnSocketClosedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket, int readError, bool peerEnded);
     void *socketData = nullptr;
@@ -66,30 +66,16 @@ public:
         /* Initialize the dedicated sliding window(s) */
         if (perMessageDeflate) {
             if ((compressOptions & CompressOptions::_COMPRESSOR_MASK) != CompressOptions::SHARED_COMPRESSOR) {
-                deflationStream = new DeflationStream(compressOptions);
+                deflationStream = std::make_unique<DeflationStream>(compressOptions);
             }
             if ((compressOptions & CompressOptions::_DECOMPRESSOR_MASK) != CompressOptions::SHARED_DECOMPRESSOR) {
-                inflationStream = new InflationStream(compressOptions);
+                inflationStream = std::make_unique<InflationStream>(compressOptions);
             }
         }
         // never close websocket sockets when closing idle connections
         this->isIdle = false;
         this->socketData = socketData;
         this->onSocketClosed = onSocketClosed;
-    }
-
-    ~WebSocketData() {
-        if (deflationStream) {
-            delete deflationStream;
-        }
-
-        if (inflationStream) {
-            delete inflationStream;
-        }
-
-        if (subscriber) {
-            delete subscriber;
-        }
     }
 };
 

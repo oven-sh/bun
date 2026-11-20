@@ -1,66 +1,30 @@
-//! `WatcherContext` trait impl for `DevServer`.
-//!
-//! `Watcher::init::<DevServer>` dispatches through the generic
-//! `WatcherContext` vtable, so the trait methods here are the *only* path the
-//! watcher thread reaches — they forward to the inherent
-//! `DevServer::{on_file_update, on_watch_error}` bodies below.
+//! The dev server's part of the watcher thread.
 
-use super::DevServer;
 use super::*;
 
-// ──────────────────────────────────────────────────────────────────────────
-// WatcherContext impl — wires `bun_watcher::Watcher::init::<DevServer>`.
-// The watcher's stored fn-ptrs (`on_file_update_wrapped` / `on_error_wrapped`
-// in `Watcher::init`) call *these* trait methods, never the inherent ones
-// directly, so each forwards to the real ported body on `DevServer`.
-// ──────────────────────────────────────────────────────────────────────────
-impl bun_watcher::WatcherContext for DevServer {
-    fn on_file_update(
-        &mut self,
-        events: &mut [bun_watcher::WatchEvent],
-        changed_files: &[bun_watcher::ChangedFilePath],
-        watchlist: &bun_watcher::WatchList,
-    ) {
-        DevServer::on_file_update(self, events, changed_files, watchlist);
-    }
-
-    /// The trait's default `on_watch_error` would forward here, so route both
-    /// to the inherent path-aware impl rather than emitting a generic warn.
-    fn on_error(&mut self, err: bun_sys::Error) {
-        DevServer::on_watch_error(self, err);
-    }
-
-    fn on_watch_error(&mut self, err: bun_sys::Error) {
-        DevServer::on_watch_error(self, err);
-    }
+pub(super) struct WatchContext {
+    pub(super) pending_reload_event: Arc<PendingReloadEvent>,
+    pub(super) vm_handle: bun_jsc::VmHandle,
 }
 
-impl DevServer {
-    /// Called on watcher's thread; Access to dev-server state restricted.
-    pub(crate) fn on_file_update(
+impl bun_watcher::WatcherContext for WatchContext {
+    fn on_file_update(
         &mut self,
         events: &[bun_watcher::Event],
-        changed_files: &[bun_watcher::ChangedFilePath],
+        changed_files: &[&[u8]],
         watchlist: &bun_watcher::WatchList,
+        evictions: &mut bun_watcher::Evictions,
     ) {
-        debug_assert!(self.magic == Magic::Valid);
         debug_log!("onFileUpdate start");
         scopeguard::defer! { debug_log!("onFileUpdate end") };
 
         let file_paths = watchlist.items_file_path();
         let kinds = watchlist.items_kind();
 
-        let atomics = self.watcher_atomics.as_ptr();
-        // SAFETY: `atomics` is the heap `WatcherAtomics`; watcher thread holds
-        // `Watcher.mutex`. The returned slot is exclusive on this thread and
-        // is deref'd per-access below (no long-lived `&mut`).
-        let ev_ptr = unsafe { WatcherAtomics::watcher_acquire_event(atomics) };
-        let ev_ptr_defer: *mut HotReloadEvent = ev_ptr;
-        scopeguard::defer! {
-            // SAFETY: `atomics`/`ev_ptr_defer` are live for the fn body; guard
-            // runs at scope exit with `Watcher.mutex` still held.
-            unsafe { WatcherAtomics::watcher_release_and_submit_event(atomics, ev_ptr_defer) }
-        };
+        let mut pending = self.pending_reload_event.state.lock();
+        if pending.event.is_empty() {
+            pending.timer = Instant::now();
+        }
 
         for event in events {
             // TODO: why does this out of bounds when you delete every file in the directory?
@@ -87,51 +51,30 @@ impl DevServer {
                         || event.op.contains(bun_watcher::Op::RENAME)
                     {
                         // TODO: audit this line heavily
-                        self.bun_watcher.remove_at_index::<false>(
-                            bun_watcher::Kind::File,
-                            event.index,
-                            0,
-                            &[],
-                        );
+                        evictions.append_assume_capacity(event.index);
                     }
 
-                    // SAFETY: `ev_ptr` is this thread's exclusively-acquired
-                    // slot (see above); the borrow ends with this call.
-                    unsafe { &mut *ev_ptr }.append_file(file_path);
+                    pending.event.append_file(file_path);
                 }
                 bun_watcher::Kind::Directory => {
-                    // Note: `target_os = "linux"` is false on Android, so
-                    // include `target_os = "android"` explicitly to
-                    // keep forwarding inotify sub-path names there.
-                    #[cfg(any(target_os = "linux", target_os = "android"))]
-                    {
-                        // INotifyWatcher stores sub paths into `changed_files`
-                        let names = event.names(changed_files);
-                        if !names.is_empty() {
-                            for maybe_sub_path in names {
-                                // SAFETY: see `ev_ptr` above; call-scoped borrow.
-                                unsafe { &mut *ev_ptr }
-                                    .append_dir(file_path, maybe_sub_path.map(|s| s.as_bytes()));
-                            }
-                        } else {
-                            // SAFETY: see `ev_ptr` above; call-scoped borrow.
-                            unsafe { &mut *ev_ptr }.append_dir(file_path, None);
-                        }
+                    let names = event.names(changed_files);
+                    if names.is_empty() {
+                        pending.event.append_dir(file_path, None);
                     }
-                    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-                    {
-                        let _ = changed_files;
-                        // SAFETY: see `ev_ptr` above; call-scoped borrow.
-                        unsafe { &mut *ev_ptr }.append_dir(file_path, None);
+                    for &sub_path in names {
+                        pending.event.append_dir(file_path, Some(sub_path));
                     }
                 }
             }
         }
 
-        self.bun_watcher.flush_evictions();
+        if !pending.event.is_empty() && !core::mem::replace(&mut pending.scheduled, true) {
+            drop(pending);
+            self.pending_reload_event.post(&self.vm_handle);
+        }
     }
 
-    pub(crate) fn on_watch_error(&self, err: sys::Error) {
+    fn on_error(&mut self, err: sys::Error) {
         if !err.path.is_empty() {
             // Note: split out path before moving `err` into `Output::err`.
             let path = err.path.clone();

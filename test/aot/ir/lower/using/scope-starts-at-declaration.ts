@@ -4,8 +4,11 @@
 // CHECK-NOT: handler=
 // CHECK: integer=1
 // CHECK-NOT: handler=
-// CHECK: [[helper]] = Builtin builtin=CompilerHelpersGetDisposeMethod
-// CHECK-NEXT: = Call [[helper]], -, [[resource]]
+// CHECK: TypeTest [[resource]] testedType=undefined|null
+// CHECK-NOT: handler=
+// CHECK: testedType=function
+// CHECK: Jump -> next [[found]]({{*}})
+// CHECK-NEXT: [[found]]({{*}}):
 // CHECK-NEXT: Jump -> next [[covered]]()
 // CHECK-NEXT: [[covered]]() handler=[[landing]]():
 // CHECK: integer=2

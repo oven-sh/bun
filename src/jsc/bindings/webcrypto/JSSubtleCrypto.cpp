@@ -833,11 +833,6 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     return createWrapper<SubtleCrypto>(globalObject, WTF::move(impl));
 }
 
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, SubtleCrypto& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
 }
 
 #endif // ENABLE(WEB_CRYPTO)

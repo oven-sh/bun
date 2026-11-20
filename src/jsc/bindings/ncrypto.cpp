@@ -1103,7 +1103,7 @@ bool X509View::checkPublicKey(const EVPKeyPointer& pkey) const
 // options were no-ops. This implements OpenSSL's semantics over the same
 // matcher fetch()/tls.connect use.
 extern "C" int Bun__X509__checkHost(X509* x509, const uint8_t* host, size_t host_len,
-    uint32_t flags, BunString* out_peer);
+    uint32_t flags, Bun::OwnedString* out_peer);
 
 X509View::CheckMatch X509View::checkHost(const std::span<const char> host,
     int flags,
@@ -1111,7 +1111,7 @@ X509View::CheckMatch X509View::checkHost(const std::span<const char> host,
 {
     ClearErrorOnReturn clearErrorOnReturn;
     if (cert_ == nullptr) return CheckMatch::NO_MATCH;
-    BunString peer = { BunStringTag::Empty, nullptr };
+    Bun::OwnedString peer;
     switch (Bun__X509__checkHost(const_cast<X509*>(cert_),
         reinterpret_cast<const uint8_t*>(host.data()), host.size(),
         static_cast<uint32_t>(flags), peerName ? &peer : nullptr)) {

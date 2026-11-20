@@ -39,7 +39,7 @@ fn run_pass_over<'s>(
         to_check,
         &FileWork {
             requested,
-            after_file: Some(after_file),
+            after_file: Some(&|checker, file, _| after_file(checker, file)),
             after_commit: &|_| {},
             frees_tree: &|_| options.frees_trees,
             is_last_pass: &|| false,
@@ -180,7 +180,7 @@ fn is_tree_of_last_file_gone(is_last_pass: bool) -> bool {
             to_check,
             &FileWork {
                 requested: &|_| Requested::All,
-                after_file: Some(&|_, file| {
+                after_file: Some(&|_, file, _| {
                     let mut committed = committed.lock();
                     while file == last && *committed + 1 < all {
                         has_committed.wait_guarded(&mut committed);
@@ -406,6 +406,47 @@ fn codes_reported_about_a_type_that_a_gone_module_exports_again() -> Option<Vec<
 fn a_message_about_a_type_that_its_file_does_not_import_reads_no_tree_that_is_gone() {
     let codes = ask_until_answered(codes_reported_about_a_type_that_a_gone_module_exports_again);
     assert_eq!(codes, [2345]);
+}
+
+fn codes_reported_by_a_renewed_checker() -> Option<Vec<u32>> {
+    let files = [
+        (
+            "main.ts",
+            "/// <reference path=\"./bun.d.ts\" />\n\
+             import \"./a\";\nimport \"./far\";\nimport \"./late\";\n",
+        ),
+        (
+            "bun.d.ts",
+            "declare module \"bun\" { type int32 = number; }\n",
+        ),
+        ("a.ts", "export const first = [1].join();\n"),
+        ("far.ts", "export const far = [1, 2, 3].join();\n"),
+        // A contextual signature asks for `ProgramSymbols`.
+        (
+            "late.ts",
+            "export const f: (a: number) => void = a => { const s: string = a; };\n",
+        ),
+    ];
+    with_program(&files, &["./main.ts"], 1, |program| {
+        let [far, late] = ["far.ts", "late.ts"].map(|path| program.file(path));
+        let files = program.files();
+        let _watch = let_trees_go_behind(files, &[far, late]);
+        // SAFETY: no task has begun.
+        unsafe { (program.loaded).renew_checker(&|count, each| (0..count).for_each(each)) };
+        {
+            let _task = ReadingTask::begin();
+            files.note_commit(far);
+        }
+        wait_until_tree_is_gone(files, far)?;
+        let report = check_and_let_trees_go(program, vec![late], LOWERING_PASS);
+        Some(codes_reported(&report, late))
+    })
+}
+
+#[test]
+fn a_renewed_checker_reads_no_tree_that_is_gone() {
+    let codes = ask_until_answered(codes_reported_by_a_renewed_checker);
+    assert_eq!(codes, [2322]);
 }
 
 #[test]

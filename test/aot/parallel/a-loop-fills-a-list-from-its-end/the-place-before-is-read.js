@@ -1,4 +1,4 @@
-// STATISTIC: IndexedStoresCompiledAsAppends >= 1
+// STATISTIC: StoresGrowingArrays >= 1
 // STATISTIC: ArrayLiteralsAllocatedForLoops >= 1
 // Under: --aot-harden=proof-checks: the raise asks at the run what the walk has shown: the position is the length and lies below the room
 'use strict';

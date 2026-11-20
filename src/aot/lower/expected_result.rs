@@ -6,7 +6,7 @@ use super::{CheckerTypeId, FileLowering, FunctionLowering};
 use crate::builtins::id::{BuiltinClass, BuiltinId, BuiltinName};
 use crate::builtins::{builtin_value_of, table};
 use crate::ir::generated::{ExpectedResult, ExpectedResultFlags, LimitId};
-use crate::ir::{ExpectedResultId, Primitives, TypeId, TypeTable};
+use crate::ir::{ExpectedResultId, LayoutId, Primitives, TypeId, TypeTable};
 
 impl FileLowering<'_, '_, '_, '_> {
     fn find_expected_result(&mut self, call: ExprId) -> Option<ExpectedResultId> {
@@ -82,10 +82,20 @@ impl FileLowering<'_, '_, '_, '_> {
     ) -> Option<ExpectedResultId> {
         let ty = self.find_type_written_over(call)?;
         let limit = LimitId::MaxExpectedResultLayouts;
-        let layouts = self.collect_reached_layouts(ty, limit)?;
+        let layouts = self.collect_reached_layouts(ty, limit, true)?;
+        if !self.holds_all_layouts_of(ty, &layouts) {
+            return None;
+        }
         self.note_what_is_built(ty, limit);
         let expected = ExpectedResult { ty, layouts, flags };
         Some(self.fragment.add_expected_result(expected))
+    }
+
+    fn holds_all_layouts_of(&self, ty: TypeId, layouts: &[LayoutId]) -> bool {
+        let named = self.fragment.types.get(ty).layouts;
+        named
+            .iter()
+            .all(|layout| layouts.binary_search(layout).is_ok())
     }
 
     fn find_type_written_over(&mut self, mut value: ExprId) -> Option<TypeId> {
@@ -166,8 +176,11 @@ impl FileLowering<'_, '_, '_, '_> {
             return None;
         }
         let limit = LimitId::MaxExpectedResultLayouts;
-        let layouts = self.collect_reached_layouts(ty, limit)?;
         let is_made_by_parser = builtin.is_some_and(table::is_parser);
+        let layouts = self.collect_reached_layouts(ty, limit, is_made_by_parser)?;
+        if !self.holds_all_layouts_of(ty, &layouts) {
+            return None;
+        }
         let flags = match (answers_query, is_made_by_parser) {
             (true, _) => ExpectedResultFlags::IS_ROWS_OF_QUERY,
             (false, true) => ExpectedResultFlags::IS_MADE_BY_PARSER,

@@ -1,13 +1,18 @@
 import { test, vi } from "bun:test";
-const sleep = ms => new Promise(done => setTimeout(done, ms));
+// Runs the event loop that many times: jobs, unhandled rejections and immediates run each time, and no clock decides.
+const spinEventLoop = async (count = 20) => { while (count-- > 0) await new Promise(done => setImmediate(done)); };
+const firstGate = Promise.withResolvers(), secondGate = Promise.withResolvers();
 const tried = name => { try { require(name); return "answered"; } catch { return "threw"; } };
 let calls = 0;
 test("a", async () => {
-  vi.doMock("./wick.mjs", async () => { await sleep(20); return { width: "mocked" }; });
+  vi.doMock("./wick.mjs", async () => { await firstGate.promise; return { width: "mocked" }; });
   console.log(tried("./lamp.mjs"));
   vi.resetModules();
-  vi.doMock("./oil.mjs", async () => { calls++; await sleep(80); throw new Error("oil fails " + calls); });
+  vi.doMock("./oil.mjs", async () => { calls++; await secondGate.promise; throw new Error("oil fails " + calls); });
   console.log(tried("./flask.mjs"));
-  await sleep(200);
+  firstGate.resolve();
+  await spinEventLoop();
+  secondGate.resolve();
+  await spinEventLoop();
   console.log(await import("./flask.mjs").then(it => it.seen, error => error.message), calls);
 });

@@ -57,6 +57,13 @@ const argumentsStaysALet =
 // A test that is `test.failing` for what `bun run` does fails where compiled code does it right.
 // In mode `bundles` a test with several entry points is one test per entry point, `<id>/<file name of the entry point>`.
 const expectedFailures: Record<string, Record<string, string>> = {
+  "test/bundler/transpiler/preserve-use-strict-cjs.test.ts": {
+    '"use strict"; after another directive preserves strict mode with the inspector enabled':
+      "--aot does not support the debugger (BUN_INSPECT) for a program that is compiled",
+    [`${blockFunctions} > twoOfANameWithEval`]: "`bun run` drops the first of two functions of one name in a block",
+    [`${blockFunctions} > argumentsInArrow`]: argumentsStaysALet,
+    [`${blockFunctions} > argumentsBesideFunction`]: argumentsStaysALet,
+  },
   "test/bundler/transpiler/ts-use-define-for-class-fields.test.ts": {
     [`${classFields} > false: computed literal keys use [[Set]] semantics`]: fieldOverridesAccessor,
     [`${classFields} > false: computed non-literal key keeps the class native`]:
@@ -81,17 +88,14 @@ const expectedFailures: Record<string, Record<string, string>> = {
     [`${decoratorExpressions} > type arguments in decorator member expression are stripped`]:
       "TS1477: a property access follows an instantiation expression",
   },
-  "test/bundler/transpiler/preserve-use-strict-cjs.test.ts": {
-    [`${blockFunctions} > twoOfANameWithEval`]: "`bun run` drops the first of two functions of one name in a block",
-    [`${blockFunctions} > argumentsInArrow`]: argumentsStaysALet,
-    [`${blockFunctions} > argumentsBesideFunction`]: argumentsStaysALet,
-  },
   "test/bundler/bundler_jsx.test.ts": {
     "bundler > jsx/AutomaticFragmentNamedImportDev": untypedJsxRuntime,
     "bundler > jsx/AutomaticLocalShadowDev": untypedJsxRuntime,
     "bundler > autoImportTreeShaking > jsx/AutoImportDroppedWhenJsxUnusedBundledCjs": undeclaredIntrinsicElements,
     "bundler > autoImportTreeShaking > jsx/AutoImportKeptWhenJsxUsedBundledCjs": undeclaredIntrinsicElements,
     [`${fastRefresh} > jsx/FastRefreshClassStatementMethods.tsx`]: "TS2339: the class C declares neither c nor v",
+    [`${fastRefresh} > jsx/FastRefreshSiblingSignaturesAreDistinct`]:
+      "TS2488: `make` does not return a list on every path",
   },
   "test/bundler/esbuild/ts.test.ts": {
     "bundler > ts/DeclareClassFields": "TS2304: nothing declares c, d, C and D",

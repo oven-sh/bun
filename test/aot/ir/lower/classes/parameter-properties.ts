@@ -1,9 +1,9 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="Base" {{*}}kind=BaseConstructor
+// CHECK-NOT: NewObject
+// CHECK: = Call {{*}}calleeName="initial"
 // CHECK: [[allocated]] = NewObject {{*}}layout=[[layout]] @
 // CHECK-NEXT: [[this]] = Convert [[allocated]] declared={type=[[layout]]}
-// CHECK-NOT: PropDefine
-// CHECK: = Call {{*}}calleeName="initial"
 // CHECK: PropDefine [[this]], {{*}}key="a"
 // CHECK: PropDefine [[this]], {{*}}key="b"
 // CHECK-NOT: key="c"

@@ -14,7 +14,7 @@
 # f4 = make
 # RUN: link functions fields mechanisms=all
 # CHECK: function f4 unreached
-# CHECK: field L0.0 "x" proven=i32 writers-known
+# CHECK: field L0.0 "x" proven=int[0, 2147483647] writers-known
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: TypeError 2 true
 # RUN(NONE): run-in-shell mechanisms=none

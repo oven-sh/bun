@@ -14,8 +14,8 @@ pub use bun_sema::check::explain::MessageChain;
 pub use bun_sema::messages::Category;
 pub use compile::{
     BuildDiagnostic, CheckedProgram, CompileRequest, Demotion, DemotionCause, EntryPointFailure,
-    EntryPoints, FileFinder, FileFinderTables, LoadFailure, LoadedProgram, Locator, PassCount,
-    Passes, RoleDecision, TextLocator, check_and_lower, check_and_lower_noting_commits,
+    EntryPoints, FileFinder, FileFinderTables, LoadFailure, LoadedProgram, Locator, PartsOfVisit,
+    PassCount, Passes, RoleDecision, TextLocator, check_and_lower, check_and_lower_noting_commits,
     check_whole_files, decide_roles, drop_thread_caches, keep_verified_roles, load_program,
     log_message, resolve_names_known_in_part, run_on_one_thread_while, run_on_region_thread,
     run_on_threads_while, says_that_name_is_not_found, wake_idle_region_threads,
@@ -27,14 +27,15 @@ use bun_core::strings;
 use bun_paths::path_buffer_pool;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
-use bun_sema::atom::RecentAtoms;
+use bun_sema::atom::{Interner, RecentAtoms};
+use bun_sema::bind::find_commonjs_indicator;
 use bun_sema::check::aot::{DiagnosticClass, DiagnosticSubject};
 use bun_sema::check::commit::RefusedInstantiations;
 use bun_sema::check::errors::Checked;
 use bun_sema::check::explain::Explained;
-use bun_sema::check::{Program, Requested, compute_ecma_line_starts};
+use bun_sema::check::{Checker, Program, Requested, compute_ecma_line_starts};
 use bun_sema::config::{self, ConfigError};
-use bun_sema::hir::FileKind;
+use bun_sema::hir::{self, FileKind};
 use bun_sema::json::Json;
 use bun_sema::messages;
 use bun_sema::program::{
@@ -43,8 +44,8 @@ use bun_sema::program::{
 };
 pub use bun_sema::resolve::ScriptKind;
 use bun_sema::resolve::{
-    AOT_CONDITION, Host, ModuleDetection, Options, ProjectFile, ProjectFiles, ancestors,
-    contains_path, displayed_path, get_relative_path_from_directory, inside,
+    AOT_CONDITION, Host, ModuleDetection, Options, ParseOptions, ProjectFile, ProjectFiles,
+    ancestors, contains_path, displayed_path, get_relative_path_from_directory, inside,
     is_declaration_file_name, is_javascript, is_javascript_file, is_relative, is_same_path, join,
     output_declaration_file_name, run_with_current_helpers, to_path, to_path_in, typescript_path,
 };
@@ -129,7 +130,7 @@ impl ThreadCaches {
 }
 
 /// The allocator retains a thread's free pages for that thread, and only that thread can release them. Each thread of
-/// `pool` does so when it's next idle, like the bundler's `Worker::deinit_soon`.
+/// `pool` does so when it's next idle, like the bundler's `ThreadPool::drop`.
 fn release_free_pages_of(pool: &bun_threading::ThreadPool) {
     use bun_threading::thread_pool::{Node, Task};
     unsafe fn release(task: *mut Task) {
@@ -165,7 +166,7 @@ pub fn for_each_parallel_in_runs(
     } else if is_pool_thread() {
         region.work_off_with_idle_threads(runners - 1);
     } else {
-        region_pool().each((), |(), (), _| region.work_off(), &mut vec![(); runners]);
+        region_pool().each((), |(), (), _| region.work_off(), &vec![(); runners]);
     }
     region.panic.resume();
 }
@@ -185,11 +186,11 @@ pub(crate) fn for_each_parallel_while(
         return meanwhile();
     }
     let region = Region::new(caches, count, run, work);
-    let mut runners = vec![(); threads.clamp(1, count.div_ceil(run))];
+    let runners = vec![(); threads.clamp(1, count.div_ceil(run))];
     region_pool().each_while(
         (),
         |(), (), _| region.work_off(),
-        &mut runners,
+        &runners,
         || {
             region.panic.catch(meanwhile);
         },
@@ -218,7 +219,7 @@ pub(crate) fn for_each_with_helpers(
         region_pool().each_while(
             (),
             |(), (), _| region.work_off(),
-            &mut vec![(); helpers],
+            &vec![(); helpers],
             || region.work_off(),
         );
     }
@@ -243,7 +244,7 @@ pub(crate) fn for_each_with_share(
     region_pool().each_while(
         (),
         |(), (), _| region.work_off(),
-        &mut vec![(); helpers.min(count.div_ceil(run).saturating_sub(1))],
+        &vec![(); helpers.min(count.div_ceil(run).saturating_sub(1))],
         || {
             let _lent = caches.lend();
             region.work_off_with_spare_threads(shares);
@@ -751,7 +752,7 @@ impl<'a> Region<'a> {
                         self.work_off();
                         shares.lend(1);
                     },
-                    &mut vec![(); helpers],
+                    &vec![(); helpers],
                     || self.work_off_with_spare_threads(shares),
                 );
             }
@@ -822,6 +823,18 @@ impl Drop for Raised<'_> {
 /// A checker is replaced after it has checked `1 / MIN_TASKS` of the total cost, because its private tables grow with
 /// every file. A file that costs more than that is heavy and starts before the others.
 const MIN_TASKS: usize = 128;
+
+/// Cost estimate for checking a file: the number of identifiers in its expressions. Each is a symbol to resolve and
+/// a type to compute. The text size is a poor predictor: on storybook, tasks partitioned by it take 1.8 times as
+/// long as tasks partitioned by the measured time, whereas tasks partitioned by this estimate take 1.1 times as
+/// long.
+/// A type node is a type to compute too. A declaration file has no expressions, and next.js checks one of 2.9 MB
+/// that takes 23% of the check's instructions.
+fn cost_of_file(files: &Files<'_>, file: FileId) -> usize {
+    let (identifiers, type_nodes) = files.sizes[file.idx()];
+    identifiers as usize + type_nodes as usize + 1
+}
+
 /// See `TaskSize::ByCostAndThreads`. What lowering has found out about a type goes with the task, and the next task finds it out
 /// again: a program of 30,000 files takes 226 G instructions to lower on 16 threads with 16 tasks for each, 220 G with 8 and
 /// 215 G with 4, and holds 95 MB and 170 MB more.
@@ -891,6 +904,12 @@ pub struct PlanOptions {
     /// Only the files of a program that are in `Request::paths` are checked, not what they import. The types of their
     /// imports are computed on demand, as in an editor.
     pub checks_only_requested_paths: bool,
+    /// `--no-follow-imports`: like `checks_only_requested_paths`, and each file gets the errors that a check of its whole
+    /// project reports in it. So every root file is loaded, a page leads nowhere, and a file that the project doesn't have
+    /// isn't added to it but is an error, like a directory.
+    pub reports_only_requested_paths: bool,
+    /// `Report::times_of_files`
+    pub times_files: bool,
     /// Without a configuration file the defaults are `tsc`'s where `bun init` writes otherwise: the library is the default
     /// for the target, which has the DOM, in place of `ESNext` alone, and Bun's types aren't named though they're installed.
     pub takes_defaults_of_tsc: bool,
@@ -940,7 +959,7 @@ pub struct PlanOptions {
     /// the same sources for a hundred programs.
     pub shares_every_file: bool,
     /// Nothing is checked. The caller only wants `Report::globals`. Of a project's root files, only those that can
-    /// declare a global are loaded, judged by name and text (`may_declare_a_global`), plus the libraries and the
+    /// declare a global are loaded, judged by `may_declare_a_global`, plus the libraries and the
     /// `types` as always. Of their imports, only what declaration files import is loaded. A file of `Request::paths`
     /// with no configuration file above it isn't in any program, and nothing is reported for a program for which
     /// `Files::global_names` returns `None` or whose packages aren't installed.
@@ -1506,6 +1525,9 @@ pub struct Report {
     pub declaration_files: Vec<(Vec<u8>, Vec<u8>)>,
     pub load_time: Duration,
     pub check_time: Duration,
+    /// `PlanOptions::times_files`: how long each checked file took, in no order. What one file is the first to ask about another
+    /// counts for the one that asks. A file that is checked again, or in several projects, has an entry for each.
+    pub times_of_files: Vec<(Vec<u8>, Duration)>,
     /// The maximum stack usage of any file, in bytes.
     pub deepest_stack: usize,
     /// `Checker::work` of all the checkers together.
@@ -1546,6 +1568,7 @@ impl Report {
         #[cfg(test)]
         self.rounds.extend(other.rounds);
         self.check_time += other.check_time;
+        self.times_of_files.extend(other.times_of_files);
         self.deepest_stack = self.deepest_stack.max(other.deepest_stack);
         self.queries += other.queries;
     }
@@ -1591,6 +1614,18 @@ fn default_compiler_options() -> Json {
 
 fn global(code: u32, args: &[impl AsRef<[u8]>]) -> Diagnostic {
     new_compiler_diagnostic(code, args.iter().map(|arg| arg.as_ref().into()).collect())
+}
+
+/// An error of Bun's own, which has no number and no file. The text is an argument too, because two diagnostics with equal
+/// arguments are one.
+fn without_code(text: &[&[u8]]) -> Diagnostic {
+    let text = text.concat();
+    Diagnostic {
+        code: 0,
+        args: Box::new([text.as_slice().into()]),
+        text,
+        ..global(18003, &[""; 0])
+    }
 }
 
 /// `NewCompilerDiagnostic`
@@ -2177,11 +2212,18 @@ fn no_project_here(cwd: &[u8], below: &[Vec<u8>]) -> Diagnostic {
     text.extend_from_slice(b"\nTo check one: bun check -p ");
     text.extend_from_slice(&relative(&below[0]));
     text.extend_from_slice(b"\nTo check everything below this directory: bun check .");
-    Diagnostic {
-        text,
-        code: 0,
-        ..global(18003, &[""; 0])
-    }
+    without_code(&[&text])
+}
+
+/// `PlanOptions::reports_only_requested_paths`
+fn not_in_project(path: &[u8], config_path: &[u8]) -> Diagnostic {
+    without_code(&[
+        b"'",
+        &displayed_path(path)[..],
+        b"' is not in the project '",
+        &displayed_path(config_path)[..],
+        b"'. --no-follow-imports adds no file to it",
+    ])
 }
 
 fn check_request(disk: &host::Disk, request: &Request) -> Report {
@@ -2232,11 +2274,23 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     let is_case_sensitive = disk.is_case_sensitive();
     let is_same = |a: &[u8], b: &[u8]| is_same_path(a, b, is_case_sensitive);
     let (mut paths, missing): (Vec<_>, Vec<_>) = (request.paths.iter())
-        .map(|path| disk.with_on_disk_casing(&host::from_argument(&cwd, path)))
+        .map(|path| disk.with_on_disk_casing(&host::file_from_argument(disk, &cwd, path)))
         .partition(|path| disk.is_dir(path) || disk.is_file(path));
     let not_found = (missing.iter()).map(|path| global(6053, &[displayed_path(path)]));
     report.diagnostics.extend(not_found);
-    if paths.is_empty() && !missing.is_empty() {
+    if request.plan_options.reports_only_requested_paths {
+        let directories = paths.extract_if(.., |path| disk.is_dir(path));
+        let rejected = directories.map(|path| {
+            let path = displayed_path(&path);
+            without_code(&[
+                b"'",
+                &path[..],
+                b"' is a directory. --no-follow-imports takes files",
+            ])
+        });
+        report.diagnostics.extend(rejected);
+    }
+    if paths.is_empty() && !request.paths.is_empty() {
         return report;
     }
     let project = request.project;
@@ -2364,7 +2418,14 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
                 continue;
             }
             let nearest = config_in(dirname::<Posix>(path));
-            match projects.owner_of(disk, request, nearest, path) {
+            match projects.owner_of(disk, request, nearest.clone(), path) {
+                // A solution has no files of its own.
+                Err(None)
+                    if request.plan_options.reports_only_requested_paths
+                        && let Some(nearest) = &nearest =>
+                {
+                    report.diagnostics.push(not_in_project(path, nearest));
+                }
                 Err(_) if request.plan_options.requires_including_project => {
                     if fallback_project.is_some() {
                         add(fallback_project.clone(), Extent::Project, path.clone());
@@ -2444,20 +2505,17 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     }
     let only_globals = request.plan_options.only_globals;
     by_project.retain(|it| !it.2.is_empty() && !(only_globals && it.0.is_none()));
-    if by_project.is_empty() && only_globals {
+    let is_rejected =
+        request.plan_options.reports_only_requested_paths && !report.diagnostics.is_empty();
+    if by_project.is_empty() && (only_globals || is_rejected) {
         return report;
     }
     if by_project.is_empty() {
-        report.diagnostics.push(Diagnostic {
-            text: [
-                b"Nothing to check: no TypeScript files in '",
-                &displayed_path(&paths[0])[..],
-                b"'",
-            ]
-            .concat(),
-            code: 0,
-            ..global(18003, &[""; 0])
-        });
+        report.diagnostics.push(without_code(&[
+            b"Nothing to check: no TypeScript files in '",
+            &displayed_path(&paths[0])[..],
+            b"'",
+        ]));
         return report;
     }
     let is_single_project = by_project.len() == 1;
@@ -2810,7 +2868,10 @@ fn check_project_of(
     };
     let is_case_sensitive = disk.is_case_sensitive();
     let named = target.named.map(|(extent, named)| {
-        if extent == Extent::Project && !request.plan_options.only_globals {
+        let adds_files = !request.plan_options.only_globals
+            // Without a configuration file they are the project.
+            && !(request.plan_options.reports_only_requested_paths && target.config.is_some());
+        if extent == Extent::Project && adds_files {
             // Load the whole project even when only some files are checked. Global declarations and module
             // augmentations from any file affect every other file, so a file must produce the same errors with and
             // without path arguments.
@@ -3282,6 +3343,16 @@ impl Host for WithOutputs<'_> {
         options: bun_sema::resolve::ParseOptions,
     ) -> bun_sema::hir::File<'s> {
         self.disk.parse(arena, path, text, atoms, options)
+    }
+    fn parse_top_level<'s>(
+        &self,
+        arena: &'s Arena,
+        path: &[u8],
+        text: &[u8],
+        atoms: &bun_sema::atom::Interner<'s>,
+        options: bun_sema::resolve::ParseOptions,
+    ) -> Option<bun_sema::hir::File<'s>> {
+        self.disk.parse_top_level(arena, path, text, atoms, options)
     }
     fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
         self.disk.parse_package_json(arena, text)
@@ -4101,15 +4172,14 @@ fn has_no_installed_dependencies(host: &dyn Host, config: &[u8]) -> bool {
     !is_installed(first) && !names.any(is_installed)
 }
 
-/// True if the root file at `path` can add to its program's globals. That's a declaration file, a script (which has
-/// neither `import` nor `export`, nor `require` in JavaScript), or a file with `declare global` or a `/// <reference`.
-/// Judged by its text, because a false positive only costs a parse. In a script `export` stands in a namespace alone. It
-/// misses a script that has one of those words in a comment, and a comment between `declare` and `global`. `imports` is called with the name of each package the file
-/// imports for its side effects, which may include declaring globals.
+/// True if the root file at `path` can add to its program's globals. That's a declaration file, a script, or a file with
+/// `declare global` or a `/// <reference`. A false positive only costs a parse, so the words are looked for in the text.
+/// Whether the file is a script is not guessed. `imports` is called with the name of each package the file imports for its
+/// side effects, which may include declaring globals.
 fn may_declare_a_global(
     host: &dyn Host,
     path: &[u8],
-    every_file_is_a_module: bool,
+    options: ParseOptions,
     imports: &dyn Fn(&[u8]),
 ) -> bool {
     if is_declaration_file_name(path) {
@@ -4121,13 +4191,14 @@ fn may_declare_a_global(
     let Some(text) = host.read(path) else {
         return false;
     };
-    text_may_declare_a_global(path, &text, every_file_is_a_module, imports)
+    text_may_declare_a_global(host, path, &text, options, imports)
 }
 
 fn text_may_declare_a_global(
+    host: &dyn Host,
     path: &[u8],
     text: &[u8],
-    every_file_is_a_module: bool,
+    options: ParseOptions,
     imports: &dyn Fn(&[u8]),
 ) -> bool {
     let has = |word: &[u8]| strings::contains(text, word);
@@ -4139,16 +4210,15 @@ fn text_may_declare_a_global(
     for word in [&b"global"[..], b"module"] {
         let mut from = 0;
         while let Some(found) = strings::index_of(&text[from..], word) {
-            let before = text[..from + found].trim_ascii_end();
-            if before.len() < from + found && before.ends_with(b"declare") {
+            if ends_with_declare(&text[..from + found]) {
                 return true;
             }
             from += found + word.len();
         }
     }
-    let (mut from, mut has_import) = (0, false);
+    let mut from = 0;
     while let Some(found) = strings::index_of(&text[from..], b"import") {
-        (from, has_import) = (from + found + b"import".len(), true);
+        from += found + b"import".len();
         if let [quote @ (b'"' | b'\''), name @ ..] = text[from..].trim_ascii_start()
             && let Some(end) = strings::index_of_char_usize(name, *quote)
             && !is_relative(&name[..end])
@@ -4156,10 +4226,145 @@ fn text_may_declare_a_global(
             imports(&name[..end]);
         }
     }
-    !every_file_is_a_module
-        && !has_import
-        && (!has(b"export") || has(b"namespace"))
-        && !(is_javascript(path) && has(b"require"))
+    options.module_detection != ModuleDetection::Force && is_script(host, path, text, options)
+}
+
+/// True if neither an `import` nor an `export` makes the file a module, nor a `require` if it's JavaScript.
+fn is_script(host: &dyn Host, path: &[u8], text: &[u8], options: ParseOptions) -> bool {
+    let has = |word: &[u8]| strings::contains(text, word);
+    let is_module = |hir: &hir::File| {
+        hir.has_module_syntax || hir.is_js && find_commonjs_indicator(hir).is_some()
+    };
+    if !has(b"import") && !has(b"export") && !(is_javascript(path) && has(b"require")) {
+        return true;
+    }
+    // Nearly every module is told by its first statement.
+    if starts_with_module_statement(text, is_javascript(path)) {
+        return false;
+    }
+    let session = Session::new();
+    let (arena, atoms) = (session.arena(), Interner::new_in(&session));
+    let top_level = host.parse_top_level(arena, path, text, &atoms, options);
+    !is_module(&top_level.unwrap_or_else(|| host.parse(arena, path, text, &atoms, options)))
+}
+
+/// True if the first statement behind the directives is certain to make the file a module.
+fn starts_with_module_statement(text: &[u8], is_javascript: bool) -> bool {
+    let mut rest = text.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(text);
+    if rest.starts_with(b"#!") {
+        rest = after_line(rest);
+    }
+    loop {
+        rest = skip_trivia(rest);
+        if let [quote @ (b'"' | b'\''), directive @ ..] = rest {
+            let Some(end) = strings::index_of_any(directive, &[*quote, b'\\', b'\n', b'\r']) else {
+                return false;
+            };
+            if directive[end] != *quote {
+                return false;
+            }
+            rest = skip_trivia(&directive[end + 1..]);
+            rest = rest.strip_prefix(b";").unwrap_or(rest);
+            continue;
+        }
+        if let Some(rest) = strip_word(rest, b"export") {
+            // `export as namespace N` makes no module.
+            return strip_word(skip_trivia(rest), b"as").is_none();
+        }
+        let Some(rest) = strip_word(rest, b"import") else {
+            return is_javascript && starts_with_commonjs(rest);
+        };
+        // `import a = b.c`, `import(..)` and `import.meta` have one of the others before any quote. In a comment there may be
+        // anything.
+        let first = strings::index_of_any(rest, b"\"'=(./;");
+        return first.is_some_and(|at| matches!(rest[at], b'"' | b'\''));
+    }
+}
+
+/// True if `text` starts with `require("a")`, `const a = require("a")`, `exports.a =` or `module.exports =`, without a
+/// comment in between.
+fn starts_with_commonjs(text: &[u8]) -> bool {
+    if let Some(rest) = strip_word(text, b"module").and_then(|it| it.strip_prefix(b".")) {
+        let rest = strip_word(rest, b"exports").map(<[u8]>::trim_ascii_start);
+        return matches!(rest, Some([b'=', after, ..]) if *after != b'=');
+    }
+    if let Some(rest) = strip_word(text, b"exports").and_then(|it| it.strip_prefix(b".")) {
+        let is_name = |byte: &u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$');
+        let name = rest.iter().take_while(|it| is_name(it)).count();
+        let rest = rest[name..].trim_ascii_start();
+        return name > 0 && matches!(rest, [b'=', after, ..] if *after != b'=');
+    }
+    const DECLARATIONS: [&[u8]; 3] = [b"const", b"let", b"var"];
+    let declared = DECLARATIONS.iter().find_map(|it| strip_word(text, it));
+    let value = match declared {
+        Some(rest) => match strings::index_of_any(rest, b"='\"`/();") {
+            Some(at) if rest[at] == b'=' => rest[at + 1..].trim_ascii_start(),
+            _ => return false,
+        },
+        None => text,
+    };
+    let argument = strip_word(value, b"require")
+        .and_then(|it| it.trim_ascii_start().strip_prefix(b"("))
+        .map(<[u8]>::trim_ascii_start);
+    let Some([quote @ (b'"' | b'\''), name @ ..]) = argument else {
+        return false;
+    };
+    let end = strings::index_of_char_usize(name, *quote);
+    end.is_some_and(|end| name[end + 1..].trim_ascii_start().starts_with(b")"))
+}
+
+/// What stands behind the whole word `word`, if `text` starts with it.
+fn strip_word<'t>(text: &'t [u8], word: &[u8]) -> Option<&'t [u8]> {
+    let is_part_of_name = |byte: &u8| {
+        byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | b'\\') || !byte.is_ascii()
+    };
+    let rest = text.strip_prefix(word)?;
+    (!rest.first().is_some_and(is_part_of_name)).then_some(rest)
+}
+
+fn after_line(text: &[u8]) -> &[u8] {
+    let end = strings::index_of_any(text, b"\r\n");
+    end.map_or(&[][..], |end| &text[end + 1..])
+}
+
+/// `text` without the white space and the comments that it starts with.
+fn skip_trivia(text: &[u8]) -> &[u8] {
+    let mut rest = text;
+    loop {
+        rest = match rest.trim_ascii_start() {
+            [b'/', b'/', comment @ ..] => after_line(comment),
+            [b'/', b'*', comment @ ..] => match strings::index_of(comment, b"*/") {
+                Some(end) => &comment[end + 2..],
+                None => &[],
+            },
+            rest => return rest,
+        };
+    }
+}
+
+/// True if `text` ends with `declare`, and white space or comments.
+fn ends_with_declare(text: &[u8]) -> bool {
+    let mut before = text;
+    loop {
+        let trimmed = before.trim_ascii_end();
+        let is_behind = trimmed.len() < text.len();
+        if is_behind && trimmed.ends_with(b"declare") {
+            return true;
+        }
+        let is_behind_line = strings::contains_char(&before[trimmed.len()..], b'\n');
+        let comment = match trimmed.strip_suffix(b"*/") {
+            Some(comment) => strings::last_index_of(comment, b"/*"),
+            None if is_behind_line => {
+                let line = strings::last_index_of_char(trimmed, b'\n').map_or(0, |at| at + 1);
+                strings::index_of(&trimmed[line..], b"//").map(|at| line + at)
+            }
+            None => None,
+        };
+        match comment {
+            Some(start) => before = &trimmed[..start],
+            None => return false,
+        }
+    }
 }
 
 /// Calls `visit` with each string that stands behind `from`, `import` or `require`, in any form. Judged by the text: a false
@@ -4169,9 +4374,9 @@ fn for_each_imported_name(text: &[u8], visit: &mut dyn FnMut(&[u8])) {
         let mut from = 0;
         while let Some(found) = strings::index_of(&text[from..], word) {
             from += found + word.len();
-            let rest = text[from..].trim_ascii_start();
-            let rest = rest.strip_prefix(b"(").unwrap_or(rest).trim_ascii_start();
-            if let [quote @ (b'"' | b'\''), name @ ..] = rest
+            let rest = skip_trivia(&text[from..]);
+            let rest = rest.strip_prefix(b"(").map_or(rest, skip_trivia);
+            if let [quote @ (b'"' | b'\'' | b'`'), name @ ..] = rest
                 && let Some(end) = strings::index_of_char_usize(name, *quote)
             {
                 visit(&name[..end]);
@@ -4237,10 +4442,10 @@ fn find_listed_file(listed: &FxHashMap<&[u8], usize>, path: &[u8]) -> Option<usi
 fn for_each_augmented_file(text: &[u8], visit: &mut dyn FnMut(&[u8])) {
     let mut from = 0;
     while let Some(found) = strings::index_of(&text[from..], b"module") {
-        let before = text[..from + found].trim_ascii_end();
+        let is_declared = ends_with_declare(&text[..from + found]);
         from += found + b"module".len();
-        if before.ends_with(b"declare")
-            && let [quote @ (b'"' | b'\''), name @ ..] = text[from..].trim_ascii_start()
+        if is_declared
+            && let [quote @ (b'"' | b'\''), name @ ..] = skip_trivia(&text[from..])
             && let Some(end) = strings::index_of_char_usize(name, *quote)
             && is_relative(&name[..end])
         {
@@ -4252,12 +4457,12 @@ fn for_each_augmented_file(text: &[u8], visit: &mut dyn FnMut(&[u8])) {
 /// The files of `files` that a program that starts elsewhere can't see unless it names them: modules that declare nothing for
 /// other files and bring in nothing that could. A file of `files` that one imports is judged by itself. A file beyond them may
 /// declare anything, and of the files that name a package the first brings the package in. A file that another adds to by
-/// `declare module` is seen with it: nothing else loads it. `is_wanted`: a file that counts whatever it holds. So a check of a few files of a large project reads each of the others once and parses only the few that
+/// `declare module` is seen with it: nothing else loads it. `is_wanted`: a file that counts whatever it holds. So a check of a few files of a large project reads each of the others once and loads only the few that
 /// matter.
 fn find_files_others_cannot_see(
     host: &dyn Host,
     files: &[Vec<u8>],
-    every_file_is_a_module: bool,
+    options: ParseOptions,
     is_wanted: &(dyn Fn(&[u8]) -> bool + Sync),
 ) -> FxHashSet<Vec<u8>> {
     let listed: FxHashMap<&[u8], usize> = (files.iter().enumerate())
@@ -4294,8 +4499,7 @@ fn find_files_others_cannot_see(
                 if !named.is_empty() {
                     packages.lock().append(&mut named);
                 }
-                leads_beyond
-                    || text_may_declare_a_global(file, &text, every_file_is_a_module, &|_| {})
+                leads_beyond || text_may_declare_a_global(host, file, &text, options, &|_| {})
             });
         if is_seen {
             may_be_seen[at].store(true, Ordering::Relaxed);
@@ -4360,7 +4564,7 @@ fn check_named_files(
             .filter(|error| !error.is_about_options)
             .map(config_diagnostic),
     );
-    let always_reported = report.diagnostics.len();
+    let mut always_reported = report.diagnostics.len();
     let is_fallback_project = request.plan_options.project_is_fallback
         && request.project.is_some_and(|it| {
             let it = host::from_argument(&host::from_native(request.cwd), it);
@@ -4426,14 +4630,14 @@ fn check_named_files(
             return report;
         }
         project.options.imports_of_sources_add_no_file = true;
-        let is_module = project.options.module_detection == ModuleDetection::Force;
+        let options = project.options.for_parsing();
         let roots = &project.files;
         let is_kept: Vec<AtomicBool> = roots.iter().map(|_| AtomicBool::new(false)).collect();
         // `import "mocha";`: the name and the file.
         let side_effect_imports: Guarded<Vec<(Vec<u8>, usize)>> = Guarded::new(Vec::new());
         host.parallel(roots.len(), &|at| {
             let imports = |name: &[u8]| side_effect_imports.lock().push((name.to_vec(), at));
-            let may = may_declare_a_global(host, &roots[at], is_module, &imports);
+            let may = may_declare_a_global(host, &roots[at], options, &imports);
             is_kept[at].store(may, Ordering::Relaxed);
         });
         // One file per name is enough to bring the package in, so the first is kept.
@@ -4461,13 +4665,14 @@ fn check_named_files(
         && project.written.files.is_none();
     let included = project.files.len();
     if !request.plan_options.only_globals
+        && !request.plan_options.reports_only_requested_paths
         && !project.options.reports_files_outside_its_roots()
         && let Some(named) = named
     {
-        let is_module = project.options.module_detection == ModuleDetection::Force;
+        let options = project.options.for_parsing();
         let is_case_sensitive = host.is_case_sensitive();
         project.options.roots_read_when_named =
-            find_files_others_cannot_see(host, &project.files, is_module, &|file| {
+            find_files_others_cannot_see(host, &project.files, options, &|file| {
                 is_among(named, &to_path(file, is_case_sensitive))
             });
     }
@@ -4569,9 +4774,9 @@ fn check_named_files(
     let mut to_check: Vec<FileId> = (0..program.files.modules.len())
         .filter(|&i| {
             let module = &program.files.modules[i];
-            match module.hir.kind {
+            match module.facts.kind {
                 // Only parse errors are reported for JSON files.
-                FileKind::Json => module.hir.has_parse_diagnostics,
+                FileKind::Json => program.files.hir(FileId(i as u32)).has_parse_diagnostics,
                 // `SkipTypeChecking`, and nothing is emitted for a declaration file.
                 FileKind::Declaration => {
                     !skip_lib_check && !(skip_default_lib_check && module.is_lib)
@@ -4597,9 +4802,13 @@ fn check_named_files(
         }
         while let Some(i) = to_follow.pop() {
             // A page represents its scripts.
-            let specifiers = modules[i].bound.specifiers.iter();
+            let specifiers = program.files.bound(FileId(i as u32)).specifiers.iter();
             let specifiers = specifiers.map(|&it| program.files.atoms.bytes(it));
-            let pages = specifiers.filter(|it| it.ends_with(b".html") && is_relative(it));
+            let pages = specifiers.filter(|it| {
+                !request.plan_options.reports_only_requested_paths
+                    && it.ends_with(b".html")
+                    && is_relative(it)
+            });
             let directory = dirname::<Posix>(modules[i].file_name());
             let scripts = pages.flat_map(|page| host.scripts_of_page(&join(directory, page)));
             let scripts = scripts.filter_map(|script| {
@@ -4609,10 +4818,9 @@ fn check_named_files(
                 }
                 here
             });
-            let edges = match request.plan_options.checks_only_requested_paths {
-                true => &[][..],
-                false => modules[i].edges,
-            };
+            let follows = !request.plan_options.checks_only_requested_paths
+                && !request.plan_options.reports_only_requested_paths;
+            let edges = if follows { modules[i].edges } else { &[] };
             for edge in edges.iter().copied().chain(scripts) {
                 if !std::mem::replace(&mut is_reached[edge.idx()], true) {
                     to_follow.push(edge.idx());
@@ -4621,17 +4829,38 @@ fn check_named_files(
         }
         is_reached
     });
+    if request.plan_options.reports_only_requested_paths
+        && let Some(named) = named
+        && !config_path.is_empty()
+    {
+        let cwd = host::from_native(request.cwd);
+        let is_missing = |path: &[u8]| {
+            is_among(named, &to_path(path, host.is_case_sensitive()))
+                && !program.files.by_path.contains(path)
+        };
+        let paths = request.paths.iter();
+        let paths = paths.map(|it| host::file_from_argument(host, &cwd, it));
+        let missing = paths.filter(|it| is_missing(it));
+        (report.diagnostics).extend(missing.map(|it| not_in_project(&it, &config_path)));
+        always_reported = report.diagnostics.len();
+    }
     // `check_request` checks those scripts in another program afterwards.
     if !scripts_elsewhere.is_empty() {
         dropped.before_the_process_ends.set(None);
     }
     report.scripts_elsewhere = scripts_elsewhere;
-    if let Some(is_reached) = &is_reached {
-        to_check.retain(|file| is_reached[file.idx()]);
-    }
     if let Some(is_owned_elsewhere) = is_owned_elsewhere {
         let path = |f: FileId| program.files.modules[f.idx()].path.text;
         to_check.retain(|&f| !is_owned_elsewhere(path(f)));
+    }
+    let mut with_include_problems = Vec::new();
+    if let Some(is_reached) = &is_reached {
+        if request.plan_options.reports_only_requested_paths {
+            with_include_problems = program.files.files_with_include_problems();
+            let is_left_out = |file: &FileId| !is_reached[file.idx()] && to_check.contains(file);
+            with_include_problems.retain(is_left_out);
+        }
+        to_check.retain(|file| is_reached[file.idx()]);
     }
     let lists_files_only = is_true(b"listFilesOnly") && request.stops_like_tsc;
     if lists_files_only {
@@ -4648,6 +4877,7 @@ fn check_named_files(
         report,
         config_path,
         to_check,
+        with_include_problems,
         threads,
         in_room,
         is_reached,
@@ -4671,6 +4901,8 @@ struct LoadedFiles<'a, 's> {
     report: Report,
     config_path: Vec<u8>,
     to_check: Vec<FileId>,
+    /// The files that aren't checked otherwise, of which `GetIncludeProcessorDiagnostics` is reported.
+    with_include_problems: Vec<FileId>,
     threads: usize,
     in_room: Option<&'a RoomSlot<'a>>,
     is_reached: Option<Vec<bool>>,
@@ -4692,6 +4924,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         mut report,
         config_path,
         to_check,
+        with_include_problems,
         threads,
         in_room,
         is_reached,
@@ -4706,7 +4939,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
     } = loaded;
     let session = program.session;
     let first_round = file_work.map_or(0, |work| work.first_round);
-    let size = |f: FileId| program.files.modules[f.idx()].hir.source_len;
+    let size = |f: FileId| program.files.modules[f.idx()].facts.source_len;
     report.files_checked = to_check.len();
     // `SkipTypeChecking`: besides its syntax errors, such a file only has what `Emit` reports, which is called after
     // the semantic and global diagnostics of the whole program are collected. So these files come after the
@@ -4717,6 +4950,13 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
     let checker = boxed_checker(None);
     let (type_checked, only_emitted): (Vec<FileId>, Vec<FileId>) = (to_check.into_iter())
         .partition(|&file| file_work.is_some() || checker.reports_semantic_errors(file));
+    if let Some(work) = file_work {
+        for &file in &type_checked {
+            if (work.requested)(file) == Requested::All && checker.reports_semantic_errors(file) {
+                program.set_check_pending(file);
+            }
+        }
+    }
     drop(checker);
     let is_any_type_checked = !type_checked.is_empty();
     let (to_check, only_emitted) = match is_any_type_checked {
@@ -4726,7 +4966,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
     if let Some(progress) = request.progress {
         let bytes = to_check
             .iter()
-            .map(|f| program.files.modules[f.idx()].hir.source_len as usize)
+            .map(|f| program.files.modules[f.idx()].facts.source_len as usize)
             .sum();
         progress.bytes_to_check.fetch_add(bytes, Ordering::Relaxed);
         progress
@@ -4746,7 +4986,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         if module.is_lib {
             host.read(module.file_name()).unwrap_or_default()
         } else {
-            std::borrow::Cow::Borrowed(&module.hir.text[..])
+            std::borrow::Cow::Borrowed(&program.files.hir(file).text[..])
         }
     };
     // The text and the line starts of each file that related information in another file points into. Thousands of
@@ -4869,12 +5109,22 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
             unsafe { program.files.free_tree(file) };
         }
     };
+    let times_files = request.plan_options.times_files;
+    let times_of_files: Guarded<Vec<(FileId, Duration)>> = Guarded::new(Vec::new());
+    let note_time = |file: FileId, began: Option<Instant>| {
+        if let Some(began) = began {
+            let took = began.elapsed();
+            times_of_files.lock().push((file, took));
+        }
+    };
     // Checks files outside the queue. Whatever the checker stores is dropped with it.
     let check_chunk = |files: &[FileId], expected: Requested| {
         let mut checker = new_checker(expected, None);
         let (mut checked, mut incomplete) = (Vec::new(), Vec::new());
         for &file in files {
+            let check_began = times_files.then(Instant::now);
             checked.push((file, checker.check_file(file)));
+            note_time(file, check_began);
             if let Some(after_file) = request.after_file
                 && expected == wanted
             {
@@ -4925,7 +5175,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
             .map(|one| Guarded::new(Some(one)))
             .collect();
         let finish = |i: usize| {
-            let _reading = bun_sema::program::ReadingNoTrees::begin();
+            let _reading = bun_sema::program::ReadingWithoutKeeping::begin();
             let (file, mut checked) = unfinished[i].lock().take().unwrap();
             if let Some(emitted_text) = checked.declaration_file.take() {
                 let path = program.files.modules[file.idx()].file_name().to_vec();
@@ -4945,17 +5195,10 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         });
     };
     let bytes_of = |index: usize| size(to_check[index]) as usize;
-    // Cost estimate for checking a file: the number of identifiers in its expressions. Each is a symbol to resolve and
-    // a type to compute. The text size is a poor predictor: on storybook, tasks partitioned by it take 1.8 times as
-    // long as tasks partitioned by the measured time, whereas tasks partitioned by this estimate take 1.1 times as
-    // long.
-    // A type node is a type to compute too. A declaration file has no expressions, and next.js checks one of 2.9 MB
-    // that takes 23% of the check's instructions.
-    let cost_of = |file: FileId| {
-        let (identifiers, type_nodes) = program.files.sizes[file.idx()];
-        identifiers as usize + type_nodes as usize + 1
-    };
-    let costs: Vec<usize> = to_check.iter().map(|&file| cost_of(file)).collect();
+    let costs: Vec<usize> = to_check
+        .iter()
+        .map(|&file| cost_of_file(program.files, file))
+        .collect();
     let size_of = |index: usize| costs[index];
     let threads = match in_room {
         Some(room_slot) if room_slot.fits_one_thread => 1,
@@ -4966,6 +5209,8 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
     let rounds: Guarded<Vec<RoundReport>> = Guarded::new(Vec::new());
     // The files of the discarded tasks.
     let lost: Guarded<Vec<usize>> = Guarded::new(Vec::new());
+    // The files of which a part has given up at a limit, as indexes into `to_check`.
+    let gave_up_in_parts: Guarded<Vec<usize>> = Guarded::new(Vec::new());
     let note_cycles_entered = file_work
         .filter(|work| !(work.is_last_pass)())
         .and_then(|work| work.note_cycles_entered);
@@ -5006,12 +5251,8 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         .map(|(index, &file)| (file, index)))
     .collect();
     let imports_of = |importer: usize| {
-        let (edges, code_edges) = {
-            let _reading = bun_sema::program::ReadingNoTrees::begin();
-            let module = program.files.module(to_check[importer]);
-            (module.edges, module.code_edges)
-        };
-        let imported = edges.iter().chain(code_edges);
+        let module = program.files.module(to_check[importer]);
+        let imported = module.edges.iter().chain(module.code_edges);
         imported.filter_map(|file| index_of_file.get(file).copied())
     };
     // `imports_of` every file, made when the first visit is discarded: where each file's begin, and all of them.
@@ -5085,7 +5326,6 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         };
         // Counted while the trees are here.
         let (files_in_order, bytes_in_order) = {
-            let _reading = bun_sema::program::ReadingNoTrees::begin();
             let depends_on_order = |&&file: &&usize| {
                 let bound = program.files.bound(to_check[file]);
                 logs_round && bound.has_types_that_depend_on_order()
@@ -5365,12 +5605,64 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 }
                 checker.record_cycles_entered(note_cycles_entered.is_some());
                 let questions = file_work.and_then(|work| Some((work, work.after_file?)));
+                let parts_run = AtomicUsize::new(0);
+                let has_part_given_up = AtomicBool::new(false);
+                let run_parts = |count: usize,
+                                 ask: &(dyn Fn(&mut Checker<'_, 's>, usize) + Sync),
+                                 meanwhile: &mut dyn FnMut()| {
+                    let Some(work) = file_work else {
+                        return false;
+                    };
+                    let was_discarded = AtomicBool::new(false);
+                    let order = {
+                        let final_files = final_files.lock();
+                        let (is_checked, next) = &*final_files;
+                        (
+                            (*next..index).all(|before| is_checked[before]),
+                            is_first_in_component(index, &final_files),
+                        )
+                    };
+                    let first_part = parts_run.fetch_add(count, Ordering::Relaxed);
+                    let ask_part = |part: usize| {
+                        let mut checker = new_checker(expected, None);
+                        let reading = bun_sema::program::ReadingTask::begin();
+                        // No other task of the round has that number: the index of each is that of a file.
+                        let number = (first_part + part + 1) * to_check.len() + first;
+                        checker.begin_task(first_round + round as u32, number as u32);
+                        checker.see_commits(is_last_round);
+                        checker.set_first_in_order(order.0, order.1);
+                        checker.set_requested(work.requested_while_asked(program.files, file));
+                        checker.begin_questions(file);
+                        ask(&mut checker, part);
+                        if checker.was_discarded() {
+                            was_discarded.store(true, Ordering::Relaxed);
+                            if !checker.can_recheck_early() {
+                                has_part_given_up.store(true, Ordering::Relaxed);
+                            }
+                        }
+                        deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
+                        queries.fetch_add(checker.work as usize, Ordering::Relaxed);
+                        checker.end_task_after_commits();
+                        drop(checker);
+                        drop(reading);
+                        bun_sema::session::give_back_free_memory();
+                    };
+                    host.parallel_while(count, &ask_part, meanwhile);
+                    !was_discarded.into_inner()
+                };
+                let parts_of_visit = PartsOfVisit {
+                    run: &run_parts,
+                    in_parallel: &|count, work| host.parallel(count, work),
+                    has_given_up: is_last_round && gave_up_in_parts.lock().contains(&index),
+                };
                 let passes_over_depth_limit = file_work.is_some() && is_last_round;
                 checker.leave_depth_limit_unreported(passes_over_depth_limit);
                 checker.allow_refused_instantiations_of_next_file();
                 let step = file_steps::count(FileStep::Check);
                 let began = step.as_ref().map(|it| it.now());
+                let check_began = times_files.then(Instant::now);
                 let mut checked = checker.check_file(file);
+                note_time(file, check_began);
                 drop(step);
                 if passes_over_depth_limit && questions.is_none() {
                     loop {
@@ -5411,7 +5703,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                     let _step = file_steps::count(FileStep::Lower);
                     loop {
                         checker.set_requested(work.requested_while_asked(program.files, file));
-                        after_file(&mut checker, file);
+                        after_file(&mut checker, file, &parts_of_visit);
                         // No ordinary visit at the end: it would store results cut off at the limit, for the next file to find.
                         if !passes_over_depth_limit
                             || checker.compute_refused_instantiations()
@@ -5447,11 +5739,17 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                         let bytes = bytes_of(index);
                         progress.bytes_checked.fetch_sub(bytes, Ordering::Relaxed);
                     }
+                    // A limit that a part has reached is one of the visit: the file waits for the last round.
+                    let has_part_given_up = has_part_given_up.into_inner();
+                    if has_part_given_up {
+                        gave_up_in_parts.lock().push(index);
+                    }
+                    let can_recheck_early = checker.can_recheck_early() && !has_part_given_up;
                     let imports_awaited = {
                         let component_of = |index: usize| {
                             (program.files.components.of_file).get(to_check[index].idx())
                         };
-                        let mut seen = match checker.can_recheck_early() {
+                        let mut seen = match can_recheck_early {
                             true => reached_from(index),
                             false => Vec::new(),
                         };
@@ -5463,7 +5761,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                     };
                     {
                         let visit = &mut visits.lock()[index];
-                        visit.can_recheck_early = checker.can_recheck_early();
+                        visit.can_recheck_early = can_recheck_early;
                         visit.unresolved_cycle = checker.take_unresolved_cycle();
                         visit.was_discarded_at_cycle = !visit.unresolved_cycle.is_empty();
                         visit.imports_awaited = imports_awaited;
@@ -5638,7 +5936,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 };
                 // A task requests its next file before it commits the last one, and that commit can make a discarded
                 // file the next.
-                let file = first.take().or_else(&mut next);
+                let file = first.take().or_else(next);
                 first = file.and_then(|file| run_task(file, &mut next));
                 if file.is_some() && is_called_again {
                     return true;
@@ -5860,7 +6158,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         if stops {
             let suspects: Vec<FileId> = (0..program.files.modules.len())
                 .filter(|&i| {
-                    let hir = &program.files.modules[i].hir;
+                    let hir = program.files.hir(FileId(i as u32));
                     // A file that's nested too deeply is only reported when it's visited.
                     (hir.has_parse_diagnostics
                         || hir.has_parse_or_grammar_diagnostics()
@@ -5917,6 +6215,16 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 report.diagnostics.extend(global_errors());
             }
         }
+        if !with_include_problems.is_empty() {
+            host.parallel(1, &|_| {
+                let mut checker = new_checker(wanted, None);
+                let files = with_include_problems.iter();
+                let checked = files.map(|&it| (it, checker.check_included_files(it)));
+                unfinished.lock().extend(checked);
+            });
+            finish_files();
+            per_file_lists.append(&mut found.lock());
+        }
         // `GetDiagnosticsOfAnyProgram` collects them itself if there are no other errors. This list also contains
         // suggestions.
         let is_error = |d: &Diagnostic| d.category == Category::Error;
@@ -5942,7 +6250,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 // file.
                 let is_excluded = match module.is_lib {
                     true => !options.lib_replacement,
-                    false => !matches!(module.hir.kind, FileKind::Declaration | FileKind::Json),
+                    false => !matches!(module.facts.kind, FileKind::Declaration | FileKind::Json),
                 };
                 if is_excluded || is_checked[i] {
                     continue;
@@ -5969,6 +6277,9 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
     report.unreadable.extend(unreadable);
     sort_and_deduplicate_with(&mut report.diagnostics, per_file_lists);
     report.check_time = checking.elapsed();
+    let times = std::mem::take(&mut *times_of_files.lock()).into_iter();
+    let path_of = |file: FileId| program.files.module(file).file_name().to_vec();
+    report.times_of_files = times.map(|(file, time)| (path_of(file), time)).collect();
     report.declaration_files = std::mem::take(&mut *declaration_files.lock());
     if let Some(room_slot) = in_room {
         room_slot.record_final_size(session.allocated_bytes());

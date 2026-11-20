@@ -792,8 +792,9 @@ fn deferred_read_omitted_by_host_is_empty_module() {
         let ghost = find_entry(files, "/ghost.ts");
         assert_eq!(ghost.role, FileRole::Checked);
         assert!(ghost.targets.is_empty());
-        let loaded = ghost.loaded.lock();
-        let hir = &loaded.as_ref().expect("the file is loaded").module.hir;
+        let mut loaded = ghost.loaded.lock();
+        let module = &mut loaded.as_mut().expect("the file is loaded").module;
+        let hir = &module.trees.get_mut().hir;
         assert!(hir.body.is_empty());
         assert_eq!(hir.source_len, 0);
         assert!(!hir.has_errors);
@@ -944,19 +945,13 @@ fn entry_with_targets(targets: Vec<u32>) -> CodeEntry<'static, 'static> {
 
 fn package_depths(edges: &[&[(u32, bool)]], entry_points: &[u32]) -> Vec<u32> {
     let targets_of = |edges: &&[(u32, bool)]| edges.iter().map(|edge| edge.0).collect();
-    let mut entries: Vec<CodeEntry<'_, '_>> = (edges.iter())
+    let entries: Vec<CodeEntry<'_, '_>> = (edges.iter())
         .map(|edges| entry_with_targets(targets_of(edges)))
         .collect();
     let steps: Vec<Vec<bool>> = (edges.iter())
         .map(|edges| edges.iter().map(|edge| edge.1).collect())
         .collect();
-    compute_package_depths(
-        &StatementsHost::default(),
-        &mut entries,
-        entry_points,
-        &steps,
-    );
-    entries.iter().map(|entry| entry.package_depth).collect()
+    compute_package_depths(&StatementsHost::default(), &entries, entry_points, &steps)
 }
 
 #[test]
@@ -1125,8 +1120,9 @@ fn unreadable_file_is_empty_module() {
         let ghost = find_entry(files, "/ghost.ts");
         assert_eq!(ghost.role, FileRole::Checked);
         assert!(ghost.targets.is_empty());
-        let loaded = ghost.loaded.lock();
-        let hir = &loaded.as_ref().expect("the file is loaded").module.hir;
+        let mut loaded = ghost.loaded.lock();
+        let module = &mut loaded.as_mut().expect("the file is loaded").module;
+        let hir = &module.trees.get_mut().hir;
         assert!(hir.body.is_empty());
         assert!(!hir.has_errors);
     });

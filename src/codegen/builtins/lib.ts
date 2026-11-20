@@ -152,6 +152,7 @@ export const {
   readsContents,
   replacedByPackages,
   result,
+  resultElementField,
   resultField,
   resultFieldHoldingOnlyWhatIsStored,
   resultSlot,

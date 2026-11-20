@@ -1,13 +1,14 @@
-# One switch is of texts OR of numbers: sixteen equalities of one value with a number and a text by turns make no Switch of sixteen, so the run ends at each change of kind, they weigh sixteen as before and the helper stays a call in the loop.
-# f1 = isOdd, f2 = countOdd
+# One switch is of texts OR of numbers: sixteen equalities of one value with a number and a text by turns make no Switch of sixteen, so the run ends at each change of kind, they weigh sixteen as before and the helper stays a call in the loops of its two callers. (A helper that one loop alone calls is copied there whatever it weighs.)
+# f1 = isOdd, f2 = countOdd, f3 = countEven
 # -- source: equalities-with-numbers-and-with-texts-by-turns-weigh-as-before-in-a-loop.js
 # function isOdd(x) { return x === 3 || x === "c" || x === 8 || x === "h" || x === 12 || x === "l" || x === 19 || x === "s" || x === 23 || x === "w" || x === 28 || x === "B" || x === 33 || x === "G" || x === 38 || x === "L"; }
 # function countOdd(list) { let n = 0; for (let i = 0; i < list.length; i++) if (isOdd(list[i])) n++; return n; }
 # const list = []; for (let i = 0; i < 48; i++) list.push(i % 3 ? i * 7 % 43 : "abcdefghijklmnopqrstuvwxyz"[i % 26]);
-# print(countOdd(list));
+# function countEven(list) { let n = 0; for (let i = 0; i < list.length; i++) if (!isOdd(list[i])) n++; return n; }
+# print(countOdd(list), countEven(list));
 # -- end of source
 # RUN(ANSWERS): run-in-shell mechanisms=all
-# ANSWERS: 9
+# ANSWERS: 9 39
 # RUN(LOOP): walk f2 mechanisms=all
 # LOOP-LABEL: code f2:Body
 # LOOP: = CallDirect {{*}} function=f1

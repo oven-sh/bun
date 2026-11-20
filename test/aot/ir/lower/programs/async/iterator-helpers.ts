@@ -65,7 +65,7 @@ export function untyped(make) {
 // CHECK-LABEL: function {{*}}name="counting"
 // CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|Generator<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: anything, v1: function, v2: number):
-// CHECK-NEXT: InitialYield v2
+// CHECK-NEXT: InitialYield v2, v0
 // CHECK-NEXT: v4 = Integer integer=1
 // CHECK-NEXT: v5 = Convert v4 declared={type=number}
 // CHECK-NEXT: Jump -> next b1(v5)
@@ -75,7 +75,7 @@ export function untyped(make) {
 // CHECK-NEXT: Branch v8 -> taken b2(), notTaken b6()
 // CHECK-NEXT: b2():
 // CHECK-NEXT: v9 = Convert v6 declared={type=number}
-// CHECK-NEXT: v10 = Yield v9, v2
+// CHECK-NEXT: v10 = Yield v9, v2, v0
 // CHECK-NEXT: v11 = ResultAt v10
 // CHECK-NEXT: v12 = ResultAt v10 index=1
 // CHECK-NEXT: Switch v12 cases=[1, 2] -> case b3(), case b4(), otherwise b5()
@@ -130,33 +130,8 @@ export function untyped(make) {
 // CHECK-NEXT: v4 = GetSuperBase v0
 // CHECK-NEXT: v5 = SuperConstruct v4, v1 layout=[[L_2]]
 // CHECK-NEXT: v6 = Convert v5 declared={type=[[L_2]]}
-// CHECK-NEXT: v7 = TypeTest v3 testedType=absent
-// CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b9(| 0)
-// CHECK-NEXT: b1(v8):
-// CHECK-NEXT: v9 = CallDirect v6 function=[[f_3]]
+// CHECK-NEXT: v7 = CallDirect v6 function=[[f_3]]
 // CHECK-NEXT: PropSet v6, v2 key="left"
-// CHECK-NEXT: v11 = Undefined
-// CHECK-NEXT: v12 = TypeTest v11 testedType=object
-// CHECK-NEXT: Branch v12 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v13):
-// CHECK-NEXT: Jump -> next b7(v13)
-// CHECK-NEXT: b3(v14):
-// CHECK-NEXT: v15 = TypeTest v14 testedType=undefined
-// CHECK-NEXT: Branch v15 -> taken b4(| 0), notTaken b8(| 0)
-// CHECK-NEXT: b4(v16):
-// CHECK-NEXT: v17 = TypeTest v6 testedType=absent
-// CHECK-NEXT: Branch v17 -> taken b5(| 0), notTaken b6(| 0)
-// CHECK-NEXT: b5(v18):
-// CHECK-NEXT: v19 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v19
-// CHECK-NEXT: b6(v20):
-// CHECK-NEXT: Jump -> next b7(v20)
-// CHECK-NEXT: b7(v21):
-// CHECK-NEXT: Return v21
-// CHECK-NEXT: b8(v22):
-// CHECK-NEXT: v23 = NewRuntimeError runtimeError=DerivedConstructorResult name="Countdown"
-// CHECK-NEXT: Throw v23
-// CHECK-NEXT: b9(v24):
-// CHECK-NEXT: v25 = NewRuntimeError runtimeError=ThisAlreadyBound
-// CHECK-NEXT: Throw v25
+// CHECK-NEXT: v9 = Undefined
+// CHECK-NEXT: Return v6
 // CHECK-NEXT: }

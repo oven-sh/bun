@@ -51,6 +51,7 @@ pub struct KnownFunction {
     pub functions: Box<[FnId]>,
     pub references: Box<[KnownReference]>,
     pub relies_on_facts: bool,
+    pub names_locked_globals: bool,
     pub is_named_only_to_be_called: bool,
 }
 
@@ -73,6 +74,7 @@ pub struct BindingValues {
     pub functions: SmallVec<[HeldFunction; 2]>,
     pub certainty: Certainty,
     pub holds_from_the_start: bool,
+    pub defined_by: Option<StmtId>,
 }
 
 #[derive(Default)]
@@ -101,6 +103,51 @@ impl FileHelpers {
 
     pub fn bindings(&self) -> impl ExactSizeIterator<Item = (SymbolId, &BindingValues)> {
         self.bindings.iter().map(|entry| (entry.0, &entry.1))
+    }
+
+    pub(super) fn leave_replaceable_variables(
+        &mut self,
+        is_replaceable: &dyn Fn(SymbolId) -> bool,
+    ) {
+        let FileHelpers {
+            functions,
+            bindings,
+            ..
+        } = self;
+        for (symbol, values) in bindings.iter_mut() {
+            if is_replaceable(*symbol) {
+                values.certainty = Certainty::MayHoldOtherValues;
+                values.holds_from_the_start = false;
+            }
+        }
+        let mut left: SmallVec<[FnId; 4]> = SmallVec::new();
+        loop {
+            let count = left.len();
+            for (function, known) in functions.iter_mut() {
+                let names_replaceable = |reference: &KnownReference| match *reference {
+                    KnownReference::Helper { symbol, .. } => {
+                        let values = find_by_key(bindings, symbol);
+                        is_replaceable(symbol)
+                            || values.is_some_and(|values| {
+                                let mut held = values.functions.iter();
+                                held.any(|held| left.contains(&held.definition))
+                            })
+                    }
+                    KnownReference::Global { symbol, .. } | KnownReference::Holder { symbol } => {
+                        is_replaceable(symbol)
+                    }
+                    KnownReference::Loaded { .. } => false,
+                };
+                if left.contains(function) || !known.references.iter().any(names_replaceable) {
+                    continue;
+                }
+                known.relies_on_facts = false;
+                left.push(*function);
+            }
+            if left.len() == count {
+                return;
+            }
+        }
     }
 }
 
@@ -245,6 +292,7 @@ impl<'a, 's> Finder<'a, 's> {
             file: self.file,
             max_bytes: table.max_bytes,
             is_outer_name: &|_| false,
+            known: Some(&table.functions),
         };
         for function in (0..self.file.hir.fns.len() as u32).map(FnId) {
             if matches!(self.file.hir[function].body, FnBody::None)
@@ -452,17 +500,22 @@ impl<'a, 's> Finder<'a, 's> {
         let Some(definition) = self.find_definition(symbol) else {
             return false;
         };
-        let created = match self.file.bound.fns[function.idx()].owner {
-            FnOwner::Expr(created) => self.file.bound.statement_of_expr(created),
-            FnOwner::None | FnOwner::Stmt(_) | FnOwner::Member(_) | FnOwner::Type(_) => None,
-        };
-        let (Some(defined), Some(created)) = (definition.statement, created) else {
+        let (hir, bound) = (self.file.hir, self.file.bound);
+        let FnOwner::Expr(written) = bound.fns[function.idx()].owner else {
             return false;
         };
-        let parent = self.file.bound.parent_of_stmt(defined);
+        let (Some(defined), Some(created)) =
+            (definition.statement, bound.statement_of_expr(written))
+        else {
+            return false;
+        };
+        let parent = bound.parent_of_stmt(defined);
         matches!(parent, Parent::File | Parent::FnBody(_))
-            && parent == self.file.bound.parent_of_stmt(created)
-            && self.file.hir[defined].start < self.file.hir[created].start
+            && parent == bound.parent_of_stmt(created)
+            && (hir[defined].start < hir[created].start
+                || (defined == created
+                    && matches!(hir[defined].kind, StmtKind::Var(_))
+                    && hir[definition.value].end <= hir[written].pos))
     }
 
     fn find_definition(&self, symbol: SymbolId) -> Option<Definition> {
@@ -753,6 +806,7 @@ impl<'a, 's> Finder<'a, 's> {
                     false => Certainty::MayHoldOtherValues,
                 },
                 holds_from_the_start: is_stable && is_declaration,
+                defined_by: None,
             };
         }
         let Some(definition) = self.find_definition(symbol) else {
@@ -781,6 +835,7 @@ impl<'a, 's> Finder<'a, 's> {
         };
         values.holds_from_the_start =
             !has_other && !self.may_start_early() && self.is_in_head(definition);
+        values.defined_by = definition.statement;
         values
     }
 
@@ -813,6 +868,18 @@ impl<'a, 's> Finder<'a, 's> {
             }
             true
         })
+    }
+
+    fn finds_locked_members(&self, shape: Shape) -> bool {
+        let is_locked_member = |member: BuiltinId| {
+            is_locked(member)
+                && table::entry(member).mutability == Mutability::AlwaysLocked
+                && !self.file.builtins.is_unlocked(member)
+        };
+        match shape {
+            Shape::ExportStarOfKeysIfMissing => is_locked_member(BuiltinId::ArrayPrototypeForEach),
+            _ => true,
+        }
     }
 
     fn is_fact(&mut self, reference: KnownReference) -> bool {
@@ -852,6 +919,7 @@ impl<'a, 's> Finder<'a, 's> {
         }
         let references = matched.references.clone();
         let answer = matched.verdict == Verdict::Accepted
+            && self.finds_locked_members(matched.entry.shape)
             && self.names_only_locked_globals(&matched.canonical.globals)
             && references
                 .into_iter()
@@ -890,12 +958,17 @@ impl<'a, 's> Finder<'a, 's> {
     fn finish(self) -> FileHelpers {
         let head_allows_reads_of_open_globals = !self.may_start_early();
         let replace_themselves = self.matched.iter().filter(|(_, matched)| {
-            matched.verdict == Verdict::Accepted
-                && matched.entry.shape == Shape::TypeofAnswersSymbolForSymbols
+            matched.verdict == Verdict::Accepted && matched.entry.shape.replaces_itself()
         });
         let only_called: SmallVec<[FnId; 1]> = replace_themselves
             .map(|(&function, _)| function)
             .filter(|&function| self.is_named_only_to_be_called(function))
+            .collect();
+        let names_locked_globals: SmallVec<[FnId; 4]> = self
+            .matched
+            .iter()
+            .filter(|(_, matched)| self.names_only_locked_globals(&matched.canonical.globals))
+            .map(|(&function, _)| function)
             .collect();
         let accepted = self.matched.into_iter().filter_map(|(function, matched)| {
             (matched.verdict == Verdict::Accepted).then(|| {
@@ -904,6 +977,7 @@ impl<'a, 's> Finder<'a, 's> {
                     functions: matched.canonical.inner_functions.into_boxed_slice(),
                     references: matched.references.into_boxed_slice(),
                     relies_on_facts: matched.relies_on_facts.unwrap_or(false),
+                    names_locked_globals: names_locked_globals.contains(&function),
                     is_named_only_to_be_called: only_called.contains(&function),
                 };
                 (function, known)

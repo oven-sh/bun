@@ -28,6 +28,7 @@
 
 #include "root.h"
 #include "ExceptionOr.h"
+#include "headers-handwritten.h"
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/Strong.h>
@@ -49,7 +50,38 @@ class Module;
 #endif
 }
 
+// The ref that `BlockList__onStructuredCloneSerialize` takes.
+BUN_DECLARE_FFI_DELETER(SerializedBlockList, BlockList__onStructuredCloneDestroy);
+
+extern "C" uint64_t Histogram__retainForStructuredClone(JSC::EncodedJSValue histogram);
+extern "C" void Histogram__releaseStructuredClone(uint64_t id);
+
 namespace WebCore {
+
+// A clone of a `node:perf_hooks` histogram shares its counts. The wire has an id, and this keeps the counts alive.
+class SerializedHistogram {
+    WTF_MAKE_NONCOPYABLE(SerializedHistogram);
+
+public:
+    explicit SerializedHistogram(JSC::JSValue histogram)
+        : m_id(Histogram__retainForStructuredClone(JSC::JSValue::encode(histogram)))
+    {
+    }
+    SerializedHistogram(SerializedHistogram&& other)
+        : m_id(std::exchange(other.m_id, 0))
+    {
+    }
+    ~SerializedHistogram()
+    {
+        if (m_id)
+            Histogram__releaseStructuredClone(m_id);
+    }
+
+    uint64_t id() const { return m_id; }
+
+private:
+    uint64_t m_id;
+};
 
 // Shared value type for fast path cloning: primitives (JSValue) or strings.
 using SimpleCloneableValue = std::variant<JSC::JSValue, WTF::String>;
@@ -173,11 +205,8 @@ private:
     Vector<unsigned char> m_data;
     std::unique_ptr<ArrayBufferContentsArray> m_arrayBufferContentsArray;
     std::unique_ptr<ArrayBufferContentsArray> m_sharedBufferContentsArray;
-    // Raw `*mut BlockList` pointers whose refcount was bumped at serialize
-    // time so they outlive the wire buffer; released in the destructor.
-    Vector<void*> m_serializedBlockListRefs;
-    // What `Histogram__retainForStructuredClone` returned at serialize time; released in the destructor.
-    Vector<uint64_t> m_serializedHistogramIds;
+    Vector<std::unique_ptr<SerializedBlockList>> m_serializedBlockLists;
+    Vector<SerializedHistogram> m_serializedHistograms;
 #if ENABLE(WEBASSEMBLY)
     std::unique_ptr<WasmModuleArray> m_wasmModulesArray;
     std::unique_ptr<WasmMemoryHandleArray> m_wasmMemoryHandlesArray;

@@ -1,0 +1,16 @@
+# f1 = make
+# f2 = Screen
+# f3 = show
+# f4 = copy
+# -- source: main.mjs
+# function make(length, kind) { switch (kind) { case "uint8": return new Uint8Array(length); case "int32": return new Int32Array(length); } return []; }
+# function Screen(length) { this.pixels = make(length, "uint8"); this.sound = make(length, "int32"); }
+# Screen.prototype.copy = function (from) { try { if (!from || !from.length) return []; const list = []; for (let i = 0; i < from.length; ++i) list[i] = from[i]; return list; } catch (error) { return from; } };
+# function show(screen) { return screen.copy(screen.pixels).length + screen.sound.length; }
+# const screen = new Screen(40); globalThis.unseen = screen;
+# print(show(screen), screen.copy(JSON.parse('[1,"2",3.5]')), screen.copy("text"), screen.copy(null).length);
+# -- end of source
+# The front end infers of the uses that the parameter is a string or an array. The calls in sight pass a Uint8Array and, once, other values.
+# RUN: link held functions
+# CHECK: function f4
+# CHECK-NEXT: proven=undefined|null|Uint8Array

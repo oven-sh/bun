@@ -31,6 +31,7 @@ impl<'s> BoundProgram<'_, '_, 's> {
             builtin_names: self.input.builtin_names,
             platform: self.input.platform,
             library: None,
+            known_helpers: None,
         }
     }
 

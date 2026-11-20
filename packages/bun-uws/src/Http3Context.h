@@ -14,7 +14,15 @@ static_assert(US_QUIC_MAX_REQUEST_FIELDS == UWS_HTTP_MAX_HEADERS_COUNT, "HTTP/3 
 
 struct Http3Context {
 
-    static Http3Context *create(Loop *loop, us_bun_socket_context_options_t options, unsigned idleTimeoutSecs = 0) {
+    struct Deleter {
+        void operator()(Http3Context *ctx) const {
+            ctx->getContextData()->~Http3ContextData();
+            us_quic_socket_context_free((us_quic_socket_context_t *) ctx);
+        }
+    };
+    using Ptr = std::unique_ptr<Http3Context, Deleter>;
+
+    static Ptr create(Loop *loop, us_bun_socket_context_options_t options, unsigned idleTimeoutSecs = 0) {
         us_quic_socket_context_t *ctx = us_create_quic_socket_context(
             (us_loop_t *) loop, options, sizeof(Http3ContextData), idleTimeoutSecs);
         if (!ctx) return nullptr;
@@ -74,12 +82,7 @@ struct Http3Context {
             rd->~Http3ResponseData();
         });
 
-        return (Http3Context *) ctx;
-    }
-
-    void free() {
-        getContextData()->~Http3ContextData();
-        us_quic_socket_context_free((us_quic_socket_context_t *) this);
+        return Ptr((Http3Context *) ctx);
     }
 
     Http3ContextData *getContextData() {

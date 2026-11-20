@@ -12,8 +12,8 @@
 # The table is born empty and is filled under a key that nobody knows. What is stored so is found again by a read under such a key of the same layout, and `push` off what that read gives is still entered though the call has given up, by escape alone: `push` lays what it is handed into its receiver. So of the read Link holds the list, and of the step through it the one function that was pushed.
 # f1 = turn, f4 = fire, f5 = the handler
 # RUN(HELD): link held accesses mechanisms=all
-# HELD: read f4 v5 proven=undefined|null|Array
-# HELD: read f4 v11 proven=undefined|f5
+# HELD: read f4 v5 proven=undefined|Array
+# HELD: read f4 v12 proven=undefined|f5
 # It is held, not proven: the callee is asked at the run whether it is that function, and behind the question the handler is copied into the loop that fires.
 # RUN(FORM): walk f1 mechanisms=all
 # FORM-LABEL: code f1:Body

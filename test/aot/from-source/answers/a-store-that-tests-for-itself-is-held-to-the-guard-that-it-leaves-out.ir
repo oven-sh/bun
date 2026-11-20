@@ -10,7 +10,7 @@
 # const marks = id(mark);
 # marks(parcels[0]);
 # print(Object.hasOwn(parcels[0], "fragile"), seen);
-# Object.defineProperty(Parcel.prototype, "fragile", { set(value: boolean) { seen++; }, configurable: true });
+# Object.defineProperty(id(Parcel.prototype), "fragile", { set(value: boolean) { seen++; }, configurable: true });
 # marks(parcels[1]);
 # print(Object.hasOwn(parcels[1], "fragile"), seen);
 # -- end of source

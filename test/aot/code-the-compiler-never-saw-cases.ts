@@ -145,22 +145,22 @@ const routes: Record<string, Record<string, Route>> = {
   },
   "workers": {
     "worker of a file": {
-      body: `const w = new Worker(temporaryFile('.js', glue('postMessage(', '1)'))); await new Promise((res, rej) => { w.onmessage = () => { globalThis.RAN = 1; res(); }; w.onerror = e => rej(new Error(e.message)); setTimeout(() => rej(new Error('no message')), 1500); }).finally(() => w.terminate())`,
+      body: `const w = new Worker(temporaryFile('.js', glue('postMessage(', '1)'))); await new Promise((res, rej) => { w.onmessage = () => { globalThis.RAN = 1; res(); }; w.onerror = e => rej(new Error(e.message)); w.addEventListener('close', () => rej(new Error('no message'))); }).finally(() => w.terminate())`,
     },
     "worker of a blob url": {
       runsApartFromTheProgram: true,
-      body: `const w = new Worker(URL.createObjectURL(new Blob([glue('postMessage(', '1)')], { type: 'text/javascript' }))); await new Promise((res, rej) => { w.onmessage = () => { globalThis.RAN = 1; res(); }; w.onerror = e => rej(new Error(e.message)); setTimeout(() => rej(new Error('no message')), 1500); }).finally(() => w.terminate())`,
+      body: `const w = new Worker(URL.createObjectURL(new Blob([glue('postMessage(', '1)')], { type: 'text/javascript' }))); await new Promise((res, rej) => { w.onmessage = () => { globalThis.RAN = 1; res(); }; w.onerror = e => rej(new Error(e.message)); w.addEventListener('close', () => rej(new Error('no message'))); }).finally(() => w.terminate())`,
     },
     "worker of a data url": {
       runsApartFromTheProgram: true,
-      body: `const w = new Worker(glue('data:text/javascript,', 'postMessage(1)')); await new Promise((res, rej) => { w.onmessage = () => { globalThis.RAN = 1; res(); }; w.onerror = e => rej(new Error(e.message)); setTimeout(() => rej(new Error('no message')), 1500); }).finally(() => w.terminate())`,
+      body: `const w = new Worker(glue('data:text/javascript,', 'postMessage(1)')); await new Promise((res, rej) => { w.onmessage = () => { globalThis.RAN = 1; res(); }; w.onerror = e => rej(new Error(e.message)); w.addEventListener('close', () => rej(new Error('no message'))); }).finally(() => w.terminate())`,
     },
     "worker threads eval": {
       runsApartFromTheProgram: true,
-      body: `const { Worker } = require('node:worker_threads'); const w = new Worker(glue('require("node:worker_threads").parentPort.postMessage(', '1)'), { eval: true }); await new Promise((res, rej) => { w.on('message', () => { globalThis.RAN = 1; res(); }); w.on('error', rej); setTimeout(() => rej(new Error('no message')), 1500); }).finally(() => w.terminate())`,
+      body: `const { Worker } = require('node:worker_threads'); const w = new Worker(glue('require("node:worker_threads").parentPort.postMessage(', '1)'), { eval: true }); await new Promise((res, rej) => { w.on('message', () => { globalThis.RAN = 1; res(); }); w.on('error', rej); w.on('exit', () => rej(new Error('no message'))); }).finally(() => w.terminate())`,
     },
     "worker with preload": {
-      body: `const w = new Worker(temporaryFile('.js', ''), { preload: [temporaryFile('.js', glue('postMessage(', '1)'))] }); await new Promise((res, rej) => { w.onmessage = () => { globalThis.RAN = 1; res(); }; w.onerror = e => rej(new Error(e.message)); setTimeout(() => rej(new Error('no message')), 1500); }).finally(() => w.terminate())`,
+      body: `const w = new Worker(temporaryFile('.js', ''), { preload: [temporaryFile('.js', glue('postMessage(', '1)'))] }); await new Promise((res, rej) => { w.onmessage = () => { globalThis.RAN = 1; res(); }; w.onerror = e => rej(new Error(e.message)); w.addEventListener('close', () => rej(new Error('no message'))); }).finally(() => w.terminate())`,
     },
   },
   "Bun's own APIs": {
@@ -255,14 +255,14 @@ const routes: Record<string, Record<string, Route>> = {
     },
     "unnamed worker threads eval": {
       runsApartFromTheProgram: true,
-      body: `const { Worker } = require(glue('node:', 'worker_threads')); const w = new Worker(glue('require("node:worker_threads").parentPort.postMessage(', '1)'), { eval: true }); await new Promise((res, rej) => { w.on('message', () => { globalThis.RAN = 1; res(); }); w.on('error', rej); setTimeout(() => rej(new Error('no message')), 1500); }).finally(() => w.terminate())`,
+      body: `const { Worker } = require(glue('node:', 'worker_threads')); const w = new Worker(glue('require("node:worker_threads").parentPort.postMessage(', '1)'), { eval: true }); await new Promise((res, rej) => { w.on('message', () => { globalThis.RAN = 1; res(); }); w.on('error', rej); w.on('exit', () => rej(new Error('no message'))); }).finally(() => w.terminate())`,
     },
     "unnamed repl": { body: `typeof require(glue('node:', 'repl')).start` },
     "plugin under a computed name": {
       body: `Bun[glue('plu', 'gin')]({ name: 'p', setup(b) { b.module(glue('virtual-', 'module'), () => ({ contents: moduleText, loader: 'js' })); } }); await import(glue('virtual-', 'module'))`,
     },
     "worker under a computed name": {
-      body: `const w = new globalThis[glue('Wor', 'ker')](temporaryFile('.js', glue('postMessage(', '1)'))); await new Promise((res, rej) => { w.onmessage = () => { globalThis.RAN = 1; res(); }; w.onerror = e => rej(new Error(e.message)); setTimeout(() => rej(new Error('no message')), 1500); }).finally(() => w.terminate())`,
+      body: `const w = new globalThis[glue('Wor', 'ker')](temporaryFile('.js', glue('postMessage(', '1)'))); await new Promise((res, rej) => { w.onmessage = () => { globalThis.RAN = 1; res(); }; w.onerror = e => rej(new Error(e.message)); w.addEventListener('close', () => rej(new Error('no message'))); }).finally(() => w.terminate())`,
     },
     "module compile under a computed name": {
       body: `const Module = require(glue('node:', 'module')); new Module('/x.js')[glue('_com', 'pile')](moduleText, '/x.js')`,

@@ -9,7 +9,7 @@ use bun_sema::check::aot::{DiagnosticClass, DiagnosticSubject, Effect, FileOrigi
 use bun_sema::hir::FileKind;
 use bun_sema::import_sites::ImportSpecifier;
 use bun_sema::program::{
-    CodeAnswer, ComputedTargets, FileId, FileRole, Files, ReadingNoTrees, Sym,
+    CodeAnswer, ComputedTargets, FileId, FileRole, Files, ReadingWithoutKeeping, Sym,
 };
 use bun_sema::resolve::{CodeHost, Host, is_relative, join};
 
@@ -29,6 +29,7 @@ pub(super) fn compute_origins(
     if texts.is_empty() {
         return origins;
     }
+    // Text that the program also loads as code counts as code. Files that only text loads are there for its sake.
     let entry_points = files.entry_points().iter().copied();
     let entry_points: Vec<FileId> = entry_points.filter(|file| !is_text(file)).collect();
     let is_loaded_by_program = find_files_loaded_from(files, entry_points);
@@ -143,6 +144,7 @@ const ENDINGS_OF_A_RELATIVE_IMPORT: [&[u8]; 10] = [
     b".json",
 ];
 
+const UNTYPED_MODULE_CODE: u32 = 7016;
 const AUGMENTATION_OF_UNKNOWN_MODULE_CODE: u32 = 2664;
 const UMD_GLOBAL_IN_MODULE_CODE: u32 = 2686;
 const THIS_IS_UNDEFINED_CODES: [u32; 2] = [2407, 2532];
@@ -165,7 +167,10 @@ const UNKNOWN_NAME_CODES: [u32; 25] = [
 
 const DECLARATION_OF_ANOTHER_KIND_CODES: [u32; 2] = [2315, 2749];
 
+/// True if the error says that a name is not found. Which of these codes it has depends on what else is in scope to suggest
+/// ("Did you mean ..") or to advise ("install the types for ..").
 pub fn says_that_name_is_not_found(code: u32) -> bool {
+    // 2550 and 2812 are about a member. 2693 and 2708: the name is only a type or a namespace, not a value.
     matches!(code, 2693 | 2708)
         || !matches!(code, 2550 | 2812) && UNKNOWN_NAME_CODES.contains(&code)
 }
@@ -217,7 +222,7 @@ impl ProgramOrigins<'_, '_> {
         if UNKNOWN_MODULE_CODES.contains(&code) {
             match diagnostic.subject {
                 DiagnosticSubject::ModuleSpecifier(specifier) => {
-                    self.is_import_that_the_build_loads(diagnostic.file, specifier)
+                    self.is_import_that_the_build_loads(diagnostic, specifier)
                 }
                 DiagnosticSubject::None | DiagnosticSubject::MemberContainer(_) => false,
             }
@@ -261,6 +266,16 @@ impl ProgramOrigins<'_, '_> {
             && files.export(module, name).is_some()
     }
 
+    fn is_in_known_evaluation(&self, diagnostic: &Diagnostic) -> bool {
+        let (Some(files), Some(file)) = (self.files, diagnostic.file) else {
+            return false;
+        };
+        let hir = files.hir(file);
+        !diagnostic.has_undefined_range
+            && (hir.is_in_known_evaluation(diagnostic.start)
+                || hir.is_in_copied_factory(diagnostic.start))
+    }
+
     fn is_in_jsdoc_comment(&self, diagnostic: &Diagnostic) -> bool {
         let (Some(files), Some(file)) = (self.files, diagnostic.file) else {
             return false;
@@ -292,6 +307,8 @@ impl ProgramOrigins<'_, '_> {
             && is_about_exact_optional_property(diagnostic.code, &diagnostic.message_chain)
     }
 
+    // A file without `import` or `export` is a script to `tsc` and a module to a build, which types it as it runs.
+    // What is an error only in a module stops nothing there.
     fn comes_of_running_a_script_as_a_module(&self, diagnostic: &Diagnostic) -> bool {
         let (Some(files), Some(file)) = (self.files, diagnostic.file) else {
             return false;
@@ -314,6 +331,7 @@ impl ProgramOrigins<'_, '_> {
         }
     }
 
+    // A plugin may write a file once every other module is loaded. The folder was listed before that.
     fn is_import_of_file_written_since_the_load(&self, diagnostic: &Diagnostic) -> bool {
         let (Some(files), Some(file), DiagnosticSubject::ModuleSpecifier(specifier)) =
             (self.files, diagnostic.file, diagnostic.subject)
@@ -331,8 +349,8 @@ impl ProgramOrigins<'_, '_> {
         endings.any(|ending| disk.is_file(&[&path[..], ending].concat()))
     }
 
-    fn is_import_that_the_build_loads(&self, file: Option<FileId>, specifier: Atom) -> bool {
-        let (Some(files), Some(file)) = (self.files, file) else {
+    fn is_import_that_the_build_loads(&self, diagnostic: &Diagnostic, specifier: Atom) -> bool {
+        let (Some(files), Some(file)) = (self.files, diagnostic.file) else {
             return false;
         };
         let Some(compiled) = files.compiled(file) else {
@@ -343,12 +361,20 @@ impl ProgramOrigins<'_, '_> {
             .import_sites
             .iter()
             .zip(compiled.code_answers);
-        sites.into_iter().any(|(site, answer)| {
-            site.specifier == ImportSpecifier::Constant(specifier)
-                && !matches!(
-                    answer,
-                    CodeAnswer::Erased | CodeAnswer::Computed(_) | CodeAnswer::NotFound(_)
-                )
+        let mut answers = sites
+            .filter(|(site, _)| site.specifier == ImportSpecifier::Constant(specifier))
+            .map(|(_, answer)| answer)
+            .peekable();
+        if answers.peek().is_none() {
+            let first = files.hir(file).text.get(diagnostic.start as usize);
+            let names_module = matches!(first, Some(b'"' | b'\''));
+            return names_module && diagnostic.code == UNTYPED_MODULE_CODE;
+        }
+        answers.any(|answer| {
+            !matches!(
+                answer,
+                CodeAnswer::Erased | CodeAnswer::Computed(_) | CodeAnswer::NotFound(_)
+            )
         })
     }
 
@@ -356,14 +382,19 @@ impl ProgramOrigins<'_, '_> {
         self.apply_effects_to_check(diagnostics, false)
     }
 
+    /// With `keeps_dependency_errors`, a type error in the source of a dependency is returned with `Effect::WithdrawsTrust`.
+    /// It passes the filters that an error in the program's own files passes. Nothing is demoted for it.
     pub(super) fn apply_effects_to_check(
         &self,
         mut diagnostics: Vec<Diagnostic>,
         keeps_dependency_errors: bool,
     ) -> Vec<BuildDiagnostic> {
-        let _reading = ReadingNoTrees::begin();
+        let _reading = ReadingWithoutKeeping::begin();
         crate::sort_and_deduplicate(&mut diagnostics);
         let with_effects = diagnostics.into_iter().filter_map(|mut diagnostic| {
+            if self.is_in_known_evaluation(&diagnostic) {
+                return None;
+            }
             let origin = self.origin_of(&diagnostic);
             if diagnostic.class == DiagnosticClass::EarlyError {
                 diagnostic.category = Category::Error;
@@ -395,6 +426,7 @@ impl ProgramOrigins<'_, '_> {
                 {
                     return None;
                 }
+                // The checker gave up, but the program has no error: the body keeps its declared types.
                 Effect::StopsBuild | Effect::Warns
                     if diagnostic.code == BODY_TOO_LARGE_FOR_FLOW_ANALYSIS_CODE =>
                 {

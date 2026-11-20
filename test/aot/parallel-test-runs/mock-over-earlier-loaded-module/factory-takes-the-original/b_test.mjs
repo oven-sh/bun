@@ -1,5 +1,4 @@
 import { test, vi } from "bun:test";
-const rest = time => new Promise(done => setTimeout(done, time));
 const say = (name, get) => { try { console.log("SAID " + name + " " + get()); } catch (error) { console.log("SAID " + name + " " + error.name); } };
 test("b", async () => {
   let taken;

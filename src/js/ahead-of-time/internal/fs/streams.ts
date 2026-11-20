@@ -261,7 +261,8 @@ function validateWindowsHandle(
 }
 
 // The classes extend the exports of node:stream as of the first file stream.
-function extendStoredBase(Class: Function, StoredBase: Function) {
+// They come in a list: a class that is handed to Object.setPrototypeOf() by name has no base in its layout.
+function extendStoredBase([Class, StoredBase]: Function[]) {
   const Twin = function () {};
   $toClass(Twin, "Twin", StoredBase);
   Object.setPrototypeOf(Class, $getPrototypeOf(Twin));
@@ -364,7 +365,7 @@ function ReadStream(
   return this as unknown as void;
 }
 $toClass(ReadStream, "ReadStream", Readable);
-if (StoredReadable !== Readable) extendStoredBase(ReadStream, StoredReadable);
+if (StoredReadable !== Readable) extendStoredBase([ReadStream, StoredReadable]);
 const readStreamPrototype = ReadStream.prototype;
 
 Object.defineProperty(readStreamPrototype, "autoClose", {
@@ -667,7 +668,7 @@ function WriteStream(
   return this as unknown as void;
 }
 $toClass(WriteStream, "WriteStream", Writable);
-if (StoredWritable !== Writable) extendStoredBase(WriteStream, StoredWritable);
+if (StoredWritable !== Writable) extendStoredBase([WriteStream, StoredWritable]);
 const writeStreamPrototype = WriteStream.prototype;
 
 writeStreamPrototype.open = streamNoop;

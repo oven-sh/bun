@@ -5,7 +5,7 @@ use bun_sema::hir::{
 use bun_sema::program::{CompiledModule, FileId};
 use smallvec::{SmallVec, smallvec};
 
-use super::constructor::find_fields_at_birth;
+use super::constructor::find_initial_fields;
 use super::{
     ClassElement, ClassPlan, ClassText, ClassTransform, FieldSemantics, FieldValue,
     FieldsInConstructor, InitializerCall, InjectionPoint, KeyThatHoldsDecorators,
@@ -448,7 +448,7 @@ pub(in crate::lower) fn find_fields_evaluated_in_constructor<'t, 's>(
     let mut defined: SmallVec<[MemberId; 4]> = with_value.collect();
     let is_at_birth = |constructor| {
         !is_derived_class(hir, class)
-            && find_fields_at_birth(get_text(), &plan, constructor).is_some()
+            && find_initial_fields(get_text(), &plan, constructor).is_some()
     };
     if !defined.is_empty() && !plan.constructor.is_some_and(is_at_birth) {
         defined.clear();

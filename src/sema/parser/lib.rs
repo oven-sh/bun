@@ -19,14 +19,14 @@ mod summarize;
 mod token;
 
 pub use names::FileAtoms;
-pub use parser::keyword_suggestion;
+pub use parser::{AppendedExpression, AppendedExpressionFilter, keyword_suggestion};
 
 use bun_sema::atom::Intern;
 use bun_sema::hir::FileBuilder;
 pub use summarize::{
     COUNTS, CompileParseOptions, Counts, PartError, Parts, Summary, ThreadCaches,
-    parse_for_compile, parse_for_compile_in, summarize, summarize_as, summarize_in,
-    summarize_top_level, with_summary, with_summary_in_place,
+    parse_appended_expressions, parse_for_compile, parse_for_compile_in, summarize, summarize_as,
+    summarize_in, summarize_top_level, with_summary, with_summary_in_place,
 };
 
 /// Why the parser rejected a text.

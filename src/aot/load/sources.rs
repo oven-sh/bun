@@ -237,6 +237,7 @@ impl Sources {
         &self.entries[file.idx()].public_path
     }
 
+    /// In an executable this is relative to the folder of the build and never an absolute path of the build machine.
     pub fn path_in_stack_traces(&self, file: FileId) -> Cow<'_, [u8]> {
         let ModulePaths {
             public_path,
@@ -247,6 +248,7 @@ impl Sources {
             None if is_absolute(path_on_disk) => {
                 with_separators_of_host(path_on_disk, cfg!(windows)).into()
             }
+            // Windows: on another drive.
             Some(_) if is_absolute(display_path) => public_path.into(),
             None | Some(_) => display_path.into(),
         }

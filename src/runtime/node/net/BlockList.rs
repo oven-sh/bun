@@ -96,7 +96,7 @@ impl BlockList {
     }
 
     pub(crate) fn is_block_list(value: JsLocal<'_>) -> bool {
-        value.to_js().as_::<Self>().is_some()
+        value.to_js().is::<Self>()
     }
 
     pub(crate) fn add_address(
@@ -202,25 +202,19 @@ impl BlockList {
         if family_js.is_undefined() {
             family_js = global.common_strings().ipv4_lower();
         }
-        let address_val;
-        let address: &sockaddr = if let Some(sa) = address_js.as_class_ref::<SocketAddress>() {
-            &sa._addr
-        } else {
-            validators::validate_string(global, address_js, format_args!("address"))?;
-            validators::validate_string(global, family_js, format_args!("family"))?;
-            match SocketAddress::init_from_addr_family(global, address_js, family_js) {
-                Ok(sa) => {
-                    address_val = sa._addr;
-                    &address_val
-                }
-                Err(err) => {
-                    debug_assert!(err == bun_jsc::JsError::Thrown);
-                    global.clear_exception();
-                    return Ok(false);
-                }
+        if let Some(sa) = address_js.as_class_ref::<SocketAddress>() {
+            return Ok(self.check_sockaddr(&sa._addr));
+        }
+        validators::validate_string(global, address_js, format_args!("address"))?;
+        validators::validate_string(global, family_js, format_args!("family"))?;
+        match SocketAddress::init_from_addr_family(global, address_js, family_js) {
+            Ok(sa) => Ok(self.check_sockaddr(&sa._addr)),
+            Err(err) => {
+                debug_assert!(err == bun_jsc::JsError::Thrown);
+                global.clear_exception();
+                Ok(false)
             }
-        };
-        Ok(self.check_sockaddr(address))
+        }
     }
 
     pub(crate) fn check_sockaddr(&self, address: &sockaddr) -> bool {

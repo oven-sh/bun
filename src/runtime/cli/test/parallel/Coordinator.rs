@@ -13,12 +13,12 @@ use std::io::Write as _;
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_ptr::Interned;
+use bun_ptr::{CellExt as _, Interned};
 
-use super::file_range::FileRange;
 use super::frame::{self, Frame};
-use super::worker::{SpawnContext, Worker, WorkerPipe};
+use super::worker::{SpawnContext, Worker};
 use crate::cli::run_compiled::log_first_time_in_test_run;
+use crate::cli::test::timings::Timings;
 use crate::test_command::CommandLineReporter;
 
 // `Status` lives in `crate::api::bun::process`
@@ -27,19 +27,17 @@ use crate::api::bun::process::Status as SpawnStatus;
 
 pub(crate) struct Coordinator<'a> {
     pub(crate) vm: &'a VirtualMachine,
-    /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
-    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
-    pub(crate) event_loop_handle: bun_jsc::EventLoopHandle,
-    pub(crate) reporter: &'a mut CommandLineReporter,
+    pub(crate) reporter: &'a CommandLineReporter,
+    /// `reporter.timings`, until `drive` returns.
+    pub(crate) timings: Option<Box<Timings>>,
     pub(crate) files: Vec<Interned>,
     /// `--timings`: recorded cost per `files` index; stealing then goes by remaining time and takes the victim's slowest file.
     pub(crate) costs: Option<Vec<u64>>,
     pub(crate) cwd: &'a [u8],
-    // [:null]?[*:0]const u8 — null-sentinel-terminated slice of C strings;
-    // backing storage has a null at [len] for execve-style consumers.
-    pub(crate) argv: Box<[bun_spawn::CStrPtr]>,
+    /// Ends with `None`.
+    pub(crate) argv: Box<[Option<bun_core::CStrRef<'static>>]>,
     /// One envp per worker slot — same base, with that slot's `WORKER_ID_VARIABLES`.
-    pub(crate) envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
+    pub(crate) envps: Vec<bun_core::CStringList>,
 
     pub(crate) workers: &'a mut [Worker],
     /// Per file index, when a structured reporter (JUnit) is configured: the
@@ -68,7 +66,6 @@ pub(crate) struct Coordinator<'a> {
     /// Heavy files that no worker has been given yet.
     pub(crate) heavy_files_to_hand_out: u32,
     pub(crate) max_worker_peak_rss_mb: u32,
-    pub(crate) max_exited_worker_rss_mb: u32,
     pub(crate) scale_up_after_ms: i64,
     pub(crate) bail: u32,
     pub(crate) dots: bool,
@@ -221,30 +218,18 @@ impl<'a> Coordinator<'a> {
     }
 
     /// The worker (spawned or not) whose range has the most files remaining.
-    fn find_steal_victim(&mut self) -> Option<*mut Worker> {
-        // Callers (assign_work) hold a live `&mut Worker` pointing
-        // into `self.workers`. `iter_mut()` would materialize a second
-        // `&mut Worker` for that same slot — instant UB under Stacked Borrows
-        // regardless of what the loop body does. Iterate via raw pointers
-        // instead.
-        let mut victim: Option<*mut Worker> = None;
+    fn find_steal_victim(&self) -> Option<usize> {
+        let mut victim = None;
         let mut most: u64 = 0;
-        let base: *mut Worker = self.workers.as_mut_ptr();
-        let len = self.workers.len();
-        for i in 0..len {
-            // SAFETY: `i < len`; read-only inspection of `range` through *mut.
-            let v = unsafe { base.add(i) };
-            // SAFETY: `v = base.add(i)` with `i < len` is in-bounds for
-            // `self.workers`; field read through *mut so no `&mut Worker` is
-            // formed that could alias the caller's live `w`.
-            let r = unsafe { (*v).range };
+        for (slot, w) in self.workers.iter().enumerate() {
+            let r = w.range;
             let n: u64 = match &self.costs {
                 Some(c) => c[r.lo as usize..r.hi as usize].iter().sum(),
                 None => u64::from(r.len()),
             };
             if n > most {
                 most = n;
-                victim = Some(v);
+                victim = Some(slot);
             }
         }
         victim
@@ -252,21 +237,21 @@ impl<'a> Coordinator<'a> {
 
     pub(crate) fn drive(&mut self) {
         let _ = self.spawn_worker();
-        self.run_pending_reaps();
+        self.handle_worker_events();
         while !self.is_done() {
             let signal = abort_handler::ABORT_SIGNAL.load(Ordering::Acquire);
             if signal != 0 {
                 self.abort_all(signal);
                 return;
             }
-            self.vm.event_loop_ref().tick();
-            self.run_pending_reaps();
+            self.vm.event_loop().tick();
+            self.handle_worker_events();
             self.assign_work_to_waiting_workers();
             if let Some(children) = &mut self.children_of_workers {
                 children.look();
             }
             self.maybe_scale_up();
-            self.run_pending_reaps();
+            self.handle_worker_events();
             if self.is_done() {
                 break;
             }
@@ -284,15 +269,12 @@ impl<'a> Coordinator<'a> {
                     sec: wait_ms / MS_PER_S,
                     nsec: (wait_ms % MS_PER_S) * bun_core::time::NS_PER_MS as i64,
                 };
-                // SAFETY: event_loop()/usockets_loop() return live pointers for the VM lifetime.
-                unsafe {
-                    (*(*self.vm.event_loop()).usockets_loop())
-                        .tick_with_timeout(Some(&ts), bun_uws::NOW_NS_UNKNOWN);
-                }
+                let loop_ = self.vm.event_loop().usockets_loop();
+                loop_.tick_with_timeout(Some(&ts), bun_uws::NOW_NS_UNKNOWN);
             } else {
-                self.vm.event_loop_ref().auto_tick();
+                self.vm.event_loop().auto_tick();
             }
-            self.run_pending_reaps();
+            self.handle_worker_events();
         }
     }
 
@@ -312,8 +294,7 @@ impl<'a> Coordinator<'a> {
             .filter_map(|w| w.inflight.map(|idx| (idx, now - w.dispatched_at)))
             .collect();
         for (idx, ms) in &running {
-            self.reporter.summary().fail += 1;
-            self.reporter.summary().files += 1;
+            self.reporter.count_failed_file();
             self.mark_cut_short(
                 *idx,
                 *ms,
@@ -370,19 +351,10 @@ impl<'a> Coordinator<'a> {
     fn spawn_worker(&mut self) -> bool {
         debug_assert!(self.spawned_count < self.parallel_limit);
         let w = &mut self.workers[self.spawned_count as usize];
-        // A prior failed start()'s errdefer leaves ipc.done = true; reset so a
-        // retry on the same slot starts with a fresh channel.
-        w.ipc = Default::default();
-        // Intrusive backref (raw ptr).
-        // Built via from_mut so the stored `*const` carries write provenance:
-        // WorkerPipe::on_read_chunk later mutates the Worker through cast_mut().
-        let w_ptr = std::ptr::from_mut::<Worker>(w).cast_const();
-        w.out = WorkerPipe::new(w_ptr);
-        w.err = WorkerPipe::new(w_ptr);
         match w.start(&SpawnContext {
             vm: self.vm,
             cwd: self.cwd,
-            argv: &self.argv,
+            argv: bun_core::CStrList::new(&self.argv),
             envps: &self.envps,
             compiled_program: crate::cli::run_compiled::graph_descriptor(),
             #[cfg(windows)]
@@ -437,7 +409,7 @@ impl<'a> Coordinator<'a> {
     }
 
     fn is_heavy(&self, file_idx: u32) -> bool {
-        let timings = self.reporter.timings.as_ref();
+        let timings = self.timings.as_ref();
         self.keeps_heavy_files_apart
             && timings.is_some_and(|t| t.is_heavy(self.files[file_idx as usize].as_bytes()))
     }
@@ -445,7 +417,7 @@ impl<'a> Coordinator<'a> {
     /// In megabytes. 0 for a file that is not heavy.
     fn heavy_growth_of(&self, file_idx: u32) -> u32 {
         let path = self.files[file_idx as usize].as_bytes();
-        let growth = (self.reporter.timings.as_ref()).and_then(|t| t.growth_of(path));
+        let growth = (self.timings.as_ref()).and_then(|t| t.growth_of(path));
         growth.filter(|_| self.is_heavy(file_idx)).unwrap_or(0)
     }
 
@@ -454,14 +426,8 @@ impl<'a> Coordinator<'a> {
         if !self.keeps_heavy_files_apart {
             return 0;
         }
-        // The caller may hold a `&mut Worker` of the slice: see `find_steal_victim`.
-        let base: *const Worker = self.workers.as_ptr();
-        let growths = (0..self.workers.len()).map(|i| {
-            // SAFETY: `i < len`; a read of one field through the raw pointer.
-            let inflight = unsafe { (*base.add(i)).inflight };
-            inflight.map_or(0, |file_idx| self.heavy_growth_of(file_idx))
-        });
-        growths.sum()
+        let running = self.workers.iter().filter_map(|w| w.inflight);
+        running.map(|file_idx| self.heavy_growth_of(file_idx)).sum()
     }
 
     fn has_heavy_files_left(&self) -> bool {
@@ -470,29 +436,27 @@ impl<'a> Coordinator<'a> {
 
     /// What the files that run and are not heavy took together.
     fn growth_running_beside_heavy_files(&self) -> u32 {
-        let Some(timings) = self.reporter.timings.as_ref() else {
+        let Some(timings) = self.timings.as_ref() else {
             return 0;
         };
-        // The caller may hold a `&mut Worker` of the slice: see `find_steal_victim`.
-        let base: *const Worker = self.workers.as_ptr();
-        let growths = (0..self.workers.len()).filter_map(|i| {
-            // SAFETY: `i < len`; a read of one field through the raw pointer.
-            let file_idx = unsafe { (*base.add(i)).inflight }?;
+        let growths = self.workers.iter().filter_map(|w| {
+            let file_idx = w.inflight?;
             let growth = timings.growth_of(self.files[file_idx as usize].as_bytes())?;
             (!self.is_heavy(file_idx)).then_some(growth)
         });
         growths.sum()
     }
 
-    /// The next file of `range`. As long as heavy files are left, that is a heavy one for which there is room, else the first one
+    /// The next file of the range of the worker in `slot`. As long as heavy files are left, that is a heavy one for which there is room, else the first one
     /// that fits beside them, else the lightest, and none where only heavy ones are left: what is begun before a heavy file runs
     /// on beside it. None of the files of a range has been handed out, so their order is free.
-    fn take_next(&mut self, range: &mut FileRange) -> Option<u32> {
+    fn take_next(&mut self, slot: usize) -> Option<u32> {
+        let range = self.workers[slot].range;
         let running = self.heavy_growth_running();
         let is_chosen =
             self.keeps_heavy_files_apart && (running > 0 || self.has_heavy_files_left());
         if !range.is_empty() && is_chosen {
-            let timings = self.reporter.timings.as_ref()?;
+            let timings = self.timings.as_ref()?;
             // Most files take next to nothing, so one without a record counts as light. A table may then hold the large ones alone.
             let growth_of = |file_idx: &u32| {
                 let growth = timings.growth_of(self.files[*file_idx as usize].as_bytes());
@@ -522,7 +486,7 @@ impl<'a> Coordinator<'a> {
                 costs.swap(range.lo as usize, next as usize);
             }
         }
-        range.pop_front()
+        self.workers[slot].range.pop_front()
     }
 
     /// A worker that found only heavy files, and no room for one, waits. It asks again and again: a heavy file may have ended.
@@ -530,26 +494,22 @@ impl<'a> Coordinator<'a> {
         if !self.keeps_heavy_files_apart {
             return;
         }
-        let base: *mut Worker = self.workers.as_mut_ptr();
-        for i in 0..self.workers.len() {
-            // SAFETY: `i < len`, and no other `&mut Worker` is live: `drive` calls this between events.
-            let w = unsafe { &mut *base.add(i) };
-            if w.alive && core::mem::take(&mut w.waits_for_heavy_file_to_end) {
-                self.assign_work(w);
+        for slot in 0..self.workers.len() {
+            let w = &mut self.workers[slot];
+            if w.can_take_work() && core::mem::take(&mut w.waits_for_heavy_file_to_end) {
+                self.assign_work(slot);
             }
         }
     }
 
-    fn assign_work(&mut self, w: &mut Worker) {
+    fn assign_work(&mut self, slot: usize) {
         if self.stop_reason.is_some() {
-            return w.shutdown(&mut self.frame);
+            return self.workers[slot].shutdown(&mut self.frame);
         }
-        let mut range = w.range;
-        let next = self.take_next(&mut range);
-        w.range = range;
-        if let Some(idx) = next {
-            return self.dispatch_to(w, idx);
+        if let Some(idx) = self.take_next(slot) {
+            return self.dispatch_to(slot, idx);
         }
+        let w = &mut self.workers[slot];
         if !w.range.is_empty() {
             w.waits_for_heavy_file_to_end = true;
             return;
@@ -559,32 +519,22 @@ impl<'a> Coordinator<'a> {
         // directory locality and total steals are O(K log N) instead of O(N).
         // Stealing from not-yet-spawned workers is fine — their range is just
         // an unclaimed reservation.
-        // Reshaped for borrowck — find_steal_victim returns *mut so
-        // we can borrow `w` and the victim disjointly.
-        if let Some(v_ptr) = self.find_steal_victim() {
-            // SAFETY: v_ptr points into self.workers. `w` cannot be the victim:
-            // `w.range` is empty here (pop_front just returned None) while the
-            // victim has the largest *non-empty* range, so `v_ptr != w` and the
-            // two `&mut Worker` are disjoint. find_steal_victim itself iterates
-            // via raw pointers and never forms a `&mut Worker` for `w`'s slot.
-            let v = unsafe { &mut *v_ptr };
+        if let Some(victim) = self.find_steal_victim() {
             if self.costs.is_some() {
-                let mut range = v.range;
-                let next = self.take_next(&mut range);
-                v.range = range;
-                if let Some(idx) = next {
-                    return self.dispatch_to(w, idx);
+                if let Some(idx) = self.take_next(victim) {
+                    return self.dispatch_to(slot, idx);
                 }
-                w.waits_for_heavy_file_to_end = true;
+                self.workers[slot].waits_for_heavy_file_to_end = true;
                 return;
-            } else if let Some(stolen) = v.range.steal_back_half() {
+            } else if let Some(stolen) = self.workers[victim].range.steal_back_half() {
+                let w = &mut self.workers[slot];
                 w.range = stolen;
                 if let Some(idx) = w.range.pop_front() {
-                    return self.dispatch_to(w, idx);
+                    return self.dispatch_to(slot, idx);
                 }
             }
         }
-        w.shutdown(&mut self.frame);
+        self.workers[slot].shutdown(&mut self.frame);
     }
 
     fn bail_out(&mut self) {
@@ -599,27 +549,16 @@ impl<'a> Coordinator<'a> {
             if self.bail == 1 { "" } else { "s" }
         );
         Output::flush();
-        // Reachable from on_frame/account_crash with the caller's
-        // `w: &mut Worker` still live and used afterward; iter_mut() here
-        // would create a second `&mut Worker` for `w`'s slot (UB). Iterate
-        // via raw pointers.
-        let base: *mut Worker = self.workers.as_mut_ptr();
-        let n = self.spawned_count as usize;
-        for i in 0..n {
-            // SAFETY: `i < spawned_count <= workers.len()`; access through
-            // *mut so no `&mut Worker` aliases the caller's `w`.
-            unsafe {
-                let other = base.add(i);
-                if (*other).alive && (*other).inflight.is_none() {
-                    (*other).shutdown(&mut self.frame);
-                }
+        for w in &mut self.workers[..self.spawned_count as usize] {
+            if w.alive && w.inflight.is_none() {
+                w.shutdown(&mut self.frame);
             }
         }
     }
 
     /// In megabytes, since this was last asked. From now on the worker's children are looked at.
-    fn take_highest_of_children(&mut self, w: &Worker) -> u32 {
-        let pid = w.process.as_ref().map(|process| process.pid);
+    fn take_highest_of_children(&mut self, slot: usize) -> u32 {
+        let pid = (self.workers[slot].process.as_ref()).map(|process| process.pid);
         match (&mut self.children_of_workers, pid) {
             (Some(children), Some(pid)) => children.take_highest(pid as i64),
             _ => 0,
@@ -627,13 +566,13 @@ impl<'a> Coordinator<'a> {
     }
 
     fn record_timing(&mut self, file_idx: u32, dispatched_at: i64) {
-        if let Some(t) = self.reporter.timings.as_mut() {
+        if let Some(t) = self.timings.as_mut() {
             t.record_since(self.files[file_idx as usize].as_bytes(), dispatched_at);
         }
     }
 
     fn keep_timing(&mut self, file_idx: u32) {
-        if let Some(t) = self.reporter.timings.as_mut() {
+        if let Some(t) = self.timings.as_mut() {
             t.keep(self.files[file_idx as usize].as_bytes());
         }
     }
@@ -679,14 +618,15 @@ impl<'a> Coordinator<'a> {
         }
     }
 
-    fn flush_captured(&mut self, w: &mut Worker) {
-        if w.captured.is_empty() {
+    fn flush_captured(&mut self, slot: usize) {
+        if self.workers[slot].captured.is_empty() {
             return;
         }
         self.break_dots();
-        if let Some(idx) = w.inflight {
+        if let Some(idx) = self.workers[slot].inflight {
             self.ensure_header(idx);
         }
+        let w = &mut self.workers[slot];
         let _ = Output::error_writer().write_all(&w.captured);
         if !strings::ends_with_char(&w.captured, b'\n') {
             let _ = Output::error_writer().write_all(b"\n");
@@ -694,14 +634,19 @@ impl<'a> Coordinator<'a> {
         w.captured.clear();
     }
 
-    pub(crate) fn on_frame(&mut self, w: &mut Worker, kind: frame::Kind, rd: &mut frame::Reader) {
+    fn on_frame(&mut self, slot: usize, kind: frame::Kind, rd: &mut frame::Reader) {
         match kind {
             frame::Kind::Ready => {
                 log_first_time_in_test_run("the first worker is ready");
+                let w = &mut self.workers[slot];
+                if !w.can_take_work() {
+                    // `reached_ready` stays false, so the exit counts in `startup_failures`.
+                    return;
+                }
                 w.reached_ready = true;
                 w.startup_failures = 0;
-                self.take_highest_of_children(w);
-                self.assign_work_or_retry(w);
+                self.take_highest_of_children(slot);
+                self.assign_work(slot);
             }
             frame::Kind::FileStart => {
                 log_first_time_in_test_run("the first test file has begun");
@@ -710,13 +655,13 @@ impl<'a> Coordinator<'a> {
                 log_first_time_in_test_run("the first result is there");
                 let idx = rd.u32();
                 let formatted = rd.str();
-                if w.inflight != Some(idx) {
+                if self.workers[slot].inflight != Some(idx) {
                     return;
                 }
                 if let Some(file) = self.test_records.get_mut(idx as usize) {
                     file.tests.push(Box::from(rd.p));
                 }
-                self.flush_captured(w);
+                self.flush_captured(slot);
                 if formatted.is_empty() {
                     return; // e.g. pass under --only-failures
                 }
@@ -754,35 +699,30 @@ impl<'a> Coordinator<'a> {
                 self.max_worker_peak_rss_mb = self.max_worker_peak_rss_mb.max(rd.u32());
                 let first_loads = rd.str();
                 // Of the two views of the children, one sees the short-lived and one sees those that run at once.
-                let growth = rd_growth + largest_child.max(self.take_highest_of_children(w));
+                let growth = rd_growth + largest_child.max(self.take_highest_of_children(slot));
                 if let Some(file) = self.test_records.get_mut(idx as usize) {
                     file.elapsed_ns = elapsed_ns;
                     file.started_unix_ms = bun_core::time::milli_timestamp()
                         - (file.elapsed_ns / bun_core::time::NS_PER_MS) as i64;
                 }
 
-                w.read_output_written_so_far();
-                self.flush_captured(w);
+                self.workers[slot].read_output_written_so_far();
+                self.flush_captured(slot);
                 if self.last_header_idx == Some(idx) {
                     self.end_group();
                 }
 
-                // A worker can write file_done and crash before the coordinator
-                // reads the frame; onWorkerExit() will already have called
-                // accountCrash() and cleared inflight. Ignore the buffered frame
-                // so we don't double-count.
+                // fd 3 is writable from test JS, so count only the file that this worker runs.
+                let w = &mut self.workers[slot];
                 if w.inflight != Some(idx) {
                     return;
                 }
+                w.inflight = None;
                 w.first_loads.clear();
                 w.first_loads.extend_from_slice(first_loads);
+                let dispatched_at = w.dispatched_at;
 
-                // Reshaped for borrowck — `summary()` mutably borrows
-                // `self.reporter`, so the unhandled-errors counter (also on
-                // `self.reporter.jest`) and `bail_out()` must run after the
-                // summary borrow is released.
-                {
-                    let summary = self.reporter.summary();
+                self.reporter.update_summary(|summary| {
                     summary.pass += pass;
                     summary.fail += fail;
                     summary.skip += skip;
@@ -791,14 +731,13 @@ impl<'a> Coordinator<'a> {
                     summary.skipped_because_label += skipped_label;
                     summary.files += files;
                     summary.shuffled += shuffled;
-                }
-                self.reporter.jest.unhandled_errors_between_tests += unhandled;
-                self.record_timing(idx, w.dispatched_at);
-                if let Some(timings) = self.reporter.timings.as_mut().filter(|_| growth > 0) {
+                });
+                (self.reporter.jest.unhandled_errors_between_tests).update(|n| n + unhandled);
+                self.record_timing(idx, dispatched_at);
+                if let Some(timings) = self.timings.as_mut().filter(|_| growth > 0) {
                     timings.record_growth(self.files[idx as usize].as_bytes(), growth);
                 }
 
-                w.inflight = None;
                 self.files_done += 1;
                 let fail_now = self.reporter.summary().fail;
                 if self.bail > 0 && fail_now >= self.bail {
@@ -808,22 +747,18 @@ impl<'a> Coordinator<'a> {
                 // pre-reap drain; don't dispatch into it (stdin is gone, the
                 // file index would be consumed and skipped). reapWorker()
                 // handles the next dispatch via respawn.
-                if w.alive {
-                    self.assign_work(w);
+                if self.workers[slot].can_take_work() {
+                    self.assign_work(slot);
                 }
             }
             frame::Kind::RepeatBufs => {
-                // Unrolled because an array of disjoint &mut fields needs
-                // explicit splitting.
-                self.reporter
-                    .failures_to_repeat_buf
-                    .extend_from_slice(rd.str());
-                self.reporter
-                    .skips_to_repeat_buf
-                    .extend_from_slice(rd.str());
-                self.reporter
-                    .todos_to_repeat_buf
-                    .extend_from_slice(rd.str());
+                for to_repeat in [
+                    &self.reporter.failures_to_repeat_buf,
+                    &self.reporter.skips_to_repeat_buf,
+                    &self.reporter.todos_to_repeat_buf,
+                ] {
+                    to_repeat.with_taken(|buf| buf.extend_from_slice(rd.str()));
+                }
             }
             frame::Kind::CoverageFile => {
                 use bun_sourcemap_jsc::code_coverage::wire;
@@ -842,63 +777,55 @@ impl<'a> Coordinator<'a> {
         }
     }
 
-    fn dispatch_to(&mut self, w: &mut Worker, idx: u32) {
+    fn dispatch_to(&mut self, slot: usize, idx: u32) {
         let file = self.files[idx as usize].as_bytes();
         let is_growth_written = self.children_of_workers.is_some();
-        w.dispatch(&mut self.frame, idx, file, is_growth_written);
+        self.workers[slot].dispatch(&mut self.frame, idx, file, is_growth_written);
     }
 
-    pub(crate) fn on_worker_exit(&mut self, w: &mut Worker, status: SpawnStatus, peak_rss_mb: u32) {
-        self.max_exited_worker_rss_mb = self.max_exited_worker_rss_mb.max(peak_rss_mb);
-        if let (Some(children), Some(process)) = (&mut self.children_of_workers, &w.process) {
-            children.forget(process.pid as i64);
-        }
-        w.exit_status = Some(status);
-        // The Channel delivers any remaining buffered data then close (which
-        // sets ipc.done and calls tryReap), so no explicit drain is needed —
-        // tryReap here covers the case where the channel already closed first.
-        self.try_reap(w);
-    }
-
-    pub(crate) fn try_reap(&mut self, w: &mut Worker) {
-        if w.exit_status.is_none() || !w.ipc.done.get() {
-            return;
-        }
-        w.reap_pending = true;
-    }
-
+    /// Acts on what the event loop has left in the workers.
     #[optimize(size)]
-    fn run_pending_reaps(&mut self) {
-        let n = self.spawned_count as usize;
-        for i in 0..n {
-            // SAFETY: `i < spawned_count <= workers.len()`. `base` is re-derived
-            // each iteration: `reap_worker`'s slot walks retag the buffer,
-            // popping any earlier derivation.
-            let w: *mut Worker = unsafe { self.workers.as_mut_ptr().add(i) };
-            // SAFETY: `w` is a live slot; short place accesses only.
-            let status = unsafe {
-                if !core::mem::take(&mut (*w).reap_pending) {
-                    continue;
+    fn handle_worker_events(&mut self) {
+        for slot in 0..self.spawned_count as usize {
+            let w = &mut self.workers[slot];
+            if let Some(mut incoming) = w.ipc.take_incoming() {
+                // Once is enough: frames that arrive together are all of one file.
+                w.read_output_written_so_far();
+                while let Some((kind, mut rd)) = incoming.next_frame() {
+                    self.on_frame(slot, kind, &mut rd);
                 }
-                // SpawnStatus is not Copy (Err arm owns a path); take()
-                // instead of pattern-match-by-copy.
-                (*w).exit_status
-                    .take()
-                    .expect("reap_pending set only after exit_status")
-            };
-            self.reap_worker(i, &status);
+                self.workers[slot].ipc.restore_incoming(incoming);
+            }
+        }
+        // Only now: what a reap does depends on what the other workers have reported.
+        for slot in 0..self.spawned_count as usize {
+            let w = &mut self.workers[slot];
+            if w.ipc.kill_pending.take()
+                && let Some(p) = &w.process
+            {
+                // So that the exit accounts for the in-flight file and the slot can respawn.
+                let _ = p.kill(9);
+            }
+            if w.ipc.done.get()
+                && let Some(status) = w.exit_status.take()
+            {
+                self.reap_worker(slot, &status);
+            }
         }
     }
 
     #[optimize(size)]
     fn reap_worker(&mut self, slot: usize, status: &SpawnStatus) {
-        // SAFETY: `slot < spawned_count <= workers.len()`; fresh root derivation, like each reborrow below.
-        let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
+        let w = &mut self.workers[slot];
+        if let (Some(children), Some(process)) = (&mut self.children_of_workers, &w.process) {
+            children.forget(process.pid as i64);
+        }
         // Decrement here (not in onProcessExit) so drive() keeps pumping until
         // the IPC pipe has been drained and this reap actually runs.
         self.live_workers -= 1;
         w.read_output_written_so_far();
-        self.flush_captured(w);
+        self.flush_captured(slot);
+        let w = &mut self.workers[slot];
         // Exited before the IPC handshake. `inflight` is None for these, so
         // the mid-file handling below never fires; the per-slot cap is what
         // bounds the respawn loop.
@@ -911,6 +838,7 @@ impl<'a> Coordinator<'a> {
             if let Some(p) = &w.process {
                 terminate_process_group(p.pid);
             }
+            let (corrupt_frame, dispatched_at) = (w.ipc.corrupt_frame.get(), w.dispatched_at);
             self.break_dots();
             self.ensure_header(idx);
             // A worker dying mid-file is never silently retried. If a test
@@ -923,24 +851,24 @@ impl<'a> Coordinator<'a> {
             // masked by the rest of the suite passing: abort the whole run so
             // the exit status reflects the crash. SIGKILL is treated as a
             // regular failure (commonly the OOM killer or the user). When the
-            // kill was ours (`Worker::on_channel_done`, corrupt IPC stream),
+            // kill was ours (corrupt IPC stream),
             // the status says nothing the user can act on; report the cause.
             let panicked = is_panic_status(status);
             if self.stop_reason == Some(StopReason::WorkerPanicked) && !panicked {
                 self.account_unfinished(idx, b"aborted: sibling worker panicked");
             } else {
                 self.keep_timing(idx);
-                if w.ipc.corrupt_frame.get() && !panicked {
+                if corrupt_frame && !panicked {
                     self.account_crash(
                         idx,
-                        w.dispatched_at,
+                        dispatched_at,
                         format_args!("worker killed: corrupt IPC frame, something wrote to fd 3"),
                     );
                 } else {
                     let mut buf = [0u8; 32];
                     self.account_crash(
                         idx,
-                        w.dispatched_at,
+                        dispatched_at,
                         format_args!(
                             "worker crashed: {}",
                             bstr::BStr::new(describe_status(&mut buf, status))
@@ -949,9 +877,7 @@ impl<'a> Coordinator<'a> {
                 }
             }
             Output::flush();
-            // SAFETY: fresh root derivation — `account_crash` can reach `bail_out`, which retags the slots.
-            let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
-            w.inflight = None;
+            self.workers[slot].inflight = None;
             if panicked {
                 self.abort_on_worker_panic(idx, status);
             }
@@ -966,8 +892,7 @@ impl<'a> Coordinator<'a> {
             self.abort_on_idle_worker_panic(status);
         }
 
-        // SAFETY: fresh derivation — `abort_on_worker_panic` above retags the slots.
-        let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
+        let w = &mut self.workers[slot];
         w.process = None;
         let startup_failures = w.startup_failures;
 
@@ -1006,18 +931,13 @@ impl<'a> Coordinator<'a> {
 
         let mut respawned = false;
         if can_respawn {
-            // SAFETY: fresh derivation — `has_undispatched_files` read the slots.
-            let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
-            w.ipc = Default::default();
-            // from_mut: keep write provenance on the stored backref (see spawn_worker).
-            let w_ptr = std::ptr::from_mut::<Worker>(w).cast_const();
-            w.out = WorkerPipe::new(w_ptr);
-            w.err = WorkerPipe::new(w_ptr);
+            let w = &mut self.workers[slot];
+            w.reset_pipes();
             w.reached_ready = false;
             match w.start(&SpawnContext {
                 vm: self.vm,
                 cwd: self.cwd,
-                argv: &self.argv,
+                argv: bun_core::CStrList::new(&self.argv),
                 envps: &self.envps,
                 compiled_program: crate::cli::run_compiled::graph_descriptor(),
                 #[cfg(windows)]
@@ -1040,11 +960,8 @@ impl<'a> Coordinator<'a> {
             // Explicit early release: `w` is a borrowed slot in self.workers, so
             // Drop won't fire until Coordinator teardown. Assigning defaults
             // drops the old values now (pipe FDs, capture buffer).
-            // SAFETY: fresh derivation — `abort_queued_files` may retag the slots.
-            let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
-            w.ipc = Default::default();
-            w.out = WorkerPipe::new(core::ptr::null());
-            w.err = WorkerPipe::new(core::ptr::null());
+            let w = &mut self.workers[slot];
+            w.reset_pipes();
             let _ = core::mem::take(&mut w.captured);
         }
     }
@@ -1056,8 +973,7 @@ impl<'a> Coordinator<'a> {
             bstr::BStr::new(self.rel_path(file_idx)),
             bstr::BStr::new(reason),
         );
-        self.reporter.summary().fail += 1;
-        self.reporter.summary().files += 1;
+        self.reporter.count_failed_file();
         self.files_done += 1;
         if let Some(file) = self.test_records.get_mut(file_idx as usize) {
             file.unfinished = Some((b"(aborted)", reason.into()));
@@ -1091,8 +1007,7 @@ impl<'a> Coordinator<'a> {
             bstr::BStr::new(self.rel_path(file_idx)),
             detail,
         );
-        self.reporter.summary().fail += 1;
-        self.reporter.summary().files += 1;
+        self.reporter.count_failed_file();
         self.mark_cut_short(
             file_idx,
             bun_core::time::milli_timestamp() - dispatched_at,
@@ -1155,7 +1070,7 @@ impl<'a> Coordinator<'a> {
             bstr::BStr::new(describe_status(&mut buf, status)),
         );
         Output::flush();
-        self.reporter.jest.unhandled_errors_between_tests += 1;
+        (self.reporter.jest.unhandled_errors_between_tests).update(|n| n + 1);
         self.terminate_workers_after_panic(b"aborted: worker panicked between files");
     }
 
@@ -1167,24 +1082,10 @@ impl<'a> Coordinator<'a> {
         // crash when the exit arrives. Runs even if --bail already stopped
         // the run, since bailOut() only shutdown()s idle workers and would
         // leave inflight ones running past the banner.
-        // Reachable from reap_worker with the caller's
-        // `w: &mut Worker` still live and used afterward; iter_mut() would
-        // create a second `&mut Worker` for `w`'s slot (UB). Iterate via raw
-        // pointers.
-        let base: *mut Worker = self.workers.as_mut_ptr();
-        let n = self.spawned_count as usize;
-        for i in 0..n {
-            // SAFETY: `i < spawned_count <= workers.len()`; field reads
-            // through *mut so no `&mut Worker` aliases the caller's `w`.
-            let other = unsafe { base.add(i) };
-            // SAFETY: `other` is in-bounds (see above); reading `.alive`
-            // through *mut forms no `&mut Worker` aliasing the caller's `w`.
-            if unsafe { !(*other).alive } {
-                continue;
-            }
-            // SAFETY: `other` is in-bounds (see above); reading `.process`
-            // through *mut forms no `&mut Worker` aliasing the caller's `w`.
-            if let Some(p) = unsafe { &(*other).process } {
+        for w in &self.workers[..self.spawned_count as usize] {
+            if w.alive
+                && let Some(p) = &w.process
+            {
                 #[cfg(unix)]
                 terminate_process_group(p.pid);
                 #[cfg(not(unix))]
@@ -1223,8 +1124,7 @@ impl<'a> Coordinator<'a> {
                     )),
                     bstr::BStr::new(reason),
                 );
-                self.reporter.summary().fail += 1;
-                self.reporter.summary().files += 1;
+                self.reporter.count_failed_file();
                 self.files_done += 1;
                 if let Some(file) = self.test_records.get_mut(idx as usize) {
                     file.unfinished = Some((b"(aborted)", reason.into()));
@@ -1232,38 +1132,6 @@ impl<'a> Coordinator<'a> {
             }
         }
         Output::flush();
-    }
-
-    fn assign_work_or_retry(&mut self, w: &mut Worker) {
-        // Kept as a separate entry point from assign_work so the .ready
-        // handler has one call site; retry is gone but the indirection
-        // costs nothing.
-        self.assign_work(w);
-    }
-
-    #[cfg(windows)]
-    pub(crate) fn create_windows_kill_on_close_job() -> Option<*mut c_void> {
-        use bun_sys::windows;
-        // SAFETY: Win32 FFI calls.
-        unsafe {
-            let job = windows::CreateJobObjectA(core::ptr::null_mut(), core::ptr::null_mut());
-            if job.is_null() {
-                return None;
-            }
-            let mut jeli: windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION = bun_core::ffi::zeroed();
-            jeli.BasicLimitInformation.LimitFlags = windows::JOB_LIMIT_FLAGS_KILL_TREE_ON_CLOSE;
-            if windows::SetInformationJobObject(
-                job,
-                windows::JobObjectExtendedLimitInformation,
-                (&mut jeli as *mut windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
-                core::mem::size_of::<windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            ) == 0
-            {
-                windows::CloseHandle(job);
-                return None;
-            }
-            Some(job)
-        }
     }
 }
 

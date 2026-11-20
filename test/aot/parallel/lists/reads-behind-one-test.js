@@ -1,5 +1,5 @@
 // Several reads of one list of numbers under written indexes ask once for the list, its length and its kind: a hole, a list that is too short, one that changes its kind between two reads, and an operand that is no number answer as they do one by one.
-// STATISTIC: ListsGuardedForReads >= 20
+// STATISTIC: ArraysGuardedForReads >= 20
 const log = [];
 let seen = 0;
 let numberOfCase = 0;

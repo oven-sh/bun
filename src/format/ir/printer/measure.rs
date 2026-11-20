@@ -31,6 +31,8 @@ pub(super) struct Measure<'d> {
     uses_flat: bool,
     /// Content that contains a group with an id has been skipped, so that group's mode hasn't been recorded.
     has_skipped_group_ids: bool,
+    /// The group whose fit is measured hasn't ended yet.
+    is_in_measured_group: bool,
     elements: Elements<'d>,
     /// Number of runs left in the printer's queue. If it's one more than the queue's length, the extra one is the
     /// printer's current run, which comes first.
@@ -54,8 +56,10 @@ impl<'d> Measure<'d> {
             is_space_element_pending: printer.pending_space,
             has_line_suffix: !printer.buffers.line_suffixes.is_empty(),
             must_be_flat: false,
-            uses_flat,
+            // The measurements don't know that a group is forced to break.
+            uses_flat: uses_flat && !printer.has_expanded_group(),
             has_skipped_group_ids: false,
+            is_in_measured_group: false,
             elements: printer.elements.clone(),
             queue_len: printer.buffers.queue.len(),
             frames_len: printer.buffers.frames.len(),
@@ -121,7 +125,10 @@ impl<'d> Printer<'d> {
     /// it up to the next possible line break.
     pub(super) fn group_fits(&mut self, group: &Group) -> PrintResult<bool> {
         let flat = group.flat();
-        if flat.flags.has(FlatFlags::MEASURED) && group.end() < self.elements.end {
+        if flat.flags.has(FlatFlags::MEASURED)
+            && group.end() < self.elements.end
+            && !self.has_expanded_group()
+        {
             let mut measure = Measure::new(self, true);
             if self.flat_fits(&mut measure, flat) == Fits::No {
                 return Ok(false);
@@ -155,13 +162,14 @@ impl<'d> Printer<'d> {
     fn group_fits_by_elements(&mut self, uses_flat: bool) -> PrintResult<bool> {
         let mut measure = Measure::new(self, uses_flat);
         self.measure_push(&mut measure, FrameKind::Group, PrintMode::Flat);
+        measure.is_in_measured_group = true;
         self.fits(&mut measure, &mut AllPredicate)
     }
 
     /// True if `variant` of a [`FormatElement::BestFitting`] fits in its place.
     pub(super) fn variant_fits(&mut self, variant: Interned) -> PrintResult<bool> {
         let flat = self.flat_of(variant);
-        if flat.flags.has(FlatFlags::MEASURED) {
+        if flat.flags.has(FlatFlags::MEASURED) && !self.has_expanded_group() {
             let mut measure = Measure::new(self, true);
             if self.flat_fits(&mut measure, flat) == Fits::No {
                 return Ok(false);
@@ -278,6 +286,7 @@ impl<'d> Printer<'d> {
             .last()
             .or_else(|| printer_frames.get(measure.frames_len - 1));
         measure.mode = top.map_or(PrintMode::Expanded, |top| top.mode);
+        measure.is_in_measured_group = measure.is_in_measured_group && !own.is_empty();
         Ok(())
     }
 
@@ -387,10 +396,16 @@ impl<'d> Printer<'d> {
             FormatElement::Interned(content) => self.measure_content(measure, *content),
             FormatElement::Tag(tag) => match tag {
                 Tag::StartGroup(group) => {
-                    if measure.must_be_flat && !group.mode().is_flat() {
+                    let is_forced = self.is_forced(measure.elements.at().saturating_sub(1), group);
+                    // A group that holds a forced group breaks, as it will when the output is formatted again.
+                    if is_forced && measure.is_in_measured_group {
                         return Ok(Fits::No);
                     }
-                    let group_mode = match group.mode().is_flat() {
+                    let is_flat = group.mode().is_flat() && !is_forced;
+                    if measure.must_be_flat && !is_flat {
+                        return Ok(Fits::No);
+                    }
+                    let group_mode = match is_flat {
                         true => mode,
                         false => PrintMode::Expanded,
                     };

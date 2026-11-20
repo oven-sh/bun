@@ -6,7 +6,7 @@
 //! document that was written without a `Formatter`.
 
 use super::element::{
-    Flat, FlatFlags, FormatElement, GroupMode, Interned, LineMode, PrintMode, Tag,
+    BestFitting, Flat, FlatFlags, FormatElement, GroupMode, Interned, LineMode, PrintMode, Tag,
 };
 use super::formatter::Storage;
 
@@ -57,6 +57,8 @@ struct State {
     last_break: u32,
     /// Something that makes `Storage::will_break` true.
     last_will_break: u32,
+    /// A [`GroupMode::StaysExpanded`] group, which makes `Storage::will_break` true if it breaks.
+    last_stays_expanded: u32,
     /// Something that keeps the enclosing groups from being [`FlatFlags::MEASURED`].
     last_unknown: u32,
     last_boundary: u32,
@@ -114,10 +116,10 @@ pub(crate) fn propagate_expand(root: Interned, storage: &mut Storage, tracker: &
             return;
         };
         end = outer_end;
-        if let Some((start, flat, will_break)) = tracker.end_skipped()
+        if let Some((start, flat, will_break, stays_expanded)) = tracker.end_skipped()
             && let Some(FormatElement::Skip(skip)) = storage.pool.get_mut(start as usize)
         {
-            (skip.flat, skip.will_break) = (flat, will_break);
+            (skip.flat, skip.will_break, skip.stays_expanded) = (flat, will_break, stays_expanded);
         }
     }
 }
@@ -157,12 +159,16 @@ impl Tracker {
             FormatElement::Skip(_) => self.state.last_unknown = index,
             FormatElement::Interned(interned) => self.interned(interned, index, storage),
             FormatElement::BestFitting(best_fitting) => {
-                self.best_fitting(best_fitting.first, index, storage)
+                self.best_fitting(best_fitting, index, storage)
             }
             FormatElement::Tag(tag) => match tag {
                 Tag::StartGroup(group) => {
-                    if group.mode() == GroupMode::Expand && !self.state.is_in_line_suffix {
-                        self.state.last_will_break = index;
+                    if !self.state.is_in_line_suffix {
+                        match group.mode() {
+                            GroupMode::Expand => self.state.last_will_break = index,
+                            GroupMode::StaysExpanded => self.state.last_stays_expanded = index,
+                            _ => {}
+                        }
                     }
                     self.open(FrameKind::Group, index);
                 }
@@ -290,8 +296,16 @@ impl Tracker {
         {
             frame.kind = FrameKind::Group;
         }
-        if mode == GroupMode::Expand && !self.state.is_in_line_suffix {
-            self.state.last_will_break = self.state.last_will_break.max(start);
+        if !self.state.is_in_line_suffix {
+            match mode {
+                GroupMode::Expand => {
+                    self.state.last_will_break = self.state.last_will_break.max(start);
+                }
+                GroupMode::StaysExpanded => {
+                    self.state.last_stays_expanded = self.state.last_stays_expanded.max(start);
+                }
+                _ => {}
+            }
         }
     }
 
@@ -327,6 +341,7 @@ impl Tracker {
             self.state = State {
                 last_break: self.state.last_break,
                 last_will_break: self.state.last_will_break,
+                last_stays_expanded: self.state.last_stays_expanded,
                 ..saved
             };
             if kind == FrameKind::Unknown {
@@ -342,9 +357,9 @@ impl Tracker {
         self.state.is_in_line_suffix = false;
     }
 
-    /// Ends the content of a [`FormatElement::Skip`]. Returns the `Skip`'s index, the content's flat measurements, and
-    /// whether `Storage::will_break` is true for it.
-    pub(crate) fn end_skipped(&mut self) -> Option<(u32, Flat, bool)> {
+    /// Ends the content of a [`FormatElement::Skip`]. Returns the `Skip`'s index, the content's flat measurements,
+    /// whether `Storage::will_break` is true for it, and whether it has a [`GroupMode::StaysExpanded`] group.
+    pub(crate) fn end_skipped(&mut self) -> Option<(u32, Flat, bool, bool)> {
         let mut is_balanced = true;
         while matches!(self.frames.last(), Some(frame) if frame.kind != FrameKind::Skipped) {
             // A start tag without an end tag, unless it's a reserved slot.
@@ -369,8 +384,9 @@ impl Tracker {
             Flat::default()
         };
         let will_break = self.state.last_will_break > frame.start;
+        let stays_expanded = self.state.last_stays_expanded > frame.start;
         self.state = self.saved.pop()?;
-        Some((frame.start, flat, will_break))
+        Some((frame.start, flat, will_break, stays_expanded))
     }
 
     /// Records a text of `width` columns at `index`.
@@ -411,25 +427,40 @@ impl Tracker {
 
     #[inline(never)]
     fn interned(&mut self, interned: Interned, index: u32, storage: &Storage) {
-        let (flat, will_break) = storage.summary_of(interned);
+        let (flat, will_break, stays_expanded) = storage.summary_and_stays_expanded(interned);
         if flat.flags.has(FlatFlags::EXPANDS) {
             self.state.last_break = index;
         }
-        if will_break && !self.state.is_in_line_suffix {
-            self.state.last_will_break = index;
+        if !self.state.is_in_line_suffix {
+            if will_break {
+                self.state.last_will_break = index;
+            }
+            if stays_expanded {
+                self.state.last_stays_expanded = index;
+            }
         }
         self.content(flat, index);
     }
 
-    /// When flat, a `BestFitting` prints as its flattest variant, which is at `first`.
+    /// When flat, a `BestFitting` prints as its flattest variant. Any variant may be printed, so a
+    /// [`GroupMode::StaysExpanded`] group in any of them counts.
     #[inline(never)]
-    fn best_fitting(&mut self, first: u32, index: u32, storage: &Storage) {
-        let Some(&flattest) = storage.variants.get(first as usize) else {
+    fn best_fitting(&mut self, best_fitting: BestFitting, index: u32, storage: &Storage) {
+        let variants = storage.variants(best_fitting);
+        let Some(&flattest) = variants.first() else {
             return self.state.last_unknown = index;
         };
         let (flat, will_break) = storage.summary_of(flattest);
-        if will_break && !self.state.is_in_line_suffix {
-            self.state.last_will_break = index;
+        if !self.state.is_in_line_suffix {
+            if will_break {
+                self.state.last_will_break = index;
+            }
+            if variants
+                .iter()
+                .any(|&variant| storage.stays_expanded(variant))
+            {
+                self.state.last_stays_expanded = index;
+            }
         }
         self.content(flat, index);
     }

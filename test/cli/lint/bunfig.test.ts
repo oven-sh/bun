@@ -1035,6 +1035,133 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
     }
   });
 
+  describe("the typescript resolver's conditionNames", () => {
+    // A package that gives every entry of a wildcard export the same declaration file, as lucide-react does.
+    const files = (settings: string) => ({
+      "bunfig.toml": `[lint.rules]\n"import/no-duplicates" = "error"\n"import/no-unresolved" = "error"\n${settings}`,
+      "node_modules/icons-pkg/package.json": JSON.stringify({
+        name: "icons-pkg",
+        type: "module",
+        exports: {
+          "./icons/*": { types: "./dist/icon.d.mts", default: "./dist/esm/icons/*.mjs" },
+          ".": { node: "./dist/node.js", import: "./dist/import.js", default: "./dist/default.js" },
+        },
+      }),
+      "node_modules/icons-pkg/dist/icon.d.mts": "declare const icon: () => string;\nexport default icon;\n",
+      "node_modules/icons-pkg/dist/esm/icons/check.mjs": `export default () => "check";\n`,
+      "node_modules/icons-pkg/dist/esm/icons/x.mjs": `export default () => "x";\n`,
+      "node_modules/icons-pkg/dist/node.js": "export const icons = 1;\n",
+      "node_modules/icons-pkg/dist/import.js": "export const icons = 1;\n",
+      "node_modules/icons-pkg/dist/default.js": "export const icons = 1;\n",
+      "src/index.ts": `import Check from "icons-pkg/icons/check";\nimport X from "icons-pkg/icons/x";\nexport const icons = [Check(), X()];\n`,
+      "src/root.ts": `import { icons } from "icons-pkg";\nimport { icons as again } from "icons-pkg";\nexport const both = [icons, again];\n`,
+      // A package whose `import` target has no declaration file next to it, while its `require` target has one.
+      "node_modules/dual-pkg/package.json": JSON.stringify({
+        name: "dual-pkg",
+        exports: { ".": { import: "./dist/index.mjs", require: "./dist/index.js" } },
+      }),
+      "node_modules/dual-pkg/dist/index.mjs": "export {};\n",
+      "node_modules/dual-pkg/dist/index.js": "module.exports = {};\n",
+      "node_modules/dual-pkg/dist/index.d.ts": "export {};\n",
+      "other/dual.ts": `import "dual-pkg";\nimport "dual-pkg";\n`,
+      // A package that ships JavaScript only, with its types in `@types`.
+      "node_modules/untyped-pkg/package.json": JSON.stringify({ name: "untyped-pkg", main: "index.js" }),
+      "node_modules/untyped-pkg/index.js": "module.exports = {};\n",
+      "node_modules/@types/untyped-pkg/package.json": JSON.stringify({
+        name: "@types/untyped-pkg",
+        types: "index.d.ts",
+      }),
+      "node_modules/@types/untyped-pkg/index.d.ts": "export {};\n",
+      "other/untyped.ts": `import "untyped-pkg";\nimport "untyped-pkg";\n`,
+    });
+    const duplicates = ["src/index.ts:1 import/no-duplicates", "src/index.ts:2 import/no-duplicates"];
+    const rootDuplicates = ["src/root.ts:1 import/no-duplicates", "src/root.ts:2 import/no-duplicates"];
+    const setting = (conditions: string) =>
+      `[lint.settings]\n"import/resolver" = { typescript = { conditionNames = ${conditions} } }\n`;
+    /** What the reports of `-f unix` say the imports of the packages resolve to, sorted. */
+    const resolvedPaths = (stdout: string) =>
+      [...stdout.replaceAll("\\", "/").matchAll(/node_modules\/(\S+)' imported/g)].map(it => it[1]).sort();
+
+    test("by default, every wildcard entry resolves to the shared types, as with eslint-import-resolver-typescript", async () => {
+      expect(await lintIn(".", files(""), ["src"])).toMatchObject({ found: [...duplicates, ...rootDuplicates] });
+      expect(await lintIn(".", files(setting(`["types", "import", "default"]`)), ["src"])).toMatchObject({
+        found: [...duplicates, ...rootDuplicates],
+      });
+    });
+
+    test("a list without `types` resolves each entry to its code", async () => {
+      expect(await lintIn(".", files(setting(`["import", "default"]`)), ["src"])).toMatchObject({
+        found: rootDuplicates,
+        exitCode: 1,
+      });
+    });
+
+    test("the first key of `exports` that is listed wins, and `default` always matches", async () => {
+      const resolved = async (conditions: string, file = "src/root.ts") => {
+        using dir = tempDir("bun-lint", files(setting(conditions)));
+        await using proc = spawn({
+          cmd: [bunExe(), "lint", "-f", "unix", file],
+          env,
+          cwd: String(dir),
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { paths: resolvedPaths(stdout), exitCode };
+      };
+      const icons = (path: string) => ({ paths: [`icons-pkg/${path}`, `icons-pkg/${path}`], exitCode: 1 });
+      expect(await resolved(`["import", "node"]`)).toEqual(icons("dist/node.js"));
+      expect(await resolved(`["import"]`)).toEqual(icons("dist/import.js"));
+      expect(await resolved(`[]`)).toEqual(icons("dist/default.js"));
+      // The first key's file wins over the second key's declaration file.
+      expect(await resolved(`["import", "require", "default"]`, "other/dual.ts")).toEqual({
+        paths: ["dual-pkg/dist/index.mjs", "dual-pkg/dist/index.mjs"],
+        exitCode: 1,
+      });
+      // JavaScript loses to the package's `@types`.
+      expect(await resolved(`["import", "default"]`, "other/untyped.ts")).toEqual({
+        paths: ["@types/untyped-pkg/index.d.ts", "@types/untyped-pkg/index.d.ts"],
+        exitCode: 1,
+      });
+    });
+
+    test("files with different lists share a tsconfig.json, in either order", async () => {
+      const override = `[[lint.overrides]]\nfiles = "src/root.ts"\nsettings = { "import/resolver" = { typescript = { conditionNames = [] } } }\n`;
+      const withOverride = { ...files(override), "tsconfig.json": "{}" };
+      for (const args of [
+        ["src/index.ts", "src/root.ts"],
+        ["src/root.ts", "src/index.ts"],
+      ]) {
+        using dir = tempDir("bun-lint", withOverride);
+        await using proc = spawn({
+          cmd: [bunExe(), "lint", "-f", "unix", ...args],
+          env,
+          cwd: String(dir),
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(resolvedPaths(stdout)).toEqual([
+          "icons-pkg/dist/default.js",
+          "icons-pkg/dist/default.js",
+          "icons-pkg/dist/icon.d.mts",
+          "icons-pkg/dist/icon.d.mts",
+        ]);
+        expect(exitCode).toBe(1);
+      }
+    });
+
+    // Real ESLint reports a resolve error for every import. Here, as with every resolver that throws, the rules that
+    // resolve report nothing.
+    test("a value that isn't an array of strings makes the resolver fail", async () => {
+      for (const conditions of [`"import"`, `["import", 1]`, `true`]) {
+        expect(await lintIn(".", files(setting(conditions)), ["src"])).toMatchObject({ found: [], exitCode: 0 });
+      }
+    });
+  });
+
   test.each([
     `parserOptions = { project = "./config/tsconfig.lint.json" }`,
     `parserOptions = { project = ["./config/tsconfig.lint.json"] }`,

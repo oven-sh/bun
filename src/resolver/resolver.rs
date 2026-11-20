@@ -999,6 +999,64 @@ impl<'a> Resolver<'a> {
         self.match_tsconfig_paths(&tsconfig, import_path, kind, out)
     }
 
+    /// The paths an import that resolved to no file can name, through tsconfig "paths" and main fields too.
+    pub fn for_each_path_named_by_import(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &[u8],
+        mut each: impl FnMut(&[u8]),
+    ) {
+        let mut named = |this: &mut Self, target: &[u8]| {
+            each(target);
+            this.for_each_main_field_target(target, &mut each);
+            false
+        };
+        if !is_package_path(import_path) {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let target = bun_paths::resolve_path::join_abs_string_buf_checked::<
+                bun_paths::platform::Auto,
+            >(source_dir, &mut buf.0, &[import_path]);
+            if let Some(target) = target {
+                named(self, target);
+            }
+            return;
+        }
+        if !bun_paths::is_absolute(source_dir) {
+            return;
+        }
+        let Some(dir_info) = self.dir_info_cached(source_dir).ok().flatten() else {
+            return;
+        };
+        let Some(tsconfig) = self.enclosing_tsconfig_json(&dir_info) else {
+            return;
+        };
+        if tsconfig.paths.count() == 0 {
+            return;
+        }
+        self.find_tsconfig_paths_target(&tsconfig, import_path, named);
+    }
+
+    /// The paths that the main fields of the package.json in `dir` name, existing or not.
+    fn for_each_main_field_target(&mut self, dir: &[u8], mut each: impl FnMut(&[u8])) {
+        let Some(dir_info) = self.read_dir_info_ignore_error(dir) else {
+            return;
+        };
+        let Some(package_json) = dir_info.package_json() else {
+            return;
+        };
+        // Not `dir`: it can be in a buffer that reading the directory wrote again.
+        let dir = dir_info.abs_path;
+        let mut buf = bun_paths::path_buffer_pool::get();
+        for field in package_json.main_fields.values() {
+            let target = bun_paths::resolve_path::join_abs_string_buf_checked::<
+                bun_paths::platform::Auto,
+            >(dir, &mut buf.0, &[field]);
+            if let Some(target) = target {
+                each(target);
+            }
+        }
+    }
+
     pub(crate) fn flush_debug_logs(&mut self, flush_mode: FlushMode) -> crate::CrateResult<()> {
         // NOTE: capture `log` before partially borrowing `self.debug_logs`
         // so the method call doesn't conflict with the field borrow (`log()`
@@ -5081,6 +5139,23 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         out: &mut MatchResult,
     ) -> MatchStatus {
+        let found = self.find_tsconfig_paths_target(tsconfig, path, |this, target| {
+            this.load_as_file_or_directory(target, kind, out)
+                .is_success()
+        });
+        match found {
+            true => MatchStatus::Success,
+            false => MatchStatus::NotFound,
+        }
+    }
+
+    /// Offers each "paths" target of `path` to `accept`, in order, until it returns true.
+    fn find_tsconfig_paths_target(
+        &mut self,
+        tsconfig: &TSConfigJSON,
+        path: &[u8],
+        mut accept: impl FnMut(&mut Self, &[u8]) -> bool,
+    ) -> bool {
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
                 "Matching \"{}\" against \"paths\" in \"{}\"",
@@ -5127,11 +5202,8 @@ impl<'a> Resolver<'a> {
                             };
                         }
 
-                        if self
-                            .load_as_file_or_directory(absolute_original_path, kind, out)
-                            .is_success()
-                        {
-                            return MatchStatus::Success;
+                        if accept(self, absolute_original_path) {
+                            return true;
                         }
                     }
                 }
@@ -5197,16 +5269,13 @@ impl<'a> Resolver<'a> {
                     continue;
                 };
 
-                if self
-                    .load_as_file_or_directory(absolute_original_path, kind, out)
-                    .is_success()
-                {
-                    return MatchStatus::Success;
+                if accept(self, absolute_original_path) {
+                    return true;
                 }
             }
         }
 
-        MatchStatus::NotFound
+        false
     }
 
     /// A `paths` substitution written as a declaration file exists for type checking
@@ -7102,7 +7171,7 @@ fn installed_package_folder(path: &[u8]) -> Option<&[u8]> {
 /// is esbuild's `rewrittenFileExtensions` table plus Bun's `.js` → `.mts`
 /// (oven-sh/bun#12580). `inside_node_modules` gates only `.mjs` and `.cjs`:
 /// `DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES` never applied to `.js`/`.jsx`.
-pub(crate) fn rewritten_file_extensions(
+pub fn rewritten_file_extensions(
     ext: &[u8],
     inside_node_modules: impl Fn() -> bool,
 ) -> &'static [&'static [u8]] {

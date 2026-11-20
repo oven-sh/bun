@@ -7,15 +7,16 @@
 //!    graph (transitive imports) without linking or emitting code.
 //! 3. Starting from each changed file that appears in the graph, walk the
 //!    reverse import edges to find every test entry point that can reach it.
+//!    A deleted file starts from the files whose import of it no longer resolves.
 //!
-//! Only those test entry points are returned.
+//! Only those test entry points are returned. A change that reaches a preload selects them all.
 
 use bun_bundler::mal_prelude::*;
 
 use bstr::BStr;
 
 use bun_alloc::Arena;
-use bun_ast::Index;
+use bun_ast::{ImportRecordFlags, Index};
 use bun_bundler::{BundleV2, Transpiler};
 use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
 use bun_core::PathBuffer as CorePathBuffer;
@@ -32,11 +33,13 @@ use bun_paths::{self, platform, resolve_path};
 use bun_ptr::Interned;
 #[cfg(not(windows))]
 use bun_resolver::fs::RealFS;
+use bun_resolver::resolver::rewritten_file_extensions;
 use bun_sys as sys;
 use bun_which::which;
 
 use crate::Command;
 use crate::api::bun_process::sync as spawn_sync;
+use crate::cli::test::scanner::TEST_NAME_SUFFIXES;
 
 // `core::result::Result` is fully qualified throughout this file to avoid the
 // shadow.
@@ -54,6 +57,28 @@ pub(crate) struct Result<'a> {
     /// files that would not otherwise be loaded when a subset of tests runs.
     /// Owned by the caller; each element is individually allocated.
     pub(crate) module_graph_files: Vec<Box<[u8]>>,
+    /// Up to `CHANGED_SAMPLE` changed files, relative to the top-level dir, when they select no test file.
+    pub(crate) changed_sample: Vec<Box<[u8]>>,
+}
+
+const CHANGED_SAMPLE: usize = 5;
+
+/// A `--preload`, `[test] preload` or top-level `preload` entry.
+enum Preload {
+    /// The local file it resolves to. An entry point of the scan.
+    File(Box<[u8]>),
+    /// A path it names, which no file answers.
+    Missing(Box<[u8]>),
+}
+
+/// What a set of changed files selects.
+struct Selection {
+    /// The sources that reach a changed file.
+    affected: DynamicBitSet,
+    /// A preload reaches a changed file. Every test file runs the preloads.
+    preload_affected: bool,
+    /// Indexes of the changed paths that no source, import or preload names.
+    unclaimed: Vec<usize>,
 }
 
 /// Filter `test_files` in place to only the entries whose module graph
@@ -76,23 +101,11 @@ pub(crate) fn filter<'a>(
     // (On Windows the watcher restarts via TerminateProcess + parent
     // respawn, which cannot carry state, so this is POSIX-only; Windows
     // falls through to git below.)
-    let changed_files = if let Some(trigger_set) = consume_watch_trigger() {
-        trigger_set
-    } else {
-        match get_changed_files(top_level_dir, changed_since) {
-            Ok(set) => set,
-            Err(GitError::GitNotFound) => {
-                Output::err_generic(
-                    "<b>--changed<r> requires <b>git<r> to be installed and in PATH",
-                    (),
-                );
-                Global::exit(1);
-            }
-            Err(GitError::GitFailed) => {
-                // get_changed_files already printed the git error output.
-                Global::exit(1);
-            }
-        }
+    let watch_trigger = consume_watch_trigger();
+    let from_watch_trigger = watch_trigger.is_some();
+    let mut changed_files = match watch_trigger {
+        Some(trigger_set) => trigger_set,
+        None => changed_files_of_git_or_exit(top_level_dir, changed_since),
     };
 
     if test_files.is_empty() {
@@ -101,6 +114,7 @@ pub(crate) fn filter<'a>(
             changed_count: changed_files.count(),
             total_tests: 0,
             module_graph_files: Vec::new(),
+            changed_sample: Vec::new(),
         });
     }
 
@@ -113,11 +127,9 @@ pub(crate) fn filter<'a>(
             changed_count: 0,
             total_tests: total,
             module_graph_files: Vec::new(),
+            changed_sample: Vec::new(),
         });
     }
-
-    // Convert the interned-path list to []const []const u8 for the bundler.
-    let entry_points: Vec<&[u8]> = test_files.iter().map(|p| p.as_bytes()).collect();
 
     // Build a dedicated transpiler for scanning. We do not reuse the VM's
     // transpiler because BundleV2.init takes ownership of the allocator and
@@ -151,15 +163,25 @@ pub(crate) fn filter<'a>(
     // `Transpiler::init` already projected resolver.opts, so sync only the
     // fields we changed above.
     scan_transpiler.resolver.opts.target = scan_transpiler.options.target;
-    scan_transpiler.resolver.opts.packages = bun_resolver::options::Packages::External;
     scan_transpiler.resolver.opts.output_dir = Box::default();
     scan_transpiler.resolver.env_loader = core::ptr::NonNull::new(scan_transpiler.env);
+    // Before packages become external: a preload may be a package.
+    let preloads = resolve_preloads(&mut scan_transpiler.resolver, &ctx.preloads, top_level_dir);
+    scan_transpiler.resolver.opts.packages = bun_resolver::options::Packages::External;
+
+    // Convert the interned-path list to []const []const u8 for the bundler.
+    let mut entry_points: Vec<&[u8]> = test_files.iter().map(|p| p.as_bytes()).collect();
+    for preload in &preloads {
+        if let Preload::File(path) = preload {
+            entry_points.push(path);
+        }
+    }
 
     // Stack-owned Mini loop so its tasks/concurrent_tasks queues drop at
     // scope exit; the arena bulk-free skips Drop.
     let event_loop = bun_event_loop::AnyEventLoop::init();
 
-    let bundle = match BundleV2::scan_module_graph_from_cli(
+    let mut bundle = match BundleV2::scan_module_graph_from_cli(
         &mut scan_transpiler,
         arena,
         Some(core::ptr::NonNull::from(&event_loop)),
@@ -179,12 +201,15 @@ pub(crate) fn filter<'a>(
                 changed_count: changed_files.count(),
                 total_tests: total,
                 module_graph_files: Vec::new(),
+                changed_sample: Vec::new(),
             });
         }
     };
 
-    let sources = bundle.graph.input_files.items_source();
-    let import_records = bundle.graph.ast.items_import_records();
+    let scanned = &mut *bundle;
+    let resolver = &mut scanned.transpiler.resolver;
+    let sources = scanned.graph.input_files.items_source();
+    let import_records = scanned.graph.ast.items_import_records();
 
     // Map absolute source path -> source index for paths that participate in
     // the graph. This lets us look up changed-file paths quickly.
@@ -250,25 +275,103 @@ pub(crate) fn filter<'a>(
         *out = path_to_index.get(tf.as_bytes()).copied();
     }
 
-    // BFS backward from every changed file that participates in the graph.
-    let mut affected = bun_core::handle_oom(DynamicBitSet::init_empty(sources.len()));
-    let mut queue: Vec<u32> = Vec::new();
+    let mut select = |changed: &StringSet| -> Selection {
+        // BFS backward from every changed file that participates in the graph.
+        let mut affected = bun_core::handle_oom(DynamicBitSet::init_empty(sources.len()));
+        let mut queue: Vec<u32> = Vec::new();
+        let mut claimed = vec![false; changed.count()];
 
-    for (idx, source) in sources.iter().enumerate() {
-        if source.path.is_file() && changed_files.contains(source.path.text) {
-            affected.set(idx);
-            queue.push(u32::try_from(idx).unwrap());
-        }
-    }
-
-    while let Some(idx) = queue.pop() {
-        for &importer in &importers[idx as usize] {
-            if affected.is_set(importer as usize) {
+        for (idx, source) in sources.iter().enumerate() {
+            if !source.path.is_file() {
                 continue;
             }
-            affected.set(importer as usize);
-            queue.push(importer);
+            if let Some(entry) = changed.map.get_index(source.path.text) {
+                claimed[entry] = true;
+                affected.set(idx);
+                queue.push(u32::try_from(idx).unwrap());
+            }
         }
+
+        // An import that resolves to no source names a deleted or renamed file.
+        let mut unclaimed: Vec<usize> = (0..claimed.len()).filter(|&i| !claimed[i]).collect();
+        let mut preload_affected = false;
+        if !unclaimed.is_empty() {
+            let named = NamedByImports::new(changed.keys(), &unclaimed);
+            for (idx, records) in import_records.iter().enumerate() {
+                if !sources[idx].path.is_file() {
+                    continue;
+                }
+                let dir = resolve_path::dirname::<platform::Auto>(sources[idx].path.text);
+                let mut names_changed = false;
+                for record in records.as_slice() {
+                    let specifier = record.path.text;
+                    if record.source_index.is_valid() {
+                        continue;
+                    }
+                    // A tsconfig.json "paths" alias whose file is gone is external to the scan.
+                    if bun_paths::is_package_path(specifier)
+                        || record.flags.contains(ImportRecordFlags::WAS_UNRESOLVED)
+                    {
+                        resolver.for_each_path_named_by_import(dir, specifier, |target| {
+                            names_changed |= named.claim(target, &mut claimed);
+                        });
+                    }
+                }
+                if names_changed && !affected.is_set(idx) {
+                    affected.set(idx);
+                    queue.push(u32::try_from(idx).unwrap());
+                }
+            }
+            for preload in &preloads {
+                if let Preload::Missing(path) = preload {
+                    preload_affected |= named.claim(path, &mut claimed);
+                }
+            }
+            unclaimed.retain(|&i| !claimed[i]);
+        }
+
+        while let Some(idx) = queue.pop() {
+            for &importer in &importers[idx as usize] {
+                if affected.is_set(importer as usize) {
+                    continue;
+                }
+                affected.set(importer as usize);
+                queue.push(importer);
+            }
+        }
+
+        for preload in &preloads {
+            if let Preload::File(path) = preload {
+                preload_affected |= match path_to_index.get(&**path) {
+                    Some(&source) => affected.is_set(source as usize),
+                    None => changed.contains(path),
+                };
+            }
+        }
+
+        Selection {
+            affected,
+            preload_affected,
+            unclaimed,
+        }
+    };
+
+    let mut selection = select(&changed_files);
+    // A watched test file that is gone was deleted or renamed: git knows the new name.
+    let is_gone_test_file = |&entry: &usize| {
+        let path = &changed_files.keys()[entry];
+        // The scanner compares the name in lowercase.
+        let name = without_extension(resolve_path::basename(path)).to_ascii_lowercase();
+        TEST_NAME_SUFFIXES
+            .iter()
+            .any(|suffix| name.ends_with(suffix))
+            && !sys::exists(path)
+    };
+    if from_watch_trigger && selection.unclaimed.iter().any(is_gone_test_file) {
+        for path in changed_files_of_git_or_exit(top_level_dir, changed_since).keys() {
+            let _ = changed_files.insert(path); // OOM-only Result
+        }
+        selection = select(&changed_files);
     }
 
     // A test file is selected if (a) its entry point source index is marked
@@ -281,12 +384,20 @@ pub(crate) fn filter<'a>(
     for i in 0..total {
         let tf = test_files[i];
         let maybe_source = slot_to_source[i];
-        let keep = changed_files.contains(tf.as_bytes())
-            || maybe_source.is_some_and(|src| affected.is_set(src as usize));
+        let keep = selection.preload_affected
+            || changed_files.contains(tf.as_bytes())
+            || maybe_source.is_some_and(|src| selection.affected.is_set(src as usize));
 
         if keep {
             test_files[write] = tf;
             write += 1;
+        }
+    }
+
+    let mut changed_sample: Vec<Box<[u8]>> = Vec::new();
+    if write == 0 {
+        for path in changed_files.keys().iter().take(CHANGED_SAMPLE) {
+            changed_sample.push(Box::from(resolve_path::relative(top_level_dir, path)));
         }
     }
 
@@ -301,7 +412,135 @@ pub(crate) fn filter<'a>(
         changed_count: changed_files.count(),
         total_tests: total,
         module_graph_files: graph_files,
+        changed_sample,
     })
+}
+
+fn changed_files_of_git_or_exit(top_level_dir: &[u8], changed_since: &[u8]) -> StringSet {
+    match get_changed_files(top_level_dir, changed_since) {
+        Ok(set) => set,
+        Err(GitError::GitNotFound) => {
+            Output::err_generic(
+                "<b>--changed<r> requires <b>git<r> to be installed and in PATH",
+                (),
+            );
+            Global::exit(1);
+        }
+        Err(GitError::GitFailed) => {
+            // get_changed_files already printed the git error output.
+            Global::exit(1);
+        }
+    }
+}
+
+/// Resolves the preloads like the runtime. One in node_modules is no local file and is left out.
+fn resolve_preloads(
+    resolver: &mut bun_resolver::Resolver<'_>,
+    names: &[Box<[u8]>],
+    top_level_dir: &[u8],
+) -> Vec<Preload> {
+    let mut preloads: Vec<Preload> = Vec::new();
+    if names.is_empty() {
+        return preloads;
+    }
+    let mut unread_log = bun_ast::Log::init();
+    // SAFETY: the resolver and `unread_log` outlive the guard.
+    let _log_scope = unsafe {
+        bun_resolver::Resolver::scoped_log(
+            &raw mut *resolver,
+            core::ptr::NonNull::from(&mut unread_log),
+        )
+    };
+    for name in names {
+        let name: &[u8] = name.strip_prefix(b"file://".as_slice()).unwrap_or(name);
+        match resolver.resolve(top_level_dir, name, bun_ast::ImportKind::Stmt) {
+            Ok(found) => {
+                let file = found.path_pair.primary.text();
+                if bun_paths::is_absolute(file)
+                    && !bun_paths::string_paths::path_contains_node_modules_folder(file)
+                {
+                    preloads.push(Preload::File(Box::from(file)));
+                }
+            }
+            Err(_) => resolver.for_each_path_named_by_import(top_level_dir, name, |path| {
+                preloads.push(Preload::Missing(Box::from(path)));
+            }),
+        }
+    }
+    preloads
+}
+
+/// The changed paths that the scan did not parse, by each name an unresolved import can use.
+struct NamedByImports<'a> {
+    paths: &'a [Box<[u8]>],
+    /// (name, index into `paths`), sorted.
+    names: Vec<(&'a [u8], usize)>,
+}
+
+impl<'a> NamedByImports<'a> {
+    fn new(paths: &'a [Box<[u8]>], unclaimed: &[usize]) -> Self {
+        let mut names: Vec<(&'a [u8], usize)> = Vec::with_capacity(unclaimed.len() * 2);
+        for &entry in unclaimed {
+            let path: &[u8] = &paths[entry];
+            names.push((path, entry));
+            // An import can leave the extension out.
+            let stem = without_extension(path);
+            if stem.len() != path.len() {
+                names.push((stem, entry));
+            }
+            // An import of a directory reads its package.json or its index file.
+            let name = resolve_path::basename(path);
+            if name == b"package.json" || without_extension(name) == b"index" {
+                names.push((resolve_path::dirname::<platform::Auto>(path), entry));
+            }
+        }
+        names.sort_unstable();
+        Self { paths, names }
+    }
+
+    /// Marks the changed paths that `target`, which resolved to no source, could have resolved to.
+    fn claim(&self, target: &[u8], claimed: &mut [bool]) -> bool {
+        let target = strings::without_trailing_slash(target);
+        let mut any = self.claim_named(target, |_| true, claimed);
+        // `./lib.js` finds lib.ts.
+        let stem = without_extension(target);
+        let rewritten = rewritten_file_extensions(&target[stem.len()..], || false);
+        if !rewritten.is_empty() {
+            let is_rewrite = |path: &[u8]| {
+                without_extension(path) == stem && rewritten.contains(&&path[stem.len()..])
+            };
+            any |= self.claim_named(stem, is_rewrite, claimed);
+        }
+        any
+    }
+
+    fn claim_named(
+        &self,
+        name: &[u8],
+        accept: impl Fn(&[u8]) -> bool,
+        claimed: &mut [bool],
+    ) -> bool {
+        let first = self.names.partition_point(|&(other, _)| other < name);
+        let mut any = false;
+        for &(other, entry) in &self.names[first..] {
+            if other != name {
+                break;
+            }
+            if accept(&self.paths[entry]) {
+                claimed[entry] = true;
+                any = true;
+            }
+        }
+        any
+    }
+}
+
+fn without_extension(path: &[u8]) -> &[u8] {
+    let name = resolve_path::basename(path);
+    match strings::last_index_of_char(name, b'.') {
+        Some(dot) if dot > 0 => &path[..path.len() - (name.len() - dot)],
+        _ => path,
+    }
 }
 
 #[cfg(not(windows))]
@@ -358,8 +597,7 @@ pub(crate) fn init_watch_trigger() -> Option<ZBox> {
 /// If the previous process's watcher recorded which files triggered
 /// this restart, read the newline-separated absolute-path list out of
 /// the trigger file, delete the file, and return the set. Returns null
-/// if the file is absent, empty, or every path no longer exists (in
-/// which case the caller falls back to querying git).
+/// if the file is absent or empty (the caller then asks git).
 fn consume_watch_trigger() -> Option<StringSet> {
     #[cfg(windows)]
     {
@@ -385,18 +623,8 @@ fn consume_watch_trigger() -> Option<StringSet> {
 
         let mut set = StringSet::new();
         for path in strings::tokenize_any(&contents, b"\r\n") {
-            // The watcher may see a file disappear (delete/rename). A path
-            // that no longer exists cannot appear in the module graph this
-            // run, so drop it; its importers will still be picked up if the
-            // importer file itself was touched.
-            if !sys::exists(path) {
-                continue;
-            }
             let _ = set.insert(path); // OOM-only Result
         }
-        // If every triggering path was a deletion, fall back to git so the
-        // user at least gets the same behaviour as the initial run rather
-        // than "0 changed files, nothing to run".
         if set.count() == 0 {
             return None;
         }
@@ -417,8 +645,7 @@ pub(crate) enum GitError {
 /// With `since == ""` this is the union of unstaged, staged, and
 /// untracked files. With a ref, it is `git diff --name-only <since>`
 /// unioned with untracked files (a brand-new file is "changed since"
-/// any prior commit). Paths that do not exist on disk (deletions) are
-/// skipped since they cannot appear in the module graph.
+/// any prior commit). A deleted file and the old name of a renamed one are listed too.
 fn get_changed_files(
     top_level_dir: &[u8],
     since: &[u8],
@@ -462,12 +689,16 @@ fn get_changed_files(
         match run_git(
             git_path,
             top_level_dir,
-            &[b"diff", b"--name-only", b"HEAD", b"--"],
+            &[&DIFF_NAMES[..], &[b"HEAD", b"--"]].concat(),
         ) {
             GitResult::SpawnFailed => return Err(GitError::GitFailed),
             GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
             GitResult::ExitError { .. } => {
-                match run_git(git_path, top_level_dir, &[b"diff", b"--name-only", b"--"]) {
+                match run_git(
+                    git_path,
+                    top_level_dir,
+                    &[&DIFF_NAMES[..], &[b"--"]].concat(),
+                ) {
                     GitResult::SpawnFailed => return Err(GitError::GitFailed),
                     GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
                     GitResult::ExitError { .. } => {}
@@ -476,7 +707,7 @@ fn get_changed_files(
                 match run_git(
                     git_path,
                     top_level_dir,
-                    &[b"diff", b"--name-only", b"--cached", b"--"],
+                    &[&DIFF_NAMES[..], &[b"--cached", b"--"]].concat(),
                 ) {
                     GitResult::SpawnFailed => return Err(GitError::GitFailed),
                     GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
@@ -488,7 +719,7 @@ fn get_changed_files(
         match run_git(
             git_path,
             top_level_dir,
-            &[b"diff", b"--name-only", since, b"--"],
+            &[&DIFF_NAMES[..], &[since, b"--"]].concat(),
         ) {
             GitResult::SpawnFailed => return Err(GitError::GitFailed),
             GitResult::ExitError { stderr } => {
@@ -520,6 +751,7 @@ fn get_changed_files(
         top_level_dir,
         &[
             b"ls-files",
+            b"-z",
             b"--others",
             b"--exclude-standard",
             b"--full-name",
@@ -532,6 +764,16 @@ fn get_changed_files(
 
     Ok(set)
 }
+
+/// NUL-terminated paths from the repository root, whatever the git config says, with both names of a rename.
+const DIFF_NAMES: [&[u8]; 6] = [
+    b"-c",
+    b"diff.relative=false",
+    b"diff",
+    b"--name-only",
+    b"-z",
+    b"--no-renames",
+];
 
 pub(crate) enum GitResult {
     /// `run_git` has already reported the spawn error.
@@ -546,13 +788,8 @@ pub(crate) enum GitResult {
 
 #[optimize(size)]
 fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
-    let mut argv: Vec<&[u8]> = Vec::with_capacity(args.len() + 3);
+    let mut argv: Vec<&[u8]> = Vec::with_capacity(args.len() + 1);
     argv.push(git_path);
-    // `core.quotePath` (on by default) wraps non-ASCII filenames in quotes
-    // and emits octal escapes. We want raw UTF-8 paths so they match the
-    // bundler's resolved paths byte-for-byte.
-    argv.push(b"-c");
-    argv.push(b"core.quotePath=off");
     argv.extend_from_slice(args);
 
     let proc = match spawn_sync::spawn(&spawn_sync::Options {
@@ -602,20 +839,18 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
     }
 }
 
-/// Parse newline-delimited repo-relative paths from git output, join each
-/// with the repository root, and insert existing files into `set`.
+/// Joins each NUL-terminated path of `git -z` output with the repository root into `set`.
 fn append_paths(set: &mut StringSet, git_root: &[u8], stdout: &[u8]) {
     let mut buf = bun_paths::path_buffer_pool::get();
-    for line in strings::tokenize_any(stdout, b"\r\n") {
-        let rel = strings::trim(line, b" \t");
-        if rel.is_empty() {
+    for rel in strings::tokenize(stdout, b"\0") {
+        let abs = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
+            git_root,
+            &mut buf.0,
+            &[rel],
+        );
+        let Some(abs) = abs else {
             continue;
-        }
-        let abs = resolve_path::join_abs_string_buf::<platform::Auto>(git_root, &mut buf.0, &[rel]);
-        // Skip deletions; the bundler can only parse files that exist.
-        if !sys::exists(abs) {
-            continue;
-        }
+        };
         // `StringSet.insert` dupes the key internally; abort on OOM rather
         // than propagating so the set can never be left holding a pointer
         // into our stack `buf` on the errdefer cleanup path.

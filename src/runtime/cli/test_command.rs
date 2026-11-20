@@ -3103,6 +3103,21 @@ impl TestCommand {
                         result.changed_count,
                         if result.changed_count == 1 { "" } else { "s" }
                     );
+                    if !result.changed_sample.is_empty() {
+                        pretty_error!(
+                            "<r><d>--changed:<r> the static imports of {} test file{} do not reach ",
+                            result.total_tests,
+                            if result.total_tests == 1 { "" } else { "s" }
+                        );
+                        for (i, path) in result.changed_sample.iter().enumerate() {
+                            let separator = if i == 0 { "" } else { ", " };
+                            pretty_error!("{}{}", separator, bstr::BStr::new(path));
+                        }
+                        match result.changed_count - result.changed_sample.len() {
+                            0 => pretty_error!("\n"),
+                            more => pretty_error!(" and {} more\n", more),
+                        }
+                    }
                     pass_with_no_tests_from_filter = true;
                 } else if !run_compiled::is_second_process() {
                     pretty_error!(

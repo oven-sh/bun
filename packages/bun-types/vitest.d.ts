@@ -593,7 +593,10 @@ declare module "vitest" {
   }
   type Writable<T extends ReadonlyArray<any>> = { -readonly [K in keyof T]: T[K] };
   interface Each<Options> {
-    /** Registers one test or block per row. An array row is spread into the callback's arguments. */
+    /**
+     * Registers one test or block per row. If every row is an array, the callback receives the elements of a row as
+     * separate arguments. Otherwise it receives each row as one argument.
+     */
     <T extends any[] | [any]>(rows: ReadonlyArray<T>): Register<T, Options>;
     <T extends ReadonlyArray<any>>(rows: ReadonlyArray<T>): Register<Writable<T>, Options>;
     <T>(rows: ReadonlyArray<T>): Register<T[], Options>;

@@ -87,10 +87,10 @@ impl Config {
     }
 
     /// `testConfig(config, filename) !== false`
-    fn allows(&self, cwd: &[u8], filename: &[u8]) -> bool {
+    fn allows(&self, file: &File, cwd: &[u8], filename: &[u8]) -> bool {
         match self {
             Config::Is(config) => *config,
-            Config::Globs(globs) => globs.matches(cwd, filename),
+            Config::Globs(globs) => globs.matches(file, cwd, filename),
         }
     }
 }
@@ -286,7 +286,8 @@ impl Rule for NoExtraneousDependencies {
             }
             None => self.closest_to(&filename, modules),
         };
-        let allowed = self.configs.iter().filter(|it| it.0.allows(cwd, &filename)).fold(IN_DEPS, |all, it| all | it.1);
+        let allows = |it: &&(Config, u8)| it.0.allows(file, cwd, &filename);
+        let allowed = self.configs.iter().filter(allows).fold(IN_DEPS, |all, it| all | it.1);
         let mut types = None;
         for visited in self.visitor.visit(file) {
             if !self.include_types && is_type_import(visited.importer) {

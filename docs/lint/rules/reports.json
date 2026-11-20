@@ -347,7 +347,7 @@
 "import/no-nodejs-modules": {"0":[[1,1,1,21,"Do not import Node.js builtin module \"fs\""],[2,1,2,34,"Do not import Node.js builtin module \"node:path\""],[4,12,4,25,"Do not import Node.js builtin module \"os\""]],"3":[[1,1,1,29,"Do not import Node.js builtin module \"path\""]]},
 "import/no-relative-packages": {"0":[[1,24,1,41,"Relative import from another package is not allowed. Use `@acme/ui/button.js` instead of `../ui/button.js`"]]},
 "import/no-relative-parent-imports": {"0":[[1,25,1,36,"Relative imports from parent directories are not allowed. Please either pass what you're importing through at runtime (dependency injection), move `home.js` to same directory as `../api.js` or consider making `../api.js` a package."]]},
-"import/no-restricted-paths": {"0":[[1,23,1,40,"Unexpected path \"../server/db.js\" imported in restricted zone."]]},
+"import/no-restricted-paths": {"0":[[1,23,1,40,"Unexpected path \"../server/db.js\" imported in restricted zone."]],"2":[[1,23,1,40,"Unexpected path \"../server/db.js\" imported in restricted zone."]]},
 "import/no-self-import": {"0":[[1,1,1,35,"Module imports itself."]],"1":[[1,21,1,33,"Module imports itself."]]},
 "import/no-unassigned-import": {"0":[[1,1,1,32,"Imported module should be assigned"],[2,1,2,25,"Imported module should be assigned"],[3,1,3,30,"Imported module should be assigned"]],"3":[[1,1,1,32,"Imported module should be assigned"]]},
 "import/no-unresolved": {"0":[[1,28,1,47,"Unable to resolve path to module './utils/fromat.js'."],[2,21,2,54,"Unable to resolve path to module 'a-package-that-is-not-installed'."]]},

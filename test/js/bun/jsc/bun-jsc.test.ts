@@ -26,9 +26,9 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBuildKite, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isBuildKite, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { createHash, type webcrypto } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 describe("bun:jsc", () => {
@@ -341,6 +341,298 @@ describe("bun:jsc", () => {
     expect(stdout).toBe("ok\n");
     expect(exitCode).toBe(0);
   });
+
+  // A recursion that stays on the stack while the sampler runs, so that every
+  // sample has `depth + 1` frames of `deep` on top of the caller's frames.
+  const deepRecursion = (depth: number, holdMs: number) => {
+    function deep(n: number): void {
+      if (n === 0) {
+        const end = performance.now() + holdMs;
+        while (performance.now() < end);
+        return;
+      }
+      deep(n - 1);
+    }
+    return () => deep(depth);
+  };
+
+  // profile() until the sampler thread has taken at least one sample.
+  const profileUntilSampled = (
+    fn: () => void,
+    sampleInterval: number,
+    accept?: (result: ReturnType<typeof profile>) => boolean,
+  ) => {
+    const deadline = performance.now() + 10_000;
+    let result = profile(fn, sampleInterval);
+    while ((result.stackTraces.traces.length === 0 || (accept && !accept(result))) && performance.now() < deadline) {
+      result = profile(fn, sampleInterval);
+    }
+    return result;
+  };
+
+  const sourceLines = readFileSync(import.meta.path, "utf8").split("\n");
+  const lineOf = (text: string) => sourceLines.findIndex(line => line.includes(text)) + 1;
+
+  // Writing "5" to /proc/self/clear_refs resets VmHWM, the peak RSS, to the current RSS.
+  const canResetPeakRSS = (() => {
+    if (!isLinux) return false;
+    try {
+      writeFileSync("/proc/self/clear_refs", "5");
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  it.todoIf(isBuildKite && isWindows)("profile stackTraces has the documented shape", () => {
+    const result = profileUntilSampled(deepRecursion(50, 20), 500);
+
+    expect(Object.keys(result)).toEqual(["functions", "bytecodes", "stackTraces"]);
+    expect(Object.keys(result.stackTraces)).toEqual(["interval", "traces", "sources"]);
+    expect(result.stackTraces.interval).toBe(0.0005);
+    expect(result.stackTraces.traces.length).toBeGreaterThan(0);
+
+    const frameKeys = ["sourceID", "name", "location", "line", "column", "category", "flags"];
+    const frameKeysWithURL = ["sourceID", "name", "location", "sourceURL", "line", "column", "category", "flags"];
+    let deepestSample = 0;
+    for (const trace of result.stackTraces.traces) {
+      let deepFrames = 0;
+      expect(Object.keys(trace)).toEqual(["timestamp", "frames"]);
+      expect(typeof trace.timestamp).toBe("number");
+      for (const frame of trace.frames) {
+        const keys = Object.keys(frame).filter(key => key !== "inliner");
+        expect([frameKeys, frameKeysWithURL]).toContainEqual(keys);
+        expect(typeof frame.sourceID).toBe("number");
+        expect(typeof frame.name).toBe("string");
+        // "#<hash>:<tier>:<bytecode index>", or ":<mode>:<offset>" for Wasm.
+        expect(frame.location).toMatch(/^(#[^:]+:[^:]+:.+|:\w+:(0x[0-9a-f]+|nil))$/);
+        expect(typeof frame.line).toBe("number");
+        expect(typeof frame.column).toBe("number");
+        expect(typeof frame.category).toBe("string");
+        expect([0, 1]).toContain(frame.flags);
+        if (frame.inliner) {
+          expect(Object.keys(frame.inliner)).toEqual(["name", "location", "line", "column", "category"]);
+        }
+        if (frame.name === "deep") deepFrames++;
+      }
+      deepestSample = Math.max(deepestSample, deepFrames);
+    }
+    // deep(50) down to deep(0) is 51 frames of `deep`, innermost first.
+    expect(deepestSample).toBeGreaterThanOrEqual(51);
+    expect(result.stackTraces.traces.some(trace => trace.frames[0]?.name === "deep")).toBe(true);
+
+    // Lines and columns are mapped back to this .ts file, not to the
+    // transpiled output.
+    const thisFile = result.stackTraces.sources.find(source => source.url === import.meta.path);
+    expect(thisFile).toBeDefined();
+    const deepFrames = result.stackTraces.traces.flatMap(trace => trace.frames).filter(frame => frame.name === "deep");
+    const deepStart = lineOf("function deep(n: number): void {");
+    const deepEnd = lineOf("deep(n - 1);") + 1;
+    for (const frame of deepFrames) {
+      expect(frame.sourceID).toBe(thisFile!.sourceID);
+      expect(frame.sourceURL).toBe(import.meta.path);
+      if (frame.line !== 0xffffffff) {
+        expect(frame.line).toBeGreaterThanOrEqual(deepStart);
+        expect(frame.line).toBeLessThanOrEqual(deepEnd);
+      }
+    }
+    for (const source of result.stackTraces.sources) {
+      expect(Object.keys(source)[0]).toBe("sourceID");
+      expect(Object.values(source)).not.toContain("");
+    }
+  });
+
+  it.todoIf(isBuildKite && isWindows)("profile stackTraces reports Wasm, RegExp, builtin and eval frames", () => {
+    // (func (export "spin") (param i32) (result i32) (loop (local.set 0 (i32.sub (local.get 0) (i32.const 1))) (br_if 0 (local.get 0))) (local.get 0))
+    const wasmBytes = new Uint8Array([
+      0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x06, 0x01, 0x60, 0x01, 0x7f, 0x01, 0x7f, 0x03, 0x02, 0x01,
+      0x00, 0x07, 0x08, 0x01, 0x04, 0x73, 0x70, 0x69, 0x6e, 0x00, 0x00, 0x0a, 0x14, 0x01, 0x12, 0x00, 0x03, 0x40, 0x20,
+      0x00, 0x41, 0x01, 0x6b, 0x21, 0x00, 0x20, 0x00, 0x0d, 0x00, 0x0b, 0x20, 0x00, 0x0b,
+    ]);
+    const { spin } = new WebAssembly.Instance(new WebAssembly.Module(wasmBytes)).exports as {
+      spin: (n: number) => number;
+    };
+    const backtracking = /^(a+)+$/;
+    const backtrackingInput = "a".repeat(18) + "b";
+    const numbers = Array.from({ length: 1000 }, (_, i) => i);
+    const evald = new Function(
+      "n",
+      "let s = 0; for (let i = 0; i < n; i++) s += i; return s;\n//# sourceURL=virtual://evald.js\n//# sourceMappingURL=virtual://evald.js.map",
+    ) as (n: number) => number;
+    const spinFor = (ms: number, fn: () => void) => {
+      const end = performance.now() + ms;
+      while (performance.now() < end) fn();
+    };
+
+    const workload = () => {
+      spinFor(50, () => spin(1_000_000));
+      spinFor(50, () => backtracking.test(backtrackingInput));
+      spinFor(50, () => numbers.map(x => x + 1));
+      spinFor(50, () => evald(10_000));
+    };
+    const frames = (result: ReturnType<typeof profile>) => result.stackTraces.traces.flatMap(trace => trace.frames);
+    const wasmCategories = ["IPInt", "BBQ", "OMG", "Wasm"];
+    const result = profileUntilSampled(workload, 200, result => {
+      const all = frames(result);
+      return (
+        all.some(frame => wasmCategories.includes(frame.category)) &&
+        all.some(frame => frame.category === "RegExp") &&
+        all.some(frame => frame.name === "map" && frame.flags === 1) &&
+        result.stackTraces.sources.some(source => source.sourceURL === "virtual://evald.js")
+      );
+    });
+    const all = frames(result);
+
+    const wasm = all.filter(frame => wasmCategories.includes(frame.category));
+    expect(wasm.length).toBeGreaterThan(0);
+    for (const frame of wasm) expect(frame.location).toMatch(/^:\w+Mode:(0x[0-9a-f]+|nil)$/);
+
+    const regexp = all.filter(frame => frame.category === "RegExp");
+    expect(regexp.length).toBeGreaterThan(0);
+    for (const frame of regexp) expect(frame.location).toBe("#<nil>:RegExp:<nil>");
+
+    // `flags` is 1 for Bun's and JSC's own JavaScript, such as Array.prototype.map.
+    expect(all.some(frame => frame.name === "map" && frame.flags === 1)).toBe(true);
+
+    const evaldSource = result.stackTraces.sources.find(source => source.sourceURL === "virtual://evald.js");
+    expect(evaldSource).toMatchObject({ sourceURL: "virtual://evald.js", sourceMappingURL: "virtual://evald.js.map" });
+    expect(all.some(frame => frame.name === "anonymous" && frame.sourceID === evaldSource!.sourceID)).toBe(true);
+  });
+
+  it.todoIf(isBuildKite && isWindows)(
+    "profile stackTraces reports the function a frame was inlined into",
+    async () => {
+      // JSC records the inlining frame only with this option on.
+      const script = `
+      const { profile } = require("bun:jsc");
+      function tiny(x) { return x + Bun.nanoseconds() % 2; }
+      function hot(n) { let s = 0; for (let i = 0; i < n; i++) s = tiny(s) | 0; return s; }
+      for (let i = 0; i < 30; i++) hot(10_000);
+      const deadline = performance.now() + 10_000;
+      let inlined = [];
+      while (inlined.length === 0 && performance.now() < deadline) {
+        const end = performance.now() + 100;
+        const result = profile(() => { while (performance.now() < end) hot(100_000); }, 100);
+        inlined = result.stackTraces.traces.flatMap(trace => trace.frames).filter(frame => frame.name === "tiny" && frame.inliner);
+      }
+      console.log(JSON.stringify(inlined.slice(0, 20)));
+    `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, BUN_JSC_collectExtraSamplingProfilerData: "1" },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      const inlined = JSON.parse(stdout);
+      expect(inlined.length).toBeGreaterThan(0);
+      for (const frame of inlined) {
+        expect(Object.keys(frame.inliner)).toEqual(["name", "location", "line", "column", "category"]);
+        expect(frame.inliner.name).toBe("hot");
+        expect(frame.inliner.location).toMatch(/^#[^:]+:(DFG|FTL):bc#\d+$/);
+        expect(frame.inliner.category).toBe(frame.category);
+        // The call site `tiny(s)` in `hot`, on line 4 of the script.
+        expect(frame.inliner.line).toBe(4);
+        expect(typeof frame.inliner.column).toBe("number");
+      }
+    },
+    // The child warms up the JIT with a busy loop, which is slow under ASAN.
+    15_000,
+  );
+
+  it.todoIf(isBuildKite && isWindows)("samplingProfilerStackTraces drains the samples and keeps sampling", async () => {
+    // In a child process: nothing stops the profiler that startSamplingProfiler() started.
+    const script = `
+      const { startSamplingProfiler, samplingProfilerStackTraces } = require("bun:jsc");
+      function deep(n) { if (n === 0) { const end = performance.now() + 20; while (performance.now() < end); return; } deep(n - 1); }
+      startSamplingProfiler(undefined, 200);
+      const deadline = performance.now() + 10_000;
+      const drain = () => {
+        let result = samplingProfilerStackTraces();
+        while (result.traces.length === 0 && performance.now() < deadline) { deep(10); result = samplingProfilerStackTraces(); }
+        return result;
+      };
+      const first = drain();
+      const second = drain();
+      console.log(JSON.stringify({
+        interval: first.interval,
+        first: first.traces.length,
+        second: second.traces.length,
+        lastOfFirst: Math.max(...first.traces.map(trace => trace.timestamp)),
+        firstOfSecond: Math.min(...second.traces.map(trace => trace.timestamp)),
+      }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const { interval, first, second, lastOfFirst, firstOfSecond } = JSON.parse(stdout);
+    expect(interval).toBe(0.0002);
+    expect(first).toBeGreaterThan(0);
+    // The profiler keeps sampling, and each call returns only the samples
+    // taken since the previous call.
+    expect(second).toBeGreaterThan(0);
+    expect(firstOfSecond).toBeGreaterThan(lastOfFirst);
+  });
+
+  it.skipIf(!canResetPeakRSS)(
+    "profile does not allocate far more than the result for deep stacks",
+    async () => {
+      // Each sampled frame used to cost about 1.5 KB of transient memory (a
+      // JSON tree, its text, and the parse of that text) on top of the frame
+      // objects in the result: about 1700 B/frame in both release and ASAN
+      // debug builds. Now a frame costs about 125 B of result objects plus
+      // JSC's own StackFrame (160 B with Vector growth slack) while the
+      // result is built: 300 to 450 B/frame.
+      //
+      // The peak is read from VmHWM, reset before the measured call, because
+      // the child inherits the test runner's high-water mark. The fixed cost
+      // of a profile() call (a few MB) is kept small per frame by requiring
+      // at least 20,000 frames. A child that sampled less is run again from
+      // scratch: a second attempt in the same process would reuse the memory
+      // the first one freed. ASAN's quarantine stays on: the transient
+      // garbage it holds is what the old code produced.
+      const script = `
+      const { profile } = require("bun:jsc");
+      const fs = require("fs");
+      const peakRSS = () => +/VmHWM:\\s+(\\d+)/.exec(fs.readFileSync("/proc/self/status", "utf8"))[1] * 1024;
+      function deep(n) {
+        if (n === 0) { const end = performance.now() + 200; while (performance.now() < end); return; }
+        deep(n - 1);
+      }
+      // Start the sampler thread and warm up the JIT outside the measurement.
+      profile(() => deep(5), 1000);
+      Bun.gc(true);
+      fs.writeFileSync("/proc/self/clear_refs", "5");
+      const before = peakRSS();
+      const result = profile(() => deep(500), 1000);
+      const after = peakRSS();
+      const frames = result.stackTraces.traces.reduce((sum, trace) => sum + trace.frames.length, 0);
+      console.log(JSON.stringify({ frames, peakDeltaBytes: after - before }));
+    `;
+      let measurement = { frames: 0, peakDeltaBytes: 0 };
+      for (let attempt = 0; attempt < 3 && measurement.frames < 20_000; attempt++) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+        measurement = JSON.parse(stdout);
+      }
+      expect(measurement.frames).toBeGreaterThanOrEqual(20_000);
+      expect(measurement.peakDeltaBytes / measurement.frames).toBeLessThan(isASAN || isDebug ? 1000 : 700);
+    },
+    // Up to three children, each about five seconds under ASAN.
+    60_000,
+  );
 });
 
 it("deserialize returns a Date whose getTime() is NaN when the timestamp is a NaN with a payload", () => {

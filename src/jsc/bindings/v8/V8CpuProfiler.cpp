@@ -2,6 +2,7 @@
 #include "V8String.h"
 #include "V8HandleScope.h"
 #include "shim/CpuProfiler.h"
+#include "BunSamplingProfiler.h"
 
 #include <JavaScriptCore/SamplingProfiler.h>
 #include <JavaScriptCore/VM.h>
@@ -42,7 +43,7 @@ uint32_t CpuProfilerImpl::start(WTF::String&& title, bool recordSamples)
         auto stopwatch = WTF::Stopwatch::create();
         stopwatch->start();
         JSC::SamplingProfiler& sampler = vm.ensureSamplingProfiler(WTF::move(stopwatch));
-        sampler.setTimingInterval(WTF::Seconds::fromMicroseconds(m_samplingIntervalUs));
+        Bun::setSamplingProfilerTimingInterval(sampler, WTF::Seconds::fromMicroseconds(m_samplingIntervalUs));
         sampler.noticeCurrentThreadAsJSCExecutionThread();
         sampler.start();
     }
@@ -88,11 +89,7 @@ static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, int64_t start
     JSC::JSLockHolder jsLock(vm);
     JSC::DeferGC deferGC(vm);
 
-    WTF::Vector<JSC::SamplingProfiler::StackTrace> stackTraces;
-    {
-        WTF::Locker locker { sampler->getLock() };
-        stackTraces = sampler->releaseStackTraces();
-    }
+    auto stackTraces = Bun::takeSamplingProfilerStackTraces(*sampler, /* pause */ false);
 
     CpuProfileNodeImpl* root = makeRoot();
 

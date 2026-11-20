@@ -2839,32 +2839,34 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
   });
 
   // The number counts the classes with private names in the files after this one, which other threads check and free.
-  test("prints the same number in the symbol name of a private method on 1 and 8 threads", async () => {
+  // `tsc --singleThreaded` 7.1 prints these. For a private method that returns itself, whose name 7.0 printed, it
+  // prints `...`.
+  test("prints the same number in the symbol name of a private member on 1 and 8 threads", async () => {
     const count = 48;
-    const name = (i: number) => `f${String(i).padStart(2, "0")}.ts`;
-    const text = `export class C { static #m() { return C.#m; } static x: number = { f: C.#m }; }\n`;
-    using dir = project(Object.fromEntries(Array.from({ length: count }, (_, i) => [name(i), text])));
+    const name = (i: number) => `f${String(i).padStart(2, "0")}`;
+    const text = `export class C { static readonly #s: unique symbol = Symbol(); static x: number = C.#s; }\n`;
+    using dir = project(Object.fromEntries(Array.from({ length: count }, (_, i) => [`${name(i)}.ts`, text])));
     const expected = Array.from(
       { length: count },
       (_, i) =>
-        `${name(i)}(1,54): error TS2322: Type '{ f: () => typeof C.\ufffd#${count - i}@#m; }' is not assignable to type 'number'.`,
+        `${name(i)}.ts(1,71): error TS2322: Type 'typeof import("${name(i)}").C.\ufffd#${count - i}@#s' is not assignable to type 'number'.`,
     ).join("\n");
     const threads = [1, 8, 8];
     for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
-      expect(stdout).toBe(expected);
+      expect(stdout.replace(/import\("[^"]*\//g, 'import("')).toBe(expected);
       expect(exitCode).toBe(1);
     }
   });
 
-  test("counts a file that was freed in the symbol name of a private method", async () => {
+  test("counts a file that was freed in the symbol name of a private member", async () => {
     using dir = project({
-      "a.ts": `export class C { static #m() { return C.#m; } static get = () => ({ f: C.#m }); }\n`,
+      "a.ts": `export class C { static readonly #s: unique symbol = Symbol(); static get = (): typeof C.#s => C.#s; }\n`,
       "b.ts": `export class NotImported { #x = 1; y = this.#x; }\n`,
       "c.ts": `import { C } from "./a";\nexport const x: number = C.get();\n`,
     });
     const { stdout, exitCode } = await check(dir, ["--threads", "1", "--skipLibCheck"]);
-    expect(stdout).toBe(
-      `c.ts(2,14): error TS2322: Type '{ f: () => typeof C.\ufffd#2@#m; }' is not assignable to type 'number'.`,
+    expect(stdout.replace(/import\("[^"]*\//g, 'import("')).toBe(
+      `c.ts(2,14): error TS2322: Type 'typeof import("a").C.\ufffd#2@#s' is not assignable to type 'number'.`,
     );
     expect(exitCode).toBe(1);
   });

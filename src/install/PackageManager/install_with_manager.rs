@@ -559,12 +559,12 @@ pub fn install_with_manager(
                     }
 
                     for row in extension_rows {
-                        // A package that a rule extends has all of its unresolved rows in here.
-                        let owner = manager.lockfile.get_parent_pkg_of_dependency(row);
-                        let dependency = &manager.lockfile.buffers.dependencies[row as usize];
-                        if owner.is_some_and(|owner| {
-                            is_held_by_bundle(&manager.lockfile, owner, dependency)
-                        }) {
+                        // A package that a rule extends has all of its unresolved rows in here, the
+                        // bundled ones too. No rule extends a package that a tarball ships.
+                        if manager.lockfile.buffers.dependencies[row as usize]
+                            .behavior
+                            .is_bundled()
+                        {
                             continue;
                         }
                         manager.lockfile.buffers.resolutions[row as usize] = invalid_package_id;

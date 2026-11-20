@@ -2325,6 +2325,11 @@ static bool isESModuleInNode(JSGlobalObject* globalObject, const String& path)
     BUN_END_REMOVABLE_ENTRY_POINT
 }
 
+static bool willLeaveBuiltinModuleToFirstUse(JSGlobalObject* realm, uint32_t registryID)
+{
+    return !isBunTest && DeclaredModuleLoad::mayRunAtFirstUse(uncheckedDowncast<Zig::GlobalObject>(realm), registryID);
+}
+
 static bool evictOriginal(JSGlobalObject* globalObject, const String& mocked)
 {
     BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, ReturnDefault, bool)
@@ -2448,9 +2453,10 @@ const AOT::ModuleHost compiledModuleHost = {
     &evictOriginal,
     &requiresPatch,
     &isESModuleInNode,
+    &willLeaveBuiltinModuleToFirstUse,
 };
 // A member missing from the initializer is null, which tells the engine that the host does not support it.
-static_assert(sizeof(AOT::ModuleHost) == 68 * sizeof(void*));
+static_assert(sizeof(AOT::ModuleHost) == 69 * sizeof(void*));
 
 void recordRefusedLoad(JSGlobalObject*, const String& path);
 bool recordAddonLoadedFromDisk(JSGlobalObject*, const String& path);

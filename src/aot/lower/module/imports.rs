@@ -1,8 +1,9 @@
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Decl, SymbolId};
-use bun_sema::hir::{ExprId, ExprKind, ImportId, MemberKey};
+use bun_sema::hir::{ExprId, ExprKind, ImportId, MemberKey, StmtId};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{FileId, Sym};
+use smallvec::SmallVec;
 
 use super::test_run_ways::{
     BoundBy, emit_behind_stations, find_way_to_declaration, find_what_binding_leads_to, has_station,
@@ -94,9 +95,83 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(crate) fn emit_variable_read(&mut self, key: VariableKey, name: StringId) -> ValueId {
+        let value = self.get_variable_that_may_be_filled_at_first_use(key);
+        self.builder.check_initialized(value, name)
+    }
+
+    /// The built-in module whose exports the variable is filled from, where no import statement runs the module and
+    /// nothing in front of the read has run it.
+    fn find_module_that_fills_at_first_use(&self, key: VariableKey) -> Option<ModuleRef> {
+        let VariableKey::SyntheticExport(export) = key else {
+            return None;
+        };
+        let modules = self.file.inputs.modules;
+        let module = modules.synthetic_export(export).module;
+        let is_late = modules.loads_at_first_use(module);
+        (is_late && !self.modules_loaded_in_front.contains(&module)).then_some(module)
+    }
+
+    /// Runs, in front of an outermost loop, the built-in modules that fill the imported names which the loop reads. A
+    /// read in the loop is then the read of a variable and nothing else. To run such a module early shows nothing: that
+    /// is what lets it run late. Returns the count of modules that were loaded in front before.
+    pub(in crate::lower) fn emit_loads_in_front_of_loop(&mut self, statement: StmtId) -> usize {
+        let loaded_before = self.modules_loaded_in_front.len();
+        let scopes = &self.file.scopes;
+        if scopes.imports_read_in_loop(statement).is_empty() {
+            return loaded_before;
+        }
+        let read: SmallVec<[SymbolId; 8]> =
+            SmallVec::from_slice(scopes.imports_read_in_loop(statement));
+        for symbol in read {
+            let modules = self.file.inputs.modules;
+            let export = match modules.import_binding(self.file.file, symbol) {
+                ImportBinding::CapturedBuiltin { export, .. }
+                | ImportBinding::Synthetic(export) => export,
+                _ => continue,
+            };
+            let key = VariableKey::SyntheticExport(export);
+            let Some(module) = self.find_module_that_fills_at_first_use(key) else {
+                continue;
+            };
+            self.get_variable_that_may_be_filled_at_first_use(key);
+            self.modules_loaded_in_front.push(module);
+        }
+        loaded_before
+    }
+
+    /// Reads the variable. One that is filled where a built-in module first runs is empty until then: the read runs the
+    /// module, which runs nothing that shows, and reads again.
+    fn get_variable_that_may_be_filled_at_first_use(&mut self, key: VariableKey) -> ValueId {
         let variable = self.file.ensure_variable(key);
         let value = self.builder.get_module_variable(variable);
-        self.builder.check_initialized(value, name)
+        let Some(module) = self.find_module_that_fills_at_first_use(key) else {
+            return value;
+        };
+        let result = self.builder.create_variable(None);
+        let (first_use, join) = (self.create_unlikely_block(), self.create_block());
+        let split = self.split_on_type(value, TypeTable::ABSENT);
+        self.builder.switch_to(split.not_taken);
+        self.builder.write_variable(result, split.not_taken_value);
+        self.jump(join);
+        self.builder.switch_to(split.taken);
+        self.jump(first_use);
+        self.continue_in(first_use);
+        self.emit_load_at_first_use(module);
+        let filled = self.builder.get_module_variable(variable);
+        self.builder.write_variable(result, filled);
+        self.jump(join);
+        self.continue_in(join);
+        self.builder.read_variable(result)
+    }
+
+    fn emit_load_at_first_use(&mut self, module: ModuleRef) {
+        let ModuleRef::Runtime(built_in) = module else {
+            unreachable!("only a built-in module is left to its first use");
+        };
+        let specifier = self.file.intern_bytes(table::specifier_of(built_in));
+        let id = self.file.fragment.declare_module(module);
+        let referrer = self.file.module_id();
+        (self.builder).require_module(id, referrer, specifier, None, false);
     }
 
     pub(crate) fn emit_exported_variable_read(
@@ -296,8 +371,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn emit_read_of_copy_that_may_stay_empty(&mut self, key: VariableKey) -> ValueId {
-        let variable = self.file.ensure_variable(key);
-        let value = self.builder.get_module_variable(variable);
+        let value = self.get_variable_that_may_be_filled_at_first_use(key);
         let result = self.builder.create_variable(None);
         let join = self.create_block();
         let split = self.split_on_type(value, TypeTable::ABSENT);
@@ -317,8 +391,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Ok(key) => key,
             Err(value) => return value,
         };
-        let variable = self.file.ensure_variable(key);
-        let value = self.builder.get_module_variable(variable);
+        let value = self.get_variable_that_may_be_filled_at_first_use(key);
         let result = self.builder.create_variable(None);
         let join = self.create_block();
         let split = self.split_on_type(value, TypeTable::ABSENT);

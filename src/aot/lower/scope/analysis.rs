@@ -177,6 +177,7 @@ pub(super) struct FunctionSummary {
 pub(super) struct LoopStores {
     pub(super) statements: Vec<StmtId>,
     pub(super) stored: GroupedList<BindingRef>,
+    pub(super) imports_read: GroupedList<SymbolId>,
 }
 
 pub(super) struct StoresUnderHandlers {
@@ -402,6 +403,15 @@ impl ScopeAnalysis {
         let index = self.loops.statements.binary_search(&statement);
         let index = index.expect("the scope walk records every live loop");
         self.loops.stored.get(index)
+    }
+
+    /// The names of import statements that the outermost loop of a function reads, in it or in a loop that it holds. None
+    /// for a loop inside another.
+    pub(in crate::lower) fn imports_read_in_loop(&self, statement: StmtId) -> &[SymbolId] {
+        match self.loops.statements.binary_search(&statement) {
+            Ok(index) => self.loops.imports_read.get(index),
+            Err(_) => &[],
+        }
     }
 
     pub(in crate::lower) fn stored_under_handlers(&self, statement: StmtId) -> &[BindingRef] {

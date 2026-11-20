@@ -549,7 +549,11 @@ fn collect_synthetic_exports(input: &RecordInput<'_, '_>) -> Vec<Vec<MergedSynth
                 name,
                 is_known_member,
                 is_replaceable,
-                writer: ExportWriter::Loader | ExportWriter::Facade | ExportWriter::Capture,
+                writer:
+                    ExportWriter::Loader
+                    | ExportWriter::LoaderAtFirstUse
+                    | ExportWriter::Facade
+                    | ExportWriter::Capture,
             }) => exports[module as usize].push(MergedSyntheticExport {
                 name,
                 merged_variable: merged_variable as u32,
@@ -1441,14 +1445,25 @@ impl RecordBuilder<'_, '_, '_> {
             let is_ranked = is_star(request) && !places.is_empty();
             is_ranked.then(|| places.partition_point(|&place| place < request.star_place) as u32)
         };
+        let graph = input.projects.get(project).graph;
+        // An import with the phase Defer that does not complete its target is how the build tells the loader to leave a
+        // built-in module to its first use. It defers nothing for the importer, and no statement is written so.
+        let is_left_to_first_use = |request: &modules::ModuleRequest| {
+            request.kind == ModuleRequestKind::Import
+                && !request.is_hoisted
+                && graph.loads_at_first_use(request.target)
+        };
         requests
             .iter()
             .map(|request| generated::ModuleRequest {
                 target: input.id_of(project, request.target),
-                phase: request.phase,
+                phase: match is_left_to_first_use(request) {
+                    true => ImportPhase::Defer,
+                    false => request.phase,
+                },
                 is_dynamic_star_export: request.is_dynamic_star_export,
                 kind: request.kind,
-                completes: request.completes,
+                completes: request.completes && !is_left_to_first_use(request),
                 is_hoisted: request.is_hoisted,
                 star_place: rank_of(request),
             })

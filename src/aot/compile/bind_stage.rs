@@ -1356,6 +1356,16 @@ impl Build<'_> {
         self.options.load.runs_tests
     }
 
+    /// An import statement leaves a built-in module to its first use in an executable whose code the build has all seen. A
+    /// test run and `bun run --aot` load where plain Bun loads.
+    fn loads_builtins_at_first_use(&self) -> bool {
+        let aot = self.options.aot;
+        !self.options.load.runs_tests
+            && !aot.runs_in_place
+            && !aot.loads_code_from_disk
+            && !self.options.can_load_code_at_run_time()
+    }
+
     pub(crate) fn bind_modules(
         &mut self,
         loaded: &LoadedBuild<'_, '_>,
@@ -1611,6 +1621,8 @@ impl Build<'_> {
                         || self.options.aot.admits_inspector)),
             any_module_loads_again: self.options.load.runs_tests && contents.any_module_loads_again,
             runs_tests: self.options.load.runs_tests,
+            loads_builtins_at_first_use: project == ProjectId::Application
+                && self.loads_builtins_at_first_use(),
             runner_starts_entry_points: project == ProjectId::Application
                 && self.runner_starts_entry_points(),
             written_entry_point_count,

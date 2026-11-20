@@ -206,6 +206,7 @@ impl Walker<'_, '_> {
             outermost: around.map_or(index, |around| self.walk.loops[around as usize].outermost),
             stored: Vec::new(),
             symbols_stored_within: Vec::new(),
+            imports_read_within: Vec::new(),
         });
         let inner = Context {
             enclosing_loop: Some(index),

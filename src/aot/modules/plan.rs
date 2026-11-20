@@ -348,6 +348,8 @@ pub(super) struct Plan {
     names_without_code_that_mocks_give: Vec<Atom>,
     files_with_late_stars: Vec<FileId>,
     mocked_runtime_modules: Vec<RuntimeModule>,
+    /// Sorted. The built-in modules that no import statement runs: each runs at its first use.
+    runtime_modules_loaded_at_first_use: Vec<RuntimeModule>,
     may_mock_every_module: bool,
     originals_beside_mocks_may_run: bool,
     /// The files that a mock names and that lie on no cycle of loads, where originals of mocks may run.
@@ -410,6 +412,7 @@ impl Plan {
             names_without_code_that_mocks_give: Vec::new(),
             files_with_late_stars: Vec::new(),
             mocked_runtime_modules: Vec::new(),
+            runtime_modules_loaded_at_first_use: Vec::new(),
             may_mock_every_module: false,
             originals_beside_mocks_may_run: false,
             runs_as_original: Vec::new(),
@@ -491,6 +494,15 @@ impl Plan {
             ModuleRef::External { .. } => self.externals_named_by_mocks.push(module),
             _ => self.add(|plan| &mut plan.is_named_by_mock, module),
         }
+    }
+
+    pub(super) fn set_runtime_modules_loaded_at_first_use(
+        &mut self,
+        mut modules: Vec<RuntimeModule>,
+    ) {
+        modules.sort_unstable();
+        modules.dedup();
+        self.runtime_modules_loaded_at_first_use = modules;
     }
 
     pub(super) fn set_absent_modules(&mut self, modules: Vec<ModuleRef>) {
@@ -1142,6 +1154,18 @@ impl ModuleGraph {
                 ModuleRef::Runtime(module) => plan.mocked_runtime_modules.contains(&module),
                 _ => plan.has(&plan.may_be_mocked, module),
             }
+    }
+
+    /// An import statement of such a built-in module runs nothing when its file is linked. The module runs where a name that a
+    /// statement binds is first read, or where anything else first asks for it, and the names are filled then.
+    pub fn loads_at_first_use(&self, module: ModuleRef) -> bool {
+        match module {
+            ModuleRef::Runtime(module) => {
+                let late = &self.plan.runtime_modules_loaded_at_first_use;
+                late.binary_search(&module).is_ok()
+            }
+            _ => false,
+        }
     }
 
     pub fn is_named_by_mock(&self, module: ModuleRef) -> bool {

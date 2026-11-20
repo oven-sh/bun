@@ -65,15 +65,32 @@ fn find_file_with_copies(
     }
 }
 
+fn loader_of_library_module(
+    projects: &Projects<'_, '_>,
+    module: Option<RuntimeModule>,
+) -> ExportWriter {
+    let application = projects.get(ProjectId::Application).graph;
+    let is_left_to_first_use =
+        module.is_some_and(|module| application.loads_at_first_use(ModuleRef::Runtime(module)));
+    match is_left_to_first_use {
+        true => ExportWriter::LoaderAtFirstUse,
+        false => ExportWriter::Loader,
+    }
+}
+
 fn find_writer(projects: &Projects<'_, '_>, exporter: ProgramModule) -> ExportWriter {
     match exporter {
         ProgramModule::File(file) => match is_common_js_file(projects, file) {
             true => ExportWriter::Body,
-            false => ExportWriter::Loader,
+            false => {
+                let module = projects.get(file.project).graph.runtime_module(file.file);
+                loader_of_library_module(projects, module)
+            }
         },
         ProgramModule::Inner { .. } => ExportWriter::Body,
         ProgramModule::Facade(_) | ProgramModule::Check(_) => ExportWriter::Facade,
-        ProgramModule::Runtime(_) | ProgramModule::External { .. } => ExportWriter::Loader,
+        ProgramModule::Runtime(module) => loader_of_library_module(projects, Some(module)),
+        ProgramModule::External { .. } => ExportWriter::Loader,
     }
 }
 
@@ -862,14 +879,15 @@ pub(super) fn synthetic_export_variable(
     is_known_member: bool,
 ) -> Variable {
     let initialization = match writer {
-        ExportWriter::Loader | ExportWriter::Facade | ExportWriter::Capture => {
-            VariableInitialization::Uninitialized
-        }
+        ExportWriter::Loader
+        | ExportWriter::LoaderAtFirstUse
+        | ExportWriter::Facade
+        | ExportWriter::Capture => VariableInitialization::Uninitialized,
         ExportWriter::Body => VariableInitialization::Undefined,
     };
     let mut declared = DeclaredType::untyped();
     let may_stay_empty = match writer {
-        ExportWriter::Capture | ExportWriter::Facade => true,
+        ExportWriter::Capture | ExportWriter::Facade | ExportWriter::LoaderAtFirstUse => true,
         ExportWriter::Loader => !is_known_member,
         ExportWriter::Body => false,
     };

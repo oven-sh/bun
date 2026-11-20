@@ -15,6 +15,8 @@ pub(super) struct DefinitionSite {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum ExportWriter {
     Loader,
+    /// The loader, where the built-in module first runs: no import statement runs it.
+    LoaderAtFirstUse,
     Body,
     Facade,
     Capture,

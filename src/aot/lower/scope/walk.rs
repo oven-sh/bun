@@ -101,6 +101,8 @@ pub(super) struct WalkedLoop {
     pub(super) outermost: u32,
     pub(super) stored: Vec<BindingRef>,
     pub(super) symbols_stored_within: Vec<SymbolId>,
+    /// At the outermost loop of its function: the names of import statements that the loop and the loops in it read.
+    pub(super) imports_read_within: Vec<SymbolId>,
 }
 
 #[derive(Default)]

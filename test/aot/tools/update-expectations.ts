@@ -2,8 +2,8 @@
 //
 //   <the Bun you built> test/aot/tools/update-expectations.ts        needs testaot: $TESTAOT, or beside that Bun
 //
-// 1. src/codegen/builtins/data/own-properties.txt and module-exports.txt, from the objects and modules of that Bun.
-//    The table of built-ins is generated from them, so if one changed: build Bun again, then run this again.
+// 1. src/codegen/builtins/data/own-properties.txt, module-exports.txt and acts-at-load.txt, from the objects and modules of that Bun.
+//    Bun is built from them, the table of built-ins from the first two, so if one changed: build Bun again, then run this again.
 // 2. test/aot/engine-tests, and aot/tests of the engine where $BUN_WEBKIT_PATH or vendor/WebKit has its sources: the IR of each test that
 //    holds its source, the listings below `# -- generated:`, and the numbers in a check line that fails by its numbers alone
 //    (./update-ir-tests.ts --counts, which prints each such line before and after).
@@ -59,13 +59,14 @@ run(
     "test",
     "test/aot/builtins/own-properties.test.ts",
     "test/aot/builtins/module-exports.test.ts",
+    "test/aot/builtins/acts-at-load.test.ts",
   ],
   { AOT_BUILTINS_UPDATE: "1" },
 );
 const changedData = changedSince(before);
 if (changedData.length > 0) {
   console.log(
-    `\nchanged:\n${changedData.join("\n")}\n\nThe table of built-ins is generated from these. Build Bun again, then run this again.`,
+    `\nchanged:\n${changedData.join("\n")}\n\nBun is built from these. Build Bun again, then run this again.`,
   );
   process.exit(process.exitCode ?? 0);
 }

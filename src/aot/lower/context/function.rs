@@ -60,6 +60,9 @@ pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
     /// Variables declared by `var type = typeof value` in the statement lists around the current statement, and before it.
     pub(in crate::lower) typeof_variables: smallvec::SmallVec<[bun_sema::bind::SymbolId; 4]>,
     pub(in crate::lower) appended_pieces: smallvec::SmallVec<[AppendedPiece; 1]>,
+    /// The built-in modules that load at their first use and that code in front of the current statement has run.
+    pub(in crate::lower) modules_loaded_in_front:
+        smallvec::SmallVec<[crate::modules::ModuleRef; 2]>,
     handler: Option<Handler>,
     position: u32,
     nesting_depth: u32,
@@ -106,6 +109,7 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
             check_of_class: None,
             typeof_variables: smallvec::SmallVec::new(),
             appended_pieces: smallvec::SmallVec::new(),
+            modules_loaded_in_front: smallvec::SmallVec::new(),
             handler: None,
             position,
             nesting_depth: 0,

@@ -465,6 +465,51 @@ JSValue DeclaredModuleLoad::requireForCommandLine(Zig::GlobalObject* globalObjec
     return requireField(globalObject, field);
 }
 
+// Whether what the path leads to is the same for as long as the realm lives: each name on the way is one that the object holding it
+// lets nobody write. The loader of a compiled program makes its built-in objects so, but for the names that the build saw the
+// program write. A module at the start of the path is loaded here, as the load that reads it would have loaded it.
+static bool staysAsItIs(Zig::GlobalObject* globalObject, const InternalModuleRegistryConstants::ReadAtLoad& read, JSValue (*requireField)(Zig::GlobalObject*, InternalModuleRegistry::Field))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* holder = globalObject;
+    if (read.module >= 0) {
+        JSValue exported = requireField(globalObject, static_cast<InternalModuleRegistry::Field>(read.module));
+        RETURN_IF_EXCEPTION(scope, false);
+        holder = exported.getObject();
+    }
+    for (const char* name = read.names; holder && *name;) {
+        auto characters = unsafeSpan(name);
+        Identifier key = Identifier::fromString(vm, String::fromLatin1(name));
+        if (!holder->structure()->isImmutablePropertyForReader(key.impl()))
+            return false;
+        name += characters.size() + 1;
+        if (!*name)
+            return true;
+        JSValue held = holder->get(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, false);
+        holder = held.getObject();
+    }
+    return holder;
+}
+
+// src/codegen/builtins/data/acts-at-load.txt lists what the load of each built-in module does that a program can see. A load that
+// does nothing of that shows nowhere if what it reads is what it would have read where the importer links.
+bool DeclaredModuleLoad::mayRunAtFirstUse(Zig::GlobalObject* globalObject, uint32_t registryID)
+{
+    using namespace InternalModuleRegistryConstants;
+    if (registryID >= moduleCount || loadShows[registryID])
+        return false;
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    for (uint32_t index = firstReadAtLoad[registryID]; index < firstReadAtLoad[registryID + 1]; ++index) {
+        bool stays = staysAsItIs(globalObject, readsAtLoad[index], &requireField);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!stays)
+            return false;
+    }
+    return true;
+}
+
 #include "InternalModuleRegistry+createInternalModuleById.h"
 
 // This is called like @getInternalField(@internalModuleRegistry, 1) ?? @createInternalModuleById(1)

@@ -821,6 +821,8 @@ function emitJsModules({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {
   const jsClassesInput = resolve(cfg.cwd, "src", "jsc", "bindings", "js_classes.ts");
   // bundle-modules.ts hashes this header's entries into the builtins section (engineStamp).
   const builtinNamesInput = resolve(cfg.cwd, "src", "js", "builtins", "BunBuiltinNames.h");
+  // bundle-modules.ts writes what the load of each module shows into InternalModuleRegistryConstants.h.
+  const actsAtLoadInput = resolve(cfg.cwd, "src", "codegen", "builtins", "data", "acts-at-load.txt");
 
   const outputs = [
     resolve(cfg.codegenDir, "WebCoreJSBuiltins.cpp"),
@@ -860,6 +862,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {
       globalObjectTableInput,
       jsClassesInput,
       builtinNamesInput,
+      actsAtLoadInput,
     ],
     implicitInputs: guardInputs({ cfg, engine }).filter(path => !sources.jsCodegen.includes(path)),
     orderOnlyInputs: [dirStamp],

@@ -12,6 +12,7 @@ mod interop;
 mod kept_frames_tests;
 mod known_members;
 mod link_lookups;
+mod loads_at_first_use;
 mod module_set;
 mod names_of_mocks;
 mod namespace_members;
@@ -125,6 +126,8 @@ pub struct BindInput<'a, 's> {
     pub hands_on_any_module: bool,
     pub any_module_loads_again: bool,
     pub runs_tests: bool,
+    /// An import statement of a built-in module whose load shows nowhere runs nothing where its file is linked.
+    pub loads_builtins_at_first_use: bool,
     pub runner_starts_entry_points: bool,
     pub written_entry_point_count: usize,
     pub entry_points_run_again: bool,
@@ -677,6 +680,13 @@ fn bind_scanned_modules(
         let hir = input.files.hir(module.file);
         erased_statements.extend(hir.ids(hir.body).map(|statement| (module.file, statement)));
     }
+    let loaded_at_first_use = loads_at_first_use::find_modules_loaded_at_first_use(
+        input,
+        &scans,
+        &modules,
+        &imports,
+        &mocked_modules,
+    );
     let mut compiled_files = modules.compiled_files.iter().zip(&mut imports).peekable();
     let record_files = modules.record_files.iter().zip(requests.files);
     let drafts: Vec<Draft<'_>> = record_files
@@ -814,6 +824,7 @@ fn bind_scanned_modules(
             plan.set_is_imported_as_namespace(module);
         }
         plan.set_replaced_variables(replaced_variables);
+        plan.set_runtime_modules_loaded_at_first_use(loaded_at_first_use);
         let importers = modules.compiled_files.iter();
         let imported = importers.flat_map(|&file| input.files.hir(file).imported_requires.iter());
         let made = imported.filter(|imported| imported.is_made);

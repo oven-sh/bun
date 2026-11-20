@@ -135,6 +135,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    fn lower_loop(&mut self, statement: StmtId) {
+        let loaded_before = self.emit_loads_in_front_of_loop(statement);
+        match self.file.hir[statement].kind {
+            StmtKind::For { init, .. } => self.lower_for(statement, init),
+            StmtKind::While { test, body } => self.lower_while(statement, test, body),
+            StmtKind::DoWhile { body, test } => self.lower_do_while(statement, body, test),
+            StmtKind::ForIn { .. } => self.lower_for_in(statement),
+            StmtKind::ForOf { .. } => self.lower_for_of(statement),
+            _ => unreachable!("the caller found a loop"),
+        }
+        self.modules_loaded_in_front.truncate(loaded_before);
+    }
+
     fn lower_statement_in_place(&mut self, statement: StmtId, behind: IdList<StmtId>) {
         if self.file.hir.is_in_jsdoc(self.file.hir[statement].start) {
             return;
@@ -197,11 +210,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 }
                 _ => self.lower_if(test, yes, no),
             },
-            StmtKind::For { init, .. } => self.lower_for(statement, init),
-            StmtKind::While { test, body } => self.lower_while(statement, test, body),
-            StmtKind::DoWhile { body, test } => self.lower_do_while(statement, body, test),
-            StmtKind::ForIn { .. } => self.lower_for_in(statement),
-            StmtKind::ForOf { .. } => self.lower_for_of(statement),
+            StmtKind::For { .. }
+            | StmtKind::While { .. }
+            | StmtKind::DoWhile { .. }
+            | StmtKind::ForIn { .. }
+            | StmtKind::ForOf { .. } => self.lower_loop(statement),
             StmtKind::Switch { expr, cases } => self.lower_switch(statement, expr, cases),
             StmtKind::Try {
                 block,

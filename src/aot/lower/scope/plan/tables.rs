@@ -223,13 +223,18 @@ fn compute_loop_stores(
     let mut loops: Vec<usize> = (0..walked_loops.len()).collect();
     loops.shared_sort_unstable_by_key(|&index| walked_loops[index].statement);
     let mut stored = Vec::new();
+    let mut imports_read = Vec::new();
     for (position, &index) in loops.iter().enumerate() {
         stored.extend(carried[index].iter().map(|&binding| (position, binding)));
+        let mut read = walked_loops[index].imports_read_within.clone();
+        sort_unique(&mut read);
+        imports_read.extend(read.into_iter().map(|symbol| (position, symbol)));
     }
     let statements = loops.iter().map(|&index| walked_loops[index].statement);
     LoopStores {
         statements: statements.collect(),
         stored: GroupedList::new(loops.len(), &stored),
+        imports_read: GroupedList::new(loops.len(), &imports_read),
     }
 }
 

@@ -1,0 +1,88 @@
+# What an import of each module of Bun that has JavaScript source does that a program can see, in the main thread or in a Worker:
+# the specifier, then the kinds. test/aot/builtins/acts-at-load.test.ts makes the lines again from the Bun under test and fails where one
+# differs. AOT_BUILTINS_UPDATE=1 rewrites them, as test/aot/tools/update-expectations.ts does. `kind@win32`: only that platform shows it.
+#   env      reads process.env, Bun.env, process.argv or process.execArgv, but for what a debug build alone asks: BUN_DEBUG_*, DEBUG_*, SHOW_PID, TRACE
+#   warns    emits a process warning, or writes to stdout or stderr
+#   listens  adds a listener to process, makes a timer, or leaves the event loop something to wait for
+#   cache    adds an entry to require.cache          channel  makes a channel of node:diagnostics_channel          throws   throws
+#   global   adds, removes or changes a property of globalThis, process, Bun, the prototype of a built-in class or another module
+#   tick     makes the queue of process.nextTick        chain    lays the prototype of node:events above the one of process
+#   reads:<path>   reads what the table of built-ins names so and lets a program replace. A compiled program loads a module at its first use
+#            if its line has nothing but these, and if no code of the program can write what they name (src/aot/modules/loads_at_first_use.rs)
+#   reads    reads something else that a program can replace
+@vercel/fetch cache
+bun:bake
+bun:ffi global
+bun:internal-for-testing env tick chain reads:AggregateError reads:Date reads:Error.captureStackTrace reads:Error reads:Function reads:JSON.stringify reads:TypeError reads:WeakMap
+bun:main
+bun:sqlite reads:Error
+bun:wrap
+isomorphic-fetch cache
+node-fetch cache reads:Error reads:JSON.parse
+node:_http_agent env chain reads:AggregateError reads:Error.captureStackTrace reads:Error
+node:_http_client env channel tick chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:FinalizationRegistry reads:Function reads:TypeError reads:WeakMap reads:WeakRef reads:process.binding
+node:_http_common tick chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:Function reads:WeakMap reads:process.binding
+node:_http_incoming tick chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:Function reads:WeakMap
+node:_http_outgoing tick chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:Function reads:TypeError reads:WeakMap reads:process.binding
+node:_http_server env tick chain reads:AggregateError reads:Date.now reads:Date reads:Error.captureStackTrace reads:Error reads:Function reads:TypeError reads:WeakMap reads:process.binding
+node:_stream_duplex tick chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:Function reads:WeakMap
+node:_stream_passthrough tick chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:Function reads:WeakMap
+node:_stream_readable tick chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:Function reads:WeakMap
+node:_stream_transform tick chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:Function reads:WeakMap
+node:_stream_wrap warns tick chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:Function reads:TypeError reads:WeakMap reads:process._exiting reads:process.emitWarning
+node:_stream_writable tick chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:Function reads:WeakMap
+node:_tls_common env warns tick chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:Function reads:WeakMap reads:process._exiting reads:process.emitWarning reads:reportError
+node:_tls_wrap env warns tick chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:Function reads:WeakMap reads:process._exiting reads:process.emitWarning reads:reportError
+node:assert reads:AggregateError reads:Error.captureStackTrace reads:Error reads:node:util/types.isPromise reads:node:util/types.isRegExp
+node:assert/strict reads:AggregateError reads:Error.captureStackTrace reads:Error reads:node:assert.strict reads:node:util/types.isPromise reads:node:util/types.isRegExp
+node:async_hooks reads:AggregateError reads:Error.captureStackTrace reads:Error
+node:child_process chain reads:AggregateError reads:Error.captureStackTrace reads:Error
+node:cluster env chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:process.binding
+node:console reads reads:console.assert reads:console.clear reads:console.count reads:console.countReset reads:console.debug reads:console.dir reads:console.dirxml reads:console.error reads:console.group reads:console.groupCollapsed reads:console.groupEnd reads:console.info reads:console.log reads:console.profile reads:console.profileEnd reads:console.table reads:console.takeHeapSnapshot reads:console.time reads:console.timeEnd reads:console.timeLog reads:console.timeStamp reads:console.trace reads:console.warn reads:console.write reads:console
+node:crypto tick chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:Function reads:WeakMap
+node:dgram env chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:Function
+node:diagnostics_channel reads:AggregateError reads:Error.captureStackTrace reads:Error reads:FinalizationRegistry reads:WeakRef
+node:dns reads:AggregateError reads:Error.captureStackTrace reads:Error
+node:dns/promises reads:AggregateError reads:Error.captureStackTrace reads:Error reads:node:dns.promises
+node:domain
+node:events chain reads:AggregateError reads:Error.captureStackTrace reads:Error
+node:fs tick reads:AggregateError reads:Error.captureStackTrace reads:Error
+node:fs/promises chain reads:AggregateError reads:Error.captureStackTrace reads:Error
+node:http env channel tick chain reads:AggregateError reads:Date.now reads:Date reads:Error.captureStackTrace reads:Error reads:FinalizationRegistry reads:Function reads:TypeError reads:WeakMap reads:WeakRef reads:process.binding
+node:http2 env channel tick chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:FinalizationRegistry reads:Function reads:TypeError reads:WeakMap reads:WeakRef reads:reportError
+node:https env channel tick chain reads:AggregateError reads:Date.now reads:Date reads:Error.captureStackTrace reads:Error reads:FinalizationRegistry reads:Function reads:JSON.stringify reads:TypeError reads:WeakMap reads:WeakRef reads:process.binding
+node:inspector env reads chain reads:AggregateError reads:Date.now reads:Date reads:Error.captureStackTrace reads:Error reads:Function reads:JSON.stringify reads:WeakMap reads:atob reads:btoa reads:console.assert reads:console.clear reads:console.count reads:console.countReset reads:console.debug reads:console.dir reads:console.dirxml reads:console.error reads:console.group reads:console.groupCollapsed reads:console.groupEnd reads:console.info reads:console.log reads:console.profile reads:console.profileEnd reads:console.table reads:console.takeHeapSnapshot reads:console.time reads:console.timeEnd reads:console.timeLog reads:console.timeStamp reads:console.trace reads:console.warn reads:console.write reads:console
+node:inspector/promises env reads chain reads:AggregateError reads:Date.now reads:Date reads:Error.captureStackTrace reads:Error reads:Function reads:JSON.stringify reads:WeakMap reads:atob reads:btoa reads:console.assert reads:console.clear reads:console.count reads:console.countReset reads:console.debug reads:console.dir reads:console.dirxml reads:console.error reads:console.group reads:console.groupCollapsed reads:console.groupEnd reads:console.info reads:console.log reads:console.profile reads:console.profileEnd reads:console.table reads:console.takeHeapSnapshot reads:console.time reads:console.timeEnd reads:console.timeLog reads:console.timeStamp reads:console.trace reads:console.warn reads:console.write reads:console
+node:net env tick chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:Function reads:WeakMap reads:reportError
+node:os
+node:path
+node:path/posix reads reads:node:path.posix # reads in the main thread only
+node:path/win32 reads:node:path.win32 reads:node:path/posix.win32
+node:perf_hooks global reads reads:AggregateError reads:Error.captureStackTrace reads:Error
+node:punycode
+node:querystring
+node:quic env warns listens channel tick chain reads:AggregateError reads:DataView reads:Date reads:Error.captureStackTrace reads:Error reads:FinalizationRegistry reads:Function reads:JSON.stringify reads:WeakMap reads:WeakRef reads:atob reads:btoa reads:process._exiting reads:process.emitWarning reads:reportError
+node:readline chain reads:AggregateError reads:Date.now reads:Date reads:Error.captureStackTrace reads:Error reads:Function reads:JSON.stringify reads:SyntaxError reads:WeakMap reads:clearImmediate reads:clearInterval reads:clearTimeout reads:setImmediate reads:setInterval reads:setTimeout
+node:readline/promises chain reads:AggregateError reads:Date.now reads:Date reads:Error.captureStackTrace reads:Error reads:Function reads:JSON.stringify reads:SyntaxError reads:WeakMap
+node:repl reads:Date.now reads:Date reads:Error reads:Function reads:JSON.stringify reads:SyntaxError reads:WeakMap
+node:stream tick chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:Function reads:TypeError reads:WeakMap
+node:stream/consumers reads:JSON.parse
+node:stream/iter throws
+node:stream/promises tick chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:Function reads:TypeError reads:WeakMap
+node:stream/web
+node:test env tick chain reads:AggregateError reads:Date reads:Error.captureStackTrace reads:Error reads:Function reads:JSON.stringify reads:TypeError reads:WeakMap
+node:timers reads:AggregateError reads:Error.captureStackTrace reads:Error reads:clearImmediate reads:clearInterval reads:clearTimeout reads:setImmediate reads:setInterval reads:setTimeout
+node:timers/promises reads:AggregateError reads:Error.captureStackTrace reads:Error reads:clearImmediate reads:clearInterval reads:clearTimeout reads:setImmediate reads:setInterval reads:setTimeout
+node:tls env tick chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:Function reads:WeakMap reads:reportError
+node:trace_events throws # throws in a Worker only
+node:tty reads:AggregateError reads:Error.captureStackTrace reads:Error
+node:url reads:AggregateError reads:Error.captureStackTrace reads:Error
+node:util env reads:AggregateError reads:Error.captureStackTrace reads:Error reads:Function reads:WeakMap
+node:v8 reads:AggregateError reads:DataView reads:Date.now reads:Date reads:Error.captureStackTrace reads:Error reads:node:util/types.isAnyArrayBuffer reads:node:util/types.isDataView
+node:vm reads:AggregateError reads:Error.captureStackTrace reads:Error
+node:wasi reads:Error
+node:worker_threads global chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:Function reads:WeakMap reads:addEventListener reads:removeEventListener reads:self
+node:zlib tick chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:Function reads:TypeError reads:WeakMap reads:atob reads:btoa reads:process.binding
+node:zlib/iter throws
+undici cache channel tick chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:FinalizationRegistry reads:Function reads:WeakMap reads:WeakRef
+ws cache chain reads:AggregateError reads:Error.captureStackTrace reads:Error reads:RangeError

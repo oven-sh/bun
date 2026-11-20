@@ -80,6 +80,9 @@ struct DeclaredModuleLoad {
     static bool canLoad(Zig::GlobalObject*, InternalModuleRegistry::Field);
     static JSC::JSValue requireNamedAtRunTime(Zig::GlobalObject*, InternalModuleRegistry::Field, ErrorCode ifNotInExecutable);
     static JSC::JSValue requireForCommandLine(Zig::GlobalObject*, InternalModuleRegistry::Field);
+    // For the loader of a compiled program, where an import statement would leave a built-in module to its first use: whether the load
+    // of the module shows in no way when it runs. False: the module has to run where its importer links.
+    static bool mayRunAtFirstUse(Zig::GlobalObject*, uint32_t registryID);
 
 private:
     static JSC::JSValue requireField(Zig::GlobalObject*, InternalModuleRegistry::Field);

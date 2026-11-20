@@ -371,6 +371,26 @@ function layoutOrder(modules: string[], outputs: Map<string, string>): string[] 
   return order;
 }
 
+// src/codegen/builtins/data/acts-at-load.txt: one line for a module, its specifier and then what its load does that a program can
+// see. `reads:<path>` is a read of what a program may put something else in place of. A module without a line is not imported by
+// its name, and the loader never asks of it.
+interface LoadOfModule {
+  // It does something else than read what has a name.
+  shows: boolean;
+  reads: string[];
+}
+const loadsOfModules = new Map(
+  fs
+    .readFileSync(path.join(import.meta.dir, "builtins", "data", "acts-at-load.txt"), "utf8")
+    .split("\n")
+    .filter(line => line && !line.startsWith("#"))
+    .map((line): [string, LoadOfModule] => {
+      const [specifier, ...words] = line.split(" # ")[0].split(" ");
+      const reads = words.filter(word => word.startsWith("reads:")).map(word => word.slice("reads:".length));
+      return [specifier, { shows: reads.length < words.length, reads }];
+    }),
+);
+
 function idToPublicSpecifierOrEnumName(id: string) {
   if (id === "internal-for-testing.ts") return "bun:internal-for-testing"; // not in the `bun/` folder because it's added conditionally
   id = id.replace(/\.[mc]?[tj]s$/, "");
@@ -385,6 +405,27 @@ function idToPublicSpecifierOrEnumName(id: string) {
   }
   return idToEnumName(id);
 }
+
+// Where a path begins: at what the module of that number exports, or at the global object (-1).
+interface ReadAtLoad {
+  module: number;
+  names: string[];
+}
+const numbersOfModules = new Map(
+  moduleList.map((id, number) => [number < nativeStartIndex ? idToPublicSpecifierOrEnumName(id) : id, number]),
+);
+function readAtLoad(path: string): ReadAtLoad {
+  const [first, ...names] = path.split(".");
+  const module = numbersOfModules.get(first);
+  return module === undefined ? { module: -1, names: [first, ...names] } : { module, names };
+}
+// A load that shows runs where the importer links, and nobody asks what it reads.
+const loadsInOrder = moduleList.slice(0, nativeStartIndex).map(id => {
+  const load = loadsOfModules.get(idToPublicSpecifierOrEnumName(id)) ?? { shows: true, reads: [] };
+  return { shows: load.shows, reads: load.shows ? [] : load.reads.map(readAtLoad) };
+});
+const firstReadsAtLoad = [0];
+for (const load of loadsInOrder) firstReadsAtLoad.push(firstReadsAtLoad.at(-1)! + load.reads.length);
 
 const { combinedSourceCode: functionsSource, privateNames } = await bundleBuiltinFunctions({
   typesDir: TYPES_DIR,
@@ -634,6 +675,23 @@ static constexpr char publicModuleNames[] =
     .map(id => idToPublicSpecifierOrEnumName(id))
     .map(name => JSON.stringify(name.startsWith("internal:") ? "" : name).slice(0, -1) + '\\0"')
     .join("\n  ")};
+
+// Whether the load of each module does something that a program can see (src/codegen/builtins/data/acts-at-load.txt).
+static constexpr bool loadShows[moduleCount] = { ${loadsInOrder.map(load => (load.shows ? 1 : 0)).join(",")} };
+// What the load of each module reads that a program may put something else in place of: the names on the way to it, each behind a
+// NUL, from what the module of that number exports, or from the global object where the number is negative.
+struct ReadAtLoad {
+    int16_t module;
+    const char* names;
+};
+static constexpr ReadAtLoad readsAtLoad[] = {
+  ${loadsInOrder
+    .flatMap(load => load.reads)
+    .concat({ module: -1, names: [] })
+    .map(read => `{ ${read.module}, ${JSON.stringify(read.names.map(name => name + "\0").join(""))} },`)
+    .join("\n  ")}
+};
+static constexpr uint16_t firstReadAtLoad[moduleCount + 1] = { ${firstReadsAtLoad.join(",")} };
 
 static constexpr uint32_t lazyFunctionTableOffsets[moduleCount + 1] = { ${lazyFunctionTableOffsets.join(",")} };
 static constexpr uint8_t lazyFunctionTable[] = { ${lazyFunctionTable.concat(0).join(",")} };

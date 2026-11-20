@@ -1,4 +1,6 @@
-use bun_sema::bind::{Binding, CodeUnit, CommonJsVariable, PrivateMembers, ScopeId, SymbolId};
+use bun_sema::bind::{
+    Binding, CodeUnit, CommonJsVariable, Decl, PrivateMembers, ScopeId, SymbolId,
+};
 use bun_sema::check::aot::find_super_call;
 use bun_sema::fold::{Decision, TreeNode};
 use bun_sema::hir::{
@@ -232,6 +234,14 @@ impl Walker<'_, '_> {
             self.pending_stores.push(symbol);
         }
         self.record_binding_use(context, binding, is_store);
+        if let (Binding::Symbol(symbol), false, Some(index)) =
+            (binding, is_store, context.enclosing_loop)
+            && self.is_declared_by_import(symbol)
+        {
+            let outermost = self.walk.loops[index as usize].outermost as usize;
+            let read = &mut self.walk.loops[outermost].imports_read_within;
+            read.push(symbol);
+        }
         if let Some(variable) = self.find_value_of_run_behind(identifier, binding) {
             self.record_binding_use(context, Binding::CommonJs(variable), false);
         }
@@ -247,6 +257,16 @@ impl Walker<'_, '_> {
             };
             self.record_scope_objects(function, search);
         }
+    }
+
+    fn is_declared_by_import(&self, symbol: SymbolId) -> bool {
+        let mut declarations = self.bound.symbol(symbol).decls.iter();
+        declarations.any(|declaration| {
+            matches!(
+                declaration,
+                Decl::ImportSpec(_) | Decl::ImportDefault(_) | Decl::ImportNamespace(_)
+            )
+        })
     }
 
     fn find_value_of_run_behind(

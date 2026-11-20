@@ -948,6 +948,32 @@ describe.concurrent("vi.setConfig", () => {
       });
     });
 
+    test("restoreMocks takes a spy on an inherited method off an object that is frozen afterwards", async () => {
+      const { stdout, stderr, exitCode } = await run(["test"], {
+        "a.test.ts": `
+          import { test, vi } from "bun:test";
+          vi.setConfig({ restoreMocks: true });
+          const frozen = new (class { method() { return "original"; } })();
+          const seen = () => console.log(JSON.stringify([frozen.method(), Object.hasOwn(frozen, "method")]));
+          test("first", () => {
+            vi.spyOn(frozen, "method").mockReturnValue("spied");
+            Object.freeze(frozen);
+            seen();
+          });
+          test("second", seen);
+        `,
+      });
+      expect({
+        stdout: stdout.split("\n").filter(line => line.startsWith("[")),
+        stderr: results(stderr),
+        exitCode,
+      }).toEqual({
+        stdout: [`["spied",true]`, `["original",false]`],
+        stderr: ["(pass) first", "(pass) second"],
+        exitCode: 0,
+      });
+    });
+
     test("apply to every attempt but not to skipped tests, until resetConfig() or the file ends", async () => {
       const { stdout, stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], {
         "shared.ts": `import { vi } from "bun:test"; export const fn = vi.fn();`,

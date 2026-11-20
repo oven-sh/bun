@@ -632,7 +632,10 @@ mod lifecycle {
             ("dialing", |_| {}),
             ("no socket", |it| it.client.dial_failed()),
             ("hello", Driver::start),
-            ("ready", |it| (it.start(), it.read("+OK\r\n")).1),
+            ("ready", |it| {
+                it.start();
+                it.read("+OK\r\n")
+            }),
         ];
         for (phase, reach) in phases {
             for (touch, apply, expected) in touches {
@@ -673,7 +676,10 @@ mod lifecycle {
             |_| {},
             |it| it.client.claim(),
             |it| it.client.connect(),
-            |it| (drop(it.client.close()), it.client.connect()).1,
+            |it| {
+                drop(it.client.close());
+                it.client.connect()
+            },
         ];
         for (phase, reach) in phases.into_iter().enumerate() {
             for (touch, apply) in touches.into_iter().enumerate() {

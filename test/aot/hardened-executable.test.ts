@@ -23,10 +23,10 @@ async function run(cmd: string[], env: Record<string, string | undefined> = bunE
 }
 
 const programThatCompresses = `import { readFileSync } from "node:fs";
-import { gunzipSync, gzip, gzipSync } from "node:zlib";
-const text = Buffer.alloc(1 << 16, "second stack ");
-const onThisThread = gunzipSync(gzipSync(text)).equals(text);
-const onAnotherThread = await new Promise<boolean>(resolve => gzip(text, (error, packed) => resolve(!error && gunzipSync(packed).equals(text))));
+let state = 1;
+const literals = Uint8Array.from({ length: 1 << 16 }, () => (state = (Math.imul(state, 1103515245) + 12345) >>> 0) >>> 26);
+const onThisThread = Bun.zstdDecompressSync(Bun.zstdCompressSync(literals)).equals(literals);
+const onAnotherThread = Bun.zstdDecompressSync(await Bun.zstdCompress(literals)).equals(literals);
 const guards = readFileSync("/proc/self/maps", "utf8").split("\\n").filter(line => {
   const [range, access] = line.split(" ");
   const [from, to] = range.split("-").map(part => parseInt(part, 16));
@@ -221,7 +221,7 @@ describe.skipIf(!isHardened)("an executable of a Bun built with --hardened=on", 
   );
 
   test.skipIf(!isX64 || !isGlibc)(
-    "gives every thread a second stack between guards for the arrays of its C libraries",
+    "gives every thread a second stack between guards for the arrays of what is compiled with SafeStack",
     async () => {
       await withCompiledProgram(
         file => {

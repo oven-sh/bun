@@ -118,7 +118,7 @@ Bun puts the keys where the plugin puts them and leaves every value as you wrote
 
 ---
 
-The second kind adds a language that Bun can't parse, like Astro. Bun knows which files these plugins format, and sends those files to your installed Prettier. Keep `prettier` and every plugin in `plugins` installed. `--doctor` shows which files those are.
+The second kind adds a language that Bun can't parse, like Astro. Bun recognises the common file endings of these plugins, and sends files with those endings to your installed Prettier. Keep `prettier` and every plugin in `plugins` installed. `--doctor` shows which files those are.
 
 ```txt
 Using .prettierrc (Prettier config)
@@ -139,24 +139,41 @@ These are the plugins of the second kind:
 - `@prettier/plugin-xml`, `prettier-plugin-toml`, `prettier-plugin-ini`, `prettier-plugin-properties`, `prettier-plugin-nginx`
 - `prettier-plugin-sh`, `prettier-plugin-sql`, `prettier-plugin-prisma`, `prettier-plugin-gherkin`
 
----
-
-The third kind is every other plugin, including one you wrote. Bun can't tell which files it formats, so you have to say. List the plugin in an override with `files`:
+For a file of such a plugin with a name that Bun doesn't recognise, like a `Gemfile`, set the plugin's `parser` in an override:
 
 ```json .prettierrc icon="file-json"
 {
+  "plugins": ["@prettier/plugin-ruby"],
   "overrides": [
     {
-      "files": "*.foo",
-      "options": { "plugins": ["./fmt/plugin.js"] }
+      "files": "Gemfile",
+      "options": { "parser": "ruby" }
     }
   ]
 }
 ```
 
-The files that match go to your installed Prettier, so keep `prettier` and the plugin installed. Match only the files the plugin formats. If no listed plugin has a parser for a matched file, that file is an error.
+---
 
-A file that Bun can format itself is not handed over because it matches `files`. A matched `.js` or `.html` file is skipped, and `bun fmt` exits with code `2`. If the plugin is meant to format such files, name the plugin's parser in the override too:
+The third kind is every other plugin, including one you wrote. Listing it sends no file to Prettier, because Bun can't tell which files it formats. List the plugin in an override with `files`, and set the plugin's `parser` there:
+
+```json .prettierrc icon="file-json"
+{
+  "overrides": [
+    {
+      "files": "*.tmpl",
+      "options": {
+        "plugins": ["./fmt/plugin.js"],
+        "parser": "tmpl"
+      }
+    }
+  ]
+}
+```
+
+The files that match go to your installed Prettier, so keep `prettier` and the plugin installed. The `parser` is what sends them there. Without it, `files` sends nothing: a matched `.js` file is skipped and `bun fmt` exits with code `2`, and a matched file that Bun can't format is left alone, as it is without the override.
+
+This also works for a file that Bun would format itself, like an `.html` file:
 
 ```json .prettierrc icon="file-json"
 {
@@ -172,7 +189,9 @@ A file that Bun can format itself is not handed over because it matches `files`.
 }
 ```
 
-A plugin of the third kind at the top level of the config, outside an override, has no files of its own. Bun skips the files that config covers and exits with code `2`. The plugin could print them differently, and Bun won't guess. Pass `--allow-unsupported` to format them without the plugin.
+If none of the listed plugins has the parser, the file is reported like any file in a language that `bun fmt` doesn't support.
+
+A plugin of the third kind at the top level of the config, outside an override, has no files of its own. Bun skips the files that it would format itself under that config and exits with code `2`. The plugin could print them differently, and Bun won't guess. Pass `--allow-unsupported` to format them without the plugin.
 
 ```txt
 error: 3 files were not formatted because the Prettier config uses plugins that bun fmt does not include: prettier-plugin-brace-style
@@ -183,7 +202,9 @@ error: 3 files were not formatted because the Prettier config uses plugins that 
 
 You don't have to keep `.prettierrc`. Move the options to [`bunfig.toml`](/format#options), under the same names, and delete the file. `overrides` become [`[[fmt.overrides]]`](/runtime/bunfig#format-overrides).
 
-`plugins` moves too, to [`plugins` in `[fmt]`](/runtime/bunfig#format-plugins) or in an override. A path is then relative to `bunfig.toml`. The three kinds are treated the same there, with one difference: the options of a built-in plugin, like `importOrder`, `tailwindFunctions`, `svelteSortOrder`, or `packageSortOrder`, aren't keys of `[fmt]`. If your config sets them, keep `.prettierrc`, or use Bun's own keys instead: [`sortImports`](/runtime/bunfig#format-sortimports), [`sortTailwindcss`](/runtime/bunfig#format-sorttailwindcss), [`svelte`](/runtime/bunfig#format-svelte), and [`sortPackageJson`](/runtime/bunfig#format-sortpackagejson).
+`plugins` moves too, to [`plugins` in `[fmt]`](/runtime/bunfig#format-plugins) or in an override. A path is then relative to `bunfig.toml`. The three kinds are treated the same there.
+
+A plugin's own options don't move to `[fmt]`. The options of a plugin of the second or third kind, like `astroAllowShorthand`, go in the `options` of a `[[fmt.overrides]]` entry that lists the plugin or sets its parser. The options of a built-in plugin, like `importOrder`, `tailwindFunctions`, `svelteSortOrder`, or `packageSortOrder`, are only read from a Prettier config. If your config sets them, keep `.prettierrc`, or use Bun's own keys instead: [`sortImports`](/runtime/bunfig#format-sortimports), [`sortTailwindcss`](/runtime/bunfig#format-sorttailwindcss), [`svelte`](/runtime/bunfig#format-svelte), and [`sortPackageJson`](/runtime/bunfig#format-sortpackagejson).
 
 ```toml bunfig.toml icon="settings"
 [fmt]

@@ -885,18 +885,20 @@ plugins = ["prettier-plugin-tailwindcss", "prettier-plugin-astro"]
 Bun doesn't run a plugin itself. What happens depends on the plugin:
 
 - **A [built-in plugin](/guides/format/migrate-from-prettier)**, like `prettier-plugin-tailwindcss`. Bun does its work.
-- **A language plugin that Bun knows**, like `prettier-plugin-astro`. The files with that plugin's endings go to your installed Prettier.
-- **Any other plugin, and your own.** Bun can't tell which files it formats, so you say so: list it in an override with `files`.
+- **A [language plugin that Bun knows](/guides/format/migrate-from-prettier)**, like `prettier-plugin-astro`. Bun recognises the common file endings of these plugins. Files with one of those endings go to your installed Prettier.
+- **Any other plugin, and your own.** Listing it sends no file to Prettier. In `[fmt]`, it makes `bun fmt` skip every file that Bun would format itself, and exit with code `2`, because the plugin could print those files differently. `--allow-unsupported` formats them without the plugin.
+
+To use a plugin of the third kind, put it in an override that names its files and sets its `parser`:
 
 ```toml title="bunfig.toml" icon="settings"
 [[fmt.overrides]]
-files = ["*.foo"]
-options = { plugins = ["./fmt/plugin.js"] }
+files = ["*.tmpl"]
+options = { plugins = ["./fmt/plugin.js"], parser = "tmpl" }
 ```
 
-The files that match go to your installed Prettier, which loads the plugin. For those files, the entry's `plugins` replaces the list in `[fmt]` and the `--plugin` flags. Everything else is formatted by Bun.
+The files that match go to your installed Prettier, which loads the plugin. The `parser` is what sends them there: `files` with `plugins` and no `parser` sends nothing. For those files, the entry's `plugins` replaces the list in `[fmt]` and the `--plugin` flags. Everything else is formatted by Bun.
 
-Match only the files the plugin formats. If none of the listed plugins has a parser for a matched file, that file is an error. A matched file that Bun formats itself, like a `.js` or an `.html` file, is skipped and `bun fmt` exits with code `2`. To send such a file to the plugin, also name the plugin's parser:
+`parser` in an override also covers what the file endings don't: a file of a language plugin whose name Bun doesn't recognise, like a `Gemfile`, and a file that Bun would format itself, like an `.html` file.
 
 ```toml title="bunfig.toml" icon="settings"
 [[fmt.overrides]]
@@ -904,7 +906,9 @@ files = ["*.go.html"]
 options = { plugins = ["prettier-plugin-go-template"], parser = "go-template" }
 ```
 
-The same entry takes the plugin's options. An option that no listed plugin declares is an error. So is a key that is a `[fmt]` key or a flag in another case, or close enough to one for a "Did you mean": Bun takes that for a typo. That also refuses a plugin's option that is named after a `[fmt]` key, like `pugPrintWidth`. Set such an option in a Prettier config file.
+If none of the listed plugins has that parser, the file is reported like any file in a language that `bun fmt` doesn't support: exit code `2`, or a warning with `--allow-unsupported`.
+
+The options of a plugin aren't keys of `[fmt]`. They go in the `options` of an entry that lists the plugin or sets its parser:
 
 ```toml title="bunfig.toml" icon="settings"
 [[fmt.overrides]]
@@ -912,9 +916,11 @@ files = ["*.astro"]
 options = { plugins = ["prettier-plugin-astro"], astroAllowShorthand = true }
 ```
 
+Bun doesn't know the options of a plugin, so your installed Prettier checks the names when a file of the entry goes to it. An option that no listed plugin declares is an error for that file. A key that is a `[fmt]` key or a flag in another case, like `printwidth`, is an error when `bunfig.toml` is read.
+
 `prettier` and the plugins must be installed in the project. Bun starts Prettier only when a file goes to it.
 
-A plugin of the third kind in `[fmt]`, outside an override, has no files of its own. Bun skips the files it would format itself and exits with code `2`, because the plugin could print them differently. `--allow-unsupported` formats them without the plugin.
+Prettier loads the plugins of your Prettier config first, then the plugins of `bunfig.toml` and `--plugin`. If two plugins have the same parser, the one that is loaded last is used. A plugin in both lists is loaded once, at its later place. With `--config-precedence file-override`, the plugins of the Prettier config are loaded last.
 
 ### Every other flag
 
@@ -929,7 +935,7 @@ logLevel = "warn" # --log-level warn
 threads = 4 # --threads 4
 ```
 
-`[fmt]` also applies in a project with a `.prettierrc` or an `.oxfmtrc.json`, where a key overrides the config file as its flag does. `plugins` is the exception. It adds to the list in a `.prettierrc`, and Prettier loads both. Next to an `.oxfmtrc.json` it has no effect, because oxfmt doesn't load Prettier plugins.
+`[fmt]` also applies in a project with a `.prettierrc` or an `.oxfmtrc.json`, where a key overrides the config file as its flag does. `plugins` is the exception. It adds to the list in a `.prettierrc`, whatever `--config-precedence` is, and Prettier loads both. Next to an `.oxfmtrc.json` no file goes to Prettier, because oxfmt doesn't load Prettier plugins, and Bun warns about each plugin that isn't built in. Of the built-in plugins, `@ianvs/prettier-plugin-sort-imports`, `@trivago/prettier-plugin-sort-imports`, and `prettier-plugin-organize-imports` still sort imports there. The others have no effect.
 
 ## Package manager
 

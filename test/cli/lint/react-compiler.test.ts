@@ -88,6 +88,74 @@ const unlisted: Files = {
 };
 const missingIn = (text: string) => Array.from(text.matchAll(/Missing dependency `([^`]+)`/g), it => it[1]);
 
+const returnsItself = (indent: string) => `${indent}const f = () => f;\n${indent}return f;`;
+/**
+ * Components with a nested function, `outer`, whose ref types don't settle: the type of a function holds the type of
+ * what it returns, and `f` returns itself. The compiler in TypeScript throws "Ref type environment did not converge"
+ * there, which gives the component up with that alone. oxlint's goes on, with `outer` as a function that reads a ref.
+ */
+const unsettled: Files = {
+  // `outer` is called during render. There's no ref.
+  "called.jsx": `function Called(props) {
+  const outer = () => {
+${returnsItself("    ")}
+  };
+  const g = outer();
+  const other = () => 1;
+  return <div onClick={g} onFocus={other}>{props.a}</div>;
+}
+`,
+  // The ref is read during render, before `outer`.
+  "before.jsx": `function Before(props) {
+  const ref = useRef(null);
+  const x = ref.current + 1;
+  const outer = () => {
+${returnsItself("    ")}
+  };
+  return <div onClick={outer}>{x}</div>;
+}
+`,
+  // The ref is read in an event handler, which is allowed. The handler holds `outer`.
+  "handler.jsx": `function Handler(props) {
+  const ref = useRef(null);
+  const onClick = () => {
+    const x = ref.current + 1;
+    const outer = () => {
+${returnsItself("      ")}
+    };
+    return [x, outer];
+  };
+  return <div onClick={onClick}>{props.a}</div>;
+}
+`,
+};
+/** `outer` under that many arrow functions. */
+const unsettledUnder = (arrows: number) => `function Deep(props) {
+  const outer = ${Buffer.alloc("() => ".length * arrows, "() => ")}{
+${returnsItself("    ")}
+  };
+  return <div onClick={outer}>{props.a}</div>;
+}
+`;
+/** The same in a component that has a ref, which `outer` reads. */
+const unsettledBesideARefUnder = (arrows: number) => `function DeepRef(props) {
+  const ref = useRef(null);
+  const outer = ${Buffer.alloc("() => ".length * arrows, "() => ")}{
+    const f = () => f;
+    const x = ref.current + 1;
+    return [f, x];
+  };
+  return <div onClick={outer}>{props.a}</div>;
+}
+`;
+/** No such function. The ref is read during render. */
+const readsRefInRender = `function Plain() {
+  const ref = useRef(null);
+  const value = ref.current;
+  return <div>{value}</div>;
+}
+`;
+
 describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.oxlint}`, () => {
   test(
     "on oxlint's own test cases",
@@ -319,6 +387,23 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
     slow,
   );
 
+  // oxlint 1.87.0 reports the same. called.jsx has no ref.
+  test(
+    "a nested function whose ref types don't settle is one that reads a ref",
+    async () => {
+      const { diagnostics, exit } = await report({ ".oxlintrc.json": rc(), ...unsettled });
+      expect(
+        Object.fromEntries(Object.entries(diagnostics).map(([path, found]) => [path, locationsOf(found)])),
+      ).toEqual({
+        "before.jsx": [["react(refs)", 3, 13]],
+        "called.jsx": [["react(refs)", 6, 13]],
+        "handler.jsx": [["react(invariant)", 1, 10]],
+      });
+      expect(exit).toBe(1);
+    },
+    slow,
+  );
+
   // oxlint 1.87.0 also reports nothing with up to 1,000 of them, in 16 s, and doesn't finish within a minute at 3,000.
   test(
     "a chain of objects that each contain the previous one, starting from a ref, takes linear memory",
@@ -483,6 +568,49 @@ describe.concurrent(
         const { files, exitCode } = await messages(linted(expected.fixtures));
         expect(briefly(files)).toEqual(expected.eslint.fixtures);
         expect(exitCode).toBe(1);
+      },
+      slow,
+    );
+
+    // Matches the plugin, which can't report the invariant: it has no location.
+    test(
+      "a nested function whose ref types don't settle gives its component up",
+      async () => {
+        const { files, exitCode } = await messages({ ...unsettled, "plain.jsx": readsRefInRender });
+        expect(briefly(files)).toEqual({
+          "plain.jsx": ["react-hooks/refs 3:17-3:28 Error: Cannot access refs during render"],
+        });
+        expect(exitCode).toBe(1);
+      },
+      slow,
+    );
+
+    // The rules that are on by default report too.
+    test(
+      "and so with only `[lint.rules]` in bunfig.toml",
+      async () => {
+        const bunfig = `[lint.rules]\n"react-hooks/refs" = "error"\n`;
+        const { raw, directories } = await lint(
+          { "bunfig.toml": bunfig, ...unsettled, "plain.jsx": readsRefInRender },
+          ["-f", "json"],
+        );
+        const found = Object.entries(byEslintFile(JSON.parse(raw), directories)).flatMap(([path, { messages }]) =>
+          messages.filter(it => it.ruleId === "react-hooks/refs").map(it => [path, it.line, it.column]),
+        );
+        expect(found).toEqual([["plain.jsx", 3, 17]]);
+      },
+      slow,
+    );
+
+    test(
+      "such a function under 20 arrows takes no longer",
+      async () => {
+        const { files, exitCode } = await messages({
+          "deep.jsx": unsettledUnder(20),
+          "deep-ref.jsx": unsettledBesideARefUnder(20),
+        });
+        expect(files).toEqual({});
+        expect(exitCode).toBe(0);
       },
       slow,
     );

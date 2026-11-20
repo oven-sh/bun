@@ -57,6 +57,7 @@ impl Connection {
         {
             return Err(Error::violation("acknowledged a packet that was not sent"));
         }
+        let gap_at = space.received.gap_at;
         let previous_largest = space.sent.largest_acked;
         space.sent.largest_acked = previous_largest.max(Some(ack.largest));
         let mut largest_sent_at = space.received.on_ack(ack);
@@ -140,17 +141,26 @@ impl Connection {
             return Ok(());
         }
         if let Some(sent_at) = largest_sent_at.filter(|_| has_news && is_larger) {
-            let delay = match id {
+            let reported = match id {
                 SpaceId::Data => {
                     let scale = 1 << self.peer.ack_delay_exponent;
-                    (Duration::from_micros(ack.delay) * scale).min(self.peer_max_ack_delay())
+                    Duration::from_micros(ack.delay) * scale
                 }
                 _ => Duration::ZERO,
             };
-            if !self.rtt.has_sample() {
-                (self.first_sample_at, self.pto_count) = (now, 0);
+            let delay = reported.min(self.peer_max_ack_delay());
+            let (mut sample, timeout) = (now - sent_at, self.probe_timeout());
+            if gap_at > sent_at && reported > timeout {
+                // Most likely, the acknowledgment that was in time is lost.
+                sample = sample.min(timeout.max(sample - reported + delay));
             }
-            self.rtt.update(now - sent_at, delay);
+            let is_first = !self.rtt.has_sample();
+            self.rtt.update(sample, delay);
+            if is_first {
+                (self.first_sample_at, self.pto_count) = (now, 0);
+                // RFC 9002 §5.2.
+                self.rtt.min = self.rtt.min.max(now - sent_at);
+            }
         }
         self.detect_lost(now, id);
         if has_news || !self.spaces.open(id).sent.has_in_flight() {

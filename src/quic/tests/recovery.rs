@@ -491,6 +491,41 @@ fn round_trip_time() {
     }
 }
 
+#[test]
+fn delay_of_a_repeated_acknowledgment_counts_up_to_a_probe_timeout() {
+    for (lost, delay, smoothed) in [
+        ([0, 0, 1], 122_500, 22_812),
+        ([0, 1, 0], 122_500, 22_812),
+        ([1, 0, 0], 122_500, 139_375),
+        ([0, 0, 1], 50_000, 92_500),
+    ] {
+        let mut raw = Raw::client().connected();
+        raw.next[2] += lost[0];
+        raw.send("padding 1");
+        raw.request_packets("a");
+        raw.advance(500);
+        raw.next[2] += lost[1];
+        raw.send("padding 1");
+        raw.advance(500);
+        raw.next[2] += lost[2];
+        raw.send(&format!("ack 1 +{delay}"));
+        assert_eq!(raw.connection().stats().smoothed_rtt.as_micros(), smoothed);
+    }
+
+    let mut raw = Raw::client().connected();
+    raw.move_to(NEW);
+    raw.send_expanded("ping");
+    raw.send("respond");
+    let number = raw.received[2].last().unwrap() + 1;
+    raw.request_packets("a");
+    raw.advance(1000);
+    raw.next[2] += 1;
+    raw.send(&format!("ack {number} +122500"));
+    let stats = raw.connection().stats();
+    assert_eq!(stats.smoothed_rtt.as_millis(), 175);
+    assert_eq!(stats.min_rtt.as_millis(), 1000);
+}
+
 /// RFC 9002 §5.1.
 #[test]
 fn only_the_largest_packet_gives_a_sample() {

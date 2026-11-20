@@ -467,6 +467,9 @@ impl Connection {
             return Err(Error::violation("packet has no frames"));
         }
         let is_largest = packet.number >= space.received.expected;
+        if packet.number > space.received.expected {
+            space.received.gap_at = arrival.now;
+        }
         let (mut is_eliciting, mut is_probing, mut has_ack) = (false, true, false);
         let mut rest = packet.payload;
         while !rest.is_empty() && self.is_receiving() {

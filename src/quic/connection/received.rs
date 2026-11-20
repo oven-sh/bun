@@ -43,6 +43,8 @@ pub(super) struct Received {
     /// Follows the largest packet number.
     pub(super) expected: u64,
     largest_at: Instant,
+    /// When a packet has last turned out to be missing.
+    pub(super) gap_at: Instant,
     /// Follows the largest number of an ack-eliciting packet.
     expected_eliciting: u64,
     /// Since the last ACK frame.

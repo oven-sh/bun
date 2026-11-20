@@ -96,7 +96,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                     chunks,
                 );
             }
-            crate::linker_context::cross_chunk_names::apply_to_clauses(c, chunks);
+            crate::linker_context::cross_chunk_names::apply_to_clauses(c, chunks)?;
         }
         debug!("  DONE {} renamers", chunks.len());
     }

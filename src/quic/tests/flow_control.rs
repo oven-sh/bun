@@ -496,14 +496,20 @@ fn a_stream_that_has_ended_does_not_say_it_again() {
 
 #[test]
 fn takes_little_more_than_it_can_send() {
+    let raw = Raw::server().config(|it| it.sends_in_order = true);
+    let mut raw = raw.connected();
+    let id = StreamId(raw.peer.open(Unidirectional));
+    let data = filler(0, 500_000);
+    raw.connection().write(id, &data);
+    assert_eq!(raw.events(), "");
+
     let mut raw = Raw::server().connected();
     let ids = [(); 2].map(|()| StreamId(raw.peer.open(Unidirectional)));
-    let data = filler(0, 500_000);
     let window = raw.connection().stats().congestion_window as usize;
     let written = raw.connection().write(ids[0], &data);
     assert_eq!(written, Some(window + 65536));
     assert_eq!(raw.connection().write(ids[0], &data), Some(0));
-    assert_eq!(raw.connection().write(ids[1], &data), Some(8192));
+    assert_eq!(raw.connection().write(ids[1], &data), Some(2048));
     assert_eq!(raw.connection().write(ids[1], &data), Some(0));
     assert_eq!(raw.events(), "");
     raw.advance(RTT);

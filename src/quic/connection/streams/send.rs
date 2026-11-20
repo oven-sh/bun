@@ -8,6 +8,7 @@ use crate::connection::sent::{Control, Frames, SentFrame};
 use crate::event::{Event, StreamEvent};
 use crate::frame::{kind, stream_flag};
 use crate::stream_id::StreamId;
+use crate::time::Instant;
 
 /// What a stream can take however much the others have.
 pub(super) const MIN_UNSENT: u64 = 8 * 1024;
@@ -83,8 +84,11 @@ impl State {
     pub(crate) fn capacity(&self, id: StreamId, stream: &Stream, len: usize) -> (u64, bool) {
         let mut credit = self.send_credit();
         let (has_to_wait, is_ahead) = match self.invited {
-            Some((invited, is_ahead)) if invited == id => {
-                credit = (credit.saturating_sub(self.spare_credit)).min(self.max_write(stream));
+            Some((invited, is_ahead))
+                if invited == id
+                    && let max @ 1.. = self.max_write(stream, len as u64) =>
+            {
+                credit = (credit.saturating_sub(self.spare_credit)).min(max);
                 (false, is_ahead)
             }
             _ if self.writable.is_empty() && self.leader.is_none() => (false, false),
@@ -97,11 +101,16 @@ impl State {
             }
         };
         let shared = match has_to_wait {
+            true if self.has_been_refused(stream) => return (0, false),
             true => 0,
             false => (self.unsent_target + self.extra_unsent(stream, len as u64))
                 .saturating_sub(self.unsent),
         };
-        let wanted = shared.max(MIN_UNSENT.saturating_sub(stream.send.unsent_len()));
+        let least = match has_to_wait && !self.sends_in_order && len as u64 > MIN_UNSENT {
+            true => LITTLE,
+            false => MIN_UNSENT,
+        };
+        let wanted = shared.max(least.saturating_sub(stream.send.unsent_len()));
         let room = self.max_retained.saturating_sub(self.retained);
         let capacity = wanted.min(room).min(credit).min(stream.send_credit());
         let max = match is_ahead {
@@ -176,7 +185,7 @@ impl State {
 
     #[inline]
     fn invites_writes(&self) -> bool {
-        (self.has_little_unsent() || self.is_any_starved())
+        (self.has_little_unsent() || self.may_starve_any())
             && self.retained + WRITE_CHUNK <= self.max_retained
             && self.send_credit() >= self.min_credit
     }
@@ -187,7 +196,8 @@ impl State {
     }
 
     #[inline]
-    pub(crate) fn start_write_round(&mut self) {
+    pub(crate) fn start_write_round(&mut self, now: Instant) {
+        self.count_periods(now);
         self.write_round += 1;
         self.is_write_round_over = false;
     }
@@ -288,6 +298,7 @@ impl State {
         self.report_blocked(id, stream);
         if stream.mark(Flags::IN_WRITABLE) {
             self.turns += 1;
+            stream.waits_since = self.periods.count;
             let rank = match self.sends_in_order {
                 true => self.rank(stream),
                 false => self.rank_share(stream),
@@ -362,7 +373,7 @@ impl State {
     #[inline]
     fn next_to_write(&mut self, table: &Table) -> (Option<usize>, bool) {
         if !self.sends_in_order {
-            return (self.next_share(table), false);
+            return (self.next_writer(table), false);
         }
         let leader = (self.leader).filter(|it| table.get(it.1).is_some_and(is_under_way));
         self.update_credit_ahead(leader.and_then(|it| table.get(it.1)));

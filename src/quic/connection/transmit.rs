@@ -81,7 +81,7 @@ impl Connection {
             {}
             self.after_transmit(now);
             if batch.len() > len_before {
-                self.streams.state.start_write_round();
+                self.streams.state.start_write_round(now);
             }
             if batch.len() >= max_len {
                 return true;

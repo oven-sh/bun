@@ -25,7 +25,8 @@ pub struct Config {
     pub uses_preferred_address: bool,
     /// Whether to go by what the peer says about priorities (RFC 9218).
     pub has_priorities: bool,
-    /// Whether streams that are not incremental go one after the other, as opposed to in turns (RFC 9218 §10).
+    /// Whether streams that are not incremental go one after the other, as opposed to in turns (RFC 9218 §10). If not,
+    /// priorities have no say in which stream may write.
     pub sends_in_order: bool,
     /// Whether what the application has got counts as unread until [`consume`](crate::Connection::consume).
     pub awaits_consumption: bool,

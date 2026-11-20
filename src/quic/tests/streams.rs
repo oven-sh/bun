@@ -754,7 +754,7 @@ fn long_streams_let_an_older_one_finish() {
 
 #[test]
 fn short_streams_pass_many_long_ones() {
-    for (len, expected) in [(20_000, 20), (50_000, 24)] {
+    for (len, expected) in [(20_000, 15), (50_000, 21)] {
         let mut raw = sending(false, 100_000);
         for len in [300_000; 12].into_iter().chain([len]) {
             let id = raw.peer.open(Unidirectional);
@@ -852,11 +852,11 @@ fn only_shorter_streams_write_ahead_of_one_that_waits() {
         raw.advance(RTT);
         raw.send("ack");
     }
-    let written = [60_000, 8192 + 50_000].map(|len| raw.connection().write(ids[3], &data[..len]));
-    assert_eq!(written, [Some(8192), Some(0)]);
+    let written = [58_000, 58_000].map(|len| raw.connection().write(ids[3], &data[..len]));
+    assert_eq!(written, [Some(2048), Some(0)]);
     assert_eq!(
-        raw.connection().write(ids[3], &data[..50_000]),
-        Some(50_000)
+        raw.connection().write(ids[3], &data[..55_000]),
+        Some(55_000)
     );
 }
 
@@ -872,7 +872,7 @@ fn nothing_passes_what_is_long_overdue() {
         let id = StreamId(raw.peer.open(Unidirectional));
         raw.connection().write(id, &data[..60_000]).unwrap()
     });
-    let expected = [[60_000; 7].as_slice(), &[8192; 2]].concat();
+    let expected = [[60_000; 7].as_slice(), &[2048; 2]].concat();
     assert_eq!(written.collect::<Vec<_>>(), expected);
 }
 
@@ -954,6 +954,157 @@ fn what_is_overdue_does_not_take_all_the_room() {
         assert_eq!(raw.peer.events(), format!("{id} writable"));
         let written = raw.connection().write(StreamId(id), &data[..3_000_000]);
         assert!(range.contains(&written.unwrap()), "{written:?}");
+        let written = raw.connection().write(StreamId(id), &data[..2_000_000]);
+        assert_eq!(written, Some(0));
+    }
+}
+
+#[test]
+fn share_that_is_overdue_is_the_same_in_small_pieces() {
+    let raw = Raw::server().with("max_data=90000000 max_stream_data_uni=9000000");
+    let mut raw = raw.connected();
+    let ids = [(); 3].map(|()| raw.peer.open(Unidirectional));
+    raw.peer.send(ids[0], &filler(0, 900_000), false);
+    turns(&mut raw);
+    raw.peer.polls = false;
+    let [filling, long, pieces] = ids.map(StreamId);
+    let data = filler(0, 5_000_000);
+    let write_pieces = |raw: &mut Raw, max| {
+        let mut is_taken = || raw.connection().write(pieces, &data[..4096]) == Some(4096);
+        (0..max).take_while(|_| is_taken()).count()
+    };
+    write_pieces(&mut raw, 40);
+    raw.connection().write(filling, &data);
+    raw.connection().finish(filling);
+    raw.connection().write(long, &data[..940_000]);
+    write_pieces(&mut raw, 1);
+    turns(&mut raw);
+    raw.peer.poll(raw.now);
+    raw.connection().write(long, &data[8192..940_000]);
+    turns(&mut raw);
+    raw.peer.poll(raw.now);
+    assert_eq!(write_pieces(&mut raw, 99), 17);
+}
+
+#[test]
+fn stream_that_has_more_than_it_seemed_gets_in_line() {
+    for (len, taken) in [(65_536, 65_536), (65_537, 4096)] {
+        let mut raw = Raw::server().connected();
+        raw.peer.polls = false;
+        let ids = [(); 3].map(|()| StreamId(raw.peer.open(Unidirectional)));
+        let data = filler(0, 900_000);
+        raw.connection().write(ids[0], &data[..100_000]);
+        raw.connection().write(ids[0], &data[..100_000]);
+        raw.connection().write(ids[1], &data[..100_000]);
+        raw.connection().want_write(ids[2]);
+        turns(&mut raw);
+        raw.peer.log.clear();
+        assert!(raw.peer.poll(raw.now));
+        assert_eq!(raw.peer.events(), "10 writable");
+        assert_eq!(raw.connection().write(ids[2], &data[..len]), Some(taken));
+    }
+}
+
+#[test]
+fn stream_that_has_offered_nothing_yet_has_no_share_to_keep_to() {
+    let mut raw = Raw::server().connected();
+    raw.peer.polls = false;
+    let ids = [(); 3].map(|()| StreamId(raw.peer.open(Unidirectional)));
+    let data = filler(0, 900_000);
+    raw.connection().want_write(ids[0]);
+    raw.connection().write(ids[1], &data[..8000]);
+    raw.connection().write(ids[2], &data);
+    turns(&mut raw);
+    raw.peer.poll(raw.now);
+    let written = raw.connection().write(ids[0], &data[..60_000]);
+    assert_eq!(written, Some(60_000));
+}
+
+#[test]
+fn what_is_overdue_takes_the_room_that_no_other_stream_wants() {
+    let mut raw = Raw::server().connected();
+    raw.peer.polls = false;
+    let ids = [(); 4].map(|()| StreamId(raw.peer.open(Unidirectional)));
+    let data = filler(0, 900_000);
+    raw.connection().write(ids[0], &data);
+    for &id in &ids[1..] {
+        turns(&mut raw);
+        raw.connection().write(id, &data[..60_000]);
+    }
+    turns(&mut raw);
+    raw.peer.poll(raw.now);
+    assert!(raw.connection().write(ids[0], &data[..700_000]) > Some(99_999));
+}
+
+#[test]
+fn stream_that_has_waited_for_long_may_write_a_few_bytes() {
+    for (is_sent, lens, expected) in [
+        (false, [900_000, 900_000], [0, 0]),
+        (true, [900_000, 898_976], [1024, 0]),
+        (true, [1024, 100], [1024, 100]),
+    ] {
+        let mut raw = Raw::server().connected();
+        raw.peer.polls = false;
+        let ids = [(); 2].map(|()| StreamId(raw.peer.open(Unidirectional)));
+        let data = filler(0, 900_000);
+        raw.connection().write(ids[0], &data);
+        if is_sent {
+            turns(&mut raw);
+        }
+        for _ in 0..3 {
+            raw.advance(1000);
+            raw.send("ping");
+        }
+        raw.connection().want_write(ids[1]);
+        raw.peer.log.clear();
+        raw.peer.poll(raw.now);
+        assert_eq!(raw.peer.has_logged("2 writable"), is_sent);
+        let written = lens.map(|len| raw.connection().write(ids[0], &data[..len]));
+        assert_eq!(written, expected.map(Some));
+    }
+}
+
+#[test]
+fn stream_that_misses_its_turn_writes_a_little() {
+    let mut raw = Raw::server().connected();
+    raw.peer.polls = false;
+    let ids = [(); 3].map(|()| StreamId(raw.peer.open(Unidirectional)));
+    let data = filler(0, 900_000);
+    for id in ids {
+        raw.connection().write(id, &data);
+    }
+    turns(&mut raw);
+    raw.peer.log.clear();
+    for _ in 0..2 {
+        raw.peer.poll(raw.now);
+    }
+    assert_eq!(raw.peer.events(), "2 writable, 6 writable");
+    assert_eq!(raw.connection().write(ids[0], &data), Some(2048));
+}
+
+#[test]
+fn streams_are_not_silent_for_long() {
+    for (count, expected) in [(20, 5..6), (90, 2..4)] {
+        let mut network = Network::new(1);
+        network.config(|it| {
+            it.parameters.initial_max_streams_uni = 99;
+            it.parameters.initial_max_stream_data_uni = 9_000_000;
+            it.parameters.initial_max_data = 90_000_000;
+        });
+        (network.bytes_per_second, network.latency) = (100_000, Duration::from_millis(10));
+        network.connect();
+        for _ in 0..count {
+            let id = network.client.open(Unidirectional);
+            network.client.send(id, &[0; 200_000], true);
+        }
+        let [before, after] = [(); 2].map(|()| {
+            network.run_for(Duration::from_secs(10));
+            let streams = network.server.streams.values().skip(12);
+            Vec::from_iter(streams.map(|it| it.received.len() >> 10))
+        });
+        for (before, after) in before.iter().zip(after) {
+            assert!(expected.contains(&(after - before)), "{before} {after}");
+        }
     }
 }
 
@@ -1069,20 +1220,20 @@ fn ends(piece_len: Option<usize>, lens: &[usize]) -> Vec<usize> {
 #[test]
 fn streams_end_one_after_the_other() {
     for (piece_len, lens, mean) in [
-        (None, &[100_000; 8][..], 490..500),
-        (None, &[200_000; 8], 905..915),
+        (None, &[100_000; 8][..], 480..490),
+        (None, &[200_000; 8], 895..905),
         (None, &[600_000; 4], 1605..1620),
-        (None, &[1_500_000; 2], 2440..2450),
+        (None, &[1_500_000; 2], 2435..2445),
         (
             None,
             &[400_000, 200_000, 150_000, 120_000, 50_000],
             495..505,
         ),
-        (Some(65_536), &[200_000; 8], 1230..1240),
-        (Some(65_536), &[600_000; 4], 1820..1830),
-        (Some(65_536), &[2_500_000; 2], 4650..4660),
-        (Some(65_536), &[1_000_000, 100_000, 200_000], 725..735),
-        (Some(4096), &[300_000; 4], 960..970),
+        (Some(65_536), &[200_000; 8], 1215..1225),
+        (Some(65_536), &[600_000; 4], 1785..1795),
+        (Some(65_536), &[2_500_000; 2], 4645..4655),
+        (Some(65_536), &[1_000_000, 100_000, 200_000], 715..725),
+        (Some(4096), &[300_000; 4], 950..960),
     ] {
         let ends = ends(piece_len, lens);
         let sum: usize = ends.iter().sum();

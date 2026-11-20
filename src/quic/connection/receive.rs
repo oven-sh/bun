@@ -140,7 +140,7 @@ impl Connection {
                         self.on_sign_of_life();
                     }
                     self.update_unsent_target();
-                    self.streams.state.start_write_round();
+                    self.streams.state.start_write_round(now);
                 }
                 self.set_loss_timer(now);
                 if is_useful && now >= self.delivery.period_end {

@@ -78,6 +78,8 @@ pub(crate) struct Stream {
     /// How many bytes are left of its share, and when that is due.
     pub(super) share: u64,
     pub(super) due: u64,
+    /// The period in which it got in line to write.
+    pub(super) waits_since: u64,
     /// How many bytes the application is left with.
     pub(super) unwritten: u64,
     /// Where it last ran out of bytes to send.
@@ -122,6 +124,7 @@ impl Stream {
             first_turn: 0,
             share: 0,
             due: 0,
+            waits_since: 0,
             unwritten: 0,
             busy_from: 0,
             turn_end: 0,

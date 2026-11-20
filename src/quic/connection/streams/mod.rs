@@ -14,6 +14,7 @@ use hashbrown::hash_map::Entry;
 pub(crate) use receive::Ready;
 use send::Line;
 pub(super) use send::WRITE_CHUNK;
+use shares::{Allowance, Periods};
 pub(crate) use stream::{Flags, Role, Stream};
 
 use super::sent::Control;
@@ -137,6 +138,8 @@ pub(crate) struct State {
     writable: Line,
     /// The last one that was told to write, and whether that is ahead of an older one.
     invited: Option<(StreamId, bool)>,
+    allowance: Allowance,
+    periods: Periods,
     /// What it leaves to those that it has overtaken.
     spare_credit: u64,
     /// The last of them that was the oldest.

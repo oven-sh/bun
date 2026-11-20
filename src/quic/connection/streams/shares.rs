@@ -5,6 +5,7 @@ use super::send::{BULK_LEN, MIN_UNSENT, WRITE_CHUNK, first_serial};
 use super::stream::{Flags, Stream};
 use super::{State, Table};
 use crate::StreamId;
+use crate::time::{Duration, Instant};
 
 const SHARE: u64 = 64 * 1024;
 /// For how many bytes a share that is due makes way for streams with up to [`BULK_LEN`] left.
@@ -14,10 +15,32 @@ const DUE_UNIT: u64 = 1024;
 const LEFT_UNIT: u64 = 4096;
 const LEFT_BITS: u32 = 8;
 const MAX_LEFT: u64 = (1 << LEFT_BITS) - 1;
+/// A stream that has waited for a whole period may write a few bytes, so that the peer does not give up on it. That
+/// takes up one part of the path at most.
+const PERIOD: Duration = Duration::from_secs(1);
+const CRUMB: u64 = DUE_UNIT;
+const PARTS: u64 = 4;
 
 #[inline]
 fn left(rank: u64) -> u64 {
     rank & MAX_LEFT
+}
+
+/// What a stream whose turn it is may write while others wait.
+#[derive(Default)]
+pub(super) struct Allowance {
+    /// An offset.
+    end: u64,
+    /// There is no end if it has less left.
+    free_below: u64,
+}
+
+#[derive(Default)]
+pub(super) struct Periods {
+    pub(super) count: u64,
+    end: Instant,
+    /// Unless no stream has waited for too long.
+    next_crumb: Option<u64>,
 }
 
 impl Stream {
@@ -68,10 +91,34 @@ impl State {
         (rank >> LEFT_BITS) + u64::from(makes_way) * (GRACE / DUE_UNIT) <= self.written()
     }
 
-    /// By streams that are too short to ever wait.
+    /// With their places in `writable`.
     #[inline]
-    pub(super) fn is_any_starved(&self) -> bool {
-        !self.sends_in_order && (self.writable.front()).is_some_and(|it| self.is_overdue(it.0, 0))
+    fn overdue(&self, rival: u64) -> impl Iterator<Item = (usize, &(u64, StreamId))> {
+        (self.writable.iter().enumerate())
+            .take_while(|it| it.1.0 >> LEFT_BITS <= self.written())
+            .filter(move |it| self.is_overdue(it.1.0, rival))
+    }
+
+    #[inline]
+    pub(super) fn count_periods(&mut self, now: Instant) {
+        if now >= self.periods.end {
+            self.periods = Periods {
+                count: self.periods.count + 1,
+                end: now + PERIOD,
+                next_crumb: self.periods.next_crumb.or(Some(0)),
+            };
+        }
+    }
+
+    #[inline]
+    fn is_crumb_due(&self) -> bool {
+        (self.periods.next_crumb).is_some_and(|it| it <= self.written())
+    }
+
+    /// For example by streams that are too short to ever wait.
+    #[inline]
+    pub(super) fn may_starve_any(&self) -> bool {
+        !self.sends_in_order && (self.is_crumb_due() || self.overdue(0).next().is_some())
     }
 
     pub(super) fn has_to_wait(&self, id: StreamId, stream: &Stream, len: u64) -> bool {
@@ -88,11 +135,18 @@ impl State {
 
     /// For a stream whose turn it is.
     #[inline]
-    pub(super) fn max_write(&self, stream: &Stream) -> u64 {
-        match self.sends_in_order || self.writable.is_empty() || stream.due > self.written() {
+    pub(super) fn max_write(&self, stream: &Stream, len: u64) -> u64 {
+        let Allowance { end, free_below } = self.allowance;
+        match self.sends_in_order || self.writable.is_empty() || stream.left(len) < free_below {
             true => u64::MAX,
-            false => stream.share.max(MIN_UNSENT),
+            false => end.saturating_sub(stream.send.end()),
         }
+    }
+
+    /// Whether it has to make do with nothing until it is its turn.
+    #[inline]
+    pub(super) fn has_been_refused(&self, stream: &Stream) -> bool {
+        !self.sends_in_order && stream.unwritten > 0 && stream.flags.contains(Flags::IN_WRITABLE)
     }
 
     /// A share is due when all streams could have had one, and streams that are about as long get half of the path.
@@ -114,21 +168,54 @@ impl State {
     }
 
     /// Where it is in `writable`.
-    pub(super) fn next_share(&self, table: &Table) -> Option<usize> {
+    pub(super) fn next_writer(&mut self, table: &Table) -> Option<usize> {
+        let crumb = self.next_crumb(table);
+        let at = crumb.or_else(|| self.next_share(table))?;
+        let &(rank, id) = self.writable.get(at)?;
+        let stream = table.get(id)?;
+        let is_due = rank >> LEFT_BITS <= self.written() && left(rank) > 0;
+        let (len, free_below) = match (crumb, is_due) {
+            (Some(_), _) => (CRUMB, 0),
+            (None, true) => (stream.share, 0),
+            (None, false) => (stream.share, left(rank).max(SHARE / LEFT_UNIT) + 1),
+        };
+        let end = stream.send.end() + len;
+        self.allowance = Allowance { end, free_below };
+        Some(at)
+    }
+
+    fn next_crumb(&mut self, table: &Table) -> Option<usize> {
+        if !self.is_crumb_due() {
+            return None;
+        }
+        let waits_since = |&(_, id): &(u64, StreamId)| {
+            let stream = table.get(id).filter(|it| it.send.unsent_len() == 0);
+            stream.map_or(u64::MAX, |it| it.waits_since)
+        };
+        let at = (self.writable.iter().map(waits_since).zip(0..).min())
+            .filter(|it| it.0 < self.periods.count - 1)
+            .map(|it| it.1);
+        let earliest = self.written().saturating_sub(WRITE_CHUNK / DUE_UNIT);
+        self.periods.next_crumb = (self.periods.next_crumb)
+            .filter(|_| at.is_some())
+            .map(|it| it.max(earliest) + PARTS);
+        at
+    }
+
+    fn next_share(&self, table: &Table) -> Option<usize> {
         let line = &self.writable;
         let is_ready = |&(_, id): &(u64, StreamId)| {
             (table.get(id)).is_some_and(|it| it.write_round != self.write_round)
         };
         if !self.has_little_unsent() {
             let has_run_dry = |id| table.get(id).is_some_and(|it| it.send.unsent_len() == 0);
-            let mut starved = line.iter().take_while(|it| self.is_overdue(it.0, 0));
-            return starved.position(|it| is_ready(it) && has_run_dry(it.1));
+            let mut starved = self.overdue(0);
+            return (starved.find(|it| is_ready(it.1) && has_run_dry(it.1.1))).map(|it| it.0);
         }
         let (at, shortest) = line.iter().enumerate().min_by_key(|it| left(it.1.0))?;
         let least = left(shortest.0);
-        let mut overdue = line.iter().take_while(|it| self.is_overdue(it.0, least));
-        if let at @ Some(_) = overdue.position(is_ready) {
-            return at;
+        if let Some((at, _)) = self.overdue(least).find(|it| is_ready(it.1)) {
+            return Some(at);
         }
         if !is_ready(shortest) {
             return line.iter().position(is_ready);

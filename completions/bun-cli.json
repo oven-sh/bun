@@ -3937,6 +3937,12 @@
           "flags": [],
           "positionalArgs": []
         },
+        "sbom": {
+          "name": "sbom",
+          "description": "print a Software Bill of Materials (SBOM) for the current workspace as JSON",
+          "flags": [],
+          "positionalArgs": []
+        },
         "licenses": {
           "name": "licenses",
           "description": "list installed packages grouped by license",

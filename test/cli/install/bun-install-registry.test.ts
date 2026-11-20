@@ -2720,6 +2720,38 @@ describe.concurrent("bundledDependencies", () => {
     expect(await installedPackages(binary.packageDir)).toEqual(installed);
     expect(await bunLockOf(binary.packageDir, binary.env, false)).toBe(written);
   });
+
+  test("a bundle that nests deeper than bun reads is recorded as far as it is read, with a warning", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
+    const levels = 40;
+    const files: Record<string, string> = {
+      "package/package.json": JSON.stringify({
+        name: "deep",
+        version: "1.0.0",
+        dependencies: { inner: "1.0.0" },
+        bundleDependencies: ["inner"],
+      }),
+    };
+    let folder = "package/";
+    for (let depth = 1; depth <= levels; depth++) {
+      folder += "node_modules/inner/";
+      files[`${folder}package.json`] = JSON.stringify({ name: "inner", version: `${depth}.0.0` });
+    }
+    await Bun.Archive.write(join(packageDir, "deep-1.0.0.tgz"), files, { compress: "gzip" });
+    await write(packageJson, JSON.stringify({ name: "deep-bundle", dependencies: { deep: "file:deep-1.0.0.tgz" } }));
+
+    const { err } = await install(packageDir, env, ["--save-text-lockfile"]);
+    expect(err).toContain("warn: deep bundles more than");
+
+    const packages = parseBunLock(await file(join(packageDir, "bun.lock")).text()).packages;
+    const recorded = Object.keys(packages).filter(key => key.startsWith("deep/"));
+    expect(recorded.length).toBeGreaterThan(0);
+    expect(recorded.length).toBeLessThan(levels);
+    expect(recorded.map(key => packages[key][0]).sort()).toEqual(
+      recorded.map((_, i) => `inner@${i + 1}.0.0`).sort(),
+    );
+    await expectReinstallIsNoop(packageDir, env);
+  });
 });
 
 // A fresh resolve starts to download tarballs before the install phase runs.

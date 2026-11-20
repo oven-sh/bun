@@ -1618,8 +1618,7 @@ impl Tree {
                 HoistDependencyResult::Contested { .. }
                 | HoistDependencyResult::ResolveReplace { .. }
                 | HoistDependencyResult::Placement { bundled: false, .. }
-                    if pkg_id != invalid_package_id
-                        && pkg_metas[pkg_id as usize].is_shipped() =>
+                    if pkg_id != invalid_package_id && pkg_metas[pkg_id as usize].is_shipped() =>
                 {
                     continue;
                 }

@@ -798,6 +798,18 @@ impl PackageManager {
                 bun_core::fmt::for_terminal(bstr::BStr::new(self.lockfile.str(&name))),
             );
         }
+        if (bundler.contents.as_ref()).is_some_and(|contents| contents.truncated) {
+            let name = self.lockfile.packages.items_name()[bundler.package_id as usize];
+            bun_ast::add_warning_pretty!(
+                self.log_mut(),
+                None,
+                bun_ast::Loc::EMPTY,
+                "<b>{}<r> bundles more than {} folders or {} levels of node_modules: the rest is not in the lockfile",
+                bun_core::fmt::for_terminal(bstr::BStr::new(self.lockfile.str(&name))),
+                crate::bundle::MAX_FOLDERS,
+                crate::bundle::MAX_DEPTH,
+            );
+        }
         let rows = bun_core::handle_oom(
             (self.lockfile).bind_bundle(bundler.package_id, bundler.contents.as_deref()),
         );

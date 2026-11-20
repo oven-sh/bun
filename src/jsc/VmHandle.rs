@@ -437,17 +437,6 @@ impl VmHandle {
         }
     }
 
-    /// Raise a JSC `TerminationException` in the VM at its next safepoint and
-    /// leave it running: a time limit on one call, which the VM's thread
-    /// withdraws when the call has unwound (`JSC::VM::cancelTermination`). Any
-    /// thread; no-op once the VM is closed.
-    pub fn notify_need_termination(&self) {
-        if let Some(_a) = self.enter() {
-            // SAFETY: as in `request_termination`.
-            unsafe { (*(*self.0.hot.vm).jsc_vm.get().cast_const()).notify_need_termination() };
-        }
-    }
-
     /// Wake the VM's loop (no-op once closed). Any thread.
     pub fn wake(&self) {
         if let Some(_a) = self.enter() {
@@ -858,16 +847,6 @@ pub unsafe extern "C" fn Bun__VmHandle__refKeepAlive(
 pub unsafe extern "C" fn Bun__VmHandle__wake(r: *const Shared) {
     // SAFETY: fn contract.
     unsafe { VmHandle::borrow_ref(r) }.wake()
-}
-
-/// Any thread: [`VmHandle::notify_need_termination`].
-///
-/// # Safety
-/// `r` is a live reference its holder keeps for the duration of the call.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__VmHandle__notifyNeedTermination(r: *const Shared) {
-    // SAFETY: fn contract.
-    unsafe { VmHandle::borrow_ref(r) }.notify_need_termination()
 }
 
 /// Any thread: Node's `can_call_into_js()`.

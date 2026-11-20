@@ -1,6 +1,5 @@
 #include "TestCallbackDeadline.h"
 
-#include "BunClientData.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/TopExceptionScope.h>
@@ -11,8 +10,6 @@
 #include <wtf/Threading.h>
 
 extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject*, JSC::EncodedJSValue function, JSC::EncodedJSValue thisValue, size_t argumentCount, const JSC::EncodedJSValue* arguments);
-// Any thread: JSC::VM::notifyNeedTermination() on the handle's VM, unless that VM is gone.
-extern "C" void Bun__VmHandle__notifyNeedTermination(const BunVmHandleRef*);
 #if OS(WINDOWS)
 extern "C" void clock_gettime_monotonic(int64_t* seconds, int64_t* nanoseconds);
 #else
@@ -36,42 +33,36 @@ static uint64_t monotonicNanoseconds()
 #endif
 }
 
-// The thread that requests the termination when the deadline of the callback on the VM's stack passes. There
-// is one, for the VM that first arms it: a process runs its test callbacks on one VM.
+// The thread that requests the termination when the deadline of the callback on a VM's stack passes. A process
+// has one, which serves one callback at a time: test callbacks do not nest, and they run on one VM.
 //
-// A suite arms and disarms once per callback, so each is one atomic operation on m_state and neither takes
-// the lock. The thread is woken only for a deadline earlier than the one it sleeps until, so with one timeout
+// A suite arms and disarms once per callback, so neither takes the lock: both are atomic operations on
+// m_state. The thread is woken only for a deadline earlier than the one it sleeps until, so with one timeout
 // for every test it wakes once per timeout, not once per callback.
 class TestCallbackDeadlineWatch {
     WTF_MAKE_NONCOPYABLE(TestCallbackDeadlineWatch);
 
 public:
-    static TestCallbackDeadlineWatch& singleton(VM& vm)
+    static TestCallbackDeadlineWatch& singleton()
     {
-        static NeverDestroyed<TestCallbackDeadlineWatch> watch(vm);
+        static NeverDestroyed<TestCallbackDeadlineWatch> watch;
         return watch;
     }
 
-    explicit TestCallbackDeadlineWatch(VM& vm)
-        : m_vm(WebCore::clientData(vm)->vmHandle)
+    TestCallbackDeadlineWatch()
     {
-        // The thread's request needs the exception object to exist.
-        vm.ensureTerminationException();
         Thread::create("TestTimeout"_s, [this] { run(); })->detach();
     }
 
-    // What disarm() takes, or 0 if it is not armed: `vm` is not this watch's VM.
+    // What disarm() takes, or 0 if it is not armed: the watch serves another callback.
     uint64_t arm(VM& vm, uint64_t deadline)
     {
-        if (WebCore::clientData(vm)->vmHandle != m_vm) [[unlikely]]
-            return 0;
-        deadline = std::max<uint64_t>(deadline, EarliestDeadline);
         uint64_t idle = Idle;
-        if (!m_state.compare_exchange_strong(idle, deadline)) [[unlikely]] {
-            // Test callbacks do not nest (RunTestsTask::call).
-            ASSERT_NOT_REACHED();
+        if (!m_state.compare_exchange_strong(idle, Arming)) [[unlikely]]
             return 0;
-        }
+        m_vm.store(&vm);
+        deadline = std::max<uint64_t>(deadline, EarliestDeadline);
+        m_state.store(deadline);
         // The thread publishes m_sleepingUntil and then reads m_state again before it sleeps, so either this
         // sees the later time it is about to sleep until, or it sees this deadline.
         if (deadline < m_sleepingUntil.load()) [[unlikely]] {
@@ -84,7 +75,7 @@ public:
         return deadline;
     }
 
-    // Whether the deadline passed first. Either way the thread requests nothing more for it once this returns.
+    // Whether the deadline passed first. Either way the thread does not touch the VM once this returns.
     bool disarm(uint64_t deadline)
     {
         uint64_t state = deadline;
@@ -109,9 +100,10 @@ public:
 private:
     // m_state is one of these, or the armed deadline.
     static constexpr uint64_t Idle = 0;
-    static constexpr uint64_t Firing = 1;
-    static constexpr uint64_t Fired = 2;
-    static constexpr uint64_t EarliestDeadline = 3;
+    static constexpr uint64_t Arming = 1;
+    static constexpr uint64_t Firing = 2;
+    static constexpr uint64_t Fired = 3;
+    static constexpr uint64_t EarliestDeadline = 4;
     static constexpr uint64_t Never = std::numeric_limits<uint64_t>::max();
 
     void run()
@@ -132,17 +124,18 @@ private:
                 m_condition.waitFor(m_lock, Seconds::fromNanoseconds(deadline - now));
                 continue;
             }
-            // The callback disarms only from this state or from Fired, so its VM is running it until then.
+            // The callback disarms only from its deadline or from Fired, so until then it is on the stack of a live VM.
             if (!m_state.compare_exchange_strong(state, Firing))
                 continue;
-            Bun__VmHandle__notifyNeedTermination(m_vm.get());
+            m_vm.load()->notifyNeedTermination();
             m_state.store(Fired);
         }
     }
 
-    const RefPtr<const BunVmHandleRef> m_vm;
     std::atomic<uint64_t> m_state { Idle };
     std::atomic<uint64_t> m_sleepingUntil { 0 };
+    // The VM of the armed callback.
+    std::atomic<VM*> m_vm { nullptr };
     Lock m_lock;
     Condition m_condition;
 };
@@ -153,7 +146,9 @@ TestCallbackDeadline::TestCallbackDeadline(JSGlobalObject* globalObject, uint64_
     // A callback that a debugger paused past its deadline is not cut short when it resumes.
     if (globalObject->hasDebugger()) [[unlikely]]
         return;
-    auto& watch = TestCallbackDeadlineWatch::singleton(m_vm);
+    // The thread's request needs the exception object to exist.
+    m_vm.ensureTerminationException();
+    auto& watch = TestCallbackDeadlineWatch::singleton();
     m_armedFor = watch.arm(m_vm, deadline);
     if (m_armedFor) [[likely]]
         m_watch = &watch;

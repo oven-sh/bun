@@ -41,17 +41,6 @@ for (const item of JSON.parse(readFileSync(fixture, "utf8")) as (Entry | string)
   entryCount++;
 }
 
-// url.origin for these does not match the spec yet (parsing does); tracked separately from the parser.
-// The value is the origin bun returns today. The test asserts it, so a fix (or a different wrong value) shows up
-// here and the input gets removed from the list.
-const knownOriginDeviations = new Map([
-  ["ftps:/example.com/", "ftps:"],
-  ["ftps:example.com/", "ftps:"],
-  ["blob:ftp://host/path", "ftp://host"],
-  ["blob:ws://example.org/", "ws://example.org"],
-  ["blob:wss://example.org/", "wss://example.org"],
-]);
-
 const componentKeys = [
   "href",
   "protocol",
@@ -116,7 +105,7 @@ function check(entry: Entry): Mismatch | null {
     actual.searchParams = url.searchParams.toString();
   }
   if (entry.origin !== undefined) {
-    expected.origin = knownOriginDeviations.get(entry.input) ?? entry.origin;
+    expected.origin = entry.origin;
     actual.origin = url.origin;
   }
 

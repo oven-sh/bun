@@ -17,15 +17,22 @@ export const BuildArtifact = b.class({
     loader: cached,
     path: { getter: b.string.utf8, cache: true },
     size: { getter: b.f64 },
+    /** `slice` and `stream` have the `length` that `Blob` gives them. */
     slice: {
       ...js,
       args: { start: b.any, end: b.any, contentType: b.any },
       returns: b.any.returning("Blob"),
-      length: 2,
+      length: 0,
     },
     /** `Bun.build` fills the field of an output that has a source map, with `undefined` if nothing was written for the map. */
     sourcemap: { getter: b.any.returning("BuildArtifact", "null", "undefined"), cache: true, capability: "heap" },
-    stream: { ...js, args: { chunkSize: b.any }, returns: b.any.returning("ReadableStream"), passThis: true },
+    stream: {
+      ...js,
+      args: { chunkSize: b.any },
+      returns: b.any.returning("ReadableStream"),
+      passThis: true,
+      length: 0,
+    },
     text: read,
     type: { getter: b.any.returning("string"), cache: true, capability: "js" },
   },

@@ -1334,10 +1334,16 @@ declare module "bun" {
      * (`'<?xml version="1.0" encoding="UTF-8"?>\n' + XML.stringify(doc)`).
      * Because of that, results can be concatenated inside an enclosing element.
      *
-     * The output is well-formed or `stringify` throws. `& < >` are escaped
-     * everywhere; `"`, tabs and newlines in attribute values, and carriage
-     * returns anywhere, are written as character references so they survive
-     * being parsed again. It throws for element, attribute or processing
+     * The output is well-formed or `stringify` throws. In text and in
+     * attribute values, `& < >` are escaped and carriage returns are
+     * written as character references. In attribute values, `"` is
+     * escaped too, and tabs and newlines are written as character
+     * references. Without a reference, a parser reads `\r\n` and `\r` as
+     * `\n`, and reads a tab or a newline in an attribute value as a
+     * space. A comment and processing-instruction data are written as
+     * they are, because XML has no escape there. A parser then reads
+     * `\r\n` and `\r` in them as `\n`, and drops whitespace at the start
+     * of the data. It throws for element, attribute or processing
      * instruction names that are not XML names; for characters XML cannot
      * contain (U+0000, other C0 controls except tab/newline/carriage return,
      * U+FFFE, U+FFFF, unpaired surrogates); for `--` inside a comment or `?>`
@@ -1351,8 +1357,11 @@ declare module "bun" {
      * shape an array is one element per item and any other object is a child
      * element.
      *
-     * `XML.parse(XML.stringify(value))` deep-equals `value` for anything
-     * `XML.parse` returned, in either shape.
+     * `XML.parse(XML.stringify(value), { compact })` deep-equals `value` for
+     * anything `XML.parse` returned with the same `compact` option. The
+     * exception is a comment or a processing instruction that holds a
+     * carriage return, which only a character reference inside an entity can
+     * put there: it is read back with `\r\n` and `\r` as `\n`.
      *
      * @category Utilities
      *

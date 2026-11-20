@@ -1,5 +1,6 @@
 import { inspect } from "bun";
 import { describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 const inputs = [
   { a: 1, b: 2 },
@@ -95,6 +96,84 @@ describe("inspect.table (with properties)", () => {
       expect(
         inspect.table(input, properties, { colors: false, sorted: true } as Bun.BunInspectOptions),
       ).toMatchSnapshot();
+    });
+  });
+});
+
+// A Map row fills only the "Key" and "Values" columns. A `properties` entry
+// can name no column of a Map table, so it adds none and is never converted.
+describe("inspect.table (a Map with properties)", () => {
+  const entries: [string, unknown][] = [["k", { a: 1 }]];
+  const expected = `┌───┬─────┬──────────┐
+│   │ Key │ Values   │
+├───┼─────┼──────────┤
+│ 0 │ k   │ { a: 1 } │
+└───┴─────┴──────────┘
+`;
+
+  it("prints Key and Values only", () => {
+    expect(inspect.table(new Map(entries), ["a", "b"])).toBe(expected);
+  });
+
+  it("prints Key and Values only for a subclass of Map", () => {
+    class Registry extends Map<string, unknown> {}
+    expect(inspect.table(new Registry(entries), ["a"])).toBe(expected);
+  });
+
+  it("does not repeat the Key or the Values column for an entry of that name", () => {
+    expect(inspect.table(new Map(entries), ["Key", "Values"])).toBe(expected);
+  });
+
+  it("does not convert an entry to a string", () => {
+    let calls = 0;
+    const entry = {
+      toString() {
+        calls++;
+        throw new Error("converted");
+      },
+    };
+    const out = inspect.table(new Map(entries), [entry as unknown as string]);
+    expect({ calls, out }).toEqual({ calls: 0, out: expected });
+  });
+
+  it("does not throw for a Symbol entry", () => {
+    expect(inspect.table(new Map(entries), [Symbol("s") as unknown as string])).toBe(expected);
+  });
+
+  it("prints an empty Map as it does without properties", () => {
+    expect(inspect.table(new Map(), ["a"])).toBe(inspect.table(new Map()));
+  });
+
+  // Compared, not spelled out: a WeakMap is typed as a Map today, which is a separate bug.
+  it("prints a WeakMap as it does without properties", () => {
+    const data = Object.assign(new WeakMap(), { x: { a: 1 } });
+    expect(inspect.table(data, ["a"])).toBe(inspect.table(data));
+  });
+
+  it("still names the columns of a Map that is a row", () => {
+    const row = Object.assign(new Map(entries), { a: 1 });
+    expect(inspect.table([row], ["a"])).toBe(`┌───┬───┐\n│   │ a │\n├───┼───┤\n│ 0 │ 1 │\n└───┴───┘\n`);
+  });
+
+  it("prints the same table from console.table", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const map = new Map([["k", { a: 1 }]]);
+console.table(map, ["a", "b"]);
+let calls = 0;
+console.table(map, [{ toString() { calls++; throw new Error("converted"); } }]);
+console.log("calls=" + calls);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: expected + expected + "calls=0\n",
+      stderr: "",
+      exitCode: 0,
     });
   });
 });

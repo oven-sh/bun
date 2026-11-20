@@ -1082,16 +1082,11 @@ impl BunTest {
 
         let mut min_timeout = Timespec::EPOCH;
         // The timeout of the last step, for a runner that waits with no test running.
-        let stepped: Cell<Option<Timespec>> = Cell::new(None);
-        scopeguard::defer! {
-            if let Some(step_timeout) = stepped.get() {
-                this.publish_wait(&step_timeout);
-            }
-        }
+        let mut stepped: Option<Timespec> = None;
 
         while let Some(result) = this.result_queue.with_taken(VecDeque::pop_front) {
             global_this.clear_termination_exception();
-            if stepped.replace(Some(Timespec::EPOCH)).is_none() {
+            if stepped.replace(Timespec::EPOCH).is_none() {
                 deadline_watch::in_runner();
             }
             let step_result: StepResult = match this.phase.get() {
@@ -1102,7 +1097,7 @@ impl BunTest {
             match step_result {
                 StepResult::Waiting { timeout } => {
                     min_timeout = min_timeout.min_ignore_epoch(timeout);
-                    stepped.set(Some(timeout));
+                    stepped = Some(timeout);
                 }
                 StepResult::Complete => {
                     if this.advance(global_this)? == Advance::Exit {
@@ -1114,6 +1109,10 @@ impl BunTest {
         }
 
         Self::update_min_timeout(this, &min_timeout);
+        // A step that failed left above, and armed no timer that would bring the runner back.
+        if let Some(step_timeout) = stepped {
+            this.publish_wait(&step_timeout);
+        }
         Ok(())
     }
 

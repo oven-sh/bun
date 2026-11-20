@@ -8769,8 +8769,63 @@ pub fn fetch_cache_directory_path() -> Vec<u8> {
 // OUTPUT_SINK — bun_core's stderr vtable, installed by us at init (B-0 hook).
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Whether a call of [`write_all_to_stdio`] is stuck, for `bun test`: a test that waits for whatever reads
+/// its output does not block the event loop by itself.
+pub mod stdio_writes {
+    use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+    static IS_COUNTED: AtomicBool = AtomicBool::new(false);
+    static BEGUN: AtomicU64 = AtomicU64::new(0);
+    static ENDED: AtomicU64 = AtomicU64::new(0);
+
+    /// The writes from now on are counted.
+    pub fn count() {
+        IS_COUNTED.store(true, Ordering::SeqCst);
+    }
+
+    /// What [`has_one_lasted_since`] compares with.
+    #[derive(Clone, Copy)]
+    pub struct Seen {
+        begun: u64,
+        ended: u64,
+    }
+
+    pub fn seen() -> Seen {
+        // In this order, a write that ends between the two loads looks as if it had not begun.
+        let ended = ENDED.load(Ordering::SeqCst);
+        Seen {
+            begun: BEGUN.load(Ordering::SeqCst),
+            ended,
+        }
+    }
+
+    /// Whether a write that was under way at `earlier` still is.
+    pub fn has_one_lasted_since(earlier: Seen) -> bool {
+        earlier.begun > earlier.ended && ENDED.load(Ordering::SeqCst) == earlier.ended
+    }
+
+    pub(super) struct Write(bool);
+
+    pub(super) fn begin() -> Write {
+        let is_counted = IS_COUNTED.load(Ordering::Relaxed);
+        if is_counted {
+            BEGUN.fetch_add(1, Ordering::SeqCst);
+        }
+        Write(is_counted)
+    }
+
+    impl Drop for Write {
+        fn drop(&mut self) {
+            if self.0 {
+                ENDED.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    }
+}
+
 /// Writes all of `bytes` to stdout or stderr, for a caller that has to know whether they got there. `Output` doesn't say.
 pub fn write_all_to_stdio(fd: Fd, mut bytes: &[u8]) -> Maybe<()> {
+    let _write = stdio_writes::begin();
     while !bytes.is_empty() {
         match write(fd, bytes) {
             Ok(0) => return Err(Error::from_code(E::EIO, Tag::write)),

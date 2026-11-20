@@ -201,33 +201,48 @@ test.concurrent(
   20_000,
 );
 
-// The runner is blocked in a write to stderr, with no test running, for longer than the timeout of the last test and 100ms more.
-test.concurrent(
-  "a reader of the output that is slow does not end the run",
-  async () => {
-    using dir = tempDir("test-timeout-slow-reader", {
-      "a.test.ts": `import { test } from "bun:test"; for (let i = 0; i < 6000; i++) test("test number " + i, () => {});`,
-    });
+// Whatever reads the output reads nothing for 1.5 seconds: longer than the timeout of a test and 100ms more. Nothing
+// tells it when `bun test` has filled the pipe. A shell pipeline, because Bun.spawn() reads a pipe as soon as there
+// is something in it.
+describe.concurrent.skipIf(isWindows)("a reader of the output that stops reading does not end the run", () => {
+  async function runWithPausedReader(source: string) {
+    using dir = tempDir("test-timeout-paused-reader", { "a.test.ts": source });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--timeout=250", "a.test.ts"],
+      cmd: ["sh", "-c", `("$0" test --timeout=250 a.test.ts; echo "exit: $?") 2>&1 | (sleep 1.5; cat)`, bunExe()],
       env: { ...bunEnv, BUN_TEST_TIMEOUT_GRACE_MS: "100" },
       cwd: String(dir),
-      stdout: "ignore",
-      stderr: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
       timeout: 30_000,
       killSignal: "SIGKILL",
     });
-    // Nothing tells when the runner has filled the pipe and has waited 350ms for its reader.
-    await Bun.sleep(1500);
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect({
-      ended: stderr.split("\n").filter(line => /^ \d+ (pass|fail)$|^error: /.test(line)),
-      signalCode: proc.signalCode,
-      exitCode,
-    }).toEqual({ ended: [" 6000 pass", " 0 fail"], signalCode: null, exitCode: 0 });
-  },
-  40_000,
-);
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return stdout
+      .split("\n")
+      .filter(line => /^\(fail\) |^  \^ |^error: |^ \d+ (pass|fail)$|^exit: /.test(line))
+      .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
+  }
+
+  // The runner is blocked in a write, with no test running.
+  test("while the runner prints results", async () => {
+    const lines = await runWithPausedReader(
+      `import { test } from "bun:test"; for (let i = 0; i < 6000; i++) test("test number " + i, () => {});`,
+    );
+    expect(lines).toEqual([" 6000 pass", " 0 fail", "exit: 0"]);
+  }, 40_000);
+
+  // The test is blocked in console.log().
+  test("while a test prints", async () => {
+    const lines = await runWithPausedReader(`
+      import { test } from "bun:test";
+      test("prints", () => {
+        const line = Buffer.alloc(1000, "x").toString();
+        for (let i = 0; i < 400; i++) console.log(line);
+      });
+      test("after it", () => {});`);
+    expect(lines).toEqual(["(fail) prints", "  ^ this test timed out after 250ms.", " 1 pass", " 1 fail", "exit: 1"]);
+  }, 40_000);
+});
 
 test.concurrent.each([
   ["--dots", ["--dots"], {}, ["a.test.ts:", "(fail) outer > blocks", blocks("this test"), ...endedTheRun()]],
@@ -273,13 +288,13 @@ test.concurrent.each([
   20_000,
 );
 
-// Drives a `bun test` that waits for an inspector: enables the debugger, and resumes it 1 second after each pause.
-// Nothing tells when the timeout of the paused test and 100ms more have passed.
-async function runPausedInDebugger(source: string) {
+// Drives a `bun test` that waits for an inspector: enables the debugger, and resumes it `pauseMs` after each pause.
+// Nothing tells how long a test has been paused.
+async function runPausedInDebugger(source: string, graceMs: number, pauseMs: number) {
   using dir = tempDir("test-timeout-debugger", { "a.test.ts": source });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--inspect-wait=127.0.0.1:0", "--timeout=250", "a.test.ts"],
-    env: { ...bunEnv, BUN_TEST_TIMEOUT_GRACE_MS: "100" },
+    env: { ...bunEnv, BUN_TEST_TIMEOUT_GRACE_MS: String(graceMs) },
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
@@ -301,7 +316,7 @@ async function runPausedInDebugger(source: string) {
   ws.onmessage = async event => {
     if (JSON.parse(String(event.data)).method !== "Debugger.paused") return;
     pauses++;
-    await Bun.sleep(1000);
+    await Bun.sleep(pauseMs);
     ws.send(JSON.stringify({ id: 100 + pauses, method: "Debugger.resume" }));
   };
   ws.onopen = () => {
@@ -319,16 +334,25 @@ async function runPausedInDebugger(source: string) {
   return { lines, pauses, signalCode: proc.signalCode, exitCode };
 }
 
-test.concurrent(
-  "a test that a debugger pauses for longer than its timeout does not end the run",
-  async () => {
-    const run = await runPausedInDebugger(`
-      import { test } from "bun:test";
-      test("pauses", () => {
-        debugger;
-        console.log("ran: to the end");
-      });
-      test("after it", () => {});`);
+// In the second one the pause ends 850ms after the timeout of the test, and the work after it takes 500ms: more than
+// 1000ms together.
+test.concurrent.each([
+  ["for longer than its timeout", 100, 1000, ""],
+  ["and that then works for less than 5 seconds", 1000, 1100, "block(500);"],
+])(
+  "a test that a debugger pauses %s does not end the run",
+  async (_, graceMs, pauseMs, work) => {
+    const run = await runPausedInDebugger(
+      fixture(`
+        test("pauses", () => {
+          debugger;
+          ${work}
+          console.log("ran: to the end");
+        });
+        test("after it", () => {});`),
+      graceMs,
+      pauseMs,
+    );
     expect(run).toEqual({
       lines: ["ran: to the end", "(fail) pauses", "  ^ this test timed out after 250ms.", "(pass) after it"],
       pauses: 1,
@@ -345,7 +369,7 @@ test.concurrent.skipIf(isWindows)(
   "under --watch, a test that blocks the event loop is reported, and the run does not end",
   async () => {
     using dir = tempDir("test-timeout-watch", {
-      "a.test.ts": fixture(`test("overruns", () => block(900));`),
+      "a.test.ts": `import { test } from "bun:test"; test("overruns", () => { Bun.sleepSync(3000); });`,
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--watch", "--no-clear-screen", "--timeout=250"],
@@ -360,6 +384,8 @@ test.concurrent.skipIf(isWindows)(
       output += chunk;
       if (output.includes("Ran 1 test across 1 file.")) break;
     }
+    proc.kill("SIGKILL");
+    await proc.exited;
     const lines = output
       .split("\n")
       .filter(line => /^\((pass|fail)\) |^warn: |^  \^ |^error: |^Ran /.test(line))
@@ -371,6 +397,9 @@ test.concurrent.skipIf(isWindows)(
       "  ^ this test timed out after 250ms.",
       "Ran 1 test across 1 file.",
     ]);
+    // The test sleeps, so what the process uses in those 3 seconds is what the thread that watches it uses.
+    const cpuSeconds = Number(proc.resourceUsage()!.cpuTime.total) / 1e6;
+    expect(cpuSeconds).toBeLessThan(1.5);
   },
   20_000,
 );

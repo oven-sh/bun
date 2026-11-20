@@ -196,9 +196,20 @@ fn publish(deadline: Timespec, is_in_callback: bool, entry: Option<Entry<'_>>) {
     drop(state);
 
     if has_deadline && !IS_WATCHING.swap(true, Ordering::Relaxed) {
+        bun_sys::stdio_writes::count();
         // SAFETY: the thread holds nothing of a VM. It reads `STATE`, which holds copies, and ends the process.
-        // Without the thread, a test that blocks the event loop hangs, as it did before there was one.
-        let _ = std::thread::Builder::new().name("TestTimeout".into()).spawn(watch);
+        if let Err(err) = std::thread::Builder::new().name("TestTimeout".into()).spawn(watch) {
+            // The next test tries again. Until then a test that blocks the event loop hangs.
+            IS_WATCHING.store(false, Ordering::Relaxed);
+            static HAS_WARNED: AtomicBool = AtomicBool::new(false);
+            if !HAS_WARNED.swap(true, Ordering::Relaxed) {
+                bun_core::pretty_errorln!(
+                    "<r><yellow>warn<r>: bun test could not start the thread that ends a run whose test blocks the event loop: {}",
+                    err,
+                );
+                Output::flush();
+            }
+        }
     }
 }
 
@@ -210,6 +221,9 @@ fn publish(deadline: Timespec, is_in_callback: bool, entry: Option<Entry<'_>>) {
 /// handles it as soon as the process runs again. A sleep that took much longer than it asked for
 /// is such a stop, and counts for nothing.
 ///
+/// The count starts again after a sleep in which the JavaScript thread could not run for a reason
+/// that is not the test's: see `waits_for_somebody_else`.
+///
 /// The JavaScript thread never wakes it, so that a test pays no system call for it: it looks at what
 /// is published a few times per `grace_ms`.
 fn watch() {
@@ -220,6 +234,7 @@ fn watch() {
 
     // Of which `generation` it has seen the deadline in the past, and for how long.
     let mut overdue: (u64, u64) = (0, 0);
+    // Under `--watch`: the `generation` that it has reported.
     let mut reported_generation = 0;
     loop {
         let (deadline, generation, grace_ns) = {
@@ -235,29 +250,42 @@ fn watch() {
         if overdue.0 != generation {
             overdue = (generation, 0);
         }
-        if overdue.1 >= grace_ns {
+        if overdue.1 >= grace_ns && reported_generation != generation {
             let state = STATE.lock();
             if state.generation != generation {
                 continue;
             }
-            // A debugger keeps a thread from running for as long as its user likes.
             if bun_jsc::debugger::holds_a_thread() || is_traced() {
                 overdue.1 = 0;
             } else if !state.only_reports {
                 end_process(state, before);
-            } else if reported_generation != generation {
+            } else {
                 reported_generation = generation;
                 report(&state, before, false);
                 Output::flush();
             }
         }
-        let sleep_ns = (grace_ns / SLEEPS_PER_GRACE).clamp(1, grace_ns.saturating_sub(overdue.1).max(1));
-        std::thread::sleep(Duration::from_nanos(sleep_ns));
+        let sleep_ns = match grace_ns.saturating_sub(overdue.1) {
+            0 => grace_ns / SLEEPS_PER_GRACE,
+            until_grace => until_grace.min(grace_ns / SLEEPS_PER_GRACE),
+        };
+        let is_held = bun_jsc::debugger::holds_a_thread();
+        let writes = bun_sys::stdio_writes::seen();
+        std::thread::sleep(Duration::from_nanos(sleep_ns.max(1)));
         let slept_ns = now().saturating_sub(before);
-        if slept_ns <= sleep_ns.saturating_mul(2) {
-            overdue.1 += slept_ns;
+        if waits_for_somebody_else(is_held, writes) {
+            overdue.1 = 0;
+        } else if slept_ns <= sleep_ns.saturating_mul(2) {
+            overdue.1 = overdue.1.saturating_add(slept_ns);
         }
     }
+}
+
+/// Whether the JavaScript thread spent a sleep of the watch, before which `was_held` and `writes` were
+/// read, in the hands of somebody who may keep it for as long as they like: a debugger that has paused
+/// it, or whatever reads the output of the process and has stopped reading (`bun test | less`).
+fn waits_for_somebody_else(was_held: bool, writes: bun_sys::stdio_writes::Seen) -> bool {
+    was_held || bun_jsc::debugger::holds_a_thread() || bun_sys::stdio_writes::has_one_lasted_since(writes)
 }
 
 /// Whether a native debugger controls the process.

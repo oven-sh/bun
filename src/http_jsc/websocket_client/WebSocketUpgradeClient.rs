@@ -1240,6 +1240,9 @@ where
         let mut connection_has_upgrade = false;
         let mut websocket_accept_header = Header::new(b"", b"");
         let mut protocol_header_seen = false;
+        // The protocol is only set once the whole handshake has validated: a handshake that fails
+        // later on (a second Sec-WebSocket-Protocol header, a bad accept key) leaves `protocol` empty.
+        let mut accepted_protocol: Option<&[u8]> = None;
 
         let mut deflate_params: Option<WebSocketDeflate::Params> = None;
 
@@ -1314,9 +1317,7 @@ where
                                 break 'brk false;
                             }
 
-                            if let Some(ws) = self.cpp_websocket() {
-                                ws.set_protocol(BunString::clone_latin1(protocol));
-                            }
+                            accepted_protocol = Some(protocol);
                             true
                         };
 
@@ -1380,6 +1381,12 @@ where
 
         if websocket_accept_header.value() != &self.expected_accept[..] {
             return Err(ErrorCode::MismatchWebsocketAcceptHeader);
+        }
+
+        if let Some(protocol) = accepted_protocol {
+            if let Some(ws) = self.cpp_websocket() {
+                ws.set_protocol(BunString::clone_latin1(protocol));
+            }
         }
 
         Ok(deflate_params)

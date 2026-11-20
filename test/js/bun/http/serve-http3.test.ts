@@ -244,6 +244,39 @@ test.skipIf(!canUnshare)("port 0 finds the port that is free for TCP and UDP", a
   expect({ stdout, exitCode }, stderr).toEqual({ stdout: "40042\n", exitCode: 0 });
 });
 
+test("the TCP port is released if the UDP port is taken", async () => {
+  using dir = tempDir("serve-http3-udp-taken", {
+    "server.mjs": `
+      const hostname = "127.0.0.1";
+      const fetch = () => new Response("ok");
+      for (;;) {
+        const { port } = await Bun.udpSocket({ hostname, port: 0 });
+        try {
+          Bun.serve({ hostname, port, tls: ${JSON.stringify(tls)}, http3: true, fetch });
+        } catch (error) {
+          if (error.code === "EADDRINUSE") continue;
+          console.log(error.message.replace(port, "N"));
+        }
+        const server = Bun.serve({ hostname, port, fetch });
+        console.log(await (await globalThis.fetch(server.url)).text());
+        process.exit(0);
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode }, stderr).toEqual({
+    stdout: "Failed to listen on UDP port N for HTTP/3\nok\n",
+    exitCode: 0,
+  });
+});
+
 // The request/response tests share one server for the whole file.
 let fixtureDir: ReturnType<typeof tempDir> | undefined;
 let fixture: ReturnType<typeof serveFixture> | undefined;
@@ -816,7 +849,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
   });
 
   // The big one: every concurrent stream gets back exactly its own bytes,
-  // transformed. Catches shared-buffer reuse in quic.c read_buf, response
+  // transformed. Catches shared-buffer reuse in quic.cpp read_buf, response
   // backpressure aliasing in Http3ResponseData, and partial-write offset
   // bugs in HTTPSResponseSink. Bodies are crypto-random so any cross-stream
   // leak shows up as an md5 mismatch, not just an offset shift.
@@ -858,7 +891,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
     }
   };
 
-  // 8 × 96KB — past the 16KB quic.c read_buf and the 64KB lsquic stream
+  // 8 × 96KB — past the 16KB quic.cpp read_buf and the 64KB lsquic stream
   // window. Aliasing bugs reproduce at any N≥2; 8 fits the debug-build 5s
   // default. (Unlike the curl version these now share one QUIC connection,
   // which is the more interesting case for read_buf reuse.)
@@ -3182,6 +3215,7 @@ describe("Bun.serve HTTP/3 request body that isn't read yet", () => {
 describe("Bun.serve HTTP/3 request that ends early", () => {
   function serve() {
     const body = Promise.withResolvers<string>();
+    const called = Promise.withResolvers<"called">();
     const server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -3189,11 +3223,12 @@ describe("Bun.serve HTTP/3 request that ends early", () => {
       http3: true,
       http1: false,
       async fetch(req) {
+        called.resolve("called");
         body.resolve(req.text().catch(e => e.name));
         return new Response(await body.promise);
       },
     });
-    return { server, body: body.promise };
+    return { server, body: body.promise, called: called.promise };
   }
   const dial = async (port: number, options?: object) => {
     const client = await connect(`127.0.0.1:${port}`, {
@@ -3211,7 +3246,6 @@ describe("Bun.serve HTTP/3 request that ends early", () => {
   test.each([
     [3, "abc", "abc"],
     [0, "", ""],
-    [10, "", "AbortError"],
     [10, "abc", "AbortError"],
     [2, "abc", "AbortError"],
   ])("content-length %d with the body %j reads as %j", async (length, sent, expected) => {
@@ -3226,6 +3260,35 @@ describe("Bun.serve HTTP/3 request that ends early", () => {
     client.destroy();
     await server.stop(true);
     expect(received).toBe(expected);
+  });
+
+  test.each([
+    ["a FIN", undefined],
+    ["trailers that declare another length", { "content-length": "0" }],
+  ])("content-length 10 with no body and then %s reads as AbortError", async (_, trailers) => {
+    const { server, body, called } = serve();
+    const client = await dial(server.port!);
+    const stream = await client.createBidirectionalStream();
+    stream.closed.catch(() => {});
+    const writer = stream.writer;
+    stream.sendHeaders(requestHeaders("/", { ":method": "POST", "content-length": "10" }));
+    await called;
+    if (trailers) stream.sendHeaders(trailers, { terminal: true });
+    else writer.endSync();
+    const received = await body;
+    client.destroy();
+    await server.stop(true);
+    expect(received).toBe("AbortError");
+  });
+
+  test("content-length 10 with the FIN beside the headers is H3_MESSAGE_ERROR before the handler runs", async () => {
+    const { server, called } = serve();
+    using relay = await tamperingRelay(server.port!);
+    const client = await dial(relay.port, { keylog: true, onkeylog: relay.keylog });
+    relay.sendStream0("server", Buffer.from(frames.postOfTenBytes));
+    const errorCode = await client.closed.catch(e => e.errorCode);
+    await server.stop(true);
+    expect([errorCode, await Promise.race([called, "not called"])]).toEqual([0x10en, "not called"]);
   });
 
   test.each([
@@ -3325,6 +3388,34 @@ describe("Bun.serve HTTP/3 response body that fails after its first chunk", () =
         after: "ok",
       });
     });
+  });
+
+  test("lets go of the stream while the request body is still on its way", async () => {
+    const { promise: released, resolve: release } = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      development: false,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            start: controller => controller.enqueue("a"),
+            async pull(controller) {
+              await released;
+              controller.error(new Error("boom"));
+            },
+          }),
+        ),
+    });
+    const body = Buffer.alloc(4 * 1024 * 1024, "x");
+    const responses = await Promise.all([0, 1, 2, 3].map(() => fetchH3(server.port!, "/", { method: "POST", body })));
+    release();
+    const results = await Promise.all(responses.map(res => res.text().catch(e => e.code)));
+    expect(results).toEqual(Array(4).fill("HTTP3StreamReset"));
+    // A stream whose final size never arrives holds the connection until its idle timeout.
+    await server.stop();
   });
 });
 

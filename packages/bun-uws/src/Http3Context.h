@@ -14,7 +14,15 @@ static_assert(US_QUIC_MAX_REQUEST_FIELDS == UWS_HTTP_MAX_HEADERS_COUNT, "HTTP/3 
 
 struct Http3Context {
 
-    static Http3Context *create(Loop *loop, us_bun_socket_context_options_t options, unsigned idleTimeoutSecs, uint64_t maxRequestBodySize) {
+    struct Deleter {
+        void operator()(Http3Context *ctx) const {
+            ctx->getContextData()->~Http3ContextData();
+            us_quic_socket_context_free((us_quic_socket_context_t *) ctx);
+        }
+    };
+    using Ptr = std::unique_ptr<Http3Context, Deleter>;
+
+    static Ptr create(Loop *loop, us_bun_socket_context_options_t options, unsigned idleTimeoutSecs, uint64_t maxRequestBodySize) {
         us_quic_socket_context_t *ctx = us_create_quic_socket_context(
             (us_loop_t *) loop, options, sizeof(Http3ContextData), idleTimeoutSecs);
         if (!ctx) return nullptr;
@@ -75,7 +83,7 @@ struct Http3Context {
             Http3ResponseData *rd = res->getHttpResponseData();
             rd->receivedBodyBytes += len;
             if (!rd->inStream) return;
-            /* RFC 9114 §4.1.2. lsquic lets a request with no DATA at all through. */
+            /* RFC 9114 §4.1.2. lsquic goes by the last header block with a content-length, trailers included. */
             if (fin && (us_quic_stream_connection_failed(s) ||
                     (rd->declaredContentLength != NO_CONTENT_LENGTH && rd->receivedBodyBytes != rd->declaredContentLength))) {
                 rd->inStream = nullptr;
@@ -110,12 +118,7 @@ struct Http3Context {
             if (cd->onReleased) cd->onReleased(cd->onReleasedUser);
         });
 
-        return (Http3Context *) ctx;
-    }
-
-    void free() {
-        getContextData()->~Http3ContextData();
-        us_quic_socket_context_free((us_quic_socket_context_t *) this);
+        return Ptr((Http3Context *) ctx);
     }
 
     Http3ContextData *getContextData() {

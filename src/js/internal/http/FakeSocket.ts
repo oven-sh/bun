@@ -29,10 +29,6 @@ var FakeSocket = class Socket extends Duplex {
     this.emit("timeout");
   };
 
-  _destroy(_err, _callback) {}
-
-  _final(_callback) {}
-
   get localAddress() {
     return this.address() ? "127.0.0.1" : undefined;
   }
@@ -111,7 +107,9 @@ var FakeSocket = class Socket extends Duplex {
     return this;
   }
 
-  _write(_chunk, _encoding, _callback) {}
+  _write(_chunk, _encoding, callback) {
+    callback();
+  }
 
   destroy() {
     this._httpMessage?.destroy?.();

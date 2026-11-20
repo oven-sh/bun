@@ -36,10 +36,14 @@ export function serialize(message: unknown, handle: unknown, options: unknown) {
     if (!native) return null;
     if (!(options as IpcSendOptions | undefined)?.keepOpen) {
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L120-L148
-      const { server } = handle;
-      if (server) server._connections--;
-      // node:http destroys the socket once its handle has gone out, which must not count again.
-      handle._server = undefined;
+      // Not `server`, which emit('connection') on an http.Server points away from the one that counted the socket.
+      const server = handle._server;
+      if (server) {
+        server._connections--;
+        server._emitCloseIfDrained();
+        // node:http destroys the socket once its handle has gone out, which must not count again.
+        handle._server = undefined;
+      }
       handle.setTimeout(0);
       (native as $Node.SocketHandle<unknown>).data = undefined;
       handle._handle = null;

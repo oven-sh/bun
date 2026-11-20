@@ -140,9 +140,10 @@ export const upgradeTLSDeferred = b.fn({
  * Returns the `TLSSocket` and the listeners for the duplex's `data`, `end` and `close`.
  * The options are those of `upgradeTLSDeferred`. UpgradedDuplex.rs keeps the duplex, calls its `pause`, `resume`, `write` and `end`
  * and reads `_readableState.ended`, `writableEnded` and `destroyed`.
+ * Without `halfOpen`, the peer's close_notify closes the `TLSSocket`.
  */
 export const upgradeDuplexToTLS = b.fn({
-  args: { duplex: b.any, options: b.any },
+  args: { duplex: b.any, options: b.any, halfOpen: b.bool },
   returns: b.any.returning(
     newListOf(table.union(table.instance("TLSSocket"), table.instance("Array").holding({ element: table.callable })))
       .spec,
@@ -195,7 +196,7 @@ export const sweepSocketTimers = b.fn({
   rustPath: testing("sweep_socket_timers"),
 });
 export const clearSocketFaults = b.fn({ ...js, rustPath: testing("clear_socket_faults") });
-/** `socket`, `close` and `shutdown` have no hook in bsd.c: a rule for one would never fire. */
+/** `socket`, `close` and `shutdown` have no hook in bsd.cpp: a rule for one would never fire. */
 export const SocketFaultSyscall = b.enumeration([
   "recv",
   "send",

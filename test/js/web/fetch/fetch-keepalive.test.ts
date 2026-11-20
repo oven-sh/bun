@@ -1083,45 +1083,37 @@ function eachRequest(socket: Socket, onRequest: () => void) {
   });
 }
 
-const chunkedOk = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n";
-test.concurrent.each([
-  [
-    "a 204 with Transfer-Encoding: chunked",
-    "HTTP/1.1 204 No Content\r\nTransfer-Encoding: chunked\r\n\r\n",
-    "0\r\n\r\n",
-  ],
-  [
-    "a 304 with Transfer-Encoding: chunked",
-    "HTTP/1.1 304 Not Modified\r\nTransfer-Encoding: chunked\r\n\r\n",
-    "0\r\n\r\n",
-  ],
-  ["a chunked body", chunkedOk, "0\r\n\r\n"],
-  ["a chunked body", chunkedOk, "\r\n"],
-])("%s whose origin sends %j once the next request is out: the next response is read", async (_, first, late) => {
-  let connections = 0;
-  const sockets: Socket[] = [];
-  const server = createServer(socket => {
-    connections++;
-    sockets.push(socket);
-    socket.on("error", () => {});
-    let requests = 0;
-    eachRequest(socket, () => {
-      if (requests++ === 0) return void socket.write(first);
-      // Two writes, so that the late bytes can be a read of their own.
-      socket.write(late);
-      socket.write("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nnext");
+test.concurrent.each([[["0\r\n\r\n"]], [["0\r", "\n\r", "\n"]], [["\r\n"]], [["\r", "\n"]]])(
+  "a chunked body whose origin sends %j once the next request is out: the next response is read",
+  async late => {
+    let connections = 0;
+    const sockets: Socket[] = [];
+    const server = createServer({ noDelay: true }, socket => {
+      connections++;
+      sockets.push(socket);
+      socket.on("error", () => {});
+      let requests = 0;
+      eachRequest(socket, async () => {
+        if (requests++ === 0) {
+          return void socket.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n");
+        }
+        // One write each, so that they can be reads of their own.
+        for (const bytes of [...late, "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nnext"]) {
+          await new Promise(resolve => socket.write(bytes, () => setImmediate(resolve)));
+        }
+      });
     });
-  });
-  await once(server.listen(0, "127.0.0.1"), "listening");
-  try {
-    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
-    await (await fetch(url)).text();
-    expect({ next: await (await fetch(url)).text(), connections }).toEqual({ next: "next", connections: 1 });
-  } finally {
-    for (const socket of sockets) socket.destroy();
-    server.close();
-  }
-});
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+      await (await fetch(url)).text();
+      expect({ next: await (await fetch(url)).text(), connections }).toEqual({ next: "next", connections: 1 });
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      server.close();
+    }
+  },
+);
 
 // An https origin that keeps its connections alive. It leaves the second request of its first connection, the one fetch
 // reuses, to `secondRequest`, which gets the TLS session and the TCP socket under it. `requests` is what arrived.
@@ -1169,6 +1161,8 @@ test.concurrent.each<[string, Parameters<typeof originWithBrokenReuse>[0]]>([
   ["close_notify", session => session.end()],
   ["FIN", (_session, raw) => raw.end()],
   ["RST", (_session, raw) => raw.resetAndDestroy()],
+  ["a late last chunk, then close_notify", session => session.end("0\r\n\r\n")],
+  ["a few bytes that are no response, then close_notify", session => session.end("junk\r\n")],
 ])("a GET that a reused https connection answers with %s is sent again", async (_label, secondRequest) => {
   await using origin = await originWithBrokenReuse(secondRequest);
   const bodies = [await bodyOrCode(origin.url, {}), await bodyOrCode(origin.url, {})];
@@ -1193,6 +1187,57 @@ test.concurrent.each<[string, BunFetchRequestInit, Parameters<typeof originWithB
     expect({ bodies, requests: origin.requests }).toEqual({
       bodies: ["ok", "EPROTO"],
       requests: ["connection 1 request 1", "connection 1 request 2"],
+    });
+  },
+);
+
+test.concurrent.each<[string, string]>([
+  ["POST", "junk\r\n"],
+  ["GET", "junk\r\nHTTP/1.1 204 No Content\r\n\r\n"],
+  ["GET", "HTTP/1.1 204 No Content\r\nA : b\r\n\r\n"],
+])("a %s that a reused connection answers with %j is not sent again", async (method, reply) => {
+  await using origin = await originWithBrokenReuse(session => session.write(reply));
+  const init = { method };
+  const bodies = [await bodyOrCode(origin.url, init), await bodyOrCode(origin.url, init)];
+  expect({ bodies, requests: origin.requests }).toEqual({
+    bodies: ["ok", "Malformed_HTTP_Response"],
+    requests: ["connection 1 request 1", "connection 1 request 2"],
+  });
+});
+
+test.concurrent.each<[string, string, string]>([
+  ["GET", "200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\nA: b\r\n\r\n", "ok"],
+  // https://github.com/oven-sh/bun/issues/36940
+  ["GET", "200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n0\r\n\r\n", "ok"],
+  ["HEAD", "304 Not Modified\r\nTransfer-Encoding: chunked\r\n\r\n", ""],
+])("a connection is reused after a %s answered with %j", async (method, reply, body) => {
+  await using origin = await originWithBrokenReuse(session => session.write(`HTTP/1.1 ${reply}`));
+  const bodies = [
+    await bodyOrCode(origin.url, {}),
+    await bodyOrCode(origin.url, { method }),
+    await bodyOrCode(origin.url, {}),
+  ];
+  expect({ bodies, requests: origin.requests }).toEqual({
+    bodies: ["ok", body, "ok"],
+    requests: ["connection 1 request 1", "connection 1 request 2", "connection 1 request 3"],
+  });
+});
+
+// The origin may still send the chunked body that it announced.
+test.concurrent.each(["204 No Content", "304 Not Modified"])(
+  "a connection is not reused after a GET answered with %s and Transfer-Encoding: chunked",
+  async status => {
+    await using origin = await originWithBrokenReuse(session =>
+      session.write(`HTTP/1.1 ${status}\r\nTransfer-Encoding: chunked\r\n\r\n`),
+    );
+    const bodies = [
+      await bodyOrCode(origin.url, {}),
+      await bodyOrCode(origin.url, {}),
+      await bodyOrCode(origin.url, {}),
+    ];
+    expect({ bodies, requests: origin.requests }).toEqual({
+      bodies: ["ok", "", "ok"],
+      requests: ["connection 1 request 1", "connection 1 request 2", "connection 2 request 1"],
     });
   },
 );

@@ -107,7 +107,7 @@ function Agent(options): void {
     // Bytes a freed socket holds or receives have no request: the next request
     // would parse them as its response (https://hackerone.com/reports/3582376).
     // Destroy it here if they are buffered, in node:net if they arrive later.
-    if (socket.readableLength > 0) {
+    if (socket.readableLength > 0 || socket.readableEnded) {
       $debug("BUFFERED DATA on FREE socket - destroying poisoned socket");
       socket.destroy();
       return;

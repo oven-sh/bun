@@ -583,10 +583,10 @@ function getBuildCommand(target: Target, options: PipelineOptions): string {
  * deps + C++ + Rust + link on one agent.
  */
 function getBuildBunStep(platform: Platform, options: PipelineOptions): CommandStep {
-  const { arch } = platform;
-  // Best-effort nasm for x64 (BoringSSL win-x64, libjpeg-turbo SIMD); images bake it, and the build's own error is clearer.
+  const { os, arch } = platform;
+  // Best-effort nasm for BoringSSL's win-x64 assembly; images bake it, and the build's own error is clearer.
   const nasmSetup =
-    arch === "x64"
+    os === "windows" && arch === "x64"
       ? [
           "which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || dnf install -y -q nasm || yum install -y -q nasm || brew install nasm || true",
         ]
@@ -924,8 +924,18 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     parallelism: platform.tier === "beta" || platform.tests ? 1 : os === "darwin" ? 4 : os === "windows" ? 8 : 20,
     ...(platform.tier === "beta" ? { soft_fail: true } : {}),
     // The beta lane runs the whole suite as one shard on one box (~35 min).
+    // The Linux asan lane and the Ubuntu lanes run the AOT suite. When their limits were set (2026-11) their longest
+    // shard of a run took 41 and 25 minutes, and an agent a fifth slower than the others ended a shard at the old limit.
     timeout_in_minutes:
-      platform.tier === "beta" ? 60 : profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
+      platform.tier === "beta"
+        ? 60
+        : os === "windows" || os === "darwin"
+          ? 45
+          : profile === "asan"
+            ? 60
+            : platform.distro === "ubuntu"
+              ? 45
+              : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
       // Platform smoke check: runner.node.ts asserts the agent matches what

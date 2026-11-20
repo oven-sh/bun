@@ -1046,6 +1046,19 @@ it("route precedence for mix of method-specific routes and any routes", async ()
   );
 });
 
+it("answers an absolute-form request target the same when a read ends right behind it", async () => {
+  await using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
+  const socket = net.connect(server.port!, "127.0.0.1").setEncoding("latin1");
+  // The first response shows that the server has read this write to its end.
+  socket.write("GET / HTTP/1.1\r\nHost: a\r\n\r\nGET http:// ");
+  let received = "";
+  for await (const chunk of socket) {
+    if (!received) socket.write("HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n");
+    received += chunk;
+  }
+  expect(received.match(/HTTP\/1\.1 \d+/g)).toEqual(["HTTP/1.1 200", "HTTP/1.1 200"]);
+});
+
 it("routes absolute-form request targets by path and derives request.url from the Host header", async () => {
   const seen: { matched: string; url: string }[] = [];
   await using server = Bun.serve({

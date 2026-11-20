@@ -180,6 +180,9 @@ impl Response {
         false
     }
     pub(crate) fn uncork(&mut self) {}
+    pub(crate) fn is_connect_request(&self) -> bool {
+        false
+    }
     pub(crate) fn prepare_for_sendfile(&mut self) {}
     pub(crate) fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
         let mut port: i32 = 0;
@@ -382,16 +385,38 @@ macro_rules! h3_route_methods {
     )*};
 }
 
-impl App {
-    pub fn create(
+/// Never made when `!SSL`, so that a server without TLS links none of this.
+pub struct OwnedApp<const SSL: bool>(core::ptr::NonNull<App>);
+
+impl<const SSL: bool> OwnedApp<SSL> {
+    pub fn new(
         opts: &BunSocketContextOptions,
         idle_timeout_s: u32,
         max_request_body_size: u64,
-    ) -> Option<*mut App> {
-        // SAFETY: opts is `#[repr(C)]` passed by value; uws owns the returned handle
+    ) -> Option<Self> {
+        if !SSL {
+            return None;
+        }
+        // SAFETY: opts is `#[repr(C)]` passed by value
         let p = unsafe { c::uws_h3_create_app(*opts, idle_timeout_s, max_request_body_size) };
-        if p.is_null() { None } else { Some(p) }
+        core::ptr::NonNull::new(p).map(Self)
     }
+
+    pub fn as_ptr(&self) -> *mut App {
+        self.0.as_ptr()
+    }
+}
+
+impl<const SSL: bool> Drop for OwnedApp<SSL> {
+    fn drop(&mut self) {
+        if SSL {
+            // SAFETY: created in `new`, destroyed once.
+            unsafe { c::uws_h3_app_destroy(self.as_ptr()) }
+        }
+    }
+}
+
+impl App {
     pub fn add_server_name_with_options(
         &mut self,
         hostname: &bun_core::ZStr,
@@ -402,13 +427,6 @@ impl App {
             return Err(AddServerNameError::FailedToAddServerName);
         }
         Ok(())
-    }
-    /// # Safety
-    /// `this` must be a live App handle previously returned by `App::create`;
-    /// it is freed by this call and must not be used afterwards.
-    pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: caller contract above
-        unsafe { c::uws_h3_app_destroy(this) }
     }
     pub fn close(&mut self) {
         c::uws_h3_app_close(self)

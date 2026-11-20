@@ -5,7 +5,7 @@
 //! connection-scoped state — HPACK tables, write/read buffers, server
 //! SETTINGS — and a map of active `Stream`s, each bound to one `HTTPClient`.
 //! Response frames are parsed into per-stream buffers and then handed to the
-//! same `picohttp.Response` / `handleResponseBody` machinery the HTTP/1.1
+//! same `Response` / `handleResponseBody` machinery the HTTP/1.1
 //! path uses, so redirects, decompression and the result callback are shared.
 
 use core::sync::atomic::AtomicI32;
@@ -63,4 +63,3 @@ pub mod stream;
 pub use client_session::ClientSession;
 pub(crate) use client_session::SessionPtr;
 pub use pending_connect::PendingConnect;
-pub use stream::Stream;

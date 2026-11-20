@@ -7,6 +7,7 @@ use crate::api::js_bundler::PluginJscExt as _;
 use crate::api::{SocketAddress, js_bundler as JSBundler};
 use crate::bake::router as FrameworkRouter;
 use crate::bake::{self as bake};
+use crate::generated_bindgen::html_bundle::js_HTMLBundle;
 use crate::generated_bindgen::server::ServerProtocol;
 use crate::generated_bindgen::server_body::{
     BunServe__onRejectPlugins, BunServe__onResolvePlugins,
@@ -31,7 +32,7 @@ use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
     self as jsc, ArrayBuffer, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError, JsResult,
-    Node, StringJsc as _, VirtualMachine,
+    Node, PendingAbortSignal, StringJsc as _, VirtualMachine,
 };
 use bun_paths as paths;
 use bun_ptr::{AsCtxPtr, RefPtr};
@@ -62,7 +63,7 @@ pub(super) use super::html_bundle::{self as html_bundle, HTMLBundle};
 pub(super) use super::any_request_context::AnyRequestContext;
 pub(super) use super::file_route::FileRoute;
 pub(super) use super::node_http_response::NodeHTTPResponse;
-pub(super) use super::request_context::{DeferDeinitFlag, UpgradeState};
+pub(super) use super::request_context::{Dispatch, UpgradeState};
 pub(super) use super::server_config::{self as server_config, ServerConfig};
 pub(super) use super::server_web_socket::ServerWebSocket;
 pub(super) use super::static_route::StaticRoute;
@@ -246,17 +247,8 @@ impl AnyRoute {
         let Some(headers_js) = argument.get(init_ctx.global, b"headers")? else {
             return Ok(None);
         };
-        let fetch_headers = FetchHeaders::create_from_js(init_ctx.global, headers_js)?;
-        let _fh_guard = scopeguard::guard(fetch_headers, |fh| {
-            // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-            if let Some(h) = fh {
-                bun_opaque::opaque_deref_mut(h.as_ptr()).deref();
-            }
-        });
-
-        // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-        let headers_ref = fetch_headers.map(|p| bun_opaque::opaque_deref(p.as_ptr().cast_const()));
-        let route = Self::from_options(init_ctx.global, headers_ref, &mut path)?;
+        let fetch_headers = HeadersRef::create_from_js(init_ctx.global, headers_js)?;
+        let route = Self::from_options(init_ctx.global, fetch_headers.as_deref(), &mut path)?;
 
         if is_index_route {
             return Ok(Some(route));
@@ -370,7 +362,7 @@ impl AnyRoute {
         init_ctx: &mut ServerInitContext,
     ) -> JsResult<Option<AnyRoute>> {
         use bun_collections::zig_hash_map::MapEntry as StdEntry;
-        if let Some(html_bundle) = argument.as_class_this_ptr::<HTMLBundle>() {
+        if let Some(html_bundle) = js_HTMLBundle::ref_from_js(argument) {
             let entry = init_ctx
                 .dedupe_html_bundle_map
                 .entry(html_bundle.as_ptr().cast_const());
@@ -519,14 +511,13 @@ pub(crate) enum ServePluginsState {
     Unqueued(Box<[Box<[u8]>]>),
     Pending {
         /// Promise may be empty if the plugin load finishes synchronously.
-        plugin: Box<JSBundler::Plugin>,
+        plugin: JSBundler::OwnedPlugin,
         promise: jsc::JSPromiseStrong,
-        /// Each holds a ref, released once the route is told the outcome.
-        html_bundle_routes: Vec<RefPtr<html_bundle::Route>>,
+        html_bundle_routes: Vec<html_bundle::PendingBuild>,
         /// Server whose DevServer is waiting for the plugins to load.
         dev_server: Option<super::AnyServer>,
     },
-    Loaded(Box<JSBundler::Plugin>),
+    Loaded(JSBundler::OwnedPlugin),
     /// Error information is not stored as it is already reported.
     Err,
 }
@@ -573,7 +564,8 @@ impl ServePlugins {
                 } => {
                     match cb {
                         ServePluginsCallback::HtmlBundleRoute(route) => {
-                            html_bundle_routes.push(RefPtr::from_this(route));
+                            html_bundle_routes
+                                .push(html_bundle::PendingBuild::new(RefPtr::from_this(route)));
                         }
                         ServePluginsCallback::DevServer => {
                             // one dev server per server
@@ -616,9 +608,7 @@ impl ServePlugins {
         // here would give it a tag that is invalidated by the writes to `self.state`
         // below (Stacked Borrows), making the eventual `heap::take` in `deref_` UB.
 
-        let plugin = JSBundler::Plugin::create(global, JSBundler::BunPluginTarget::Browser);
-        // SAFETY: `Plugin::create` returns a freshly-boxed `*mut Plugin` (single owner).
-        let plugin: Box<JSBundler::Plugin> = unsafe { bun_core::heap::take(plugin) };
+        let plugin = JSBundler::OwnedPlugin::new(global, JSBundler::BunPluginTarget::Browser);
         let mut bunstring_array: Vec<StringView<'_>> = Vec::with_capacity(plugin_list.len());
         for raw_plugin in &plugin_list {
             bunstring_array.push(StringView::from_bytes(raw_plugin));
@@ -641,15 +631,16 @@ impl ServePlugins {
             dev_server: None,
         };
 
-        global.bun_vm().event_loop().enter();
-        let result = jsc::host_fn::from_js_host_call(global, || {
-            match &self.state {
-                ServePluginsState::Pending { plugin, .. } => plugin.as_ref(),
-                _ => unreachable!(),
-            }
-            .load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
-        })?;
-        global.bun_vm().event_loop().exit();
+        let result = {
+            let _entered = global.bun_vm().enter_event_loop_scope();
+            jsc::host_fn::from_js_host_call(global, || {
+                match &self.state {
+                    ServePluginsState::Pending { plugin, .. } => plugin,
+                    _ => unreachable!(),
+                }
+                .load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
+            })?
+        };
 
         // handle the case where js synchronously throws an error
         if let Some(e) = global.try_take_exception() {
@@ -717,23 +708,15 @@ impl ServePlugins {
         };
         drop(promise); // Drop on JscStrong releases the slot.
 
+        let loaded = plugin.as_non_null();
         self.state = ServePluginsState::Loaded(plugin);
-        let plugin_ref = match &self.state {
-            ServePluginsState::Loaded(p) => &**p,
-            _ => unreachable!(),
-        };
 
         for route in html_bundle_routes {
-            bun_core::handle_oom(html_bundle::Route::on_plugins_resolved(
-                route.this_ptr(),
-                Some(NonNull::from(plugin_ref)),
-            ));
+            bun_core::handle_oom(html_bundle::Route::on_plugins_resolved(route, Some(loaded)));
         }
         if let Some(server) = dev_server {
             if let Some(dev) = server.dev_server_mut() {
-                bun_core::handle_oom(dev.on_plugins_resolved(Some(
-                    std::ptr::from_ref::<JSBundler::Plugin>(plugin_ref).cast_mut(),
-                )));
+                bun_core::handle_oom(dev.on_plugins_resolved(loaded));
             }
         }
     }
@@ -751,7 +734,7 @@ impl ServePlugins {
         else {
             unreachable!()
         };
-        drop(plugin); // pending.plugin.deinit()
+        drop(plugin);
         drop(promise); // Drop on JscStrong releases the slot.
 
         for route in html_bundle_routes {
@@ -779,12 +762,8 @@ impl ServePlugins {
 
 impl Drop for ServePlugins {
     fn drop(&mut self) {
-        match &self.state {
-            ServePluginsState::Unqueued(_) => {}
-            ServePluginsState::Pending { .. } => debug_assert!(false), // should have one ref while pending!
-            ServePluginsState::Loaded(_) => {}                         // Box<Plugin> drops
-            ServePluginsState::Err => {}
-        }
+        // The promise reaction holds a ref while pending.
+        debug_assert!(!matches!(self.state, ServePluginsState::Pending { .. }));
     }
 }
 
@@ -962,14 +941,11 @@ fn warn_about_idle_timeout_once() {
 // ─── NewServer ───────────────────────────────────────────────────────────────
 // ─── NewServer (canonical type lives in mod.rs) ──────────────────────────────
 // NOTE (unification): the struct, `UserRoute`,
-// `CreateJsRequest`, `PreparedRequest`, `SavedRequest`, `SavedRequestUnion`,
+// `SavedRequest`, `SavedRequestUnion`,
 // `ServerAllConnectionsClosedTask`, `AnyServer` and the four type aliases are
 // defined once in `super` (mod.rs). This file contributes additional inherent
 // methods on the same type — there is no separate Phase-A struct.
-pub(super) use super::{
-    CreateJsRequest, DetachRequestOnDrop, NewServer, PreparedRequest, ServerRequestContext,
-    UserRoute,
-};
+pub(super) use super::{DispatchedRequest, NewServer, ServerRequestContext, UserRoute};
 
 impl<const SSL: bool, const DEBUG: bool> uws_sys::web_socket::WebSocketUpgradeServer<SSL>
     for NewServer<SSL, DEBUG>
@@ -1005,11 +981,8 @@ impl<const SSL: bool, const DEBUG: bool> uws_sys::web_socket::WebSocketUpgradeSe
 }
 
 impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
-    /// Construct the cross-module `super::AnyServer` back-reference. Routes
-    /// (StaticRoute/FileRoute/HTMLBundle) store this so they can call back
-    /// into `on_pending_request` / `on_request_complete`.
     #[inline]
-    fn as_any_server(&self) -> super::AnyServer {
+    pub(super) fn as_any_server(&self) -> super::AnyServer {
         super::AnyServer::from(std::ptr::from_ref::<Self>(self))
     }
 
@@ -1028,13 +1001,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref via
         // const-asserted `bun_opaque::opaque_deref_mut`. `self.app` is `Some`
         // for the lifetime of any JS-reachable `Server` (set in `listen()`,
-        // freed in `deinit()` after the JS wrapper is gone).
-        bun_opaque::opaque_deref_mut(self.app.get().expect("server not listening"))
+        // freed in `drop` after the JS wrapper is gone).
+        bun_opaque::opaque_deref_mut(self.app().expect("server not listening"))
     }
 
-    /// Unbounded so `deinit()` (in
-    /// the unbounded `impl NewServer` in mod.rs) can call it without naming
-    /// the per-transport `RequestContext` bounds.
+    /// Unbounded so that `drop` can call it without the `RequestContext` bounds.
     pub(super) fn notify_inspector_server_stopped(&self) {
         if self.inspector_server_id.get().get() != 0 {
             bun_core::hint::cold();
@@ -1058,7 +1029,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     /// node:http 'clientError'. `callback(socketHandle, errorCode, rawPacket)`.
     pub(crate) fn set_on_client_error(&self, global: &JSGlobalObject, callback: JSValue) {
-        let (Some(server_js), Some(app)) = (self.js_value_for_dispatch(), self.app.get()) else {
+        let (Some(server_js), Some(app)) = (self.js_value_for_dispatch(), self.app()) else {
             return;
         };
         let mut on_clienterror = callback;
@@ -1158,7 +1129,7 @@ fn request_ip(config: &ServerConfig, cx: &mut JsScope<'_>, request: &Request) ->
     if config.address.is_unix() {
         return Ok(JSValue::NULL);
     }
-    let Some(info) = request.request_context.get_remote_socket_info() else {
+    let Some(info) = request.request_context.get().get_remote_socket_info() else {
         return Ok(JSValue::NULL);
     };
     crate::socket::socket_address::SocketAddress::create_dto(
@@ -1189,7 +1160,7 @@ fn set_request_timeout<'a>(
     let value = seconds.to_u32();
 
     if let Some(request) = request.as_class_ref::<Request>() {
-        let _ = request.request_context.set_timeout(value);
+        let _ = request.request_context.get().set_timeout(value);
     } else if let Some(response) = request.as_class_ref::<NodeHTTPResponse>() {
         response.set_timeout((value % 255) as u8);
     } else {
@@ -1274,7 +1245,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             .first()
             .map_or(JSValue::UNDEFINED, |compress| compress.to_js());
         let compress = compress.is_undefined() || compress.to_boolean();
-        let payload = payload_from_js(global, "publish", data.to_js(), Accept::AnyOrNullish)?;
+        let payload = payload_from_js(global, "publish", *data, Accept::AnyOrNullish)?;
         let bytes = payload.bytes();
 
         if self.config.get().websocket.is_none() {
@@ -1283,7 +1254,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if topic.slice().is_empty() {
             return Err(global.throw(format_args!("publish requires a topic string")));
         }
-        let Some(app) = self.app.get() else {
+        let Some(app) = self.app() else {
             return Ok(JSValue::js_number(0.0));
         };
         let status = AnyWebSocket::publish_with_options(
@@ -1332,18 +1303,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return Ok(false);
         }
 
-        let Some(request_ptr) = <Request as bun_jsc::JsClass>::from_js(request) else {
+        let Some(request) = <Request as bun_jsc::JsClass>::from_js(&request) else {
             return Err(
                 global.throw_invalid_arguments(format_args!("upgrade requires a Request object"))
             );
         };
-        // SAFETY: from_js returns a live *mut Request (rooted by the caller's
-        // argument). Shared, re-derived after each JS re-entry point below; the
-        // one field write at the end goes through `request_ptr`.
-        let request = unsafe { &*request_ptr };
 
         if request
             .request_context
+            .get()
             .server_ptr()
             .is_some_and(|owner| !core::ptr::addr_eq(owner, &raw const *self))
         {
@@ -1352,10 +1320,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             )));
         }
 
-        let Some(upgrader_ptr) = request
-            .request_context
-            .get::<ServerRequestContext<SSL, DEBUG, false>>()
-        else {
+        let Some(upgrader_ptr) = request.request_context.get().get::<ServerRequestContext<
+            SSL,
+            DEBUG,
+            false,
+        >>() else {
             return Ok(false);
         };
         // SAFETY: tagged pointer just matched this monomorphization.
@@ -1376,8 +1345,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // Keep the upgrader alive across option getters below, which run
         // arbitrary user JS. A re-entrant server.upgrade(req) from a getter
         // would otherwise be able to deref this context out from under us.
-        upgrader.ref_();
-        let _upgrader_guard = scopeguard::guard(upgrader, |upgrader| upgrader.deref());
+        let _upgrader_ref = upgrader.ref_guard();
 
         // Validate the handshake against `request.headers`, never the raw uWS request.
         // Copy the values, because the option getters below can modify the headers.
@@ -1458,19 +1426,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // See https://github.com/oven-sh/bun/issues/1339
             upgrader.upgrade_context.set(UpgradeState::Upgraded);
             let signal = upgrader.signal.take();
-            upgrader.resp.set(None);
+            let detached = upgrader.resp.take();
 
             // Snapshot the lazy url before detaching (mirrors to_async_without_abort_handler).
-            // SAFETY: re-derived after the JS-running option getters above; still
-            // the live JsClass payload for `request`.
-            let request = unsafe { &*request_ptr };
             if request.ensure_url().is_err() {
                 request.url.set(BunString::EMPTY);
             }
 
-            // SAFETY: plain-field detach through the root pointer; the shared
-            // borrow above is not used past this point.
-            unsafe { (*request_ptr).request_context = AnyRequestContext::NULL };
+            request.request_context.set(AnyRequestContext::NULL);
             upgrader.request_weakref.set(request::WeakRef::EMPTY);
 
             options.data.ensure_still_alive();
@@ -1491,7 +1454,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // on_abort nor an end path can reclaim a parked handler promise's
             // claim later. Reclaim it here.
             upgrader.reclaim_promise_cell();
-            upgrader.deref();
+            drop(detached);
 
             if resp
                 .upgrade(
@@ -1669,8 +1632,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // The DevServer is HTTP/1-only. With it, an HTML route answers HTTP/2 and HTTP/3 with a 503.
         if self.dev_server.get().is_some()
             || !self.config.get().development.is_hmr_enabled()
-            || self.h2_app.get().is_some()
-            || self.h3_app.get().is_some()
+            || self.h2_app().is_some()
+            || self.h3_app().is_some()
             || !self.has_listener()
             || !self
                 .config
@@ -1685,7 +1648,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub(crate) fn reload_static_routes(&self) {
-        if self.app.get().is_none() {
+        if self.app().is_none() {
             // Static routes will get cleaned up when the server is stopped
             return;
         }
@@ -1772,7 +1735,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         } else {
             None
         };
-        let request: *mut Request = if let Some(url_utf8) = url_arg {
+        let request = RefPtr::new(if let Some(url_utf8) = url_arg {
             let temp_url_str = url_utf8.slice();
 
             if temp_url_str.is_empty() {
@@ -1824,27 +1787,26 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
             }
 
-            Request::new(Request::init2(
+            Request::init2(
                 BunString::clone_utf8(url.href),
                 headers,
                 // Moves `body` into the per-VM hive pool (ref_count = 1).
                 crate::webcore::body::hive_alloc(body),
                 method,
-            ))
+            )
         } else if let Some(request_) = request_arg {
             request_.clone(&global.js_thread_of_caller())?
         } else {
             let fetch_error = Fetch::fetch_type_error_string(input);
             let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(global, format_args!("{}", fetch_error));
             return Ok(JSPromise::rejected_promise(global, err).to_js());
-        };
+        });
 
         debug_assert!(!self.config.get().on_request.is_empty()); // confirmed above
         let global_this = self.global();
         let on_request = self.config.get().on_request;
-        // SAFETY: `request` was just allocated via `heap::alloc`; its ref
-        // transfers to the JS wrapper inside `to_js`.
-        let request_value = unsafe { Request::to_js(request, &global_this) };
+        let request_ptr = request.this_ptr();
+        let request_value = Request::to_js(request, &global_this);
         let this_value = self.js_value_assert_alive();
         let response_value =
             match on_request.call(&global_this, this_value, &[request_value, this_value]) {
@@ -1872,18 +1834,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return Ok(response_value);
         }
 
-        if let Some(resp) = <Response as bun_jsc::JsClass>::from_js(response_value) {
-            // SAFETY: `from_js` returns a live `*mut Response` (owned by its
-            // JS wrapper, which `response_value` keeps alive). `request` is
-            // kept alive by `request_value` (its JS wrapper) for the duration
-            // of this synchronous frame.
-            unsafe { (*resp).set_url((*request).url.get().clone()) };
+        if let Some(resp) = <Response as bun_jsc::JsClass>::from_js(&response_value) {
+            resp.set_url(request_ptr.url.get().clone());
         }
         Ok(JSPromise::resolved_promise_value(global, response_value))
     }
 
     pub(crate) fn close_idle_connections(&self, _: &mut JsScope<'_>) -> usize {
-        if self.app.get().is_none() || self.phase_held.get() {
+        if self.app().is_none() || self.phase_held.get() {
             return 0;
         }
         // One sweep, as in Node: busy connections are not marked to close later.
@@ -1923,7 +1881,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             server_config::Address::Tcp { port, .. } => *port,
         };
 
-        if let Some(listener) = self.listener.get() {
+        if let Some(listener) = self.listener() {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             if let Some(p) = bun_opaque::opaque_deref_mut(listener).get_local_port() {
                 return Some(p);
@@ -1960,7 +1918,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             server_config::Address::Tcp { port, .. } => *port,
         };
 
-        if let Some(listener) = self.listener.get() {
+        if let Some(listener) = self.listener() {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             let listener = bun_opaque::opaque_deref_mut(listener);
             port = listener.get_local_port().unwrap_or(port);
@@ -2011,7 +1969,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             server_config::Address::Unix(_) => return Ok(JSValue::UNDEFINED),
             server_config::Address::Tcp { hostname, .. } => hostname,
         };
-        if let Some(listener) = self.listener.get() {
+        if let Some(listener) = self.listener() {
             let mut buf = [0u8; 1024];
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             if let Some(addr) = bun_opaque::opaque_deref_mut(listener)
@@ -2171,13 +2129,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return;
         };
 
-        let should_deinit_context = core::cell::Cell::new(false);
-        let Some(mut prepared) = Self::prepare_js_request_context::<MUX>(
+        let Some((request, ctx)) = Self::prepare_js_request_context::<MUX>(
             this,
             req,
             resp,
-            Some(bun_ptr::BackRef::new(&should_deinit_context)),
-            CreateJsRequest::No,
             user_route.route.method.specific(),
             upgrade_ctx,
         ) else {
@@ -2195,20 +2150,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         } else {
             Bun__ServerRouteList__callRoute
         };
-        let response_value = jsc::from_js_host_call(global, || {
-            call_route(
-                global,
-                user_route.id,
-                prepared.request_object,
-                server_js,
-                route_list,
-                &mut prepared.js_request,
-                req.as_ptr(),
-            )
-        })
-        .unwrap_or_else(|err| global.take_exception(err));
+        let (request, response_value) =
+            DispatchedRequest::call_route(request, global, |request, js_request| {
+                call_route(
+                    global,
+                    user_route.id,
+                    request,
+                    server_js,
+                    route_list,
+                    js_request,
+                    req.as_ptr(),
+                )
+            });
 
-        Self::handle_request(this, &should_deinit_context, &prepared, req, response_value);
+        Self::handle_request(this, &request, ctx, req, response_value);
     }
 
     /// Calls the `fetch` handler. `upgrade_ctx` as in [`Self::on_user_route_request`].
@@ -2225,16 +2180,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return;
         };
 
-        let should_deinit_context = core::cell::Cell::new(false);
-        let Some(prepared) = Self::prepare_js_request_context::<MUX>(
-            this,
-            req,
-            resp,
-            Some(bun_ptr::BackRef::new(&should_deinit_context)),
-            CreateJsRequest::Yes,
-            None,
-            upgrade_ctx,
-        ) else {
+        let Some((request, ctx)) =
+            Self::prepare_js_request_context::<MUX>(this, req, resp, None, upgrade_ctx)
+        else {
             return;
         };
 
@@ -2244,49 +2192,32 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let on_request = server.config.get().on_request;
         debug_assert!(!on_request.is_empty());
         let global = server.global_this();
-        let response_value =
-            match on_request.call(global, server_js, &[prepared.js_request, server_js]) {
-                Ok(v) => v,
-                Err(err) => global.take_exception(err),
-            };
+        let request = DispatchedRequest::new(request, global);
+        let response_value = match on_request.call(global, server_js, &[request.js, server_js]) {
+            Ok(v) => v,
+            Err(err) => global.take_exception(err),
+        };
 
-        Self::handle_request(this, &should_deinit_context, &prepared, req, response_value);
+        Self::handle_request(this, &request, ctx, req, response_value);
     }
 
     /// Hands what the handler returned to the `RequestContext`, then frees it or makes the request asynchronous.
     fn handle_request<const MUX: bool>(
         this: *mut Self,
-        should_deinit_context: &core::cell::Cell<bool>,
-        prepared: &PreparedRequest<SSL, DEBUG, MUX>,
+        request: &DispatchedRequest,
+        ctx: Dispatch<SSL, DEBUG, MUX>,
         req: uws::AnyRequest,
         response_value: JSValue,
     ) {
-        // SAFETY: `ctx.request_weakref` keeps `request_object` alive. The uWS request does not outlive this function.
-        let _detach_guard = unsafe { DetachRequestOnDrop::new(prepared.request_object) };
-
-        // SAFETY: `ctx` can't be freed while `defer_deinit_until_callback_completes` is set, and `this` is the live server.
-        let (ctx, server) = unsafe { (&*prepared.ctx, &*this) };
-        ctx.on_response(server, prepared.js_request, response_value);
-        prepared.js_request.ensure_still_alive();
-
-        ctx.defer_deinit_until_callback_completes.set(None);
-
-        if should_deinit_context.get() {
-            ctx.deinit();
+        // SAFETY: `this` is the live server.
+        let server = unsafe { &*this };
+        let Some(ctx) = ServerRequestContext::respond(ctx, server, request.js, response_value)
+        else {
             return;
-        }
-
-        if ctx.should_render_missing() {
-            ctx.render_missing();
-            return;
-        }
+        };
 
         // uWS reuses `req` for the next request, so an asynchronous one copies what it needs.
-        ctx.to_async(
-            req.as_ptr(),
-            // SAFETY: live (see above), and no other borrow of the Request is outstanding.
-            unsafe { &mut *prepared.request_object },
-        );
+        ctx.to_async(req.as_ptr(), &request.native);
     }
 
     fn should_warn_about_idle_timeout(&self) -> bool {
@@ -2301,11 +2232,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         this: *mut Self,
         mut req: uws::AnyRequest,
         resp: uws::AnyResponse,
-        should_deinit_context: Option<DeferDeinitFlag>,
-        create_js_request: CreateJsRequest,
         method: Option<http::Method>,
         upgrade_ctx: Option<&mut WebSocketUpgradeContext>,
-    ) -> Option<PreparedRequest<SSL, DEBUG, MUX>> {
+    ) -> Option<(RefPtr<Request>, Dispatch<SSL, DEBUG, MUX>)> {
         debug_assert!(match resp {
             uws::AnyResponse::SSL(_) => SSL && !MUX,
             uws::AnyResponse::TCP(_) => !SSL && !MUX,
@@ -2334,7 +2263,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             resp.send_when_complete();
         }
 
-        server.on_pending_request();
         req.set_yield(false);
 
         if server.should_warn_about_idle_timeout() {
@@ -2356,13 +2284,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 server,
                 req.as_ptr(),
                 resp,
-                should_deinit_context,
                 method,
             );
             slot.assume_init().as_ptr()
         };
         // SAFETY: initialized by `create`.
-        let ctx = unsafe { &*ctx_ptr };
+        let ctx = Dispatch::new(unsafe { &*ctx_ptr });
         if let Some(upgrade_ctx) = upgrade_ctx {
             ctx.upgrade_context
                 .set(UpgradeState::Pending(NonNull::from(upgrade_ctx)));
@@ -2384,26 +2311,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let global = server.global_this();
         let _context = server.vm().enter_context(server.context.get());
         let signal = AbortSignal::new(global);
-        ctx.signal.set(NonNull::new(signal));
-        // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
-        bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
+        ctx.signal
+            .set(Some(PendingAbortSignal::new(signal.clone())));
 
-        // The JS wrapper frees it, or `ctx.request_weakref` does for `CreateJsRequest::No`.
-        let request_object_ptr: *mut Request = Request::new(Request::init(
+        let request = RefPtr::new(Request::init(
             ctx.method,
             AnyRequestContext::init(ctx_ptr),
             SSL,
-            Some(bun_opaque::opaque_deref_mut(signal).ref_()),
+            Some(signal),
             body_hive,
         ));
-        // SAFETY: freshly leaked from `heap::into_raw`, so it carries the allocation's provenance.
-        ctx.request_weakref
-            .set(unsafe { bun_ptr::WeakPtr::<Request>::init_ref(request_object_ptr) });
+        ctx.request_weakref.set(bun_ptr::WeakPtr::new(&request));
 
         // `Request.url` and `.headers` read a `uws::Request` lazily. HTTP/2 and HTTP/3 have none, so both are filled in now.
         if MUX {
-            // SAFETY: freshly leaked.
-            copy_url_and_headers_of_mux_request(unsafe { &*request_object_ptr }, &req, SSL);
+            copy_url_and_headers_of_mux_request(&request, &req, SSL);
             ctx.req.set(None);
         }
 
@@ -2450,22 +2372,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
         }
 
-        Some(PreparedRequest {
-            js_request: match create_js_request {
-                // SAFETY: from `Request::new` above; the wrapper adopts its ref.
-                CreateJsRequest::Yes => unsafe { Request::to_js(request_object_ptr, global) },
-                CreateJsRequest::Bake => {
-                    match Request::to_js_for_bake(request_object_ptr, global) {
-                        Ok(v) => v,
-                        Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-                        Err(_) => return None,
-                    }
-                }
-                CreateJsRequest::No => JSValue::ZERO,
-            },
-            request_object: request_object_ptr,
-            ctx: ctx_ptr,
-        })
+        Some((request, ctx))
     }
 
     // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
@@ -2526,7 +2433,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // And then we use a hash of their project root directory:
         let second_hash_segment: [u8; 8] = 'brk: {
             let mut buffer = paths::path_buffer_pool::get();
-            let root = &self.dev_server.get().as_ref().unwrap().root;
+            let root = &self.dev_server.get().as_ref().unwrap().graphs.root;
             let len = root.len().min(buffer.len());
             break 'brk hash(strings::copy_lowercase(&root[..len], &mut buffer[..len]))
                 .to_ne_bytes();
@@ -2549,7 +2456,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             &mut json_string,
             "{{ \"workspace\": {{ \"root\": {}, \"uuid\": \"{}\" }} }}",
             bun_fmt::format_json_string_utf8(
-                &self.dev_server.get().as_ref().unwrap().root,
+                &self.dev_server.get().as_ref().unwrap().graphs.root,
                 Default::default()
             ),
             uuid,
@@ -2568,7 +2475,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         protos: Option<Box<[u8]>>,
         data: JSValue,
     ) -> JsResult<()> {
-        let (Some(server_js), Some(app)) = (self.js_value_for_dispatch(), self.app.get()) else {
+        let (Some(server_js), Some(app)) = (self.js_value_for_dispatch(), self.app()) else {
             return Ok(());
         };
         let handlers =
@@ -2612,7 +2519,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             })
     }
 
-    // `js_gc_route_list_set` / `ptr_to_js` live on the unbounded
+    // `js_gc_route_list_set` lives on the unbounded
     // `impl NewServer` in mod.rs; do not redefine them here.
 }
 
@@ -2645,7 +2552,7 @@ unsafe extern "C" {
     safe fn Bun__ServerRouteList__callRoute(
         global: &JSGlobalObject,
         index: u32,
-        request_ptr: *mut Request,
+        request: RefPtr<Request>,
         server_object: JSValue,
         route_list_object: JSValue,
         request_object: &mut JSValue,
@@ -2655,7 +2562,7 @@ unsafe extern "C" {
     safe fn Bun__ServerRouteList__callRouteH3(
         global: &JSGlobalObject,
         index: u32,
-        request_ptr: *mut Request,
+        request: RefPtr<Request>,
         server_object: JSValue,
         route_list_object: JSValue,
         request_object: &mut JSValue,

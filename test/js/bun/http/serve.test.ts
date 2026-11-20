@@ -5312,7 +5312,130 @@ describe.concurrent("request body backpressure", () => {
       sock.destroy();
     }
   });
+
+  // The failed send takes the socket's error, so epoll reports a hangup alone.
+  it.skipIf(!isLinux).each(["bytes", "stream"])(
+    "aborts a request with a paused body whose %s response finds the connection reset",
+    async kind => {
+      const gate = Promise.withResolvers<void>();
+      const aborted = Promise.withResolvers<string>();
+      const server = serve({
+        port: 0,
+        idleTimeout: 0,
+        async fetch(req) {
+          req.signal.addEventListener("abort", () => aborted.resolve(req.signal.reason.name));
+          await gate.promise;
+          return new Response(
+            kind === "bytes"
+              ? Buffer.alloc(1024 * 1024)
+              : new ReadableStream({ start: controller => controller.enqueue("first") }),
+          );
+        },
+      });
+      try {
+        const { sock } = await pumpUploadUntilPlateau(server.port!, 32 * 1024 * 1024, 7);
+        sock.resetAndDestroy();
+        gate.resolve();
+        expect(await aborted.promise).toBe("AbortError");
+        await server.stop();
+      } finally {
+        server.stop(true);
+      }
+    },
+  );
 });
+
+// Bun.build() waits for an async plugin setup() by running the event loop.
+it("a direct stream survives a pull() that ends it and runs the event loop until the connection is closed", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import net from "node:net";
+      const pulled = Promise.withResolvers();
+      using server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        async fetch() {
+          // From a timer, so that no tick of the socket loop is on the stack.
+          await Bun.sleep(1);
+          return new Response(new ReadableStream({
+            type: "direct",
+            pull(controller) {
+              controller.write("body");
+              controller.end();
+              let waited = false;
+              Bun.build({
+                entrypoints: ["./none.js"],
+                plugins: [{ name: "nested tick", setup: () => closed.then(() => void (waited = true)) }],
+              }).catch(() => {});
+              pulled.resolve(waited);
+            },
+          }));
+        },
+      });
+      const client = net.connect(server.port, "127.0.0.1").on("error", () => {}).resume();
+      const closed = new Promise(resolve => client.on("close", resolve));
+      client.write("GET / HTTP/1.1\\r\\nHost: a\\r\\nConnection: close\\r\\n\\r\\n");
+      console.log(await pulled.promise, server.pendingRequests);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("true 0\n");
+  expect(exitCode).toBe(0);
+});
+
+it.each(["http", "https"])(
+  "a request keeps its head and body while its handler runs the event loop (%s)",
+  async protocol => {
+    const message = (name: string) =>
+      `POST /${name} HTTP/1.1\r\nHost: a\r\nX-Name: ${name}\r\nContent-Length: 1\r\n\r\n${name}`;
+    const otherArrived = Promise.withResolvers<void>();
+    const seen = Promise.withResolvers<string[]>();
+    let requests = 0;
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: protocol === "https" ? tls : undefined,
+      async fetch(req) {
+        if (req.method === "GET") return new Response();
+        if (requests++) {
+          otherArrived.resolve();
+          return new Response();
+        }
+        other.write(message("b"));
+        Bun.build({
+          entrypoints: ["./none.js"],
+          plugins: [{ name: "nested tick", setup: () => otherArrived.promise }],
+        }).catch(() => {});
+        seen.resolve([`${requests} requests`, req.url, req.headers.get("x-name")!, await req.text()]);
+        return new Response();
+      },
+    });
+    async function open() {
+      const options = { port: server.port!, host: "127.0.0.1", rejectUnauthorized: false };
+      const socket = protocol === "https" ? nodeTls.connect(options) : net.connect(options);
+      await once(socket, protocol === "https" ? "secureConnect" : "connect");
+      return socket;
+    }
+    const [first, other] = await Promise.all([open(), open()]);
+    try {
+      // A nested libuv tick doesn't see the events that the outer one has collected, so the server ends this handshake first.
+      other.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
+      await once(other, "data");
+      first.write(message("a"));
+      expect(await seen.promise).toEqual(["2 requests", `${protocol}://a/a`, "a", "a"]);
+    } finally {
+      first.destroy();
+      other.destroy();
+    }
+  },
+);
 
 // https://github.com/oven-sh/bun/issues/32469
 it("type: direct stream awaiting flush(true) under backpressure does not re-enter pull", async () => {

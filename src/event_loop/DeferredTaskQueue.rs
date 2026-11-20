@@ -35,7 +35,7 @@
 //! buffer to its own fd or socket, so relative order within a pass has no correctness effect, and
 //! anything a pass skips runs on the next one.
 
-use core::cell::UnsafeCell;
+use core::cell::{Cell, UnsafeCell};
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -52,6 +52,8 @@ pub type DeferredRepeatingTask = unsafe extern "C" fn(*mut c_void) -> bool;
 pub struct DeferredTaskQueue {
     /// No borrow spans a callback, which reaches this queue again.
     map: UnsafeCell<ArrayHashMap<Option<NonNull<c_void>>, DeferredRepeatingTask>>,
+    posted_since_run: Cell<bool>,
+    passes: Cell<u32>,
 }
 
 impl DeferredTaskQueue {
@@ -64,6 +66,7 @@ impl DeferredTaskQueue {
             bun_collections::hash_map::Entry::Occupied(_) => true,
             bun_collections::hash_map::Entry::Vacant(v) => {
                 v.insert(task);
+                self.posted_since_run.set(true);
                 false
             }
         }
@@ -76,7 +79,20 @@ impl DeferredTaskQueue {
         unsafe { &mut *self.map.get() }.swap_remove(&ctx)
     }
 
+    /// Whether the last pass may have left a task unrun. A task that only kept its entry did run.
+    pub fn may_have_unrun_tasks(&self) -> bool {
+        // SAFETY: a read of the length.
+        self.posted_since_run.get() && !unsafe { &*self.map.get() }.is_empty()
+    }
+
+    /// How often `run` was called. It changes once the script that is running has returned.
+    pub fn passes(&self) -> u32 {
+        self.passes.get()
+    }
+
     pub fn run(&self) {
+        self.passes.update(|passes| passes.wrapping_add(1));
+        self.posted_since_run.set(false);
         // Callbacks may re-entrantly mutate `self.map` (see the re-entrancy
         // note in the file doc), so re-read `len()` every iteration and
         // re-check slot `i` after each callback. `remaining` is a livelock bound.
@@ -114,7 +130,6 @@ impl DeferredTaskQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::cell::Cell;
 
     #[derive(Default)]
     struct Fixture {

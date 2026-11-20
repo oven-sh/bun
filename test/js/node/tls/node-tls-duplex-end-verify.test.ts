@@ -1894,6 +1894,85 @@ test("over a Duplex: a TLS socket whose peer was destroyed takes its Duplex with
   }
 });
 
+// What `ender` receives from `peer`, which answers end("ask") with end("answer").
+async function answerToEnd(ender: tls.TLSSocket, peer: tls.TLSSocket, when: string) {
+  const log: string[] = [];
+  const answer = () => peer.end("answer");
+  if (when === "'data'") peer.once("data", answer);
+  else peer.resume().once("end", when === "'end'" ? answer : () => setImmediate(answer));
+  for (const socket of [ender, peer]) socket.on("error", (err: NodeJS.ErrnoException) => log.push(`${err.code}`));
+  ender.on("data", chunk => log.push(`${chunk}`)).on("end", () => log.push("end"));
+  const closed = [ender, peer].map(socket => new Promise(resolve => socket.once("close", resolve)));
+  ender.end("ask");
+  await Promise.all(closed);
+  return log;
+}
+
+for (const side of ["client", "server"]) {
+  for (const [when, allowHalfOpen] of [
+    ["'data'", false],
+    ["'end'", false],
+    ["'data'", true],
+    ["'end'", true],
+    ["a later turn", true],
+  ] as const) {
+    test(`2 TLS sessions deep, allowHalfOpen: ${allowHalfOpen}: a ${side} that end()s gets the answer written in ${when}`, async () => {
+      const { clients, servers, close } = await nestedSessions(2, { allowHalfOpen });
+      try {
+        for (const socket of [clients[0], servers[0]]) socket.on("error", () => {});
+        const [ender, peer] = side === "client" ? [clients[1], servers[1]] : [servers[1], clients[1]];
+        assert.deepStrictEqual(await answerToEnd(ender, peer, when), ["answer", "end"]);
+      } finally {
+        close();
+      }
+    });
+  }
+
+  test(`over a Duplex: a ${side} answers the data that came with the close_notify, and then sends its own`, async () => {
+    // From `holding` on, what the other side writes arrives in one chunk, with the EOF behind it.
+    let holding = false;
+    const held: Buffer[] = [];
+    const recordTypes: number[] = [];
+    const makeSide = (name: string, peer: () => Duplex) =>
+      new Duplex({
+        read() {},
+        write(chunk, encoding, callback) {
+          if (holding && name !== side) held.push(chunk);
+          else peer().push(chunk);
+          if (holding && name === side) recordTypes.push(chunk[0]);
+          callback();
+        },
+        final(callback) {
+          setImmediate(() => {
+            peer()
+              .pause()
+              .push(Buffer.concat(held.splice(0)));
+            peer().push(null);
+            peer().resume();
+          });
+          callback();
+        },
+      });
+    const sides = { client: makeSide("client", () => sides.server), server: makeSide("server", () => sides.client) };
+    // TLS 1.2 shows the record type.
+    const server = new tls.TLSSocket(sides.server, { isServer: true, key, cert, maxVersion: "TLSv1.2" });
+    const client = tls.connect({ socket: sides.client, rejectUnauthorized: false });
+    try {
+      await Promise.all([
+        new Promise(secured => client.once("secureConnect", secured)),
+        new Promise(secured => server.once("secure", secured)),
+      ]);
+      holding = true;
+      const [ender, peer] = side === "client" ? [server, client] : [client, server];
+      assert.deepStrictEqual(await answerToEnd(ender, peer, "'data'"), ["answer", "end"]);
+      assert.deepStrictEqual(recordTypes, [23, 21]);
+    } finally {
+      client.destroy();
+      server.destroy();
+    }
+  });
+}
+
 // The peers keep their sides open in these two.
 test("3 TLS sessions deep: a client that rejects the innermost certificate releases the connection", async () => {
   const { clients, servers, close } = await nestedSessions(2, { allowHalfOpen: true });

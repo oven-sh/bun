@@ -2974,14 +2974,6 @@ what is above object 1 connect("a", 1)
   the receiver <- every object, a number, a string
   undefined <- undefined
   null <- null
-what is above object 1 _destroy()
-  undefined <- every receiver
-what is above object 1 _destroy("a", 1)
-  undefined <- every receiver
-what is above object 1 _final()
-  undefined <- every receiver
-what is above object 1 _final("a", 1)
-  undefined <- every receiver
 what is above object 1 localAddress, read
   throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
   throws TypeError: Cannot access invalid private field <- an heir of the prototype object, a proxy of such an heir, the prototype object
@@ -3082,9 +3074,9 @@ what is above object 1 unref("a", 1)
   undefined <- undefined
   null <- null
 what is above object 1 _write()
-  undefined <- every receiver
+  throws TypeError: what is called is not a function <- every receiver
 what is above object 1 _write("a", 1)
-  undefined <- every receiver
+  throws TypeError: what is called is not a function <- every receiver
 what is above object 1 destroy()
   throws TypeError: undefined is not an object <- every object, a number, a string, undefined
   throws TypeError: null is not an object <- null

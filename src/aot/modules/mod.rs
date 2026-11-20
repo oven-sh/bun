@@ -56,7 +56,7 @@ pub use plan::{Member, ModuleRef, Shape, Site, View};
 pub use reexport_paths::{PathStep, ReexportPath};
 pub use referents::{Library, LinkedProject, find_name_stored_as_module_exports};
 pub use requests::Spelling;
-pub(crate) use spelled_files::directory_of;
+pub(crate) use spelled_files::{directory_of, find_files_that_unknown_names_may_require};
 pub(crate) use test_replacements::asks_for_original_beside_mock;
 pub use unlinked_files::UnlinkedFiles;
 pub use wrapped::{InnerModule, InnerModuleKind, WrappedModules};
@@ -173,6 +173,7 @@ struct ScannedModules {
     reloadable_es_modules: Vec<ModuleRef>,
     is_reloadable: Vec<bool>,
     absent_modules: Vec<ModuleRef>,
+    test_files_that_ask_loader: Vec<FileId>,
     binds_skippable_statements: bool,
 }
 
@@ -240,8 +241,17 @@ fn scan_modules(input: &BindInput<'_, '_>, left: StatementsLeft) -> ScannedModul
         input, &scans,
     ));
     let absent_modules = test_run_evictions::find_absent_modules_named_by_mocks(input, &scans);
-    let mut is_reloadable =
-        test_run_evictions::find_reloadable_files(input, &scans, &absent_modules);
+    let mut test_files_that_ask_loader = Vec::new();
+    if evicted.is_any_module_taken_out() {
+        test_files_that_ask_loader =
+            test_run_evictions::find_test_files_that_ask_loader(input, &scans, &mut run_again);
+    }
+    let mut is_reloadable = test_run_evictions::find_reloadable_files(
+        input,
+        &scans,
+        &absent_modules,
+        &test_files_that_ask_loader,
+    );
     // What the loader finds by itself has the loader's module records.
     for &(_, file) in &modules.left_to_loader {
         is_reloadable[file.idx()] = false;
@@ -265,6 +275,7 @@ fn scan_modules(input: &BindInput<'_, '_>, left: StatementsLeft) -> ScannedModul
         reloadable_es_modules,
         is_reloadable,
         absent_modules,
+        test_files_that_ask_loader,
         binds_skippable_statements: checks_statements.is_some(),
     }
 }
@@ -283,6 +294,7 @@ fn bind_scanned_modules(
         reloadable_es_modules,
         is_reloadable,
         absent_modules,
+        test_files_that_ask_loader,
         binds_skippable_statements,
     } = scanned;
     let file_count = input.files.modules.len();
@@ -332,7 +344,7 @@ fn bind_scanned_modules(
         texts.markers_stored_from_outside().into_iter().collect();
     let names_without_code = mocked.names_without_code.clone();
     let (mut tables, imports_from_commonjs) =
-        resolve_begun_exports(input.files, &scans, &modules, begun, &texts);
+        resolve_begun_exports(input.files, &scans, &modules, begun, &texts, &mocked);
     sites.settle(input.files, &modules, &tables);
     steps.end("bind: resolve exports");
     let find_marker = |module: ModuleRef| match modules.interop(module).kind {
@@ -383,19 +395,8 @@ fn bind_scanned_modules(
     let mut replaced_variables: Vec<Sym> = replaced_variables.copied().collect();
     let replaced_names = imports.iter().flat_map(|file| &file.replaced_names);
     let mut replaced_names: Vec<(ModuleRef, Atom)> = replaced_names.copied().collect();
-    let mut replace = |resolution: Resolution| match resolution {
-        Resolution::Variable(variable) => replaced_variables.push(variable),
-        Resolution::Synthetic { module, name } => replaced_names.push((module, name)),
-        Resolution::RuntimeMember { module, name } => {
-            replaced_names.push((ModuleRef::Runtime(module), name));
-        }
-        Resolution::Namespace { .. }
-        | Resolution::LiveName { .. }
-        | Resolution::DynamicStar { .. }
-        | Resolution::Unloadable { .. }
-        | Resolution::NotFound
-        | Resolution::Ambiguous => {}
-    };
+    let mut replaced_resolutions: Vec<Resolution> = Vec::new();
+    let mut replace = |resolution: Resolution| replaced_resolutions.push(resolution);
     let mocked_modules = imports.iter().flat_map(|file| &file.mocked_modules);
     let mut mocked_modules: FxHashSet<ModuleRef> = mocked_modules.copied().collect();
     if !input.run.modules_replaced_in_text.is_empty() {
@@ -551,6 +552,46 @@ fn bind_scanned_modules(
         let files = modules.compiled_files.iter();
         mocked_modules.extend(files.map(|&file| ModuleRef::File(file)));
     }
+    let mocked_files = mocked_modules.iter();
+    for file in mocked_files.filter_map(|&module| modules.table_file(module)) {
+        for &(_, resolved) in tables.names(file) {
+            replace(resolved.resolution);
+        }
+    }
+    let mut names_found_in_run: FxHashSet<(FileId, Atom)> = FxHashSet::default();
+    let mut searched_files: FxHashSet<FileId> = FxHashSet::default();
+    while let Some(resolution) = replaced_resolutions.pop() {
+        match resolution {
+            Resolution::Variable(variable) => replaced_variables.push(variable),
+            Resolution::Synthetic { module, name } => replaced_names.push((module, name)),
+            Resolution::RuntimeMember { module, name } => {
+                replaced_names.push((ModuleRef::Runtime(module), name));
+            }
+            Resolution::LiveName {
+                module: ModuleRef::File(file),
+                name,
+            }
+            | Resolution::DynamicStar { module: file, name } => {
+                if modules.table_file(ModuleRef::File(file)).is_none()
+                    || !names_found_in_run.insert((file, name))
+                {
+                    continue;
+                }
+                let behind = tables.names_behind(&scans, file, name).into_iter();
+                let found =
+                    behind.filter_map(|(file, name)| tables.find_statement_or_result(file, name));
+                replaced_resolutions.extend(found);
+                if tables.has_dynamic_names(ModuleRef::File(file)) && searched_files.insert(file) {
+                    mocked_modules.extend(find_modules_behind_stars(input, &scans, &modules, file));
+                }
+            }
+            Resolution::Namespace { .. }
+            | Resolution::LiveName { .. }
+            | Resolution::Unloadable { .. }
+            | Resolution::NotFound
+            | Resolution::Ambiguous => {}
+        }
+    }
     let of_library = |&module: &ModuleRef| match module {
         ModuleRef::Runtime(module) => Some(module),
         _ => None,
@@ -561,12 +602,6 @@ fn bind_scanned_modules(
     let answered_for = imports.iter();
     let answered_for = answered_for.flat_map(|file| &file.library_modules_answered_for);
     mocked_modules.extend(answered_for.map(|&module| ModuleRef::Runtime(module)));
-    let mocked_files = mocked_modules.iter();
-    for file in mocked_files.filter_map(|&module| modules.table_file(module)) {
-        for &(_, resolved) in tables.names(file) {
-            replace(resolved.resolution);
-        }
-    }
     let replaced = ReplacedNames {
         names: &replaced_names,
         modules: &mocked_modules,
@@ -803,6 +838,7 @@ fn bind_scanned_modules(
             plan.set_is_named_by_mock(module);
         }
         plan.set_absent_modules(absent_modules);
+        plan.set_test_files_that_ask_loader(test_files_that_ask_loader);
         plan.set_names_of_mocks(&mocked);
         if mocks_any_module {
             plan.set_every_module_may_be_mocked();
@@ -972,6 +1008,7 @@ fn bind_scanned_modules(
         folders_of_databases: modules.folders_of_databases,
         star_names_left_out,
         names_laid_on_object_prototype,
+        enums_stored_into: OnceLock::new(),
     };
     let ((), graph) = run_steps_beside(
         input.beside,

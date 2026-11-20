@@ -395,6 +395,7 @@ declare module "node:net" {
   interface Server {
     _handle: Bun.SocketListener<Socket> | null;
     _connections: number;
+    _emitCloseIfDrained(): void;
   }
 }
 
@@ -844,7 +845,7 @@ declare namespace $Node {
     onResolve: Map<string, [RegExp, BundlerPlugin.OnResolveCallback][]> | undefined;
     promises: Promise<unknown>[] | undefined;
     $onEndCallbacks: BundlerPlugin.OnEndCallback[] | undefined;
-    /** `internalID`: the address of the native request, as a double. */
+    /** `internalID`: the request's `BundlerPlugin::RequestID`. */
     onLoadAsync(
       internalID: number,
       sourceCode: string | ArrayBufferView | ArrayBuffer | null,
@@ -1280,8 +1281,8 @@ declare namespace $Node {
     /** Throws what `request()` would throw for these headers. */
     validateRequest(headers: object): undefined;
     setNativeSocket(socket: unknown): undefined;
-    /** `false`: too many pings wait for their acknowledgement. */
-    ping(payload: ArrayBuffer | SharedArrayBuffer | ArrayBufferView): boolean;
+    /** Adds `entry` to `pending` in the order of the frames. `false`: too many pings wait for their acknowledgement, or the session is over. */
+    ping<T>(payload: ArrayBuffer | SharedArrayBuffer | ArrayBufferView, pending: T[], entry: T): boolean;
     altsvc(origin: string, alt: string, streamId: number): undefined;
     origin(origins: string | string[]): undefined;
     goaway(
@@ -1301,11 +1302,14 @@ declare namespace $Node {
       outboundQueueSize: number;
     };
     getFrameCounters(): { framesReceived: number; framesSent: number };
-    settings(settings: object): undefined;
+    /** Adds `entry` to `pending` in the order of the frames. */
+    settings<T>(settings: object, pending: T[], entry: T): undefined;
     setLocalWindowSize(windowSize: number): undefined;
     read(data: ArrayBuffer | SharedArrayBuffer | ArrayBufferView): undefined;
-    /** How many bytes still wait. */
-    flush(): number;
+    /** Parses now what arrived inside a write and waits for its turn. */
+    readHeldInput(): undefined;
+    /** How many bytes still wait. `socketDrained`: a socket written in JS takes bytes again. */
+    flush(socketDrained?: boolean): number;
     detach(keepOutput?: boolean): undefined;
     rstStream(streamId: number, code: number): undefined;
     /** `false`: no such stream can send, and the parser calls `callback`. Otherwise what became of the write. */
@@ -1343,6 +1347,7 @@ declare namespace $Node {
     /** `unread`: the streams released as such that are still alive. Otherwise those whose close was not delivered yet. Only streams with a context. */
     forEachStream(callback: (stream: never, isClosed: boolean) => void, unread?: boolean): undefined;
     emitErrorToAllStreams(code: number): undefined;
+    refusePushesAbove(lastStreamId: number): undefined;
     /** -1: the ids have run out. 0: the peer's limit of concurrent streams is reached. */
     getNextStream(): number;
     /** The promised id, or -1. */
@@ -2481,7 +2486,8 @@ declare namespace $Node {
     setRawReads(enabled: boolean): void;
     isRequestTimedOut(headersTimeout: number, requestTimeout: number): boolean;
     stopParsing(): void;
-    detachParser(): void;
+    detachParser(restOfReadTaken: boolean): void;
+    detachParserAfterRead(): void;
     /** Whether the connection ended in the middle of a message. */
     finishParsing(): boolean;
     closeIfIdle(): boolean;

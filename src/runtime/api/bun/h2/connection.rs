@@ -2,7 +2,7 @@
 
 use super::field_checks::{BlockKind, FieldChecks};
 use super::stream::{PaddingStrategy, RequestMethod, ResetBy, Stream, StreamTable, update};
-use bun_http::lshpack;
+use bun_hpack::{Decoder, Encoder};
 use bun_http_types::h2::flow_control::{DEFAULT_WINDOW_SIZE, RecvWindow, SendWindow};
 use bun_http_types::h2::frame::{
     self, CONNECTION_PREFACE, ErrorCode, FRAME_HEADER_SIZE, Frame, FrameError, FrameHeader,
@@ -25,6 +25,13 @@ pub(crate) mod lib_error {
     pub(crate) const BAD_CLIENT_MAGIC: i32 = -903;
     pub(crate) const FLOODED: i32 = -904;
     pub(crate) const TOO_MANY_CONTINUATIONS: i32 = -905;
+}
+
+/// A SETTINGS frame the peer hasn't ACKed yet.
+struct PendingSettings {
+    /// All values from its ACK on.
+    settings: Settings,
+    has_header_table_size: bool,
 }
 
 /// Outcome of feeding bytes: how many were consumed, and whether the connection is now closing.
@@ -164,6 +171,8 @@ pub(crate) trait Sink {
         stream_id: u32,
         payload: &[&[u8]],
     ) -> bool;
+    /// Can run JS that writes frames. No JS runs between its return and the next `write_frame`'s place on the wire.
+    fn prepare_write(&self);
     /// The bytes that wait to be written, which count toward node's maxSessionMemory.
     fn buffered_output(&self) -> usize;
     /// The owner wants control back before the next frame. `receive` returns `FeedEnd::Yielded`.
@@ -191,7 +200,7 @@ pub(crate) trait Sink {
     fn on_stream_open(&self, stream: &Stream);
     /// A PUSH_PROMISE on `parent_id` reserved `promised_id`. The promised request's fields follow under that id.
     fn on_push_promise(&self, parent_id: u32, promised_id: u32);
-    /// One decoded header field. `name` and `value` point into a shared buffer, so copy them before returning.
+    /// One decoded header field. It must not run JS.
     fn on_header(&self, stream_id: u32, name: &[u8], value: &[u8], never_index: bool);
     /// The block is refused, so the fields `on_header` got for it are dropped.
     fn on_headers_refused(&self);
@@ -228,8 +237,10 @@ pub(crate) struct Connection {
     acked_max_frame_size: Cell<u32>,
     /// The SETTINGS_MAX_HEADER_LIST_SIZE the peer has ACKed. Like nghttp2, a submitted value applies from its ACK on.
     pub enforced_max_header_list_size: Cell<u32>,
-    /// The values of each SETTINGS frame the peer hasn't ACKed yet, in send order (§6.5.3).
-    pub pending_local_settings_acks: JsCell<VecDeque<Settings>>,
+    /// The SETTINGS_ENABLE_PUSH the peer has ACKed. A push can cross the frame that turns it off.
+    pub enforced_enable_push: Cell<bool>,
+    /// In send order (§6.5.3).
+    pending_local_settings_acks: JsCell<VecDeque<PendingSettings>>,
     invalid_frame_count: Cell<u32>,
     /// node's maxSettings: the entries accepted in one SETTINGS frame.
     pub max_settings: Cell<u32>,
@@ -238,7 +249,8 @@ pub(crate) struct Connection {
     pub send_window: Cell<SendWindow>,
     pub recv_window: Cell<RecvWindow>,
 
-    pub hpack: JsCell<lshpack::Coder>,
+    pub encoder: JsCell<Box<Encoder>>,
+    decoder: JsCell<Decoder>,
     /// node's paddingStrategy, which every new stream starts with.
     pub padding_strategy: Cell<PaddingStrategy>,
 
@@ -291,12 +303,14 @@ impl Default for Connection {
             acked_local_initial_window: Cell::new(DEFAULT_WINDOW_SIZE),
             acked_max_frame_size: Cell::new(Settings::default().max_frame_size),
             enforced_max_header_list_size: Cell::new(Settings::default().max_header_list_size),
+            enforced_enable_push: Cell::new(Settings::default().enable_push),
             pending_local_settings_acks: JsCell::new(VecDeque::new()),
             invalid_frame_count: Cell::new(0),
             max_settings: Cell::new(32),
             send_window: Cell::new(SendWindow::new(DEFAULT_WINDOW_SIZE)),
             recv_window: Cell::new(RecvWindow::new(DEFAULT_WINDOW_SIZE)),
-            hpack: JsCell::new(lshpack::Coder::default()),
+            encoder: JsCell::new(Box::new(Encoder::new())),
+            decoder: JsCell::new(Decoder::new()),
             padding_strategy: Cell::new(PaddingStrategy::None),
             streams: StreamTable::default(),
             header_block: JsCell::new(HeaderBlockAssembler::default()),
@@ -344,6 +358,22 @@ impl Connection {
     }
 
     // ---- Outbound -------------------------------------------------------
+
+    /// Call right before writing a SETTINGS frame that leads to `local_settings`.
+    pub(crate) fn note_settings_sent(&self, has_header_table_size: bool) {
+        let settings = self.local_settings.get();
+        if has_header_table_size {
+            // Jetty uses a larger table before it acknowledges it, which Node refuses.
+            self.decoder
+                .with_mut(|d| d.allow_table_size(settings.header_table_size));
+        }
+        self.pending_local_settings_acks.with_mut(|pending| {
+            pending.push_back(PendingSettings {
+                settings,
+                has_header_table_size,
+            });
+        });
+    }
 
     fn send_settings_ack(&self, sink: &impl Sink) {
         sink.write_frame(FrameType::Settings, flags::ACK, 0, &[]);
@@ -693,7 +723,10 @@ impl Connection {
 
     fn handle_settings_ack(&self, sink: &impl Sink) -> bool {
         // §6.5.3: an ACK is for the oldest outstanding SETTINGS, not the latest submission.
-        let Some(acked) = self
+        let Some(PendingSettings {
+            settings: acked,
+            has_header_table_size,
+        }) = self
             .pending_local_settings_acks
             .with_mut(VecDeque::pop_front)
         else {
@@ -713,13 +746,25 @@ impl Connection {
         self.acked_max_frame_size.set(acked.max_frame_size);
         self.enforced_max_header_list_size
             .set(acked.max_header_list_size);
-        self.hpack
-            .with_mut(|h| h.set_acked_header_table_size(acked.header_table_size));
+        self.enforced_enable_push.set(acked.enable_push);
+        if has_header_table_size {
+            // The peer may be using a larger one already.
+            let largest = self
+                .pending_local_settings_acks
+                .get()
+                .iter()
+                .filter(|sent| sent.has_header_table_size)
+                .map(|sent| sent.settings.header_table_size)
+                .fold(acked.header_table_size, u32::max);
+            self.decoder.with_mut(|d| d.set_max_table_size(largest));
+        }
         sink.on_local_settings(&acked);
         false
     }
 
     fn handle_settings(&self, sink: &impl Sink, entries: Entries<'_>) -> bool {
+        // Frames that get ahead of the ACK have to go by the old values.
+        sink.prepare_write();
         let old_initial_window = self.remote_settings.get().initial_window_size;
         for (id, value) in entries {
             if let Some(sid) = SettingId::from_u16(id) {
@@ -739,7 +784,7 @@ impl Connection {
                 update(&self.remote_settings, |r| r.apply(sid, value));
                 // Per entry, because the peer's decoder evicts at each one (RFC 7541 §4.2).
                 if sid == SettingId::HeaderTableSize {
-                    self.hpack.with_mut(|h| h.set_peer_header_table_size(value));
+                    self.encoder.with_mut(|e| e.set_max_table_size(value));
                 }
             } else {
                 sink.on_remote_custom_setting(id, value);
@@ -1116,18 +1161,20 @@ impl Connection {
             is_trailer && !end_stream,
         );
         let block = self.header_block.with_mut(HeaderBlockAssembler::take);
-        let decoded = self.hpack.with_mut(|hpack| {
-            let mut rest = block.as_slice();
-            while !rest.is_empty() {
-                let Ok(field) = hpack.decode(rest) else {
-                    return false;
-                };
-                rest = &rest[field.next..];
-                if deliver && checks.accept(field.name, field.value) {
-                    sink.on_header(target, field.name, field.value, field.never_index);
+        let decoded = self.decoder.with_mut(|decoder| {
+            let mut scratch = Vec::new();
+            let mut fields = decoder.decode(&block, &mut scratch);
+            loop {
+                match fields.next() {
+                    Ok(Some(field)) => {
+                        if deliver && checks.accept(field.name, field.value) {
+                            sink.on_header(target, field.name, field.value, field.never_index);
+                        }
+                    }
+                    Ok(None) => return true,
+                    Err(_) => return false,
                 }
             }
-            true
         });
         self.header_block.with_mut(|b| b.recycle(block));
         if !decoded {
@@ -1416,7 +1463,8 @@ impl Connection {
         }
         // 6.6: a client that disabled push (SETTINGS_ENABLE_PUSH=0) must treat the receipt of a
         // PUSH_PROMISE as a connection error of type PROTOCOL_ERROR.
-        if !self.local_settings.get().enable_push {
+        let wants_push = self.local_settings.get().enable_push;
+        if !wants_push && !self.enforced_enable_push.get() {
             self.send_go_away(
                 sink,
                 ErrorCode::PROTOCOL_ERROR,
@@ -1435,11 +1483,14 @@ impl Connection {
         }
 
         // Like nghttp2, don't reserve the stream after our GOAWAY. Later frames on its id are dropped as frames on a closed stream.
-        let discard = self.goaway_sent.get();
+        let discard = self.goaway_sent.get() || !wants_push;
         if !discard {
             self.insert_stream(promised, State::ReservedRemote);
         }
         self.last_peer_id.set(promised);
+        if !wants_push {
+            self.send_rst_stream(sink, promised, ErrorCode::CANCEL);
+        }
 
         let meta = HeaderBlockMeta {
             target: promised,

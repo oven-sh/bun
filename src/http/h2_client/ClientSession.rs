@@ -14,7 +14,7 @@ use bun_http_types::h2::frame::{ErrorCode, FrameHeader, FrameType, MAX_STREAM_ID
 use bun_http_types::h2::header_block::HeaderBlockAssembler;
 use bun_http_types::h2::settings::DEFAULT_MAX_FRAME_SIZE;
 use bun_http_types::h2::stream::State as StreamState;
-use bun_ptr::RefPtr;
+use bun_ptr::{AliasableBox, RefPtr};
 
 use super::stream::Stream;
 use super::{dispatch, encode};
@@ -22,10 +22,12 @@ use crate::http_context::{HTTPSocket, PeerVerification};
 use crate::http_request_body::HTTPRequestBody;
 use crate::http_thread::WriteMessageType;
 use crate::internal_state::HTTPStage;
-use crate::lshpack;
 use crate::signals;
 use crate::ssl_config;
-use crate::{Carrier, HTTPClient, HTTPVerboseLevel, NewHTTPContext, Protocol, StreamProgress};
+use crate::{
+    Carrier, HTTPClient, HTTPVerboseLevel, InFlightRequest, NewHTTPContext, Protocol,
+    RequestBuffer, Response, StreamProgress,
+};
 
 /// HTTP/2 only ever runs over TLS in this client (ALPN "h2").
 pub type Socket = HTTPSocket<true>;
@@ -46,22 +48,11 @@ type u24 = u32;
 
 #[derive(bun_ptr::CellRefCounted)]
 pub struct ClientSession {
-    /// Ref holders: the socket-ext tag while the session is the ActiveSocket
-    /// (1), the context's active_h2_sessions registry while listed (1), and
-    /// the keep-alive pool while parked (1). Hand-offs between socket and
-    /// pool transfer a ref rather than touching the count.
+    /// One ref moves between `active_h2_sessions`, while the socket ext points here, and the keep-alive pool.
     pub(crate) ref_count: Cell<u32>,
-    /// Set when a `&mut self` body has torn the session down (`fail_streams`,
-    /// or `maybe_release` closing an unpoolable socket) and the socket-ext ref
-    /// is therefore due to be released. The body cannot release it itself: at
-    /// that point it is normally the last ref, and freeing the session while a
-    /// `&mut self` argument to it is live is undefined behaviour even if the
-    /// reference is never used again. The [`SessionPtr`] entry point that ran
-    /// the body takes the flag and releases the ref once the borrow has ended
-    /// (see [`ClientSession::enter`]).
-    socket_ref_owed: Cell<bool>,
 
-    pub(crate) hpack: lshpack::Coder,
+    pub(crate) encoder: bun_hpack::Encoder,
+    pub(crate) decoder: bun_hpack::Decoder,
     pub(crate) socket: Socket,
     pub(crate) ctx: *mut NewHTTPContext<true>, // BACKREF: context outlives and registers this session
 
@@ -85,14 +76,14 @@ pub struct ClientSession {
     /// available, so frame handlers always see complete frames.
     pub(crate) read_buffer: Vec<u8>,
 
-    pub(crate) streams: ArrayHashMap<u31, *mut Stream>,
+    pub(crate) streams: ArrayHashMap<u31, AliasableBox<Stream>>,
     pub(crate) next_stream_id: u31,
     /// The inbound HEADERS + CONTINUATION sequence in progress.
     pub(crate) header_block: HeaderBlockAssembler,
 
     /// Cold-start coalesced requests parked until the server's first SETTINGS
     /// frame arrives so the real MAX_CONCURRENT_STREAMS cap can be honoured.
-    pub(crate) pending_attach: Vec<*mut HTTPClient<'static>>, // BACKREF: client owns itself; session only borrows
+    pub(crate) pending_attach: Vec<InFlightRequest>,
 
     pub(crate) preface_sent: bool,
     pub(crate) settings_received: bool,
@@ -120,7 +111,6 @@ pub struct ClientSession {
     pub(crate) liveness_ping_spent: bool,
     pub(crate) fatal_error: Option<Error>,
     /// Reused by `write_request`: a request's fields, and their HPACK encoding.
-    pub(crate) request_fields: lshpack::HeaderBlock,
     pub(crate) encode_scratch: Vec<u8>,
 
     pub(crate) remote_max_frame_size: u24,
@@ -142,7 +132,7 @@ pub struct ClientSession {
 /// Every `pub(crate)` entry point that can leave the session released (socket
 /// events, the registry / pool hand-offs in `HTTPContext::connect`, the
 /// per-request wakeups from `HTTPThread`) takes one of these instead of
-/// `&mut self` and goes through [`ClientSession::enter`], so the releases
+/// `&mut self` and goes through [`ClientSession::enter`], so frees can only
 /// happen through the holder's pointer after the body's `&mut` borrow has
 /// ended. Callers that need the session alive across two entry points hold a
 /// [`RefPtr::from_this`] guard of their own across both.
@@ -171,51 +161,10 @@ fn stream_ref(ptr: *const Stream) -> bun_ptr::ParentRef<Stream> {
     bun_ptr::ParentRef::from(NonNull::new(ptr.cast_mut()).expect("streams entry is non-null"))
 }
 
-/// Upgrade a `*mut HTTPClient` from `pending_attach` to `&mut HTTPClient`.
-///
-/// INVARIANT: `pending_attach` entries are back-refs registered via
-/// `enqueue`/`adopt` (each is `client.as_erased_ptr().as_ptr()`, hence
-/// non-null); each points at a live `HTTPClient` embedded in its `AsyncHTTP`,
-/// alive until its terminal callback (which removes it from the queue first).
-/// Disjoint allocation from `ClientSession`. HTTP-thread-only.
-#[inline(always)]
-fn pending_client_mut<'a>(ptr: *mut HTTPClient<'static>) -> &'a mut HTTPClient<'static> {
-    // Route through the crate-wide [`HTTPClient::from_erased_backref`] accessor;
-    // `pending_attach` entries originate from `as_erased_ptr()`, never null.
-    HTTPClient::from_erased_backref(NonNull::new(ptr).expect("pending_attach entries are non-null"))
-}
-
-/// Upgrade a `NonNull<HTTPClient>` taken from `Stream.client` to `&mut`.
-///
-/// INVARIANT: `Stream.client` is a back-ref to the live `HTTPClient` embedded
-/// in its `AsyncHTTP`, set in `attach()` and cleared before the terminal
-/// callback. Disjoint allocation from both `Stream` and `ClientSession`, so
-/// the returned `&mut` does not alias either. HTTP-thread-only.
-#[inline(always)]
-pub(super) fn stream_client_mut<'a>(
-    c: NonNull<HTTPClient<'static>>,
-) -> &'a mut HTTPClient<'static> {
-    // Route through the crate-wide [`HTTPClient::from_erased_backref`] accessor;
-    // see INVARIANT above.
-    HTTPClient::from_erased_backref(c)
-}
-
-/// Reclaim and drop a `Stream` previously `heap::alloc`-boxed in `attach()`.
-///
-/// INVARIANT (module): `stream` was removed from `ClientSession.streams`
-/// immediately before this call, so the session is the sole remaining owner.
-#[inline(always)]
-fn drop_stream(stream: *mut Stream) {
-    // SAFETY: see INVARIANT above.
-    unsafe { drop(bun_core::heap::take(stream)) };
-}
-
 impl ClientSession {
     /// Wrap a holder's pointer as a [`SessionPtr`].
     ///
-    /// INVARIANT: `session` is a session the caller holds a ref on (a socket
-    /// ext slot's tag, a registry or pool entry, or the pointer `create`
-    /// returned), so it is live for as long as the caller uses the handle.
+    /// INVARIANT: a registry or pool entry holds a ref on `session`.
     /// HTTP-thread-only.
     #[inline]
     pub(crate) fn this_ptr(session: NonNull<ClientSession>) -> SessionPtr {
@@ -223,28 +172,13 @@ impl ClientSession {
         unsafe { SessionPtr::new(session.as_ptr()) }
     }
 
-    /// Run a `&mut self` body on the session behind `this`, then perform the
-    /// releases it asked for.
-    ///
-    /// The guard keeps the session alive while the body re-enters clients
-    /// (delivering bodies, failing requests) and releases the registry ref, so
-    /// no release inside the body is ever the last one. `body` receives a
-    /// reborrow that ends when it returns; only then is the socket-ext ref it
-    /// may have given up (`socket_ref_owed`) released, followed by the guard's
-    /// own ref, both through `this`. When the body tore the session down that
-    /// second release frees it, with no reference to it live anywhere.
-    fn enter(this: SessionPtr, body: impl FnOnce(&mut ClientSession)) {
+    /// Run a `&mut self` body under a ref, so that no release inside the body is the last one.
+    fn enter<R>(this: SessionPtr, body: impl FnOnce(&mut ClientSession) -> R) -> R {
         let _guard = RefPtr::from_this(this);
         // SAFETY: `this` is live (see `this_ptr`; the guard above holds it for
         // the rest of this call) and HTTP-thread-only, so this is the only
         // borrow of the session for the duration of `body`.
-        body(unsafe { &mut *this.as_ptr() });
-        if this.socket_ref_owed.take() {
-            // SAFETY: the body gave up the socket ext's ref; `_guard`
-            // still holds one, so the session is live and this release is not
-            // the last. No borrow of the session is live: the body's ended.
-            unsafe { ClientSession::deref(this.as_ptr()) };
-        }
+        body(unsafe { &mut *this.as_ptr() })
     }
 
     /// Socket onData entry point; see [`Self::handle_data`].
@@ -258,10 +192,15 @@ impl ClientSession {
     }
 
     /// Socket onClose entry point. The socket is already gone, so
-    /// every stream fails and the socket ext's ref is released; unless a
+    /// every stream fails and the registry's ref is released; unless a
     /// caller holds its own guard, the session is freed before this returns.
     pub(crate) fn on_close(this: SessionPtr, err: Error) {
         Self::enter(this, |s| s.fail_streams(err));
+    }
+
+    /// The JS thread can pause a body after the timer was armed. `resume_receive` arms it again.
+    pub(crate) fn outlives_timeout(&self) -> bool {
+        !self.awaiting_ping_ack && !self.streams.is_empty() && !self.waits_for_origin()
     }
 
     /// Socket onTimeout entry point; see [`Self::on_close`]. When the wait for
@@ -279,16 +218,14 @@ impl ClientSession {
 
     /// Multiplex `client` onto an established (registered or pool-resumed)
     /// session; see [`Self::adopt_client`].
-    pub(crate) fn adopt(this: SessionPtr, client: &mut HTTPClient) -> bool {
-        let mut adopted = false;
-        Self::enter(this, |s| adopted = s.adopt_client(client));
-        adopted
+    pub(crate) fn adopt(this: SessionPtr, client: InFlightRequest) -> Result<(), InFlightRequest> {
+        Self::enter(this, |s| s.adopt_client(client))
     }
 
     /// Open the first stream on a session `create` just returned, for the
     /// client whose connect negotiated h2. Unlike [`Self::adopt`] this does not
     /// wait for the server's SETTINGS: the leader's stream carries the preface.
-    pub(crate) fn attach_leader(this: SessionPtr, client: &mut HTTPClient) {
+    pub(crate) fn attach_leader(this: SessionPtr, client: InFlightRequest) {
         Self::enter(this, |s| s.attach(client));
     }
 
@@ -307,13 +244,12 @@ impl ClientSession {
     }
 
     /// A request in `pending_attach` was aborted.
-    pub(crate) fn abort_parked(
-        session: NonNull<ClientSession>,
-        client: NonNull<HTTPClient<'static>>,
-    ) {
+    pub(crate) fn abort_parked(session: NonNull<ClientSession>, async_http_id: u64) {
         Self::enter(Self::this_ptr(session), |s| {
-            s.pending_attach.retain(|&parked| parked != client.as_ptr());
-            pending_client_mut(client.as_ptr()).fail(crate::Error::Aborted);
+            let i = (s.pending_attach.iter()).position(|c| c.async_http_id() == async_http_id);
+            (s.pending_attach)
+                .remove(i.expect("named by its carrier"))
+                .fail(crate::Error::Aborted);
             s.after_abort(s.last_read);
         });
     }
@@ -328,19 +264,18 @@ impl ClientSession {
     /// The consumer of the stream's response body takes bytes again.
     pub(crate) fn resume_receive(stream: NonNull<Stream>) {
         Self::enter(Self::of_stream(stream), |s| {
-            s.replenish_window();
-            if s.write_buffer.is_not_empty() {
-                if let Err(err) = s.flush() {
-                    return s.fail_all(err);
-                }
-            }
-            let Some(client) = stream_mut(stream.as_ptr()).client_mut() else {
+            let Some(client) = &mut stream_mut(stream.as_ptr()).client else {
                 return;
             };
             if let Err(err) = client.send_held_body() {
                 s.detach_with_failure(stream.as_ptr(), err);
                 s.rearm_timeout();
-                s.maybe_release();
+                return s.maybe_release();
+            }
+            s.replenish_window();
+            s.rearm_timeout();
+            if let Err(err) = s.flush() {
+                s.fail_all(err);
             }
         });
     }
@@ -370,7 +305,7 @@ impl ClientSession {
     }
 
     /// Allocate a session for a socket whose ALPN just selected h2 and list it
-    /// in the context's registry. The returned handle carries the socket ext's
+    /// in the context's registry. The returned handle borrows the registry's
     /// ref: the caller tags the socket with it (`tag_as_h2`) and then opens the
     /// leader's stream with [`Self::attach_leader`].
     pub(crate) fn create(
@@ -378,10 +313,10 @@ impl ClientSession {
         socket: Socket,
         client: &HTTPClient,
     ) -> SessionPtr {
-        let this = bun_core::heap::into_raw(Box::new(ClientSession {
+        let this = RefPtr::new(ClientSession {
             ref_count: Cell::new(1),
-            socket_ref_owed: Cell::new(false),
-            hpack: lshpack::Coder::default(),
+            encoder: bun_hpack::Encoder::new(),
+            decoder: bun_hpack::Decoder::new(),
             socket,
             ctx,
             hostname: Box::<[u8]>::from(client.connected_url.hostname),
@@ -406,7 +341,6 @@ impl ClientSession {
             ping_cap_armed: false,
             liveness_ping_spent: false,
             fatal_error: None,
-            request_fields: lshpack::HeaderBlock::default(),
             encode_scratch: Vec::new(),
             remote_max_frame_size: DEFAULT_MAX_FRAME_SIZE,
             remote_max_concurrent_streams: 100,
@@ -414,13 +348,12 @@ impl ClientSession {
             conn_send_window: SendWindow::new(DEFAULT_WINDOW_SIZE),
             conn_recv_window: RecvWindow::new(LOCAL_INITIAL_WINDOW_SIZE),
             registry_index: Cell::new(u32::MAX),
-        }));
+        });
         super::live_sessions.fetch_add(1, Ordering::Relaxed);
         // `ctx` is a live back-ref to the owning context (set-once,
         // HTTP-thread-only, no ancestor `&mut HTTPContext` on this path) —
         // route through the centralised [`HTTPClient::ssl_ctx_mut`] accessor.
-        HTTPClient::ssl_ctx_mut(ctx).register_h2(this);
-        Self::this_ptr(NonNull::new(this).expect("heap::into_raw is non-null"))
+        HTTPClient::ssl_ctx_mut(ctx).register_h2(this)
     }
 
     pub(crate) fn has_headroom(&self) -> bool {
@@ -445,11 +378,11 @@ impl ClientSession {
         self.port == port
             && self.pool.id == pool_id
             && mine == ssl_config
-            && strings::eql_long(&self.hostname, hostname, true)
+            && strings::eql_long(&self.hostname, hostname)
     }
 
-    /// Returns false if the session has no room for `client`, which `connect()` then places elsewhere.
-    fn adopt_client(&mut self, client: &mut HTTPClient) -> bool {
+    /// Gives `client` back if the session has no room for it. `connect()` then places it elsewhere.
+    fn adopt_client(&mut self, client: InFlightRequest) -> Result<(), InFlightRequest> {
         // Park instead of attaching when (a) we're inside onData's deliver
         // loop — attach() mustn't mutate `streams` under iteration — or (b)
         // the server's first SETTINGS hasn't arrived yet, so the real
@@ -458,7 +391,7 @@ impl ClientSession {
         // attaches directly so the preface still goes out.
         if self.delivering || !self.settings_received {
             self.park(client);
-            return true;
+            return Ok(());
         }
         // Belt-and-suspenders: callers gate on hasHeadroom(), but a session
         // pulled from the keep-alive pool (HTTPContext.existingSocket) may have
@@ -466,7 +399,7 @@ impl ClientSession {
         // dropped it.
         if !self.has_headroom() {
             self.maybe_release();
-            return false;
+            return Err(client);
         }
         self.attach(client);
         if self.streams.count() == 0 {
@@ -474,19 +407,19 @@ impl ClientSession {
             self.goaway_received = true;
             self.maybe_release();
         }
-        true
+        Ok(())
     }
 
     /// Park a request that was coalesced onto this session's connect until the
     /// server's SETTINGS arrive; see [`Self::park`].
-    pub(crate) fn enqueue(this: SessionPtr, client: &mut HTTPClient<'_>) {
+    pub(crate) fn enqueue(this: SessionPtr, client: InFlightRequest) {
         Self::enter(this, |s| s.park(client));
     }
 
     /// Park a coalesced request until the server's SETTINGS arrive.
-    fn park(&mut self, client: &mut HTTPClient<'_>) {
+    fn park(&mut self, mut client: InFlightRequest) {
         client.carrier = Carrier::H2Parked(NonNull::from(&mut *self));
-        self.pending_attach.push(client.as_erased_ptr().as_ptr());
+        self.pending_attach.push(client);
         self.rearm_timeout();
     }
 
@@ -495,8 +428,7 @@ impl ClientSession {
             return;
         }
         let waiters = core::mem::take(&mut self.pending_attach);
-        for client_ptr in waiters {
-            let client = pending_client_mut(client_ptr);
+        for client in waiters {
             if let Some(err) = self.fatal_error {
                 client.fail(err);
             } else if client.signals.get(signals::Field::Aborted) {
@@ -504,7 +436,7 @@ impl ClientSession {
             } else if self.has_headroom() {
                 self.attach(client);
             } else {
-                client.retry_after_h2_coalesce();
+                client.connect();
             }
         }
     }
@@ -554,19 +486,19 @@ impl ClientSession {
 
     /// Allocate a stream for `client`, serialise its request as HEADERS +
     /// DATA, and flush.
-    fn attach(&mut self, client: &mut HTTPClient) {
+    fn attach(&mut self, mut client: InFlightRequest) {
         debug_assert!(self.has_headroom());
 
-        let stream = bun_core::heap::into_raw(Stream::new(
+        let owned = AliasableBox::new(Stream::new(
             self.next_stream_id,
             NonNull::from(&mut *self),
-            Some(client.as_erased_ptr()),
             SendWindow::new(self.remote_initial_window_size),
         ));
+        let stream = owned.as_ptr();
         super::live_streams.fetch_add(1, Ordering::Relaxed);
         self.next_stream_id = self.next_stream_id.saturating_add(2);
         let stream_ref = stream_mut(stream);
-        let _ = self.streams.put(stream_ref.id, stream);
+        let _ = self.streams.put(stream_ref.id, owned);
         client.carrier = Carrier::H2(NonNull::from(&mut *stream_ref));
         client.flags.protocol = Protocol::Http2;
         client.allow_retry = false;
@@ -575,21 +507,17 @@ impl ClientSession {
             encode::write_preface(self);
         }
 
-        self.rearm_timeout();
         // DATA-frame encoding may yield mid-body — compress into the Vec so the
         // cursor stays valid across event-loop ticks.
         if let Err(e) = client.compress_body_for_send(false) {
             self.remove_stream(stream);
-            client.carrier = Carrier::None;
-            client.fail(e);
-            return;
+            return client.fail(e);
         }
-        let mut header_overflow = Vec::new();
-        let request = client.build_request(client.body_len_for_send(), &mut header_overflow);
-        if let Err(err) = encode::write_request(self, client, stream_ref, &request) {
+        let mut buffer = RequestBuffer::default();
+        let request = client.build_request(&mut buffer);
+        if let Err(err) = encode::write_request(self, &mut client, stream_ref, &request) {
             // No RST: the server never saw this stream id, and RST_STREAM on an idle stream is a connection error (RFC 9113 §5.1).
             self.remove_stream(stream);
-            client.carrier = Carrier::None;
             client.fail(err);
             let _ = self.flush();
             return;
@@ -610,23 +538,26 @@ impl ClientSession {
             HTTPStage::Body
         };
         client.state.response_stage = HTTPStage::Headers;
+        stream_ref.client = Some(client);
 
+        self.rearm_timeout();
         if let Err(err) = self.pump_send_bodies() {
             self.fail_all(err);
             return;
         }
 
-        if client.flags.is_streaming_request_body {
-            // Nothing of the response is here to decode, so this can't fail.
-            let _ = client.send_progress();
+        if let Some(client) = &mut stream_mut(stream).client
+            && client.flags.is_streaming_request_body
+        {
+            client.send_partial_result();
         }
     }
 
     /// Unlink `stream` from the session map and free it.
     fn remove_stream(&mut self, stream: *mut Stream) {
         let s = stream_mut(stream);
-        self.streams.swap_remove(&s.id);
-        drop_stream(stream);
+        let id = s.id;
+        self.streams.swap_remove(&id);
     }
 
     /// Remove `stream` from the session, RST it, and fail its client. The
@@ -636,12 +567,9 @@ impl ClientSession {
         self.rst_stream(s, ErrorCode::CANCEL);
         let _ = self.flush();
         let client = s.client.take();
-        if let Some(c) = client {
-            stream_client_mut(c).carrier = Carrier::None;
-        }
         self.remove_stream(stream);
         if let Some(c) = client {
-            stream_client_mut(c).fail(err);
+            c.fail(err);
         }
     }
 
@@ -661,13 +589,13 @@ impl ClientSession {
             any_unbounded |= eff == 0;
             want = want.max(eff);
         };
-        for &s in self.streams.values() {
-            if let Some(c) = stream_ref(s).client_ref() {
+        for s in self.streams.values() {
+            if let Some(c) = &s.client {
                 fold(c.effective_idle_timeout_seconds());
             }
         }
-        for &c in &self.pending_attach {
-            fold(pending_client_mut(c).effective_idle_timeout_seconds());
+        for c in &self.pending_attach {
+            fold(c.effective_idle_timeout_seconds());
         }
         // A client whose effective deadline is 0 ("no timeout": explicit
         // `{timeout:false}`, or no override under global=0) contributes 0 to
@@ -679,6 +607,9 @@ impl ClientSession {
         if any_unbounded && want != 0 {
             let global = crate::idle_timeout_seconds();
             want = if global == 0 { 0 } else { want.max(global) };
+        }
+        if !self.waits_for_origin() {
+            want = 0;
         }
         self.ping_cap_armed = false;
         if self.awaiting_ping_ack {
@@ -695,11 +626,21 @@ impl ClientSession {
         self.socket.set_timeout(want);
     }
 
+    /// False while every response waits for its reader.
+    fn waits_for_origin(&self) -> bool {
+        !self.pending_attach.is_empty()
+            || self
+                .streams
+                .values()
+                .iter()
+                .any(|s| s.client.as_ref().is_some_and(|c| !c.holds_stream_window()))
+    }
+
     /// New request body bytes (or end-of-body) are available in the request's
     /// ThreadSafeStreamBuffer.
     fn on_request_body(&mut self, stream: *mut Stream, message: WriteMessageType) {
         {
-            let Some(client) = stream_mut(stream).client_mut() else {
+            let Some(client) = &mut stream_mut(stream).client else {
                 return;
             };
             let HTTPRequestBody::Stream(ref mut st) = client.state.original_request_body else {
@@ -732,14 +673,12 @@ impl ClientSession {
         }
         // Collect (id, increment) pairs before mutating self.
         let mut updates: Vec<(u32, u32)> = Vec::new();
-        for &s in self.streams.values() {
+        for s in self.streams.values().iter().map(AliasableBox::as_ptr) {
             let s = stream_mut(s);
             if !s.recv_window.needs_update() || s.remote_closed() {
                 continue;
             }
-            if s.client_ref()
-                .is_some_and(|c| c.signals.is_receive_paused())
-            {
+            if s.client.as_ref().is_some_and(|c| c.holds_stream_window()) {
                 continue;
             }
             updates.push((s.id, s.recv_window.take_update()));
@@ -782,7 +721,7 @@ impl ClientSession {
 
     /// Parse frames into per-stream state, deliver each ready stream to its
     /// client, then pool or close if no streams remain. Structured "parse all
-    /// → deliver all" because delivering may free the client.
+    /// → deliver all" because delivering may finish the request.
     fn handle_data(&mut self, incoming: &[u8]) {
         self.last_read = Instant::now();
         let was_awaiting_ping_ack = self.awaiting_ping_ack;
@@ -830,9 +769,10 @@ impl ClientSession {
         let mut i: usize = 0;
         let mut rst_any = false;
         while i < self.streams.count() {
-            let stream = self.streams.values()[i];
-            if self.deliver_stream(stream) {
-                let s = stream_mut(stream);
+            let stream = self.streams.values()[i].as_ptr();
+            self.deliver_stream(stream);
+            let s = stream_mut(stream);
+            if s.client.is_none() {
                 // Any detach that leaves the stream open from the server's
                 // perspective (we never sent END_STREAM, *or* the server
                 // never did and hasn't RST'd) must signal abandonment so the
@@ -914,8 +854,7 @@ impl ClientSession {
 
     /// Tear the session down once its socket is gone (or, via `fail_all`,
     /// about to be closed): leave the registry, fail every parked and attached
-    /// request, and hand the socket-ext ref to the enclosing entry point for
-    /// release. Runs exactly once per session: the socket is dead afterwards,
+    /// request. Runs exactly once per session: the socket is dead afterwards,
     /// so no further socket event reaches it, and every `fail_all` caller
     /// returns straight away.
     fn fail_streams(&mut self, err: Error) {
@@ -924,35 +863,20 @@ impl ClientSession {
         // failure → fail_all() while connect() still holds `&mut HTTPContext`,
         // so route through the raw-ptr helper instead of forming a second
         // aliased `&mut NewHTTPContext` via autoref.
-        unsafe { NewHTTPContext::<true>::unregister_h2_raw(self.ctx, self) };
+        let registry_ref = unsafe { NewHTTPContext::<true>::unregister_h2_raw(self.ctx, self) };
+        debug_assert!(registry_ref.is_some(), "h2 session torn down twice");
         for client in core::mem::take(&mut self.pending_attach) {
-            pending_client_mut(client).fail(err);
+            client.fail(err);
+        }
+        for stream in self.streams.values() {
+            if let Some(c) = stream_mut(stream.as_ptr()).client.take() {
+                c.fail(err);
+            }
         }
         // `handle_data`'s deliver loop holds a stream across the callback that re-entered here.
-        let deliver_loop_frees_streams = self.delivering;
-        for &e in self.streams.values() {
-            let client = stream_mut(e).client.take();
-            if let Some(c) = client {
-                stream_client_mut(c).carrier = Carrier::None;
-            }
-            if !deliver_loop_frees_streams {
-                drop_stream(e);
-            }
-            if let Some(c) = client {
-                stream_client_mut(c).fail(err);
-            }
-        }
-        if !deliver_loop_frees_streams {
+        if !self.delivering {
             self.streams.clear_retaining_capacity();
         }
-        self.give_up_socket_ref();
-    }
-
-    /// The socket-ext ref is no longer wanted; `enter` releases it once this
-    /// body has returned. See `socket_ref_owed`.
-    fn give_up_socket_ref(&self) {
-        debug_assert!(!self.socket_ref_owed.get(), "h2 session torn down twice");
-        self.socket_ref_owed.set(true);
     }
 
     fn fail_all(&mut self, err: Error) {
@@ -1000,8 +924,8 @@ impl ClientSession {
     fn reap_aborted(&mut self) {
         let mut i: usize = 0;
         while i < self.streams.count() {
-            let stream = self.streams.values()[i];
-            let aborted = match stream_ref(stream).client_ref() {
+            let stream = self.streams.values()[i].as_ptr();
+            let aborted = match &stream_ref(stream).client {
                 Some(c) => c.signals.get(signals::Field::Aborted),
                 None => {
                     i += 1;
@@ -1017,7 +941,7 @@ impl ClientSession {
     }
 
     /// Once the last request is gone, leave the registry and either park the
-    /// connection in the keep-alive pool (which takes over the socket-ext ref)
+    /// connection in the keep-alive pool (which takes over the registry's ref)
     /// or close it and give that ref up. A connection that could be parked
     /// first waits for the ACK of its liveness PING.
     fn maybe_release(&mut self) {
@@ -1032,20 +956,18 @@ impl ClientSession {
         // path that has already unregistered (abort, a
         // `fail_all` earlier in the same entry point) leaves it at maxInt so a
         // second caller can't close the socket or give up the ref twice.
-        if self.registry_index.get() == u32::MAX {
-            return;
-        }
         // SAFETY: ctx back-ref is valid for the session's lifetime. This path
         // is reachable re-entrantly via HTTPContext::connect() → adopt() while
         // connect() still holds `&mut HTTPContext<true>`, so we MUST NOT
         // materialise a second `&mut NewHTTPContext` from the backref —
         // unregister_h2_raw operates via raw-ptr place projection instead.
-        unsafe { NewHTTPContext::<true>::unregister_h2_raw(self.ctx, self) };
+        let registry_ref = unsafe { NewHTTPContext::<true>::unregister_h2_raw(self.ctx, self) };
+        if registry_ref.is_none() {
+            return;
+        }
         if self.can_pool() && !self.socket.is_closed_or_has_error() {
             // Pool stores the live *ClientSession so a later fetch can resume
-            // the multiplexed connection; the socket ext's ref moves to it.
-            // SAFETY: `self` is heap-owned and that ref is outstanding.
-            let self_ref = unsafe { RefPtr::from_raw(core::ptr::from_mut(self)) };
+            // the multiplexed connection; the registry's ref moves to it.
             // ctx back-ref is valid for the session's lifetime. Unlike
             // `unregister_h2_raw` above, this branch is *not* reachable on the
             // re-entrant `connect()` → `adopt()` path: every adopt-side entry
@@ -1066,44 +988,32 @@ impl ClientSession {
                 b"",
                 0,
                 0,
-                Some(self_ref),
+                registry_ref,
                 b"",
                 self.pool,
             );
         } else {
             NewHTTPContext::<true>::close_socket(self.socket);
-            self.give_up_socket_ref();
         }
     }
 
     /// Deliver any ready headers/body/error on `stream` to its client.
-    /// Returns true when the stream is finished and should be removed.
-    /// After a true return, neither `stream.client` nor the client's memory
-    /// may be touched.
-    fn deliver_stream(&mut self, stream_ptr: *mut Stream) -> bool {
+    /// Leaves `stream.client` empty when the stream is finished and should be removed.
+    fn deliver_stream(&mut self, stream_ptr: *mut Stream) {
         let stream = stream_mut(stream_ptr);
-        let Some(client_ptr) = stream.client else {
-            return true;
+        let Some(mut client) = stream.client.take() else {
+            return;
         };
-        // `stream.client` is a disjoint allocation from `stream`, so this
-        // `&mut HTTPClient` does not overlap the `&mut Stream` above.
-        let client = stream_client_mut(client_ptr);
 
         if client.signals.get(signals::Field::Aborted) {
             self.rst_stream(stream, ErrorCode::CANCEL);
             let _ = self.flush();
-            stream.client = None;
-            client.carrier = Carrier::None;
-            client.fail(crate::Error::Aborted);
-            return true;
+            return client.fail(crate::Error::Aborted);
         }
 
         if let Some(err) = stream.fatal_error {
-            stream.client = None;
-            client.carrier = Carrier::None;
             if stream.http1_required && stream.status_code == 0 && client.can_retry_over_http1() {
-                client.retry_over_http1();
-                return true;
+                return client.retry_over_http1();
             }
             // Only transparently retry when the server refused the stream
             // before producing any of it (REFUSED_STREAM after HEADERS would
@@ -1117,43 +1027,31 @@ impl ClientSession {
                     HTTPRequestBody::Bytes(_)
                 )
             {
-                client.retry_from_h2();
-            } else {
-                client.fail(err);
+                return client.retry_from_h2();
             }
-            return true;
+            return client.fail(err);
         }
 
         if stream.status_code == 0 {
-            return false;
+            stream.client = Some(client);
+            return;
         }
-        let head = core::mem::take(&mut stream.headers_ready)
-            .then_some((stream.status_code, stream.decoded_headers.as_slice()));
-        let mut progress =
+        let head = core::mem::take(&mut stream.headers_ready).then(|| {
+            Response::from_fields(
+                stream.status_code,
+                core::mem::take(&mut stream.decoded_headers),
+            )
+        });
+        let progress =
             client.receive_from_stream(head, &stream.body_buffer, stream.remote_closed());
         stream.body_buffer.clear();
-        if let Ok(StreamProgress::Open { report }) = progress {
-            if !report {
-                return false;
-            }
-            match client.send_progress() {
-                Ok(_) => return false,
-                Err(err) => progress = Err(err),
-            }
-        }
         // `handle_data` resets a stream that the server still has open.
-        stream.client = None;
-        client.carrier = Carrier::None;
         match progress {
+            Ok(StreamProgress::Open) => stream.client = Some(client),
+            Ok(StreamProgress::Complete) => client.deliver(),
             Ok(StreamProgress::Redirect) => client.follow_redirect(),
-            Ok(_) => {
-                if let Err(err) = client.send_progress() {
-                    client.fail(err);
-                }
-            }
             Err(err) => client.fail(err),
         }
-        true
     }
 }
 
@@ -1161,13 +1059,5 @@ impl Drop for ClientSession {
     fn drop(&mut self) {
         super::live_sessions.fetch_sub(1, Ordering::Relaxed);
         debug_assert!(self.registry_index.get() == u32::MAX);
-        // hpack: HpackHandle drops automatically (lshpack_wrapper_deinit).
-        // write_buffer / read_buffer / pending_attach / header_block /
-        // encode_scratch / hostname / ssl_config are dropped automatically.
-        for &e in self.streams.values() {
-            drop_stream(e);
-        }
-        // streams map storage drops automatically.
-        // bun.destroy(this) — handled by heap::take in `deref`.
     }
 }

@@ -17,6 +17,7 @@ use bun_uws::NewSocketHandler;
 use bun_uws_sys::socket_group::VTable;
 use bun_uws_sys::{ConnectingSocket, SocketKind, us_bun_verify_error_t, us_socket_t, vtable};
 
+use super::NativeRef;
 use super::uws_handlers as handlers;
 
 /// kind → vtable. Rust kinds get a monomorphized `Trampolines<H>` vtable
@@ -203,18 +204,13 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
     data: *mut u8,
     len: c_int,
 ) -> *mut us_socket_t {
-    // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref
-    // (`s` is non-null per loop.c contract).
-    let s_ref = us_socket_t::opaque_mut(s);
-    debug_assert!(s_ref.kind() == SocketKind::BunSocketTls);
+    debug_assert!(us_socket_t::opaque_mut(s).kind() == SocketKind::BunSocketTls);
     // `bun.jsc.API.NewSocket(true)` → the runtime-local `socket::NewSocket<true>`.
     type TLSSocket = super::NewSocket<true>;
-    // The ext slot for `BunSocketTls` always holds a live `TLSSocket`, stamped
-    // at construction.
-    let tls: bun_ptr::ThisPtr<TLSSocket> =
-        s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>().unwrap();
+    // The ext slot of an open `BunSocketTls` holds its `TLSSocket`.
+    let tls = NativeRef::<true>::of(s).get().unwrap();
     if let Some(raw) = tls.twin.get().as_ref() {
-        let raw: *mut TLSSocket = raw.as_ptr();
+        let raw = raw.this_ptr();
         // A negative length from the C side means there is nothing to deliver;
         // never panic across the `extern "C"` boundary.
         let Ok(len) = usize::try_from(len) else {
@@ -223,16 +219,11 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
         // SAFETY: `data` points to `len` readable bytes from the TLS BIO; loop.c
         // guarantees the buffer outlives this call.
         let slice = unsafe { core::slice::from_raw_parts(data, len) };
-        // SAFETY: `twin` holds a live +1 ref to the `[raw, _]` half, so `raw`
-        // is live for `ThisPtr::new`; dispatch is single-threaded so no
-        // aliasing `&mut` exists.
-        crate::dispatch::fold(unsafe {
-            TLSSocket::on_data(
-                bun_ptr::ThisPtr::new(raw),
-                NewSocketHandler::<true>::from(s),
-                slice,
-            )
-        });
+        crate::dispatch::fold(TLSSocket::on_data(
+            raw,
+            NewSocketHandler::<true>::from(s),
+            slice,
+        ));
     }
     s
 }
@@ -269,7 +260,7 @@ pub(crate) extern "C" fn us_dispatch_bun_socket_identity(
     bun_socket: *mut c_void,
     ssl: *mut bun_boringssl_sys::SSL,
 ) -> c_int {
-    // SAFETY: openssl.c passes the live `TLSSocket` whose `on_open` called `us_ssl_set_bun_socket`.
+    // SAFETY: openssl.cpp passes the live `TLSSocket` whose `on_open` called `us_ssl_set_bun_socket`.
     let tls = unsafe { &*bun_socket.cast::<super::NewSocket<true>>() };
     tls.server_identity(bun_boringssl_sys::SSL::opaque_mut(ssl)) as c_int
 }
@@ -285,11 +276,9 @@ pub(crate) extern "C" fn us_dispatch_server_identity(
     let s_ref = us_socket_t::opaque_mut(s);
     let ssl = bun_boringssl_sys::SSL::opaque_mut(ssl);
     let verdict = match s_ref.kind() {
-        SocketKind::HttpClientTls => s_ref
-            .ext::<Option<core::ptr::NonNull<c_void>>>()
-            .map_or(Unchecked, |ext| {
-                bun_http::http_context::Handler::<true>::server_identity(ext.as_ptr(), ssl)
-            }),
+        SocketKind::HttpClientTls => {
+            bun_http::http_context::Handler::<true>::server_identity(NewSocketHandler::from(s), ssl)
+        }
         SocketKind::WsClientUpgradeTls => s_ref
             .ext::<Option<bun_ptr::ThisPtr<handlers::WSUpgradeClient<true>>>>()
             .map_or(Unchecked, |client| client.server_identity(ssl)),

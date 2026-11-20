@@ -760,6 +760,32 @@ describe.each(["TLSv1.3", "TLSv1.2"])("an ALPNCallback over a Duplex can drop it
   });
 });
 
+it.concurrent.each(["tls", "https"])("a Worker can end inside the ALPNCallback of its %s server", async module => {
+  using dir = tempDir("tls-alpn-worker-exit", {
+    "main.mjs": `
+      import { once } from "node:events";
+      import tls from "node:tls";
+      import { Worker } from "node:worker_threads";
+      const worker = new Worker(new URL("./server.mjs", import.meta.url));
+      const exited = once(worker, "exit");
+      const [port] = await once(worker, "message");
+      const client = tls.connect({ port, host: "127.0.0.1", ALPNProtocols: ["a"], rejectUnauthorized: false });
+      client.on("secureConnect", () => console.log("secureConnect")).on("error", () => {});
+      await new Promise(closed => client.on("close", closed));
+      console.log("exit", ...(await exited));
+    `,
+    "server.mjs": `
+      import { createServer } from "node:${module}";
+      import { parentPort } from "node:worker_threads";
+      const server = createServer({ ...${JSON.stringify(COMMON_CERT)}, ALPNCallback: () => process.exit(7) });
+      server.listen(0, "127.0.0.1", () => parentPort.postMessage(server.address().port));
+    `,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "main.mjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "exit 7\n", stderr: "", exitCode: 0 });
+});
+
 describe("an SNICallback over a Duplex can drop its connection", () => {
   it.concurrent.each([
     ["emit", "TLSv1.3", 'server.emit("connection", duplex)'],
@@ -2278,6 +2304,96 @@ it.each([
   await once(client, "close");
   server.close();
   await once(server, "close");
+});
+
+describe.each(["tls", "https", "a stream"])("a context selected by server name, over %s", kind => {
+  const altCert = { key: rawKey, cert };
+  const altFingerprint = new crypto.X509Certificate(cert).fingerprint256;
+  const aes128 = "ECDHE-RSA-AES128-GCM-SHA256";
+  const aes256 = "ECDHE-RSA-AES256-GCM-SHA384";
+  const chacha = "ECDHE-RSA-CHACHA20-POLY1305";
+  const refused = "ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE";
+
+  /** The cipher that each of `clients` gets along with the selected context's certificate, or the code of its error. */
+  async function negotiate(
+    by: string,
+    serverOptions: tls.TlsOptions,
+    contextOptions: tls.SecureContextOptions,
+    clients: tls.ConnectionOptions[],
+  ) {
+    const context = tls.createSecureContext({ ...altCert, ...contextOptions });
+    const options: tls.TlsOptions = { ...COMMON_CERT, ...serverOptions };
+    if (by === "SNICallback") options.SNICallback = (_name, cb) => cb(null, context);
+    const server = kind === "https" ? https.createServer(options) : createServer(options);
+    if (by === "addContext") server.addContext("alt.example.com", context);
+    if (kind !== "a stream") await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      return await Promise.all(
+        clients.map(async clientOptions => {
+          let transport: tls.ConnectionOptions;
+          if (kind === "a stream") {
+            const [serverSide, socket] = duplexPair();
+            server.emit("connection", serverSide);
+            transport = { socket };
+          } else {
+            transport = { port: (server.address() as AddressInfo).port, host: "127.0.0.1" };
+          }
+          const client = connect({
+            ...transport,
+            servername: "alt.example.com",
+            rejectUnauthorized: false,
+            maxVersion: "TLSv1.2",
+            ...clientOptions,
+          });
+          try {
+            await once(client, "secureConnect");
+            expect(client.getPeerCertificate().fingerprint256).toBe(altFingerprint);
+            return client.getCipher().name;
+          } catch (err) {
+            return (err as NodeJS.ErrnoException).code ?? err;
+          } finally {
+            client.destroy();
+          }
+        }),
+      );
+    } finally {
+      server.close();
+    }
+  }
+
+  describe.each(["SNICallback", "addContext"])("%s", by => {
+    it("has the server's ciphers, in the server's order", async () => {
+      const clients = [{ ciphers: aes128 }, { ciphers: aes256 }, { ciphers: `${aes128}:${aes256}:${chacha}` }];
+      expect(await negotiate(by, { ciphers: `${chacha}:${aes256}` }, {}, clients)).toEqual([refused, aes256, chacha]);
+    });
+
+    // Node ignores the context's own.
+    it("has the ciphers that it names itself", async () => {
+      const clients = [{ ciphers: aes128 }, { ciphers: aes256 }, { ciphers: chacha }];
+      expect({
+        "no list on the server": await negotiate(by, {}, { ciphers: aes256 }, clients),
+        "some in both": await negotiate(
+          by,
+          { ciphers: `${aes128}:${aes256}` },
+          { ciphers: `${aes256}:${chacha}` },
+          clients,
+        ),
+        "none in both": await negotiate(by, { ciphers: aes128 }, { ciphers: aes256 }, clients),
+      }).toEqual({
+        "no list on the server": [refused, aes256, refused],
+        "some in both": [refused, aes256, chacha],
+        "none in both": [refused, aes256, refused],
+      });
+    });
+
+    it("has the server's sigalgs", async () => {
+      const clients = [
+        { ciphers: aes256, sigalgs: "RSA-PSS+SHA256" },
+        { ciphers: aes256, sigalgs: "RSA-PSS+SHA512" },
+      ];
+      expect(await negotiate(by, { sigalgs: "RSA-PSS+SHA512" }, {}, clients)).toEqual([refused, aes256]);
+    });
+  });
 });
 
 describe("addContext with a name of more than 10 labels", () => {
@@ -4095,6 +4211,25 @@ describe("key/cert arrays", () => {
   ] as const)("every identity is served to the clients that can use it: %s", async (_, options, expected) => {
     using server = await listen(createServer(options as tls.TlsOptions, socket => socket.on("error", () => {})));
     expect(await servedToEachKindOfClient(server.port)).toEqual(expected);
+  });
+
+  it.each([
+    ["the server's", both],
+    ["those of an SNICallback's context", { ...rsa, SNICallback: (_, cb) => cb(null, tls.createSecureContext(both)) }],
+  ] as [string, tls.TlsOptions][])("sigalgs covers every identity: %s", async (_, identities) => {
+    async function servedWith(sigalgs: string) {
+      using server = await listen(createServer({ ...identities, sigalgs }, socket => socket.on("error", () => {})));
+      return await servedToEachKindOfClient(server.port, { servername: "agent1" });
+    }
+    expect({
+      "RSA": await servedWith("rsa_pss_rsae_sha256"),
+      "RSA, another hash": await servedWith("rsa_pss_rsae_sha512"),
+      "ECDSA": await servedWith("ecdsa_secp256r1_sha256"),
+    }).toEqual({
+      "RSA": each(refused, "agent1/1", "agent1/1"),
+      "RSA, another hash": { ...each(refused, "agent1/1", "agent1/1"), "TLS 1.3, RSA only": refused },
+      "ECDSA": each("agent10.example.com/2", refused),
+    });
   });
 
   it.each([
@@ -6283,3 +6418,21 @@ it("a server that requests a client certificate names its own ca, not the tls.se
   });
   expect(exitCode).toBe(0);
 });
+
+it.concurrent.each(["tls.createServer", "https.createServer", "http2.createSecureServer"])(
+  "what a 'drop' listener of %s() throws is an uncaught exception",
+  async create => {
+    const script = `
+      process.on("uncaughtException", error => console.log(error.message));
+      const server = ${create}(${JSON.stringify({ key: cert1.key, cert: cert1.cert })});
+      server.maxConnections = 0;
+      server.on("drop", () => { throw new Error("from 'drop'"); });
+      server.listen(0, "127.0.0.1", () => {
+        tls.connect({ host: "127.0.0.1", port: server.address().port }).on("error", () => server.close());
+      });
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "from 'drop'\n", stderr: "", exitCode: 0 });
+  },
+);

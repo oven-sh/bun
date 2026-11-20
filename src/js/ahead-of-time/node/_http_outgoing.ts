@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_outgoing.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 522503b9d2e85c020704fb18d9ed72f6b825baf7b68fd5c30aefa57dd202bf92.
+// Written against that file with the SHA-256 5b0c2f37290edfd282dfdb14b8ca7c54ae21abd98783d3f9125009d2cc37a228.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_outgoing"
@@ -398,7 +398,8 @@ ObjectDefineProperty(OutgoingMessage.prototype, "closed", {
 ObjectDefineProperty(OutgoingMessage.prototype, "writableFinished", {
   __proto__: null,
   get(this: $Node.OutgoingMessage) {
-    return this.finished && this.outputSize === 0 && (!this[kSocket] || this[kSocket].writableLength === 0);
+    // The socket stand-ins of serverless adapters have no writableLength.
+    return this.finished && this.outputSize === 0 && (!this[kSocket] || !this[kSocket].writableLength);
   },
 });
 
@@ -2209,7 +2210,10 @@ function queueEndCallback(msg: $Node.OutgoingMessage, callback: () => void) {
 function onFinish(outmsg, err?) {
   const callbacks = outmsg[kEndCallbacks];
   if (callbacks) outmsg[kEndCallbacks] = undefined;
-  if ((outmsg[kFinishesWithoutLastWrite] && outmsg[kSocket]) || (!err && !outmsg.socket?._hadError)) {
+  if (
+    (outmsg[kFinishesWithoutLastWrite] && outmsg[kSocket] && !outmsg._closed) ||
+    (!err && !outmsg.socket?._hadError)
+  ) {
     return void outmsg.emit("finish");
   }
   if (!callbacks) return;

@@ -3,6 +3,7 @@ import fs, { mkdirSync } from "fs";
 import {
   bunEnv,
   bunExe,
+  bunRun,
   exampleHtml,
   exampleSite,
   gcTick,
@@ -219,6 +220,26 @@ const IS_UV_FS_COPYFILE_DISABLED =
     expect(stdout.trim()).toBe("copy me");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(isWindows)("Bun.write('', Bun.file(src)) rejects with ENOENT", async () => {
+    using dir = tempDir("bun-write-empty-dest", { file: "x" });
+    const script = `
+      import fs from "node:fs";
+      const results = new Set();
+      for (let i = 0; i < 20; i++) {
+        await Bun.write("earlier", Bun.file("file"));
+        fs.rmSync("earlier");
+        results.add(await Bun.write("", Bun.file("file")).then(() => "copied", err => err.code));
+        results.add(fs.readdirSync(".").join());
+        fs.rmSync("earlier", { force: true });
+      }
+      console.log(JSON.stringify([...results]));
+    `;
+    // The earlier path is in a buffer of the thread that copied to it.
+    expect(await bunRun(["--cwd", String(dir), "-e", script], { UV_THREADPOOL_SIZE: "2" })).toSpawn(
+      '["ENOENT","file"]',
+    );
   });
 
   it("Bun.write('out.txt', 'string')", async () => {
@@ -1033,14 +1054,6 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       const { promise: gate, resolve: openGate } = Promise.withResolvers();
       await using server = await origin(gate);
       fs.mkdirSync(path.dirname(dest), { recursive: true });
-      const onDisk = new Promise(resolve => {
-        const watcher = fs.watch(path.dirname(dest), () => {
-          if (fs.existsSync(dest) && fs.statSync(dest).size > 0) {
-            watcher.close();
-            resolve();
-          }
-        });
-      });
       // Its own frame: after it returns only Bun.write refers to the body.
       let response;
       async function start() {
@@ -1051,7 +1064,8 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       const written = start();
       // The first half is on disk before the second half is sent. Before, nothing was written
       // until the whole body had been collected in memory.
-      await onDisk;
+      // Polled: on Windows fs.watch may not report a change in size while the file is open.
+      while (!(await fs.promises.stat(dest).catch(() => {}))?.size);
       // One full collection per event-loop turn (an fs round trip) until the Response is gone.
       do {
         await fs.promises.stat(dest);

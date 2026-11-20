@@ -110,6 +110,8 @@ pub(crate) struct Stream {
     pub send_window: Cell<SendWindow>,
     /// The request or the final response went out.
     pub sent_final_headers: Cell<bool>,
+    /// They have END_STREAM, which the state only shows once they are written.
+    pub final_headers_end_stream: Cell<bool>,
     /// END_STREAM goes out on the trailers, not on the last DATA frame.
     pub wait_for_trailers: Cell<bool>,
     pub padding_strategy: Cell<PaddingStrategy>,
@@ -145,6 +147,7 @@ impl Stream {
             request_method: Cell::new(None),
             send_window: Cell::new(SendWindow::new(initial_send)),
             sent_final_headers: Cell::new(false),
+            final_headers_end_stream: Cell::new(false),
             wait_for_trailers: Cell::new(false),
             padding_strategy: Cell::new(PaddingStrategy::None),
             queue: JsCell::new(VecDeque::new()),
@@ -159,6 +162,12 @@ impl Stream {
     #[inline]
     pub(crate) fn is_closed(&self) -> bool {
         self.state.get() == State::Closed
+    }
+
+    /// False once JS destroyed the stream too, whose reset follows a turn later.
+    #[inline]
+    pub(crate) fn takes_data(&self) -> bool {
+        self.state().can_send() && !self.released.get() && !self.final_headers_end_stream.get()
     }
 
     /// Closed, and JS has no `Http2Stream` for it any more.

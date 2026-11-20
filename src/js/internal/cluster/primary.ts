@@ -242,6 +242,7 @@ const methodMessageMapping = {
   listening,
   online,
   queryServer,
+  sync,
 };
 
 function onmessage(this: ClusterWorker, message, _handle: unknown) {
@@ -267,6 +268,10 @@ function online(worker: ClusterWorker) {
 
 function exitedAfterDisconnect(worker: ClusterWorker, message) {
   worker.exitedAfterDisconnect = true;
+  send(worker, { ack: message.seq });
+}
+
+function sync(worker: ClusterWorker, message) {
   send(worker, { ack: message.seq });
 }
 

@@ -38,6 +38,7 @@ public:
     unsigned is_ssl : 1 = 0;
     /* socket.end() was called. Later writes are dropped. */
     unsigned ended : 1 = 0;
+    unsigned detachesParserAfterRead : 1 = 0;
     /* Set by onClose() for the peerEnded / closeError getters: the peer's FIN, the error of a failed read. */
     unsigned peer_ended : 1 = 0;
     int closeReadError = 0;
@@ -82,7 +83,10 @@ public:
      * parser when 'close' is emitted on the socket). */
     void stopHTTPParsing();
     /* 'connect' or 'upgrade' has the socket, and responses ahead of that request are still owed: every read goes to the socket's handle, and only its own pause holds the reads. */
-    void detachParser();
+    void detachParser(bool restOfReadTaken);
+    /* The program took the reads from the parser, which finishes the read it is in, like llhttp. */
+    void detachParserAfterRead();
+    void detachParserIfDue();
 
     /* socket.end(): true when uWS will shut down later, after the buffered response. */
     bool shutdownAfterResponseDrains();
@@ -101,6 +105,7 @@ public:
     void setRawReads(bool enabled);
     void onRawRead(const char* data, int length);
     void onReadParsed();
+    void onPartialHead();
     bool onPeerEnded();
     /* Node's parser.finish(), for the socket's 'end' listener. Returns whether the stream ended inside a message. */
     bool finishParsing();

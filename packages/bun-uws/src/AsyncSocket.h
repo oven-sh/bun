@@ -27,6 +27,7 @@
  * to signal error with -1 (which is how the entire UNIX syscalling is built). */
 
 #include <cstring>
+#include <wtf/SetForScope.h>
 
 #include "libusockets.h"
 #include "bun-usockets/src/internal/internal.h"
@@ -66,6 +67,12 @@ public:
     /* Get loop data for socket */
     LoopData *getLoopData() {
         return (LoopData *) us_loop_ext(us_socket_group_loop(us_socket_group((us_socket_t *) this)));
+    }
+
+    /* A handler can tick the loop (waitForPromise). After an await no tick is under its caller to keep a socket that closes there allocated. */
+    [[nodiscard]] SetForScope<int> holdClosedSockets() {
+        int &tickDepth = us_socket_group_loop(us_socket_group((us_socket_t *) this))->data.tick_depth;
+        return SetForScope<int>(tickDepth, tickDepth + 1);
     }
 
     /* Get socket extension */
@@ -167,7 +174,7 @@ public:
                 slot = loopData->acquireCorkSlot(this, SSL);
             }
             auto *s = loopData->getCorkSlot(slot);
-            char *sendBuffer = s->buffer + s->offset;
+            char *sendBuffer = s->buffer.get() + s->offset;
             s->offset += (unsigned int) size;
             ASSERT(s->offset <= LoopData::CORK_BUFFER_SIZE);
             loopData->touchCorkSlot(slot);
@@ -179,7 +186,7 @@ public:
             if (corked) {
                 auto *s = loopData->getCorkSlot(slot);
                 ourCorkOffset = s->offset;
-                ourCorkBuffer = s->buffer;
+                ourCorkBuffer = s->buffer.get();
                 s->offset = 0;
             }
 
@@ -201,7 +208,7 @@ public:
 
     /* Whether every byte handed to us_socket_write() has reached the kernel.
      * For TLS, us_socket_write() can report records as written while their
-     * ciphertext still sits in the connection's spill (openssl.c
+     * ciphertext still sits in the connection's spill (openssl.cpp
      * ssl_emit); the close-after-drain gates in HttpResponse /
      * HttpContext must wait for that too. Kept separate from
      * getBufferedAmount() so WebSocket's maxBackpressure policy and the
@@ -293,7 +300,7 @@ public:
         if (LoopData::CORK_BUFFER_SIZE - s->offset < length) {
             return nullptr;
         }
-        char *room = s->buffer + s->offset;
+        char *room = s->buffer.get() + s->offset;
         s->offset += (unsigned int) length;
         loopData->touchCorkSlot(slot);
         return room;
@@ -355,7 +362,7 @@ public:
                 auto *s = loopData->getCorkSlot(slot);
                 if (length <= LoopData::CORK_COPY_MAX && LoopData::CORK_BUFFER_SIZE - s->offset >= length) {
                     /* If the entire chunk fits in cork buffer */
-                    memcpy(s->buffer + s->offset, src, length);
+                    memcpy(s->buffer.get() + s->offset, src, length);
                     s->offset += (unsigned int) length;
                     ASSERT(s->offset <= LoopData::CORK_BUFFER_SIZE);
                     loopData->touchCorkSlot(slot);
@@ -455,7 +462,7 @@ public:
 
         const char *corkBuffer = nullptr;
         if (slot != LoopData::INVALID_CORK_SLOT) {
-            corkBuffer = loopData->getCorkSlot(slot)->buffer;
+            corkBuffer = loopData->getCorkSlot(slot)->buffer.get();
             loopData->releaseCorkSlot(slot);
         }
 
@@ -500,7 +507,7 @@ public:
 
         auto *s = loopData->getCorkSlot(slot);
         unsigned int offset = s->offset;
-        char *buffer = s->buffer;
+        char *buffer = s->buffer.get();
         loopData->releaseCorkSlot(slot);
 
         if (offset) {

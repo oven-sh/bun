@@ -1467,9 +1467,9 @@ describe("module loading", () => {
         "-e",
         `const { heapStats } = require("bun:jsc");
          require("ws");
-         const afterWs = heapStats().objectTypeCounts.HTTPParser ?? 0;
+         const afterWs = heapStats().objectTypeCounts.ProcessBindingHTTPParser ?? 0;
          require("node:http");
-         const afterHttp = heapStats().objectTypeCounts.HTTPParser ?? 0;
+         const afterHttp = heapStats().objectTypeCounts.ProcessBindingHTTPParser ?? 0;
          console.log(JSON.stringify({ afterWs, httpMarkerWorks: afterHttp > 0 }));`,
       ],
       env: bunEnv,
@@ -1479,7 +1479,7 @@ describe("module loading", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     // httpMarkerWorks guards the detector: if node:http ever stops creating
-    // HTTPParser structures at load time, this test needs a new marker.
+    // the binding at load time, this test needs a new marker.
     expect(JSON.parse(stdout)).toEqual({ afterWs: 0, httpMarkerWorks: true });
     expect(exitCode).toBe(0);
   });
@@ -1954,6 +1954,26 @@ describe("client TLS options", () => {
         inherited: await dial(server.url, { tls: Object.assign(Object.create({ ca: ca1 }), { checkServerIdentity }) }),
         getter: await dial(server.url, { tls: new Options() }),
       }).toEqual({ inherited: anonymous, getter: anonymous });
+    });
+
+    it("runs the `tls` option's getters on that object", async () => {
+      using server = await serve(agent1);
+      class Options {
+        #ca = ca1;
+        #serverName = "agent1";
+        get ca() {
+          return this.#ca;
+        }
+        get serverName() {
+          return this.#serverName;
+        }
+      }
+      const connect = (own: object) => dial(server.url, { tls: Object.assign(new Options(), own) });
+      expect({
+        checkServerIdentity: await connect({ checkServerIdentity: () => undefined }),
+        pfx: await connect({ pfx, passphrase: "sample" }),
+        both: await connect({ pfx, passphrase: "sample", checkServerIdentity: () => new Error("pinned") }),
+      }).toEqual({ checkServerIdentity: anonymous, pfx: identified, both: "refused" });
     });
 
     it("an own `pfx` in the `tls` option keeps the inherited options", async () => {

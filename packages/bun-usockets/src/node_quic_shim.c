@@ -187,9 +187,13 @@ static void nq_on_path_switch(lsquic_conn_t *c, int validated, int is_preferred,
     }
 }
 
-/* lsquic is built with the same width, see lsxpackDefines in scripts/build/deps/lshpack.ts. */
+/* lsquic is built with the same width, see lsxpackDefines in scripts/build/deps/lsqpack.ts. */
 _Static_assert(sizeof(lsxpack_strlen_t) == 4 && offsetof(struct lsxpack_header, chain_next_idx) == sizeof(char *) + 24,
     "LSXPACK_MAX_STRLEN must be UINT32_MAX");
+
+_Static_assert(ssl_compliance_policy_fips_202205 == 1 && ssl_compliance_policy_wpa3_192_202304 == 3 &&
+    ssl_early_data_unknown == 0 && ssl_early_data_disabled == 1 && ssl_early_data_no_session_offered == 5,
+    "update the constants in src/runtime/node/quic/tls.rs");
 
 #define US_NQ_HSET_MIN_BUF 256
 
@@ -411,7 +415,7 @@ void us_nq_settings_init(struct lsquic_engine_settings *s, int is_server,
     unsigned flags = (is_server ? LSENG_SERVER : 0) | (is_http ? LSENG_HTTP : 0);
     lsquic_engine_init_settings(s, flags);
     s->es_versions = (1u << LSQVER_I001) | (1u << LSQVER_I002);
-    /* Static-table-only encoding, as quic.c does. The dynamic table also makes
+    /* Static-table-only encoding, as quic.cpp does. The dynamic table also makes
      * the decoder stream carry acks, and lsquic delays a server's MAX_STREAMS
      * grant while that stream has unsent data (lsquic_qdh_arm_if_unsent). */
     s->es_qpack_enc_max_size = 0;

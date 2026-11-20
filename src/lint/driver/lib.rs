@@ -8,9 +8,8 @@
 
 #![forbid(unsafe_code)]
 #![deny(clippy::iter_over_hash_type)]
-// For code that a flag like `--doctor`, `--rules` or `--init` runs once. `#[optimize(size)]` roughly halves its size,
-// and its speed doesn't matter. Nothing that runs per file has it.
-#![feature(optimize_attribute)]
+// `#[optimize(size)]` is for code that a flag like `--doctor`, `--rules` or `--init` runs once. Nothing that runs per
+// file has it.
 
 mod args;
 pub mod bunfig;
@@ -22,6 +21,7 @@ mod doctor;
 mod embedded;
 mod eslintrc;
 mod evaluate;
+pub use evaluate::configuration_read_by;
 mod explain;
 pub mod fmt;
 pub mod for_tests;
@@ -41,6 +41,7 @@ mod rulesdir;
 mod run;
 mod suppressions;
 mod typed;
+mod walk;
 
 /// A linter with every rule registered.
 pub(crate) type Linter = bun_lint::linter::Linter<rules::Rules>;

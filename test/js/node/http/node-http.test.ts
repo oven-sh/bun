@@ -35,12 +35,13 @@ import http, {
   validateHeaderValue,
 } from "node:http";
 import https, { createServer as createHttpsServer } from "node:https";
-import type { AddressInfo } from "node:net";
+import type { AddressInfo, Socket as NetSocket } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
 import { constants, tmpdir } from "node:os";
 import * as path from "node:path";
 import { Duplex, duplexPair, PassThrough, Writable } from "node:stream";
 import { text } from "node:stream/consumers";
+import { finished as streamFinished } from "node:stream/promises";
 import { connect as tlsConnect } from "node:tls";
 import { inspect } from "node:util";
 import { runInNewContext } from "node:vm";
@@ -4263,6 +4264,27 @@ it("standalone ServerResponse flushes the header block before a non-chunked Buff
   expect(sawPrefinish).toBe(true);
 });
 
+it("writableFinished turns true on a socket stand-in that has no writableLength", async () => {
+  const socket = Object.assign(new EventEmitter(), {
+    _writableState: {},
+    writable: true,
+    cork() {},
+    uncork() {},
+    write(_: unknown, __: unknown, callback?: (() => void) | null) {
+      if (callback) setImmediate(callback);
+      return true;
+    },
+  });
+  const res = new ServerResponse(new IncomingMessage(null as any));
+  res.assignSocket(socket as any);
+  expect(res.writableFinished).toBe(false);
+  await once(res.end("body"), "finish");
+  expect(res.writableFinished).toBe(true);
+  const settled = streamFinished(res);
+  socket.emit("close");
+  expect(await settled).toBeUndefined();
+});
+
 it("assignSocket() accepts serverless-http's socket stand-in, which has on() but no once()", async () => {
   let out = "";
   const noop = () => {};
@@ -4387,6 +4409,19 @@ it("ref() and unref() work on an heir of Server.prototype that no constructor ha
   expect(heir.ref()).toBe(heir);
 });
 
+it("the stand-in socket of a standalone ServerResponse finishes and closes", async () => {
+  const socket = new ServerResponse(new IncomingMessage(null as any)).socket!;
+  const events: string[] = [];
+  socket.on("finish", () => events.push("finish"));
+  socket.on("close", () => events.push("close"));
+  socket.write("dropped", () => events.push("write callback"));
+  socket.end();
+  await new Promise(resolve => setImmediate(resolve));
+  socket.destroy();
+  await new Promise(resolve => setImmediate(resolve));
+  expect(events).toEqual(["write callback", "finish", "close"]);
+});
+
 it("standalone ServerResponse end() after writeHead() sets writableEnded (#25632)", async () => {
   // With no native handle and no socket assigned, end() after writeHead() must
   // still transition to `finished` / `writableEnded` and buffer the rendered
@@ -4414,6 +4449,36 @@ it("standalone ServerResponse end() after writeHead() sets writableEnded (#25632
   });
   await new Promise<void>(r => process.nextTick(r));
   expect(cbCalled).toBe(false);
+});
+
+it("flushHeaders() after the listener threw doesn't throw", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        process.on("uncaughtException", err => console.log("uncaught", err.code ?? err.message));
+        const server = require("node:http").createServer((req, res) => {
+          setImmediate(() => {
+            server.close();
+            server.closeAllConnections();
+            res.flushHeaders();
+            console.log("flushed", res.headersSent);
+          });
+          throw new Error("thrown");
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const client = require("node:net").connect(server.address().port, "127.0.0.1");
+          client.on("error", () => {}).resume().write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "uncaught thrown\nflushed true\n", exitCode: 0 });
 });
 
 it("flushHeaders on a 204 response carries no chunked framing", async () => {
@@ -8469,6 +8534,64 @@ it("connectionListener pauses reads when queued pipelined responses back up", as
   serverSide.destroy();
 });
 
+it("connectionListener answers Proxy-Connection: close with Connection: close and ends the connection", async () => {
+  const server = createServer((req, res) => res.setHeader("Content-Length", 0).end());
+  const [clientSide, serverSide] = duplexPair();
+  try {
+    server.emit("connection", serverSide);
+    clientSide.write("GET / HTTP/1.1\r\nHost: x\r\nProxy-Connection: close\r\n\r\n");
+    expect(await text(clientSide)).toEndWith("\r\nConnection: close\r\n\r\n");
+  } finally {
+    clientSide.destroy();
+    serverSide.destroy();
+  }
+});
+
+it("connectionListener keeps an HTTP/1.0 connection that asks for keep-alive", async () => {
+  const server = createServer((req, res) => res.setHeader("Content-Length", 0).end());
+  const [clientSide, serverSide] = duplexPair();
+  try {
+    server.emit("connection", serverSide);
+    const reads = clientSide.setEncoding("latin1")[Symbol.asyncIterator]();
+    clientSide.write("GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n");
+    expect((await reads.next()).value).toEndWith("\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n");
+    clientSide.write("GET / HTTP/1.0\r\n\r\n");
+    expect((await reads.next()).value).toEndWith("\r\nConnection: close\r\n\r\n");
+    expect(await reads.next()).toEqual({ value: undefined, done: true });
+  } finally {
+    clientSide.destroy();
+    serverSide.destroy();
+  }
+});
+
+describe.each<[string, http.RequestListener]>([
+  ["socket.write()", ({ socket }) => socket.write("HTTP/1.1 101 Switching Protocols\r\n\r\n")],
+  ["res.end()", (req, res) => res.writeHead(101, { Connection: "upgrade", Upgrade: "a" }).end()],
+])("connectionListener lets the 'request' listener switch protocols with %s", (_, switchProtocols) => {
+  it.each(["", "Transfer-Encoding: chunked\r\n", "Content-Length: 99\r\n"])("with %j", async framing => {
+    const server = createServer((req, res) => {
+      switchProtocols(req, res);
+      req.socket.on("data", data => req.socket.write(data));
+    });
+    const [clientSide, serverSide] = duplexPair();
+    try {
+      server.emit("connection", serverSide);
+      const reads = clientSide.setEncoding("latin1")[Symbol.asyncIterator]();
+      clientSide.write(`POST / HTTP/1.1\r\nHost: x\r\nConnection: upgrade\r\nUpgrade: a\r\n${framing}\r\n`);
+      expect(await reads.next()).toEqual({ value: expect.stringMatching(/^HTTP\/1.1 101 /), done: false });
+      for (const value of ["GET / HTTP/1.1\r\n", "one\r\n", "two"]) {
+        clientSide.write(value);
+        expect(await reads.next()).toEqual({ value, done: false });
+      }
+      clientSide.end();
+      expect(await reads.next()).toEqual({ value: undefined, done: true });
+    } finally {
+      clientSide.destroy();
+      serverSide.destroy();
+    }
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/4733
 // https://github.com/oven-sh/bun/issues/18613
 // Ending the response inside the request handler must not drop the request
@@ -9916,6 +10039,36 @@ it.each([
   }
 });
 
+describe.each<[string, (req: any) => void]>([
+  ["req.socket with a plain object", req => (req.socket = { remoteAddress: "192.0.2.1" })],
+  ["req.socket with an object that inherits from it", req => (req.socket = Object.create(req.socket))],
+  ["req.connection with a plain object", req => (req.connection = { encrypted: true })],
+])("a listener replaces %s", (_, replace) => {
+  it.each([
+    ["ServerResponse", ServerResponse],
+    ["a subclass", class extends ServerResponse {}],
+  ])("the connection serves the next requests and closes behind the last one: %s", async (_, ServerResponse) => {
+    const finished: string[] = [];
+    const server = http.createServer({ ServerResponse }, (req, res) => {
+      replace(req);
+      res.on("finish", () => finished.push(req.url!));
+      setImmediate(() => res.end(`[${req.url}]`));
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      client.write("GET /1 HTTP/1.1\r\nHost: x\r\n\r\n");
+      await once(client, "readable");
+      client.write("GET /2 HTTP/1.1\r\nHost: x\r\n\r\nGET /3 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      expect((await text(client)).match(/\[.*?\]/g)).toEqual(["[/1]", "[/2]", "[/3]"]);
+      expect(finished).toEqual(["/1", "/2", "/3"]);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+});
+
 it("end() sends 200 after statusCode is deleted", async () => {
   const server = http.createServer((req, res) => {
     // @ts-expect-error
@@ -10307,13 +10460,238 @@ describe("raw request bytes on a server's connection socket", () => {
       expect(await raw).toBe("LATER");
     });
   }
-  const behindRemoveAllListeners = "a listener added behind removeAllListeners(...$removed) gets the later reads";
-  it.each([{ removed: ["data"] }])(behindRemoveAllListeners, readsBehindRemoveAllListeners);
-  // TODO: these also remove the 'newListener' listener through which the server hears of a 'data' listener. In Node.js the listener gets the reads.
-  it.todo.each([{ removed: [] }, { removed: ["newListener"] }])(
-    behindRemoveAllListeners,
+  it.each([{ removed: ["data"] }, { removed: [] }, { removed: ["newListener"] }])(
+    "a listener added behind removeAllListeners(...$removed) gets the later reads",
     readsBehindRemoveAllListeners,
   );
+
+  describe.each(["http", "https"])("%s: a reader that replaces the server's 'data' listener", scheme => {
+    const create = (listener: http.RequestListener) =>
+      scheme === "https" ? createHttpsServer(tlsCert, listener) : createServer(listener);
+    const get = (path: string) => `GET ${path} HTTP/1.1\r\nHost: x\r\n\r\n`;
+
+    it.each([
+      { removed: [], readerFirst: false },
+      { removed: ["data"], readerFirst: false },
+      { removed: ["data"], readerFirst: true },
+    ])("takes the reads from the parser (removed: $removed, a reader before: $readerFirst)", async row => {
+      const seen: string[] = [];
+      const server = create((req, res) => {
+        seen.push(req.url!);
+        const { socket } = req;
+        if (row.readerFirst) socket.on("data", () => seen.push("removed reader"));
+        socket.removeAllListeners(...row.removed);
+        socket.on("error", () => {});
+        socket.on("data", chunk => socket.write(`<${chunk.toString("latin1").split(" H")[0]}>`));
+        res.end("<done>");
+      });
+      server.on("clientError", (err: NodeJS.ErrnoException) => seen.push(String(err.code)));
+      await withClient(server, async (client, until) => {
+        client.write(get("/1"));
+        await until("<done>");
+        client.write(get("/2"));
+        await until("<GET /2>");
+        client.write("no http");
+        await until("<no http>");
+        client.write("last");
+        await until("<last>");
+      });
+      expect(seen).toEqual(["/1"]);
+    });
+
+    it.each([{ removed: [] }, { removed: ["data"] }])(
+      "leaves the parser the rest of the read it is in (removed: $removed)",
+      async ({ removed }) => {
+        const seen: string[] = [];
+        const server = create((req, res) => {
+          seen.push(req.url!);
+          if (req.url === "/1") {
+            req.socket.on("data", () => seen.push("removed reader"));
+            req.socket.removeAllListeners(...removed);
+            req.socket.on("data", chunk => req.socket.write(`<raw ${chunk.length}>`));
+          }
+          res.end(`<${req.url}>`);
+        });
+        await withClient(server, async (client, until) => {
+          client.write(get("/1") + get("/1b"));
+          await until("</1b>");
+          client.write(get("/2"));
+          await until(`<raw ${get("/2").length}>`);
+          client.write("last");
+          await until("<raw 4>");
+        });
+        expect(seen).toEqual(["/1", "/1b"]);
+      },
+    );
+
+    it("stops the parser when the rest of that read is not HTTP", async () => {
+      let errors = 0;
+      const server = create(req => {
+        req.socket.removeAllListeners("data");
+        req.socket.on("data", chunk => req.socket.write(`<${chunk}>`));
+      });
+      server.on("clientError", (_, socket) => socket.write(`<error ${++errors}>`));
+      await withClient(server, async (client, until) => {
+        client.write(get("/") + "\x01custom");
+        await until("<error 1>");
+        for (const read of ["a", "b"]) {
+          client.write("\x01" + read);
+          await until(`<\x01${read}>`);
+        }
+      });
+      expect(errors).toBe(1);
+    });
+
+    it("leaves the end of the connection to the server's 'end' listener", async () => {
+      const { promise: closed, resolve } = Promise.withResolvers<void>();
+      const server = create((req, res) => {
+        res.detachSocket(req.socket);
+        req.socket.removeAllListeners("data");
+        req.socket.on("data", chunk => req.socket.write(`<${chunk}>`));
+        req.socket.on("close", () => resolve());
+        req.socket.write("<ready>");
+      });
+      await withClient(server, async (client, until) => {
+        client.write(get("/"));
+        await until("<ready>");
+        client.write("a");
+        await until("<a>");
+        client.write("b");
+        await until("<b>");
+        client.end();
+        await closed;
+      });
+    });
+
+    it("can give the socket to another server", async () => {
+      const other = create((req, res) => res.end(`<other ${req.url}>`));
+      const server = create((req, res) => {
+        const { socket } = req;
+        socket.removeAllListeners("data");
+        socket.once("data", chunk => {
+          socket.pause();
+          socket.unshift(chunk);
+          other.emit(scheme === "https" ? "secureConnection" : "connection", socket);
+        });
+        res.end(`<first ${req.url}>`);
+      });
+      await withClient(server, async (client, until) => {
+        client.write(get("/1"));
+        await until("<first /1>");
+        client.write(get("/2"));
+        await until("/2>");
+        await until("<other /2>");
+        other.closeAllConnections();
+      });
+    });
+  });
+
+  it.each(["http", "https"])(
+    "%s: a listener added while the socket is paused gets the reads after resume()",
+    async scheme => {
+      let raw = "";
+      const onRequest: http.RequestListener = (req, res) => {
+        if (req.url !== "/1") return void res.end(`<${req.url}>`);
+        setImmediate(() => {
+          req.socket.pause();
+          req.socket.on("data", chunk => (raw += chunk.toString("latin1")));
+          req.socket.resume();
+          res.write("<resumed>");
+          res.end();
+        });
+      };
+      const server = scheme === "https" ? createHttpsServer(tlsCert, onRequest) : createServer(onRequest);
+      await withClient(server, async (client, until) => {
+        client.write("GET /1 HTTP/1.1\r\nHost: x\r\n\r\n");
+        await until("<resumed>");
+        client.write("GET /2 HTTP/1.1\r\nHost: x\r\n\r\n");
+        await until("</2>");
+      });
+      expect(raw).toBe("GET /2 HTTP/1.1\r\nHost: x\r\n\r\n");
+    },
+  );
+
+  describe.each(["data", "readable"])("a '%s' listener leaves a pause in place", event => {
+    const get = (path: string) => `GET ${path} HTTP/1.1\r\nHost: x\r\n\r\n`;
+    // Sends /held. Whatever the server reads of it, it has read when a second connection has been answered.
+    async function sendHeld(server: Server, client: import("node:net").Socket) {
+      await new Promise(resolve => client.write(get("/held"), resolve));
+      const other = connect((server.address() as AddressInfo).port, "127.0.0.1");
+      await other.end(get("/other")).toArray();
+    }
+
+    it("of the program, until resume()", async () => {
+      const seen: string[] = [];
+      const server = createServer((req, res) => {
+        seen.push(req.url!);
+        res.end(`<${req.url}>`);
+      });
+      const connection = once(server, "connection");
+      await withClient(server, async (client, until) => {
+        client.write(get("/1"));
+        await until("</1>");
+        const [socket] = await connection;
+        socket.pause();
+        socket.on(event, () => void socket.read());
+        await sendHeld(server, client);
+        seen.push("resume");
+        socket.resume();
+        await until("</held>");
+      });
+      expect(seen).toEqual(["/1", "/other", "resume", "/held"]);
+    });
+
+    it("of the server, until the responses that are backed up have left", async () => {
+      const seen: string[] = [];
+      const third = Promise.withResolvers<IncomingMessage>();
+      let first!: ServerResponse;
+      const server = createServer((req, res) => {
+        seen.push(req.url!);
+        if (req.url === "/1") return void (first = res);
+        if (req.url === "/2") res.write(Buffer.alloc(res.writableHighWaterMark));
+        if (req.url === "/3") third.resolve(req);
+        res.end(`<${req.url}>`);
+      });
+      await withClient(server, async (client, until) => {
+        client.write(get("/1") + get("/2") + get("/3"));
+        const { socket } = await third.promise;
+        socket.on(event, () => void socket.read());
+        await sendHeld(server, client);
+        seen.push("drain");
+        first.end();
+        await until("</held>");
+      });
+      expect(seen).toEqual(["/1", "/2", "/3", "/other", "drain", "/held"]);
+    });
+  });
+
+  it.each(["http", "https"])(
+    "%s: the client's FIN closes a connection with a reader that a 'clientError' listener left open",
+    async scheme => {
+      const server = scheme === "https" ? createHttpsServer(tlsCert) : createServer();
+      server.on(scheme === "https" ? "secureConnection" : "connection", socket => socket.on("data", () => {}));
+      await withClient(server, async client => {
+        client.write("\x01\r\n\r\n");
+        const [err, socket] = await once(server, "clientError");
+        expect(err.code).toBe("HPE_INVALID_METHOD");
+        client.end();
+        await once(socket, "close");
+      });
+    },
+  );
+
+  it("removeAllListeners() with no reader behind it leaves the reads to the parser", async () => {
+    const server = createServer((req, res) => {
+      req.socket.removeAllListeners();
+      res.end(`<${req.url}>`);
+    });
+    await withClient(server, async (client, until) => {
+      for (const path of ["/1", "/2"]) {
+        client.write(`GET ${path} HTTP/1.1\r\nHost: x\r\n\r\n`);
+        await until(`<${path}>`);
+      }
+    });
+  });
 
   it.each([
     ["connect", "CONNECT x:1 HTTP/1.1\r\nHost: x\r\n\r\n"],
@@ -10626,32 +11004,37 @@ describe.each([
 });
 
 describe.skipIf(!isIPv6())("listen({ ipv6Only })", () => {
-  function dial(host: string, port: number) {
-    const { promise, resolve } = Promise.withResolvers<string>();
-    const socket = connect(port, host);
-    socket.on("connect", () => {
-      socket.destroy();
-      resolve("connected");
-    });
-    socket.on("error", (error: NodeJS.ErrnoException) => resolve(error.code!));
-    return promise;
-  }
-
   describe.each([
     ["http", () => createServer()],
     ["https", () => createHttpsServer({ key: tlsCert.key, cert: tlsCert.cert })],
   ])("an %s server on ::", (_, create) => {
     it.each([
-      [true, "ECONNREFUSED"],
-      [false, "connected"],
-      [undefined, "connected"],
-    ])("with ipv6Only: %p", async (ipv6Only, v4) => {
+      [true, ["::1"]],
+      [false, ["::ffff:127.0.0.1", "::1"]],
+      [undefined, ["::ffff:127.0.0.1", "::1"]],
+    ])("with ipv6Only: %p", async (ipv6Only, expected) => {
       const server = create();
+      const clients: NetSocket[] = [];
       try {
+        // Another process can have the same port on IPv4, so the server says who reached it.
+        const accepted: (string | undefined)[] = [];
+        const last = Promise.withResolvers<void>();
+        server.on("connection", socket => {
+          accepted.push(socket.remoteAddress);
+          if (socket.remoteAddress === "::1") last.resolve();
+        });
         await once(server.listen({ host: "::", port: 0, ipv6Only }), "listening");
         const { port } = server.address() as AddressInfo;
-        expect({ v6: await dial("::1", port), v4: await dial("127.0.0.1", port) }).toEqual({ v6: "connected", v4 });
+        for (const host of ["127.0.0.1", "::1"]) {
+          const client = connect(port, host);
+          clients.push(client);
+          // The kernel defers the accept until a byte arrives.
+          await new Promise(settled => client.on("error", settled).write("G", settled));
+        }
+        await last.promise;
+        expect(accepted).toEqual(expected);
       } finally {
+        for (const client of clients) client.destroy();
         server.close();
       }
     });

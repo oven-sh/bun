@@ -164,33 +164,15 @@ pub(crate) unsafe extern "C" fn OPENSSL_system_free(ptr: *mut c_void) {
 
 pub use bun_sys::posix::INET6_ADDRSTRLEN;
 
-// Canonical cross-platform AF_* surface — handles the Windows ws2def.h split.
-use bun_sys::posix::AF::{INET as AF_INET, INET6 as AF_INET6};
-
 /// Node.js's `canonicalizeIP`: the canonical text of the address that libuv's `uv_inet_pton` reads in `addr_str`, without the zone id of an IPv6 address. `None` for any other text.
 pub fn canonicalize_ip<'a>(
     addr_str: &[u8],
     out_ip: &'a mut [u8; INET6_ADDRSTRLEN + 1],
 ) -> Option<&'a [u8]> {
     match bun_core::ip_address::parse_uv_inet_pton(addr_str)? {
-        IpAddr::V4(ip) => canonical_ip_octets(&ip.octets(), out_ip),
-        IpAddr::V6(ip) => canonical_ip_octets(&ip.octets(), out_ip),
+        IpAddr::V4(ip) => c_ares::ntop(&ip.octets(), out_ip),
+        IpAddr::V6(ip) => c_ares::ntop(&ip.octets(), out_ip),
     }
-}
-
-/// Canonical text form of raw IP address octets (4 or 16 bytes), e.g. `::1`.
-fn canonical_ip_octets<'a>(
-    octets: &[u8],
-    out_ip: &'a mut [u8; INET6_ADDRSTRLEN + 1],
-) -> Option<&'a [u8]> {
-    let af: c_int = match octets.len() {
-        4 => AF_INET,
-        16 => AF_INET6,
-        _ => return None,
-    };
-    // SAFETY: `octets` is readable for its checked 4/16-byte length and
-    // `out_ip` is INET6_ADDRSTRLEN + 1 bytes — `ntop`'s requirements.
-    unsafe { c_ares::ntop(af, octets.as_ptr().cast(), &mut out_ip[..]) }
 }
 
 /// Strips a single trailing `.` (the DNS root label). Mirrors Node.js
@@ -490,6 +472,22 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
     false
 }
 
+/// [`check_x509_server_identity`] for the HTTP/3 client in quic.cpp.
+///
+/// # Safety
+/// `host_ptr[..host_len]` must be readable.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__X509__checkServerIdentity(
+    x509: &mut boring::X509,
+    host_ptr: *const u8,
+    host_len: usize,
+) -> bool {
+    // SAFETY: caller contract.
+    check_x509_server_identity(x509, unsafe {
+        core::slice::from_raw_parts(host_ptr, host_len)
+    })
+}
+
 /// OpenSSL `X509_CHECK_FLAG_*` values. BoringSSL defines four of these as `0`
 /// (the behaviour was removed), so `X509Certificate#checkHost` keeps its own
 /// copy and calls [`Bun__X509__checkHost`] instead of `X509_check_host`.
@@ -724,7 +722,7 @@ impl core::fmt::Display for CanonicalIpList<'_> {
         let mut first = true;
         for entry in names.subject_alt_names() {
             if let boring::SubjectAltName::Ip(octets) = entry {
-                if let Some(ip) = canonical_ip_octets(octets, &mut buf) {
+                if let Some(ip) = c_ares::ntop(octets, &mut buf) {
                     if !core::mem::take(&mut first) {
                         f.write_str(", ")?;
                     }
@@ -795,7 +793,7 @@ pub fn server_identity_mismatch_message(ssl_ptr: &mut boring::SSL, hostname: &[u
     message
 }
 
-/// What a client says about the name on the server's certificate, inside the handshake. openssl.c's `US_IDENTITY_*`.
+/// What a client says about the name on the server's certificate, inside the handshake. openssl.cpp's `US_IDENTITY_*`.
 #[repr(i32)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ServerIdentity {

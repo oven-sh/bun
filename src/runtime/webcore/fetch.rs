@@ -52,12 +52,11 @@ use crate::webcore::jsc::{
 };
 use bun_core::{String as BunString, StringView, Tag as BunStringTag};
 use bun_http::http_request_body::StreamFraming;
-use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _};
+use bun_http::{self as http, FetchRedirect, Headers};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::{Method, OwnedMethod};
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{HTTPHeaderName, StringJsc as _, URLJsc as _};
-use bun_sys::FdExt as _;
 // `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
 // brings the trait impl into scope for `JSValue::get_optional_enum::<FetchRedirect>`.
 use crate::node;
@@ -75,10 +74,9 @@ use bun_http_jsc::headers_jsc::from_fetch_headers;
 use bun_jsc::AbortSignalRef;
 #[cfg(windows)]
 use bun_paths::resolve_path::PosixToWinNormalizer;
-use bun_picohttp as picohttp;
 use bun_ptr::RefPtr;
 use bun_resolver::data_url::{DataURL, FetchDataURL};
-use bun_s3_signing::{SignOptions, SignResult};
+use bun_s3_signing::SignOptions;
 use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
 
@@ -105,7 +103,7 @@ fn parse_unix(
 /// The HTTP thread connects to the `unix` path later and the keep-alive pool
 /// keys on it, so a relative path is anchored to `cwd` at call time, unnormalized.
 fn absolute_unix_socket_path(cwd: &[u8], path: Vec<u8>) -> Box<[u8]> {
-    // Windows: bsd.c has no long-path fallback. Leading NUL: Linux abstract socket.
+    // Windows: bsd.cpp has no long-path fallback. Leading NUL: Linux abstract socket.
     if cfg!(windows) || path.first() == Some(&0) || bun_paths::is_absolute(&path) {
         return path.into_boxed_slice();
     }
@@ -274,33 +272,16 @@ pub(crate) fn preconnect(cx: &mut JsScope<'_>, url: &BunString) -> JsResult<()> 
             .throw());
     }
 
-    // bun.handleOom(url_str.toOwnedSlice(...)) → to_owned_slice() aborts on OOM.
-    // `preconnect` takes a `URL<'static>` that borrows a `Box<[u8]>` href and
-    // assumes ownership when `is_url_owned == true` (it reconstructs the Box
-    // to free it). Hand the allocation off via `heap::alloc`.
-    let href_box: Box<[u8]> = url_str.to_owned_slice().into_boxed_slice();
-    let href_raw: *mut [u8] = bun_core::heap::into_raw(href_box);
-    // SAFETY: `href_raw` is a freshly-leaked Box<[u8]>; we either pass ownership
-    // to `preconnect` (which frees it) or reclaim it on the early-return paths.
-    let href: &'static [u8] = unsafe { &*href_raw };
-    let url = ZigURL::parse(href);
-
-    macro_rules! reclaim_href {
-        () => {
-            // SAFETY: paired with the `heap::alloc` above; not yet handed to preconnect.
-            drop(unsafe { bun_core::heap::take(href_raw) });
-        };
-    }
+    let href = url_str.to_owned_slice();
+    let url = ZigURL::parse(&href);
 
     if !url.is_http() && !url.is_https() {
-        reclaim_href!();
         return Err(
             global_object.throw_invalid_arguments(format_args!("URL must be HTTP or HTTPS"))
         );
     }
 
     if url.hostname.is_empty() {
-        reclaim_href!();
         return Err(global_object
             .err(
                 jsc::ErrorCode::INVALID_ARG_TYPE,
@@ -310,19 +291,15 @@ pub(crate) fn preconnect(cx: &mut JsScope<'_>, url: &BunString) -> JsResult<()> 
     }
 
     if !url.has_valid_port() {
-        reclaim_href!();
         return Err(global_object.throw_invalid_arguments(format_args!("Invalid port")));
     }
 
-    // `preconnect` is a free fn in `bun_http::async_http`. Ownership
-    // of `href_raw` transfers here (`is_url_owned: true`).
     // A request to an origin the environment proxies never dials it.
     let vm = VirtualMachine::get();
     if vm.env_loader().get_http_proxy_for(&url).is_some() {
-        reclaim_href!();
         return Ok(());
     }
-    http::async_http::preconnect(url, true, crate::socket::http_client_defaults(vm));
+    http::async_http::preconnect(href.into(), crate::socket::http_client_defaults(vm));
     Ok(())
 }
 
@@ -392,15 +369,14 @@ enum URLType {
 /// Nothing was queued yet: cancel a stream body with `reason` and reject with it.
 fn reject_before_send(
     global_this: &JSGlobalObject,
-    body: &mut HTTPRequestBody,
+    body: &HTTPRequestBody,
     reason: JSValue,
 ) -> JsResult<JSValue> {
-    if let HTTPRequestBody::ReadableStream(stream_ref) = &*body {
+    if let HTTPRequestBody::ReadableStream(stream_ref) = body {
         if let Some(stream) = stream_ref.get() {
             stream.cancel_with_reason(global_this, reason)?;
         }
     }
-    body.detach();
     Ok(JSPromise::rejected_promise(global_this, reason).to_js())
 }
 
@@ -458,15 +434,11 @@ fn fetch_impl(
         break 'brk None;
     };
 
-    let request: Option<&Request> = if first_arg.is_cell() {
-        // SAFETY: `first_arg`, which the call frame keeps alive, owns the Request.
-        first_arg.as_direct::<Request>().map(|p| unsafe { &*p })
-    } else {
-        None
-    };
+    let request = first_arg.as_direct::<Request>();
+    let request = request.as_deref();
 
     // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
-    let url_str_optional = if first_arg.as_::<Request>().is_none() {
+    let url_str_optional = if !first_arg.is::<Request>() {
         StringOrURL::from_js(first_arg, global_this)?
     } else {
         None
@@ -1169,7 +1141,7 @@ fn fetch_impl(
     if let Some(sig) = &signal {
         if sig.aborted() {
             let reason = sig.js_reason(global_this);
-            return reject_before_send(global_this, &mut body, reason);
+            return reject_before_send(global_this, &body, reason);
         }
     }
 
@@ -1209,14 +1181,10 @@ fn fetch_impl(
                 )?,
                 global_this,
             )? {
-                let mut old = core::mem::replace(
-                    &mut body,
-                    HTTPRequestBody::ReadableStream(readable_stream::Strong::init(
-                        stream,
-                        global_this,
-                    )),
-                );
-                old.detach();
+                body = HTTPRequestBody::ReadableStream(readable_stream::Strong::init(
+                    stream,
+                    global_this,
+                ));
                 break 'prepare_body;
             }
             let rejected_value = JSPromise::rejected_promise(
@@ -1224,25 +1192,22 @@ fn fetch_impl(
                 global_this.create_error_instance(format_args!("Failed to start the body stream")),
             )
             .to_js();
-            body.detach();
             return Ok(rejected_value);
         }
     }
     if body.needs_to_read_file() {
         'prepare_body: {
             // A local `PathBuffer` serves as NUL-termination scratch for
-            // `path.slice_z()` (the `vm.node_fs()` accessor is gated behind a
-            // jsc↔runtime cycle).
+            // `path.slice_z()`.
             let mut open_path_buf = bun_paths::path_buffer_pool::get();
             let opened_fd_res: bun_sys::Result<bun_sys::Fd> = {
                 let store = body.store().expect("needs_to_read_file implies store");
                 match &store.data.as_file().pathlike {
                     // On Windows `read_file` would wrap dup's HANDLE in a CRT fd that the close below never frees.
                     PathOrFileDescriptor::Fd(fd) => bun_sys::dup(*fd).and_then(|duped| {
-                        duped.make_lib_uv_owned_for_syscall(
-                            bun_sys::Tag::dup,
-                            bun_sys::ErrorCase::CloseOnFail,
-                        )
+                        bun_sys::CloseOnDrop::new(duped)
+                            .make_lib_uv_owned_for_syscall(bun_sys::Tag::dup)
+                            .map(bun_sys::CloseOnDrop::into_raw)
                     }),
                     PathOrFileDescriptor::Path(path) => {
                         let zpath = path.slice_z(&mut open_path_buf);
@@ -1257,13 +1222,13 @@ fn fetch_impl(
                 }
             };
 
-            let opened_fd = match opened_fd_res {
+            let opened_file = match opened_fd_res {
                 Err(err) => {
                     let err_js = system_type_error(&err, global_this);
                     let rejected_value = JSPromise::rejected_promise(global_this, err_js).to_js();
                     return Ok(rejected_value);
                 }
-                Ok(fd) => fd,
+                Ok(fd) => bun_sys::File::from_fd(fd),
             };
 
             // An explicit `compress` request always wins over the sendfile
@@ -1280,7 +1245,7 @@ fn fetch_impl(
                 && http::SendFile::is_eligible(&url)
             {
                 'use_sendfile: {
-                    let stat: bun_sys::Stat = match bun_sys::fstat(opened_fd) {
+                    let stat: bun_sys::Stat = match bun_sys::fstat(opened_file.fd()) {
                         Ok(result) => result,
                         // bail out for any reason
                         Err(_) => break 'use_sendfile,
@@ -1303,7 +1268,7 @@ fn fetch_impl(
                     // `http::SendFile` fields are `usize`; blob sizes/offsets
                     // are `blob::SizeType` (u64) — hence the `as usize` casts.
                     let mut sf = http::SendFile {
-                        fd: opened_fd,
+                        file: opened_file,
                         remain: (blob_offset + original_size) as usize,
                         offset: blob_offset as usize,
                         content_size: original_size.min(stat_size) as usize,
@@ -1318,11 +1283,10 @@ fn fetch_impl(
                         .saturating_sub(sf.offset);
                     // `remain` is now the slice window clamped to the file, which is the Content-Length.
                     sf.content_size = sf.remain;
-                    body.detach();
 
                     // macOS and FreeBSD read a sendfile(2) length of 0 as "until end of file".
                     if sf.remain == 0 {
-                        opened_fd.close();
+                        body = HTTPRequestBody::default();
                         break 'prepare_body;
                     }
 
@@ -1332,21 +1296,17 @@ fn fetch_impl(
                 }
             }
 
-            let opened_file = bun_sys::File::from_fd(opened_fd);
-
             // TODO: make this async + lazy
             let blob_offset = body.blob().offset.get();
             let blob_size = body.blob().size.get();
-            // The `vm.node_fs()` accessor is a jsc↔runtime cycle. `read_file`
-            // with an `Fd` path only touches `self.sync_error_buf` for
-            // path-variant inputs, so a fresh `NodeFS` is sufficient here.
             let mut node_fs = node::fs::NodeFS::default();
-            // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
-            let mut rf_args = node::fs::args::ReadFile::default();
-            rf_args.encoding = Encoding::Buffer;
-            rf_args.path = PathOrFileDescriptor::Fd(opened_file.fd());
-            rf_args.offset = blob_offset;
-            rf_args.max_size = Some(blob_size);
+            let rf_args = node::fs::args::ReadFile {
+                encoding: Encoding::Buffer,
+                path: PathOrFileDescriptor::Fd(opened_file.fd()),
+                offset: blob_offset,
+                max_size: Some(blob_size),
+                ..Default::default()
+            };
             let res = node_fs.read_file(&rf_args, node::fs::Flavor::Sync);
 
             // Eagerly close before constructing the (potentially large) JS result.
@@ -1356,19 +1316,12 @@ fn fetch_impl(
                 Err(err) => {
                     let err_js = system_type_error(&err, global_this);
                     let rejected_value = JSPromise::rejected_promise(global_this, err_js).to_js();
-                    body.detach();
                     return Ok(rejected_value);
                 }
-                Ok(mut result) => {
-                    body.detach();
+                Ok(result) => {
                     body = HTTPRequestBody::AnyBlob(blob::Any::from_owned_slice(
                         result.slice().to_vec(),
                     ));
-                    // StringOrBuffer::Drop is a no-op for Buffer; release the
-                    // readFile allocation now that the bytes are copied out.
-                    if let crate::node::types::StringOrBuffer::Buffer(buf) = &mut result {
-                        buf.destroy();
-                    }
                 }
             }
         }
@@ -1378,7 +1331,7 @@ fn fetch_impl(
     // ArrayBuffer/TypedArray, string) are handled; ReadableStream and sendfile
     // are skipped. S3 destinations replace the header set with a signed one,
     // so compression is skipped there too. The actual compression runs on the
-    // HTTP thread (HTTPClient::start) so it can reuse LibdeflateState's shared
+    // HTTP thread (HTTPClient::compress_body_for_send) so it can reuse LibdeflateState's shared
     // scratch buffer; here we only commit to it by appending Content-Encoding
     // and forwarding the option.
     if let Some(compress_opt) = &compress
@@ -1471,22 +1424,11 @@ fn fetch_impl(
                 None
             };
 
-            let s3_stream = Box::new(S3StreamWrapper {
+            let s3_stream = S3StreamWrapper {
                 url: BunString::create_atom_if_possible(url.href),
                 promise,
-                global: global_this,
-            });
-            // Shim: erases both the payload type and the `Result` return when
-            // coercing to the `fn (S3UploadResult, *mut c_void)` callback shape.
-            fn s3_stream_wrapper_resolve(result: s3::S3UploadResult<'_>, ctx: *mut libc::c_void) {
-                // SAFETY: ctx was produced by `heap::alloc(s3_stream)` below; the
-                // 'static lifetime is a raw-pointer fiction (the pointee's real
-                // lifetime is managed by the resolve callback itself).
-                let _ = S3StreamWrapper::resolve(result, ctx.cast::<S3StreamWrapper<'static>>());
-            }
-            // `dupe()` heap-allocates a fresh intrusive-refcounted copy.
-            // `upload_stream` adopts the ref by value (no extra bump) and the
-            // MultiPartUpload derefs on completion.
+                global: jsc::GlobalRef::from(global_this),
+            };
             let _ = s3::upload_stream(
                 credentials_with_options.credentials.dupe(),
                 url.s3_path(),
@@ -1500,8 +1442,9 @@ fn fetch_impl(
                 headers.as_ref().and_then(|h| h.get_content_encoding()),
                 proxy_url,
                 credentials_with_options.request_payer,
-                Some(s3_stream_wrapper_resolve),
-                bun_core::heap::into_raw(s3_stream).cast::<libc::c_void>(),
+                Some(Box::new(move |result| {
+                    let _ = s3_stream.resolve(result);
+                })),
             )?;
             return Ok(promise_value);
         }
@@ -1553,29 +1496,10 @@ fn fetch_impl(
             // result.url = ""; — fetch now owns this (mem::take above)
         }
 
-        let content_type = headers.as_ref().and_then(|h| h.get_content_type());
-        let mut header_buffer: [picohttp::Header; SignResult::MAX_HEADERS + 1] =
-            [picohttp::Header::ZERO; SignResult::MAX_HEADERS + 1];
-
-        if let Some(range_) = &range {
-            let new_headers = result.mix_with_header(
-                &mut header_buffer,
-                picohttp::Header::new(b"range", range_.as_bytes()),
-            );
-            set_headers(&mut headers, new_headers);
-        } else if let Some(ct) = content_type {
-            if !ct.is_empty() {
-                let new_headers = result.mix_with_header(
-                    &mut header_buffer,
-                    picohttp::Header::new(b"Content-Type", ct),
-                );
-                set_headers(&mut headers, new_headers);
-            } else {
-                set_headers(&mut headers, result.headers());
-            }
-        } else {
-            set_headers(&mut headers, result.headers());
-        }
+        headers = Some(result.headers(
+            range.as_ref().map(|range| range.as_bytes()),
+            headers.as_ref().and_then(|h| h.get_content_type()),
+        ));
     }
 
     // Decided before anything is queued, so an unusable framing header rejects up front.
@@ -1597,7 +1521,7 @@ fn fetch_impl(
                             invalid.name
                         ),
                     );
-                    return reject_before_send(global_this, &mut body, err);
+                    return reject_before_send(global_this, &body, err);
                 }
             }
         };
@@ -1692,23 +1616,18 @@ fn fetch_impl(
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// S3 ReadableStream upload Wrapper — module level because Rust does not allow
-// `impl` blocks inside fn bodies for types referenced by external fn pointers.
+// S3 ReadableStream upload Wrapper
 // ──────────────────────────────────────────────────────────────────────────
 
-struct S3StreamWrapper<'a> {
+struct S3StreamWrapper {
     promise: jsc::JSPromiseStrong,
     url: BunString,
-    global: &'a JSGlobalObject,
+    global: jsc::GlobalRef,
 }
 
-impl<'a> S3StreamWrapper<'a> {
-    fn resolve(result: s3::S3UploadResult, self_: *mut Self) -> JsResult<()> {
-        // SAFETY: self_ was created via heap::alloc in fetch_impl; we reclaim
-        // ownership here exactly once on the resolve callback.
-        let mut self_ = unsafe { bun_core::heap::take(self_) };
-        let global = self_.global;
-        // `defer bun.destroy(self)` → Box<Self> Drop at end of scope.
+impl S3StreamWrapper {
+    fn resolve(mut self, result: s3::S3UploadResult) -> JsResult<()> {
+        let global = &*self.global;
         match result {
             s3::S3UploadResult::Success => {
                 let response = RefPtr::new(Response::init(
@@ -1718,12 +1637,12 @@ impl<'a> S3StreamWrapper<'a> {
                         ..Default::default()
                     },
                     Body::new(BodyValue::Empty),
-                    self_.url,
+                    self.url,
                     false,
                 ));
                 let response_js = Response::to_js(response, global);
                 response_js.ensure_still_alive();
-                self_.promise.resolve(global, response_js)?;
+                self.promise.resolve(global, response_js)?;
             }
             s3::S3UploadResult::Failure(err) => {
                 let response = RefPtr::new(Response::init(
@@ -1736,26 +1655,15 @@ impl<'a> S3StreamWrapper<'a> {
                     Body::new(BodyValue::InternalBlob(InternalBlob::from_string_bytes(
                         err.message.to_vec(),
                     ))),
-                    self_.url,
+                    self.url,
                     false,
                 ));
 
                 let response_js = Response::to_js(response, global);
                 response_js.ensure_still_alive();
-                self_.promise.resolve(global, response_js)?;
+                self.promise.resolve(global, response_js)?;
             }
         }
         Ok(())
     }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// setHeaders helper
-// ──────────────────────────────────────────────────────────────────────────
-
-fn set_headers(headers: &mut Option<Headers>, new_headers: &[picohttp::Header]) {
-    let old = headers.take();
-    *headers = Some(Headers::from_pico_http_headers(new_headers));
-    // `if (old) |*h| h.deinit()` → Drop on `old`.
-    drop(old);
 }

@@ -10,8 +10,9 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
         // node:net and node:tls check the server's identity in JS (`checkServerIdentity`).
         socket.flags.set(SocketFlags::DEFERS_SERVER_IDENTITY);
         // Weak while idle: `_handle` owns it, and `this_value_for_connect` pins each attempt.
-        let value = socket.to_js(global);
-        socket.this_value.set(jsc::JsRef::init_weak(value));
+        let this = socket.this_ptr();
+        let value = NewSocket::to_js(socket, global);
+        this.this_value.set(jsc::JsRef::init_weak(value));
         value
     }
 
@@ -28,8 +29,8 @@ pub(crate) fn do_connect<'a>(
     options: JsLocal<'a>,
 ) -> JsResult<JSValue> {
     let (maybe_tcp, maybe_tls) = match socket {
-        SocketHandle::Tcp(socket) => (Some(socket.as_ctx_ptr()), None),
-        SocketHandle::Tls(socket) => (None, Some(socket.as_ctx_ptr())),
+        SocketHandle::Tcp(socket) => (Some(socket), None),
+        SocketHandle::Tls(socket) => (None, Some(socket)),
         SocketHandle::Ignored(_) => (None, None),
     };
     Listener::connect_inner(&cx.js_thread(), maybe_tcp, maybe_tls, options.to_js())

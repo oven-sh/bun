@@ -42,7 +42,13 @@ const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { addServerAbortSignalOption } = require("internal/net/server_abort_signal");
-const { kForeignListener, kHandleClosed, kSNIContexts, readInProgress } = require("internal/net/symbols");
+const {
+  kSharesWrites,
+  kForeignListener,
+  kHandleClosed,
+  kSNIContexts,
+  readInProgress,
+} = require("internal/net/symbols");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
 const {
   kInternalSocketData,
@@ -98,6 +104,8 @@ const kListenerGeneration = Symbol("http.server.listenerGeneration");
 const kClusterHandle = Symbol("http.server.clusterHandle");
 // listen() and close() bump it, so a reply from the cluster primary to an earlier listen() is dropped.
 const kClusterListeningId = Symbol("http.server.clusterListeningId");
+// The id of the listen() that waits for the primary.
+const kClusterPendingBind = Symbol("http.server.clusterPendingBind");
 // Under `bun --hot`, maps a reused native server to the http.Server it dispatches to, or to null once another http.Server stopped it.
 let nativeServerOwners: WeakMap<WeakKey, Server | null> | undefined;
 // Set on the 'connect'/'upgrade' handoff; closeAll/closeIdleConnections() skip these, as in Node.
@@ -234,7 +242,7 @@ function onServerResponseClose() {
   // where the ServerResponse object has already been deconstructed.
   // Fortunately, that requires only a single if check. :-)
   const httpMessage = this._httpMessage;
-  if (httpMessage) {
+  if (httpMessage && httpMessage !== this[kFinishedAtClose]) {
     emitCloseNT(httpMessage);
   }
 }
@@ -337,7 +345,7 @@ function normalizeServerTls(tls) {
 // uWS parses the connections it accepts. Every other Duplex gets Node's connection listener.
 function connectionListener(this: Server, socket) {
   // A socket that 'connect' or 'upgrade' got is a connection like any other when it's emitted again.
-  if (socket[kHandle] !== undefined && !socket[kHandedOff]) return;
+  if (staysWithNativeParser(socket)) return;
   const tlsServer = this[tlsSymbol];
   // Its 'connection' listener wraps the socket in a TLSSocket, which comes back as 'secureConnection'.
   if (tlsServer) tlsServer.emit("connection", socket);
@@ -345,7 +353,18 @@ function connectionListener(this: Server, socket) {
 }
 
 function secureConnectionListener(this: Server, socket) {
-  if (socket[kHandle] === undefined || socket[kHandedOff]) connectionListenerInternal(this, socket);
+  if (!staysWithNativeParser(socket)) connectionListenerInternal(this, socket);
+}
+
+// A socket whose reads the program took is handed over here, like one that 'upgrade' got.
+function staysWithNativeParser(socket) {
+  if (socket[kHandle] === undefined || socket[kHandedOff]) return false;
+  if (!tookReadsFromParser(socket)) return true;
+  socket[kHandle].detachParser(false);
+  detachFromHttp(socket, undefined);
+  connectionState(socket);
+  startNextResponse(socket);
+  return false;
 }
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L103-L106
@@ -632,6 +651,13 @@ Server.prototype.closeAllConnections = function () {
       destroyNow(socket);
     }
   }
+  const handedOff = this[kHandedOffSockets];
+  if (handedOff) {
+    for (const socket of handedOff) {
+      // ws.handleUpgrade() took it in a 'request' listener, so its request is still in flight.
+      if (socket[kHandle] === undefined && socket._httpMessage?.[kHandle]) socket.destroy();
+    }
+  }
 };
 
 // net.Socket's _destroy() calls this after it queued the socket's own 'close', so the immediate set here runs behind that. The one that stop()'s promise sets can run ahead: an idle connection that its peer or closeIdleConnections() closes emits 'close' after the server, as in Node.
@@ -658,6 +684,13 @@ Server.prototype.getConnections = function (callback) {
   return this;
 };
 
+// Behind the response that has the connection.
+function lastRequestWaits(socket) {
+  const parser = socket.parser;
+  const res = socket._httpMessage;
+  return parser != null && res != null && parser.incoming !== null && parser.incoming !== res.req;
+}
+
 function closeIdleParsedConnections(server) {
   const parsed = server[kConnections];
   if (parsed === undefined) return;
@@ -665,6 +698,7 @@ function closeIdleParsedConnections(server) {
   for (let i = 0, l = connections.length; i < l; i++) {
     const socket = connections[i].socket;
     if (socket._httpMessage && !socket._httpMessage.finished) continue;
+    if (lastRequestWaits(socket)) continue;
     socket.destroy();
   }
 }
@@ -769,7 +803,9 @@ Server.prototype.address = function () {
 
 Server.prototype.listen = function () {
   // Before anything is registered, like net.Server: https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2270-L2272
-  if (this[serverSymbol]) throw $ERR_SERVER_ALREADY_LISTEN();
+  const pendingBind = this[kClusterPendingBind];
+  if (this[serverSymbol] || (pendingBind !== undefined && pendingBind === this[kClusterListeningId]))
+    throw $ERR_SERVER_ALREADY_LISTEN();
   const server = this;
   let port, host;
   let socketPath;
@@ -878,10 +914,10 @@ Server.prototype.listen = function () {
       return this;
     }
 
-    server[kClusterListeningId]++;
+    const listeningId = ++server[kClusterListeningId];
     server.once("listening", () => {
       // No channel (NODE_UNIQUE_ID inherited by a plain child, or already disconnected): nothing to notify.
-      if (!process.connected) return;
+      if (!process.connected || listeningId !== server[kClusterListeningId]) return;
       cluster.worker.state = "listening";
       const address = server.address();
       const isObjectAddress = address !== null && typeof address === "object";
@@ -897,8 +933,22 @@ Server.prototype.listen = function () {
       process.send!(message, undefined, kInternalSendOptions);
     });
 
-    server[kRealListen](tls, port, host, socketPath, true, ipv6Only, fd);
-    if (!exclusive) cluster._trackServer(server);
+    if (exclusive) {
+      server[kRealListen](tls, port, host, socketPath, true, ipv6Only, fd);
+      return this;
+    }
+    server[kClusterPendingBind] = listeningId;
+    cluster._trackServer(server, track => {
+      if (listeningId !== server[kClusterListeningId]) return;
+      server[kClusterPendingBind] = undefined;
+      if (cluster.worker?.exitedAfterDisconnect) return;
+      try {
+        server[kRealListen](tls, port, host, socketPath, true, ipv6Only, fd);
+        server[kClusterHandle] = track();
+      } catch (err) {
+        emitListenError(server, err, port, host, socketPath, fd);
+      }
+    });
   } catch (err) {
     emitListenError(server, err, port, host, socketPath, fd);
   }
@@ -908,15 +958,16 @@ Server.prototype.listen = function () {
 
 // net.Server's listenInCluster, always `sharedOnly` like its TLS servers: Bun.serve can't take connections the primary accepted.
 function listenInCluster(server, tls, port, host, socketPath, ipv6Only, fd) {
-  const listeningId = ++server[kClusterListeningId];
+  const listeningId = (server[kClusterPendingBind] = ++server[kClusterListeningId]);
   function query(address, queryPort, addressType) {
     const flags = ipv6Only ? 1 : 0;
     const serverQuery = { address, port: queryPort, addressType, fd, flags, sharedOnly: true, isHttp: true };
     cluster._getServer(server, serverQuery, (errno, handle, reply) => {
-      if (listeningId !== server[kClusterListeningId] || cluster.worker.exitedAfterDisconnect) {
+      if (listeningId !== server[kClusterListeningId]) {
         handle?.close();
         return;
       }
+      server[kClusterPendingBind] = undefined;
       if (errno) {
         const ex = new ExceptionWithHostPort(errno, "bind", address, queryPort);
         if (typeof reply?.bunHint === "string") ex.message += `\n  note: ${reply.bunHint}`;
@@ -948,8 +999,9 @@ function listenInCluster(server, tls, port, host, socketPath, ipv6Only, fd) {
   // https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2434-L2452
   require("node:dns").lookup(address, (err, ip, family) => {
     if (listeningId !== server[kClusterListeningId]) return;
-    if (err) server.emit("error", err);
-    else query(ip, port, family === 6 ? 6 : 4);
+    if (!err) return query(ip, port, family === 6 ? 6 : 4);
+    server[kClusterPendingBind] = undefined;
+    server.emit("error", err);
   });
 }
 
@@ -1550,10 +1602,10 @@ function detachFromHttp(socket, req) {
   delete socket._onTimeout;
   // Only that function ignores the keep-alive timer, which stays armed while a request is in flight.
   if (socket.timeout === 0) socket.setTimeout(0);
-  delete socket._final;
   delete socket._destroy;
   const server = socket.server;
   server[kTrackedConnections].delete(socket);
+  if (socket.encrypted) socket.allowHalfOpen = server.allowHalfOpen;
   // In Node each socket holds the process itself. Here unref() on the server has always let go of these sockets too.
   server[kHandedOffSockets].add(socket);
   if (server._unref) socket.unref();
@@ -1576,12 +1628,17 @@ function handOffSocket(socket, req, pipeline) {
   if (pipeline === undefined) return leaveHttp(socket);
   // The socket reads and writes through uWS until the responses ahead of this request are out.
   pipeline.outgoing.pop();
-  socket[kHandle].detachParser();
+  socket[kHandle].detachParser(true);
   startNextResponse(socket);
 }
 // The listener gets the rest of the read as `head`.
 function leaveHttp(socket) {
-  if (socket[kHandle].leaveHttp(true)) socket[kHandle] = undefined;
+  if (socket[kHandle].leaveHttp(true)) leftHttp(socket);
+}
+function leftHttp(socket) {
+  socket[kHandle] = undefined;
+  if (socket[kSharesWrites]) socket[kSharesWrites] = false;
+  delete socket._final;
 }
 // ws.handleUpgrade() while uWS still owns the connection: from a 'request' listener, or before the body of the Upgrade request has ended.
 Server.prototype[kLeaveHttp] = function (socket, req) {
@@ -1597,10 +1654,11 @@ Server.prototype[kLeaveHttp] = function (socket, req) {
   if (socket[kHandle] === undefined) return;
   if (!socket[kHandedOff]) detachFromHttp(socket, req);
   if (!http.leaveHttp(false)) return;
-  socket[kHandle] = undefined;
+  leftHttp(socket);
   socket[kUpgradeStream] = undefined;
-  res?.detachSocket(socket);
-  if (socket[kConnectionState] !== undefined) socket.once("close", abortWaitingResponses.bind(undefined, socket));
+  // The response of a 'request' listener keeps the socket and closes with it, as in Node.
+  if (res != null) socket.prependListener("close", nativeSocketOnClose);
+  else if (socket[kConnectionState] !== undefined) socket.once("close", abortWaitingResponses.bind(undefined, socket));
   // A reader that waits for the rest of the body gets 'end', like in Node 25 and older.
   if (!req.complete) onDataIncomingMessage.$call(req, undefined, true, NodeHTTPResponseAbortEvent.none);
 };
@@ -1858,7 +1916,8 @@ function executeParser(server, socket, parser, state, d) {
 class UpgradeStream extends Duplex {
   constructor(socket, req) {
     super({
-      allowHalfOpen: socket.allowHalfOpen,
+      // The FIN that ends a socket of uWS's also ends the request, whose 'end' listener may write to this stream. It closes with the socket.
+      allowHalfOpen: socket.allowHalfOpen || socket[kHandleClosed] !== undefined,
     });
 
     this[kSocket] = socket;
@@ -1907,17 +1966,29 @@ class UpgradeStream extends Duplex {
     const socket = this[kSocket];
     // The listener can have ended `req.socket` itself, and end() on a finished socket calls back with an error.
     if (socket.writableEnded) callback();
-    else socket.end(callback);
+    else socket.end(afterSocketWrite.bind(undefined, this, callback));
   }
 
   _write(chunk, encoding, callback) {
-    this[kSocket].write(chunk, encoding, callback);
+    const socket = this[kSocket];
+    const done = afterSocketWrite.bind(undefined, this, callback);
+    // The peer's FIN has ended it.
+    if (socket.writableEnded && socket[kHandleClosed] !== undefined)
+      process.nextTick(done, $ERR_STREAM_DESTROYED("write"));
+    else socket.write(chunk, encoding, done);
   }
 
   _destroy(err, callback) {
     this[kSocket].destroy(err);
     callback(err);
   }
+}
+
+// A socket that uWS handed over closes with no 'error' when its connection fails, and so does the stream that stands for it.
+function afterSocketWrite(stream, callback, err) {
+  const socket = stream[kSocket];
+  if (err && socket[kHandleClosed] !== undefined) stream.destroy();
+  callback(err);
 }
 
 function onParserExecuteCommon(server, socket, parser, state, ret, d) {
@@ -2063,10 +2134,25 @@ function waitForSocket(res, socket, state) {
   startNextResponse(socket);
 }
 
+// A close over unread bytes is a reset, which drops what the peer has yet to read. Its FIN or the idle timeout closes then.
+function closeWithoutReset(socket, lastResponse) {
+  if (lastResponse?.req.complete && !socket._paused) return void socket.destroySoon();
+  socket[kHandle].detachParser(false);
+  socket._paused = false;
+  socket.resume();
+  socket.setTimeout(keepAliveIdleTimeout(socket.server), destroyNow.bind(undefined, socket));
+}
+
 function startNextResponse(socket) {
   const state = socket?.[kConnectionState];
-  if (state === undefined || socket._httpMessage != null || socket.writableEnded || socket.destroyed) return;
+  if (state === undefined || socket._httpMessage != null || socket.destroyed) return;
   if (socket[kHandle] === undefined) return;
+  if (socket.writableEnded) {
+    // No response can follow the FIN. The close aborts those that wait.
+    const { length } = state.outgoing;
+    if (length !== 0 && !socket[kHandedOff]) closeWithoutReset(socket, state.outgoing[length - 1]);
+    return;
+  }
   const res = state.outgoing[0];
   if (res === undefined) {
     if (socket[kHandedOff]) leaveHttp(socket);
@@ -2298,7 +2384,11 @@ function attachConnection(server: Server, socket) {
 
 // A TLSSocket of the program's that was emitted as 'connection' finishes its handshake with this server as socket.server too.
 function attachSecureConnection(server: Server, socket) {
-  if (socket[kHandle] !== undefined) nativeConnectionListener(server, socket);
+  if (socket[kHandle] === undefined) return;
+  // What the peer's FIN ends is uWS's decision while it parses the connection, as on a plain one.
+  socket.allowHalfOpen = true;
+  socket[kSharesWrites] = true;
+  nativeConnectionListener(server, socket);
 }
 
 // https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L826-L829
@@ -2323,6 +2413,7 @@ function nativeConnectionListener(server: Server, socket) {
   socket.on("resume", nativeSocketOnResume);
   socket.on("pause", onSocketPause);
   socket.on("newListener", unconsumeForListener);
+  socket.removeAllListeners = removeAllListeners;
   socket.setEncoding = socketSetEncoding;
   socket._onTimeout = onSocketTimeoutTimerExpired;
   socket._final = nativeSocketFinal;
@@ -2351,10 +2442,34 @@ function unconsume(socket) {
   const parser = socket.parser;
   if (parser == null || !parser._consumed) return;
   parser._consumed = false;
-  socket.removeListener("pause", onSocketPause);
-  socket.removeListener("resume", nativeSocketOnResume);
   // Gone once uWS has closed the connection, which is before the socket's 'close'.
   socket[kHandle]?.setRawReads(true);
+  if (tookReadsFromParser(socket)) stopParsing(socket);
+}
+function stopParsing(socket) {
+  socket[kHandle]?.detachParserAfterRead();
+  socket.removeListener("pause", onSocketPause);
+  socket.removeListener("resume", nativeSocketOnResume);
+  // net.Socket has had a read pending since the accept, so no _read() would lift a pause from before. A full buffer stops the reads now.
+  socket._handle?.resume();
+  if (socket.encrypted) socket.allowHalfOpen = socket.server.allowHalfOpen;
+}
+// Node's parser gets the reads of an unconsumed socket through its 'data' listener. Before the first request, it may not have added that yet.
+function tookReadsFromParser(socket) {
+  return (
+    socket.parser?._consumed === false &&
+    socket[kStopParsingOnCloseListener] === true &&
+    socket.listenerCount("data", noopOnData) === 0
+  );
+}
+function removeAllListeners(this: any, _event) {
+  const socket = this;
+  NetSocket.prototype.removeAllListeners.$apply(socket, arguments);
+  if (socket[kHandle] === undefined || socket[kHandedOff]) return socket;
+  if (tookReadsFromParser(socket)) stopParsing(socket);
+  else if (socket.parser?._consumed && socket.listenerCount("newListener", unconsumeForListener) === 0)
+    socket.on("newListener", unconsumeForListener);
+  return socket;
 }
 
 function nativeSocketOnResume(this: any) {
@@ -2362,7 +2477,8 @@ function nativeSocketOnResume(this: any) {
     this.pause();
     return;
   }
-  this._handle?.resume();
+  // Behind a full buffer, _read() starts the reads.
+  if (this.readableLength <= this.readableHighWaterMark) this._handle?.resume();
 }
 function onSocketPause(this: any) {
   this._handle?.pause();
@@ -2370,8 +2486,23 @@ function onSocketPause(this: any) {
 
 // Without net.Socket's tick: what the response writes after socket.end() is dropped, as in Node, where both share the socket's Writable.
 function nativeSocketFinal(this: any, callback) {
+  if (this[kHandedOff]) {
+    NetSocket.prototype._final.$call(this, finishBehindResponses.bind(undefined, this, callback));
+    return;
+  }
   this._handle?.shutdown();
+  finishBehindResponses(this, finishAndReadToFin.bind(undefined, this, callback));
+}
+// A pause would hide the peer's FIN. onDataIncomingMessage() decides what becomes of a body that nothing reads.
+function finishAndReadToFin(socket, callback) {
+  if (socket.isPaused() && socket.parser?._consumed && !socket.parser.incoming?._consuming) socket._handle?.resume();
   callback();
+}
+// The FIN waits for the response bytes that uWS still holds. An empty write completes behind them, or at the close, which reports what failed.
+function finishBehindResponses(socket, callback) {
+  const http = socket[kHandle];
+  if (http === undefined || http.closed || http.finSent) callback();
+  else NetSocket.prototype._write.$call(socket, kEmptyBuffer, "buffer", () => callback());
 }
 
 // net.Socket queues 'close' from here. Node's comes from the handle, so it doesn't run in the AsyncLocalStorage store of the request whose end closes the connection.
@@ -2398,8 +2529,12 @@ function closeWithConnection(emitClose, socket, isException) {
   setImmediate(emit);
 }
 
-// Node's socketOnEnd. What becomes of the connection after a clean end is uWS's decision, right behind this.
+// Node's socketOnEnd. What becomes of a connection that uWS parses after a clean end is uWS's decision, right behind this.
 function nativeSocketOnEnd(this: any) {
+  if (tookReadsFromParser(this)) {
+    if (!this.server.httpAllowHalfOpen) this.end();
+    return;
+  }
   if (!this[kHandle]?.finishParsing()) return;
   const err: any = $HPE_INVALID_EOF_STATE("Parse Error: Invalid EOF state");
   err.reason = "Invalid EOF state";
@@ -2412,7 +2547,8 @@ function onConnectionClosed(this: any, tracked, left) {
   const http = this;
   const socket = left ?? http.duplex;
   if (socket[kHandle] !== http) return;
-  socket[kHandle] = undefined;
+  if (left === undefined) socket[kHandle] = undefined;
+  else if (http.closed) leftHttp(socket);
   if (left !== undefined) {
     // Not closed: the body of an accepted Upgrade request has ended, and the connection is the socket's from here on.
     socket.removeListener("end", socket.end);
@@ -2436,6 +2572,8 @@ function onConnectionClosed(this: any, tracked, left) {
   }
   if (socket.destroyed || http.closeError) {
     // The handle's own close, right behind this, reports the error.
+  } else if (socket[kHandedOff] && socket.writableFinished) {
+    // It also reports the EOF: the FIN that answers this side's comes as a close.
   } else if (!http.peerEnded) {
     // This side closed it, so there's no EOF to report.
     socket.destroy();
@@ -2460,9 +2598,11 @@ function nativeSocketOnClose(this: any) {
   const pending = socket[kDetachedWhileClosing];
   socket[kDetachedWhileClosing] = undefined;
   const message = socket._httpMessage ?? (pending?.destroyed ? pending : undefined);
-  const req = message != null && socket[kFinishedAtClose] !== message ? message.req : undefined;
-  abortRequest(req);
-  if (message && !message._closed) emitCloseNT(message);
+  // One that finished at the close emits 'close' behind its 'finish'.
+  if (message != null && socket[kFinishedAtClose] !== message) {
+    abortRequest(message.req);
+    emitCloseNT(message);
+  }
   abortWaitingResponses(socket);
 }
 function abortWaitingResponses(socket) {
@@ -2658,9 +2798,13 @@ function ServerResponse(req, options): void {
     this.shouldKeepAlive = false;
   }
 
-  // The native response of a request that 'upgrade' or 'connect' handed over is done. This one writes to the socket it's assigned, like in Node.
+  // The native response of a request that 'upgrade' or 'connect' got goes when the connection leaves HTTP. This one writes to the socket it's assigned, like in Node.
   let handle = options?.[kHandle];
-  if (handle === undefined && (handle = req[kHandle]) && handle.flags & NodeHTTPResponseFlags.closed_or_completed) {
+  if (
+    handle === undefined &&
+    (handle = req[kHandle]) &&
+    (req.upgrade || handle.flags & NodeHTTPResponseFlags.closed_or_completed)
+  ) {
     handle = undefined;
   }
   this[kHandle] = handle;
@@ -2942,7 +3086,9 @@ function emitResponseFinish() {
   // the response's own socket (set by assignSocket, cleared only by
   // detachSocket) still references the connection then.
   const detachedFrom = this[kDetachedFrom];
-  const socket = detachedFrom ?? this.req?.socket ?? this.socket;
+  let socket = detachedFrom ?? this.req?.socket ?? this.socket;
+  // So it does when middleware put a stand-in in req.socket.
+  if (socket != null && !Object.hasOwn(socket, kHandedOff)) socket = this[kSocket];
   // Node's clearIncoming: a request that ended before its response did, or that gets no EOF. Any other one is cleared at its EOF.
   const parser = socket?.parser;
   if (parser != null && parser.incoming === req && (req.readableEnded || req.destroyed)) parser.incoming = null;
@@ -3819,6 +3965,8 @@ ServerResponse.prototype.flushHeaders = function () {
   if (this[kImplicitHeaderFromEnd]) return;
 
   this._headerSent = true;
+  // Socket already gone, and 'close' is still to come.
+  if (handle.flags & NodeHTTPResponseFlags.closed_or_completed) return;
   let renderedHeaders;
   try {
     renderedHeaders = renderNativeHeaders(this);

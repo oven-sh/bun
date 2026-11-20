@@ -48,6 +48,7 @@ const {
   kAcceptedTLS,
   kArmHandshakeTimeout,
   kDestroyOnRead,
+  kSharesWrites,
   kForeignListener,
   kHandleClosed,
   kPreHandshakeWrite,
@@ -398,8 +399,12 @@ function endNT(self, socket, callback) {
   // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L500
   // A TLS wrap made since _final attached this socket's handle, or left the fd to the raw half of `socket`.
   const current = self._handle;
+  // A destroy() at 'finish' drops what a stream under TLS still holds. Read before the close_notify joins it, which a peer that left never takes.
+  const transport = unadoptedTransport(self);
+  const holdsData = transport !== undefined && !(transport instanceof Socket) && transport.writableLength > 0;
   (!socket || current?.[kAdoptedTLSRaw] ? current : socket)?.shutdown();
-  callback();
+  if (holdsData && transport.writableEnded && !transport.writableFinished) transport.once("finish", callback);
+  else callback();
 }
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
@@ -488,7 +493,9 @@ function onUpgradedEnd(connection, eof) {
   if (!connection.destroyed) eof();
 }
 function attachTLSEngine(self, connection, options) {
-  const [handle, events] = upgradeDuplexToTLS(connection, options);
+  // Unlike Node, not over a Duplex with allowHalfOpen, which is its default: programs count on the close there.
+  const halfOpen = connection instanceof Socket || !self.allowHalfOpen;
+  const [handle, events] = upgradeDuplexToTLS(connection, options, halfOpen);
   connection.on("data", events[0]);
   connection.on("end", onUpgradedEnd.bind(null, connection, events[1]));
   connection.on("close", events[2]);
@@ -796,10 +803,15 @@ function readStart(self, handle) {
   if (!self[kUserUnrefed]) handle?.ref?.();
 }
 
+// libuv has a uv_write_t for such a write, which holds the loop whatever unref() says. It has none for one that waits for the handshake or for a stream.
+function waitsForKernel(self) {
+  return self[kWriteReq] !== undefined && !self.secureConnecting && unadoptedTransport(self) === undefined;
+}
+
 // The write that was holding the loop (_write) just drained; a socket whose
 // reads are over (peer FIN) or stopped is back at rest and lets go again.
 function unrefAfterDrain(self, handle) {
-  if ((self[kended] || self[kPausedUnref]) && !self[kUserUnrefed] && handle === self._handle) handle.unref?.();
+  if ((self[kended] || self[kPausedUnref] || self[kUserUnrefed]) && handle === self._handle) handle.unref?.();
 }
 
 function finishSocketEnd(self) {
@@ -961,7 +973,9 @@ const SocketHandlers = {
   },
   end(socket) {
     const self = socket.data;
-    if (self && !isOfEarlierConnection(self, socket)) onReadEnd(self);
+    if (!self || isOfEarlierConnection(self, socket)) return;
+    if (self[kDestroyOnRead]) self.destroy();
+    else onReadEnd(self);
   },
   close(socket, err?: NativeSocketError) {
     const self = socket.data;
@@ -1377,27 +1391,34 @@ function onconnection(err, clientHandle) {
 
   _socket[kAttach](clientHandle);
 
-  const blockList = self.blockList;
-  if (blockList) {
-    const addressType = isIP(clientHandle.remoteAddress);
-    // No 'drop': https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2512-L2520
-    if (addressType && blockList.check(clientHandle.remoteAddress, `ipv${addressType}`)) {
+  try {
+    const blockList = self.blockList;
+    if (blockList) {
+      const addressType = isIP(clientHandle.remoteAddress);
+      // No 'drop': https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2512-L2520
+      if (addressType && blockList.check(clientHandle.remoteAddress, `ipv${addressType}`)) {
+        clientHandle.end();
+        return;
+      }
+    }
+    if (self.maxConnections != null && self._connections >= self.maxConnections) {
+      const data = {
+        localAddress: _socket.localAddress,
+        localPort: _socket.localPort || clientHandle.localPort,
+        localFamily: _socket.localFamily,
+        remoteAddress: _socket.remoteAddress,
+        remotePort: _socket.remotePort,
+        remoteFamily: _socket.remoteFamily || "IPv4",
+      };
+
       clientHandle.end();
+      self.emit("drop", data);
       return;
     }
-  }
-  if (self.maxConnections != null && self._connections >= self.maxConnections) {
-    const data = {
-      localAddress: _socket.localAddress,
-      localPort: _socket.localPort || clientHandle.localPort,
-      localFamily: _socket.localFamily,
-      remoteAddress: _socket.remoteAddress,
-      remotePort: _socket.remotePort,
-      remoteFamily: _socket.remoteFamily || "IPv4",
-    };
-
+  } catch (e) {
+    // Thrown on, it would end at a TLSSocket's own 'error' listener.
     clientHandle.end();
-    self.emit("drop", data);
+    reportError(e);
     return;
   }
 
@@ -2386,7 +2407,10 @@ Socket.prototype.ref = function ref() {
     return this;
   }
   // Node has one handle under both sockets. Here the TLS socket that adopted the fd holds the loop.
-  (socket[kAdoptedTLSRaw] ?? socket).ref();
+  const tlsSocket = socket[kAdoptedTLSRaw];
+  if (tlsSocket) tlsSocket.ref();
+  // Once the reads are over, only a pending write holds the loop.
+  else if (!this[kended] || this[kWriteReq]) socket.ref();
   return this;
 };
 
@@ -2558,7 +2582,9 @@ Socket.prototype.unref = function unref() {
     this.once("connect", this.unref);
     return this;
   }
-  (socket[kAdoptedTLSRaw] ?? socket).unref();
+  const tlsSocket = socket[kAdoptedTLSRaw];
+  if (tlsSocket) tlsSocket.unref();
+  else if (!waitsForKernel(this)) socket.unref();
   return this;
 };
 
@@ -2633,16 +2659,16 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   const status = socket.$write(chunk, encoding);
   if (status === false) {
     this[kWriteReq] = { writeHandle: socket, writeCallback: callback, writeFrame: AsyncContextFrame.current() };
-    // A pending write holds the loop even on a handle whose FIN/pause dropped
+    // A pending write holds the loop even on a handle whose FIN/pause/unref() dropped
     // its hold (libuv: the uv_write_t is active); unrefAfterDrain lets go again.
-    if ((this[kended] || this[kPausedUnref]) && !this[kUserUnrefed]) socket.ref?.();
+    if (this[kUserUnrefed] ? waitsForKernel(this) : this[kended] || this[kPausedUnref]) socket.ref?.();
   } else if (status !== true) {
     // https://github.com/nodejs/node/blob/v26.5.0/lib/internal/stream_base_commons.js#L158-L159
     // Node still holds the descriptor of a peer that hung up, so its write fails with EPIPE.
     const err = new ErrnoException(this[kHungUp] && status === uv().UV_EBADF ? uv().UV_EPIPE : status, "write");
     if (endsWithoutError(this)) process.nextTick(callback, err);
     else callback(err);
-  } else if (this.encrypted) {
+  } else if (this.encrypted && !this[kSharesWrites]) {
     // A TLS write is never done in the same call in Node, so writableLength counts it until the next tick (test-tls-buffersize.js).
     process.nextTick(callback);
   } else {
@@ -3897,7 +3923,13 @@ function onClusterConnection(err, clientHandle) {
     socket[kSetKeepAlive] = true;
     socket[kSetKeepAliveInitialDelay] = keepAliveDelayOf(self);
   }
-  socket.connect({ fd: clientHandle.fd, fdIsRawSocket: true, pauseOnConnect: self.pauseOnConnect });
+  try {
+    socket.connect({ fd: clientHandle.fd, fdIsRawSocket: true, pauseOnConnect: self.pauseOnConnect });
+  } catch {
+    // The event loop refused the descriptor. A listener drops such a connection too.
+    clientHandle.close();
+    return;
+  }
   const blockList = self.blockList;
   if (blockList) {
     const remote = socket.remoteAddress;

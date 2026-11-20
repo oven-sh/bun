@@ -5,6 +5,8 @@ export default {
   // Set while a socket must receive nothing (an idle socket in an http.Agent
   // pool): the read path destroys the socket instead of delivering the bytes.
   kDestroyOnRead: Symbol("kDestroyOnRead"),
+  // True on a TLSSocket whose connection node:http's responses write to as well. They would overtake a write that waits in the stream's buffer.
+  kSharesWrites: Symbol("kSharesWrites"),
   // net.Server.prototype method. node:http calls it on its own server, whose connections uWS accepts.
   kForeignListener: Symbol("kForeignListener"),
   // A function that node:http puts on a socket it handed to 'connect' or 'upgrade'. net.Socket calls it when the connection has closed.

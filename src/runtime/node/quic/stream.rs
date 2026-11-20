@@ -1371,7 +1371,7 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
                     stream.want_read(false);
                     break;
                 }
-                // RFC 9114 §4.1.2. lsquic lets a request with no DATA at all through.
+                // RFC 9114 §4.1.2. lsquic goes by the last header block with a content-length, trailers included.
                 if qs
                     .request_length
                     .get()

@@ -969,6 +969,43 @@ describe.concurrent("unref()/pause() around connect()", () => {
   });
 });
 
+describe.concurrent.each([
+  ["an accepted socket", `require("node:net").createServer(socket => socket.once("data", () => send(socket)))`],
+  ["an 'upgrade' socket", `require("node:http").createServer().on("upgrade", (req, socket) => send(socket))`],
+])("%s", (_, createServer) => {
+  it.each(["socket.unref().end(bytes)", "socket.end(bytes).unref()"])("%s sends all of the bytes", async call => {
+    const size = 16 << 20;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          function send(socket) {
+            const bytes = Buffer.alloc(${size});
+            server.close();
+            ${call};
+            console.log("called");
+          }
+          const server = ${createServer};
+          server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const stdout = proc.stdout.getReader();
+    const port = Number(Buffer.from((await stdout.read()).value!).toString());
+    const client = connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+    client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n");
+    await stdout.read();
+    let received = 0;
+    for await (const chunk of client) received += chunk.length;
+    expect(received).toBe(size);
+    expect(await proc.exited).toBe(0);
+  });
+});
+
 it.concurrent("socket should keep process alive if unref is not called", async () => {
   using server = replyingTLSServer();
   const { stdout, stderr, exitCode } = await bunRun(join(import.meta.dir, "node-ref-default-fixture.js"), {
@@ -1594,6 +1631,47 @@ describe("Socket fd adoption", () => {
       }
     });
 
+    it("a socket can fill stdout after one that did has closed", async () => {
+      const { rfd, wfd } = openFifo("again.fifo", nonBlocking);
+      try {
+        await using proc = Bun.spawn({
+          // spawn() makes the child's stdout blocking, so a shell puts the pipe there.
+          cmd: [
+            "sh",
+            "-c",
+            'exec "$@" >&3',
+            "sh",
+            bunExe(),
+            "-e",
+            `
+              const net = require("node:net");
+              for (const fill of "ab") {
+                const socket = new net.Socket({ fd: 1, readable: false, writable: true }).on("error", () => {});
+                const err = await new Promise(resolve => socket.write(Buffer.alloc(300_000, fill), resolve));
+                console.error(fill, err?.code);
+                await new Promise(resolve => socket.destroy().on("close", resolve));
+              }
+            `,
+          ],
+          env: bunEnv,
+          stdio: ["ignore", "ignore", "pipe", wfd],
+        });
+        fs.closeSync(wfd);
+        const [received, stderr, exitCode] = await Promise.all([
+          new Response(Bun.file(rfd).stream()).bytes(),
+          proc.stderr.text(),
+          proc.exited,
+        ]);
+        expect({ bytes: received.length, stderr, exitCode }).toEqual({
+          bytes: 600_000,
+          stderr: "a undefined\nb undefined\n",
+          exitCode: 0,
+        });
+      } finally {
+        fs.closeSync(rfd);
+      }
+    });
+
     it("destroy() cancels a write the pipe had no room for", async () => {
       const { rfd, wfd } = openFifo("cancel.fifo", nonBlocking);
       try {
@@ -1744,14 +1822,14 @@ describe("Socket fd adoption", () => {
   });
 
   // Nothing is read from it, so only a pending write may keep the process alive.
-  it("an open write-only socket doesn't keep the process alive", async () => {
+  it.each(["", ".ref()", ".unref().ref()"])("an open write-only socket%s doesn't keep the process alive", async ref => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
           const net = require("node:net");
-          const socket = new net.Socket({ fd: 1, readable: false, writable: true });
+          const socket = new net.Socket({ fd: 1, readable: false, writable: true })${ref};
           socket.write("done");
           process.on("exit", () => console.error(JSON.stringify({ destroyed: socket.destroyed })));
         `,
@@ -5434,4 +5512,36 @@ describe("typeOfService", () => {
       server.destroy();
     }
   });
+});
+
+it.concurrent.each([
+  ["connects", ``, "connect\nclose\n"],
+  ["can be destroyed", `socket.destroy();`, "close\n"],
+])("a socket whose handle timed out while it was connecting %s", async (_, then, expected) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { sweepSocketTimers } = require("bun:internal-for-testing");
+        const net = require("node:net");
+        const server = net.createServer(peer => peer.end()).listen(0, "127.0.0.1", () => {
+          const socket = net.connect(server.address().port, "127.0.0.1").resume();
+          socket.on("connect", () => console.log("connect"));
+          socket.on("close", () => (console.log("close"), server.close()));
+          // Behind the tick that dials, ahead of the poll that sees the connection.
+          process.nextTick(() => {
+            socket._handle.timeout(1);
+            sweepSocketTimers(3);
+            ${then}
+          });
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
 });

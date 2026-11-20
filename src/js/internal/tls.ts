@@ -442,7 +442,7 @@ function unsealPfxForNative(tls) {
     _pfxExtraCACerts: pfxCAs,
   } = processPfxOptions({ pfx: tls.pfx, passphrase: tls.passphrase, key: tls.key, cert: tls.cert });
   const { ca } = tls;
-  const unsealed = { __proto__: tls, key, cert, ca, pfx: undefined };
+  const unsealed = require("internal/shared").withMembers(tls, { key, cert, ca, pfx: undefined });
   if (!pfxCAs) return unsealed;
   if (ca) unsealed.ca = $isArray(ca) ? [...ca, ...pfxCAs] : [ca, ...pfxCAs];
   return unsealed;

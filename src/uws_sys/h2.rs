@@ -124,6 +124,9 @@ impl Response {
         false
     }
     pub(crate) fn uncork(&mut self) {}
+    pub(crate) fn is_connect_request(&self) -> bool {
+        false
+    }
     pub(crate) fn prepare_for_sendfile(&mut self) {}
     pub(crate) fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
         let mut port: i32 = 0;
@@ -326,18 +329,20 @@ macro_rules! h2_route_methods {
     )*};
 }
 
-impl App {
+pub struct OwnedApp(core::ptr::NonNull<App>);
+
+impl OwnedApp {
     /// Attach an HTTP/2 context to `parent`: its connections that negotiate
     /// "h2" via ALPN (or, without TLS, open with the prior-knowledge preface)
     /// are served by this app's routes. With `allow_http1 == false` the
     /// parent stops serving HTTP/1.x.
-    pub fn create<const SSL: bool>(
+    pub fn new<const SSL: bool>(
         parent: &mut crate::app::App<SSL>,
         allow_http1: bool,
         idle_timeout_s: u32,
         max_request_body_size: u64,
-    ) -> Option<*mut App> {
-        // SAFETY: parent is a live TemplatedApp<SSL>; uws owns the returned handle
+    ) -> Option<Self> {
+        // SAFETY: parent is a live TemplatedApp<SSL>
         let p = unsafe {
             c::uws_h2_create_app(
                 i32::from(SSL),
@@ -347,15 +352,22 @@ impl App {
                 max_request_body_size,
             )
         };
-        if p.is_null() { None } else { Some(p) }
+        core::ptr::NonNull::new(p).map(Self)
     }
-    /// # Safety
-    /// `this` must be a live App handle previously returned by `App::create`;
-    /// it is freed by this call and must not be used afterwards.
-    pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: caller contract above
-        unsafe { c::uws_h2_app_destroy(this) }
+
+    pub fn as_ptr(&self) -> *mut App {
+        self.0.as_ptr()
     }
+}
+
+impl Drop for OwnedApp {
+    fn drop(&mut self) {
+        // SAFETY: created in `new`, destroyed once.
+        unsafe { c::uws_h2_app_destroy(self.as_ptr()) }
+    }
+}
+
+impl App {
     /// Streams parked on backpressure need another drain pass outside the
     /// current call; `cb(user, ctx)` should arrange for [`drain`] to run soon.
     pub fn on_schedule_drain(

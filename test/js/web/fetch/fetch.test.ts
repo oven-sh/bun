@@ -795,7 +795,7 @@ describe("fetch", () => {
       fetch(req) {
         return new Response(req.body);
       },
-      hostname: "localhost",
+      hostname: "127.0.0.1",
     });
 
     // POST with body
@@ -855,7 +855,7 @@ describe("fetch", () => {
       fetch(req) {
         return new Response(req.headers.get("content-length"));
       },
-      hostname: "localhost",
+      hostname: "127.0.0.1",
     });
 
     // POST with body
@@ -2078,12 +2078,12 @@ it("should work with http 100 continue", async () => {
     });
 
     const { promise: start, resolve } = Promise.withResolvers();
-    server.listen(0, resolve);
+    server.listen(0, "127.0.0.1", resolve);
 
     await start;
 
     const address = server.address() as net.AddressInfo;
-    const result = await fetch(`http://localhost:${address.port}`).then(r => r.text());
+    const result = await fetch(`http://127.0.0.1:${address.port}`).then(r => r.text());
     expect(result).toBe("Hello, World!");
   } finally {
     server?.close();
@@ -2108,12 +2108,12 @@ it("should work with http 100 continue on the same buffer", async () => {
     });
 
     const { promise: start, resolve } = Promise.withResolvers();
-    server.listen(0, resolve);
+    server.listen(0, "127.0.0.1", resolve);
 
     await start;
 
     const address = server.address() as net.AddressInfo;
-    const result = await fetch(`http://localhost:${address.port}`).then(r => r.text());
+    const result = await fetch(`http://127.0.0.1:${address.port}`).then(r => r.text());
     expect(result).toBe("Hello, World!");
   } finally {
     server?.close();
@@ -2390,7 +2390,7 @@ it.concurrent("304 not modified with missing content-length does not cause a req
       close() {},
     },
     port: 0,
-    hostname: "localhost",
+    hostname: "127.0.0.1",
   });
 
   const response = await fetch(`http://${server.hostname}:${server.port}/`);
@@ -2413,7 +2413,7 @@ it("304 not modified with missing content-length and connection close does not c
       close() {},
     },
     port: 0,
-    hostname: "localhost",
+    hostname: "127.0.0.1",
   });
 
   const response = await fetch(`http://${server.hostname}:${server.port}/`);
@@ -2436,7 +2436,7 @@ it("304 not modified with content-length 0 and connection close does not cause a
       close() {},
     },
     port: 0,
-    hostname: "localhost",
+    hostname: "127.0.0.1",
   });
 
   const response = await fetch(`http://${server.hostname}:${server.port}/`);
@@ -2459,7 +2459,7 @@ it("304 not modified with 0 content-length does not cause a request timeout", as
       close() {},
     },
     port: 0,
-    hostname: "localhost",
+    hostname: "127.0.0.1",
   });
 
   const response = await fetch(`http://${server.hostname}:${server.port}/`);
@@ -2506,7 +2506,7 @@ describe("http/1.1 response body length", () => {
         close() {},
       },
       port: 0,
-      hostname: "localhost",
+      hostname: "127.0.0.1",
     });
   });
   afterAll(() => {
@@ -3166,11 +3166,11 @@ it("rejects a response with an unparseable Content-Length instead of treating it
       }
     });
   });
-  await once(server.listen(0, "localhost"), "listening");
+  await once(server.listen(0, "127.0.0.1"), "listening");
   const { port } = server.address() as AddressInfo;
 
   for (const path of ["invalid", "conflicting"]) {
-    const result = await fetch(`http://localhost:${port}/${path}`)
+    const result = await fetch(`http://127.0.0.1:${port}/${path}`)
       .then(res => res.text())
       .catch(e => e);
     expect(result).toBeInstanceOf(Error);
@@ -3178,7 +3178,7 @@ it("rejects a response with an unparseable Content-Length instead of treating it
   }
 
   // A well-formed Content-Length is still delivered normally.
-  const ok = await fetch(`http://localhost:${port}/valid`);
+  const ok = await fetch(`http://127.0.0.1:${port}/valid`);
   expect(await ok.text()).toBe("hello");
 });
 
@@ -3192,7 +3192,7 @@ it("never sends the URL fragment in the request-target", async () => {
       socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
     });
   });
-  await once(server.listen(0, "localhost"), "listening");
+  await once(server.listen(0, "127.0.0.1"), "listening");
   const { port } = server.address() as AddressInfo;
 
   const tails = [
@@ -3206,7 +3206,7 @@ it("never sends the URL fragment in the request-target", async () => {
   ];
   const expected: string[] = [];
   for (const tail of tails) {
-    const href = `http://localhost:${port}${tail}`;
+    const href = `http://127.0.0.1:${port}${tail}`;
     const url = new URL(href);
     expected.push(`GET ${url.pathname}${url.search} HTTP/1.1`);
     await (await fetch(href)).text();
@@ -3318,7 +3318,7 @@ it("fetch() with a fixed-size body drops a caller-supplied Transfer-Encoding hea
       socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
     });
   });
-  await once(server.listen(0, "localhost"), "listening");
+  await once(server.listen(0, "127.0.0.1"), "listening");
   const { port } = server.address() as AddressInfo;
 
   // A body whose raw bytes look like a terminal chunk followed by a second request.
@@ -3326,7 +3326,7 @@ it("fetch() with a fixed-size body drops a caller-supplied Transfer-Encoding hea
   const bodyLength = Buffer.byteLength(body);
 
   // Caller-supplied Transfer-Encoding header alongside a buffered (string) body.
-  const withTE = await fetch(`http://localhost:${port}/`, {
+  const withTE = await fetch(`http://127.0.0.1:${port}/`, {
     method: "POST",
     headers: { "Transfer-Encoding": "chunked", "Content-Type": "text/plain" },
     body,
@@ -3334,7 +3334,7 @@ it("fetch() with a fixed-size body drops a caller-supplied Transfer-Encoding hea
   expect(await withTE.text()).toBe("OK");
 
   // The same request without the header still works the same way.
-  const plain = await fetch(`http://localhost:${port}/`, {
+  const plain = await fetch(`http://127.0.0.1:${port}/`, {
     method: "POST",
     headers: { "Content-Type": "text/plain" },
     body,
@@ -3381,18 +3381,18 @@ it("fetch() does not forward a caller-supplied Content-Length on a request witho
       socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
     });
   });
-  await once(server.listen(0, "localhost"), "listening");
+  await once(server.listen(0, "127.0.0.1"), "listening");
   const { port } = server.address() as AddressInfo;
 
   // GET request with no body: a caller-supplied Content-Length must not reach the wire.
-  const bodyless = await fetch(`http://localhost:${port}/`, {
+  const bodyless = await fetch(`http://127.0.0.1:${port}/`, {
     headers: { "Content-Length": "52", "X-Custom": "still-forwarded" },
   });
   expect(await bodyless.text()).toBe("OK");
 
   // POST request with a real body: the emitted Content-Length is computed from the
   // body, not taken from the caller-supplied header.
-  const withBody = await fetch(`http://localhost:${port}/`, {
+  const withBody = await fetch(`http://127.0.0.1:${port}/`, {
     method: "POST",
     headers: { "Content-Length": "999" },
     body: "hi",
@@ -3476,9 +3476,9 @@ describe("fetch() with a streaming request body and caller framing headers", () 
         socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
       });
     });
-    await once(server.listen(0, "localhost"), "listening");
+    await once(server.listen(0, "127.0.0.1"), "listening");
     return {
-      url: `http://localhost:${(server.address() as AddressInfo).port}/`,
+      url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/`,
       nextRequest: () =>
         queue.length > 0 ? Promise.resolve(queue.shift()!) : new Promise<RawRequest>(resolve => waiting.push(resolve)),
       get connections() {
@@ -3699,9 +3699,9 @@ describe("fetch() with a streaming request body and caller framing headers", () 
           }
         });
       });
-      await once(server.listen(0, "localhost"), "listening");
+      await once(server.listen(0, "127.0.0.1"), "listening");
       return {
-        url: `http://localhost:${(server.address() as AddressInfo).port}/`,
+        url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/`,
         take: () =>
           queue.length > 0 ? Promise.resolve(queue.shift()!) : new Promise<Seen>(resolve => waiting.push(resolve)),
         whenSeen,
@@ -3818,13 +3818,13 @@ it("releases interim 1xx response bytes as they are parsed while waiting for the
       writeMore();
     });
   });
-  await once(server.listen(0, "localhost"), "listening");
+  await once(server.listen(0, "127.0.0.1"), "listening");
   const { port } = server.address() as AddressInfo;
 
   try {
     Bun.gc(true);
     const rssBefore = rss();
-    const responsePromise = fetch(`http://localhost:${port}/`);
+    const responsePromise = fetch(`http://127.0.0.1:${port}/`);
     await floodDone;
     Bun.gc(true);
     const rssDuringFlood = rss();
@@ -3976,10 +3976,11 @@ it("does not reuse a keep-alive connection when bytes follow a response that end
       { request: "/204", status: 204, body: "", newConnections: 0 },
       { request: "/304 + trailing bytes", status: 304, body: "", newConnections: 1 },
       { request: "/304", status: 304, body: "", newConnections: 0 },
+      // The origin may still send the chunked body that it announced.
       { request: "/204-chunked + trailing bytes", status: 204, body: "", newConnections: 1 },
-      { request: "/204-chunked", status: 204, body: "", newConnections: 0 },
+      { request: "/204-chunked", status: 204, body: "", newConnections: 1 },
       { request: "/304-chunked + trailing bytes", status: 304, body: "", newConnections: 1 },
-      { request: "/304-chunked", status: 304, body: "", newConnections: 0 },
+      { request: "/304-chunked", status: 304, body: "", newConnections: 1 },
       { request: "/empty + trailing bytes", status: 200, body: "", newConnections: 1 },
       { request: "/empty", status: 200, body: "", newConnections: 0 },
       { request: "/head + trailing bytes", status: 200, body: "", newConnections: 1 },
@@ -4029,22 +4030,22 @@ it("does not reuse a keep-alive connection whose response carried more bytes tha
       }
     });
   });
-  await once(server.listen(0, "localhost"), "listening");
+  await once(server.listen(0, "127.0.0.1"), "listening");
   const { port } = server.address() as AddressInfo;
 
   try {
     // The mis-framed response is still delivered, truncated to its declared length.
-    const first = await fetch(`http://localhost:${port}/overshoot`);
+    const first = await fetch(`http://127.0.0.1:${port}/overshoot`);
     expect(await first.text()).toBe("hello");
 
     // The follow-up request must go out on a fresh connection, so it can never be
     // answered by the leftover "injected" bytes on the desynchronized socket.
-    const second = await fetch(`http://localhost:${port}/after`);
+    const second = await fetch(`http://127.0.0.1:${port}/after`);
     expect(await second.text()).toBe("legit!");
     expect(connections).toBe(2);
 
     // A correctly framed keep-alive response is still pooled and reused.
-    const third = await fetch(`http://localhost:${port}/again`);
+    const third = await fetch(`http://127.0.0.1:${port}/again`);
     expect(await third.text()).toBe("legit!");
     expect(connections).toBe(2);
   } finally {
@@ -4069,7 +4070,7 @@ it("does not reuse a keep-alive connection whose chunked response carried bytes 
       payload,
       Buffer.from("\r\n0\r\n\r\n", "latin1"),
     ]);
-  // The client has two chunked decoders: one for a read that fits its 16 KiB scratch buffer, one for the rest.
+  // More than one read.
   const largeBody = Buffer.alloc(64 * 1024, "x").toString();
   const responses: Record<string, Buffer> = {
     "/legit": chunkedResponse(Buffer.from("legit!")),
@@ -4129,7 +4130,7 @@ it("does not reuse a keep-alive connection whose chunked response carried bytes 
       results.push([path, body === largeBody ? "<large body>" : body, connections]);
     }
     // Each body still arrives in full. Only the request after an overshoot dials a new connection. A repeated
-    // terminator or one empty line isn't an overshoot.
+    // terminator isn't an overshoot.
     expect(results).toEqual([
       ["/overshoot", "hello", 1],
       ["/legit", "legit!", 2],
@@ -4139,10 +4140,10 @@ it("does not reuse a keep-alive connection whose chunked response carried bytes 
       ["/repeated-terminator", "hello", 4],
       ["/legit", "legit!", 4],
       ["/one-crlf", "hello", 4],
-      ["/one-crlf-large", "<large body>", 4],
-      ["/two-crlf", "hello", 4],
-      ["/crlf-overshoot", "hello", 5],
-      ["/legit", "legit!", 6],
+      ["/one-crlf-large", "<large body>", 5],
+      ["/two-crlf", "hello", 6],
+      ["/crlf-overshoot", "hello", 7],
+      ["/legit", "legit!", 8],
     ]);
   } finally {
     for (const socket of sockets) socket.destroy();
@@ -4453,6 +4454,22 @@ it.concurrent.each([
   expect(exitCode).toBe(0);
 });
 
+it("verbose fetch logging keeps the quotes of a header value in the curl command", async () => {
+  using server = Bun.serve({ port: 0, fetch: () => new Response() });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `await fetch(process.env.SERVER_URL, { verbose: "curl", headers: { "If-Match": '"a"' } });`],
+    env: { ...bunEnv, SERVER_URL: server.url.href },
+    stdout: "inherit",
+    stderr: "pipe",
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(String.raw`-H "If-Match: \"a\""`);
+  expect(exitCode).toBe(0);
+});
+
 it("verbose fetch logging escapes control characters coming from the peer", async () => {
   // U+009B is the one-byte form of ESC [ (CSI), so "\u009b31m" written to a terminal as-is turns
   // the rest of the line red. HTTP/1.1 lets a server put any byte >= 0x80 in a reason phrase or
@@ -4504,7 +4521,7 @@ it("verbose fetch logging escapes control characters coming from the peer", asyn
   expect(stderr).toMatch(/^.*authorization: Bea\\u009brer \[redacted\]$/im);
   expect(stderr).toMatch(/^< 500 Server \\u009bError$/m);
   expect(stderr).toMatch(/^< x-evil: a\\u009b31mb$/m);
-  expect(stderr).toContain(isWindows ? `-H "x-req: v\\u009b31mq"` : `-H 'x-req: v\\u009b31mq'`);
+  expect(stderr).toContain(`-H "x-req: v\\u009b31mq"`);
   expect(stderr).not.toMatch(/[\x80-\x9f]/);
   expect(exitCode).toBe(0);
 });
@@ -4553,7 +4570,7 @@ it.skipIf(isWindows)(
     ]);
     const argv = args.split("\n");
     expect(shellStderr).toBe("");
-    expect(argv.slice(0, 5)).toEqual(["--http1.1", url, "--globoff", "-X", "POST"]);
+    expect(argv.slice(0, 5)).toEqual(["--http1.1", url.replace("$", "%24"), "--globoff", "-X", "POST"]);
     expect(argv).toContain(`x-req: ${header}`);
     expect(argv.slice(-3)).toEqual(["--data-raw", body, ""]);
     expect(shellExitCode).toBe(0);

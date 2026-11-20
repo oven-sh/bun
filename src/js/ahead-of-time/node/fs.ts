@@ -480,20 +480,14 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
     fs.lutimesCb(callback, path, atime, mtime);
   },
   accessSync = fs.accessSync.bind(fs),
-  appendFileSync = IS_COMPILED_AHEAD_OF_TIME
-    ? ({
-        appendFileSync(_path, _data, _options) {
-          return fs.appendFileSync.$apply(fs, arguments);
-        },
-      }.appendFileSync as never)
-    : fs.appendFileSync.bind(fs),
-  closeSync = IS_COMPILED_AHEAD_OF_TIME
-    ? ({
-        closeSync(_fd) {
-          return fs.closeSync.$apply(fs, arguments);
-        },
-      }.closeSync as never)
-    : fs.closeSync.bind(fs),
+  appendFileSync =
+    IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME
+      ? ($bindgen("node_fs_binding.bind.ts", "appendFileSync") as never)
+      : fs.appendFileSync.bind(fs),
+  closeSync =
+    IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME
+      ? ($bindgen("node_fs_binding.bind.ts", "closeSync") as never)
+      : fs.closeSync.bind(fs),
   copyFileSync = fs.copyFileSync.bind(fs),
   // This behavior - never throwing -- matches Node.js behavior.
   // https://github.com/nodejs/node/blob/c82f3c9e80f0eeec4ae5b7aedd1183127abda4ad/lib/fs.js#L275C1-L295C1
@@ -507,22 +501,16 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
     }
   },
   chownSync = fs.chownSync.bind(fs),
-  chmodSync = IS_COMPILED_AHEAD_OF_TIME
-    ? ({
-        chmodSync(_path, _mode) {
-          return fs.chmodSync.$apply(fs, arguments);
-        },
-      }.chmodSync as never)
-    : fs.chmodSync.bind(fs),
+  chmodSync =
+    IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME
+      ? ($bindgen("node_fs_binding.bind.ts", "chmodSync") as never)
+      : fs.chmodSync.bind(fs),
   fchmodSync = fs.fchmodSync.bind(fs),
   fchownSync = fs.fchownSync.bind(fs),
-  fstatSync = IS_COMPILED_AHEAD_OF_TIME
-    ? ({
-        fstatSync(_fd) {
-          return fs.fstatSync.$apply(fs, arguments);
-        },
-      }.fstatSync as never)
-    : fs.fstatSync.bind(fs),
+  fstatSync =
+    IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME
+      ? ($bindgen("node_fs_binding.bind.ts", "fstatSync") as never)
+      : fs.fstatSync.bind(fs),
   fsyncSync = fs.fsyncSync.bind(fs),
   ftruncateSync = fs.ftruncateSync.bind(fs),
   futimesSync = fs.futimesSync.bind(fs),
@@ -1507,13 +1495,10 @@ setName(_toUnixTimestamp, "_toUnixTimestamp");
 setName(access, "access");
 setName(accessSync, "accessSync");
 setName(appendFile, "appendFile");
-setName(appendFileSync, "appendFileSync");
 setName(chmod, "chmod");
-setName(chmodSync, "chmodSync");
 setName(chown, "chown");
 setName(chownSync, "chownSync");
 setName(close, "close");
-setName(closeSync, "closeSync");
 setName(copyFile, "copyFile");
 setName(copyFileSync, "copyFileSync");
 setName(cp, "cp");
@@ -1527,7 +1512,6 @@ setName(fchmodSync, "fchmodSync");
 setName(fchown, "fchown");
 setName(fchownSync, "fchownSync");
 setName(fstat, "fstat");
-setName(fstatSync, "fstatSync");
 setName(fsync, "fsync");
 setName(fsyncSync, "fsyncSync");
 setName(ftruncate, "ftruncate");
@@ -1541,7 +1525,6 @@ setName(lchownSync, "lchownSync");
 setName(link, "link");
 setName(linkSync, "linkSync");
 setName(lstat, "lstat");
-setName(lstatSync, "lstatSync");
 setName(lutimes, "lutimes");
 setName(lutimesSync, "lutimesSync");
 setName(mkdir, "mkdir");
@@ -1553,10 +1536,8 @@ setName(open, "open");
 setName(openSync, "openSync");
 setName(read, "read");
 setName(readFile, "readFile");
-setName(readFileSync, "readFileSync");
 setName(readSync, "readSync");
 setName(readdir, "readdir");
-setName(readdirSync, "readdirSync");
 setName(readlink, "readlink");
 setName(readlinkSync, "readlinkSync");
 setName(readv, "readv");
@@ -1571,7 +1552,6 @@ setName(rmdir, "rmdir");
 setName(rmdirSync, "rmdirSync");
 setName(stat, "stat");
 setName(statfs, "statfs");
-setName(statSync, "statSync");
 setName(statfsSync, "statfsSync");
 setName(symlink, "symlink");
 setName(symlinkSync, "symlinkSync");
@@ -1594,3 +1574,13 @@ setName(fdatasync, "fdatasync");
 setName(fdatasyncSync, "fdatasyncSync");
 setName(openAsBlob, "openAsBlob");
 setName(opendir, "opendir");
+if (!(IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME)) {
+  setName(appendFileSync, "appendFileSync");
+  setName(chmodSync, "chmodSync");
+  setName(closeSync, "closeSync");
+  setName(fstatSync, "fstatSync");
+  setName(lstatSync, "lstatSync");
+  setName(readFileSync, "readFileSync");
+  setName(readdirSync, "readdirSync");
+  setName(statSync, "statSync");
+}

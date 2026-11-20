@@ -403,9 +403,7 @@ impl<const SHORT: bool> Display for IntegrityFormatter<SHORT> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         const BUF_LEN: usize = SHA512_DIGEST.div_ceil(3) * 4;
         let mut buf = [0u8; BUF_LEN];
-        let count =
-            bun_simdutf_sys::simdutf::base64::encode(&self.bytes[..SHA512_DIGEST], &mut buf, false);
-        let encoded = &buf[..count];
+        let encoded = crate::base64::standard_encode(&mut buf, &self.bytes);
         if SHORT {
             write!(
                 f,
@@ -759,8 +757,7 @@ pub fn buf_print_z<'a>(
     if n >= c.buf.len() {
         return Err(core::fmt::Error);
     }
-    c.buf[n] = 0;
-    Ok(crate::ZStr::from_buf(c.buf, n))
+    Ok(crate::ZStr::nul_terminate(c.buf, n))
 }
 
 /// [`buf_print`] that panics on overflow. Use when the
@@ -1934,7 +1931,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                 if self.opts.redact_sensitive_information {
                     return write!(writer, "{}", redacted_source(text));
                 } else {
-                    return write_bytes(writer, text);
+                    return write!(writer, "{}", bstr::BStr::new(text));
                 }
             }
         }
@@ -3478,20 +3475,17 @@ pub fn int_as_bytes<T: ::itoa::Integer>(buf: &mut [u8], value: T) -> &[u8] {
 }
 
 /// NUL-terminated decimal `u64` → ASCII into a caller-owned scratch buffer,
-/// returning a [`CStr`] borrowing the head of `buf`.
+/// returning a [`ZStr`](crate::ZStr) borrowing the head of `buf`.
 ///
 /// Used when handing an integer to a C API that wants a `*const c_char`
 /// service/port string (e.g. `getaddrinfo`, `ares_getaddrinfo`). 21 bytes
 /// covers `u64::MAX` (20 digits) + NUL; `u16`/`u32` callers widen via `as u64`.
 #[inline]
-pub fn itoa_z(buf: &mut [u8; 21], n: u64) -> &core::ffi::CStr {
+pub fn itoa_z(buf: &mut [u8; 21], n: u64) -> &crate::ZStr {
     let mut tmp = ItoaBuf::new();
     let s = tmp.format(n).as_bytes();
     buf[..s.len()].copy_from_slice(s);
-    buf[s.len()] = 0;
-    // SAFETY: itoa output is pure ASCII digits (no interior NUL); we just
-    // wrote a NUL terminator at `s.len()`.
-    unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(&buf[..=s.len()]) }
+    crate::ZStr::nul_terminate(buf, s.len())
 }
 
 /// Byte length of `n` formatted with the default `{}` Display. Used by
@@ -3556,28 +3550,6 @@ fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Resu
         remain = &remain[i + 1..];
     }
     write_bytes(writer, remain)
-}
-
-/// `parts` joined into one POSIX shell word: `'...'`, with each `'` written as `'\''`.
-pub struct QuotePosixShell<'a>(pub(crate) &'a [&'a [u8]]);
-
-pub fn quote_posix_shell<'a>(parts: &'a [&'a [u8]]) -> QuotePosixShell<'a> {
-    QuotePosixShell(parts)
-}
-
-impl Display for QuotePosixShell<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str("'")?;
-        for part in self.0 {
-            let mut remain = *part;
-            while let Some(i) = crate::strings::index_of_char_usize(remain, b'\'') {
-                write!(f, "{}'\\''", bstr::BStr::new(&remain[..i]))?;
-                remain = &remain[i + 1..];
-            }
-            write!(f, "{}", bstr::BStr::new(remain))?;
-        }
-        f.write_str("'")
-    }
 }
 
 /// Escapes C0/C1 control characters, DEL, U+2028-U+202E (line separators, bidirectional overrides)

@@ -2,11 +2,23 @@ import axios from "axios";
 import type { Server } from "bun";
 import { proxyInternals } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isIPv6, isWindows, tempDir, tls as tlsCert } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  expectRssDeltaBelow,
+  isASAN,
+  isIPv6,
+  isLinux,
+  isWindows,
+  tempDir,
+  tls as tlsCert,
+} from "harness";
 import { HttpsProxyAgent } from "https-proxy-agent";
+import { mkfifo } from "mkfifo";
 import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
+import { join } from "node:path";
 import tls from "node:tls";
 import { decodeErrorAlert, startMalformedServerHelloServer } from "../../node/tls/tls-handshake-alert-utils";
 import { createAdversarialProxy, deadPort, proxyFreeEnv } from "./proxy-stress-helpers";
@@ -1649,6 +1661,24 @@ test("a bad record delivered with a 101 through a proxy tunnel does not free the
   expect(exitCode).toBe(0);
 });
 
+// The fixture reads /proc/net/tcp.
+test.skipIf(!isLinux)("a reset delivered with a 101 through an https proxy rejects with ECONNRESET", async () => {
+  using dir = tempDir("proxy-upgrade-reset", {});
+  const fifo = join(String(dir), "ca.pem");
+  mkfifo(fifo);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), require.resolve("./proxy-upgrade-reset-fixture.ts"), fifo],
+    env: { ...bunEnv, ...proxyFreeEnv },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ upgrade: "ECONNRESET", blocker: "FailedToOpenSocket", probe: "probe-ok" }) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 describe.concurrent("proxy object format with headers", () => {
   test("proxy object with url string works same as string proxy", async () => {
     const response = await fetch(httpServer.url, {
@@ -2426,6 +2456,36 @@ describe.concurrent("a CONNECT tunnel", () => {
       statusText: error.statusText,
       headers: error.headers instanceof Headers && error.headers.get("x-reason"),
     }).toEqual({ name: "Error", code: "ERR_PROXY_TUNNEL", status: 403, statusText: "Forbidden", headers: "policy" });
+  });
+
+  test.each([
+    ["GET", "", "through", ["GET", "GET", "GET"]],
+    ["GET", "HTTP/1.1 200", "through", ["GET", "GET", "GET"]],
+    ["PUT", "", "through", ["GET", "PUT", "PUT"]],
+    ["POST", "", "ECONNRESET", ["GET", "POST"]],
+  ])("whose origin answers a reusing %s with %j and close_notify: %s", async (method, lastWords, outcome, seen) => {
+    const requests: string[] = [];
+    const origin = tls.createServer(tlsCert, socket => {
+      socket.on("error", () => {});
+      socket.on("data", data => {
+        if (requests.push(data.toString("latin1").split(" ")[0]) === 2) socket.end(lastWords);
+        else socket.write("HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\nthrough");
+      });
+    });
+    await once(origin.listen(0, "127.0.0.1"), "listening");
+    try {
+      const { port } = origin.address() as net.AddressInfo;
+      using proxy = await tunnelingProxy(port);
+      using session = new Bun.FetchSession({ proxy: proxy.url, tls: { ca: tlsCert.cert } });
+      const send = (method: string) =>
+        fetch(`https://localhost:${port}/`, { session, method }).then(
+          response => response.text(),
+          error => error.code,
+        );
+      expect([await send("GET"), await send(method), requests]).toEqual(["through", outcome, seen]);
+    } finally {
+      origin.close();
+    }
   });
 
   test("is pooled per fetch session", async () => {

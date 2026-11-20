@@ -5,13 +5,13 @@ use std::rc::Rc;
 
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
-use bun_ptr::ThisPtr;
+use bun_ptr::{RefPtr, ThisPtr};
 use bun_uws::{self as uws, us_socket_t};
 use bun_uws_sys::response::PerMessageDeflateParams;
 
 use super::{Handlers, NewSocket, SocketFlags};
 use crate::dispatch::fold;
-use crate::server::{AnyServer, ServerWebSocket};
+use crate::server::{AnyServer, PendingRequest, ServerWebSocket};
 
 type Transport<const SSL: bool> = uws::NewSocketHandler<SSL>;
 
@@ -25,12 +25,11 @@ pub(crate) struct AcceptedSocketConfig {
 }
 
 impl<const SSL: bool> NewSocket<SSL> {
-    /// The socket holds one ref for the connection, which `on_close` releases.
     fn accept_from_http(
         config: &AcceptedSocketConfig,
         s: *mut us_socket_t,
         reject_unauthorized: bool,
-    ) -> ThisPtr<Self> {
+    ) -> RefPtr<Self> {
         let this = Self::new(Some(Rc::clone(&config.handlers)));
         let transport = Transport::<SSL>::from_uws_http(s);
         this.socket.set(transport);
@@ -39,7 +38,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             f.set(SocketFlags::REJECT_UNAUTHORIZED, reject_unauthorized);
             f.insert(SocketFlags::NO_DELAY | SocketFlags::HELD_BY_SERVER);
         });
-        this.ref_();
         let global = config.handlers.global_object;
         Self::data_set_cached(this.get_this_value(&global), &global, config.data);
         this
@@ -222,7 +220,7 @@ unsafe fn adopt_into_web_socket<'a>(
     // SAFETY: `init` just stored `ws` inline in its JS wrapper, which `ws` keeps alive.
     let ws_ref = unsafe { &*ws };
     // The server doesn't count the connection until the WebSocket opens, so this keeps a stopped server from draining.
-    server.on_pending_request();
+    let pending = PendingRequest::new(server);
     // SAFETY: the caller's contract.
     let adopted = unsafe {
         Bun__NodeHTTPSocket__adoptIntoWebSocket(
@@ -239,7 +237,7 @@ unsafe fn adopt_into_web_socket<'a>(
             handle,
         )
     };
-    server.on_request_complete();
+    drop(pending);
     if adopted.is_null() {
         ws_ref.discard_unopened();
         return None;
@@ -262,7 +260,7 @@ macro_rules! with_handle {
     };
 }
 
-/// SAFETY: `config` is a server's `node_socket_config`, and `s` is an open connection of that server.
+/// Returns the connection's ref. SAFETY: `config` is a server's `node_socket_config`, and `s` is an open connection of that server.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Bun__NodeHTTPSocket__create(
     config: *const AcceptedSocketConfig,
@@ -274,11 +272,11 @@ pub(crate) unsafe extern "C" fn Bun__NodeHTTPSocket__create(
     let config = unsafe { &*config };
     if ssl {
         NewSocket::<true>::accept_from_http(config, s, reject_unauthorized)
-            .as_ptr()
+            .into_raw()
             .cast()
     } else {
         NewSocket::<false>::accept_from_http(config, s, false)
-            .as_ptr()
+            .into_raw()
             .cast()
     }
 }
@@ -415,7 +413,8 @@ pub(crate) unsafe extern "C" fn Bun__NodeHTTPSocket__onClose(
             this.update_flags(|f| f.insert(SocketFlags::FINALIZING));
         }
         fold(NewSocket::on_close(
-            this,
+            // SAFETY: the ref that `create` returned.
+            unsafe { RefPtr::from_raw(this.as_ptr()) },
             Transport::DETACHED,
             read_error,
             None,

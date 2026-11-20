@@ -12,7 +12,7 @@
  */
 
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { relative, resolve, sep } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { binaryExpectations, exportList, shimExpectations, strippedExpectations } from "./binary-expectations.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
@@ -198,9 +198,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     }
   }
 
-  // Collect all dep lib paths, include dirs, output stamps, and directly-
-  // compiled source files (deps like picohttpparser that provide .c files
-  // instead of a .a — we compile those alongside bun's own sources).
+  // Collect all dep lib paths, include dirs and output stamps.
   const depLibs: string[] = [];
   const depObjects: string[] = [];
   const depIncludes: string[] = [];
@@ -298,6 +296,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // force-include would lock those in before the source can speak.
   const noPchSources = new Set<string>();
 
+  // bsd.cpp defines __APPLE_USE_RFC_3542 before <netinet/in.h>. None of these use WTF.
+  for (const src of cxxSources) {
+    if (dirname(src) === resolve(cfg.cwd, "packages/bun-usockets/src")) noPchSources.add(src);
+  }
+
   // highway_json.cpp is compiled -O2 even in debug profiles (see its
   // fileOverrides entry in flags.ts); a TU at a different -O level than the
   // PCH cannot use the PCH ("__OPTIMIZE__ ... was disabled in precompiled
@@ -306,7 +309,15 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_json.cpp"));
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_xml.cpp"));
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_png.cpp"));
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_byte_set.cpp"));
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_jpeg.cpp"));
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_webp_decoder.cpp"));
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_webp_encoder.cpp"));
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_checksums.cpp"));
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_zlib.cpp"));
   }
+  // Nor can one with other CPU features, which this one has in some release builds.
+  noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_brotli.cpp"));
 
   // Windows-only cpp sources (rescle — PE resource editor for --compile).
   if (cfg.windows) {
@@ -318,9 +329,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     noPchSources.add(rescle);
     noPchSources.add(rescleBinding);
   }
-
-  // Deps with provides.sources compiled in the loop below so each dep's
-  // phony can point at its own .o files.
 
   // Codegen .cpp files — compiled like regular sources.
   cxxSources.push(...codegen.cppSources);
@@ -381,17 +389,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   );
 
   // Compile all .c files. No PCH — dep signal applied directly.
-  const cObjects: string[] = [];
-  const compileC = (src: string): string => {
-    const obj = cc(n, cfg, src, {
-      flags: cFlagsFull,
-      implicitInputs: depHeaderSignal,
-      orderOnlyInputs: codegenOrderOnly,
-    });
-    cObjects.push(obj);
-    return obj;
-  };
-  for (const src of cSources) compileC(src);
+  const cObjects = cSources.map(src =>
+    cc(n, cfg, src, { flags: cFlagsFull, implicitInputs: depHeaderSignal, orderOnlyInputs: codegenOrderOnly }),
+  );
 
   // InternalModuleRegistryConstants.S — `.incbin`s the bundled JS module sources
   // so InternalModuleRegistry.cpp sees a tiny {offset, length} table instead of
@@ -412,16 +412,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
         implicitInputs: [codegen.builtinSourcesArchive],
       }),
     );
-  }
-
-  // Deps that contribute source files for bun to compile directly (via
-  // provides.sources) instead of building a lib. Compile them here with
-  // bun's full flag set and give each a phony so `--target <name>` builds
-  // its .o files. libs.length === 0 guard: deps with a build step already
-  // got a phony in resolveDep — don't emit a duplicate.
-  for (const d of deps) {
-    if (d.sources.length === 0 || d.libs.length > 0) continue;
-    n.phony(d.name, d.sources.map(compileC));
   }
 
   // Dep objects (when !cfg.archiveDeps) are linked alongside bun's own
@@ -1149,12 +1139,11 @@ export function validateBunConfig(cfg: Config): void {
       `--local-deps: ${name} is disabled for ${cfg.os}-${cfg.arch}${cfg.abi ? `-${cfg.abi}` : ""} in this configuration, so the checkout at ${path} would never be built`,
       { hint: `Drop ${name} from --local-deps, or build a target/config where its \`enabled\` predicate holds` },
     );
-    // A dep the graph fetches but never reads (no build step, no sources, no
-    // includes — lolhtml, which cargo consumes through the workspace
-    // Cargo.toml's `path = "vendor/lolhtml"`) can't be redirected from here.
-    const provides = dep.provides(cfg);
+    // A dep the graph fetches but never reads (no build step, no includes —
+    // lolhtml, which cargo consumes through the workspace Cargo.toml's
+    // `path = "vendor/lolhtml"`) can't be redirected from here.
     assert(
-      (provides.sources ?? []).length > 0 || provides.includes.length > 0 || dep.build(cfg).kind !== "none",
+      dep.provides(cfg).includes.length > 0 || dep.build(cfg).kind !== "none",
       `--local-deps: ${name} is only fetched by the build graph, never compiled or included by it, so redirecting it to ${path} would change nothing`,
       {
         hint: `Point ${name}'s real consumer at the checkout instead (for a cargo path dependency: the workspace Cargo.toml)`,

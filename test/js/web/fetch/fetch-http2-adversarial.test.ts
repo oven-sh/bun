@@ -943,15 +943,16 @@ describe.concurrent("malformed HTTP/2 frames end the connection", () => {
   });
 
   test("SETTINGS_HEADER_TABLE_SIZE above 4096 doesn't grow the encoder's table", async () => {
-    const sizeUpdates: boolean[] = [];
+    const sizeUpdates: string[] = [];
     const onStream: StreamCb = (socket, id, _, headerBlock) => {
       // A dynamic table size update is 001xxxxx (RFC 7541 section 6.3).
-      sizeUpdates.push((headerBlock[0] & 0xe0) === 0x20);
+      if ((headerBlock[0] & 0xe0) === 0x20) sizeUpdates.push(headerBlock.subarray(0, 3).toString("hex"));
       socket.write(ok(id));
     };
     await withAdversarialServer({ settingsPayload: setting(1, 65536), onStream }, async url => {
       expect([await outcome(url), await outcome(url), await outcome(url)]).toEqual([200, 200, 200]);
-      expect(sizeUpdates).toEqual([false, false, false]);
+      // 4096.
+      expect(sizeUpdates).toEqual(["3fe11f"]);
     });
   });
 });

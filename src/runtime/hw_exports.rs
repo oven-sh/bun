@@ -15,8 +15,6 @@
 //!   - `Bun__Chrome__autoDetect` / `Bun__Chrome__ensure`
 //!       → `src/runtime/webview/ChromeProcess.rs`
 
-use core::ffi::c_void;
-
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSInternalPromise, JSValue, StringJsc as _, ZigStackFrame};
@@ -162,56 +160,33 @@ pub(crate) fn close_child_ipc(global: &JSGlobalObject) {
 
 // ─── sql_jsc bridge — `bun_sql_jsc::jsc::SqlRuntimeHooks` vtable ─────────────
 //
-// `bun_sql_jsc` cannot name `RuntimeState` / `socket::SSLConfig`
+// `bun_sql_jsc` cannot name `RuntimeState` / `socket::ssl_config::ParsedTls`
 // (this crate depends on it). Instead of Rust→Rust
 // `extern "C"` re-decls (which let the two sides silently disagree on pointee
 // layout), the low tier defines [`bun_sql_jsc::jsc::SqlRuntimeHooks`] and this
 // crate registers a `&'static` instance from [`crate::jsc_hooks::
 // `__BUN_SQL_RUNTIME_HOOKS`. Every fn-pointer signature is type-checked at the
 // struct-literal below.
-//
-// Opaque-pointer protocol for `SSLConfig`: `ssl_config_from_js` returns a
-// `Box<socket::SSLConfig>::into_raw`; the SQL side holds it as `*mut c_void`
-// and frees via `ssl_config_free`. Scalar accessors borrow into that box.
 
 mod sql_hooks {
     use super::*;
     use bun_sql_jsc::jsc::SqlRuntimeHooks;
 
-    fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
+    fn ssl_config_from_js(
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> Option<Box<crate::socket::SSLConfig>> {
         use crate::socket::ssl_config::ParsedTls;
         let vm = global.bun_vm_ref();
         match ParsedTls::from_js(vm, global, value, false) {
             // `sslmode` already asked for TLS, so `tls: {}` is `tls: true`.
-            Ok(parsed) => {
-                bun_core::heap::into_raw(Box::new(parsed.or_defaults(vm, false))).cast::<c_void>()
-            }
+            Ok(parsed) => Some(Box::new(parsed.or_defaults(vm, false))),
             Err(bun_jsc::JsError::OutOfMemory) => {
                 let _ = global.throw_out_of_memory();
-                core::ptr::null_mut()
+                None
             }
-            Err(_) => core::ptr::null_mut(),
+            Err(_) => None,
         }
-    }
-    unsafe fn ssl_config_free(this: *mut c_void) {
-        // SAFETY: `this` was produced by `heap::alloc` in
-        // `ssl_config_from_js`; sql_jsc's `SSLConfig::drop` guards null/double.
-        drop(unsafe { bun_core::heap::take(this.cast::<crate::socket::SSLConfig>()) });
-    }
-    unsafe fn ssl_config_as_usockets_client(
-        this: *const c_void,
-    ) -> bun_uws::us_bun_socket_context_options_t {
-        // SAFETY: `this` is a live boxed `SSLConfig` from `ssl_config_from_js`.
-        unsafe { &*this.cast::<crate::socket::SSLConfig>() }.as_usockets_for_client_verification()
-    }
-    unsafe fn ssl_config_server_name(this: *const c_void) -> *const core::ffi::c_char {
-        // SAFETY: `this` is a live boxed `SSLConfig`; returned ptr borrows its
-        // heap-owned C-string field, valid until `ssl_config_free`.
-        unsafe { &*this.cast::<crate::socket::SSLConfig>() }.server_name
-    }
-    unsafe fn ssl_config_reject_unauthorized(this: *const c_void) -> i32 {
-        // SAFETY: `this` is a live boxed `SSLConfig`.
-        unsafe { (*this.cast::<crate::socket::SSLConfig>()).reject_unauthorized }
     }
 
     /// Declared `extern "Rust"` in `bun_sql_jsc::jsc`; link-time resolved.
@@ -219,10 +194,6 @@ mod sql_hooks {
     static __BUN_SQL_RUNTIME_HOOKS: SqlRuntimeHooks = SqlRuntimeHooks {
         sql_rare: crate::jsc_hooks::sql_rare,
         ssl_config_from_js,
-        ssl_config_free,
-        ssl_config_as_usockets_client,
-        ssl_config_server_name,
-        ssl_config_reject_unauthorized,
     };
 }
 

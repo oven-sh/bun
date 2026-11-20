@@ -27,7 +27,8 @@ use crate::load::runtime_roots::{
     may_interpret_files,
 };
 use crate::load::sources::{
-    FreezeInput, FrozenSources, check_unique_paths_across_projects, freeze_sources, parsed_source,
+    FreezeInput, FrozenSources, check_unique_paths_across_projects, freeze_sources,
+    may_evaluate_text, parsed_source,
 };
 use crate::load::{PerProject, ProjectId, Sources};
 use crate::modules::asks_for_original_beside_mock;
@@ -376,7 +377,7 @@ fn find_worker_positions(
 ) -> Vec<(Vec<u8>, u32)> {
     let mut places = Vec::new();
     for &(file, start) in workers {
-        let hir = &files.module(file).hir;
+        let hir = files.hir(file);
         let ExprKind::New(call) = hir[start].kind else {
             continue;
         };
@@ -411,7 +412,7 @@ fn find_unknown_node_workers(
                 true => (Code::WorkerTextNotCompiled, &[]),
                 false => (Code::WorkerStartedFromUnknownValue, &[names_left_out]),
             };
-            let span = Span::of_node(&files.module(file).hir, file, start.at);
+            let span = Span::of_node(files.hir(file), file, start.at);
             said.push(Diagnostic::new(code, Some(span), arguments));
         }
     }
@@ -426,7 +427,7 @@ fn find_missing_node_workers(files: &Files<'_>, contents: &ProgramContents) -> V
         };
         let starts = source.contents.named_node_workers.iter();
         for &at in starts.filter(|&&at| !contents.is_followed_worker(file, at)) {
-            let span = Span::of_node(&files.module(file).hir, file, NodeData::Expr(at));
+            let span = Span::of_node(files.hir(file), file, NodeData::Expr(at));
             let code = Code::WorkerStartedFromUnknownValue;
             said.push(Diagnostic::new(code, Some(span), &[b""]));
         }
@@ -894,9 +895,7 @@ impl<'a> Build<'a> {
         // A string can import code from disk, and that code any built-in module.
         let evaluates_text = options.aot.loads_code_from_disk
             && !options.load.runs_tests
-            && (files.compiled_files().iter())
-                .filter_map(|&file| parsed_source(files, file))
-                .any(|source| source.builtins.mentions_evaluator());
+            && may_evaluate_text(files);
         let inputs =
             self.create_runtime_load_inputs(shared, session, &roots, &contents, evaluates_text);
         let takes_known_regions = Cell::new(true);

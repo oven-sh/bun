@@ -64,6 +64,8 @@ const libc = dlopen("libc.so.6", {
   close:    { args: ["int"],                       returns: "int" },
   setsockopt:{args: ["int","int","int","ptr","int"],returns:"int" },
 });
+// Left open, LeakSanitizer takes seconds at exit to find it suppressed.
+process.on("exit", () => libc.close());
 const AF_INET=2, SOCK_STREAM=1, SOCK_NONBLOCK=0o4000, SOL_SOCKET=1, SO_REUSEADDR=2;
 function sockaddr_in(ip, port) {
   const b = new Uint8Array(16);

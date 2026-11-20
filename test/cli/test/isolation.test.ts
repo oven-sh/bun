@@ -1509,6 +1509,30 @@ describe.concurrent("bun test --isolate=modules", () => {
     ]);
   });
 
+  test("a zlib stream that a file left in the middle of a write becomes idle", async () => {
+    await passes(
+      {
+        "a.test.js": `
+          test("a", () => {
+            const zlib = require("node:zlib");
+            zlib.left = zlib.createDeflate({ chunkSize: 4 << 20 });
+            zlib.left.write(require("node:crypto").randomBytes(2 << 20));
+          });
+        `,
+        "b.test.js": `
+          test("b", async () => {
+            const { left } = require("node:zlib");
+            for (const deadline = performance.now() + 15_000; ; await new Promise(setImmediate)) {
+              try { return left.reset(); }
+              catch (error) { if (!left || performance.now() > deadline) throw error; }
+            }
+          }, 20_000);
+        `,
+      },
+      2,
+    );
+  });
+
   test("Bun.main, import.meta.main, process.argv and Bun.argv name the running file", async () => {
     const file = `
       import { basename } from "node:path";
@@ -2650,6 +2674,32 @@ test.concurrent(
     expect(exitCode).toBe(0);
   },
 );
+
+test.concurrent("--isolate: a queued watchFile timer update does not re-arm the last file's scheduler", async () => {
+  // The first sleep makes the scheduler's timer due along with `due`. The second lets the stat pass
+  // it started queue its timer update, which the file then ends without running.
+  const fixture = `
+    import { test } from "bun:test";
+    import fs from "node:fs";
+
+    test("leaves a watcher behind", async () => {
+      Bun.gc(true);
+      const polled = Promise.withResolvers();
+      fs.watchFile(import.meta.dir + "/missing", { interval: 5 }, polled.resolve);
+      await polled.promise;
+      const due = Promise.withResolvers();
+      setTimeout(due.resolve, 6);
+      Bun.sleepSync(10);
+      await due.promise;
+      Bun.sleepSync(10);
+    });
+  `;
+  const files = ["./a.test.js", "./b.test.js", "./c.test.js", "./d.test.js"];
+  using dir = tempDir("isolate-statwatcher-update", Object.fromEntries(files.map(file => [file, fixture])));
+  const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], files);
+  expect(stderr).toContain("4 pass");
+  expect(exitCode).toBe(0);
+});
 
 // The synchronous module-load path (require(esm), importSync) must attach the
 // transpiler's ESM-record analysis (module_info) to the ResolvedSource under

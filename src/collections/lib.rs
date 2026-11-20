@@ -1,19 +1,19 @@
 //! bun_collections — crate root. Thin re-export hub.
 
 #![feature(
+    allocator_ext,
     type_info,
     adt_const_params,
     unsized_const_params,
     const_cmp,
-    const_trait_impl,
-    allocator_api
+    const_trait_impl
 )]
 #![allow(incomplete_features)]
 #![warn(unused_must_use)]
 
 pub mod hive_array;
 pub mod index_sort;
-pub mod multi_array_list;
+mod multi_array_list;
 pub mod vec_ext;
 // `bounded_array` moved down to `bun_core` (cycle-break for the
 // `bun_string → bun_core` merge — `bun_core::string::immutable` needs it).
@@ -31,18 +31,14 @@ pub mod static_hash_map;
 pub use static_hash_map::StaticHashMap;
 
 pub use bounded_array::BoundedArray;
-pub use hive_array::{
-    Fallback as HiveArrayFallback, HiveArray, HiveBox, HiveRef, HiveRefHandle, HiveSlot,
-};
+pub use hive_array::{Fallback as HiveArrayFallback, HiveArray, HiveRef, HiveRefHandle, HiveSlot};
 pub use linear_fifo::LinearFifo;
 pub use multi_array_list::MultiArrayList;
 #[doc(hidden)]
 pub use paste::paste as __mal_paste;
-pub use vec_ext::{ByteVecExt, OffsetByteList, VecExt, prepend_from};
+pub use vec_ext::{ByteVecExt, OffsetByteList, VecExt, recycle_vec};
 
-pub use bit_set::{
-    AutoBitSet, ByteSet, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, IntegerBitSet,
-};
+pub use bit_set::{AutoBitSet, ByteSet, DynamicBitSet, DynamicBitSetList, IntegerBitSet};
 
 // `multi_array_list` imports from here; canonical impl lives in
 // `bun_core::strings`.
@@ -278,34 +274,6 @@ impl<T, const N: usize> SmallList<T, N> {
         debug_assert!(values.len() <= N);
         Self(smallvec::SmallVec::from_slice(values))
     }
-    /// Build a `SmallList` whose heap spill (if any) is allocated from `arena`
-    /// instead of the global allocator.
-    ///
-    /// Use this when the list is stored in an arena-owned, never-`Drop`'d
-    /// structure (forgotten/`set_len(0)`-cleared on teardown). The returned
-    /// list **must not** be dropped or grown past its initial length: when it
-    /// spills, the backing storage is arena memory that the global allocator
-    /// does not own. The arena reclaims the slab on reset; running
-    /// `SmallVec::drop` would call `dealloc` on a pointer it never handed out.
-    #[cfg_attr(bun_asan, inline(never))]
-    #[cfg_attr(not(bun_asan), inline)]
-    pub fn from_arena_iter<I>(arena: &bun_alloc::Arena, iter: I) -> Self
-    where
-        I: IntoIterator<Item = T>,
-        I::IntoIter: ExactSizeIterator,
-    {
-        let iter = iter.into_iter();
-        let len = iter.len();
-        if len <= N {
-            return Self(smallvec::SmallVec::from_iter(iter));
-        }
-        let slab = arena.alloc_slice_fill_iter(iter);
-        // SAFETY: `slab` was just initialized to exactly `len` elements;
-        // `len > N` so the resulting `SmallVec` is heap-mode, and the caller
-        // never drops or grows it (see fn doc), so the global-allocator
-        // invariant of `from_raw_parts` is never exercised.
-        Self(unsafe { smallvec::SmallVec::from_raw_parts(slab.as_mut_ptr(), len, len) })
-    }
     /// Adopt a `Vec<T>` as the heap buffer
     /// (O(1) header transfer; no element copy).
     #[inline]
@@ -406,18 +374,9 @@ impl<T, const N: usize> SmallList<T, N> {
             self.0.reserve_exact(new_capacity as usize - cur);
         }
     }
-    /// Exposed as safe: every current external caller only shrinks
-    /// (`new_len <= len`). Growing past the initialised region is the
-    /// caller's responsibility.
     #[inline]
-    pub fn set_len(&mut self, new_len: u32) {
-        // SAFETY: a raw length store. All current external callers only
-        // shrink (`new_len <= self.len()`), so `[0..new_len]` stays
-        // initialised and `new_len <= capacity`, satisfying
-        // `SmallVec::set_len`'s preconditions (the truncated tail merely
-        // leaks). Any caller that grows takes responsibility for
-        // initialising the exposed region.
-        unsafe { self.0.set_len(new_len as usize) }
+    pub fn truncate(&mut self, new_len: u32) {
+        self.0.truncate(new_len as usize);
     }
 
     // ── conversion / clone ─────────────────────────────────────────────────

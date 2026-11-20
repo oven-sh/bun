@@ -58,12 +58,13 @@ pub(crate) fn postgres_error_to_js_with_hint(
 ) -> JSValue {
     use AnyPostgresError::*;
     let code: &'static [u8] = match err {
+        ChannelBindingFailed => b"ERR_POSTGRES_CHANNEL_BINDING_FAILED",
+        ChannelBindingRequired => b"ERR_POSTGRES_CHANNEL_BINDING_REQUIRED",
         ConnectionClosed => b"ERR_POSTGRES_CONNECTION_CLOSED",
         ConnectionFailed => b"ERR_POSTGRES_CONNECTION_FAILED",
         ConnectionRefused => b"ERR_POSTGRES_CONNECTION_REFUSED",
         CopyNotSupported => b"ERR_POSTGRES_COPY_NOT_SUPPORTED",
         ExpectedRequest => b"ERR_POSTGRES_EXPECTED_REQUEST",
-        ExpectedStatement => b"ERR_POSTGRES_EXPECTED_STATEMENT",
         InvalidBackendKeyData => b"ERR_POSTGRES_INVALID_BACKEND_KEY_DATA",
         InvalidBinaryData => b"ERR_POSTGRES_INVALID_BINARY_DATA",
         InvalidByteSequence => b"ERR_POSTGRES_INVALID_BYTE_SEQUENCE",
@@ -76,6 +77,7 @@ pub(crate) fn postgres_error_to_js_with_hint(
         SASL_SIGNATURE_MISMATCH => b"ERR_POSTGRES_SASL_SIGNATURE_MISMATCH",
         SASL_SIGNATURE_INVALID_BASE64 => b"ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64",
         SASLIterationCountOutOfRange => b"ERR_POSTGRES_SASL_ITERATION_COUNT_OUT_OF_RANGE",
+        SASLNoKnownMechanism => b"ERR_POSTGRES_SASL_NO_KNOWN_MECHANISM",
         TLSNotAvailable => b"ERR_POSTGRES_TLS_NOT_AVAILABLE",
         TLSUpgradeFailed => b"ERR_POSTGRES_TLS_UPGRADE_FAILED",
         TooManyParameters => {

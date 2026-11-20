@@ -5,7 +5,6 @@ use bun_core::{StringView, strings};
 use bun_http::{Headers, Method};
 use bun_http_types::ETag;
 use bun_http_types::ETag::StringPointer;
-use bun_io::Closer;
 use bun_io::FileType;
 use bun_ptr::{RefPtr, ThisPtr};
 use bun_resolver::fs::StatHash;
@@ -13,11 +12,16 @@ use bun_sys::{self, Fd};
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::node::types::PathOrFileDescriptor;
-use crate::server::file_response_stream::{StartOptions as FileResponseStreamOptions, StreamOwner};
+use crate::server::file_response_stream::{
+    StartOptions as FileResponseStreamOptions, StreamFd, StreamOwner,
+};
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_jsc::bun_string_jsc;
 
-use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest, write_status};
+use crate::server::{
+    AnyServer, FileResponseStream, HTTPStatusText, PendingRequest, RangeRequest, Served,
+    write_status,
+};
 use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{Blob, FetchHeaders, Response};
@@ -57,7 +61,7 @@ fn headers_from(
 /// The headers of a route's `Response`, and the server's Alt-Svc.
 pub(crate) fn write_route_headers(headers: &Headers, server: Option<AnyServer>, resp: AnyResponse) {
     use bun_http_types::ETag::HeaderEntryColumns;
-    let entries = headers.entries.slice();
+    let entries = &headers.entries;
     let names: &[StringPointer] = entries.items_name();
     let values: &[StringPointer] = entries.items_value();
     let buf = headers.buf.as_slice();
@@ -84,7 +88,7 @@ pub(crate) fn write_alt_svc(server: Option<AnyServer>, resp: AnyResponse) {
 
 /// What `FileRoute::serve` left for `on()` to do with the open fd.
 enum Serve {
-    /// The response is finished; close the fd and complete.
+    /// The response is finished.
     Done,
     /// Hand the fd to a `FileResponseStream`.
     Stream {
@@ -163,9 +167,6 @@ impl FileRoute {
         global: &JSGlobalObject,
         argument: JSValue,
     ) -> JsResult<Option<RefPtr<FileRoute>>> {
-        // `as_class_ref` is the safe shared-borrow downcast (one audited
-        // unsafe in `JSValue`); `get_body_value`/`get_init_headers`/
-        // `status_code` all take `&self`.
         if let Some(response) = argument.as_class_ref::<Response>() {
             let body_value = response.get_body_value();
             body_value.to_blob_if_possible();
@@ -251,16 +252,10 @@ impl FileRoute {
         method: Method,
     ) {
         debug_assert!(this.server.get().is_some());
-        // Held until `on_response_complete`; a reload can drop the route
-        // table's ref while a `FileResponseStream` is still streaming.
-        let route = RefPtr::from_this(this);
-        if let Some(server) = route.server.get() {
-            server.on_pending_request();
-        }
-        let store = route.blob.store().unwrap().clone();
+        let route = PendingRequest::new(RefPtr::from_this(this));
+        let store = this.blob.store().unwrap().clone();
         let Some(path) = store.get_path() else {
             req.set_yield(true);
-            route.on_response_complete(resp);
             return;
         };
 
@@ -271,9 +266,8 @@ impl FileRoute {
             {
                 let mut path_buffer = bun_paths::path_buffer_pool::get();
                 path_buffer[..path.len()].copy_from_slice(path);
-                path_buffer[path.len()] = 0;
                 bun_sys::open(
-                    bun_core::ZStr::from_buf(&path_buffer[..], path.len()),
+                    bun_core::ZStr::nul_terminate(&mut path_buffer, path.len()),
                     open_flags,
                     0,
                 )
@@ -286,33 +280,21 @@ impl FileRoute {
 
         let Ok(fd) = fd_result else {
             req.set_yield(true);
-            route.on_response_complete(resp);
             return;
         };
+        let fd = StreamFd::Owned(fd);
 
-        // Every non-streaming outcome — bodiless status codes
-        // (1xx/204/205/304), HEAD, non-streamable files, and the JS-exception
-        // early returns — is `Serve::Done`, so neither the fd nor the route ref
-        // (or the server's pending_requests counter) can leak regardless of
-        // which branch ran.
-        match route.serve(fd, path, &mut req, resp, method) {
-            Serve::Done => {
-                #[cfg(windows)]
-                Closer::close(fd, bun_sys::windows::libuv::Loop::get());
-                #[cfg(not(windows))]
-                Closer::close(fd, ());
-                route.on_response_complete(resp);
-            }
+        match this.serve(fd.get(), path, &mut req, resp, method) {
+            Serve::Done => {}
             Serve::Stream {
                 file_type,
                 pollable,
                 offset,
                 length,
             } => {
-                let server = route.server.get().unwrap();
+                let server = this.server.get().unwrap();
                 FileResponseStream::start(FileResponseStreamOptions {
                     fd,
-                    auto_close: true,
                     resp,
                     vm: bun_ptr::BackRef::new(server.vm()),
                     file_type,
@@ -464,22 +446,11 @@ impl FileRoute {
             length: body_len,
         }
     }
-
-    /// The last thing a response does with the route; callers then release
-    /// the ref `on()` took for it.
-    pub(crate) fn on_response_complete(&self, resp: AnyResponse) {
-        resp.clear_aborted();
-        resp.clear_on_writable();
-        resp.clear_timeout();
-        if let Some(server) = self.server.get() {
-            server.on_request_complete();
-        }
-    }
 }
 
-impl Drop for FileRoute {
-    fn drop(&mut self) {
-        self.blob.deinit();
+impl Served for RefPtr<FileRoute> {
+    fn served_by(&self) -> Option<AnyServer> {
+        self.server.get()
     }
 }
 

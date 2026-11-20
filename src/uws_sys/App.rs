@@ -1,5 +1,6 @@
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
+use core::ptr::NonNull;
 
 use bun_boringssl_sys::OwnedSslCtx;
 use bun_core::ZStr;
@@ -37,7 +38,7 @@ use bun_ptr::ThisPtr;
 //
 // 3. App.rs - Rust bindings that call the C wrapper functions
 //    - App<const SSL: bool> generic struct parameterized by SSL boolean
-//    - Methods like create(), destroy(), close() call corresponding C functions
+//    - Methods like close() call corresponding C functions
 //    - Type-safe wrappers around raw C pointers and function calls
 //    - Converts Rust slices to C pointer/length pairs
 //    - Provides compile-time SSL flag selection via SSL as i32
@@ -83,6 +84,28 @@ macro_rules! uws_app_route_methods {
     )*};
 }
 
+pub struct OwnedApp<const SSL: bool>(NonNull<App<SSL>>);
+
+impl<const SSL: bool> OwnedApp<SSL> {
+    /// `ctx` is what every accepted socket starts from, verify mode included. `Some` exactly when `SSL`.
+    pub fn new(ctx: Option<&OwnedSslCtx>) -> Self {
+        debug_assert_eq!(SSL, ctx.is_some());
+        let app = c::uws_create_app(ctx.map(|ctx| SslCtx::opaque_ref(ctx.as_ptr())));
+        Self(NonNull::new(app.cast()).expect("`new` does not return null"))
+    }
+
+    pub fn as_ptr(&self) -> *mut App<SSL> {
+        self.0.as_ptr()
+    }
+}
+
+impl<const SSL: bool> Drop for OwnedApp<SSL> {
+    fn drop(&mut self) {
+        // SAFETY: created in `new` with the same flag, destroyed once.
+        unsafe { c::uws_app_destroy(App::<SSL>::SSL_FLAG, self.as_ptr().cast()) }
+    }
+}
+
 impl<const SSL: bool> App<SSL> {
     const SSL_FLAG: i32 = SSL as i32;
 
@@ -112,20 +135,6 @@ impl<const SSL: bool> App<SSL> {
     /// Returns the number of connections closed.
     pub fn close_idle_connections(&mut self, close_when_idle: bool) -> usize {
         c::uws_app_close_idle(Self::SSL_FLAG, self.as_raw(), i32::from(close_when_idle))
-    }
-
-    /// `ctx` is what every accepted socket starts from, verify mode included. `Some` exactly when `SSL`.
-    pub fn create(ctx: Option<&OwnedSslCtx>) -> *mut Self {
-        debug_assert_eq!(SSL, ctx.is_some());
-        c::uws_create_app(ctx.map(|ctx| SslCtx::opaque_ref(ctx.as_ptr()))).cast::<Self>()
-    }
-
-    /// # Safety
-    /// `this` must be a live app handle from [`App::create`]. Caller must not use it after.
-    /// (FFI destroy on an opaque C-owned handle — intentionally not `Drop`.)
-    pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: caller contract — `this` is a valid *mut uws_app_s; ssl flag matches construction.
-        unsafe { c::uws_app_destroy(Self::SSL_FLAG, this.cast::<uws_app_t>()) }
     }
 
     pub fn set_flags(&mut self, lenient_http_flags: u8, http_allow_half_open: bool) {
@@ -289,7 +298,7 @@ impl<const SSL: bool> App<SSL> {
     pub fn listen_with_config(
         &mut self,
         config: c::uws_app_listen_config_t,
-    ) -> Result<*mut ListenSocket<SSL>, ListenError> {
+    ) -> Result<OwnedListenSocket<SSL>, ListenError> {
         let mut failure = ListenError::default();
         // SAFETY: self is a valid app; config.host (if non-null) is NUL-terminated and outlives the call.
         let socket = unsafe {
@@ -303,18 +312,16 @@ impl<const SSL: bool> App<SSL> {
                 &raw mut failure.dns_error,
             )
         };
-        if socket.is_null() {
-            Err(failure)
-        } else {
-            Ok(socket.cast::<ListenSocket<SSL>>())
-        }
+        NonNull::new(socket.cast())
+            .map(|socket| OwnedListenSocket(crate::OwnedListenSocket(socket)))
+            .ok_or(failure)
     }
 
     pub fn listen_on_unix_socket(
         &mut self,
         domain_name: &ZStr,
         flags: i32,
-    ) -> Result<*mut ListenSocket<SSL>, ListenError> {
+    ) -> Result<OwnedListenSocket<SSL>, ListenError> {
         let mut failure = ListenError::default();
         // SAFETY: self is a valid app; domain_name is NUL-terminated.
         let socket = unsafe {
@@ -327,11 +334,9 @@ impl<const SSL: bool> App<SSL> {
                 &raw mut failure.error,
             )
         };
-        if socket.is_null() {
-            Err(failure)
-        } else {
-            Ok(socket.cast::<ListenSocket<SSL>>())
-        }
+        NonNull::new(socket.cast())
+            .map(|socket| OwnedListenSocket(crate::OwnedListenSocket(socket)))
+            .ok_or(failure)
     }
 
     /// Listens on a descriptor the caller already bound. On failure the caller keeps `fd`.
@@ -339,7 +344,7 @@ impl<const SSL: bool> App<SSL> {
         &mut self,
         fd: crate::LIBUS_SOCKET_DESCRIPTOR,
         options: c_int,
-    ) -> Result<*mut ListenSocket<SSL>, ListenError> {
+    ) -> Result<OwnedListenSocket<SSL>, ListenError> {
         let mut failure = ListenError::default();
         let socket = c::uws_app_listen_fd(
             Self::SSL_FLAG,
@@ -348,11 +353,9 @@ impl<const SSL: bool> App<SSL> {
             options,
             &mut failure.error,
         );
-        if socket.is_null() {
-            Err(failure)
-        } else {
-            Ok(socket.cast::<ListenSocket<SSL>>())
-        }
+        NonNull::new(socket.cast())
+            .map(|socket| OwnedListenSocket(crate::OwnedListenSocket(socket)))
+            .ok_or(failure)
     }
 
     pub fn num_subscribers(&mut self, topic: &[u8]) -> u32 {
@@ -497,15 +500,16 @@ pub struct ListenSocket<const SSL: bool> {
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
-impl<const SSL: bool> ListenSocket<SSL> {
-    #[inline]
-    pub fn close(&mut self) {
-        // S008: ListenSocket<SSL> is layout-identical to crate::ListenSocket
-        // (both ZST opaques) — safe deref via `opaque_deref_mut`.
-        bun_opaque::opaque_deref_mut(std::ptr::from_mut::<Self>(self).cast::<UwsListenSocket>())
-            .close()
-    }
+/// Drop it before [`App::close`], which closes the socket too.
+pub struct OwnedListenSocket<const SSL: bool>(crate::OwnedListenSocket);
 
+impl<const SSL: bool> OwnedListenSocket<SSL> {
+    pub fn as_ptr(&self) -> *mut ListenSocket<SSL> {
+        self.0.as_ptr().cast()
+    }
+}
+
+impl<const SSL: bool> ListenSocket<SSL> {
     #[inline]
     pub fn get_local_port(&mut self) -> Option<u16> {
         // S008: opaque ZST cast as above.

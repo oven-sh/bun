@@ -35,6 +35,16 @@ export const H2FrameParserOptions = b.dictionary({
   type: { type: b.u32.default(1), rustName: "session_type" },
 });
 
+/** `entry` is pushed onto `pending`. */
+const queuesEntry = {
+  pending: [
+    ...table.retainedByNativeCode,
+    table.writesContents(),
+    table.storedByKey(table.indexKeys, table.operand("entry")),
+    table.storedByKey(table.keysNamed("length"), table.f64),
+  ],
+};
+
 /** The session of `node:http2`. */
 export const H2FrameParser = b.class({
   rustPath: "crate::api::H2FrameParser",
@@ -81,7 +91,12 @@ export const H2FrameParser = b.class({
       length: 1,
     },
     emitErrorToAllStreams: { args: { code: b.u32 }, capability: "js" },
-    flush: { returns: b.usize, capability: "js", rustName: "flush_from_js" },
+    flush: {
+      args: { socketDrained: b.bool.default(false) },
+      returns: b.usize,
+      capability: "js",
+      rustName: "flush_from_js",
+    },
     forEachStream: { args: { callback: b.callable, unread: b.bool.default(false) }, capability: "js" },
     getCurrentState: { returns: b.any.returning("object"), capability: "js" },
     getFrameCounters: { returns: b.any.returning("object"), capability: "js" },
@@ -94,13 +109,15 @@ export const H2FrameParser = b.class({
     isStreamClosed: { args: { streamId: b.u32 }, returns: b.bool },
     noTrailers: { args: { streamId: b.u32 }, capability: "js" },
     origin: { ...js, args: { origin: b.any } },
-    ping: { ...js, args: { payload: buffer }, returns: b.bool },
+    ping: { ...js, args: { payload: buffer, pending: b.any, entry: b.any }, returns: b.bool, uses: queuesEntry },
     pushPromise: {
       ...js,
       args: { parentId: b.u32, promisedId: b.u32, headers: b.any, sensitiveHeaders: b.any },
       returns: b.any.returning("number"),
     },
     read: { ...js, args: { data: buffer } },
+    readHeldInput: { ...js, rustName: "read_held_input_from_js" },
+    refusePushesAbove: { args: { lastStreamId: b.u32 }, capability: "js" },
     releaseStream: { args: { streamId: b.u32, unread: b.bool.default(false) }, returns: b.bool },
     request: {
       ...js,
@@ -121,7 +138,7 @@ export const H2FrameParser = b.class({
     setNextStreamID: { args: { streamId: b.u32.wrap }, capability: "js" },
     setStreamContext: { args: { streamId: b.u32, context: b.any }, capability: "js" },
     setStreamReading: { args: { streamId: b.u32, reading: b.bool }, capability: "js" },
-    settings: { ...js, args: { settings: b.any } },
+    settings: { ...js, args: { settings: b.any, pending: b.any, entry: b.any }, uses: queuesEntry },
     validateRequest: { ...js, args: { headers: b.any } },
     writeStream: {
       ...js,

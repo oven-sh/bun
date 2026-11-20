@@ -181,7 +181,6 @@ type NativeClient = globalThis.WebSocket;
 type NativeServer = import("bun").ServerWebSocket<WebSocket>;
 
 interface NativeTlsOptions {
-  __proto__?: object | null;
   servername?: string;
   [option: string]: unknown;
 }
@@ -2124,9 +2123,7 @@ function keepIdentityError(websocket: WebSocket, tls: NativeTlsOptions): NativeT
   // The handshake calls it from the event loop, which doesn't have the AsyncLocalStorage context of `new WebSocket()`.
   const asyncContext = $getInternalField($asyncContext, 0);
 
-  // Inherit from `tls` instead of copying it, so that getters and inherited options keep working.
-  return {
-    __proto__: tls,
+  return require("internal/shared").withMembers(tls, {
     checkServerIdentity: (hostname: string, cert: unknown) => {
       const verdict =
         asyncContext === $getInternalField($asyncContext, 0)
@@ -2135,7 +2132,7 @@ function keepIdentityError(websocket: WebSocket, tls: NativeTlsOptions): NativeT
       if (enforced) websocket[kIdentityError] = verdict;
       return verdict;
     },
-  };
+  });
 }
 
 function connectError(dialled: string, error: NativeError): Error {
@@ -3037,7 +3034,7 @@ function initAsClient(
       ? keepIdentityError(websocket, require("internal/tls").unsealPfxForNative(proxyTls))
       : proxyTls;
     nativeOptions.proxy =
-      wrapped === proxyTls ? proxy : ({ __proto__: proxy, tls: wrapped } as unknown as ProxyOptions);
+      wrapped === proxyTls ? proxy : require("internal/shared").withMembers(proxy as ProxyOptions, { tls: wrapped });
     // For connectError(). The caller may change or reuse its `proxy` object before the connection fails. A redirect
     // comes here again with the same `proxy`.
     if (websocket._redirects === 0) {

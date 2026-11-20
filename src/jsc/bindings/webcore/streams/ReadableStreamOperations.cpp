@@ -520,6 +520,7 @@ static void releaseNativeSourceRef(JSGlobalObject* globalObject, JSReadableStrea
     auto* handle = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get())->handle();
     if (!handle)
         return;
+    nativeSourceReaderReleased(handle);
     JSValue updateRef = handle->getIfPropertyExists(globalObject, builtinNames(vm).updateRefPublicName());
     RETURN_IF_EXCEPTION(scope, void());
     if (!updateRef || !updateRef.isCallable())

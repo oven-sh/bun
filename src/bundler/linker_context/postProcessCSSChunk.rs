@@ -14,7 +14,7 @@ pub(crate) fn post_process_css_chunk(
     worker: &mut thread_pool::Worker,
     chunk: &mut Chunk,
 ) -> Result<(), crate::Error> {
-    let c = ctx.c();
+    let c = ctx.c;
     // Avoid FRU `..Default::default()` — StringJoiner impls Drop (E0509).
     let mut j = StringJoiner::default();
     j.watcher = Watcher {
@@ -127,12 +127,11 @@ pub(crate) fn post_process_css_chunk(
     // Make sure the file ends with a newline
     j.ensure_newline_at_end();
 
-    // SAFETY: `worker.arena` set by `Worker::create`, outlives the worker step.
     let alloc = worker.arena();
     // SAFETY: every borrowed node in `j` points into `chunk.compile_results_for_chunk`
     // (filled in place before post-processing, never reassigned afterwards), graph
     // source paths, or `'static` literals; `watcher.input` is
-    // `chunk.unique_key` (`&'static`). All of these outlive the joiner stored in
+    // `chunk.unique_key` (bundle arena). All of these outlive the joiner stored in
     // `chunk.intermediate_output`, which is only read while the chunk and the linker
     // graph are alive.
     let mut j = unsafe { j.detach_lifetime() };
@@ -140,21 +139,16 @@ pub(crate) fn post_process_css_chunk(
         bun_core::handle_oom(c.break_output_into_pieces(alloc, &mut j, ctx.chunks.len() as u32));
     // TODO: meta contents
 
-    chunk.isolated_hash = c.generate_isolated_hash(chunk, alloc);
+    chunk.isolated_hash = c.generate_isolated_hash(chunk);
     // chunk.flags.is_executable = is_executable;
 
     if c.options.source_maps != options::SourceMapOption::None {
         let can_have_shifts = matches!(chunk.intermediate_output, IntermediateOutput::Pieces(_));
-        // Copy the `ParentRef` out (not `c.resolver()`) so `output_dir`
-        // borrows the local, not `c`, avoiding the split-borrow with
-        // `c.generate_source_map_for_chunk(&mut self, …)` below.
-        let resolver = c.resolver.expect("resolver set in load()");
-        let output_dir = &resolver.opts.output_dir;
         chunk.output_source_map = c.generate_source_map_for_chunk(
             chunk.isolated_hash,
             worker,
             &compile_results_for_source_map,
-            output_dir,
+            &c.resolver.opts.output_dir,
             can_have_shifts,
         )?;
     }

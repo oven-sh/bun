@@ -29,7 +29,6 @@ struct HttpRequest;
 struct Http2Context;
 
 struct HttpFlags {
-    bool isParsingHttp: 1 = false;
     bool usingCustomExpectHandler: 1 = false;
     /* node:http parser leniency. Two llhttp lenient bits: useInsecureHTTPParser = LENIENT_HEADERS
      * ("relaxed"+"insecure"); useLenientTransferEncoding = LENIENT_TRANSFER_ENCODING ("insecure"
@@ -40,8 +39,6 @@ struct HttpFlags {
      * or queued responses keeps the connection open until they drain (Node's
      * socketOnEnd); when false (the default), the connection ends right away. */
     bool httpAllowHalfOpen: 1 = false;
-    /* The new owner of upgradedWebSocket already has what follows the request head in this read. */
-    bool restOfReadTaken: 1 = false;
 };
 
 /* What node:http hears about a connection. socketData is HttpResponseData::socketData. */
@@ -51,6 +48,9 @@ struct NodeHttpSocketHooks {
     void (*onDrain)(void *socketData);
     void (*onRawRead)(void *socketData, const char *data, int length);
     void (*onReadParsed)(void *socketData);
+    void (*onParseFailed)(void *socketData);
+    /* A read ended inside a request head. The socket can be closed when this returns. */
+    void (*onPartialHead)(void *socketData);
     /* The body of an accepted Upgrade request has ended. The socket can have left this context when this returns. */
     void (*onUpgradeBodyEnded)(void *socketData);
     /* A TLS handshake ended, or an established session failed. The socket can be closed when this returns. */
@@ -76,16 +76,20 @@ private:
         HttpRequest *httpRequest;
     };
 
-    /* The socket onData is currently parsing, nullptr outside a parse. The
-     * close gates in internalEnd need the per-socket identity: a DIFFERENT
-     * socket's response can complete inside this window (a microtask drained
-     * during a request dispatch), and the context-wide isParsingHttp bit
-     * alone would wrongly defer its close to a post-parse gate that only
-     * checks the parsed socket. */
-    struct us_socket_t *parsingSocket = nullptr;
+    /* A read that HttpContext::onData() is parsing. */
+    struct Parse {
+        struct us_socket_t *socket;
+        /* A handler of that one ticks the loop (waitForPromise). */
+        Parse *outer;
+        /* What the socket became when it left HTTP under this parse. */
+        struct us_socket_t *upgraded = nullptr;
+        /* The new owner already has what follows the request head in this read. */
+        bool restOfReadTaken = false;
+    };
+    /* The innermost one, nullptr outside a parse. */
+    Parse *parsing = nullptr;
 
     HttpRouter<RouterData> router;
-    void *upgradedWebSocket = nullptr;
     /* Set by enableNodeHttpCompat(). A socket only has socketData in such a context. */
     const NodeHttpSocketHooks *nodeHttpHooks = nullptr;
     OnClientErrorCallback onClientError = nullptr;
@@ -119,13 +123,23 @@ public:
     
     HttpFlags flags;
 
-    bool isParsing(struct us_socket_t *s) const { return flags.isParsingHttp && parsingSocket == s; }
+    /* Per socket: the response of another one can complete under a parse, in a microtask of the dispatch. */
+    bool isParsing(struct us_socket_t *s) const {
+        for (Parse *parse = parsing; parse; parse = parse->outer) {
+            if (parse->socket == s) {
+                return true;
+            }
+        }
+        return false;
+    }
 
-    /* An owner outside uWS adopted s after HttpResponse::leaveHttp(). If s is being parsed, the parser stops here. */
-    void socketLeft(struct us_socket_t *s, bool restOfReadTaken) {
-        if (isParsing(s)) {
-            upgradedWebSocket = s;
-            flags.restOfReadTaken = restOfReadTaken;
+    /* Another owner adopted s after HttpResponse::leaveHttp(). If s is being parsed, the parser stops here. */
+    void socketLeft(struct us_socket_t *s, struct us_socket_t *adopted, bool restOfReadTaken) {
+        for (Parse *parse = parsing; parse; parse = parse->outer) {
+            if (parse->socket == s && !parse->upgraded) {
+                parse->upgraded = adopted;
+                parse->restOfReadTaken = restOfReadTaken;
+            }
         }
     }
 };

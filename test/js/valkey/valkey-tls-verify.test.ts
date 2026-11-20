@@ -346,3 +346,107 @@ describe("RedisClient tls.serverName", () => {
     });
   });
 });
+
+describe("RedisClient tls.checkServerIdentity", () => {
+  const agent1 = { key: serverKey, cert: serverCert };
+  const localhost = { key: localhostTls.key, cert: localhostTls.cert };
+  const refusal = () => Object.assign(new Error("refused"), { code: "REFUSED" });
+
+  test("replaces the check of the name", async () => {
+    await withServer(agent1, async port => {
+      const calls: [string, string][] = [];
+      const checkServerIdentity = (hostname: string, cert: tls.PeerCertificate) =>
+        void calls.push([hostname, cert.subject.CN as string]);
+      expect(await ping(`rediss://127.0.0.1:${port}`, { ca, checkServerIdentity })).toBe("PONG");
+      expect(await ping(`rediss://127.0.0.1:${port}`, { ca, checkServerIdentity, serverName: "other" })).toBe("PONG");
+      expect(calls).toEqual([
+        ["127.0.0.1", "agent1"],
+        ["other", "agent1"],
+      ]);
+    });
+  });
+
+  test.each([
+    ["returns an error", refusal, "REFUSED"],
+    [
+      "throws",
+      () => {
+        throw refusal();
+      },
+      "REFUSED",
+    ],
+    ["returns a promise", async () => {}, "ERR_INVALID_RETURN_VALUE"],
+  ])("fails the connection, with nothing sent, when it %s", async (_, checkServerIdentity: any, code) => {
+    await withServer(localhost, async (port, server) => {
+      let received = 0;
+      const closed = Promise.withResolvers();
+      server.on("connection", socket => socket.on("close", closed.resolve));
+      server.on("secureConnection", socket => socket.on("data", chunk => (received += chunk.length)));
+      expect(await ping(`rediss://127.0.0.1:${port}`, { ca: localhostTls.cert, checkServerIdentity })).toBe(code);
+      await closed.promise;
+      expect(received).toBe(0);
+    });
+  });
+
+  test("is not asked about a chain that does not verify, or with rejectUnauthorized: false", async () => {
+    await withServer(agent1, async port => {
+      let calls = 0;
+      const checkServerIdentity = () => (calls++, refusal());
+      expect(await ping(`rediss://127.0.0.1:${port}`, { checkServerIdentity })).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+      expect(await ping(`rediss://127.0.0.1:${port}`, { checkServerIdentity, rejectUnauthorized: false })).toBe("PONG");
+      expect(calls).toBe(0);
+    });
+  });
+
+  test("is asked by duplicate() too", async () => {
+    await withServer(localhost, async port => {
+      let calls = 0;
+      const client = new RedisClient(`rediss://127.0.0.1:${port}`, {
+        autoReconnect: false,
+        tls: { ca: localhostTls.cert, checkServerIdentity: () => (calls++ === 0 ? undefined : refusal()) },
+      });
+      try {
+        await client.connect();
+        expect(await client.duplicate().then(String, e => e.code)).toBe("REFUSED");
+        expect(calls).toBe(2);
+      } finally {
+        client.close();
+      }
+    });
+  });
+
+  test("can close the client and connect it again", async () => {
+    await withServer(localhost, async port => {
+      let calls = 0;
+      let again: Promise<unknown> | undefined;
+      const client = new RedisClient(`rediss://127.0.0.1:${port}`, {
+        autoReconnect: false,
+        tls: {
+          ca: localhostTls.cert,
+          checkServerIdentity() {
+            if (calls++ > 0) return refusal();
+            client.close();
+            again = client.connect().catch(e => e.code);
+          },
+        },
+      });
+      try {
+        expect(await client.connect().catch(e => e.code)).toBe("ERR_REDIS_CONNECTION_CLOSED");
+        expect(await again).toBe("REFUSED");
+        expect(calls).toBe(2);
+      } finally {
+        client.close();
+      }
+    });
+  });
+
+  test("leaves the built-in check in place when it is not a function", async () => {
+    await withServer(localhost, async port => {
+      const tls = { ca: localhostTls.cert, checkServerIdentity: false as any };
+      expect(await ping(`rediss://127.0.0.1:${port}`, tls)).toBe("PONG");
+      expect(await ping(`rediss://127.0.0.1:${port}`, { ...tls, serverName: "other" })).toBe(
+        "ERR_TLS_CERT_ALTNAME_INVALID",
+      );
+    });
+  });
+});

@@ -452,7 +452,7 @@ describe("transportParams.maxIdleTimeout", () => {
 // accepting: each new session re-filled `sessions`, so the
 // `closing && sessions.is_empty()` finish gate never tripped and `closed`
 // never resolved. Bun's own HTTP/3 listener refuses in on_new_conn while
-// closing (packages/bun-usockets/src/quic.c us_quic_on_new_conn).
+// closing (packages/bun-usockets/src/quic.cpp us_quic_on_new_conn).
 describe("the default congestion controller", () => {
   test("keeps its window while the sender's event loop is busy", async () => {
     let received = 0;
@@ -666,7 +666,7 @@ describe("a send that fails for one destination", () => {
     },
   );
 
-  // With IP_RECVERR, a socket reports the ICMP error about one peer on its next send, whatever that send's destination is.
+  // A socket with IP_RECVERR reports the ICMP error about one peer on its next send, whatever that send's destination is, so the endpoint doesn't set it.
   test.skipIf(!isLinux)("an ICMP error about dead peers doesn't fail the sends to a live peer", async () => {
     const received: number[] = [];
     const serverSessions: any[] = [];
@@ -1597,8 +1597,34 @@ describe("a server session and its handshake", () => {
   });
 });
 
-// lsquic queues a stateless reset for retry when its send fails. The endpoint socket sets IP_RECVERR,
-// so on Linux the ICMP port unreachable for one reset fails the next send with ECONNREFUSED.
+describe("a handshake in flight", () => {
+  test.concurrent.each(["Bun.serve", "fetch", "node:quic"])(
+    "completes when %s makes its first QUIC engine",
+    async api => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          join(import.meta.dir, "quic-handshake-in-flight-fixture.ts"),
+          api,
+          join(keysDir, "agent1-key.pem"),
+          join(keysDir, "agent1-cert.pem"),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // stderr contains the ExperimentalWarning.
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: '{"result":"answered","connections":1}\n',
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    },
+  );
+});
+
+// lsquic queues a stateless reset for retry when its send would block.
 describe("endpoint.close() with an unsent stateless reset", () => {
   test.skipIf(!isASAN || !isLinux)(
     "frees the reset's connection object",

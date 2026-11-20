@@ -58,6 +58,7 @@ export async function tamperingRelay(serverPort: number) {
 /** HTTP/3 frames. The field lines use QPACK's static table. */
 export const frames = {
   post: [0x01, 16, 0, 0, 0xd4, 0xd7, 0xc1, 0x50, 9, ...Buffer.from("localhost")],
+  postOfTenBytes: [0x01, 20, 0, 0, 0xd4, 0xd7, 0xc1, 0x50, 9, ...Buffer.from("localhost"), 0x54, 2, ...Buffer.from("10")],
   status200: [0x01, 3, 0, 0, 0xd9],
   wholeData: [0x00, 3, ...Buffer.from("abc")],
   dataCutInItsPayload: [0x00, 10, ...Buffer.from("abc")],

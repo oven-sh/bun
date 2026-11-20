@@ -852,6 +852,12 @@ const THIS_OF_SLOPPY_FUNCTIONS: &[(&str, BuiltinId)] = &[
     ("function f() { var self = this; }", BuiltinId::GlobalThis),
     ("function f() { g.call(this); }", BuiltinId::GlobalThis),
     ("function f() { this.own(); }", BuiltinId::GlobalThis),
+    ("({ m() { super.own(); } });", BuiltinId::GlobalThis),
+    (
+        "({ m() { return () => super.own; } });",
+        BuiltinId::GlobalThis,
+    ),
+    ("({ m() { super.own = g; } });", BuiltinId::GlobalThis),
     ("function f() { this[k]; }", BuiltinId::GlobalThis),
     ("function f() { this.constructor; }", BuiltinId::GlobalThis),
     (
@@ -875,6 +881,9 @@ const THIS_OF_OTHER_CODE: &[&str] = &[
     "x = this; const f = () => this;",
     "class A { m() { return this; } static { f(this); } }",
     "class A { m = this; n = () => this; }",
+    "class A extends B { m() { super.own(); super.own = 1; } }",
+    "'use strict'; ({ m() { super.own(); } });",
+    "({ m() { 'use strict'; super.own(); } });",
     "function f() { this.process = 1; this.own; this.own = this.other; }",
     "function f() { typeof this; this instanceof f; if (!this) {} this; }",
 ];

@@ -32,8 +32,8 @@ pub(crate) mod bun_object;
 pub(crate) mod crash_handler_jsc;
 #[path = "api/cron.rs"]
 pub(crate) mod cron;
-#[path = "api/cron_parser.rs"]
-pub(crate) mod cron_parser;
+#[path = "api/cron_os.rs"]
+pub(crate) mod cron_os;
 #[path = "api/csrf_jsc.rs"]
 pub(crate) mod csrf_jsc;
 #[path = "api/filesystem_router.rs"]
@@ -136,7 +136,6 @@ pub(crate) mod bun {
 pub(crate) use crate::api::bun::h2_frame_parser::H2FrameParser;
 pub(crate) use crate::api::bun::ssl_context_cache as SSLContextCache;
 pub(crate) use crate::api::js_bundler::BuildArtifact;
-pub(crate) use crate::api::js_bundler::JSBundler;
 
 // ─── shared scaffold for Bun.{TOML,JSONC,JSON5,YAML,XML}.parse ───────────────
 //
@@ -150,23 +149,19 @@ fn with_text_format_source<R>(
     path: &'static [u8],
     f: impl FnOnce(&bun_alloc::Arena, &mut bun_ast::Log, &bun_ast::Source) -> bun_jsc::JsResult<R>,
 ) -> bun_jsc::JsResult<R> {
-    // A private mi_heap costs microseconds to create, more than parsing a
-    // small document: keep one per thread and recycle it between calls.
-    // `#[thread_local]` rather than `thread_local!` so there is no
-    // destructor racing mimalloc's own thread teardown (as in
-    // `ast_memory_allocator.rs`); a parked heap is reclaimed with the thread.
-    #[thread_local]
-    static ARENA: core::cell::Cell<Option<bun_alloc::Arena>> = core::cell::Cell::new(None);
-    struct Recycle(Option<bun_alloc::Arena>);
-    impl Drop for Recycle {
+    use core::cell::Cell;
+    // A private mi_heap costs microseconds to create, more than parsing a small document.
+    struct Recycle<'a>(Option<bun_alloc::Arena>, &'a Cell<Option<bun_alloc::Arena>>);
+    impl Drop for Recycle<'_> {
         fn drop(&mut self) {
             if let Some(mut arena) = self.0.take() {
                 arena.reset_retain_with_limit(2 * 1024 * 1024);
-                ARENA.set(Some(arena));
+                self.1.set(Some(arena));
             }
         }
     }
-    let recycle = Recycle(Some(ARENA.take().unwrap_or_default()));
+    let slot = &global.bun_vm().text_format_arena;
+    let recycle = Recycle(Some(slot.take().unwrap_or_default()), slot);
     let arena = recycle.0.as_ref().expect("set above");
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
     let _ast_scope = ast_memory_allocator.enter();

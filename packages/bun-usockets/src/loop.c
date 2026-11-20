@@ -77,6 +77,10 @@ void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
     }
 }
 
+static uint64_t us_internal_monotonic_ns(void) {
+    return uv_hrtime();
+}
+
 #else
 
 #define LIBUS_TIMEOUT_GRANULARITY_NS ((long long) LIBUS_TIMEOUT_GRANULARITY * 1000000000LL)
@@ -352,8 +356,11 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
  * (us_internal_timer_sweep). */
 static const int MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION = 5;
 
-/* An accepted socket's handlers run inside the accept loop. The bound lets timers and other sockets run between batches. The listener's poll is level-triggered and reports the rest on the next tick. */
-static const int MAX_ACCEPTS_PER_READINESS_EVENT = 32;
+/* An accepted socket's handlers run inside the accept loop, so a batch ends for timers and other sockets to run. The listener's poll is
+ * level-triggered and reports the rest on the next tick. Past the minimum a batch gets the time that the loop spent on anything but
+ * batches since the listener's last one: a fixed count is a fixed rate on a busy loop, and the accept queue overflows. */
+static const int MIN_ACCEPTS_PER_BATCH = 32;
+static const uint64_t MAX_ACCEPT_BATCH_NS = 50 * 1000 * 1000;
 
 void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
     struct us_internal_loop_data_t *loop_data = &loop->data;
@@ -391,22 +398,14 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
 }
 
 // Called when DNS resolution completes
-// Does not wake up the loop.
-void us_internal_dns_callback(struct us_connecting_socket_t *c, void* addrinfo_req) {
-    (void)addrinfo_req; /* already stored on c by us_socket_group_connect */
+// Wakes up the loop.
+// Can be caleld from any thread.
+void us_internal_dns_callback_threadsafe(struct us_connecting_socket_t *c) {
     struct us_loop_t *loop = c->loop;
     Bun__lock(&loop->data.mutex);
     c->next = loop->data.dns_ready_head;
     loop->data.dns_ready_head = c;
     Bun__unlock(&loop->data.mutex);
-}
-
-// Called when DNS resolution completes
-// Wakes up the loop.
-// Can be caleld from any thread.
-void us_internal_dns_callback_threadsafe(struct us_connecting_socket_t *c, void* addrinfo_req) {
-    struct us_loop_t *loop = c->loop;
-    us_internal_dns_callback(c, addrinfo_req);
     us_wakeup_loop(loop);
 }
 
@@ -541,6 +540,22 @@ static int us_internal_defer_end(struct us_socket_t *s, struct us_loop_t *loop) 
     return 1;
 }
 
+/* A handler can tick the loop (waitForPromise) while its caller still parses the buffer, so the reads under it get another one. */
+static char *us_internal_take_recv_buf(struct us_loop_t *loop) {
+    char *recv_buf = loop->data.recv_buf;
+    loop->data.recv_buf = NULL;
+    if (UNLIKELY(!recv_buf)) {
+        recv_buf = us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
+        if (!recv_buf) Bun__outOfMemory();
+    }
+    return recv_buf;
+}
+
+static void us_internal_put_recv_buf(struct us_loop_t *loop, char *recv_buf) {
+    if (UNLIKELY(loop->data.recv_buf)) us_free(loop->data.recv_buf);
+    loop->data.recv_buf = recv_buf;
+}
+
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events) {
     switch (us_internal_poll_type(p)) {
     case POLL_TYPE_CALLBACK: {
@@ -592,6 +607,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     /* Todo: stop timer if any */
 
                     int accepted = 0;
+                    const uint64_t start = us_internal_monotonic_ns();
+                    const uint64_t budget = start - loop->data.accept_batches_ns - listen_socket->last_batch_ns;
+                    const uint64_t deadline = start + (budget < MAX_ACCEPT_BATCH_NS ? budget : MAX_ACCEPT_BATCH_NS);
+                    listen_socket->last_batch_ns += budget;
                     do {
                         struct us_poll_t *accepted_p = us_create_poll(loop, 0, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + listen_socket->socket_ext_size);
                         us_poll_init(accepted_p, client_fd, POLL_TYPE_SOCKET);
@@ -642,7 +661,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                             break;
                         }
 
-                    } while (++accepted < MAX_ACCEPTS_PER_READINESS_EVENT && (client_fd = bsd_accept_socket(us_poll_fd(p), &addr, listen_socket->shared)) != LIBUS_SOCKET_ERROR);
+                    } while ((++accepted < MIN_ACCEPTS_PER_BATCH || us_internal_monotonic_ns() < deadline) &&
+                             (client_fd = bsd_accept_socket(us_poll_fd(p), &addr, listen_socket->shared)) != LIBUS_SOCKET_ERROR);
+                    loop->data.accept_batches_ns += us_internal_monotonic_ns() - start;
                 }
             }
         break;
@@ -767,6 +788,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
 
                 size_t repeat_recv_count = 0;
+                char *recv_buf = us_internal_take_recv_buf(loop);
 
                 do {
                     #ifdef _WIN32
@@ -783,7 +805,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         /* The protocol sends one descriptor per message. The buffer has room for more, so that extra ones are received and can be closed. */
                         char cmsg_buf[CMSG_SPACE(64 * sizeof(int))];
 
-                        iov.iov_base = loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING;
+                        iov.iov_base = recv_buf + LIBUS_RECV_BUFFER_PADDING;
                         iov.iov_len = LIBUS_RECV_BUFFER_LENGTH;
 
                         msg.msg_flags = 0;
@@ -840,7 +862,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         }
                     }else{
                     #endif
-                        length = bsd_recv(us_poll_fd(&s->p), loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, recv_flags);
+                        length = bsd_recv(us_poll_fd(&s->p), recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, recv_flags);
                     #if !defined(_WIN32)
                     }
                     #endif
@@ -849,8 +871,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         if (UNLIKELY(s->lingering) && (s->lingered_bytes += length) >= LIBUS_LINGER_MAX_BYTES) {
                             us_socket_pause(s);
                         }
-                        s = s->ssl ? us_internal_ssl_on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length)
-                                   : s->lingering ? s : us_dispatch_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
+                        s = s->ssl ? us_internal_ssl_on_data(s, recv_buf + LIBUS_RECV_BUFFER_PADDING, length)
+                                   : s->lingering ? s : us_dispatch_data(s, recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
                         /* After socket adoption, track the new socket; the old one becomes invalid */
                         s = us_internal_socket_follow_adopted(s);
                         // loop->num_ready_polls isn't accessible on Windows.
@@ -945,12 +967,15 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                          * surface as `tlsClientError` → uncaught in node:http2.
                          * main called us_socket_close(ssl=0, …) at every loop
                          * close site for exactly this reason. */
-                        s = us_internal_socket_close_raw(s, LIBUS_ERR, NULL);
+                        int read_error = LIBUS_ERR;
+                        us_internal_put_recv_buf(loop, recv_buf);
+                        s = us_internal_socket_close_raw(s, read_error, NULL);
                         return;
                     }
 
                     break;
                 } while (s);
+                us_internal_put_recv_buf(loop, recv_buf);
             }
 
             /* A peer that refuses our bytes may never send its FIN, so a plain socket closes once nothing is left to read. */
@@ -1166,9 +1191,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             if (run_recv && !u->closed) {
                 /* Return to the event loop after 32 reads, as libuv's uv__udp_recvmsg does, so timers and other polls run in between. The poll is level-triggered, so the next turn reads on. */
                 int reads_left = 32;
+                char *recv_buf = us_internal_take_recv_buf(u->loop);
                 do {
                     struct udp_recvbuf recvbuf;
-                    bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
+                    bsd_udp_setup_recvbuf(&recvbuf, recv_buf, LIBUS_RECV_BUFFER_LENGTH);
                     int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT, u->shared_fd ? 1 : LIBUS_UDP_RECV_COUNT);
                     if (npackets > 0) {
                         u->on_data(u, &recvbuf, npackets);
@@ -1218,6 +1244,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         break;
                     }
                 } while (!u->closed && --reads_left);
+                us_internal_put_recv_buf(u->loop, recv_buf);
 #if defined(__linux__)
                 /* Datagrams are left, so a residual EPOLLERR is the next turn's to judge. */
                 if (reads_left == 0) {

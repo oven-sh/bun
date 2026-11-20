@@ -13,7 +13,16 @@ import {
 } from "harness";
 import { mkfifo } from "mkfifo";
 import { once } from "node:events";
-import { closeSync, existsSync, openSync, readFileSync, truncateSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  truncateSync,
+} from "node:fs";
 import { open } from "node:fs/promises";
 import net from "node:net";
 import { createServer as createTlsServer } from "node:tls";
@@ -400,6 +409,29 @@ test("fetch() releases the descriptor it duplicates for a Bun.file(fd) body", as
   } finally {
     closeSync(fd);
   }
+});
+
+test.skipIf(!isLinux)("uploading an empty slice closes the file", async () => {
+  using dir = tempDir("fetch-file-empty-slice", { "f.bin": Buffer.alloc(64 * 1024) });
+  const path = realpathSync(join(String(dir), "f.bin"));
+  await using server = Bun.serve({
+    port: 0,
+    fetch: async req => new Response(String((await req.bytes()).length)),
+  });
+
+  for (let i = 0; i < 20; i++) {
+    const res = await fetch(server.url, { method: "POST", body: Bun.file(path).slice(0, 0) });
+    expect(await res.text()).toBe("0");
+  }
+
+  const timesOpen = readdirSync("/proc/self/fd").filter(fd => {
+    try {
+      return readlinkSync(`/proc/self/fd/${fd}`) === path;
+    } catch {
+      return false;
+    }
+  }).length;
+  expect(timesOpen).toBe(0);
 });
 
 test("missing file throws the expected error", async () => {

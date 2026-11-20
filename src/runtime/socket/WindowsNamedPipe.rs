@@ -20,29 +20,25 @@
 
 use core::cell::{Cell, OnceCell};
 use core::ffi::{c_uint, c_void};
-use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_boringssl_sys as boringssl;
 use bun_collections::ByteVecExt;
 use bun_core::{ZStr, timespec};
-use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-use bun_io::{StreamingWriter, WriteStatus};
+use bun_io::{IoEvent, Owner, PollTag, StreamingWriter, WriteHandler, WriteStatus};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JsCell, SysErrorJsc};
 use bun_libuv_sys::{UvHandle as _, UvStream as _};
-use bun_ptr::RefPtr;
+use bun_ptr::{RefPtr, ThisPtr};
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self, Fd, ReturnCodeExt as _, SystemErrno};
 use bun_uws::ssl_wrapper::{self, SSLWrapper};
 use bun_uws::{self as uws, Transport, us_bun_verify_error_t};
 
 use crate::socket::{NewSocket, TCPSocket, TLSSocket};
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimer, EventLoopTimerTag};
 
 bun_output::declare_scope!(WindowsNamedPipe, visible);
-
-type WrapperType = SSLWrapper<*mut WindowsNamedPipe>;
 
 use crate::jsc_hooks::timer_all;
 
@@ -52,33 +48,33 @@ pub(crate) static LIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = Self::queue_free)]
 pub(crate) struct WindowsNamedPipe {
-    /// Starts at one, the connection's ref, which `on_close` releases.
     ref_count: Cell<u32>,
+    /// Held until the pipe closes, or fails to open.
+    pub(super) self_ref: Cell<Option<RefPtr<Self>>>,
     handle: uws::TransportHandle,
-    /// Holds one ref on the socket while not `None`. `on_close` and `fail_connect` release it.
-    socket: Cell<SocketType>,
+    /// `on_close` and `fail_connect` hand it to the socket's last event.
+    socket: JsCell<Option<OwnedSocket>>,
     global_this: GlobalRef,
     is_open: Cell<bool>,
     /// In no uSockets group, so the context that opened it closes it through this when it stops.
     abort_handle: bun_jsc::AbortHandle,
     /// Set before the pipe opens and freed with `self`: a `handle_traffic` frame can be on the stack when the pipe closes.
-    wrapper: OnceCell<WrapperType>,
-    pub(crate) deferred_writer_close: Cell<bool>,
+    wrapper: OnceCell<SSLWrapper>,
     pub(crate) root: Cell<*mut WindowsNamedPipe>,
-    /// Non-owning alias of the heap `uv::Pipe`. The owning
-    /// `Box<uv::Pipe>` is leaked in [`Self::create`] and adopted by
-    /// `self.writer.source` (`Source::Pipe`) inside [`start`]; this field only
-    /// ever observes/null-checks the handle, never frees it. Cleared by
-    /// [`Self::on_close`] before the writer's async close frees the Box.
-    pub(crate) pipe: Cell<Option<NonNull<uv::Pipe>>>, // any duplex
+    /// Until [`start`](Self::start) hands it to `writer`.
+    pipe: JsCell<Option<uv::Owned<uv::Pipe>>>,
     /// The per-thread VM singleton outlives this struct (it is torn down only
     /// at thread exit, after every named pipe is closed), so `&'static` is the
     /// honest model here rather than a threaded lifetime.
     pub(crate) vm: &'static VirtualMachine,
-    pub(crate) writer: JsCell<StreamingWriter<WindowsNamedPipe>>,
+    writer: StreamingWriter,
+    /// Held while a write is in flight.
+    inflight_write_ref: Cell<Option<RefPtr<Self>>>,
 
     pub(crate) incoming: JsCell<Vec<u8>>, // Maybe we should use IPCBuffer here as well
     pub(crate) connect_req: JsCell<uv::uv_connect_t>,
+    /// Held while libuv has `connect_req`.
+    connect_ref: Cell<Option<RefPtr<Self>>>,
 
     pub(crate) event_loop_timer: EventLoopTimer,
     pub(crate) current_timeout: Cell<u32>,
@@ -101,43 +97,42 @@ enum Target<'a> {
     Path(&'a [u8]),
 }
 
-/// The socket this pipe is the transport of.
-#[derive(Copy, Clone)]
-pub(crate) enum SocketType {
-    Tls(bun_ptr::ThisPtr<TLSSocket>),
-    Tcp(bun_ptr::ThisPtr<TCPSocket>),
-    None,
+/// A ref on the socket this pipe is the transport of.
+#[derive(Clone)]
+pub(crate) enum OwnedSocket {
+    Tls(RefPtr<TLSSocket>),
+    Tcp(RefPtr<TCPSocket>),
 }
 
-impl SocketType {
-    pub(crate) fn of<const SSL: bool>(socket: bun_ptr::ThisPtr<NewSocket<SSL>>) -> Self {
-        let socket = socket.as_ptr();
-        // SAFETY: `socket` is live, `NewSocket<true>` is `TLSSocket` and `NewSocket<false>` is `TCPSocket`.
+impl OwnedSocket {
+    pub(crate) fn of<const SSL: bool>(socket: RefPtr<NewSocket<SSL>>) -> Self {
+        let socket = socket.into_raw();
+        // SAFETY: the same ref. `NewSocket<true>` is `TLSSocket` and `NewSocket<false>` is `TCPSocket`.
         unsafe {
             if SSL {
-                Self::Tls(bun_ptr::ThisPtr::new(socket.cast()))
+                Self::Tls(RefPtr::from_raw(socket.cast()))
             } else {
-                Self::Tcp(bun_ptr::ThisPtr::new(socket.cast()))
+                Self::Tcp(RefPtr::from_raw(socket.cast()))
             }
         }
     }
 }
 
-/// Runs `$body`, written over `NewSocket<$ssl>`, for the socket in `$socket`, and folds what its handlers left pending. `SocketType::None` is a no-op.
+/// Runs `$body`, written over `NewSocket<$ssl>`, for the socket in `$socket`, and folds what its handlers left pending.
 macro_rules! match_socket {
     ($socket:expr, |$s:ident: NewSocket<$ssl:ident>| $body:expr) => {
         match $socket {
-            SocketType::Tls($s) => {
+            Some(OwnedSocket::Tls($s)) => {
                 const $ssl: bool = true;
                 let _ = $ssl;
                 crate::dispatch::fold($body)
             }
-            SocketType::Tcp($s) => {
+            Some(OwnedSocket::Tcp($s)) => {
                 const $ssl: bool = false;
                 let _ = $ssl;
                 crate::dispatch::fold($body)
             }
-            SocketType::None => {}
+            None => {}
         }
     };
 }
@@ -148,12 +143,8 @@ bitflags::bitflags! {
     pub struct Flags: u16 {
         const DISCONNECTED = 1 << 0;
         const IS_CLOSED    = 1 << 1;
-        /// Rust-only bookkeeping: set once `start_with_pipe` adopts the
-        /// `Box<uv::Pipe>` leaked in `create`. Lets `Drop` reclaim the orphan
-        /// allocation on early-error paths (before adoption) without risking a
-        /// double-free once the writer owns it.
+        /// `writer` has taken the pipe.
         const PIPE_ADOPTED = 1 << 4;
-        const WRITER_BUSY  = 1 << 6;
         /// `shutdown()` ran on a plain pipe. The write side ends once queued data drains, and reads continue.
         const SHUTDOWN_REQUESTED = 1 << 7;
         /// libuv has the `uv_shutdown` request.
@@ -181,41 +172,27 @@ impl WindowsNamedPipe {
     }
 
     #[inline]
-    fn wrapper_ref(&self) -> Option<&WrapperType> {
+    fn wrapper_ref(&self) -> Option<&SSLWrapper> {
         self.wrapper.get()
     }
 
-    #[inline]
-    fn uv_pipe(&self) -> Option<*mut uv::Pipe> {
-        self.pipe.get().map(NonNull::as_ptr)
+    /// Runs `f` on the pipe, which is dropped if that fails.
+    fn try_pipe(
+        &self,
+        tag: bun_sys::Tag,
+        f: impl FnOnce(&mut uv::Pipe) -> uv::ReturnCode,
+    ) -> bun_sys::Result<()> {
+        let rc = (self.pipe).with_mut(|pipe| f(pipe.as_mut().expect("not started")));
+        rc.to_result(tag).inspect_err(|_| self.pipe.set(None))
     }
 
-    /// Reclaim the leaked `Box<uv::Pipe>` on an early-error path **before**
-    /// [`start`] hands it to `self.writer.source` via `start_with_pipe`.
-    ///
-    /// [`Self::create`] `Box::leak`s the allocation and records only a non-owning
-    /// `NonNull` in `self.pipe`; until adoption the writer's `Drop`
-    /// (`close_without_reporting`) is a no-op (`source == None`), so any
-    /// `connect`/`open`/`get_accepted_by` early return would leak the box and —
-    /// if `uv_pipe_init` had already run — leave the handle in the libuv
-    /// `handle_queue` with no `uv_close` ever scheduled (loop never drains).
-    /// `close_and_destroy` covers both states via its `loop_.is_null()` branch.
-    ///
-    /// MUST NOT be called once `start_with_pipe` has adopted the allocation
-    /// (would double-free against `writer.source`'s `Box`).
-    fn discard_unadopted_pipe(&self) {
-        debug_assert!(
-            self.writer.get().source.is_none(),
-            "pipe already adopted by writer.source; discard would double-free"
-        );
-        if let Some(pipe) = self.pipe.take() {
-            // SAFETY: `pipe` is the `NonNull` recorded from `Box::leak` in
-            // `create()` and not yet re-materialised (asserted above);
-            // `close_and_destroy` reclaims via `Box::from_raw` either
-            // immediately (never-init'd, `loop_ == null`) or in the `uv_close`
-            // callback (init'd). Ownership transfers here exactly once.
-            unsafe { uv::Pipe::close_and_destroy(pipe.as_ptr()) };
-        }
+    fn init_pipe(&self) -> bun_sys::Result<()> {
+        let uv_loop = self.vm.uv_loop();
+        self.try_pipe(bun_sys::Tag::pipe, |pipe| pipe.init(uv_loop, false))?;
+        // Until the writer records itself as the owner.
+        (self.pipe.get().as_ref().expect("not started"))
+            .set_owner(self.root_ptr().cast(), Self::stop_for_vm_teardown);
+        Ok(())
     }
 
     /// Holds a ref on `self` until the returned guard drops.
@@ -225,7 +202,7 @@ impl WindowsNamedPipe {
     /// event loop before it returns (`expect().resolves` blocks on a promise
     /// that way), which runs that task. A callback that uses `self` after it
     /// dispatched to a handler holds this guard, so the free waits until the
-    /// callback is done. The writer does the same around an in-flight write,
+    /// callback is done. `inflight_write_ref` does the same around an in-flight write,
     /// and `connect`/`open` around the connect.
     ///
     /// Only for paths that cannot run after `on_close` released the
@@ -236,12 +213,6 @@ impl WindowsNamedPipe {
     fn keep_alive(&self) -> RefPtr<Self> {
         // SAFETY: `root_ptr` is the live heap allocation.
         unsafe { RefPtr::init_ref(self.root_ptr()) }
-    }
-
-    /// Releases one ref. The last one queues the free, so `self` outlives the caller's frame.
-    fn release(&self) {
-        // SAFETY: `root_ptr` is the live heap allocation, and the caller owns the ref.
-        unsafe { Self::deref(self.root_ptr()) }
     }
 
     fn queue_free(this: *mut Self) {
@@ -262,17 +233,14 @@ impl WindowsNamedPipe {
         uws::NewSocketHandler::from_transport(&raw const self.handle)
     }
 
-    fn on_writable(&self) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onWritable");
-        // flush pending data
-        self.flush();
-        // call onWritable (will flush on demand)
-        self.dispatch_writable();
+    pub(crate) fn on_writer_io(&self, event: IoEvent) {
+        let _keep_alive = self.keep_alive();
+        self.writer.on_io(self, event);
     }
 
     fn dispatch_writable(&self) {
-        match_socket!(self.socket.get(), |s: NewSocket<SSL>| {
-            NewSocket::on_writable(s, self.handle::<SSL>())
+        match_socket!(self.socket.get().clone(), |s: NewSocket<SSL>| {
+            NewSocket::on_writable(s.this_ptr(), self.handle::<SSL>())
         });
     }
 
@@ -288,44 +256,11 @@ impl WindowsNamedPipe {
         let mut data = self.incoming.replace(Vec::new());
 
         match self.wrapper_ref() {
-            Some(w) => w.receive_data(data.as_slice()),
+            Some(w) => w.receive_data(&mut &*self, data.as_slice()),
             None => self.on_data(data.as_slice()),
         }
         data.clear();
         self.incoming.set(data);
-    }
-
-    fn on_write(&self, amount: usize, status: WriteStatus) {
-        bun_output::scoped_log!(
-            WindowsNamedPipe,
-            "onWrite {} {}",
-            amount,
-            match status {
-                WriteStatus::Pending => "pending",
-                WriteStatus::Drained => "drained",
-                WriteStatus::EndOfFile => "end_of_file",
-            }
-        );
-
-        match status {
-            WriteStatus::Pending => {}
-            WriteStatus::Drained => {
-                // unref after sending all data
-                self.writer.with_mut(|w| {
-                    if let Some(source) = w.source.as_mut() {
-                        // `Source` is an enum;
-                        // `unref()` matches the active variant (always `Pipe` here
-                        // via `start_with_pipe`).
-                        source.unref();
-                    }
-                });
-                self.send_shutdown_if_drained();
-            }
-            WriteStatus::EndOfFile => {
-                // we send FIN so we close after this
-                self.close_writer();
-            }
-        }
     }
 
     #[inline]
@@ -335,174 +270,103 @@ impl WindowsNamedPipe {
         p
     }
 
-    fn close_writer(&self) {
-        self.with_writer(|w| w.close());
-    }
-
-    fn with_writer<R>(&self, op: impl FnOnce(&mut StreamingWriter<Self>) -> R) -> R {
-        let was_busy = self.flags.get().contains(Flags::WRITER_BUSY);
-        self.update_flags(|f| f.insert(Flags::WRITER_BUSY));
-        let r = self.writer.with_mut(op);
-        if !was_busy {
-            self.update_flags(|f| f.remove(Flags::WRITER_BUSY));
-            if self.deferred_writer_close.replace(false) {
-                self.on_close();
-            }
-        }
-        r
-    }
-
     fn on_read_error(&self, err: bun_sys::E) {
         bun_output::scoped_log!(WindowsNamedPipe, "onReadError");
         let _keep_alive = self.keep_alive();
         if err == bun_sys::E::EOF {
             // we received FIN but we dont allow half-closed connections right now
-            match_socket!(self.socket.get(), |s: NewSocket<SSL>| {
-                NewSocket::on_end(s, self.handle::<SSL>())
+            match_socket!(self.socket.get().clone(), |s: NewSocket<SSL>| {
+                NewSocket::on_end(s.this_ptr(), self.handle::<SSL>())
             });
-            self.close_writer();
+            self.writer.close(self);
             return;
         }
         self.on_error(bun_sys::Error::from_code(err, bun_sys::Tag::read));
-        self.close_writer();
-    }
-
-    fn on_error(&self, err: bun_sys::Error) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onError");
-        let _keep_alive = self.keep_alive();
-        if self.is_open.get() {
-            match_socket!(self.socket.get(), |s: NewSocket<SSL>| {
-                s.handle_error(err.to_js(&self.global_this))
-            });
-        } else {
-            self.fail_connect(SystemErrno::from_raw(err.errno));
-        }
-        self.close();
+        self.writer.close(self);
     }
 
     /// `connectError` is the last event of a socket whose connect failed, so this pipe forgets the socket: neither `on_close`, which still fires on the asynchronous failure path, nor `Drop` touches it again.
     fn fail_connect(&self, errno: SystemErrno) {
         // Cleared before `connectError` runs JS, which may connect the same socket again through a new pipe.
-        let socket = self.socket.replace(SocketType::None);
-        match_socket!(socket, |s: NewSocket<SSL>| {
-            let failed = NewSocket::handle_connect_error(s, errno);
-            s.get().deref();
-            failed
+        match_socket!(self.socket.take(), |s: NewSocket<SSL>| {
+            NewSocket::handle_connect_error(s, errno, 0)
         });
     }
 
     fn on_open(&self) {
         bun_output::scoped_log!(WindowsNamedPipe, "onOpen");
         self.is_open.set(true);
-        match_socket!(self.socket.get(), |s: NewSocket<SSL>| {
-            NewSocket::on_open(s, self.handle::<SSL>())
+        match_socket!(self.socket.get().clone(), |s: NewSocket<SSL>| {
+            NewSocket::on_open(s.this_ptr(), self.handle::<SSL>())
         });
     }
 
     fn on_data(&self, decoded_data: &[u8]) {
         bun_output::scoped_log!(WindowsNamedPipe, "onData ({})", decoded_data.len());
-        match_socket!(self.socket.get(), |s: NewSocket<SSL>| {
-            NewSocket::on_data(s, self.handle::<SSL>(), decoded_data)
+        match_socket!(self.socket.get().clone(), |s: NewSocket<SSL>| {
+            NewSocket::on_data(s.this_ptr(), self.handle::<SSL>(), decoded_data)
         });
     }
+}
 
-    // ── SSLWrapper trampolines ───────────────────────────────────────────────
-    // `ssl_wrapper::Handlers<*mut Self>` carries `fn(*mut Self, ..)` slots.
-    // SAFETY (all): `this` is the `ctx` set in `wrapper_handlers`; the engine
-    // only fires handlers while `self` (its owner) is alive.
-    fn ssl_on_open(this: *mut Self) {
-        // SAFETY: see block note above.
-        unsafe { &*this }.on_open()
-    }
-    fn ssl_on_handshake(this: *mut Self, ok: bool, e: us_bun_verify_error_t) {
-        // SAFETY: see block note above.
-        unsafe { &*this }.on_handshake(ok, e)
-    }
-    fn ssl_on_data(this: *mut Self, d: &[u8]) {
-        // SAFETY: see block note above.
-        unsafe { &*this }.on_data(d)
-    }
-    fn ssl_on_close(this: *mut Self) {
-        // SAFETY: see block note above.
-        unsafe { &*this }.on_close()
-    }
-    fn ssl_write(this: *mut Self, d: &[u8]) -> usize {
-        // SAFETY: see block note above.
-        unsafe { &*this }.internal_write(d);
-        d.len()
+impl ssl_wrapper::Handler for &WindowsNamedPipe {
+    fn on_open(&mut self) {
+        WindowsNamedPipe::on_open(self)
     }
 
-    fn wrapper_handlers(&self) -> ssl_wrapper::Handlers<*mut WindowsNamedPipe> {
-        ssl_wrapper::Handlers {
-            ctx: self.root_ptr(),
-            on_open: Self::ssl_on_open,
-            on_handshake: Self::ssl_on_handshake,
-            on_data: Self::ssl_on_data,
-            on_close: Self::ssl_on_close,
-            write: Self::ssl_write,
-        }
+    fn on_data(&mut self, decoded_data: &[u8]) {
+        WindowsNamedPipe::on_data(self, decoded_data)
     }
 
-    fn on_handshake(&self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
+    fn on_close(&mut self) {
+        WriteHandler::on_close(*self)
+    }
+
+    fn write(&mut self, encoded_data: &[u8]) -> usize {
+        self.internal_write(encoded_data);
+        encoded_data.len()
+    }
+
+    fn on_handshake(&mut self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
         bun_output::scoped_log!(WindowsNamedPipe, "onHandshake");
         let _keep_alive = self.keep_alive();
 
-        match_socket!(self.socket.get(), |s: NewSocket<SSL>| {
-            NewSocket::on_handshake(s, self.handle::<SSL>(), handshake_success as i32, ssl_error)
+        match_socket!(self.socket.get().clone(), |s: NewSocket<SSL>| {
+            NewSocket::on_handshake(
+                s.this_ptr(),
+                self.handle::<SSL>(),
+                handshake_success as i32,
+                ssl_error,
+            )
         });
         // Retry writes parked during the handshake; a TLS 1.2 client's completion sends nothing.
         if handshake_success && !self.is_shutdown() {
             self.dispatch_writable();
         }
     }
+}
 
-    fn on_close(&self) {
-        if self.flags.get().contains(Flags::WRITER_BUSY) {
-            self.deferred_writer_close.set(true);
-            return;
-        }
-        bun_output::scoped_log!(WindowsNamedPipe, "onClose");
-        self.pipe.set(None);
-        if !self.flags.get().is_closed() {
-            self.update_flags(|f| f.set(Flags::IS_CLOSED, true)); // only call onClose once
-            let socket = self.socket.replace(SocketType::None);
-            match_socket!(socket, |s: NewSocket<SSL>| {
-                let closed = NewSocket::on_close(s, self.handle::<SSL>(), 0, None);
-                s.get().deref();
-                closed
-            });
-            self.release_resources();
-            // The connection's ref.
-            self.release();
-        }
-    }
-
+impl WindowsNamedPipe {
     fn call_write_or_end(&self, data: Option<&[u8]>, msg_more: bool) {
         if let Some(bytes) = data {
             if !bytes.is_empty() {
                 // ref because we have pending data
-                self.writer.with_mut(|w| {
-                    if let Some(source) = w.source.as_mut() {
-                        // See `on_write` for the active-variant note.
-                        source.ref_();
-                    }
-                });
+                self.writer.update_ref(true);
                 if self.flags.get().disconnected() {
                     // enqueue to be sent after connecting
-                    self.writer
-                        .with_mut(|w| bun_core::handle_oom(w.outgoing.write(bytes)));
+                    self.writer.enqueue(bytes);
                 } else {
                     // write will enqueue the data if it cannot be sent
-                    let _ = self.writer.with_mut(|w| w.write(bytes));
+                    let _ = self.writer.write(self, bytes);
                 }
             }
         }
 
         if !msg_more {
             if let Some(w) = self.wrapper_ref() {
-                let _ = w.shutdown(false);
+                let _ = w.shutdown(&mut &*self, false);
             }
-            self.with_writer(|w| w.end());
+            self.writer.end(self);
         }
     }
 
@@ -520,40 +384,35 @@ impl WindowsNamedPipe {
     pub(crate) fn on_timeout(&self) {
         bun_output::scoped_log!(WindowsNamedPipe, "onTimeout");
 
-        let has_been_cleared = self.event_loop_timer.state.get() == EventLoopTimerState::CANCELLED
-            || self.vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running;
-
-        self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
-
-        if has_been_cleared {
+        if self.vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
             return;
         }
 
-        match_socket!(self.socket.get(), |s: NewSocket<SSL>| {
-            NewSocket::on_timeout(s, self.handle::<SSL>())
+        match_socket!(self.socket.get().clone(), |s: NewSocket<SSL>| {
+            NewSocket::on_timeout(s.this_ptr(), self.handle::<SSL>())
         });
     }
 
-    /// The transport of `socket`, on which it takes a ref. Returns the pipe with one ref, the connection's.
-    pub(crate) fn create(cx: &bun_jsc::JsThread<'_>, socket: SocketType) -> *mut WindowsNamedPipe {
+    /// The transport of `socket`.
+    pub(crate) fn create(cx: &bun_jsc::JsThread<'_>, socket: OwnedSocket) -> ThisPtr<Self> {
         let global_this = GlobalRef::from(cx.global());
-        let pipe = Box::new(bun_core::ffi::zeroed::<uv::Pipe>());
         let this = bun_core::heap::into_raw(Box::new(WindowsNamedPipe {
             ref_count: Cell::new(1),
+            self_ref: Cell::new(None),
             handle: Default::default(),
-            socket: Cell::new(socket),
+            socket: JsCell::new(Some(socket)),
             vm: global_this.bun_vm(),
             global_this,
             is_open: Cell::new(false),
             abort_handle: bun_jsc::AbortHandle::for_owner::<WindowsNamedPipe>(),
-            // Leaked here. `start_with_pipe` in `start()` hands the allocation to `self.writer.source`, which frees it.
-            pipe: Cell::new(Some(NonNull::from(Box::leak(pipe)))),
+            pipe: JsCell::new(Some(uv::Owned::zeroed())),
             wrapper: OnceCell::new(),
-            deferred_writer_close: Cell::new(false),
             root: Cell::new(core::ptr::null_mut()),
-            writer: JsCell::new(StreamingWriter::default()),
+            writer: StreamingWriter::default(),
+            inflight_write_ref: Cell::new(None),
             incoming: JsCell::new(Vec::new()),
             connect_req: JsCell::new(bun_core::ffi::zeroed::<uv::uv_connect_t>()),
+            connect_ref: Cell::new(None),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::WindowsNamedPipe),
             current_timeout: Cell::new(0),
             flags: Cell::new(Flags::DISCONNECTED),
@@ -564,12 +423,13 @@ impl WindowsNamedPipe {
             (*this).handle.set(this);
         }
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
-        match_socket!(socket, |s: NewSocket<SSL>| {
-            s.ref_();
-            Ok(())
-        });
-        // SAFETY: fully initialised and heap-pinned; dropping the handle disarms it.
-        unsafe { bun_jsc::AbortHandle::arm_owner(this, cx.context()) };
+        // SAFETY: initialised above with a count of 1, and heap-pinned. Dropping the handle disarms it.
+        let self_ref = unsafe {
+            bun_jsc::AbortHandle::arm_owner(this, cx.context());
+            RefPtr::from_raw(this)
+        };
+        let this = self_ref.this_ptr();
+        this.self_ref.set(Some(self_ref));
         this
     }
 
@@ -578,11 +438,10 @@ impl WindowsNamedPipe {
         cx: &bun_jsc::JsThread<'_>,
         target: Target<'_>,
         ssl_ctx: Option<boringssl::OwnedSslCtx>,
-        socket: SocketType,
+        socket: OwnedSocket,
     ) -> Result<(), SystemErrno> {
-        // SAFETY: `create()` returns a live pipe with its only ref.
-        let pipe = unsafe { &*Self::create(cx, socket) };
-        match_socket!(socket, |s: NewSocket<SSL>| {
+        let pipe = Self::create(cx, socket);
+        match_socket!(pipe.socket.get(), |s: NewSocket<SSL>| {
             s.socket.set(pipe.handle::<SSL>());
             Ok(())
         });
@@ -593,13 +452,11 @@ impl WindowsNamedPipe {
         if started.is_ok() {
             return Ok(());
         }
-        pipe.socket.set(SocketType::None);
-        match_socket!(socket, |s: NewSocket<SSL>| {
+        match_socket!(pipe.socket.take(), |s: NewSocket<SSL>| {
             s.socket.set(uws::NewSocketHandler::<SSL>::DETACHED);
-            s.get().deref();
             Ok(())
         });
-        pipe.release();
+        pipe.self_ref.set(None);
         Err(SystemErrno::ENOENT)
     }
 
@@ -608,7 +465,7 @@ impl WindowsNamedPipe {
         cx: &bun_jsc::JsThread<'_>,
         fd: Fd,
         ssl_ctx: Option<boringssl::OwnedSslCtx>,
-        socket: SocketType,
+        socket: OwnedSocket,
     ) -> Result<(), SystemErrno> {
         Self::attach(cx, Target::Fd(fd), ssl_ctx, socket)
     }
@@ -618,7 +475,7 @@ impl WindowsNamedPipe {
         cx: &bun_jsc::JsThread<'_>,
         path: &[u8],
         ssl_ctx: Option<boringssl::OwnedSslCtx>,
-        socket: SocketType,
+        socket: OwnedSocket,
     ) -> Result<(), SystemErrno> {
         Self::attach(cx, Target::Path(path), ssl_ctx, socket)
     }
@@ -634,8 +491,7 @@ impl WindowsNamedPipe {
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let len = path.len().min(path_buf.len() - 1);
         path_buf[..len].copy_from_slice(&path[..len]);
-        path_buf[len] = 0;
-        self.connect(ZStr::from_buf(&path_buf[..], len), ssl_ctx)
+        self.connect(ZStr::nul_terminate(&mut path_buf, len), ssl_ctx)
     }
 
     /// `extern "C"` trampoline matching `uv_connect_cb` (`Pipe::connect`'s
@@ -645,31 +501,18 @@ impl WindowsNamedPipe {
     /// `Pipe::connect` call site).
     extern "C" fn uv_on_connect(req: *mut uv::uv_connect_t, status: uv::ReturnCode) {
         // SAFETY: `req` is `self.connect_req`, whose `data` was set to
-        // `self as *mut Self` in `connect`; the owning struct is kept alive by
-        // the `ref_()` taken there until this callback runs.
-        let this = unsafe { (*req).data.cast::<Self>() };
-        // SAFETY: as above.
-        unsafe { &*this }.on_connect(status);
+        // `self as *mut Self` in `connect`, and `connect_ref` keeps it alive.
+        let this = unsafe { &*(*req).data.cast::<Self>() };
+        let _connect_ref = this.connect_ref.take();
+        this.on_connect(status);
     }
 
     fn on_connect(&self, status: uv::ReturnCode) {
-        if let Some(pipe) = self.uv_pipe() {
-            // SAFETY: live libuv handle alias; see `pipe`.
-            unsafe { (*pipe).unref() };
-        }
-
         if let Some(err) = status.to_error(bun_sys::Tag::connect) {
-            // The writer never adopted the pipe (`start_with_pipe` only runs on
-            // the success branch below), so `on_error → close → writer.end()`
-            // has no source to close: it neither frees the pipe nor reports
-            // `on_close`. Do both here. `discard_unadopted_pipe` schedules the
-            // `uv_close` that frees the `Box`, like the synchronous early-error
-            // paths in `connect`/`open`/`get_accepted_by`, and `on_close` is
-            // what releases the connection's ref.
-            self.discard_unadopted_pipe();
+            self.pipe.set(None);
+            // The writer has no source to close, so it does not report `on_close`.
             self.on_error(err);
             self.on_close();
-            self.release();
             return;
         }
 
@@ -677,14 +520,13 @@ impl WindowsNamedPipe {
         if self.start() {
             match self.wrapper_ref() {
                 // trigger onOpen and start the handshake
-                Some(w) => w.start(),
+                Some(w) => w.start(&mut &*self),
                 None => self.on_open(),
             }
         }
         self.flush();
         // With nothing queued, no `on_write(Drained)` follows to send a shutdown requested before the connect.
         self.send_shutdown_if_drained();
-        self.release();
     }
 
     pub(crate) fn get_accepted_by(
@@ -697,35 +539,14 @@ impl WindowsNamedPipe {
         self.update_flags(|f| f.set(Flags::DISCONNECTED, true));
 
         self.init_tls_wrapper(ssl_ctx.cloned(), false);
-        let uv_loop = self.vm.uv_loop();
-        let pipe = self.uv_pipe().unwrap();
-        // SAFETY: live libuv handle alias; see `pipe`.
-        if let Err(e) = unsafe { (*pipe).init(uv_loop, false) }.to_result(bun_sys::Tag::pipe) {
-            self.discard_unadopted_pipe();
-            return Err(e);
-        }
-        // Until the writer adopts it (start_with_pipe), a thread teardown closes
-        // this pipe through us; afterwards the writer re-records itself as owner.
-        uv::open_handles::set_owner(
-            pipe.cast(),
-            self.root_ptr().cast(),
-            Some(Self::stop_for_vm_teardown),
-        );
-
-        // SAFETY: as above.
-        if let Err(e) = server
-            .accept(unsafe { &mut *pipe })
-            .to_result(bun_sys::Tag::accept)
-        {
-            self.discard_unadopted_pipe();
-            return Err(e);
-        }
+        self.init_pipe()?;
+        self.try_pipe(bun_sys::Tag::accept, |pipe| server.accept(pipe))?;
 
         self.update_flags(|f| f.set(Flags::DISCONNECTED, false));
         if self.start() {
             match self.wrapper_ref() {
                 // trigger onOpen and start the handshake
-                Some(w) => w.start(),
+                Some(w) => w.start(&mut &*self),
                 None => self.on_open(),
             }
         }
@@ -737,28 +558,10 @@ impl WindowsNamedPipe {
         self.update_flags(|f| f.set(Flags::DISCONNECTED, true));
 
         self.init_tls_wrapper(ssl_ctx, true);
-        let uv_loop = self.vm.uv_loop();
-        let pipe = self.uv_pipe().unwrap();
-        // SAFETY: live libuv handle alias; see `pipe`.
-        if let Err(e) = unsafe { (*pipe).init(uv_loop, false) }.to_result(bun_sys::Tag::pipe) {
-            self.discard_unadopted_pipe();
-            return Err(e);
-        }
-        // Until the writer adopts it (start_with_pipe), a thread teardown closes
-        // this pipe through us; afterwards the writer re-records itself as owner.
-        uv::open_handles::set_owner(
-            pipe.cast(),
-            self.root_ptr().cast(),
-            Some(Self::stop_for_vm_teardown),
-        );
+        self.init_pipe()?;
+        self.try_pipe(bun_sys::Tag::open, |pipe| pipe.open(fd.uv()))?;
 
-        // SAFETY: as above.
-        if let Err(e) = unsafe { (*pipe).open(fd.uv()) }.to_result(bun_sys::Tag::open) {
-            self.discard_unadopted_pipe();
-            return Err(e);
-        }
-
-        self.ref_();
+        let _keep_alive = self.keep_alive();
         self.on_connect(uv::ReturnCode::ZERO);
         bun_sys::Result::Ok(())
     }
@@ -766,40 +569,18 @@ impl WindowsNamedPipe {
     fn connect(&self, path: &[u8], ssl_ctx: Option<boringssl::OwnedSslCtx>) -> bun_sys::Result<()> {
         debug_assert!(self.pipe.get().is_some());
         self.update_flags(|f| f.set(Flags::DISCONNECTED, true));
-        let pipe = self.uv_pipe().unwrap();
-        // ref because we are connecting
-        // SAFETY: live libuv handle alias; see `pipe`.
-        unsafe { (*pipe).ref_() };
 
         self.init_tls_wrapper(ssl_ctx, true);
-        let uv_loop = self.vm.uv_loop();
-        // SAFETY: as above.
-        if let Err(e) = unsafe { (*pipe).init(uv_loop, false) }.to_result(bun_sys::Tag::pipe) {
-            self.discard_unadopted_pipe();
-            return Err(e);
-        }
-        // Until the writer adopts it (start_with_pipe), a thread teardown closes
-        // this pipe through us; afterwards the writer re-records itself as owner.
-        uv::open_handles::set_owner(
-            pipe.cast(),
-            self.root_ptr().cast(),
-            Some(Self::stop_for_vm_teardown),
-        );
+        self.init_pipe()?;
 
         let ctx: *mut Self = self.root_ptr();
-        let req: *mut uv::uv_connect_t = self.connect_req.as_ptr();
-        // SAFETY: `req` is our own cell storage; libuv stashes `req`/`ctx` until
-        // the connect callback fires (this struct outlives that).
-        unsafe { (*req).data = ctx.cast::<c_void>() };
-        // SAFETY: `pipe` is live (see above) and `req`/`pipe` are disjoint.
-        if let Some(err) =
-            unsafe { (*pipe).connect(&mut *req, path, ctx.cast::<c_void>(), Self::uv_on_connect) }
-                .to_error(bun_sys::Tag::connect2)
-        {
-            self.discard_unadopted_pipe();
-            return Err(err);
-        }
-        self.ref_();
+        self.connect_req.with_mut(|req| {
+            req.data = ctx.cast::<c_void>();
+            self.try_pipe(bun_sys::Tag::connect2, |pipe| {
+                pipe.connect(req, path, ctx.cast::<c_void>(), Self::uv_on_connect)
+            })
+        })?;
+        self.connect_ref.set(Some(self.keep_alive()));
         Ok(())
     }
 
@@ -807,31 +588,21 @@ impl WindowsNamedPipe {
     fn init_tls_wrapper(&self, ssl_ctx: Option<boringssl::OwnedSslCtx>, is_client: bool) {
         let Some(ctx) = ssl_ctx else { return };
         self.wrapper
-            .get_or_init(|| WrapperType::init_with_ctx(ctx, is_client, self.wrapper_handlers()));
+            .get_or_init(|| SSLWrapper::init_with_ctx(ctx, is_client));
     }
 
     fn start(&self) -> bool {
-        let Some(pipe_nn) = self.pipe.get() else {
+        let Some(mut pipe) = self.pipe.take() else {
             return false;
         };
-        // SAFETY: live libuv handle alias; see `pipe`.
-        unsafe { (*pipe_nn.as_ptr()).unref() };
+        pipe.unref();
         let this: *mut Self = self.root_ptr();
         self.update_flags(|f| f.insert(Flags::PIPE_ADOPTED));
-        let start_pipe_result = self.writer.with_mut(|w| {
-            w.set_parent(this);
-            // SAFETY: `start_with_pipe`'s contract is "Box-allocated pointer;
-            // ownership transfers to `self.source`". `pipe_nn` is the
-            // `NonNull` recorded from the `Box<uv::Pipe>` leaked in `create()`
-            // and not yet adopted (asserted by `start_with_pipe`'s
-            // `debug_assert!(source.is_none())`).
-            unsafe { w.start_with_pipe(pipe_nn.as_ptr()) }
-        });
-        if let bun_sys::Result::Err(err) = start_pipe_result {
-            self.on_error(err);
-            return false;
-        }
-        let Some(stream) = self.writer.with_mut(|w| w.get_stream()) else {
+        let owner = Owner::new(PollTag::WindowsNamedPipe, this.cast());
+        // SAFETY: `owner` points to `self`, which is heap-allocated.
+        unsafe { self.writer.set_owner(owner) };
+        self.writer.start_with_pipe(self, pipe);
+        let Some(stream) = self.writer.get_stream() else {
             self.on_error(bun_sys::Error::from_code(
                 bun_sys::E::PIPE,
                 bun_sys::Tag::read,
@@ -854,7 +625,7 @@ impl WindowsNamedPipe {
     /// `uv::open_handles` closes a not-yet-adopted pipe through here at teardown.
     unsafe fn stop_for_vm_teardown(this: *mut core::ffi::c_void) {
         // SAFETY: recorded right after `pipe.init` by this live object; replaced by
-        // the writer at adoption or dropped with the pipe (discard_unadopted_pipe).
+        // the writer at adoption or dropped with the pipe.
         unsafe { &*this.cast::<Self>() }.close_or_cancel_connect();
     }
 
@@ -864,7 +635,7 @@ impl WindowsNamedPipe {
     /// the error and the close.
     pub(crate) fn close_or_cancel_connect(&self) {
         if !self.flags.get().contains(Flags::PIPE_ADOPTED) {
-            self.discard_unadopted_pipe();
+            self.pipe.set(None);
             return;
         }
         self.close();
@@ -877,17 +648,17 @@ impl WindowsNamedPipe {
             || flags.contains(Flags::SHUTDOWN_SENT)
             || flags.is_closed()
             || flags.disconnected()
-            || self.writer.get().has_pending_data()
+            || self.writer.has_pending_data()
         {
             return;
         }
-        let Some(stream) = self.writer.with_mut(|w| w.get_stream()) else {
-            self.with_writer(|w| w.end());
+        let Some(stream) = self.writer.get_stream() else {
+            self.writer.end(self);
             return;
         };
         self.update_flags(|f| f.insert(Flags::SHUTDOWN_SENT));
         let req = bun_core::heap::alloc(bun_core::ffi::zeroed::<uv::uv_shutdown_t>());
-        // SAFETY: `stream` is the live pipe stream owned by `self.writer.source`. libuv
+        // SAFETY: `stream` is the live pipe stream owned by `self.writer`. libuv
         // owns `req` until it calls `uv_on_shutdown`, with `UV_ECANCELED` if the handle
         // closes first.
         let rc = unsafe { uv::uv_shutdown(req, stream, Some(Self::uv_on_shutdown)) };
@@ -895,7 +666,7 @@ impl WindowsNamedPipe {
             // SAFETY: libuv didn't take `req`, so the callback never runs.
             unsafe { bun_core::heap::destroy(req) };
             // Close the whole handle so the peer still sees EOF.
-            self.with_writer(|w| w.end());
+            self.writer.end(self);
         }
     }
 
@@ -910,9 +681,7 @@ impl WindowsNamedPipe {
     }
 
     pub(crate) fn set_timeout_in_milliseconds(&self, ms: c_uint) {
-        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
-            timer_all().remove(&self.event_loop_timer);
-        }
+        self.event_loop_timer.disarm();
         self.current_timeout.set(ms);
 
         // if the interval is 0 means that we stop the timer
@@ -934,28 +703,14 @@ impl WindowsNamedPipe {
         bun_output::scoped_log!(WindowsNamedPipe, "deinit");
         // clear the timer
         self.set_timeout(0);
-        // "The source is already
-        // closed by the time on_close reaches here (that close is what fired the
-        // callback)" is true ONLY for the writer-initiated close path
-        // (`WindowsStreamingWriterParent::on_close`). It is FALSE when we arrive
-        // via `ssl_on_close` (TLS close_notify): the underlying `uv_pipe_t` is
-        // still open and in libuv's handle_queue, so without an explicit close
-        // here the HANDLE survives ≥ one extra event-loop tick (until the
-        // pipe's refcount hits 0 and `WindowsStreamingWriter::Drop`
-        // finally runs). Inline `close_without_reporting()` (private on the
-        // writer) so the source pipe is `uv_close`d NOW; the `get_fd() != INVALID`
-        // guard makes this a no-op on the writer-initiated path where the source
-        // was already taken, and `closed_without_reporting = true` keeps
-        // `on_close_source()` from re-entering `Parent::on_close` (we're already
-        // inside it). `current_payload` may still back an in-flight `uv_write`
-        // (cancelled async by `uv_close`) so it is left to the writer's own Drop.
-        if let Some(stream) = self.writer.with_mut(|w| w.get_stream()) {
+        // After a TLS close_notify the pipe is still open.
+        if let Some(stream) = self.writer.get_stream() {
             // SAFETY: `stream` is the live pipe stream; `uv_read_stop`
             // always succeeds and is a no-op if not reading.
             unsafe { (*stream).read_stop() };
         }
-        self.writer.with_mut(|w| w.close_without_reporting());
-        self.writer.with_mut(|w| w.outgoing = Default::default());
+        self.writer.close_without_reporting(self);
+        self.writer.discard_queued();
         if let Some(w) = self.wrapper_ref() {
             w.deinit();
         }
@@ -976,15 +731,13 @@ impl Transport for WindowsNamedPipe {
         }
 
         let flags = self.flags.get();
-        flags.disconnected()
-            || flags.contains(Flags::SHUTDOWN_REQUESTED)
-            || self.writer.get().is_done
+        flags.disconnected() || flags.contains(Flags::SHUTDOWN_REQUESTED) || self.writer.is_done()
     }
 
     fn write(&self, data: &[u8]) -> (i32, i32) {
         bun_output::scoped_log!(WindowsNamedPipe, "write (len: {})", data.len());
         if let Some(w) = self.wrapper_ref() {
-            let written = w.write_data(data).unwrap_or(0);
+            let written = w.write_data(&mut &*self, data).unwrap_or(0);
             return (i32::try_from(written).expect("int cast"), 0);
         }
         self.internal_write(data);
@@ -996,9 +749,14 @@ impl Transport for WindowsNamedPipe {
         i32::try_from(encoded_data.len()).expect("int cast")
     }
 
+    /// A failed write reports its error, and TLS dispatches reads, before it returns.
+    fn write_runs_js(&self) -> bool {
+        true
+    }
+
     fn shutdown(&self) {
         if let Some(w) = self.wrapper_ref() {
-            let _ = w.shutdown(false);
+            let _ = w.shutdown(&mut &*self, false);
             return;
         }
         let flags = self.flags.get();
@@ -1011,22 +769,22 @@ impl Transport for WindowsNamedPipe {
 
     fn close(&self) {
         if let Some(w) = self.wrapper_ref() {
-            let _ = w.shutdown(false);
+            let _ = w.shutdown(&mut &*self, false);
         }
-        self.with_writer(|w| w.end());
+        self.writer.end(self);
     }
 
     fn pause_stream(&self) -> bool {
-        let Some(pipe) = self.uv_pipe() else {
-            return false;
+        let Some(stream) = self.writer.get_stream() else {
+            return self.pipe.get().is_some();
         };
-        // SAFETY: live libuv handle alias; see `pipe`.
-        unsafe { (*pipe).read_stop() };
+        // SAFETY: `stream` is the live pipe stream.
+        unsafe { (*stream).read_stop() };
         true
     }
 
     fn resume_stream(&self) -> bool {
-        let Some(stream) = self.writer.with_mut(|w| w.get_stream()) else {
+        let Some(stream) = self.writer.get_stream() else {
             return false;
         };
         let this: *mut Self = self.root_ptr();
@@ -1042,7 +800,7 @@ impl Transport for WindowsNamedPipe {
         if let Some(wrapper) = self.wrapper_ref() {
             wrapper.shutdown_read();
         } else {
-            if let Some(stream) = self.writer.with_mut(|w| w.get_stream()) {
+            if let Some(stream) = self.writer.get_stream() {
                 // SAFETY: `stream` is the live pipe stream; `uv_read_stop`
                 // always succeeds and is a no-op if not reading.
                 unsafe { (*stream).read_stop() };
@@ -1052,16 +810,16 @@ impl Transport for WindowsNamedPipe {
 
     fn flush(&self) {
         if let Some(w) = self.wrapper_ref() {
-            w.flush();
+            w.flush(&mut &*self);
         }
         if !self.flags.get().disconnected() {
-            let _ = self.writer.with_mut(|w| w.flush());
+            let _ = self.writer.flush(self);
         }
     }
 
     fn set_timeout(&self, seconds: c_uint) {
         bun_output::scoped_log!(WindowsNamedPipe, "setTimeout({})", seconds);
-        self.set_timeout_in_milliseconds(seconds * 1000);
+        self.set_timeout_in_milliseconds(seconds.saturating_mul(1000));
     }
 
     fn ssl(&self) -> Option<*mut boringssl::SSL> {
@@ -1074,32 +832,7 @@ impl Transport for WindowsNamedPipe {
 impl Drop for WindowsNamedPipe {
     fn drop(&mut self) {
         LIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
-        // A pipe that never opened and never failed still holds its socket.
-        let socket = self.socket.replace(SocketType::None);
-        match_socket!(socket, |s: NewSocket<SSL>| {
-            s.get().deref();
-            Ok(())
-        });
         self.release_resources();
-        // Reclaim the `Box<uv::Pipe>` leaked in `create()` if it was never
-        // adopted by `self.writer.source` (early-error returns from
-        // `connect`/`open`/`get_accepted_by` before `start()` runs). Once
-        // `PIPE_ADOPTED` is set the writer is the sole owner and frees via
-        // its libuv close callback — touching it here would double-free.
-        // `close_and_destroy` handles both un-adopted states: if `pipe.init()`
-        // never ran (`loop_` still null) it just `Box::from_raw`-drops the
-        // allocation; if init() DID run before the later open/accept/connect
-        // failure it `uv_close`s first so the handle is unlinked from libuv's
-        // `handle_queue` before the heap block is freed.
-        if !self.flags.get().contains(Flags::PIPE_ADOPTED) {
-            if let Some(pipe) = self.pipe.take() {
-                // SAFETY: `pipe` is the `NonNull` from `Box::leak` in `create()`,
-                // never adopted (gated on `!PIPE_ADOPTED`); `close_and_destroy`
-                // is the unique reclaim and accepts both never-init'd and
-                // init'd-but-unowned handles.
-                unsafe { uv::Pipe::close_and_destroy(pipe.as_ptr()) };
-            }
-        }
     }
 }
 
@@ -1116,84 +849,94 @@ impl bun_event_loop::Taskable for WindowsNamedPipe {
     }
 }
 
-impl bun_io::pipe_writer::WriterParent for WindowsNamedPipe {
-    #[inline]
-    unsafe fn ref_(this: *mut Self) {
-        // SAFETY: BACKREF set via `set_parent`. Intrusive refcount bump.
-        unsafe { (*this).ref_() };
-    }
-    #[inline]
-    unsafe fn deref(this: *mut Self) {
-        // SAFETY: see ref_. The last ref queues the free.
-        unsafe { WindowsNamedPipe::deref(this) };
-    }
-}
+impl WriteHandler for WindowsNamedPipe {
+    fn on_write(&self, amount: usize, status: WriteStatus) {
+        bun_output::scoped_log!(
+            WindowsNamedPipe,
+            "onWrite {} {}",
+            amount,
+            match status {
+                WriteStatus::Pending => "pending",
+                WriteStatus::Drained => "drained",
+                WriteStatus::EndOfFile => "end_of_file",
+            }
+        );
 
-impl bun_io::pipe_writer::WindowsWriterParent for WindowsNamedPipe {
-    #[inline]
-    unsafe fn loop_(this: *mut Self) -> *mut uv::Loop {
-        // SAFETY: BACKREF set via `set_parent`; shared-only read.
-        unsafe { (*this).vm.uv_loop() }
+        match status {
+            WriteStatus::Pending => {}
+            WriteStatus::Drained => {
+                // unref after sending all data
+                self.writer.update_ref(false);
+                self.send_shutdown_if_drained();
+            }
+            WriteStatus::EndOfFile => {
+                // we send FIN so we close after this
+                self.writer.close(self);
+            }
+        }
     }
-}
 
-impl bun_io::pipe_writer::WindowsStreamingWriterParent for WindowsNamedPipe {
-    const HAS_ON_WRITABLE: bool = true;
-    #[inline]
-    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
-        // SAFETY: BACKREF set via `set_parent`; the callbacks take `&self`.
-        unsafe { (*this).on_write(amount, status) }
+    fn on_error(&self, err: bun_sys::Error) {
+        bun_output::scoped_log!(WindowsNamedPipe, "onError");
+        let _keep_alive = self.keep_alive();
+        if self.is_open.get() {
+            match_socket!(self.socket.get().clone(), |s: NewSocket<SSL>| {
+                s.handle_error(err.to_js(&self.global_this))
+            });
+        } else {
+            self.fail_connect(SystemErrno::from_raw(err.errno));
+        }
+        self.close();
     }
-    #[inline]
-    unsafe fn on_error(this: *mut Self, err: bun_sys::Error) {
-        // SAFETY: see on_write.
-        unsafe { (*this).on_error(err) }
+
+    fn on_close(&self) {
+        bun_output::scoped_log!(WindowsNamedPipe, "onClose");
+        self.pipe.set(None);
+        if !self.flags.get().is_closed() {
+            self.update_flags(|f| f.set(Flags::IS_CLOSED, true)); // only call onClose once
+            match_socket!(self.socket.take(), |s: NewSocket<SSL>| {
+                NewSocket::on_close(s, self.handle::<SSL>(), 0, None)
+            });
+            self.release_resources();
+            self.self_ref.set(None);
+        }
     }
-    #[inline]
-    unsafe fn on_writable(this: *mut Self) {
-        // SAFETY: see on_write.
-        unsafe { (*this).on_writable() }
+
+    fn on_writable(&self) {
+        bun_output::scoped_log!(WindowsNamedPipe, "onWritable");
+        // flush pending data
+        self.flush();
+        // call onWritable (will flush on demand)
+        self.dispatch_writable();
     }
-    #[inline]
-    unsafe fn on_close(this: *mut Self) {
-        // SAFETY: see on_write.
-        unsafe { (*this).on_close() }
+
+    fn set_has_inflight_write(&self, value: bool) {
+        self.inflight_write_ref
+            .set(value.then(|| self.keep_alive()));
     }
 }
 
 /// The three `stream.readStart` callbacks (alloc/error/read) baked into a
 /// trait so the
 /// `extern "C"` libuv trampoline is monomorphised over `WindowsNamedPipe`.
-impl uv::StreamReader for WindowsNamedPipe {
+// SAFETY: nothing touches `incoming` between `on_read_alloc` and the report of the read.
+unsafe impl uv::StreamReader for WindowsNamedPipe {
     #[inline]
-    fn on_read_alloc(this: &mut Self, suggested_size: usize) -> &mut [u8] {
-        let this: &Self = this;
-        // SAFETY: the returned region is the buffer's spare capacity handed to
-        // libuv for the pending read; nothing else touches `incoming` until
-        // `on_read` commits the byte count.
-        let incoming = unsafe { &mut *this.incoming.as_ptr() };
-        // SAFETY: libuv writes into this region before `on_read` commits it.
-        let spare = unsafe { incoming.uv_alloc_spare_u8(suggested_size) };
-        &mut spare[..suggested_size]
+    fn on_read_alloc(this: &Self, suggested_size: usize) -> *mut [u8] {
+        this.incoming
+            .with_mut(|incoming| incoming.uv_alloc_spare(suggested_size))
     }
     #[inline]
-    fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
+    fn on_read_error(this: &Self, err: core::ffi::c_int) {
         // The trampoline only reaches this arm when `nreads < 0`, and for any
         // negative code `translate_uv_error_to_e` already
         // yields a concrete `E` (falling back to `UNKNOWN` for unmapped
         // codes). Pass it straight through; do NOT remap UNKNOWN→CANCELED.
         let e = bun_sys::windows::translate_uv_error_to_e(err);
-        let this: &Self = this;
         this.on_read_error(e);
     }
     #[inline]
-    unsafe fn on_read(this: *mut Self, data: &[u8]) {
-        // `data` points into `(*this).incoming` (it was returned from
-        // `on_read_alloc`). Capture the only thing the body needs (length)
-        // and drop the slice before touching `*this`.
-        let nread = data.len();
-        // SAFETY: `this` is the live context stashed in `handle.data` by
-        // `read_start_ctx`; `data` is no longer live.
-        unsafe { &*this }.on_read(nread);
+    unsafe fn on_read(this: &Self, nread: usize) {
+        this.on_read(nread);
     }
 }

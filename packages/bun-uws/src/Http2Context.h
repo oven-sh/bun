@@ -10,7 +10,7 @@
  * adopted into this context's group in place and its ext block repointed at a
  * heap Http2Connection. Each request stream is an Http2Response, which
  * exposes the same method surface as HttpResponse<SSL> / Http3Response so the
- * layers above stay transport-agnostic. HPACK is ls-hpack.
+ * layers above stay transport-agnostic.
  *
  * Lifetime rule: an Http2Response* handed to a route handler stays valid
  * until its onAborted fires. Streams retire (both directions closed or reset)
@@ -28,10 +28,9 @@
 #include "Utilities.h"
 #include "HttpResponse.h"
 #include "SocketKinds.h"
+#include "Hpack.h"
 #include "Http2ResponseData.h"
 #include "Http3Request.h"
-
-#include <lshpack.h>
 
 #include <algorithm>
 #include <charconv>
@@ -39,7 +38,10 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <optional>
+#include <ranges>
+#include <span>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -75,7 +77,6 @@ enum SettingId : uint16_t {
 static constexpr uint32_t FRAME_HEADER_SIZE = 9;
 static constexpr int32_t DEFAULT_WINDOW_SIZE = 65535;
 static constexpr int64_t MAX_WINDOW_SIZE = 0x7fffffff;
-static constexpr uint32_t DEFAULT_HEADER_TABLE_SIZE = 4096;
 /* What we accept per frame. Kept at the protocol minimum so a full frame
  * always fits the per-connection reassembly buffer cheaply. */
 static constexpr uint32_t LOCAL_MAX_FRAME_SIZE = 16384;
@@ -92,11 +93,6 @@ static constexpr uint32_t LOCAL_MAX_CONCURRENT_STREAMS = 256;
 /* Same cap as the HTTP/1 parser (UWS_HTTP_MAX_HEADERS_COUNT). */
 static constexpr size_t MAX_HEADER_FIELDS = 200;
 static constexpr unsigned MAX_SETTINGS_PER_FRAME = 32;
-/* ls-hpack refuses to decode a longer name or value. */
-static constexpr size_t MAX_STRING_LENGTH = UINT16_MAX;
-/* ls-hpack is built with the same width, see lsxpackDefines in scripts/build/deps/lshpack.ts. */
-static_assert(sizeof(lsxpack_strlen_t) == 4 && offsetof(lsxpack_header_t, chain_next_idx) == sizeof(char *) + 24,
-    "LSXPACK_MAX_STRLEN must be UINT32_MAX");
 /* A header block may span this many CONTINUATION frames (the byte cap alone
  * doesn't bound a flood of empty ones). */
 static constexpr unsigned MAX_CONTINUATION_FRAMES = 32;
@@ -140,22 +136,6 @@ static inline uint32_t readU32BE(const unsigned char *p) {
 
 static inline void writeU32BE(char *p, uint32_t v) {
     p[0] = (char)(v >> 24); p[1] = (char)(v >> 16); p[2] = (char)(v >> 8); p[3] = (char) v;
-}
-
-static inline unsigned char *hpackEncodeInteger(unsigned char *dst, uint8_t prefixPattern, unsigned prefixBits, uint32_t value) {
-    uint32_t maxPrefix = (1u << prefixBits) - 1;
-    if (value < maxPrefix) {
-        *dst++ = (unsigned char)(prefixPattern | value);
-        return dst;
-    }
-    *dst++ = (unsigned char)(prefixPattern | maxPrefix);
-    value -= maxPrefix;
-    while (value >= 128) {
-        *dst++ = (unsigned char)((value & 0x7f) | 0x80);
-        value >>= 7;
-    }
-    *dst++ = (unsigned char) value;
-    return dst;
 }
 
 }
@@ -295,11 +275,13 @@ private:
 struct Http2Connection {
     us_socket_t *s;
     Http2Context *ctx;
-    struct lshpack_enc enc;
-    struct lshpack_dec dec;
+    Hpack hpack;
 
     /* Inbound: partial frame reassembly, and HEADERS+CONTINUATION block. */
     BackPressure in;
+    /* Received while a handler under onData ticks the loop (waitForPromise). It goes behind what onData still has to parse. */
+    WTF::Vector<char> inBehindHandler;
+    bool parsing = false;
     BackPressure headerBlock;
     uint32_t headerBlockStream = 0;
     uint8_t headerBlockFlags = 0;
@@ -329,9 +311,6 @@ struct Http2Connection {
     int32_t peerInitialWindowSize = http2::DEFAULT_WINDOW_SIZE;
     int64_t connSendWindow = http2::DEFAULT_WINDOW_SIZE;
     uint32_t connUnackedReceive = 0;
-    uint32_t encoderTableSize = http2::DEFAULT_HEADER_TABLE_SIZE;
-    bool pendingTableSizeUpdate = false;
-    uint32_t minTableSizeSinceBlock = 0;
 
     /* Highest client stream id seen (protocol checks) vs. highest one handed
      * to a handler (what GOAWAY reports as possibly acted upon, §6.8). */
@@ -347,13 +326,28 @@ struct Http2Connection {
     bool filteredOpen = false;
     bool filteredAccept = false;
 
-    /* >0 while this connection is dispatching into user code; deletion of
-     * the connection and its streams waits for the outermost frame. */
+    /* Held by a frame that dispatches into user code, or by the sweep list. The last one frees a closed connection. */
+    struct Pin {
+        explicit Pin(Http2Connection *connection) : conn(connection) { conn->busy++; }
+        Pin(Pin &&other) noexcept : conn(std::exchange(other.conn, nullptr)) {}
+        ~Pin() { if (conn && --conn->busy == 0 && conn->closed) delete conn; }
+
+        Http2Connection *get() const { return conn; }
+        Http2Connection *operator->() const { return conn; }
+        bool isOutermost() const { return conn->busy == 1; }
+
+    private:
+        Http2Connection *conn;
+    };
+
+private:
     int busy = 0;
+
+public:
     bool closed = false;
     bool inSweepList = false;
 
-    std::vector<Http2Response *> streams;
+    WTF::Vector<std::unique_ptr<Http2Response>> streams;
     std::vector<Http2Response *> drainedAgain;
     /* Streams we sent RST_STREAM on; frames for them may still be in flight
      * and are ignored (§5.1 closed). Anything else on a closed id is an error. */
@@ -368,7 +362,7 @@ struct Http2Connection {
     bool wasResetByPeer(uint32_t id) const { for (uint32_t r : resetByPeer) if (r == id) return true; return false; }
     std::vector<Http2Response *> writable;
     std::vector<Http2Response *> draining;
-    std::vector<Http2Response *> pendingFree;
+    WTF::Vector<std::unique_ptr<Http2Response>> pendingFree;
     /* Seconds of silence before onTimeout; recomputed when a stream sets a
      * timeout or retires (see Http2Response::timeoutS). */
     unsigned idleTimeoutS = 0;
@@ -377,21 +371,16 @@ struct Http2Connection {
     IdleTimeout idleTimer;
     int drainDepth = 0;
 
-    Http2Connection(us_socket_t *socket, Http2Context *context) : s(socket), ctx(context) {
-        lshpack_enc_init(&enc);
-        lshpack_enc_use_hist(&enc, 1);
-        lshpack_dec_init(&dec);
-    }
-    ~Http2Connection() {
-        for (Http2Response *stream : pendingFree) delete stream;
-        for (Http2Response *stream : streams) delete stream;
-        lshpack_enc_cleanup(&enc);
-        lshpack_dec_cleanup(&dec);
+    Http2Connection(us_socket_t *socket, Http2Context *context) : s(socket), ctx(context) {}
+
+    Http2Response *openStream(uint32_t id) {
+        streams.append(std::make_unique<Http2Response>(this, id, peerInitialWindowSize));
+        return streams.last().get();
     }
 
     Http2Response *findStream(uint32_t id) {
         /* Newest streams are the busy ones. */
-        for (size_t i = streams.size(); i-- > 0;) if (streams[i]->id == id) return streams[i];
+        for (auto &stream : streams | std::views::reverse) if (stream->id == id) return stream.get();
         return nullptr;
     }
 
@@ -539,7 +528,7 @@ struct Http2Connection {
     inline void scheduleFlush();
 
     bool drainedAfterGoaway() {
-        return !closed && !us_socket_is_shut_down(s) && streams.empty() && (goawaySent || goawayReceived) && out->length() == 0;
+        return !closed && !us_socket_is_shut_down(s) && streams.isEmpty() && (goawaySent || goawayReceived) && out->length() == 0;
     }
 
     /* The graceful close, once drainedAfterGoaway() holds. The kernel may still hold the end of a response, and
@@ -569,6 +558,8 @@ struct Http2Connection {
     /* ── inbound ──────────────────────────────────────────────────────── */
 
     inline void onData(const char *data, size_t length);
+    /* false: the connection reads no more. */
+    inline bool parse(const char *data, size_t length);
     inline bool handleFrame(uint8_t type, uint8_t flags, uint32_t streamId, const unsigned char *payload, uint32_t length);
     inline bool handleHeaderBlock(uint32_t streamId, uint8_t flags, const unsigned char *block, size_t length);
     /* `flowLength` is the whole frame payload (padding counts against the
@@ -614,15 +605,13 @@ struct Http2Context {
     BackPressure sharedOut;
     Http2Connection *sharedOutHolder = nullptr;
 
-    /* Scratch shared by every connection on this context: decoded request
-     * header bytes + list, and the HPACK encode buffer. dispatchDepth guards
+    /* Scratch shared by every connection on this context. dispatchDepth guards
      * the (node:http-only) case of a dispatch nesting another. */
-    std::vector<char> decodeBuffer;
-    std::vector<us_quic_header_t> decodedHeaders;
-    std::vector<unsigned char> encodeBuffer;
+    HpackBuffer decodeBuffer;
+    HpackBuffer encodeBuffer;
     int dispatchDepth = 0;
 
-    std::vector<Http2Connection *> sweepList;
+    std::vector<Http2Connection::Pin> sweepList;
 
     static Http2Connection *connection(us_socket_t *s) {
         return *(Http2Connection **) us_socket_ext(s);
@@ -633,22 +622,14 @@ struct Http2Context {
         return v > 0xffffff ? 0xffffff : (uint32_t) v;
     }
 
-    static Http2Context *create(Loop *loop, unsigned idleTimeoutS, uint64_t maxRequestBodySize) {
-        Http2Context *ctx = new Http2Context;
-        ctx->loop = loop;
-        ctx->idleTimeoutS = idleTimeoutS;
-        ctx->maxRequestBodySize = maxRequestBodySize;
-        us_socket_group_init(&ctx->group, (us_loop_t *) loop, &vtable, ctx);
-        return ctx;
+    Http2Context(Loop *loop, unsigned idleTimeoutS, uint64_t maxRequestBodySize) : loop(loop), idleTimeoutS(idleTimeoutS), maxRequestBodySize(maxRequestBodySize) {
+        us_socket_group_init(&group, (us_loop_t *) loop, &vtable, this);
     }
 
-    void free() {
+    ~Http2Context() {
         closeAll(0);
         if (parent && detachFromParent) detachFromParent(parent, this);
-        for (Http2Connection *conn : sweepList) { conn->inSweepList = false; if (--conn->busy == 0 && conn->closed) delete conn; }
-        sweepList.clear();
         us_socket_group_deinit(&group);
-        delete this;
     }
 
     /* Hook into an HttpContext<SSL>'s data so its connections can migrate here. */
@@ -735,14 +716,14 @@ struct Http2Context {
     /* fn may close connections (and run JS that closes others), so snapshot
      * the group's list first and pin each entry across the call. */
     template <typename F> void forEachConnection(F &&fn) {
-        std::vector<Http2Connection *> list;
+        std::vector<Http2Connection::Pin> list;
         for (us_socket_t *s = group.head_sockets; s; s = s->next) {
             Http2Connection *conn = connection(s);
-            if (!conn->closed) { conn->busy++; list.push_back(conn); }
+            if (!conn->closed) list.emplace_back(conn);
         }
-        for (Http2Connection *conn : list) {
-            if (!conn->closed) fn(conn);
-            if (--conn->busy == 0 && conn->closed) delete conn;
+        for (auto &entry : list) {
+            Http2Connection::Pin conn = std::move(entry);
+            if (!conn->closed) fn(conn.get());
         }
     }
 
@@ -771,7 +752,7 @@ struct Http2Context {
         if (closeWhenIdle) stopping = true;
         size_t closedNow = 0;
         forEachConnection([&](Http2Connection *conn) {
-            if (!conn->streams.empty() && !closeWhenIdle) return;
+            if (!conn->streams.isEmpty() && !closeWhenIdle) return;
             if (!us_socket_is_shut_down(conn->s)) {
                 if (!conn->goawaySent) conn->writeGoaway(http2::ERR_NO_ERROR);
                 conn->flush();
@@ -793,13 +774,10 @@ struct Http2Context {
 
     bool drainScheduled = false;
 
-    /* Queued connections are pinned (busy) so they can't be deleted before
-     * the pass reaches them. */
     void scheduleSweep(Http2Connection *conn) {
         if (conn->inSweepList || conn->closed) return;
         conn->inSweepList = true;
-        conn->busy++;
-        sweepList.push_back(conn);
+        sweepList.emplace_back(conn);
         if (!drainScheduled && scheduleDrain) {
             drainScheduled = true;
             scheduleDrain(scheduleDrainUser, this);
@@ -822,55 +800,42 @@ struct Http2Context {
      * free retired streams. Runs from the embedder's deferred queue (see
      * scheduleDrain) and after every socket event on that connection. */
     void sweep() {
-        std::vector<Http2Connection *> batch;
+        std::vector<Http2Connection::Pin> batch;
         batch.swap(sweepList);
-        if (batch.empty()) return;
-        for (Http2Connection *conn : batch) {
+        for (auto &entry : batch) {
+            Http2Connection::Pin conn = std::move(entry);
             conn->inSweepList = false;
-            conn->busy--; /* the queue's pin */
-            if (conn->closed) { if (conn->busy == 0) delete conn; continue; }
+            if (conn->closed) continue;
             /* Inside its own socket event (the deferred queue runs after every
              * JS callback): the event's epilogue flushes once for the whole
              * batch and frees retired streams. Flushing here would be one
              * write() per response. */
-            if (conn->busy > 0) continue;
-            conn->busy++;
+            if (!conn.isOutermost()) continue;
             conn->borrowSharedOut();
             conn->pump();
             conn->returnSharedOut();
-            conn->busy--;
             if (!sweepConnection(conn)) continue;
             if (conn->drainedAfterGoaway()) conn->finish();
         }
     }
 
-    /* Delete retired streams, telling each holder first. Returns false if
-     * the connection closed meanwhile (and was deleted if nothing else of
-     * ours is on the stack). */
-    static bool sweepConnection(Http2Connection *conn) {
-        if (conn->busy > 0) {
+    /* Delete retired streams, telling each holder first. Returns false if the connection closed meanwhile. */
+    static bool sweepConnection(const Http2Connection::Pin &conn) {
+        if (!conn.isOutermost()) {
             /* A frame of ours further up the stack (a nested event-loop tick
              * got us here) may still hold one of these streams; its epilogue
              * sweeps when it unwinds. */
             return !conn->closed;
         }
-        conn->busy++;
-        while (!conn->pendingFree.empty() && !conn->closed) {
-            Http2Response *stream = conn->pendingFree.back();
-            conn->pendingFree.pop_back();
+        while (!conn->pendingFree.isEmpty() && !conn->closed) {
+            std::unique_ptr<Http2Response> stream = conn->pendingFree.takeLast();
             if (stream->data.onAborted) {
                 auto cb = stream->data.onAborted;
                 stream->data.onAborted = nullptr;
-                cb(stream, stream->data.userData);
+                cb(stream.get(), stream->data.userData);
             }
-            delete stream;
         }
-        conn->busy--;
-        if (conn->closed) {
-            if (conn->busy == 0) delete conn;
-            return false;
-        }
-        return true;
+        return !conn->closed;
     }
 
 private:
@@ -885,24 +850,21 @@ private:
     }
 
     static us_socket_t *onWritable(us_socket_t *s) {
-        Http2Connection *conn = connection(s);
-        conn->busy++;
+        Http2Connection::Pin conn(connection(s));
         conn->flush();
         conn->borrowSharedOut();
         if (!conn->closed) conn->drainWritable();
-        conn->busy--;
         return epilogue(conn, s);
     }
 
     static us_socket_t *onClose(us_socket_t *s, int, void *) {
-        Http2Connection *conn = connection(s);
+        Http2Connection::Pin conn(connection(s));
         Http2Context *ctx = conn->ctx;
         conn->closed = true;
-        if (ctx->sharedOutHolder == conn) { ctx->sharedOut.clear(); ctx->sharedOutHolder = nullptr; conn->out = &conn->ownOut; }
-        conn->busy++;
-        for (Http2Response *stream : conn->streams) {
+        if (ctx->sharedOutHolder == conn.get()) { ctx->sharedOut.clear(); ctx->sharedOutHolder = nullptr; conn->out = &conn->ownOut; }
+        for (auto &stream : conn->streams) {
             stream->dead = true;
-            conn->pendingFree.push_back(stream);
+            conn->pendingFree.append(std::move(stream));
         }
         conn->streams.clear();
         conn->writable.clear();
@@ -910,38 +872,31 @@ private:
         /* Every holder learns its Http2Response* is going away. The objects
          * themselves are deleted with the connection once no frame of ours
          * is still running (~Http2Connection). */
-        for (Http2Response *stream : conn->pendingFree) {
+        for (auto &stream : conn->pendingFree) {
             if (stream->data.onAborted) {
                 auto cb = stream->data.onAborted;
                 stream->data.onAborted = nullptr;
-                cb(stream, stream->data.userData);
+                cb(stream.get(), stream->data.userData);
             }
         }
-        ctx->reportGone(conn);
-        conn->busy--;
-        if (conn->busy == 0) delete conn;
+        ctx->reportGone(conn.get());
         return s;
     }
 
     /* No traffic either way for idleTimeoutS (or a drained going-away
      * connection): streams in flight are aborted through onClose. */
     static us_socket_t *onTimeout(us_socket_t *s) {
-        Http2Connection *conn = connection(s);
+        Http2Connection::Pin conn(connection(s));
         if (conn->idleTimer.rearmIfPeerStillReads(s, conn->idleTimeoutS)) return s;
-        conn->busy++;
-        std::vector<Http2Response *> open = conn->streams;
+        auto open = WTF::map(conn->streams, [](auto &stream) { return stream.get(); });
         for (Http2Response *stream : open) {
             if (!stream->dead && stream->data.onTimeout) stream->data.onTimeout(stream, stream->data.userData);
         }
-        conn->busy--;
-        if (conn->closed) {
-            if (conn->busy == 0) delete conn;
-            return s;
-        }
+        if (conn->closed) return s;
         if (!conn->goawaySent) conn->writeGoaway(http2::ERR_NO_ERROR);
         conn->flush();
         /* With no stream to abort, a TLS close can wait for the peer's close_notify, so a request that crosses the GOAWAY isn't reset. */
-        if (conn->streams.empty()) return us_socket_close(s, 0, nullptr);
+        if (conn->streams.isEmpty()) return us_socket_close(s, 0, nullptr);
         return us_socket_close_now(s);
     }
 
@@ -953,15 +908,12 @@ private:
 
     /* After user code ran from a socket event: push bytes out, free what
      * retired, finish a drained going-away connection. */
-    static us_socket_t *epilogue(Http2Connection *conn, us_socket_t *s) {
+    static us_socket_t *epilogue(const Http2Connection::Pin &conn, us_socket_t *s) {
         if (conn->closed) {
             conn->returnSharedOut();
-            if (conn->busy == 0) delete conn;
             return s;
         }
-        conn->busy++;
         conn->pump();
-        conn->busy--;
         conn->returnSharedOut();
         if (!sweepConnection(conn)) return s;
         if (conn->drainedAfterGoaway()) conn->finish();
@@ -1010,10 +962,10 @@ inline void Http2Connection::touch() {
 inline void Http2Connection::recomputeIdleTimeout() {
     /* Most permissive among open streams (0 = never); a stream that never
      * asked counts as the context default, as does a connection with none. */
-    unsigned t = streams.empty() ? ctx->idleTimeoutS : 0;
-    bool never = streams.empty() && ctx->idleTimeoutS == 0;
+    unsigned t = streams.isEmpty() ? ctx->idleTimeoutS : 0;
+    bool never = streams.isEmpty() && ctx->idleTimeoutS == 0;
     customTimeouts = false;
-    for (Http2Response *stream : streams) {
+    for (auto &stream : streams) {
         customTimeouts |= stream->timeoutS != 255;
         unsigned s = stream->timeoutS == 255 ? ctx->idleTimeoutS : stream->timeoutS;
         never |= s == 0;
@@ -1052,59 +1004,20 @@ inline void Http2Connection::scheduleFlush() {
 inline void Http2Connection::writeHeaderBlock(Http2Response *stream, bool endStream) {
     wroteStreamBytes = true;
     Http2ResponseData *d = &stream->data;
-    std::vector<unsigned char> &buf = ctx->encodeBuffer;
-    size_t need = 16;
-    for (auto &h : d->hdrs) need += h.nameLen + h.valueLen + 32;
-    if (buf.size() < need) buf.resize(need);
-    unsigned char *p = buf.data();
-    unsigned char *end = buf.data() + buf.size();
-    if (pendingTableSizeUpdate) {
-        if (minTableSizeSinceBlock != encoderTableSize) p = http2::hpackEncodeInteger(p, 0x20, 5, minTableSizeSinceBlock);
-        p = http2::hpackEncodeInteger(p, 0x20, 5, encoderTableSize);
-        pendingTableSizeUpdate = false;
-    }
-    const char *base = d->hdrBuf.span().data();
-    for (auto &h : d->hdrs) {
-        if (h.nameLen + h.valueLen + 32 > (size_t)(end - p)) {
-            size_t used = (size_t)(p - buf.data());
-            buf.resize(buf.size() * 2 + h.nameLen + h.valueLen + 32);
-            p = buf.data() + used;
-            end = buf.data() + buf.size();
-        }
-        if (h.nameLen > http2::MAX_STRING_LENGTH / 2 || h.valueLen > http2::MAX_STRING_LENGTH / 2) {
-            /* Literal without indexing, no Huffman. */
-            *p++ = 0x00;
-            p = http2::hpackEncodeInteger(p, 0x00, 7, h.nameLen);
-            memcpy(p, base + h.nameOff, h.nameLen); p += h.nameLen;
-            p = http2::hpackEncodeInteger(p, 0x00, 7, h.valueLen);
-            memcpy(p, base + h.valueOff, h.valueLen); p += h.valueLen;
-            continue;
-        }
-        lsxpack_header_t x;
-        lsxpack_header_set_offset2(&x, base + h.nameOff, 0, h.nameLen, h.nameLen, h.valueLen);
-        for (;;) {
-            unsigned char *q = lshpack_enc_encode(&enc, p, end, &x);
-            if (q != p) { p = q; break; }
-            size_t used = (size_t)(p - buf.data());
-            buf.resize(buf.size() * 2);
-            p = buf.data() + used;
-            end = buf.data() + buf.size();
-        }
-    }
+    std::span<const char> block = hpack.encode(ctx->encodeBuffer, d->hdrBuf.span(), d->hdrs.span(), Hpack::Indexing::Allowed);
     d->hdrBuf.shrink(0);
     d->hdrs.shrink(0);
 
     /* HEADERS then CONTINUATIONs, each ≤ the peer's frame size. No other
      * frame may interleave, which holds since the block is appended at once. */
-    const char *block = (const char *) buf.data();
-    size_t total = (size_t)(p - buf.data());
+    size_t total = block.size();
     size_t off = 0;
     bool first = true;
     do {
         uint32_t chunk = (uint32_t) std::min<size_t>(total - off, peerMaxFrameSize);
         bool last = off + chunk == total;
         uint8_t flags = (last ? http2::END_HEADERS : 0) | (first && endStream ? http2::END_STREAM : 0);
-        writeFrame(first ? http2::HEADERS : http2::CONTINUATION, flags, stream->id, block + off, chunk);
+        writeFrame(first ? http2::HEADERS : http2::CONTINUATION, flags, stream->id, block.data() + off, chunk);
         off += chunk;
         first = false;
     } while (off < total);
@@ -1112,20 +1025,11 @@ inline void Http2Connection::writeHeaderBlock(Http2Response *stream, bool endStr
 }
 
 inline void Http2Connection::writeInformational(Http2Response *stream, std::string_view status) {
-    unsigned char tmp[32];
     char field[10] = {':', 's', 't', 'a', 't', 'u', 's', '1', '0', '0'};
     memcpy(field + 7, status.data(), std::min<size_t>(status.size(), 3));
-    lsxpack_header_t x;
-    lsxpack_header_set_offset2(&x, field, 0, 7, 7, 3);
-    x.indexed_type = 1;
-    unsigned char *p = tmp;
-    if (pendingTableSizeUpdate) {
-        if (minTableSizeSinceBlock != encoderTableSize) p = http2::hpackEncodeInteger(p, 0x20, 5, minTableSizeSinceBlock);
-        p = http2::hpackEncodeInteger(p, 0x20, 5, encoderTableSize);
-        pendingTableSizeUpdate = false;
-    }
-    unsigned char *q = lshpack_enc_encode(&enc, p, tmp + sizeof(tmp), &x);
-    writeFrame(http2::HEADERS, http2::END_HEADERS, stream->id, (const char *) tmp, (uint32_t)(q - tmp));
+    const HeaderRef ref{0, 7, 7, 3};
+    std::span<const char> block = hpack.encode(ctx->encodeBuffer, field, {&ref, 1}, Hpack::Indexing::Without);
+    writeFrame(http2::HEADERS, http2::END_HEADERS, stream->id, block.data(), (uint32_t) block.size());
 }
 
 inline void Http2Connection::replenishStreamWindow(Http2Response *stream, uint32_t bytes) {
@@ -1178,8 +1082,9 @@ inline void Http2Connection::drainWritable() {
 inline void Http2Connection::retireStream(Http2Response *stream, bool abortNow) {
     if (stream->dead) return;
     stream->dead = true;
-    auto it = std::find(streams.begin(), streams.end(), stream);
-    if (it != streams.end()) streams.erase(it);
+    size_t index = streams.findIf([&](auto &open) { return open.get() == stream; });
+    std::unique_ptr<Http2Response> retired = std::move(streams[index]);
+    streams.removeAt(index);
     if (stream->wantsWrite) {
         auto wit = std::find(writable.begin(), writable.end(), stream);
         if (wit != writable.end()) writable.erase(wit);
@@ -1192,7 +1097,7 @@ inline void Http2Connection::retireStream(Http2Response *stream, bool abortNow) 
         stream->data.onAborted = nullptr;
         cb(stream, stream->data.userData);
     }
-    pendingFree.push_back(stream);
+    pendingFree.append(std::move(retired));
     if (closed) return;
     /* Freed (and a drained going-away connection closed) after the current
      * socket event, or from the deferred pass if we're outside one; never
@@ -1237,15 +1142,34 @@ inline bool Http2Connection::streamError(uint32_t streamId, Http2Response *strea
 }
 
 inline void Http2Connection::onData(const char *data, size_t length) {
-    busy++;
+    if (parsing) [[unlikely]] {
+        inBehindHandler.append(std::span<const char>(data, length));
+        us_socket_pause(s);
+        return;
+    }
+    Pin pin(this);
+    parsing = true;
+    bool reads = parse(data, length);
+    while (!inBehindHandler.isEmpty()) [[unlikely]] {
+        WTF::Vector<char> held = std::exchange(inBehindHandler, {});
+        us_socket_resume(s);
+        reads = reads && parse(held.span().data(), held.size());
+    }
+    parsing = false;
+    if (reads) {
+        /* Only frames that move a stream count as activity: a peer holding
+         * streams open at a zero window can't keep the connection alive on PINGs.
+         * After a graceful stop, neither can a peer with no stream. */
+        if (progressed || (streams.isEmpty() && !ctx->stopping)) touch();
+        progressed = false;
+    }
+    Http2Context::epilogue(pin, s);
+}
+
+inline bool Http2Connection::parse(const char *data, size_t length) {
     if (prefaceOffset < http2::CLIENT_PREFACE_LEN) {
         size_t n = std::min<size_t>(http2::CLIENT_PREFACE_LEN - prefaceOffset, length);
-        if (memcmp(data, http2::CLIENT_PREFACE + prefaceOffset, n) != 0) {
-            connectionError(http2::ERR_PROTOCOL_ERROR);
-            busy--;
-            Http2Context::epilogue(this, s);
-            return;
-        }
+        if (memcmp(data, http2::CLIENT_PREFACE + prefaceOffset, n) != 0) return connectionError(http2::ERR_PROTOCOL_ERROR);
         prefaceOffset += (uint8_t) n;
         data += n;
         length -= n;
@@ -1269,18 +1193,9 @@ inline void Http2Connection::onData(const char *data, size_t length) {
         uint32_t flen = ((uint32_t) h[0] << 16) | ((uint32_t) h[1] << 8) | h[2];
         uint8_t type = h[3], flags = h[4];
         uint32_t streamId = http2::readU32BE(h + 5) & 0x7fffffff;
-        if (flen > http2::LOCAL_MAX_FRAME_SIZE) {
-            connectionError(http2::ERR_FRAME_SIZE_ERROR);
-            busy--;
-            Http2Context::epilogue(this, s);
-            return;
-        }
+        if (flen > http2::LOCAL_MAX_FRAME_SIZE) return connectionError(http2::ERR_FRAME_SIZE_ERROR);
         if (avail - consumed < http2::FRAME_HEADER_SIZE + flen) break;
-        if (!handleFrame(type, flags, streamId, h + http2::FRAME_HEADER_SIZE, flen) || closed || us_socket_is_shut_down(s)) {
-            busy--;
-            Http2Context::epilogue(this, s);
-            return;
-        }
+        if (!handleFrame(type, flags, streamId, h + http2::FRAME_HEADER_SIZE, flen) || closed || us_socket_is_shut_down(s)) return false;
         consumed += http2::FRAME_HEADER_SIZE + flen;
     }
 
@@ -1289,13 +1204,7 @@ inline void Http2Connection::onData(const char *data, size_t length) {
     } else if (consumed < avail) {
         in.append((const char *) p + consumed, avail - consumed);
     }
-    /* Only frames that move a stream count as activity: a peer holding
-     * streams open at a zero window can't keep the connection alive on PINGs.
-     * After a graceful stop, neither can a peer with no stream. */
-    if (progressed || (streams.empty() && !ctx->stopping)) touch();
-    progressed = false;
-    busy--;
-    Http2Context::epilogue(this, s);
+    return true;
 }
 
 inline bool Http2Connection::handleSettings(uint8_t flags, const unsigned char *payload, uint32_t length) {
@@ -1309,19 +1218,9 @@ inline bool Http2Connection::handleSettings(uint8_t flags, const unsigned char *
         uint16_t id = (uint16_t)((payload[off] << 8) | payload[off + 1]);
         uint32_t value = http2::readU32BE(payload + off + 2);
         switch (id) {
-        case http2::SETTINGS_HEADER_TABLE_SIZE: {
-            uint32_t newSize = std::min(value, http2::DEFAULT_HEADER_TABLE_SIZE);
-            if (newSize != encoderTableSize || pendingTableSizeUpdate) {
-                /* RFC 7541 §4.2: if the limit dipped below the final value
-                 * between blocks, the decoder must see that minimum first. */
-                minTableSizeSinceBlock = pendingTableSizeUpdate ? std::min(minTableSizeSinceBlock, newSize) : std::min(encoderTableSize, newSize);
-                encoderTableSize = newSize;
-                lshpack_enc_set_max_capacity(&enc, minTableSizeSinceBlock);
-                if (newSize != minTableSizeSinceBlock) lshpack_enc_set_max_capacity(&enc, newSize);
-                pendingTableSizeUpdate = true;
-            }
+        case http2::SETTINGS_HEADER_TABLE_SIZE:
+            hpack.setPeerTableSize(value);
             break;
-        }
         case http2::SETTINGS_ENABLE_PUSH:
             if (value > 1) return connectionError(http2::ERR_PROTOCOL_ERROR);
             break;
@@ -1329,11 +1228,11 @@ inline bool Http2Connection::handleSettings(uint8_t flags, const unsigned char *
             if (value > (uint32_t) http2::MAX_WINDOW_SIZE) return connectionError(http2::ERR_FLOW_CONTROL_ERROR);
             int64_t delta = (int64_t) value - peerInitialWindowSize;
             peerInitialWindowSize = (int32_t) value;
-            for (Http2Response *stream : streams) {
+            for (auto &stream : streams) {
                 int64_t w = (int64_t) stream->sendWindow + delta;
                 if (w > http2::MAX_WINDOW_SIZE) return connectionError(http2::ERR_FLOW_CONTROL_ERROR);
                 stream->sendWindow = (int32_t) w;
-                if (delta > 0) markWantsWrite(stream);
+                if (delta > 0) markWantsWrite(stream.get());
             }
             break;
         }
@@ -1544,46 +1443,14 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
     uint32_t limit = maxHeaderListSize();
     size_t hardCap = std::max<size_t>((size_t) limit * http2::HEADER_BLOCK_HARD_CAP_FACTOR, http2::LOCAL_MAX_FRAME_SIZE);
     if (length > hardCap) return connectionError(http2::ERR_ENHANCE_YOUR_CALM);
-    std::vector<char> localBuffer;
-    std::vector<us_quic_header_t> localList;
-    bool nested = ctx->dispatchDepth > 0;
-    std::vector<char> &buf = nested ? localBuffer : ctx->decodeBuffer;
-    std::vector<us_quic_header_t> &list = nested ? localList : ctx->decodedHeaders;
-    if (buf.size() < (size_t) limit + 64) buf.resize((size_t) limit + 64);
-    list.clear();
-    size_t used = 0, decoded = 0, fields = 0;
-    const unsigned char *p = block, *end = block + length;
-    while (p < end) {
-        lsxpack_header_t x;
-        size_t room = buf.size() - used;
-        lsxpack_header_prepare_decode(&x, buf.data() + used, 0, room > http2::MAX_STRING_LENGTH ? http2::MAX_STRING_LENGTH : room);
-        int rc = lshpack_dec_decode(&dec, &p, end, &x);
-        if (rc == LSHPACK_ERR_MORE_BUF) {
-            size_t need = used + x.val_len + 64;
-            if (x.val_len > http2::MAX_STRING_LENGTH || buf.size() >= hardCap || room >= http2::MAX_STRING_LENGTH) {
-                return connectionError(http2::ERR_ENHANCE_YOUR_CALM);
-            }
-            buf.resize(std::min(hardCap, std::max(buf.size() * 2, need)));
-            continue;
-        }
-        /* lshpack decodes a zero-length literal name successfully. */
-        if (rc != 0 || x.name_len == 0) return connectionError(http2::ERR_COMPRESSION_ERROR);
-        decoded += lsxpack_header_get_dec_size(&x);
-        fields++;
-        /* Past the 431 thresholds we keep decoding only to keep HPACK state in
-         * sync; a block that expands far beyond them is an attack, not a request. */
-        if (decoded > hardCap || fields > http2::MAX_HEADER_FIELDS * 2) return connectionError(http2::ERR_ENHANCE_YOUR_CALM);
-        if (list.size() > http2::MAX_HEADER_FIELDS) continue;
-        /* Offsets for now; buf may still grow. */
-        list.push_back({(const char *) (uintptr_t) (x.buf + x.name_offset - buf.data()), x.name_len,
-                        (const char *) (uintptr_t) (x.buf + x.val_offset - buf.data()), x.val_len, x.hpack_index});
-        used += lsxpack_header_get_dec_size(&x);
-    }
-    for (us_quic_header_t &h : list) {
-        h.name = buf.data() + (uintptr_t) h.name;
-        h.value = buf.data() + (uintptr_t) h.value;
-    }
-    bool tooLarge = used > limit || list.size() > http2::MAX_HEADER_FIELDS;
+    std::optional<HpackBuffer> nestedBuffer;
+    HpackBuffer &buffer = ctx->dispatchDepth > 0 ? nestedBuffer.emplace() : ctx->decodeBuffer;
+    /* Past the 431 thresholds decoding goes on only to keep HPACK state in
+     * sync; a block that expands far beyond them is an attack, not a request. */
+    auto [list, status] = hpack.decode(buffer, {block, length}, {limit, http2::MAX_HEADER_FIELDS, hardCap, http2::MAX_HEADER_FIELDS * 2});
+    if (status == Hpack::Status::Malformed) return connectionError(http2::ERR_COMPRESSION_ERROR);
+    if (status == Hpack::Status::OverHardLimit) return connectionError(http2::ERR_ENHANCE_YOUR_CALM);
+    bool tooLarge = status == Hpack::Status::OverLimit;
     bool selfDependent = headerBlockSelfDependent;
     headerBlockSelfDependent = false;
 
@@ -1630,9 +1497,8 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
     lastProcessedStreamId = streamId;
     if (ctx->stopping) writeGoaway(http2::ERR_NO_ERROR);
     if (tooLarge) {
-        Http2Response *stream = new Http2Response(this, streamId, peerInitialWindowSize);
+        Http2Response *stream = openStream(streamId);
         stream->remoteClosed = endStream;
-        streams.push_back(stream);
         stream->writeStatus("431")->end();
         return !closed;
     }
@@ -1643,10 +1509,9 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
         return streamError(streamId, nullptr, http2::ERR_PROTOCOL_ERROR);
     }
 
-    Http2Response *stream = new Http2Response(this, streamId, peerInitialWindowSize);
+    Http2Response *stream = openStream(streamId);
     stream->declaredContentLength = contentLength;
     stream->remoteClosed = endStream;
-    streams.push_back(stream);
     progressed = true;
     if (!isKnownMethod(req.getCaseSensitiveMethod())) {
         /* RFC 9110 §15.6.2. The router would dispatch it to the "any" handler,
@@ -1913,17 +1778,11 @@ inline void Http2Response::growReceiveWindow() {
 }
 
 inline Http2Response *Http2Response::cork(MoveOnlyFunction<void()> &&fn) {
-    Http2Connection *c = conn;
-    c->busy++;
+    Http2Connection::Pin c(conn);
     fn();
-    c->busy--;
-    if (c->closed) {
-        if (c->busy == 0) delete c;
-        return this;
-    }
     /* Outermost holder outside a socket event: whatever fn() queued (bytes
      * in out, retired streams) goes to the deferred pass. */
-    if (c->busy == 0) c->ctx->scheduleSweep(c);
+    if (!c->closed && c.isOutermost()) c->ctx->scheduleSweep(c.get());
     return this;
 }
 

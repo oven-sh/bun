@@ -169,7 +169,6 @@ export const HTMLRewriterTransform = b.class({
     "response",
     "inputStream",
     "outputStream",
-    "pendingPromise",
     "handlerError",
     "suspensionPromise",
     "handlers",

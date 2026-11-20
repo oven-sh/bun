@@ -23,7 +23,7 @@ interface ChildCluster extends InstanceType<typeof EventEmitter> {
   Worker: typeof Worker;
   _setupWorker(): void;
   _getServer(obj: ListeningObject, options, cb: GetServerCallback): void;
-  _trackServer(server): void;
+  _trackServer(server, bind: (track: () => TrackedServerHandle) => void): void;
 }
 
 /** A `net.Server` or a `dgram.Socket`. */
@@ -59,6 +59,7 @@ interface RoundRobinFauxHandle {
 /** Stands in `handles`, as its own key, for a server that bound its own socket. */
 interface TrackedServerHandle {
   [owner_symbol]: Pick<HandleOwner, "close">;
+  close(): void;
 }
 
 const cluster = new EventEmitter() as ChildCluster;
@@ -68,6 +69,8 @@ const noop = FunctionPrototype as () => void;
 const TIMEOUT_MAX = 2 ** 31 - 1;
 const kNoFailure = 0;
 let seq = 0;
+let lastClose = -1;
+let lastAck = -1;
 const callbacks = new Map<number, ReplyCallback>();
 
 function makeConnectionHandle(fd: number) {
@@ -121,6 +124,7 @@ cluster._setupWorker = function () {
   function onmessage(this: ClusterWorker, message, handle) {
     const ack = message.ack;
     if (ack !== undefined) {
+      if (ack > lastAck) lastAck = ack;
       const callback = callbacks.$get(ack);
       if (callback !== undefined) {
         callbacks.$delete(ack);
@@ -182,6 +186,9 @@ cluster._getServer = function (obj, options, cb) {
   send(message, (reply, handle: number | SharedHandle | null | undefined) => {
     if (typeof obj._setServerData === "function") obj._setServerData(reply.data);
 
+    // disconnect() has closed the handles it knew of, and nothing would close this one.
+    if (cluster.worker!.exitedAfterDisconnect) cb = closeUnwantedHandle;
+
     if (typeof handle === "number" && handle >= 0) {
       handle = makeSharedHandle(handle);
     }
@@ -208,11 +215,20 @@ cluster._getServer = function (obj, options, cb) {
   });
 };
 
-// For a server that bound its own socket, so that worker.disconnect() closes it too.
-cluster._trackServer = function (server) {
-  const handle = { [owner_symbol]: server };
-  handles.set(handle, handle);
-  server.once("close", () => handles.delete(handle));
+function closeUnwantedHandle(_errno: unknown, handle?: { close(): void } | null) {
+  handle?.close();
+}
+
+// For a server that binds its own socket. `track` makes worker.disconnect() close it too.
+cluster._trackServer = function (server, bind) {
+  function track() {
+    const handle = { [owner_symbol]: server, close: () => void handles.delete(handle) };
+    handles.set(handle, handle);
+    return handle;
+  }
+  // The primary holds the address of a handle until it has read the handle's 'close'.
+  if (lastClose > lastAck && process.connected) send({ act: "sync" }, () => bind(track));
+  else bind(track);
 };
 
 function removeIndexesKey(indexesKey: string, index: number) {
@@ -259,7 +275,7 @@ function shared(
   handle.close = function () {
     if (!released) {
       released = true;
-      send({ act: "close", key });
+      sendClose(key);
       handles.delete(key);
       removeIndexesKey(indexesKey, index);
     }
@@ -311,7 +327,7 @@ function rr(message, { indexesKey, index }: { indexesKey: string; index: number 
     // the parent process will delete the handle when worker process exits.
     // So it is ok if the close message get lost.
     // See the comments of https://github.com/nodejs/node/pull/46161
-    send({ act: "close", key });
+    sendClose(key);
     handles.delete(key);
     removeIndexesKey(indexesKey, index);
     key = undefined;
@@ -361,6 +377,11 @@ function send(message: object, cb?: ReplyCallback) {
   if (typeof cb === "function") callbacks.$set(seq, cb);
   seq += 1;
   return process.send!(wire, undefined, kInternalSendOptions);
+}
+
+function sendClose(key: string) {
+  lastClose = seq;
+  send({ act: "close", key });
 }
 
 // Extend generic Worker with methods specific to worker processes.

@@ -104,18 +104,13 @@ function lazyWebStreamFromOldStyleStream(source: $Node.Stream) {
   );
 }
 
-// `init` with one member replaced. A spread would drop its inherited and non-enumerable members.
-function withMember(init, name: string, value): any {
-  return { __proto__: init, [name]: value };
-}
-
 // An old-style Stream has no Symbol.asyncIterator, which is how native fetch() and Request read a node stream.
 function withWebBody(init, toWebStream: typeof webStreamFromOldStyleStream) {
   const body = init?.body;
   return typeof body?.pipe === "function" &&
     !body[Symbol.asyncIterator] &&
     body instanceof require("node:stream").Stream
-    ? withMember(init, "body", toWebStream(body))
+    ? require("internal/shared").withMembers(init, { body: toWebStream(body) })
     : init;
 }
 
@@ -244,7 +239,7 @@ async function fetch(
 ) {
   if (init && ObjectHasOwn(init, "agent") && (init as any).agent && (init as any).tls === undefined) {
     const tls = tlsFromAgent((init as any).agent, url);
-    if (tls !== undefined) init = withMember(init, "tls", tls);
+    if (tls !== undefined) init = require("internal/shared").withMembers(init, { tls });
   }
   init = withWebBody(init, webStreamFromOldStyleStream);
   let response;

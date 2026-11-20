@@ -43,7 +43,7 @@ use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 ///     }, false ],
 ///        ----- "is the module async?"
 pub(crate) fn convert_stmts_for_chunk_for_dev_server<'a, 'bump>(
-    c: &LinkerContext<'a>,
+    c: &LinkerContext<'_, 'a>,
     stmts: &mut StmtList,
     part_stmts: &[bun_ast::Stmt],
     bump: &'bump Bump,
@@ -295,7 +295,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'a, 'bump>(
                             ),
                             right: Expr::init(
                                 E::Array {
-                                    items: ExprNodeList::move_from_list(esm_callbacks),
+                                    items: bun_alloc::AstAlloc::vec_from_iter(esm_callbacks),
                                     is_single_line: callbacks_len <= 2,
                                     ..Default::default()
                                 },

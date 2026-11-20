@@ -979,17 +979,7 @@ impl ServerConfig {
                     let transpiler = &vm.transpiler;
                     let framework = match bake_framework {
                         Some(object) if bake_pages => {
-                            match crate::bake::Framework::from_js(
-                                object,
-                                global,
-                                &mut bundler_options,
-                            ) {
-                                Ok(framework) => framework,
-                                Err(err) => {
-                                    bundler_options.destroy_plugin();
-                                    return Err(err);
-                                }
-                            }
+                            crate::bake::Framework::from_js(object, global, &mut bundler_options)?
                         }
                         _ if bake_pages => transpiler
                             .with_mut(|t| crate::bake::Framework::bake_pages(&mut t.resolver)),

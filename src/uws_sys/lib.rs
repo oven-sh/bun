@@ -51,7 +51,7 @@ pub struct us_bun_verify_error_t {
 impl us_bun_verify_error_t {
     /// `X509_V_ERR_HOSTNAME_MISMATCH`, from the in-handshake server identity check (`ERR_TLS_CERT_ALTNAME_INVALID`).
     pub const HOSTNAME_MISMATCH: core::ffi::c_int = 62;
-    /// `error` of openssl.c's `us_ssl_peer_disconnected_error`. Not an X509 code.
+    /// `error` of openssl.cpp's `us_ssl_peer_disconnected_error`. Not an X509 code.
     pub const PEER_DISCONNECTED: core::ffi::c_int = -46;
 }
 
@@ -167,7 +167,7 @@ pub enum SendStatus {
 /// `bun.timespec` — `us_loop_run_bun_tick` takes `*const timespec`.
 pub use bun_core::Timespec;
 
-/// openssl.c's functions that need only an `SSL*`: what the TLS engine over a `us_socket_t` and `SSLWrapper` share.
+/// openssl.cpp's functions that need only an `SSL*`: what the TLS engine over a `us_socket_t` and `SSLWrapper` share.
 pub mod ssl {
     use super::{SslCtx, us_bun_verify_error_t};
     use bun_boringssl_sys::{SSL, SSL_SESSION};
@@ -273,6 +273,7 @@ pub mod connecting_socket;
 pub mod h2;
 #[path = "h3.rs"]
 pub mod h3;
+mod hpack;
 #[path = "InternalLoopData.rs"]
 pub mod internal_loop_data;
 #[path = "ListenSocket.rs"]
@@ -374,7 +375,7 @@ pub use timer::Timer;
 
 pub use body_reader_mixin::BodyReaderMixin;
 pub use connecting_socket::ConnectingSocket;
-pub use listen_socket::ListenSocket;
+pub use listen_socket::{ListenSocket, OwnedListenSocket};
 pub use request::{AnyRequest, Request};
 pub use response::c::uws_res;
 pub use response::{AnyResponse, SocketAddress, WebSocketUpgradeContext};

@@ -411,6 +411,39 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     });
   });
 
+  test("poll_start → a cluster worker drops a connection that it can't adopt and serves the next", async () => {
+    using dir = tempDir("net-fault-cluster-adopt", {
+      "fixture.js": `
+        const cluster = require("node:cluster");
+        const net = require("node:net");
+
+        if (cluster.isPrimary) {
+          const worker = cluster.fork();
+          const dial = (port, next) =>
+            net.connect(port, "127.0.0.1").on("data", chunk => console.log(String(chunk))).on("close", next);
+          worker.on("message", port => dial(port, () => (console.log("dropped"), dial(port, () => worker.disconnect()))));
+          worker.on("exit", code => console.log("exit", code));
+        } else {
+          const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+          const server = net.createServer(c => c.end("served"));
+          server.listen(0, "127.0.0.1", () => {
+            fault.set({ syscall: "poll_start", action: "errno", errno: "ENOMEM", repeat: 1 });
+            process.send(server.address().port);
+          });
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "dropped\nserved\nexit 0\n", stderr: "", exitCode: 0 });
+  });
+
   test("connect → ECONNREFUSED is reported on connecting socket", async () => {
     const server = net.createServer();
     server.listen(0, "127.0.0.1");

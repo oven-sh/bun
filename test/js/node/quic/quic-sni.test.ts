@@ -259,6 +259,25 @@ test("every CRL in one `crl` entry counts", async () => {
   expect(info.validationErrorCode as unknown as string).toBe("CERT_REVOKED");
 });
 
+test("an expired intermediate in `ca` does not shadow the valid one the server sends", async () => {
+  const read = (name: string) =>
+    readFileSync(join(import.meta.dir, "..", "tls", "fixtures", "expired-intermediate", name));
+  const identity = {
+    keys: [createPrivateKey(read("leaf.key"))],
+    certs: [Buffer.concat([read("leaf.pem"), read("int-valid.pem")])],
+  };
+  await using server = await listen(ignoreErrors, { sni: { "*": identity }, alpn: ["quic-test"] });
+  const session = await connect(server.address!, {
+    alpn: "quic-test",
+    servername: "localhost",
+    verifyPeer: "manual",
+    ca: [read("root.pem"), read("int-expired.pem")],
+  } as SessionOptions);
+  const info = await session.opened;
+  await session.close();
+  expect(info.validationErrorCode).toBeUndefined();
+});
+
 test("verifyPeer 'strict' and 'auto' refuse a certificate with a blocked public key", async () => {
   // Unlike agent6's, this certificate names its host, which both modes check.
   const fixtures = join(import.meta.dir, "..", "tls", "fixtures");
@@ -639,5 +658,60 @@ test.each([
     await expect(session.opened).rejects.toThrow(`Peer certificate validation failed: ${reason}`);
   } finally {
     session.destroy();
+  }
+});
+
+const trusted = { servername: "localhost", ca: [Buffer.from(tls.cert)] };
+
+test.each([
+  ["the same options", trusted, trusted, "resumed"],
+  ["another servername", trusted, { ...trusted, servername: "example.com" }, "ERR_QUIC_TRANSPORT_ERROR"],
+  ["another ca", trusted, { ...trusted, ca: [cert2] }, "ERR_QUIC_TRANSPORT_ERROR"],
+  ["no ca", trusted, { servername: "localhost" }, "ERR_QUIC_TRANSPORT_ERROR"],
+  ...["auto", "strict"].map(verifyPeer => [
+    `verifyPeer '${verifyPeer}' after 'manual'`,
+    { ...trusted, servername: "example.com", verifyPeer: "manual" },
+    { ...trusted, servername: "example.com", verifyPeer },
+    "ERR_QUIC_TRANSPORT_ERROR",
+  ]),
+  ["verifyPeer 'strict' after 'auto'", trusted, { ...trusted, verifyPeer: "strict" }, "full handshake"],
+] as [string, object, object, string][])("a sessionTicket offered with %s", async (_, first, second, expected) => {
+  let streams = 0;
+  const server = await listen(
+    session => {
+      ignoreErrors(session);
+      session.closed.catch(() => {});
+      session.onstream = stream => {
+        streams++;
+        stream.closed.catch(() => {});
+      };
+    },
+    { sni: { "*": ipSanIdentity }, alpn: ["quic-test"] },
+  );
+  const ticket = Promise.withResolvers<ArrayBufferView>();
+  const issuer = await connect(server.address!, {
+    alpn: "quic-test",
+    onsessionticket: ticket.resolve,
+    ...first,
+  } as SessionOptions);
+  const sessionTicket = await ticket.promise;
+  await issuer.close();
+
+  const session = await connect(server.address!, { alpn: "quic-test", sessionTicket, ...second } as SessionOptions);
+  ignoreErrors(session);
+  session.closed.catch(() => {});
+  try {
+    const stream = await session.createUnidirectionalStream({ body: Buffer.from("early") });
+    stream.closed.catch(() => {});
+    const outcome = await session.opened.then(
+      (info: any) => (info.earlyDataAccepted ? "resumed" : "full handshake"),
+      err => err.code,
+    );
+    expect(outcome).toBe(expected);
+    // What left with the first flight reached the server ahead of its answer.
+    if (expected !== "full handshake") expect(streams).toBe(expected === "resumed" ? 1 : 0);
+  } finally {
+    session.destroy();
+    server.destroy();
   }
 });

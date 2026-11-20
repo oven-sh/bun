@@ -94,10 +94,8 @@ pub fn with_front_end_inputs<R>(
         .root_dir
         .clone_from(&transpiler.options.root_dir);
     let event_loop = Some(NonNull::from(&event_loop));
-    let started = BundleV2::init_without_starting_threads(
-        transpiler, None, &arena, event_loop, false, None, &arena,
-    );
-    let mut bundle = started.ok()?;
+    let mut bundle =
+        BundleV2::init_without_starting_threads(transpiler, None, &arena, event_loop, None, &arena);
     let services = BundlerServices::new(
         NonNull::from(&mut *bundle).cast(),
         MODULE_PREFIX,
@@ -110,8 +108,7 @@ pub fn with_front_end_inputs<R>(
     );
     let result = then(&options, &services, log);
     drop(services.shut_down());
-    bundle.deinit_without_freeing_arena();
-    bun_sema_driver::wake_idle_region_threads();
     drop(bundle);
+    bun_sema_driver::wake_idle_region_threads();
     Some(result)
 }

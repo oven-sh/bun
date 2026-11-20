@@ -161,9 +161,6 @@ impl StaticRoute {
         global_this: &JSGlobalObject,
         argument: JSValue,
     ) -> JsResult<Option<RefPtr<StaticRoute>>> {
-        // `as_class_ref` is the safe shared-borrow downcast (one audited
-        // unsafe in `JSValue`); every `Response` accessor used below takes
-        // `&self` (interior mutability for `body`), so no `&mut` is needed.
         if let Some(response) = argument.as_class_ref::<Response>() {
             if !HTTPStatusText::is_sendable(response.status_code()) {
                 return Err(global_this.throw_invalid_arguments(format_args!(
@@ -274,9 +271,6 @@ impl StaticRoute {
     pub(crate) fn on_head(this: ThisPtr<Self>, resp: AnyResponse) {
         debug_assert!(this.server.get().is_some());
         Self::retain_for_response(this);
-        if let Some(server) = this.server.get() {
-            server.on_pending_request();
-        }
         resp.corked(|| this.render_metadata_and_end(resp));
         Self::on_response_complete(this, resp);
     }
@@ -325,9 +319,6 @@ impl StaticRoute {
     pub(crate) fn on(this: ThisPtr<Self>, resp: AnyResponse) {
         debug_assert!(this.server.get().is_some());
         Self::retain_for_response(this);
-        if let Some(server) = this.server.get() {
-            server.on_pending_request();
-        }
         let mut finished = false;
         this.do_render_blob(resp, &mut finished);
         if finished {
@@ -355,6 +346,9 @@ impl StaticRoute {
             this.pending_ref.set(Some(RefPtr::from_this(this)));
         }
         this.pending_responses.set(n + 1);
+        if let Some(server) = this.server.get() {
+            server.on_pending_request();
+        }
     }
 
     /// May free `this`.
@@ -477,9 +471,6 @@ impl StaticRoute {
     ) -> bool {
         req.set_yield(false);
         Self::retain_for_response(this);
-        if let Some(server) = this.server.get() {
-            server.on_pending_request();
-        }
         write_status(resp, status);
         write_route_headers(&this.headers, this.server.get(), resp);
         if !HTTPStatusText::is_null_body(status) {
@@ -488,11 +479,5 @@ impl StaticRoute {
         resp.end_without_body(resp.should_close_connection());
         Self::on_response_complete(this, resp);
         true
-    }
-}
-
-impl Drop for StaticRoute {
-    fn drop(&mut self) {
-        self.blob.detach();
     }
 }

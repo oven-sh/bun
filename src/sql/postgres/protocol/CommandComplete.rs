@@ -1,27 +1,15 @@
+use crate::postgres::AnyPostgresError;
 use crate::postgres::protocol::new_reader::NewReader;
-use crate::shared::Data;
 
-pub struct CommandComplete {
-    pub command_tag: Data,
+pub struct CommandComplete<'a> {
+    pub command_tag: &'a [u8],
 }
 
-impl Default for CommandComplete {
-    fn default() -> Self {
-        Self {
-            command_tag: Data::Empty,
-        }
-    }
-}
-
-impl CommandComplete {
-    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
-        &mut self,
-        mut reader: NewReader<Container>,
-    ) -> crate::Result<()> {
+impl<'a> CommandComplete<'a> {
+    pub fn decode_internal(reader: &NewReader<'a>) -> Result<Self, AnyPostgresError> {
         let remaining = reader.body_length()?;
 
-        let (tag, _) = reader.string_within(remaining)?;
-        *self = Self { command_tag: tag };
-        Ok(())
+        let (command_tag, _) = reader.string_within(remaining)?;
+        Ok(Self { command_tag })
     }
 }

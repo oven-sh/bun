@@ -1,6 +1,5 @@
 use core::ffi::{CStr, c_char, c_int};
 use core::net::IpAddr;
-use core::ptr::null_mut;
 
 use bun_boringssl_sys as ssl;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc};
@@ -85,8 +84,9 @@ const TLS13_AES_128_GCM_SHA256: &[u8] = b"TLS_AES_128_GCM_SHA256";
 const TLS13_AES_256_GCM_SHA384: &[u8] = b"TLS_AES_256_GCM_SHA384";
 const TLS13_CHACHA20_POLY1305_SHA256: &[u8] = b"TLS_CHACHA20_POLY1305_SHA256";
 
+// `node_quic_shim.c` asserts these, and the `SSL_EARLY_DATA_*` values below, against BoringSSL's headers.
 const SSL_COMPLIANCE_POLICY_FIPS_202205: c_int = 1;
-const SSL_COMPLIANCE_POLICY_WPA3_192_202304: c_int = 2;
+const SSL_COMPLIANCE_POLICY_WPA3_192_202304: c_int = 3;
 
 fn tls13_policy_for_ciphers(ciphers: &[u8]) -> Option<c_int> {
     let mut has_128 = false;
@@ -122,7 +122,12 @@ impl TlsConfig {
         {
             let ca_pem = collect_pem(global, v)?;
             if !ca_pem.is_empty() {
-                given.ca = Some(ca_pem.iter().map(|pem| bun_core::dupe_z(pem)).collect());
+                given.ca = Some(
+                    ca_pem
+                        .iter()
+                        .map(|pem| bun_core::SensitiveCString::new(pem))
+                        .collect(),
+                );
             }
         }
         let trust = global.bun_vm().tls_config(given, is_server);
@@ -240,6 +245,28 @@ pub(super) struct TlsContext {
         reason = "BoringSSL keeps the `arg` pointer (this Vec's header address) across ClientHellos, so the Vec must not move; the Box pins it"
     )]
     _alpn: Option<Box<Vec<u8>>>,
+    /// A client's. Its tickets carry it.
+    session_id_context: Option<[u8; 32]>,
+}
+
+/// A resumed handshake checks no certificate, so this covers all that decides which server is accepted.
+fn client_session_id_context(
+    options: &uws::SocketContext::BunSocketContextOptions,
+    config: &TlsConfig,
+) -> [u8; 32] {
+    let mut id = options.digest();
+    let mut hasher = bun_sha_hmac::SHA256::init();
+    hasher.update(&id);
+    if config.ca_pem.is_none() {
+        hasher.update(bun_uws_sys::socket_context::c::us_get_default_ca_store_digest());
+    }
+    hasher.update(&[
+        u8::from(config.verify_peer_strict),
+        u8::from(config.verify_hostname),
+    ]);
+    hasher.update(&config.servername);
+    hasher.r#final(&mut id);
+    id
 }
 
 /// Returns the session of the lsquic conn that owns `ssl`, which must be live.
@@ -325,7 +352,7 @@ impl TlsContext {
             [&config.certs_pem, &config.keys_pem, &config.crl_pem].map(|pems| pem_list(pems));
         let ca = config.ca_pem.as_deref().map(pem_list);
         let mut err = uws::create_bun_socket_error_t::none;
-        let Some(owned) = (uws::SocketContext::BunSocketContextOptions {
+        let options = uws::SocketContext::BunSocketContextOptions {
             cert: cert.as_ptr(),
             cert_count: cert.len() as u32,
             key: key.as_ptr(),
@@ -338,8 +365,14 @@ impl TlsContext {
             ssl_min_version: ssl::TLS1_3_VERSION.into(),
             ssl_max_version: ssl::TLS1_3_VERSION.into(),
             ..Default::default()
-        })
-        .create_ssl_context(&mut err) else {
+        };
+        let session_id_context =
+            (!config.is_server).then(|| client_session_id_context(&options, config));
+        let built = match &session_id_context {
+            Some(id) => options.create_ssl_context_with_digest(id, &mut err),
+            None => options.create_ssl_context(&mut err),
+        };
+        let Some(owned) = built else {
             // Without a message of its own, the reason is BoringSSL's.
             let reason = ssl::ERR_reason_error_string(ssl::ERR_get_error());
             ssl::ERR_clear_error();
@@ -355,6 +388,7 @@ impl TlsContext {
         let mut this = TlsContext {
             ctx: owned,
             _alpn: None,
+            session_id_context,
         };
         // SAFETY: `ctx` is live and nothing else has it yet. The pointers it's given are NUL-terminated or come with a length.
         unsafe {
@@ -442,6 +476,21 @@ impl TlsContext {
     pub(super) fn raw(&self) -> *mut ssl::SSL_CTX {
         self.ctx.as_ptr()
     }
+
+    /// Whether a client with the same options got `ticket`: lsquic's version tag, format version and length, then the session.
+    pub(super) fn can_resume(&self, ticket: &[u8]) -> bool {
+        let Some((head, rest)) = ticket.split_first_chunk::<12>() else {
+            return false;
+        };
+        let len = u32::from_be_bytes([head[8], head[9], head[10], head[11]]);
+        let session = rest
+            .get(..len as usize)
+            .and_then(ssl::OwnedSslSession::from_der);
+        ssl::ERR_clear_error();
+        session
+            .zip(self.session_id_context)
+            .is_some_and(|(session, id)| session.id_context() == id)
+    }
 }
 
 pub(super) fn negotiated_alpn(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
@@ -469,7 +518,7 @@ pub(super) fn negotiated_alpn(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
 unsafe extern "C" {
     /// `X509_V_ERR_*` -> node's code name; see ncrypto.cpp.
     safe fn Bun__X509__validationErrorCode(err: i32) -> *const core::ffi::c_char;
-    /// openssl.c: the signature algorithms every other TLS context of Bun accepts from a peer.
+    /// openssl.cpp: the signature algorithms every other TLS context of Bun accepts from a peer.
     fn us_ssl_ctx_set_verify_signature_algorithms(ctx: *mut ssl::SSL_CTX) -> c_int;
 }
 
@@ -553,41 +602,13 @@ pub(super) fn local_certificate_der(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
     if cert.is_null() {
         return None;
     }
-    let mut der: *mut u8 = null_mut();
-    // SAFETY: cert is live; i2d allocates.
-    let len = unsafe { ssl::i2d_X509(cert, core::ptr::from_mut(&mut der)) };
-    if len <= 0 || der.is_null() {
-        return None;
-    }
-    // SAFETY: i2d allocated `der[..len]`.
-    let bytes = unsafe { core::slice::from_raw_parts(der, len as usize).to_vec() };
-    // SAFETY: i2d's allocation is freed with OPENSSL_free.
-    unsafe { ssl::OPENSSL_free(der.cast()) };
-    Some(bytes)
+    Some(ssl::X509::opaque_ref(cert).to_der()?.to_vec())
 }
 
 pub(super) fn peer_certificate_der(ssl_ptr: *mut ssl::SSL) -> Option<Vec<u8>> {
     if ssl_ptr.is_null() {
         return None;
     }
-    // SAFETY: `ssl_ptr` is non-null (checked above) and live for this call;
-    // SSL_get_peer_certificate returns an owned +1 X509 reference we release
-    // below.
-    unsafe {
-        let cert = ssl::SSL_get_peer_certificate(ssl_ptr);
-        if cert.is_null() {
-            return None;
-        }
-        let mut der: *mut u8 = null_mut();
-        let len = ssl::i2d_X509(cert, core::ptr::from_mut(&mut der));
-        let result = if len > 0 && !der.is_null() {
-            let bytes = core::slice::from_raw_parts(der, len as usize).to_vec();
-            ssl::OPENSSL_free(der.cast());
-            Some(bytes)
-        } else {
-            None
-        };
-        ssl::X509_free(cert);
-        result
-    }
+    let cert = ssl::SSL::opaque_ref(ssl_ptr).peer_certificate()?;
+    Some(cert.to_der()?.to_vec())
 }

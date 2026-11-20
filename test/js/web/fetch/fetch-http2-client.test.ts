@@ -137,7 +137,7 @@ type RawState = {
   /** Called for each PING from the client. The helper never ACKs a PING; a test does it. */
   onPing?: (conn: RawConn, payload: Buffer) => void;
   /** Called for each request, before `onStream`. */
-  onRequest?: () => void;
+  onRequest?: (block: Buffer) => void;
   /** Resolves once every accepted socket has emitted `close` — i.e. all
    *  in-flight client frames have been delivered to the `data` handler.
    *  Tests asserting on server-side capture (`state.rst`) should await this
@@ -201,6 +201,7 @@ async function withRawH2Server(
     };
     let buf = Buffer.alloc(0);
     let prefaceSeen = false;
+    const fragments: Buffer[] = [];
     socket.on("data", (chunk: Buffer) => {
       buf = Buffer.concat([buf, chunk]);
       if (!prefaceSeen) {
@@ -224,8 +225,13 @@ async function withRawH2Server(
           state.frames.push(f);
           conn.onFrame?.(f);
         }
-        if (type === 1) state.onRequest?.();
-        if (type === 1) onStream(conn, id, connIndex); // HEADERS opens a stream
+        if (type === 1 || type === 9) {
+          fragments.push(payload);
+          if (!(flags & 4)) continue;
+          const block = Buffer.concat(fragments.splice(0));
+          state.onRequest?.(block);
+          onStream(conn, id, connIndex); // a whole header block opens a stream
+        }
         if (type === 3) state.rst.push({ id, code: payload.readUInt32BE(0) });
         if (type === 6 && !(flags & 1)) state.onPing?.(conn, payload);
       }
@@ -386,6 +392,111 @@ test.concurrent(
   },
   60_000,
 );
+
+function dataFrames(streamId: number, body: Buffer) {
+  const frames: Buffer[] = [];
+  for (let i = 0; i < body.length; i += 16384) frames.push(frame(FRAME_DATA, 0, streamId, body.subarray(i, i + 16384)));
+  return Buffer.concat(frames);
+}
+
+test.concurrent(
+  "h2: the idle deadline does not run while the body waits for its reader",
+  async () => {
+    const body = Buffer.alloc(1024 * 1024, "a");
+    const opened = Promise.withResolvers<RawConn>();
+    await withRawH2Server(
+      (conn, id, connIndex) => {
+        if (connIndex > 0) return;
+        conn.headers(id, hpackStatus(200));
+        conn.socket.write(dataFrames(id, body));
+        opened.resolve(conn);
+      },
+      async url => {
+        const response = await fetch(url, { ...h2, timeout: 1000 });
+        const conn = await opened.promise;
+        await conn.ping();
+        // Armed later, on a connection of its own, so it can't fire first.
+        using session = new Bun.FetchSession();
+        expect(await statusOrCode(fetch(url, { ...h2, timeout: 1000, session }))).toBe("TimeoutError");
+        conn.data(1, "", true);
+        expect(await response.bytes().then(bytes => bytes.length, errcode)).toBe(body.length);
+      },
+    );
+  },
+  30_000,
+);
+
+test.concurrent.each(["http2", "http1.1"] as const)(
+  "%s: the idle deadline does not run once a reader has fallen behind",
+  async protocol => {
+    const opened = Promise.withResolvers<http2.Http2ServerResponse>();
+    let requests = 0;
+    const server = http2.createSecureServer({ ...tls, allowHTTP1: true }, (_, res) => {
+      if (requests++ > 0) return;
+      res.writeHead(200).write("a");
+      opened.resolve(res);
+    });
+    using fence = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const url = `https://127.0.0.1:${(server.address() as net.AddressInfo).port}/`;
+      const options = { protocol, timeout: 1000, tls: { rejectUnauthorized: false } } as const;
+      const reader = (await fetch(url, options)).body!.getReader();
+      let total = (await reader.read()).value!.length;
+      const res = await opened.promise;
+      // The first goes to the stream's own pull. Only the last takes the rest over 256 KiB, so nothing arrives after the pause.
+      for (const size of [1, 250 * 1024, 8 * 1024]) {
+        await new Promise(resolve => res.write(Buffer.alloc(size), resolve));
+        await fetch(fence.url);
+      }
+      // Armed later, on a connection of its own, so it can't fire first.
+      using session = new Bun.FetchSession();
+      expect(await statusOrCode(fetch(url, { ...options, session }))).toBe("TimeoutError");
+      res.end();
+      for (let chunk; !(chunk = await reader.read()).done;) total += chunk.value.length;
+      expect(total).toBe(258 * 1024 + 2);
+    } finally {
+      server.close();
+    }
+  },
+  30_000,
+);
+
+test.concurrent("h2: a stream gets no window while compressed bytes it delivered wait to be decoded", async () => {
+  const member = zlib.gzipSync(Buffer.alloc(1024 * 1024));
+  // More than half of the 16 MiB window, which is when a WINDOW_UPDATE is due.
+  const body = Buffer.alloc(member.length * Math.ceil((9 * 1024 * 1024) / member.length), member);
+  const opened = Promise.withResolvers<RawConn>();
+  await withRawH2Server(
+    (conn, id) => {
+      conn.headers(id, Buffer.concat([hpackStatus(200), hpackLit("content-encoding", "gzip")]));
+      conn.socket.write(dataFrames(id, body));
+      opened.resolve(conn);
+    },
+    async (url, state) => {
+      const response = await fetch(url, h2);
+      const conn = await opened.promise;
+      await conn.ping();
+      const reader = response.body!.getReader();
+      for (let total = 0; total < 2 * 1024 * 1024;) total += (await reader.read()).value!.length;
+      await conn.ping();
+      expect(state.frames.map(({ type }) => type)).toEqual([FRAME_HEADERS]);
+      await reader.cancel();
+    },
+  );
+});
+
+test.concurrent("h2: a compressed body larger than the window arrives whole", async () => {
+  const body = zlib.gzipSync(Buffer.alloc(20 * 1024 * 1024, "a"), { level: 0 });
+  await withH2Server(
+    (_req, res) => void res.writeHead(200, { "content-encoding": "gzip" }).end(body),
+    async url => {
+      let total = 0;
+      for await (const chunk of (await fetch(url, h2)).body!) total += chunk.length;
+      expect(total).toBe(20 * 1024 * 1024);
+    },
+  );
+});
 
 describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT)", () => {
   test("GET: status, headers and body round-trip", async () => {
@@ -2465,6 +2576,107 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       // reconnect per request would have passed the body check vacuously.
       expect(sessions).toBe(1);
     });
+  });
+
+  test.each([
+    [[100], "3f45"],
+    [[0, 4096], "203fe11f"],
+    [[200, 100, 300], "3f453f8d02"],
+    [[4096], "3fe11f"],
+  ])("SETTINGS_HEADER_TABLE_SIZE of %j between two requests", async (sizes, update) => {
+    await withRawH2Server(
+      (conn, id) => {
+        const entries = sizes.map(size => Buffer.concat([Buffer.from([0, 1]), u32be(size)]));
+        if (id === 1) conn.socket.write(frame(4, 0, 0, Buffer.concat(entries)));
+        conn.headers(id, hpackStatus(204), { endStream: true });
+      },
+      async (url, state) => {
+        const starts: string[] = [];
+        state.onRequest = block => starts.push(block.subarray(0, block.indexOf("8287", 0, "hex")).toString("hex"));
+        await using proc = await spawnFetch(`
+          for (let i = 0; i < 3; i++) console.log((await fetch("${url}", { tls: { rejectUnauthorized: false } })).status);
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, starts, exitCode }).toEqual({
+          stdout: "204\n204\n204\n",
+          stderr: "",
+          starts: ["", update, ""],
+          exitCode: 0,
+        });
+      },
+    );
+  });
+
+  test.each([
+    ["an open", 3],
+    ["a finished", 1],
+  ])("a header block that does not decode on %s stream ends the connection", async (_, badId) => {
+    await withRawH2Server(
+      (conn, id) => {
+        if (id === 3) conn.headers(badId, Buffer.from([0x80]), { endStream: true });
+        else conn.headers(id, hpackStatus(204), { endStream: true });
+      },
+      async (url, state) => {
+        await using proc = await spawnFetch(`
+          for (let i = 0; i < 3; i++)
+            console.log(await fetch("${url}", { tls: { rejectUnauthorized: false } }).then(r => r.status, e => e.code));
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, connections: state.connections, exitCode }).toEqual({
+          stdout: "204\nHTTP2CompressionError\n204\n",
+          stderr: "",
+          connections: 2,
+          exitCode: 0,
+        });
+      },
+    );
+  });
+
+  test("authorization and cookie are never-indexed literals", async () => {
+    await withRawH2Server(
+      (conn, id) => conn.headers(id, hpackStatus(204), { endStream: true }),
+      async (url, state) => {
+        const blocks: string[] = [];
+        state.onRequest = block => blocks.push(block.toString("hex"));
+        await using proc = await spawnFetch(`
+          const headers = { authorization: "~~", cookie: "~~~" };
+          for (let i = 0; i < 2; i++) console.log((await fetch("${url}", { headers, tls: { rejectUnauthorized: false } })).status);
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "204\n204\n", stderr: "", exitCode: 0 });
+        expect(blocks.map(block => [block.includes("1f08027e7e"), block.includes("1f11037e7e7e")])).toEqual([
+          [true, true],
+          [true, true],
+        ]);
+      },
+    );
+  });
+
+  test("a request header may take 64 KiB with its name", async () => {
+    await withRawH2Server(
+      (conn, id) => conn.headers(id, hpackStatus(204), { endStream: true }),
+      async (url, state) => {
+        const blocks: Buffer[] = [];
+        state.onRequest = block => blocks.push(block);
+        await using proc = await spawnFetch(`
+          for (const length of [65536, 65537, 10]) {
+            const headers = { "x-big": Buffer.alloc(length - 5, "c").toString() };
+            console.log(await fetch("${url}", { headers, tls: { rejectUnauthorized: false } }).then(r => r.status, e => e.code));
+          }
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        // The length, 65531 times the 5 bits of "c", and one bit of padding.
+        const value = [Buffer.from("fffebe02", "hex"), Buffer.alloc(40956, "2108421084", "hex"), Buffer.from([0x09])];
+        const whole = blocks.map(block => block.includes(Buffer.concat(value)));
+        expect({ stdout, stderr, whole, connections: state.connections, exitCode }).toEqual({
+          stdout: "204\nUnableToEncode\n204\n",
+          stderr: "",
+          whole: [true, false],
+          connections: 2,
+          exitCode: 0,
+        });
+      },
+    );
   });
 
   test("303 to a streaming POST over HTTP/1.1 closes the socket instead of pooling it mid-chunked-body", async () => {

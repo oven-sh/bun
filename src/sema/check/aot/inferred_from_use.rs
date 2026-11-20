@@ -3799,7 +3799,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     fn compute_number_type(&mut self, symbol: SymbolId) -> TypeId {
         let mut walk = self.new_walk();
-        match self.c.p.aot_symbols().int32_alias() {
+        match self.c.p.aot_symbols.int32_alias() {
             Some(int32) if self.holds_integers(&mut walk, symbol) => self.c.declared_type(int32),
             Some(_) | None => TypeId::ANY,
         }
@@ -3914,7 +3914,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn is_int32_type(&mut self, ty: TypeId) -> bool {
-        let int32 = self.c.p.aot_symbols().int32_alias();
+        let int32 = self.c.p.aot_symbols.int32_alias();
         let int32 = int32.map(|alias| self.c.declared_type(alias));
         self.c.every_type(ty, |c, part| {
             let is_int32_literal = matches!(
@@ -5234,7 +5234,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn number_type(&mut self, facts: Facts) -> TypeId {
-        let int32 = self.c.p.aot_symbols().int32_alias();
+        let int32 = self.c.p.aot_symbols.int32_alias();
         match int32 {
             Some(int32)
                 if facts.intersects(Facts::INT32 | Facts::KEY)

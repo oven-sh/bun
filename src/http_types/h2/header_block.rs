@@ -1,4 +1,4 @@
-//! Reassembly of a header block from HEADERS or PUSH_PROMISE and its CONTINUATION frames (RFC 9113 §4.3, §6.10).
+//! Header blocks (RFC 9113 §4.3): reassembly from HEADERS or PUSH_PROMISE and CONTINUATION frames, and outbound staging.
 
 use super::frame::{FrameHeader, FrameType};
 use super::settings::DEFAULT_MAX_FRAME_SIZE;
@@ -82,6 +82,92 @@ impl HeaderBlockAssembler {
             block.clear();
             self.block = block;
         }
+    }
+}
+
+/// The fields of an outbound header block, staged until all of them are known.
+#[derive(Default)]
+pub struct HeaderFields {
+    /// Each name followed by its value, in field order.
+    bytes: Vec<u8>,
+    /// Two entries per field: the name length with `never_index` in bit 31, then the value length.
+    fields: Vec<u32>,
+}
+
+impl HeaderFields {
+    const NEVER_INDEX: u32 = 1 << 31;
+
+    pub fn push(
+        &mut self,
+        name: &[u8],
+        value: &[u8],
+        never_index: bool,
+    ) -> Result<(), bun_alloc::AllocError> {
+        // Treat a length that overflows its entry like a failed allocation.
+        let (Ok(name_len), Ok(value_len)) = (u32::try_from(name.len()), u32::try_from(value.len()))
+        else {
+            return Err(bun_alloc::AllocError);
+        };
+        if name_len >= Self::NEVER_INDEX {
+            return Err(bun_alloc::AllocError);
+        }
+        self.bytes
+            .try_reserve(name.len() + value.len())
+            .map_err(|_| bun_alloc::AllocError)?;
+        self.fields
+            .try_reserve(2)
+            .map_err(|_| bun_alloc::AllocError)?;
+        self.bytes.extend_from_slice(name);
+        self.bytes.extend_from_slice(value);
+        self.fields.push(if never_index {
+            name_len | Self::NEVER_INDEX
+        } else {
+            name_len
+        });
+        self.fields.push(value_len);
+        Ok(())
+    }
+
+    pub fn clear(&mut self) {
+        self.bytes.clear();
+        self.fields.clear();
+    }
+
+    /// Name, value and `never_index`.
+    pub fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8], bool)> {
+        let mut rest = self.bytes.as_slice();
+        let fields = self.fields.as_chunks::<2>().0;
+        fields.iter().map(move |&[name_len, value_len]| {
+            let (name, value);
+            (name, rest) = rest.split_at((name_len & !Self::NEVER_INDEX) as usize);
+            (value, rest) = rest.split_at(value_len as usize);
+            (name, value, name_len & Self::NEVER_INDEX != 0)
+        })
+    }
+
+    /// Value of the first field named `name`.
+    pub fn get(&self, name: &[u8]) -> Option<&[u8]> {
+        self.iter()
+            .find_map(|(field_name, value, _)| (field_name == name).then_some(value))
+    }
+
+    /// Number of fields.
+    pub fn len(&self) -> usize {
+        self.fields.len() / 2
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.fields.is_empty()
+    }
+
+    /// Heap bytes retained after `clear()`.
+    pub fn capacity(&self) -> usize {
+        self.bytes.capacity() + self.fields.capacity() * core::mem::size_of::<u32>()
+    }
+
+    /// https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_hd.c#L1578-L1603
+    pub fn deflate_bound(&self) -> usize {
+        12 + 12 * self.len() + self.bytes.len()
     }
 }
 

@@ -303,7 +303,7 @@ impl MimeType {
         }
     }
 
-    pub fn init(str_: &[u8], dupe: bool) -> MimeType {
+    pub fn init(str_: &[u8]) -> MimeType {
         let mut str = str_;
         if let Some(slash) = strings::index_of_char_usize(str, b'/') {
             let category_ = &str[0..slash];
@@ -320,7 +320,7 @@ impl MimeType {
 
             match category_.len() {
                 len if len == b"application".len() => {
-                    if strings::eql_comptime_ignore_len(category_, b"application") {
+                    if category_ == b"application" {
                         if str == b"json" || str == b"geo+json" {
                             return JSON;
                         }
@@ -333,20 +333,21 @@ impl MimeType {
                     if str == b"wasm" {
                         return WASM;
                     }
+
                     return MimeType {
-                        value: Self::maybe_dupe(str_, dupe),
+                        value: Cow::Owned(str_.to_vec()),
                         category: Category::Application,
                     };
                 }
                 len if len == b"font".len() => {
-                    if strings::eql_comptime_ignore_len(category_, b"font") {
+                    if category_ == b"font" {
                         return MimeType {
-                            value: Self::maybe_dupe(str_, dupe),
+                            value: Cow::Owned(str_.to_vec()),
                             category: Category::Font,
                         };
                     }
 
-                    if strings::eql_comptime_ignore_len(category_, b"text") {
+                    if category_ == b"text" {
                         if str == b"css" {
                             return CSS;
                         }
@@ -362,30 +363,31 @@ impl MimeType {
                         if str == b"plain" {
                             return TEXT;
                         }
+
                         return MimeType {
-                            value: Self::maybe_dupe(str_, dupe),
+                            value: Cow::Owned(str_.to_vec()),
                             category: Category::Text,
                         };
                     }
                 }
                 len if len == b"image".len() => {
-                    if strings::eql_comptime_ignore_len(category_, b"image") {
+                    if category_ == b"image" {
                         return MimeType {
-                            value: Self::maybe_dupe(str_, dupe),
+                            value: Cow::Owned(str_.to_vec()),
                             category: Category::Image,
                         };
                     }
 
-                    if strings::eql_comptime_ignore_len(category_, b"audio") {
+                    if category_ == b"audio" {
                         return MimeType {
-                            value: Self::maybe_dupe(str_, dupe),
+                            value: Cow::Owned(str_.to_vec()),
                             category: Category::Audio,
                         };
                     }
 
-                    if strings::eql_comptime_ignore_len(category_, b"video") {
+                    if category_ == b"video" {
                         return MimeType {
-                            value: Self::maybe_dupe(str_, dupe),
+                            value: Cow::Owned(str_.to_vec()),
                             category: Category::Video,
                         };
                     }
@@ -393,18 +395,11 @@ impl MimeType {
                 _ => {}
             }
         }
+
         MimeType {
-            value: Self::maybe_dupe(str_, dupe),
+            value: Cow::Owned(str_.to_vec()),
             category: Category::Other,
         }
-    }
-
-    #[inline]
-    fn maybe_dupe(s: &[u8], _dupe: bool) -> Cow<'static, [u8]> {
-        // Borrowing the input slice in the no-dupe case (zero-copy) would need
-        // a lifetime parameter on `MimeType`, so
-        // both cases copy here; never launder the borrow to 'static instead.
-        Cow::Owned(s.to_vec())
     }
 }
 
@@ -417,12 +412,6 @@ pub fn by_extension_no_default(ext_without_leading_dot: &[u8]) -> Option<MimeTyp
         return Some(Compact::from(*entry).to_mime_type());
     }
     None
-}
-
-// TODO: use a precomputed static hash map for this
-// its too many branches to use ComptimeStringMap
-pub fn by_name(name: &[u8]) -> MimeType {
-    MimeType::init(name, false)
 }
 
 // Duplicate keys are rejected at compile time. The original table

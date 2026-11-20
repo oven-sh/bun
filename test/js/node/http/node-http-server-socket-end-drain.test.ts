@@ -131,6 +131,24 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
     }).toEqual({ statusLine: "HTTP/1.1 200 OK", body });
   });
 
+  test.concurrent.each([
+    ["end()", (res: ServerResponse) => void res.end("late")],
+    ["write()", (res: ServerResponse) => void res.write("late")],
+    ["flushHeaders()", (res: ServerResponse) => res.flushHeaders()],
+    ["writeContinue()", (res: ServerResponse) => res.writeContinue()],
+  ])("res.%s behind socket.end(data) sends nothing", async (_name, late) => {
+    const onRequest: Handler = (req, res) => {
+      req.socket.end("raw");
+      late(res);
+    };
+    await using server = protocol === "https" ? https.createServer(tlsCert, onRequest) : http.createServer(onRequest);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const to = { port: (server.address() as net.AddressInfo).port, host: "127.0.0.1" };
+    const client = protocol === "https" ? tls.connect({ ...to, ca: tlsCert.cert }) : net.connect(to);
+    client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    expect(Buffer.concat(await client.toArray()).toString()).toBe("raw");
+  });
+
   test.concurrent("res.socket.end() behind 8 MiB the client hasn't read, on a response that never ends", async () => {
     const size = 8 * 1024 * 1024;
     const { promise: heldAtEnd, resolve } = Promise.withResolvers<number>();
@@ -166,6 +184,195 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
       client.destroy();
     }
   });
+});
+
+// Windows takes all 8 MiB in one send, so there nothing waits for the client.
+describe.skipIf(isWindows).each(["http", "https"] as const)(
+  "%s: a socket that ends behind 8 MiB the client hasn't read",
+  protocol => {
+    const size = 8 * 1024 * 1024;
+    const turn = () => new Promise(resolve => setImmediate(resolve));
+
+    async function respond(act: (req: IncomingMessage, client: net.Socket) => void | Promise<void>) {
+      const server = protocol === "https" ? https.createServer(tlsCert) : http.createServer();
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const to = { port: (server.address() as net.AddressInfo).port, host: "127.0.0.1", allowHalfOpen: true };
+      const client = protocol === "https" ? tls.connect({ ...to, ca: tlsCert.cert }) : net.connect(to);
+      client.on("error", () => {});
+      client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      const [req, res] = (await once(server, "request")) as [IncomingMessage, ServerResponse];
+      const events: string[] = [];
+      req.on("aborted", () => events.push("req aborted"));
+      res.on("finish", () => events.push("res finish"));
+      req.socket.on("finish", () => events.push("socket finish"));
+      const socketClosed = once(req.socket, "close");
+      res.end(Buffer.alloc(size, "a"));
+      await act(req, client);
+      await turn();
+      await turn();
+      return {
+        server,
+        events,
+        socketClosed,
+        async read() {
+          let received = 0;
+          client.on("data", chunk => (received += chunk.length));
+          await new Promise(resolve => client.once("end", () => client.end()).once("close", resolve));
+          return received;
+        },
+        [Symbol.dispose]() {
+          client.destroy();
+          server.closeAllConnections();
+          server.close();
+        },
+      };
+    }
+
+    test.concurrent.each([
+      ["destroySoon()", (req: IncomingMessage) => req.socket.destroySoon()],
+      ["end()", (req: IncomingMessage) => void req.socket.end()],
+      [
+        "the client's FIN",
+        async (req: IncomingMessage, client: net.Socket) => {
+          client.end();
+          await once(req.socket, "end");
+        },
+      ],
+    ])("%s: nothing finishes or aborts until the bytes are out", async (_name, act) => {
+      using exchange = await respond(act);
+      const early = [...exchange.events];
+      const whole = (await exchange.read()) > size;
+      await exchange.socketClosed;
+      expect({ early, whole, late: exchange.events.toSorted() }).toEqual({
+        early: [],
+        whole: true,
+        late: ["res finish", "socket finish"],
+      });
+    });
+
+    test.concurrent.each([
+      ["socket.destroy()", (req: IncomingMessage) => void req.socket.destroy()],
+      ["res.destroy()", (req: IncomingMessage) => void (req.socket as any)._httpMessage.destroy()],
+      ["closeAllConnections()", (req: IncomingMessage) => (req.socket as any).server.closeAllConnections()],
+    ])("%s: the response finishes before it closes", async (_name, close) => {
+      const order: string[] = [];
+      const { promise: both, resolve } = Promise.withResolvers<void>();
+      using _exchange = await respond(req => {
+        for (const event of ["finish", "close"]) {
+          (req.socket as any)._httpMessage.on(event, () => order.push(event) === 2 && resolve());
+        }
+        close(req);
+      });
+      await both;
+      expect(order).toEqual(["finish", "close"]);
+    });
+
+    test.concurrent("end(): an unread upload that waits behind the response doesn't reset it", async () => {
+      using exchange = await respond(async (req, client) => {
+        client.write(`POST /2 HTTP/1.1\r\nHost: x\r\nContent-Length: ${size}\r\n\r\n`);
+        client.write(Buffer.alloc(size));
+        await once((req.socket as any).server, "request");
+        req.socket.end();
+      });
+      expect(await exchange.read()).toBeGreaterThan(size);
+      await exchange.socketClosed;
+    });
+
+    test.concurrent.each([
+      ["write(), end()", "end", "<a><b>"],
+      ["write(), write()", "write", "<a><b><late>"],
+    ] as const)("%s on the socket go out ahead of a later response", async (_name, second, expected) => {
+      const server = (protocol === "https" ? https.createServer(tlsCert) : http.createServer()).on(
+        "request",
+        (req, res) => {
+          req.socket.write("<a>");
+          req.socket[second]("<b>");
+          res.end("<late>");
+        },
+      );
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const to = { port: (server.address() as net.AddressInfo).port, host: "127.0.0.1" };
+      const client = protocol === "https" ? tls.connect({ ...to, ca: tlsCert.cert }) : net.connect(to);
+      try {
+        let received = "";
+        client.on("data", chunk => (received += chunk));
+        client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        await once(client, "close");
+        expect(received.match(/<[^>]*>/g)!.join("")).toBe(expected);
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    });
+
+    test.concurrent("end(): the connection closes on the responses that wait behind it", async () => {
+      using exchange = await respond(async (req, client) => {
+        client.write("GET /2 HTTP/1.1\r\nHost: x\r\n\r\n");
+        await once((req.socket as any).server, "request");
+        req.socket.end();
+        client.resume();
+        await once(client, "end");
+      });
+      await new Promise(resolve => exchange.server.close(resolve));
+    });
+
+    test.concurrent.each([
+      ["end()", (socket: net.Socket) => void socket.end()],
+      ["destroySoon()", (socket: net.Socket) => socket.destroySoon()],
+    ])("destroy() after %s closes the connection", async (_name, end) => {
+      using exchange = await respond(async req => {
+        end(req.socket);
+        await turn();
+        req.socket.destroy();
+      });
+      await exchange.socketClosed;
+      expect(await exchange.read()).toBeLessThan(size);
+    });
+  },
+);
+
+test.concurrent.each(["http", "https"] as const)(
+  "%s: a socket that an unread upload paused closes when end() and the client's FIN have ended both sides",
+  async protocol => {
+    await using server = protocol === "https" ? https.createServer(tlsCert) : http.createServer();
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const to = { port: (server.address() as net.AddressInfo).port, host: "127.0.0.1" };
+    const client = protocol === "https" ? tls.connect({ ...to, ca: tlsCert.cert }) : net.connect(to);
+    try {
+      client.on("error", () => {}).resume();
+      client.write(`POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1000000\r\n\r\n`);
+      const [req, res] = (await once(server, "request")) as [IncomingMessage, ServerResponse];
+      client.write(Buffer.alloc(200_000));
+      await once(req.socket, "pause");
+      req.socket.end();
+      await once(res, "close");
+      expect(req.socket.destroyed).toBe(true);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+    }
+  },
+);
+
+test("https: httpAllowHalfOpen keeps the responses that are owed at the client's FIN", async () => {
+  const owed: ServerResponse[] = [];
+  await using server = https.createServer(tlsCert, (req, res) => {
+    if (owed.push(res) > 1) return;
+    req.socket.on("end", () =>
+      setImmediate(() => {
+        for (const response of owed) response.end(`<${response.req.url}>`);
+      }),
+    );
+  });
+  (server as any).httpAllowHalfOpen = true;
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const client = tls.connect({ port: (server.address() as net.AddressInfo).port, host: "127.0.0.1", ca: tlsCert.cert });
+  client.end("GET /1 HTTP/1.1\r\nHost: x\r\n\r\nGET /2 HTTP/1.1\r\nHost: x\r\n\r\n");
+  expect(
+    Buffer.concat(await client.toArray())
+      .toString()
+      .match(/<[^>]*>/g),
+  ).toEqual(["</1>", "</2>"]);
 });
 
 // An http.Server socket has allowHalfOpen: end() sends the FIN, and the request in flight still gets its body.
@@ -392,6 +599,28 @@ describe.each(["http", "https"] as const)("%s: the request body behind the FIN o
       req.on("data", chunk => (received += chunk.length));
       await once(req, "end");
       expect({ received, finWaits: held > 0 }).toEqual({ received: size, finWaits: true });
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+    }
+  });
+
+  test.concurrent("a reader that comes late gets the rest of a body that had paused the socket", async () => {
+    await using server = createServer(() => {});
+    const client = await connectTo(server);
+    try {
+      const size = (server as any).highWaterMark + 1000;
+      client.write(requestHead(`Content-Length: ${size}`));
+      const [req] = (await once(server, "request")) as [IncomingMessage];
+      client.write(Buffer.alloc(size - 1000));
+      await once(req.socket, "pause");
+      await new Promise(resolve => client.write(Buffer.alloc(1000), resolve));
+      req.socket.end();
+      await once(client, "end");
+      const seen = observe(req);
+      req.once("end", () => client.end());
+      const { body, events } = await seen;
+      expect({ received: body.length, events }).toEqual({ received: size, events: ["end", "close"] });
     } finally {
       client.destroy();
       server.closeAllConnections();

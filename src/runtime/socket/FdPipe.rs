@@ -2,9 +2,9 @@
 
 use core::cell::Cell;
 
-use bun_jsc::JsResult;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_ptr::ThisPtr;
+use bun_jsc::{JsCell, JsResult};
+use bun_ptr::RefPtr;
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_uws::{SocketTCP, Transport};
 
@@ -15,16 +15,17 @@ use crate::dispatch::fold;
 pub(crate) struct FdPipe {
     handle: bun_uws::TransportHandle,
     fd: Fd,
-    /// `None` once closed. `connect_finish` took the connection's ref on it, and `on_close` releases that ref.
-    socket: Cell<Option<ThisPtr<TCPSocket>>>,
+    /// `None` once closed.
+    socket: JsCell<Option<RefPtr<TCPSocket>>>,
     is_shutdown: Cell<bool>,
     rejected_send_error: Cell<i32>,
     /// The task that closes and frees `self` is in the queue.
     is_queued: Cell<bool>,
     /// In no uSockets group, so the context that opened it closes it through this when it stops.
     abort_handle: bun_jsc::AbortHandle,
+    /// Forced: the kernel keeps a fired poll for as long as the file is open, and `close` leaves stdout open.
     #[cfg(not(windows))]
-    poll: Cell<Option<*mut bun_io::posix_event_loop::FilePoll>>,
+    poll: JsCell<Option<bun_io::OwnedFilePoll<true>>>,
 }
 
 bun_jsc::impl_abort_handle_owner!(FdPipe, abort_handle, |this, _cause| {
@@ -35,20 +36,21 @@ bun_jsc::impl_abort_handle_owner!(FdPipe, abort_handle, |this, _cause| {
 impl FdPipe {
     /// Makes `fd` the transport of `socket` and reports it open.
     pub(crate) fn open(
-        socket: ThisPtr<TCPSocket>,
+        owned: RefPtr<TCPSocket>,
         fd: Fd,
         context: &bun_jsc::ScriptExecutionContext,
     ) -> JsResult<()> {
+        let socket = owned.this_ptr();
         let this = bun_core::heap::into_raw(Box::new(Self {
             handle: Default::default(),
             fd,
-            socket: Cell::new(Some(socket)),
+            socket: JsCell::new(Some(owned)),
             is_shutdown: Cell::new(false),
             rejected_send_error: Cell::new(0),
             is_queued: Cell::new(false),
             abort_handle: bun_jsc::AbortHandle::for_owner::<Self>(),
             #[cfg(not(windows))]
-            poll: Cell::new(None),
+            poll: JsCell::new(None),
         }));
         // SAFETY: fully initialised and heap-pinned; dropping the handle disarms it.
         unsafe { bun_jsc::AbortHandle::arm_owner(this, context) };
@@ -63,19 +65,21 @@ impl FdPipe {
     /// Returns true if `on_poll` will report that the descriptor takes bytes again.
     #[cfg(not(windows))]
     fn wait_until_writable(&self) -> bool {
-        use bun_io::posix_event_loop::{FilePoll, Flags, Owner, PollTag};
+        use bun_io::posix_event_loop::{Flags, Owner, PollTag};
         // kqueue doesn't reliably report a FIFO's readiness on macOS, and the write could wait forever.
         if !cfg!(target_os = "linux") {
             return false;
         }
-        let ctx = bun_io::js_vm_ctx();
-        let poll = self.poll.get().unwrap_or_else(|| {
-            let owner = Owner::new(PollTag::FdPipe, core::ptr::from_ref(self).cast_mut().cast());
-            FilePoll::init(ctx, self.fd, Default::default(), owner)
-        });
-        self.poll.set(Some(poll));
-        // SAFETY: `poll` is this pipe's live hive slot, and no other borrow of it is live.
-        unsafe { (*poll).register(ctx.loop_(), Flags::Writable, true) }.is_ok()
+        self.poll.with_mut(|poll| {
+            poll.get_or_insert_with(|| {
+                let owner =
+                    Owner::new(PollTag::FdPipe, core::ptr::from_ref(self).cast_mut().cast());
+                // SAFETY: `owner` points to the heap allocation that holds this poll.
+                unsafe { bun_io::OwnedFilePoll::new(bun_io::js_vm_ctx(), self.fd, owner) }
+            })
+            .register(Flags::Writable, true)
+            .is_ok()
+        })
     }
 
     #[cfg(windows)]
@@ -85,7 +89,7 @@ impl FdPipe {
 
     #[cfg(not(windows))]
     pub(crate) fn on_poll(&self) {
-        if let Some(socket) = self.socket.get() {
+        if let Some(socket) = self.socket.get().as_ref().map(RefPtr::this_ptr) {
             fold(TCPSocket::on_writable(
                 socket,
                 SocketTCP::from_transport(&raw const self.handle),
@@ -150,10 +154,7 @@ impl Transport for FdPipe {
             return;
         };
         #[cfg(not(windows))]
-        if let Some(poll) = self.poll.take() {
-            // SAFETY: this pipe's live hive slot, given back here.
-            unsafe { (*poll).deinit() };
-        }
+        self.poll.set(None);
         // Leaves stdin, stdout and stderr open. The program may have closed the descriptor itself.
         let _ = self.fd.close_allowing_bad_file_descriptor(None);
         self.enqueue();

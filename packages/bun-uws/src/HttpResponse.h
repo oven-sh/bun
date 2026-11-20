@@ -263,7 +263,7 @@ public:
      * no later uncork or gate: true. */
     bool uncorkCompletedResponse() {
         HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((us_socket_t *) this);
-        const bool parsingThis = httpContext->getSocketContextData()->parsingSocket == (us_socket_t *) this;
+        const bool parsingThis = httpContext->getSocketContextData()->isParsing((us_socket_t *) this);
         if (!Super::isCorked()) {
             /* A write larger than the cork buffer released the cork. The rest of this read can hold the body of a node:http request. */
             return !(parsingThis && httpContext->isNodeHttp());
@@ -636,6 +636,8 @@ public:
             ((HttpResponseData<SSL, true> *) responseData)->~HttpResponseData();
         } else {
             responseData->~HttpResponseData();
+            /* A paused ServerWebSocket gets the messages ahead of a hangup when it resumes. */
+            ((struct us_socket_t *) this)->hangup_closes_unsent = 0;
         }
         return left;
     }
@@ -662,9 +664,6 @@ private:
         LoopData *loopData = Super::getLoopData();
         int corkedSlot = loopData->findCorkSlot(this);
 
-        /* Read before the adoption below, which can move this socket. An upgrade of another connection must leave the parsed socket alone. */
-        const bool upgradingParsedSocket = httpContextData->isParsing((us_socket_t *) this);
-
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
         /* The old ext size is only used as an upper bound to keep the block in
          * place (and as the copy length when it cannot be). The base size is
@@ -685,11 +684,7 @@ private:
         /* Initialize websocket with any moved backpressure intact */
         webSocket->init(perMessageDeflate, compressOptions, std::move(left.backpressure), nullptr, nullptr);
 
-        /* We should only mark this if inside the parser; if upgrading "async" we cannot set this */
-        if (upgradingParsedSocket) {
-            /* We need to tell the Http parser that we changed socket */
-            httpContextData->upgradedWebSocket = webSocket;
-        }
+        httpContextData->socketLeft((us_socket_t *) this, usSocket, false);
 
         /* Arm idleTimeout */
         us_socket_timeout((us_socket_t *) webSocket, webSocketContextData->idleTimeoutComponents.first);
@@ -884,6 +879,10 @@ public:
         this->resetTimeout();
     }
 
+    bool isConnectRequest() {
+        return getHttpResponseData()->isConnectRequest;
+    }
+
     /* For a handler that can read the request body: maxRequestBodySize holds from here on. Returns false, with the request answered, if its Content-Length is already over it. */
     bool acceptRequestBody() {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
@@ -1061,6 +1060,8 @@ public:
 
      /* Corks the response if possible. Leaves already corked socket be. */
     HttpResponse *cork(MoveOnlyFunction<void()> &&handler) {
+        auto hold = Super::holdClosedSockets();
+
         if (!Super::isCorked()) {
             LoopData *loopData = Super::getLoopData();
             Super::cork();

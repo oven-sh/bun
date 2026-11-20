@@ -17,6 +17,7 @@ use core::fmt::Arguments;
 
 use bstr::BStr;
 
+use bun_bundler::transpiler::{MacroJSCtx, Transpiler};
 use bun_collections::VecExt;
 use bun_core::strings;
 #[cfg(unix)]
@@ -270,7 +271,7 @@ impl History {
 
         // Don't add duplicates of the last entry
         if let Some(last) = self.entries.last() {
-            if strings::eql_long(last, line, true) {
+            if strings::eql_long(last, line) {
                 self.position = self.entries.len();
                 return Ok(());
             }
@@ -578,8 +579,7 @@ impl ReplCommand {
 
     fn find(name: &[u8]) -> Option<&'static ReplCommand> {
         Self::ALL.iter().find(|&cmd| {
-            strings::eql_long(cmd.name, name, true)
-                || (name.len() > 1 && cmd.name.starts_with(name))
+            strings::eql_long(cmd.name, name) || (name.len() > 1 && cmd.name.starts_with(name))
         })
     }
 }
@@ -979,7 +979,7 @@ pub(super) struct Repl<'a> {
 
     // Windows: saved console mode for restoration
     #[cfg(windows)]
-    original_windows_mode: Option<bun_sys::windows::DWORD>,
+    stdin_mode_guard: Option<bun_sys::windows::StdinModeGuard>,
 
     // POSIX: the REPL's own stdin raw-mode state
     #[cfg(unix)]
@@ -1004,12 +1004,10 @@ impl<'a> Repl<'a> {
             stdin_buf_end: 0,
             vm: None,
             global: None,
-            // `adopt(UNDEFINED)`: no protect taken; drop's unprotect() is a
-            // C++-side no-op for non-cell values.
-            last_result: ProtectedJSValue::adopt(JSValue::UNDEFINED),
-            last_error: ProtectedJSValue::adopt(JSValue::UNDEFINED),
+            last_result: JSValue::UNDEFINED.protected(),
+            last_error: JSValue::UNDEFINED.protected(),
             #[cfg(windows)]
-            original_windows_mode: None,
+            stdin_mode_guard: None,
             #[cfg(unix)]
             tty_state: tty::State::new(),
         }
@@ -1048,16 +1046,14 @@ impl<'a> Repl<'a> {
         }
         #[cfg(windows)]
         {
-            self.original_windows_mode = bun_sys::windows::update_stdio_mode_flags(
-                bun_sys::Stdio::StdIn,
+            self.stdin_mode_guard = Some(bun_sys::windows::StdinModeGuard::set(
                 bun_sys::windows::UpdateStdioModeFlagsOpts {
                     set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT
                         | bun_sys::windows::ENABLE_PROCESSED_INPUT,
                     unset: bun_sys::windows::ENABLE_LINE_INPUT
                         | bun_sys::windows::ENABLE_ECHO_INPUT,
                 },
-            )
-            .ok();
+            ));
         }
     }
 
@@ -1070,13 +1066,7 @@ impl<'a> Repl<'a> {
         }
         #[cfg(windows)]
         {
-            if let Some(mode) = self.original_windows_mode {
-                // SAFETY: stdin handle is valid console handle
-                unsafe {
-                    let _ = bun_sys::windows::SetConsoleMode(Fd::stdin().native(), mode);
-                }
-                self.original_windows_mode = None;
-            }
+            self.stdin_mode_guard = None;
         }
     }
 
@@ -2152,16 +2142,17 @@ impl<'a> Repl<'a> {
         // until that pass. Lowering wraps the declaration in `try/finally` first,
         // which the REPL transform passes through intact.
 
-        // Initialize macro context from transpiler (required for import processing).
-        vm.transpiler.with_mut(|t| {
-            if t.macro_context.is_none() {
-                t.macro_context = Some(bun_js_parser::Macro::MacroContext::init(t));
-            }
-        });
         let define = &vm.transpiler.get().options.define;
-        // SAFETY: JS thread, and `define` is another field. Does not hold for a macro: loading it
-        // borrows the transpiler again while the parse holds this.
-        opts.macro_context = unsafe { (*vm.transpiler.as_ptr()).macro_context.as_mut() };
+        opts.macro_remap = Some(&vm.transpiler.get().options.macro_remap);
+        // SAFETY: JS thread; the VM outlives the parse. Does not hold for a macro: `enable_macro_mode`
+        // borrows the transpiler mutably while the parser holds `define` and `macro_remap`.
+        opts.macro_context = Some(unsafe {
+            Transpiler::macro_context(
+                vm.transpiler.as_ptr(),
+                &vm.module_loader.macro_load_states,
+                MacroJSCtx::ZERO,
+            )
+        });
 
         // Create log for errors
         let mut log = bun_ast::Log::init();
@@ -2203,7 +2194,6 @@ impl<'a> Repl<'a> {
         );
 
         if bun_js_printer::print_ast::<
-            _,
             /* ASCII_ONLY */ true,
             /* GENERATE_SOURCE_MAP */ false,
         >(
@@ -2235,12 +2225,10 @@ impl<'a> Repl<'a> {
     fn print_js_error_to(
         &self,
         error_value: JSValue,
-        writer: &mut bun_core::io::Writer,
+        writer: &bun_core::io::Writer,
         enable_colors: bool,
     ) {
-        // Note: the `bun_core::io::Writer` vtable doesn't implement
-        // `bun_io::Write`, so buffer through a `Vec<u8>` (which does) and
-        // flush in one shot — REPL error output is tiny.
+        // Buffered: none of the value is printed if formatting throws.
         let Some(global) = self.global else {
             return;
         };
@@ -2277,8 +2265,7 @@ impl<'a> Repl<'a> {
             return;
         };
         let writer = Output::writer();
-        // Note: see `print_js_error_to` — buffer because
-        // `bun_core::io::Writer` doesn't implement `bun_io::Write`.
+        // Buffered: none of the value is printed if formatting throws.
         let mut buf: Vec<u8> = Vec::new();
         if let Err(err) = jsc::ConsoleObject::format2(
             jsc::ConsoleObject::MessageLevel::Log,

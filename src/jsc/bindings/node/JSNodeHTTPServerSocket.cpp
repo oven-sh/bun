@@ -137,11 +137,12 @@ void JSNodeHTTPServerSocket::setRawReads(bool enabled)
 }
 
 template<bool SSL>
-static void endParserReads(us_socket_t* socket)
+static void endParserReads(us_socket_t* socket, bool restOfReadTaken)
 {
     using Data = uWS::HttpResponseData<SSL>;
     // An Upgrade too: the rest of the read that is being parsed went to the listener as `head`.
-    reinterpret_cast<Data*>(us_socket_ext(socket))->isConnectRequest = true;
+    reinterpret_cast<Data*>(us_socket_ext(socket))->isConnectRequest |= restOfReadTaken;
+    reinterpret_cast<Data*>(us_socket_ext(socket))->state |= Data::HTTP_NODE_PARSER_DETACHED;
     reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->resumeReads(Data::READ_PAUSE_BODY | Data::READ_PAUSE_PARKED | Data::READ_PAUSE_FLOOD);
 }
 
@@ -159,14 +160,14 @@ void JSNodeHTTPServerSocket::leaveHttpAfterBody()
     }
 }
 
-void JSNodeHTTPServerSocket::detachParser()
+void JSNodeHTTPServerSocket::detachParser(bool restOfReadTaken)
 {
     if (isClosed()) {
         return;
     }
     stopHTTPParsing();
     setRawReads(true);
-    is_ssl ? endParserReads<true>(socket) : endParserReads<false>(socket);
+    is_ssl ? endParserReads<true>(socket, restOfReadTaken) : endParserReads<false>(socket, restOfReadTaken);
 }
 
 template<bool SSL>
@@ -178,25 +179,22 @@ static std::string* requestTrailersFor(us_socket_t* socket)
     return &httpResponseData->nodeHttpRequestTrailers;
 }
 
-/* Move the connection's captured trailer section out, returning its (ptr, length)
- * through a thread-local buffer that stays valid until the next call on this
- * thread. Called by NodeHTTPResponse at the request's body fin, still inside the
+/* Copied and cleared by NodeHTTPResponse at the request's body fin, still inside the
  * parser, so a pipelined request cannot overwrite or inherit another's trailers. */
-extern "C" size_t Bun__NodeHTTP__takeRequestTrailerBytes(bool is_ssl, us_socket_t* socket, const char** out)
+extern "C" size_t Bun__NodeHTTP__requestTrailerBytes(bool is_ssl, us_socket_t* socket, const char** out)
 {
     *out = nullptr;
     if (!socket || us_socket_is_closed(socket)) {
         return 0;
     }
     std::string* trailers = is_ssl ? requestTrailersFor<true>(socket) : requestTrailersFor<false>(socket);
-    if (trailers->empty()) {
-        return 0;
-    }
-    static thread_local std::string taken;
-    taken = std::move(*trailers);
-    trailers->clear();
-    *out = taken.data();
-    return taken.size();
+    *out = trailers->data();
+    return trailers->size();
+}
+
+extern "C" void Bun__NodeHTTP__clearRequestTrailerBytes(bool is_ssl, us_socket_t* socket)
+{
+    std::string().swap(is_ssl ? *requestTrailersFor<true>(socket) : *requestTrailersFor<false>(socket));
 }
 
 /* Parse a raw trailer section into a flat [name, value, ...] JSArray, or
@@ -421,7 +419,7 @@ void JSNodeHTTPServerSocket::onUpgradeBodyEnded()
         args.append(duplex);
     }
     if (!leaveHttp(false)) {
-        detachParser();
+        detachParser(true);
         return;
     }
     if (!callback || !duplex || globalObject->scriptExecutionStatus(globalObject, this) != ScriptExecutionStatus::Running) {
@@ -489,6 +487,22 @@ extern "C" bool Bun__NodeHTTP__notifyWhenReadParsed(int ssl, us_socket_t* socket
         return false;
     }
     return ssl ? notifyWhenNodeHttpReadParsed<true>(socket) : notifyWhenNodeHttpReadParsed<false>(socket);
+}
+
+void JSNodeHTTPServerSocket::detachParserIfDue()
+{
+    if (detachesParserAfterRead) {
+        detachParser(false);
+    }
+}
+
+void JSNodeHTTPServerSocket::detachParserAfterRead()
+{
+    if (!ended && Bun__NodeHTTP__notifyWhenReadParsed(is_ssl, socket)) {
+        detachesParserAfterRead = true;
+    } else {
+        detachParser(false);
+    }
 }
 
 template<bool SSL>
@@ -727,7 +741,7 @@ static void handOverToSocketHandle(us_socket_t* socket, void* handle, bool restO
     auto* contextData = uWS::HttpContext<SSL>::getSocketContextDataS(socket);
     auto left = reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->leaveHttp();
     Bun__NodeHTTPSocket__leaveHttp(handle, SSL, socket, left.backpressure.data(), left.backpressure.length(), left.readsPaused, left.bytesRead, responseBytesWritten);
-    contextData->socketLeft(socket, restOfReadTaken);
+    contextData->socketLeft(socket, socket, restOfReadTaken);
 }
 
 bool JSNodeHTTPServerSocket::leaveHttp(bool restOfReadTaken)
@@ -736,7 +750,7 @@ bool JSNodeHTTPServerSocket::leaveHttp(bool restOfReadTaken)
         return false;
     }
     flushResponseBytesAhead();
-    if (us_socket_is_closed(socket) || us_socket_is_shut_down(socket)) {
+    if (ended || us_socket_is_closed(socket) || us_socket_is_shut_down(socket)) {
         return false;
     }
     uint64_t responseBytesWritten = 0;
@@ -820,10 +834,12 @@ extern "C" NEVER_INLINE void Bun__NodeHTTPServerSocket__shutdown(us_socket_t* so
 {
     BUN_REMOVABLE_DEFINITION(NodeHttp, Bun__NodeHTTPServerSocket__shutdown);
     auto* serverSocket = openServerSocket(socket, ssl);
-    if (!serverSocket) {
+    if (!serverSocket || serverSocket->ended) {
         return;
     }
     serverSocket->ended = true;
+    // The parse stops at the FIN and reports no end of the read.
+    serverSocket->detachParserIfDue();
     if (!serverSocket->shutdownAfterResponseDrains()) {
         serverSocket->halfClose();
     }
@@ -833,7 +849,7 @@ template<bool SSL>
 static bool closeBehindPendingShutdown(us_socket_t* socket)
 {
     auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
-    if (!(httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN)) {
+    if (!(httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN) || !reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->hasFullyDrained()) {
         return false;
     }
     httpResponseData->state &= ~uWS::HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN;
@@ -852,7 +868,7 @@ extern "C" NEVER_INLINE void Bun__NodeHTTPServerSocket__close(us_socket_t* socke
         us_socket_close(socket, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
         return;
     }
-    // destroySoon(): the FIN still waits for queued bytes, so the close goes behind them too.
+    // destroySoon(), in the writable event that sent the bytes the FIN waited for. The response hears of it first.
     if (ssl ? closeBehindPendingShutdown<true>(socket) : closeBehindPendingShutdown<false>(socket)) {
         return;
     }
@@ -900,9 +916,31 @@ void JSNodeHTTPServerSocket::onReadParsed()
     if (isClosed()) {
         return;
     }
+    detachParserIfDue();
     if (auto* res = currentResponse()) {
         Bun__NodeHTTPResponse_onReadParsed(res->wrapped());
     }
+}
+
+// Every read restarts the socket's inactivity timer, and no listener hears of this one.
+void JSNodeHTTPServerSocket::onPartialHead()
+{
+    auto* globalObject = defaultGlobalObject(this->globalObject());
+    auto* duplex = m_duplex.get();
+    if (!duplex || globalObject->scriptExecutionStatus(globalObject, this) != ScriptExecutionStatus::Running) {
+        return;
+    }
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    Bun__EventLoop__enter(globalObject);
+    JSValue unrefTimer = duplex->get(globalObject, Identifier::fromString(vm, "_unrefTimer"_s));
+    if (!scope.exception()) {
+        JSC::call(globalObject, unrefTimer, duplex, ArgList(), "socket._unrefTimer is not a function"_s);
+    }
+    if (auto* exception = scope.exception(); exception && scope.tryClearException()) {
+        globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+    }
+    Bun__EventLoop__exit(globalObject);
 }
 
 template<bool SSL>

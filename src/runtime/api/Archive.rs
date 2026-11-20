@@ -25,7 +25,7 @@ pub(crate) enum Compression {
 #[derive(Clone, Copy)]
 pub(crate) struct GzipOptions {
     /// Compression level: 1 (fastest) to 12 (maximum compression). Default is 6.
-    pub level: u8,
+    pub level: bun_deflate::Level,
 }
 
 pub(crate) struct Archive {
@@ -131,7 +131,7 @@ impl Archive {
         let compress = parse_compression_options(global, options.to_js())?;
 
         // For Blob/Archive, ref the existing store (zero-copy)
-        if let Some(blob) = blob_from_js(data) {
+        if let Some(blob) = data.as_class_ref::<Blob>() {
             if let Some(store) = blob.store.get().as_ref() {
                 return Ok(Self {
                     store: store.clone(),
@@ -193,20 +193,23 @@ fn parse_compression_options(
         }
 
         // Parse level option (1-12, default 6)
-        let mut level: u8 = 6;
+        let mut level = bun_deflate::Level::DEFAULT;
         if let Some(level_val) = options_arg.get_truthy(global, "level")? {
             if !level_val.is_number() {
                 return Err(
                     global.throw_invalid_arguments(format_args!("Archive: level must be a number"))
                 );
             }
-            let level_num = level_val.to_int64();
-            if level_num < 1 || level_num > 12 {
+            let level_num = i32::try_from(level_val.to_int64()).ok();
+            let Some(valid) = level_num
+                .filter(|&level| level >= 1)
+                .and_then(bun_deflate::Level::new)
+            else {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Archive: level must be between 1 and 12"
                 )));
-            }
-            level = u8::try_from(level_num).expect("int cast");
+            };
+            level = valid;
         }
 
         return Ok(Compression::Gzip(GzipOptions { level }));
@@ -219,12 +222,6 @@ fn parse_compression_options(
 fn create_archive(data: Vec<u8>, compress: Compression) -> Archive {
     let store = Store::init(data);
     Archive { store, compress }
-}
-
-/// The caller's `value` keeps the `Blob` alive.
-#[inline]
-fn blob_from_js(value: JSValue) -> Option<&'static Blob> {
-    value.as_class_ref::<Blob>()
 }
 
 /// Shared helper that builds tarball bytes from a JS object
@@ -259,18 +256,13 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         let key_slice = key.to_utf8();
 
         // Get data - use view for Blob/ArrayBuffer, convert for strings
+        let blob = value.as_class_ref::<Blob>();
         let mut array_buffer = None;
-        let data_slice = get_entry_data(global, value, &mut array_buffer)?;
+        let data_slice = match &blob {
+            Some(blob) => Utf8Bytes::Borrowed(blob.shared_view()),
+            None => get_entry_data(global, value, &mut array_buffer)?,
+        };
         let data = data_slice.slice();
-
-        // Readers take it for a directory, and its contents for more entries.
-        let last = bun_core::slice_to_nul(key_slice.slice()).last();
-        if !data.is_empty() && last.is_some_and(|&c| bun_paths::is_sep_native(c)) {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Failed to create tarball: {} is a directory and cannot have contents",
-                bun_core::fmt::quote(key_slice.slice())
-            )));
-        }
 
         writer
             .header(&tar::writer::File {
@@ -279,7 +271,13 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
                 perm: 0o644,
                 mtime: now_secs,
             })
-            .map_err(fail)?;
+            .map_err(|err| match err {
+                tar::Error::DirectoryWithContents => global.throw_invalid_arguments(format_args!(
+                    "Failed to create tarball: {} is a directory and cannot have contents",
+                    bun_core::fmt::quote(key_slice.slice())
+                )),
+                err => fail(err),
+            })?;
         writer.data(data).map_err(fail)?;
     }
 
@@ -291,12 +289,6 @@ fn get_entry_data<'a>(
     value: JSValue,
     array_buffer: &'a mut Option<bun_jsc::ArrayBuffer>,
 ) -> JsResult<Utf8Bytes<'a>> {
-    // For Blob, use sharedView (no copy needed). The backing store outlives
-    // the returned slice for the duration of the caller's tarball build.
-    if let Some(blob) = blob_from_js(value) {
-        return Ok(Utf8Bytes::Borrowed(blob.shared_view()));
-    }
-
     // For ArrayBuffer/TypedArray, use view (no copy needed)
     if let Some(buffer) = value.as_array_buffer(global) {
         return Ok(Utf8Bytes::Borrowed(array_buffer.insert(buffer).slice()));
@@ -346,7 +338,7 @@ impl Archive {
         }
 
         // For Blobs, use store reference with options compression
-        if let Some(blob) = blob_from_js(data_arg) {
+        if let Some(blob) = data_arg.as_class_ref::<Blob>() {
             if let Some(store) = blob.store.get().as_ref() {
                 return start_write_task(
                     &cx,
@@ -1037,11 +1029,8 @@ fn start_files_task(
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
 enum CompressError {
-    #[error("GzipInitFailed")]
-    GzipInitFailed,
     #[error("GzipCompressFailed")]
     GzipCompressFailed,
-    /// The output buffer (sized by the data being compressed) could not be allocated.
     #[error("OutOfMemory")]
     OutOfMemory,
 }
@@ -1055,21 +1044,13 @@ impl CompressError {
     }
 }
 
-fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
-    use bun_libdeflate_sys::libdeflate;
-    libdeflate::load();
+fn compress_gzip(data: &[u8], level: bun_deflate::Level) -> Result<Vec<u8>, CompressError> {
+    use bun_deflate::{Error, Format};
 
-    let mut compressor =
-        libdeflate::OwnedCompressor::new(i32::from(level)).ok_or(CompressError::GzipInitFailed)?;
-
-    let mut output = Vec::new();
-    let result = compressor
-        .compress_to_vec(data, &mut output, libdeflate::Encoding::Gzip)
-        .map_err(|_| CompressError::OutOfMemory)?;
-    if result.status != libdeflate::Status::Success {
-        return Err(CompressError::GzipCompressFailed);
-    }
-    Ok(output)
+    bun_deflate::compress_to_vec(data, Format::Gzip, level).map_err(|err| match err {
+        Error::Alloc(_) => CompressError::OutOfMemory,
+        _ => CompressError::GzipCompressFailed,
+    })
 }
 
 /// Check if a path is safe (no absolute paths or path traversal)
@@ -1150,6 +1131,10 @@ pub(crate) fn match_glob_patterns(patterns: &[GlobPattern], pathname: &[u8]) -> 
     !has_positive_patterns || matches_positive
 }
 
+/// In bytes of memory. Names take next to nothing once they are compressed.
+#[cfg(unix)]
+const DEFERRED_SYMLINKS_LIMIT: usize = 128 * 1024 * 1024;
+
 /// Extract archive to disk with glob pattern filtering.
 /// Supports negative patterns with "!" prefix (e.g., "!node_modules/**").
 fn extract_to_disk_filtered(
@@ -1164,37 +1149,18 @@ fn extract_to_disk_filtered(
         })?;
 
     // Open/create target directory using bun.sys
-    let cwd = Fd::cwd();
-    let _ = cwd.make_path(root);
-    let dir_fd: Fd = 'brk: {
-        if bun_paths::is_absolute(root) {
-            break 'brk match bun_sys::open_a(root, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0) {
-                Ok(fd) => fd,
-                Err(_) => return Err(crate::Error::OpenError),
-            };
-        } else {
-            break 'brk match bun_sys::openat_a(
-                cwd,
-                root,
-                bun_sys::O::RDONLY | bun_sys::O::DIRECTORY,
-                0,
-            ) {
-                Ok(fd) => fd,
-                Err(_) => return Err(crate::Error::OpenError),
-            };
-        }
-    };
-    let _dir_close = bun_sys::CloseOnDrop::new(dir_fd);
+    let _ = Fd::cwd().make_path(root);
+    let dir = bun_sys::Dir::open(root).map_err(|_| crate::Error::OpenError)?;
 
     #[cfg(unix)]
-    let make_path = |path: &[u8]| beneath::make_path(dir_fd, path, Symlinks::FollowInside);
+    let make_path = |path: &[u8]| beneath::make_path(dir.fd(), path, Symlinks::FollowInside);
     #[cfg(windows)]
-    let make_path = |path: &[u8]| dir_fd.make_path(path);
+    let make_path = |path: &[u8]| dir.fd().make_path(path);
 
     let mut count: u32 = 0;
     let mut write_strategy = bun_archive::WriteStrategy::default();
     #[cfg(unix)]
-    let mut deferred_symlinks = Vec::new();
+    let (mut deferred_symlinks, mut deferred_bytes) = (Vec::new(), 0usize);
 
     loop {
         let entry_ref = match reader.next_entry() {
@@ -1251,9 +1217,9 @@ fn extract_to_disk_filtered(
                 let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
                 #[cfg(unix)]
                 let open =
-                    || beneath::openat(dir_fd, pathname_z, flags, mode, Symlinks::FollowInside);
+                    || beneath::openat(dir.fd(), pathname_z, flags, mode, Symlinks::FollowInside);
                 #[cfg(windows)]
-                let open = || bun_sys::openat(dir_fd, pathname_z, flags, mode);
+                let open = || bun_sys::openat(dir.fd(), pathname_z, flags, mode);
                 let opened = open().or_else(|err| {
                     make_path(bun_core::dirname(pathname).ok_or(err)?)?;
                     open()
@@ -1269,9 +1235,9 @@ fn extract_to_disk_filtered(
                 if !write_success {
                     // Remove partial file on failure
                     #[cfg(unix)]
-                    let _ = beneath::unlinkat(dir_fd, pathname, Symlinks::FollowInside);
+                    let _ = beneath::unlinkat(dir.fd(), pathname, Symlinks::FollowInside);
                     #[cfg(windows)]
-                    let _ = bun_sys::unlinkat(dir_fd, pathname_z);
+                    let _ = bun_sys::unlinkat(dir.fd(), pathname_z);
                     return Err(crate::Error::ReadError);
                 }
                 count += 1;
@@ -1281,7 +1247,13 @@ fn extract_to_disk_filtered(
                 #[cfg(unix)]
                 {
                     let target = entry_ref.symlink().unwrap_or_default();
-                    if is_safe_path(target) {
+                    if target.len() < bun_paths::MAX_PATH_BYTES && is_safe_path(target) {
+                        deferred_bytes += size_of::<bun_archive::DeferredSymlink>()
+                            + pathname.len()
+                            + target.len();
+                        if deferred_bytes > DEFERRED_SYMLINKS_LIMIT {
+                            return Err(crate::Error::ReadError);
+                        }
                         deferred_symlinks.push(bun_archive::DeferredSymlink::new(pathname, target));
                     }
                 }
@@ -1292,7 +1264,7 @@ fn extract_to_disk_filtered(
 
     #[cfg(unix)]
     {
-        count += bun_archive::create_deferred_symlinks(dir_fd, &deferred_symlinks, false);
+        count += bun_archive::create_deferred_symlinks(dir.fd(), &deferred_symlinks, false);
     }
 
     Ok(count)
@@ -1339,7 +1311,7 @@ pub(crate) mod testing {
                 "\"{}\"... {} bytes crc32={:08x}",
                 name[..SHOWN].escape_ascii(),
                 name.len(),
-                bun_zlib::crc32_bytes(0, name),
+                bun_highway::crc32(0, name),
             );
         }
     }
@@ -1429,10 +1401,7 @@ pub(crate) mod testing {
                         entry.mtime(),
                     );
                     let mut wide = Vec::new();
-                    if options.windows
-                        && tar::compose::to_utf16(entry.path(), entry.path_is_utf8(), &mut wide)
-                            .is_ok()
-                    {
+                    if options.windows && tar::compose::to_utf16(entry, &mut wide).is_ok() {
                         // A name that is not UTF-8 has one unit for each byte.
                         let name = if entry.path_is_utf8() {
                             String::from_utf16_lossy(&wide).into_bytes()
@@ -1460,7 +1429,7 @@ pub(crate) mod testing {
                     run = Run::default();
                 }
                 Event::Data { offset, bytes } => {
-                    crc = bun_zlib::crc32_bytes(crc, bytes);
+                    crc = bun_highway::crc32(crc, bytes);
                     if offset != run.offset + run.len {
                         run.flush(&mut log);
                         run.offset = offset;

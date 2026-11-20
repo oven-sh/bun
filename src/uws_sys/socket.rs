@@ -13,7 +13,7 @@ use core::ffi::{c_int, c_uint, c_void};
 use core::mem::size_of;
 use core::ptr::NonNull;
 
-use bun_core::{Fd, ZStr};
+use bun_core::{Fd, ZBox, ZStr};
 
 use crate::{
     CloseCode, ConnectResult, ConnectingSocket, LIBUS_SOCKET_DESCRIPTOR, QueuedInput, SocketGroup,
@@ -268,16 +268,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             socket: self.socket,
         }
     }
-    /// Generic counterpart of [`Self::assume_ssl`]/[`Self::assume_tcp`] for
-    /// callers inside an `if IS_SSL { ... }` arm widening a concrete handle
-    /// back to the surrounding `NewSocketHandler<IS_SSL>`.
-    #[inline]
-    pub const fn cast_ssl<const NEW_SSL: bool>(self) -> NewSocketHandler<NEW_SSL> {
-        debug_assert!(IS_SSL == NEW_SSL);
-        NewSocketHandler {
-            socket: self.socket,
-        }
-    }
 
     #[inline]
     pub fn detach(&mut self) {
@@ -516,14 +506,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     /// Vectored raw write: one writev on real sockets; sequential raw writes on
     /// a [`Transport`]. Plain-TCP callers only — raw
     /// writes bypass TLS framing.
-    pub fn raw_writev(&self, iov: &[crate::UsIoVec]) -> i32 {
+    pub fn raw_writev(&self, iov: &[crate::UsIoVec<'_>]) -> i32 {
         on_socket!(self.socket;
             connected s => s.raw_writev(iov),
             transport t => {
                 let mut total: i32 = 0;
                 for v in iov {
-                    // SAFETY: UsIoVec contract — base/len reference caller-owned memory
-                    let slice = unsafe { core::slice::from_raw_parts(v.base.cast::<u8>(), v.len) };
+                    let slice = v.as_slice();
                     let w = t.raw_write(slice);
                     if w > 0 { total += w; }
                     if w < slice.len() as i32 { break; }
@@ -635,16 +624,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
-    /// Resume a handshake suspended by an asynchronous SNICallback. The ctx
-    /// reference is consumed (freed here when no TLS engine is left to resume).
-    pub fn sni_resolve(&self, ctx: *mut crate::SslCtx, error: bool) {
+    /// Resume a handshake suspended by an asynchronous SNICallback.
+    pub fn sni_resolve(&self, ctx: Option<bun_boringssl_sys::OwnedSslCtx>, error: bool) {
         if let InternalSocket::Connected(s) | InternalSocket::UwsHttp(s) = self.socket {
             return sock(s).sni_resolve(ctx, error);
         }
-        let Some(ssl) = self.ssl_mut() else {
-            // SAFETY: the caller passed an owned SSL_CTX reference, or null.
-            return unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
-        };
+        let Some(ssl) = self.ssl_mut() else { return };
+        let ctx = ctx.map_or(core::ptr::null_mut(), |ctx| ctx.into_raw());
         // SAFETY: `ssl` is live, and the callee takes the reference `ctx` carries.
         if unsafe { crate::ssl::us_ssl_sni_resolve(ssl, ctx, c_int::from(error)) } != 0 {
             // Drives the handshake again.
@@ -882,19 +868,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         let host = bun_core::ip_address::strip_ipv6_brackets(raw_host);
         // SocketGroup.connect needs a NUL-terminated host.
         let mut stack = [0u8; 256];
-        let heap: Vec<u8>;
-        let host_z: &core::ffi::CStr = if host.len() < stack.len() {
+        let heap: ZBox;
+        let host_z: &ZStr = if host.len() < stack.len() {
             stack[..host.len()].copy_from_slice(host);
-            stack[host.len()] = 0;
-            ZStr::from_buf(&stack, host.len()).as_cstr()
+            ZStr::nul_terminate(&mut stack, host.len())
         } else {
-            heap = {
-                let mut v = Vec::with_capacity(host.len() + 1);
-                v.extend_from_slice(host);
-                v.push(0);
-                v
-            };
-            ZStr::from_slice_with_nul(&heap).as_cstr()
+            heap = ZBox::from_bytes(host);
+            &heap
         };
 
         // The dispatch trampolines read the ext slot as `Option<NonNull<_>>`
@@ -1051,6 +1031,5 @@ impl AnySocket {
         fn shutdown(&self);
         fn shutdown_read(&self);
         fn local_port(&self) -> Option<u16>;
-        fn get_native_handle(&self) -> Option<*mut c_void>;
     }
 }

@@ -24,6 +24,15 @@ import {
   constants as zlibConstants,
   zstdCompressSync,
 } from "node:zlib";
+import {
+  Bits,
+  FIXED,
+  fixedDistanceCodes,
+  fixedLiteralCodes,
+  gzipHeader,
+  header,
+  putTokens,
+} from "../../node/zlib/zlib-golden/write";
 
 const CHUNK = 64 * 1024;
 const COUNT = 256; // 16 MiB
@@ -575,8 +584,7 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     return { ...server, url: `${secure ? "https" : "http"}://127.0.0.1:${server.port}/` };
   }
 
-  // A CONNECT proxy that pipes both ways. bun does not pause a tunnelled socket, so the origin's
-  // bytes keep arriving while the reader is paused.
+  // A CONNECT proxy that pipes both ways.
   async function serveConnectProxy() {
     let connects = 0;
     const server = await listening(
@@ -673,7 +681,18 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     expectBounded(await runClient(server.url, opts, READ_A_LITTLE));
   });
 
-  // The end of the body reaches the client while the reader is paused, since a tunnelled socket keeps reading.
+  test("through a CONNECT proxy: the origin stops writing while the reader is stalled, then resumes", async () => {
+    await using server = await serve("h1-tls", BIG);
+    await using proxy = await serveConnectProxy();
+    const res = await fetch(server.url, { ...fetchOpts("h1-tls"), proxy: { url: proxy.url, respectNoProxy: false } });
+    const reader = res.body!.getReader();
+    await reader.read();
+    const stalled = await server.settled();
+    expect(stalled).toBeLessThan(BODY);
+    const { foreign, ended } = await readUntilResumed(reader, server, stalled);
+    expect({ foreign, ended, connects: proxy.connects() }).toEqual({ foreign: 0, ended: false, connects: 1 });
+  });
+
   test("gzip through a CONNECT proxy, and the origin closes: a reader that takes a little holds a little", async () => {
     await using server = await serveBomb("gzip", true, true);
     await using proxy = await serveConnectProxy();
@@ -706,6 +725,37 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     });
     const opts = { protocol: "http3", tls: { rejectUnauthorized: false } };
     expectBounded(await runClient(`https://127.0.0.1:${server.port}/`, opts, READ_A_LITTLE));
+  });
+
+  test.skipIf(isWindows)("gzip over HTTP/3: a reader that takes a little does not move the origin on", async () => {
+    const bomb = bombFor("gzip");
+    const { add, block, api } = progress(Infinity);
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            pull(controller) {
+              add(bomb.length);
+              controller.enqueue(bomb);
+              block();
+            },
+          }),
+          { headers: { "content-encoding": "gzip" } },
+        ),
+    });
+    const res = await fetch(`https://127.0.0.1:${server.port}/`, { protocol: "http3", tls: { ca: tls.cert } });
+    // The origin has used up the 6 MiB window.
+    await api.wrote(6 * 1024 * 1024);
+    const stalled = await api.settled();
+    const reader = res.body!.getReader();
+    for (let total = 0; total < 8 * MARK;) total += (await reader.read()).value!.length;
+    expect((await api.settled()) - stalled).toBeLessThan(1024 * 1024);
+    await reader.cancel();
+    await server.stop(true);
   });
 
   // Once a program has said that it won't read the rest of a body, the client drops what it holds of it.
@@ -986,6 +1036,39 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     expect(total).toBe(300_000);
   });
 
+  // The same, with a budget that ends in the last match of the packet.
+  test("gzip: output the decoder still holds arrives without another packet", async () => {
+    const matches = Math.ceil(MARK / 258);
+    const tokens = [7, ...Array(matches).fill({ length: 258, distance: 1 })];
+    const expected = Buffer.alloc(1 + matches * 258, 7);
+    const block = putTokens(header(new Bits(), FIXED, false), tokens, fixedLiteralCodes, fixedDistanceCodes);
+    const wire = Buffer.concat([gzipHeader(), block.end()]);
+    await using server = await listening(
+      createTcpServer(s => {
+        s.on("error", () => {});
+        s.once("data", () =>
+          s.write(
+            Buffer.concat([
+              Buffer.from(`HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n`),
+              Buffer.from(wire.length.toString(16) + "\r\n"),
+              wire,
+              Buffer.from("\r\n"),
+            ]),
+          ),
+        );
+      }),
+    );
+    const res = await fetch(`http://127.0.0.1:${server.port}/`);
+    const reader = res.body!.getReader();
+    const chunks: Uint8Array[] = [];
+    for (let total = 0; total < expected.length; total += chunks.at(-1)!.length) {
+      chunks.push((await reader.read()).value!);
+    }
+    await reader.cancel();
+    expect(chunks.at(-1)!.length).toBe(expected.length - MARK);
+    expect(expected.equals(Buffer.concat(chunks))).toBe(true);
+  });
+
   // `await (await fetch(url)).text()` turns the consumer to BufferAll, possibly while the HTTP
   // thread is inside a pass it began under the reader's budget. A paused consumer asks for the
   // rest of such a pass; one that has just stopped being a reader never does, and without the
@@ -1247,7 +1330,6 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
       expect(await consume(res)).toBe(digest);
     });
 
-    // A tunnelled socket is never paused. The consumer's resume reaches the client all the same.
     test.each([
       ["res.bytes()", `[await (await fetch(url, opts)).bytes()]`],
       ["a streaming reader", `await Array.fromAsync((await fetch(url, opts)).body)`],
@@ -1535,6 +1617,50 @@ describe.concurrent("fetch() gives the request slot of an unread body to the nex
     expect(await run(STATUSES, url, { protocol: "http3", tls: { ca: tls.cert } })).toEqual(printed("18\n"));
   });
 
+  describe.each<[string, Buffer[]]>([
+    ["larger than the receive buffer", [Buffer.from(`Content-Length: ${big.length}\r\n\r\n`), big]],
+    ["cut off by an origin that went quiet", quiet],
+  ])("a body %s whose reader let go", (_, response) => {
+    test.each([
+      ["before it read", "res.body.getReader().releaseLock()"],
+      ["after a read", "const reader = res.body.getReader(); await reader.read(); reader.releaseLock()"],
+      ["by leaving a loop", "for await (const chunk of res.body.values({ preventCancel: true })) break"],
+    ])("%s", async (_, letGo) => {
+      using origin = await serveRaw(response);
+      const script = /* js */ `
+        let ok = 0;
+        for (let i = 0; i < 6; i++) {
+          const res = await fetch(url);
+          ${letGo};
+          ok++;
+        }
+        console.log(ok);
+        process.exit(0);
+      `;
+      expect(await run(script, origin.url)).toEqual(printed("6\n"));
+    });
+  });
+
+  test("the next reader gets the rest of a body whose first reader let go", async () => {
+    using origin = await serveRaw([Buffer.from(`Content-Length: ${big.length}\r\n\r\n`), big]);
+    const script = /* js */ `
+      let total = 0;
+      const responses = await Promise.all(
+        Array.from({ length: 9 }, async () => {
+          const res = await fetch(url);
+          const reader = res.body.getReader();
+          const { value } = await reader.read();
+          total += value.length;
+          reader.releaseLock();
+          return res;
+        }),
+      );
+      for (const res of responses) for await (const chunk of res.body) total += chunk.length;
+      console.log(total);
+    `;
+    expect(await run(script, origin.url)).toEqual(printed(`${9 * big.length}\n`));
+  });
+
   test("bodies that are read after all the heads are in arrive whole", async () => {
     using origin = await serveRaw([Buffer.from(`Content-Length: ${big.length}\r\n\r\n`), big]);
     const script = /* js */ `
@@ -1552,6 +1678,7 @@ describe.concurrent("fetch() gives the request slot of an unread body to the nex
     test.each([
       ["res.text()", "res.text().catch(() => {})"],
       ["a reader", "res.body.getReader().read()"],
+      ["a second reader", "res.body.getReader().releaseLock(), res.body.getReader().read()"],
       ["res.body.text()", "res.body.text().catch(() => {})"],
       ["Bun.write()", "Bun.write(opts.file + i, res).catch(() => {})"],
       ["Bun.serve()", "await forward(res)"],

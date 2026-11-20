@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_incoming.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 4f95665043e6f4f3d49e32817a7356b59d1a04ac2406fe4d7f29c9a945deca3a.
+// Written against that file with the SHA-256 7470c1fa258f956881da850ac8274fccea7e1117be92340f4c743d264de38c76.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_incoming"
@@ -399,7 +399,7 @@ ObjectDefineProperty(IncomingMessage.prototype, "aborted", {
 });
 
 // Materializes on first read from the bytes captured on the native handle
-// (takeRawHeaders). Assignment (the llhttp client path, or user code)
+// (takeRawHeaders). Assignment (the client path, or user code)
 // short-circuits materialization through the setter.
 function getRawHeaders(this: $Node.IncomingMessage) {
   let raw = this[kRawHeaders];

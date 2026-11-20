@@ -3,6 +3,7 @@ import { fetchH3Internals } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, expiredTls, isDebug, isLinux, tempDir, tls } from "harness";
 import { createPrivateKey } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { listen, QuicError } from "node:quic";
 import { frames, tamperingRelay } from "../../node/quic/tampering-relay";
@@ -1331,7 +1332,7 @@ test("follows a redirect onto another origin's idle pooled connection right away
 
 // Same retry, but the reconnect fails inside `connect()` itself. A QUIC
 // connect to a resolved hostname probes each address with a throwaway UDP
-// `connect(2)` (quic.c, us_quic_connect_result) and gives up when no entry is
+// `connect(2)` (quic.cpp, us_quic_connect_result) and gives up when no entry is
 // reachable. The shim lets the first probe through and refuses every later
 // one, so the handshake failure below retries onto a connect that fails
 // before it returns. On that path the request must be failed once, by the
@@ -1960,6 +1961,25 @@ describe("per-request tls options over http3", () => {
       defaultStore: "HTTP3HandshakeFailed",
       rightCAAgain: "hello over h3",
     });
+  });
+
+  test.each([
+    [["leaf", "int-valid"], ["root", "int-expired"], "verified"],
+    [["leaf", "int-valid"], ["root", "int-future"], "verified"],
+    [["leaf", "int-valid"], ["root-expired"], "HTTP3HandshakeFailed"],
+    [["leaf", "int-expired"], ["root"], "HTTP3HandshakeFailed"],
+  ])("a CA in tls.ca whose dates do not cover now counts as absent: %p under %p", async (chain, ca, expected) => {
+    const read = (name: string) =>
+      readFileSync(join(import.meta.dir, "../../node/tls/fixtures/expired-intermediate", name), "utf8");
+    const pems = (names: string[]) => names.map(name => read(`${name}.pem`));
+    using server = Bun.serve({
+      port: 0,
+      tls: { key: read("leaf.key"), cert: pems(chain).join("") },
+      http3: true,
+      http1: false,
+      fetch: () => new Response("verified"),
+    });
+    expect(await attempt(`https://127.0.0.1:${server.port}/`, { ca: pems(ca) })).toBe(expected);
   });
 
   test("verifies the certificate against tls.serverName", async () => {

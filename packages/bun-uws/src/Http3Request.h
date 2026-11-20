@@ -4,7 +4,6 @@
 #include "quic.h"
 #include "Utilities.h"
 
-#include <lshpack.h>
 
 #include <string_view>
 #include <utility>
@@ -148,18 +147,18 @@ private:
     enum class Field : uint8_t { Method, Scheme, Path, Authority, Host, ContentLength, Te, Expect, ConnectionSpecific, Other };
     static constexpr unsigned int bit(Field field) { return 1u << (unsigned int) field; }
 
-    /* lshpack reports the HPACK static-table index when the peer used one for the name, which is nearly always. HTTP/3 passes -1. */
+    /* The decoder reports the HPACK static-table index (RFC 7541 Appendix A) when the peer used one for the name, which is nearly always. HTTP/3 passes -1. */
     static Field classify(int hpackIndex, std::string_view name) {
-        switch (hpackIndex > 0 ? hpackIndex : LSHPACK_HDR_UNKNOWN) {
-        case LSHPACK_HDR_AUTHORITY: return Field::Authority;
-        case LSHPACK_HDR_METHOD_GET: case LSHPACK_HDR_METHOD_POST: return Field::Method;
-        case LSHPACK_HDR_PATH: case LSHPACK_HDR_PATH_INDEX_HTML: return Field::Path;
-        case LSHPACK_HDR_SCHEME_HTTP: case LSHPACK_HDR_SCHEME_HTTPS: return Field::Scheme;
-        case LSHPACK_HDR_HOST: return Field::Host;
-        case LSHPACK_HDR_CONTENT_LENGTH: return Field::ContentLength;
-        case LSHPACK_HDR_EXPECT: return Field::Expect;
-        case LSHPACK_HDR_TRANSFER_ENCODING: return Field::ConnectionSpecific;
-        case LSHPACK_HDR_UNKNOWN: break;
+        switch (hpackIndex) {
+        case -1: case 0: break;
+        case 1: return Field::Authority;
+        case 2: case 3: return Field::Method;
+        case 4: case 5: return Field::Path;
+        case 6: case 7: return Field::Scheme;
+        case 28: return Field::ContentLength;
+        case 35: return Field::Expect;
+        case 38: return Field::Host;
+        case 57: return Field::ConnectionSpecific;
         default: return Field::Other;
         }
         switch (name.size()) {

@@ -98,6 +98,7 @@ const SETTINGS = 2;
 const CONFIGURED = 3;
 const SELECTORS = 4;
 const LOADED = 10;
+const PRINTED = 19;
 
 // What `evaluate-eslint.js` has written for a `RegExp`, and `write_option` for `NaN`.
 const revive = (_, value) =>
@@ -253,6 +254,10 @@ async function findPlugin([directory, specifier, alias]) {
   return { name, isAlias: alias !== null, plugin, file, path, hasNothing };
 }
 
+// src/runtime/defer_require.js
+const lazy = typeof $Bun_lazy === "function" ? $Bun_lazy : undefined;
+const ifLoaded = lazy?.ifLoaded ?? ((object, key) => object[key]);
+
 // Where the objects are that the modules which are loaded export: `{ module, export }`, as `locate` in `evaluate-eslint.js` has it.
 function exportedObjects() {
   const exported = new Map();
@@ -263,7 +268,7 @@ function exportedObjects() {
     };
     try {
       note(exports, []);
-      for (const [name, value] of Object.entries(exports ?? {})) note(value, [name]);
+      for (const name of Object.keys(exports ?? {})) note(ifLoaded(exports, name), [name]);
     } catch {}
   }
   return exported;
@@ -318,9 +323,10 @@ async function loadPlugin([location, position, firstRule]) {
   }
   const { name, isAlias, plugin, file, path, hasNothing } = found;
   const described = [];
-  const exported = position === null ? exportedObjects() : null;
   // Sorted: a plugin that imports its rules all at once has them in another order each time.
   const names = Object.keys(plugin.rules ?? {}).sort();
+  if (position === null) for (const it of names) void plugin.rules[it];
+  const exported = position === null ? exportedObjects() : null;
   names.forEach((ruleName, i) => {
     // A plugin can load a rule when it is asked for it.
     if (position !== null) rules[firstRule + i] = { plugin, name: ruleName };
@@ -1068,7 +1074,35 @@ function reportLoading() {
   loadingTime = 0;
 }
 
+// A plugin says once that an option is deprecated, and remembers that in a variable, which each realm has.
+function warnOnce(name) {
+  const print = console[name];
+  // Whether it was held back
+  const printed = new Map();
+  console[name] = {
+    [name](text) {
+      if (arguments.length === 1 && typeof text === "string" && /deprecat|warn/i.test(text)) {
+        const wasHeldBack = printed.get(text);
+        if (wasHeldBack) {
+          // It isn't said once after all.
+          printed.set(text, false);
+          Reflect.apply(print, this, arguments);
+        } else if (wasHeldBack === undefined && printed.size < 64) {
+          let holdsBack = false;
+          try {
+            holdsBack = native.askText(PRINTED, name + text) === "1";
+          } catch {}
+          printed.set(text, holdsBack);
+          if (holdsBack) return;
+        }
+      }
+      return Reflect.apply(print, this, arguments);
+    },
+  }[name];
+}
+
 function start() {
+  ["log", "warn", "error"].forEach(warnOnce);
   const { cwd: directory, measures } = askForJson(START);
   cwd = directory;
   measuresLoading = measures;
@@ -1088,10 +1122,16 @@ function describeLoadError(error) {
   return lines.filter(it => !/^\s+at .*(?:\bbun-lint-plugins\.js|\(native):\d+/.test(it)).join("\n");
 }
 
+// What the engine says, as opposed to a plugin that throws on purpose.
+const lacksSomething =
+  / is not (?:a |an |defined|iterable)|Cannot (?:access|destructure|find|read|set) |Can't find variable/;
+
 // What the other side calls, with what the message is. Returns the result, or a promise of it.
 function handle(kind) {
   if (!hasStarted) start();
-  const returned = respond(kind);
+  const again = it => (it[0] === FAILED && lacksSomething.test(it) && lazy?.loadAll() ? respond(kind) : it);
+  let returned = respond(kind);
+  returned = typeof returned === "string" ? again(returned) : returned.then(again);
   if (!measuresLoading) return returned;
   if (typeof returned !== "string") return returned.finally(reportLoading);
   reportLoading();

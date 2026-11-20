@@ -1,7 +1,9 @@
+use bun_sema::atom::known;
 use bun_sema::hir::{FnId, FnKind};
 use smallvec::SmallVec;
 
 use super::EntryArguments;
+use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{EntryParameter, FunctionFlags, MethodKind};
 use crate::ir::{DeclaredType, FunctionId, TypeTable, ValueId};
 use crate::lower::member::{self, GivenName, PropertyName};
@@ -14,11 +16,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         name: Option<GivenName>,
     ) -> ValueId {
         let hir = self.file.hir;
-        if hir.is_evaluated_function(function) {
-            self.set_position(hir.replaced_callee_position(hir[function].start));
-            self.builder.check_evaluation(true);
+        if !hir.is_evaluated_function(function) {
+            return self.create_named_closure(function, name, None);
         }
-        self.create_named_closure(function, name, None)
+        let mut name = Some(name);
+        let mut lower_written = |lowering: &mut Self| {
+            lowering.set_position(hir.replaced_callee_position(hir[function].start));
+            lowering.emit_test_of_replaced_callee(known::Function, BuiltinId::Function);
+            lowering.builder.check_evaluation(true);
+            lowering.create_named_closure(function, name.take().flatten(), None)
+        };
+        let replaced = hir.replaced_evaluation_of(function);
+        match replaced.filter(|_| self.file.inputs.may_replace_evaluators) {
+            Some(replaced) => self.lower_in_place_of_evaluation(replaced, &mut lower_written),
+            None => lower_written(self),
+        }
     }
 
     pub(crate) fn lower_method(

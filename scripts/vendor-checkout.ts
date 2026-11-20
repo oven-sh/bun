@@ -1,3 +1,6 @@
+import { rmSync } from "node:fs";
+import { join } from "node:path";
+
 /** Where an entry of test/vendor.json is checked out from, and to. */
 interface VendorCheckout {
   repository: string;
@@ -18,6 +21,16 @@ export async function checkoutVendor(
     throw new Error(`expected the full hash of a commit of ${repository}, got ${JSON.stringify(commit)}`);
   }
   await git("init", "--quiet", vendorPath);
-  await git("-C", vendorPath, "fetch", "--depth", "1", repository, commit);
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await git("-C", vendorPath, "fetch", "--depth", "1", repository, commit);
+      break;
+    } catch (error) {
+      if (attempt === 3) throw error;
+      console.warn(error);
+      // A fetch that was killed at its time limit leaves this behind.
+      rmSync(join(vendorPath, ".git", "shallow.lock"), { force: true });
+    }
+  }
   await git("-C", vendorPath, "checkout", "--force", "--detach", commit);
 }

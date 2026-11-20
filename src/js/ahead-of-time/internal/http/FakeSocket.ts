@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/http/FakeSocket.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 3bbff026b2c4b0a0f04c4c75c2bfd13cde10fc227ab1f57ef15f259a7782d87c.
+// Written against that file with the SHA-256 a9ed1a188e4601dbf99cd13106c95045f6f2c7b7d1ba1ea8aedd0f24d14dad36.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const Duplex = require("internal/streams/duplex");
@@ -37,10 +37,6 @@ var FakeSocket = class Socket extends Duplex {
   _onTimeout = function (this: $Node.Duplex) {
     this.emit("timeout");
   };
-
-  _destroy(_err: Error | null, _callback: $Node.ErrorCallback) {}
-
-  _final(_callback: $Node.ErrorCallback) {}
 
   get localAddress() {
     return this.address() ? "127.0.0.1" : undefined;
@@ -120,7 +116,9 @@ var FakeSocket = class Socket extends Duplex {
     return this;
   }
 
-  _write(_chunk: unknown, _encoding: string, _callback: $Node.ErrorCallback) {}
+  _write(_chunk: unknown, _encoding: string, callback: $Node.ErrorCallback) {
+    callback();
+  }
 
   destroy() {
     this._httpMessage?.destroy?.();

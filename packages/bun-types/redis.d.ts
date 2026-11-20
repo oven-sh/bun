@@ -37,8 +37,15 @@ declare module "bun" {
     /**
      * TLS options. `serverName` sets the SNI and the name the certificate is
      * verified against, which default to the URL host.
+     * `checkServerIdentity(hostname, cert)` replaces that check, as in
+     * `node:tls`: return nothing to accept the certificate or an `Error`
+     * to refuse it. It is not called with `rejectUnauthorized: false`.
      */
-    tls?: boolean | Bun.TLSOptions;
+    tls?:
+      | boolean
+      | (Bun.TLSOptions & {
+          checkServerIdentity?: NonNullable<import("node:tls").ConnectionOptions["checkServerIdentity"]> | undefined;
+        });
 
     /**
      * Whether to enable auto-pipelining
@@ -90,14 +97,16 @@ declare module "bun" {
     /**
      * Callback fired when the client disconnects from the Redis server
      *
-     * @param error The error that caused the disconnection
+     * @param error The error that caused the disconnection. A pending
+     * `connect()` and the queued commands reject with the same object.
      */
     onclose: ((this: RedisClient, error: Error) => void) | null;
 
     /**
      * Connect to the Redis server
      *
-     * @returns A promise that resolves when connected
+     * @returns A promise that resolves when connected, or rejects with the
+     * reason the connection failed
      */
     connect(): Promise<void>;
 

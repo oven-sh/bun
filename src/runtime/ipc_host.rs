@@ -164,15 +164,12 @@ pub(crate) fn do_send(
     #[cfg_attr(windows, allow(unused_mut, unused_variables))]
     let mut dup_err: Option<bun_sys::Error> = None;
     if !handle.is_undefined_or_null() {
-        if let Some(listener) = Listener::from_js(handle) {
+        if let Some(listener) = Listener::from_js(&handle) {
             log!("got listener");
-            // SAFETY: from_js returned a non-null `*mut Listener`; the JS
-            // wrapper holds it alive for the call.
-            match unsafe { (*listener).listener.get() } {
+            match listener.listener.get() {
                 crate::socket::listener::ListenerType::Uws(socket_uws) => {
                     // may need to handle ssl case
-                    // SAFETY: `socket_uws` is a live non-null `*mut ListenSocket` owned by uSockets.
-                    let listen_socket = unsafe { &mut *socket_uws };
+                    let listen_socket = bun_opaque::opaque_deref_mut(socket_uws.as_ptr());
                     listen_socket.set_shared();
                     let fd = listen_socket.get_socket().get_fd();
                     #[cfg(not(windows))]
@@ -189,9 +186,8 @@ pub(crate) fn do_send(
                 crate::socket::listener::ListenerType::NamedPipe(_named_pipe) => {}
                 crate::socket::listener::ListenerType::None => {}
             }
-        } else if let Some(socket) = crate::socket::TCPSocket::from_js(handle) {
-            // SAFETY: from_js returned a non-null pointer; the JS wrapper
-            let fd = unsafe { (*socket).socket.get().fd() };
+        } else if let Some(socket) = crate::socket::TCPSocket::from_js(&handle) {
+            let fd = socket.socket.get().fd();
             if fd != bun_sys::Fd::INVALID {
                 log!("got tcp socket fd");
                 let keep_open = !options_.is_undefined_or_null()
@@ -280,10 +276,11 @@ pub(crate) fn do_send(
     }
 
     if status == SerializeAndSendResult::Failure {
-        close_detached(global_object, pause_target)?;
         // The serializer rejected the message (cyclic JSON, uncloneable value): that is the error.
-        if global_object.has_exception() {
-            return Err(bun_jsc::JsError::Thrown);
+        let rejected = global_object.try_take_exception();
+        close_detached(global_object, pause_target)?;
+        if let Some(rejected) = rejected {
+            return Err(global_object.throw_value(rejected));
         }
         let ex = global_object.create_type_error_instance(format_args!("process.send() failed"));
         ex.put(
@@ -411,7 +408,6 @@ impl IPCInstance {
     pub(crate) fn handle_ipc_message(message: &DecodedIPCMessage, handle: JSValue) -> JsResult<()> {
         let vm = bun_jsc::virtual_machine::VirtualMachine::get();
         let global_this = vm.global();
-        let event_loop = vm.event_loop();
 
         match *message {
             DecodedIPCMessage::Version(v) => {
@@ -419,9 +415,8 @@ impl IPCInstance {
             }
             DecodedIPCMessage::Data(data) => {
                 bun_core::scoped_log!(IPC, "Received IPC message from parent");
-                event_loop.enter();
+                let _entered = vm.enter_event_loop_scope();
                 Process__emitMessageEvent(global_this, data, handle);
-                event_loop.exit();
             }
             DecodedIPCMessage::Internal(data) => {
                 bun_core::scoped_log!(IPC, "Received IPC internal message from parent");
@@ -440,21 +435,21 @@ impl IPCInstance {
     pub(crate) fn handle_ipc_close() {
         bun_core::scoped_log!(IPC, "IPCInstance#handleIPCClose");
         let vm = bun_jsc::virtual_machine::VirtualMachine::get();
-        let event_loop = vm.event_loop();
         crate::jsc_hooks::ipc_child_singleton_deinit();
-        event_loop.enter();
-        // On the next tick, so that it comes after the callbacks of the messages that never went out.
-        let emit = bun_jsc::JSFunction::create(
-            vm.global(),
-            "",
-            crate::generated_bindgen::ipc_host::Bun__IPC__emitProcessDisconnectEvent,
-            0,
-            Default::default(),
-        );
-        if let Err(err) = JSValue::call_next_tick_1(emit, vm.global(), JSValue::UNDEFINED) {
-            let _ = bun_jsc::task::report_error_or_terminate(vm.global(), err);
+        {
+            let _entered = vm.enter_event_loop_scope();
+            // On the next tick, so that it comes after the callbacks of the messages that never went out.
+            let emit = bun_jsc::JSFunction::create(
+                vm.global(),
+                "",
+                crate::generated_bindgen::ipc_host::Bun__IPC__emitProcessDisconnectEvent,
+                0,
+                Default::default(),
+            );
+            if let Err(err) = JSValue::call_next_tick_1(emit, vm.global(), JSValue::UNDEFINED) {
+                let _ = bun_jsc::task::report_error_or_terminate(vm.global(), err);
+            }
         }
-        event_loop.exit();
         // Group is embedded in RareData and shared with subprocess IPC; nothing
         // to free here.
         vm.channel_ref.disable();

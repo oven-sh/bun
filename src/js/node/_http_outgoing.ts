@@ -254,7 +254,8 @@ ObjectDefineProperty(OutgoingMessage.prototype, "closed", {
 ObjectDefineProperty(OutgoingMessage.prototype, "writableFinished", {
   __proto__: null,
   get() {
-    return this.finished && this.outputSize === 0 && (!this[kSocket] || this[kSocket].writableLength === 0);
+    // The socket stand-ins of serverless adapters have no writableLength.
+    return this.finished && this.outputSize === 0 && (!this[kSocket] || !this[kSocket].writableLength);
   },
 });
 
@@ -1117,7 +1118,10 @@ function queueEndCallback(msg, callback) {
 function onFinish(outmsg, err?) {
   const callbacks = outmsg[kEndCallbacks];
   if (callbacks) outmsg[kEndCallbacks] = undefined;
-  if ((outmsg[kFinishesWithoutLastWrite] && outmsg[kSocket]) || (!err && !outmsg.socket?._hadError)) {
+  if (
+    (outmsg[kFinishesWithoutLastWrite] && outmsg[kSocket] && !outmsg._closed) ||
+    (!err && !outmsg.socket?._hadError)
+  ) {
     return void outmsg.emit("finish");
   }
   if (!callbacks) return;

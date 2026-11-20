@@ -151,6 +151,7 @@ pub struct Connection {
     ack_only_packets: u32,
 
     tolerated_load: TokenBucket,
+    earned_load: u64,
     idle_timeout: Duration,
     has_sent_since_receiving: bool,
     progress_timeout: Duration,
@@ -265,6 +266,7 @@ impl Connection {
             ack_controller: None,
             ack_only_packets: 0,
             tolerated_load: TOLERATED_LOAD,
+            earned_load: 0,
             idle_timeout: Duration::from_millis(local.max_idle_timeout_millis),
             has_sent_since_receiving: false,
             progress_timeout: config.progress_timeout,

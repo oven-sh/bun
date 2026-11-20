@@ -78,7 +78,12 @@ impl Connection {
             if positions.end == 0 {
                 break;
             }
-            for packet in packets.range_mut(positions).filter(|it| it.is_in_flight()) {
+            let mut at = positions.start;
+            while let Some(packet) = packets.get_mut(at).filter(|_| at < positions.end) {
+                at += packet.settle(positions.end - at);
+                if !packet.is_in_flight() {
+                    continue;
+                }
                 packet.fate = Fate::Acked;
                 has_news = true;
                 is_reordered |= Some(packet.number) < previous_largest;

@@ -24,6 +24,8 @@ use crate::time::{Duration, Instant};
 
 const MAX_COALESCED: usize = 8;
 const LOAD_WHILE_GOING_AWAY: u32 = 2000;
+/// Some peers change keys and IDs after a number of packets, however fast they go.
+const PACKETS_PER_LOAD: u64 = 500;
 const MAX_UNDECRYPTABLE: usize = 32;
 const MAX_UNDECRYPTABLE_LEN: usize = 48 * 1024;
 const UNVALIDATED_MAX_UNDECRYPTABLE_LEN: usize = 16 * 1024;
@@ -151,6 +153,9 @@ impl Connection {
     #[cold]
     fn bear_load(&mut self, now: Instant) -> Result {
         let load = core::mem::take(&mut self.streams.state.load);
+        let earned = self.stats.packets_received / PACKETS_PER_LOAD;
+        let new = earned.saturating_sub(core::mem::replace(&mut self.earned_load, earned));
+        (self.tolerated_load).put_back(new.try_into().unwrap_or(u32::MAX));
         match (self.tolerated_load.take(now, load), &self.http3) {
             (true, _) => Ok(()),
             (false, Some(_)) if self.side.is_server() && !self.streams.table.is_going_away => {

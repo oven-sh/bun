@@ -276,6 +276,7 @@ impl Connection {
             frame_count: space.sent.frames.end().wrapping_sub(draft.first_frame) as u16,
             control: draft.control,
             fate: Fate::Unknown,
+            settled: 0,
         });
         space.sent.last_at = now;
         space.probes = space.probes.saturating_sub(1);

@@ -87,12 +87,22 @@ pub(super) struct SentPacket {
     pub(super) frame_count: u16,
     pub(super) control: Control,
     pub(super) fate: Fate,
+    /// How many packets from this one on are known not to be in flight.
+    pub(super) settled: u16,
 }
 
 impl SentPacket {
     #[inline]
     pub(super) fn is_in_flight(&self) -> bool {
         matches!(self.fate, Fate::Unknown | Fate::Probed)
+    }
+
+    /// For the first of `len` packets that are acknowledged. Returns the distance to the next one that may be news.
+    #[inline]
+    pub(super) fn settle(&mut self, len: usize) -> usize {
+        let known = self.settled;
+        self.settled = known.max(len.try_into().unwrap_or(u16::MAX));
+        known.max(1).into()
     }
 }
 

@@ -1877,9 +1877,15 @@ describe.concurrent("aroundEach and aroundAll", () => {
     });
   });
 
-  test("the timeout is for the time before runTest() and for the time after it, not for the time inside", async () => {
-    const { log, results, errors, exitCode } = await runTests({
-      "a.test.js": `
+  // Serial: the hooks' timeouts are real time, and the other tests of this file keep the processor from the child.
+  test.serial(
+    "the timeout is for the time before runTest() and for the time after it, not for the time inside",
+    async () => {
+      // The timeout of a hook with a phase that has to end in time. Such a phase only calls runTest() or returns, and
+      // still a debug build has taken over 100 ms for it, alone on the machine. A phase that never ends has 10 ms.
+      const longEnough = 250;
+      const { log, results, errors, exitCode } = await runTests({
+        "a.test.js": `
         import { test, describe, aroundEach, aroundAll, afterEach, afterAll } from "vitest";
         const never = new Promise(() => {});
         const outer = () => aroundEach(async runTest => { console.log("outer >"); await runTest(); console.log("outer <"); });
@@ -1897,7 +1903,7 @@ describe.concurrent("aroundEach and aroundAll", () => {
         });
         describe("aroundEach teardown", () => {
           outer();
-          aroundEach(async runTest => { await runTest(); await never; }, 10);
+          aroundEach(async runTest => { await runTest(); await never; }, ${longEnough});
           test("test", () => console.log("test"));
         });
         describe("aroundAll setup", () => {
@@ -1906,15 +1912,15 @@ describe.concurrent("aroundEach and aroundAll", () => {
           test("test", () => console.log("unreachable"));
         });
         describe("aroundAll teardown", () => {
-          aroundAll(async runSuite => { await runSuite(); await never; }, 10);
+          aroundAll(async runSuite => { await runSuite(); await never; }, ${longEnough});
           test("test", () => console.log("test"));
         });
         describe("inside", () => {
-          aroundAll(runSuite => runSuite(), 100);
-          aroundEach(runTest => runTest(), 100);
+          aroundAll(runSuite => runSuite(), ${longEnough});
+          aroundEach(runTest => runTest(), ${longEnough});
           test("takes longer than the timeout of the hooks", async () => {
             const start = performance.now();
-            while (performance.now() - start < 150) await new Promise(resolve => setTimeout(resolve, 10));
+            while (performance.now() - start < ${longEnough * 1.5}) await new Promise(resolve => setTimeout(resolve, 10));
           });
         });
         describe("the test times out", () => {
@@ -1926,38 +1932,39 @@ describe.concurrent("aroundEach and aroundAll", () => {
           await new Promise(resolve => setImmediate(resolve));
         });
       `,
-    });
-    expect({ log, results, errors, exitCode }).toEqual({
-      log: [
-        "outer >",
-        "aborted",
-        "outer <",
-        "outer >",
-        "test",
-        "outer <",
-        "test",
-        "after a timeout: fail",
-        "late: Cannot call runTest() after the setup phase of the aroundEach hook has ended",
-      ],
-      results: [
-        "(fail) aroundEach setup > test",
-        "(fail) aroundEach teardown > test",
-        "(fail) aroundAll setup > (unnamed)",
-        "(pass) aroundAll teardown > test",
-        "(fail) aroundAll teardown > (unnamed)",
-        "(pass) inside > takes longer than the timeout of the hooks",
-        "(fail) the test times out > test",
-        "(pass) runTest() after its hook timed out",
-      ],
-      errors: [
-        `AroundHookSetupError: The setup phase of "aroundEach" hook timed out after 10ms.`,
-        `AroundHookTeardownError: The teardown phase of "aroundEach" hook timed out after 10ms.`,
-        `AroundHookSetupError: The setup phase of "aroundAll" hook timed out after 10ms.`,
-        `AroundHookTeardownError: The teardown phase of "aroundAll" hook timed out after 10ms.`,
-      ],
-      exitCode: 1,
-    });
-  });
+      });
+      expect({ log, results, errors, exitCode }).toEqual({
+        log: [
+          "outer >",
+          "aborted",
+          "outer <",
+          "outer >",
+          "test",
+          "outer <",
+          "test",
+          "after a timeout: fail",
+          "late: Cannot call runTest() after the setup phase of the aroundEach hook has ended",
+        ],
+        results: [
+          "(fail) aroundEach setup > test",
+          "(fail) aroundEach teardown > test",
+          "(fail) aroundAll setup > (unnamed)",
+          "(pass) aroundAll teardown > test",
+          "(fail) aroundAll teardown > (unnamed)",
+          "(pass) inside > takes longer than the timeout of the hooks",
+          "(fail) the test times out > test",
+          "(pass) runTest() after its hook timed out",
+        ],
+        errors: [
+          `AroundHookSetupError: The setup phase of "aroundEach" hook timed out after 10ms.`,
+          `AroundHookTeardownError: The teardown phase of "aroundEach" hook timed out after ${longEnough}ms.`,
+          `AroundHookSetupError: The setup phase of "aroundAll" hook timed out after 10ms.`,
+          `AroundHookTeardownError: The teardown phase of "aroundAll" hook timed out after ${longEnough}ms.`,
+        ],
+        exitCode: 1,
+      });
+    },
+  );
 
   test.each(["vitest", "bun:test"])(
     "what runs inside sees the AsyncLocalStorage stores that runTest() and runSuite() were called in: %s",
@@ -3488,7 +3495,9 @@ describe.concurrent(`[test] globals = "vitest"`, () => {
     });
   });
 
-  test("is part of the transpiler cache key", async () => {
+  // Serial: the runs share a cache, so they go one after the other. Beside the other tests, four runs of a debug
+  // build take longer than the timeout.
+  test.serial("is part of the transpiler cache key", async () => {
     using cache = tempDir("vitest-flavor-cache", {});
     const env = { BUN_RUNTIME_TRANSPILER_CACHE_PATH: String(cache) };
     // The transpiler cache skips small files.
@@ -3806,7 +3815,8 @@ describe.concurrent(`"vitest" has no jest, xit, xtest or xdescribe`, () => {
     expect({ log, exitCode }).toEqual({ log: expected, exitCode: 0 });
   });
 
-  test("the transpiler cache is keyed by flavor, and a cached test file keeps its flavor", async () => {
+  // Serial, like "is part of the transpiler cache key": these are five runs.
+  test.serial("the transpiler cache is keyed by flavor, and a cached test file keeps its flavor", async () => {
     using cache = tempDir("vitest-flavor-cache", {});
     const env = {
       BUN_RUNTIME_TRANSPILER_CACHE_PATH: String(cache),

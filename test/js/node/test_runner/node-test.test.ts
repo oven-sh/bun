@@ -166,6 +166,8 @@ describe("node:test", () => {
     expect(exitCode).toBe(1);
   });
 
+  // bun:test ends the blocked hook 5 s after the hook's own timeout, so this
+  // row cannot end in less than 5 s. It gets the headroom of the rows above.
   test.concurrent(
     "should end a before() hook with its own timeout that blocks in spawnSync",
     async () => {
@@ -176,7 +178,7 @@ describe("node:test", () => {
         stderr: expect.stringContaining("0 pass"),
       });
     },
-    20_000,
+    30_000,
   );
 
   test.concurrent(

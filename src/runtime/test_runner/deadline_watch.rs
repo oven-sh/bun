@@ -196,6 +196,7 @@ fn publish(deadline: Timespec, is_in_callback: bool, entry: Option<Entry<'_>>) {
     drop(state);
 
     if has_deadline && !IS_WATCHING.swap(true, Ordering::Relaxed) {
+        // SAFETY: the thread holds nothing of a VM. It reads `STATE`, which holds copies, and ends the process.
         // Without the thread, a test that blocks the event loop hangs, as it did before there was one.
         let _ = std::thread::Builder::new().name("TestTimeout".into()).spawn(watch);
     }

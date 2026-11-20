@@ -196,6 +196,9 @@
   "src/runtime/shell/interpreter.rs": {
     "WorkPool::schedule*": 1
   },
+  "src/runtime/test_runner/deadline_watch.rs": {
+    "thread spawn": 1
+  },
   "src/runtime/webcore/blob/copy_file.rs": {
     "unsafe impl Send": [
       "CopyFile"

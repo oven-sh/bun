@@ -2899,9 +2899,13 @@ fn json_text(e: &bun_ast::Expr, minify_whitespace: bool) -> Vec<u8> {
         *e,
         &source,
         bun_js_printer::PrintJsonOptions {
+            // No caller shows the indentation.
+            indent: bun_ast::Indentation {
+                scalar: 0,
+                ..Default::default()
+            },
             mangled_props: None,
             minify_whitespace,
-            ..Default::default()
         },
     );
     printer.ctx.get_written().to_vec()
@@ -2912,7 +2916,7 @@ fn expr_text(e: &bun_ast::Expr, bump: &Bump) -> Vec<u8> {
     if let Some(s) = e.as_string(bump) {
         return s.to_vec();
     }
-    // Collapse the printer's indentation.
+    // Collapse the printer's line breaks.
     let mut out: Vec<u8> = Vec::new();
     let mut last_space = false;
     for b in json_text(e, false) {

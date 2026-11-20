@@ -1,4 +1,4 @@
-import { RedisClient, type Subprocess } from "bun";
+import { RedisClient, SQL, type Subprocess } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isIPv6, tls } from "harness";
@@ -7,6 +7,16 @@ import { connect as netConnect } from "net";
 import { join } from "path";
 import { Duplex } from "stream";
 import { connect as tlsConnect } from "tls";
+import {
+  MYSQL_CLIENT_SSL,
+  MYSQL_DEFAULT_CAPABILITIES,
+  mysqlHandshakeV10,
+  mysqlOkPacket,
+  mysqlTextResultSet,
+  pgAuthenticationOk,
+  pgCommandComplete,
+  pgReadyForQuery,
+} from "../../sql/wire-frames";
 import { startRecordingProxy } from "../../web/websocket/proxy-test-utils";
 let url: URL;
 let process: Subprocess<"ignore", "pipe", "inherit"> | null = null;
@@ -904,6 +914,181 @@ it.concurrent.each(["HELLO", "GET a"])(
     expect({ values, received: (await output.next()).value }).toEqual({
       values: ["a", "b", "c"],
       received: "HELLO,GET a,GET b,GET c",
+    });
+  },
+);
+
+// Scripted SQL servers. Each starts in plaintext and moves to TLS 1.2 after the client asked for it. REPLIES holds the
+// bytes to answer with, by what the client sent. The server renegotiates when it has read the message in
+// RENEGOTIATE_AT and answers that message when the renegotiation has finished. When the connection closes it prints
+// what it received.
+const sqlServerPrelude = /* js */ `
+  const net = require("net");
+  const replies = JSON.parse(process.env.REPLIES);
+  const received = [];
+  const reply = (socket, message) => {
+    received.push(message);
+    const answer = () => socket.write(Buffer.from(replies[message] ?? replies.other, "hex"));
+    if (message === process.env.RENEGOTIATE_AT) socket.renegotiate({}, err => (err ? socket.destroy(err) : answer()));
+    else answer();
+  };
+  const secure = require("tls").createServer(
+    { cert: process.env.SERVER_CERT, key: process.env.SERVER_KEY, maxVersion: "TLSv1.2" },
+    socket => {
+      let pending = Buffer.alloc(0);
+      socket.on("error", () => {});
+      socket.on("close", () => console.log(JSON.stringify(received)));
+      socket.on("data", chunk => {
+        pending = Buffer.concat([pending, chunk]);
+        for (let length; (length = messageLength(pending)) <= pending.length; pending = pending.subarray(length)) {
+          const message = describe(pending.subarray(0, length));
+          if (message) reply(socket, message);
+        }
+      });
+    },
+  );
+  secure.listen(0, "127.0.0.1");
+  // Reads the client's request for TLS, which is requestLength(pending) bytes long, in however many reads it
+  // arrives. Then hands the connection to the TLS server, with what the client sent behind the request.
+  const secureAfter = (plain, requestLength, accept) => {
+    let pending = Buffer.alloc(0);
+    plain.on("data", function onData(chunk) {
+      pending = Buffer.concat([pending, chunk]);
+      if (requestLength(pending) > pending.length) return;
+      plain.off("data", onData);
+      plain.pause();
+      const inner = net.connect(secure.address().port, "127.0.0.1", () => {
+        if (accept) plain.write(accept);
+        inner.write(pending.subarray(requestLength(pending)));
+        plain.pipe(inner).pipe(plain);
+      });
+      // Without the TLS server the client would wait for nothing: close its connection, so that its query rejects.
+      inner.on("error", () => plain.destroy());
+    });
+  };
+  const listen = onPlain => {
+    const server = net.createServer(plain => {
+      plain.on("error", () => {});
+      onPlain(plain);
+    });
+    server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+  };
+`;
+
+// A packet is the length of its payload in 3 bytes, a sequence id, and the payload. The server greets first. The
+// client answers with an SSLRequest packet, and everything after that packet is TLS. The first packet over TLS is the
+// login. A query is the byte 0x03 (COM_QUERY) and its text, and 0x01 (COM_QUIT) ends the session.
+const renegotiatingMySQLServer = /* js */ `
+  const messageLength = pending => (pending.length < 4 ? Infinity : 4 + pending.readUIntLE(0, 3));
+  const describe = packet => {
+    if (received.length === 0) return "login";
+    if (packet[4] === 0x03) return packet.toString("latin1", 5);
+    return packet[4] === 0x01 ? "" : "not a query";
+  };
+  listen(plain => {
+    plain.write(Buffer.from(replies.greeting, "hex"));
+    secureAfter(plain, messageLength);
+  });
+`;
+
+// The client asks for TLS with an SSLRequest of 8 bytes. The answer is the byte "S", and everything after it is TLS.
+// The first message over TLS is the startup message: its length, then its content. Every later message has a type
+// byte in front of the length. "Q" is a query and its text, and "X" ends the session.
+const renegotiatingPostgresServer = /* js */ `
+  const typed = pending => received.length > 0 && pending[0] !== 0;
+  const messageLength = pending =>
+    pending.length < 5 ? Infinity : typed(pending) ? 1 + pending.readUInt32BE(1) : pending.readUInt32BE(0);
+  const describe = message => {
+    if (!typed(message)) return "startup";
+    if (message[0] === 0x51) return message.toString("latin1", 5, message.length - 1);
+    return message[0] === 0x58 ? "" : "not a query";
+  };
+  listen(plain => secureAfter(plain, () => 8, "S"));
+`;
+
+const words = ["first", "second", "third", "fourth"];
+const hex = (replies: Record<string, Buffer>) =>
+  JSON.stringify(
+    Object.fromEntries(Object.entries(replies).map(([message, bytes]) => [message, bytes.toString("hex")])),
+  );
+
+const sqlDrivers = [
+  {
+    name: "MySQL",
+    server: renegotiatingMySQLServer,
+    url: (port: number) => `mysql://user:secret@127.0.0.1:${port}/db`,
+    query: (word: string) => `select '${word}'`,
+    replies: {
+      greeting: mysqlHandshakeV10({ capabilities: MYSQL_DEFAULT_CAPABILITIES | MYSQL_CLIENT_SSL }),
+      // The login packet is number 2 of its exchange: the greeting is 0 and the SSLRequest is 1.
+      login: mysqlOkPacket(3),
+      other: mysqlOkPacket(1),
+      ...Object.fromEntries(
+        words.map(word => [`select '${word}'`, mysqlTextResultSet(1, [{ name: "word", type: 0xfd }], [[word]])]),
+      ),
+    },
+    value: (result: any) => result[0]?.word,
+    session: ["login", "SET time_zone = '+00:00'"],
+  },
+  {
+    name: "Postgres",
+    server: renegotiatingPostgresServer,
+    url: (port: number) => `postgres://user:secret@127.0.0.1:${port}/db`,
+    query: (word: string) => `update ${word}`,
+    replies: {
+      startup: Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]),
+      other: Buffer.concat([pgCommandComplete("SET"), pgReadyForQuery()]),
+      ...Object.fromEntries(
+        words.map((word, index) => [
+          `update ${word}`,
+          Buffer.concat([pgCommandComplete(`UPDATE ${index + 1}`), pgReadyForQuery()]),
+        ]),
+      ),
+    },
+    value: (result: any) => words[result.count - 1],
+    session: ["startup"],
+  },
+];
+
+// The driver checks the server's identity and starts its session when the TLS handshake is reported. The report of a
+// renegotiation must do neither again: a server answers a second login too, and every later query then gets the reply
+// to the query before it. The server renegotiates before it answers the first message of the session, when the driver
+// still waits for its login to be accepted, or before it answers a query.
+it.concurrent.each(
+  sqlDrivers.flatMap(driver =>
+    [driver.session[0], driver.query("second")].map(renegotiateAt => ({ ...driver, renegotiateAt })),
+  ),
+)(
+  "Bun.SQL starts its $name session once when the server renegotiates before it answers $renegotiateAt",
+  async ({ server: script, url, query, replies, value, session, renegotiateAt }) => {
+    await using server = Bun.spawn({
+      cmd: ["node", "-e", sqlServerPrelude + script],
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+      env: {
+        ...bunEnv,
+        SERVER_CERT: tls.cert,
+        SERVER_KEY: tls.key,
+        REPLIES: hex(replies),
+        RENEGOTIATE_AT: renegotiateAt,
+      },
+    });
+    const output = lines(server.stdout);
+    const port = Number((await output.next()).value);
+    const values: unknown[] = [];
+    let identityChecks = 0;
+    {
+      await using sql = new SQL(url(port), {
+        max: 1,
+        tls: { ca: tls.cert, checkServerIdentity: () => void identityChecks++ },
+      });
+      for (const word of words) values.push(value(await sql.unsafe(query(word)).simple()));
+    }
+    expect({ values, identityChecks, received: JSON.parse((await output.next()).value!) }).toEqual({
+      values: words,
+      identityChecks: 1,
+      received: [...session, ...words.map(query)],
     });
   },
 );

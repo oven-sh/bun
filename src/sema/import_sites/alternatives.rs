@@ -4581,10 +4581,8 @@ impl Follower<'_, '_, '_> {
             return false;
         };
         let name = atoms.bytes(name);
-        let mut parts = name.rsplit(|&it| it == b'/' || it == b'\\');
-        let last = parts.next().unwrap_or(name);
-        let stem = file.own_name.rsplitn(2, |&it| it == b'.').last();
-        let stem = stem.unwrap_or(file.own_name);
+        let last = &name[strings::last_index_of_any(name, b"/\\").map_or(0, |slash| slash + 1)..];
+        let stem = strings::rsplit_once_char(file.own_name, b'.').map_or(file.own_name, |it| it.0);
         !file.own_name.is_empty()
             && (last == file.own_name
                 || last == stem
@@ -7886,8 +7884,9 @@ fn name_from_url_of_folder(folder: &[u8], text: &Text) -> Option<Text> {
         return None;
     }
     let mut name = text.clone();
-    let last = name.start.rsplit(|&byte| byte == b'/').next();
-    if name.end.is_none() && matches!(last, Some(b"." | b"..")) {
+    let last =
+        &name.start[strings::last_index_of_char(&name.start, b'/').map_or(0, |slash| slash + 1)..];
+    if name.end.is_none() && matches!(last, b"." | b"..") {
         name.start.push(b'/');
     }
     if folder == b"./" && name.start.starts_with(b"../") {

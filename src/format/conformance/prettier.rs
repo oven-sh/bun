@@ -22,6 +22,7 @@ const ONLY_BABEL_TS_REJECTS: &str = "an input that only `babel-ts` rejects: Pret
 const HTML_LIKE_COMMENT: &str = "`babel` rejects HTML-like comments, but the snapshots of js/comments/html-like and of jsx/jsx-test-suite, made with `acorn`, have them formatted";
 const PLUGIN: &str = "formatted by a plugin of Prettier";
 const CHANGES_A_VALUE: &str = "Prettier's output is another value: it drops the blanks at the end of a block scalar (prettier#19764)";
+const ADDS_A_LINE_OF_CODE: &str = "Prettier's output is another document: it prints an empty line in a fenced code block that has no line between its fences, and that line is code";
 
 /// Skipped cases and why. A case is skipped if its path contains the text.
 const EXCLUDED: &[(&str, &str)] = &[
@@ -85,6 +86,22 @@ const EXCLUDED: &[(&str, &str)] = &[
         ONLY_BABEL_TS_REJECTS,
     ),
     ("yaml/block-folded/block-folded-strip.yml", CHANGES_A_VALUE),
+    (
+        "markdown/commonmark-test-suite/snippet: example-126.md",
+        ADDS_A_LINE_OF_CODE,
+    ),
+    (
+        "markdown/commonmark-test-suite/snippet: example-130.md",
+        ADDS_A_LINE_OF_CODE,
+    ),
+    (
+        "markdown/commonmark-test-suite/snippet: example-144.md",
+        ADDS_A_LINE_OF_CODE,
+    ),
+    (
+        "markdown/commonmark-test-suite/snippet: example-237.md",
+        ADDS_A_LINE_OF_CODE,
+    ),
 ];
 
 /// Not idempotent in Prettier either: `unstableTests` in `tests/config/format-test/failed-format-tests.js`.

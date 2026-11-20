@@ -1,6 +1,6 @@
 // Sub-modules
 
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::collections::VecDeque;
 
@@ -20,7 +20,6 @@ pub(crate) const MARK_EXTENSION: u8 = 1 << 4;
 pub(crate) const MARK_OTHER: u8 = 1 << 5;
 use bun_core::StackCheck;
 
-use super::helpers;
 use super::html_renderer::HtmlRenderer;
 use super::types::{
     Align, BlockType, Container, ContainerEnds, Extensions, Flags, OFF, Renderer,
@@ -81,6 +80,7 @@ pub(crate) struct Parser<'a> {
     // Cell because find_html_tag is a &self query reached from both &self and
     // &mut self scanners.
     pub(crate) html_scan_memo: Cell<HtmlScanMemo>,
+    pub(crate) code_span_ends: RefCell<crate::inlines::CodeSpanEnds>,
     // No thematic break starts between these two places. See `is_hr_line`.
     pub(crate) not_hr: Cell<(OFF, OFF)>,
 
@@ -124,6 +124,11 @@ pub(crate) struct Parser<'a> {
 
     // `RendererImpl::wants_source`
     pub(crate) track: bool,
+    // `RendererImpl::wants_inline_content`
+    pub(crate) tracks_content: bool,
+    // How many emphasis and strikethrough spans are open
+    pub(crate) emph_depth: u32,
+    pub(crate) reuse: Option<Box<crate::stream::Reuse>>,
     // What `container_source` is told, for each container opener and closer
     // in `blocks`, in their order.
     pub(crate) container_sources: Vec<(OFF, OFF, u32)>,
@@ -145,6 +150,7 @@ pub(crate) struct Parser<'a> {
     pub(crate) footnote_labels: bun_collections::StringSet,
 }
 
+#[derive(Clone, Copy)]
 pub struct BlockHeader {
     pub(crate) block_type: BlockType,
     pub(crate) flags: u32,
@@ -194,6 +200,11 @@ pub const MAX_INPUT_LEN: usize = (OFF::MAX - MAX_LOOKAHEAD) as usize;
 
 /// The most bytes that ended blocks and their lines may take. It keeps `Container.opener_index` a `u32`.
 const MAX_BLOCK_BYTES: usize = OFF::MAX as usize;
+
+/// See [`Parser::charge_ref_def_output`].
+pub(crate) fn max_ref_def_output(document_len: u64) -> u64 {
+    16 * document_len.min(1024 * 1024 / 16)
+}
 
 /// The runtime block-metadata cap checked by [`Parser::append_block_header`]:
 /// always [`MAX_BLOCK_BYTES`] outside of tests, shrinkable only through
@@ -253,20 +264,28 @@ impl<'a> Parser<'a> {
 
     fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Result<Parser<'a>, ParserError> {
         let size = input_size(text)?;
+        let has_carriage_return = bun_core::strings::contains_char(text, b'\r');
+        Ok(Self::new(text, size, has_carriage_return, flags, rend))
+    }
+
+    pub(crate) fn new(
+        text: &'a [u8],
+        size: OFF,
+        has_carriage_return: bool,
+        flags: Flags,
+        rend: Renderer<'a>,
+    ) -> Parser<'a> {
         let track = rend.ptr.wants_source();
+        let tracks_content = track && rend.ptr.wants_inline_content();
         let mut p = Parser {
             text,
             size,
-            has_carriage_return: bun_core::strings::contains_char(text, b'\r'),
+            has_carriage_return,
             flags,
             renderer: rend,
             image_nesting_level: 0,
             link_nesting_level: 0,
-            code_indent_offset: if flags.no_indented_code_blocks {
-                u32::MAX
-            } else {
-                4
-            },
+            code_indent_offset: flags.code_indent_offset(),
             mark_char_map: [0; 256],
             marks: Vec::new(),
             marks_seen: 0,
@@ -281,6 +300,7 @@ impl<'a> Parser<'a> {
             bracket_pairs: Vec::new(),
             label_frames: Vec::new(),
             html_scan_memo: Cell::new(HtmlScanMemo::EMPTY),
+            code_span_ends: RefCell::default(),
             not_hr: Cell::new((0, 0)),
             n_containers: 0,
             directives: Vec::new(),
@@ -297,9 +317,12 @@ impl<'a> Parser<'a> {
             last_list_item_starts_with_two_blank_lines: false,
             last_header_opens_list_item: false,
             last_line_is_only_a_task_mark: false,
-            max_ref_def_output: 16 * (size as u64).min(1024 * 1024 / 16),
+            max_ref_def_output: max_ref_def_output(u64::from(size)),
             stack_check: StackCheck::init(),
             track,
+            tracks_content,
+            emph_depth: 0,
+            reuse: None,
             container_sources: Vec::new(),
             line_beg: 0,
             is_directive_end: false,
@@ -311,10 +334,16 @@ impl<'a> Parser<'a> {
             footnote_labels: bun_collections::StringSet::new(),
         };
         p.build_mark_char_map();
-        Ok(p)
+        p
     }
 
     // All owned buffers are `Vec<_>`, so `Drop` is automatic — no explicit impl.
+
+    /// The consumer reads what is written in the document by itself.
+    #[inline]
+    pub(crate) fn tracks_document(&self) -> bool {
+        self.track && !self.tracks_content
+    }
 
     #[inline]
     pub(crate) fn ch(&self, off: OFF) -> u8 {
@@ -388,18 +417,18 @@ impl<'a> Parser<'a> {
     //   process_table_block, process_table_row
     //
     // blocks.rs — impl Parser:
-    //   process_doc, analyze_line, process_line, start_new_block,
-    //   add_line_to_current_block, end_current_block,
-    //   consume_ref_defs_from_current_block
+    //   process_doc, first_line_beg, read_lines, n_finished_blocks, close_blocks, render_blocks,
+    //   analyze_line, process_line, start_new_block,
+    //   add_line_to_current_block, end_current_block
     //
     // containers.rs — impl Parser:
     //   push_container, push_container_block, enter_child_containers,
-    //   leave_child_containers, is_container_compatible, process_all_blocks
+    //   leave_child_containers, is_container_compatible, process_blocks
     //
     // inlines.rs — impl Parser:
     //   process_leaf_block, process_inline_content, enter_span, leave_span,
     //   emit_text, emit_emph_open_tags, emit_emph_close_tags,
-    //   find_code_span_end, normalize_code_span_content, flanking,
+    //   normalize_code_span_content, flanking,
     //   collect_emphasis_delimiters, resolve_emphasis_delimiters, find_entity,
     //   find_html_tag
     //
@@ -433,12 +462,9 @@ pub(crate) fn render_to_html(
     flags: Flags,
     render_opts: RenderOptions,
 ) -> Result<Box<[u8]>, ParserError> {
-    // Skip UTF-8 BOM
-    let input = helpers::skip_utf8_bom(text);
+    let mut html_renderer = HtmlRenderer::init(text, render_opts);
 
-    let mut html_renderer = HtmlRenderer::init(input, render_opts);
-
-    let mut parser = Parser::init(input, flags, html_renderer.renderer())?;
+    let mut parser = Parser::init(text, flags, html_renderer.renderer())?;
 
     parser.process_doc()?;
     drop(parser);
@@ -458,13 +484,7 @@ pub(crate) fn render_with_renderer<'a>(
     extensions: Option<Extensions<'a>>,
 ) -> Result<(), ParserError> {
     let _ = render_options; // Available for renderer implementations; parse layer does not use these.
-    // Who wants to know where things are is told places in `text`.
-    let input = match rend.ptr.wants_source() {
-        true => text,
-        false => helpers::skip_utf8_bom(text),
-    };
-
-    let mut p = Parser::init(input, flags, rend)?;
+    let mut p = Parser::init(text, flags, rend)?;
     if let Some(extensions) = extensions {
         p.set_extensions(extensions);
     }

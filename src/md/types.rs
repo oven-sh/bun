@@ -84,6 +84,34 @@ pub trait RendererImpl {
     fn leave_span(&mut self, span_type: SpanType) -> JsResult<()>;
     fn text(&mut self, text_type: TextType, content: &[u8]) -> JsResult<()>;
 
+    /// Where a `Stream` puts the ids that earlier parts of the document have used up.
+    fn heading_ids(&mut self) -> Option<&mut crate::helpers::HeadingIdTracker> {
+        None
+    }
+
+    /// Whether what this consumer makes of a list item or of a row of a table can be used again by a later pass of a
+    /// `Stream`.
+    fn can_keep(&self) -> bool {
+        false
+    }
+    /// After `leave_block` of such a block.
+    fn keep(&mut self, _slot: u32) -> JsResult<()> {
+        Ok(())
+    }
+    /// In place of all events of the block.
+    fn reuse(&mut self, _slot: u32) -> JsResult<()> {
+        Ok(())
+    }
+
+    /// With `wants_source`: blocks are cut as for a renderer, but their inline content is as it is written, with the
+    /// indentation of the lines of a paragraph. `inline_source` is told places in `inline_content`.
+    fn wants_inline_content(&self) -> bool {
+        false
+    }
+    fn inline_content(&mut self, _content: &[u8]) {}
+    /// Before `leave_block` of the document: where the next block starts, or the text ends.
+    fn source_end(&mut self, _end: OFF) {}
+
     /// Whether this consumer wants to know where things are written in the
     /// document. Asked once, before parsing. None of the methods below is
     /// called, and nothing is recorded for them, unless it does. It is then
@@ -118,8 +146,7 @@ pub trait RendererImpl {
     fn extension_span(&mut self, _tag: u32, _content: &[u8]) -> JsResult<()> {
         Ok(())
     }
-    /// A link reference definition. These come right after `enter_block` of
-    /// the document, those in front of a setext heading first.
+    /// A link reference definition. These come before the blocks, in their order.
     fn definition(&mut self, _definition: &Definition<'_>) {}
 }
 
@@ -276,7 +303,7 @@ pub struct Container {
     pub(crate) start: u32,
     pub(crate) mark_indent: u32,
     pub(crate) contents_indent: u32,
-    /// Index in `Parser.blocks` of a list's opener.
+    /// Index in `Parser.blocks` of its opener.
     pub(crate) opener_index: u32,
     /// Where the marker of the container (of the current item of a list) is.
     pub(crate) mark_beg: OFF,
@@ -327,9 +354,22 @@ pub struct Flags {
     pub(crate) math_blocks: bool,
     pub(crate) directives: bool,
     pub(crate) no_single_tilde: bool,
+    pub(crate) no_reference_definitions: bool,
+    pub(crate) table_pipes_in_code: bool,
+    pub(crate) table_extra_cells: bool,
+    pub(crate) max_nesting: u32,
     pub(crate) micromark: bool,
     pub(crate) micromark_to_the_letter: bool,
     pub(crate) mdx: bool,
+}
+
+impl Flags {
+    pub(crate) fn code_indent_offset(&self) -> u32 {
+        match self.no_indented_code_blocks {
+            true => u32::MAX,
+            false => 4,
+        }
+    }
 }
 
 /// Syntax of the consumer's own.

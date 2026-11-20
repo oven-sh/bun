@@ -1,9 +1,7 @@
-use bun_alloc::AllocError;
-
 use crate::compat;
 use crate::helpers;
 use crate::links::{ParsedDest, scan_link_destination};
-use crate::parser::Parser;
+use crate::parser::{BlockHeader, Parser};
 use crate::types;
 use crate::unicode;
 
@@ -102,7 +100,7 @@ impl Parser<'_> {
         let mut p = pos;
 
         // Must start with [
-        if p >= text.len() || text[p] != b'[' {
+        if p >= text.len() || text[p] != b'[' || self.flags.no_reference_definitions {
             return None;
         }
         p += 1;
@@ -294,19 +292,18 @@ impl Parser<'_> {
         Some(ParsedTitle { title, end_pos: p })
     }
 
-    pub(crate) fn build_ref_def_hashtable(&mut self) -> Result<(), AllocError> {
-        let mut blocks = core::mem::take(&mut self.blocks);
-        let mut block_lines = core::mem::take(&mut self.block_lines);
-        let mut rest = block_lines.as_mut_slice();
-
-        for hdr in &mut blocks {
+    /// Returns whether `blocks` have definitions, be it of labels that are taken.
+    pub(crate) fn build_ref_def_hashtable(
+        &mut self,
+        blocks: &mut [BlockHeader],
+        mut rest: &mut [types::VerbatimLine],
+    ) -> bool {
+        let mut has_ref_defs = false;
+        for hdr in blocks {
             let lines;
             (lines, rest) = rest.split_at_mut(hdr.n_lines as usize);
 
-            // Only process paragraph blocks (not container openers/closers)
-            if hdr.block_type != types::BlockType::P
-                || hdr.flags & types::BLOCK_CONTAINER_OPENER != 0
-                || hdr.flags & types::BLOCK_CONTAINER_CLOSER != 0
+            if hdr.block_type != types::BlockType::P && hdr.flags & types::BLOCK_SETEXT_HEADER == 0
             {
                 continue;
             }
@@ -393,6 +390,8 @@ impl Parser<'_> {
             // Restore buffer for reuse on next iteration.
             self.buffer = merged;
 
+            has_ref_defs |= lines_consumed > 0;
+
             // Update the block: mark consumed lines
             if lines_consumed as usize >= lines.len() {
                 // Entire paragraph is ref defs — flag to skip during rendering
@@ -405,9 +404,6 @@ impl Parser<'_> {
                 }
             }
         }
-
-        self.blocks = blocks;
-        self.block_lines = block_lines;
-        Ok(())
+        has_ref_defs
     }
 }

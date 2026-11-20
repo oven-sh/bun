@@ -63,6 +63,8 @@ static JSPromise* performFlushAlgorithm(JSC::VM& vm, JSGlobalObject* globalObjec
         RELEASE_AND_RETURN(scope, runNativeArm<JSCompressionStream>(controller->m_algorithmContext.get(), [&](auto* s) { return compressionStreamFlush(globalObject, s, controller); }));
     case TransformerKind::Decompression:
         RELEASE_AND_RETURN(scope, runNativeArm<JSDecompressionStream>(controller->m_algorithmContext.get(), [&](auto* s) { return decompressionStreamFlush(globalObject, s, controller); }));
+    case TransformerKind::Markdown:
+        RELEASE_AND_RETURN(scope, runNativeArm<JSTransformStream>(controller->m_algorithmContext.get(), [&](auto*) { return markdownStreamFlush(globalObject, controller); }));
     }
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }

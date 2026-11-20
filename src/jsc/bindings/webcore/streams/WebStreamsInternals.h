@@ -567,6 +567,12 @@ JSC::JSPromise* textEncoderStreamFlush(JSC::JSGlobalObject*, JSTextEncoderStream
 JSC::JSPromise* textDecoderStreamTransform(JSC::JSGlobalObject*, JSTextDecoderStream*, JSTransformStreamDefaultController*, JSC::JSValue chunk); // userJS: yes — JSTextDecoderStream.cpp
 JSC::JSPromise* textDecoderStreamFlush(JSC::JSGlobalObject*, JSTextDecoderStream*, JSTransformStreamDefaultController*); // userJS: yes — JSTextDecoderStream.cpp
 
+// MarkdownTransform.cpp — the TransformerKind::Markdown algorithm ARMS, and what ClearAlgorithms calls.
+
+JSC::JSPromise* markdownStreamTransform(JSC::JSGlobalObject*, JSTransformStreamDefaultController*, JSC::JSValue chunk); // userJS: yes — MarkdownTransform.cpp
+JSC::JSPromise* markdownStreamFlush(JSC::JSGlobalObject*, JSTransformStreamDefaultController*); // userJS: yes — MarkdownTransform.cpp
+void markdownStreamRelease(JSTransformStreamDefaultController*); // userJS: no — MarkdownTransform.cpp
+
 // JSCompressionStreamShared.cpp — the TransformerKind::Compression / ::Decompression algorithm
 // ARMS. Same dispatch/bridge relationship as the TextEncoder/TextDecoder arms above.
 

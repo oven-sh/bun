@@ -46,6 +46,8 @@ namespace Bun {
 
 using namespace JSC;
 
+JSC::JSArray* createMarkdownTokenConstants(JSC::VM&, JSC::JSGlobalObject*);
+
 class MarkdownTagStrings {
 public:
 #define MARKDOWN_TAG_STRINGS_ACCESSOR_DEFINITION(name, str, idx) \
@@ -60,6 +62,12 @@ public:
         return m_strings[index].getInitializedOnMainThread(globalObject);
     }
 
+    // See BunMarkdownTokens.cpp.
+    JSC::JSArray* tokenConstants(JSC::JSGlobalObject* globalObject)
+    {
+        return m_tokenConstants.getInitializedOnMainThread(globalObject);
+    }
+
     void initialize();
 
     template<typename Visitor>
@@ -67,6 +75,7 @@ public:
 
 private:
     JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSString> m_strings[MARKDOWN_TAG_STRINGS_COUNT];
+    JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSArray> m_tokenConstants;
 };
 
 } // namespace Bun

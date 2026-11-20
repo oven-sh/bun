@@ -1,6 +1,6 @@
 use crate::compat;
 use crate::helpers;
-use crate::inlines::Walk;
+use crate::inlines::{CodeSpanEnds, Walk};
 use crate::parser::{self, MARK_CLOSER, MARK_HIDES, MARK_OPENER, Parser};
 use crate::types::{OFF, Reference, SpanDetail, SpanType, TextType};
 
@@ -206,8 +206,9 @@ impl Parser<'_> {
         // Where the last backslash escape ends.
         let mut escape_end: usize = 0;
         // Of the wiki links whose label `pos` is in: where what is around the
-        // label ends, and the opener that was the last before it.
-        let mut around_wiki_labels: Vec<(usize, OFF)> = Vec::new();
+        // label ends, the opener that was the last before it, and what is known
+        // of its code spans.
+        let mut around_wiki_labels: Vec<(usize, OFF, CodeSpanEnds)> = Vec::new();
         // A label is content of its own.
         let mut end = content.len();
         let mut walk = Walk::default();
@@ -217,9 +218,10 @@ impl Parser<'_> {
         loop {
             pos = self.next_mark(&mut walk, pos);
             if pos >= end {
-                let Some((outer_end, outer_top)) = around_wiki_labels.pop() else {
+                let Some((outer_end, outer_top, code_span_ends)) = around_wiki_labels.pop() else {
                     break;
                 };
+                *self.code_span_ends.get_mut() = code_span_ends;
                 BracketMatches::leave_open(&mut storage, top);
                 pos = end + 2;
                 taken = pos;
@@ -254,12 +256,13 @@ impl Parser<'_> {
                         && let Some(wiki_link) = self.match_wiki_link(content, pos)
                         && !(is_image && self.is_image_around_brackets(content, pos, &wiki_link))
                     {
-                        around_wiki_labels.push((end, top));
-                        (end, top) = (wiki_link.inner_end, BracketMatches::UNMATCHED);
                         pos = match wiki_link.pipe_pos {
                             Some(pipe) => pipe + 1,
                             None => wiki_link.inner_start,
                         };
+                        let of_label = CodeSpanEnds::starting_at(pos);
+                        around_wiki_labels.push((end, top, self.code_span_ends.replace(of_label)));
+                        (end, top) = (wiki_link.inner_end, BracketMatches::UNMATCHED);
                         taken = pos;
                         continue;
                     }
@@ -310,7 +313,7 @@ impl Parser<'_> {
         // Where the `[` is in the block's inline content.
         bracket: usize,
     ) -> Result<LabelLeave, parser::Error> {
-        if self.image_nesting_level > 0 {
+        if self.image_nesting_level > 0 && !self.tracks_content {
             // Inside image alt text: emit only text, no HTML tags
             Ok(LabelLeave::AltText)
         } else if is_image {

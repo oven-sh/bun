@@ -6,41 +6,100 @@ use crate::types::{self, BlockType, Container, Line, OFF, VerbatimLine};
 
 type BlockHeader = parser::BlockHeader;
 
+#[derive(Clone, Copy)]
+pub(crate) enum ReadUntil {
+    End,
+    /// A block ends that is not one of the first `n_held`, or one starts behind them.
+    News {
+        n_held: usize,
+    },
+}
+
 impl Parser<'_> {
     pub(crate) fn process_doc(&mut self) -> Result<(), parser::Error> {
-        let dummy_blank = Line {
-            r#type: LineType::Blank,
-            ..Line::default()
-        };
-        let mut pivot_line = dummy_blank;
-        let mut line_buf: [Line; 2] = [Line::default(), Line::default()];
-        let mut line_idx: usize = 0;
-        let mut off: OFF = 0;
+        let mut pivot_line = Line::default();
+        let mut off = self.first_line_beg();
 
         self.enter_block(BlockType::Doc, 0, 0)?;
 
-        while off < self.size {
-            let line = &mut line_buf[line_idx];
-
-            self.analyze_line(off, &mut off, &pivot_line, line)?;
-            // Pass the whole buf + idx so process_line can swap lines.
-            self.process_line(&mut pivot_line, line_idx, &mut line_buf, &mut line_idx)?;
-        }
-
-        self.end_current_block()?;
-        if self.track {
+        self.read_lines(&mut off, &mut pivot_line, ReadUntil::End)?;
+        self.close_blocks()?;
+        if self.tracks_document() {
             self.renderer.ptr.line_starts(&self.line_starts);
         }
-
-        // Build ref def hashtable
-        self.build_ref_def_hashtable()?;
-
-        // Process all blocks
-        self.line_beg = OFF::MAX;
-        self.leave_child_containers(0)?;
-        self.process_all_blocks()?;
+        self.render_blocks(self.blocks.len(), self.block_lines.len())?;
+        self.renderer.ptr.source_end(self.size);
 
         self.leave_block(BlockType::Doc, 0)?;
+        Ok(())
+    }
+
+    pub(crate) fn first_line_beg(&self) -> OFF {
+        match self.tracks_document() {
+            true => 0,
+            false => self.size - helpers::skip_utf8_bom(self.text).len() as OFF,
+        }
+    }
+
+    /// Adds the lines from `off` on to the blocks, and moves `off` behind them.
+    pub(crate) fn read_lines(
+        &mut self,
+        off: &mut OFF,
+        pivot_line: &mut Line,
+        until: ReadUntil,
+    ) -> Result<(), parser::Error> {
+        while *off < self.size {
+            let mut line = Line::default();
+            self.analyze_line(*off, off, pivot_line, &mut line)?;
+            self.process_line(pivot_line, &line)?;
+            if let ReadUntil::News { n_held } = until
+                && (self.n_finished_blocks() > n_held || (n_held > 0 && self.has_open_block()))
+            {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn has_open_block(&self) -> bool {
+        self.n_containers > 0 || self.current_block.is_some()
+    }
+
+    /// How many of `blocks` are before the outermost open container.
+    pub(crate) fn n_finished_blocks(&self) -> usize {
+        match self.n_containers {
+            0 => self.blocks.len(),
+            _ => self.containers[0].opener_index as usize,
+        }
+    }
+
+    /// The end of the document ends everything that is open.
+    pub(crate) fn close_blocks(&mut self) -> Result<(), parser::Error> {
+        self.end_current_block()?;
+        self.line_beg = OFF::MAX;
+        self.leave_child_containers(0)
+    }
+
+    /// Renders the first `n_blocks` of `blocks`, whose lines are the first `n_lines` of `block_lines`, and removes
+    /// both. No container may be open behind them.
+    pub(crate) fn render_blocks(
+        &mut self,
+        n_blocks: usize,
+        n_lines: usize,
+    ) -> Result<(), parser::Error> {
+        let mut blocks = core::mem::take(&mut self.blocks);
+        let mut lines = core::mem::take(&mut self.block_lines);
+        let has_ref_defs =
+            self.build_ref_def_hashtable(&mut blocks[..n_blocks], &mut lines[..n_lines]);
+        if let Some(reuse) = &mut self.reuse {
+            reuse.is_on &= !has_ref_defs;
+        }
+        let n_sources = self.process_blocks(&blocks[..n_blocks], &lines[..n_lines])?;
+        self.container_sources.drain(..n_sources);
+        blocks.drain(..n_blocks);
+        lines.drain(..n_lines);
+        self.blocks = blocks;
+        self.block_lines = lines;
         Ok(())
     }
 
@@ -53,7 +112,7 @@ impl Parser<'_> {
     ) -> Result<(), parser::Error> {
         let mut off = off_start;
         self.line_beg = off_start;
-        if self.track {
+        if self.tracks_document() {
             self.line_starts.push(off_start);
         }
         let mut total_indent: u32 = 0;
@@ -69,9 +128,6 @@ impl Parser<'_> {
         let follows_task_mark = core::mem::take(&mut self.last_line_is_only_a_task_mark);
         // Nothing is on the line but the markers of containers that were open before it.
         let mut is_empty = false;
-
-        *line = Line::default();
-        line.enforce_new_block = false;
 
         // Eat indentation and match containers
         let indent_result = helpers::line_indentation(self.text, total_indent, off);
@@ -386,7 +442,9 @@ impl Parser<'_> {
             // Check for new container block
             if line.indent < self.code_indent_offset {
                 let cont_result = self.is_container_mark(line.indent, off);
-                if cont_result.is_container {
+                if cont_result.is_container
+                    && n_parents + n_brothers + n_children < self.flags.max_nesting
+                {
                     container = cont_result.container;
                     container.mark_beg = off;
                     container.mark_end = cont_result.off;
@@ -858,14 +916,8 @@ impl Parser<'_> {
     pub(crate) fn process_line(
         &mut self,
         pivot_line: &mut Line,
-        cur_line_idx: usize,
-        line_buf: &mut [Line; 2],
-        line_idx: &mut usize,
+        line: &Line,
     ) -> Result<(), parser::Error> {
-        // Index into line_buf via cur_line_idx instead of taking a `&mut Line`
-        // parameter, which would alias line_buf.
-        let line = &mut line_buf[cur_line_idx];
-
         // Blank line ends current leaf block.
         // Note: blank lines inside fenced code blocks are typed .fencedcode by analyzeLine,
         // and blank lines inside HTML blocks type 1-5 are typed .html by analyzeLine.
@@ -981,8 +1033,11 @@ impl Parser<'_> {
         // Add line to current block
         self.add_line_to_current_block(line);
 
-        // Ensure we alternate line buffers to avoid aliasing
-        *line_idx ^= 1;
+        // The line has what ends the block in it
+        if line.r#type == LineType::Html && self.html_block_type == 0 {
+            self.end_current_block()?;
+            *pivot_line = Line::default();
+        }
         Ok(())
     }
 
@@ -1025,21 +1080,8 @@ impl Parser<'_> {
         let Some(mut hdr) = self.current_block.take() else {
             return Ok(());
         };
-        let is_setext =
-            hdr.block_type == BlockType::H && (hdr.flags & types::BLOCK_SETEXT_HEADER) != 0;
-        if is_setext
-            && let Some(first) = self.current_block_lines().first()
-            && self.ch(first.beg) == b'['
-        {
-            self.consume_ref_defs_from_current_block();
-        }
         // Every line has at least one byte of the input, whose size is an `OFF`.
         hdr.n_lines = (self.block_lines.len() - self.current_block_first_line) as u32;
-
-        // All lines consumed (`current_block_is_only_ref_defs` keeps that from being a heading)
-        if is_setext && hdr.n_lines == 0 {
-            hdr.flags |= types::BLOCK_REF_DEF_ONLY;
-        }
         self.append_block_header(hdr)
     }
 
@@ -1074,89 +1116,6 @@ impl Parser<'_> {
         let is_only_ref_defs = pos >= merged.len();
         self.buffer = merged;
         is_only_ref_defs
-    }
-
-    pub(crate) fn consume_ref_defs_from_current_block(&mut self) {
-        // Merge lines into buffer for ref def parsing
-        self.buffer.clear();
-        for vline in &self.block_lines[self.current_block_first_line..] {
-            if vline.beg > vline.end || vline.end > self.size {
-                continue;
-            }
-            if self.buffer.len() > 0 {
-                self.buffer.push(b'\n');
-            }
-            self.buffer
-                .extend_from_slice(&self.text[vline.beg as usize..vline.end as usize]);
-        }
-
-        // Move the merged buffer out of self so parse_ref_def/normalize_label
-        // can borrow &self/&mut self.
-        let merged = core::mem::take(&mut self.buffer);
-        let mut pos: usize = 0;
-        let mut lines_consumed: u32 = 0;
-
-        while pos < merged.len() {
-            let Some(result) = self.parse_ref_def(&merged, pos) else {
-                break;
-            };
-
-            // Capture borrowed result fields before &mut self calls.
-            let raw_label: Box<[u8]> = Box::from(result.label);
-            let dest_dupe: Box<[u8]> = Box::from(result.dest);
-            let title_dupe: Box<[u8]> = Box::from(result.title);
-            let end_pos = result.end_pos;
-
-            let norm_label = self.normalize_label(&raw_label);
-            if norm_label.is_empty() {
-                break;
-            }
-
-            // First definition wins
-            let label = norm_label.into_boxed_slice();
-            if !self.ref_def_labels.contains(&label) {
-                let _ = self.ref_def_labels.insert(&label);
-                self.ref_defs.push(crate::ref_defs::RefDef {
-                    dest: dest_dupe,
-                    title: title_dupe,
-                });
-            }
-
-            let mut newlines: u32 = 0;
-            for &mc in &merged[pos..end_pos] {
-                if mc == b'\n' {
-                    newlines += 1;
-                }
-            }
-            if end_pos >= merged.len() && (end_pos == pos || merged[end_pos - 1] != b'\n') {
-                newlines += 1;
-            }
-            if self.track {
-                let lines = &self.block_lines[self.current_block_first_line..];
-                let first = lines.get(lines_consumed as usize);
-                let last = lines.get((lines_consumed + newlines).saturating_sub(1) as usize);
-                if let (Some(first), Some(last)) = (first, last) {
-                    self.renderer.ptr.definition(&types::Definition {
-                        beg: first.beg,
-                        end: last.end,
-                        label: result.label,
-                        dest: result.dest,
-                        title: result.title,
-                        lines: &lines
-                            [lines_consumed as usize..(lines_consumed + newlines) as usize],
-                    });
-                }
-            }
-            lines_consumed += newlines;
-            pos = end_pos;
-        }
-
-        // Restore buffer for reuse.
-        self.buffer = merged;
-
-        let first = self.current_block_first_line;
-        let end = (first + lines_consumed as usize).min(self.block_lines.len());
-        self.block_lines.drain(first..end);
     }
 }
 

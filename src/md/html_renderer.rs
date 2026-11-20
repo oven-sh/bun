@@ -628,6 +628,9 @@ impl RendererImpl for HtmlRenderer<'_> {
         HtmlRenderer::text(self, text_type, content);
         Ok(())
     }
+    fn heading_ids(&mut self) -> Option<&mut helpers::HeadingIdTracker> {
+        Some(&mut self.heading_tracker)
+    }
 }
 
 /// GFM 6.11: Check if HTML content starts with a disallowed tag.

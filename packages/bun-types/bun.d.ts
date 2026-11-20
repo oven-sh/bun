@@ -1578,11 +1578,14 @@ declare module "bun" {
   /**
    * Markdown related APIs.
    *
-   * Parses and renders markdown with four output modes:
+   * Parses and renders markdown with these output modes:
    * - `html()` — render to an HTML string
    * - `ansi()` — render to an ANSI-colored string for terminals
    * - `render()` — render with custom callbacks for each element
    * - `react()` — parse to React-compatible JSX elements
+   * - `tokens()` — parse to a tree of plain objects
+   * - `htmlStream()`, `ansiStream()`, `renderStream()`, `reactStream()`, `tokensStream()` — the same for a document
+   *   that arrives in chunks
    *
    * Supports GFM extensions (tables, strikethrough, task lists, autolinks) and
    * component overrides to replace default HTML tags with custom components.
@@ -1638,6 +1641,19 @@ declare module "bun" {
       noIndentedCodeBlocks?: boolean;
       /** Disable HTML blocks. Default: `false`. */
       noHtmlBlocks?: boolean;
+      /** Strikethrough needs two tildes, so `~text~` stays plain text. Default: `false`. */
+      noSingleTilde?: boolean;
+      /** Treat `[label]: url` as plain text, and with it all reference links. Default: `false`. */
+      noReferenceDefinitions?: boolean;
+      /** A `|` inside a code span does not end a table cell. Default: `false`. */
+      tablePipesInCode?: boolean;
+      /** Keep the cells of a table row that has more cells than the header. GFM drops them. Default: `false`. */
+      tableExtraCells?: boolean;
+      /**
+       * How deep lists and block quotes nest, how deep emphasis nests, and how deep links and images nest. Markers
+       * beyond that depth are plain text. Default: `100` for `tokens()` and `tokensStream()`, otherwise no limit.
+       */
+      maxNesting?: number;
       /** Disable inline HTML spans. Default: `false`. */
       noHtmlSpans?: boolean;
       /**
@@ -2071,6 +2087,180 @@ declare module "bun" {
       components?: ComponentOverrides,
       options?: ReactOptions,
     ): import("./jsx.d.ts").JSX.Element;
+
+    /** A node of the tree that {@link tokens} returns. */
+    type Token =
+      | { type: "space" | "hr" | "br"; raw: string }
+      | { type: "code"; raw: string; text: string; lang?: string; codeBlockStyle?: "indented" }
+      | { type: "heading"; raw: string; depth: number; text: string; tokens: Token[]; id?: string }
+      | { type: "paragraph" | "blockquote" | "em" | "strong" | "del"; raw: string; text: string; tokens: Token[] }
+      | { type: "list"; raw: string; ordered: boolean; start: number | ""; loose: boolean; items: ListItemToken[] }
+      | ListItemToken
+      | { type: "html"; raw: string; text: string; block: true; pre: boolean }
+      | { type: "html"; raw: string; text: string; block: false; inLink: boolean; inRawBlock: boolean }
+      | { type: "def"; raw: string; tag: string; href: string; title: string | undefined }
+      | {
+          type: "table";
+          raw: string;
+          header: TableCellToken[];
+          align: Array<TableCellToken["align"]>;
+          rows: TableCellToken[][];
+        }
+      | { type: "text"; raw: string; text: string; tokens?: Token[]; escaped?: boolean }
+      | { type: "escape" | "codespan"; raw: string; text: string }
+      | { type: "link"; raw: string; href: string; title?: string | null; text: string; tokens: Token[] }
+      | { type: "image"; raw: string; href: string; title: string | null; text: string; tokens: Token[] }
+      | { type: "wikilink"; raw: string; target: string; text: string; tokens: Token[] };
+
+    interface ListItemToken {
+      type: "list_item";
+      raw: string;
+      task: boolean;
+      /** `undefined` unless `task` is `true`. */
+      checked: boolean | undefined;
+      loose: boolean;
+      text: string;
+      tokens: Token[];
+    }
+
+    interface TableCellToken {
+      text: string;
+      tokens: Token[];
+      header: boolean;
+      align: "left" | "center" | "right" | null;
+    }
+
+    /**
+     * Parse markdown to tokens in the format of `marked.lexer()` from marked 15.
+     *
+     * The `raw` strings of the top-level tokens add up to the input. Text is not escaped, and entities are not
+     * decoded. Pass `autolinks: true` to link bare URLs as marked does.
+     *
+     * @example
+     * ```ts
+     * Bun.markdown.tokens("# Hi");
+     * // [{ type: "heading", raw: "# Hi", depth: 1, text: "Hi", tokens: [{ type: "text", ... }] }]
+     * ```
+     */
+    export function tokens(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike,
+      options?: Options,
+    ): Token[];
+
+    /**
+     * Renders a markdown document that arrives in chunks.
+     *
+     * Bun renders a top-level block (a paragraph, a whole list, a whole code block) once the line that ends it is
+     * complete, and then releases its text. A chunk can end anywhere, including inside a UTF-8 sequence or a surrogate
+     * pair. The output does not depend on where chunks end.
+     *
+     * The joined output of `write()` and `end()` is what the non-streaming function returns for the whole document,
+     * except for reference links: `[text][label]` stays plain text if its definition (`[label]: url`) is in a later
+     * top-level block.
+     *
+     * Either call `write()` and `end()`, or use `readable` and `writable`. `preview()` works with both.
+     */
+    interface MarkdownStream<Output> {
+      /**
+       * Add a chunk of the document.
+       *
+       * If a render callback throws, the stream ends.
+       *
+       * @returns The blocks that this chunk finished. Empty if there are none.
+       * @throws `ERR_INVALID_STATE` if the stream has ended, if `readable` or `writable` is locked, or when called from
+       * one of the stream's callbacks
+       */
+      write(chunk: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike): Output;
+      /**
+       * Render the text that is still buffered as if the document ended here, without changing the stream. The next
+       * chunk can change this output, so replace the previous preview with it instead of appending.
+       *
+       * `tokensStream()` and `reactStream()` return the finished list items and table rows of an unfinished block as
+       * the same objects each time, and do not parse them again. The other streams render the whole block on each call.
+       *
+       * Empty after the stream has ended.
+       *
+       * @throws `ERR_INVALID_STATE` when called from one of the stream's callbacks
+       */
+      preview(): Output;
+      /**
+       * End the document, after adding `chunk` if there is one.
+       *
+       * @returns All the blocks that `write()` has not returned
+       * @throws `ERR_INVALID_STATE` if the stream has ended, if `readable` or `writable` is locked, or when called from
+       * one of the stream's callbacks
+       */
+      end(chunk?: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | null): Output;
+      /** The non-empty results of the chunks written to `writable`. Errors when you call `write()` or `end()`. */
+      readonly readable: ReadableStream<Output>;
+      /** Takes the chunks. Closing it ends the document. Errors when you call `write()` or `end()`. */
+      readonly writable: WritableStream<string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike>;
+    }
+
+    /**
+     * Like {@link html}, for a document that arrives in chunks. Each result is made of whole top-level blocks.
+     *
+     * @example
+     * ```ts
+     * const md = Bun.markdown.htmlStream();
+     * md.write("# Hel"); // ""
+     * md.preview(); // "<h1>Hel</h1>\n"
+     * md.write("lo\n\nworld"); // "<h1>Hello</h1>\n"
+     * md.end(); // "<p>world</p>\n"
+     *
+     * // As a TransformStream
+     * new Response(Bun.file("README.md").stream().pipeThrough(Bun.markdown.htmlStream()));
+     * ```
+     */
+    export function htmlStream(options?: Options): MarkdownStream<string>;
+
+    /**
+     * Like {@link ansi}, for a document that arrives in chunks.
+     *
+     * @example
+     * ```ts
+     * for await (const text of Bun.stdin.stream().pipeThrough(Bun.markdown.ansiStream())) {
+     *   process.stdout.write(text);
+     * }
+     * ```
+     */
+    export function ansiStream(theme?: AnsiTheme): MarkdownStream<string>;
+
+    /**
+     * Like {@link render}, for a document that arrives in chunks.
+     *
+     * Bun reads `callbacks` once, when it creates the stream. `preview()` calls them too, so they can run several
+     * times for the same text.
+     */
+    export function renderStream(callbacks?: RenderCallbacks, options?: Options): MarkdownStream<string>;
+
+    /**
+     * Like {@link react}, for a document that arrives in chunks. Each result is an array with one element per
+     * top-level block instead of a Fragment.
+     *
+     * @example
+     * ```tsx
+     * const md = Bun.markdown.reactStream();
+     * const finished = [];
+     * for await (const token of tokens) {
+     *   finished.push(...md.write(token));
+     *   root.render(<>{[...finished, ...md.preview()]}</>);
+     * }
+     * finished.push(...md.end());
+     * root.render(<>{finished}</>);
+     * ```
+     */
+    export function reactStream(
+      components?: ComponentOverrides,
+      options?: ReactOptions,
+    ): MarkdownStream<import("./jsx.d.ts").JSX.Element[]>;
+
+    /**
+     * Like {@link tokens}, for a document that arrives in chunks.
+     *
+     * The `raw` of a token depends on the blank lines after it, so `write()` returns a token when the next block starts.
+     */
+    export function tokensStream(options?: Options): MarkdownStream<Token[]>;
   }
 
   /**

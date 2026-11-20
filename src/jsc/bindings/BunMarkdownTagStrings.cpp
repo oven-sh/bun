@@ -4,6 +4,7 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
+#include "RemovableFeatures.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/SlotVisitorInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
@@ -42,6 +43,11 @@ void MarkdownTagStrings::initialize()
             init.set(jsOwnedString(init.vm, tagLiterals[i]));
         });
     }
+    m_tokenConstants.initLater([](const JSC::LazyProperty<JSGlobalObject, JSArray>::Initializer& init) {
+        BUN_BEGIN_REMOVABLE_ENTRY_POINT(Markdown, Abort, void)
+        init.set(createMarkdownTokenConstants(init.vm, init.owner));
+        BUN_END_REMOVABLE_ENTRY_POINT
+    });
 }
 
 template<typename Visitor>
@@ -49,6 +55,7 @@ void MarkdownTagStrings::visit(Visitor& visitor)
 {
     for (auto& string : m_strings)
         string.visit(visitor);
+    m_tokenConstants.visit(visitor);
 }
 
 template void MarkdownTagStrings::visit(JSC::AbstractSlotVisitor&);

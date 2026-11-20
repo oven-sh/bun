@@ -31,6 +31,11 @@ const options = {
   noHtmlBlocks: { type: flag, altNames: ["no_html_blocks"] },
   noHtmlSpans: { type: flag, altNames: ["no_html_spans"] },
   tagFilter: { type: flag, altNames: ["tag_filter"] },
+  noSingleTilde: flag,
+  noReferenceDefinitions: flag,
+  tablePipesInCode: flag,
+  tableExtraCells: flag,
+  maxNesting: b.u32.optional,
 } as const;
 export const MarkdownOptions = b.dictionary(options, { allowArray: true });
 export const ReactOptions = b.dictionary({ reactVersion: b.f64.otherAsNull, ...options }, { allowArray: true });
@@ -108,6 +113,47 @@ export const ComponentOverrides = b.dictionary(
 
 const js = { capability: "js", throws: true } as const;
 
+/** A surrogate pair can be cut in two, so a string is not made UTF-8 by itself. */
+const chunk = b.bytes({ from: ["string", "buffer"], string: "asIs", held: "handle" });
+const renders = {
+  returns: b.any.returning("string", "Array"),
+  expected: { chunk: expected.input },
+  passThis: true,
+  ...js,
+} as const;
+
+export const MarkdownStream = b.class({
+  rustPath: "crate::api::markdown_object::stream::MarkdownStream",
+  estimatedSize: true,
+  internalFields: {
+    /** The `RenderCallbacks` or `ComponentOverrides`, as an array. */
+    overrides: b.any,
+    /** An array of the list items and table rows that a later call returns again. */
+    kept: b.any,
+    transform: b.cell("WebCore::JSTransformStream", "streams/JSTransformStream.h"),
+  },
+  proto: {
+    write: { args: { chunk }, ...renders, calledFromCpp: true },
+    preview: { ...renders, expected: {} },
+    end: { args: { chunk: chunk.nullable }, ...renders, calledFromCpp: true },
+    readable: { getter: b.any.returning("ReadableStream"), passThis: true, ...js },
+    writable: { getter: b.any.returning("WritableStream"), passThis: true, ...js },
+  },
+  calledFromCpp: {
+    /** Whether the internal fields can be emptied: no member is using them. */
+    release: { returns: b.bool },
+  },
+  calledFromRust: {
+    readableSide: { args: { isCalledDirectly: b.bool }, returns: b.any, throws: true },
+    writableSide: { args: { isCalledDirectly: b.bool }, returns: b.any, throws: true },
+    /** Whether the caller of `write` or `end` is not the transform, which is then of no more use. */
+    detachUnlessPiping: { returns: b.any, throws: true },
+  },
+});
+
+const streams = (name: string) =>
+  ({ rustPath: `crate::api::markdown_object::stream::${name}`, returns: MarkdownStream, ...js }) as const;
+
 export const markdown = b.namespace({
   html: { args: { input, options: MarkdownOptions.otherAsNull }, returns: b.string.utf8, expected, ...js },
   ansi: { args: { input, theme: AnsiTheme.default({}) }, returns: b.string.utf8, expected, length: 2, ...js },
@@ -125,4 +171,16 @@ export const markdown = b.namespace({
     length: 3,
     ...js,
   },
+  tokens: { args: { input, options: MarkdownOptions.otherAsNull }, returns: b.any.returning("Array"), expected, ...js },
+  htmlStream: { args: { options: MarkdownOptions.otherAsNull }, ...streams("html") },
+  ansiStream: { args: { theme: AnsiTheme.default({}) }, ...streams("ansi") },
+  renderStream: {
+    args: { callbacks: RenderCallbacks.otherAsNull, options: MarkdownOptions.otherAsNull },
+    ...streams("render"),
+  },
+  reactStream: {
+    args: { components: ComponentOverrides.otherAsNull, options: ReactOptions.otherAsNull },
+    ...streams("react"),
+  },
+  tokensStream: { args: { options: MarkdownOptions.otherAsNull }, ...streams("tokens") },
 });

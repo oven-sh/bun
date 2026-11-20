@@ -387,6 +387,46 @@ test("eval does not leak source code", async () => {
   expect(proc.exitCode).toBe(0);
 });
 
+// The registry that revokes the blob: URLs was made with a callback written in the constructor, so it
+// kept what the constructor of the first such Worker had in scope: that Worker's port.
+test("an `eval: true` Worker and its ports are collected once it has exited", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker } = require("worker_threads");
+       const { once } = require("events");
+       const { heapStats } = require("bun:jsc");
+       (async () => {
+         void MessagePort.prototype; // the constructor and the prototype are MessagePort cells too
+         const ports = () => heapStats().objectTypeCounts.MessagePort ?? 0;
+         Bun.gc(true);
+         const before = ports();
+         let collected = 0;
+         const seen = new FinalizationRegistry(() => collected++);
+         for (let i = 0; i < 4; i++) {
+           await (async () => {
+             const worker = new Worker("", { eval: true });
+             seen.register(worker, i);
+             await once(worker, "exit");
+           })();
+         }
+         const deadline = Date.now() + 5000;
+         while ((collected < 4 || ports() > before) && Date.now() < deadline) {
+           Bun.gc(true);
+           await new Promise(resolve => setImmediate(resolve));
+         }
+         console.log(JSON.stringify({ collected, portsLeft: ports() - before }));
+       })();`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: '{"collected":4,"portsLeft":0}\n', exitCode: 0 });
+});
+
 describe("captured stdio backpressure", () => {
   // node flow control (lib/internal/worker/io.js): a writev batch's callback is
   // withheld until the reader acks (STDIO_WANTS_MORE_DATA), so 'drain' must not

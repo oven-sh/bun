@@ -162,9 +162,34 @@ function makeEndedReadable() {
   });
 }
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/worker/io.js#L211-L247
+function setupPortReferencing(
+  port: MessagePort,
+  emitter: Pick<import("node:events").EventEmitter, "on" | "listenerCount">,
+  forward: NonNullable<MessagePort["onmessage"]>,
+) {
+  let stopped = false;
+  // Started here and not at the first listener, as in node: until then a message is emitted to no one.
+  port.onmessage = forward;
+  port.unref();
+  emitter.on("newListener", function onNewListener(name: string | symbol) {
+    if (name !== "message" || emitter.listenerCount("message") !== 0) return;
+    if (!stopped) return port.ref();
+    stopped = false;
+    port.onmessage = forward;
+  });
+  emitter.on("removeListener", function onRemoveListener(name: string | symbol) {
+    if (name !== "message" || emitter.listenerCount("message") !== 0) return;
+    stopped = true;
+    // With no 'message' handler the port leaves what arrives queued. The setter also unrefs it, and refs it above.
+    port.onmessage = null;
+  });
+}
+
 export default {
   kFlushSync,
   makePortReadable,
   makePortWritable,
   makeEndedReadable,
+  setupPortReferencing,
 } as const;

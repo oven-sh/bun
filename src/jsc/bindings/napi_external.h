@@ -76,6 +76,8 @@ public:
         Base::finishCreation(vm);
         m_value = value;
         m_finalizer = NapiFinalizer { callback, finalizer_hint };
+        if (m_env && callback)
+            m_boundCleanup = &m_env->addFinalizer(finalizeAtEnvCleanup, nullptr, this);
     }
 
     static void destroy(JSC::JSCell* cell);
@@ -85,6 +87,9 @@ public:
     void* m_value;
     NapiFinalizer m_finalizer;
     WTF::RefPtr<NapiEnv> m_env;
+    const NapiEnv::BoundFinalizer* m_boundCleanup { nullptr };
+
+    static void finalizeAtEnvCleanup(napi_env, void*, void*);
 
 #if ASSERT_ENABLED
     String sourceOriginURL = String();

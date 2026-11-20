@@ -7,7 +7,7 @@ use bun_ast::Symbol;
 use core::cell::Cell;
 use core::cmp::Ordering;
 use core::ops::Range;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::mpsc;
 
 /// One source-map point: printed (line, col) came from original (line, col); all 0-based.
@@ -626,6 +626,8 @@ struct Namer<'s> {
     /// Every name that is not renamed, such as a global or a long local, sorted. A renamed local is
     /// never given one of these names.
     taken: Vec<Vec<u8>>,
+    /// The name for each index and depth that has one.
+    given: BTreeMap<(usize, usize), bun_ast::StoreStr>,
     scratch: Vec<u8>,
     /// Rename every local (the comparison key), not only mangled-looking ones (the un-minified display).
     all_names: bool,
@@ -709,6 +711,7 @@ impl<'s> Namer<'s> {
             listed: sides.each_ref().map(|side| vec![false; side.symbols.len()]),
             taken: taken.into_iter().map(<[u8]>::to_vec).collect(),
             sides,
+            given: BTreeMap::new(),
             scratch: Vec::new(),
         }
     }
@@ -759,6 +762,14 @@ impl<'s> Namer<'s> {
     }
 
     fn assign(&mut self, side: usize, symbol: usize, index: usize, depth: usize) {
+        let name = match self.given.get(&(index, depth)) {
+            Some(&name) => name,
+            None => self.new_name(index, depth),
+        };
+        self.sides[side].symbols[symbol].original_name = name;
+    }
+
+    fn new_name(&mut self, index: usize, depth: usize) -> bun_ast::StoreStr {
         const LETTERS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
         let out = &mut self.scratch;
         out.clear();
@@ -780,8 +791,9 @@ impl<'s> Namer<'s> {
         {
             out.push(b'_');
         }
-        self.sides[side].symbols[symbol].original_name =
-            bun_ast::StoreStr::new(self.names.alloc_slice_copy(out));
+        let name = bun_ast::StoreStr::new(self.names.alloc_slice_copy(out));
+        self.given.insert((index, depth), name);
+        name
     }
 
     /// `depth` is the naming digit (only scopes that named something bump it).

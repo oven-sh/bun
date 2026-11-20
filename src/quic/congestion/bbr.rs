@@ -58,7 +58,7 @@ struct Recovery {
     end: u64,
     /// What counts as lost.
     lost: u64,
-    /// For the first round.
+    /// For the first round at most.
     conserves_packets: bool,
     /// The application made the flight as small as it was, and thus the window.
     is_application_limited: bool,
@@ -85,6 +85,7 @@ pub(super) struct Bbr {
     ran_dry_at: u64,
     acked_in_round: u64,
     lost_in_round: u64,
+    was_congested_in_round: bool,
     acked_in_last_round: u64,
     is_pipe_filled: bool,
     is_last_sample_limited: bool,
@@ -121,6 +122,7 @@ impl Bbr {
             ran_dry_at: 0,
             acked_in_round: 0,
             lost_in_round: 0,
+            was_congested_in_round: false,
             acked_in_last_round: 0,
             is_pipe_filled: false,
             is_last_sample_limited: false,
@@ -222,7 +224,11 @@ impl Bbr {
             has_min_rtt_expired &= !core::mem::take(&mut self.is_restarting);
             self.update_excess_acked(now, feedback.acked);
         }
-        self.update_recovery(feedback, is_round_start);
+        // Loss alone does not tell that there is a queue.
+        let is_congested = feedback.is_overflow
+            || feedback.lost > 0
+                && rtt.latest.as_micros() > Gain::PROBE_UP.of(self.min_rtt.as_micros());
+        self.update_recovery(feedback, is_round_start, is_congested);
         if let Some(recovery) = &mut self.recovery {
             if feedback.is_persistent_congestion {
                 recovery.window = MIN_SEGMENTS * self.segment;
@@ -247,6 +253,7 @@ impl Bbr {
             }
             self.acked_in_round += feedback.acked;
             self.lost_in_round += feedback.lost;
+            self.was_congested_in_round |= is_congested;
             if feedback.is_persistent_congestion {
                 self.lost_in_round = 0;
             }
@@ -306,7 +313,7 @@ impl Bbr {
         (self.excess_acked).update(self.round, self.bunch_len - expected);
     }
 
-    fn update_recovery(&mut self, feedback: &Feedback, is_round_start: bool) {
+    fn update_recovery(&mut self, feedback: &Feedback, is_round_start: bool, is_congested: bool) {
         let min_window = self.min_window();
         let Some(recovery) = &mut self.recovery else {
             if feedback.lost > 0 {
@@ -316,13 +323,16 @@ impl Bbr {
                         .saturating_add(self.excess_acked.get()),
                     false => 0,
                 };
+                let is_application_limited = self.ran_dry_at == feedback.last_sent;
                 self.recovery = Some(Recovery {
                     window: (window.max(feedback.in_flight + 1)).max(floor.max(min_window)),
                     end: feedback.last_sent,
                     lost: feedback.lost,
                     has_collapsed: false,
-                    conserves_packets: true,
-                    is_application_limited: self.ran_dry_at == feedback.last_sent,
+                    conserves_packets: self.is_pipe_filled
+                        || is_congested
+                        || is_application_limited,
+                    is_application_limited,
                 });
                 self.round_end = feedback.last_sent;
                 self.has_lost_packets = true;
@@ -349,8 +359,9 @@ impl Bbr {
     fn check_pipe_filled(&mut self) {
         let acked = core::mem::take(&mut self.acked_in_round);
         let lost = core::mem::take(&mut self.lost_in_round);
-        let is_loss_high =
-            lost >= HIGH_LOSS_SEGMENTS * self.segment && lost * HIGH_LOSS_RATIO > acked + lost;
+        let is_loss_high = core::mem::take(&mut self.was_congested_in_round)
+            && lost >= HIGH_LOSS_SEGMENTS * self.segment
+            && lost * HIGH_LOSS_RATIO > acked + lost;
         if self.is_last_sample_limited && !is_loss_high {
             return;
         }

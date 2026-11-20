@@ -485,10 +485,10 @@ fn bursts_that_lose_their_ends_get_shorter() {
             sender.wait(millis(1)).send(6);
         }
         assert_eq!(sender.controller.pacer.quantum().div_ceil(SEGMENT), 6);
-        for (at, fate) in bursts.concat().bytes().enumerate() {
+        for (flight, fate) in sender.flights.iter().zip(bursts.concat().bytes()) {
             match fate {
-                b'x' => (sender.controller).on_lost(&sender.flights[at], at % 6 == 5),
-                _ => sender.controller.on_acked(&sender.flights[at]),
+                b'x' => (sender.controller).on_lost(flight, flight.sequence % 6 == 0),
+                _ => sender.controller.on_acked(flight),
             }
         }
         sender.controller.end_ack(sender.now, &sender.rtt);
@@ -941,18 +941,19 @@ fn bbr_starts_up_for_longer_if_recovery_holds_it_back() {
 
 #[test]
 fn bbr_starts_up_until_short_transfers_suffer_high_loss() {
-    for (segments, lost, is_high) in [
-        (100, 5, false),
-        (100, 6, true),
-        (299, 6, true),
-        (300, 6, false),
-        (1000, 20, false),
-        (1000, 21, true),
+    for (segments, lost, rtt, is_high) in [
+        (100, 5, 12_501, false),
+        (100, 6, 12_501, true),
+        (100, 6, 12_500, false),
+        (299, 6, 12_501, true),
+        (300, 6, 12_501, false),
+        (1000, 20, 12_501, false),
+        (1000, 21, 12_501, true),
     ] {
         let mut sender = Sender::new(Algorithm::Bbr);
         let startup_rate = sender.rounds(6, millis(10)).pacing_rate();
         for round in 1..=4 {
-            sender.run_dry().send(segments).wait(millis(10));
+            sender.run_dry().send(segments).wait(micros(rtt));
             sender.feedback(lost, usize::MAX);
             assert_eq!(sender.pacing_rate() < startup_rate, is_high && round == 4);
         }
@@ -1131,8 +1132,8 @@ fn bbr_follows_the_bandwidth() {
 #[test]
 fn bbr_conserves_packets_for_a_round() {
     let mut sender = Sender::new(Algorithm::Bbr);
-    sender.fill().wait(millis(10)).feedback(0, 10).send(10);
-    assert_eq!(sender.feedback(1, 5).segments(), 31);
+    sender.fill().wait(millis(7)).feedback(0, 10).send(10);
+    assert_eq!(sender.wait(millis(3)).feedback(1, 5).segments(), 31);
     assert_eq!(sender.feedback(1, 0).segments(), 30);
     assert_eq!(sender.send(5).feedback(0, 15).segments(), 30);
     assert_eq!(sender.send(15).feedback(0, 10).segments(), 30);
@@ -1141,7 +1142,17 @@ fn bbr_conserves_packets_for_a_round() {
     assert_eq!(sender.feedback(1, 3).segments(), 33);
     assert_eq!(sender.feedback(0, usize::MAX).segments(), 60);
     sender.send(1).wait(millis(10));
-    assert_eq!(sender.feedback(0, 1).segments(), 102);
+    assert_eq!(sender.feedback(0, 1).segments(), 62);
+}
+
+#[test]
+fn bbr_does_not_conserve_packets_in_startup_unless_there_is_a_queue() {
+    for (delay, expected) in [(2500, 36), (2501, 31)] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.fill().wait(millis(10)).feedback(0, 10).send(10);
+        sender.wait(micros(delay)).feedback(1, 5);
+        assert_eq!(sender.feedback(0, 5).segments(), expected);
+    }
 }
 
 #[test]

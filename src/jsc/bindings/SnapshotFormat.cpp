@@ -1,6 +1,10 @@
 #include "root.h"
 
+#include "BunClientData.h"
+#include "EventNames.h"
+#include "JSEvent.h"
 #include "ZigGlobalObject.h"
+#include <JavaScriptCore/AOTPropertyWalk.h>
 #include <JavaScriptCore/ArrayConstructor.h>
 #include <JavaScriptCore/JSFunctionInlines.h>
 #include <JavaScriptCore/JSMapIterator.h>
@@ -363,4 +367,46 @@ extern "C" bool SnapshotFormat__includes(EncodedJSValue encodedList, uint32_t le
             return true;
     }
     return false;
+}
+
+namespace Bun {
+
+// The names that toEqual reads of an event: each one that is enumerable on it or on a prototype, without the methods and the constants of the native prototypes.
+void addEventAttributeNames(JSGlobalObject* globalObject, JSObject* event, PropertyNameArrayBuilder& names)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PropertyNameArrayBuilder found(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    event->getPropertyNames(globalObject, found, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, );
+    // A snapshot shows `data` for the type "message", and `message` and `error` for the type "error", also where they are not enumerable.
+    const Identifier* const ofMessage[] = { &WebCore::builtinNames(vm).dataPublicName() };
+    const Identifier* const ofError[] = { &vm.propertyNames->message, &vm.propertyNames->error };
+    const AtomString& type = uncheckedDowncast<WebCore::JSEvent>(event)->wrapped().type();
+    std::span<const Identifier* const> alsoShown;
+    if (type == WebCore::eventNames().messageEvent)
+        alsoShown = ofMessage;
+    else if (type == WebCore::eventNames().errorEvent)
+        alsoShown = ofError;
+    const size_t enumerable = found.size();
+    for (size_t i = 0; i < enumerable + alsoShown.size(); i++) {
+        const Identifier& name = i < enumerable ? found[i] : *alsoShown[i - enumerable];
+        for (JSObject* holder = event; holder; holder = holder->getPrototypeDirect().getObject()) {
+            PropertySlot slot(holder, PropertySlot::InternalMethodType::VMInquiry, &vm);
+            bool hasOwn = holder->methodTable()->getOwnPropertySlot(holder, globalObject, name, slot);
+            RETURN_IF_EXCEPTION(scope, );
+            // A Proxy does not tell this lookup what it holds. An enumerable name stays, and the walk reads it through the Proxy as toEqual does.
+            bool isBehindProxy = !hasOwn && slot.isTaintedByOpaqueObject();
+            if (!hasOwn && !isBehindProxy)
+                continue;
+            bool isAccessor = hasOwn && (slot.attributes() & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor)) != 0;
+            bool isPlainObject = holder->type() == FinalObjectType || AOT::PropertyWalk::isCompiledObject(holder);
+            // What stays out is a value of a native prototype: a method or a constant, the same for every event.
+            if (holder == event || (isBehindProxy && i < enumerable) || isAccessor || isPlainObject)
+                names.add(name);
+            break;
+        }
+    }
+}
+
 }

@@ -6751,6 +6751,11 @@ declare module "bun" {
   interface OnLoadArgs {
     /**
      * The resolved import specifier of the module being loaded
+     *
+     * In a runtime plugin, `path` keeps the query string of the import, and
+     * `filter` runs on the same string. `import("./data.csv?v=2")` gives
+     * `"/app/data.csv?v=2"`, which `/\.csv$/` does not match and
+     * `/\.csv(\?.+)?$/` does. Remove the query before you read the file.
      * @example
      * ```ts
      * builder.onLoad({ filter: /^hello:world$/ }, (args) => {

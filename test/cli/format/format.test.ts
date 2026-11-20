@@ -4460,24 +4460,20 @@ exports.format = async (text, options) => {
       timeout,
     );
 
-    // Prettier says that it can't resolve the parser. No plugin is to blame, so this is a language without support.
     test(
       "--parser with a parser that none of the plugins has",
       async () => {
-        const left = "1 file was not formatted because bun fmt does not support its language yet: 1 nonsense";
-        const [result, checked, allowed] = await Promise.all([
-          format(files, ["--parser", "nonsense"], { stdin: "a\n" }),
-          format(files, ["--parser", "nonsense", "--check"], { stdin: "a\n" }),
-          format(files, ["--parser", "nonsense", "--allow-unsupported"], { stdin: "a\n" }),
-        ]);
-        const refused = {
-          raw: "",
-          stderr: `error: ${left}\n  Use --allow-unsupported to make this a warning.`,
-          exitCode: 2,
-        };
-        expect(result).toMatchObject(refused);
-        expect(checked).toMatchObject(refused);
-        expect(allowed).toMatchObject({ raw: "a\n", stderr: `warn: ${left}`, exitCode: 0 });
+        const prettier = `exports.resolveConfig = async () => null;
+class ConfigError extends Error {
+  name = "ConfigError";
+}
+exports.format = async (text, { parser }) => {
+  throw new ConfigError(\`Couldn't resolve parser "\${parser}".\`);
+};
+`;
+        const project = { ...files, "node_modules/prettier/index.cjs": prettier };
+        const result = await format(project, ["--parser", "nonsense"], { stdin: "a\n" });
+        expect(result).toMatchObject({ raw: "", stderr: `error: Couldn't resolve parser "nonsense".`, exitCode: 1 });
       },
       timeout,
     );

@@ -94,10 +94,11 @@ async function formatWithPrettier() {
     return DONE + (await prettier.format(text, { ...options, filepath }));
   } catch (error) {
     // Prettier throws the first for a file whose name no plugin knows, and the second for a `parser` that no plugin has.
+    // Text without a file name gets its parser from `--parser`, and there Prettier's own message is the answer.
     const isOfNoPlugin =
       error?.name === "UndefinedParserError" ||
       (error?.name === "ConfigError" && String(error.message).startsWith("Couldn't resolve parser"));
-    if (isOfNoPlugin) return NO_PARSER;
+    if (isOfNoPlugin && path !== null) return NO_PARSER;
     if (!looksAtStdin) throw error;
     // As `listDifferent` of Prettier's command line shows it.
     return MESSAGE_OF_PRETTIER + error.message;

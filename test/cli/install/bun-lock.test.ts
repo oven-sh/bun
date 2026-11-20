@@ -5971,6 +5971,7 @@ ${Object.entries(packages)
       lockfile: () => file(lockfilePath).text(),
       install: (...args: string[]) => installWithOwnCache(packageDir, ...args),
       update: (...args: string[]) => runWithOwnCache(packageDir, "update", ...args),
+      requested: () => recorded.requests.map(request => request.path),
       downloaded: () =>
         recorded.requests
           .map(request => request.path)
@@ -6217,6 +6218,128 @@ ${Object.entries(packages)
       expect(err).not.toContain("Saved lockfile");
       expect(await project.lockfile()).toBe(lockfile);
     }
+  });
+
+  // host@1.0.0 and host@1.1.0 both bundle inner@^1.0.0. The tarball of the first has inner@1.0.0 and the tarball of
+  // the second has inner@1.0.1. The registry resolves the range to inner@1.0.5, which is what the earlier version of
+  // bun wrote for "host/inner".
+  it.concurrent("`bun update` of a bundling package to its next version records what that tarball ships", async () => {
+    const bundlesInner = (range: string) => ({ dependencies: { inner: range }, bundleDependencies: ["inner"] });
+    const shipsInner = (version: string) => ({ "node_modules/inner/package.json": { name: "inner", version } });
+    const inline = await registryWithHolds(
+      {
+        host: { "1.0.0": bundlesInner("^1.0.0"), "1.1.0": bundlesInner("^1.0.0") },
+        other: { "1.0.0": bundlesInner("1.0.0") },
+        inner: { "1.0.0": {}, "1.0.1": {}, "1.0.5": {} },
+      },
+      [],
+      {
+        "host-1.0.0.tgz": shipsInner("1.0.0"),
+        "host-1.1.0.tgz": shipsInner("1.0.1"),
+        "other-1.0.0.tgz": shipsInner("1.0.0"),
+      },
+    );
+    using server = inline.server;
+    const locked = { host: "^1.0.0", other: "1.0.0" };
+    using dir = projectOn(server, { "package.json": { name: "foo", dependencies: locked } });
+    const cwd = String(dir);
+    const lockfilePath = join(cwd, "bun.lock");
+
+    // This registry gives no hash, and its tarballs are not at the default path.
+    const entry = (name: string, version: string, info: string) =>
+      `["${name}@${version}", "${server.url.origin}/${name}-${version}.tgz", ${info}, ""]`;
+    const hostInfo = '{ "dependencies": { "inner": "^1.0.0" } }';
+    const other = entry("other", "1.0.0", '{ "dependencies": { "inner": "1.0.0" } }');
+    // other is not updated, so its inner stays the registry package that the earlier version of bun wrote.
+    const innerOfOther = entry("inner", "1.0.0", '{ "bundled": true }');
+    const written = bunLock(2, locked, {
+      host: entry("host", "1.0.0", hostInfo),
+      other,
+      "host/inner": entry("inner", "1.0.5", '{ "bundled": true }'),
+      "other/inner": innerOfOther,
+    });
+    await write(lockfilePath, written);
+    await installWithOwnCache(cwd, "--frozen-lockfile");
+    expect(await file(lockfilePath).text()).toBe(written);
+
+    let { err } = await runWithOwnCache(cwd, "update", "host");
+    expect(err).toContain("Saved lockfile");
+    const lockfile = await file(lockfilePath).text();
+    expect(lockfile).toBe(
+      bunLock(
+        4,
+        { host: "^1.1.0", other: "1.0.0" },
+        {
+          host: entry("host", "1.1.0", hostInfo),
+          other,
+          "host/inner": shipped("inner", "1.0.1"),
+          "other/inner": innerOfOther,
+        },
+      ),
+    );
+    expect(await installedVersions(cwd)).toEqual({
+      host: "1.1.0",
+      other: "1.0.0",
+      "host/inner": "1.0.1",
+      "other/inner": "1.0.0",
+    });
+
+    for (const args of [[], ["--frozen-lockfile"], ["--lockfile-only"]]) {
+      ({ err } = await installWithOwnCache(cwd, ...args));
+      expect(err).not.toContain("Saved lockfile");
+      expect(await file(lockfilePath).text()).toBe(lockfile);
+    }
+  });
+
+  // `local` is a folder that bundles no-deps@^1.0.0 and has no-deps@1.0.0 in its node_modules. The earlier version
+  // of bun resolved the range to no-deps@1.1.0. An install keeps that entry. An update reads the folder again.
+  it.concurrent.each([
+    { command: "bun update local", args: ["local"] },
+    { command: "bun update", args: [] },
+  ])("`$command` records what the folder of a file: package ships", async ({ args }) => {
+    const dependencies = { local: "file:./local" };
+    using project = await createProject(dependencies);
+    await write(
+      join(project.packageDir, "local", "package.json"),
+      JSON.stringify({
+        name: "local",
+        version: "1.0.0",
+        dependencies: { "no-deps": "^1.0.0" },
+        bundleDependencies: ["no-deps"],
+      }),
+    );
+    await write(
+      join(project.packageDir, "local", "node_modules", "no-deps", "package.json"),
+      JSON.stringify({ name: "no-deps", version: "1.0.0" }),
+    );
+    const local = '["local@file:local", { "dependencies": { "no-deps": "^1.0.0" } }]';
+    const written = bunLock(2, dependencies, {
+      local,
+      "local/no-deps": await fetched(project.url, "no-deps", "1.1.0", '{ "bundled": true }'),
+    });
+    await write(project.lockfilePath, written);
+
+    for (const installArgs of [["--frozen-lockfile"], []]) {
+      const { err } = await project.install(...installArgs);
+      expect(err).not.toContain("Saved lockfile");
+      expect(await project.lockfile()).toBe(written);
+    }
+    const requested = project.requested();
+    const downloaded = project.downloaded();
+
+    let { err } = await project.update(...args);
+    expect(err).toContain("Saved lockfile");
+    const lockfile = await project.lockfile();
+    expect(lockfile).toBe(bunLock(4, dependencies, { local, "local/no-deps": shipped("no-deps", "1.0.0") }));
+    // The update asks the registry for nothing: no-deps is in the folder.
+    expect(project.requested()).toEqual(requested);
+
+    for (const installArgs of [[], ["--frozen-lockfile"], ["--lockfile-only"]]) {
+      ({ err } = await project.install(...installArgs));
+      expect(err).not.toContain("Saved lockfile");
+      expect(await project.lockfile()).toBe(lockfile);
+    }
+    expect(project.downloaded()).toEqual(downloaded);
   });
 
   describe("bun.lock at lockfileVersion 4", () => {

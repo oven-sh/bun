@@ -740,8 +740,15 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
       }
 
       const { breakpointId, locations } = result;
+
+      // The script is already loaded, but its `Debugger.scriptParsed` event has
+      // not been handled yet. This happens when attaching to a process with many
+      // scripts. No `Debugger.breakpointResolved` event will follow, so wait for
+      // the source and set the breakpoints at their real locations.
       if (locations.length) {
-        // TODO: Source was loaded while the breakpoint was being set?
+        await this.send("Debugger.removeBreakpoint", { breakpointId });
+        await this.#getSource(url);
+        return this.#setBreakpointsByUrl(url, requests, unsetOld);
       }
 
       return requests.map(request =>
@@ -1267,7 +1274,12 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
   }
 
   async ["Debugger.scriptParsed"](event: JSC.Debugger.ScriptParsedEvent): Promise<void> {
-    const { url, scriptId, sourceMapURL } = event;
+    const { scriptId, sourceMapURL } = event;
+
+    // Code evaluated at runtime has no url, but may name itself with a
+    // `//# sourceURL=` comment. Vite's SSR module runner does this for every
+    // module it evaluates with `new AsyncFunction()`.
+    const url = event.url || event.sourceURL;
 
     // If no url is present, the script is from a `evaluate` request.
     if (!url) {
@@ -1532,14 +1544,15 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
 
     const oldSource = this.#getSourceIfPresent(sourceId);
     if (oldSource) {
-      const { scriptId, path: oldPath } = oldSource;
-      // For now, the script ID will always change.
-      // Could that not be the case in the future?
-      this.#sources.delete(scriptId);
+      const { scriptId: oldScriptId, path: oldPath } = oldSource;
 
       // If the path changed or the source has a source reference,
       // the old source should be marked as removed.
+      // Otherwise, keep the old script mapped: several live scripts can share
+      // a url, as Vite's SSR module runner evaluates a module again on every
+      // invalidation while the previous instances keep running.
       if (path !== oldPath /*|| sourceReference*/) {
+        this.#sources.delete(oldScriptId);
         this.emitAdapterEvent("loadedSource", {
           reason: "removed",
           source: oldSource,

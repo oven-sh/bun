@@ -297,6 +297,21 @@ Use the `$(...)` syntax instead.
 
 ---
 
+## Exit code and process ID (`$?` and `$$`)
+
+`$?` is the exit code of the last statement. After `a && b` or `a || b`, it is the exit code of the operand that ran last. `$$` is the ID of the Bun process that runs the shell.
+
+```js
+import { $ } from "bun";
+
+await $`false; echo $?`; // 1\n
+await $`echo $$`; // the value of process.pid
+```
+
+Both expand inside double quotes. Single quotes or a backslash keep the characters: `'$?'`, `\$?`.
+
+---
+
 ## Environment variables
 
 Set environment variables like in bash:

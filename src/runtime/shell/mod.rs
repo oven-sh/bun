@@ -139,7 +139,7 @@ pub(crate) use bun_shell_parser::{escape_8bit, needs_escape_utf8_ascii_latin1};
 // layout) at the arena/state-machine boundary.
 pub(crate) mod ast {
     use bun_shell_parser::parse::ast as p;
-    pub(crate) use p::{BinaryOp, CondExprOp, IoKind, RedirectFlags};
+    pub(crate) use p::{BinaryOp, CondExprOp, IoKind, RedirectFlags, SpecialParam};
 
     pub(crate) type SmolList<T> = bun_shell_parser::parse::SmolList<'static, T>;
     pub(crate) type Script = p::Script<'static>;

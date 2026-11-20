@@ -659,6 +659,221 @@ describe("trailing directory separator", async () => {
     const entries = await Array.fromAsync(glob.scan({ onlyFiles: false, cwd: tmpdir }));
     expect(entries.sort()).toEqual(files.slice(2, 3).sort());
   });
+
+  describe("globstar recurses into nested directories", () => {
+    const files = {
+      "d1/d2/d3/deep.txt": "x",
+      "d1/f.txt": "x",
+      "e1/g.txt": "x",
+    };
+    const j = (...p: string[]) => p.join(path.sep);
+    const scan = (dir: string, p: string) => [...new Glob(p).scanSync({ cwd: dir, onlyFiles: false })].sort();
+
+    test("**/ yields every directory at every depth and no files", () => {
+      using dir = tempDir("glob-trailing-globstar", files);
+      expect(scan(String(dir), "**/")).toEqual(["d1", j("d1", "d2"), j("d1", "d2", "d3"), "e1"]);
+    });
+
+    test("prefix/**/ yields every directory under prefix", () => {
+      using dir = tempDir("glob-trailing-globstar-prefix", files);
+      expect(scan(String(dir), "d1/**/")).toEqual([j("d1", "d2"), j("d1", "d2", "d3")]);
+    });
+
+    test("**/ and match() agree on nested directory paths", () => {
+      using dir = tempDir("glob-trailing-globstar-match", files);
+      const g = new Glob("d1/**/");
+      const entries = scan(String(dir), "d1/**/");
+      expect(entries).toEqual([j("d1", "d2"), j("d1", "d2", "d3")]);
+      for (const e of entries) {
+        expect(g.match(e.replaceAll(path.sep, "/") + "/")).toBe(true);
+      }
+    });
+
+    test("async scan agrees with sync", async () => {
+      using dir = tempDir("glob-trailing-globstar-async", files);
+      const entries = (await Array.fromAsync(new Glob("**/").scan({ cwd: String(dir), onlyFiles: false }))).sort();
+      expect(entries).toEqual(["d1", j("d1", "d2"), j("d1", "d2", "d3"), "e1"]);
+    });
+  });
+
+  describe("excludes files when the final component carries a trailing separator", () => {
+    const files = {
+      "foo": "x",
+      "file.txt": "x",
+      "sub/foo": "x",
+      "bar/placeholder": "x",
+    };
+    const j = (...p: string[]) => p.join(path.sep);
+    const scan = (dir: string, p: string) => [...new Glob(p).scanSync({ cwd: dir, onlyFiles: false })].sort();
+
+    test("**/foo/ does not yield a file named foo", () => {
+      using dir = tempDir("glob-trailing-sep-peek", files);
+      expect(scan(String(dir), "**/foo/")).toEqual([]);
+    });
+
+    test("**/*/ yields only directories", () => {
+      using dir = tempDir("glob-trailing-sep-star", files);
+      expect(scan(String(dir), "**/*/")).toEqual(["bar", "sub"]);
+    });
+
+    test("literal/ does not yield a file via the statat fast path", () => {
+      using dir = tempDir("glob-trailing-sep-literal", files);
+      expect(scan(String(dir), "foo/")).toEqual([]);
+      expect(scan(String(dir), "bar/")).toEqual(["bar"]);
+    });
+
+    test("prefix/literal/ does not yield a file", () => {
+      using dir = tempDir("glob-trailing-sep-prefix-literal", files);
+      expect(scan(String(dir), "sub/foo/")).toEqual([]);
+      expect(scan(String(dir), "*/foo/")).toEqual([]);
+    });
+
+    test("**/foo/ yields a directory named foo", () => {
+      using dir = tempDir("glob-trailing-sep-dir-named-foo", {
+        "foo/placeholder": "x",
+        "sub/foo/placeholder": "x",
+        "sub/bar": "x",
+      });
+      expect(scan(String(dir), "**/foo/")).toEqual(["foo", j("sub", "foo")]);
+    });
+  });
+
+  // The blocks below compare entries with `/` separators on every platform.
+  const norm = (entries: Iterable<string>) => [...entries].map(p => p.replaceAll("\\", "/")).sort();
+  const scanDirs = (cwd: string, pattern: string, opts: GlobScanOptions = {}) =>
+    norm(new Glob(pattern).scanSync({ cwd, onlyFiles: false, ...opts }));
+  const tree = {
+    "d1/d2/d3/deep.txt": "",
+    "d1/f.txt": "",
+    "e1/g.txt": "",
+    "foo": "",
+    "sub/foo": "",
+  };
+  const topDirs = ["d1", "e1", "sub"];
+  const allDirs = ["d1", "d1/d2", "d1/d2/d3", "e1", "sub"];
+
+  test("**/ recurses behind ./ and behind an absolute prefix", () => {
+    using dir = tempDir("glob-trailing-sep-prefix", tree);
+    const cwd = String(dir);
+    expect(scanDirs(cwd, "./**/")).toEqual(allDirs.map(d => `./${d}`));
+    expect(scanDirs(cwd, `${path.join(cwd, "**")}${path.sep}`)).toEqual(norm(allDirs.map(d => path.join(cwd, d))));
+    expect(scanDirs(cwd, `${path.join(cwd, "d1", "**")}${path.sep}`)).toEqual(
+      norm(["d1/d2", "d1/d2/d3"].map(d => path.join(cwd, d))),
+    );
+  });
+
+  test("a globstar or a brace group before the separator lists no file", () => {
+    using dir = tempDir("glob-trailing-sep-shapes", tree);
+    const cwd = String(dir);
+    expect(scanDirs(cwd, "**/**/")).toEqual(allDirs);
+    expect(scanDirs(cwd, "**/{d2,foo}/")).toEqual(["d1/d2"]);
+  });
+
+  test("the default onlyFiles: true matches nothing", () => {
+    using dir = tempDir("glob-trailing-sep-only-files", tree);
+    const cwd = String(dir);
+    const scanFiles = (pattern: string) => ({ pattern, entries: norm(new Glob(pattern).scanSync({ cwd })) });
+    for (const pattern of ["**/", "*/", "d1/", "foo/", "sub/foo/", "*/foo/", "**/foo/", "**/*/", "./"]) {
+      expect(scanFiles(pattern)).toEqual({ pattern, entries: [] });
+    }
+  });
+
+  test.each([
+    ["d1//", ["d1"]],
+    ["d1///", ["d1"]],
+    ["*//", topDirs],
+    ["**//", allDirs],
+    ["d1/.//", ["d1/."]],
+  ] as [string, string[]][])("a run of separators lists like one separator: %j", (pattern, expected) => {
+    using dir = tempDir("glob-trailing-sep-run", tree);
+    expect(scanDirs(String(dir), pattern)).toEqual(expected);
+  });
+
+  // A final `./` or `../` names one directory. The walker stats it and lists
+  // it as written. `absolute` resolves it.
+  test.each([
+    ["./", ["."], "."],
+    ["../", [".."], ".."],
+    ["d1/./", ["d1/."], "d1"],
+    ["d1/../", ["d1/.."], "."],
+    ["d1/d2/../", ["d1/d2/.."], "d1"],
+    ["d*/./", ["d1/."], "d1"],
+    ["d*/../", ["d1/.."], "."],
+  ] as [string, string[], string][])(
+    "a final dot component lists the directory it names: %j",
+    (pattern, expected, resolved) => {
+      using dir = tempDir("glob-trailing-sep-dot", tree);
+      const cwd = String(dir);
+      expect(scanDirs(cwd, pattern)).toEqual(expected);
+      expect(scanDirs(cwd, pattern, { absolute: true })).toEqual(norm([path.resolve(cwd, resolved)]));
+      expect(norm(new Glob(pattern).scanSync({ cwd }))).toEqual([]);
+    },
+  );
+
+  test("a final dot component behind an absolute wildcard lists each match", () => {
+    using dir = tempDir("glob-trailing-sep-dot-abs", tree);
+    const cwd = String(dir);
+    const absolute = (...parts: string[]) => [cwd, ...parts].join(path.sep);
+    expect(scanDirs(cwd, absolute("*", "..", ""))).toEqual(norm(topDirs.map(d => absolute(d, ".."))));
+    expect(scanDirs(cwd, absolute("*", ".", ""))).toEqual(norm(topDirs.map(d => absolute(d, "."))));
+  });
+
+  test("scan() lists the same entries as scanSync()", async () => {
+    using dir = tempDir("glob-trailing-sep-async", tree);
+    const cwd = String(dir);
+    const scanAsync = async (pattern: string) =>
+      norm(await Array.fromAsync(new Glob(pattern).scan({ cwd, onlyFiles: false })));
+    expect(await scanAsync("./**/")).toEqual(allDirs.map(d => `./${d}`));
+    expect(await scanAsync("**/foo/")).toEqual([]);
+    expect(await scanAsync("*//")).toEqual(topDirs);
+    expect(await scanAsync("d1/./")).toEqual(["d1/."]);
+  });
+
+  test.skipIf(!isWindows)("a backslash is a trailing separator on Windows", () => {
+    using dir = tempDir("glob-trailing-sep-backslash", tree);
+    const cwd = String(dir);
+    expect(scanDirs(cwd, "**\\")).toEqual(allDirs);
+    expect(scanDirs(cwd, "d1\\**\\")).toEqual(["d1/d2", "d1/d2/d3"]);
+    expect(scanDirs(cwd, "*\\")).toEqual(topDirs);
+    expect(scanDirs(cwd, "d1\\\\")).toEqual(["d1"]);
+    expect(scanDirs(cwd, "foo\\")).toEqual([]);
+    expect(scanDirs(cwd, ".\\")).toEqual(["."]);
+    expect(scanDirs(cwd, "..\\")).toEqual([".."]);
+  });
+
+  describe.skipIf(!canCreateDirSymlink)("symlinks", () => {
+    function makeTree(prefix: string) {
+      const dir = tempDir(prefix, tree);
+      fs.symlinkSync("d1", path.join(String(dir), "lnk_dir"), "dir");
+      fs.symlinkSync("foo", path.join(String(dir), "lnk_file"), "file");
+      return dir;
+    }
+
+    // Without followSymlinks a wildcard never matches a symlink as a
+    // directory. A literal name resolves through it.
+    test("followSymlinks: false lists a symlink only where the pattern names it", () => {
+      using dir = makeTree("glob-trailing-sep-symlink");
+      const cwd = String(dir);
+      expect(scanDirs(cwd, "lnk_dir/")).toEqual(["lnk_dir"]);
+      expect(scanDirs(cwd, "lnk_file/")).toEqual([]);
+      expect(scanDirs(cwd, "*/")).toEqual(topDirs);
+      expect(scanDirs(cwd, "l*/")).toEqual([]);
+      expect(scanDirs(cwd, "**/lnk_dir/")).toEqual([]);
+      expect(scanDirs(cwd, "**/l*/")).toEqual([]);
+    });
+
+    test("followSymlinks: true lists a symlink to a directory", () => {
+      using dir = makeTree("glob-trailing-sep-symlink-follow");
+      const cwd = String(dir);
+      const follow = { followSymlinks: true };
+      expect(scanDirs(cwd, "lnk_dir/", follow)).toEqual(["lnk_dir"]);
+      expect(scanDirs(cwd, "lnk_file/", follow)).toEqual([]);
+      expect(scanDirs(cwd, "*/", follow)).toEqual(["d1", "e1", "lnk_dir", "sub"]);
+      expect(scanDirs(cwd, "l*/", follow)).toEqual(["lnk_dir"]);
+      expect(scanDirs(cwd, "**/lnk_dir/", follow)).toEqual(["lnk_dir"]);
+      expect(scanDirs(cwd, "**/l*/", follow)).toEqual(["lnk_dir"]);
+    });
+  });
 });
 
 describe("absolute path pattern", async () => {

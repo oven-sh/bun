@@ -5299,12 +5299,13 @@ extern "C" int getPeakRSS(size_t* peak)
 #endif
 }
 
-// heap.size() walks every block. Until the first collection nothing has been freed, so the whole heap counts as used.
+// heap.size() walks every block. Until the first collection nothing has been freed, so the whole heap counts as used:
+// the blocks, and through capacity() the large allocations and the array buffers.
 HeapUsage heapUsage(JSC::VM& vm)
 {
     size_t total = vm.heap.blockBytesAllocated();
     size_t used = vm.heap.sizeAfterLastCollection();
-    return { total, used ? used : total };
+    return { total, used ? used : std::max(total, vm.heap.capacity()) };
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -5335,7 +5336,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * glo
     result->putDirectOffset(vm, 1, JSC::jsNumber(usage.total));
     result->putDirectOffset(vm, 2, JSC::jsNumber(usage.used));
 
-    // Cells report their extra memory when a collection visits them: until the first one this counts only array buffers.
+    // Array buffers and deprecatedReportExtraMemory() bytes count when reported. A cell's own extra memory counts once a collection visits it.
     result->putDirectOffset(vm, 3, JSC::jsNumber(vm.heap.extraMemorySize() + vm.heap.externalMemorySize()));
 
     // JSC won't count this number until vm.heap.addReference() is called.

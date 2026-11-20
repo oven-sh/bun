@@ -640,8 +640,7 @@ impl<'a> Report<'a> {
         self
     }
 
-    /// Like [`Report::help_with`], for a rule that ESLint has too: `text` only runs with an oxlint config. "" is no
-    /// help.
+    /// Like [`Report::help_with`], but only with an oxlint config. "" is no help.
     pub fn oxlint_help_with(self, text: impl FnOnce() -> String) -> Self {
         match self.file.language().is_oxlint {
             true => self.help_with(text),

@@ -545,7 +545,7 @@ pub fn install_with_manager(
                         reresolve_owned_rows(manager, &pinned_rows, |dependency| {
                             all_name_hashes.binary_search(&dependency.name_hash).is_ok()
                                 || (catalogs_changed
-                                    && dependency.version.tag == DependencyVersionTag::Catalog)
+                                    && dependency.version.tag() == DependencyVersionTag::Catalog)
                                 || catalog_overridden
                                     .binary_search(&dependency.name_hash)
                                     .is_ok()
@@ -722,7 +722,6 @@ pub fn install_with_manager(
                 && load_result.migrated_from().is_none();
             run_security_scanner(
                 manager,
-                ctx,
                 original_cwd,
                 &lockfile_before_clean,
                 &named.moved,
@@ -931,7 +930,6 @@ pub fn install_with_manager(
         let mut summary = if isolated {
             install_isolated_packages(
                 manager,
-                ctx,
                 install_root_dependencies,
                 &workspace_filters,
                 None,
@@ -940,7 +938,6 @@ pub fn install_with_manager(
         } else {
             install_hoisted_packages(
                 manager,
-                ctx,
                 &workspace_filters,
                 install_root_dependencies,
                 log_level,
@@ -1071,7 +1068,7 @@ pub fn install_with_manager(
     }
 
     if runs_root_scripts {
-        run_root_lifecycle_scripts(manager, ctx, log_level)?;
+        run_root_lifecycle_scripts(manager, log_level)?;
     }
 
     if log_level != Options::LogLevel::Silent {
@@ -1141,7 +1138,7 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
         let pending_tasks = this.pending_task_count();
 
         if PackageManager::verbose_install() && pending_tasks > 0 {
-            if PackageManager::has_enough_time_passed_between_waiting_messages() {
+            if this.has_enough_time_passed_between_waiting_messages() {
                 bun_core::pretty_errorln!(
                     "<d>[PackageManager]<r> waiting for {} tasks\n",
                     pending_tasks,
@@ -1987,9 +1984,10 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
         let workspace_package_ids = workspace_res_list.get(&lockfile.buffers.resolutions);
         debug_assert_eq!(workspace_deps.len(), workspace_package_ids.len());
         for (dep, &package_id) in workspace_deps.iter().zip(workspace_package_ids) {
-            if dep.version.tag != DependencyVersionTag::Npm
-                && dep.version.tag != DependencyVersionTag::DistTag
-            {
+            if !matches!(
+                dep.version.tag(),
+                DependencyVersionTag::Npm | DependencyVersionTag::DistTag
+            ) {
                 continue;
             }
             if package_id == invalid_package_id {
@@ -1998,7 +1996,7 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
 
             let name = dep.name.slice(&lockfile.buffers.string_bytes);
             let entry_ptr = if register_rows {
-                if dep.version.tag == DependencyVersionTag::DistTag && !update_to_latest {
+                if dep.version.tag() == DependencyVersionTag::DistTag && !update_to_latest {
                     continue;
                 }
                 let entry = updating_packages.get_or_put(name).unwrap_or_oom();
@@ -2210,7 +2208,7 @@ fn resolve_pending_tasks(
     } else if log_level != Options::LogLevel::Silent {
         bun_core::pretty_errorln!(
             "Resolved, downloaded and extracted [{}]",
-            manager.total_tasks,
+            manager.total_tasks.get(),
         );
         Output::flush();
     }
@@ -2537,7 +2535,6 @@ fn reresolve_rows_outside_overrides(
 #[inline(never)]
 fn run_security_scanner(
     manager: &mut PackageManager,
-    ctx: Command::Context,
     original_cwd: &[u8],
     before_clean: &Lockfile,
     moved: &[(DependencyID, PackageID)],
@@ -2551,7 +2548,6 @@ fn run_security_scanner(
     ));
     match security_scanner::perform_security_scan_after_resolution(
         manager,
-        ctx,
         original_cwd,
         &seeds,
         loaded_bun_lockfile,
@@ -2734,7 +2730,6 @@ fn write_yarn_lock_with_progress(
 #[inline(never)]
 fn run_root_lifecycle_scripts(
     manager: &mut PackageManager,
-    ctx: Command::Context,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
     if let Some(scripts) = manager.root_lifecycle_scripts.take() {
@@ -2754,13 +2749,7 @@ fn run_root_lifecycle_scripts(
         let output_in_foreground = true;
         // `spawn_package_lifecycle_scripts` consumes by-value; `.take()`
         // moves it out (`package_name` is owned by the List and drops with it).
-        manager.spawn_package_lifecycle_scripts(
-            ctx,
-            scripts,
-            optional,
-            output_in_foreground,
-            None,
-        )?;
+        manager.spawn_package_lifecycle_scripts(scripts, optional, output_in_foreground, None)?;
 
         // .monotonic is okay because at this point, this value is only accessed from this
         // thread.

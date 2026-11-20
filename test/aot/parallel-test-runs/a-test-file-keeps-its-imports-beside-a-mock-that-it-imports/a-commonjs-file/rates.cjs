@@ -1,0 +1,1 @@
+exports.rate = () => "real";

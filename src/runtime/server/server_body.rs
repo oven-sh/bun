@@ -8,6 +8,7 @@ use crate::api::standalone_graph_jsc::is_asset;
 use crate::api::{SocketAddress, js_bundler as JSBundler};
 use crate::bake::router as FrameworkRouter;
 use crate::bake::{self as bake};
+use crate::generated_bindgen::html_bundle::js_HTMLBundle;
 use crate::generated_bindgen::server::ServerProtocol;
 use crate::generated_bindgen::server_body::{
     BunServe__onRejectPlugins, BunServe__onResolvePlugins,
@@ -35,7 +36,7 @@ use bun_jsc::{
     Node, PendingAbortSignal, StringJsc as _, VirtualMachine, host_fn,
 };
 use bun_paths as paths;
-use bun_ptr::{AsCtxPtr, RefPtr};
+use bun_ptr::RefPtr;
 use bun_removable_features::{Feature, is_removed};
 use bun_resolver::fs::FileSystem;
 use bun_standalone_graph::StandaloneModuleGraph;
@@ -743,7 +744,7 @@ impl AnyRoute {
         init_ctx: &mut ServerInitContext,
     ) -> JsResult<Option<AnyRoute>> {
         use bun_collections::zig_hash_map::MapEntry as StdEntry;
-        if let Some(html_bundle) = argument.as_class_this_ptr::<HTMLBundle>() {
+        if let Some(html_bundle) = js_HTMLBundle::ref_from_js(argument) {
             let entry = init_ctx
                 .dedupe_html_bundle_map
                 .entry(html_bundle.as_ptr().cast_const());
@@ -1286,24 +1287,14 @@ fn on_timeout_for_idle_warn() {
 // ─── NewServer ───────────────────────────────────────────────────────────────
 // ─── NewServer (canonical type lives in mod.rs) ──────────────────────────────
 // NOTE (unification): the struct, `ServerFlags`, `UserRoute`,
-// `CreateJsRequest`, `PreparedRequest`, `SavedRequest`, `SavedRequestUnion`,
+// `SavedRequest`, `SavedRequestUnion`,
 // `ServerAllConnectionsClosedTask`, `AnyServer` and the four type aliases are
 // defined once in `super` (mod.rs). This file contributes additional inherent
 // methods on the same type — there is no separate Phase-A struct.
 pub(super) use super::{
-    CreateJsRequest, DebugHTTPSServer, DebugHTTPServer, DispatchedRequest, HTTPSServer, HTTPServer,
-    NewServer, ServerFlags, UserRoute,
+    DebugHTTPSServer, DebugHTTPServer, DispatchedRequest, HTTPSServer, HTTPServer, NewServer,
+    ServerFlags, UserRoute,
 };
-
-/// Generic over the
-/// per-transport `RequestContext` so the same body serves HTTP/1 and HTTP/3.
-/// `super::PreparedRequest<SSL,DEBUG>` is the HTTP/1-concrete instantiation
-/// used by the bake/saved-request path; the generic form here is only reached
-/// from the `_for<Ctx>` dispatch helpers below.
-struct PreparedRequestFor<Ctx: RequestCtxOps> {
-    request: DispatchedRequest,
-    ctx: Ctx::Dispatch,
-}
 
 // `WebSocketUpgradeServer<SSL>` so `ServerWebSocket::behavior::<Self, SSL>` and
 // `app.ws(...)` accept `*mut Self` / `*mut UserRoute<..>` as the upgrade ctx.
@@ -1504,7 +1495,7 @@ where
             .first()
             .map_or(JSValue::UNDEFINED, |compress| compress.to_js());
         let compress = compress.is_undefined() || compress.to_boolean();
-        let payload = payload_from_js(global, "publish", data.to_js(), Accept::AnyOrNullish)?;
+        let payload = payload_from_js(global, "publish", *data, Accept::AnyOrNullish)?;
         let bytes = payload.bytes();
 
         if self.config.get().websocket.is_none() {
@@ -1532,7 +1523,7 @@ where
         cx: &mut JsScope<'_>,
         request: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        let request = request.to_js().as_class_ref::<Request>().ok_or_else(|| {
+        let request = request.as_class_ref::<Request>().ok_or_else(|| {
             cx.global()
                 .throw_invalid_arguments(format_args!("Expected Request object"))
         })?;
@@ -1596,14 +1587,11 @@ where
             return Ok(false);
         }
 
-        let Some(request_ptr) = <Request as bun_jsc::JsClass>::from_js(request) else {
+        let Some(request) = <Request as bun_jsc::JsClass>::from_js(&request) else {
             return Err(
                 global.throw_invalid_arguments(format_args!("upgrade requires a Request object"))
             );
         };
-        // SAFETY: from_js returns a live *mut Request (rooted by the caller's
-        // argument). Shared, re-derived after each JS re-entry point below.
-        let request = unsafe { &*request_ptr };
 
         if request
             .request_context
@@ -1725,9 +1713,6 @@ where
             let detached = upgrader.resp.take();
 
             // Snapshot the lazy url before detaching (mirrors to_async_without_abort_handler).
-            // SAFETY: re-derived after the JS-running option getters above; still
-            // the live JsClass payload for `request`.
-            let request = unsafe { &*request_ptr };
             if request.ensure_url().is_err() {
                 request.url.set(BunString::EMPTY);
             }
@@ -2088,12 +2073,8 @@ where
             return Ok(response_value);
         }
 
-        if let Some(resp) = <Response as bun_jsc::JsClass>::from_js(response_value) {
-            // SAFETY: `from_js` returns a live `*mut Response` (owned by its
-            // JS wrapper, which `response_value` keeps alive). The request is
-            // kept alive by `request_value` (its JS wrapper) for the duration
-            // of this synchronous frame.
-            unsafe { (*resp).set_url(request_ptr.url.get().clone()) };
+        if let Some(resp) = <Response as bun_jsc::JsClass>::from_js(&response_value) {
+            resp.set_url(request_ptr.url.get().clone());
         }
         Ok(JSPromise::resolved_promise_value(global, response_value))
     }
@@ -2390,10 +2371,9 @@ where
             return;
         };
 
-        let Some(mut prepared) = server.prepare_js_request_context_for::<Ctx, R>(
+        let Some((request, ctx)) = server.prepare_js_request_context_for::<Ctx, R>(
             req,
             resp,
-            CreateJsRequest::No,
             user_route.route.method.specific(),
         ) else {
             return;
@@ -2408,31 +2388,29 @@ where
         };
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
         let global = bun_opaque::opaque_deref(server.global_this);
-        let response_value = match jsc::from_js_host_call(global, || {
-            call_route(
-                global,
-                index,
-                prepared.request.native.as_ptr(),
-                server_js,
-                server_request_list,
-                &mut prepared.request.js,
-                std::ptr::from_mut(req).cast::<c_void>(),
-            )
-        }) {
-            Ok(v) => v,
-            Err(err) => global.take_exception(err),
-        };
+        let (request, response_value) =
+            DispatchedRequest::call_route(request, global, |request, js_request| {
+                call_route(
+                    global,
+                    index,
+                    request,
+                    server_js,
+                    server_request_list,
+                    js_request,
+                    std::ptr::from_mut(req).cast::<c_void>(),
+                )
+            });
 
-        server.handle_request_for::<Ctx>(prepared, req, response_value);
+        server.handle_request_for::<Ctx>(&request, ctx, req, response_value);
     }
 
     fn handle_request_for<Ctx: RequestCtxOps<Server = Self>>(
         &self,
-        prepared: PreparedRequestFor<Ctx>,
+        request: &DispatchedRequest,
+        ctx: Ctx::Dispatch,
         req: &mut Ctx::Req,
         response_value: JSValue,
     ) {
-        let PreparedRequestFor { request, ctx } = prepared;
         let Some(ctx) = Ctx::respond(ctx, self, request.js, response_value) else {
             return;
         };
@@ -2451,8 +2429,7 @@ where
             respond_stopped_503(resp);
             return;
         };
-        let Some(prepared) =
-            self.prepare_js_request_context_for::<Ctx, R>(req, resp, CreateJsRequest::Yes, None)
+        let Some((request, ctx)) = self.prepare_js_request_context_for::<Ctx, R>(req, resp, None)
         else {
             return;
         };
@@ -2462,22 +2439,21 @@ where
         debug_assert!(!on_request_fn.is_empty());
 
         let global = self.global_this();
-        let response_value =
-            match on_request_fn.call(global, js_value, &[prepared.request.js, js_value]) {
-                Ok(v) => v,
-                Err(err) => global.take_exception(err),
-            };
+        let request = DispatchedRequest::new(request, global);
+        let response_value = match on_request_fn.call(global, js_value, &[request.js, js_value]) {
+            Ok(v) => v,
+            Err(err) => global.take_exception(err),
+        };
 
-        self.handle_request_for::<Ctx>(prepared, req, response_value);
+        self.handle_request_for::<Ctx>(&request, ctx, req, response_value);
     }
 
     fn prepare_js_request_context_for<Ctx: RequestCtxOps<Server = Self>, R: RespLike>(
         &self,
         req: &mut Ctx::Req,
         resp: &mut R,
-        create_js_request: CreateJsRequest,
         method: Option<http::Method>,
-    ) -> Option<PreparedRequestFor<Ctx>> {
+    ) -> Option<(RefPtr<Request>, Ctx::Dispatch)> {
         jsc::mark_binding!();
 
         // We need to register the handler immediately since uSockets will not buffer.
@@ -2682,10 +2658,7 @@ where
             }
         }
 
-        Some(PreparedRequestFor {
-            request: DispatchedRequest::new(request_object, create_js_request, &self.global())?,
-            ctx: dispatch,
-        })
+        Some((request_object, dispatch))
     }
 
     fn upgrade_web_socket_user_route(
@@ -2709,35 +2682,29 @@ where
             return;
         };
 
-        let Some(mut prepared) =
-            server.prepare_js_request_context(req, resp, CreateJsRequest::No, method)
-        else {
+        let Some((request, ctx)) = server.prepare_js_request_context(req, resp, method) else {
             return;
         };
-        prepared
-            .ctx
-            .upgrade_context
+        ctx.upgrade_context
             .set(UpgradeState::Pending(NonNull::from(upgrade_ctx)));
         let _entered = server.vm().enter_event_loop_scope_without_checkpoint();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
         let global = bun_opaque::opaque_deref(server.global_this);
-        let response_value = match jsc::from_js_host_call(global, || {
-            Bun__ServerRouteList__callRoute(
-                global,
-                index,
-                prepared.request.native.as_ptr(),
-                server_js,
-                server_request_list,
-                &mut prepared.request.js,
-                std::ptr::from_mut(req).cast::<c_void>(),
-            )
-        }) {
-            Ok(v) => v,
-            Err(err) => global.take_exception(err),
-        };
+        let (request, response_value) =
+            DispatchedRequest::call_route(request, global, |request, js_request| {
+                Bun__ServerRouteList__callRoute(
+                    global,
+                    index,
+                    request,
+                    server_js,
+                    server_request_list,
+                    js_request,
+                    std::ptr::from_mut(req).cast::<c_void>(),
+                )
+            });
 
-        server.handle_request(prepared, req, response_value);
+        server.handle_request(&request, ctx, req, response_value);
     }
 
     /// # Safety
@@ -2822,10 +2789,7 @@ where
         ctx.request_weakref.set(bun_ptr::WeakPtr::new(&request));
 
         let global = this.global();
-        let request = DispatchedRequest {
-            native: request.this_ptr(),
-            js: Request::to_js(request, &global),
-        };
+        let request = DispatchedRequest::new(request, &global);
         let args = [request.js, server_js];
 
         let response_value = match this.config.get().on_request.call(&global, server_js, &args) {
@@ -3003,8 +2967,7 @@ where
         Ok(())
     }
 
-    // `js_gc_route_list_set` / `ptr_to_js` live on the unbounded
-    // `impl NewServer` in mod.rs; do not redefine them here.
+    // `js_gc_route_list_set` lives on the unbounded `impl NewServer` in mod.rs.
 }
 
 // ─── Exported fns ────────────────────────────────────────────────────────────
@@ -3300,12 +3263,12 @@ unsafe extern "C" {
     ) -> JSValue;
 
     // `&JSGlobalObject` / `&mut JSValue` discharge the deref'd-param
-    // preconditions; `request_ptr`/`req` are opaque handles that C++ stores or
+    // preconditions; `req` is an opaque handle that C++
     // forwards (module-private — sole callers pass live pointers).
     pub(super) safe fn Bun__ServerRouteList__callRoute(
         global: &JSGlobalObject,
         index: u32,
-        request_ptr: *mut Request,
+        request: RefPtr<Request>,
         server_object: JSValue,
         route_list_object: JSValue,
         request_object: &mut JSValue,
@@ -3315,7 +3278,7 @@ unsafe extern "C" {
     safe fn Bun__ServerRouteList__callRouteH3(
         global: &JSGlobalObject,
         index: u32,
-        request_ptr: *mut Request,
+        request: RefPtr<Request>,
         server_object: JSValue,
         route_list_object: JSValue,
         request_object: &mut JSValue,

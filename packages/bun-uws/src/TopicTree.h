@@ -31,6 +31,7 @@
 namespace uWS {
 
 struct Subscriber;
+struct TopicRegistry;
 
 struct Topic : std::unordered_set<Subscriber *> {
 
@@ -44,10 +45,13 @@ struct Topic : std::unordered_set<Subscriber *> {
 struct Subscriber {
 
     template <typename, typename> friend struct TopicTree;
+    friend struct TopicRegistry;
 
 private:
     /* We use a factory */
-    Subscriber() = default;
+    explicit Subscriber(TopicRegistry *registry) : registry(registry) {}
+
+    TopicRegistry *registry;
 
     /* State of prev, next does not matter unless we are needsDrainage() since we are not in the list */
     Subscriber *prev, *next;
@@ -61,6 +65,9 @@ private:
 
 public:
 
+    /* Leaves every topic */
+    inline ~Subscriber();
+
     /* We have a list of topics we subscribe to (read by WebSocket::iterateTopics) */
     std::set<Topic *> topics;
 
@@ -72,8 +79,49 @@ public:
     }
 };
 
+/* The part of a TopicTree that points at subscribers */
+struct TopicRegistry {
+    friend struct Subscriber;
+
+protected:
+    /* The topics */
+    std::unordered_map<std::string_view, std::unique_ptr<Topic>> topics;
+
+    /* List of subscribers that needs drainage */
+    Subscriber *drainableSubscribers = nullptr;
+
+    void unlinkDrainableSubscriber(Subscriber *s) {
+        if (s->prev) {
+            s->prev->next = s->next;
+        }
+        if (s->next) {
+            s->next->prev = s->prev;
+        }
+        /* If we are the head, then we also need to reset the head */
+        if (drainableSubscribers == s) {
+            drainableSubscribers = s->next;
+        }
+    }
+};
+
+inline Subscriber::~Subscriber() {
+    for (Topic *topicPtr : topics) {
+        /* If we are the last subscriber, simply remove the whole topic */
+        if (topicPtr->size() == 1) {
+            registry->topics.erase(topicPtr->name);
+        } else {
+            /* Otherwise just remove us */
+            topicPtr->erase(this);
+        }
+    }
+
+    if (needsDrainage()) {
+        registry->unlinkDrainableSubscriber(this);
+    }
+}
+
 template <typename T, typename B>
-struct TopicTree {
+struct TopicTree : TopicRegistry {
 
     enum IteratorFlags {
         // To appease clang-analyzer
@@ -94,12 +142,6 @@ private:
     /* The drain callback must not publish, unsubscribe or subscribe.
      * It must only cork, uncork, send, write */
     std::function<bool(Subscriber *, T &, IteratorFlags)> cb;
-
-    /* The topics */
-    std::unordered_map<std::string_view, std::unique_ptr<Topic>> topics;
-
-    /* List of subscribers that needs drainage */
-    Subscriber *drainableSubscribers = nullptr;
 
     /* Palette of outgoing messages, up to 64k */
     std::vector<T> outgoingMessages;
@@ -130,19 +172,6 @@ private:
         }
     }
 
-    void unlinkDrainableSubscriber(Subscriber *s) {
-        if (s->prev) {
-            s->prev->next = s->next;
-        }
-        if (s->next) {
-            s->next->prev = s->prev;
-        }
-        /* If we are the head, then we also need to reset the head */
-        if (drainableSubscribers == s) {
-            drainableSubscribers = s->next;
-        }
-    }
-
 public:
 
     TopicTree(std::function<bool(Subscriber *, T &, IteratorFlags)> cb) : cb(cb) {
@@ -165,9 +194,9 @@ public:
         /* Lookup or create new topic */
         Topic *topicPtr = lookupTopic(topic);
         if (!topicPtr) {
-            Topic *newTopic = new Topic(topic);
-            topics.insert({std::string_view(newTopic->name.data(), newTopic->name.length()), std::unique_ptr<Topic>(newTopic)});
-            topicPtr = newTopic;
+            auto newTopic = std::make_unique<Topic>(topic);
+            topicPtr = newTopic.get();
+            topics.insert({topicPtr->name, std::move(newTopic)});
         }
 
         /* Insert us in topic, insert topic in us */
@@ -211,35 +240,8 @@ public:
     }
 
     /* Factory function for creating a Subscriber */
-    Subscriber *createSubscriber() {
-        return new Subscriber();
-    }
-
-    /* This is used to end a Subscriber, before freeing it */
-    void freeSubscriber(Subscriber *s) {
-
-        /* I guess we call this one even if we are not subscribers */
-        if (!s) {
-            return;
-        }
-
-        /* For all topics, unsubscribe */
-        for (Topic *topicPtr : s->topics) {
-            /* If we are the last subscriber, simply remove the whole topic */
-            if (topicPtr->size() == 1) {
-                topics.erase(topicPtr->name);
-            } else {
-                /* Otherwise just remove us */
-                topicPtr->erase(s);
-            }
-        }
-
-        /* We also need to unlink us */
-        if (s->needsDrainage()) {
-            unlinkDrainableSubscriber(s);
-        }
-
-        delete s;
+    std::unique_ptr<Subscriber> createSubscriber() {
+        return std::unique_ptr<Subscriber>(new Subscriber(this));
     }
 
     /* Mainly used by WebSocket::send to drain one socket before sending */

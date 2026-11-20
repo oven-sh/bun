@@ -57,12 +57,15 @@ pub(crate) fn rename_symbols_in_chunk<'a>(
     };
 
     let mut reserved_names = renamer::compute_initial_reserved_names(c.options.output_format)?;
-    for &source_index in files_in_order {
-        renamer::compute_reserved_names_for_scope(
-            &all_module_scopes[source_index as usize],
-            symbols,
-            &mut reserved_names,
-        );
+    // Under the dev server each module reserves its own names (`run_nested_rename_task`).
+    if c.dev_server.is_none() {
+        for &source_index in files_in_order {
+            renamer::compute_reserved_names_for_scope(
+                &all_module_scopes[source_index as usize],
+                symbols,
+                &mut reserved_names,
+            );
+        }
     }
 
     let sorted_imports_from_other_chunks: Vec<StableRef> = {
@@ -231,6 +234,16 @@ pub(crate) fn rename_symbols_in_chunk<'a>(
     let mut nested_scopes: Vec<(u32, *const bun_ast::Scope)> = Vec::new();
 
     for &source_index in files_in_order {
+        // A dev server module is a closure that nothing outside refers to, like a
+        // CommonJS closure. `bun build --format=internal_bake_dev` links across files.
+        if c.dev_server.is_some() {
+            nested_scopes.push((
+                source_index,
+                &raw const all_module_scopes[source_index as usize],
+            ));
+            continue;
+        }
+
         let wrap = all_flags[source_index as usize].wrap;
         let parts: &[Part] = all_parts[source_index as usize].as_slice();
 
@@ -462,8 +475,14 @@ pub(crate) fn run_nested_rename_task(
         &c.cross_chunk_names,
         &uses,
         source_index,
-        &worker.arena,
+        worker.arena(),
     );
+    if c.dev_server.is_some() {
+        let module_scope = &c.graph.ast.items_module_scope()[source_index as usize];
+        renamer::for_each_reserved_name_in_scope(module_scope, &c.graph.symbols, &mut |name| {
+            nested.reserve(name)
+        });
+    }
     let mut sorted: Vec<u32> = Vec::new();
     for &(_, scope) in scopes {
         // SAFETY: live arena-allocated scope (see `rename_symbols_in_chunk`).

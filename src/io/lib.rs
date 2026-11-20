@@ -10,6 +10,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 #![allow(unsafe_op_in_unsafe_fn)]
+#![cfg_attr(unix, feature(core_io_borrowed_buf))]
 // ── submodules ──────────────────────────────────────────────────────────────
 
 pub mod error;
@@ -28,15 +29,7 @@ pub use error::Error;
 // crate, `EventLoopHandle` is `EventLoopCtx` (the by-value `{kind, owner}`
 // pair) and the seam is type-checked.
 
-#[cfg(windows)]
-pub mod windows_event_loop;
-
-// `posix_event_loop` also defines the *shared* event-loop scaffolding
-// (`EventLoopCtx`, `AllocatorType`, `Owner`, `Flags`, `PollTag`, `Store`,
-// `OpaqueCallback`); `windows_event_loop` re-uses those types and only
-// overrides `FilePoll`/`KeepAlive`/`Closer`/`Loop`/`Waker`. The platform-
-// specific bits inside (kqueue/epoll wakers, fd polling) are individually
-// `#[cfg(unix)]`-gated so the module still compiles on Windows.
+// `posix_event_loop` also defines what Windows shares (`js_vm_ctx`, `Owner`, `FileType`).
 mod keep_alive;
 pub mod posix_event_loop;
 pub use keep_alive::{JsKeepAlive, KeepAlive};
@@ -61,8 +54,9 @@ pub mod parent_death_watchdog;
 pub mod parent_death_watchdog {
     use core::ffi::c_void;
     use core::sync::atomic::{AtomicBool, Ordering};
-    use std::os::windows::io::{AsRawHandle as _, HandleOrNull, IntoRawHandle as _, OwnedHandle};
+    use std::os::windows::io::{AsRawHandle as _, IntoRawHandle as _};
 
+    use bun_core::wstr;
     use bun_sys::windows;
 
     use crate::posix_event_loop::EventLoopCtx;
@@ -102,17 +96,14 @@ pub mod parent_death_watchdog {
         if ENABLED.swap(true, Ordering::Relaxed) {
             return;
         }
-        // SAFETY: Win32 FFI; null args are documented-valid (anonymous Job).
-        unsafe {
-            // Export so a nested Bun spawned via `Bun.spawn([process.execPath,
-            // ...])` self-arms its own Job and parent-watch (POSIX parity).
-            let _ = windows::SetEnvironmentVariableW(
-                bun_core::w!("BUN_FEATURE_FLAG_NO_ORPHANS\0").as_ptr(),
-                bun_core::w!("1\0").as_ptr(),
-            );
-            ensure_kill_on_close_job();
-            arm_parent_watch();
-        }
+        // Export so a nested Bun spawned via `Bun.spawn([process.execPath,
+        // ...])` self-arms its own Job and parent-watch (POSIX parity).
+        let _ = windows::SetEnvironmentVariableW(
+            wstr!("BUN_FEATURE_FLAG_NO_ORPHANS"),
+            Some(wstr!("1")),
+        );
+        ensure_kill_on_close_job();
+        arm_parent_watch();
     }
 
     static JOB_ASSIGNED: AtomicBool = AtomicBool::new(false);
@@ -130,11 +121,7 @@ pub mod parent_death_watchdog {
         let Some(job) = windows::create_kill_on_close_job() else {
             return;
         };
-        // SAFETY: `job` is open; the other is this process's pseudo-handle.
-        if unsafe {
-            windows::AssignProcessToJobObject(job.as_raw_handle(), windows::GetCurrentProcess())
-        } != 0
-        {
+        if windows::AssignProcessToJobObject(&job, windows::GetCurrentProcess()).is_ok() {
             let _ = job.into_raw_handle();
         }
     }
@@ -146,26 +133,18 @@ pub mod parent_death_watchdog {
     /// creator exists but its DACL denies us (e.g. a SYSTEM service spawned
     /// us via `CreateProcessAsUser`), skip the parent watch best-effort; the
     /// Job Object half already covers descendants.
-    unsafe fn arm_parent_watch() {
-        const ERROR_INVALID_PARAMETER: u32 = 87;
-        let ppid = getppid();
-        if ppid == 0 {
+    fn arm_parent_watch() {
+        let Some(ppid @ 1..) = windows::parent_process_id() else {
             return;
-        }
-        // SAFETY: Win32 FFI; by-value args, failure → NULL. SYNCHRONIZE for
-        // the wait, PROCESS_QUERY_LIMITED_INFORMATION for `GetProcessTimes`.
-        let parent = unsafe {
-            HandleOrNull::from_raw_handle(windows::OpenProcess(
-                windows::SYNCHRONIZE | windows::PROCESS_QUERY_LIMITED_INFORMATION,
-                0,
-                ppid,
-            ))
         };
-        let Ok(parent) = OwnedHandle::try_from(parent) else {
-            if windows::GetLastError() == ERROR_INVALID_PARAMETER {
-                windows::kernel32::ExitProcess(EXIT_CODE as u32);
+        // For the wait and for `GetProcessTimes`.
+        let access = windows::SYNCHRONIZE | windows::PROCESS_QUERY_LIMITED_INFORMATION;
+        let parent = match windows::OpenProcess(access, ppid) {
+            Ok(parent) => parent,
+            Err(windows::Win32Error::INVALID_PARAMETER) => {
+                windows::kernel32::ExitProcess(EXIT_CODE as u32)
             }
-            return;
+            Err(_) => return,
         };
         // PID-reuse guard: `InheritedFromUniqueProcessId` is frozen at our
         // creation, so if the creator already exited and its PID was reused we
@@ -174,80 +153,23 @@ pub mod parent_death_watchdog {
         if !is_original_parent(parent.as_raw_handle()) {
             windows::kernel32::ExitProcess(EXIT_CODE as u32);
         }
-        let mut wait: windows::HANDLE = core::ptr::null_mut();
-        // SAFETY: `&mut wait` is a valid out-param; `parent` is a valid
-        // waitable handle; `on_parent_exit_cb` has the `WAITORTIMERCALLBACK`
-        // ABI; `Context` is unused.
-        if unsafe {
-            windows::RegisterWaitForSingleObject(
-                &raw mut wait,
-                parent.as_raw_handle(),
-                on_parent_exit_cb,
-                core::ptr::null_mut(),
-                windows::INFINITE,
-                windows::WT_EXECUTEONLYONCE,
-            )
-        } != 0
-        {
-            let _ = parent.into_raw_handle();
-        }
-    }
-
-    /// `InheritedFromUniqueProcessId` via direct ntdll call. Not
-    /// `uv_os_getppid`: libuv loads `NtQueryInformationProcess` lazily in
-    /// `uv__winapi_init`, and `enable()` runs from `main()` before that.
-    fn getppid() -> u32 {
-        // SAFETY: out-param is a valid `PROCESS_BASIC_INFORMATION`; the pseudo
-        // handle needs no access rights.
-        unsafe {
-            let mut pbi: windows::PROCESS_BASIC_INFORMATION = bun_core::ffi::zeroed_unchecked();
-            let rc = windows::ntdll::NtQueryInformationProcess(
-                windows::GetCurrentProcess(),
-                windows::ProcessBasicInformation,
-                core::ptr::from_mut(&mut pbi).cast(),
-                core::mem::size_of::<windows::PROCESS_BASIC_INFORMATION>() as u32,
-                core::ptr::null_mut(),
-            );
-            if !windows::NT_SUCCESS(rc) {
-                return 0;
-            }
-            pbi.InheritedFromUniqueProcessId as u32
-        }
+        let _ = windows::call_when_signaled(parent, on_parent_exit_cb);
     }
 
     fn is_original_parent(parent: windows::HANDLE) -> bool {
-        let Some(parent_created) = creation_time(parent) else {
+        let Ok(parent_times) = windows::GetProcessTimes(parent) else {
             return false;
         };
-        let Some(self_created) = creation_time(windows::GetCurrentProcess()) else {
+        let Ok(self_times) = windows::GetProcessTimes(windows::GetCurrentProcess()) else {
             return true;
         };
-        parent_created <= self_created
-    }
-
-    fn creation_time(h: windows::HANDLE) -> Option<u64> {
-        let mut t: [windows::FILETIME; 4] = bun_core::ffi::zeroed();
-        // SAFETY: `h` is either the pseudo-handle or a handle we opened; out
-        // params are valid `FILETIME` slots.
-        if unsafe {
-            windows::GetProcessTimes(
-                h,
-                &raw mut t[0],
-                &raw mut t[1],
-                &raw mut t[2],
-                &raw mut t[3],
-            )
-        } == 0
-        {
-            return None;
-        }
-        Some((u64::from(t[0].dwHighDateTime) << 32) | u64::from(t[0].dwLowDateTime))
+        parent_times.creation <= self_times.creation
     }
 
     /// Thread-pool callback: the parent's process object signaled. Matches the
     /// Linux `PR_SET_PDEATHSIG` SIGKILL path (hard exit, no Rust-side
     /// unwinding); the Job Object reaps descendants when our handles close.
-    unsafe extern "system" fn on_parent_exit_cb(_ctx: *mut c_void, _timed_out: windows::BOOLEAN) {
+    extern "system" fn on_parent_exit_cb(_ctx: *mut c_void, _timed_out: windows::BOOLEAN) {
         windows::kernel32::ExitProcess(EXIT_CODE as u32);
     }
 
@@ -259,9 +181,10 @@ pub use parent_death_watchdog as ParentDeathWatchdog;
 // ─── public surface (was bun_io's crate root) ──────────────────────────────
 
 #[cfg(not(windows))]
-pub use posix_event_loop::{FilePoll, Loop};
+pub use posix_event_loop::{FilePoll, Loop, OwnedFilePoll};
+/// The raw `uv_loop_t`, which a `WindowsLoop` wraps.
 #[cfg(windows)]
-pub use windows_event_loop::{FilePoll, Loop};
+pub type Loop = bun_sys::windows::libuv::Loop;
 
 /// How a [`Loop`] is handed around: libuv's functions take a pointer.
 #[cfg(not(windows))]
@@ -269,26 +192,14 @@ pub type LoopRef = &'static Loop;
 #[cfg(windows)]
 pub type LoopRef = *mut Loop;
 
-/// The platform-native [`Loop`] of a uws loop: itself on POSIX, the libuv loop it wraps on Windows.
-#[inline]
-pub fn uws_to_native(uws: &'static bun_uws_sys::Loop) -> LoopRef {
-    #[cfg(not(windows))]
-    {
-        uws
-    }
-    #[cfg(windows)]
-    {
-        uws.uv_loop()
-    }
-}
+pub use posix_event_loop::{IoEvent, Owner, PollTag, js_vm_ctx};
 
-pub use posix_event_loop::{AllocatorType, Owner, PollTag, get_vm_ctx, js_vm_ctx};
-
+#[cfg(not(windows))]
 pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);
 
 // At crate root so the per-method `$crate::__EventLoopCtx__*` type aliases the
 // macro emits (and the impl-macro reads back) actually resolve from impl
-// crates. `Store`/`FilePoll` here are the *platform* re-exports above.
+// crates.
 //
 // `loop_` is typed `&bun_uws_sys::Loop` (the uws
 // wrapper — `PosixLoop`/`WindowsLoop`), NOT the cfg-aliased `crate::Loop`
@@ -298,38 +209,33 @@ pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);
 bun_dispatch::link_interface! {
     pub EventLoopCtx[Js, Mini, SpawnSync] {
         fn loop_() -> &'static bun_uws_sys::Loop;
-        fn file_polls_ptr() -> *mut Store;
-        // `alloc_file_poll() -> *mut FilePoll` was removed — it
-        // returned an *uninitialized* hive slot, and any caller forming
-        // `&mut FilePoll` over it hit validity-invariant UB on the niche-
-        // bearing enum fields. `FilePoll::init` now goes through
-        // `file_polls_ptr()` + `Store::get_init` (write-before-read).
+        #[cfg(not(windows))]
+        fn file_polls_ptr() -> *const Store;
         fn increment_pending_unref_counter();
+        #[cfg(not(windows))]
         fn after_event_loop_callback() -> Option<OpaqueCallback>;
+        #[cfg(not(windows))]
         fn set_after_event_loop_callback(
             cb: Option<OpaqueCallback>,
             ctx: Option<core::ptr::NonNull<core::ffi::c_void>>,
         );
+        #[cfg(not(windows))]
         fn pipe_read_scratch() -> *const PipeReadScratch;
     }
 }
 
 impl EventLoopCtx {
-    /// Single backref-deref accessor for the per-thread `Store`:
-    /// `pub(crate)`, `&self → &mut`, must NOT be called while
-    /// another `&mut Store` (or a `&mut FilePoll` that lives inside the inline
-    /// hive buffer) is live. Every in-crate caller is a leaf op that holds none.
     #[inline]
-    fn file_polls_mut(&self) -> &'static mut Store {
-        // SAFETY: per-thread set-once pointer (`BackRef`-shaped); the event
-        // loop is single-threaded so no concurrent `&mut Store` exists, and
-        // every crate-internal caller upholds the leaf-op discipline above.
-        unsafe { &mut *self.file_polls_ptr() }
+    #[cfg(not(windows))]
+    fn file_polls(&self) -> &Store {
+        // SAFETY: owned by the VM/Mini loop, which is live (`EventLoopCtx::new`).
+        unsafe { &*self.file_polls_ptr() }
     }
     /// Claims the per-loop pipe-read scratch; `None` while a read further up the stack holds it.
     #[inline]
-    fn claim_pipe_read_scratch(&self) -> Option<PipeReadScratchGuard<'static>> {
-        // SAFETY: per-thread scratch owned by the VM/Mini loop, which outlives every read.
+    #[cfg(not(windows))]
+    fn claim_pipe_read_scratch(&self) -> Option<PipeReadScratchGuard<'_>> {
+        // SAFETY: as in `file_polls`.
         unsafe { (*self.pipe_read_scratch()).claim() }
     }
     #[inline]
@@ -347,6 +253,7 @@ impl EventLoopCtx {
         self.loop_().dec();
     }
     #[inline]
+    #[cfg(not(windows))]
     pub(crate) fn loop_add_active(&self, n: u32) {
         self.loop_().add_active(n);
     }
@@ -354,38 +261,19 @@ impl EventLoopCtx {
     pub(crate) fn loop_sub_active(&self, n: u32) {
         self.loop_().sub_active(n);
     }
-    #[inline]
-    pub(crate) fn alloc_file_poll(&self, value: FilePoll) -> core::ptr::NonNull<FilePoll> {
-        self.file_polls_mut().get_init(value)
-    }
-
-    /// What a `FilePoll` keeps of the ctx it was made with; [`get_vm_ctx`] gives that ctx back.
-    #[inline]
-    #[cfg(not(windows))]
-    pub(crate) fn allocator_type(&self) -> AllocatorType {
-        match self.kind {
-            EventLoopCtxKind::Js => AllocatorType::Js,
-            EventLoopCtxKind::Mini => AllocatorType::Mini,
-            EventLoopCtxKind::SpawnSync => AllocatorType::SpawnSync,
-        }
-    }
-    /// See [`uws_to_native`].
-    #[inline]
-    pub fn native_loop(&self) -> LoopRef {
-        uws_to_native(self.loop_())
-    }
 }
 #[cfg(not(windows))]
 pub use posix_event_loop::Store;
-#[cfg(windows)]
-pub use windows_event_loop::Store;
 
 /// Mirrors posix_event_loop::Flags.
+#[cfg(not(windows))]
 pub use posix_event_loop::Flags as PollFlag;
 /// Mirrors poll kind enum used by process.rs.
+#[cfg(not(windows))]
 pub use posix_event_loop::Flags as PollKind;
 
-/// `file_poll` module — real one lives in {posix,windows}_event_loop.rs.
+/// `file_poll` module — real one lives in posix_event_loop.rs.
+#[cfg(not(windows))]
 pub mod file_poll {
     pub use super::Store;
     pub use super::posix_event_loop::Flags;
@@ -405,7 +293,7 @@ pub mod pipe_read_scratch;
 #[path = "PipeReader.rs"]
 pub mod pipe_reader;
 #[path = "PipeWriter.rs"]
-pub mod pipe_writer;
+mod pipe_writer;
 #[path = "pipes.rs"]
 pub mod pipes;
 pub use pipe_read_scratch::{PipeReadScratch, PipeReadScratchGuard};
@@ -424,215 +312,19 @@ pub use write::{AsFmt, DiscardingWriter, FixedBufferStream, FmtAdapter, IntLe, R
 pub use max_buf as MaxBuf;
 pub use pipes::{Chunk, FileType, ReadState};
 
-// `BufferedReader` parent callback dispatch. Each variant's `link_impl_*!` (in
-// `bun_runtime`/`bun_install`) forwards to that type's `BufferedReaderParent`
-// trait impl — see `buffered_reader_parent_link!` below.
-bun_dispatch::link_interface! {
-    pub BufferedReaderParentLink[
-        SubprocessPipeReader,
-        ShellPipeReader,
-        ShellIoReader,
-        FileReader,
-        FileResponseStream,
-        Terminal,
-        CronRegister,
-        CronRemove,
-        FilterRunHandle,
-        MultiRunPipeReader,
-        TestParallelWorker,
-        LifecycleScript,
-        InstallGit,
-        SecurityScan,
-    ] {
-        fn has_on_read_chunk() -> bool;
-        fn on_read_chunk(chunk: pipes::Chunk<'_>, has_more: pipes::ReadState) -> bool;
-        fn on_reader_done();
-        fn on_reader_error(err: bun_sys::Error);
-        fn loop_() -> LoopRef;
-        fn event_loop() -> EventLoopCtx;
-        fn ref_();
-        fn deref();
-    }
-}
-
-/// One-stop generator for a `BufferedReader` parent: emits **both** the
-/// `impl BufferedReaderParent for $T` block and the matching
-/// `link_impl_BufferedReaderParentLink!` registration. Every parent type just
-/// declares same-named inherent methods and writes one macro invocation.
-///
-/// ## Shape
-///
-/// ```ignore
-/// bun_io::impl_buffered_reader_parent! {
-///     Variant for Ty;                 // or `Ty<'a>` (link uses `'static`)
-///     has_on_read_chunk = true|false;
-///     // ↓ omit when has_on_read_chunk = false (trait default fires)
-///     on_read_chunk    = |this, chunk, has_more| (*this).on_read_chunk(chunk, has_more);
-///     on_reader_done   = |this| (*this).on_reader_done();
-///     on_reader_error  = |this, err| (*this).on_reader_error(err);
-///     loop_            = |this| (*this).loop_();
-///     event_loop       = |this| (*this).event_loop_handle.as_event_loop_ctx();
-/// }
-/// ```
-///
-/// Each `|this, ..|` body runs inside the generated
-/// `unsafe fn(this: *mut Self, ..)` trait method, wrapped in an `unsafe {}`
-/// block — `this` is the raw `*mut Self` registered via `set_parent` (see the
-/// aliasing contract on [`pipe_reader::BufferedReaderParent`]). `Self` resolves
-/// to `$T` inside every body. Autoref via `(*this).method()` covers the common
-/// case where the inherent takes `&self`/`&mut self`; sites whose inherent must
-/// stay raw-pointer (e.g. `Rc::from_raw` keepalive in shell `PipeReader`)
-/// forward as `<Self>::method(this)` instead.
-#[macro_export]
-macro_rules! impl_buffered_reader_parent {
-    // Single-lifetime generic: trait impl over `<'lt>`, link registered at `'static`.
-    (
-        $variant:ident for $T:ident<$lt:lifetime>;
-        feature = $feature:ident;
-        $($rest:tt)*
-    ) => {
-        $crate::buffered_reader_parent_link!($variant for $T<'static>);
-        $crate::__impl_buffered_reader_parent_body! { [$lt] [$T<$lt>] $variant; [$feature] $($rest)* }
-    };
-    (
-        $variant:ident for $T:ident<$lt:lifetime>;
-        $($rest:tt)*
-    ) => {
-        $crate::buffered_reader_parent_link!($variant for $T<'static>);
-        $crate::__impl_buffered_reader_parent_body! { [$lt] [$T<$lt>] $variant; [] $($rest)* }
-    };
-    // Non-generic.
-    (
-        $variant:ident for $T:ty;
-        feature = $feature:ident;
-        $($rest:tt)*
-    ) => {
-        $crate::buffered_reader_parent_link!($variant for $T);
-        $crate::__impl_buffered_reader_parent_body! { [] [$T] $variant; [$feature] $($rest)* }
-    };
-    (
-        $variant:ident for $T:ty;
-        $($rest:tt)*
-    ) => {
-        $crate::buffered_reader_parent_link!($variant for $T);
-        $crate::__impl_buffered_reader_parent_body! { [] [$T] $variant; [] $($rest)* }
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __buffered_reader_callback {
-    ([] $body:expr) => {
-        $body
-    };
-    ([$feature:ident] $body:expr) => {
-        ::bun_removable_features::removable_body!($feature, Abort, { $body })
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __impl_buffered_reader_parent_body {
-    (
-        [$($lt:lifetime)?] [$T:ty] $variant:ident;
-        $feature:tt
-        has_on_read_chunk = $has:expr;
-        $( on_read_chunk = |$rc_this:ident, $rc_chunk:ident, $rc_more:ident| $rc:expr; )?
-        on_reader_done = |$rd_this:ident| $rd:expr;
-        on_reader_error = |$re_this:ident, $re_err:ident| $re:expr;
-        loop_ = |$l_this:ident| $lp:expr;
-        event_loop = |$e_this:ident| $ev:expr;
-        $( ref_ = |$rf_this:ident| $rf:expr; )?
-        $( deref = |$dr_this:ident| $dr:expr; )?
-    ) => {
-        // SAFETY (all generated methods): see `BufferedReaderParent` aliasing
-        // contract — `this` is the `*mut Self` registered via `set_parent`; a
-        // `&mut` to the embedded reader may be live on the caller's stack.
-        impl $(<$lt>)? $crate::pipe_reader::BufferedReaderParent for $T {
-            const KIND: $crate::BufferedReaderParentLinkKind =
-                $crate::BufferedReaderParentLinkKind::$variant;
-            const HAS_ON_READ_CHUNK: bool = $has;
-            $(
-                #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-                unsafe fn on_read_chunk(
-                    $rc_this: *mut Self,
-                    $rc_chunk: $crate::Chunk<'_>,
-                    $rc_more: $crate::ReadState,
-                ) -> bool {
-                    unsafe { $crate::__buffered_reader_callback!($feature $rc) }
-                }
-            )?
-            #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-            unsafe fn on_reader_done($rd_this: *mut Self) {
-                unsafe { $crate::__buffered_reader_callback!($feature $rd) }
-            }
-            #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-            unsafe fn on_reader_error($re_this: *mut Self, $re_err: $crate::__bun_sys::Error) {
-                unsafe { $crate::__buffered_reader_callback!($feature $re) }
-            }
-            #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-            unsafe fn loop_($l_this: *mut Self) -> $crate::LoopRef {
-                unsafe { $lp }
-            }
-            #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-            unsafe fn event_loop($e_this: *mut Self) -> $crate::EventLoopHandle {
-                unsafe { $ev }
-            }
-            $(
-                #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-                unsafe fn ref_($rf_this: *mut Self) {
-                    unsafe { $rf }
-                }
-            )?
-            $(
-                #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-                unsafe fn deref($dr_this: *mut Self) {
-                    unsafe { $dr }
-                }
-            )?
-        }
-    };
-}
-
-#[doc(hidden)]
-pub use bun_sys as __bun_sys;
-
-/// Generates the `link_impl_BufferedReaderParentLink!` body for a type that
-/// already implements [`pipe_reader::BufferedReaderParent`]. Used once per
-/// variant in the impl crates (`bun_runtime`/`bun_install`).
-#[macro_export]
-macro_rules! buffered_reader_parent_link {
-    ($variant:ident for $T:ty) => {
-        $crate::link_impl_BufferedReaderParentLink! {
-            $variant for $T => |this| {
-                has_on_read_chunk() =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::HAS_ON_READ_CHUNK,
-                on_read_chunk(chunk, has_more) =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::on_read_chunk(this, chunk, has_more),
-                on_reader_done() =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::on_reader_done(this),
-                on_reader_error(err) =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::on_reader_error(this, err),
-                loop_() =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::loop_(this),
-                event_loop() =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::event_loop(this),
-                ref_() =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::ref_(this),
-                deref() =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::deref(this),
-            }
-        }
-    };
-}
-pub use pipe_writer::{BufferedWriter, StreamBuffer, StreamingWriter, WriteResult, WriteStatus};
+pub use pipe_writer::{
+    BufferedWriteHandler, BufferedWriter, StreamBuffer, StreamingWriter, WriteHandler, WriteResult,
+    WriteStatus,
+};
 #[cfg(windows)]
 pub use source::Source;
 
 // Stub for never-constructed-on-POSIX `Source` so cross-platform sigs
 // (`Option<Source>`) typecheck.
 
-pub use pipe_reader::{BufferedReader, BufferedReaderParent, PosixFlags};
+#[cfg(not(windows))]
+pub use pipe_reader::PosixFlags;
+pub use pipe_reader::{BufferedReader, ReadResult};
 
 pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};
 
@@ -641,11 +333,13 @@ pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};
 #[cfg(not(windows))]
 use core::ffi::c_int;
 #[cfg(not(windows))]
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 pub use crate::closer::Closer;
 pub use crate::waker::Waker;
-use bun_sys::{self as sys, E, Fd};
+#[cfg(not(windows))]
+use bun_sys as sys;
+use bun_sys::{E, Fd};
 
 // `loop` is a Rust keyword, so the static is
 // named `io_loop` but the runtime tagname is `"loop"` so `BUN_DEBUG_loop=1` works.
@@ -745,46 +439,24 @@ pub struct IoRequestLoop {
     pub(crate) pending: RequestQueue,
     pub(crate) waker: Waker,
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) epoll_fd: Fd,
+    pub(crate) epoll_fd: sys::File,
     /// FreeBSD's `Waker` is `LinuxWaker` (an eventfd), so unlike macOS the
     /// waker fd is NOT itself a kqueue. We create one here and register the
     /// eventfd on it, mirroring how Linux registers the eventfd on epoll_fd.
     #[cfg(target_os = "freebsd")]
-    pub(crate) kqueue_fd: Fd,
+    pub(crate) kqueue_fd: sys::File,
 }
 
-// §Concurrency: `STAGE` under `INIT_LOCK` is the init gate; the singleton itself stays raw because
-// the IO thread mutates fields concurrently with `schedule()` callers (which only
-// touch the lock-free `pending` queue + `waker`), so wrapping the whole struct in a
-// `Mutex` would be wrong.
-//
-// `ThreadCell` (not `RacyCell`) to encode "IO-thread-only after init" in the
-// type. `claim()` is invoked from `on_spawn_io_thread`. Cross-thread
-// `schedule()` callers go through `get_unchecked` and touch only the
-// lock-free `pending` + `waker` (see `schedule`); `STAGE` provides the
-// happens-before for init.
 #[cfg(not(windows))]
-static LOOP: bun_core::ThreadCell<core::mem::MaybeUninit<IoRequestLoop>> =
-    bun_core::ThreadCell::new(core::mem::MaybeUninit::uninit());
+static LOOP: bun_core::Once<IoRequestLoop> = bun_core::Once::new();
+#[cfg(not(windows))]
+static IS_RUNNING: AtomicBool = AtomicBool::new(false);
 #[cfg(not(windows))]
 static INIT_LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
-#[cfg(not(windows))]
-static STAGE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(STAGE_EMPTY);
-#[cfg(not(windows))]
-const STAGE_EMPTY: u8 = 0;
-/// `LOOP` is initialized but the IO thread hasn't started.
-#[cfg(not(windows))]
-const STAGE_LOADED: u8 = 1;
-#[cfg(not(windows))]
-const STAGE_RUNNING: u8 = 2;
 
 #[cfg(not(windows))]
 impl IoRequestLoop {
-    /// Initializes `LOOP`. On failure, closes the fds it opened so a later call can retry.
-    fn load() -> sys::Result<()> {
-        #[cfg(not(target_os = "macos"))]
-        use bun_sys::FdExt as _;
-
+    fn init() -> sys::Result<Self> {
         let waker = Waker::init().map_err(|err| {
             let errno = match err {
                 crate::Error::Sys(errno) => errno,
@@ -792,79 +464,60 @@ impl IoRequestLoop {
             };
             sys::Error::from_code(errno, sys::Tag::open)
         })?;
-        let waker_fd = waker.get_fd();
-        // SAFETY: `INIT_LOCK` is held and `STAGE` is `STAGE_EMPTY`, so nothing
-        // else accesses `LOOP`. `get_unchecked` because this runs on the
-        // *spawning* thread, before the IO thread `claim()`s the cell.
-        let loop_ = unsafe {
-            (*LOOP.get_unchecked()).write(IoRequestLoop {
-                pending: RequestQueue::default(),
-                waker,
-                #[cfg(any(target_os = "linux", target_os = "android"))]
-                epoll_fd: Fd::INVALID,
-                #[cfg(target_os = "freebsd")]
-                kqueue_fd: Fd::INVALID,
-            })
-        };
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
+        let epoll_fd = {
             let raw = safe_c::epoll_create1(libc::EPOLL_CLOEXEC);
             if raw < 0 {
-                let err = sys::Error::from_code(sys::get_errno(raw), sys::Tag::epoll_create1);
-                waker_fd.close();
-                return Err(err);
+                return Err(sys::Error::from_code(
+                    sys::get_errno(raw),
+                    sys::Tag::epoll_create1,
+                ));
             }
-            loop_.epoll_fd = Fd::from_native(raw);
+            let epoll_fd = sys::File::from_fd(Fd::from_native(raw));
 
             {
-                // SAFETY: all-zero is a valid epoll_event (POD).
+                // No data: `tick_epoll` skips an event without a `Poll`.
                 let mut epoll: linux::epoll_event = bun_core::ffi::zeroed();
                 epoll.events =
                     linux::EPOLL_IN | linux::EPOLL_ET | linux::EPOLL_ERR | linux::EPOLL_HUP;
-                epoll.u64 = std::ptr::from_mut::<IoRequestLoop>(loop_) as usize as u64;
                 // SAFETY: valid epoll fd + waker fd just created.
                 let rc = unsafe {
                     libc::epoll_ctl(
-                        loop_.epoll_fd.native(),
+                        epoll_fd.fd().native(),
                         linux::EPOLL_CTL_ADD,
-                        waker_fd.native(),
+                        waker.get_fd().native(),
                         &raw mut epoll,
                     )
                 };
                 match sys::get_errno(rc) {
                     E::SUCCESS => {}
-                    err => {
-                        loop_.epoll_fd.close();
-                        waker_fd.close();
-                        return Err(sys::Error::from_code(err, sys::Tag::epoll_ctl));
-                    }
+                    err => return Err(sys::Error::from_code(err, sys::Tag::epoll_ctl)),
                 }
             }
-        }
+            epoll_fd
+        };
 
         #[cfg(target_os = "freebsd")]
-        {
+        let kqueue_fd = {
             let kq = safe_c::kqueue();
             if kq < 0 {
-                let err = sys::Error::from_code(sys::get_errno(kq), sys::Tag::kqueue);
-                waker_fd.close();
-                return Err(err);
+                return Err(sys::Error::from_code(sys::get_errno(kq), sys::Tag::kqueue));
             }
-            loop_.kqueue_fd = Fd::from_native(kq);
+            let kqueue_fd = sys::File::from_fd(Fd::from_native(kq));
             // Register the eventfd waker. udata = 0 → Pollable.tag() == .empty,
             // which onUpdateKQueue treats as a no-op (the wakeup just unblocks
             // the kevent() wait so the pending queue gets drained). EV_CLEAR
             // makes it edge-triggered so we never need to read() the eventfd.
             // SAFETY: all-zero is a valid kevent (POD).
             let mut change: KEvent = bun_core::ffi::zeroed();
-            change.ident = usize::try_from(waker_fd.native()).expect("int cast");
+            change.ident = usize::try_from(waker.get_fd().native()).expect("int cast");
             change.filter = libc::EVFILT_READ;
             change.flags = libc::EV_ADD | libc::EV_CLEAR;
             // SAFETY: valid kqueue fd just created; passing 1 change, 0 events.
             let rc = unsafe {
                 libc::kevent(
-                    loop_.kqueue_fd.native(),
+                    kqueue_fd.fd().native(),
                     core::ptr::from_ref::<KEvent>(&change),
                     1,
                     core::ptr::null_mut(),
@@ -874,61 +527,48 @@ impl IoRequestLoop {
             };
             match sys::get_errno(rc as isize) {
                 sys::Errno::SUCCESS => {}
-                err => {
-                    loop_.kqueue_fd.close();
-                    waker_fd.close();
-                    return Err(sys::Error::from_code(err, sys::Tag::kevent));
-                }
+                err => return Err(sys::Error::from_code(err, sys::Tag::kevent)),
             }
-        }
+            kqueue_fd
+        };
 
-        #[cfg(target_os = "macos")]
-        let _ = (loop_, waker_fd);
-        Ok(())
+        Ok(IoRequestLoop {
+            pending: RequestQueue::default(),
+            waker,
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            epoll_fd,
+            #[cfg(target_os = "freebsd")]
+            kqueue_fd,
+        })
     }
 
     /// Starts the IO thread on first use. If that fails, the next call retries.
     pub fn ensure_init() -> sys::Result<()> {
-        if STAGE.load(Ordering::Acquire) == STAGE_RUNNING {
+        if IS_RUNNING.load(Ordering::Acquire) {
             return Ok(());
         }
         let _guard = INIT_LOCK.lock_guard();
-        if STAGE.load(Ordering::Relaxed) == STAGE_EMPTY {
-            Self::load()?;
-            STAGE.store(STAGE_LOADED, Ordering::Relaxed);
-        }
-        if STAGE.load(Ordering::Relaxed) == STAGE_LOADED {
+        let this = match LOOP.get() {
+            Some(this) => this,
+            None => {
+                let request_loop = Self::init()?;
+                LOOP.get_or_init(|| request_loop)
+            }
+        };
+        if !IS_RUNNING.load(Ordering::Relaxed) {
             // A smaller thread, since it's not doing much. The JoinHandle detaches on drop.
             std::thread::Builder::new()
                 .stack_size(1024 * 1024 * 2)
-                .spawn(Self::on_spawn_io_thread)
+                .spawn(|| this.tick())
                 .map_err(|err| {
                     sys::Error::from_code_int(
                         err.raw_os_error().unwrap_or(libc::EAGAIN),
                         sys::Tag::pthread_create,
                     )
                 })?;
-            STAGE.store(STAGE_RUNNING, Ordering::Release);
+            IS_RUNNING.store(true, Ordering::Release);
         }
         Ok(())
-    }
-
-    pub(crate) fn on_spawn_io_thread() {
-        // From here on, only this thread may borrow `IoRequestLoop`;
-        // `ThreadCell` enforces that in debug builds.
-        LOOP.claim();
-        // SAFETY: `LOOP` is initialized before this thread is spawned (the
-        // spawn in `ensure_init()` is sequenced after `load()`, and spawning
-        // a thread provides the cross-thread happens-before). We take a
-        // *shared* `&IoRequestLoop` — never `&mut` — because `schedule()` on
-        // other threads concurrently touches `pending`/`waker` through a
-        // sibling raw pointer derived from `LOOP.get_unchecked()`. A `&mut`
-        // here would assert `noalias` over those bytes for the process
-        // lifetime (tick never returns), which is UB under Stacked Borrows
-        // regardless of the queue's internal atomics. All IO-thread-mutable
-        // state lives behind `Cell` so `&self` suffices; thread-confinement
-        // of those `Cell`s is debug-asserted by `ThreadCell::get()` above.
-        unsafe { (*LOOP.get()).assume_init_ref() }.tick();
     }
 
     /// Enqueue `request` for the IO thread to pick up. Safe to call from any
@@ -939,27 +579,17 @@ impl IoRequestLoop {
     /// Callers must call `ensure_init()` and handle its error before scheduling
     /// an operation's first request.
     pub fn schedule(request: &mut Request) {
-        Self::ensure_init().expect("IoRequestLoop::ensure_init() succeeded before schedule()");
+        let this = LOOP
+            .get()
+            .expect("ensure_init() succeeded before schedule()");
         debug_assert!(!request.scheduled);
         request.scheduled = true;
-        let request = core::ptr::NonNull::from(request);
-        // SAFETY: `STAGE` above established happens-before for `load()`'s
-        // init of `pending`/`waker`. `get_unchecked` (no owner assert) and a
-        // pointer cast of the `repr(transparent)` `MaybeUninit` (not
-        // `as_mut_ptr(&mut self)`) keep this in raw-ptr land: the only
-        // references formed are the `&pending` / `&waker` autorefs, which may
-        // coexist with the IO thread's `&IoRequestLoop` held across `tick()`.
-        // `pending.push` (lock-free MPSC) and `waker.wake` both take `&self`.
-        unsafe {
-            let loop_p = LOOP.get_unchecked().cast::<IoRequestLoop>();
-            (*core::ptr::addr_of!((*loop_p).pending)).push(request);
-            (*core::ptr::addr_of!((*loop_p).waker)).wake();
-        }
+        this.pending.push(core::ptr::NonNull::from(request));
+        this.waker.wake();
     }
 
     pub(crate) fn tick(&self) {
-        // SAFETY: literal is NUL-terminated; len excludes the NUL.
-        let name = bun_core::ZStr::from_static(b"IO Watcher\0");
+        let name = bun_core::zstr!("IO Watcher");
         bun_core::Output::Source::configure_named_thread(name);
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1071,19 +701,7 @@ impl IoRequestLoop {
 
             for event in current_events {
                 let pollable = Pollable::from(event.u64);
-                if pollable.tag() == PollableTag::Empty {
-                    // `self` *is* `(*LOOP.get()).assume_init_ref()` (see
-                    // `on_spawn_io_thread`), and `MaybeUninit<T>` is
-                    // `repr(transparent)`, so its address equals the sentinel
-                    // stored in `load()` — no need to re-deref the cell.
-                    if event.u64 == core::ptr::from_ref(self) as usize as u64 {
-                        // Edge-triggered: no need to read the eventfd counter
-                        continue;
-                    }
-                }
-                // `pollable.poll()` is the `io_poll` field pointer this loop
-                // registered via `register_for_epoll`; the owner is live and
-                // non-null (the kernel hands back the udata we registered).
+                // Null for the waker, which is edge-triggered: no need to read its counter.
                 let Some(poll) = core::ptr::NonNull::new(pollable.poll()) else {
                     continue;
                 };
@@ -1095,11 +713,11 @@ impl IoRequestLoop {
     pub(crate) fn pollfd(&self) -> Fd {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            return self.epoll_fd;
+            return self.epoll_fd.fd();
         }
         #[cfg(target_os = "freebsd")]
         {
-            return self.kqueue_fd;
+            return self.kqueue_fd.fd();
         }
         #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
         {
@@ -1308,16 +926,16 @@ pub unsafe trait IntrusiveUvFs: Sized {
     /// `core::mem::offset_of!(Self, io_request)`.
     const UV_FS_OFFSET: usize;
 
-    /// Recover `*mut Self` from the `*mut uv::fs_t` libuv passes back.
+    /// Take back the `Box<Self>` that was left to libuv, from the `*mut uv::fs_t` it passes back.
     ///
     /// # Safety
     /// `req` must point to the `fs_t` field at `Self::UV_FS_OFFSET` inside a
-    /// live `Self` allocation, and the pointer's provenance must cover the
+    /// leaked `Box<Self>` that nothing else takes back, and the pointer's provenance must cover the
     /// whole allocation.
     #[inline(always)]
-    unsafe fn from_uv_fs(req: *mut bun_sys::windows::libuv::fs_t) -> *mut Self {
+    unsafe fn take_from_uv_fs(req: *mut bun_sys::windows::libuv::fs_t) -> Box<Self> {
         // SAFETY: caller upholds the trait safety contract above.
-        unsafe { bun_core::container_of::<Self, _>(req, Self::UV_FS_OFFSET) }
+        unsafe { bun_core::heap::take(bun_core::container_of(req, Self::UV_FS_OFFSET)) }
     }
 }
 
@@ -1796,156 +1414,10 @@ impl Poll {
 
 pub const RETRY: E = E::EAGAIN;
 
-use crate::posix_event_loop::Flags as PollFlags;
-#[cfg(not(windows))]
-use crate::posix_event_loop::OneShotFlag;
-
 pub type EventLoopHandle = EventLoopCtx;
 
-pub type FilePollFlag = PollFlags;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum FilePollKind {
-    Readable,
-    Writable,
-}
-
-/// A slot of the event loop's `Store`. Dropping it unregisters the poll and puts the slot back.
-pub struct OwnedFilePoll<const FORCE_UNREGISTER: bool = false>(core::ptr::NonNull<FilePoll>);
-
-impl<const FORCE_UNREGISTER: bool> OwnedFilePoll<FORCE_UNREGISTER> {
-    pub fn new(ev: EventLoopCtx, fd: Fd, owner: Owner) -> Self {
-        Self(FilePoll::init(ev, fd, owner))
-    }
-
-    pub(crate) fn poll_ref(&self) -> FilePollRef<'_> {
-        FilePollRef(self.0, core::marker::PhantomData)
-    }
-}
-
-impl<const FORCE_UNREGISTER: bool> core::ops::Deref for OwnedFilePoll<FORCE_UNREGISTER> {
-    type Target = FilePoll;
-    fn deref(&self) -> &FilePoll {
-        // SAFETY: as in `FilePollRef::inner`.
-        unsafe { self.0.as_ref() }
-    }
-}
-
-impl<const FORCE_UNREGISTER: bool> core::ops::DerefMut for OwnedFilePoll<FORCE_UNREGISTER> {
-    fn deref_mut(&mut self) -> &mut FilePoll {
-        self.poll_ref().inner()
-    }
-}
-
-impl<const FORCE_UNREGISTER: bool> Drop for OwnedFilePoll<FORCE_UNREGISTER> {
-    fn drop(&mut self) {
-        let (ev, was_ever_registered) = self.reset(FORCE_UNREGISTER);
-        ev.file_polls_mut().put(self.0, ev, was_ever_registered);
-    }
-}
-
-/// The slot of an [`OwnedFilePoll`], to change through a shared borrow of the owner.
-#[repr(transparent)]
-#[derive(Clone, Copy)]
-pub struct FilePollRef<'a>(
-    core::ptr::NonNull<FilePoll>,
-    core::marker::PhantomData<&'a FilePoll>,
-);
-
-impl<'a> FilePollRef<'a> {
-    #[inline]
-    fn inner(self) -> &'a mut FilePoll {
-        // SAFETY: the owner is alive, the loop is single-threaded, and no
-        // caller runs user code under the borrow.
-        unsafe { &mut *self.0.as_ptr() }
-    }
-    #[inline]
-    pub(crate) fn fd(self) -> Fd {
-        self.inner().fd
-    }
-    #[inline]
-    pub(crate) fn set_owner(self, owner: Owner) {
-        self.inner().owner = owner;
-    }
-    #[inline]
-    pub(crate) fn unregister(self, loop_: LoopRef, force: bool) -> sys::Result<()> {
-        #[cfg(not(windows))]
-        {
-            self.inner().unregister(loop_, force)
-        }
-        #[cfg(windows)]
-        {
-            let _ = (loop_, force);
-            unreachable!("FilePoll fd registration is POSIX-only");
-        }
-    }
-    #[inline]
-    pub(crate) fn register_with_fd(
-        self,
-        loop_: LoopRef,
-        kind: FilePollKind,
-        fd: Fd,
-    ) -> sys::Result<()> {
-        let flag = match kind {
-            FilePollKind::Readable => PollFlags::Readable,
-            FilePollKind::Writable => PollFlags::Writable,
-        };
-        #[cfg(not(windows))]
-        {
-            self.inner()
-                .register_with_fd(loop_, flag, OneShotFlag::Dispatch, fd)
-        }
-        #[cfg(windows)]
-        {
-            let _ = (loop_, flag, fd);
-            unreachable!("FilePoll fd registration is POSIX-only");
-        }
-    }
-    #[inline]
-    pub(crate) fn has_flag(self, f: FilePollFlag) -> bool {
-        self.inner().flags.contains(f)
-    }
-    #[inline]
-    pub fn set_flag(self, f: FilePollFlag) {
-        self.inner().flags.insert(f);
-    }
-    #[inline]
-    pub(crate) fn file_type(self) -> crate::pipes::FileType {
-        #[cfg(not(windows))]
-        {
-            self.inner().file_type()
-        }
-        #[cfg(windows)]
-        {
-            crate::pipes::FileType::File
-        }
-    }
-    #[inline]
-    pub fn is_registered(self) -> bool {
-        self.inner().is_registered()
-    }
-    #[inline]
-    pub fn is_watching(self) -> bool {
-        self.inner().is_watching()
-    }
-    #[inline]
-    pub(crate) fn enable_keeping_process_alive(self, ev: EventLoopHandle) {
-        self.inner().enable_keeping_process_alive(ev);
-    }
-    #[inline]
-    pub(crate) fn disable_keeping_process_alive(self, ev: EventLoopHandle) {
-        self.inner().disable_keeping_process_alive(ev);
-    }
-    #[inline]
-    pub(crate) fn set_keeping_process_alive(self, ev: EventLoopHandle, value: bool) {
-        if value {
-            self.enable_keeping_process_alive(ev)
-        } else {
-            self.disable_keeping_process_alive(ev)
-        }
-    }
-}
+#[cfg(not(windows))]
+pub type FilePollFlag = posix_event_loop::Flags;
 
 /// Moved from `bun_runtime::webcore::PathOrFileDescriptor`.
 /// Owned here so `open_for_writing` has no upward dep; runtime re-exports it.
@@ -1957,11 +1429,13 @@ pub enum PathOrFileDescriptor<'a> {
 // ─── Waker (moved from bun_io) ──────────────────────────────────────────────
 //
 // io (T2) owns the
-// Waker so `Loop::load` has no upward dep on bun_io (T3). bun_io re-exports.
+// Waker so `IoRequestLoop::init` has no upward dep on bun_io (T3). bun_io re-exports.
 
 pub mod waker {
     #[cfg(not(windows))]
-    use bun_sys::Fd;
+    use bun_sys::{Fd, File};
+    #[cfg(windows)]
+    use core::sync::atomic::{AtomicPtr, Ordering};
 
     #[cfg(target_os = "macos")]
     pub type Waker = KEventWaker;
@@ -1975,21 +1449,16 @@ pub mod waker {
 
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     pub struct LinuxWaker {
-        pub(crate) fd: Fd,
+        eventfd: File,
     }
 
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     impl LinuxWaker {
-        /// Stand-in until `init()` runs (e.g. a `BundleThread` allocated before
-        /// its real waker is created). `Fd::INVALID` is sentinel-only; never
-        /// poll/wake through it.
-        pub const fn placeholder() -> Self {
-            Self { fd: Fd::INVALID }
-        }
-
         pub fn init() -> crate::error::Result<Self> {
             match bun_sys::eventfd(0, 0) {
-                Ok(fd) => Ok(Self::init_with_file_descriptor(fd)),
+                Ok(fd) => Ok(Self {
+                    eventfd: File::from_fd(fd),
+                }),
                 Err(err) => Err(bun_errno::SystemErrno::init(i64::from(err.errno))
                     .map(crate::Error::Sys)
                     .unwrap_or(crate::Error::Unexpected)),
@@ -1998,28 +1467,15 @@ pub mod waker {
 
         #[inline]
         pub(crate) fn get_fd(&self) -> Fd {
-            self.fd
-        }
-
-        #[inline]
-        fn init_with_file_descriptor(fd: Fd) -> Self {
-            Self { fd }
+            self.eventfd.fd()
         }
 
         pub fn wait(&self) {
-            // eventfd reads are always exactly 8 bytes (u64 counter). Use a u64
-            // directly instead of type-punning through usize, which would be UB
-            // on any 32-bit target and needs no `&mut *raw` reborrow here.
-            let mut bytes: u64 = 0;
-            // SAFETY: valid fd; `bytes` is an 8-byte buffer; result intentionally discarded.
-            let _ = unsafe { libc::read(self.fd.native(), (&raw mut bytes).cast(), 8) };
+            let _ = self.eventfd.read(&mut [0; size_of::<u64>()]);
         }
 
         pub fn wake(&self) {
-            // eventfd writes are always exactly 8 bytes (u64 increment).
-            let bytes: u64 = 1;
-            // SAFETY: valid fd; `bytes` is an 8-byte buffer; result intentionally discarded.
-            let _ = unsafe { libc::write(self.fd.native(), (&raw const bytes).cast(), 8) };
+            let _ = bun_sys::write(self.get_fd(), &1u64.to_ne_bytes());
         }
     }
 
@@ -2030,7 +1486,7 @@ pub mod waker {
 
     #[cfg(target_os = "macos")]
     pub struct KEventWaker {
-        kq: i32,
+        kq: File,
         machport: libc::mach_port_t,
         pub machport_buf: Box<[u8]>,
     }
@@ -2051,35 +1507,21 @@ pub mod waker {
         // SAFETY: all-zero is a valid kevent64_s array (POD).
         const ZEROED: [Kevent64; 16] = bun_core::ffi::zeroed();
 
-        /// Stand-in until `init()` runs. To be overwritten via `ptr::write`
-        /// (no `Drop` of the empty `machport_buf` is required, but dropping
-        /// it is also harmless).
-        pub fn placeholder() -> Self {
-            Self {
-                kq: -1,
-                machport: 0,
-                machport_buf: Box::default(),
-            }
-        }
-
         pub fn wake(&self) {
             let _ = io_darwin_schedule_wakeup(self.machport);
         }
 
         #[inline]
         pub(crate) fn get_fd(&self) -> Fd {
-            Fd::from_native(self.kq)
+            self.kq.fd()
         }
 
         pub fn wait(&self) {
-            if !Fd::from_native(self.kq).is_valid() {
-                return;
-            }
             let mut events = Self::ZEROED;
             // SAFETY: FFI syscall; pointers reference a stack-local array valid for the call.
             unsafe {
                 libc::kevent64(
-                    self.kq,
+                    self.kq.fd().native(),
                     events.as_ptr(),
                     0,
                     events.as_mut_ptr(),
@@ -2099,16 +1541,16 @@ pub mod waker {
                         .unwrap_or(crate::Error::Unexpected),
                 );
             }
-            Self::init_with_file_descriptor(kq)
-        }
-
-        pub(crate) fn init_with_file_descriptor(kq: i32) -> crate::error::Result<Self> {
-            debug_assert!(kq > -1);
+            let kq = File::from_fd(Fd::from_native(kq));
             // Box<[u8]> owns the buffer for the machport's lifetime.
             let mut machport_buf = vec![0u8; 1024].into_boxed_slice();
             // SAFETY: FFI call; buf outlives the machport (owned by the returned Waker).
             let machport = unsafe {
-                io_darwin_create_machport(kq, machport_buf.as_mut_ptr().cast::<c_void>(), 1024)
+                io_darwin_create_machport(
+                    kq.fd().native(),
+                    machport_buf.as_mut_ptr().cast::<c_void>(),
+                    1024,
+                )
             };
             if machport == 0 {
                 return Err(crate::Error::MachportCreationFailed);
@@ -2125,65 +1567,30 @@ pub mod waker {
 
     #[cfg(windows)]
     pub struct WindowsWaker {
-        /// Process-global `WindowsLoop` singleton. `BackRef` invariant (pointee
-        /// outlives holder) holds trivially: the loop is never freed. `None`
-        /// only between [`placeholder`] and [`init`]; every dispatch path
-        /// (`wake`/`wait`/`uv_loop`) unwraps and would have UB-derefed the old
-        /// raw null anyway.
-        ///
-        /// [`placeholder`]: Self::placeholder
-        /// [`init`]: Self::init
-        pub loop_: Option<bun_ptr::BackRef<bun_uws_sys::WindowsLoop>>,
+        /// The loop of the thread that called `init`. Other threads only wake it. `AtomicPtr` only to be `Sync`.
+        loop_: AtomicPtr<bun_uws_sys::WindowsLoop>,
     }
 
     #[cfg(windows)]
     impl WindowsWaker {
-        /// Stand-in until `init()` runs (e.g. a `BundleThread` allocated before
-        /// its real waker is created). `loop_` is `None` and must never be
-        /// dereferenced — overwrite via `ptr::write` before first
-        /// `wake()`/`wait()`/`uv_loop()`. Mirrors `LinuxWaker::placeholder` /
-        /// `KEventWaker::placeholder` so cross-platform call sites don't fall
-        /// back to `mem::zeroed()` (UB for the niche-optimised `Option<BackRef>`).
-        pub const fn placeholder() -> Self {
-            Self { loop_: None }
-        }
-
         pub fn init() -> crate::error::Result<Self> {
+            let loop_: &bun_uws_sys::WindowsLoop = bun_uws_sys::WindowsLoop::get();
             Ok(Self {
-                loop_: Some(bun_ptr::BackRef::new(bun_uws_sys::WindowsLoop::get())),
+                loop_: AtomicPtr::new(core::ptr::from_ref(loop_).cast_mut()),
             })
         }
 
-        /// Unwrap the back-reference. Panics on a `placeholder()` waker, which
-        /// is the same precondition the previous raw-pointer deref carried
-        /// (just loud instead of UB).
-        #[inline]
-        fn loop_ref(&self) -> bun_ptr::BackRef<bun_uws_sys::WindowsLoop> {
-            self.loop_.expect("WindowsWaker used before init()")
-        }
-
+        /// On the thread that called `init`.
         pub fn wait(&self) {
-            self.loop_ref().run();
+            bun_uws_sys::WindowsLoop::get().run();
         }
 
         pub fn wake(&self) {
-            // The cross-thread wake path: `WindowsLoop` is `!Sync`, so pass the raw
-            // pointer to the thread-safe C wake (`uv_async_send`).
-            // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton;
+            // Relaxed: only `init` writes it, before the waker is shared.
+            let loop_ = self.loop_.load(Ordering::Relaxed);
+            // SAFETY: `loop_` came from `WindowsLoop::get()`, which is `&'static`;
             // `us_wakeup_loop` → `uv_async_send` is documented thread-safe.
-            unsafe { bun_uws_sys::loop_::us_wakeup_loop(self.loop_ref().as_const_ptr()) };
-        }
-
-        /// Raw libuv `uv_loop_t*` underlying this waker's `WindowsLoop`.
-        ///
-        /// `loop_` is the process-global singleton from `WindowsLoop::get()`
-        /// (set in [`init`]), so the returned pointer has process lifetime —
-        /// safe to hand to `uv::Timer::init` and friends without an `unsafe`
-        /// block at the call site.
-        #[inline]
-        pub fn uv_loop(&self) -> *mut bun_sys::windows::libuv::Loop {
-            // `BackRef` deref is safe (process-lifetime singleton).
-            self.loop_ref().uv_loop()
+            unsafe { bun_uws_sys::loop_::us_wakeup_loop(loop_) };
         }
     }
 }
@@ -2192,7 +1599,7 @@ pub mod waker {
 //
 // Schedules an async fd close on the
 // thread pool (POSIX) or via uv_fs_close (Windows). io (T2) owns it so
-// `pipes::PollOrFd::close` has no upward dep on bun_io (T3).
+// `pipes::PipeHandle::close` has no upward dep on bun_io (T3).
 
 pub mod closer {
     use bun_sys::Fd;

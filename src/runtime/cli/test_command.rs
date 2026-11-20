@@ -1,11 +1,11 @@
-use core::cell::{Cell, OnceCell};
+use core::cell::{Cell, OnceCell, RefCell};
 
 use bun_io::Write as _;
 
 use crate::cli::Command;
 use crate::cli::run_compiled;
 use crate::cli::test::changed_files_filter as ChangedFilesFilter;
-use crate::cli::test::parallel_runner as ParallelRunner;
+use crate::cli::test::parallel::runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
 use crate::cli::test::timings::Timings;
 use bun_collections::BoundedArray;
@@ -22,7 +22,7 @@ use bun_options_types::context::{JunitSuites, ReactCompilerScope, TestEnvironmen
 use bun_paths as bun_path;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;
-use bun_ptr::Interned;
+use bun_ptr::{CellExt as _, Interned};
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd, File};
 
@@ -310,13 +310,10 @@ fn add_files_below(root: &[u8], start: &[u8], end: &[u8], found: &mut Vec<Box<[u
     ];
     let mut folders: Vec<Vec<u8>> = vec![Vec::new()];
     while let Some(relative) = folders.pop() {
-        let path = bun_core::ZBox::from_bytes([root, &relative[..]].concat());
-        let flags = bun_sys::O::RDONLY | bun_sys::O::DIRECTORY;
-        let Ok(folder) = bun_sys::openat(Fd::cwd(), &path, flags, 0) else {
+        let Ok(folder) = bun_sys::Dir::open(&[root, &relative[..]].concat()) else {
             continue;
         };
-        let _close = bun_sys::CloseOnDrop::new(folder);
-        let mut entries = bun_sys::dir_iterator::iterate(folder);
+        let mut entries = bun_sys::dir_iterator::iterate(folder.fd());
         while let Ok(Some(entry)) = entries.next() {
             let name = entry.name.slice_u8();
             let below = [&relative[..], b"/", name].concat();
@@ -509,7 +506,7 @@ fn select_shard_by_reach(
     let otherwise: Vec<u32> = match timings {
         Some(timings) => {
             let ranges = timings.partition(test_files, shard.count);
-            let shard_of = |test: u32| ranges.iter().position(|it| it.lo <= test && test < it.hi);
+            let shard_of = |test: u32| ranges.iter().position(|it| it.contains(&(test as usize)));
             (0..tests as u32)
                 .map(|test| shard_of(test).unwrap_or(0) as u32)
                 .collect()
@@ -756,7 +753,6 @@ if (name === \"\\0never\") (globalThis as any)[name] = require(name);
 // `crate::test_runner::*`; the façade below adapts the body's nested-path
 // usage (`bun_test::Execution::Result`, `bun_test::BasicResult`, …) without a
 // 2k-line body rewrite.
-use crate::test_runner::cells::CellExt as _;
 use crate::test_runner::environment::Environment;
 use crate::test_runner::jest::{self, Summary, TestRunner};
 use crate::test_runner::snapshot::Snapshots;
@@ -1153,9 +1149,15 @@ impl TestFailure {
     pub(crate) fn record_log_message(slot: &mut Option<TestFailure>, thrown: jsc::JSValue) {
         let (name, msg): (&[u8], _) =
             if let Some(error) = thrown.as_class_ref::<jsc::ResolveMessage>() {
-                (b"ResolveMessage", &error.msg)
+                (
+                    b"ResolveMessage",
+                    jsc::WrapperGuard::map(error, |error| &error.msg),
+                )
             } else if let Some(error) = thrown.as_class_ref::<jsc::BuildMessage>() {
-                (b"BuildMessage", &error.msg)
+                (
+                    b"BuildMessage",
+                    jsc::WrapperGuard::map(error, |error| &error.msg),
+                )
             } else {
                 return;
             };
@@ -1795,7 +1797,7 @@ pub(crate) struct CommandLineReporter {
     pub(crate) last_printed_dot: Cell<bool>,
 
     /// Set in a `--parallel` worker, which sends per-test output to the coordinator instead of to stderr.
-    pub(crate) worker: OnceCell<ParallelRunner::WorkerLink>,
+    pub(crate) worker: OnceCell<ParallelRunner::CoordinatorLink>,
 
     pub(crate) failures_to_repeat_buf: Cell<Vec<u8>>,
     pub(crate) skips_to_repeat_buf: Cell<Vec<u8>>,
@@ -2766,10 +2768,10 @@ impl TestCommand {
                     .test_options
                     .test_filter_regex()
                     .map(|p| jsc::RegularExpression::opaque_ref(p.as_ptr().cast())),
-                snapshots: Cell::new(Some(Snapshots::init(ctx.test_options.update_snapshots))),
+                snapshots: RefCell::new(Snapshots::init(ctx.test_options.update_snapshots)),
                 bun_test_root: bun_test::BunTestRoot::init(),
                 current_file: jest::CurrentFile::default(),
-                index: Cell::default(),
+                file_ids: Cell::default(),
                 default_timeout_override: Cell::new(u32::MAX),
                 vi_config: Cell::default(),
                 vi_config_of_preload: Cell::default(),
@@ -2817,19 +2819,19 @@ impl TestCommand {
         }
 
         bun_ast::initialize_store();
-        let vm = VirtualMachine::init(jsc::virtual_machine::InitOptions {
+        let options = jsc::virtual_machine::InitOptions {
             // Clone (not take): build_worker_argv reads ctx.args to forward them to workers.
             transform_options: ctx.args.clone(),
             argv: core::mem::take(&mut ctx.passthrough).leak(),
             debugger: core::mem::take(&mut ctx.runtime_options.debugger),
-            log: core::ptr::NonNull::new(ctx.log),
             env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
             smol: ctx.runtime_options.smol,
             is_main_thread: true,
             graph: run_compiled::graph(),
             ..Default::default()
-        })?;
-        crate::jsc_hooks::state_of(vm)
+        };
+        let vm = VirtualMachine::init(ctx.log, options)?;
+        crate::jsc_hooks::runtime_state_of(vm)
             .test_runner
             .set(Some(&reporter.jest));
         // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
@@ -2872,7 +2874,7 @@ impl TestCommand {
             run_compiled::hand_on_environment(&env_loader.map);
         }
 
-        vm.load_extra_env_and_source_code_printer();
+        vm.load_extra_env();
         VirtualMachine::set_is_main_thread_vm(true);
 
         if ctx.test_options.isolate {
@@ -3192,37 +3194,14 @@ impl TestCommand {
         {
             vm.hot_reload.set(ctx.debug.hot_reload);
 
-            // Install the --changed trigger collector BEFORE the watcher
-            // thread starts so a file edit during runAllTests is still
-            // recorded. The addFileByPathSlow seeding stays after
-            // runAllTests (separate concern; see O_EVTONLY comment
-            // below).
-            if ctx.test_options.changed.is_some()
-                && vm.hot_reload.get() == jsc::virtual_machine::HotReload::Watch
-            {
-                ChangedFilesFilter::init_watch_trigger();
-            }
-
             match vm.hot_reload.get() {
                 jsc::virtual_machine::HotReload::Hot => {
-                    // SAFETY: `vm` is the process-lifetime main-thread VM; it
-                    // outlives the leaked reloader.
-                    unsafe {
-                        jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
-                            std::ptr::from_ref(vm).cast_mut(),
-                            None,
-                        );
-                    }
+                    jsc::hot_reloader::enable_hot_module_reloading(vm, None, None);
                 }
                 jsc::virtual_machine::HotReload::Watch => {
-                    // SAFETY: `vm` is the process-lifetime main-thread VM; it
-                    // outlives the leaked reloader.
-                    unsafe {
-                        jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
-                            std::ptr::from_ref(vm).cast_mut(),
-                            None,
-                        );
-                    }
+                    let trigger_file = (ctx.test_options.changed.as_ref())
+                        .and_then(|_| ChangedFilesFilter::init_watch_trigger());
+                    jsc::hot_reloader::enable_hot_module_reloading(vm, None, trigger_file);
                     run_compiled::watch_files_of_check(vm);
                 }
                 _ => {}
@@ -3322,17 +3301,8 @@ impl TestCommand {
         // "Ran N tests" summary (printed after this), so seeding completes
         // before the next file edit.
         if ctx.test_options.changed.is_some() && vm.is_watcher_enabled() {
-            // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
-            // `enable_hot_module_reloading`; non-null because
-            // `is_watcher_enabled()` checked it.
-            let watcher = unsafe {
-                &mut *vm
-                    .bun_watcher
-                    .get()
-                    .cast::<jsc::hot_reloader::ImportWatcher>()
-            };
             for path in &changed_module_graph_files {
-                let _ = watcher.add_file_by_path_slow(path);
+                vm.add_to_watcher_if_needed(path);
             }
         }
 
@@ -4070,7 +4040,7 @@ impl TestCommand {
                 }
 
                 // Automatically execute bun_test tests
-                if !buntest.has_results() {
+                if !buntest.has_queued_results() {
                     buntest.add_result(bun_test::ResultMsg::Start);
                 }
                 bun_test::BunTest::run(&buntest, vm.global())?;
@@ -4081,7 +4051,7 @@ impl TestCommand {
                 let mut prev_unhandled_count = vm.unhandled_error_counter.get();
                 while buntest.phase.get() != bun_test::Phase::Done {
                     // `RunTestsTask` leaves results queued when it fires in an event loop nested under JS.
-                    if buntest.has_results() {
+                    if buntest.has_queued_results() {
                         bun_test::BunTest::run_next_tick(
                             &std::rc::Rc::downgrade(&buntest),
                             global,

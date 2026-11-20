@@ -1,4 +1,3 @@
-#![feature(allocator_api)]
 // `#[thread_local]` for the per-node-allocation hot-path TLS
 // (`DATA_STORE_OVERRIDE`, `Expr/Stmt::data::Store::{INSTANCE,
 // MEMORY_ALLOCATOR, DISABLE_RESET}`, `store_ast_alloc_heap::ARENA`): bare
@@ -383,18 +382,6 @@ impl fmt::Debug for Ref {
     }
 }
 
-// Local mirror of `bun_resolver::fs`'s path+contents pair (canonical home would
-// be `bun_paths`); defined here so init_file / init_recycled_file resolve.
-// `pub` so `bun_bundler::Transpiler::parse_maybe` can construct it for
-// `Source::init_recycled_file`.
-/// A [`Source`]'s path paired with its raw bytes (used by virtual-module
-/// injection: `BundleV2`'s `additional_files`, `Bun.build` inputs).
-#[derive(Clone, Copy)]
-pub struct PathContentsPair<'a> {
-    pub path: bun_paths::fs::Path<'a>,
-    pub contents: &'a [u8],
-}
-
 /// Owned/borrowed → `Cow<'static, [u8]>` for `Data.text`. Superset of the old
 /// `impl Into<Cow<'static, [u8]>>` bound on [`range_data`] that additionally
 /// admits `&'static str` (so `concat!()` literals work) and `&[u8; N]`.
@@ -441,35 +428,6 @@ impl IntoText for Box<[u8]> {
     #[inline]
     fn into_text(self) -> Cow<'static, [u8]> {
         Cow::Owned(self.into_vec())
-    }
-}
-
-/// Sink adapter for [`Log::print`] — lets callers pass either a borrowed
-/// `fmt::Write` impl or the `&bun_core::io::Writer` returned by
-/// `Output::error_writer()` (the dominant call shape across the tree).
-pub trait IntoLogWrite {
-    type W: fmt::Write;
-    fn into_log_write(self) -> Self::W;
-}
-impl<'a, W: fmt::Write> IntoLogWrite for &'a mut W {
-    type W = &'a mut W;
-    #[inline]
-    fn into_log_write(self) -> &'a mut W {
-        self
-    }
-}
-/// `fmt::Write` view over a `bun_core::io::Writer`.
-pub struct IoWriterAdapter<'a>(&'a bun_core::io::Writer);
-impl fmt::Write for IoWriterAdapter<'_> {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.0.write_all(s.as_bytes()).map_err(|_| fmt::Error)
-    }
-}
-impl<'a> IntoLogWrite for &'a bun_core::io::Writer {
-    type W = IoWriterAdapter<'a>;
-    #[inline]
-    fn into_log_write(self) -> IoWriterAdapter<'a> {
-        IoWriterAdapter(self)
     }
 }
 
@@ -1883,12 +1841,11 @@ impl Log {
         )
     }
 
-    pub fn print<W: IntoLogWrite>(&self, to: W) -> fmt::Result {
-        let mut w = to.into_log_write();
+    pub fn print(&self, mut to: impl fmt::Write) -> fmt::Result {
         if Output::ENABLE_ANSI_COLORS_STDERR.load(core::sync::atomic::Ordering::Relaxed) {
-            self.print_with_enable_ansi_colors::<true>(&mut w)
+            self.print_with_enable_ansi_colors::<true>(&mut to)
         } else {
-            self.print_with_enable_ansi_colors::<false>(&mut w)
+            self.print_with_enable_ansi_colors::<false>(&mut to)
         }
     }
 
@@ -2066,7 +2023,6 @@ pub struct Source<'a> {
 
     /// `Owned` when the `Source` read the file itself ([`source_from_file`]).
     pub contents: Cow<'a, [u8]>,
-    pub contents_is_recycled: bool,
 
     /// Lazily-generated human-readable identifier name that is non-unique
     /// Avoid accessing this directly most of the  time
@@ -2081,7 +2037,6 @@ impl Default for Source<'_> {
         Source {
             path: bun_paths::fs::Path::default(),
             contents: Cow::Borrowed(b""),
-            contents_is_recycled: false,
             identifier_name: Cow::Borrowed(b""),
             index: Index::source(0),
         }
@@ -2357,17 +2312,6 @@ impl<'a> Source<'a> {
         }
     }
 
-    pub fn init_recycled_file(file: &PathContentsPair<'a>) -> crate::Result<Source<'a>> {
-        let mut source = Source {
-            path: file.path,
-            contents: Cow::Borrowed(file.contents),
-            contents_is_recycled: true,
-            ..Default::default()
-        };
-        source.path.namespace = b"file";
-        Ok(source)
-    }
-
     pub fn init_path_string(
         path_string: &'a (impl AsRef<[u8]> + ?Sized),
         contents: &'a (impl AsRef<[u8]> + ?Sized),
@@ -2629,11 +2573,6 @@ pub use ast_result::{
 pub use import_record::{Flags as ImportRecordFlags, ImportRecord, Tag as ImportRecordTag};
 pub use loader::{Loader, LoaderHashTable, SideEffects};
 pub use target::Target;
-pub mod transpiler_cache;
-// Glob re-export: `link_interface!` emits `#[doc(hidden)]` type aliases that
-// the `link_impl_*!` macro addresses as `$crate::__TranspilerCacheImpl__*`.
-// `$crate` resolves to this crate root, so the aliases must be reachable here.
-pub use transpiler_cache::*;
 
 pub use ast_memory_allocator::ASTMemoryAllocator;
 pub use b as B;
@@ -2684,6 +2623,8 @@ pub mod flags {
         IsStatic,
         WasShorthand,
         IsSpread,
+        /// The value is a function that returns the value. See `defer_requires.rs` in the parser.
+        IsDeferredRequire,
     }
     pub type PropertySet = EnumSet<Property>;
     pub const PROPERTY_NONE: PropertySet = EnumSet::empty();

@@ -157,7 +157,6 @@ pub(crate) fn post_process_js_chunk(
         ModuleInfo::create(loader.is_type_script())
     });
 
-    // SAFETY: worker.arena is set in Worker::create() before any task runs.
     let worker_arena: &Arena = worker.arena();
 
     // An ESM entry point already ends in an `export { }` clause
@@ -225,7 +224,7 @@ pub(crate) fn post_process_js_chunk(
         }
 
         let ast = c.graph.ast.get(chunk.entry_point.source_index() as usize);
-        let ast_view = ast.for_printer();
+        let ast_view = ast.as_printer_view();
         let source = c.get_source(chunk.entry_point.source_index());
         let target = c.resolver.opts.target;
 
@@ -452,14 +451,31 @@ pub(crate) fn post_process_js_chunk(
         newline_before_comment = true;
     }
 
-    // Add the top-level directive if present (but omit "use strict" in ES
-    // modules because all ES modules are automatically in strict mode)
-    if chunk.is_entry_point() && !output_format.is_always_strict_mode() {
-        let flags = c.graph.ast.items_flags()[chunk.entry_point.source_index() as usize];
+    // Add the top-level directives if present (but omit "use strict" in ES
+    // modules because all ES modules are automatically in strict mode).
+    // The dev server gives every module its own closure, and the prologue goes there.
+    if chunk.is_entry_point() && output_format != options::OutputFormat::InternalBakeDev {
+        let directives = c.graph.ast.items_directives()[chunk.entry_point.source_index() as usize];
 
-        if flags.contains(crate::bundled_ast::Flags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE) {
-            j.push_static(b"\"use strict\";\n");
-            line_offset.advance(b"\"use strict\";\n");
+        for stmt in directives.slice() {
+            let js_ast::StmtData::SDirective(directive) = stmt.data else {
+                continue;
+            };
+            let directive = directive.value.slice();
+            if directive == b"use strict" && output_format.is_always_strict_mode() {
+                continue;
+            }
+            let mut buf = MutableString::init_empty();
+            // The printer escapes string literals ASCII-only for the bun target.
+            bun_core::handle_oom(js_printer::quote_for_json(directive, &mut buf, is_bun));
+            bun_core::handle_oom(buf.append_slice(if c.options.minify_whitespace {
+                b";".as_slice()
+            } else {
+                b";\n".as_slice()
+            }));
+            let quoted = buf.take_slice();
+            line_offset.advance(&quoted);
+            j.push_owned(quoted.into_boxed_slice());
             newline_before_comment = true;
         }
     }
@@ -1247,7 +1263,7 @@ pub(crate) fn generate_entry_point_tail_js(
         result: js_printer::print::<false>(
             arena,
             c.resolver.opts.target,
-            &ast.for_printer(),
+            &ast.as_printer_view(),
             c.get_source(source_index),
             print_options,
             ast.import_records.as_slice(),

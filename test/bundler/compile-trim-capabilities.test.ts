@@ -173,6 +173,7 @@ function machOWithOneStub(isTrimmed: boolean) {
   const file = Buffer.alloc(0x480);
   const base = 0x1_0000_0000;
   const [text, stubs, constants, slot, symbols, strings, indirect] = [0x300, 0x340, 0x380, 0x3c0, 0x400, 0x420, 0x440];
+  const functionStarts = 0x460;
   const slotAddress = base + constants + 8 + 0x20200;
   let at = 32;
   // LC_SEGMENT_64: the bytes of the file from `start` to `end`, mapped at `address`. Protection 5 is read and execute.
@@ -202,7 +203,7 @@ function machOWithOneStub(isTrimmed: boolean) {
   const data: Section[] = [[constants, 24, 0]]; // __const
   file.writeUInt32LE(0xfeedfacf, 0);
   file.writeUInt32LE(0x0100000c, 4);
-  file.writeUInt32LE(isTrimmed ? 5 : 4, 16);
+  file.writeUInt32LE(isTrimmed ? 6 : 5, 16);
   if (isTrimmed) {
     segment(5, base, 0, constants, code);
     segment(5, base + constants, constants, slot, data);
@@ -218,11 +219,13 @@ function machOWithOneStub(isTrimmed: boolean) {
   file.writeUInt32LE(indirect, at + 24 + 56);
   file.writeUInt32LE(1, symbols);
   file.write("_posix_spawn", strings + 1, "latin1");
+  // LC_FUNCTION_STARTS, for the caller to fill.
+  [0x26, 16, functionStarts, 8].forEach((word, index) => file.writeUInt32LE(word, at + 24 + 80 + index * 4));
   const callOfStub = (from: number) => (0x94000000 | (((stubs - from) / 4) & 0x03ffffff)) >>> 0; // bl
   file.writeUInt32LE(callOfStub(text + 4), text + 4);
   file.writeUInt32LE(callOfStub(constants + 4), constants + 4);
   file.fill(0x10, constants + 8, constants + 24);
-  return { file, call: base + text + 4 };
+  return { file, call: base + text + 4, base, text, functionStarts };
 }
 
 test.each([
@@ -231,4 +234,20 @@ test.each([
 ])("in a Mach-O file no word of the constants %s is a place", (_, isTrimmed) => {
   const { file, call } = machOWithOneStub(isTrimmed);
   expect(placesThatCall(file, ["posix_spawn"]).map(place => place.address)).toEqual([call]);
+});
+
+// The code begins 0x300 bytes behind the header, which the list writes as `80 06`, and 0x40 bytes ahead of the stub.
+test.each([
+  // mov ecx, [rip + 0x37e8ea8c]; add [rax], al; add al, al; call stub
+  ["a call is a place, and an `e8` in the operand of a `mov` is none", "8b0d8ceae837000000c0e831000000", "8006", 11],
+  // ret; one zero; jmp stub
+  ["a jump that begins the second function is a place", "c300e939000000", "800602", 3],
+  // the last byte of an instruction; call stub
+  ["a call in a function that begins ahead of the section is a place", "00e83a000000", "f005", 2],
+])("in a Mach-O file for x64 %s", (_, code, distances, place) => {
+  const { file, base, text, functionStarts } = machOWithOneStub(false);
+  file.writeUInt32LE(0x01000007, 4);
+  file.fill(0, text, text + 16).write(code, text, "hex");
+  file.write(distances, functionStarts, "hex");
+  expect(placesThatCall(file, ["posix_spawn"]).map(({ address }) => address)).toEqual([base + text + place]);
 });

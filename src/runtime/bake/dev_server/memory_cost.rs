@@ -44,7 +44,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             inspector_server_id: _,
             configuration_hash_key: _,
             vm: _,
-            vm_handle: _,
             server: _,
             router: _,
             route_bundles: _,
@@ -69,13 +68,12 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             server_register_update_callback: _,
             bun_watcher: _,
             directory_watchers: _,
-            watcher_atomics: _,
+            pending_reload_event: _,
+            spare_reload_event: _,
             testing_batch_events: _,
             generation: _,
             bundles_since_last_error: _,
             framework: _,
-            bundler_framework_views: _,
-            bundler_options: _,
             server_transpiler: _,
             client_transpiler: _,
             ssr_transpiler: _,
@@ -111,7 +109,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .plugin_state
     //   .server_register_update_callback
     //   .server_fetch_function_callback
-    //   .watcher_atomics
+    //   .pending_reload_event, .spare_reload_event
 
     // pointers that are not considered a part of DevServer
     //   .vm
@@ -121,7 +119,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .ssr_transpiler
     //   .log
     //   .framework
-    //   .bundler_options
     //   .broadcast_console_log_from_browser_to_server
 
     // to be counted.
@@ -133,9 +130,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     for bundle in dev.route_bundles.iter() {
         other_bytes += bundle.memory_cost();
     }
-    // .bundler_framework_views (the pointed-to Frameworks are owned elsewhere;
-    // count the Vec's own backing store)
-    other_bytes += memory_cost_array_list(&dev.bundler_framework_views);
     // .graphs.server
     {
         let cost = dev.graphs.server.memory_cost_detailed();
@@ -311,9 +305,6 @@ impl DevServer {
         // SAFETY: `timer` points to the `memory_visualizer_timer` field of a DevServer.
         let dev: &mut DevServer = unsafe { &mut *DevServer::from_timer_ptr(timer) };
         debug_assert!(dev.magic == Magic::Valid);
-        dev.memory_visualizer_timer
-            .state
-            .set(EventLoopTimerState::FIRED);
         dev.emit_memory_visualizer_message();
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1000);
         crate::jsc_hooks::timer_all().update(timer, &next);

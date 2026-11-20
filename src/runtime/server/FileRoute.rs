@@ -148,9 +148,6 @@ impl FileRoute {
         global: &JSGlobalObject,
         argument: JSValue,
     ) -> JsResult<Option<RefPtr<FileRoute>>> {
-        // `as_class_ref` is the safe shared-borrow downcast (one audited
-        // unsafe in `JSValue`); `get_body_value`/`get_init_headers`/
-        // `status_code` all take `&self`.
         if let Some(response) = argument.as_class_ref::<Response>() {
             let body_value = response.get_body_value();
             body_value.to_blob_if_possible();
@@ -273,9 +270,8 @@ impl FileRoute {
             {
                 let mut path_buffer = bun_paths::path_buffer_pool::get();
                 path_buffer[..path.len()].copy_from_slice(path);
-                path_buffer[path.len()] = 0;
                 bun_sys::open(
-                    bun_core::ZStr::from_buf(&path_buffer[..], path.len()),
+                    bun_core::ZStr::nul_terminate(&mut path_buffer, path.len()),
                     open_flags,
                     0,
                 )

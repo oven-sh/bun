@@ -50,7 +50,9 @@ use crate::ir::{Id, ModuleId, Program};
 use crate::known_helpers::KnownHelpers;
 use crate::link::{Leftovers, LinkedFunctions, run_beside, run_one_after_the_other};
 use crate::load::contents::ProgramContents;
-use crate::load::contents::entry_points::{join_below_root, name_from_working_directory};
+use crate::load::contents::entry_points::{
+    NameOfLoad, join_below_root, name_from_working_directory,
+};
 use crate::load::contents::worker_entries::{find_file_named_as_in_executable, source_path_of};
 use crate::load::source_provider::{PathsOfProgram, SourceProvider};
 use crate::load::{PerProject, ProjectId, Sources, host_platform};
@@ -121,6 +123,7 @@ pub(crate) struct StartedWorkers {
     pub names: Vec<EntryPointPaths>,
     pub followed_at: Vec<(Vec<u8>, u32)>,
     pub named_at: Vec<(Vec<u8>, u32)>,
+    pub names_of_loads: Vec<NameOfLoad>,
     pub names_followed: Vec<FollowedName>,
     pub names_plugin: bool,
     /// What a warning says of names that lead out of the root directory.
@@ -646,6 +649,7 @@ impl<'a> Build<'a> {
         }
         let leftovers = core::mem::take(&mut self.leftovers);
         let beside = self.beside_runner();
+        let order_files = self.options.aot.order_files.as_slice();
         let clock = &mut self.clock;
         let provider = self.provider;
         let paths = PathsOfProgram {
@@ -662,7 +666,7 @@ impl<'a> Build<'a> {
             || {
                 clock.stop();
                 let entered = Instant::now();
-                let engine = engine::compile(bytes, engine_options, &output.texts);
+                let engine = engine::compile(bytes, engine_options, &output.texts, order_files);
                 (engine, entered.elapsed())
             },
         );

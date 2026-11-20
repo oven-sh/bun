@@ -11,7 +11,7 @@ use core::mem;
 use bun_core::strings;
 use bun_core::{CStrList, CStrRef, ZBox, ZStr};
 use bun_paths as paths;
-use bun_sys::{self as sys, Fd, FdExt};
+use bun_sys::{self as sys, Fd};
 
 bun_core::declare_scope!(Patch, visible);
 
@@ -92,15 +92,14 @@ fn rename_file(patch_dir: Fd, rename: &FileRename<'_>) -> sys::Result<()> {
 
 fn create_file(patch_dir: Fd, creation: &FileCreation<'_>) -> sys::Result<()> {
     let (parent, base) = resolve_target(patch_dir, creation.path, Some(CREATED_DIR_MODE))?;
-    let (fd, _) = open_target_file(
+    let (file, _) = open_target_file(
         parent.fd(),
         &base,
         sys::O::CREAT | sys::O::RDWR,
         creation.mode.to_bun_mode(),
     )?;
-    let _close = sys::CloseOnDrop::new(fd);
     // `O_TRUNC` isn't used, so that a target that gets rejected hasn't already been emptied.
-    sys::ftruncate(fd, 0)?;
+    sys::ftruncate(file.fd(), 0)?;
 
     // A `@@ -0,0 +0,0 @@` header with no body parses to a hunk with zero parts.
     let Some(first_part) = creation.hunk.as_ref().and_then(|h| h.parts.first()) else {
@@ -110,7 +109,7 @@ fn create_file(patch_dir: Fd, creation: &FileCreation<'_>) -> sys::Result<()> {
     if !first_part.no_newline_at_end_of_file {
         contents.push(b'\n');
     }
-    sys::File::borrow(&fd).write_all(&contents)
+    file.write_all(&contents)
 }
 
 fn patch_file(patch_dir: Fd, patch: &FilePatch<'_>) -> Result<(), ApplyError> {
@@ -120,27 +119,22 @@ fn patch_file(patch_dir: Fd, patch: &FilePatch<'_>) -> Result<(), ApplyError> {
 
 fn change_mode(patch_dir: Fd, change: &FileModeChange<'_>) -> sys::Result<()> {
     let (parent, base) = resolve_target(patch_dir, change.path, None)?;
-    let (fd, _) = open_target_file(parent.fd(), &base, sys::O::RDONLY, 0)?;
+    let (file, _) = open_target_file(parent.fd(), &base, sys::O::RDONLY, 0)?;
     // On Windows, `fchmod` needs a CRT-backed fd. Closing that fd also closes the HANDLE.
-    let fd = fd.make_libuv_owned().map_err(|()| {
-        fd.close();
-        sys::Error::from_code(sys::E::EMFILE, sys::Tag::chmod)
-    })?;
-    let _close = sys::CloseOnDrop::new(fd);
-    sys::fchmod(fd, change.new_mode.to_bun_mode())
+    let file = file.make_lib_uv_owned_for_syscall(sys::Tag::chmod)?;
+    sys::fchmod(file.fd(), change.new_mode.to_bun_mode())
 }
 
 /// Hunks are placed by matching their `-` side, like `git apply` does, because the `+` line numbers
 /// can be stale.
 fn apply_patch(patch: &FilePatch<'_>, parent: Fd, base: &ZStr) -> Result<(), ApplyError> {
     // One fd for the read and the write-back, so nothing can be swapped in between them.
-    let (file_fd, size) = open_target_file(parent, base, sys::O::RDWR, 0)?;
-    let _close_file = sys::CloseOnDrop::new(file_fd);
+    let (file, size) = open_target_file(parent, base, sys::O::RDWR, 0)?;
 
     if size > MAX_PATCH_TARGET_BYTES {
         return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::read).into());
     }
-    let filebuf: Vec<u8> = sys::File::borrow(&file_fd)
+    let filebuf: Vec<u8> = file
         .read_to_end()
         .map_err(|_| sys::Error::from_code(sys::E::EINVAL, sys::Tag::read))?;
 
@@ -221,10 +215,10 @@ fn apply_patch(patch: &FilePatch<'_>, parent: Fd, base: &ZStr) -> Result<(), App
         patched.push(b"");
     }
 
-    sys::ftruncate(file_fd, 0)?;
+    sys::ftruncate(file.fd(), 0)?;
     // `read_to_end` advanced the cursor on Windows (POSIX reads use `pread`).
-    sys::set_file_offset(file_fd, 0)?;
-    sys::File::borrow(&file_fd).write_all(&patched.join(&b'\n'))?;
+    file.seek_to(0)?;
+    file.write_all(&patched.join(&b'\n'))?;
     Ok(())
 }
 
@@ -395,22 +389,22 @@ fn open_target_file(
     base: &ZStr,
     flags: i32,
     mode: sys::Mode,
-) -> sys::Result<(Fd, u64)> {
+) -> sys::Result<(sys::CloseOnDrop, u64)> {
     #[cfg(windows)]
     reject_reparse_point(parent, base)?;
     // Without `O_NONBLOCK`, opening a FIFO blocks before the `!ISREG` rejection below.
     let nonblock = if cfg!(windows) { 0 } else { sys::O::NONBLOCK };
     let file = sys::openat(parent, base, flags | sys::O::NOFOLLOW | nonblock, mode)
         .map_err(|e| symlink_component_err(parent, base, e))
-        .map(sys::File::from_fd)?;
-    let stat = sys::fstat(file.fd())?;
+        .map(sys::CloseOnDrop::new)?;
+    let stat = file.stat()?;
     if !sys::S::ISREG(stat.st_mode as u32) {
         return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
     }
     if stat.st_nlink > 1 {
         return Err(sys::Error::from_code(sys::E::EMLINK, sys::Tag::open));
     }
-    Ok((file.into_raw(), stat.st_size as u64))
+    Ok((file, stat.st_size as u64))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1374,7 +1368,7 @@ pub fn spawn_git_diff(
     new_folder: &[u8],
     cwd: &ZStr,
     git: &ZStr,
-    loop_: &bun_event_loop::AnyEventLoop,
+    loop_: bun_event_loop::EventLoopHandle,
 ) -> bun_spawn::Result<bun_sys::Result<bun_spawn::sync::Result>> {
     let argv: Vec<Box<[u8]>> = {
         const ARGS: [&[u8]; 11] = [
@@ -1414,7 +1408,7 @@ pub fn spawn_git_diff(
     ];
     let mut envp = Vec::with_capacity(ENV_STATIC.len() + 2);
     let variables = path_var.as_deref().into_iter().chain(ENV_STATIC);
-    envp.extend(variables.map(|variable| Some(CStrRef::from_bytes_with_nul(variable))));
+    envp.extend(variables.map(|variable| Some(CStrRef::from_slice_with_nul(variable))));
 
     #[cfg(not(windows))]
     let _ = loop_;
@@ -1423,15 +1417,13 @@ pub fn spawn_git_diff(
         stdout: bun_spawn::sync::Stdio::Buffer,
         stderr: bun_spawn::sync::Stdio::Buffer,
         cwd: cwd.as_bytes().into(),
-        envp: Some(CStrList::terminate(&mut envp)),
+        envp: Some(CStrList::from_unterminated(&mut envp)),
         argv,
         // `spawn` dereferences `windows.loop_` unconditionally, and `WindowsOptions::default()` is
         // zeroed.
         #[cfg(windows)]
         windows: bun_spawn::sync::WindowsOptions {
-            // `as_handle` owns the handle conversion so variant internals
-            // stay encapsulated.
-            loop_: bun_event_loop::AnyEventLoop::as_handle(loop_),
+            loop_,
             ..Default::default()
         },
         ..Default::default()
@@ -1477,7 +1469,7 @@ pub fn git_diff_preprocess_paths(old_folder: &[u8], new_folder: &[u8]) -> [Vec<u
 pub fn git_diff_internal(
     old_folder_: &[u8],
     new_folder_: &[u8],
-    loop_: &bun_event_loop::AnyEventLoop,
+    loop_: bun_event_loop::EventLoopHandle,
 ) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
     let paths = git_diff_preprocess_paths(old_folder_, new_folder_);
     let old_folder = &paths[0][..];

@@ -11,8 +11,6 @@ pub use crate::w;
 pub mod escape_reg_exp;
 #[path = "HashedString.rs"]
 pub mod hashed_string;
-#[path = "SmolStr.rs"]
-pub mod smol_str;
 #[path = "StringBuilder.rs"]
 pub mod string_builder;
 #[path = "StringJoiner.rs"]
@@ -1417,10 +1415,7 @@ impl<'a> EncodedSlice<'a> {
         if self.is_16bit() {
             return strings::eql_comptime_utf16(self.utf16_slice(), ascii);
         }
-        if self.len != ascii.len() {
-            return false;
-        }
-        strings::eql_comptime_ignore_len(self.slice(), ascii)
+        self.slice() == ascii
     }
 
     /// Encoding-aware ASCII prefix check.
@@ -1462,8 +1457,7 @@ impl<'a> EncodedSlice<'a> {
         if written >= buf.len() {
             return Err(crate::CrateError::NoSpaceLeft);
         }
-        buf[written] = 0;
-        Ok(ZStr::from_buf(&buf[..], written))
+        Ok(ZStr::nul_terminate(buf, written))
     }
 
     /// Re-wrap a sub-range of the underlying storage, preserving the
@@ -1687,7 +1681,6 @@ pub use crate::StringPointer;
 
 pub use hashed_string::HashedString;
 pub use mutable_string::MutableString;
-pub use smol_str::SmolStr;
 pub use string_builder::StringBuilder;
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -15,7 +15,7 @@ use bun_lsquic_sys as lsquic;
 use bun_uws as uws;
 
 use crate::jsc_hooks::timer_all;
-use crate::timer::{EventLoopTimerState, EventLoopTimerTag, OwnedTimer};
+use crate::timer::{EventLoopTimerTag, OwnedTimer};
 
 use super::callbacks;
 use super::ffi::lsquic_callback;
@@ -968,7 +968,7 @@ fn apply_transport_params(
             let Some(addr) = addr_js.as_class_ref::<crate::socket::SocketAddress>() else {
                 continue;
             };
-            let stored = session::StoredAddr::from_socket_address(addr);
+            let stored = session::StoredAddr::from_socket_address(&addr);
             let Some((_family, port, ip)) = stored.decode() else {
                 continue;
             };
@@ -1052,10 +1052,9 @@ fn apply_transport_params(
     };
     if let Some(cc) = options.get(global, "cc")?.filter(|v| v.is_string()) {
         let name = bun_core::String::from_js(cc, global)?.to_owned_slice();
-        // lsquic.h es_cc_algo: 0=default(→3 Adaptive), 1=Cubic, 2=BBRv1,
-        // 3=Adaptive. lsquic ships no Reno (NGTCP2_CC_ALGO_RENO in node's
-        // backend), so map 'reno' to Cubic, the closest loss-based option,
-        // rather than silently falling through to Adaptive which may pick BBR.
+        // lsquic.h es_cc_algo: 0=default (BBRv1), 1=Cubic, 2=BBRv1. lsquic ships
+        // no Reno (NGTCP2_CC_ALGO_RENO in node's backend), so map 'reno' to
+        // Cubic, the closest loss-based option.
         let algo = match name.as_slice() {
             b"cubic" | b"reno" => 1,
             b"bbr" => 2,
@@ -1089,12 +1088,6 @@ impl QuicEndpoint {
     ) -> JsResult<JsWrapper<'a, Self>> {
         static INIT: std::sync::Once = std::sync::Once::new();
         INIT.call_once(|| {
-            // SAFETY: pure library init.
-            unsafe {
-                lsquic::lsquic_global_init(
-                    lsquic::LSQUIC_GLOBAL_CLIENT | lsquic::LSQUIC_GLOBAL_SERVER,
-                )
-            };
             if bun_core::getenv_z(bun_core::zstr!("BUN_DEBUG_lsquic")).is_some() {
                 // SAFETY: static C string.
                 unsafe { lsquic::us_nq_enable_logging(c"debug".as_ptr()) };
@@ -1117,7 +1110,7 @@ impl QuicEndpoint {
                 .filter(|v| !v.is_empty_or_undefined_or_null())
             {
                 if let Some(addr) = addr_js.as_class_ref::<crate::socket::SocketAddress>() {
-                    let stored = StoredAddr::from_socket_address(addr);
+                    let stored = StoredAddr::from_socket_address(&addr);
                     if let Some((_, port, ip)) = stored.decode() {
                         use core::fmt::Write;
                         let mut host = String::new();
@@ -1143,7 +1136,8 @@ impl QuicEndpoint {
                 }
             }
             if let Some(bl_js) = options.get(global, "blockList")?.filter(|v| v.is_object()) {
-                if let Some(bl) = crate::generated_bindgen::block_list::js_BlockList::from_js(bl_js)
+                if let Some(bl) =
+                    crate::generated_bindgen::block_list::js_BlockList::from_js(&bl_js)
                 {
                     block_list = Some(bl.as_ptr());
                     block_list_js = Some(bun_jsc::Strong::create(bl_js, global));
@@ -1347,7 +1341,7 @@ impl QuicEndpoint {
             on_drain,
             on_close,
             on_recv_error,
-            cfg.host.as_ptr().cast(),
+            bun_core::ZStr::from_slice_with_nul(&cfg.host),
             cfg.port,
             0,
             Some(&mut err),
@@ -1603,10 +1597,6 @@ impl QuicEndpoint {
     pub(crate) fn on_timer_fire(this: *mut Self) {
         // SAFETY: the timer heap only holds timers of live endpoints.
         let this_ref = unsafe { &*this };
-        this_ref
-            .event_loop_timer
-            .state
-            .set(EventLoopTimerState::FIRED);
         let global_ptr = this_ref.global.get();
         if global_ptr.is_null() {
             return;
@@ -2249,7 +2239,7 @@ impl QuicEndpoint {
                 )
                 .throw());
         };
-        let remote = StoredAddr::from_socket_address(addr);
+        let remote = StoredAddr::from_socket_address(&addr);
         if let Some(version) = read_u64_option(global, options, "version")?
             .map(|v| v as u32)
             .filter(|v| *v != QUIC_VERSION_1 && *v != QUIC_VERSION_2)

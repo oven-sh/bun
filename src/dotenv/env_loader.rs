@@ -238,8 +238,7 @@ impl Loader {
             .filter(|n| !n.is_empty() && n.len() < MAX_PATH_BYTES)
         {
             buf[..node.len()].copy_from_slice(node);
-            buf[node.len()] = 0;
-            let node = ZStr::from_buf(&buf[..], node.len());
+            let node = ZStr::nul_terminate(buf, node.len());
             if bun_sys::is_executable_file_path(node) {
                 return Some(node);
             }
@@ -1324,9 +1323,9 @@ pub struct Map {
 
 impl Map {
     /// Builds a NULL-terminated `K=V\0` envp array.
-    pub fn create_null_delimited_env_map(&self) -> Result<CStringList, AllocError> {
+    pub fn to_envp(&self) -> CStringList {
         let entries = (self.map.iter()).map(|(key, value)| [&**key, b"=", &value.value]);
-        Ok(CStringList::concat(entries))
+        CStringList::from_parts(entries)
     }
 
     /// Build a heap-allocated Windows environment block suitable for

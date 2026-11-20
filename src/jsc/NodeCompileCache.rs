@@ -60,21 +60,19 @@ struct Entry {
 /// StandaloneModuleGraph.rs "Bytecode alignment" note). Either a heap buffer
 /// or a span inside a whole-file mapping.
 struct AlignedBlob {
-    ptr: core::ptr::NonNull<u8>,
-    len: usize,
     backing: Backing,
+    /// The blob runs from here to the end of `backing`.
+    start: usize,
 }
 
 enum Backing {
-    Heap,
-    /// `PROT_READ`/`MAP_PRIVATE` mapping of the whole cache file; `ptr` points
-    /// at [`blob_file_offset`] inside it, 128-aligned because the mapping base
+    Heap(Vec<u8>),
+    /// `PROT_READ`/`MAP_PRIVATE` mapping of the whole cache file; `start` is
+    /// [`blob_file_offset`] inside it, 128-aligned because the mapping base
     /// is page-aligned. Safe against entry rewrites: writers go through
     /// tmpfile + rename, so a replaced file's old inode stays live under the
     /// mapping.
-    Map {
-        _pages: sys::Mmap,
-    },
+    Map(sys::Mmap),
 }
 
 // SAFETY: the buffer is plain bytes; ownership is unique to the entry map.
@@ -88,38 +86,25 @@ static RETIRED_BLOBS: Mutex<Vec<AlignedBlob>> = Mutex::new(Vec::new());
 const BLOB_ALIGN: usize = 128;
 
 impl AlignedBlob {
-    /// Uninitialized buffer; caller must fill all `len` bytes before reading.
-    fn new_uninit(len: usize) -> Option<Self> {
-        let layout = core::alloc::Layout::from_size_align(len.max(1), BLOB_ALIGN).ok()?;
-        // SAFETY: layout has non-zero size.
-        let raw = unsafe { std::alloc::alloc(layout) };
-        let ptr = core::ptr::NonNull::new(raw)?;
+    fn copy_of(blob: &[u8]) -> Option<Self> {
+        let mut bytes = Vec::<u8>::new();
+        bytes.try_reserve_exact(blob.len() + BLOB_ALIGN - 1).ok()?;
+        let start = bytes.as_ptr().align_offset(BLOB_ALIGN);
+        bytes.resize(start, 0);
+        bytes.extend_from_slice(blob);
         Some(Self {
-            ptr,
-            len,
-            backing: Backing::Heap,
+            backing: Backing::Heap(bytes),
+            start,
         })
     }
 
     fn as_slice(&self) -> &[u8] {
-        // SAFETY: `ptr` is valid for `len` bytes for the lifetime of `self`.
-        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
-    }
-
-    fn as_mut_slice(&mut self) -> &mut [u8] {
-        // SAFETY: `ptr` is valid for `len` bytes for the lifetime of `self`.
-        unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
-    }
-}
-
-impl Drop for AlignedBlob {
-    fn drop(&mut self) {
-        if let Backing::Heap = self.backing {
-            let layout =
-                core::alloc::Layout::from_size_align(self.len.max(1), BLOB_ALIGN).expect("valid");
-            // SAFETY: allocated in `new_uninit` with the identical layout.
-            unsafe { std::alloc::dealloc(self.ptr.as_ptr(), layout) };
-        }
+        let backing = match &self.backing {
+            Backing::Heap(bytes) => bytes,
+            // SAFETY: see `Backing::Map`.
+            Backing::Map(pages) => unsafe { pages.as_slice() },
+        };
+        &backing[self.start..]
     }
 }
 
@@ -191,8 +176,7 @@ fn type_name(is_cjs: bool) -> &'static str {
 
 fn sha256(bytes: &[u8]) -> [u8; HASH_SIZE] {
     let mut out = [0u8; HASH_SIZE];
-    // SAFETY: `out` is exactly the 32 bytes SHA256 writes.
-    unsafe { boring::SHA256(bytes.as_ptr(), bytes.len(), out.as_mut_ptr()) };
+    bun_sha_hmac::sha::hashers::SHA256::hash(bytes, &mut out);
     out
 }
 
@@ -819,19 +803,17 @@ fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option
     // page-aligned (every supported page size is a multiple of 128) and
     // `blob_off` is a multiple of 128 by construction, but a miss here would
     // be a JSC assert or segfault, so verify instead of assuming.
-    let ptr = core::ptr::NonNull::from(blob_bytes).cast::<u8>();
+    let is_aligned = blob_bytes.as_ptr().addr().is_multiple_of(BLOB_ALIGN);
     let blob = match mapped {
-        Some(pages) if ptr.addr().get().is_multiple_of(BLOB_ALIGN) => AlignedBlob {
-            ptr,
-            len: cache_size as usize,
-            backing: Backing::Map { _pages: pages },
+        Some(pages) if is_aligned => AlignedBlob {
+            backing: Backing::Map(pages),
+            start: blob_off as usize,
         },
         _ => {
-            let Some(mut blob) = AlignedBlob::new_uninit(cache_size as usize) else {
+            let Some(blob) = AlignedBlob::copy_of(blob_bytes) else {
                 finish(line, &|| "allocation failed\n".into());
                 return;
             };
-            blob.as_mut_slice().copy_from_slice(blob_bytes);
             blob
         }
     };
@@ -992,14 +974,13 @@ fn write_persist_job_locked(
     cclog!("[compile cache] Creating temporary file for cache of {name} ({tname})...");
 
     // 0600 like Node: entries contain the module's post-transpile source.
-    let mut tmpfile =
-        match sys::Tmpfile::create_with_mode(state.dir_handle.fd(), tmpname_zstr, 0o600) {
-            Ok(t) => t,
-            Err(e) => {
-                cclog!("failed. {}\n", errno_name(&e));
-                return Err(());
-            }
-        };
+    let tmpfile = match sys::Tmpfile::create_with_mode(state.dir_handle.fd(), tmpname_zstr, 0o600) {
+        Ok(t) => t,
+        Err(e) => {
+            cclog!("failed. {}\n", errno_name(&e));
+            return Err(());
+        }
+    };
 
     let tmp_display = if logging {
         format!(
@@ -1025,7 +1006,7 @@ fn write_persist_job_locked(
     header_bytes[8..12].copy_from_slice(&cache_size.to_le_bytes());
     header_bytes[12..12 + HASH_SIZE].copy_from_slice(&job.code_hash);
     header_bytes[12 + HASH_SIZE..HEADER_SIZE].copy_from_slice(&cache_hash);
-    let file = sys::File::borrow(&tmpfile.fd);
+    let file = &tmpfile.file;
     let write_all = || -> sys::Maybe<()> {
         file.pwrite_all(&header_bytes, 0)?;
         file.pwrite_all(&job.code, HEADER_SIZE as i64)?;
@@ -1035,14 +1016,13 @@ fn write_persist_job_locked(
     };
     if let Err(e) = write_all() {
         cclog!("failed: {}\n", errno_name(&e));
-        let _ = sys::unlinkat(state.dir_handle.fd(), tmpname_zstr);
         return Err(());
     }
     cclog!("success\n");
 
     let mut dest_z = [0u8; 17];
     dest_z[..16].copy_from_slice(&basename);
-    let dest_zstr = ZStr::from_buf(&dest_z, 16);
+    let dest_zstr = ZStr::from_slice_with_nul(&dest_z);
     let final_display = if logging {
         format!(
             "{}{}{}",
@@ -1054,9 +1034,8 @@ fn write_persist_job_locked(
         String::new()
     };
     cclog!("[compile cache] Renaming {tmp_display} to {final_display}...");
-    if let Err(e) = tmpfile.finish(dest_zstr) {
+    if let Err((e, _)) = tmpfile.finish(dest_zstr) {
         cclog!("failed: {}\n", errno_name(&e));
-        let _ = sys::unlinkat(state.dir_handle.fd(), tmpname_zstr);
         return Err(());
     }
     cclog!("success\n");

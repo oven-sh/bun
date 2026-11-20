@@ -19,16 +19,13 @@ use bun_sys::FdDirExt as _;
 use bun_sys::copy_file as CopyFile;
 use bun_url::URL;
 use bun_which::which;
-use bun_zlib as Zlib;
+use bun_zlib::{Inflater, inflate};
 
 use crate::Command;
 use crate::cli::run_command::RunCommand;
 
 #[path = "create/SourceFileProjectGenerator.rs"]
 pub(crate) mod SourceFileProjectGenerator;
-
-// Single-thread CLI scratch buffer, used by the git lookup and by `--open`.
-static BUN_PATH_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 
 #[cfg(not(windows))]
 const SKIP_DIRS: &[&OSPathSlice] = &[b"node_modules", b".git"];
@@ -148,8 +145,6 @@ impl CreateOptions {
 }
 
 const BUN_CREATE_DIR: &[u8] = b".bun-create";
-// Single-thread CLI scratch buffer.
-static HOME_DIR_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 
 /// `name`, joined onto a template dir by the `Loose` join (`/` and `\` fold), stays inside it.
 fn names_path_inside_dir(name: &[u8]) -> bool {
@@ -463,12 +458,16 @@ impl CreateCommand {
                 progress.refresh();
 
                 let mut tarball_buf_list: Vec<u8> = Vec::with_capacity(16384);
-                let mut gunzip = Zlib::ZlibReaderArrayList::init(
-                    tarball_bytes.list.as_slice(),
+                let status = Inflater::new(inflate::Container::ZlibOrGzip).inflate_to_vec(
+                    &mut tarball_bytes.list.as_slice(),
                     &mut tarball_buf_list,
-                )?;
-                gunzip.read_all(true)?;
-                drop(gunzip);
+                    usize::MAX,
+                );
+                match status {
+                    Ok(inflate::Status::StreamEnd) => {}
+                    Err(bun_zlib::Error::Alloc(error)) => return Err(error.into()),
+                    _ => return Err(bun_http::Error::Zlib.into()),
+                }
 
                 progress.root().set_name(b"Extracting ");
                 progress.root().append_to_name(template);
@@ -1161,9 +1160,8 @@ impl CreateCommand {
         Output::flush();
 
         if create_options.open {
-            // SAFETY: single-threaded CLI access to module-level static path buffer
-            let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get() };
-            if let Some(bin) = which(bun_path_buf, path_env, destination, b"bun") {
+            let mut bun_path_buf = bun_paths::path_buffer_pool::get();
+            if let Some(bin) = which(&mut bun_path_buf, path_env, destination, b"bun") {
                 let argv: [&[u8]; 1] = [bin.as_bytes()];
                 crate::cli::open::open_url(bun_core::zstr!("http://localhost:3000/"));
 
@@ -1205,8 +1203,7 @@ impl CreateCommand {
 
         env_loader.load_process()?;
 
-        // SAFETY: single-threaded CLI access to module-level static path buffer
-        let home_dir_buf = unsafe { &mut *HOME_DIR_BUF.get() };
+        let mut home_dir_buf = bun_paths::path_buffer_pool::get();
         // Returns the length of the NUL-terminated path in `buf`, or `None` if it is too long.
         let join = |parts: &[&[u8]], buf: &mut PathBuffer| {
             bun_paths::resolve_path::join_abs_string_buf_z_checked::<
@@ -1218,7 +1215,7 @@ impl CreateCommand {
             let positional = positionals[0];
 
             let parts = [filesystem.top_level_dir(), positional];
-            let Some(len) = join(&parts, home_dir_buf) else {
+            let Some(len) = join(&parts, &mut home_dir_buf) else {
                 pretty_errorln!("<r><red>error<r>: template name too long");
                 Global::exit(1);
             };
@@ -1263,7 +1260,7 @@ impl CreateCommand {
                 home_dir.map(|dir| vec![dir, BUN_CREATE_DIR, positional]),
             ];
             for parts in template_dirs.iter().flatten() {
-                let Some(len) = join(parts, home_dir_buf) else {
+                let Some(len) = join(parts, &mut home_dir_buf) else {
                     continue;
                 };
                 let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
@@ -1272,7 +1269,7 @@ impl CreateCommand {
                         .unwrap_or(false)
                 {
                     example_tag = ExampleTag::LocalFolder;
-                    break 'brk &home_dir_buf[..len];
+                    break 'brk crate::cli::cli_dupe(&home_dir_buf[..len]);
                 }
             }
 
@@ -1303,7 +1300,7 @@ impl CreateCommand {
 
 pub(crate) struct ExtractedInfo {
     pub example_tag: ExampleTag,
-    // A positional or a static buffer, both process-lifetime.
+    // A positional or a copy in the CLI arena, both process-lifetime.
     pub template: &'static [u8],
 }
 
@@ -1319,6 +1316,8 @@ fn file_copier_copy(
     while let Some(entry) = walker.next()? {
         #[cfg(windows)]
         {
+            use bun_sys::windows::Win32ErrorExt as _;
+
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
             }
@@ -1333,37 +1332,22 @@ fn file_copier_copy(
 
             match entry.kind {
                 bun_sys::FileKind::Directory => {
-                    // SAFETY: `src`/`dst` are NUL-terminated wide strings.
-                    if unsafe {
-                        bun_sys::windows::CreateDirectoryExW(
-                            src.as_ptr(),
-                            dst.as_ptr(),
-                            core::ptr::null_mut(),
-                        )
-                    } == 0
-                    {
+                    if bun_sys::windows::CreateDirectoryExW(src, dst).is_err() {
                         let _ = bun_sys::MakePath::make_path_u16(destination_dir_, entry.path);
                     }
                 }
                 bun_sys::FileKind::File => {
                     scopeguard::defer! { progress.complete_one(NodeId::Root) }
-                    // SAFETY: `src`/`dst` are NUL-terminated wide strings.
-                    if unsafe { bun_sys::windows::CopyFileW(src.as_ptr(), dst.as_ptr(), 0) }
-                        == bun_sys::windows::FALSE
+                    let mut result = bun_sys::windows::CopyFileW(src, dst, false);
+                    if result.is_err()
+                        && let Some(entry_dirname) = bun_paths::Dirname::dirname_u16(entry.path)
                     {
-                        if let Some(entry_dirname) = bun_paths::Dirname::dirname_u16(entry.path) {
-                            let _ =
-                                bun_sys::MakePath::make_path_u16(destination_dir_, entry_dirname);
-                            // SAFETY: same NUL-terminated wide strings as above; retry after mkdir.
-                            if unsafe { bun_sys::windows::CopyFileW(src.as_ptr(), dst.as_ptr(), 0) }
-                                != bun_sys::windows::FALSE
-                            {
-                                continue;
-                            }
-                        }
-
+                        let _ = bun_sys::MakePath::make_path_u16(destination_dir_, entry_dirname);
+                        result = bun_sys::windows::CopyFileW(src, dst, false);
+                    }
+                    if let Err(err) = result {
                         Output::err(
-                            bun_sys::windows::last_system_errno(),
+                            err.to_system_errno(),
                             "failed to copy file {}",
                             format_args!(
                                 "{}",
@@ -1401,21 +1385,20 @@ fn file_copier_copy(
                 }
                 open_outfile()
             }) {
-                Ok(f) => f,
+                Ok(fd) => bun_sys::CloseOnDrop::new(fd),
                 Err(err) => exit_copy_failed(err, entry.path.as_bytes(), progress),
             };
-            let _close_out = bun_sys::CloseOnDrop::new(outfile);
             scopeguard::defer! { progress.complete_one(NodeId::Root) }
 
-            let infile = bun_sys::openat(entry.dir, entry.basename, bun_sys::O::RDONLY, 0)?;
-            let _close_in = bun_sys::CloseOnDrop::new(infile);
+            let infile = bun_sys::openat(entry.dir, entry.basename, bun_sys::O::RDONLY, 0)
+                .map(bun_sys::CloseOnDrop::new)?;
 
             // What was executable stays executable.
-            if let Ok(stat) = bun_sys::fstat(infile) {
-                let _ = bun_sys::fchmod(outfile, stat.st_mode as bun_core::Mode);
+            if let Ok(stat) = infile.stat() {
+                let _ = bun_sys::fchmod(outfile.fd(), stat.st_mode as bun_core::Mode);
             }
 
-            if let Err(err) = CopyFile::copy_file(infile, outfile) {
+            if let Err(err) = CopyFile::copy_file(infile.fd(), outfile.fd()) {
                 exit_copy_failed(err, entry.path.as_bytes(), progress);
             }
         }
@@ -1494,11 +1477,6 @@ impl ExampleTag {
     }
 }
 
-// Single-threaded CLI scratch state.
-static GITHUB_REPOSITORY_URL_BUF: bun_core::RacyCell<[u8; 1024]> =
-    bun_core::RacyCell::new([0u8; 1024]);
-static NPM_REGISTRY_URL_BUF: bun_core::RacyCell<[u8; 1024]> = bun_core::RacyCell::new([0u8; 1024]);
-
 impl Example {
     const EXAMPLES_URL: &'static [u8] = b"https://registry.npmjs.org/bun-examples-all/latest";
 
@@ -1538,8 +1516,7 @@ impl Example {
             progress.end();
         }
 
-        // SAFETY: single-threaded CLI access to module-level static path buffer
-        let home_dir_buf = unsafe { &mut *HOME_DIR_BUF.get() };
+        let mut home_dir_buf = bun_paths::path_buffer_pool::get();
         let create_dir = env_loader.map.get(b"BUN_CREATE_DIR");
         let home_dir = env_loader.map.get(bun_core::env_var::HOME.key());
         let folders: [Option<bun_sys::Dir>; 3] = [
@@ -1548,7 +1525,7 @@ impl Example {
             home_dir.map(|dir| vec![dir, BUN_CREATE_DIR]),
         ]
         .map(|parts| -> Option<bun_sys::Dir> {
-            bun_sys::Dir::open(filesystem.abs_buf(&parts?, home_dir_buf)).ok()
+            bun_sys::Dir::open(filesystem.abs_buf(&parts?, &mut home_dir_buf)).ok()
         });
 
         for folder in folders.iter().flatten() {
@@ -1566,8 +1543,7 @@ impl Example {
                 home_dir_buf[..entry_name.len()].copy_from_slice(entry_name);
                 home_dir_buf[entry_name.len()] = bun_paths::SEP;
                 home_dir_buf[entry_name.len() + 1..len].copy_from_slice(b"package.json");
-                home_dir_buf[len] = 0;
-                let path = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
+                let path = bun_core::ZStr::nul_terminate(&mut home_dir_buf, len);
 
                 if bun_sys::faccessat(folder, path).unwrap_or(false) {
                     examples.push(Example {
@@ -1615,8 +1591,7 @@ impl Example {
             }
         }
 
-        // SAFETY: single-threaded CLI access to static buffer
-        let url_buf = unsafe { &mut *GITHUB_REPOSITORY_URL_BUF.get() };
+        let mut url_buf = [0u8; 1024];
         let api_url = URL::parse({
             let mut cursor: &mut [u8] = &mut url_buf[..];
             let cap = cursor.len();
@@ -1727,8 +1702,7 @@ impl Example {
         refresher.root().set_name(b"Fetching package.json");
         refresher.refresh();
 
-        // SAFETY: single-threaded CLI access to static buffer.
-        let url_buf = unsafe { &mut *NPM_REGISTRY_URL_BUF.get() };
+        let mut url_buf = [0u8; 1024];
         let mut mutable = MutableString::default();
 
         let api_url = URL::parse({
@@ -2027,20 +2001,19 @@ impl GitHandler {
         let git_start = bun_core::time::nano_timestamp();
 
         // The git CLI: libgit2 took three times as long for this.
-        // SAFETY: single-threaded CLI access to module-level static path buffer
-        let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get() };
+        let mut bun_path_buf = bun_paths::path_buffer_pool::get();
         #[cfg(windows)]
         let win_loop = bun_event_loop::EventLoopHandle::init_mini(
             bun_event_loop::MiniEventLoop::init_global(None),
         );
-        if let Some(git) = which(bun_path_buf, path, destination, b"git") {
+        if let Some(git) = which(&mut bun_path_buf, path, destination, b"git") {
             let git: &[u8] = git.as_bytes();
 
             if verbose {
                 bun_core::pretty_errorln!("git backend: {}", bstr::BStr::new(git));
             }
 
-            let env = DotEnv::Map::for_git_child()?.create_null_delimited_env_map()?;
+            let env = DotEnv::Map::for_git_child()?.to_envp();
             use spawn_sync::SyncStdio::{self, Buffer, Ignore, Inherit};
             let spawn = |args: &[&[u8]], output: SyncStdio| -> crate::Result<spawn_sync::Result> {
                 Ok(spawn_sync::spawn(&spawn_sync::Options {

@@ -6,26 +6,14 @@
 //!
 //! So we make a slimmer version of Ast for bundling that doesn't allocate as much memory
 
-// `bun_css` is a T2 peer crate that does not depend on `bun_js_parser`, so the
-// dep is acyclic. Typing the `css` field concretely removes the `*mut c_void`
-// erasure that forced every bundler/linker call site to `.cast()` back.
-pub use bun_css::BundlerStyleSheet;
-
-/// Arena-owned handle to a parsed CSS stylesheet.
-///
-/// It lives in a `Worker.heap`, so `BundleV2::drop` drops it before the workers.
-pub(crate) type CssAstRef<'arena> = bun_ast::StoreRef<BundlerStyleSheet<'arena>>;
-
-/// Element type of the `css` SoA column (`items_css()`). Exposed so bundler
-/// call sites can name the column without re-spelling the pointer shape.
-pub(crate) type CssCol<'arena> = Option<CssAstRef<'arena>>;
-
 use bun_ast::import_record;
 use bun_core::strings;
 
 use crate::options::ModuleType;
 use bun_ast::ast_result::Ast;
-use bun_ast::{CharFreq, ExportsKind, Ref, Scope, SlotCounts, StoreStr, TlaCheck};
+use bun_ast::{
+    CharFreq, ExportsKind, Ref, Scope, SlotCounts, Stmt, StoreSlice, StoreStr, TlaCheck,
+};
 use bun_ast::{part, symbol};
 
 pub(crate) type CommonJSNamedExports = bun_ast::ast_result::CommonJSNamedExports;
@@ -53,12 +41,11 @@ pub struct BundledAst<'arena> {
     pub(crate) import_records: import_record::List<'arena>,
 
     pub(crate) hashbang: StoreStr,
+    /// See `Ast::directives`.
+    pub(crate) directives: StoreSlice<Stmt>,
     /// See `Ast::export_default_alias_of_import`.
     pub(crate) export_default_alias_of_import: Ref,
     pub(crate) parts: part::List<'arena>,
-    // See `CssAstRef` doc for the arena drop-order invariant that backs the
-    // safe `Deref`.
-    pub(crate) css: CssCol<'arena>,
     pub(crate) url_for_css: &'arena [u8],
     pub(crate) symbols: symbol::List<'arena>,
     pub(crate) module_scope: Scope,
@@ -103,9 +90,9 @@ bun_collections::multi_array_columns! {
         module_type: ModuleType,
         import_records: import_record::List<'arena>,
         hashbang: StoreStr,
+        directives: StoreSlice<Stmt>,
         export_default_alias_of_import: Ref,
         parts: part::List<'arena>,
-        css: CssCol<'arena>,
         url_for_css: &'arena [u8],
         symbols: symbol::List<'arena>,
         module_scope: Scope,
@@ -142,7 +129,6 @@ bitflags::bitflags! {
         const FORCE_CJS_TO_ESM = 1 << 4;
         const HAS_LAZY_EXPORT = 1 << 5;
         const COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED = 1 << 6;
-        const HAS_EXPLICIT_USE_STRICT_DIRECTIVE = 1 << 7;
         /// See `Ast::commonjs_lifted_to_esm`.
         const COMMONJS_LIFTED_TO_ESM = 1 << 9;
         // _padding: u6 fills the rest
@@ -161,9 +147,9 @@ impl<'arena> BundledAst<'arena> {
             module_type: ModuleType::Unknown,
             import_records: import_record::List::new_in(arena),
             hashbang: StoreStr::EMPTY,
+            directives: StoreSlice::EMPTY,
             export_default_alias_of_import: Ref::NONE,
             parts: part::List::new_in(arena),
-            css: None,
             url_for_css: b"",
             symbols: symbol::List::new_in(arena),
             module_scope: Scope::default(),
@@ -187,8 +173,8 @@ impl<'arena> BundledAst<'arena> {
         }
     }
 
-    pub(crate) fn for_printer(&self) -> bun_js_printer::BundledFile<'_> {
-        bun_js_printer::BundledFile {
+    pub(crate) fn as_printer_view(&self) -> bun_js_printer::BundledAstView<'_> {
+        bun_js_printer::BundledAstView {
             approximate_newline_count: self.approximate_newline_count as usize,
             has_lazy_export: self.flags.contains(Flags::HAS_LAZY_EXPORT),
             has_top_level_await: !self.top_level_await_keyword.is_empty(),
@@ -211,10 +197,6 @@ impl<'arena> BundledAst<'arena> {
             Flags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED,
             ast.commonjs_module_exports_assigned_deoptimized,
         );
-        flags.set(
-            Flags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE,
-            ast.directive.is_some_and(|d| d == b"use strict"),
-        );
 
         Self {
             approximate_newline_count: ast.approximate_newline_count as u32,
@@ -227,9 +209,9 @@ impl<'arena> BundledAst<'arena> {
             import_records: ast.import_records,
 
             hashbang: ast.hashbang,
+            directives: ast.directives,
             export_default_alias_of_import: ast.export_default_alias_of_import,
             parts: ast.parts,
-            css: None,
             url_for_css: b"",
             // This list may be mutated later, so we should store the capacity
             symbols: ast.symbols,

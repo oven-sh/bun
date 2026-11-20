@@ -57,8 +57,6 @@ bun_core::declare_scope!(PROCESS, visible);
 // The raw OS spawn layer (option/result structs, `Rusage`, `spawn_process_posix`)
 // moved into the leaf `bun_spawn_sys` crate so it has no event-loop dependency.
 // Re-export here so existing `bun_spawn::process::*` paths keep resolving.
-#[cfg(any(target_os = "linux", target_os = "android"))]
-pub use bun_spawn_sys::PidFdType;
 pub use bun_spawn_sys::spawn_process::rusage_zeroed;
 #[cfg(windows)]
 use bun_spawn_sys::uv_getrusage;
@@ -105,7 +103,7 @@ bun_opaque::opaque_ffi! {
 #[inline]
 fn call_exit_handler(h: ProcessExitHandler, status: Status, rusage: &Rusage) {
     let Some(h) = h else { return };
-    if h.owner.is_null() {
+    if h.owner().is_null() {
         return;
     }
     h.on_process_exit(status, rusage);
@@ -120,14 +118,11 @@ fn call_exit_handler(h: ProcessExitHandler, status: Status, rusage: &Rusage) {
 pub struct Process {
     pub pid: PidT,
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pidfd: Cell<PidFdType>,
+    pidfd: JsCell<Option<bun_sys::File>>,
     /// Empty while it runs.
     status: OnceCell<Status>,
     #[cfg(unix)]
     poller: JsCell<Poller>,
-    /// Inactive unless `poller` is `WaiterThread`.
-    #[cfg(unix)]
-    waiter_keep_alive: KeepAlive,
     /// libuv keeps its address, and its `data` points back here.
     #[cfg(windows)]
     handle: UnsafeCell<uv::uv_process_t>,
@@ -257,33 +252,6 @@ pub fn event_loop_handle_to_ctx(handle: EventLoopHandle) -> bun_io::EventLoopCtx
 
 // ─── posix_spawn / FilePoll / uv-backed Process methods ──────────────────────
 impl Process {
-    #[cfg(unix)]
-    pub(crate) fn init_posix(
-        posix: &PosixSpawnResult,
-        event_loop: EventLoopHandle,
-    ) -> RefPtr<Process> {
-        let mut status = OnceCell::new();
-        if posix.has_exited {
-            let mut rusage = rusage_zeroed();
-            let waitpid_result = posix_spawn::wait4(posix.pid, 0, Some(&mut rusage));
-            if let Some(reaped) = Status::from(posix.pid, &waitpid_result) {
-                status = OnceCell::from(reaped);
-            }
-        }
-        RefPtr::new(Process {
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            pid: posix.pid,
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            pidfd: Cell::new(posix.pidfd.unwrap_or(0)),
-            js_poster: event_loop.js_poster(),
-            event_loop,
-            poller: JsCell::new(Poller::Detached),
-            waiter_keep_alive: KeepAlive::default(),
-            status,
-            exit_handler: Cell::default(),
-        })
-    }
-
     // has_exited / has_killed live in the always-on impl above.
 
     /// May free `this`.
@@ -367,13 +335,9 @@ impl Process {
         if this.is_on_waiter_thread() {
             return Ok(());
         }
-        let ctx = this.event_loop_ctx();
-        this.poller.set(Poller::WaiterThread);
-        this.waiter_keep_alive.ref_(ctx);
-        waiter_thread_posix::reap_on_thread(RefPtr::from_this(this)).inspect_err(|_| {
-            this.waiter_keep_alive.unref(ctx);
-            this.poller.set(Poller::Detached);
-        })
+        this.leave_to_waiter_thread();
+        waiter_thread_posix::reap_on_thread(RefPtr::from_this(this))
+            .inspect_err(|_| this.detach_poller())
     }
 
     /// May free `this`, if it returns `Ok(true)`.
@@ -415,40 +379,38 @@ impl Process {
 
         #[cfg(unix)]
         {
-            let ctx = this.event_loop_ctx();
             if WaiterThread::should_use_waiter_thread() {
                 WaiterThread::start()?;
-                this.poller.set(Poller::WaiterThread);
-                this.waiter_keep_alive.ref_(ctx);
+                this.leave_to_waiter_thread();
                 WaiterThread::append(RefPtr::from_this(this));
                 return Ok(());
             }
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            let watchfd = this.pidfd.get();
+            let Some(watchfd) = this.pidfd.get().as_ref().map(|file| file.fd().native()) else {
+                debug_assert!(this.has_exited());
+                return Err(bun_sys::Error::from_code(
+                    bun_sys::E::ESRCH,
+                    bun_sys::Tag::pidfd_open,
+                ));
+            };
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
             let watchfd = this.pid;
 
-            let mut poll = match this.poller.replace(Poller::Detached) {
+            let poll = match this.poller.replace(Poller::Detached) {
                 Poller::Fd(poll) => poll,
-                Poller::WaiterThread | Poller::Detached => OwnedFilePoll::new(
-                    ctx,
-                    Fd::from_native(watchfd),
-                    bun_io::Owner::new(
-                        bun_io::posix_event_loop::poll_tag::PROCESS,
-                        this.as_ptr().cast(),
-                    ),
-                ),
+                Poller::WaiterThread(_) | Poller::Detached => {
+                    let owner = bun_io::Owner::new(bun_io::PollTag::Process, this.as_ptr().cast());
+                    let ctx = this.event_loop_ctx();
+                    // SAFETY: the poll becomes a field of its owner.
+                    unsafe { OwnedFilePoll::new(ctx, Fd::from_native(watchfd), owner) }
+                }
             };
 
-            poll.enable_keeping_process_alive(ctx);
+            poll.enable_keeping_process_alive();
             let registered = poll
-                .register(
-                    this.event_loop.platform_event_loop(),
-                    bun_io::PollKind::Process,
-                    PROCESS_POLL_ONE_SHOT,
-                )
-                .inspect_err(|_| poll.disable_keeping_process_alive(ctx));
+                .register(bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT)
+                .inspect_err(|_| poll.disable_keeping_process_alive());
             this.poller.set(Poller::Fd(poll));
             registered
         }
@@ -456,11 +418,9 @@ impl Process {
 
     #[cfg(unix)]
     fn rewatch_posix(this: ThisPtr<Self>) -> bun_sys::Result<()> {
-        let ctx = this.event_loop_ctx();
         if WaiterThread::should_use_waiter_thread() {
             WaiterThread::start()?;
-            this.poller.set(Poller::WaiterThread);
-            this.waiter_keep_alive.ref_(ctx);
+            this.leave_to_waiter_thread();
             WaiterThread::append(RefPtr::from_this(this));
             return Ok(());
         }
@@ -470,13 +430,7 @@ impl Process {
             return Ok(());
         }
 
-        this.with_poll(|fd| {
-            fd.register(
-                this.event_loop.platform_event_loop(),
-                bun_io::PollKind::Process,
-                PROCESS_POLL_ONE_SHOT,
-            )
-        })
+        this.with_poll(|fd| fd.register(bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT))
         .expect(
             "Internal Bun error: poll_ref in Subprocess is null unexpectedly. Please file a bug report.",
         )
@@ -557,23 +511,16 @@ impl Process {
         });
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            use bun_sys::FdExt as _;
-            let pidfd = self.pidfd.get();
-            if pidfd != Fd::INVALID.native() && pidfd > 0 {
-                Fd::from_native(pidfd).close();
-                self.pidfd.set(Fd::INVALID.native());
-            }
-        }
+        self.pidfd.set(None);
     }
 
     pub fn disable_keeping_event_loop_alive(&self) {
         #[cfg(unix)]
         {
-            let ctx = self.event_loop_ctx();
-            let on_poll = self.with_poll(|poll| poll.disable_keeping_process_alive(ctx));
-            if on_poll.is_none() {
-                self.waiter_keep_alive.unref(ctx);
+            match self.poller.get() {
+                Poller::Fd(poll) => poll.disable_keeping_process_alive(),
+                Poller::WaiterThread(keep_alive) => keep_alive.unref(self.event_loop_ctx()),
+                Poller::Detached => {}
             }
         }
         // `us_loop_pump` runs `uv_run` without active handles too, so `on_exit_uv` still fires.
@@ -587,10 +534,10 @@ impl Process {
         }
         #[cfg(unix)]
         {
-            let ctx = self.event_loop_ctx();
-            let on_poll = self.with_poll(|poll| poll.enable_keeping_process_alive(ctx));
-            if on_poll.is_none() && self.is_on_waiter_thread() {
-                self.waiter_keep_alive.ref_(ctx);
+            match self.poller.get() {
+                Poller::Fd(poll) => poll.enable_keeping_process_alive(),
+                Poller::WaiterThread(keep_alive) => keep_alive.ref_(self.event_loop_ctx()),
+                Poller::Detached => {}
             }
         }
         #[cfg(windows)]
@@ -653,7 +600,7 @@ impl Process {
         {
             // Detached is a deliberate no-op: spawnSync's `read_all()` runs
             // before `watch_or_reap()` installs the poller; the first
-            // `recv_non_block` returns EAGAIN (yes hasn't written yet) so the
+            // `recv_non_block_buf` returns EAGAIN (yes hasn't written yet) so the
             // maxBuffer overflow fires from the event-loop poll
             // tick *after* the Fd poller is armed. Do not widen this match to
             // mask spawn-maxbuf.test.ts — the async-path hang there has a
@@ -789,30 +736,37 @@ impl core::fmt::Display for Status {
 enum Poller {
     Fd(OwnedFilePoll),
     /// Waited for off the loop: by the shared waiter thread (Linux without pidfd) or by a `reap_on_thread` thread (macOS).
-    WaiterThread,
+    WaiterThread(KeepAlive),
     Detached,
 }
 
 #[cfg(unix)]
 impl Process {
     fn detach_poller(&self) {
-        if let Poller::WaiterThread = self.poller.replace(Poller::Detached) {
+        if let Poller::WaiterThread(keep_alive) = self.poller.replace(Poller::Detached) {
             // Only here: a `Process` dropped on another thread is detached, and must not reach for its loop.
-            self.waiter_keep_alive.unref(self.event_loop_ctx());
+            keep_alive.unref(self.event_loop_ctx());
         }
     }
 
+    fn leave_to_waiter_thread(&self) {
+        self.detach_poller();
+        let keep_alive = KeepAlive::default();
+        keep_alive.ref_(self.event_loop_ctx());
+        self.poller.set(Poller::WaiterThread(keep_alive));
+    }
+
     fn is_on_waiter_thread(&self) -> bool {
-        matches!(self.poller.get(), Poller::WaiterThread)
+        matches!(self.poller.get(), Poller::WaiterThread(_))
     }
 
     /// Runs `f` on the poll, if there is one.
     #[inline]
-    fn with_poll<R>(&self, f: impl FnOnce(&mut FilePoll) -> R) -> Option<R> {
-        self.poller.with_mut(|poller| match poller {
+    fn with_poll<R>(&self, f: impl FnOnce(&FilePoll) -> R) -> Option<R> {
+        match self.poller.get() {
             Poller::Fd(poll) => Some(f(poll)),
-            Poller::WaiterThread | Poller::Detached => None,
-        })
+            Poller::WaiterThread(_) | Poller::Detached => None,
+        }
     }
 }
 
@@ -847,7 +801,7 @@ pub use waiter_thread_posix::WaiterThreadPosix as WaiterThread;
 pub mod waiter_thread_posix {
     use super::*;
     use bun_event_loop::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New as AnyTaskNew};
-    use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task, TaskTag};
+    use bun_event_loop::ConcurrentTask::TaskTag;
     use bun_event_loop::task_tag;
     use bun_threading::UnboundedQueue;
 
@@ -901,27 +855,19 @@ pub mod waiter_thread_posix {
         pub(crate) rusage: Rusage,
     }
 
-    impl<T: ProcessLike> bun_event_loop::Taskable for ResultTask<T> {
+    impl<T: ProcessLike> bun_event_loop::BoxedTask for ResultTask<T> {
         const TAG: TaskTag = T::TASK_TAG;
         /// An exit status the waiter thread posted whose delivery will not run:
         /// drop it and the strong ref it carried for the JS thread.
-        unsafe fn release_unrun(this: *mut Self) {
-            // SAFETY: fn contract — the box `ResultTask::new` made.
-            drop(unsafe { bun_core::heap::take(this) });
-        }
+        fn release_unrun(self: Box<Self>) {}
         /// A child's exit is delivered to its `Process` whatever became of the script that spawned it
         /// (the child is reaped); what reaches script is the exit handler's to decide.
-        unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        fn context(&self) -> bun_event_loop::ContextId {
             bun_event_loop::ContextId::NONE
         }
     }
 
     impl<T: ProcessLike> ResultTask<T> {
-        #[inline]
-        pub(crate) fn new(v: ResultTask<T>) -> *mut ResultTask<T> {
-            bun_core::heap::into_raw(Box::new(v))
-        }
-
         pub fn run_from_js_thread(self) {
             self.run_from_main_thread();
         }
@@ -996,8 +942,7 @@ pub mod waiter_thread_posix {
             rusage: &Rusage,
         ) {
             if this.is_on_waiter_thread() {
-                this.waiter_keep_alive.unref(this.event_loop_ctx());
-                this.poller.set(Poller::Detached);
+                this.detach_poller();
             }
             Process::on_wait_pid(this.this_ptr(), result, rusage);
         }
@@ -1061,21 +1006,11 @@ pub mod waiter_thread_posix {
             EventLoopHandle::Js { .. } => {
                 // Its own: the JS thread may free the process before `post` has returned.
                 let poster = (process.js_poster().cloned()).expect("JS-owned process has a poster");
-                let rt = ResultTask::<T>::new(ResultTask {
+                poster.post_boxed(Box::new(ResultTask {
                     result,
                     subprocess: process,
                     rusage: *rusage,
-                });
-                let ct = ConcurrentTask::create(Task::init(rt));
-                if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
-                    // VM torn down: nobody will observe this exit. Free the
-                    // task and drop the ref its delivery would have released.
-                    // SAFETY: refused ⇒ we own both boxes.
-                    unsafe {
-                        drop(bun_core::heap::take(ct.as_ptr()));
-                        drop(bun_core::heap::take(rt));
-                    }
-                }
+                }));
             }
             EventLoopHandle::Mini(mini) => {
                 let out = ResultTaskMini::<T>::new(ResultTaskMini {
@@ -1122,9 +1057,7 @@ pub mod waiter_thread_posix {
         let thread = std::thread::Builder::new()
             .stack_size(STACK_SIZE)
             .spawn(move || {
-                Output::Source::configure_named_thread_no_js(bun_core::ZStr::from_static(
-                    b"Waitpid\0",
-                ));
+                Output::Source::configure_named_thread_no_js(bun_core::zstr!("Waitpid"));
                 let mut rusage = rusage_zeroed();
                 let result = posix_spawn::wait4(pid, 0, Some(&mut rusage));
                 post_wait_result(process.get(), result, &rusage);
@@ -1203,9 +1136,7 @@ pub mod waiter_thread_posix {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 let one: [u8; 8] = (1usize).to_ne_bytes();
-                // SAFETY: write(2) is async-signal-safe; eventfd valid after start().
-                let n = unsafe { libc::write(INSTANCE.eventfd().native(), one.as_ptr().cast(), 8) };
-                if n < 0 {
+                if bun_sys::write(INSTANCE.eventfd(), &one).is_err() {
                     panic!("Failed to write to eventfd");
                 }
             }
@@ -1246,8 +1177,7 @@ pub mod waiter_thread_posix {
     }
 
     fn loop_() {
-        // SAFETY: NUL-terminated literal.
-        Output::Source::configure_named_thread(bun_core::ZStr::from_static(b"Waitpid\0"));
+        Output::Source::configure_named_thread(bun_core::zstr!("Waitpid"));
         WaiterThreadPosix::reload_handlers();
         let mut active = Vec::new();
 
@@ -1272,8 +1202,7 @@ pub mod waiter_thread_posix {
                     continue 'outer;
                 }
 
-                // SAFETY: valid pollfd array.
-                let _ = unsafe { libc::poll(polls.as_mut_ptr(), 1, i32::MAX) };
+                let _ = bun_core::poll_once(&mut polls, i32::MAX);
             }
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
             {
@@ -1465,7 +1394,25 @@ pub trait SpawnResultExt: Sized {
 #[cfg(unix)]
 impl SpawnResultExt for PosixSpawnResult {
     fn to_process(self, event_loop: EventLoopHandle) -> RefPtr<Process> {
-        Process::init_posix(&self, event_loop)
+        let mut status = OnceCell::new();
+        if self.has_exited {
+            let mut rusage = rusage_zeroed();
+            let waitpid_result = posix_spawn::wait4(self.pid, 0, Some(&mut rusage));
+            if let Some(reaped) = Status::from(self.pid, &waitpid_result) {
+                status = OnceCell::from(reaped);
+            }
+        }
+        RefPtr::new(Process {
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            pid: self.pid,
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            pidfd: JsCell::new(self.pidfd),
+            js_poster: event_loop.js_poster(),
+            event_loop,
+            poller: JsCell::new(Poller::Detached),
+            status,
+            exit_handler: Cell::default(),
+        })
     }
 }
 
@@ -1510,10 +1457,10 @@ mod spawn_process_body {
         }
     }
 
-    /// [`spawn_process`] for callers holding borrowed C strings: builds the `argv` pointer block.
-    pub fn spawn_process_cstr(
+    /// [`spawn_process`] for callers holding borrowed strings: builds the `argv` pointer block.
+    pub fn spawn_process_z(
         options: &SpawnOptions<'_>,
-        argv: &[&core::ffi::CStr],
+        argv: &[&bun_core::ZStr],
         envp: Option<CStrList<'_>>,
     ) -> Result<bun_sys::Result<SpawnProcessResult>, crate::Error> {
         let argv = argv.iter().map(|&arg| Some(arg.into()));
@@ -1541,7 +1488,7 @@ mod spawn_process_body {
         uv_process_options.exit_cb = Some(Process::on_exit_uv);
         // `WindowsOptions::default()` leaves a null handle, which `uv_loop()` would dereference.
         assert!(
-            !matches!(options.windows.loop_, EventLoopHandle::Js { owner } if owner.owner.is_null()),
+            !matches!(options.windows.loop_, EventLoopHandle::Js { owner } if owner.owner().is_null()),
             "spawn_process_windows: WindowsSpawnOptions.windows.loop_ was not set. \
          WindowsOptions::default() leaves it zeroed (Zig spec: `= undefined`); \
          every caller must populate it — see src/CLAUDE.md §Spawning Subprocesses \
@@ -2266,12 +2213,12 @@ mod spawn_process_body {
         }
 
         pub fn spawn(options: &Options<'_>) -> core::result::Result<Maybe<Result>, crate::Error> {
-            let argv = CStringList::concat(options.argv.iter().map(|arg| [&**arg]));
+            let argv = CStringList::from_parts(options.argv.iter().map(|arg| [&**arg]));
             let argv = argv.as_list();
 
             #[cfg(windows)]
             {
-                let envp = Some(options.envp.unwrap_or_else(|| bun_sys::environ_list()));
+                let envp = Some(options.envp.unwrap_or_else(|| bun_core::os::environ()));
                 if options.stdin != SyncStdio::Buffer
                     && options.stderr != SyncStdio::Buffer
                     && options.stdout != SyncStdio::Buffer
@@ -2297,6 +2244,8 @@ mod spawn_process_body {
             Bun__noOrphans_begin, Bun__noOrphans_onExit, Bun__noOrphans_onFork,
             Bun__noOrphans_releaseKq,
         };
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        use bun_sys::linux::{PrctlOp, prctl};
 
         /// RAII guard around `Bun__registerSignalsForForwarding`: registers on
         /// construction, unregisters on drop.
@@ -2480,8 +2429,7 @@ mod spawn_process_body {
                 // the defer immediately below — registered here (not in the
                 // post-spawn `defer if (no_orphans)` block) so spawn-failure
                 // early returns don't leave subreaper armed process-wide.
-                // SAFETY: prctl
-                let _ = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) };
+                let _ = prctl(PrctlOp::SET_CHILD_SUBREAPER, 1);
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
             scopeguard::defer! {
@@ -2492,8 +2440,7 @@ mod spawn_process_body {
                     // between disarm and `onProcessExit`→`killDescendants()` escapes
                     // to init.
                     ParentDeathWatchdog::kill_subreaper_adoptees(siblings);
-                    // SAFETY: prctl
-                    let _ = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 0) };
+                    let _ = prctl(PrctlOp::SET_CHILD_SUBREAPER, 0);
                 }
             }
 
@@ -2606,8 +2553,6 @@ mod spawn_process_body {
             Bun__sendPendingSignalIfNecessary();
 
             let mut out: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            let _pidfd = process.pidfd.map(|fd| File::from_fd(Fd::from_native(fd)));
             let mut out_files = [process.stdout, process.stderr];
             let kill_and_fail = |err| {
                 let _ = kill(process.pid, 1);
@@ -2707,8 +2652,7 @@ mod spawn_process_body {
                         break;
                     }
 
-                    // SAFETY: valid pollfd array
-                    let rc = unsafe { libc::poll(poll_fds_buf.as_mut_ptr(), poll_len as _, -1) };
+                    let rc = bun_core::poll_once(&mut poll_fds_buf[..poll_len], -1);
                     match bun_sys::get_errno(rc as isize) {
                         bun_sys::E::SUCCESS => {}
                         bun_sys::E::EAGAIN | bun_sys::E::EINTR => continue,
@@ -2909,8 +2853,7 @@ mod spawn_process_body {
             let mut child_exited = false;
             let mut child_status: Option<Status> = None;
             loop {
-                // SAFETY: an empty changelist registers nothing.
-                let got = match unsafe { bun_sys::kevent(kq_fd, &[], &mut events[..], None) } {
+                let got = match bun_sys::kevent_wait(kq_fd, &mut events[..], None) {
                     Err(err) => return Some(Err(err)),
                     Ok(c) => c,
                 };
@@ -3079,13 +3022,11 @@ mod spawn_process_body {
             // restore on return so the next caller — or `bun run`'s own
             // post-script lifetime — keeps the backstop.
             if ppid > 1 {
-                // SAFETY: prctl
-                let _ = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, 0) };
+                let _ = prctl(PrctlOp::SET_PDEATHSIG, 0);
             }
             scopeguard::defer! {
                 if ppid > 1 {
-                    // SAFETY: prctl
-                    let _ = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) };
+                    let _ = prctl(PrctlOp::SET_PDEATHSIG, libc::SIGKILL as _);
                 }
             }
             if ppid > 1 && getppid() != ppid {
@@ -3182,8 +3123,7 @@ mod spawn_process_body {
                     push(&mut buf, &mut pfds_len, file.fd());
                 }
 
-                // SAFETY: valid pollfd array
-                let rc = unsafe { libc::poll(buf.as_mut_ptr(), pfds_len as _, timeout_ms) };
+                let rc = bun_core::poll_once(&mut buf[..pfds_len], timeout_ms);
                 match bun_sys::get_errno(rc as isize) {
                     bun_sys::E::SUCCESS => {}
                     bun_sys::E::EAGAIN | bun_sys::E::EINTR => {}
@@ -3268,8 +3208,8 @@ mod spawn_process_body {
 } // mod spawn_process_body
 
 pub use spawn_process_body::spawn_process;
-pub use spawn_process_body::spawn_process_cstr;
 #[cfg(unix)]
 pub use spawn_process_body::spawn_process_posix;
+pub use spawn_process_body::spawn_process_z;
 
 pub use spawn_process_body::sync;

@@ -3,9 +3,9 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::io::Write as _;
 
 use bun_jsc::JsResult;
+use bun_ptr::CellExt as _;
 
 use crate::test_runner::bun_test::{BunTest, DescribeScope, ExecutionEntry, TestScheduleEntry};
-use crate::test_runner::cells::CellExt as _;
 
 fn dump_sub(buntest: &BunTest, current: TestScheduleEntry) -> JsResult<()> {
     if !group::get_log_enabled() {
@@ -82,8 +82,8 @@ pub(crate) fn dump_order(buntest: &BunTest) -> JsResult<()> {
                 sequence_index, sequence.remaining_repeat_count.get(),
             ));
 
-            for (_, step) in buntest.steps_from(sequence.first_entry) {
-                let entry = buntest.entry(step.entry);
+            for (_, sequence_entry) in buntest.sequence_entries_from(sequence.first_entry) {
+                let entry = buntest.entry(sequence_entry.entry);
                 group::log(format_args!(
                     "ExecutionEntry \"{}\" (concurrent={}, mode={}, only={}, has_callback={})",
                     bstr::BStr::new(entry.base.name.as_deref().unwrap_or(b"(unnamed)")),

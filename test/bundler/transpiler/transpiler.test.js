@@ -3963,7 +3963,8 @@ console.log(resolve.length)
         expect(parsed("[1, 2n, null]", true, false, transpilerNoDCE)).toBe("[1, 2n, null]");
         expect(parsed("true", true, false, transpilerNoDCE)).toBe("true");
         expect(parsed("!0", true, false, transpilerNoDCE)).toBe("!0");
-        expect(parsed('if (!1) "dead";', true, false, transpilerNoDCE)).toBe('if (!1)\n  "dead"');
+        // A string statement that is kept prints as a template literal, which is never a directive.
+        expect(parsed('if (!1) "dead";', true, false, transpilerNoDCE)).toBe("if (!1)\n  `dead`");
         expect(parsed("if (!1) var x = 2;", true, false, transpilerNoDCE)).toBe("if (!1)\n  var x = 2");
         expect(parsed("if (undefined) { let y = Math.random(); }", true, false, transpilerNoDCE)).toBe(
           "if (undefined) {\n  let y = Math.random();\n}",
@@ -5181,6 +5182,66 @@ console.log(foo, array);
       );
     });
 
+    describe.concurrent("a macro that calls the transpiler that is running it", () => {
+      const names = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
+      async function run(index) {
+        using dir = tempDir("macro-reenters-transpiler", {
+          "many.ts": names.map(name => `export const ${name} = () => 1;`).join("\n"),
+          "macros.ts": `
+            export function scans(context) {
+              transpiler.scan("1");
+              return context?.name;
+            }
+            export function scansMacros() {
+              transpiler.scan('import { ${names} } from "./many.ts" with { type: "macro" }; ${names.join("();")}();');
+              return new Error("from the macro");
+            }
+          `,
+          "index.ts": `
+            globalThis.transpiler = new Bun.Transpiler({ loader: "ts" });
+            const imports = 'import { scans, scansMacros } from "./macros.ts" with { type: "macro" };';
+            ${index}
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "index.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        // Debug builds print "[macro] call <name>" first.
+        return { lastLine: stdout.trim().split("\n").pop(), stderr, exitCode };
+      }
+
+      it("can make it load other macros", async () => {
+        expect(await run(`console.log(transpiler.transformSync(imports + "f(scansMacros())"));`)).toEqual({
+          lastLine: `f(scansMacros());`,
+          stderr: expect.stringContaining("error: from the macro"),
+          exitCode: 1,
+        });
+      });
+
+      it("leaves the context argument for the next macro", async () => {
+        const code = `imports + "f(scans(), scans())"`;
+        expect(await run(`console.log(transpiler.transformSync(${code}, { name: "context" }));`)).toEqual({
+          lastLine: `f("context", "context");`,
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      it.each(["transformSync", "scan"])("%s still throws its parse error", async method => {
+        const code = `imports + "scans(); const c = 1; c = 2;"`;
+        expect(await run(`try { transpiler.${method}(${code}); } catch (e) { console.log(e.message); }`)).toEqual({
+          lastLine: `This assignment will throw because "c" is a constant`,
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    });
+
     it("special identifier in import statement", () => {
       const out = transpiler.transformSync(`
         import {ɵtest} from 'foo'
@@ -5330,15 +5391,160 @@ console.log("boop");
 `,
     );
   });
-  it("does not preserve use strict (for now)", () => {
+  it("preserves use strict", () => {
     expect(
       new Bun.Transpiler().transformSync(`"use strict";
   console.log("boop");
   `),
     ).toBe(
-      `console.log("boop");
+      `"use strict";
+console.log("boop");
 `,
     );
+  });
+  it("preserves the directive prologue ahead of everything else", () => {
+    // Each directive is printed, a repeated one too. "use asm" is removed on purpose.
+    expect(
+      new Bun.Transpiler().transformSync(`"use strict";
+  'use client';
+  "use asm";
+  "use strict";
+  console.log("boop");
+  `),
+    ).toBe(
+      `"use strict";
+"use client";
+"use strict";
+console.log("boop");
+`,
+    );
+  });
+  it("preserves directives in function bodies", () => {
+    expect(
+      new Bun.Transpiler().transformSync(
+        `function f(a) { "use strict"; "use other"; return a }
+  const g = () => { "use strict"; return 1 };
+  class A { m() { "use strict"; return 2 } }`,
+      ),
+    ).toBe(
+      `function f(a) {
+  "use strict";
+  "use other";
+  return a;
+}
+const g = () => {
+  "use strict";
+  return 1;
+};
+
+class A {
+  m() {
+    "use strict";
+    return 2;
+  }
+}
+`,
+    );
+    expect(
+      new Bun.Transpiler({ minifyWhitespace: true, minify: { syntax: true } }).transformSync(
+        `function f(a) { "use strict"; return a }`,
+      ),
+    ).toBe(`function f(a){"use strict";return a}`);
+  });
+  it("only treats a string at the start of a module or function body as a directive", () => {
+    // A block is not a directive prologue, so "use strict" does not make the
+    // scope strict: `var eval` and `var yield` are accepted.
+    expect(
+      new Bun.Transpiler().transformSync(`{ 'use strict'; var eval = 1 }
+  if (1) { 'use strict'; var yield = 1 }
+  try { 'use strict'; var implements = 1 } finally { 'use strict'; var interface = 1 }
+  class A { static { "use strict"; } }`),
+    ).not.toContain('"use strict"');
+    // A template literal is never a directive
+    expect(new Bun.Transpiler().transformSync("function f() { `use strict`; var package = 1 }")).not.toContain(
+      "use strict",
+    );
+    // A Use Strict Directive has no escape sequence, and a parenthesized string
+    // ends the prologue. Neither makes the function strict.
+    expect(
+      new Bun.Transpiler().transformSync(`function f(a = 1) { "use\\x20strict"; var package = 1 }
+  function g() { '\\u0075se strict'; var package = 2 }
+  function h(a = 1) { ("use strict"); var package = 3 }
+  function i(a = 1) { ("first"); "use strict"; var package = 4 }
+  ("use strict"); var package = 5;`),
+    ).not.toContain("use strict");
+    // A namespace body is lowered to a function body and keeps its prologue, as in tsc
+    expect(new Bun.Transpiler({ loader: "ts" }).transformSync(`namespace N { "use strict"; export const x = 1 }`))
+      .toBe(`var N;
+((N) => {
+  "use strict";
+  N.x = 1;
+})(N ||= {});
+`);
+    // A directive prologue applies to the parameters as well
+    expect(() => new Bun.Transpiler().transformSync(`function f(arguments) { "use strict" }`)).toThrow(
+      'Declarations with the name "arguments" cannot be used in strict mode',
+    );
+    expect(() => new Bun.Transpiler().transformSync(`function f(a = 1) { "use strict"; return a }`)).toThrow(
+      'Cannot use a "use strict" directive in a function with a non-simple parameter list',
+    );
+  });
+
+  it("does not turn a string that is not a directive into one", () => {
+    // Without dead-code elimination an unused string statement is kept. Printed as a
+    // string at the head of a function body it would be a directive.
+    const source = `
+      function paren() { ("use strict"); return typeof this }
+      function semicolon() { ;"use strict"; return typeof this }
+      function template() { \`use strict\`; return typeof this }
+      function folded() { "use " + "strict"; return typeof this }
+      function inBlock() { { "use strict" } return typeof this }
+      function inIf() { if (1) "use strict"; return typeof this }
+      function real() { "use strict"; return typeof this }
+      return [paren(), semicolon(), template(), folded(), inBlock(), inIf(), real()].join(" ");
+    `;
+    for (const options of [
+      {},
+      { minify: { syntax: true } },
+      { deadCodeElimination: false },
+      { deadCodeElimination: false, minify: { syntax: true } },
+      { deadCodeElimination: false, minifyWhitespace: true, minify: { syntax: true, whitespace: true } },
+    ]) {
+      const output = new Bun.Transpiler(options).transformSync(`function probe() {${source}}`);
+      // Indirect eval: the code around the functions is sloppy, like a CommonJS file.
+      expect({ options, result: (0, eval)(`(function () { ${output}; return probe(); })()`) }).toEqual({
+        options,
+        result: "object object object object object object undefined",
+      });
+    }
+  });
+
+  it("keeps a template literal under minify only where it is a whole statement", () => {
+    const transpiler = new Bun.Transpiler({
+      deadCodeElimination: false,
+      minifyWhitespace: true,
+      minify: { syntax: true, whitespace: true },
+    });
+    expect(transpiler.transformSync('`abc def`.split(" ").forEach(f);`a`+g();`a`[h()];`x` in obj;')).toBe(
+      '"abc def".split(" ").forEach(f);"a"+g();"a"[h()];"x"in obj;',
+    );
+    expect(transpiler.transformSync("function f(){`use strict`;return this}")).toBe(
+      "function f(){`use strict`;return this}",
+    );
+  });
+
+  it("does not change a string node that another expression shares", () => {
+    // With `inline`, each use of a replaced export shares the node of its value.
+    // A kept `foo;` statement prints as a template literal. The other uses do not.
+    const transpiler = new Bun.Transpiler({
+      exports: { replace: { foo: "bar" } },
+      inline: true,
+      deadCodeElimination: false,
+    });
+    const source = `export const foo = 1; console.log(foo);`;
+    const first = transpiler.transformSync(source);
+    transpiler.transformSync(`export const foo = 1; foo; console.log(foo);`);
+    expect(transpiler.transformSync(source)).toBe(first);
   });
 
   it("can parse 'a<b>' as typescript", () => {

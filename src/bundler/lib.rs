@@ -1,5 +1,5 @@
 #![feature(inherent_associated_types)]
-#![feature(adt_const_params, allocator_api, thread_local)]
+#![feature(adt_const_params, thread_local)]
 #![cfg_attr(any(test, feature = "test_support"), feature(linkage))]
 #![allow(incomplete_features)] // inherent_associated_types — used only for the ThreadPool::Worker path
 #![allow(non_snake_case, non_upper_case_globals)]
@@ -120,8 +120,6 @@ pub mod DeferredBatchTask;
 pub mod Graph;
 pub mod IndexStringMap;
 pub mod PathToSourceIndexMap;
-
-pub mod BundleThread;
 
 pub mod ServerComponentParseTask;
 
@@ -365,12 +363,6 @@ pub mod options {
 
     pub use crate::bake_types::Framework;
 }
-
-/// Re-export so `crate::RuntimeTranspilerCache` resolves for `transpiler::ParseOptions`
-/// and downstream callers (`jsc_hooks` / `RuntimeTranspilerStore`). The struct
-/// is canonical in `bun_js_parser`; the bundler-tier `disabled` lives on
-/// `RuntimeTranspilerCacheExt`.
-pub use cache::RuntimeTranspilerCacheExt;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-export the canonical `bake_types` defs from

@@ -5,17 +5,17 @@ const kept = [];
 function turn(grid, side, at, sine, cosine) {
   for (let k = 0; k < side; k++) {
     const held = grid[k][at + 1];
-    grid[k][at + 1] = sine * grid[k][at] + cosine * held;
+    grid[k][at + 1] = grid[k][at] * sine + held / 2;
     kept.push(grid[k].buffer);
-    grid[k][at] = cosine * grid[k][at] - sine * held;
+    grid[k][at] = (held - grid[k][at]) * cosine;
   }
 }
 function named(grid, side, at, sine, cosine) {
   for (let k = 0; k < side; k++) {
     const row = grid[k], held = row[at + 1];
-    row[at + 1] = sine * row[at] + cosine * held;
+    row[at + 1] = row[at] * sine + held / 2;
     kept.push(row.buffer);
-    row[at] = cosine * row[at] - sine * held;
+    row[at] = (held - row[at]) * cosine;
   }
 }
 const said = [];

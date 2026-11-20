@@ -237,7 +237,7 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
 /// `bun_socket_tls` sockets reach this.
 ///
 /// # Safety
-/// `openssl.c` must pass a live, non-null `s` whose ext slot holds a valid
+/// `openssl.cpp` must pass a live, non-null `s` whose ext slot holds a valid
 /// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn us_dispatch_session(
@@ -279,11 +279,9 @@ pub(crate) extern "C" fn us_dispatch_server_identity(
             .ext::<NativeRef<true>>()
             .get()
             .map_or(Unchecked, |tls| tls.server_identity(ssl)),
-        SocketKind::HttpClientTls => s_ref
-            .ext::<Option<core::ptr::NonNull<c_void>>>()
-            .map_or(Unchecked, |ext| {
-                bun_http::http_context::Handler::<true>::server_identity(ext.as_ptr(), ssl)
-            }),
+        SocketKind::HttpClientTls => {
+            bun_http::http_context::Handler::<true>::server_identity(NewSocketHandler::from(s), ssl)
+        }
         SocketKind::WsClientUpgradeTls => s_ref
             .ext::<Option<bun_ptr::ThisPtr<handlers::WSUpgradeClient<true>>>>()
             .map_or(Unchecked, |client| client.server_identity(ssl)),
@@ -336,7 +334,7 @@ pub(crate) extern "C" fn us_dispatch_new_session(
 /// `keylog` handler.
 ///
 /// # Safety
-/// `openssl.c` must pass a live, non-null `s` whose ext slot holds a valid
+/// `openssl.cpp` must pass a live, non-null `s` whose ext slot holds a valid
 /// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn us_dispatch_keylog(

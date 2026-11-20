@@ -10,14 +10,19 @@
 #include "JSTransformStream.h"
 #include "StreamConstructor.h"
 
+// TextEncoderStreamEncoder.rs
+BUN_DECLARE_FFI_DELETER(TextEncoderStreamEncoder, TextEncoderStreamEncoder__destroyForStream);
+
 namespace WebCore {
 
 class JSTextEncoderStream final : public JSTransformStream {
 public:
     using Base = JSTransformStream;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
 
     static JSTextEncoderStream* create(JSC::VM&, JSC::Structure*);
+    static void destroy(JSC::JSCell* cell) { static_cast<JSTextEncoderStream*>(cell)->~JSTextEncoderStream(); }
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
@@ -35,10 +40,8 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
 
-    // the Rust TextEncoderStreamEncoder (lone-surrogate state + reusable scratch). Freed
-    // eagerly at ClearAlgorithms; a vm.heap.addFinalizer registered in the constructor is
-    // the idempotent fallback for an abandoned stream.
-    void* m_encoder { nullptr };
+    // Lone-surrogate state + reusable scratch. Freed eagerly at ClearAlgorithms.
+    std::unique_ptr<TextEncoderStreamEncoder> m_encoder;
 
 private:
     JSTextEncoderStream(JSC::VM&, JSC::Structure*);

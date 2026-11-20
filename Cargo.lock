@@ -137,9 +137,7 @@ checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 name = "bun_alloc"
 version = "0.0.0"
 dependencies = [
- "allocator-api2",
  "bun_mimalloc_sys",
- "bun_opaque",
  "bun_wyhash",
  "libc",
 ]
@@ -255,7 +253,6 @@ dependencies = [
  "bun_alloc",
  "bun_collections",
  "bun_core",
- "bun_dispatch",
  "bun_paths",
  "bun_perf",
  "bun_ptr",
@@ -312,16 +309,11 @@ name = "bun_brotli"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
- "bun_brotli_sys",
  "bun_core",
+ "bun_highway",
+ "bun_removable_features",
+ "bun_sema_standalone",
  "thiserror",
-]
-
-[[package]]
-name = "bun_brotli_sys"
-version = "0.0.0"
-dependencies = [
- "bun_opaque",
 ]
 
 [[package]]
@@ -432,6 +424,7 @@ dependencies = [
  "bun_core",
  "bun_libuv_sys",
  "bun_opaque",
+ "enum-map",
  "libc",
  "strum",
 ]
@@ -465,7 +458,6 @@ dependencies = [
  "bun_alloc",
  "bun_core",
  "bun_ptr",
- "bun_simdutf_sys",
  "bun_wyhash",
  "hashbrown 0.15.5",
  "paste",
@@ -534,6 +526,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_cron"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_core",
+ "thiserror",
+]
+
+[[package]]
 name = "bun_csrf"
 version = "0.0.0"
 dependencies = [
@@ -582,6 +583,17 @@ dependencies = [
  "bun_core",
  "bun_css",
  "bun_jsc",
+]
+
+[[package]]
+name = "bun_deflate"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_highway",
+ "bun_pod",
+ "bun_removable_features",
+ "thiserror",
 ]
 
 [[package]]
@@ -717,6 +729,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_global_allocator"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+]
+
+[[package]]
 name = "bun_hash"
 version = "0.0.0"
 dependencies = [
@@ -735,6 +754,14 @@ name = "bun_histogram"
 version = "0.0.0"
 
 [[package]]
+name = "bun_hpack"
+version = "0.0.0"
+dependencies = [
+ "bun_wyhash",
+ "thiserror",
+]
+
+[[package]]
 name = "bun_http"
 version = "0.0.0"
 dependencies = [
@@ -748,14 +775,14 @@ dependencies = [
  "bun_brotli",
  "bun_collections",
  "bun_core",
- "bun_dns",
+ "bun_deflate",
  "bun_dotenv",
  "bun_errno",
  "bun_event_loop",
+ "bun_hpack",
+ "bun_http1",
  "bun_http_types",
  "bun_io",
- "bun_libdeflate_sys",
- "bun_picohttp",
  "bun_ptr",
  "bun_removable_features",
  "bun_sys",
@@ -771,6 +798,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_http1"
+version = "0.0.0"
+dependencies = [
+ "bitflags",
+ "bun_core",
+ "bun_http_types",
+ "thiserror",
+]
+
+[[package]]
 name = "bun_http_jsc"
 version = "0.0.0"
 dependencies = [
@@ -781,15 +818,15 @@ dependencies = [
  "bun_boringssl",
  "bun_collections",
  "bun_core",
+ "bun_deflate",
  "bun_errno",
  "bun_highway",
  "bun_http",
+ "bun_http1",
  "bun_http_types",
  "bun_io",
  "bun_jsc",
- "bun_libdeflate_sys",
  "bun_opaque",
- "bun_picohttp",
  "bun_ptr",
  "bun_sha_hmac",
  "bun_uws",
@@ -810,6 +847,13 @@ dependencies = [
  "bun_url",
  "enumset",
  "strum",
+]
+
+[[package]]
+name = "bun_icu_data"
+version = "0.0.0"
+dependencies = [
+ "bun_zstd_decoder",
 ]
 
 [[package]]
@@ -847,6 +891,7 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_crash_handler",
+ "bun_deflate",
  "bun_dns",
  "bun_dotenv",
  "bun_errno",
@@ -858,13 +903,11 @@ dependencies = [
  "bun_io",
  "bun_js_parser",
  "bun_js_printer",
- "bun_libdeflate_sys",
  "bun_options_types",
  "bun_parsers",
  "bun_patch",
  "bun_paths",
  "bun_perf",
- "bun_picohttp",
  "bun_ptr",
  "bun_removable_features",
  "bun_resolver",
@@ -874,7 +917,6 @@ dependencies = [
  "bun_spawn",
  "bun_sys",
  "bun_threading",
- "bun_transpiler",
  "bun_url",
  "bun_uws",
  "bun_which",
@@ -940,6 +982,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_jpeg"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_core",
+ "bun_highway",
+ "thiserror",
+]
+
+[[package]]
 name = "bun_js_parser"
 version = "0.0.0"
 dependencies = [
@@ -964,7 +1016,6 @@ dependencies = [
  "criterion",
  "enumset",
  "regex",
- "scopeguard",
  "smallvec",
  "strum",
  "thiserror",
@@ -1040,7 +1091,6 @@ dependencies = [
  "bun_js_parser",
  "bun_js_printer",
  "bun_jsc_macros",
- "bun_libdeflate_sys",
  "bun_opaque",
  "bun_options_types",
  "bun_patch",
@@ -1051,6 +1101,7 @@ dependencies = [
  "bun_resolver",
  "bun_s3_signing",
  "bun_sha_hmac",
+ "bun_simdutf_sys",
  "bun_sourcemap",
  "bun_spawn",
  "bun_sys",
@@ -1072,14 +1123,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "bun_libdeflate_sys"
-version = "0.0.0"
-dependencies = [
- "bun_alloc",
- "bun_opaque",
 ]
 
 [[package]]
@@ -1156,6 +1199,7 @@ dependencies = [
  "bun_semver",
  "bun_sys",
  "bun_threading",
+ "bun_wyhash",
  "bun_zstd",
 ]
 
@@ -1445,15 +1489,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_picohttp"
-version = "0.0.0"
-dependencies = [
- "bstr",
- "bun_core",
- "strum",
-]
-
-[[package]]
 name = "bun_platform"
 version = "0.0.0"
 dependencies = [
@@ -1484,7 +1519,6 @@ name = "bun_ptr"
 version = "0.0.0"
 dependencies = [
  "bstr",
- "bun_alloc",
  "bun_core",
  "bun_core_macros",
 ]
@@ -1578,7 +1612,6 @@ dependencies = [
  "bun_sys",
  "bun_url",
  "bun_wyhash",
- "scopeguard",
  "strum",
  "thiserror",
 ]
@@ -1609,9 +1642,11 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_crash_handler",
+ "bun_cron",
  "bun_csrf",
  "bun_css",
  "bun_css_jsc",
+ "bun_deflate",
  "bun_dns",
  "bun_dotenv",
  "bun_errno",
@@ -1619,21 +1654,25 @@ dependencies = [
  "bun_exe_format",
  "bun_format_conformance",
  "bun_glob",
+ "bun_global_allocator",
  "bun_hash",
  "bun_highway",
  "bun_histogram",
+ "bun_hpack",
  "bun_http",
+ "bun_http1",
  "bun_http_jsc",
  "bun_http_types",
+ "bun_icu_data",
  "bun_install",
  "bun_install_jsc",
  "bun_install_types",
  "bun_io",
+ "bun_jpeg",
  "bun_js_parser",
  "bun_js_parser_jsc",
  "bun_js_printer",
  "bun_jsc",
- "bun_libdeflate_sys",
  "bun_libuv_sys",
  "bun_lint",
  "bun_lint_driver",
@@ -1646,7 +1685,6 @@ dependencies = [
  "bun_parsers",
  "bun_patch_jsc",
  "bun_paths",
- "bun_picohttp",
  "bun_platform",
  "bun_png",
  "bun_ptr",
@@ -1672,6 +1710,7 @@ dependencies = [
  "bun_sys",
  "bun_sys_jsc",
  "bun_tcc_sys",
+ "bun_test_schedule",
  "bun_text_diff",
  "bun_threading",
  "bun_trim",
@@ -1680,6 +1719,7 @@ dependencies = [
  "bun_uws_sys",
  "bun_valkey",
  "bun_watcher",
+ "bun_webp",
  "bun_which",
  "bun_wyhash",
  "bun_zlib",
@@ -1707,7 +1747,6 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_http_types",
- "bun_picohttp",
  "bun_ptr",
  "bun_sha_hmac",
  "strum",
@@ -1792,7 +1831,7 @@ dependencies = [
  "bun_alloc",
  "bun_boringssl_sys",
  "bun_core",
- "bun_js_parser",
+ "bun_crash_handler",
  "bun_sema",
  "bun_sema_baselines",
  "bun_sema_driver",
@@ -1800,7 +1839,6 @@ dependencies = [
  "bun_sys",
  "bun_threading",
  "bun_zstd",
- "cc",
  "libc",
 ]
 
@@ -1938,7 +1976,6 @@ dependencies = [
  "bun_core",
  "bun_libuv_sys",
  "bun_sys",
- "bun_windows_sys",
  "enumset",
  "libc",
  "strum",
@@ -1952,9 +1989,11 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_alloc",
+ "bun_base64",
  "bun_boringssl",
  "bun_collections",
  "bun_core",
+ "bun_ptr",
  "bun_sha_hmac",
  "bun_sys",
  "strum",
@@ -1967,9 +2006,7 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_analytics",
- "bun_base64",
  "bun_boringssl",
  "bun_boringssl_sys",
  "bun_collections",
@@ -1979,12 +2016,9 @@ dependencies = [
  "bun_io",
  "bun_jsc",
  "bun_ptr",
- "bun_sha_hmac",
  "bun_sql",
  "bun_uws",
  "scopeguard",
- "strum",
- "thiserror",
 ]
 
 [[package]]
@@ -2043,7 +2077,6 @@ dependencies = [
  "enum-map",
  "libc",
  "rustix",
- "scopeguard",
  "strum",
  "thiserror",
 ]
@@ -2063,6 +2096,8 @@ version = "0.0.0"
 dependencies = [
  "bun_alloc",
  "bun_core",
+ "bun_deflate",
+ "bun_highway",
  "bun_zlib",
  "itoa",
  "thiserror",
@@ -2079,6 +2114,10 @@ dependencies = [
  "strum",
  "thiserror",
 ]
+
+[[package]]
+name = "bun_test_schedule"
+version = "0.0.0"
 
 [[package]]
 name = "bun_text_diff"
@@ -2102,13 +2141,6 @@ dependencies = [
  "scopeguard",
  "strum",
  "thiserror",
-]
-
-[[package]]
-name = "bun_transpiler"
-version = "0.0.0"
-dependencies = [
- "bun_bundler",
 ]
 
 [[package]]
@@ -2146,6 +2178,7 @@ dependencies = [
  "bun_boringssl",
  "bun_core",
  "bun_jsc_macros",
+ "bun_ptr",
  "bun_uws_sys",
  "strum",
 ]
@@ -2160,6 +2193,7 @@ dependencies = [
  "bun_boringssl_sys",
  "bun_core",
  "bun_errno",
+ "bun_hpack",
  "bun_http_types",
  "bun_libuv_sys",
  "bun_opaque",
@@ -2175,7 +2209,7 @@ dependencies = [
 name = "bun_valkey"
 version = "0.0.0"
 dependencies = [
- "bstr",
+ "bun_collections",
  "bun_core",
  "strum",
 ]
@@ -2190,13 +2224,21 @@ dependencies = [
  "bun_core",
  "bun_errno",
  "bun_paths",
- "bun_ptr",
  "bun_sys",
  "bun_threading",
  "bun_wyhash",
  "libc",
  "scopeguard",
  "strum",
+ "thiserror",
+]
+
+[[package]]
+name = "bun_webp"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_highway",
  "thiserror",
 ]
 
@@ -2230,17 +2272,10 @@ name = "bun_zlib"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
- "bun_collections",
  "bun_core",
- "bun_zlib_sys",
- "strum",
-]
-
-[[package]]
-name = "bun_zlib_sys"
-version = "0.0.0"
-dependencies = [
- "bun_core",
+ "bun_deflate",
+ "bun_highway",
+ "thiserror",
 ]
 
 [[package]]
@@ -2248,8 +2283,29 @@ name = "bun_zstd"
 version = "0.0.0"
 dependencies = [
  "bun_core",
- "bun_opaque",
+ "bun_highway",
+ "bun_zstd_decoder",
+ "bun_zstd_encoder",
  "strum",
+]
+
+[[package]]
+name = "bun_zstd_decoder"
+version = "0.0.0"
+dependencies = [
+ "bun_highway",
+]
+
+[[package]]
+name = "bun_zstd_encoder"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "bun_highway",
+ "bun_pod",
+ "bun_removable_features",
+ "bun_threading",
+ "bun_zstd_decoder",
 ]
 
 [[package]]
@@ -2263,16 +2319,6 @@ name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
-
-[[package]]
-name = "cc"
-version = "1.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3eb0f42d6c360dc3f8a821f6bf2fdea7f72bfd36b3076eb0e6d1e9e0752fff4"
-dependencies = [
- "find-msvc-tools",
- "shlex",
-]
 
 [[package]]
 name = "cfg-if"
@@ -2636,12 +2682,6 @@ name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
-
-[[package]]
-name = "find-msvc-tools"
-version = "0.1.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e0f1c7c3a72c66fd80abe965175f7523475c0489a87d3ff9d6e8c87d87a9d2d"
 
 [[package]]
 name = "fnv"
@@ -3275,12 +3315,6 @@ dependencies = [
  "digest",
  "keccak",
 ]
-
-[[package]]
-name = "shlex"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "siphasher"

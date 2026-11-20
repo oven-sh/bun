@@ -699,7 +699,7 @@ describe("corrupt compressed responses", () => {
 
   it("redirect loop with a non-empty body rejects with TooManyRedirects", async () => {
     // Real-world 302s carry an HTML body, which routes the intermediate
-    // head through clone_metadata(); hitting the redirect limit must still
+    // head through store_metadata(); hitting the redirect limit must still
     // reject fetch() rather than resolve with that 302.
     const body = "<html><body>Moved.</body></html>";
     const srv = createNetServer(sock => {
@@ -853,9 +853,9 @@ describe("fetch() decodes multi-member Content-Encoding: gzip", () => {
   });
 
   // Last member's ISIZE trailer > 512 KiB (LibdeflateState::shared_buffer) so
-  // the libdeflate fast path takes the decompress_to_vec branch, which must
+  // the libdeflate fast path takes the exact-size branch, which must
   // also detect unconsumed input and fall through.
-  it.concurrent("content-length, last member > 512 KiB (decompress_to_vec branch)", async () => {
+  it.concurrent("content-length, last member > 512 KiB (exact-size branch)", async () => {
     const big = Buffer.alloc(600 * 1024, "BIG-LAST-MEMBER-");
     const body = Buffer.concat([M1, gzipSync(big)]);
     const server = createNetServer(socket => {
@@ -1017,6 +1017,9 @@ describe("Content-Encoding: deflate, zlib-wrapped or raw", () => {
     wb9: deflateSync(plain, { windowBits: 9 }),
     wb15: deflateSync(plain),
     twoReadings, // fetch() must return the zlib reading
+    // Only gzip has members. Behind the others, one is stray bytes like any.
+    rawThenMember: Buffer.concat([deflateRawSync(plain), gzipSync("more")]),
+    wb15ThenMember: Buffer.concat([deflateSync(plain), gzipSync("more")]),
   };
   const fails: Record<string, Buffer> = {
     rawPassing1950: rawStartingWith(0x78, 769), // 78 01: raw deflate that starts with a valid zlib header

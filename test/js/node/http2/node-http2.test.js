@@ -4380,6 +4380,41 @@ describe.concurrent(
       },
     );
 
+    // A queued frame holds one callback, so a write that lands in the same frame completes the
+    // write before it. That callback is the JS here: the socket is native.
+    it("previous write's callback running while the next write is queued, native writer", async () => {
+      const result = await run(/* js */ `
+      const server = http2.createServer({ settings: { initialWindowSize: 100 } });
+      server.on("error", die("server error"));
+      const body = new Promise(resolve => {
+        server.on("stream", (stream, headers) => {
+          if (headers[":path"] === "/blocked") return;
+          const chunks = [];
+          stream.on("data", c => chunks.push(c));
+          stream.on("end", () => resolve(Buffer.concat(chunks)));
+        });
+      });
+      await new Promise(r => server.listen(0, "127.0.0.1", r));
+      const session = http2.connect("http://127.0.0.1:" + server.address().port);
+      session.on("error", die("session error"));
+      await new Promise(r => session.once("remoteSettings", r));
+      const blocked = session.request({ ":method": "POST", ":path": "/blocked" });
+      const req = session.request({ ":method": "POST", ":path": "/" });
+      blocked._write(Buffer.alloc(200), "buffer", () => {});
+      const holder = { src: payload(8000, false) };
+      const snap = Buffer.from(holder.src);
+      let fired = false;
+      // write() waits for the callback; _write() queues two writes at once.
+      req._write(Buffer.from("aaa"), "buffer", () => { fired = true; yank(holder, "transfer"); });
+      req._write(holder.src, "buffer", () => req.end());
+      const firedDuringWrite = fired;
+      const got = (await body).subarray(3);
+      console.log(JSON.stringify({ native: !!session.socket._handle, firedDuringWrite, foreign: foreign(got, snap) }));
+      process.exit(0);
+    `);
+      expect(result).toEqual({ native: true, firedDuringWrite: true, foreign: 0 });
+    });
+
     // The session's socket is a native TLSSocket, but one upgraded from a JS Duplex
     // (tls.connect({ socket })), so every TLS record is written through that Duplex's JS.
     // Oracle: the request body a real secure server receives.
@@ -6132,7 +6167,11 @@ it("http2 server sends each session's frames to its own peer under interleaved r
   }
 });
 
-it("fails the whole session when an outbound header block cannot be encoded", async () => {
+it.each([
+  ["string", value => ({ "test-header": value })],
+  ["array", value => ({ "test-header": ["short", value] })],
+  ["raw list", value => ["test-header", value]],
+])("fails the whole session when an outbound header block cannot be encoded (%s)", async (_, headers) => {
   // A header block the HPACK encoder cannot emit is a COMPRESSION_ERROR (9) against the
   // session in node, so the session and the in-flight request both see
   // ERR_HTTP2_SESSION_ERROR rather than a per-stream error.
@@ -6142,7 +6181,7 @@ it("fails the whole session when an outbound header block cannot be encoded", as
     const client = http2.connect(`http://localhost:${port}`, { maxSendHeaderBlockLength: 100000 });
     const sessionError = new Promise(resolve => client.on("error", resolve));
     const requestError = new Promise(resolve => {
-      const req = client.request({ "test-header": Buffer.alloc(90000, "A").toString() });
+      const req = client.request(headers(Buffer.alloc(90000, "A").toString()));
       req.on("error", resolve);
       req.end();
     });

@@ -9,7 +9,7 @@ use bun_archive::tar;
 use bun_collections::VecExt as _;
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
-use bun_core::strings::{self, StringOrTinyString};
+use bun_core::strings;
 use bun_core::{Global, Output, pretty, prettyln};
 use bun_http as http;
 use bun_install::dependency::{self, TagExt as _};
@@ -20,7 +20,7 @@ use bun_install::npm::{self, PackageManifest};
 use bun_install::package_manager::options::Do;
 use bun_install::package_manager::workspace_manifests::WorkspaceManifests;
 use bun_install::{PackageManager, resolution};
-use bun_sys::{Fd, FdExt as _, dir_iterator as DirIterator};
+use bun_sys::{Fd, dir_iterator as DirIterator};
 use bun_url::URL;
 
 use crate::cli::pm_diff_normalize as normalize;
@@ -667,9 +667,10 @@ fn read_dir_tree(
             }
         }
     }
-    let mut stack: Vec<(Fd, Vec<u8>)> = vec![(root_dir.into_raw(), Vec::new())];
+    let mut stack = vec![(root_dir, Vec::new())];
     while let Some((dir, prefix)) = stack.pop() {
-        let mut it = DirIterator::iterate(dir);
+        let mut it = DirIterator::iterate_owned(dir);
+        let dir = it.dir();
         loop {
             let entry = match it.next() {
                 Ok(Some(entry)) => entry,
@@ -711,7 +712,7 @@ fn read_dir_tree(
             match kind {
                 bun_sys::FileKind::Directory if own_kind == bun_sys::FileKind::SymLink => {}
                 bun_sys::FileKind::Directory => match bun_sys::open_dir_at(dir, name) {
-                    Ok(sub) => stack.push((sub, rel)),
+                    Ok(sub) => stack.push((bun_sys::Dir::from_fd(sub), rel)),
                     Err(err) => fail(err, &rel),
                 },
                 bun_sys::FileKind::File => match bun_sys::File::read_from(dir, name) {
@@ -737,7 +738,6 @@ fn read_dir_tree(
                 _ => {}
             }
         }
-        dir.close();
     }
     Ok(tree)
 }
@@ -838,7 +838,7 @@ fn fetch_registry_tree(
 
     let mut log = bun_ast::Log::init();
     let manifest = match PackageManifest::parse(
-        scope,
+        scope.manifest_cache_key(),
         &mut log,
         body.list.as_slice(),
         name,
@@ -937,7 +937,7 @@ fn fetch_registry_tree(
     if tarball_url.is_empty() {
         tarball_url = bun_install::extract_tarball::build_url_with_printer(
             scope.url.href(),
-            &StringOrTinyString::init_append_if_needed(name, &mut BumpAppender(&bump))?,
+            name,
             found.version,
             &manifest.string_buf,
             |args| -> Result<Vec<u8>, bun_alloc::AllocError> {
@@ -975,13 +975,6 @@ fn fetch_registry_tree(
     };
     read_tarball_into(tarball.list.as_slice(), &mut tree)?;
     Ok(tree)
-}
-
-struct BumpAppender<'a>(&'a Bump);
-impl bun_core::strings::Appender for BumpAppender<'_> {
-    fn append(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
-        Ok(self.0.alloc_slice_copy(s))
-    }
 }
 
 fn registry_get(

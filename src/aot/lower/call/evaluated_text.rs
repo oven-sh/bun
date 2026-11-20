@@ -1,18 +1,21 @@
-use bun_sema::atom::Atom;
+use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Decl, ScopeId, ScopeKind};
 use bun_sema::fold::Constant;
 use bun_sema::hir::{
     CallId, ExprId, ExprKind, FnKind, GlobalCode, KnownEvaluation, NodeData, PatId,
+    ReplacedEvaluation,
 };
 use rustc_hash::FxHashMap;
 
-use super::{Arguments, Callee, emit_call_by_eval};
+use super::{Arguments, Callee, emit_call_by_eval, emit_call_of};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::{EvaluatedText, table};
 use crate::ir::{BlockId, Edge, StringId, ValueId};
 use crate::load::known_evaluations::may_need_scope_around;
 use crate::lower::expression::Tail;
 use crate::lower::{FileLowering, FunctionLowering};
+
+const MESSAGE_OF_REPLACED_CALLEE: &[u8] = b"The compiler compiled the import() in this string, but the program has replaced eval or Function. Put the string in a variable to call the replacement.";
 
 impl FileLowering<'_, '_, '_, '_> {
     fn list_known_functions(&self, call: CallId) -> Vec<KnownEvaluation> {
@@ -152,6 +155,69 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         let arguments = self.lower_arguments(site.args);
         self.emit_ordinary(call, is_construct, callee, arguments, tail)
+    }
+
+    pub(in crate::lower) fn lower_in_place_of_evaluation(
+        &mut self,
+        replaced: &ReplacedEvaluation,
+        lower_written: &mut dyn FnMut(&mut Self) -> ValueId,
+    ) -> ValueId {
+        let hir = self.file.hir;
+        let written = hir[replaced.expression];
+        let (name, id) = match written.kind {
+            ExprKind::Fn(_) => (known::Function, BuiltinId::Function),
+            _ => (known::eval, BuiltinId::Eval),
+        };
+        let position = hir.replaced_callee_position(written.pos);
+        self.set_position(position);
+        let callee = self.get_binding(Binding::Free, name);
+        let function = self.emit_builtin_itself(id);
+        let is_function = self.builder.strict_eq(callee, function);
+        let in_place = self.create_block();
+        let ordinary = self.create_block();
+        let join = self.create_block();
+        let result = self.builder.add_parameter(join, None);
+        self.builder
+            .branch(is_function, Edge::to(in_place), Edge::to(ordinary));
+
+        self.continue_in(in_place);
+        let value = lower_written(self);
+        self.jump_with(join, &[value]);
+
+        self.continue_in(ordinary);
+        self.set_position(position);
+        let texts = hir.ids(replaced.arguments);
+        let texts = texts.map(|text| self.emit_constant(Constant::String(text)));
+        let arguments = Arguments::Values(texts.collect());
+        let name = Some(self.file.intern_atom(name));
+        let returned = match replaced.is_new {
+            true => self.emit_construct(callee, arguments, name),
+            false => emit_call_of(self, Callee::without_key(callee, None, name), arguments),
+        };
+        self.jump_with(join, &[returned]);
+
+        self.continue_in(join);
+        result
+    }
+
+    pub(in crate::lower) fn emit_test_of_replaced_callee(&mut self, name: Atom, id: BuiltinId) {
+        if self.file.inputs.may_replace_evaluators {
+            return;
+        }
+        let callee = self.get_binding(Binding::Free, name);
+        let function = self.emit_builtin_itself(id);
+        let is_function = self.builder.strict_eq(callee, function);
+        let same = self.create_block();
+        let other = self.create_block();
+        self.builder
+            .branch(is_function, Edge::to(same), Edge::to(other));
+        self.continue_in(other);
+        let message = self.file.intern_bytes(MESSAGE_OF_REPLACED_CALLEE);
+        let message = self.builder.string(message);
+        let constructor = self.emit_builtin_itself(BuiltinId::EvalError);
+        let error = self.builder.construct(constructor, None, &[message], None);
+        self.emit_throw(error);
+        self.continue_in(same);
     }
 
     /// `Function`, with strings that the build may have compiled.

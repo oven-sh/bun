@@ -31,7 +31,6 @@ use bun_jsc::{JsCell, JsCellRefExt as _, JsRef};
 use bun_ptr::AliasableBox;
 use core::cell::Cell;
 use core::fmt;
-use core::ops::ControlFlow;
 use std::sync::atomic::Ordering;
 
 use bun_sys::{self, Fd, File};
@@ -41,7 +40,7 @@ pub(crate) use crate::shell::env_map::EnvMap;
 use crate::shell::io::IO;
 use crate::shell::states::assigns::Assigns;
 use crate::shell::states::r#async::Async;
-use crate::shell::states::base::Base;
+use crate::shell::states::base::{Base, Env};
 use crate::shell::states::binary::Binary;
 pub(crate) use crate::shell::states::cmd::Cmd;
 use crate::shell::states::cond_expr::CondExpr;
@@ -245,13 +244,6 @@ pub enum StateKind {
     Condexpr,
     Async,
     Subshell,
-}
-
-/// Zero-sized witness that an output stream needs IO (see `Builtin::needs_io`).
-#[repr(u8)]
-#[derive(Clone, Copy)]
-pub(crate) enum OutputNeedsIOSafeGuard {
-    OutputNeedsIo,
 }
 
 /// The shell promise's `reject` function and the error to call it with. Kept on the stack, where the GC sees it.
@@ -479,37 +471,29 @@ impl Interpreter {
         // on Windows `MAX_PATH_BYTES` is ~96 KiB and `init` runs from
         // JS-triggered paths that may already be deep on the stack.
         let mut pathbuf = bun_paths::path_buffer_pool::get();
-        let cwd_len = match bun_sys::getcwd(&mut pathbuf[..]) {
-            Ok(n) => n,
+        let cwd_z = match bun_sys::getcwd_z(&mut pathbuf) {
+            Ok(cwd) => cwd,
             Err(e) => return Err(ShellErr::new_sys(&e)),
         };
-        // NUL-terminate for `open()`; downstream `cwd()` strips the trailing 0.
-        pathbuf[cwd_len] = 0;
-        let cwd_z = bun_core::ZStr::from_buf(pathbuf.as_slice(), cwd_len);
 
         let cwd_fd = match bun_sys::open(cwd_z, bun_sys::O::DIRECTORY | bun_sys::O::RDONLY, 0) {
             Ok(fd) => OwnedFd(fd),
             Err(e) => return Err(ShellErr::new_sys(&e)),
         };
 
-        let mut cwd_arr = Vec::with_capacity(cwd_len + 1);
-        cwd_arr.extend_from_slice(&pathbuf[..cwd_len + 1]);
-        debug_assert_eq!(*cwd_arr.last().unwrap(), 0);
+        // Downstream `cwd()` strips the trailing 0.
+        let cwd_arr = cwd_z.as_bytes_with_nul().to_vec();
 
         // ── stdin ──────────────────────────────────────────────────────────
         log!("Duping stdin");
         let stdin_fd_res = if bun_core::output::stdio::is_stdin_null() {
             #[cfg(unix)]
             {
-                bun_sys::open(
-                    bun_core::ZStr::from_static(b"/dev/null\0"),
-                    bun_sys::O::RDONLY,
-                    0,
-                )
+                bun_sys::open(bun_core::zstr!("/dev/null"), bun_sys::O::RDONLY, 0)
             }
             #[cfg(windows)]
             {
-                bun_sys::open(bun_core::ZStr::from_static(b"NUL\0"), bun_sys::O::RDONLY, 0)
+                bun_sys::open(bun_core::zstr!("NUL"), bun_sys::O::RDONLY, 0)
             }
         } else {
             shell_dup(Fd::stdin())
@@ -834,7 +818,7 @@ impl Interpreter {
         if let Node::Pipeline(p) = self.node(parent) {
             let rightmost = p.cmds.as_deref().is_none_or(|c| {
                 c.len() < 2
-                    || matches!(c.last(), Some(crate::shell::states::pipeline::CmdOrResult::Cmd { id, .. }) if *id == child)
+                    || matches!(c.last(), Some(crate::shell::states::pipeline::CmdOrResult::Cmd(id)) if *id == child)
             });
             if rightmost {
                 self.as_pipeline_mut(parent).base.interrupted = true;
@@ -946,15 +930,15 @@ impl Interpreter {
         io: IO,
     ) -> (Option<NodeId>, Yield) {
         let child = match expr {
-            ast::Expr::Cmd(c) => Cmd::init(self, shell, *c, parent, io),
+            ast::Expr::Cmd(c) => Cmd::init(self, Env::inherited(shell), *c, parent, io),
             ast::Expr::Binary(b) => Binary::init(self, shell, *b, parent, io),
             ast::Expr::Pipeline(p) => Pipeline::init(self, shell, *p, parent, io),
             ast::Expr::Assign(a) => Assigns::init(self, shell, *a, parent, AssignCtx::Shell),
-            ast::Expr::If(i) => If::init(self, shell, *i, parent, io),
-            ast::Expr::CondExpr(c) => CondExpr::init(self, shell, *c, parent, io),
+            ast::Expr::If(i) => If::init(self, Env::inherited(shell), *i, parent, io),
+            ast::Expr::CondExpr(c) => CondExpr::init(self, Env::inherited(shell), *c, parent, io),
             ast::Expr::Subshell(s) => {
                 // Stmt/Binary callers dupe
-                // the env here so `Subshell::start`/`next` can use `base.shell`
+                // the env here so `Subshell::start`/`next` can use `shell`
                 // as-is. (Pipeline dupes itself and calls `Subshell::init`
                 // directly, so it does NOT go through this path.)
                 // SAFETY: `shell` is the live parent `ShellExecEnv` borrowed for the
@@ -1178,7 +1162,7 @@ impl Interpreter {
         let shell = self.root_shell.as_ptr();
         let ast = &self.args.get().script_ast;
         let io = self.root_io.get().clone();
-        let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
+        let root = Script::init(self, Env::inherited(shell), ast, NodeId::INTERPRETER, io);
         Script::start(self, root).run(self);
         Ok(())
     }
@@ -1368,7 +1352,7 @@ impl Interpreter {
         let shell = self.root_shell.as_ptr();
         let ast = &self.args.get().script_ast;
         let io = self.root_io.get().clone();
-        let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
+        let root = Script::init(self, Env::inherited(shell), ast, NodeId::INTERPRETER, io);
         Script::start(self, root).run(self);
         if global_this.has_exception() {
             return Err(crate::jsc::JsError::Thrown);
@@ -1537,11 +1521,7 @@ fn io_to_js_value(
     buf: *mut Vec<u8>,
 ) -> bun_jsc::JsResult<crate::jsc::JSValue> {
     // SAFETY: `buf` points into a live `ShellExecEnv` (root or borrowed).
-    let bytelist = core::mem::take(unsafe { &mut *buf });
-    // The moved-out `Vec<u8>` storage is handed to JSC directly; the
-    // `Vec<u8>` value itself is `mem::forget`-ed since JSC now owns the bytes.
-    let mut bytelist = core::mem::ManuallyDrop::new(bytelist);
-    crate::jsc::JSValue::create_buffer(global_this, bytelist.slice_mut())
+    crate::jsc::JSValue::create_buffer(global_this, core::mem::take(unsafe { &mut *buf }))
 }
 
 /// On the mini event
@@ -1568,7 +1548,6 @@ pub(crate) fn throw_shell_err(
 // ────────────────────────────────────────────────────────────────────────────
 
 /// Shell execution environment (env vars, cwd, captured stdout/stderr).
-/// Every state node holds a `*mut ShellExecEnv` in its `Base`.
 pub(crate) struct ShellExecEnv {
     pub(crate) _buffered_stdout: Bufio,
     pub(crate) _buffered_stderr: Bufio,
@@ -1807,7 +1786,6 @@ impl ShellExecEnv {
         // Build NUL-terminated `new_cwd` in `buf`.
         let new_cwd_len: usize = if is_abs {
             buf[..new_cwd_.len()].copy_from_slice(new_cwd_);
-            buf[new_cwd_.len()] = 0;
             new_cwd_.len()
         } else {
             // `join_z_buf` normalizes `.`/`..` so the stored `$PWD`/`$OLDPWD`
@@ -1835,10 +1813,9 @@ impl ShellExecEnv {
             if n > 1 && buf[n - 1] == b'/' {
                 n -= 1;
             }
-            buf[n] = 0;
             n
         };
-        let new_cwd_z = bun_core::ZStr::from_buf(&buf[..], new_cwd_len);
+        let new_cwd_z = bun_core::ZStr::nul_terminate(&mut buf, new_cwd_len);
 
         self.cwd_fd = OwnedFd(shell_openat(
             self.cwd_fd.fd(),
@@ -1852,7 +1829,7 @@ impl ShellExecEnv {
 
         self.__cwd.clear();
         // include trailing NUL.
-        self.__cwd.extend_from_slice(&buf[..new_cwd_len + 1]);
+        self.__cwd.extend_from_slice(new_cwd_z.as_bytes_with_nul());
 
         debug_assert_eq!(*self.__cwd.last().unwrap(), 0);
         debug_assert_eq!(*self.__prev_cwd.last().unwrap(), 0);
@@ -1944,16 +1921,12 @@ pub(crate) use crate::shell::states::assigns::AssignCtx;
 fn open_null_device() -> bun_sys::Result<Fd> {
     #[cfg(unix)]
     {
-        bun_sys::open(
-            bun_core::ZStr::from_static(b"/dev/null\0"),
-            bun_sys::O::RDWR,
-            0,
-        )
+        bun_sys::open(bun_core::zstr!("/dev/null"), bun_sys::O::RDWR, 0)
     }
     #[cfg(windows)]
     {
         // Windows NUL is bidirectional regardless of the open flags.
-        bun_sys::open(bun_core::ZStr::from_static(b"nul\0"), bun_sys::O::RDWR, 0)
+        bun_sys::open(bun_core::zstr!("nul"), bun_sys::O::RDWR, 0)
     }
 }
 
@@ -2028,15 +2001,15 @@ impl Drop for OwnedFd {
 }
 
 /// Same as `bun_sys::dup` on POSIX; on Windows the duped handle is converted
-/// to a libuv-owned fd via `makeLibUVOwnedForSyscall(.dup, .close_on_fail)` so
+/// to a libuv-owned fd via `make_lib_uv_owned_for_syscall` so
 /// the IOWriter/IOReader uv-based async write/read paths receive a uv fd
 /// instead of a raw NT handle.
 pub(crate) fn shell_dup(fd: Fd) -> bun_sys::Result<Fd> {
     #[cfg(windows)]
     {
-        use bun_sys::FdExt;
-        bun_sys::dup(fd)?
-            .make_lib_uv_owned_for_syscall(bun_sys::Tag::dup, bun_sys::ErrorCase::CloseOnFail)
+        bun_sys::File::from_fd(bun_sys::dup(fd)?)
+            .make_lib_uv_owned_for_syscall(bun_sys::Tag::dup)
+            .map(bun_sys::File::into_raw)
     }
     #[cfg(not(windows))]
     {
@@ -2102,8 +2075,7 @@ fn shell_get_path<'a>(
             return Err(name_too_long());
         }
         buf[source_root_len..end].copy_from_slice(to_tail);
-        buf[end] = 0;
-        return Ok(bun_core::ZStr::from_buf(buf.as_slice(), end));
+        return Ok(bun_core::ZStr::nul_terminate(buf, end));
     }
     if bun_paths::Platform::Windows.is_absolute(to.as_bytes()) {
         return Ok(to);
@@ -2123,8 +2095,7 @@ fn shell_get_path<'a>(
         return Err(name_too_long());
     }
     buf[..len].copy_from_slice(joined);
-    buf[len] = 0;
-    Ok(bun_core::ZStr::from_buf(buf.as_slice(), len))
+    Ok(bun_core::ZStr::nul_terminate(buf, len))
 }
 
 /// Windows: rewrite the path via `shell_get_path` then `bun_sys::stat`, tagging
@@ -2171,7 +2142,6 @@ pub(crate) fn shell_openat(
 ) -> bun_sys::Result<Fd> {
     #[cfg(windows)]
     {
-        use bun_sys::FdExt;
         if flags & bun_sys::O::DIRECTORY != 0 {
             if bun_paths::Platform::Posix.is_absolute(path.as_bytes()) {
                 let mut buf = bun_paths::path_buffer_pool::get();
@@ -2185,11 +2155,10 @@ pub(crate) fn shell_openat(
                         ..Default::default()
                     },
                 )
+                .map(bun_sys::File::from_fd)
                 .map_err(|e| e.with_path(path.as_bytes()))?
-                .make_lib_uv_owned_for_syscall(
-                    bun_sys::Tag::open,
-                    bun_sys::ErrorCase::CloseOnFail,
-                );
+                .make_lib_uv_owned_for_syscall(bun_sys::Tag::open)
+                .map(bun_sys::File::into_raw);
             }
             return bun_sys::open_dir_at_windows_a(
                 dir,
@@ -2200,8 +2169,10 @@ pub(crate) fn shell_openat(
                     ..Default::default()
                 },
             )
+            .map(bun_sys::File::from_fd)
             .map_err(|e| e.with_path(path.as_bytes()))?
-            .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail);
+            .make_lib_uv_owned_for_syscall(bun_sys::Tag::open)
+            .map(bun_sys::File::into_raw);
         }
         let mut buf = bun_paths::path_buffer_pool::get();
         let p = shell_get_path(dir, path, &mut buf, bun_sys::Tag::open)?;
@@ -2216,245 +2187,10 @@ pub(crate) fn shell_openat(
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Builtin flag-parsing infra
-// ────────────────────────────────────────────────────────────────────────────
-
-/// Custom parse error for invalid options.
-///
-/// Payload slices borrow from the builtin's argv (NUL-terminated `Vec<u8>` in
-/// `Cmd::args`) or are `'static` literals.
-pub(crate) enum ParseError<'a> {
-    IllegalOption(&'a [u8]),
-    Unsupported(&'a [u8]),
-    ShowUsage,
-}
-
-impl<'a> ParseError<'a> {
-    /// The option-name payload.
-    #[inline]
-    pub(crate) fn opt(&self) -> &'a [u8] {
-        match *self {
-            ParseError::IllegalOption(s) | ParseError::Unsupported(s) => s,
-            ParseError::ShowUsage => b"",
-        }
-    }
-}
-
-pub(crate) enum ParseFlagResult<'a> {
-    ContinueParsing,
-    Done,
-    IllegalOption(&'a [u8]),
-    Unsupported(&'a [u8]),
-}
-
-/// Per-builtin opts type implements this to plug into `FlagParser::parse_flags`.
-pub(crate) trait FlagParser {
-    /// Handle a `--long` flag. Return `None` to fall through to short parsing.
-    fn parse_long<'a>(&mut self, flag: &'a [u8]) -> Option<ParseFlagResult<'a>>;
-    /// Handle one byte of a `-abc` cluster. Return `None` to keep iterating.
-    fn parse_short<'a>(
-        &mut self,
-        ch: u8,
-        smallflags: &'a [u8],
-        i: usize,
-    ) -> Option<ParseFlagResult<'a>>;
-}
-
-/// Returns the trailing non-flag args (`args[idx..]`) on success.
-pub(crate) fn parse_flags<'a, O: FlagParser>(
-    opts: &mut O,
-    args: &'a [*const core::ffi::c_char],
-) -> Result<Option<&'a [*const core::ffi::c_char]>, ParseError<'a>> {
-    if args.is_empty() {
-        return Ok(None);
-    }
-    let mut idx = 0usize;
-    while idx < args.len() {
-        // SAFETY: argv entries are NUL-terminated C strings (see Builtin::init) that stay
-        // put until the node is freed; every caller is done with `'a` inside the builtin's `start`.
-        let flag = unsafe { bun_core::ffi::cstr(args[idx]) }.to_bytes();
-        match parse_one_flag(opts, flag) {
-            ParseFlagResult::Done => return Ok(Some(&args[idx..])),
-            ParseFlagResult::ContinueParsing => {}
-            ParseFlagResult::IllegalOption(s) => return Err(ParseError::IllegalOption(s)),
-            ParseFlagResult::Unsupported(s) => return Err(ParseError::Unsupported(s)),
-        }
-        idx += 1;
-    }
-    Err(ParseError::ShowUsage)
-}
-
-fn parse_one_flag<'a, O: FlagParser>(opts: &mut O, flag: &'a [u8]) -> ParseFlagResult<'a> {
-    if flag.is_empty() || flag[0] != b'-' {
-        return ParseFlagResult::Done;
-    }
-    if flag.len() == 1 {
-        return ParseFlagResult::IllegalOption(b"-");
-    }
-    if flag.len() > 2 && flag[1] == b'-' {
-        if let Some(r) = opts.parse_long(flag) {
-            return r;
-        }
-    }
-    let small_flags = &flag[1..];
-    for (i, &ch) in small_flags.iter().enumerate() {
-        if let Some(r) = opts.parse_short(ch, small_flags, i) {
-            return r;
-        }
-    }
-    ParseFlagResult::ContinueParsing
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// OutputTask
-// ────────────────────────────────────────────────────────────────────────────
-
-/// Owned bytes a builtin's async sub-task
-/// produced off-thread, queued for stdout once back on the main thread.
-pub(crate) enum OutputSrc {
-    /// Owned, freed on drop.
-    Arrlist(Vec<u8>),
-}
-
-impl OutputSrc {
-    pub(crate) fn slice(&self) -> &[u8] {
-        match self {
-            OutputSrc::Arrlist(v) => v.as_slice(),
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum OutputTaskState {
-    WaitingWriteErr,
-    WaitingWriteOut,
-    Done,
-}
-
-/// Vtable trait the parent builtin implements. All hooks
-/// take `(&mut Interpreter, NodeId)` (NodeId style — the parent builtin lives
-/// inside the interpreter's node arena).
-///
-/// `child` is the `OutputTask` itself: `write_*` keep it until the IOWriter
-/// chunk completes (`Break`), or hand it back after a synchronous write (`Continue`).
-pub(crate) trait OutputTaskVTable: Sized {
-    fn write_err(
-        interp: &Interpreter,
-        cmd: NodeId,
-        child: Box<OutputTask<Self>>,
-        errbuf: &[u8],
-    ) -> ControlFlow<Yield, Box<OutputTask<Self>>>;
-    fn on_write_err(interp: &Interpreter, cmd: NodeId);
-    fn write_out(
-        interp: &Interpreter,
-        cmd: NodeId,
-        child: Box<OutputTask<Self>>,
-    ) -> ControlFlow<Yield, Box<OutputTask<Self>>>;
-    fn on_write_out(interp: &Interpreter, cmd: NodeId);
-    fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield;
-}
-
-/// A task that can write to stdout and/or stderr.
-///
-/// Owned by the running frame, or by the builtin while an IOWriter chunk is
-/// in flight; freed by `deinit`.
-pub(crate) struct OutputTask<P: OutputTaskVTable> {
-    /// Owning Cmd node (the builtin's `cmd` id).
-    pub(crate) parent: NodeId,
-    pub(crate) output: OutputSrc,
-    pub(crate) state: OutputTaskState,
-    _marker: core::marker::PhantomData<P>,
-}
-
-impl<P: OutputTaskVTable> OutputTask<P> {
-    pub(crate) fn new(parent: NodeId, output: OutputSrc) -> Box<Self> {
-        Box::new(OutputTask {
-            parent,
-            output,
-            state: OutputTaskState::WaitingWriteErr,
-            _marker: core::marker::PhantomData,
-        })
-    }
-
-    /// Takes the freshly-constructed task by `Box` (callers always pair `new`
-    /// → `start`) and drives the first state transition. The box is dropped by
-    /// [`Self::deinit`] when the task reaches `Done`.
-    pub(crate) fn start(mut me: Box<Self>, interp: &Interpreter, errbuf: Option<&[u8]>) -> Yield {
-        log!(
-            "OutputTask(0x{:x}) start errbuf={:?}",
-            std::ptr::from_ref(&*me) as usize,
-            errbuf.map(|b| b.len())
-        );
-        me.state = OutputTaskState::WaitingWriteErr;
-        if let Some(err) = errbuf {
-            return match P::write_err(interp, me.parent, me, err) {
-                ControlFlow::Break(y) => y,
-                ControlFlow::Continue(me) => Self::next(me, interp),
-            };
-        }
-        me.state = OutputTaskState::WaitingWriteOut;
-        let mut me = match P::write_out(interp, me.parent, me) {
-            ControlFlow::Break(y) => return y,
-            ControlFlow::Continue(me) => me,
-        };
-        P::on_write_out(interp, me.parent);
-        me.state = OutputTaskState::Done;
-        Self::deinit(me, interp)
-    }
-
-    pub(crate) fn next(mut me: Box<Self>, interp: &Interpreter) -> Yield {
-        match me.state {
-            OutputTaskState::WaitingWriteErr => {
-                P::on_write_err(interp, me.parent);
-                me.state = OutputTaskState::WaitingWriteOut;
-                let mut me = match P::write_out(interp, me.parent, me) {
-                    ControlFlow::Break(y) => return y,
-                    ControlFlow::Continue(me) => me,
-                };
-                P::on_write_out(interp, me.parent);
-                me.state = OutputTaskState::Done;
-                Self::deinit(me, interp)
-            }
-            OutputTaskState::WaitingWriteOut => {
-                P::on_write_out(interp, me.parent);
-                me.state = OutputTaskState::Done;
-                Self::deinit(me, interp)
-            }
-            OutputTaskState::Done => panic!("Invalid state"),
-        }
-    }
-
-    pub(crate) fn on_io_writer_chunk(
-        me: Box<Self>,
-        interp: &Interpreter,
-        _written: usize,
-        _err: Option<bun_sys::SystemError>,
-    ) -> Yield {
-        log!(
-            "OutputTask(0x{:x}) onIOWriterChunk",
-            std::ptr::from_ref(&*me) as usize
-        );
-        Self::next(me, interp)
-    }
-
-    /// Frees, then fires `on_done`.
-    fn deinit(me: Box<Self>, interp: &Interpreter) -> Yield {
-        debug_assert!(me.state == OutputTaskState::Done);
-        log!(
-            "OutputTask(0x{:x}) deinit",
-            std::ptr::from_ref(&*me) as usize
-        );
-        let parent = me.parent;
-        drop(me);
-        P::on_done(interp, parent)
-    }
-}
-
-// ────────────────────────────────────────────────────────────────────────────
 // ShellTask
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Thread-pool task wrapper used by [`PoolTask`] and the mv/rm/cp builtins.
+/// Thread-pool task wrapper used by [`PoolTask`] and the rm/cp builtins.
 ///
 /// A trait the per-builtin task struct implements. The container-of chain
 /// (WorkPoolTask → ShellTask → Ctx) is built from `core::mem::offset_of!` in
@@ -2577,7 +2313,7 @@ impl ShellTask {
     ///
     /// SAFETY: `ctx` must be a live heap allocation that embeds this
     /// `ShellTask` at `C::TASK_OFFSET` and outlives the worker-thread call.
-    pub(crate) unsafe fn schedule<C: ShellTaskCtx>(ctx: *mut C) {
+    unsafe fn schedule<C: ShellTaskCtx>(ctx: *mut C) {
         log!("ShellTask schedule");
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
         unsafe {
@@ -2631,7 +2367,7 @@ impl ShellTask {
     /// [`schedule`](Self::schedule); not touched again on the worker thread
     /// after this returns.
     pub(crate) unsafe fn on_finish<C: ShellTaskCtx>(ctx: *mut C) {
-        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTask};
+        use bun_event_loop::EventLoopTask;
         log!("ShellTask onFinish");
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
         // Stay on raw pointers: once `enqueue_task_concurrent` returns, the
@@ -2648,8 +2384,7 @@ impl ShellTask {
             match &mut (*this).concurrent_task {
                 EventLoopTask::Js(ct) => {
                     // Tag resolved via `C: Taskable`.
-                    ct.from(ctx, AutoDeinit::ManualDeinit);
-                    poster.post_js(core::ptr::NonNull::from(ct));
+                    poster.post_js_intrusive(core::ptr::NonNull::from(ct.from(ctx)));
                 }
                 EventLoopTask::Mini(at) => {
                     // Pass the monomorphised callback explicitly.

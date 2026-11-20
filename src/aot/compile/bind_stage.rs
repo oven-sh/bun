@@ -21,7 +21,9 @@ use crate::load::loaders::{gives_data, loader_by_path};
 use crate::load::module_paths::compute_display_path;
 use crate::load::plugin_modules::{first_error_of, warn_instead_of_errors};
 use crate::load::source_provider::{RefusedText, SourceProvider};
-use crate::load::sources::{JSON_PARSE_ERROR_FOR_BLANK_TEXT, Sources, parsed_source};
+use crate::load::sources::{
+    JSON_PARSE_ERROR_FOR_BLANK_TEXT, Sources, may_replace_evaluators, parsed_source,
+};
 use crate::load::{PerProject, ProjectId};
 use crate::module_keys::type_attribute_of;
 use crate::modules::{
@@ -1317,11 +1319,12 @@ fn keep_where_parsers_refused_data(
             paths.display_path,
             b"\" could not be parsed as ",
             type_attribute_of(*loader).as_bytes(),
-        ];
+        ]
+        .concat();
         provider.keep_where_text_is_refused(&RefusedText {
             path: paths.public_path,
             is_syntax_error: *loader == Loader::Json,
-            message: said_by_bun_run.unwrap_or(&message.concat()),
+            message: said_by_bun_run.unwrap_or(&message),
             line: place.line,
             column: place.column,
             offset: place.offset,
@@ -1756,6 +1759,7 @@ impl Build<'_> {
                         view.files(),
                         view.sources,
                         &graph,
+                        &self.started_workers.names_of_loads,
                         &left_out.files,
                         &in_parallel,
                     );
@@ -1818,6 +1822,10 @@ impl Build<'_> {
                         platform: self.platform,
                         library: None,
                         known_helpers: None,
+                        may_replace_evaluators: may_replace_evaluators(
+                            view.files(),
+                            loaded.can_load_code_at_run_time,
+                        ),
                     };
                     for &(file, place) in &reached.places_that_hand_module_cache_on {
                         if !hands_module_cache_to_code_out_of_sight(&linked, file, place) {

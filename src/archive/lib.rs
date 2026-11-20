@@ -3,13 +3,11 @@
 
 use bun_alloc::AllocError;
 use bun_collections::StringArrayHashMap;
-#[cfg(unix)]
-use bun_core::ZStr;
 use bun_core::{MutableString, strings};
 use bun_core::{Output, slice_as_bytes};
 #[cfg(unix)]
 use bun_paths::PathBuffer;
-use bun_paths::{OSPathChar, SEP, SEP_STR};
+use bun_paths::{OSPathChar, OSPathSliceZ, SEP, SEP_STR};
 #[cfg(unix)]
 use bun_sys::beneath::{self, Symlinks};
 use bun_sys::{self, Fd, FdExt, File};
@@ -349,11 +347,8 @@ fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> crate::Result<()> {
     // returns BadPathName here.
     let it = bun_paths::ComponentIterator::init(sub_path, bun_paths::PathFormat::Windows)?;
     bun_paths::make_path_with(it, |prefix| {
-        match open_dir_at_windows(dir_fd, prefix, opts) {
-            Ok(fd) => {
-                fd.close();
-                Ok(bun_paths::MakePathStep::Created)
-            }
+        match open_dir_at_windows(dir_fd, prefix, opts).map(File::from_fd) {
+            Ok(_) => Ok(bun_paths::MakePathStep::Created),
             Err(e) if e.get_errno() == E::ENOENT => Ok(bun_paths::MakePathStep::NotFound(e.into())),
             Err(e) => Err(e.into()),
         }
@@ -430,24 +425,10 @@ impl Archiver {
         // whatever its size.
         leaves_root: &mut dyn FnMut(&[u8]) -> bun_sys::Result<bool>,
     ) -> crate::Result<()> {
-        // Uses the bun_sys directory-fd helpers (open_dir_absolute / open_dir_at).
-        let dir: Fd = 'brk: {
-            let cwd = Fd::cwd();
-
-            // if the destination doesn't exist, we skip the whole thing since nothing can overwrite it.
-            if bun_paths::is_absolute(root) {
-                let Ok(d) = bun_sys::open_dir_absolute(root) else {
-                    return Ok(());
-                };
-                break 'brk d;
-            } else {
-                let Ok(d) = bun_sys::open_dir_at(cwd, root) else {
-                    return Ok(());
-                };
-                break 'brk d;
-            }
+        // if the destination doesn't exist, we skip the whole thing since nothing can overwrite it.
+        let Ok(dir) = bun_sys::Dir::open(root) else {
+            return Ok(());
         };
-        let _close_dir = bun_sys::CloseOnDrop::new(dir);
 
         let mut reader = open_memory(file_buffer, Dialect::General)?;
         let mut normalized_buf = bun_paths::path_buffer_pool::get();
@@ -511,11 +492,10 @@ impl Archiver {
             let size: usize = usize::try_from(entry.size().max(0)).unwrap();
             let in_the_way = leaves_root(pathname)?
                 || (size > 0
-                    && match bun_sys::openat_a(dir, pathname, bun_sys::O::WRONLY, 0) {
-                        Ok(opened) => {
-                            let _close = bun_sys::CloseOnDrop::new(opened);
-                            bun_sys::get_file_size(opened)? > 0
-                        }
+                    && match bun_sys::openat_a(&dir, pathname, bun_sys::O::WRONLY, 0)
+                        .map(bun_sys::CloseOnDrop::new)
+                    {
+                        Ok(opened) => opened.get_end_pos()? > 0,
                         Err(_) => false,
                     });
 
@@ -666,7 +646,7 @@ impl Archiver {
                     )
                 })
             };
-            let Some(normalized) = normalized else {
+            let Some(path) = normalized else {
                 if options.log {
                     bun_core::warn!(
                         "Skipping entry with a path longer than the maximum path length: {}\n",
@@ -678,10 +658,6 @@ impl Archiver {
                 }
                 continue;
             };
-            let normalized_len = normalized.len();
-            normalized_buf[normalized_len] = 0;
-            // SAFETY: we just wrote a NUL at normalized_buf[normalized_len]
-            let path: &mut [OSPathChar] = &mut normalized_buf[..normalized_len];
             if path.is_empty() || (path.len() == 1 && path[0] == b'.' as OSPathChar) {
                 continue;
             }
@@ -712,7 +688,9 @@ impl Archiver {
                 continue 'loop_;
             }
 
-            let path_slice: &[OSPathChar] = &path[..];
+            let normalized_len = path.len();
+            let path_z = OSPathSliceZ::nul_terminate(&mut normalized_buf, normalized_len);
+            let path_slice: &[OSPathChar] = path_z;
 
             if options.log {
                 bun_core::prettyln!(
@@ -817,9 +795,6 @@ impl Archiver {
                     #[cfg(not(windows))]
                     let file_handle_native: Fd = {
                         // dir.createFileZ(.{truncate, mode}) → bun_sys::openat
-                        // SAFETY: normalized_buf[path_slice.len()] == 0 (written above).
-                        let path_z: &ZStr =
-                            unsafe { ZStr::from_raw(path_slice.as_ptr(), path_slice.len()) };
                         match beneath::openat(dir_fd, path_z, flags, mode, symlinks) {
                             Ok(fd) => fd,
                             Err(err) => match err.get_errno() {
@@ -836,13 +811,7 @@ impl Archiver {
                         }
                     };
 
-                    let output = match file_handle_native.make_lib_uv_owned() {
-                        Ok(fd) => File::from_fd(fd),
-                        Err(err) => {
-                            file_handle_native.close();
-                            return Err(err.into());
-                        }
-                    };
+                    let output = File::from_fd(file_handle_native).make_lib_uv_owned()?;
 
                     let size: usize = usize::try_from(entry.size().max(0)).unwrap();
 

@@ -519,16 +519,16 @@ pub fn do_patch_commit(
         None,
     );
     let cache_dir = cache_result.cache_dir;
-    let cache_dir_subpath = cache_result.cache_dir_subpath.as_bytes().to_vec();
+    let cache_dir_subpath = cache_result.cache_dir_subpath.as_bytes();
     let cache_path = cache_dir_path(cache_dir);
     let old_folder =
-        resolve_path::join::<platform::Posix>(&[&cache_path, &cache_dir_subpath]).to_vec();
+        resolve_path::join::<platform::Posix>(&[&cache_path, cache_dir_subpath]).to_vec();
     let new_folder = real_folder(&manager.lockfile, &cache_path, &target.folder, false);
     make_bins_executable(
         &manager.lockfile,
         &pkg,
         cache_dir,
-        &cache_dir_subpath,
+        cache_dir_subpath,
         &new_folder,
     );
 
@@ -614,7 +614,7 @@ pub fn do_patch_commit(
     // install fail.
     if !patch_applies(
         cache_dir,
-        &cache_dir_subpath,
+        cache_dir_subpath,
         &new_folder,
         &bun_ast::Source::init_path_string(&patch_filename[..], &patchfile_contents[..]),
     ) {
@@ -783,7 +783,7 @@ fn diff_against_cache(
         &from_cwd(cwd.as_bytes(), old_folder),
         &from_cwd(cwd.as_bytes(), new_folder),
     );
-    let spawned = bun_patch::spawn_git_diff(&paths[0], &paths[1], cwd, git, &manager.event_loop);
+    let spawned = bun_patch::spawn_git_diff(&paths[0], &paths[1], cwd, git, manager.event_loop);
     let mut spawn_result = match spawned {
         Err(e) => {
             bun_core::pretty_error!("<r><red>error<r>: failed to make diff {}<r>\n", e.name(),);
@@ -1087,7 +1087,7 @@ fn has_trusted_scripts(
     folder: &[u8],
 ) -> bool {
     if !manager.options.do_.run_scripts()
-        || !(manager.lockfile).has_trusted_dependency(name, name, &pkg.resolution)
+        || !(manager.lockfile).has_trusted_dependency(&manager.options, name, name, &pkg.resolution)
     {
         return false;
     }
@@ -1156,28 +1156,26 @@ fn make_bins_executable(
     ) else {
         return;
     };
-    let cache_entry = strings::StringOrTinyString::init(cache_dir_subpath);
     let mut abs_target_buf = bun_paths::path_buffer_pool::get();
     let mut abs_dest_buf = bun_paths::path_buffer_pool::get();
     let mut rel_buf = bun_paths::path_buffer_pool::get();
     bin::Linker {
         bin: pkg.bin,
-        target_node_modules_path: &raw const cache_path,
-        target_package_name: cache_entry,
+        target_node_modules_path: Some(&cache_path),
+        target_package_name: cache_dir_subpath,
         seen: None,
         node_modules_path: &mut links_path,
-        package_name: cache_entry,
+        package_name: cache_dir_subpath,
         global_bin_path: ZStr::EMPTY,
         string_buf: lockfile.buffers.string_bytes.as_slice(),
         extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
         abs_target_buf: abs_target_buf.as_mut_slice(),
-        abs_dest_buf: abs_dest_buf.as_mut_slice(),
         rel_buf: rel_buf.as_mut_slice(),
         is_behind_link: Some(false),
         err: None,
         skipped_due_to_missing_bin: false,
     }
-    .link(false);
+    .link(false, abs_dest_buf.as_mut_slice());
 }
 
 /// The patched package's cache entry can be missing, because an install that finds the patched

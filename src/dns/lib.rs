@@ -10,32 +10,23 @@ use bun_core::{String as BunString, ZStr};
 use bun_wyhash::Wyhash11 as Wyhash;
 
 // `libc` does not expose winsock types/constants on Windows; route every
-// `libc::AF_*` / `addrinfo` / `sockaddr_*` reference through this shim so
+// `libc::AF_*` / `addrinfo` reference through this shim so
 // the body of this crate stays cfg-free.
 #[cfg(not(windows))]
 mod sock {
     pub use libc::addrinfo;
     pub(crate) use libc::{
-        AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM,
-        freeaddrinfo, getaddrinfo, sockaddr_un,
+        AF_INET, AF_INET6, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM, freeaddrinfo,
+        getaddrinfo,
     };
 }
 #[cfg(windows)]
 mod sock {
     pub use bun_windows_sys::ws2_32::addrinfo;
     pub(crate) use bun_windows_sys::ws2_32::{
-        AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM,
-        freeaddrinfo, getaddrinfo,
+        AF_INET, AF_INET6, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM, freeaddrinfo,
+        getaddrinfo,
     };
-    // Windows SDK ships <afunix.h> (SOCKADDR_UN) since win10_rs4 but neither
-    // windows-sys nor bun_windows_sys export it. Mirror the on-the-wire layout
-    // (`{ family: u16, path: [108]u8 }`) here so address_to_string stays
-    // cfg-free below.
-    #[repr(C)]
-    pub(crate) struct sockaddr_un {
-        pub sun_family: u16,
-        pub sun_path: [u8; 108],
-    }
 }
 
 pub use sock::addrinfo;
@@ -66,13 +57,14 @@ impl AddrInfoList {
             _ => Err(status),
         }
     }
-}
 
-impl core::ops::Deref for AddrInfoList {
-    type Target = addrinfo;
-    fn deref(&self) -> &addrinfo {
+    pub fn addresses(&self) -> Addresses<'_> {
         // SAFETY: live until `drop`.
-        unsafe { self.0.as_ref() }
+        Addresses(Some(unsafe { self.0.as_ref() }))
+    }
+
+    pub fn to_list(&self) -> ResultList {
+        self.addresses().into_list()
     }
 }
 
@@ -80,6 +72,39 @@ impl Drop for AddrInfoList {
     fn drop(&mut self) {
         // SAFETY: from `getaddrinfo`.
         unsafe { sock::freeaddrinfo(self.0.as_ptr()) }
+    }
+}
+
+/// Iterator over the bytes of each non-null `ai_addr` of a `getaddrinfo` result.
+#[derive(Clone)]
+pub struct Addresses<'a>(Option<&'a addrinfo>);
+
+impl Addresses<'_> {
+    fn into_list(self) -> ResultList {
+        let mut list = ResultList::with_capacity(self.clone().count());
+        list.extend(self.map(|address| GetAddrInfoResult {
+            address: Address::from_bytes(address),
+            // no TTL in POSIX getaddrinfo()
+            ttl: 0,
+        }));
+        list
+    }
+}
+
+impl<'a> Iterator for Addresses<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<&'a [u8]> {
+        loop {
+            let entry = self.0?;
+            // SAFETY: `ai_next` is null or the next entry of the list.
+            self.0 = unsafe { entry.ai_next.as_ref() };
+            if !entry.ai_addr.is_null() {
+                let (addr, len) = (entry.ai_addr.cast::<u8>(), entry.ai_addrlen as usize);
+                // SAFETY: `getaddrinfo` initialized `ai_addrlen` bytes at `ai_addr`.
+                return Some(unsafe { core::slice::from_raw_parts(addr, len) });
+            }
+        }
     }
 }
 
@@ -330,38 +355,12 @@ pub struct GetAddrInfoResult {
 
 pub type ResultList = Vec<GetAddrInfoResult>;
 
+#[cfg(windows)]
 impl GetAddrInfoResult {
-    pub fn to_list(addrinfo: &sock::addrinfo) -> ResultList {
-        let mut list = ResultList::with_capacity(addr_info_count(addrinfo) as usize);
-
-        let mut addr: *const sock::addrinfo = addrinfo;
-        while !addr.is_null() {
-            // SAFETY: addr is non-null, points into the getaddrinfo result chain
-            let a = unsafe { &*addr };
-            if let Some(r) = Self::from_addr_info(a) {
-                list.push(r);
-            }
-            addr = a.ai_next;
-        }
-
-        list
-    }
-
-    fn from_addr_info(addrinfo: &sock::addrinfo) -> Option<GetAddrInfoResult> {
-        let sockaddr = addrinfo.ai_addr;
-        if sockaddr.is_null() {
-            return None;
-        }
-        Some(GetAddrInfoResult {
-            // SAFETY: `ai_addr` is non-null and points to a valid sockaddr per
-            // getaddrinfo's contract. `.cast()` erases the nominal-type
-            // mismatch on Windows (ws2_32::sockaddr ↔ the libuv-sys mirror
-            // `bun_sys::posix::sockaddr` routes to) — both are the 16-byte
-            // ws2def.h `SOCKADDR`.
-            address: unsafe { Address::init_posix(sockaddr.cast()) },
-            // no TTL in POSIX getaddrinfo()
-            ttl: 0,
-        })
+    /// # Safety
+    /// `addrinfo` is an entry of a `getaddrinfo` result.
+    pub unsafe fn to_list(addrinfo: &sock::addrinfo) -> ResultList {
+        Addresses(Some(addrinfo)).into_list()
     }
 }
 
@@ -371,7 +370,7 @@ pub fn address_to_string(address: &Address) -> BunString {
     match address.family() {
         sock::AF_INET => {
             let v4 = address.as_in4().unwrap(); // family() just checked
-            let bytes: [u8; 4] = v4.sin_addr.s_addr.to_ne_bytes();
+            let bytes: [u8; 4] = v4.addr.to_ne_bytes();
             BunString::create_format(format_args!(
                 "{}.{}.{}.{}",
                 bytes[0], bytes[1], bytes[2], bytes[3]
@@ -384,45 +383,28 @@ pub fn address_to_string(address: &Address) -> BunString {
             // link-local from getaddrinfo) — ntop only sees the 16 raw addr
             // bytes and cannot emit it itself.
             let mut buf = [0u8; 64]; // >= INET6_ADDRSTRLEN (46) + "%4294967295" (11)
-            // SAFETY: sin6_addr is a valid in6_addr; buf len fits INET6_ADDRSTRLEN.
-            let n = match unsafe {
-                bun_cares_sys::ntop(sock::AF_INET6, (&raw const v6.sin6_addr).cast(), &mut buf)
-            } {
+            let n = match bun_cares_sys::ntop(&v6.addr, &mut buf) {
                 Some(s) => s.len(),
                 None => return BunString::EMPTY,
             };
-            let len = if v6.sin6_scope_id != 0 {
+            let len = if v6.scope_id != 0 {
                 let mut cursor = &mut buf[n..];
                 let before = cursor.len();
                 // 64 - 46 = 18 > len("%4294967295") = 11, cannot truncate.
-                let _ = write!(cursor, "%{}", v6.sin6_scope_id);
+                let _ = write!(cursor, "%{}", v6.scope_id);
                 n + (before - cursor.len())
             } else {
                 n
             };
             BunString::clone_latin1(&buf[..len])
         }
-        sock::AF_UNIX => {
-            // Unix sockets exist on every target Bun ships (Windows 10 rs4+
-            // included), so no cfg.
-            // SAFETY: family() == AF_UNIX; sockaddr_storage is >= sizeof(sockaddr_un).
-            let un = unsafe { &*address.as_sockaddr().cast::<sock::sockaddr_un>() };
+        #[cfg(unix)]
+        libc::AF_UNIX => {
+            let un = address.as_un().unwrap(); // family() just checked
             BunString::clone_latin1(bun_core::slice_as_bytes(&un.sun_path))
         }
         _ => BunString::EMPTY,
     }
-}
-
-fn addr_info_count(addrinfo: &sock::addrinfo) -> u32 {
-    let mut count: u32 = 1;
-    let mut current: *mut sock::addrinfo = addrinfo.ai_next;
-    while !current.is_null() {
-        // SAFETY: current is non-null, points into the getaddrinfo result chain
-        let cur = unsafe { &*current };
-        count += (!cur.ai_addr.is_null()) as u32;
-        current = cur.ai_next;
-    }
-    count
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -493,17 +475,10 @@ pub fn is_valid_hostname(name: &[u8]) -> bool {
 
 /// The process-wide DNS
 /// cache lives in `bun_runtime` (it owns libinfo/libuv worker threads + JSC
-/// stat counters). Lower-tier crates (`bun_http`, `bun_install`) reach it via
-/// the link-time `Bun__addrinfo_*` family — same mechanism usockets C uses —
+/// stat counters). `bun_install` reaches it via a link-time extern
 /// rather than a `bun_runtime` crate dep, which would cycle.
 pub mod internal {
     use core::ffi::c_void;
-
-    unsafe extern "C" {
-        // Defined in `bun_runtime::dns_jsc::internal` alongside the other
-        // `Bun__addrinfo_*` exports; resolved at link time.
-        fn Bun__addrinfo_registerQuic(request: *mut c_void, pc: *mut c_void);
-    }
 
     unsafe extern "Rust" {
         /// `bun.dns.internal.prefetch` — kick off an async DNS resolution for
@@ -520,20 +495,5 @@ pub mod internal {
         // SAFETY: link-time extern of this signature. The macOS body dereferences
         // `loop_`, for which the one caller passes its live uws loop.
         unsafe { __bun_dns_prefetch(loop_.cast::<c_void>(), hostname, port) }
-    }
-
-    /// Register `pc` to be notified when the addrinfo `request` resolves.
-    /// Mirrors `us_getaddrinfo_set` for the QUIC client connect path, which
-    /// has no `us_connecting_socket_t` to hang the callback on.
-    ///
-    /// SAFETY: `request` must be the live addrinfo request handle returned by
-    /// `us_quic_pending_connect_addrinfo`; `pc` must be a live
-    /// `bun_http::H3::PendingConnect` that stays valid until its
-    /// `on_dns_resolved[_threadsafe]` fires.
-    #[inline]
-    pub unsafe fn register_quic(request: *mut c_void, pc: *mut c_void) {
-        // SAFETY: forwarded to the runtime export; both pointers are opaque on
-        // this side of the crate boundary and re-typed by the callee.
-        unsafe { Bun__addrinfo_registerQuic(request, pc) }
     }
 }

@@ -356,6 +356,7 @@ function connectionListenerHTTP1(server, socket, options) {
     continueExpression,
     MAX_HEADER_PAIRS,
   } = require("node:_http_common");
+  const { kReqShouldKeepAlive } = require("node:_http_incoming");
   const { ConnResetException } = require("internal/shared");
   const { kHandle: kHttp1ResponseHandle, kHeaderSource, http1ServerPipeline } = require("internal/http");
   // Populated by node:_http_server, which the require("node:http") above loads.
@@ -451,6 +452,7 @@ function connectionListenerHTTP1(server, socket, options) {
     req.url = url;
     req.method = typeof methodNum === "number" ? allMethods[methodNum] : methodNum;
     req.upgrade = upgrade;
+    if (!shouldKeepAlive) req[kReqShouldKeepAlive] = false;
     // _addHeaderLine reads this off the request (Node's parserOnHeadersComplete copies it the same way).
     if (server.joinDuplicateHeaders) {
       req.joinDuplicateHeaders = true;
@@ -458,7 +460,7 @@ function connectionListenerHTTP1(server, socket, options) {
     req._addHeaderLines(rawHeaders, rawHeaders.length);
 
     // Node's parserOnIncoming: upgrade only sticks for CONNECT or when an 'upgrade' listener
-    // exists; otherwise fall through to normal dispatch. Returning 2 makes llhttp stop after
+    // exists; otherwise fall through to normal dispatch. Returning 2 makes the parser stop after
     // this message so tunnel bytes are never parsed as HTTP.
     if (upgrade) {
       req.upgrade =
@@ -640,7 +642,7 @@ function connectionListenerHTTP1(server, socket, options) {
   function onHttp1SocketErrorListener(err) {
     onHttp1SocketError(err, undefined);
   }
-  // Node's socketOnEnd: let llhttp detect a message cut short by EOF, then end
+  // Node's socketOnEnd: let the parser detect a message cut short by EOF, then end
   // the connection the way Node does (httpAllowHalfOpen / _last / idle end).
   function onHttp1SocketEnd() {
     const ret = parser.finish();

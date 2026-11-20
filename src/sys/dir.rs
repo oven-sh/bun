@@ -130,18 +130,13 @@ impl Dir {
         struct StackItem {
             name: Vec<u8>,
             parent_dir: Fd,
-            iter: dir_iterator::WrappedIterator,
-        }
-        impl Drop for StackItem {
-            fn drop(&mut self) {
-                let _ = close(self.iter.dir());
-            }
+            iter: dir_iterator::OwnedIterator,
         }
         let mut stack = Vec::<StackItem>::with_capacity(16);
         stack.push(StackItem {
             name: sub_path.to_vec(),
             parent_dir: self.fd,
-            iter: dir_iterator::iterate(initial),
+            iter: dir_iterator::iterate_owned(initial),
         });
 
         'process_stack: while let Some(top) = stack.last_mut() {
@@ -158,7 +153,7 @@ impl Dir {
                             O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
                             0,
                         ) {
-                            Ok(fd) => fd,
+                            Ok(fd) => Dir::from_fd(fd),
                             Err(e) => match e.get_errno() {
                                 E::ENOTDIR => match unlink_err.take() {
                                     Some(unlink_err) => return Err(unlink_err),
@@ -177,7 +172,7 @@ impl Dir {
                         stack.push(StackItem {
                             name,
                             parent_dir: dir,
-                            iter: dir_iterator::iterate(new_dir),
+                            iter: dir_iterator::iterate_owned(new_dir),
                         });
                         continue 'process_stack;
                     } else {
@@ -227,7 +222,7 @@ impl Dir {
                     O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
                     0,
                 ) {
-                    Ok(fd) => fd,
+                    Ok(fd) => Dir::from_fd(fd),
                     Err(e) => match e.get_errno() {
                         E::ENOTDIR => {
                             // Racing fs: it became a file; unlink it.
@@ -246,7 +241,7 @@ impl Dir {
                 stack.push(StackItem {
                     name,
                     parent_dir,
-                    iter: dir_iterator::iterate(new_dir),
+                    iter: dir_iterator::iterate_owned(new_dir),
                 });
                 continue 'process_stack;
             }
@@ -256,9 +251,9 @@ impl Dir {
 
     /// Try removing
     /// `sub_path` as a file; on `EISDIR`/`EPERM` open it as an iterable
-    /// directory and return the fd. Returns `None` when removal succeeded or
+    /// directory and return it. Returns `None` when removal succeeded or
     /// the path doesn't exist.
-    fn delete_tree_open_initial_subpath(&self, sub_path: &[u8]) -> Maybe<Option<Fd>> {
+    fn delete_tree_open_initial_subpath(&self, sub_path: &[u8]) -> Maybe<Option<Dir>> {
         let mut unlink_err: Option<Error> = None;
         loop {
             match unlinkat_a(self.fd, sub_path, 0) {
@@ -278,7 +273,7 @@ impl Dir {
                 O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
                 0,
             ) {
-                Ok(fd) => return Ok(Some(fd)),
+                Ok(fd) => return Ok(Some(Dir::from_fd(fd))),
                 Err(e) => match e.get_errno() {
                     E::ENOENT => return Ok(None),
                     E::ENOTDIR => match unlink_err.take() {
@@ -309,9 +304,7 @@ fn unlinkat_a(dirfd: Fd, path: &[u8], flags: i32) -> Maybe<()> {
     let mut buf = bun_paths::path_buffer_pool::get();
     let len = path.len().min(buf.0.len() - 1);
     buf.0[..len].copy_from_slice(&path[..len]);
-    buf.0[len] = 0;
-    // SAFETY: NUL-terminated above.
-    let z = ZStr::from_buf(&buf.0[..], len);
+    let z = ZStr::nul_terminate(&mut buf, len);
     unlinkat_with_flags(dirfd, z, flags)
 }
 
@@ -332,9 +325,7 @@ impl Dir {
         let mut buf = bun_paths::path_buffer_pool::get();
         let len = sub_path.len().min(buf.0.len() - 1);
         buf.0[..len].copy_from_slice(&sub_path[..len]);
-        buf.0[len] = 0;
-        // SAFETY: NUL-terminated above.
-        let z = ZStr::from_buf(&buf.0[..], len);
+        let z = ZStr::nul_terminate(&mut buf, len);
         match mkdirat(self.fd, z, 0o755) {
             Ok(()) => Ok(()),
             Err(e) if e.get_errno() == E::EEXIST => Err(bun_errno::SystemErrno::EEXIST),
@@ -350,16 +341,12 @@ impl Dir {
         let mut tbuf = bun_paths::path_buffer_pool::get();
         let tlen = target.len().min(tbuf.0.len() - 1);
         tbuf.0[..tlen].copy_from_slice(&target[..tlen]);
-        tbuf.0[tlen] = 0;
-        // SAFETY: NUL-terminated above.
-        let tz = ZStr::from_buf(&tbuf.0[..], tlen);
+        let tz = ZStr::nul_terminate(&mut tbuf, tlen);
 
         let mut lbuf = bun_paths::path_buffer_pool::get();
         let llen = link_name.len().min(lbuf.0.len() - 1);
         lbuf.0[..llen].copy_from_slice(&link_name[..llen]);
-        lbuf.0[llen] = 0;
-        // SAFETY: NUL-terminated above.
-        let lz = ZStr::from_buf(&lbuf.0[..], llen);
+        let lz = ZStr::nul_terminate(&mut lbuf, llen);
 
         symlinkat(tz, self.fd, lz)
     }

@@ -824,7 +824,7 @@ impl Checker<'_, '_> {
     pub(super) fn is_effective_external_module(&self, file: FileId) -> bool {
         let (module, kind) = (self.files().module(file), self.module_options(file).module);
         // `isCommonJSContainingModuleKind`
-        module.hir.has_module_syntax
+        module.facts.has_module_syntax
             || (kind == ModuleKind::CommonJs || kind.is_node()) && module.is_commonjs()
     }
 

@@ -71,16 +71,6 @@ impl SavedSourceMap {
 // zig_hash_map uses an 80% max load factor.
 type HashTable = HashMap<u64, Value, IdentityContext<u64>>;
 
-impl bun_js_printer::OnSourceMapChunk for SavedSourceMap {
-    fn on_source_map_chunk(
-        &self,
-        chunk: SourceMap::Chunk,
-        source: &bun_ast::Source,
-    ) -> bun_js_printer::Result<()> {
-        self.put_mappings(source, chunk.buffer)
-    }
-}
-
 impl SavedSourceMap {
     pub fn put_mappings(
         &self,
@@ -124,7 +114,7 @@ impl SavedSourceMap {
 
         let provider = match mapping {
             Value::Internal(blob) => {
-                // No VLQ decode and no `Mapping.List`: a shell that callers can hold on to.
+                // Wraps the blob: no VLQ decode, no `Mapping.List`.
                 let blob = core::mem::take(blob).into_vec();
                 let result = Arc::new(ParsedSourceMap::from_internal(blob.into()));
                 *mapping = Value::Parsed(Arc::clone(&result));
@@ -146,7 +136,6 @@ impl SavedSourceMap {
         // Not under the lock: this parses JSON. The handle's owner unregisters it before freeing it.
         if let Some(parse) = provider.get_source_map(path, Default::default(), hint) {
             if let Some(ref parsed_map) = parse.map {
-                // The mutex is not locked. We have to check the hash table again.
                 self.put_parsed(path, Arc::clone(parsed_map));
 
                 return parse;

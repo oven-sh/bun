@@ -1,4 +1,4 @@
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 use std::io::Write as _;
 
 use crate::cli::test_command::ReportersConfig;
@@ -13,11 +13,11 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, RegularExpression,
     StringJsc as _,
 };
+use bun_ptr::CellExt as _;
 
 pub(crate) use super::bun_test;
 use crate::generated_bindgen::expect::{js_Expect, js_ExpectTypeOf};
 use crate::generated_bindgen::jest::{Bun__Jest__returnUndefined, Bun__Jest__setDefaultTimeout};
-use super::cells::CellExt as _;
 use super::pretty_format::{self, JestPrettyFormat};
 use super::scope_functions::{create_bound, Mode as ScopeKind, ScopeFunctions};
 use super::snapshot::Snapshots;
@@ -26,7 +26,7 @@ use super::{vi_utils, vi_wait};
 use bun_test::js_fns::{GenericHookTag, create_hook};
 use bun_test::{BaseScopeCfg, Flavor, RefDataValue, ScopeMode};
 
-struct Heading {
+struct FileHeader {
     title: Box<[u8]>,
     prefix: &'static [u8],
     repeat_count: u32,
@@ -35,7 +35,7 @@ struct Heading {
 
 #[derive(Default)]
 pub(crate) struct CurrentFile {
-    unprinted: Cell<Option<Heading>>,
+    unprinted: Cell<Option<FileHeader>>,
     // No pending heading also means a worker never printed one.
     has_printed_header: Cell<bool>,
 }
@@ -57,7 +57,7 @@ impl CurrentFile {
             return;
         }
         if reporters.dots || reporters.only_failures {
-            self.unprinted.set(Some(Heading { title: title.into(), prefix, repeat_count, repeat_index }));
+            self.unprinted.set(Some(FileHeader { title: title.into(), prefix, repeat_count, repeat_index }));
             return;
         }
 
@@ -102,8 +102,8 @@ impl CurrentFile {
     }
 
     pub(crate) fn print_if_needed(&self) {
-        if let Some(heading) = self.unprinted.take() {
-            Self::print(&heading.title, heading.prefix, heading.repeat_count, heading.repeat_index);
+        if let Some(header) = self.unprinted.take() {
+            Self::print(&header.title, header.prefix, header.repeat_count, header.repeat_index);
             self.has_printed_header.set(true);
         }
     }
@@ -111,7 +111,7 @@ impl CurrentFile {
 
 pub(crate) struct TestRunner {
     pub(crate) current_file: CurrentFile,
-    pub(crate) index: Cell<FileMap>,
+    pub(crate) file_ids: Cell<FileMap>,
     pub(crate) only: bool,
     pub(crate) run_todo: bool,
     pub(crate) concurrent: bool,
@@ -128,7 +128,7 @@ pub(crate) struct TestRunner {
     /// Also true in a `--parallel` worker, whose records the coordinator replays into its own `JunitReporter`.
     pub(crate) reports_to_junit: bool,
 
-    pub(crate) snapshots: Cell<Option<Box<Snapshots>>>,
+    pub(crate) snapshots: RefCell<Snapshots>,
 
     pub(crate) default_timeout_ms: u32,
 
@@ -154,8 +154,9 @@ pub(crate) struct TestRunner {
 }
 
 impl TestRunner {
+    /// `f` must not run script.
     pub(crate) fn with_snapshots<R>(&self, f: impl FnOnce(&mut Snapshots) -> R) -> R {
-        self.snapshots.with_taken(|snapshots| f(snapshots.as_mut().expect("`Snapshots` runs no script")))
+        f(&mut self.snapshots.borrow_mut())
     }
 
     pub(crate) fn get_active_timeout(&self) -> bun_core::Timespec {
@@ -166,14 +167,14 @@ impl TestRunner {
         // `on_stack` pins the caller when still synchronously on stack;
         // else take the latest running entry so a sibling never terminates early.
         if let Some(on_stack) = active_file.execution.on_stack.get().and_then(|on_stack| on_stack.entry) {
-            return active_file.step(on_stack).timespec.get();
+            return active_file.sequence_entry(on_stack).timespec.get();
         }
         if active_file.phase.get() == bun_test::Phase::Execution {
             if let Some(group) = active_file.execution.active_group() {
                 let mut latest: Option<bun_core::Timespec> = None;
                 for seq in group.sequences(&active_file.execution) {
                     let Some(entry) = seq.active_entry.get() else { continue };
-                    let ts = active_file.step(entry).timespec.get();
+                    let ts = active_file.sequence_entry(entry).timespec.get();
                     if latest.is_none_or(|l| ts.order(&l) == core::cmp::Ordering::Greater) {
                         latest = Some(ts);
                     }
@@ -222,9 +223,9 @@ impl TestRunner {
     }
 
     pub(crate) fn get_or_put_file(&self, path: &'static [u8]) -> File {
-        self.index.with_taken(|index| {
-            let next_id = index.count() as FileId;
-            File { id: *index.entry(path).or_insert_with(|| next_id), path }
+        self.file_ids.with_taken(|file_ids| {
+            let next_id = file_ids.count() as FileId;
+            File { id: *file_ids.entry(path).or_insert_with(|| next_id), path }
         })
     }
 }

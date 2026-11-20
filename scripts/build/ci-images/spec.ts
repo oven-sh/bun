@@ -204,7 +204,7 @@ export const pins = {
       "windows-x64": "88d8258dcf6ae4f7a80c7d1088e1f36fa7025a1cfd1343731b4ee6f385121fc0",
       "windows-aarch64": "de9f7d29ccd39efa59a3dda3ec363b396e09b92681229b9b8f6aaa4c84285e9c",
     },
-    channel: "nightly-2026-09-15",
+    channel: "nightly-2026-11-14",
     components: ["rust-src", "rustfmt", "clippy", "miri", "llvm-tools"],
     targets: [
       "aarch64-unknown-linux-gnu",
@@ -213,6 +213,7 @@ export const pins = {
       "x86_64-unknown-linux-musl",
       "aarch64-linux-android",
       "x86_64-linux-android",
+      "aarch64-unknown-freebsd",
       "x86_64-unknown-freebsd",
       "aarch64-apple-darwin",
       "x86_64-apple-darwin",

@@ -835,8 +835,15 @@ describe.skipIf(!supported)("bun run --aot", () => {
       `,
     });
     for (const aot of [false, true]) {
-      const { stdout, exitCode } = await run(String(dir), aot, "build.ts", { args: [aot ? "./compiled" : "./plain"] });
-      expect({ stdout, exitCode }).toEqual({ stdout: "true,true\n", exitCode: 0 });
+      const { stdout, stderr, exitCode } = await run(String(dir), aot, "build.ts", {
+        args: [aot ? "./compiled" : "./plain"],
+      });
+      expect({ aot, stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+        aot,
+        stdout: "true,true\n",
+        stderr: "",
+        exitCode: 0,
+      });
     }
     const hashOf = async (path: string) => Bun.hash(await Bun.file(join(String(dir), path)).bytes());
     expect(await hashOf("compiled/app1.exe")).toBe(await hashOf("plain/app1.exe"));

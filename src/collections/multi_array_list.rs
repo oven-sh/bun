@@ -42,6 +42,7 @@
 //! `<[MaybeUninit<u8>]>` slice ops over [`Col`]/[`ColMut`] views.
 
 use core::alloc::Layout;
+use core::cmp::Ordering;
 use core::marker::PhantomData;
 use core::mem::type_info;
 use core::mem::{ManuallyDrop, MaybeUninit};
@@ -297,40 +298,14 @@ const ZERO_META: FieldMeta = FieldMeta {
 struct Reflected<T>(PhantomData<T>);
 
 impl<T> Reflected<T> {
-    /// Number of fields in `T`; const-panics unless `T` is laid out as a struct.
-    ///
-    /// The reflection API has no "is this a struct" query (`Type::of::<T>().kind`
-    /// ICEs on nightly-2026-09-15, and `variant(0)` is a hard error on a struct),
-    /// so the check is on what the scatter/gather needs: one variant (not a
-    /// multi-variant enum), fields unless `T` is zero-sized (not a primitive,
-    /// pointer or array), and fields that do not overlap (not a union; disjoint
-    /// fields cannot sum past `size_of::<T>()`). A single-variant enum with an
-    /// explicit `#[repr(int)]` still passes; its tag would never be written.
+    /// Number of fields in `T`; const-panics unless `T` is a struct. A tuple
+    /// crashes rustc in `Type::of` instead (rust-lang/rust#165150).
     const COUNT: usize = {
-        let id = type_info::of::<T>();
         assert!(
-            id.variants() == 1,
+            matches!(type_info::Type::of::<T>().kind, type_info::TypeKind::Struct),
             "MultiArrayList<T>: T must be a struct with named fields",
         );
-        let n = id.fields(0);
-        assert!(
-            n > 0 || core::mem::size_of::<T>() == 0,
-            "MultiArrayList<T>: T must be a struct with named fields",
-        );
-        let mut sum = 0usize;
-        let mut i = 0;
-        while i < n {
-            sum += match id.field(0, i).type_id().size() {
-                Some(s) => s,
-                None => panic!("MultiArrayList: field type must be Sized"),
-            };
-            i += 1;
-        }
-        assert!(
-            sum <= core::mem::size_of::<T>(),
-            "MultiArrayList<T>: T must be a struct with named fields",
-        );
-        n
+        type_info::of::<T>().fields(0)
     };
     const ALIGN: usize = core::mem::align_of::<T>();
 
@@ -384,9 +359,7 @@ impl<T> Reflected<T> {
             let mut j = 0;
             while j + 1 + i < n {
                 if Self::META[idx[j]].align < Self::META[idx[j + 1]].align {
-                    let tmp = idx[j];
-                    idx[j] = idx[j + 1];
-                    idx[j + 1] = tmp;
+                    idx.swap(j, j + 1);
                 }
                 j += 1;
             }
@@ -542,6 +515,27 @@ impl<'a, F> ColMut<'a, F> {
 }
 
 /// Struct-of-arrays list. See module docs.
+///
+/// `T` must be a struct. The tag of an enum is not a field, so it would never
+/// be stored, and only one field of a union holds a value.
+///
+/// ```compile_fail,E0080
+/// #[repr(u8)]
+/// enum Tagged {
+///     Only { x: u32 },
+/// }
+/// let mut list = bun_collections::MultiArrayList::<Tagged>::default();
+/// list.append(Tagged::Only { x: 1 }).unwrap();
+/// ```
+///
+/// ```compile_fail,E0080
+/// union Either {
+///     x: u32,
+///     nothing: (),
+/// }
+/// let mut list = bun_collections::MultiArrayList::<Either>::default();
+/// list.append(Either { nothing: () }).unwrap();
+/// ```
 pub struct MultiArrayList<T, A: Allocator = Global> {
     bytes: NonNull<u8>,
     len: usize,
@@ -783,14 +777,16 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
 
     /// The bytes of column `field_index` (declaration order), for a serializer.
     ///
-    /// SAFETY: the field has no padding or other uninitialized bytes in any row.
+    /// # Safety
+    /// The field has no padding or other uninitialized bytes in any row.
     #[inline]
     pub unsafe fn column_bytes(&self, field_index: usize) -> &[u8] {
         let size = Reflected::<T>::META[field_index].size;
         Col::new(self.col_ptr::<u8>(field_index), self.len * size).as_slice()
     }
 
-    /// SAFETY: only valid values of the field are written, and only initialized bytes are read.
+    /// # Safety
+    /// Only valid values of the field are written, and only initialized bytes are read.
     #[inline]
     pub unsafe fn column_bytes_mut(&mut self, field_index: usize) -> &mut [u8] {
         let size = Reflected::<T>::META[field_index].size;
@@ -978,12 +974,16 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         Ok(result)
     }
 
-    /// Stable sort by field `NAME`.
-    pub fn sort_by<const NAME: &'static str, F>(&mut self, less: impl Fn(&F, &F) -> bool) {
+    /// Stable insertion sort by field `NAME`.
+    pub fn sort_by_column<const NAME: &'static str, F>(
+        &mut self,
+        cmp: impl Fn(&F, &F) -> Ordering,
+    ) {
         let mut columns = self.columns();
         for i in 1..self.len {
             let mut j = i;
-            while j > 0 && less(&self.items::<NAME, F>()[j], &self.items::<NAME, F>()[j - 1]) {
+            while j > 0 && cmp(&self.items::<NAME, F>()[j], &self.items::<NAME, F>()[j - 1]).is_lt()
+            {
                 columns.swap_rows(j, j - 1);
                 j -= 1;
             }
@@ -1051,7 +1051,7 @@ impl<T, A: Allocator> Drop for MultiArrayList<T, A> {
         // **intentionally preserved**:
         // [`clone`] is a bitwise SoA memcpy, so two live lists
         // can alias the same column heap pointers — see `bundle_v2.rs`
-        // `clone_ast` / `BundleV2::drop`, which drains exactly
+        // `create_linker_graph` / `BundleV2::drop`, which drains exactly
         // one alias and relies on the other dropping slab-only. Running
         // element destructors here would double-free that side.
         //
@@ -1264,7 +1264,7 @@ mod tests {
             })
             .unwrap();
         }
-        list.sort_by::<"a", u32>(|a, b| a < b);
+        list.sort_by_column::<"a", u32>(u32::cmp);
         assert_eq!(list.items::<"a", u32>(), &[0, 1, 2, 3, 4]);
         assert_eq!(list.items::<"c", u64>(), &[0, 10, 20, 30, 40]);
     }

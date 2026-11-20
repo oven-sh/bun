@@ -370,8 +370,8 @@ impl<'a, 's> TreeWriter<'a, 's> {
 
     pub(super) fn name_of(&mut self, reference: Ref) -> Atom {
         match self.function.names.get(&reference.inner_index()) {
-            Some(&(name, _)) => name,
-            None => {
+            Some(&(name, _)) if name.is_some() => name,
+            Some(_) | None => {
                 self.function.has_unknown_symbol = true;
                 Atom::NONE
             }

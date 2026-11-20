@@ -12,6 +12,7 @@
 use ::core::ffi::c_void;
 use bun_bundler::mal_prelude::*;
 use std::io::Write as _;
+use std::sync::Arc;
 use std::time::Instant;
 
 use bun_alloc::{AllocError, Arena};
@@ -36,12 +37,12 @@ use crate::bake;
 use crate::bake::router::{self, FrameworkRouter, OpaqueFileId};
 use crate::server::html_bundle::HTMLBundleRoute;
 use crate::server::{PendingRequest, Served};
-use crate::timer::{EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::EventLoopTimerTag;
 use bun_ast::Loader;
 use bun_bundler::{self as bundler, BundleV2, Transpiler};
 use bun_http::{Method, MimeType};
 use bun_safety::ThreadLock;
-use bun_watcher::Watcher;
+use bun_watcher::{OwnedWatcher, Watcher};
 
 pub(super) use self::assets::Assets;
 pub(super) use self::error_report_request::ErrorReportRequest;
@@ -58,7 +59,6 @@ bun_output::define_scoped_log!(map_log, crate::bake::dev_server::SourceMapStore)
 use core::sync::atomic::Ordering;
 
 use bun_collections::StringArrayHashMap;
-use bun_sys::FdExt as _;
 
 use super::{Graph, Side};
 
@@ -83,7 +83,6 @@ mod router_glue;
 mod server_hmr_ffi;
 mod trace;
 mod watch;
-mod watcher_atomics;
 
 pub(super) use crate::server::SavedRequestUnion;
 pub(crate) use bundle::EntryPointList;
@@ -97,7 +96,7 @@ use ensure_route::{
 use failures::mark_all_route_children;
 pub(crate) use finalize::{CachedFileIndex, HotUpdateContext};
 use hmr_socket::hmr_socket_behavior;
-pub(crate) use hot_reload_event::HotReloadEvent;
+pub(crate) use hot_reload_event::{HotReloadEvent, PendingReloadEvent};
 use http::{
     DevHandlerId, dev_route_tramp, extract_pathname_from_url, host_forbidden,
     is_allowed_dev_origin, on_outdated_js_corked, origin_forbidden,
@@ -106,7 +105,6 @@ pub(crate) use http::{is_allowed_dev_host, is_allowed_host_header};
 pub(crate) use lifecycle::init;
 pub(crate) use protocol::{ConsoleLogKind, HmrTopic, HmrTopicBits, IncomingMessageId, MessageId};
 use router_glue::{OpaqueFileIdOrOptional, from_opaque_file_id, relative_path, to_opaque_file_id};
-pub(crate) use watcher_atomics::{NextEvent, WatcherAtomics};
 
 /// `DevServer.FileKind` — kept in lockstep with `bun_bundler::bake_types::CacheKind`
 /// (the vtable boundary maps between them via an exhaustive match).
@@ -198,14 +196,14 @@ impl GraphTraceState {
     }
 
     pub(crate) fn clear(&mut self) {
-        self.server_bits.unmanaged.set_all(false);
-        self.client_bits.unmanaged.set_all(false);
+        self.server_bits.set_all(false);
+        self.client_bits.set_all(false);
         self.failures.clear();
     }
 
     pub(crate) fn resize(&mut self, side: Side, new_size: usize) -> Result<(), crate::Error> {
         let b = self.bits(side);
-        if b.unmanaged.bit_length < new_size {
+        if b.bit_length() < new_size {
             b.resize(new_size, false)?;
         }
         Ok(())
@@ -313,14 +311,6 @@ impl DevServer {
     fn global(&self) -> &'static JSGlobalObject {
         self.vm().global()
     }
-
-    #[inline]
-    pub(crate) fn ssr_transpiler_mut(&mut self) -> Option<&mut Transpiler<'static>> {
-        let server_components = self.framework.server_components.as_ref()?;
-        // SAFETY: `init()` writes it if the SSR graph is separate.
-        (server_components.separate_ssr_graph)
-            .then(|| unsafe { self.ssr_transpiler.assume_init_mut() })
-    }
 }
 pub(super) use crate::bake::dev_server::route_bundle::RouteBundle;
 pub(super) use crate::bake::dev_server::source_map_store::SourceMapStore;
@@ -359,6 +349,22 @@ pub(crate) enum PluginState {
     /// Currently, this represents a degraded state where no bundle can
     /// be correctly executed because the plugins did not load successfully.
     Err,
+}
+
+pub(crate) enum Plugins {
+    /// From `Options::bundler_options`.
+    Owned(crate::api::js_bundler::OwnedPlugin),
+    /// Owned by the server's `ServePlugins`.
+    Borrowed(::core::ptr::NonNull<crate::api::js_bundler::Plugin>),
+}
+
+impl Plugins {
+    fn as_non_null(&self) -> ::core::ptr::NonNull<crate::api::js_bundler::Plugin> {
+        match self {
+            Plugins::Owned(plugins) => plugins.as_non_null(),
+            Plugins::Borrowed(plugins) => *plugins,
+        }
+    }
 }
 
 pub(crate) enum TestingBatchEvents {
@@ -425,9 +431,8 @@ pub(crate) struct CurrentBundle {
 pub(crate) struct NextBundle {
     /// A list of `RouteBundle`s which have active requests to bundle it.
     pub(crate) route_queue: ArrayHashMap<route_bundle::Index, ()>,
-    /// If a reload event exists and should be drained. The information
-    /// for this watch event is in one of the `watch_events`
-    pub(crate) reload_event: Option<*mut HotReloadEvent>, // BORROW_FIELD: ptr into dev.watcher_atomics.events[]
+    /// `DevServer.pending_reload_event` is to be drained.
+    pub(crate) has_reload_event: bool,
     /// The list of requests that are blocked on this bundle.
     pub(crate) requests: deferred_request::List,
 }
@@ -454,8 +459,6 @@ pub(crate) struct DevServer {
     /// is the JSC_BORROW guarantee: vm is valid for DevServer's entire
     /// lifetime.
     pub(crate) vm: bun_ptr::BackRef<VirtualMachine>,
-    /// How the file-watcher thread submits hot-reload events to the VM.
-    pub(crate) vm_handle: bun_jsc::VmHandle,
     /// May be `None` if not attached to an HTTP server yet. When no server is
     /// available, functions taking in requests and responses are unavailable.
     /// However, a lot of testing in this mode is missing, so it may hit assertions.
@@ -498,20 +501,11 @@ pub(crate) struct DevServer {
     pub(crate) server_register_update_callback: jsc::StrongOptional,
 
     // Watching
-    // Note: the watcher thread owns this allocation at shutdown (it frees it
-    // in `thread_main` once `running` flips false). Auto-dropping a
-    // `Box<Watcher>` here would free the heap block while the watcher thread
-    // is still blocked in `GetQueuedCompletionStatus`/`read()` holding a
-    // `*mut Watcher` into it (and on Windows the kernel still has a pending
-    // `ReadDirectoryChangesW` against the inline `DirWatcher.buf`/`overlapped`).
-    // `ManuallyDrop` so `Drop for DevServer` can hand the raw pointer to
-    // `Watcher::shutdown` instead.
-    pub(crate) bun_watcher: ::core::mem::ManuallyDrop<Box<Watcher>>,
+    pub(crate) bun_watcher: OwnedWatcher,
     pub(crate) directory_watchers: DirectoryWatchStore,
-    /// Heap-owned via `heap::alloc_nn` so a still-queued
-    /// `HotReloadEvent.concurrent_task` can outlive `DevServer`; see the
-    /// `next_event` check in `Drop`.
-    pub(crate) watcher_atomics: ::core::ptr::NonNull<WatcherAtomics>,
+    pub(crate) pending_reload_event: Arc<PendingReloadEvent>,
+    /// Empty. Swapped with the one in `pending_reload_event` to reuse its memory.
+    pub(crate) spare_reload_event: HotReloadEvent,
     pub(crate) testing_batch_events: TestingBatchEvents,
 
     /// Number of bundles that have been executed. This is currently not read, but
@@ -521,25 +515,21 @@ pub(crate) struct DevServer {
     pub(crate) bundles_since_last_error: usize,
 
     pub(crate) framework: bake::Framework,
-    pub(crate) bundler_framework_views: Vec<*mut bun_bundler::bake_types::Framework>,
-    pub(crate) bundler_options: bake::SplitBundlerOptions,
     // Each logical graph gets its own bundler configuration.
     // Note: `'static` is the DevServer-self lifetime stand-in (see
     // `CurrentBundle.bv2`). `Transpiler<'a>` borrows the global
     // `Fs::FileSystem` singleton + `dot_env::Loader`, both of which outlive
     // the server.
-    // `ManuallyDrop`: dropped in `Drop for DevServer`, before the framework views they borrow.
-    pub(crate) server_transpiler: ::core::mem::ManuallyDrop<Transpiler<'static>>,
-    pub(crate) client_transpiler: ::core::mem::ManuallyDrop<Transpiler<'static>>,
-    // Initialized only with a separate SSR graph.
-    pub(crate) ssr_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
+    pub(crate) server_transpiler: Transpiler<'static>,
+    pub(crate) client_transpiler: Transpiler<'static>,
+    /// `Some` with a separate SSR graph.
+    pub(crate) ssr_transpiler: Option<Transpiler<'static>>,
     /// The log used by all `server_transpiler`, `client_transpiler` and `ssr_transpiler`.
     /// Note that it is rarely correct to write messages into it. Instead, associate
     /// messages with the IncrementalGraph file or Route using `SerializedFailure`
     pub(crate) log: Log,
     pub(crate) plugin_state: PluginState,
-    /// Owned by `bundler_options` or by the server.
-    pub(crate) plugins: Option<::core::ptr::NonNull<crate::api::js_bundler::Plugin>>,
+    pub(crate) plugins: Option<Plugins>,
     /// See `CurrentBundle` doc comment.
     pub(crate) current_bundle: Option<CurrentBundle>,
     /// When `current_bundle` is non-null and new requests to bundle come in,

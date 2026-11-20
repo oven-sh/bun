@@ -9,6 +9,12 @@ impl<T> AliasableBox<T> {
         Self(bun_core::heap::alloc_nn(value))
     }
 
+    /// # Safety
+    /// As for [`Box::from_non_null`].
+    pub unsafe fn from_non_null(ptr: NonNull<T>) -> Self {
+        Self(ptr)
+    }
+
     /// As [`Box::into_raw`].
     pub fn into_raw(self) -> *mut T {
         self.into_non_null().as_ptr()
@@ -17,6 +23,12 @@ impl<T> AliasableBox<T> {
     /// As [`Box::into_non_null`].
     pub fn into_non_null(self) -> NonNull<T> {
         core::mem::ManuallyDrop::new(self).0
+    }
+
+    /// Invalidates the pointers into the value.
+    pub fn into_box(self) -> Box<T> {
+        // SAFETY: it came from a `Box`, and `self` was the only owner.
+        unsafe { bun_core::heap::take(self.into_raw()) }
     }
 
     /// Valid until `self` is dropped.
@@ -35,6 +47,13 @@ impl<T> core::ops::Deref for AliasableBox<T> {
     fn deref(&self) -> &T {
         // SAFETY: live until `self` is dropped.
         unsafe { self.0.as_ref() }
+    }
+}
+
+impl<T> core::ops::DerefMut for AliasableBox<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        // SAFETY: as above; code that dereferences `as_ptr()` must not overlap this borrow.
+        unsafe { self.0.as_mut() }
     }
 }
 
@@ -61,12 +80,24 @@ mod tests {
         let dropped = Rc::new(());
         let owner = AliasableBox::new((1u32, Rc::clone(&dropped)));
         let ptr = owner.as_ptr();
-        let moved = vec![owner];
+        let mut moved = vec![owner];
+        (*moved[0]).0 += 1;
         // SAFETY: `moved` keeps the allocation alive, and nothing else borrows it.
         unsafe { (*ptr).0 += 1 };
         // SAFETY: as above.
-        assert_eq!(unsafe { (*moved[0].as_ptr()).0 }, 2);
+        assert_eq!(unsafe { (*moved[0].as_ptr()).0 }, 3);
         drop(moved);
+        assert_eq!(Rc::strong_count(&dropped), 1);
+    }
+
+    #[test]
+    fn from_non_null_round_trips() {
+        let dropped = Rc::new(());
+        let ptr = AliasableBox::new(Rc::clone(&dropped)).into_non_null();
+        assert_eq!(Rc::strong_count(&dropped), 2);
+        // SAFETY: `into_non_null` gave the allocation up.
+        let owner = unsafe { AliasableBox::from_non_null(ptr) };
+        drop(owner.into_box());
         assert_eq!(Rc::strong_count(&dropped), 1);
     }
 }

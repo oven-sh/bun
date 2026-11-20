@@ -30,8 +30,8 @@ use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_collections::{
-    ArrayHashMap, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, HashMap, LinearFifo,
-    StringArrayHashMap, index_sort,
+    ArrayHashMap, DynamicBitSet, DynamicBitSetList, HashMap, LinearFifo, StringArrayHashMap,
+    index_sort,
 };
 use bun_core::{Global, Output, fast_random, fmt as bun_fmt};
 use bun_paths::path_options::AssumeOk as _;
@@ -41,7 +41,6 @@ use bun_sys::{self as sys, Fd};
 use bun_wyhash::{Wyhash, Wyhash11};
 
 use crate::analytics;
-use crate::bun_bunfig::Arguments as Command;
 use crate::bun_progress::Progress;
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{self, Lockfile};
@@ -362,7 +361,7 @@ fn dependency_is_contained_folder(
     declarer: &Resolution,
     dep: &install::Dependency,
 ) -> bool {
-    if declarer.tag.is_local_package() || dep.version.tag != VersionTag::Folder {
+    if declarer.tag.is_local_package() || dep.version.tag() != VersionTag::Folder {
         return false;
     }
     let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -545,8 +544,8 @@ fn build_store(
     }
     let peer_name_count: u32 = u32::try_from(peer_name_idx.count()).expect("int cast");
 
-    let leaking_peers: DynamicBitSetList =
-        DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
+    let mut leaking_peers =
+        DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count)?;
 
     if peer_name_count != 0 {
         // The runtime child of a peer edge is whichever package an ancestor's
@@ -570,10 +569,9 @@ fn build_store(
         // Per-package bits computed once: own peer-dep names, and non-peer
         // dependency names that will appear in `node_dependencies` (i.e., not
         // filtered out by bundled/disabled/unresolved).
-        let own_peers: DynamicBitSetList =
-            DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
-        let provides: DynamicBitSetList =
-            DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
+        let mut own_peers =
+            DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count)?;
+        let mut provides = DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count)?;
         for pkg_idx in 0..lockfile.packages.len() {
             let pkg_id: PackageID = u32::try_from(pkg_idx).expect("int cast");
             let deps = pkg_dependency_slices[pkg_id as usize];
@@ -583,7 +581,7 @@ fn build_store(
                     continue;
                 };
                 if dep.behavior.is_peer() {
-                    own_peers.set(pkg_id as usize, bit);
+                    own_peers.at_mut(pkg_id).set(bit);
                 } else if !is_contained_folder(dep_id)
                     && !is_filtered_dependency_or_workspace(
                         dep_id,
@@ -596,12 +594,12 @@ fn build_store(
                         &mut linked,
                     )
                 {
-                    provides.set(pkg_id as usize, bit);
+                    provides.at_mut(pkg_id).set(bit);
                 }
             }
         }
 
-        let mut scratch = DynamicBitSetUnmanaged::init_empty(peer_name_count as usize)?;
+        let mut scratch = DynamicBitSet::init_empty(peer_name_count as usize)?;
 
         let mut changed = true;
         while changed {
@@ -610,28 +608,28 @@ fn build_store(
                 let pkg_id: PackageID = u32::try_from(pkg_idx).expect("int cast");
                 let deps = pkg_dependency_slices[pkg_id as usize];
 
-                scratch.copy_into(&own_peers.at(pkg_id as usize));
+                scratch.copy_from(&own_peers.at(pkg_id));
 
                 for dep_id in deps.begin()..deps.end() {
                     let dep = &dependencies[dep_id as usize];
                     if dep.behavior.is_peer() {
                         if let Some(bit) = peer_name_idx.get_index(&dep.name_hash) {
                             for &child in &peer_targets[bit] {
-                                scratch.set_union(&leaking_peers.at(child as usize));
+                                scratch.set_union(&leaking_peers.at(child));
                             }
                         }
                     } else {
                         let res_pkg = resolutions[dep_id as usize];
                         if res_pkg != invalid_package_id {
-                            scratch.set_union(&leaking_peers.at(res_pkg as usize));
+                            scratch.set_union(&leaking_peers.at(res_pkg));
                         }
                     }
                 }
-                scratch.set_exclude(&provides.at(pkg_id as usize));
+                scratch.set_exclude(&provides.at(pkg_id));
 
-                let mut dst = leaking_peers.at(pkg_id as usize);
+                let mut dst = leaking_peers.at_mut(pkg_id);
                 if !scratch.eql(&dst) {
-                    dst.copy_into(&scratch);
+                    dst.copy_from(&scratch);
                     changed = true;
                 }
             }
@@ -756,7 +754,7 @@ fn build_store(
             // dependencies when root also declares that workspace; the
             // root-declared entry does. (If root does not declare it, the
             // protocol reference is the only one and must keep them.)
-            if entry_dep.version.tag == VersionTag::Workspace
+            if entry_dep.version.tag() == VersionTag::Workspace
                 && !entry_dep.behavior.is_workspace()
                 && root_declares_workspace.is_set(entry.pkg_id as usize)
             {
@@ -775,11 +773,11 @@ fn build_store(
                 } = nodes.split_mut();
 
                 let ctx_hash: u64 =
-                    if entry_dep.version.tag == VersionTag::Workspace || peer_name_count == 0 {
+                    if entry_dep.version.tag() == VersionTag::Workspace || peer_name_count == 0 {
                         0
                     } else {
                         'ctx: {
-                            let leaks = leaking_peers.at(entry.pkg_id as usize);
+                            let leaks = leaking_peers.at(entry.pkg_id);
                             if leaks.count() == 0 {
                                 break 'ctx 0;
                             }
@@ -846,14 +844,14 @@ fn build_store(
                         break 'dont_dedupe;
                     }
 
-                    if (dedupe_dep.version.tag == VersionTag::Workspace)
-                        != (entry_dep.version.tag == VersionTag::Workspace)
+                    if (dedupe_dep.version.tag() == VersionTag::Workspace)
+                        != (entry_dep.version.tag() == VersionTag::Workspace)
                     {
                         break 'dont_dedupe;
                     }
 
-                    if dedupe_dep.version.tag == VersionTag::Workspace
-                        && entry_dep.version.tag == VersionTag::Workspace
+                    if dedupe_dep.version.tag() == VersionTag::Workspace
+                        && entry_dep.version.tag() == VersionTag::Workspace
                     {
                         if dedupe_dep.behavior.is_workspace() != entry_dep.behavior.is_workspace() {
                             break 'dont_dedupe;
@@ -1254,8 +1252,8 @@ fn build_store(
                     let curr_dep = &dependencies[curr_dep_id as usize];
                     let existing_dep = &dependencies[info.dep_id as usize];
 
-                    if existing_dep.version.tag == VersionTag::Workspace
-                        && curr_dep.version.tag == VersionTag::Workspace
+                    if existing_dep.version.tag() == VersionTag::Workspace
+                        && curr_dep.version.tag() == VersionTag::Workspace
                     {
                         if existing_dep.behavior.is_workspace() != curr_dep.behavior.is_workspace()
                         {
@@ -1347,7 +1345,7 @@ fn build_store(
 
         let new_entry_is_root = new_entry_dep_id == invalid_dependency_id;
         let new_entry_is_workspace = !new_entry_is_root
-            && dependencies[new_entry_dep_id as usize].version.tag == VersionTag::Workspace;
+            && dependencies[new_entry_dep_id as usize].version.tag() == VersionTag::Workspace;
 
         let new_entry_dependencies: store::entry::Dependencies =
             if dedupe_entry.found_existing && new_entry_is_workspace {
@@ -1624,8 +1622,9 @@ fn expect_directory(path: &bun_core::ZStr) -> sys::Result<()> {
     // `exists_at_type` reports a junction itself, so a dangling one would pass.
     #[cfg(windows)]
     {
-        use bun_sys::FdExt as _;
-        sys::openat(Fd::cwd(), path, sys::O::RDONLY | sys::O::DIRECTORY, 0).map(|fd| fd.close())
+        sys::openat(Fd::cwd(), path, sys::O::RDONLY | sys::O::DIRECTORY, 0)
+            .map(sys::File::from_fd)
+            .map(drop)
     }
     #[cfg(not(windows))]
     {
@@ -1687,7 +1686,6 @@ fn check_link_entries(manager: &mut PackageManager, lockfile: &Lockfile, store: 
 /// Runs on main thread
 pub(crate) fn install_isolated_packages(
     manager: &mut PackageManager,
-    command_ctx: Command::Context,
     install_root_dependencies: bool,
     workspace_filters: &[WorkspaceFilter],
     packages_to_install: Option<&[PackageID]>,
@@ -1787,6 +1785,7 @@ pub(crate) fn install_isolated_packages(
                         pkg_names[pkg_id as usize].slice(string_buf)
                     };
                     lockfile.has_trusted_dependency(
+                        &manager.options,
                         dep_name,
                         pkg_names[pkg_id as usize].slice(string_buf),
                         pkg_res,
@@ -2010,12 +2009,7 @@ pub(crate) fn install_isolated_packages(
             }
 
             // <cache_dir>/links — created lazily by the first task that misses.
-            // getCacheDirectory() populates `cache_directory_path` as a side-effect.
-            let _ = manager.get_cache_directory();
-            let cache_dir_path = &manager.cache_directory_path;
-            if cache_dir_path.is_empty() {
-                break 'global_store_path None;
-            }
+            let cache_dir_path = &manager.get_cache_directory().path;
             // Own a Vec<u8> with a trailing NUL so it can be re-borrowed as
             // a `&ZStr` for `Installer.global_store_path` below.
             let joined = paths::resolve_path::join_abs_string::<paths::platform::Auto>(
@@ -2112,7 +2106,7 @@ pub(crate) fn install_isolated_packages(
 
     {
         if manager.options.log_level.show_progress() {
-            manager.start_link_progress(store.entries.len());
+            manager.start_install_progress_bar(store.entries.len());
         }
 
         let node_pkg_ids = store.nodes.items_pkg_id();
@@ -2167,7 +2161,6 @@ pub(crate) fn install_isolated_packages(
         let mut installer = store::Installer {
             lockfile: lockfile_ptr,
             manager: manager_ptr,
-            command_ctx,
             installed,
             store: &store,
             tasks,
@@ -2240,7 +2233,7 @@ pub(crate) fn install_isolated_packages(
 
         // add the pending task count upfront
         installer
-            .manager_mut()
+            .manager()
             .increment_pending_tasks(u32::try_from(store.entries.len()).expect("int cast"));
         // `link:` entries go first, because `Installer::start_link_task` must run before the tasks
         // of their dependents start.
@@ -2250,6 +2243,7 @@ pub(crate) fn install_isolated_packages(
         };
         let links = (0..store.entries.len()).filter(is_link);
         let others = (0..store.entries.len()).filter(|entry| !is_link(entry));
+        let mut folder_name_buf = bun_paths::path_buffer_pool::get();
         for _entry_id in links.chain(others) {
             let entry_id = store::entry::Id::from(u32::try_from(_entry_id).expect("int cast"));
             let store::Ids { dep_id, pkg_id } = store.ids(entry_id);
@@ -2472,8 +2466,9 @@ pub(crate) fn install_isolated_packages(
                     }
 
                     // Downloads only produce the unpatched folder; `apply_package_patch` derives the rest.
-                    let cache_subpath_z = installer.cached_folder_name(entry_id, None);
-                    let cache_dir = installer.manager_mut().get_cache_directory();
+                    let cache_subpath_z =
+                        installer.cached_folder_name(&mut **folder_name_buf, entry_id, None);
+                    let cache_dir = installer.manager_mut().get_cache_directory().handle.fd();
 
                     let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
                     {
@@ -2506,55 +2501,13 @@ pub(crate) fn install_isolated_packages(
 
                     let ctx = install::TaskCallbackContext::IsolatedPackageInstallContext(entry_id);
 
-                    let dep = &lockfile_ro.buffers.dependencies[dep_id as usize];
-
-                    let enqueued = match pkg_res.tag {
-                        ResolutionTag::Npm => package_manager::enqueue_package_for_download(
-                            installer.manager_mut(),
-                            pkg_name.slice(string_buf),
-                            dep_id,
-                            pkg_id,
-                            pkg_res.npm().version,
-                            pkg_res.npm().url.slice(string_buf),
-                            ctx,
-                        ),
-                        ResolutionTag::Git => package_manager::enqueue_git_for_checkout(
-                            installer.manager_mut(),
-                            dep_id,
-                            pkg_id,
-                            dep.name.slice(string_buf),
-                            ctx,
-                            patch_info.name_and_version_hash(),
-                        ),
-                        ResolutionTag::Github => {
-                            let url = installer.manager().alloc_github_url(pkg_res.github());
-                            package_manager::enqueue_tarball_for_download(
-                                installer.manager_mut(),
-                                dep_id,
-                                pkg_id,
-                                &url,
-                                ctx,
-                            )
-                        }
-                        ResolutionTag::LocalTarball => {
-                            package_manager::enqueue_tarball_for_reading(
-                                installer.manager_mut(),
-                                dep_id,
-                                pkg_id,
-                                dep.name.slice(string_buf),
-                                &pkg_res,
-                                ctx,
-                            )
-                        }
-                        _ => package_manager::enqueue_tarball_for_download(
-                            installer.manager_mut(),
-                            dep_id,
-                            pkg_id,
-                            pkg_res.remote_tarball().slice(string_buf),
-                            ctx,
-                        ),
-                    };
-                    match enqueued {
+                    match package_manager::enqueue_install_task(
+                        installer.manager_mut(),
+                        dep_id,
+                        pkg_id,
+                        ctx,
+                        patch_info.name_and_version_hash(),
+                    ) {
                         Ok(()) => {}
                         Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
                         Err(ForTarballError::AlreadyFailed | ForTarballError::Offline) => {

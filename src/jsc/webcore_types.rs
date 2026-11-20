@@ -5,7 +5,7 @@
 //! (S3 I/O, streaming, JS host-fns, async readers) on top via the `BlobExt` /
 //! `StoreExt` / … extension traits in that crate. Defining the data shapes here
 //! lets lower-tier crates (`bun_http_jsc`, `bun_sql_jsc`) downcast a `JSValue`
-//! to `*mut Blob` and read its bytes without a `bun_runtime` forward-dep.
+//! to `Blob` and read its bytes without a `bun_runtime` forward-dep.
 //!
 //! Everything that touches the
 //! event loop / fs / network stays in `bun_runtime`.
@@ -23,7 +23,7 @@ use bun_ptr::RefPtr;
 
 use crate::JsCell;
 use crate::node_path::{PathLike, PathOrFileDescriptor};
-use crate::{JSGlobalObject, JSValue, JsClass};
+use crate::{JSGlobalObject, JSValue, JsClass, WrapperGuard};
 
 /// Blob size type. Values are masked to 52 bits at the boundary.
 pub type SizeType = u64;
@@ -209,54 +209,57 @@ const _: () = {
     // The class is generated into `bun_runtime`, which has its members (`BlobExt`).
     unsafe extern "C" {
         safe fn Bun__Bindgen__Blob__fromJS(value: JSValue) -> *mut c_void;
-        safe fn Bun__Bindgen__Blob__fromJSDirect(value: JSValue) -> *mut c_void;
-        fn Bun__Bindgen__Blob__create(global: *mut JSGlobalObject, wrapped: *mut c_void)
-        -> JSValue;
+        fn Bun__Bindgen__Blob__fromJSDirect(value: JSValue) -> *mut c_void;
+        #[allow(improper_ctypes)]
+        safe fn Bun__Bindgen__Blob__create(
+            global: &JSGlobalObject,
+            wrapped: RefPtr<Blob>,
+        ) -> JSValue;
     }
 
     // `JSValue::as(Blob)` special-case: a `BuildArtifact`
     // wraps a `Blob`, so downcasting to `Blob` must also match it. The struct
     // lives in `bun_runtime`, so resolve the fallback at link time.
     //
-    // safe: by-value `JSValue` (tagged i64); the Rust-ABI body in `bun_runtime`
-    // only type-checks the encoded value and returns the stored payload pointer
-    // (or `None`) — no precondition beyond the link succeeding.
+    // safe: the Rust-ABI body in `bun_runtime` is a safe function.
     unsafe extern "Rust" {
-        safe fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob>;
+        safe fn __bun_blob_from_build_artifact(value: JSValue) -> *mut Blob;
     }
 
     impl JsClass for Blob {
-        fn from_js(value: JSValue) -> Option<*mut Self> {
-            let blob = match Bun__Bindgen__Blob__fromJS(value) {
-                blob if blob.is_null() => __bun_blob_from_build_artifact(value),
-                blob => Some(blob.cast()),
+        fn from_js(value: &JSValue) -> Option<WrapperGuard<'_, Self>> {
+            let blob = match Bun__Bindgen__Blob__fromJS(*value) {
+                blob if blob.is_null() => __bun_blob_from_build_artifact(*value),
+                blob => blob.cast(),
             };
             // C++ `mayHoldBlob` (blob.h) answers for a cell of any other type without this call.
-            debug_assert!(blob.is_none() || value.js_type() == crate::JSType::DOMWrapper);
-            blob
+            debug_assert!(blob.is_null() || value.js_type() == crate::JSType::DOMWrapper);
+            // SAFETY: a `JSBlob` holds a ref on what it wraps, and so does a `JSBuildArtifact`, of which the `Blob` is a field.
+            unsafe { WrapperGuard::new(value, blob) }
         }
-        fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-            let blob = Bun__Bindgen__Blob__fromJSDirect(value);
-            (!blob.is_null()).then(|| blob.cast())
+        fn from_js_direct(value: &JSValue) -> Option<WrapperGuard<'_, Self>> {
+            if !value.is_cell() {
+                return None;
+            }
+            // SAFETY: `value` is a cell, and a `JSBlob` holds a ref on what it wraps.
+            unsafe { WrapperGuard::new(value, Bun__Bindgen__Blob__fromJSDirect(*value).cast()) }
         }
         fn to_js(self, global: &JSGlobalObject) -> JSValue {
             // Heap-promote and hand
             // ownership to the codegen wrapper. The S3File fast-path (different
             // JS wrapper) is layered on by `bun_runtime`'s `BlobExt::into_js` for
             // S3-backed blobs; lower-tier callers never construct S3 blobs.
-            let ptr = Blob::new(self);
-            // SAFETY: the new object takes the one ref `Blob::new` made.
-            unsafe { Bun__Bindgen__Blob__create(global.as_mut_ptr(), ptr.cast()) }
+            Bun__Bindgen__Blob__create(global, Blob::new(self))
         }
     }
 };
 
 impl Blob {
-    /// Heap-promote, with the one ref that the caller owns.
+    /// Heap-promote.
     #[inline]
-    pub fn new(mut blob: Blob) -> *mut Blob {
+    pub fn new(mut blob: Blob) -> RefPtr<Blob> {
         blob.ref_count = bun_ptr::RawRefCount::init(1);
-        bun_core::heap::into_raw(Box::new(blob))
+        RefPtr::new(blob)
     }
 
     #[inline]
@@ -559,7 +562,7 @@ pub mod store {
     pub struct Store {
         pub data: Data,
         pub mime_type: MimeType,
-        pub ref_count: bun_ptr::ThreadSafeRefCount<Store>,
+        ref_count: bun_ptr::ThreadSafeRefCount<Store>,
         pub is_all_ascii: IsAllAscii,
     }
 
@@ -644,20 +647,7 @@ pub mod store {
         Heap(Vec<u8>),
         Static(&'static [u8]),
         #[cfg(unix)]
-        Mapped(Mapping),
-    }
-
-    /// An `mmap` region.
-    #[cfg(unix)]
-    struct Mapping(*mut [u8]);
-
-    #[cfg(unix)]
-    impl Drop for Mapping {
-        fn drop(&mut self) {
-            if let Err(err) = bun_sys::munmap(self.0.cast(), self.0.len()) {
-                bun_core::debug_warn!("Blob store munmap failed: {:?}", err);
-            }
-        }
+        Mapped(bun_sys::Mmap),
     }
 
     impl Bytes {
@@ -678,18 +668,20 @@ pub mod store {
             Self::new(Storage::Static(bytes))
         }
 
-        /// SAFETY: `mapping` is a whole read-write `mmap` region, and nothing else unmaps it.
+        /// # Safety
+        /// As [`bun_sys::Mmap::as_mut_slice`], until `mapping` is dropped.
         #[cfg(unix)]
-        pub unsafe fn from_mapping(mapping: *mut [u8]) -> Bytes {
-            Self::new(Storage::Mapped(Mapping(mapping)))
+        pub unsafe fn from_mapping(mapping: bun_sys::Mmap) -> Bytes {
+            Self::new(Storage::Mapped(mapping))
         }
 
-        /// SAFETY: as [`Self::from_mapping`], and `mapping` maps `memfd` from its start.
+        /// # Safety
+        /// As [`Self::from_mapping`], and `mapping` maps `memfd` from its start.
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        pub unsafe fn from_memfd_mapping(mapping: *mut [u8], memfd: bun_sys::File) -> Bytes {
+        pub unsafe fn from_memfd_mapping(mapping: bun_sys::Mmap, memfd: bun_sys::File) -> Bytes {
             Bytes {
                 memfd: Some(memfd),
-                ..Self::new(Storage::Mapped(Mapping(mapping)))
+                ..Self::new(Storage::Mapped(mapping))
             }
         }
 
@@ -707,21 +699,23 @@ pub mod store {
             match &self.storage {
                 Storage::Heap(bytes) => bytes,
                 Storage::Static(bytes) => bytes,
-                // SAFETY: mapped until it is dropped.
+                // SAFETY: the contract of `from_mapping`.
                 #[cfg(unix)]
-                Storage::Mapped(mapping) => unsafe { &*mapping.0 },
+                Storage::Mapped(mapping) => unsafe { mapping.as_slice() },
             }
         }
 
         /// The bytes of [`Self::init_static`] must not be written to.
-        pub fn as_mut_ptr(&mut self) -> *mut [u8] {
+        pub fn slice_raw(&mut self) -> *mut [u8] {
             match &mut self.storage {
                 Storage::Heap(bytes) => {
                     core::ptr::slice_from_raw_parts_mut(bytes.as_mut_ptr(), bytes.len())
                 }
                 Storage::Static(bytes) => core::ptr::from_ref(*bytes).cast_mut(),
                 #[cfg(unix)]
-                Storage::Mapped(mapping) => mapping.0,
+                Storage::Mapped(mapping) => {
+                    core::ptr::slice_from_raw_parts_mut(mapping.as_ptr(), mapping.size())
+                }
             }
         }
 
@@ -852,15 +846,23 @@ pub mod store {
     // ────────────────────────────────────────────────────────────────────
 
     impl Store {
+        #[inline]
+        pub fn new(data: Data, mime_type: MimeType) -> Store {
+            Store {
+                data,
+                mime_type,
+                ref_count: bun_ptr::ThreadSafeRefCount::init(),
+                is_all_ascii: IsAllAscii::default(),
+            }
+        }
+
         /// Takes ownership of
         /// `bytes`. Returns a +1-ref heap `Store`.
         pub fn init(bytes: Vec<u8>) -> RefPtr<Store> {
-            RefPtr::new(Store {
-                data: Data::Bytes(Bytes::init(bytes)),
-                mime_type: bun_http_types::MimeType::NONE,
-                ref_count: bun_ptr::ThreadSafeRefCount::init(),
-                is_all_ascii: IsAllAscii::default(),
-            })
+            RefPtr::new(Store::new(
+                Data::Bytes(Bytes::init(bytes)),
+                bun_http_types::MimeType::NONE,
+            ))
         }
 
         pub fn get_path(&self) -> Option<&[u8]> {
@@ -919,7 +921,7 @@ pub mod store {
         ///
         /// # Safety
         /// `this` must point to a live `Store` originally allocated via
-        /// `Store::new` / `Box::new`, and the caller must own one outstanding
+        /// `RefPtr::new`, and the caller must own one outstanding
         /// reference being released.
         #[inline]
         pub unsafe fn deref(this: NonNull<Store>) {

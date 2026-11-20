@@ -48,13 +48,6 @@ fn from_duplex<const SSL: bool>(duplex: &UpgradedDuplex) -> uws::NewSocketHandle
     )
 }
 
-/// Shorthand for the JS-side `EventLoopCtx` (replaces direct VM passing to
-/// `KeepAlive::ref_/unref` — `bun_io` no longer accepts `&VirtualMachine`).
-#[inline]
-fn js_loop_ctx() -> bun_io::EventLoopCtx {
-    bun_io::posix_event_loop::get_vm_ctx(bun_io::posix_event_loop::AllocatorType::Js)
-}
-
 /// The error behind a close that the event loop initiated: the `recv()`
 /// failure or `SO_ERROR` that uSockets closed the socket with (`> 2`, see
 /// `on_close`). uSockets reports it in the platform's own numbering: an errno
@@ -484,23 +477,15 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// The wrapper takes over `this`.
     pub(crate) fn to_js(this: RefPtr<Self>, global: &JSGlobalObject) -> JSValue {
         jsc::mark_binding!();
-        // The codegen wrappers are monomorphic in `TCPSocket`/`TLSSocket`, hence the casts.
         let ptr = this.into_raw();
-        let value = if SSL {
-            js_TLSSocket::to_js(ptr.cast(), global)
-        } else {
-            js_TCPSocket::to_js(ptr.cast(), global)
-        };
-        debug_assert!(
-            Some(ptr.cast::<c_void>())
-                == if SSL {
-                    js_TLSSocket::from_js(value).map(|p| p.as_ptr().cast())
-                } else {
-                    js_TCPSocket::from_js(value).map(|p| p.as_ptr().cast())
-                },
-            "JS{{TCP,TLS}}Socket.toJS: C ABI round-trip mismatch",
-        );
-        value
+        // SAFETY: `SSL` tells which of the two types `Self` is, so this is the `RefPtr` given up above.
+        unsafe {
+            if SSL {
+                js_TLSSocket::to_js(RefPtr::from_raw(ptr.cast()), global)
+            } else {
+                js_TCPSocket::to_js(RefPtr::from_raw(ptr.cast()), global)
+            }
+        }
     }
     pub(crate) fn data_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
         jsc::mark_binding!();
@@ -594,8 +579,6 @@ impl<const SSL: bool> NewSocket<SSL> {
                     bun_core::ZBox::from_bytes(bun_core::ip_address::strip_ipv6_brackets(host));
                 let port = *port;
                 // `host` borrow ends here; `this.connection` no longer borrowed.
-                // `ZBox` guarantees a trailing NUL; host bytes contain no interior NUL.
-                let host_c = hostz.as_zstr().as_cstr();
 
                 // Bind to the requested local address before connecting, if any.
                 let local = this.local_binding.get();
@@ -606,9 +589,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                     match group.connect(
                         kind,
                         ssl_ctx,
-                        host_c,
+                        &hostz,
                         c_int::from(port),
-                        local_z.as_ref().map(|(z, p)| (z.as_zstr().as_cstr(), *p)),
+                        local_z.as_ref().map(|(z, p)| (z.as_zstr(), *p)),
                         flags,
                         core::mem::size_of::<*mut c_void>() as c_int,
                     ) {
@@ -796,7 +779,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             None
         } else {
             context
-                .to_js()
                 .as_class_ref::<crate::api::bun_secure_context::SecureContext>()
                 .map(|sc| sc.ctx.clone())
                 .inspect(install_sni_alpn_selector)
@@ -839,7 +821,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.socket.get().is_detached() {
             return Ok(());
         }
-        if this.native_callback.get().on_writable() {
+        if let Some(h2) = this.native_callback.get().h2_ref() {
+            h2.on_native_writable();
             return Ok(());
         }
         let handlers = this.get_handlers();
@@ -1038,7 +1021,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.socket.set(SocketHandler::<SSL>::DETACHED);
 
         let vm = handlers.vm;
-        this.poll_ref.unref_on_next_tick(js_loop_ctx());
+        this.poll_ref.unref_on_next_tick(bun_io::js_vm_ctx());
 
         // The deferred `mark_inactive()` is gated on the `Handlers` captured
         // before the user callback runs: `onConnectError` can synchronously
@@ -1266,7 +1249,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             .with_mut(|b| b.clear_and_free());
         self.detach_native_callback();
         old.close(uws::CloseCode::Failure);
-        self.poll_ref.unref(js_loop_ctx());
+        self.poll_ref.unref(bun_io::js_vm_ctx());
         if self.flags.get().contains(Flags::IS_ACTIVE) {
             self.update_flags(|f| f.remove(Flags::IS_ACTIVE));
             if let Some(h) = self.handlers_opt() {
@@ -1304,7 +1287,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     self.handlers.set(None);
                 }
             }
-            self.poll_ref.unref(js_loop_ctx());
+            self.poll_ref.unref(bun_io::js_vm_ctx());
         }
     }
 
@@ -1357,7 +1340,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Stale if node:net reconnected through this wrapper while it was paused.
         this.update_flags(|f| f.remove(Flags::IS_PAUSED));
         if !this.ref_pollref_on_connect.replace(true) {
-            this.poll_ref.unref(js_loop_ctx());
+            this.poll_ref.unref(bun_io::js_vm_ctx());
         }
         if !SSL {
             this.pause_on_connect_once();
@@ -1614,7 +1597,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let callback = handlers.on_end();
         if callback.is_empty() {
-            this.poll_ref.unref(js_loop_ctx());
+            this.poll_ref.unref(bun_io::js_vm_ctx());
 
             // If you don't handle TCP fin, we assume you're done.
             this.mark_inactive();
@@ -2091,7 +2074,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
 
-        this.poll_ref.unref(js_loop_ctx());
+        this.poll_ref.unref(bun_io::js_vm_ctx());
 
         let callback = handlers.on_close();
 
@@ -2155,8 +2138,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.socket.get().is_detached() {
             return Ok(());
         }
-        if this.native_callback.get().on_data(data)? {
-            return Ok(());
+        if let Some(h2) = this.native_callback.get().h2_ref() {
+            return h2.on_native_read(data);
         }
         let handlers = this.get_handlers();
         log!(
@@ -2456,7 +2439,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// Vectored raw write for plain-TCP sockets: all chunks reach the fd in one
     /// writev. Callers guarantee this socket has no TLS layer (raw writes bypass
     /// SSL framing). Updates bytes_written like the scalar path.
-    pub(crate) fn write_vectored_raw(&self, iov: &[bun_uws_sys::UsIoVec]) -> i32 {
+    pub(crate) fn write_vectored_raw(&self, iov: &[bun_uws_sys::UsIoVec<'_>]) -> i32 {
         let socket = self.socket.get();
         if socket.is_shutdown() || socket.is_closed() {
             return -1;
@@ -3062,7 +3045,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // defer behind its ciphertext write spill (`ssl_close_after_spill`).
         socket.close(uws::CloseCode::FastShutdown);
         self.socket.set(SocketHandler::<SSL>::DETACHED);
-        self.poll_ref.unref(js_loop_ctx());
+        self.poll_ref.unref(bun_io::js_vm_ctx());
     }
 
     pub(crate) fn end(
@@ -3103,7 +3086,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     pub(crate) fn js_ref(&self) {
         if self.socket.get().is_established() {
-            self.poll_ref.ref_(js_loop_ctx());
+            self.poll_ref.ref_(bun_io::js_vm_ctx());
         } else {
             // `connect_finish` holds the loop until then; `on_open` applies this.
             self.ref_pollref_on_connect.set(true);
@@ -3112,7 +3095,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     pub(crate) fn js_unref(&self) {
         if self.socket.get().is_established() {
-            self.poll_ref.unref(js_loop_ctx());
+            self.poll_ref.unref(bun_io::js_vm_ctx());
         } else {
             self.ref_pollref_on_connect.set(false);
         }
@@ -3501,7 +3484,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         tls.mark_active();
         if was_reffed {
-            tls.poll_ref.ref_(js_loop_ctx());
+            tls.poll_ref.ref_(bun_io::js_vm_ctx());
         }
 
         // A server-side adopted socket has no listen socket to hang an
@@ -3635,27 +3618,12 @@ pub(crate) enum NativeCallbacks {
 }
 
 impl NativeCallbacks {
-    /// `&self` borrows the socket's `JsCell<NativeCallbacks>`; the dispatch
-    /// re-enters JS, which can `detach_native_callback` and overwrite that cell.
-    /// Copy the parser pointer out first; the callee's `keepalive()` holds it.
-    /// `Ok(false)`: nothing attached, dispatch to the JS handlers.
-    pub(crate) fn on_data(&self, data: &[u8]) -> JsResult<bool> {
-        let h2 = match self {
-            NativeCallbacks::H2(h2) => h2.as_ptr(),
-            NativeCallbacks::None => return Ok(false),
-        };
-        // SAFETY: `on_native_read` takes a keepalive; `h2` stays live across re-entry.
-        unsafe { (*h2).on_native_read(data) }?;
-        Ok(true)
-    }
-    pub(crate) fn on_writable(&self) -> bool {
-        let h2 = match self {
-            NativeCallbacks::H2(h2) => h2.as_ptr(),
-            NativeCallbacks::None => return false,
-        };
-        // SAFETY: `on_native_writable` takes a keepalive; `h2` stays live across re-entry.
-        unsafe { (*h2).on_native_writable() };
-        true
+    /// Returns a new ref: the dispatch re-enters JS, which can `detach_native_callback`.
+    fn h2_ref(&self) -> Option<RefPtr<H2FrameParser>> {
+        match self {
+            NativeCallbacks::H2(h2) => Some(h2.clone()),
+            NativeCallbacks::None => None,
+        }
     }
 }
 
@@ -4516,19 +4484,10 @@ pub(crate) fn create_socket_pair(cx: &mut JsScope<'_>) -> JsResult<[c_int; 2]> {
 
     #[cfg(not(windows))]
     {
-        let mut fds_: [libc::c_int; 2] = [0, 0];
-        // SAFETY: libc FFI.
-        let rc =
-            unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds_.as_mut_ptr()) };
-        if rc != 0 {
-            let err = sys::Error::from_code(sys::get_errno(rc), sys::Tag::socketpair);
-            return Err(global.throw_value(err.to_js(global)));
+        match sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, true) {
+            Ok(pair) => Ok(pair.map(sys::Fd::native)),
+            Err(err) => Err(global.throw_value(err.to_js(global))),
         }
-
-        let _ = sys::update_nonblocking(sys::Fd::from_native(fds_[0]), true);
-        let _ = sys::update_nonblocking(sys::Fd::from_native(fds_[1]), true);
-
-        Ok(fds_)
     }
 }
 

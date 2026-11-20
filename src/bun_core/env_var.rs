@@ -78,6 +78,8 @@ new!(pub BUN_CONFIG_WS_CLOSE_TIMEOUT: unsigned, "BUN_CONFIG_WS_CLOSE_TIMEOUT", {
 new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
 #[cfg(not(bun_locked_environment))]
 new!(pub BUN_AOT_VERBOSE: boolean, "BUN_AOT_VERBOSE", { default: false });
+#[cfg(not(bun_locked_environment))]
+new!(pub BUN_AOT_ORDER_OUT: string, "BUN_AOT_ORDER_OUT", {});
 // Bun's own tests, behind BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: `bun build --compile --aot` writes the program alone where it would write an
 // executable.
 #[cfg(not(bun_locked_environment))]
@@ -274,6 +276,8 @@ pub mod feature_flag {
 
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG, "BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER, "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER", {});
+    new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DEFERRED_REQUIRE, "BUN_FEATURE_FLAG_DISABLE_DEFERRED_REQUIRE", {});
+    new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_SETTLED_FORMAT, "BUN_FEATURE_FLAG_DISABLE_SETTLED_FORMAT", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE, "BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DNS_CACHE, "BUN_FEATURE_FLAG_DISABLE_DNS_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE, "BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE", {});

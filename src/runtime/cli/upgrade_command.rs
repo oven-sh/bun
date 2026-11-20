@@ -731,7 +731,7 @@ impl UpgradeCommand {
 
             // Reshaped for borrowck — use a stack-local PathBuffer instead of thread_local
             let mut tmpdir_path_buf = bun_paths::path_buffer_pool::get();
-            let tmpdir_path = match sys::get_fd_path(save_dir.fd(), &mut tmpdir_path_buf) {
+            let tmpdir_z = match sys::get_fd_path_z(save_dir.fd(), &mut tmpdir_path_buf) {
                 Ok(p) => p,
                 Err(err) => {
                     Output::err_generic(
@@ -742,14 +742,9 @@ impl UpgradeCommand {
                 }
             };
 
-            let tmpdir_path_len = tmpdir_path.len();
-            tmpdir_path_buf[tmpdir_path_len] = 0;
-            // SAFETY: buf[tmpdir_path_len] == 0 written above
-            let tmpdir_z = ZStr::from_buf(&tmpdir_path_buf[..], tmpdir_path_len);
             let _ = sys::chdir(tmpdir_z);
 
-            // SAFETY: literal ends with NUL.
-            let tmpname: &ZStr = ZStr::from_static(b"bun.zip\0");
+            let tmpname: &ZStr = bun_core::zstr!("bun.zip");
             let exe: &[u8] = if use_profile {
                 Self::PROFILE_EXE_SUBPATH.as_bytes()
             } else {
@@ -814,7 +809,7 @@ impl UpgradeCommand {
                     let unzip_result = match spawn_sync::spawn(&spawn_sync::Options {
                         argv: build_argv(&unzip_argv),
                         envp: None,
-                        cwd: Box::<[u8]>::from(&tmpdir_path_buf[..tmpdir_path_len]),
+                        cwd: Box::<[u8]>::from(tmpdir_z.as_bytes()),
                         stdin: spawn_sync::SyncStdio::Inherit,
                         stdout: spawn_sync::SyncStdio::Inherit,
                         stderr: spawn_sync::SyncStdio::Inherit,
@@ -864,7 +859,7 @@ impl UpgradeCommand {
                         &mut unzip_script,
                         "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path \"{}\" \"{}\" -Force",
                         bun_fmt::escape_powershell(bstr::BStr::new(tmpname.as_bytes())),
-                        bun_fmt::escape_powershell(bstr::BStr::new(&tmpdir_path_buf[..tmpdir_path_len])),
+                        bun_fmt::escape_powershell(bstr::BStr::new(tmpdir_z.as_bytes())),
                     )
                     .expect("oom");
 
@@ -915,7 +910,7 @@ impl UpgradeCommand {
                     let spawn_res = spawn_sync::spawn(&spawn_sync::Options {
                         argv: build_argv(&unzip_argv),
                         envp: None,
-                        cwd: Box::<[u8]>::from(&tmpdir_path_buf[..tmpdir_path_len]),
+                        cwd: Box::<[u8]>::from(tmpdir_z.as_bytes()),
                         stderr: spawn_sync::SyncStdio::Inherit,
                         stdout: spawn_sync::SyncStdio::Inherit,
                         stdin: spawn_sync::SyncStdio::Inherit,
@@ -959,7 +954,7 @@ impl UpgradeCommand {
                     let spawned = spawn_sync::spawn(&spawn_sync::Options {
                         argv: build_argv(&verify_argv),
                         envp: None,
-                        cwd: Box::<[u8]>::from(&tmpdir_path_buf[..tmpdir_path_len]),
+                        cwd: Box::<[u8]>::from(tmpdir_z.as_bytes()),
                         stdout: spawn_sync::SyncStdio::Buffer,
                         stderr: spawn_sync::SyncStdio::Ignore,
                         stdin: spawn_sync::SyncStdio::Ignore,
@@ -1080,9 +1075,7 @@ impl UpgradeCommand {
             // copy of `exe`.
             let mut exe_z_buf = bun_paths::path_buffer_pool::get();
             exe_z_buf[..exe.len()].copy_from_slice(exe);
-            exe_z_buf[exe.len()] = 0;
-            // SAFETY: NUL written above.
-            let exe_z: &ZStr = ZStr::from_buf(&exe_z_buf[..], exe.len());
+            let exe_z: &ZStr = ZStr::nul_terminate(&mut exe_z_buf, exe.len());
 
             if use_canary {
                 // Check if the versions are the same
@@ -1241,22 +1234,19 @@ impl UpgradeCommand {
                 let completions_argv: [&[u8]; 2] = [target_filename.as_bytes(), b"completions"];
 
                 let _ = env_loader.map.put(b"IS_BUN_AUTO_UPDATE", b"true");
-                // `spawn_sync` takes the null-terminated envp
-                // directly, so build it from the DotEnv map. Output is buffered and
-                // silently dropped along with any spawn error.
-                if let Ok(envp) = env_loader.map.create_null_delimited_env_map() {
-                    let _ = spawn_sync::spawn(&spawn_sync::Options {
-                        argv: build_argv(&completions_argv),
-                        envp: Some(envp.as_list()),
-                        cwd: Box::<[u8]>::from(target_dirname),
-                        stdout: spawn_sync::SyncStdio::Buffer,
-                        stderr: spawn_sync::SyncStdio::Buffer,
-                        stdin: spawn_sync::SyncStdio::Ignore,
-                        #[cfg(windows)]
-                        windows: spawn_windows_options(),
-                        ..Default::default()
-                    });
-                }
+                let envp = env_loader.map.to_envp();
+                // Output is buffered and silently dropped along with any spawn error.
+                let _ = spawn_sync::spawn(&spawn_sync::Options {
+                    argv: build_argv(&completions_argv),
+                    envp: Some(envp.as_list()),
+                    cwd: Box::<[u8]>::from(target_dirname),
+                    stdout: spawn_sync::SyncStdio::Buffer,
+                    stderr: spawn_sync::SyncStdio::Buffer,
+                    stdin: spawn_sync::SyncStdio::Ignore,
+                    #[cfg(windows)]
+                    windows: spawn_windows_options(),
+                    ..Default::default()
+                });
             }
 
             Output::print_start_end(ctx.start_time, bun_core::time::nano_timestamp());
@@ -1332,59 +1322,22 @@ pub(crate) mod upgrade_js_bindings {
                 sys::Result::Ok(norm) => norm,
             };
 
-            let path_len_bytes: u16 = (path.len() * 2) as u16;
-            let mut nt_name = w::UNICODE_STRING {
-                Length: path_len_bytes,
-                MaximumLength: path_len_bytes,
-                Buffer: path.as_ptr().cast_mut().cast::<u16>(),
+            let options = sys::NtCreateFileOptions {
+                access_mask: w::STANDARD_RIGHTS_READ
+                    | w::FILE_READ_ATTRIBUTES
+                    | w::FILE_READ_EA
+                    | w::SYNCHRONIZE
+                    | w::FILE_TRAVERSE,
+                disposition: w::FILE_OPEN,
+                options: w::FILE_DIRECTORY_FILE
+                    | w::FILE_SYNCHRONOUS_IO_NONALERT
+                    | w::FILE_OPEN_FOR_BACKUP_INTENT,
+                attributes: 0,
+                sharing_mode: w::FILE_SHARE_READ | w::FILE_SHARE_WRITE,
             };
-
-            let mut attr = w::OBJECT_ATTRIBUTES {
-                Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
-                RootDirectory: core::ptr::null_mut(),
-                Attributes: 0,
-                ObjectName: &mut nt_name,
-                SecurityDescriptor: core::ptr::null_mut(),
-                SecurityQualityOfService: core::ptr::null_mut(),
-            };
-
-            let flags: u32 = w::STANDARD_RIGHTS_READ
-                | w::FILE_READ_ATTRIBUTES
-                | w::FILE_READ_EA
-                | w::SYNCHRONIZE
-                | w::FILE_TRAVERSE;
-
-            let mut fd: w::HANDLE = w::INVALID_HANDLE_VALUE;
-            let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
-
-            // SAFETY: FFI call to NtCreateFile with valid pointers
-            let rc = unsafe {
-                w::ntdll::NtCreateFile(
-                    &mut fd,
-                    flags,
-                    &mut attr,
-                    &mut io,
-                    core::ptr::null_mut(),
-                    0,
-                    w::FILE_SHARE_READ | w::FILE_SHARE_WRITE,
-                    w::FILE_OPEN,
-                    w::FILE_DIRECTORY_FILE
-                        | w::FILE_SYNCHRONOUS_IO_NONALERT
-                        | w::FILE_OPEN_FOR_BACKUP_INTENT,
-                    core::ptr::null_mut(),
-                    0,
-                )
-            };
-
-            match sys::windows::Win32Error::from_nt_status(rc) {
-                sys::windows::Win32Error::SUCCESS => {
-                    // System-kind handle on Windows.
-                    // SAFETY: test-only helper; access is single-threaded (JS thread).
-                    unsafe {
-                        TEMPDIR_FD.write(Some(sys::File::from_fd(sys::Fd::from_system(fd))));
-                    }
-                }
-                _ => {}
+            if let Ok(handle) = w::NtCreateFile(None, path, options) {
+                // SAFETY: test-only helper; access is single-threaded (JS thread).
+                unsafe { TEMPDIR_FD.write(Some(handle.into())) };
             }
         }
     }

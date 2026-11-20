@@ -11,6 +11,13 @@ pub struct File {
     pub handle: Fd,
 }
 
+#[cfg(windows)]
+impl From<std::os::windows::io::OwnedHandle> for File {
+    fn from(handle: std::os::windows::io::OwnedHandle) -> Self {
+        Self::from_fd(Fd::from_system(handle.into_raw_handle()))
+    }
+}
+
 impl Drop for File {
     #[inline]
     fn drop(&mut self) {
@@ -49,6 +56,16 @@ impl File {
     #[inline]
     pub fn into_raw(self) -> Fd {
         core::mem::ManuallyDrop::new(self).handle
+    }
+    /// As [`FdExt::make_lib_uv_owned`].
+    pub fn make_lib_uv_owned(mut self) -> core::result::Result<Self, MakeLibUvOwnedError> {
+        self.handle = self.handle.make_lib_uv_owned()?;
+        Ok(self)
+    }
+    /// As [`FdExt::make_lib_uv_owned_for_syscall`].
+    pub fn make_lib_uv_owned_for_syscall(mut self, syscall_tag: Tag) -> Maybe<Self> {
+        self.handle = self.handle.make_lib_uv_owned_for_syscall(syscall_tag)?;
+        Ok(self)
     }
     /// Non-owning `&File` view of an [`Fd`]. Mirrors `Path::new(&OsStr)`.
     #[inline]
@@ -366,7 +383,7 @@ pub(crate) mod tests {
     pub(crate) static FD_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn open_cwd() -> File {
-        File::open(ZStr::from_static(b".\0"), O::RDONLY, 0).unwrap()
+        File::open(bun_core::zstr!("."), O::RDONLY, 0).unwrap()
     }
 
     #[test]

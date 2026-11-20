@@ -16,7 +16,7 @@ const _: () = assert!(size_of::<Option<CStrRef>>() == size_of::<*const c_char>()
 impl<'a> CStrRef<'a> {
     /// Panics unless the last byte is a NUL.
     #[inline]
-    pub const fn from_bytes_with_nul(bytes: &'a [u8]) -> Self {
+    pub const fn from_slice_with_nul(bytes: &'a [u8]) -> Self {
         assert!(matches!(bytes.last(), Some(0)));
         Self(NonNull::from_ref(bytes).cast(), PhantomData)
     }
@@ -26,7 +26,7 @@ impl<'a> CStrRef<'a> {
         self.0.as_ptr()
     }
 
-    /// Measures the string.
+    /// Calls `strlen`.
     #[inline]
     pub fn to_cstr(self) -> &'a CStr {
         // SAFETY: a `CStr` and a `ZStr` end with a NUL, and the other constructors check or write
@@ -59,14 +59,14 @@ pub struct CStrList<'a>(&'a [Option<CStrRef<'a>>]);
 impl<'a> CStrList<'a> {
     /// Panics unless `items` ends with `None`.
     #[inline]
-    pub fn new(items: &'a [Option<CStrRef<'a>>]) -> Self {
+    pub const fn new(items: &'a [Option<CStrRef<'a>>]) -> Self {
         assert!(matches!(items.last(), Some(None)));
         Self(items)
     }
 
-    /// Adds the `None`.
+    /// Pushes the terminating `None` onto `items`.
     #[inline]
-    pub fn terminate<'s: 'a>(items: &'a mut Vec<Option<CStrRef<'s>>>) -> Self {
+    pub fn from_unterminated<'s: 'a>(items: &'a mut Vec<Option<CStrRef<'s>>>) -> Self {
         items.push(None);
         Self(items)
     }
@@ -74,6 +74,13 @@ impl<'a> CStrList<'a> {
     #[inline]
     pub fn first(self) -> Option<CStrRef<'a>> {
         self.0[0]
+    }
+
+    /// Without the `None`.
+    #[cfg(windows)]
+    #[inline]
+    pub fn unterminated(self) -> &'a [Option<CStrRef<'a>>] {
+        &self.0[..self.0.len() - 1]
     }
 
     #[inline]
@@ -92,7 +99,7 @@ pub struct CStringList {
 
 impl CStringList {
     /// Each string is the concatenation of its parts.
-    pub fn concat<'s, const N: usize>(
+    pub fn from_parts<'s, const N: usize>(
         strings: impl ExactSizeIterator<Item = [&'s [u8]; N]> + Clone,
     ) -> Self {
         let len_with_nul = |parts: [&[u8]; N]| parts.iter().map(|p| p.len()).sum::<usize>() + 1;
@@ -120,7 +127,7 @@ impl CStringList {
 
     /// Without the `None`.
     #[inline]
-    pub fn entries(&self) -> &[Option<CStrRef<'_>>] {
+    pub fn unterminated(&self) -> &[Option<CStrRef<'_>>] {
         &self.items[..self.items.len() - 1]
     }
 
@@ -140,20 +147,23 @@ mod tests {
     }
 
     #[test]
-    fn concat_joins_the_parts_of_each_string() {
+    fn from_parts_joins_the_parts_of_each_string() {
         let pairs: [[&[u8]; 3]; 3] = [[b"A", b"=", b"1"], [b"", b"", b""], [b"BC", b"=", b""]];
-        let list = Box::new(CStringList::concat(pairs.into_iter()));
-        assert_eq!(read(list.entries()), [&b"A=1"[..], b"", b"BC="].map(Some));
+        let list = Box::new(CStringList::from_parts(pairs.into_iter()));
+        assert_eq!(
+            read(list.unterminated()),
+            [&b"A=1"[..], b"", b"BC="].map(Some)
+        );
 
-        let empty = CStringList::concat(core::iter::empty::<[&[u8]; 1]>());
-        assert!(empty.entries().is_empty());
+        let empty = CStringList::from_parts(core::iter::empty::<[&[u8]; 1]>());
+        assert!(empty.unterminated().is_empty());
         assert!(empty.as_list().first().is_none());
     }
 
     #[test]
-    fn terminate_adds_the_null() {
-        let mut items = vec![Some(c"a".into()), Some(ZStr::from_static(b"bc\0").into())];
-        let list = CStrList::terminate(&mut items);
+    fn from_unterminated_adds_the_null() {
+        let mut items = vec![Some(c"a".into()), Some(crate::zstr!("bc").into())];
+        let list = CStrList::from_unterminated(&mut items);
         assert_eq!(read(list.0), [Some(&b"a"[..]), Some(b"bc"), None]);
         assert!(CStrList::new(&items).first().is_some());
     }
@@ -166,7 +176,7 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn from_bytes_with_nul_refuses_a_string_without_an_end() {
-        CStrRef::from_bytes_with_nul(b"a\0b");
+    fn from_slice_with_nul_refuses_a_string_without_an_end() {
+        CStrRef::from_slice_with_nul(b"a\0b");
     }
 }

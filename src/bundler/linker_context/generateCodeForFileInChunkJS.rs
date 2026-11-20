@@ -67,6 +67,11 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
 
             let hmr_api_ref = ast.wrapper_ref;
 
+            // The prologue of the module is the prologue of its closure.
+            for directive in ast.directives.slice() {
+                stmts.inside_wrapper_prefix.append_directive(*directive);
+            }
+
             for part in parts {
                 let part_stmts: &[Stmt] = part.stmts.slice();
                 if let Err(err) =
@@ -176,7 +181,6 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                 source_storage = bun_ast::Source {
                     path: new_path,
                     contents: std::borrow::Cow::Borrowed(&source_ref.contents),
-                    contents_is_recycled: source_ref.contents_is_recycled,
                     identifier_name: std::borrow::Cow::Borrowed(&source_ref.identifier_name),
                     index: source_ref.index,
                 };
@@ -223,29 +227,26 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
 
     let output_format = c.options.output_format;
 
-    // The top-level directive must come first (the non-wrapped case is handled
-    // by the chunk generation code, although only for the entry point)
+    // The top-level directives must come first (the non-wrapped case is handled
+    // by the chunk generation code, although only for the entry point of this
+    // chunk). An ES module without a wrapper symbol prints no closure to hold them.
     if flags.wrap != WrapKind::None
-        && ast
-            .flags
-            .contains(AstFlags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE)
-        && !chunk.is_entry_point()
-        && !output_format.is_always_strict_mode()
+        && !chunk.is_entry_point_file(source_index as u32)
+        && !ast.wrapper_ref.is_empty()
     {
-        stmts
-            .inside_wrapper_prefix
-            .append_non_dependency(Stmt::alloc(
-                S::Directive {
-                    value: bun_ast::StoreStr::new(b"use strict"),
-                },
-                bun_ast::Loc::EMPTY,
-            ))
-            .expect("unreachable");
+        for directive in ast.directives.slice() {
+            // Every ES module is already in strict mode
+            if output_format.is_always_strict_mode()
+                && matches!(directive.data, StmtData::SDirective(d) if d.value.slice() == b"use strict")
+            {
+                continue;
+            }
+            stmts.inside_wrapper_prefix.append_directive(*directive);
+        }
     }
 
     let parts_live = &c.graph.parts_live[source_index];
 
-    // TODO: handle directive
     if namespace_export_part_index >= part_range.part_index_begin
         && namespace_export_part_index < part_range.part_index_end
         && parts_live.is_set(namespace_export_part_index as usize)
@@ -517,7 +518,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                 // The wrapper must be a regular function, not an arrow, so that a
                 // top-level `arguments` reference in the CommonJS body binds to the
                 // wrapper's own `arguments` object (Node and esbuild both allow it).
-                let cjs_args = Vec::<Expr>::from_slice(&[Expr::init(
+                let cjs_args = bun_ast::ExprNodeList::from_slice(&[Expr::init(
                     E::Function {
                         func: G::Fn {
                             args: bun_ast::StoreSlice::new(args.into_bump_slice()),
@@ -540,7 +541,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                             },
                             bun_ast::Loc::EMPTY,
                         ),
-                        args: Vec::move_from_list(cjs_args),
+                        args: cjs_args,
                         ..Default::default()
                     },
                     bun_ast::Loc::EMPTY,
@@ -748,7 +749,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                         StmtListWhich::OutsideWrapperPrefix,
                         Stmt::alloc(
                             S::Local {
-                                decls: G::DeclList::move_from_list(core::mem::take(
+                                decls: bun_alloc::AstAlloc::vec_from_iter(core::mem::take(
                                     &mut hoist.decls,
                                 )),
                                 ..Default::default()
@@ -766,7 +767,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                     debug_assert!(!ast.wrapper_ref.is_empty()); // js_parser's needsWrapperRef thought wrapper was not needed
 
                     // "__esm(() => { ... })"
-                    let esm_args = Vec::<Expr>::from_slice(&[Expr::init(
+                    let esm_args = bun_ast::ExprNodeList::from_slice(&[Expr::init(
                         E::Arrow {
                             is_async,
                             body: G::FnBody {
@@ -782,7 +783,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                     let value = Expr::init(
                         E::Call {
                             target: Expr::init_identifier(c.esm_runtime_ref, bun_ast::Loc::EMPTY),
-                            args: Vec::move_from_list(esm_args),
+                            args: esm_args,
                             ..Default::default()
                         },
                         bun_ast::Loc::EMPTY,
@@ -921,7 +922,7 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
                         did_merge_with_previous_local = true;
 
                         let mut clone =
-                            Vec::<G::Decl>::init_capacity(before.decls.len() + after.decls.len());
+                            G::DeclList::init_capacity(before.decls.len() + after.decls.len());
                         clone.append_slice_assume_capacity(before.decls.slice());
                         clone.append_slice_assume_capacity(after.decls.slice());
                         // we must clone instead of overwrite in-place incase the same S.Local is used across threads
@@ -930,7 +931,7 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
                         stmts[end - 1] = Stmt::allocate(
                             _arena,
                             S::Local {
-                                decls: Vec::move_from_list(clone),
+                                decls: clone,
                                 is_export: before.is_export,
                                 origin: before.origin,
                                 kind: before.kind,

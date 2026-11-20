@@ -290,7 +290,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // Detach the tunnel first so its shutdown callbacks cannot re-enter this path.
         if let Transport::Tunnel(tunnel) = self.transport.replace(Transport::Socket) {
             tunnel.clear_connected_web_socket();
-            WebSocketProxyTunnel::shutdown(tunnel.this_ptr());
+            WebSocketProxyTunnel::shutdown(&tunnel);
             drop(tunnel);
             // Release the I/O-layer ref taken in init_with_tunnel() — the
             // tunnel was this struct's socket-equivalent owner. In the
@@ -483,14 +483,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         let result = match self.deflate.borrow_mut().as_mut() {
             None => Err(ErrorCode::UnexpectedRsv1),
             Some(deflate) => deflate
-                .decompress(
-                    rare.libdeflate_decompressor(),
-                    data,
-                    &mut decompressed,
-                    self.max_payload_length(),
-                )
+                .decompress(data, &mut decompressed, self.max_payload_length())
                 .map_err(|err| match err {
-                    websocket_deflate::Error::InflateFailed => ErrorCode::InvalidCompressedData,
+                    websocket_deflate::Error::Corrupt => ErrorCode::InvalidCompressedData,
                     websocket_deflate::Error::TooLarge => ErrorCode::MessageTooBig,
                     websocket_deflate::Error::OutOfMemory => ErrorCode::FailedToAllocateMemory,
                 }),
@@ -956,7 +951,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             let mut unmask = self.unmask.get();
             let mut receive_buffer = self.receive_buffer.borrow_mut();
             let writable = bun_core::handle_oom(receive_buffer.writable_with_size(chunk.len()));
-            unmask.copy(&mut writable[..chunk.len()], chunk);
+            unmask.copy(writable, chunk);
             receive_buffer.update(chunk.len());
             self.unmask.set(unmask);
         }
@@ -2239,7 +2234,7 @@ impl Mask {
             bun_core::hint::cold();
             return;
         }
-        bun_highway::fill_with_skip_mask(*mask_buf, &mut output[..input.len()], input, skip_mask);
+        bun_highway::fill_with_skip_mask(*mask_buf, output, input, skip_mask);
     }
 
     /// In-place variant for when output and input alias the same buffer

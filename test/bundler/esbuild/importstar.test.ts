@@ -2012,4 +2012,76 @@ describe.concurrent("bundler", () => {
       stdout: '{"inner":{"a":1,"b":2,"default":"d"},"innerDefault":"d","top":0}',
     },
   });
+  // `export * as eval from` and `export { eval } from` name exports, and an
+  // export can have any identifier name. The bundler makes the binding behind
+  // each one, and `eval`, `arguments` and `await` cannot be bindings in module
+  // code. A function body also reads its own `arguments`.
+  for (const format of ["esm", "cjs"] as const) {
+    itBundled(`importstar/ExportStarAsRestrictedBindingName-${format}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import * as lib from './lib'
+          function read() { return [typeof lib.arguments.join, typeof lib.eval.EOL, typeof lib.await.format] }
+          console.log(JSON.stringify(read()))
+        `,
+        "/lib.js": /* js */ `
+          export * as arguments from 'node:path'
+          export * as eval from 'node:os'
+          export * as await from 'node:util'
+        `,
+      },
+      format,
+      outfile: format === "esm" ? "/out.js" : "/out.cjs",
+      target: "node",
+      run: {
+        stdout: '["function","string","function"]',
+      },
+    });
+  }
+  itBundled("importstar/ReExportRestrictedBindingNameFromExternal", {
+    files: {
+      "/entry.js": `export { eval, arguments, await } from './foo'`,
+    },
+    external: ["./foo"],
+    runtimeFiles: {
+      "/foo.js": /* js */ `
+        const a = 1, b = 2, c = 3
+        export { a as eval, b as arguments, c as await }
+      `,
+      "/test.js": /* js */ `
+        import * as out from './out.js'
+        console.log(JSON.stringify([out.eval, out.arguments, out.await]))
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "[1,2,3]",
+    },
+  });
+  // No binding is made here: the re-exported item links to the export it
+  // names, and the other item reads a property of the CommonJS namespace. So
+  // a sloppy file that declares `eval` itself keeps the declaration as
+  // written. The `.cjs` name makes the runtime load the output as sloppy code.
+  itBundled("importstar/ReExportRestrictedNameWithoutBindingKeepsSloppyDeclaration", {
+    files: {
+      "/entry.js": /* js */ `
+        import './sloppy'
+        import * as reexport from './reexport'
+        import * as cjs from './cjs'
+        console.log(JSON.stringify([reexport.eval, cjs.eval, globalThis.sloppyEvalName]))
+      `,
+      "/reexport.js": `export { eval } from './esm'`,
+      "/esm.js": `const one = 1; export { one as eval }`,
+      "/cjs.js": `exports.eval = 2`,
+      "/sloppy.js": /* js */ `
+        function eval() {}
+        globalThis.sloppyEvalName = eval.name
+      `,
+    },
+    format: "cjs",
+    outfile: "/out.cjs",
+    run: {
+      stdout: '[1,2,"eval"]',
+    },
+  });
 });

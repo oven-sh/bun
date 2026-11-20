@@ -1713,8 +1713,12 @@ pub(crate) mod js_bundler {
                 if !is_standalone_html {
                     this.target = Target::Bun;
                     if compile.aot.is_some() {
+                        if this.bytecode {
+                            return Err(global_this.throw_invalid_arguments(format_args!(
+                                "compile.aot cannot be used with bytecode. Choose compile.aot for machine code or bytecode for bytecode"
+                            )));
+                        }
                         ensure_compiler(global_this)?;
-                        this.bytecode = false;
                         this.format = options::Format::Esm;
                         compile.compile_target = CompileTarget::default();
                     } else if compile.executable_path.list.is_empty()

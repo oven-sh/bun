@@ -22,6 +22,8 @@ const refused: [string[], string][] = [
   [[...build, "--no-aot", "./entry.js", "--outfile", app], both],
   [["build", "--compile", "--no-aot", "--aot", "./entry.js", "--outfile", app], both],
   [["test", "--aot", "--no-aot"], both],
+  [[...build, "--bytecode", "./entry.js", "--outfile", app], "Cannot use both --aot and --bytecode"],
+  [["compile", "--bytecode", "./entry.js", "--outfile", app], "Cannot use --bytecode with bun compile"],
   [[...build, "--dts", "./entry.js", "--outfile", app], declarations],
   [["compile", "--dts", "./entry.js", "--outfile", app], declarations],
   [["compile", "--app", "./entry.js", "--outfile", app], "bun compile does not support --app"],
@@ -43,7 +45,6 @@ test.each(refused)(
 );
 
 const noted: [string, string][] = [
-  ["--bytecode", "note: --bytecode has no effect with --aot"],
   ["--format=cjs", "note: --format has no effect with --aot"],
   ["--format=iife", "note: --format has no effect with --aot"],
 ];

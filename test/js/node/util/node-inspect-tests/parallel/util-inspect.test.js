@@ -598,14 +598,7 @@ test("no assertion failures 2", () => {
   // Exceptions should print the error message, not '{}'.
   {
     [new Error(), new Error("FAIL"), new TypeError("FAIL"), new SyntaxError("FAIL")].forEach(err => {
-      assert(
-        //! temp bug workaround with replace()'s
-        util.inspect(err).startsWith(err.stack.replace(/^Error: /, err.message ? "$&" : "Error")),
-        `Expected "${util.inspect(err)}" to start with "${err.stack.replace(
-          /^Error: /,
-          err.message ? "$&" : "Error",
-        )}"`,
-      );
+      assert.strictEqual(util.inspect(err), err.stack);
     });
 
     assert.throws(
@@ -3225,6 +3218,188 @@ test("no assertion failures 3", () => {
       "{ Symbol(Symbol.iterator): [Getter] }",
     );
   }
+});
+
+test("util.inspect keeps the `: ` that is in an error's stack", () => {
+  const firstLine = value => util.inspect(value).split("\n")[0];
+
+  // JavaScriptCore makes the stack when `line` is set, which is before this constructor sets the name.
+  class P extends Error {
+    constructor(message) {
+      super(message);
+      this.line = 3;
+      this.name = "P";
+    }
+  }
+
+  // The message changes after the stack is made.
+  for (const change of [err => (err.message = ""), err => delete err.message, err => (err.message = 0)]) {
+    const err = new Error("msg");
+    const stack = err.stack;
+    change(err);
+    assert.strictEqual(util.inspect(err), stack);
+  }
+
+  // The same, for errors whose name util.inspect puts on the stack.
+  {
+    class BazError extends Error {
+      get name() {
+        return "BazError";
+      }
+    }
+    class A extends TypeError {}
+    const lines = [new BazError("test"), new A("x"), new P("m")].map(err => {
+      void err.stack;
+      err.message = "";
+      return firstLine(err);
+    });
+    assert.deepStrictEqual(lines, ["BazError: test", "A [TypeError]: x", "P: m"]);
+  }
+
+  // The message is falsy when the stack is made.
+  {
+    class HttpError extends Error {
+      constructor(status) {
+        super();
+        this.message = status;
+      }
+    }
+    assert.strictEqual(firstLine(new HttpError(0)), "HttpError: 0");
+  }
+
+  // The program wrote the stack.
+  for (const [stack, expected] of [
+    ["Error: manually set\n    at foo (file.js:1:1)", "Error: manually set\n    at foo (file.js:1:1)"],
+    ["Error: no frames", "[Error: no frames]"],
+    ["Error: \n    at foo (file.js:1:1)", "Error: \n    at foo (file.js:1:1)"],
+  ]) {
+    const err = new Error();
+    err.stack = stack;
+    assert.strictEqual(util.inspect(err), expected);
+  }
+
+  // An Error.prepareStackTrace hook wrote the stack. source-map-support writes `name: message` for an empty message too.
+  {
+    const prepareStackTrace = Error.prepareStackTrace;
+    Error.prepareStackTrace = (error, frames) =>
+      `${error.name}: ${error.message}${frames.map(frame => `\n    at ${frame}`).join("")}`;
+    let lines;
+    try {
+      lines = [firstLine(new Error()), firstLine(new P())];
+    } finally {
+      Error.prepareStackTrace = prepareStackTrace;
+    }
+    assert.deepStrictEqual(lines, ["Error: ", "P: "]);
+  }
+
+  // The name of the class still goes in front of the line.
+  {
+    class Foo extends Error {}
+    const err = new Foo("msg");
+    void err.stack;
+    err.message = "";
+    assert.strictEqual(firstLine(err), "Foo [Error]: msg");
+  }
+
+  // The error is the cause of another error.
+  {
+    const cause = new Error("inner");
+    cause.stack = "Error: inner\n    at foo (file.js:1:1)";
+    cause.message = "";
+    const err = new Error("outer", { cause });
+    err.stack = "Error: outer\n    at bar (file.js:2:1)";
+    assert.strictEqual(
+      util.inspect(err),
+      "Error: outer\n    at bar (file.js:2:1) {\n  [cause]: Error: inner\n      at foo (file.js:1:1)\n}",
+    );
+  }
+});
+
+// JavaScriptCore can make the stack before the name is set, and it does not find every inherited name.
+// Such a stack starts with `Error: `, and util.inspect puts the name there.
+test("util.inspect puts an error's name on a stack that starts with `Error: `", () => {
+  const firstLine = value => util.inspect(value).split("\n")[0];
+
+  // The constructor sets `line`, which makes the stack, and then the name.
+  {
+    class ParseFailure extends Error {
+      constructor(message) {
+        super(message);
+        this.line = 3;
+        this.name = "ParseFailure";
+      }
+    }
+    assert.strictEqual(firstLine(new ParseFailure("bad token")), "ParseFailure: bad token");
+  }
+
+  // The name is two prototypes away from the error.
+  {
+    class A extends TypeError {}
+    assert.strictEqual(firstLine(new A("x")), "A [TypeError]: x");
+  }
+
+  // The name is a getter.
+  {
+    class BazError extends Error {
+      get name() {
+        return "BazError";
+      }
+    }
+    assert.strictEqual(firstLine(new BazError("test")), "BazError: test");
+  }
+
+  // The name is text. It is not a replacement pattern.
+  for (const name of ["A$&B", "A$`B", "A$'B", "A$$B", "A$1B"]) {
+    const err = new Error("x");
+    err.line = 3;
+    err.name = name;
+    assert.strictEqual(firstLine(err), `${name}: x`);
+  }
+
+  // An empty name is not put on the stack.
+  {
+    const err = new RangeError("Error: disk full");
+    err.name = "";
+    assert.strictEqual(util.inspect(err), err.stack);
+    assert.strictEqual(firstLine(err), "Error: disk full");
+  }
+  {
+    const err = new Error("msg");
+    const stack = err.stack;
+    err.name = "";
+    assert.strictEqual(util.inspect(err), stack);
+  }
+
+  // A stack that is `Error` with no message keeps its first line.
+  for (const [stack, expected] of [
+    ["Error\n    at foo (file.js:1:1)", "Error\n    at foo (file.js:1:1) {\n  name: 'EmptyError'\n}"],
+    ["Error", "[Error] { name: 'EmptyError' }"],
+  ]) {
+    const err = new Error();
+    err.stack = stack;
+    err.name = "EmptyError";
+    assert.strictEqual(util.inspect(err), expected);
+  }
+});
+
+test("util.inspect puts the name on an error's stack with no call to a replaced String.prototype.replace", () => {
+  const err = new Error("x");
+  err.line = 3;
+  err.name = "Custom";
+
+  const replace = String.prototype.replace;
+  let calls = 0;
+  String.prototype.replace = function (...args) {
+    calls++;
+    return replace.apply(this, args);
+  };
+  let first;
+  try {
+    first = util.inspect(err).split("\n")[0];
+  } finally {
+    String.prototype.replace = replace;
+  }
+  assert.deepStrictEqual({ first, calls }, { first: "Custom: x", calls: 0 });
 });
 
 // Utility functions

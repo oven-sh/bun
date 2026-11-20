@@ -18,6 +18,8 @@ pub(crate) const MARK_HIDES: u8 = 1 << 3;
 /// One of `Extensions::span_bytes`.
 pub(crate) const MARK_EXTENSION: u8 = 1 << 4;
 pub(crate) const MARK_OTHER: u8 = 1 << 5;
+/// `\n`: it joins the lines of a block.
+pub(crate) const MARK_LINE_END: u8 = 1 << 6;
 use bun_core::StackCheck;
 
 use super::helpers;
@@ -68,6 +70,8 @@ pub(crate) struct Parser<'a> {
     // The lines of `blocks`, in their order, then those of `current_block`.
     pub(crate) block_lines: Vec<VerbatimLine>,
     pub(crate) buffer: Vec<u8>,
+    // Where `emit_code_text` writes the text of a code span with a space for each line ending.
+    pub(crate) code_text: Vec<u8>,
     pub(crate) emph_delims: Vec<EmphDelim>,
     // Scratch storage recycled by resolve_emphasis_delimiters (inlines.rs).
     pub(crate) prev_candidate: Vec<usize>,
@@ -276,6 +280,7 @@ impl<'a> Parser<'a> {
             blocks: Vec::new(),
             block_lines: Vec::new(),
             buffer: Vec::new(),
+            code_text: Vec::new(),
             emph_delims: Vec::new(),
             prev_candidate: Vec::new(),
             bracket_pairs: Vec::new(),
@@ -331,6 +336,7 @@ impl<'a> Parser<'a> {
         for c in [b'\\', b'&', b'!', 0, b'\n'] {
             map[c as usize] = MARK_OTHER;
         }
+        map[b'\n' as usize] |= MARK_LINE_END;
         map[b'*' as usize] = MARK_DELIMITER;
         map[b'_' as usize] = MARK_DELIMITER;
         map[b'`' as usize] = MARK_HIDES;

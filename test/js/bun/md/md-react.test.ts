@@ -346,6 +346,61 @@ This is **bold** and *italic*.
     expect(code.props.children).toEqual(["code"]);
   });
 
+  // CommonMark 6.1, code spans: "First, line endings are converted to spaces."
+  describe("a line ending in a code span is a space", () => {
+    test.each([
+      ["`a\nb`", "a b"],
+      ["`a\r\nb`", "a b"],
+      ["`a\rb`", "a b"],
+      ["``a\nb\nc``", "a b c"],
+      // The spaces before the line ending stay, and a backslash is no hard break.
+      ["`a  \nb`", "a   b"],
+      ["`a\\\nb`", "a\\ b"],
+      // One space goes from each end, whether it is written as a space or as a line ending.
+      ["`\na\n`", "a"],
+      ["` a\nb `", "a b"],
+      ["`  a\nb  `", " a b "],
+      ["`a\n`", "a "],
+      ["`\na`", " a"],
+      // Around other characters that mean something outside of a code span, and behind a long run of backticks.
+      ["``*a* [b]\n&amp; `c` \\\n<d> _e_``", "*a* [b] &amp; `c` \\ <d> _e_"],
+      ["`````a`b\nc`````", "a`b c"],
+      // Far into a long span.
+      [
+        "`0123456789abcdef 0123456789abcdef\n0123456789abcdef\n0123456789abcdef 0123456789abcdef`",
+        "0123456789abcdef 0123456789abcdef 0123456789abcdef 0123456789abcdef 0123456789abcdef",
+      ],
+    ])("%j has the text %j", (markdown, text) => {
+      for (const input of [markdown, Buffer.from(markdown)]) {
+        const code = children(input as string)[0].props.children[0];
+        expect({ type: code.type, props: code.props }).toEqual({ type: "code", props: { children: [text] } });
+      }
+      expect(reactRender(markdown) + "\n").toBe(Markdown.html(markdown));
+    });
+
+    test.each([
+      ["> x `a\n> b` y", "> x `a b` y"],
+      ["- x `a\n  b` y", "- x `a b` y"],
+      ["[`a\nb`](/u)", "[`a b`](/u)"],
+      ["*`a\nb`* **`c\nd`**", "*`a b`* **`c d`**"],
+      ["![`a\nb` c](/u)", "![`a b` c](/u)"],
+      ["`a\nb`\n===", "`a b`\n==="],
+      // Between two code spans that are on one line, and in the text of a link around an image.
+      ["`*a*` x\n`b\nc` `d`", "`*a*` x\n`b c` `d`"],
+      ["[x ![`a\nb`](/i) `c\nd`](/u) `e\nf`", "[x ![`a b`](/i) `c d`](/u) `e f`"],
+    ])("%j is the tree of %j", (markdown, onOneLine) => {
+      const options = { headings: { ids: true } };
+      expect(Markdown.react(markdown, undefined, options)).toEqual(Markdown.react(onOneLine, undefined, options));
+    });
+
+    test("in the alt of an image and in the id of a heading", () => {
+      const image = children("![`a\nb`](/u)")[0].props.children[0];
+      expect(image.props).toEqual({ src: "/u", alt: "a b" });
+      const heading = children("`a\nb`\n===", undefined, { headings: { ids: true } })[0];
+      expect(heading.props.id).toBe("a-b");
+    });
+  });
+
   test("strikethrough is a React element", () => {
     const del = children("~~deleted~~\n")[0].props.children[0];
     expect(del.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);

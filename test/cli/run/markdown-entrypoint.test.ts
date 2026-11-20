@@ -65,6 +65,10 @@ describe("bun <file.md>", () => {
     expect(await runMd(["> A quote", ">", "> > Nested quote", ""].join("\n"))).toMatchSnapshot();
   });
 
+  test("keeps a code span that goes over a line ending on its line and in its blockquote", async () => {
+    expect(Bun.stripANSI(await runMd("> see `bun\n> run` now\n"))).toBe("│ see bun run now\n");
+  });
+
   test("renders horizontal rules", async () => {
     expect(await runMd(["above", "", "---", "", "below", ""].join("\n"))).toMatchSnapshot();
   });

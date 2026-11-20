@@ -29,7 +29,6 @@
 #include "JSMessageChannel.h"
 // #include "JSNodeCustom.h"
 #include "MessagePort.h"
-// #include "WebCoreOpaqueRootInlines.h"
 #include <JavaScriptCore/SlotVisitorInlines.h>
 
 namespace WebCore {

@@ -42,8 +42,6 @@ namespace Bun {
 
 using Bindgen::Generated::JSNodeHTTPResponse;
 
-class JSNodeHTTPServerSocketPrototype;
-
 class JSNodeHTTPServerSocket : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;

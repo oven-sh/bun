@@ -29,7 +29,6 @@
 #include "root.h"
 #include "Event.h"
 #include "JSValueInWrappedObject.h"
-// #include "SerializedScriptValue.h"
 
 namespace WebCore {
 

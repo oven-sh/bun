@@ -1119,7 +1119,6 @@ JSValue consumeDirectStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::
     sink->setStream(vm, stream);
     sink->setArrayBufferSink(vm, arrayBufferSink);
     sink->setCapabilityPromise(vm, capability);
-    sink->m_asUint8Array = asUint8Array;
     sink->setSource(vm, source);
     installOneShotMethods(vm, globalObject, sink);
     RETURN_IF_EXCEPTION(scope, {});

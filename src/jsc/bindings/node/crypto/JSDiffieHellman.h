@@ -30,7 +30,6 @@ public:
     }
 
     ncrypto::DHPointer& getImpl() { return m_dh; }
-    const ncrypto::DHPointer& getImpl() const { return m_dh; }
     int verifyError() const { return m_verifyError; }
 
     template<typename, JSC::SubspaceAccess mode>

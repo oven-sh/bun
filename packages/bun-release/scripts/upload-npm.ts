@@ -289,9 +289,6 @@ async function test() {
 
     console.log("Running " + exec + " bun");
 
-    // let output = await $`${{
-    //   raw: exec,
-    // }} bun -- -e "console.log(JSON.stringify([Bun.version, process.platform, process.arch, process.execPath]))"`.text();
     const split = exec.split(" ");
     let {
       stdout: output,

@@ -62,13 +62,8 @@ namespace ncrypto {
 
 #if NCRYPTO_DEVELOPMENT_CHECKS
 #define NCRYPTO_STR(x) #x
-#define NCRYPTO_FAIL(MESSAGE) ASSERT_WITH_MESSAGE(false, MESSAGE)
-#define NCRYPTO_ASSERT_EQUAL(LHS, RHS, MESSAGE) \
-    ASSERT_WITH_MESSAGE(LHS == RHS, MESSAGE)
 #define NCRYPTO_ASSERT_TRUE(COND) ASSERT_WITH_MESSAGE(COND, NCRYPTO_STR(COND))
 #else
-#define NCRYPTO_FAIL(MESSAGE)
-#define NCRYPTO_ASSERT_EQUAL(LHS, RHS, MESSAGE)
 #define NCRYPTO_ASSERT_TRUE(COND)
 #endif
 
@@ -211,7 +206,6 @@ class X509Pointer;
 class ECDSASigPointer;
 class ECGroupPointer;
 class ECPointPointer;
-class ECKeyPointer;
 class Dsa;
 class Rsa;
 class Ec;
@@ -229,11 +223,6 @@ template<typename T>
 struct Buffer {
     T* data = nullptr;
     size_t len = 0;
-
-    static Buffer from(std::span<T> input)
-    {
-        return { input.data(), input.size() };
-    }
 };
 
 class Digest final {
@@ -267,9 +256,6 @@ private:
 
 class Cipher final {
 public:
-    static constexpr size_t MAX_KEY_LENGTH = EVP_MAX_KEY_LENGTH;
-    static constexpr size_t MAX_IV_LENGTH = EVP_MAX_IV_LENGTH;
-
     Cipher() = default;
     Cipher(const EVP_CIPHER* cipher)
         : cipher_(cipher)
@@ -462,7 +448,6 @@ public:
     inline std::span<const uint8_t> span() const { return { get<const uint8_t>(), len_ }; }
     inline size_t size() const noexcept { return len_; }
     void reset(void* data = nullptr, size_t len = 0);
-    void reset(const Buffer<void>& buffer);
 
     // Sets the underlying data buffer to all zeros.
     void zero();

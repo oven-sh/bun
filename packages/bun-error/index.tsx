@@ -29,19 +29,6 @@ export enum JSErrorCode {
   UserErrorCode = 254,
 }
 
-const JSErrorCodeLabel = {
-  0: "Error",
-  1: "EvalError",
-  2: "RangeError",
-  3: "ReferenceError",
-  4: "SyntaxError",
-  5: "TypeError",
-  6: "URIError",
-  7: "AggregateError",
-  253: "StackOverflow",
-  8: "OutOfMemory",
-};
-
 const BUN_ERROR_CONTAINER_ID = "__bun-error__";
 
 enum RuntimeType {
@@ -218,13 +205,11 @@ class FancyTypeError {
     this.runtimeType = exception.runtime_type || 0;
     this.runtimeTypeName = RuntimeType[this.runtimeType] || "undefined";
     this.message = exception.message || "";
-    this.explain = "";
 
     this.normalize(exception);
   }
 
   runtimeType: RuntimeType;
-  explain: string;
   runtimeTypeName: string;
   message: string;
 

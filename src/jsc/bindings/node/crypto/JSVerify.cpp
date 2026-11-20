@@ -33,7 +33,6 @@ using namespace JSC;
 JSC_DECLARE_HOST_FUNCTION(jsVerifyProtoFuncInit);
 JSC_DECLARE_HOST_FUNCTION(jsVerifyProtoFuncUpdate);
 JSC_DECLARE_HOST_FUNCTION(jsVerifyProtoFuncVerify);
-JSC_DECLARE_HOST_FUNCTION(jsVerifyOneShot);
 
 // Constructor functions
 JSC_DECLARE_HOST_FUNCTION(callVerify);

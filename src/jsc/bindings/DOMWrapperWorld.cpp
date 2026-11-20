@@ -41,7 +41,6 @@ DOMWrapperWorld::~DOMWrapperWorld()
 {
     VM::ClientData* clientData = m_vm.clientData;
     ASSERT(clientData);
-    // static_cast<JSVMClientData*>(clientData)->forgetWorld(*this);
 }
 
 } // namespace WebCore

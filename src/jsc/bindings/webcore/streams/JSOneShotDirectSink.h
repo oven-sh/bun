@@ -79,8 +79,6 @@ public:
     bool m_closed : 1 { false };
     // The pull() call is on the stack: its caller ends the stream once it knows whether the call threw.
     bool m_insidePullCall : 1 { false };
-    // true ⇒ resolve with a Uint8Array (toBytes); false ⇒ an ArrayBuffer (toArrayBuffer).
-    bool m_asUint8Array : 1 { false };
 
 private:
     JSOneShotDirectSink(JSC::VM&, JSC::Structure*);

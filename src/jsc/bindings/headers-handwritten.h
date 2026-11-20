@@ -397,11 +397,6 @@ typedef void WebSocketHTTPSClient;
 typedef void WebSocketClient;
 typedef void WebSocketClientTLS;
 
-#ifndef __cplusplus
-typedef struct Bun__ArrayBuffer Bun__ArrayBuffer;
-typedef struct JSC::JSUint8Array JSC::JSUint8Array;
-#endif
-
 #ifdef __cplusplus
 
 extern "C" void Bun__WTFStringImpl__destroy(WTF::StringImpl* impl);

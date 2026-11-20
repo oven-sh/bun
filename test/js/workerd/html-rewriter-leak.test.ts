@@ -339,17 +339,109 @@ describe("an output Response that outlives its rewrite does not keep the pending
 // Each .on() / .onDocument() call stores a native registration, which has to be
 // freed when the HTMLRewriter is garbage-collected.
 //
+// mimalloc counts, for each size class, the blocks it has handed out and not
+// got back, in release builds too. Next to nothing else is in the size class
+// of the handler structs, so its count is the count of live structs, whatever
+// the OS does with freed pages.
+//
+// Skipped in debug: too slow for this many registrations, and CI has no debug
+// lane.
+test.concurrent.skipIf(isDebug || isASAN)(
+  "HTMLRewriter does not leak element/document handler allocations",
+  async () => {
+    const ROUNDS = 2;
+    const REWRITERS_PER_ROUND = 1000;
+    // Each rewriter gets 32 on() and 32 onDocument() calls.
+    const REGISTRATIONS_PER_ROUND = REWRITERS_PER_ROUND * 64;
+    // ElementHandler is 40 bytes and DocumentHandler is 48. mimalloc serves both
+    // from its 48-byte size class.
+    const HANDLER_BLOCK_SIZE = 48;
+    const code = /* js */ `
+      const { heapStats } = require("bun:jsc");
+      const noop = { element() {}, comments() {}, text() {} };
+      const docNoop = { doctype() {}, comments() {}, text() {}, end() {} };
+
+      // malloc_bins has an entry for each size class. Its "current" is the
+      // count of live blocks of that size.
+      function liveHandlerBlocks() {
+        return heapStats().mimalloc.malloc_bins.find(bin => bin.block_size === ${HANDLER_BLOCK_SIZE}).current;
+      }
+
+      // Counts while the rewriters of the round are alive, then lets the
+      // collector have them.
+      function round() {
+        const rewriters = [];
+        for (let i = 0; i < ${REWRITERS_PER_ROUND}; i++) {
+          const rewriter = new HTMLRewriter();
+          for (let j = 0; j < 32; j++) rewriter.on("div", noop);
+          for (let j = 0; j < 32; j++) rewriter.onDocument(docNoop);
+          rewriters.push(rewriter);
+        }
+        const held = liveHandlerBlocks();
+        rewriters.length = 0;
+        Bun.gc(true);
+        return held;
+      }
+
+      // The first round pays for what is allocated once.
+      round();
+      const before = liveHandlerBlocks();
+      let held;
+      for (let i = 0; i < ${ROUNDS}; i++) held = round();
+      const after = liveHandlerBlocks();
+
+      process.stdout.write(JSON.stringify({ before, held, after }));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: {
+        ...bunEnv,
+        // The runner's GC_LEVEL=1 adds collections of its own.
+        BUN_GARBAGE_COLLECTOR_LEVEL: "0",
+        // The JIT allocates blocks of this size class while it compiles.
+        BUN_JSC_useJIT: "0",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: expect.stringMatching(/^\{"before":-?\d+,"held":-?\d+,"after":-?\d+\}$/),
+      stderr: "",
+      exitCode: 0,
+    });
+    const { before, held, after } = JSON.parse(stdout);
+
+    // While the rewriters of a round are alive, the count is up by one for each
+    // registration. One kind of struct alone is half of that: a struct that
+    // leaves this size class, or that mimalloc does not count, fails here.
+    expect(held - before, stdout).toBeGreaterThan((REGISTRATIONS_PER_ROUND * 3) / 4);
+    // Unfixed: the struct of every registration of both rounds is still there,
+    // 128,000 blocks. One struct for each rewriter would be 2,000. Fixed: about 0.
+    expect(after - before, stdout).toBeLessThan(REWRITERS_PER_ROUND);
+  },
+);
+
+// ASAN builds cannot read that count: their allocator is ASAN's. They measure
+// resident memory.
+//
 // RSS is a high-water mark — Bun.gc(true) collects every wrapper and its
 // lol-html builder, but the allocators don't promptly hand pages back to the
 // OS. So warmup runs the *same* workload as the measured phase: the allocator
 // footprint is established before the baseline, and any growth past that is
 // what's actually retained.
 //
-// Skipped in debug: at this N a debug pass is ~40s and the extra debug-build
-// allocation tracking adds enough RSS noise to drown the signal. CI has no
-// debug test lane; release + ASAN cover the regression.
-test.skipIf(isDebug)(
-  "HTMLRewriter does not leak element/document handler allocations",
+// Skipped in debug: at this N a debug pass is ~8s and the extra debug-build
+// allocation tracking adds enough RSS noise to drown the signal. The
+// LeakSanitizer test below runs there.
+//
+// One registration costs about 7 µs on the ASAN lane: four times this N took
+// 11.8 to 14.5 s of the 15 s limit there.
+test.skipIf(isDebug || !isASAN)(
+  "HTMLRewriter does not leak element/document handler allocations (resident memory)",
   async () => {
     const code = /* js */ `
       const rss = process.memoryUsage.rss;
@@ -362,7 +454,7 @@ test.skipIf(isDebug)(
         for (let i = 0; i < 32; i++) rw.onDocument(docNoop);
       }
 
-      const N = 4000;
+      const N = 1000;
       function pass() {
         for (let i = 0; i < N; i++) once();
         Bun.gc(true);
@@ -406,13 +498,77 @@ test.skipIf(isDebug)(
 
     const { deltaMB } = JSON.parse(stdout.trim());
 
-    // Unfixed: ~50 MB over 3 measured passes. Fixed: a plateau, but RSS is a
-    // high-water mark and allocator jitter has been observed to reach ~30 MB
-    // on release lanes, so the bound sits between that and the unfixed signal.
-    expect(deltaMB).toBeLessThan(35);
+    // With the quarantine off: 11 to 14 MB unfixed, -1.5 to 2 MB fixed.
+    expect(deltaMB).toBeLessThan(6);
     expect(exitCode).toBe(0);
   },
   isASAN ? 45_000 : 15_000,
+);
+
+// The same regression, counted exactly on sanitizer builds. That includes
+// debug builds, which skip the RSS test. LeakSanitizer fails the run for every
+// handler struct that is still allocated at exit with nothing pointing to it,
+// so one leaked struct is enough.
+test.skipIf(!isASAN || isWindows)(
+  "HTMLRewriter does not leak element/document handler allocations (LeakSanitizer)",
+  async () => {
+    const ROUNDS = 4;
+    const REWRITERS_PER_ROUND = 16;
+    const code = /* js */ `
+      const { heapStats } = require("bun:jsc");
+      const noop = { element() {}, comments() {}, text() {} };
+      const docNoop = { doctype() {}, comments() {}, text() {}, end() {} };
+
+      function once() {
+        const rw = new HTMLRewriter();
+        for (let i = 0; i < 32; i++) rw.on("div", noop);
+        for (let i = 0; i < 32; i++) rw.onDocument(docNoop);
+      }
+
+      // From a macrotask on purpose: leaksan.supp has entries for module
+      // evaluation, and they hide every allocation made while the module
+      // body is on the stack.
+      setImmediate(() => {
+        for (let round = 0; round < ${ROUNDS}; round++) {
+          for (let i = 0; i < ${REWRITERS_PER_ROUND}; i++) once();
+          Bun.gc(true);
+        }
+        process.stdout.write(String(heapStats().objectTypeCounts.HTMLRewriter ?? 0));
+      });
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: {
+        ...bunEnv,
+        // Every cell that is still alive at exit gets finalized, so what
+        // LeakSanitizer then finds is a struct that a finalizer did not free.
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Unfixed: "SUMMARY: AddressSanitizer: 180224 byte(s) leaked in 4096
+    // allocation(s)" on stderr and a non-zero exit code.
+    expect({ stdout, stderr: withoutAsanWarning(stderr), exitCode }).toEqual({
+      stdout: expect.stringMatching(/^\d+$/),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    // stdout is the count of rewriters that are still alive. The collector
+    // freed the others: they did not wait for the VM to be torn down.
+    expect(Number(stdout)).toBeLessThan((ROUNDS * REWRITERS_PER_ROUND) / 4);
+  },
+  // A pass takes about 0.3 s on a release ASAN build and 2 s on a debug build.
+  // A failure takes over 6 s, more than the default limit: LeakSanitizer
+  // symbolizes its report before the child exits.
+  90_000,
 );
 
 // `fail()` / `cancel_from_output()` on a native ByteStream/FileReader input
@@ -1635,6 +1791,91 @@ test.concurrent("a parked rewrite that dies with its handler promise does not re
   expect(stdout).toBe(JSON.stringify({ rewrites: 50, cancelled: 0 }));
   expect(exitCode).toBe(0);
 });
+
+// The same abandon, for the native streams the pipe points at: its output
+// stream once `.body` was read, and an input that is a native stream. Their
+// wrappers die with the transform cell, and each wrapper's sweep frees its
+// native half. The pipe then used the freed stream (ASAN: heap-use-after-free
+// in ByteStream::on_data for the output, in ByteStream::detach_sink for the
+// input). Only ASAN builds observe the stale access, so release lanes skip it.
+test.concurrent.skipIf(!isASAN).each([
+  ["a string", "string"],
+  ["another rewriter's finished output", "chain"],
+  ["another rewriter's open output", "openChain"],
+] as const)(
+  "a parked rewrite that dies with its handler promise does not reach its freed streams: %s as input",
+  async (_, input) => {
+    using dir = tempDir("hr-abandon-freed-streams", {
+      "abandon.js": /* js */ `
+        import { fullGC, heapStats } from "bun:jsc";
+        import { stat } from "node:fs/promises";
+
+        const N = 64;
+        const html = "<div>x</div><div>y";
+        const encoder = new TextEncoder();
+        const passThrough = () => new HTMLRewriter().on("div", { element() {} });
+        const inputs = {
+          string: () => new Response(html),
+          chain: () => passThrough().transform(new Response(html)),
+          // The inner rewrite has not ended: its output stream is the native input of the parked one.
+          openChain: () => {
+            let controller;
+            const source = new ReadableStream({ start: c => void (controller = c) });
+            const output = passThrough().transform(new Response(source));
+            controller.enqueue(encoder.encode(html));
+            return output;
+          },
+        };
+        const input = inputs[process.argv[2]];
+        let parked = 0;
+        const never = { element: () => (parked++, new Promise(() => {})) };
+        const park = body => new HTMLRewriter().on("div", never).transform(body);
+
+        // Kept: a rewrite that has not parked yet, and a parked one whose output stream does not exist yet.
+        let controller;
+        const unparked = park(new Response(new ReadableStream({ start: c => void (controller = c) })));
+        const unread = park(new Response(html));
+
+        // Each of these parks, its output stream exists, and nothing keeps it.
+        for (let i = 0; i < N; i++) park(input()).body;
+        await new Promise(resolve => setImmediate(resolve));
+
+        // Go on from an event-loop task: the tasks queued below then run before any timer, and
+        // JavaScriptCore's incremental sweeper is a timer.
+        await stat(".");
+        // Collects. The dead cells wait for their sweep: an allocation sweeps those of its own type first.
+        fullGC();
+        // A new output stream: the dead ones free their native halves.
+        unread.body;
+        // A new promise context, when the pump parks this rewrite: the dead ones queue their abandon tasks.
+        controller.enqueue(encoder.encode("<div>"));
+        // Those tasks run now. No transform cell was allocated, so the dead ones are still unswept.
+        await stat(".");
+
+        process.stdout.write(JSON.stringify({ parked, alive: heapStats().objectTypeCounts.HTMLRewriterTransform }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "abandon.js", input],
+      // symbolize=0: a debug build takes longer to symbolize a report than the test may run.
+      // detect_leaks=0: the leak suppressions match by symbol, and this test is about the use-after-free only.
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(withoutAsanWarning(stderr)).toBe("");
+    expect(stdout).toMatch(/^\{"parked":66,"alive":\d+\}$/);
+    expect(exitCode).toBe(0);
+    // The two kept rewrites are alive. The collection found the 64 others dead, or all but a few.
+    expect(JSON.parse(stdout).alive).toBeLessThan(8);
+  },
+);
 
 // The handler's promise is collected while script still holds the Response, so
 // the abandon task is queued for a reachable rewrite. Script then drops the

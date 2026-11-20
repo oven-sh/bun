@@ -1,14 +1,15 @@
 // Tests how a `ws` server socket handles incoming frames, using a raw TCP client. See ws-raw-peer.ts.
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { tls as harnessTls, isLinux } from "harness";
 import { readFileSync } from "node:fs";
-import http from "node:http";
+import http, { type IncomingMessage } from "node:http";
 import https from "node:https";
 import zlib from "node:zlib";
 import type { ServerOptions, WebSocket } from "ws";
 import {
   abnormalClose,
   closePayload,
+  createServer,
   deflate,
   deflateWithContext,
   encodeFrame,
@@ -19,12 +20,15 @@ import {
   MiB,
   nextEvent,
   OP,
-  openServer,
   type Payload,
+  type RawClient,
+  recordEvents,
   type RequestOptions,
   runScript,
   scriptTimeout,
   serve,
+  shrinkBuffers,
+  stripMessage,
   tooBig,
   tryCall,
   upgradeRequest,
@@ -35,6 +39,9 @@ const rsv1MustBeClear = invalidFrame("RSV1 must be clear", "WS_ERR_UNEXPECTED_RS
 const offerDeflate: RequestOptions = { headers: { "Sec-WebSocket-Extensions": "permessage-deflate" } };
 
 const hex = (digits: string) => Buffer.from(digits, "hex");
+
+/** `length` bytes that differ by position: a payload put together in the wrong order doesn't compare equal. */
+const varied = (length: number) => Buffer.alloc(length, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));
 
 /** Encodes a masked frame, as a client would send it. */
 const frame = (opcode: number, payload?: Payload, options?: FrameOptions) =>
@@ -49,13 +56,16 @@ function frameHeader(opcode: number, length: number | bigint) {
   return header;
 }
 
-type Connection = Pick<Awaited<ReturnType<typeof openServer>>, "client" | "events" | "closed">;
+type Connection = { client: RawClient; events: string[]; closed: Promise<void> };
 
 /** Expects a failed connection: 'error' while CLOSING, a Close frame with `code`, FIN, then 'close' with 1006. */
 async function expectFailure({ client, events, closed }: Connection, error: string, code: number) {
   expect(await client.remainingFrames()).toEqual([`close ${code}`]);
   await closed;
   expect(events).toEqual([`error ${error} rs=2`, abnormalClose]);
+  // A reset would also end remainingFrames(). The client answers the server's FIN with its own.
+  await client.closed;
+  expect(client.socketEvents).toEqual(["end", "close"]);
 }
 
 /** For runScript(): a server and `socket`, its only client. `onConnection` is the 'connection' listener's body. */
@@ -68,15 +78,77 @@ const serverScript = (onConnection: string) => `
       ${onConnection}
     });
   });
+  // Without a collection before the exit, the closed server and the loaded modules are still allocated when
+  // LeakSanitizer looks. It then takes seconds to symbolize them, only for a suppression to drop the report.
+  process.on("beforeExit", () => Bun.gc(true));
 `;
 const bufferLiteral = (bytes: Buffer) => `Buffer.from("${bytes.toString("hex")}", "hex")`;
 
 describe.each(implementations)("ws server receive ($name)", ({ ws: implementation, builtin, specifier }) => {
   const { WebSocket, WebSocketServer } = implementation;
 
+  // A server costs more to start and close than most of these tests take, so the tests that pass the same `options`
+  // to open() share one.
+  const servers = new Map<string, ReturnType<typeof createServer>>();
+  afterAll(async () => {
+    for (const server of await Promise.allSettled(servers.values())) {
+      if (server.status === "fulfilled") await server.value[Symbol.asyncDispose]();
+    }
+  });
+
+  /**
+   * Like `openServer()`: an OPEN server socket (`ws`, with its upgrade request `req`) plus `client`, the raw client on
+   * the other end. `events` is `recordEvents(ws)`; `closed` resolves on 'close'. `connect()` opens another raw client
+   * to the same server. Disposing it closes only the connections of this call: the server stays up for later tests.
+   */
+  async function open(options: ServerOptions = {}, request?: RequestOptions) {
+    const key = Bun.inspect(options);
+    if (!servers.has(key)) servers.set(key, createServer(implementation, options));
+    const server = await servers.get(key)!;
+    const clients: RawClient[] = [];
+    const connect = (request?: RequestOptions) => {
+      const client = server.connect(request);
+      clients.push(client);
+      return client;
+    };
+    const client = connect(request);
+    // The server is shared, so the client's port picks its 'connection'. An upgrade that a test abandoned when it
+    // timed out can arrive during a later test.
+    const connection = Promise.withResolvers<[WebSocket, IncomingMessage]>();
+    const onConnection = (ws: WebSocket, req: IncomingMessage) => {
+      const port = client.socket.localPort;
+      if (!port || req.socket.remotePort !== port) return;
+      server.wss.off("connection", onConnection);
+      connection.resolve([ws, req]);
+    };
+    server.wss.on("connection", onConnection);
+    // No 'connection' follows a response that isn't a 101. Fail then, and not at the test's timeout.
+    client.response.then(({ status }) => {
+      if (status.startsWith("HTTP/1.1 101 ")) return;
+      server.wss.off("connection", onConnection);
+      connection.reject(new Error(`upgrade failed: ${status}`));
+    });
+    const [ws, req] = await connection.promise;
+    const events = recordEvents(ws);
+    const closed = new Promise<void>(resolve => ws.on("close", () => resolve()));
+    await client.response;
+    return {
+      ws,
+      req,
+      client,
+      events,
+      closed,
+      connect,
+      [Symbol.dispose]() {
+        for (const client of clients) client.destroy();
+        ws.terminate();
+      },
+    };
+  }
+
   describe("messages", () => {
     test("delivers text and binary frames as Buffers by default", async () => {
-      await using server = await openServer(implementation);
+      using server = await open();
       const { ws, client, events } = server;
       expect(ws.binaryType).toBe("nodebuffer");
       client.text("héllo");
@@ -100,7 +172,7 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
     ])(
       "with binaryType $binaryType, a binary frame is $binary and a text frame is a Buffer",
       async ({ binaryType, binary }) => {
-        await using server = await openServer(implementation);
+        using server = await open();
         const { ws, client, events } = server;
         ws.binaryType = binaryType as WebSocket["binaryType"];
         expect<string>(ws.binaryType).toBe(binaryType);
@@ -117,7 +189,7 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
     );
 
     test("binaryType can change between messages, and an unknown value is ignored", async () => {
-      await using server = await openServer(implementation);
+      using server = await open();
       const { ws, client, events } = server;
       ws.binaryType = "arraybuffer";
       client.binary(hex("01"));
@@ -137,7 +209,7 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
     });
 
     test("a Blob contains the frame's bytes and has no type", async () => {
-      await using server = await openServer(implementation);
+      using server = await open();
       server.ws.binaryType = "blob" as any;
       server.client.binary(hex("0908"));
       const [blob] = await nextEvent(server.ws, "message");
@@ -146,7 +218,7 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
     });
 
     test("reassembles fragments into one message, and answers a Ping between them immediately", async () => {
-      await using server = await openServer(implementation);
+      using server = await open();
       const { client, events } = server;
       client.text("ab", { fin: false });
       client.ping("mid");
@@ -181,14 +253,14 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
         message: "message Buffer(0x010203) binary rs=1",
       },
     ])("fragments: $label", async ({ frames, message }) => {
-      await using server = await openServer(implementation);
+      using server = await open();
       for (const fragment of frames) server.client.write(fragment);
       expect(await server.client.roundTrip()).toEqual([]);
       expect(server.events).toEqual([message]);
     });
 
     test("delivers fifty frames from one write in order", async () => {
-      await using server = await openServer(implementation);
+      using server = await open();
       const texts = Array.from({ length: 50 }, (_, i) => "m" + i);
       server.client.write(Buffer.concat(texts.map(text => frame(OP.text, text))));
       expect(await server.client.roundTrip()).toEqual([]);
@@ -196,17 +268,21 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
     });
 
     test("parses frames that arrive one byte at a time", async () => {
-      await using server = await openServer(implementation);
-      const { client, events } = server;
+      using server = await open();
+      const { ws, client, events } = server;
+      const received: unknown[] = [];
+      ws.on("message", data => received.push(data));
       client.socket.setNoDelay(true);
-      const frames = Buffer.concat([frame(OP.text, "hello"), frame(OP.binary, Buffer.alloc(200, 1))]);
+      const frames = Buffer.concat([frame(OP.text, "hello"), frame(OP.binary, varied(200))]);
       for (let i = 0; i < frames.length; i++) client.write(frames.subarray(i, i + 1));
       expect(await client.roundTrip()).toEqual([]);
       expect(events).toEqual(['message Buffer("hello") text rs=1', "message Buffer(200 bytes) binary rs=1"]);
+      // `events` has only the length of a payload this long.
+      expect(received[1]).toEqual(varied(200));
     });
 
     test("skipUTF8Validation delivers a text frame with invalid UTF-8 unchanged", async () => {
-      await using server = await openServer(implementation, { skipUTF8Validation: true });
+      using server = await open({ skipUTF8Validation: true });
       server.client.text(hex("c328"));
       expect(await server.client.roundTrip()).toEqual([]);
       expect(server.events).toEqual(["message Buffer(0xc328) text rs=1"]);
@@ -215,7 +291,7 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
 
   describe("ping and pong", () => {
     test("answers a Ping with a Pong carrying the same payload, and doesn't answer a Pong", async () => {
-      await using server = await openServer(implementation);
+      using server = await open();
       const { client, events } = server;
       client.ping("hello");
       expect(await client.next()).toBe('pong "hello"');
@@ -234,7 +310,7 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
     });
 
     test("the payload is a Buffer for every binaryType", async () => {
-      await using server = await openServer(implementation);
+      using server = await open();
       const { ws, client, events } = server;
       for (const binaryType of ["arraybuffer", "fragments", "blob"]) {
         ws.binaryType = binaryType as WebSocket["binaryType"];
@@ -246,7 +322,7 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
     });
 
     test("autoPong: false doesn't send a Pong automatically", async () => {
-      await using server = await openServer(implementation, { autoPong: false } as ServerOptions);
+      using server = await open({ autoPong: false } as ServerOptions);
       const { ws, client, events } = server;
       client.ping("hello");
       await nextEvent(ws, "ping");
@@ -261,7 +337,7 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
   // these tests write to the paused socket and then round-trip on `control`, a second connection to the same server.
   describe("pause() and resume()", () => {
     test("delivers nothing between pause() and resume()", async () => {
-      await using server = await openServer(implementation);
+      using server = await open();
       const { ws, client, events } = server;
       const control = server.connect();
       await control.response;
@@ -281,7 +357,7 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
     });
 
     test(`pause() and resume() on the request's socket ${builtin ? "have no effect" : "work too"}`, async () => {
-      await using server = await openServer(implementation);
+      using server = await open();
       const { req, client, events } = server;
       const control = server.connect();
       await control.response;
@@ -298,7 +374,7 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
     });
 
     test("a paused socket can still send, and answers a Ping after resume()", async () => {
-      await using server = await openServer(implementation);
+      using server = await open();
       const { ws, client, events } = server;
       const control = server.connect();
       await control.response;
@@ -321,6 +397,8 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
       const wss = new WebSocketServer({ server: httpServer.server });
       const { ws, client, events } = await httpServer.open(wss);
       const { client: control } = await httpServer.open(wss);
+      // With the default buffers the kernel takes several megabytes before the client's writes stall.
+      shrinkBuffers({ sender: client.socket, receiver: ws });
       const message = frame(OP.binary, Buffer.alloc(100_000));
       const allReceived = Promise.withResolvers<void>();
       let sent = 0;
@@ -342,7 +420,7 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
     });
 
     test("ignores the peer's Close frame and FIN while paused, and handles them after resume()", async () => {
-      await using server = await openServer(implementation);
+      using server = await open();
       const { ws, client, events } = server;
       const control = server.connect();
       await control.response;
@@ -361,7 +439,7 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
     });
 
     test("terminate() on a paused socket emits 'close' 1006, and isPaused stays true", async () => {
-      await using server = await openServer(implementation);
+      using server = await open();
       const { ws, client, events } = server;
       ws.pause();
       ws.terminate();
@@ -374,7 +452,7 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
     });
 
     test("close() on a paused socket sends the Close frame, and reads the peer's after resume()", async () => {
-      await using server = await openServer(implementation);
+      using server = await open();
       const { ws, client, events } = server;
       const control = server.connect();
       await control.response;
@@ -395,7 +473,7 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
     });
 
     test("pause() on a CLOSED socket is a no-op", async () => {
-      await using server = await openServer(implementation);
+      using server = await open();
       server.ws.terminate();
       await server.closed;
       expect([tryCall(() => server.ws.pause()), server.ws.isPaused]).toEqual(["undefined", false]);
@@ -512,30 +590,23 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
         withDeflate: true,
       },
     ])("$label", async ({ bytes, error, code = 1002, withDeflate = false }) => {
-      await using server = await openServer(
-        implementation,
-        { perMessageDeflate: withDeflate },
-        withDeflate ? offerDeflate : {},
-      );
+      using server = await open({ perMessageDeflate: withDeflate }, withDeflate ? offerDeflate : {});
       server.client.write(bytes);
       await expectFailure(server, error, code);
     });
 
-    // The error message comes from zlib and depends on the bytes, so only check the code.
+    // The error message comes from zlib and depends on the bytes, so it isn't compared.
     test("corrupt compressed data fails with Z_DATA_ERROR and Close 1007", async () => {
-      await using server = await openServer(implementation, { perMessageDeflate: true }, offerDeflate);
-      const { ws, client, events } = server;
-      const failed = nextEvent(ws, "error");
+      using server = await open({ perMessageDeflate: true }, offerDeflate);
+      const { client, events } = server;
       client.text(hex("ffffffff"), { rsv1: true });
-      const [error] = await failed;
-      expect({ class: error.constructor, code: error.code }).toEqual({ class: Error, code: "Z_DATA_ERROR" });
       expect(await client.remainingFrames()).toEqual(["close 1007"]);
       await server.closed;
-      expect(events.slice(1)).toEqual([abnormalClose]);
+      expect(events.map(stripMessage)).toEqual(["error Error Z_DATA_ERROR rs=2", abnormalClose]);
     });
 
     test("delivers frames before the bad frame and drops the ones after it", async () => {
-      await using server = await openServer(implementation);
+      using server = await open();
       const { client, events } = server;
       client.write(Buffer.concat([frame(OP.text, "before"), frame(3, "x"), frame(OP.text, "after")]));
       expect(await client.remainingFrames()).toEqual(["close 1002"]);
@@ -548,7 +619,7 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
     });
 
     test("close() and send() in the 'error' listener are no-ops", async () => {
-      await using server = await openServer(implementation);
+      using server = await open();
       const { ws, client } = server;
       const calls: string[] = [];
       ws.on("error", () =>
@@ -565,7 +636,7 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
     test.concurrent(
       "throws an uncaught exception when there's no 'error' listener",
       async () => {
-        const { lines, exitCode } = await runScript(
+        const child = await runScript(
           { specifier },
           serverScript(`
           ws.on("close", (code, reason) => {
@@ -575,11 +646,11 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
           socket.write(${bufferLiteral(frame(3, "x"))});
         `),
         );
-        expect(lines).toEqual([
-          `uncaught ${invalidFrame("invalid opcode 3", "WS_ERR_INVALID_OPCODE")}`,
-          "close 1006 Buffer()",
-        ]);
-        expect(exitCode).toBe(0);
+        expect(child).toEqual({
+          lines: [`uncaught ${invalidFrame("invalid opcode 3", "WS_ERR_INVALID_OPCODE")}`, "close 1006 Buffer()"],
+          stderr: "",
+          exitCode: 0,
+        });
       },
       scriptTimeout,
     );
@@ -589,7 +660,7 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
   test.concurrent.skipIf(!builtin)(
     "a throwing 'message' listener doesn't block later messages",
     async () => {
-      const { lines, exitCode } = await runScript(
+      const child = await runScript(
         { specifier },
         serverScript(`
         ws.on("message", data => {
@@ -604,8 +675,11 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
         socket.write(${bufferLiteral(Buffer.concat([frame(OP.text, "a"), frame(OP.text, "b")]))});
       `),
       );
-      expect(lines).toEqual(["message a 1", 'uncaught Error "boom"', "message b 1", "message c 1"]);
-      expect(exitCode).toBe(0);
+      expect(child).toEqual({
+        lines: ["message a 1", 'uncaught Error "boom"', "message b 1", "message c 1"],
+        stderr: "",
+        exitCode: 0,
+      });
     },
     scriptTimeout,
   );
@@ -613,8 +687,7 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
   describe("permessage-deflate", () => {
     test("receives and sends compressed messages", async () => {
       const parameters = "permessage-deflate; client_no_context_takeover; server_no_context_takeover";
-      await using server = await openServer(
-        implementation,
+      using server = await open(
         { perMessageDeflate: { threshold: 0 } },
         { headers: { "Sec-WebSocket-Extensions": parameters } },
       );
@@ -651,18 +724,21 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
       },
       {
         label: "a message that inflates to 1 MiB",
-        bytes: frame(OP.binary, deflate(Buffer.alloc(MiB, 1)), { rsv1: true }),
+        bytes: frame(OP.binary, deflate(varied(MiB)), { rsv1: true }),
         message: "Buffer(1048576 bytes) binary",
+        payload: varied(MiB),
       },
-    ])("receives $label", async ({ bytes, message }) => {
-      await using server = await openServer(implementation, { perMessageDeflate: true }, offerDeflate);
+    ])("receives $label", async ({ bytes, message, payload }) => {
+      using server = await open({ perMessageDeflate: true }, offerDeflate);
+      const received = nextEvent(server.ws, "message");
       server.client.write(bytes);
       expect(await server.client.roundTrip()).toEqual([]);
       expect(server.events).toEqual([`message ${message} rs=1`]);
+      if (payload) expect(payload.equals((await received)[0])).toBe(true);
     });
 
     test("accepts a fragmented compressed message with RSV1 on the first fragment and a Ping in between", async () => {
-      await using server = await openServer(implementation, { perMessageDeflate: true }, offerDeflate);
+      using server = await open({ perMessageDeflate: true }, offerDeflate);
       const { client, events } = server;
       const payload = deflate("fragmented and compressed");
       client.text(payload.subarray(0, 5), { rsv1: true, fin: false });
@@ -674,7 +750,7 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
     });
 
     test("keeps the inflate window across messages (context takeover)", async () => {
-      await using server = await openServer(implementation, { perMessageDeflate: true }, offerDeflate);
+      using server = await open({ perMessageDeflate: true }, offerDeflate);
       const { client, events } = server;
       expect(client.header("Sec-WebSocket-Extensions")).toBe("permessage-deflate");
       const [first, second] = await deflateWithContext(["the same words twice", "the same words twice"]);
@@ -706,17 +782,13 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
         withDeflate: true,
       },
     ])("$label over the limit sends Close 1009 and emits 'close' 1006", async ({ bytes, withDeflate = false }) => {
-      await using server = await openServer(
-        implementation,
-        { maxPayload: 100, perMessageDeflate: withDeflate },
-        withDeflate ? offerDeflate : {},
-      );
+      using server = await open({ maxPayload: 100, perMessageDeflate: withDeflate }, withDeflate ? offerDeflate : {});
       server.client.write(bytes);
       await expectFailure(server, tooBig, 1009);
     });
 
     test("delivers messages exactly at the limit", async () => {
-      await using server = await openServer(implementation, { maxPayload: 100, perMessageDeflate: true }, offerDeflate);
+      using server = await open({ maxPayload: 100, perMessageDeflate: true }, offerDeflate);
       const { client, events } = server;
       client.binary(Buffer.alloc(100, 1));
       client.binary(Buffer.alloc(60), { fin: false });
@@ -731,7 +803,7 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
     });
 
     test("doesn't apply to Pings", async () => {
-      await using server = await openServer(implementation, { maxPayload: 10 });
+      using server = await open({ maxPayload: 10 });
       server.client.ping(Buffer.alloc(100, "p"));
       expect(await server.client.next()).toBe("pong 100 bytes");
       expect(server.events).toEqual(["ping Buffer(100 bytes) rs=1"]);
@@ -772,14 +844,14 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
     // Except for the 20 MiB test, these send only a frame header, which is enough to trigger a rejection.
     describe("defaults to 100 MiB, and 0 means no limit", () => {
       test("rejects 100 MiB + 1 by default", async () => {
-        await using server = await openServer(implementation);
+        using server = await open();
         server.client.write(frameHeader(OP.binary, 100 * MiB + 1));
         await expectFailure(server, tooBig, 1009);
       });
 
       test("delivers a 20 MiB message", async () => {
-        await using server = await openServer(implementation);
-        const payload = Buffer.alloc(20 * MiB, 7);
+        using server = await open();
+        const payload = varied(20 * MiB);
         const message = nextEvent(server.ws, "message");
         server.client.binary(payload);
         await Promise.race([message, server.closed]);
@@ -792,7 +864,7 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
         { label: "1 GiB with maxPayload: 0", options: { maxPayload: 0 }, length: 1024 * MiB },
         { label: "1 GiB with maxPayload: undefined", options: { maxPayload: undefined }, length: 1024 * MiB },
       ])("doesn't reject $label", async ({ options, length }) => {
-        await using server = await openServer(implementation, options);
+        using server = await open(options);
         const { ws, client, events } = server;
         const control = server.connect();
         await control.response;
@@ -807,7 +879,7 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
       test.skipIf(!isLinux)("doesn't preallocate the 3 GiB declared by a frame header", async () => {
         const addressSpace = () =>
           Number(/^VmSize:\s*(\d+) kB$/m.exec(readFileSync("/proc/self/status", "utf8"))![1]) * 1024;
-        await using server = await openServer(implementation, { maxPayload: 0 });
+        using server = await open({ maxPayload: 0 });
         const control = server.connect();
         await control.response;
         const before = addressSpace();

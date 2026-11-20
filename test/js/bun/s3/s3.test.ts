@@ -1156,18 +1156,13 @@ for (let credentials of allCredentials) {
             }),
           );
         });
-        it("should error with invalid endpoint", async () => {
+        // Local server only: sent to Amazon S3 by the R2 group, it got no answer in about 1 CI build of 150 (#46609).
+        it.skipIf(credentials.service !== "s3-server")("should error with a bucket in another region", async () => {
           await Promise.all(
             [s3, (path, ...args) => S3(...args).file(path), file].map(async fn => {
               try {
-                const s3file =
-                  credentials.service === "s3-server"
-                    ? // The bucket is in another region than the endpoint.
-                      fn("s3://buntest-us-west-1/credentials-test", s3Options)
-                    : fn("s3://bucket/credentials-test", {
-                        ...s3Options, // credentials and endpoint dont match
-                        endpoint: "s3.us-west-1.amazonaws.com",
-                      });
+                // The bucket is in another region than the endpoint.
+                const s3file = fn("s3://buntest-us-west-1/credentials-test", s3Options);
                 await s3file.write("Hello Bun!");
                 expect.unreachable();
               } catch (e: any) {
@@ -1825,6 +1820,17 @@ describe("s3 multipart upload id validation", () => {
 });
 
 describe("s3 upload stream body error", () => {
+  // The S3 client honors the proxy environment, and the stubs are on loopback.
+  const envWithoutProxy = {
+    ...bunEnv,
+    HTTP_PROXY: undefined,
+    HTTPS_PROXY: undefined,
+    ALL_PROXY: undefined,
+    http_proxy: undefined,
+    https_proxy: undefined,
+    all_proxy: undefined,
+  };
+
   // The readStreamIntoSink abrupt path dispatches a single-file PUT before
   // the pump promise rejects; the PUT's response callback must not read a
   // freed upload when fail() runs from the reject handler.
@@ -1937,8 +1943,7 @@ describe("s3 upload stream body error", () => {
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      // The S3 client honors the proxy environment; the stub is on loopback.
-      env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined },
+      env: envWithoutProxy,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1999,8 +2004,7 @@ describe("s3 upload stream body error", () => {
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      // The S3 client honors the proxy environment; the stub is on loopback.
-      env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined },
+      env: envWithoutProxy,
       stdout: "pipe",
       stderr: "pipe",
     });

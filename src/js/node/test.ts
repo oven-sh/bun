@@ -768,7 +768,7 @@ function reportNodeToRunParent(node: TestNode, startedAt: number) {
 // MockTracker
 //
 // Port of Node.js lib/internal/test_runner/mock/mock.js (v26.3.0):
-//   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/lib/internal/test_runner/mock/mock.js
+//   https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/internal/test_runner/mock/mock.js
 // API reference: https://nodejs.org/api/test.html#class-mocktracker
 // -----------------------------------------------------------------------------
 let trackMockCall: (ctx: MockFunctionContext, thisArg: unknown, args: unknown[], target: unknown) => unknown;

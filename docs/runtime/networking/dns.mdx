@@ -32,7 +32,8 @@ dns.prefetch("bun.com", 443);
 ```ts
 import { dns } from "bun";
 
-const [{ address }] = await dns.lookup("example.com", { backend: "system" });
+const addresses = await dns.lookup("example.com", { backend: "system" });
+console.log(addresses[0]?.address);
 ```
 
 `node:dns.lookup()` always uses the `"system"` backend to match Node.js, whose `dns.lookup()` is documented as calling `getaddrinfo(3)`. The `node:dns.resolve*()` functions use c-ares, as they do in Node.js.

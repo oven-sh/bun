@@ -7265,6 +7265,14 @@ bun:sqlite.Database.prototype fileControl("a", 1)
   throws TypeError: Cannot access invalid private field <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
+bun:sqlite.Database.prototype status()
+  throws TypeError: Cannot access invalid private field <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+bun:sqlite.Database.prototype status("a", 1)
+  throws TypeError: Cannot access invalid private field <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
 bun:sqlite.Database.prototype close()
   throws TypeError: Cannot access invalid private field <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined

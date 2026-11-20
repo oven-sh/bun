@@ -31,6 +31,8 @@ pub struct Command<'c> {
     /// Written to git's stdin.
     pub input: &'c [u8],
     pub cwd: &'c [u8],
+    /// Environment variables for this invocation, set on top of this process's environment and [`Command::VARIABLES`].
+    pub variables: &'c [(&'c [u8], &'c [u8])],
 }
 
 impl Command<'_> {
@@ -226,10 +228,21 @@ impl<'e> Files<'e> {
     }
 
     fn git(&self, args: &[&[u8]], input: &[u8]) -> Result<Finished, Fatal> {
+        self.git_with(args, input, &[])
+    }
+
+    /// Runs git with `variables` set in its environment.
+    fn git_with(
+        &self,
+        args: &[&[u8]],
+        input: &[u8],
+        variables: &[(&[u8], &[u8])],
+    ) -> Result<Finished, Fatal> {
         let command = Command {
             args,
             input,
             cwd: &self.environment.cwd,
+            variables,
         };
         (self.environment.run_git)(&command).map_err(|why| match why {
             NotRun::NotFound => {
@@ -471,7 +484,15 @@ impl<'e> Files<'e> {
             input.extend_from_slice(&paths::relative(&self.environment.cwd, &path));
             input.push(0);
         }
-        let finished = self.git(&[b"update-index", b"-z", b"--stdin"], &input)?;
+        const UPDATE_INDEX: [&[u8]; 3] = [b"update-index", b"-z", b"--stdin"];
+        let mut finished = self.git(&UPDATE_INDEX, &input)?;
+        if finished.is_ok
+            && let Some(lock) = self.real_index_lock()
+        {
+            let lock = paths::to_native(lock);
+            let variables: [(&[u8], &[u8]); 1] = [(b"GIT_INDEX_FILE", &lock)];
+            finished = self.git_with(&UPDATE_INDEX, &input, &variables)?;
+        }
         match finished.is_ok {
             true => Ok(()),
             false => Err(with_git_stderr(
@@ -479,6 +500,21 @@ impl<'e> Files<'e> {
                 &finished,
             )),
         }
+    }
+
+    /// In a pre-commit hook for `git commit <path>`, returns the lock file that becomes the real index when the commit
+    /// succeeds. Git builds such a commit from a temporary index, `next-index-<pid>.lock` next to the real one, which
+    /// is what `GIT_INDEX_FILE` names in the hook, and throws it away afterwards. An empty `index.lock` is one that
+    /// another git command holds while it works.
+    fn real_index_lock(&self) -> Option<Vec<u8>> {
+        let index = bun_core::getenv_z(&bun_core::ZBox::from_bytes(b"GIT_INDEX_FILE"))?;
+        let name = paths::file_name(index);
+        if !name.starts_with(b"next-index-") || !name.ends_with(b".lock") {
+            return None;
+        }
+        let index = paths::resolve(&self.environment.cwd, &paths::from_native(index));
+        let lock = paths::join(paths::dirname(&index), b"index.lock");
+        matches!(fs::kind_and_size(&lock), Some((fs::Kind::File, size)) if size > 0).then_some(lock)
     }
 }
 

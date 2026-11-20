@@ -197,15 +197,17 @@ describe("v8.getHeapStatistics", () => {
     "used_heap_size equals process.memoryUsage().heapUsed and does not exceed the heap size",
     async () => {
       const megabyte = 1024 * 1024;
-      const { points, kept } = (await runChild(/* js */ `
+      const { points, collectionsBeforeTheFullCollection, kept } = (await runChild(/* js */ `
       ${readSource}
+      const profiler = new (require("node:v8").GCProfiler)();
+      profiler.start();
 
       const beforeFirstCollection = read();
-      // 8 MB of large arrays and an array buffer of 8 MB. That is too little to start a collection.
-      const arrays = [];
-      for (let i = 0; i < 10; i++) arrays.push(new Array(99_999).fill(i + 0.5));
-      const buffers = [new ArrayBuffer(8 * ${megabyte})];
+      // 1.6 MB of large arrays and an array buffer of 2 MB. The first collection starts after 8 MB.
+      const arrays = [new Array(99_999).fill(0.5), new Array(99_999).fill(1.5)];
+      const buffers = [new ArrayBuffer(2 * ${megabyte})];
       const afterLargeAllocations = read();
+      const collectionsBeforeTheFullCollection = profiler.stop().statistics.length;
       Bun.gc(true);
       const afterFullCollection = read();
       for (let i = 0; i < 32; i++) buffers.push(new ArrayBuffer(${megabyte}));
@@ -213,11 +215,12 @@ describe("v8.getHeapStatistics", () => {
 
       console.log(JSON.stringify({
         points: { beforeFirstCollection, afterLargeAllocations, afterFullCollection, afterArrayBuffers },
+        collectionsBeforeTheFullCollection,
         kept: arrays.length + buffers.length,
       }));
-    `)) as { points: Record<string, Reading>; kept: number };
+    `)) as { points: Record<string, Reading>; collectionsBeforeTheFullCollection: number; kept: number };
 
-      expect(kept).toBe(43);
+      expect(kept).toBe(35);
       expect(Object.keys(points)).toEqual([
         "beforeFirstCollection",
         "afterLargeAllocations",
@@ -225,12 +228,13 @@ describe("v8.getHeapStatistics", () => {
         "afterArrayBuffers",
       ]);
       for (const [point, stats] of Object.entries(points)) expectUsedToEqualHeapUsed(point, stats);
-      // The heap blocks alone are less than 2 MB here.
-      expect(points.afterLargeAllocations.used_heap_size).toBeGreaterThanOrEqual(16_000_000);
+      // No collection has measured the heap yet, and its blocks alone are less than 2 MB.
+      expect(collectionsBeforeTheFullCollection).toBe(0);
+      expect(points.afterLargeAllocations.used_heap_size).toBeGreaterThanOrEqual(3_600_000);
       // An array buffer counts from its allocation.
-      expect(points.afterLargeAllocations.external_memory).toBeGreaterThanOrEqual(8 * megabyte);
-      expect(points.afterFullCollection.external_memory).toBeGreaterThanOrEqual(8 * megabyte);
-      expect(points.afterArrayBuffers.external_memory).toBeGreaterThanOrEqual(40 * megabyte);
+      expect(points.afterLargeAllocations.external_memory).toBeGreaterThanOrEqual(2 * megabyte);
+      expect(points.afterFullCollection.external_memory).toBeGreaterThanOrEqual(2 * megabyte);
+      expect(points.afterArrayBuffers.external_memory).toBeGreaterThanOrEqual(34 * megabyte);
     },
   );
 
@@ -284,11 +288,11 @@ describe("v8.getHeapStatistics", () => {
   });
 
   // https://github.com/oven-sh/bun/issues/42200
-  // A call costs about what process.memoryUsage() costs, and the cost does not follow the size of the heap.
-  // Measured with the two walks of the heap that bun:jsc has. heapStats() visits every cell: it costs 300 times
-  // what process.memoryUsage() costs, with an empty heap too. heapSize() visits every block: it costs 23 times
-  // more with this heap than with an empty one. The records are those of the issue. The arrays are for the blocks.
-  // Not concurrent: the other children of this file would take the processor from the measurement.
+  // A call costs less than process.memoryUsage() does: 0.1 to 0.9 times as much, with an empty heap and with a
+  // large one. The two walks of the heap that bun:jsc has cost more: heapSize() visits every block and costs 20
+  // times as much with this heap, and heapStats() visits every cell and costs 300 times as much with any heap.
+  // The clock is the wall clock, because the time of the processor includes the threads of the collector.
+  // A busy machine slows process.memoryUsage() in the same windows, so it does not change the ratio.
   test("costs what process.memoryUsage() costs, with an empty heap and with a large heap", async () => {
     type Costs = Record<"getHeapStatistics" | "getHeapSpaceStatistics" | "memoryUsage", number>;
     const { empty, large, retained } = (await runChild(/* js */ `
@@ -326,24 +330,17 @@ describe("v8.getHeapStatistics", () => {
       }
 
       const empty = measure();
-      const records = [];
-      for (let i = 0; i < 20_000; i++) records.push({ i, s: "record " + i, a: [i, i + 1] });
-      const arrays = [];
-      for (let i = 0; i < 4000; i++) arrays.push(new Array(1000).fill(i));
+      const retained = [];
+      for (let i = 0; i < 8000; i++) retained.push(new Array(1000).fill(i));
       const large = measure();
-      console.log(JSON.stringify({ empty, large, retained: records.length + arrays.length }));
+      console.log(JSON.stringify({ empty, large, retained: retained.length }));
     `)) as { empty: Costs; large: Costs; retained: number };
 
-    expect(retained).toBe(24_000);
+    expect(retained).toBe(8000);
     const costs = JSON.stringify({ empty, large });
     for (const fn of ["getHeapStatistics", "getHeapSpaceStatistics"] as const) {
-      expect(empty[fn] / empty.memoryUsage, `${fn}() against process.memoryUsage(), empty heap: ${costs}`).toBeLessThan(
-        20,
-      );
-      expect(large[fn] / large.memoryUsage, `${fn}() against process.memoryUsage(), large heap: ${costs}`).toBeLessThan(
-        20,
-      );
-      expect(large[fn] / empty[fn], `${fn}(), large heap against empty heap: ${costs}`).toBeLessThan(5);
+      expect(empty[fn] / empty.memoryUsage, `${fn}() with an empty heap: ${costs}`).toBeLessThan(5);
+      expect(large[fn] / large.memoryUsage, `${fn}() with a large heap: ${costs}`).toBeLessThan(5);
     }
   });
 

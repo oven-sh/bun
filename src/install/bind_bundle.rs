@@ -13,7 +13,9 @@ use crate::lockfile_real::package::meta::ShippedIdentity;
 use crate::lockfile_real::package::{Package, PackageColumns as _};
 use crate::lockfile_real::{CatalogMap, DependencySlice, Lockfile, PackageIDSlice, StringBuilder};
 use crate::package_installer::alias_is_safe_install_target;
-use crate::{Dependency, DependencyID, PackageID, PackageManager, invalid_package_id};
+use crate::{
+    Dependency, DependencyID, DependencyVersionTag, PackageID, PackageManager, invalid_package_id,
+};
 
 struct Row {
     dependency: Dependency,
@@ -47,7 +49,9 @@ fn declared_rows(folder: &ShippedFolder) -> impl Iterator<Item = (&DeclaredDepen
         .filter(|(row, _)| alias_is_safe_install_target(&row.name))
 }
 
-/// Returns `None` for a range that does not parse: the row is left out.
+/// Returns `None` for a range that does not parse and for a `catalog:` range: the row is left out.
+/// bun.lock's reader never binds a row without a version, so a folder with that name gets the row
+/// that nothing declares instead.
 fn declared_row(
     string_builder: &mut StringBuilder<'_>,
     declared: &DeclaredDependency,
@@ -70,7 +74,7 @@ fn declared_row(
         )?,
     };
     CatalogMap::strip_reference(&mut row);
-    Some(row)
+    (row.version.tag() != DependencyVersionTag::Uninitialized).then_some(row)
 }
 
 /// The shipped package that Node finds for `name` from the folder of `from`, above that folder's
@@ -98,7 +102,8 @@ impl Lockfile {
     /// which are new rows at the end of the buffers: call this before any of them is queued.
     ///
     /// - A row of `bundler` with the name of a folder in its `node_modules` becomes a bundled row
-    ///   and is bound to the package in that folder, whatever range the row has.
+    ///   and is bound to the package in that folder, whatever range the row has. A row without a
+    ///   version (`CatalogMap::strip_reference`) is dropped instead, as `declared_row` does.
     /// - A bundled row without a folder stays unresolved.
     /// - Every other folder there gets a row that nothing declares, which is bound to the package
     ///   in it: `ShippedIdentity::append_synthetic_row`.
@@ -168,6 +173,9 @@ impl Lockfile {
             // The old rows are dropped, so what is recorded for their ids moves with them.
             let was_refreshing = self.take_refreshing(id);
             let row = if let Some(index) = in_folder {
+                if dependency.version.tag() == DependencyVersionTag::Uninitialized {
+                    continue;
+                }
                 dependency.behavior.insert(Behavior::BUNDLED);
                 shipped[index as usize].placed = true;
                 Row {

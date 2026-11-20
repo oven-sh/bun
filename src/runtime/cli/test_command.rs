@@ -591,10 +591,7 @@ fn select_shard_by_reach(
 }
 
 // A preload is named as it was written: "./test/preload.ts", "dotenv/config". Whoever looks for what it imports needs its file.
-pub(crate) fn find_files_of_preloads(
-    vm: &VirtualMachine,
-    preloads: &[Box<[u8]>],
-) -> Vec<Box<[u8]>> {
+fn find_files_of_preloads(vm: &VirtualMachine, preloads: &[Box<[u8]>]) -> Vec<Box<[u8]>> {
     let mut unread_log = bun_ast::Log::init();
     // SAFETY: the resolver and `unread_log` outlive the guard.
     let _log_scope = unsafe {
@@ -3106,13 +3103,17 @@ impl TestCommand {
                         result.changed_count,
                         if result.changed_count == 1 { "" } else { "s" }
                     );
-                    if !result.unreached.is_empty() {
-                        pretty_error!("<r><d>--changed:<r> no test file or preload imports ");
-                        for (i, path) in result.unreached.iter().enumerate() {
+                    if !result.changed_sample.is_empty() {
+                        pretty_error!(
+                            "<r><d>--changed:<r> the static imports of {} test file{} do not reach ",
+                            result.total_tests,
+                            if result.total_tests == 1 { "" } else { "s" }
+                        );
+                        for (i, path) in result.changed_sample.iter().enumerate() {
                             let separator = if i == 0 { "" } else { ", " };
                             pretty_error!("{}{}", separator, bstr::BStr::new(path));
                         }
-                        match result.unreached_count - result.unreached.len() {
+                        match result.changed_count - result.changed_sample.len() {
                             0 => pretty_error!("\n"),
                             more => pretty_error!(" and {} more\n", more),
                         }
@@ -3120,20 +3121,13 @@ impl TestCommand {
                     pass_with_no_tests_from_filter = true;
                 } else if !run_compiled::is_second_process() {
                     pretty_error!(
-                        "<r><d>--changed:<r> {} changed file{}, running {}/{} test file{}",
+                        "<r><d>--changed:<r> {} changed file{}, running {}/{} test file{}\n",
                         result.changed_count,
                         if result.changed_count == 1 { "" } else { "s" },
                         result.test_files.len(),
                         result.total_tests,
                         if result.total_tests == 1 { "" } else { "s" }
                     );
-                    match result.unreached_count {
-                        0 => pretty_error!("\n"),
-                        count => pretty_error!(
-                            " <d>({} not imported by a test file or preload)<r>\n",
-                            count
-                        ),
-                    }
                 }
                 Output::flush();
                 break 'brk result.test_files;

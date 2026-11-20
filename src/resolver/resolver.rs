@@ -999,6 +999,32 @@ impl<'a> Resolver<'a> {
         self.match_tsconfig_paths(&tsconfig, import_path, kind, out)
     }
 
+    /// Calls `each` with every absolute path that an import of `import_path` from `source_dir`
+    /// names through tsconfig.json "paths", whether a file answers it or not.
+    pub fn for_each_tsconfig_paths_target(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &[u8],
+        mut each: impl FnMut(&[u8]),
+    ) {
+        if !bun_paths::is_absolute(source_dir) {
+            return;
+        }
+        let Some(dir_info) = self.dir_info_cached(source_dir).ok().flatten() else {
+            return;
+        };
+        let Some(tsconfig) = self.enclosing_tsconfig_json(&dir_info) else {
+            return;
+        };
+        if tsconfig.paths.count() == 0 {
+            return;
+        }
+        self.find_tsconfig_paths_target(&tsconfig, import_path, |_, target| {
+            each(target);
+            false
+        });
+    }
+
     pub(crate) fn flush_debug_logs(&mut self, flush_mode: FlushMode) -> crate::CrateResult<()> {
         // NOTE: capture `log` before partially borrowing `self.debug_logs`
         // so the method call doesn't conflict with the field borrow (`log()`
@@ -5081,6 +5107,24 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         out: &mut MatchResult,
     ) -> MatchStatus {
+        let found = self.find_tsconfig_paths_target(tsconfig, path, |this, target| {
+            this.load_as_file_or_directory(target, kind, out)
+                .is_success()
+        });
+        match found {
+            true => MatchStatus::Success,
+            false => MatchStatus::NotFound,
+        }
+    }
+
+    /// Calls `accept` with each absolute path that "paths" of `tsconfig` maps `path` to, in the
+    /// order the resolver tries them, until it returns true.
+    fn find_tsconfig_paths_target(
+        &mut self,
+        tsconfig: &TSConfigJSON,
+        path: &[u8],
+        mut accept: impl FnMut(&mut Self, &[u8]) -> bool,
+    ) -> bool {
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
                 "Matching \"{}\" against \"paths\" in \"{}\"",
@@ -5127,11 +5171,8 @@ impl<'a> Resolver<'a> {
                             };
                         }
 
-                        if self
-                            .load_as_file_or_directory(absolute_original_path, kind, out)
-                            .is_success()
-                        {
-                            return MatchStatus::Success;
+                        if accept(self, absolute_original_path) {
+                            return true;
                         }
                     }
                 }
@@ -5197,16 +5238,13 @@ impl<'a> Resolver<'a> {
                     continue;
                 };
 
-                if self
-                    .load_as_file_or_directory(absolute_original_path, kind, out)
-                    .is_success()
-                {
-                    return MatchStatus::Success;
+                if accept(self, absolute_original_path) {
+                    return true;
                 }
             }
         }
 
-        MatchStatus::NotFound
+        false
     }
 
     /// A `paths` substitution written as a declaration file exists for type checking

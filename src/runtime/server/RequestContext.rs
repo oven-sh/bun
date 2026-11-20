@@ -1180,6 +1180,17 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         self.end_head(|resp| resp.end_without_body(close_connection));
     }
 
+    /// Says "keep-alive", or a client can't tell it from the head of a body that a close ends.
+    fn end_head_without_length(&self) {
+        let close_connection = self.should_close_connection();
+        self.end_head(|resp| {
+            if !MUX && !close_connection && !resp.state().wrote_connection_header() {
+                resp.write_header(b"Connection", b"keep-alive");
+            }
+            resp.end_without_body(close_connection);
+        });
+    }
+
     fn end_head(&self, end: impl FnOnce(uws::AnyResponse)) {
         ctx_log!("endWithoutBody");
         if let Some(resp) = self.resp.get() {
@@ -1815,6 +1826,10 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         let sendfile = self.sendfile.get();
         if (is_regular && sendfile.remain == 0) || !self.method.has_body() {
             drop(opened);
+            if !is_regular {
+                // A pipe or a device has no length to report.
+                return self.end_head_without_length();
+            }
             // SAFETY: FFI handle
             let close = resp.should_close_connection();
             let _base_ref = self.detach_response();
@@ -2366,8 +2381,6 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         let Some(server) = this.try_server() else {
             // server detached?
             this.render_metadata();
-            // SAFETY: FFI handle
-            resp.write_header_int(b"content-length", 0);
             this.end_without_body(this.should_close_connection());
             return;
         };
@@ -2397,14 +2410,17 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                 if let Some(content_length) = headers.fast_get(jsc::HTTPHeaderName::ContentLength) {
                     // Parse before renderMetadata(), which derefs the FetchHeaders and frees the borrowed StringImpl.
                     let content_length_str = content_length.to_utf8();
-                    let len: usize = HTTP::parse_content_length(content_length_str.slice());
+                    let len = HTTP::parse_content_length_strict(content_length_str.slice());
                     drop(content_length_str);
 
-                    this.render_metadata();
-                    // SAFETY: FFI handle
-                    resp.write_header_int(b"content-length", len as u64);
-                    this.end_without_body(this.should_close_connection());
-                    return;
+                    // A value that is not a length is not forwarded.
+                    if let Some(len) = len {
+                        this.render_metadata();
+                        // SAFETY: FFI handle
+                        resp.write_header_int(b"content-length", len);
+                        this.end_without_body(this.should_close_connection());
+                        return;
+                    }
                 }
                 // Only a GET finds out how long the decoded body is.
                 if headers.body_facts().intersects(BodyFacts::DECODED) {
@@ -2448,7 +2464,13 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                 this.end_head(|resp| resp.end_head_of_stream(close_connection));
             }
             Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_) => {
+                // Only an empty body says what GET would send. RFC 9110 §8.6 forbids a
+                // Content-Length that differs from GET's, so the others send none.
+                let is_empty = matches!(body_value, Body::Value::Empty);
                 this.render_metadata();
+                if !is_empty {
+                    return this.end_head_without_length();
+                }
                 // SAFETY: FFI handle
                 resp.write_header_int(b"content-length", 0);
                 this.end_without_body(this.should_close_connection());
@@ -3283,7 +3305,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                         .get_init_headers_mut()?
                         .fast_get(jsc::HTTPHeaderName::ContentLength)?
                         .to_utf8();
-                    bun_core::parse_int::<u64>(s.slice(), 10).ok()
+                    HTTP::parse_content_length_strict(s.slice())
                 })
                 .flatten();
             (status, app_cl)

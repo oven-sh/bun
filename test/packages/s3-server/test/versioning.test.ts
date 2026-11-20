@@ -186,12 +186,12 @@ describe("a bucket with versioning", () => {
 
     // The key has no object for a request without a version ID. The versions are there.
     expect(await read(t, "GET", "key")).toEqual(failed(404, noSuchKey("key"), marker(first)));
-    expect(await read(t, "HEAD", "key")).toEqual(answer(404, { "content-length": "0", ...marker(first) }));
+    expect(await read(t, "HEAD", "key")).toEqual(answer(404, { connection: "keep-alive", ...marker(first) }));
     expect(await read(t, "GET", "key", version(ids[1]))).toEqual(answer(200, { ...BINARY, ...id(ids[1]) }, "hello"));
     // S3 has no content and no metadata for a delete marker.
     const headers = { "allow": "DELETE", "last-modified": LAST_MODIFIED, ...marker(first) };
     expect(await read(t, "GET", "key", version(first))).toEqual(failed(405, notAllowed, headers));
-    expect(await read(t, "HEAD", "key", version(first))).toEqual(answer(405, { "content-length": "0", ...headers }));
+    expect(await read(t, "HEAD", "key", version(first))).toEqual(answer(405, { connection: "keep-alive", ...headers }));
 
     const second = (await read(t, "DELETE", "key")).headers["x-amz-version-id"];
     const never = (await read(t, "DELETE", "never")).headers["x-amz-version-id"];
@@ -363,7 +363,7 @@ describe("a bucket with versioning", () => {
       expect(await request("marked", deleted)).toEqual(failed(405, notAllowed, headers));
       expect(await read(t, "GET", "marked", options)).toEqual(failed(404, noSuchKey("marked"), marker(deleted)));
       if (operation !== "GetObject") return;
-      expect(await read(t, "HEAD", "key", version("not-an-id"))).toEqual(answer(400, { "content-length": "0" }));
+      expect(await read(t, "HEAD", "key", version("not-an-id"))).toEqual(answer(400, { connection: "keep-alive" }));
       expect(await read(t, "DELETE", "key", version("not-an-id"))).toEqual(failed(400, invalid("not-an-id")));
     });
   });

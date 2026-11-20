@@ -1256,6 +1256,7 @@ bitflags::bitflags! {
         const HTTP_REQUEST_BODY_TOO_LARGE   = 128;
         const HTTP_NODE_RECEIVED_FIN        = 1 << 15;
         const HTTP_NODE_CLOSE_AFTER_MESSAGE = 1 << 20;
+        const HTTP_WROTE_CONNECTION_HEADER  = 1 << 27;
     }
 }
 
@@ -1288,6 +1289,11 @@ impl State {
     #[inline]
     pub fn is_http_connection_close(self) -> bool {
         self.bits() & State::HTTP_CONNECTION_CLOSE.bits() != 0
+    }
+
+    #[inline]
+    pub fn wrote_connection_header(self) -> bool {
+        self.contains(State::HTTP_WROTE_CONNECTION_HEADER)
     }
 
     #[inline]

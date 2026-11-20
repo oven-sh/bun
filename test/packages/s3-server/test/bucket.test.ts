@@ -213,8 +213,8 @@ describe("a bucket", () => {
     };
     await expectSteps([
       [() => head(t.client, B), [200, "us-east-1", "false", "0", ""]],
-      [() => head(t.client, "/missing-bucket"), [404, null, null, "0", ""]],
-      [() => head(t.other, B), [403, "us-east-1", null, "0", ""]],
+      [() => head(t.client, "/missing-bucket"), [404, null, null, null, ""]],
+      [() => head(t.other, B), [403, "us-east-1", null, null, ""]],
     ]);
   });
 

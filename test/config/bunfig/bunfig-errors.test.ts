@@ -33,6 +33,110 @@ describe.concurrent("bunfig.toml type-mismatch error messages", () => {
   });
 });
 
+// Only a string is a define. Every other value is skipped with a warning.
+describe.concurrent("a define value that is not a string", () => {
+  const PRINT_DEFINES = `console.log(typeof K === "undefined" ? "no K" : JSON.stringify(K), typeof L === "undefined" ? "no L" : JSON.stringify(L));`;
+
+  async function run(files: Record<string, string>, args: string[]) {
+    using dir = tempDir("bunfig-define", { "k.js": PRINT_DEFINES, ...files });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Every line that is printed, so that a line of the config in there fails the test.
+    return { stdout, stderr: stderr.split("\n").filter(line => line !== ""), exitCode };
+  }
+
+  /** What one skipped entry prints: the warning, then where the entry is. */
+  const ignored = (file: string, key: string, why: string, position: string) => [
+    `warn: ignoring define "${key}": ${why}`,
+    expect.stringMatching(new RegExp(`^ +at .*${file.replace(".", "\\.")}:${position}$`)),
+  ];
+  const belowHeader = (received: string) =>
+    `expected string but received ${received}. Keys below a define header are defines: write it as a string, or move it above the first [header]`;
+  const notString = (received: string) =>
+    `expected string but received ${received}, write it as a string like "true" or "'text'"`;
+  const DOTTED = "TOML reads a dotted key as nested tables, quote the whole key";
+
+  // `L` is a string in each of these, and stays a define.
+  const cases: [config: string, key: string, why: string, position: string][] = [
+    [`[define]\nL = "1"\nK = false`, "K", belowHeader("boolean"), "3:5"],
+    [`[define]\nL = "1"\nK = 1`, "K", belowHeader("number"), "3:5"],
+    [`[define]\nL = "1"\nK = 1.5`, "K", belowHeader("number"), "3:5"],
+    [`[define]\nL = "1"\nK = [1, 2]`, "K", belowHeader("array"), "3:5"],
+    [`[define]\nL = "1"\nK = { a = 1 }`, "K", belowHeader("object"), "3:5"],
+    // A top-level key below the header is an entry of the table.
+    [`[define]\nL = "1"\npreload = ["./preload.js"]`, "preload", belowHeader("array"), "3:11"],
+    [`[define]\nL = "1"\ntelemetry = false`, "telemetry", belowHeader("boolean"), "3:13"],
+    [`[define]\nL = "1"\n[serve.static.define]\nK = 1`, "K", belowHeader("number"), "4:5"],
+    // No header made these tables.
+    [`define = { L = "1", K = false }`, "K", notString("boolean"), "1:25"],
+    [`define.L = "1"\ndefine.K = false`, "K", notString("boolean"), "2:12"],
+    [`[define]\nL = "1"\n[[define.K]]\na = 1`, "K", notString("array"), "3:10"],
+    [`[define]\nL = "1"\n[define.process.env]`, "process", notString("object"), "3:9"],
+    [`[define]\nL = "1"\n[serve.static]\ndefine = { K = 1 }`, "K", notString("number"), "4:16"],
+    // TOML reads an unquoted dotted key, and a header, as nested tables.
+    [`[define]\nL = "1"\nprocess.env.SECRET = "'sk_live_abc123'"`, "process.env.SECRET", DOTTED, "3:13"],
+    [`[define]\nL = "1"\n[define.process.env]\nSECRET = "'sk_live_abc123'"`, "process.env.SECRET", DOTTED, "4:1"],
+  ];
+
+  test.each(cases)("%j is skipped with a warning", async (config, key, why, position) => {
+    expect(await run({ "bunfig.toml": config + "\n" }, ["k.js"])).toEqual({
+      stdout: "no K 1\n",
+      stderr: ignored("bunfig.toml", key, why, position),
+      exitCode: 0,
+    });
+  });
+
+  test("each dotted key below one table has its warning", async () => {
+    const config = `[define]\nL = "1"\nprocess.env.A = "1"\nprocess.env.B = "2"\nprocess.C = "3"\n`;
+    expect(await run({ "bunfig.toml": config }, ["k.js"])).toEqual({
+      stdout: "no K 1\n",
+      stderr: [
+        ...ignored("bunfig.toml", "process.env.A", DOTTED, "3:13"),
+        ...ignored("bunfig.toml", "process.env.B", DOTTED, "4:13"),
+        ...ignored("bunfig.toml", "process.C", DOTTED, "5:9"),
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test("each such value of a JSON config has its warning", async () => {
+    const config = `{\n  "define": {\n    "K": false,\n    "L": "1",\n    "M": null,\n    "N": { "a": 1 }\n  }\n}\n`;
+    expect(await run({ "config.json": config }, ["--config=./config.json", "k.js"])).toEqual({
+      stdout: "no K 1\n",
+      stderr: [
+        ...ignored("config.json", "K", notString("boolean"), "3:10"),
+        ...ignored("config.json", "M", notString("null"), "5:10"),
+        ...ignored("config.json", "N", notString("object"), "6:10"),
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test("a line of a JSON config that starts with [ is not a header", async () => {
+    const config = `{ "zz":\n[1], "define": {\n"K": false, "L": "1" } }\n`;
+    expect(await run({ "config.json": config }, ["--config=./config.json", "k.js"])).toEqual({
+      stdout: "no K 1\n",
+      stderr: ignored("config.json", "K", notString("boolean"), "3:6"),
+      exitCode: 0,
+    });
+  });
+
+  test("a string is a define, with no warning", async () => {
+    const config = `[define]\nK = "false"\nL = '"text"'\n`;
+    expect(await run({ "bunfig.toml": config }, ["k.js"])).toEqual({
+      stdout: `false "text"\n`,
+      stderr: [],
+      exitCode: 0,
+    });
+  });
+});
+
 // bun builds every config path in a stack buffer of MAX_PATH_BYTES (the platform's
 // PATH_MAX, see bun_core), so the longest path it can hold is MAX_PATH_BYTES - 1
 // bytes plus the NUL terminator. Paths that do not fit used to overflow the buffer

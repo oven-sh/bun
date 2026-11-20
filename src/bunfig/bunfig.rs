@@ -138,6 +138,24 @@ fn num_to_u32(n: f64) -> u32 {
     n as u32
 }
 
+/// The table of a dotted key or of a header: the TOML parser puts it at the position of its key.
+fn dotted_table(key: &Expr, value: &Expr) -> Option<bun_ast::StoreRef<E::Object>> {
+    value.data.e_object().filter(|_| value.loc == key.loc)
+}
+
+/// Whether `loc` is in a table header: its line starts with `[`, and no `]` comes before it.
+fn is_in_header(source: &bun_ast::Source, loc: bun_ast::Loc) -> bool {
+    usize::try_from(loc.start)
+        .ok()
+        .and_then(|at| source.contents.get(..at))
+        .is_some_and(|before| {
+            let line = bun_core::strings::last_index_of_char(before, b'\n')
+                .map_or(before, |newline| &before[newline + 1..]);
+            bun_core::trim_left(line, b" \t").first() == Some(&b'[')
+                && !bun_core::strings::contains_char(line, b']')
+        })
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Parser
 // ─────────────────────────────────────────────────────────────────────────────
@@ -357,29 +375,95 @@ impl<'a> Parser<'a, '_> {
         self.expect(expr, ExprTag::EObject)?;
         let obj = expr.data.e_object().expect("infallible: variant checked");
         let properties = obj.properties.slice();
-        let valid_count = properties
-            .iter()
-            .filter(|p| matches!(p.value.as_ref().unwrap().data, ExprData::EString(_)))
-            .count();
-        let mut keys: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
-        let mut values: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
+        let mut keys: Vec<Box<[u8]>> = Vec::with_capacity(properties.len());
+        let mut values: Vec<Box<[u8]>> = Vec::with_capacity(properties.len());
+        let mut table_in_header = None;
         for prop in properties {
-            let ExprData::EString(v) = &prop
-                .value
-                .as_ref()
-                .expect("infallible: prop has value")
-                .data
-            else {
-                continue;
-            };
-            let ExprData::EString(k) = &prop.key.as_ref().expect("infallible: prop has key").data
-            else {
-                continue;
-            };
-            keys.push(estring_to_owned(k, self.bump));
-            values.push(estring_to_owned(v, self.bump));
+            let key = prop.key.as_ref().expect("infallible: prop has key");
+            let value = prop.value.as_ref().expect("infallible: prop has value");
+            match (&key.data, &value.data) {
+                (ExprData::EString(k), ExprData::EString(v)) => {
+                    keys.push(estring_to_owned(k, self.bump));
+                    values.push(estring_to_owned(v, self.bump));
+                }
+                _ => self.warn_ignored_define(expr, &mut table_in_header, key, value),
+            }
         }
         Ok(api::StringMap { keys, values })
+    }
+
+    /// Says that `key` of the `define` table is skipped, because `value` is not a string.
+    #[cold]
+    fn warn_ignored_define(
+        &mut self,
+        table: &Expr,
+        table_in_header: &mut Option<bool>,
+        key: &Expr,
+        value: &Expr,
+    ) {
+        use bun_core::fmt::escape_control_chars;
+        let name = key.as_string(self.bump).unwrap_or(b"");
+        // No excerpt in these warnings: the line can hold a secret the redactor does not know.
+        let source = self.source;
+
+        // An unquoted `a.b.c = ".."` is the table `a`, and each key below it is a define.
+        let mut path = name.to_vec();
+        let mut tables = Vec::from_iter(dotted_table(key, value).map(|it| (it, 0, path.len())));
+        let mut has_dotted = false;
+        while let Some(top) = tables.last_mut() {
+            let (object, index, prefix) = *top;
+            top.1 += 1;
+            let Some(property) = object.properties.slice().get(index) else {
+                tables.pop();
+                continue;
+            };
+            let (Some(segment), Some(below)) = (property.key.as_ref(), property.value.as_ref())
+            else {
+                continue;
+            };
+            path.truncate(prefix);
+            path.push(b'.');
+            path.extend_from_slice(segment.as_string(self.bump).unwrap_or(b""));
+            if let Some(inner) = dotted_table(segment, below) {
+                tables.push((inner, 0, path.len()));
+                continue;
+            }
+            has_dotted = true;
+            self.log.add_warning_fmt_no_excerpt(
+                source,
+                segment.loc,
+                format_args!(
+                    "ignoring define \"{}\": TOML reads a dotted key as nested tables, quote the whole key",
+                    escape_control_chars(&path)
+                ),
+            );
+        }
+        if has_dotted {
+            return;
+        }
+
+        // A header takes every key up to the next header, but not a key of a header itself.
+        let below_header = *table_in_header.get_or_insert_with(|| is_in_header(source, table.loc))
+            && !is_in_header(source, key.loc);
+        let name = escape_control_chars(name);
+        let received = value.data.tag_name();
+        if below_header {
+            self.log.add_warning_fmt_no_excerpt(
+                source,
+                value.loc,
+                format_args!(
+                    "ignoring define \"{name}\": expected string but received {received}. Keys below a define header are defines: write it as a string, or move it above the first [header]"
+                ),
+            );
+        } else {
+            self.log.add_warning_fmt_no_excerpt(
+                source,
+                value.loc,
+                format_args!(
+                    "ignoring define \"{name}\": expected string but received {received}, write it as a string like \"true\" or \"'text'\""
+                ),
+            );
+        }
     }
 
     // `cmd` is a runtime arg rather than a const generic —

@@ -416,6 +416,73 @@ describe.each(["hoisted", "isolated"] as const)("packageExtensions (%s)", linker
     await app.install(manifest, false);
   });
 
+  // `bundled-same-host@1.0.0` ships a `no-deps@1.0.0` in its tarball. It is not the registry's `no-deps@1.0.0`.
+  test.concurrent(
+    "extends the registry package and not the copy with its name and version that a tarball ships",
+    async () => {
+      const app = await project(linker);
+      const manifest = {
+        dependencies: { "bundled-same-host": "1.0.0", "no-deps": "1.0.0" },
+        packageExtensions: { "no-deps@1.0.0": { dependencies: { "a-dep": "1.0.1" } } },
+      };
+
+      await app.install(manifest, true);
+      const lock = await app.lockText();
+      const { packages, packageExtensions } = await app.lock();
+      expect(packages["bundled-same-host/no-deps"]).toEqual(["no-deps@1.0.0", "", { bundled: true }, ""]);
+      expect(packages["no-deps"][2]).toEqual({ dependencies: { "a-dep": "1.0.1" } });
+      expect(packageExtensions).toEqual({ "no-deps@1.0.0": { dependencies: ["a-dep"] } });
+      // The parsed section cannot show a key that is written twice.
+      expect(lock.match(/"no-deps@1\.0\.0": \{ "dependencies": \["a-dep"\] \}/g)).toHaveLength(1);
+      expect(await app.resolvedFrom("no-deps", "1.0.0", "a-dep")).toBe("1.0.1");
+
+      await app.install(manifest, false);
+      expect(await app.lockText()).toBe(lock);
+      await app.install(manifest, false, "--frozen-lockfile");
+      expect(await app.lockText()).toBe(lock);
+
+      // `--lockfile-only` writes the file also when nothing changed.
+      const { err, exitCode } = await bun(app.dir, "install", "--lockfile-only");
+      expect(err).not.toContain("error:");
+      expect(await app.lockText()).toBe(lock);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // `bundled-older-host@1.0.0` ships `no-deps@1.0.1`, and nothing else in the project is a `no-deps`.
+  test.concurrent(
+    "a key that only names a package that a tarball ships changes nothing, added now or later",
+    async () => {
+      const dependencies = { "bundled-older-host": "1.0.0" };
+      const extended = { dependencies, packageExtensions: { "no-deps@1.0.1": { dependencies: { "a-dep": "1.0.1" } } } };
+
+      const fresh = await project(linker);
+      await fresh.install(extended, true);
+      const lock = await fresh.lockText();
+      expect(await fresh.locked()).toEqual(["bundled-older-host@1.0.0", "no-deps@1.0.1"]);
+      expect((await fresh.lock()).packages["bundled-older-host/no-deps"]).toEqual([
+        "no-deps@1.0.1",
+        "",
+        { bundled: true },
+        "",
+      ]);
+      expect(lock).not.toContain("packageExtensions");
+      await fresh.install(extended, false);
+      await fresh.install(extended, false, "--frozen-lockfile");
+      expect(await fresh.lockText()).toBe(lock);
+
+      const later = await project(linker);
+      await later.install({ dependencies }, true);
+      expect(await later.lockText()).toBe(lock);
+      await later.install(extended, false, "--frozen-lockfile");
+      await later.install(extended, false);
+      const { err, exitCode } = await bun(later.dir, "install", "--lockfile-only");
+      expect(err).not.toContain("error:");
+      expect(await later.lockText()).toBe(lock);
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test.concurrent("bun.lockb also records what was added", async () => {
     const app = await project(linker, { saveTextLockfile: false });
     const extended = (version: string) => ({

@@ -380,6 +380,14 @@ impl Lockfile {
         Builder::string_hash(&crate::dedupe::label(self, id))
     }
 
+    /// A package that a tarball ships is what its shipped package.json says, so no rule extends
+    /// it and no record is its own: `package_extension_key` of a shipped package is also the key
+    /// of the registry package with that name and version.
+    #[inline]
+    fn is_shipped_package(&self, id: PackageID) -> bool {
+        self.packages.items_meta()[id as usize].is_shipped()
+    }
+
     fn package_extension_row(
         &mut self,
         wanted: &Wanted<'_>,
@@ -419,7 +427,7 @@ impl Lockfile {
         unresolved: &mut Vec<DependencyID>,
     ) -> Result<bool, AllocError> {
         let resolution = self.packages.items_resolution()[id as usize];
-        if resolution.tag != ResolutionTag::Npm {
+        if resolution.tag != ResolutionTag::Npm || self.is_shipped_package(id) {
             return Ok(false);
         }
         let mut wanted = Wanted::of(
@@ -538,6 +546,7 @@ impl Lockfile {
     ) {
         if added.is_empty()
             || self.packages.items_resolution()[id as usize].tag != ResolutionTag::Npm
+            || self.is_shipped_package(id)
         {
             return;
         }
@@ -575,6 +584,9 @@ impl Lockfile {
         name_hash: PackageNameHash,
         is_peer: bool,
     ) -> Result<(), AllocError> {
+        if self.is_shipped_package(id) {
+            return Ok(());
+        }
         let wanted = Wanted::of(
             rules,
             self.packages.items_name_hash()[id as usize],
@@ -672,7 +684,9 @@ impl Lockfile {
     #[inline(never)]
     pub(crate) fn keep_package_extensions_of(&mut self, old: &Lockfile) {
         for id in 0..self.packages.len() as PackageID {
-            if self.packages.items_resolution()[id as usize].tag != ResolutionTag::Npm {
+            if self.packages.items_resolution()[id as usize].tag != ResolutionTag::Npm
+                || self.is_shipped_package(id)
+            {
                 continue;
             }
             let package = self.package_extension_key(id);
@@ -692,7 +706,9 @@ impl Lockfile {
         let resolutions = &self.buffers.resolutions;
         let mut lines: Vec<Vec<u8>> = Vec::new();
         for id in 0..self.packages.len() {
-            if self.packages.items_resolution()[id].tag != ResolutionTag::Npm {
+            if self.packages.items_resolution()[id].tag != ResolutionTag::Npm
+                || self.is_shipped_package(id as PackageID)
+            {
                 continue;
             }
             let label = crate::dedupe::label(self, id as PackageID);

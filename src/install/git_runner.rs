@@ -627,6 +627,7 @@ fn read_clone_config(repo: &bun_sys::Dir) -> bun_sys::Maybe<Vec<u8>> {
 
 /// Overwrites the `config` file of the clone in `repo` with the output of `clone_config`.
 fn write_clone_config(repo: &bun_sys::Dir, url: &[u8]) -> bun_sys::Maybe<()> {
+    use bun_sys::O;
     let old = read_clone_config(repo)?;
     let config = clone_config(url, &old);
     if config == old {
@@ -637,8 +638,9 @@ fn write_clone_config(repo: &bun_sys::Dir, url: &[u8]) -> bun_sys::Maybe<()> {
     let tmp_name =
         Path::fs::FileSystem::tmpname(b"tmp", &mut tmp_name_buf, bun_core::fast_random())
             .map_err(|_| bun_sys::Error::from_code(bun_sys::E::ENOSPC, bun_sys::Tag::open))?;
-    bun_sys::File::write_file(repo.fd(), tmp_name, &config)?;
-    bun_sys::renameat(repo.fd(), tmp_name, repo.fd(), bun_core::zstr!("config"))
+    let tmp = bun_sys::Tmpfile::open(repo, tmp_name, O::WRONLY | O::CREAT | O::TRUNC, 0o664)?;
+    tmp.file.write_all(&config)?;
+    tmp.close().rename_to(repo, bun_core::zstr!("config"))
 }
 
 /// Moves the URL that the clone's `config` records to the end of `urls`, so it is tried first.

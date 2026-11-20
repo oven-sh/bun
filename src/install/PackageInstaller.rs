@@ -543,7 +543,7 @@ pub(crate) fn remove_placed_package(
         bun_core::fast_random(),
     );
     if let Some(old) = moved {
-        let _ = node_modules.delete_tree(old.as_bytes());
+        drop(old);
     } else {
         // If the rename fails, delete the files `verify` reads first.
         if let Some(package) = crate::prune::descend(&node_modules, alias) {

@@ -297,10 +297,9 @@ fn tmpname(prefix: &[u8]) -> ZBox {
 /// Written next to the destination and then renamed over it. Removed on drop if the rename didn't
 /// happen.
 struct TempOutput {
+    tmp: sys::Tmpfile<ZBox>,
+    /// After `tmp`, which is in it.
     dir: Dir,
-    name: ZBox,
-    file: Option<File>,
-    committed: bool,
 }
 
 impl TempOutput {
@@ -309,37 +308,19 @@ impl TempOutput {
             bun_paths::dirname(destination).unwrap_or(b"."),
             Default::default(),
         )?;
-        let name = tmpname(b"pack");
-        let file = sys::openat(
+        let tmp = sys::Tmpfile::open(
             dir.fd(),
-            &name,
+            tmpname(b"pack"),
             O::WRONLY | O::CREAT | O::EXCL | O::CLOEXEC,
             0o644,
         )?;
-        Ok(Self {
-            dir,
-            name,
-            file: Some(File::from_fd(file)),
-            committed: false,
-        })
+        Ok(Self { tmp, dir })
     }
 
-    fn commit(mut self, destination: &[u8]) -> sys::Maybe<()> {
-        // Windows requires the file to be closed before it's renamed.
-        self.file = None;
+    fn commit(self, destination: &[u8]) -> sys::Maybe<()> {
         let basename = ZBox::from_bytes(bun_paths::basename(destination));
-        sys::renameat(self.dir.fd(), &self.name, self.dir.fd(), &basename)?;
-        self.committed = true;
-        Ok(())
-    }
-}
-
-impl Drop for TempOutput {
-    fn drop(&mut self) {
-        if !self.committed {
-            self.file = None;
-            let _ = sys::unlinkat(self.dir.fd(), &self.name);
-        }
+        // Windows requires the file to be closed before it's renamed.
+        self.tmp.close().rename_to(&self.dir, &basename)
     }
 }
 
@@ -535,7 +516,7 @@ pub fn pack(pm: &mut PackageManager, destination: &[u8]) -> Result<PackSummary, 
     };
     let mut summary = PackSummary::default();
     {
-        let mut w = Writer::new(output.as_ref().and_then(|output| output.file.as_ref()));
+        let mut w = Writer::new(output.as_ref().map(|output| &*output.tmp.file));
         w.write(MAGIC)?;
         for entry in &entries {
             if entry_tag(entry.name.as_bytes()).is_none() {
@@ -687,40 +668,6 @@ impl Reader {
         }
         let mode = u32::from_le_bytes(mode);
         Ok((Header { kind, mode, size }, path))
-    }
-}
-
-/// A private directory inside the temporary directory. The `n`th new package is staged as
-/// `<name>/<n>`.
-struct Staging {
-    parent: Fd,
-    name: ZBox,
-    dir: Option<Dir>,
-}
-
-impl Staging {
-    fn create(parent: Fd) -> sys::Maybe<Self> {
-        let name = tmpname(b"unpack");
-        sys::mkdirat(parent, &name, 0o700)?;
-        let mut staging = Self {
-            parent,
-            name,
-            dir: None,
-        };
-        staging.dir = Some(Dir::borrow(&parent).open_at(staging.name.as_bytes())?);
-        Ok(staging)
-    }
-
-    fn fd(&self) -> Fd {
-        self.dir.as_ref().map_or(Fd::INVALID, Dir::fd)
-    }
-}
-
-impl Drop for Staging {
-    fn drop(&mut self) {
-        // Windows requires the directory to be closed before it's removed.
-        self.dir = None;
-        let _ = Dir::borrow(&self.parent).delete_tree(self.name.as_bytes());
     }
 }
 
@@ -918,7 +865,12 @@ fn create_index_link(cache_dir: Fd, cache_dir_path: &[u8], entry: &ZStr) {
 pub fn unpack(pm: &mut PackageManager, pack_path: &[u8]) -> Result<UnpackSummary, Error> {
     let mut r = Reader::open(pack_path)?;
     let cache_dir = pm.get_cache_directory().handle.fd();
-    let staging = Staging::create(pm.get_temporary_directory().handle.fd())?;
+    let tmpdir = &pm.get_temporary_directory().handle;
+    let staging_name = tmpname(b"unpack");
+    sys::mkdirat(tmpdir, &staging_name, 0o700)?;
+    let staging_name = sys::DeleteTreeOnDrop::new(tmpdir, staging_name);
+    // The `n`th new package is staged in it as `<n>`.
+    let staging = tmpdir.open_at(&staging_name)?;
     let mut summary = UnpackSummary::default();
     let mut staged: Vec<(ZBox, ResolutionTag)> = Vec::new();
     let mut staged_buf = [0u8; 21];
@@ -961,7 +913,7 @@ pub fn unpack(pm: &mut PackageManager, pack_path: &[u8]) -> Result<UnpackSummary
         }
     }
 
-    // The whole pack is verified by now and the cache is untouched. Dropping `staging` deletes it.
+    // The whole pack is verified by now and the cache is untouched.
     if pm.options.dry_run {
         summary.created = staged.len() as u32;
         return Ok(summary);

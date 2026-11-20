@@ -19,8 +19,7 @@ use bun_paths::{platform, resolve_path};
 use bun_ptr::{RefPtr, ThisPtr};
 use bun_removable_features::removable_body_behind_value;
 use bun_resolver::fs::FileSystem;
-use bun_sys::{self as sys, Fd, File};
-use scopeguard::ScopeGuard;
+use bun_sys::{self as sys, Fd};
 
 #[cfg(not(windows))]
 use crate::api::bun::process::SpawnResultExt as _;
@@ -174,7 +173,7 @@ impl OsJobs {
                 for job in self.0.take() {
                     // The child outlives the VM, and the file is its input or the installed plist.
                     if let Some(file) = job.step.take().and_then(|(step, _)| step.into_file()) {
-                        ScopeGuard::into_inner(file);
+                        file.keep();
                     }
                 }
             });
@@ -391,8 +390,7 @@ fn after(step: Step, exit: Result<(), Failure>, output: sys::Result<Vec<u8>>) ->
     Err(failure)
 }
 
-/// A path that is unlinked when it drops.
-type OwnedFile = ScopeGuard<ZBox, fn(ZBox)>;
+type OwnedFile = sys::UnlinkOnDrop<ZBox>;
 
 fn write_file(
     path: &[u8],
@@ -400,11 +398,11 @@ fn write_file(
     contents: &[u8],
     [create_failed, write_failed]: [&'static str; 2],
 ) -> Result<OwnedFile, Failure> {
-    let owned: OwnedFile = scopeguard::guard(ZBox::from_bytes(path), |p| _ = sys::unlink(&p));
     let flags = sys::O::WRONLY | sys::O::CREAT | flag;
-    let file = File::openat(Fd::cwd(), owned.as_bytes(), flags, mode).map_err(|_| create_failed)?;
-    file.write_all(contents).map_err(|_| write_failed)?;
-    Ok(owned)
+    let tmp = sys::Tmpfile::open(Fd::cwd(), ZBox::from_bytes(path), flags, mode)
+        .map_err(|_| create_failed)?;
+    tmp.file.write_all(contents).map_err(|_| write_failed)?;
+    Ok(tmp.close())
 }
 
 /// Under a name that cannot be guessed.
@@ -546,7 +544,7 @@ mod backend {
         pub(super) fn next(self, _: &[u8]) -> Next {
             match self {
                 Step::BootoutOld(plist) => {
-                    let plist = ScopeGuard::into_inner(plist);
+                    let plist = plist.keep();
                     let domain = format!("gui/{}", sys::c::getuid());
                     let argv = [
                         b"/bin/launchctl",

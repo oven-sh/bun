@@ -1125,26 +1125,18 @@ impl<'a> Linker<'a> {
         else {
             return;
         };
-        struct UnlinkUnlessRenamed<'p>(Option<&'p ZStr>);
-        impl Drop for UnlinkUnlessRenamed<'_> {
-            fn drop(&mut self) {
-                if let Some(tmppath) = self.0 {
-                    let _ = sys::unlinkat(Fd::cwd(), tmppath);
-                }
-            }
-        }
-        let mut tmpfile_guard = UnlinkUnlessRenamed(Some(tmppath));
 
         // Write to temporary file with corrected content
+        let Ok(tmp) = sys::Tmpfile::open(
+            Fd::cwd(),
+            tmppath,
+            sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
+            original_mode,
+        ) else {
+            return;
+        };
         {
-            let Ok(tmpfile) = sys::File::openat(
-                Fd::cwd(),
-                tmppath,
-                sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
-                original_mode,
-            ) else {
-                return;
-            };
+            let tmpfile = &tmp.file;
             // Write the corrected shebang (without \r)
             if tmpfile
                 .write_all(&chunk_without_newline[0..chunk_without_newline.len() - 1])
@@ -1166,7 +1158,7 @@ impl<'a> Linker<'a> {
             // Reapply original permissions (umask was applied during openat, so we need to restore)
             if sys::fchmodat(
                 Fd::cwd(),
-                tmppath,
+                tmp.name(),
                 (original_stat.st_mode & 0o777) as Mode,
                 0,
             )
@@ -1177,9 +1169,7 @@ impl<'a> Linker<'a> {
         }
 
         // Atomic replace: rename temp file to original
-        if sys::renameat(Fd::cwd(), tmppath, Fd::cwd(), abs_target).is_ok() {
-            tmpfile_guard.0 = None;
-        }
+        let _ = tmp.close().rename_to(Fd::cwd(), abs_target);
     }
 
     #[cfg(windows)]

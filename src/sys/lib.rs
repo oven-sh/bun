@@ -783,7 +783,7 @@ pub use signal_code::SignalCode;
 #[cfg(unix)]
 pub mod beneath;
 pub mod tmp;
-pub use tmp::Tmpfile;
+pub use tmp::{DeleteTreeOnDrop, Tmpfile, UnlinkOnDrop};
 // `windows/mod.rs` is `#![cfg(windows)]`-gated internally; on POSIX this
 // declares an empty module so `bun_sys::windows::*` paths still resolve under
 // `#[cfg(windows)]` arms in dependents.
@@ -8556,61 +8556,9 @@ pub(crate) fn copy_file_z_slow_with_handle(
     }
     r
 }
-/// `renameatZ` alias (bun_install reaches for it as the NUL-terminated form).
-#[inline]
-pub fn renameat_z(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr) -> Maybe<()> {
-    let from_dir = from_dir.as_fd();
-    let to_dir = to_dir.as_fd();
-    renameat(from_dir, from, to_dir, to)
-}
 
-/// Option struct for [`renameat_concurrently`];
-/// callers can build it inline.
-#[derive(Default, Clone, Copy)]
-pub struct RenameatConcurrentlyOptions {
-    pub move_fallback: bool,
-}
-/// Alias: `bun_install` call sites spell this `RenameOptions`.
-pub type RenameOptions = RenameatConcurrentlyOptions;
-
-/// `moveFileZSlowMaybe`. Thin wrapper
-/// (`renameatConcurrently` falls back through here).
-#[inline]
-pub(crate) fn move_file_z_slow_maybe(
-    from_dir: Fd,
-    filename: &ZStr,
-    to_dir: Fd,
-    destination: &ZStr,
-) -> Maybe<()> {
-    move_file_z_slow(from_dir, filename, to_dir, destination)
-}
-
-/// `renameatConcurrently`. Tries an atomic NOREPLACE rename,
-/// then EXCHANGE, then a racy delete-tree + rename. With `move_fallback` set,
-/// an EXDEV result falls through to a slow open/copy.
+/// Tries an atomic NOREPLACE rename, then EXCHANGE, then a racy delete-tree + rename.
 /// After an EXCHANGE, `from` holds the tree that was at `to`.
-pub fn renameat_concurrently(
-    from_dir_fd: Fd,
-    from: &ZStr,
-    to_dir_fd: Fd,
-    to: &ZStr,
-    opts: RenameatConcurrentlyOptions,
-) -> Maybe<()> {
-    match renameat_concurrently_without_fallback(from_dir_fd, from, to_dir_fd, to) {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            if opts.move_fallback && e.get_errno() == E::EXDEV {
-                bun_core::output::debug_warn(
-                    "renameatConcurrently() failed with E.XDEV, falling back to moveFileZSlowMaybe()",
-                );
-                return move_file_z_slow_maybe(from_dir_fd, from, to_dir_fd, to);
-            }
-            Err(e)
-        }
-    }
-}
-
-/// `renameatConcurrentlyWithoutFallback`.
 pub(crate) fn renameat_concurrently_without_fallback(
     from_dir_fd: Fd,
     from: &ZStr,
@@ -8870,14 +8818,11 @@ mod owned_handle_tests {
         let to_dir = open_dir_at(root, b"to").expect("open to");
 
         // The dest `to/sub` exists, so the rename must `delete_tree` it first.
-        renameat_concurrently(
+        renameat_concurrently_without_fallback(
             root,
             bun_core::zstr!("from/sub"),
             to_dir,
             bun_core::zstr!("sub"),
-            RenameatConcurrentlyOptions {
-                move_fallback: true,
-            },
         )
         .expect("rename");
 

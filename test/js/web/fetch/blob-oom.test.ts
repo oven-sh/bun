@@ -1,7 +1,17 @@
 import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+import { heapStats } from "bun:jsc";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rmSync, truncateSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  expectMaxObjectTypeCount,
+  isASAN,
+  isDebug,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import os from "node:os";
 import path from "path";
 
@@ -47,8 +57,6 @@ describe("Memory", () => {
   });
 
   describe("Blob", () => {
-    // Each case builds its own Blob: Blob.prototype.bytes() detaches the blob
-    // it was called on when it throws.
     test(".text() rejects with ERR_STRING_TOO_LONG", async () => {
       await expect(new Blob(parts).text()).rejects.toMatchObject(stringTooLong);
     });
@@ -64,6 +72,85 @@ describe("Memory", () => {
     test(".arrayBuffer() resolves with every byte", async () => {
       const buffer = await new Blob(parts).arrayBuffer();
       expect(buffer.byteLength).toBe(BLOB_SIZE);
+    });
+  });
+
+  // A .bytes() that rejects for its size must leave the Blob it was called on as it was.
+  describe("Blob after .bytes() rejects", () => {
+    // "ABC", NUL bytes, "XYZ": the ends show which bytes a later read returns.
+    const source = new Uint8Array(BLOB_SIZE);
+    source.set(Buffer.from("ABC"));
+    source.set(Buffer.from("XYZ"), BLOB_SIZE - 3);
+
+    const outcome = (settled: PromiseSettledResult<Uint8Array>) =>
+      settled.status === "rejected"
+        ? { name: settled.reason.name, message: settled.reason.message }
+        : { resolvedByteLength: settled.value.byteLength };
+
+    // Calls .bytes() twice, then reads the Blob in the ways that have no limit.
+    async function rejectBytesThenRead(blob: Blob) {
+      const bytes = (await Promise.allSettled([blob.bytes(), blob.bytes()])).map(outcome);
+      const buffer = Buffer.from(await blob.arrayBuffer());
+      return {
+        bytes,
+        size: blob.size,
+        byteLength: buffer.byteLength,
+        equalsSource: buffer.equals(source),
+        head: await blob.slice(0, 3).text(),
+        tail: await blob.slice(-3).text(),
+        asResponseBody: (await new Response(blob).arrayBuffer()).byteLength,
+      };
+    }
+    const unchanged = {
+      bytes: [outOfMemory, outOfMemory],
+      size: BLOB_SIZE,
+      byteLength: BLOB_SIZE,
+      equalsSource: true,
+      head: "ABC",
+      tail: "XYZ",
+      asResponseBody: BLOB_SIZE,
+    };
+
+    test.each<[string, () => Blob]>([
+      // One part of 8 MiB or more is a memfd store on Linux. Several parts are a heap store.
+      ["a Blob of one part", () => new Blob([source])],
+      ["a Blob of two parts", () => new Blob([source.subarray(0, MiB), source.subarray(MiB)])],
+      ["a File", () => new File([source], "source.bin")],
+      // The slice holds the last reference to a store that is larger than its window.
+      ["a slice", () => new Blob(["-", source, "-"]).slice(1, 1 + BLOB_SIZE)],
+    ])("%s keeps every byte", async (_, create) => {
+      expect(await rejectBytesThenRead(create())).toEqual(unchanged);
+    });
+
+    test(".bytes() resolves at the limit and rejects one byte above it", async () => {
+      const atLimit = new Blob([source.subarray(0, ALLOCATION_LIMIT)]);
+      expect(Buffer.from(await atLimit.bytes()).equals(source.subarray(0, ALLOCATION_LIMIT))).toBe(true);
+
+      const aboveLimit = new Blob([source.subarray(0, ALLOCATION_LIMIT + 1)]);
+      await expect(aboveLimit.bytes()).rejects.toMatchObject(outOfMemory);
+      expect((await aboveLimit.arrayBuffer()).byteLength).toBe(ALLOCATION_LIMIT + 1);
+    });
+
+    // These read through a private Blob that shares the store of the caller's Blob.
+    test.each<[string, (blob: Blob) => Promise<Uint8Array>]>([
+      ["blob.stream().bytes()", blob => blob.stream().bytes()],
+      ["Bun.readableStreamToBytes(blob.stream())", async blob => Bun.readableStreamToBytes(blob.stream())],
+    ])("%s rejects and the Blob keeps every byte", async (_, read) => {
+      const blob = new Blob([source]);
+      await expect(read(blob)).rejects.toMatchObject(outOfMemory);
+      expect(Buffer.from(await blob.arrayBuffer()).equals(source)).toBe(true);
+    });
+
+    // The Blob keeps its store after the rejection, so the store goes when the Blob is collected.
+    test("the Blob is collected once nothing holds it", async () => {
+      Bun.gc(true);
+      const before = heapStats().objectTypeCounts.Blob ?? 0;
+      // A property is the only reference, so clearing it leaves the Blob unreachable.
+      const holder: { blob: Blob | null } = { blob: new Blob([source]) };
+      await expect(holder.blob!.bytes()).rejects.toMatchObject(outOfMemory);
+      expect((await holder.blob!.arrayBuffer()).byteLength).toBe(BLOB_SIZE);
+      holder.blob = null;
+      await expectMaxObjectTypeCount(expect, "Blob", before);
     });
   });
 

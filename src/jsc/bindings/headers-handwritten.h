@@ -536,6 +536,16 @@ struct DeepMatchState {
         PatternOfValue,
     };
     JSC::JSValue recordedAt(unsigned record, RecordedValue which) { return recorded.at(record * 4 + which); }
+
+    // Whether the comparison ended at a pair that it refused as a whole, for what no print shows. It leaves the pattern of that pair beside itself, as its last record (recordPairThatWasRefused in bindings.cpp).
+    bool lastRecordIsOfRefusedPair()
+    {
+        unsigned records = recordedNames.size();
+        if (!records)
+            return false;
+        JSC::JSValue pattern = recordedAt(records - 1, PatternOfHolder);
+        return recordedAt(records - 1, Value) == pattern && recordedAt(records - 1, PatternOfValue) == pattern;
+    }
 };
 
 // JestMatchedRows.cpp. A place is an object together with the pattern it was compared with. 0 is no place and 1 is the root.
@@ -546,8 +556,8 @@ struct MatchedRow {
 JSC::Structure* createMatchedRowsStructure(JSC::VM&, JSC::JSGlobalObject*);
 // The rows cell for what `state` recorded (one cell per call), or empty if the root gets no row. Takes the names out of `state`. Enters no JavaScript.
 JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject*, DeepMatchState&, JSC::JSValue root, JSC::JSValue rootPattern);
-// The same for a comparison that failed. A walk of its own first adds the matchers of the pattern that pass after the first mismatch. It asks those, so it enters JavaScript. `readsListedKeysOnly` is for toEqual and the like, which on their fast path read only the keys that an object lists as its own.
-JSC::JSValue matchedRowsOfFailedMatch(JSC::JSGlobalObject*, DeepMatchState& comparison, JSC::JSValue root, JSC::JSValue rootPattern, bool readsListedKeysOnly = false);
+// The same for a comparison that failed. A walk of its own first adds the matchers of the pattern that pass after the first mismatch. It asks those, so it enters JavaScript. `ofDeepEquals` is for toEqual and the like, whose comparison is Bun__deepEquals and keeps no record.
+JSC::JSValue matchedRowsOfFailedMatch(JSC::JSGlobalObject*, DeepMatchState& comparison, JSC::JSValue root, JSC::JSValue rootPattern, bool ofDeepEquals = false);
 // Whether that walk may ask the asymmetric matcher `matcher`: one of the five built-in kinds that compare with nothing that another value holds, with no promise to read. Runs no user code.
 bool diffMayAsk(JSC::JSObject* matcher);
 // bindings.cpp. The answer of a matcher that diffMayAsk() admits, and nothing for any other: the walk has no other way to a matcher.

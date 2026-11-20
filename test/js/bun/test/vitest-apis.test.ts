@@ -1153,6 +1153,50 @@ describe("expect.addEqualityTesters", () => {
       expect(lines).toEqual(['-   "a": 2,', '+   "a": 1,']);
       expect({ registered, askedByTheCall }).toEqual({ registered: true, askedByTheCall: 0 });
     });
+
+    test("shows no matcher as passed in two values that a tester said no to", () => {
+      class Volume {
+        constructor(
+          public amount: unknown,
+          public unit: string,
+        ) {}
+      }
+      // It says no for a volume beside a volume with a matcher: a matcher is not the amount 1.
+      expect.addEqualityTesters([
+        (a, b) => (a instanceof Volume && b instanceof Volume ? a.amount === b.amount && a.unit === b.unit : undefined),
+      ]);
+      const volume = () => new Volume(1, "L");
+      const withMatcher = () => new Volume(expect.any(Number), "L");
+      const amount = ['-     "amount": Any<Number>,', '+     "amount": 1,'];
+      // With a matcher that passed before the two volumes, with one after them that the diff asks, with a received
+      // key that the pattern does not name, and at the root.
+      expect(flaggedLines({ a: 1, v: volume() }, { a: expect.any(Number), v: withMatcher() })).toEqual(amount);
+      expect(flaggedLines({ v: volume(), z: 1 }, { v: withMatcher(), z: expect.any(Number) })).toEqual(amount);
+      expect(flaggedLines({ more: 1, v: volume() }, { v: withMatcher() })).toEqual(['+   "more": 1,', ...amount]);
+      expect(flaggedLines(volume(), withMatcher())).toEqual(['-   "amount": Any<Number>,', '+   "amount": 1,']);
+      // Here the comparison stopped before the two volumes, and asked no tester about them. The diff asks none
+      // either, and shows what their matcher says.
+      expect(flaggedLines({ a: 1, v: volume() }, { a: 2, v: withMatcher() })).toEqual(['-   "a": 2,', '+   "a": 1,']);
+
+      // toEqual keeps no record of what its tester refused. Where the rows would leave no flagged line, its diff
+      // has none of them, as before.
+      const flaggedByToEqual = (received: object, expected: object) =>
+        messageOf(() => expect(received).toEqual(expected))
+          .split("\n")
+          .filter(line => /^[-+] {3}/.test(line));
+      expect(flaggedByToEqual({ a: 1, v: volume() }, { a: expect.any(Number), v: withMatcher() })).toEqual([
+        '-   "a": Any<Number>,',
+        '+   "a": 1,',
+        ...amount,
+      ]);
+      expect(flaggedByToEqual({ v: volume(), z: 1 }, { v: withMatcher(), z: expect.any(Number) })).toEqual([
+        ...amount,
+        '-   "z": Any<Number>,',
+        '+   "z": 1,',
+      ]);
+      // Beside a line that differs, the matcher in the two volumes shows as passed.
+      expect(flaggedByToEqual({ more: 1, v: volume() }, { v: withMatcher() })).toEqual(['+   "more": 1,']);
+    });
   });
 
   test("this.equals uses only the testers it is given", () => {

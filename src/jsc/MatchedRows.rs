@@ -29,6 +29,14 @@ impl MatchedRows {
         Ok(rows)
     }
 
+    /// The rows of the comparison alone, without the ones that the walk for a diff added after the first mismatch. Empty if that walk added none of the rows, or all of them.
+    pub fn of_comparison_alone(self) -> Self {
+        if self.is_empty() {
+            return self;
+        }
+        Self(crate::cpp::Bun__JestMatchedRows__ofComparisonAlone(self.0))
+    }
+
     /// The place of the object that was matched. None if there are no rows.
     pub fn root(self) -> MatchedPlace {
         if self.is_empty() {

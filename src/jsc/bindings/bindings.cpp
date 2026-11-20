@@ -890,6 +890,7 @@ static NEVER_INLINE std::optional<bool> domNodesDequal(JSGlobalObject* globalObj
 namespace Bun {
 bool oneAnswersByAsymmetricMatch(JSGlobalObject* globalObject, JSValue a, JSValue b)
 {
+    DisallowVMEntry noUserCode(globalObject->vm());
     return oneMayHaveAsymmetricMatchMethod(globalObject, a, b) && !asymmetricMatchMethod(globalObject, a) != !asymmetricMatchMethod(globalObject, b);
 }
 
@@ -2583,6 +2584,12 @@ static COLD NEVER_INLINE void recordMatcherThatSaidNo(Bun::DeepMatchState& state
     state.recordIfAsked(holder, pattern, name, matcher, matcher);
 }
 
+// Nor may it show a matcher as passed in a pair that the comparison refused as a whole, for what no print shows. DeepMatchState::lastRecordIsOfRefusedPair() reads this record.
+static COLD NEVER_INLINE void recordPairThatWasRefused(Bun::DeepMatchState& state, VM& vm, JSValue value, JSValue pattern)
+{
+    state.recordIfAsked(asObject(value), asObject(pattern), vm.propertyNames->emptyIdentifier, pattern, pattern);
+}
+
 template<bool enableAsymmetricMatchers>
 bool Bun__deepMatch(
     JSValue objValue,
@@ -2605,8 +2612,11 @@ bool Bun__deepMatch(
     if constexpr (enableAsymmetricMatchers) {
         // expect.objectContaining()'s argument is a pattern, so the testers don't see it.
         if (!isMatchingObjectContaining && hasEqualityTesters(globalObject)) [[unlikely]] {
-            if (auto verdict = runEqualityTesters(globalObject, throwScope, objValue, subsetValue))
+            if (auto verdict = runEqualityTesters(globalObject, throwScope, objValue, subsetValue)) {
+                if (!*verdict && state.records) [[unlikely]]
+                    recordPairThatWasRefused(state, vm, objValue, subsetValue);
                 return *verdict;
+            }
         }
     }
 
@@ -2656,6 +2666,8 @@ bool Bun__deepMatch(
         }
 #endif
         if (objCount != subsetCount) {
+            if (state.records) [[unlikely]]
+                recordPairThatWasRefused(state, vm, objValue, subsetValue);
             return false;
         }
     }

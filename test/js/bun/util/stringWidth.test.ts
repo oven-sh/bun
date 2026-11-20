@@ -1102,10 +1102,11 @@ describe("stringWidth extended", () => {
     });
 
     test("consistency holds for pseudo-random escape-heavy UTF-16 input", () => {
+      // Math.imul: the plain product exceeds 2^53. High bits: an LCG's low bits have short periods.
       let seed = 0x5eed1234;
       const next = () => {
-        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-        return seed;
+        seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
+        return seed >>> 16;
       };
       // ESC, the C1 introducers (DCS/SOS/CSI/ST/OSC/PM/APC), every kind of
       // byte that can follow them — introducers, intermediates, final bytes,
@@ -1615,10 +1616,11 @@ describe("ANSI escapes across SIMD chunk boundaries", () => {
 
   test("matches the scalar reference on pseudo-random escape-heavy inputs", () => {
     // Deterministic LCG so failures are reproducible.
+    // Math.imul: the plain product exceeds 2^53. High bits: an LCG's low bits have short periods.
     let seed = 0x12345678;
     const next = () => {
-      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-      return seed;
+      seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
+      return seed >>> 16;
     };
     const alphabet = "\x1b[]m;19aZ \x07\x9c\\\xad\x01\x18\x1a\x7f\x80\x9f\xa0\xe9\xff@~?K\x9b\x9d\x90\x98PX^_(#c7";
     const mismatches: string[] = [];

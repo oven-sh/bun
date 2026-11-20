@@ -154,10 +154,11 @@ describe("Buffer#indexOf / lastIndexOf adversarial worst case", () => {
 
 describe("Buffer#indexOf / lastIndexOf correctness", () => {
   test("randomized cross-check vs naive", () => {
+    // Math.imul: the plain product exceeds 2^53. High bits: an LCG's low bits have short periods.
     let seed = 0x1234_5678;
     const rand = () => {
-      seed = (seed * 1103515245 + 12345) >>> 0;
-      return seed;
+      seed = (Math.imul(seed, 1103515245) + 12345) >>> 0;
+      return seed >>> 16;
     };
     const randByte = (alphabet: number) => 0x61 + (rand() % alphabet);
 

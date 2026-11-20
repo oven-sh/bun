@@ -14,9 +14,10 @@ const SEND_BUFFER = 64 * 1024;
 
 function patternBuffer(len: number, seed: number): Buffer {
   const b = Buffer.allocUnsafe(len);
-  let x = seed | 1;
+  let x = seed;
   for (let i = 0; i < len; i++) {
-    x = (x * 1103515245 + 12345) >>> 0;
+    // Math.imul: the plain product exceeds 2^53.
+    x = (Math.imul(x, 1103515245) + 12345) >>> 0;
     b[i] = x >>> 24;
   }
   return b;

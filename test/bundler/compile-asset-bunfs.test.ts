@@ -510,14 +510,12 @@ describe.concurrent.skipIf(!cc)("compile --asset: embedded shared libraries keep
       .map(f => f.split(sep).join("/"));
   }
 
-  test(
-    "a required .node addon finds the --asset library next to it",
-    async () => {
-      using dir = tempDir("bunfs-addon-sibling", {
-        "foo.c": FOO_C,
-        "addon.c": ADDON_C,
-        "lib/.keep": "",
-        "index.ts": /* ts */ `
+  test("a required .node addon finds the --asset library next to it", async () => {
+    using dir = tempDir("bunfs-addon-sibling", {
+      "foo.c": FOO_C,
+      "addon.c": ADDON_C,
+      "lib/.keep": "",
+      "index.ts": /* ts */ `
           const addon = require("./lib/addon.node");
           const direct = { exports: {} as any };
           process.dlopen(direct, "/$bunfs/root/lib/addon.node");
@@ -525,55 +523,51 @@ describe.concurrent.skipIf(!cc)("compile --asset: embedded shared libraries keep
           process.dlopen(url, "file:///$bunfs/root/lib/addon.node");
           console.log(JSON.stringify([addon.answer, direct.exports.answer, url.exports.answer]));
         `,
-      });
-      await buildLibs(String(dir), { "lib/addon.node": "addon.c" });
-      await compile(String(dir), ["--asset", "lib"]);
+    });
+    await buildLibs(String(dir), { "lib/addon.node": "addon.c" });
+    await compile(String(dir), ["--asset", "lib"]);
 
-      using extractRoot = tempDir("bunfs-addon-sibling-extract", {});
-      const extractDir = String(extractRoot);
-      const first = await runIsolated(String(dir), extractDir);
-      expect(first.stderr).not.toContain("ERR_DLOPEN_FAILED");
-      expect(first.stdout.trim()).toBe("[42,42,42]");
-      expect(first.code).toBe(0);
+    using extractRoot = tempDir("bunfs-addon-sibling-extract", {});
+    const extractDir = String(extractRoot);
+    const first = await runIsolated(String(dir), extractDir);
+    expect(first.stderr).not.toContain("ERR_DLOPEN_FAILED");
+    expect(first.stdout.trim()).toBe("[42,42,42]");
+    expect(first.code).toBe(0);
 
-      // One addon file, next to the one library file: the hoisted
-      // `addon-[hash].node` copy resolves to its `lib/addon.node` twin.
-      const addons = extracted(extractDir, ".node");
-      const libs = extracted(extractDir, "libfoo." + soExt);
-      expect(addons).toHaveLength(1);
-      expect(libs).toHaveLength(1);
-      expect(dirname(addons[0])).toBe(dirname(libs[0]));
-      expect(addons[0].endsWith("/lib/addon.node")).toBe(true);
+    // One addon file, next to the one library file: the hoisted
+    // `addon-[hash].node` copy resolves to its `lib/addon.node` twin.
+    const addons = extracted(extractDir, ".node");
+    const libs = extracted(extractDir, "libfoo." + soExt);
+    expect(addons).toHaveLength(1);
+    expect(libs).toHaveLength(1);
+    expect(dirname(addons[0])).toBe(dirname(libs[0]));
+    expect(addons[0].endsWith("/lib/addon.node")).toBe(true);
 
-      // A second run reuses the extracted directory.
-      const second = await runIsolated(String(dir), extractDir);
-      expect(second.stdout.trim()).toBe("[42,42,42]");
-      expect(second.code).toBe(0);
-      expect(extracted(extractDir, ".node")).toEqual(addons);
-      expect(extracted(extractDir, "libfoo." + soExt)).toEqual(libs);
+    // A second run reuses the extracted directory.
+    const second = await runIsolated(String(dir), extractDir);
+    expect(second.stdout.trim()).toBe("[42,42,42]");
+    expect(second.code).toBe(0);
+    expect(extracted(extractDir, ".node")).toEqual(addons);
+    expect(extracted(extractDir, "libfoo." + soExt)).toEqual(libs);
 
-      // A temp sweeper that removes one file, not the tree: the next run puts
-      // the set back and leaves no scratch directory behind.
-      rmSync(join(extractDir, libs[0]));
-      const third = await runIsolated(String(dir), extractDir);
-      expect(third.stderr).not.toContain("ERR_DLOPEN_FAILED");
-      expect(third.stdout.trim()).toBe("[42,42,42]");
-      expect(third.code).toBe(0);
-      expect(extracted(extractDir, ".node")).toEqual(addons);
-      expect(extracted(extractDir, "libfoo." + soExt)).toEqual(libs);
-      expect(readdirSync(extractDir)).toHaveLength(1);
-    },
-    TIMEOUT,
-  );
+    // A temp sweeper that removes one file, not the tree: the next run puts
+    // the set back and leaves no scratch directory behind.
+    rmSync(join(extractDir, libs[0]));
+    const third = await runIsolated(String(dir), extractDir);
+    expect(third.stderr).not.toContain("ERR_DLOPEN_FAILED");
+    expect(third.stdout.trim()).toBe("[42,42,42]");
+    expect(third.code).toBe(0);
+    expect(extracted(extractDir, ".node")).toEqual(addons);
+    expect(extracted(extractDir, "libfoo." + soExt)).toEqual(libs);
+    expect(readdirSync(extractDir)).toHaveLength(1);
+  });
 
-  test(
-    "bun:ffi dlopen of an embedded library finds its --asset dependency",
-    async () => {
-      using dir = tempDir("bunfs-ffi-sibling", {
-        "foo.c": FOO_C,
-        "bar.c": BAR_C,
-        "lib/.keep": "",
-        "index.ts": /* ts */ `
+  test("bun:ffi dlopen of an embedded library finds its --asset dependency", async () => {
+    using dir = tempDir("bunfs-ffi-sibling", {
+      "foo.c": FOO_C,
+      "bar.c": BAR_C,
+      "lib/.keep": "",
+      "index.ts": /* ts */ `
           import { dlopen } from "bun:ffi";
           import hoisted from "./lib/libbar.${soExt}" with { type: "file" };
           const symbols = { bar: { args: [], returns: "int" } } as const;
@@ -581,18 +575,16 @@ describe.concurrent.skipIf(!cc)("compile --asset: embedded shared libraries keep
           const b = dlopen("/$bunfs/root/lib/libbar.${soExt}", symbols).symbols.bar();
           console.log(JSON.stringify([a, b]));
         `,
-      });
-      await buildLibs(String(dir), { [`lib/libbar.${soExt}`]: "bar.c" });
-      await compile(String(dir), ["--asset", "lib"]);
+    });
+    await buildLibs(String(dir), { [`lib/libbar.${soExt}`]: "bar.c" });
+    await compile(String(dir), ["--asset", "lib"]);
 
-      using extractRoot = tempDir("bunfs-ffi-sibling-extract", {});
-      const result = await runIsolated(String(dir), String(extractRoot));
-      expect(result.stderr).not.toContain("ERR_DLOPEN_FAILED");
-      expect(result.stdout.trim()).toBe("[43,43]");
-      expect(result.code).toBe(0);
-    },
-    TIMEOUT,
-  );
+    using extractRoot = tempDir("bunfs-ffi-sibling-extract", {});
+    const result = await runIsolated(String(dir), String(extractRoot));
+    expect(result.stderr).not.toContain("ERR_DLOPEN_FAILED");
+    expect(result.stdout.trim()).toBe("[43,43]");
+    expect(result.code).toBe(0);
+  });
 
   // The extracted directory sits in the temp directory, where another user of
   // the machine can put files. A library steps out of its own directory with
@@ -643,126 +635,120 @@ describe.concurrent.skipIf(!cc)("compile --asset: embedded shared libraries keep
     copyFileSync(from, to);
   }
 
-  test(
-    "a search path that climbs above an --asset library stays in the extracted directory",
-    async () => {
-      // The shape of sharp's addon: five entries, the last climbs five levels
-      // from a library four directories deep.
-      const sharpShaped = [
-        "$ORIGIN/../../y/lib",
-        "$ORIGIN/../../../y/1.2.4/lib",
-        "$ORIGIN/../../node_modules/@img/y/lib",
-        "$ORIGIN/../../../node_modules/@img/y/lib",
-        "$ORIGIN/../../../../../@img-y-npm-1.2.4-105fd6d44d/node_modules/@img/y/lib",
-      ];
-      using dir = tempDir("bunfs-climb-asset", {
-        "foo.c": answers("foo", 42),
-        "y.c": answers("y", 40),
-        "dep.c": answers("dep", 2),
-        "planted-foo.c": answers("foo", 666),
-        "planted-dep.c": answers("dep", 666),
-        "addon.c": addonOf("foo()", "int foo(void);"),
-        "scoped.c": addonOf("y() + dep()", "int y(void); int dep(void);"),
-        "lib/.keep": "",
-        "node_modules/@img/x/lib/.keep": "",
-        "node_modules/@img/y/lib/.keep": "",
-        "real/.keep": "",
-        "planted/.keep": "",
-        "index.ts": /* ts */ `
+  test("a search path that climbs above an --asset library stays in the extracted directory", async () => {
+    // The shape of sharp's addon: five entries, the last climbs five levels
+    // from a library four directories deep.
+    const sharpShaped = [
+      "$ORIGIN/../../y/lib",
+      "$ORIGIN/../../../y/1.2.4/lib",
+      "$ORIGIN/../../node_modules/@img/y/lib",
+      "$ORIGIN/../../../node_modules/@img/y/lib",
+      "$ORIGIN/../../../../../@img-y-npm-1.2.4-105fd6d44d/node_modules/@img/y/lib",
+    ];
+    using dir = tempDir("bunfs-climb-asset", {
+      "foo.c": answers("foo", 42),
+      "y.c": answers("y", 40),
+      "dep.c": answers("dep", 2),
+      "planted-foo.c": answers("foo", 666),
+      "planted-dep.c": answers("dep", 666),
+      "addon.c": addonOf("foo()", "int foo(void);"),
+      "scoped.c": addonOf("y() + dep()", "int y(void); int dep(void);"),
+      "lib/.keep": "",
+      "node_modules/@img/x/lib/.keep": "",
+      "node_modules/@img/y/lib/.keep": "",
+      "real/.keep": "",
+      "planted/.keep": "",
+      "index.ts": /* ts */ `
           const addon = require("./lib/addon.node").answer;
           const scoped = require("./node_modules/@img/x/lib/addon.node").answer;
           console.log(JSON.stringify({ addon, scoped }));
         `,
+    });
+    const root = String(dir);
+    const foo = join("lib", libraryFile("foo"));
+    const y = join("node_modules/@img/y/lib", libraryFile("y"));
+    const dep = join("real", libraryFile("dep"));
+    await Promise.all([
+      link(root, foo, "foo.c"),
+      link(root, y, "y.c"),
+      link(root, dep, "dep.c"),
+      link(root, join("planted", libraryFile("foo")), "planted-foo.c"),
+      link(root, join("planted", libraryFile("dep")), "planted-dep.c"),
+    ]);
+    await Promise.all([
+      link(root, "lib/addon.node", "addon.c", { needs: [foo], searches: ["$ORIGIN/../../lib", "$ORIGIN"] }),
+      link(root, "node_modules/@img/x/lib/addon.node", "scoped.c", {
+        needs: [y, dep],
+        searches: [...sharpShaped, join(root, "real")],
+        flags: isMacOS ? [] : ["-Wl,--disable-new-dtags"],
+      }),
+    ]);
+    await compile(root, ["--asset", "lib", "--asset", "node_modules"]);
+
+    // Where each climbing path pointed without the levels.
+    using extractRoot = tempDir("bunfs-climb-asset-extract", {});
+    const extractDir = String(extractRoot);
+    plant(join(root, "planted", libraryFile("foo")), join(extractDir, "lib", libraryFile("foo")));
+    plant(
+      join(root, "planted", libraryFile("dep")),
+      join(extractDir, "@img-y-npm-1.2.4-105fd6d44d/node_modules/@img/y/lib", libraryFile("dep")),
+    );
+
+    const result = await runIsolated(root, extractDir);
+    expect(result.stdout.trim()).toBe(JSON.stringify({ addon: 42, scoped: 42 }));
+    expect(result.code).toBe(0);
+
+    const [mirror] = readdirSync(extractDir).filter(name => name.startsWith(".bun-"));
+    const layout = [mirror, ...LEVELS].join("/");
+    expect(extracted(extractDir, ".node").sort()).toEqual([
+      `${layout}/lib/addon.node`,
+      `${layout}/node_modules/@img/x/lib/addon.node`,
+    ]);
+
+    if (isGlibc) {
+      // The loader names every file it tries. Each one for an extracted
+      // library is inside the extracted directory.
+      await using proc = Bun.spawn({
+        cmd: [join(root, "app" + exe)],
+        cwd: extractDir,
+        // `LD_DEBUG_OUTPUT` would send the trace to a file instead of stderr.
+        env: Object.fromEntries(
+          Object.entries({ ...bunEnv, BUN_TMPDIR: extractDir, TMPDIR: extractDir, LD_DEBUG: "libs" }).filter(
+            ([key]) => key !== "LD_DEBUG_OUTPUT",
+          ),
+        ) as Record<string, string>,
+        stdout: "pipe",
+        stderr: "pipe",
       });
-      const root = String(dir);
-      const foo = join("lib", libraryFile("foo"));
-      const y = join("node_modules/@img/y/lib", libraryFile("y"));
-      const dep = join("real", libraryFile("dep"));
-      await Promise.all([
-        link(root, foo, "foo.c"),
-        link(root, y, "y.c"),
-        link(root, dep, "dep.c"),
-        link(root, join("planted", libraryFile("foo")), "planted-foo.c"),
-        link(root, join("planted", libraryFile("dep")), "planted-dep.c"),
-      ]);
-      await Promise.all([
-        link(root, "lib/addon.node", "addon.c", { needs: [foo], searches: ["$ORIGIN/../../lib", "$ORIGIN"] }),
-        link(root, "node_modules/@img/x/lib/addon.node", "scoped.c", {
-          needs: [y, dep],
-          searches: [...sharpShaped, join(root, "real")],
-          flags: isMacOS ? [] : ["-Wl,--disable-new-dtags"],
-        }),
-      ]);
-      await compile(root, ["--asset", "lib", "--asset", "node_modules"]);
-
-      // Where each climbing path pointed without the levels.
-      using extractRoot = tempDir("bunfs-climb-asset-extract", {});
-      const extractDir = String(extractRoot);
-      plant(join(root, "planted", libraryFile("foo")), join(extractDir, "lib", libraryFile("foo")));
-      plant(
-        join(root, "planted", libraryFile("dep")),
-        join(extractDir, "@img-y-npm-1.2.4-105fd6d44d/node_modules/@img/y/lib", libraryFile("dep")),
-      );
-
-      const result = await runIsolated(root, extractDir);
-      expect(result.stdout.trim()).toBe(JSON.stringify({ addon: 42, scoped: 42 }));
-      expect(result.code).toBe(0);
-
-      const [mirror] = readdirSync(extractDir).filter(name => name.startsWith(".bun-"));
-      const layout = [mirror, ...LEVELS].join("/");
-      expect(extracted(extractDir, ".node").sort()).toEqual([
-        `${layout}/lib/addon.node`,
-        `${layout}/node_modules/@img/x/lib/addon.node`,
-      ]);
-
-      if (isGlibc) {
-        // The loader names every file it tries. Each one for an extracted
-        // library is inside the extracted directory.
-        await using proc = Bun.spawn({
-          cmd: [join(root, "app" + exe)],
-          cwd: extractDir,
-          // `LD_DEBUG_OUTPUT` would send the trace to a file instead of stderr.
-          env: Object.fromEntries(
-            Object.entries({ ...bunEnv, BUN_TMPDIR: extractDir, TMPDIR: extractDir, LD_DEBUG: "libs" }).filter(
-              ([key]) => key !== "LD_DEBUG_OUTPUT",
-            ),
-          ) as Record<string, string>,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        const tried = stderr
-          .split("\n")
-          .map(line => line.split("trying file=")[1])
-          .filter(path => path !== undefined)
-          .map(path => resolve(path))
-          .filter(path => path.startsWith(extractDir + sep));
-        expect(tried.filter(path => !path.startsWith(join(extractDir, mirror) + sep))).toEqual([]);
-        // `$ORIGIN/../../lib` of the addon in `lib`: one level above the layout.
-        const above = join(extractDir, mirror, ...LEVELS.slice(1), "lib");
-        expect(tried.some(path => path.startsWith(above + sep))).toBe(true);
-        expect(stdout.trim()).toBe(JSON.stringify({ addon: 42, scoped: 42 }));
-        expect(code).toBe(0);
-      }
-    },
-    TIMEOUT,
-  );
+      const [stdout, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const tried = stderr
+        .split("\n")
+        .map(line => line.split("trying file=")[1])
+        .filter(path => path !== undefined)
+        .map(path => resolve(path))
+        .filter(path => path.startsWith(extractDir + sep));
+      expect(tried.filter(path => !path.startsWith(join(extractDir, mirror) + sep))).toEqual([]);
+      // `$ORIGIN/../../lib` of the addon in `lib`: one level above the layout.
+      const above = join(extractDir, mirror, ...LEVELS.slice(1), "lib");
+      expect(tried.some(path => path.startsWith(above + sep))).toBe(true);
+      expect(stdout.trim()).toBe(JSON.stringify({ addon: 42, scoped: 42 }));
+      expect(code).toBe(0);
+    }
+  });
 
   // A hoisted addon, a library the bundler does not take for one, and an addon
   // that builds a path from its own location: each sits at the top of the layout.
-  test(
-    "a library that another user put in the temp directory is not loaded",
-    async () => {
-      using dir = tempDir("bunfs-climb-hoisted", {
-        "near.c": answers("near", 42),
-        "eff.c": answers("eff", 42),
-        "planted-near.c": answers("near", 666),
-        "planted-eff.c": answers("eff", 666),
-        "planted-reach.c": answers("reach", 666),
-        "addon.c": addonOf("near()", "int near(void);"),
-        "bar.c": "int eff(void); int bar(void) { return eff() + 1; }\n",
-        "built.c":
-          /* c */ `
+  test("a library that another user put in the temp directory is not loaded", async () => {
+    using dir = tempDir("bunfs-climb-hoisted", {
+      "near.c": answers("near", 42),
+      "eff.c": answers("eff", 42),
+      "planted-near.c": answers("near", 666),
+      "planted-eff.c": answers("eff", 666),
+      "planted-reach.c": answers("reach", 666),
+      "addon.c": addonOf("near()", "int near(void);"),
+      "bar.c": "int eff(void); int bar(void) { return eff() + 1; }\n",
+      "built.c":
+        /* c */ `
             #define _GNU_SOURCE
             #include <dlfcn.h>
             #include <stdio.h>
@@ -778,9 +764,9 @@ describe.concurrent.skipIf(!cc)("compile --asset: embedded shared libraries keep
               return reach ? reach() : -1;
             }
           ` + addonOf("reach_from((void*)napi_register_module_v1)", ""),
-        "real/.keep": "",
-        "planted/.keep": "",
-        "index.ts": /* ts */ `
+      "real/.keep": "",
+      "planted/.keep": "",
+      "index.ts": /* ts */ `
           import { dlopen } from "bun:ffi";
           import library from "./libbar.bin" with { type: "file" };
           const declared = require("./addon.node").answer;
@@ -788,104 +774,96 @@ describe.concurrent.skipIf(!cc)("compile --asset: embedded shared libraries keep
           const ffi = dlopen(library, { bar: { args: [], returns: "int" } }).symbols.bar();
           console.log(JSON.stringify({ declared, built, ffi }));
         `,
-      });
-      const root = String(dir);
-      const near = join("real", libraryFile("near"));
-      const eff = join("real", libraryFile("eff"));
-      await Promise.all([
-        link(root, near, "near.c"),
-        link(root, eff, "eff.c"),
-        link(root, join("planted", libraryFile("near")), "planted-near.c"),
-        link(root, join("planted", libraryFile("eff")), "planted-eff.c"),
-        link(root, join("planted", libraryFile("reach")), "planted-reach.c"),
-        link(root, "built.node", "built.c", { flags: isMacOS ? [] : ["-ldl"] }),
-      ]);
-      await Promise.all([
-        // Eight levels up from the top of the layout is the top of the
-        // extracted directory: the last step that stays inside it.
-        link(root, "addon.node", "addon.c", {
-          needs: [near],
-          searches: [
-            "$ORIGIN",
-            "$ORIGIN/deps",
-            "$ORIGIN/../lib",
-            ["$ORIGIN", ...LEVELS.map(() => ".."), "lib"].join("/"),
-            join(root, "real"),
-          ],
-        }),
-        link(root, "libbar.bin", "bar.c", {
-          needs: [eff],
-          searches: ["$ORIGIN", "$ORIGIN/../lib", join(root, "real")],
-        }),
-      ]);
-      await compile(root);
+    });
+    const root = String(dir);
+    const near = join("real", libraryFile("near"));
+    const eff = join("real", libraryFile("eff"));
+    await Promise.all([
+      link(root, near, "near.c"),
+      link(root, eff, "eff.c"),
+      link(root, join("planted", libraryFile("near")), "planted-near.c"),
+      link(root, join("planted", libraryFile("eff")), "planted-eff.c"),
+      link(root, join("planted", libraryFile("reach")), "planted-reach.c"),
+      link(root, "built.node", "built.c", { flags: isMacOS ? [] : ["-ldl"] }),
+    ]);
+    await Promise.all([
+      // Eight levels up from the top of the layout is the top of the
+      // extracted directory: the last step that stays inside it.
+      link(root, "addon.node", "addon.c", {
+        needs: [near],
+        searches: [
+          "$ORIGIN",
+          "$ORIGIN/deps",
+          "$ORIGIN/../lib",
+          ["$ORIGIN", ...LEVELS.map(() => ".."), "lib"].join("/"),
+          join(root, "real"),
+        ],
+      }),
+      link(root, "libbar.bin", "bar.c", {
+        needs: [eff],
+        searches: ["$ORIGIN", "$ORIGIN/../lib", join(root, "real")],
+      }),
+    ]);
+    await compile(root);
 
-      // One planted library where each path has pointed without the levels:
-      // the temp directory itself and two directories in it.
-      using extractRoot = tempDir("bunfs-climb-hoisted-extract", {});
-      const extractDir = String(extractRoot);
-      for (const to of [extractDir, join(extractDir, "deps"), join(extractDir, "lib")]) {
-        plant(join(root, "planted", libraryFile("near")), join(to, libraryFile("near")));
-        plant(join(root, "planted", libraryFile("eff")), join(to, libraryFile("eff")));
-      }
-      plant(join(root, "planted", libraryFile("reach")), join(extractDir, "lib", libraryFile("reach")));
+    // One planted library where each path has pointed without the levels:
+    // the temp directory itself and two directories in it.
+    using extractRoot = tempDir("bunfs-climb-hoisted-extract", {});
+    const extractDir = String(extractRoot);
+    for (const to of [extractDir, join(extractDir, "deps"), join(extractDir, "lib")]) {
+      plant(join(root, "planted", libraryFile("near")), join(to, libraryFile("near")));
+      plant(join(root, "planted", libraryFile("eff")), join(to, libraryFile("eff")));
+    }
+    plant(join(root, "planted", libraryFile("reach")), join(extractDir, "lib", libraryFile("reach")));
 
-      const result = await runIsolated(root, extractDir);
-      expect(result.stdout.trim()).toBe(JSON.stringify({ declared: 42, built: -1, ffi: 43 }));
-      expect(result.code).toBe(0);
+    const result = await runIsolated(root, extractDir);
+    expect(result.stdout.trim()).toBe(JSON.stringify({ declared: 42, built: -1, ffi: 43 }));
+    expect(result.code).toBe(0);
 
-      const levelsOf = (suffix: string) => extracted(extractDir, suffix).map(path => path.split("/").slice(1, -1));
-      expect({ addons: levelsOf(".node"), library: levelsOf(".bin") }).toEqual({
-        addons: [LEVELS, LEVELS],
-        library: [LEVELS],
-      });
-    },
-    TIMEOUT,
-  );
+    const levelsOf = (suffix: string) => extracted(extractDir, suffix).map(path => path.split("/").slice(1, -1));
+    expect({ addons: levelsOf(".node"), library: levelsOf(".bin") }).toEqual({
+      addons: [LEVELS, LEVELS],
+      library: [LEVELS],
+    });
+  });
 
   // `process.dlopen` refuses a path that ends in `better_sqlite3.node`. An
   // embedded addon was extracted under a hash, so that never matched one. The
   // mirror keeps the embedded name, and the addon still has to load.
-  test(
-    "an embedded addon named better_sqlite3.node loads",
-    async () => {
-      using dir = tempDir("bunfs-addon-name", {
-        "foo.c": FOO_C,
-        "addon.c": ADDON_C,
-        "lib/.keep": "",
-        "index.ts": /* ts */ `
+  test("an embedded addon named better_sqlite3.node loads", async () => {
+    using dir = tempDir("bunfs-addon-name", {
+      "foo.c": FOO_C,
+      "addon.c": ADDON_C,
+      "lib/.keep": "",
+      "index.ts": /* ts */ `
           const direct = { exports: {} as any };
           process.dlopen(direct, "/$bunfs/root/lib/better_sqlite3.node");
           console.log(JSON.stringify([require("./lib/better_sqlite3.node").answer, direct.exports.answer]));
         `,
-      });
-      await buildLibs(String(dir), { "lib/better_sqlite3.node": "addon.c" });
-      await compile(String(dir), ["--asset", "lib"]);
+    });
+    await buildLibs(String(dir), { "lib/better_sqlite3.node": "addon.c" });
+    await compile(String(dir), ["--asset", "lib"]);
 
-      using extractRoot = tempDir("bunfs-addon-name-extract", {});
-      const result = await runIsolated(String(dir), String(extractRoot));
-      expect(result.stderr).not.toContain("ERR_DLOPEN_FAILED");
-      expect(result.stdout.trim()).toBe("[42,42]");
-      expect(result.code).toBe(0);
-    },
-    TIMEOUT,
-  );
+    using extractRoot = tempDir("bunfs-addon-name-extract", {});
+    const result = await runIsolated(String(dir), String(extractRoot));
+    expect(result.stderr).not.toContain("ERR_DLOPEN_FAILED");
+    expect(result.stdout.trim()).toBe("[42,42]");
+    expect(result.code).toBe(0);
+  });
 
   // A process that cannot have the canonical directory, or that no later run
   // could trust there, loads from a copy under a name of its own: one copy,
   // not one for each `dlopen` call, and the copy is gone when the process exits.
-  test(
-    "a process that cannot use the canonical directory loads from one copy of its own",
-    async () => {
-      const euid = process.geteuid!();
-      using dir = tempDir("bunfs-ffi-own-copy", {
-        "foo.c": FOO_C,
-        "bar.c": BAR_C,
-        "euid.c": `unsigned geteuid(void) { return ${euid + 1}; }\n`,
-        "lib/.keep": "",
-        // Three `dlopen` calls, then what the temp directory holds while the
-        // process runs and the euid the process sees.
-        "index.ts": /* ts */ `
+  test("a process that cannot use the canonical directory loads from one copy of its own", async () => {
+    const euid = process.geteuid!();
+    using dir = tempDir("bunfs-ffi-own-copy", {
+      "foo.c": FOO_C,
+      "bar.c": BAR_C,
+      "euid.c": `unsigned geteuid(void) { return ${euid + 1}; }\n`,
+      "lib/.keep": "",
+      // Three `dlopen` calls, then what the temp directory holds while the
+      // process runs and the euid the process sees.
+      "index.ts": /* ts */ `
           import { dlopen } from "bun:ffi";
           import { readdirSync } from "node:fs";
           const symbols = { bar: { args: [], returns: "int" } } as const;
@@ -894,58 +872,56 @@ describe.concurrent.skipIf(!cc)("compile --asset: embedded shared libraries keep
           const entries = readdirSync(process.env.BUN_TMPDIR!).length;
           console.log(JSON.stringify({ answers, entries, euid: process.geteuid!() }));
         `,
-      });
-      await buildLibs(String(dir), { [`lib/libbar.${soExt}`]: "bar.c" });
-      await compile(String(dir), ["--asset", "lib"]);
-      const report = (entries: number, seenEuid = euid) =>
-        JSON.stringify({ answers: [43, 43, 43], entries, euid: seenEuid });
+    });
+    await buildLibs(String(dir), { [`lib/libbar.${soExt}`]: "bar.c" });
+    await compile(String(dir), ["--asset", "lib"]);
+    const report = (entries: number, seenEuid = euid) =>
+      JSON.stringify({ answers: [43, 43, 43], entries, euid: seenEuid });
 
-      // The first run gives the name of the canonical directory.
-      using named = tempDir("bunfs-ffi-own-copy-name", {});
-      const first = await runIsolated(String(dir), String(named));
-      expect(first.stderr).not.toContain("ERR_DLOPEN_FAILED");
-      expect(first.stdout.trim()).toBe(report(1));
-      expect(first.code).toBe(0);
-      const name = readdirSync(String(named)).find(entry => entry.startsWith(".bun-"))!;
-      expect(name).toBeString();
+    // The first run gives the name of the canonical directory.
+    using named = tempDir("bunfs-ffi-own-copy-name", {});
+    const first = await runIsolated(String(dir), String(named));
+    expect(first.stderr).not.toContain("ERR_DLOPEN_FAILED");
+    expect(first.stdout.trim()).toBe(report(1));
+    expect(first.code).toBe(0);
+    const name = readdirSync(String(named)).find(entry => entry.startsWith(".bun-"))!;
+    expect(name).toBeString();
 
-      // Another user of the machine can create that name first. A file at the
-      // name in a second temp directory stands for the other user's entry.
-      using taken = tempDir("bunfs-ffi-own-copy-taken", { [name]: "" });
-      const result = await runIsolated(String(dir), String(taken));
-      expect(result.stderr).not.toContain("ERR_DLOPEN_FAILED");
-      expect(result.stdout.trim()).toBe(report(2));
-      expect(result.code).toBe(0);
-      expect(readdirSync(String(taken))).toEqual([name]);
+    // Another user of the machine can create that name first. A file at the
+    // name in a second temp directory stands for the other user's entry.
+    using taken = tempDir("bunfs-ffi-own-copy-taken", { [name]: "" });
+    const result = await runIsolated(String(dir), String(taken));
+    expect(result.stderr).not.toContain("ERR_DLOPEN_FAILED");
+    expect(result.stdout.trim()).toBe(report(2));
+    expect(result.code).toBe(0);
+    expect(readdirSync(String(taken))).toEqual([name]);
 
-      // The canonical directory is this user's and cannot be completed: a
-      // directory sits where a library goes, and a rename does not replace it.
-      const library = join(String(named), extracted(String(named), "libbar." + soExt)[0]);
-      rmSync(library);
-      mkdirSync(join(library, "in-the-way"), { recursive: true });
-      const beside = await runIsolated(String(dir), String(named));
-      expect(beside.stderr).not.toContain("ERR_DLOPEN_FAILED");
-      expect(beside.stdout.trim()).toBe(report(2));
-      expect(beside.code).toBe(0);
-      expect(readdirSync(String(named))).toEqual([name]);
+    // The canonical directory is this user's and cannot be completed: a
+    // directory sits where a library goes, and a rename does not replace it.
+    const library = join(String(named), extracted(String(named), "libbar." + soExt)[0]);
+    rmSync(library);
+    mkdirSync(join(library, "in-the-way"), { recursive: true });
+    const beside = await runIsolated(String(dir), String(named));
+    expect(beside.stderr).not.toContain("ERR_DLOPEN_FAILED");
+    expect(beside.stdout.trim()).toBe(report(2));
+    expect(beside.code).toBe(0);
+    expect(readdirSync(String(named))).toEqual([name]);
 
-      // Some filesystems do not keep the owner of a file: a mount that gives
-      // every file to one user, or a server that maps root to another user.
-      // What the process creates there shows an owner that is not its euid, so
-      // no directory there can pass for this user's in a later run. The
-      // preloaded `geteuid` stands for such a filesystem: the process sees
-      // another euid than the owner of what it creates.
-      if (isLinux) {
-        await run_cc(String(dir), ["-shared", "-fPIC", "euid.c", "-o", "euid.so"]);
-        using otherOwner = tempDir("bunfs-ffi-own-copy-owner", {});
-        const preload = [join(String(dir), "euid.so"), bunEnv.LD_PRELOAD].filter(Boolean).join(":");
-        const shown = await runIsolated(String(dir), String(otherOwner), { LD_PRELOAD: preload });
-        expect(shown.stderr).not.toContain("ERR_DLOPEN_FAILED");
-        expect(shown.stdout.trim()).toBe(report(1, euid + 1));
-        expect(shown.code).toBe(0);
-        expect(readdirSync(String(otherOwner))).toEqual([]);
-      }
-    },
-    TIMEOUT,
-  );
+    // Some filesystems do not keep the owner of a file: a mount that gives
+    // every file to one user, or a server that maps root to another user.
+    // What the process creates there shows an owner that is not its euid, so
+    // no directory there can pass for this user's in a later run. The
+    // preloaded `geteuid` stands for such a filesystem: the process sees
+    // another euid than the owner of what it creates.
+    if (isLinux) {
+      await run_cc(String(dir), ["-shared", "-fPIC", "euid.c", "-o", "euid.so"]);
+      using otherOwner = tempDir("bunfs-ffi-own-copy-owner", {});
+      const preload = [join(String(dir), "euid.so"), bunEnv.LD_PRELOAD].filter(Boolean).join(":");
+      const shown = await runIsolated(String(dir), String(otherOwner), { LD_PRELOAD: preload });
+      expect(shown.stderr).not.toContain("ERR_DLOPEN_FAILED");
+      expect(shown.stdout.trim()).toBe(report(1, euid + 1));
+      expect(shown.code).toBe(0);
+      expect(readdirSync(String(otherOwner))).toEqual([]);
+    }
+  });
 });

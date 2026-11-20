@@ -1687,6 +1687,258 @@ describe.concurrent("matchers that have to wait for a promise", () => {
     ]);
     expect(exitCode).toBe(0);
   });
+
+  test("asymmetricMatch() and this.equals() leave a promise they can't wait for as it was", async () => {
+    const { stdout, stderr, exitCode } = await run(["a.js"], {
+      "a.js": `
+        import { expect } from "bun:test";
+
+        const reported = [];
+        const controlReported = Promise.withResolvers();
+        process.on("unhandledRejection", reason => {
+          reported.push(reason.message);
+          if (reason.message === "control") controlReported.resolve();
+        });
+        // Pending promises that reject at the end, in this order. Each one is then reported, unless something handled it.
+        const toReject = [];
+        const rejectsLater = message => new Promise((_, reject) => toReject.push(() => reject(new Error(message))));
+
+        let thenReads = 0, thenCalls = 0;
+        const then = resolve => (thenCalls++, resolve(1));
+        const thenable = { get then() { thenReads++; return then; } };
+        class OwnThen extends Promise {
+          then(...args) {
+            thenCalls++;
+            return super.then(...args);
+          }
+        }
+        class Box {
+          constructor(value) {
+            this.value = value;
+          }
+        }
+
+        const cannotWait = "An async matcher only works inside an expect() matcher, which then returns a promise: await expect(received).toEqual(expected)";
+        const attempt = ask => {
+          try {
+            return ask();
+          } catch (error) {
+            return error.message === cannotWait ? "throws" : String(error);
+          }
+        };
+        let equals, answer;
+        expect.extend({
+          toAsk(received, expected, strict) {
+            equals = this.equals;
+            answer = attempt(() => this.equals(received, expected, [], strict));
+            return { pass: true, message: () => "" };
+          },
+          // Async matchers. The promise of the first one is still pending when it returns.
+          toRejectLater: () => rejectsLater("rejected by toRejectLater()"),
+          toRejectNow: () => Promise.reject(new Error("rejected by toRejectNow()")),
+        });
+        expect.addEqualityTesters([
+          function (a, b) {
+            if (a instanceof Box && b instanceof Box) return this.equals(a.value, b.value);
+          },
+        ]);
+        const ask = (received, matcher, strict) => (expect([received]).toAsk([matcher], strict), answer);
+        const awaited = async (received, matcher) => {
+          try {
+            await expect([received]).toEqual([matcher]);
+            return true;
+          } catch {
+            return false;
+          }
+        };
+
+        // These would have to wait, so they throw.
+        const refused = {
+          "pending promise": ask(rejectsLater("rejected later"), expect.resolvesTo.anything()),
+          "thenable": ask(thenable, expect.rejectsTo.anything()),
+          "function with then()": ask(Object.assign(() => {}, { then }), expect.not.resolvesTo.anything()),
+          "pending Promise subclass with its own then()": ask(new OwnThen(() => {}), expect.resolvesTo.anything()),
+          "strictly": ask(thenable, expect.resolvesTo.anything(), true),
+          "equals() taken out of its matcher": attempt(() => equals([thenable], [expect.resolvesTo.anything()])),
+          "asymmetricMatch()": (expect.toAsk([expect.resolvesTo.anything()]).asymmetricMatch([thenable]), answer),
+          "this.equals() of an equality tester": attempt(() => expect(new Box(thenable)).toEqual(new Box(expect.resolvesTo.anything()))),
+          "async matcher in asymmetricMatch()": attempt(() => expect.toRejectLater().asymmetricMatch(1)),
+          "async matcher in this.equals()": ask(1, expect.toRejectLater()),
+        };
+        Object.prototype.then = then;
+        refused["then() of Object.prototype"] = ask({}, expect.resolvesTo.anything());
+        delete Object.prototype.then;
+
+        // The promise of this matcher has settled, so it is read, and its rejection counts as handled.
+        const alreadyRejected = {
+          "async matcher in asymmetricMatch()": attempt(() => expect.toRejectNow().asymmetricMatch(1)),
+          "async matcher in this.equals()": ask(1, expect.toRejectNow()),
+        };
+
+        // These need no wait. this.equals() answers like a matcher that can wait: [this.equals(), await toEqual()].
+        // Neither one waits for the last two promises, so both leave them to reject unhandled.
+        const error = () => new Error("settled");
+        const notThenable = message => Object.assign(rejectsLater(message), { then: 1 });
+        const thenThrows = message => Object.defineProperty(rejectsLater(message), "then", { get() { throw error(); } });
+        const answered = {};
+        for (const [name, value, matcher] of [
+          ["fulfilled", () => Promise.resolve(1), expect.resolvesTo.any(Number)],
+          ["fulfilled, rejectsTo", () => Promise.resolve(1), expect.rejectsTo.anything()],
+          ["rejected", () => Promise.reject(error()), expect.rejectsTo.any(Error)],
+          ["rejected, resolvesTo", () => Promise.reject(error()), expect.resolvesTo.anything()],
+          ["fulfilled Promise subclass with its own then()", () => OwnThen.resolve(1), expect.resolvesTo.any(Number)],
+          ["number", () => 1, expect.resolvesTo.anything()],
+          ["null", () => null, expect.rejectsTo.anything()],
+          ["object", () => ({}), expect.not.resolvesTo.anything()],
+          ["then is not a function", () => ({ then: 1 }), expect.resolvesTo.anything()],
+          ["then getter throws", () => ({ get then() { throw error(); } }), expect.rejectsTo.any(Error)],
+          ["pending promise, then is not a function", () => notThenable("then is not a function"), expect.resolvesTo.anything()],
+          ["pending promise, then getter throws", () => thenThrows("then getter throws"), expect.rejectsTo.any(Error)],
+        ]) {
+          answered[name] = [ask(value(), matcher), await awaited(value(), matcher)];
+        }
+        String.prototype.then = then;
+        const ofString = [ask("string", expect.resolvesTo.anything()), awaited("string", expect.resolvesTo.anything())];
+        delete String.prototype.then;
+        answered["string, then() of String.prototype"] = [ofString[0], await ofString[1]];
+
+        // .resolves, .rejects and expect.poll() answer for those two kinds of promise at once too, and leave them alone.
+        const otherMatchers = {};
+        for (const [name, matcher] of [
+          [".resolves, then is not a function", name => expect(notThenable(name)).resolves.toBe(1)],
+          [".rejects, then is not a function", name => expect(notThenable(name)).rejects.toBe(1)],
+          [".resolves, then getter throws", name => expect(thenThrows(name)).resolves.toBe(1)],
+          [".rejects, then getter throws", name => expect(thenThrows(name)).rejects.toThrow("settled")],
+          ["expect.poll(), then is not a function", name => {
+            const promise = notThenable(name);
+            return expect.poll(() => promise).toBe(promise);
+          }],
+        ]) {
+          try {
+            await matcher(name);
+            otherMatchers[name] = "passes";
+          } catch (error) {
+            otherMatchers[name] = Bun.stripANSI(error.message).split("\\n")[2];
+          }
+        }
+
+        const thenCallsWhileRefused = thenCalls;
+        // Nothing called the thenable's then() yet, so a matcher that can wait calls it, once.
+        await expect([thenable]).toEqual([expect.resolvesTo.any(Number)]);
+        rejectsLater("control");
+        for (const reject of toReject) reject();
+        await controlReported.promise;
+        console.log(JSON.stringify({ refused, alreadyRejected, answered, otherMatchers, thenReads, thenCallsWhileRefused, thenCalls, reported }));
+      `,
+    });
+    // What the two toRejectNow() asks print.
+    expect(stderr.split("\n").filter(line => line.startsWith("error: "))).toEqual([
+      "error: rejected by toRejectNow()",
+      "error: rejected by toRejectNow()",
+    ]);
+    expect(JSON.parse(stdout[0])).toEqual({
+      refused: {
+        "pending promise": "throws",
+        "thenable": "throws",
+        "function with then()": "throws",
+        "pending Promise subclass with its own then()": "throws",
+        "strictly": "throws",
+        "equals() taken out of its matcher": "throws",
+        "asymmetricMatch()": "throws",
+        "this.equals() of an equality tester": "throws",
+        "async matcher in asymmetricMatch()": "throws",
+        "async matcher in this.equals()": "throws",
+        "then() of Object.prototype": "throws",
+      },
+      alreadyRejected: {
+        "async matcher in asymmetricMatch()": "Error: Matcher `toRejectNow` returned a promise that rejected",
+        "async matcher in this.equals()": "Error: Matcher `toRejectNow` returned a promise that rejected",
+      },
+      answered: {
+        "fulfilled": [true, true],
+        "fulfilled, rejectsTo": [false, false],
+        "rejected": [true, true],
+        "rejected, resolvesTo": [false, false],
+        "fulfilled Promise subclass with its own then()": [true, true],
+        "number": [false, false],
+        "null": [false, false],
+        "object": [true, true],
+        "then is not a function": [false, false],
+        "then getter throws": [true, true],
+        "pending promise, then is not a function": [false, false],
+        "pending promise, then getter throws": [true, true],
+        "string, then() of String.prototype": [false, false],
+      },
+      otherMatchers: {
+        ".resolves, then is not a function": "Expected promise",
+        ".rejects, then is not a function": "Expected promise",
+        ".resolves, then getter throws": "Expected promise that resolves",
+        ".rejects, then getter throws": "passes",
+        "expect.poll(), then is not a function": "passes",
+      },
+      // One read per ask of the thenable: five that throw, and the one that waits.
+      thenReads: 6,
+      thenCallsWhileRefused: 0,
+      thenCalls: 1,
+      reported: [
+        "rejected later",
+        "rejected by toRejectLater()",
+        "rejected by toRejectLater()",
+        "then is not a function",
+        "then is not a function",
+        "then getter throws",
+        "then getter throws",
+        ".resolves, then is not a function",
+        ".rejects, then is not a function",
+        ".resolves, then getter throws",
+        ".rejects, then getter throws",
+        "expect.poll(), then is not a function",
+        "control",
+      ],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a promise that this.equals() or asymmetricMatch() refused fails the test it rejects in", async () => {
+    const { report, exitCode, signalCode } = await runTests(`
+      const turn = () => new Promise(resolve => setImmediate(resolve));
+      let rejectReceived, rejectMatcher;
+      expect.extend({
+        toAsk(received, expected) {
+          try {
+            this.equals(received, expected);
+          } catch {}
+          return { pass: true, message: () => "" };
+        },
+        toRejectLater: () => new Promise((_, reject) => (rejectMatcher = reject)),
+      });
+      test("this.equals() refuses a pending promise", () => {
+        expect([new Promise((_, reject) => (rejectReceived = reject))]).toAsk([expect.rejectsTo.anything()]);
+      });
+      test("that promise rejects", async () => {
+        rejectReceived(new Error("received rejected later"));
+        await turn();
+      });
+      test("asymmetricMatch() refuses an async matcher", () => {
+        expect(() => expect.toRejectLater().asymmetricMatch(1)).toThrow("An async matcher only works inside an expect() matcher");
+      });
+      test("the matcher's promise rejects", async () => {
+        rejectMatcher(new Error("matcher rejected later"));
+        await turn();
+      });
+      test("next", () => {});
+    `);
+    expect(report).toEqual([
+      "(pass) this.equals() refuses a pending promise",
+      "error: received rejected later",
+      "(fail) that promise rejects",
+      "(pass) asymmetricMatch() refuses an async matcher",
+      "error: matcher rejected later",
+      "(fail) the matcher's promise rejects",
+      "(pass) next",
+    ]);
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
+  });
 });
 
 describe.concurrent("expect.soft()", () => {

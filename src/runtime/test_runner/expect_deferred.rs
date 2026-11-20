@@ -7,7 +7,7 @@ use core::ffi::c_uint;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::call_frame::CallerSrcLoc;
-use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
+use bun_jsc::js_promise::{Status, UnwrapMode, Unwrapped};
 use bun_jsc::{
     AnyPromise, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue,
     JsClass as _, JsError, JsResult, Strong,
@@ -22,6 +22,7 @@ use crate::test_runner::bun_test::{
 };
 use crate::test_runner::execution::ExecutionSequence;
 use crate::test_runner::expect::js as expect_js;
+use crate::test_runner::pretty_format;
 use crate::test_runner::vi_wait::ViWait;
 
 type Matcher<'m, 'a> = &'m dyn Fn(&mut JsScope<'a>, This<'_>) -> JsResult<JSValue>;
@@ -558,13 +559,55 @@ impl Pass {
         Self::return_or_throw(global, threw, value)
     }
 
-    pub(crate) fn settled(
-        global: &JSGlobalObject,
-        question: Question,
-        ask: &mut dyn FnMut() -> JsResult<JSValue>,
-    ) -> JsResult<Settled> {
-        let promise = Self::once(global, question, ask)?.as_any_promise();
-        Settled::of(global, promise).map_err(|pending| Self::wait_for(global, pending))
+    /// What `await value` settled to. The matcher waits for a pending promise.
+    pub(crate) fn settled(global: &JSGlobalObject, value: JSValue) -> JsResult<Settled> {
+        let question = Question {
+            asked: Asked::Promise,
+            who: JSValue::UNDEFINED,
+            what: value,
+        };
+        let awaited = Self::once(global, question, &mut || match Self::current() {
+            Some(_) => Ok(Expect::promise_to_await(global, value)?
+                .map_or(JSValue::UNDEFINED, AnyPromise::as_value)),
+            None => Self::settled_already(global, value),
+        })?;
+        Settled::of(global, awaited.as_any_promise()).map_err(|pending| Self::wait_for(global, pending))
+    }
+
+    /// `settled()` where nothing can wait: it refuses a pending promise or a thenable without touching it.
+    #[cold]
+    #[optimize(size)]
+    fn settled_already(global: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
+        // Only an object can be a thenable. `member` would search a primitive's prototype, and throw for null.
+        if !value.is_object() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        if let Some(promise) = value.as_any_promise()
+            && promise.status() != Status::Pending
+        {
+            // The answer comes from this promise, so a rejection of it is handled.
+            promise.set_handled(global.vm());
+            return Ok(value);
+        }
+        // A plain Get, as in `await`. `JSValue::get` skips `Object.prototype`.
+        match pretty_format::member(global, value, "then") {
+            Ok(then) if then.is_callable() => Err(Self::cannot_wait(global)),
+            Ok(_) => Ok(JSValue::UNDEFINED),
+            // As in `await`, what the `then` getter threw becomes a rejection.
+            Err(thrown) => {
+                let rejected = JSPromise::create(global);
+                rejected.set_handled();
+                rejected.reject(global, Err(thrown))?;
+                Ok(rejected.to_js())
+            }
+        }
+    }
+
+    #[cold]
+    fn cannot_wait(global: &JSGlobalObject) -> JsError {
+        global.throw(format_args!(
+            "An async matcher only works inside an expect() matcher, which then returns a promise: await expect(received).toEqual(expected)"
+        ))
     }
 
     /// Throws an `ExpectDeferred`, which makes the running matcher return a promise and re-run once `promise` settles.
@@ -572,9 +615,7 @@ impl Pass {
     #[cold]
     pub(crate) fn wait_for(global: &JSGlobalObject, promise: AnyPromise) -> JsError {
         let Some(pass) = Self::current() else {
-            return global.throw(format_args!(
-                "An async matcher only works inside an expect() matcher, which then returns a promise: await expect(received).toEqual(expected)"
-            ));
+            return Self::cannot_wait(global);
         };
         let journal = match pass.journal(global, pass.cursor.get()) {
             Ok(journal) => journal,

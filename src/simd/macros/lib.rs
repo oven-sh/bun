@@ -185,7 +185,8 @@ impl Version {
             .split_terminator(',')
             .map(|it| it.split_once('+').unwrap_or((it, "")))
         {
-            let has_name = |it: &Target| it.arch().map_or("portable", |_| it.name()) == name;
+            let has_name =
+                |it: &Target| it.name() == name || it.arch().is_none() && name == "portable";
             assert!(Target::ALL.iter().any(has_name), "`{name}` is no target");
             let more = more.split_terminator('+').map(|it| it.trim_matches('"'));
             let targets = Target::ALL.into_iter().filter(has_name);
@@ -194,8 +195,8 @@ impl Version {
         }
         let has = |start| list.split(',').any(|it| it.starts_with(start));
         all.retain(|it| match it.0 {
-            Target::Portable64 => has("avx512"),
-            Target::Portable32 => has("avx2"),
+            Target::Portable64 => has("avx512") || has("portable64"),
+            Target::Portable32 => has("avx2") || has("portable32"),
             _ => true,
         });
         for (i, a) in all.iter().enumerate() {

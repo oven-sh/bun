@@ -70,6 +70,32 @@ impl<const N: usize, const B: usize> Lanes<u8, N, B> {
     }
 }
 
+impl<const B: usize> Lanes<u8, 64, B> {
+    /// Looks up in all its lanes, then those of `upper`. The highest bit of an index does not count.
+    #[inline]
+    pub fn lookup2_across(self, upper: Self, indices: Self) -> Self {
+        Self::from_array(array::from_fn(|i| {
+            let index = usize::from(indices[i]);
+            [self, upper][index / 64 % 2][index % 64]
+        }))
+    }
+
+    /// The lanes with a bit in `bits` come first. The others are unspecified.
+    #[inline]
+    pub fn compress(self, bits: u64) -> Self {
+        let mut kept = (0..64).filter(|i| bits >> i & 1 != 0);
+        Self::from_array(array::from_fn(|_| kept.next().map_or(0xAA, |i| self[i])))
+    }
+
+    /// For each position in a lane, the number of lanes in which the bit is set.
+    #[inline]
+    pub fn count_by_position(lanes: Lanes<u64, 8, B>) -> Self {
+        Self::from_array(array::from_fn(|at| {
+            (0..8).map(|i| (lanes[i] >> at & 1) as u8).sum()
+        }))
+    }
+}
+
 impl<const N: usize, const B: usize> Lanes<i8, N, B> {
     #[inline]
     pub fn pack<const M: usize>(first: Lanes<i16, M, B>, second: Lanes<i16, M, B>) -> Self
@@ -180,6 +206,36 @@ impl<const B: usize> Lanes<u32, 4, B> {
         let pairs: Self = Lanes::<u16, 8, B>::sums_of_2(a.abs_diff(b)).bitcast();
         debug_assert!(pairs[1] | pairs[3] == 0);
         (pairs & 0xFFFF) + (pairs >> 16)
+    }
+}
+
+impl<const B: usize> Lanes<u32, 16, B> {
+    /// Looks up in all its lanes. Only the lowest 4 bits of an index count.
+    #[inline]
+    pub fn lookup_across(self, indices: Self) -> Self {
+        Self::from_array(array::from_fn(|i| self[indices[i] as usize % 16]))
+    }
+
+    /// Each lane by its own number of bits, modulo 32.
+    #[inline]
+    pub fn rotate_left(self, bits: Self) -> Self {
+        Self::from_array(array::from_fn(|i| self[i].rotate_left(bits[i])))
+    }
+}
+
+impl<const B: usize> Lanes<u64, 8, B> {
+    /// Each lane by its own number of bits, modulo 64.
+    #[inline]
+    pub fn rotate_left(self, bits: Self) -> Self {
+        Self::from_array(array::from_fn(|i| self[i].rotate_left(bits[i] as u32)))
+    }
+
+    /// Adds two bits to the one in each position. Returns the carries.
+    #[inline]
+    pub fn add_bits(&mut self, a: Self, b: Self) -> Self {
+        let carries = a & b | *self & (a ^ b);
+        *self ^= a ^ b;
+        carries
     }
 }
 

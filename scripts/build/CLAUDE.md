@@ -22,7 +22,7 @@ This directory generates `build.ninja`. The scripts **describe** the build; ninj
 
 **Deps in our graph.** `BuildSpec` variants:
 
-- `direct` — list the dep's sources explicitly; each becomes a first-class `cc`/`cxx` edge in our graph and the `.o`s go straight into bun's link. Every C/C++ dep that is compiled (zstd, boringssl, mimalloc, … and a local WebKit checkout). Skips a sub-process configure entirely and lets LTO see across the dep boundary. `groups` are further flag sets (a cmake "target" each), `steps` are generators and target executables.
+- `direct` — list the dep's sources explicitly; each becomes a first-class `cc`/`cxx` edge in our graph and the `.o`s go straight into bun's link. Every C/C++ dep that is compiled (boringssl, mimalloc, … and a local WebKit checkout). Skips a sub-process configure entirely and lets LTO see across the dep boundary. `groups` are further flag sets (a cmake "target" each), `steps` are generators and target executables.
 - `cargo` — (rule kept for out-of-workspace cargo deps; none today — lolhtml and rust-argon2 are path dependencies compiled as units of bun's own Rust graph).
 - `prebuilt` — skip build entirely, download compiled `.a`/`.lib` (WebKit, nodejs-headers).
 
@@ -48,7 +48,7 @@ rule cc
   depfile = $out.d
   deps = gcc
 
-build obj/src/foo.c.o: cc ../../src/foo.c | deps/zstd/libzstd.a || codegen/generated.h
+build obj/src/foo.c.o: cc ../../src/foo.c | deps/cares/libcares.a || codegen/generated.h
   cflags = -O2 -I...
 ```
 
@@ -60,9 +60,9 @@ rule dep_fetch
   restat = 1
   pool = dep
 
-build ../../vendor/zstd/.ref: dep_fetch | ../../scripts/build/fetch-cli.ts
-  name = zstd
-  repo = facebook/zstd
+build ../../vendor/cares/.ref: dep_fetch | ../../scripts/build/fetch-cli.ts
+  name = cares
+  repo = c-ares/c-ares
   commit = abc123...
 ```
 
@@ -184,7 +184,7 @@ For `mode: "full"` (the normal case):
 
 CI's `build-bun` step builds the same graph (`ci-build` profile: release, prebuilt WebKit); `build.ts` then packages and uploads the zips.
 
-**No crate is a final Rust artifact.** `bun_runtime` is a library like the rest and bun's link takes the rlibs, so what rustc decides only when _it_ links is decided here: the allocator marker `__rust_no_alloc_shim_is_unstable_v2` is defined in `src/runtime/bin_entry/mod.rs` (the allocator itself comes from `#[global_allocator]` there, the error handler from std), and `rust.ts` leaves the panic runtime the profile does not use (`panic_unwind` under `panic = "abort"`) out of the link. Release Rust is bitcode in the rlibs (`-C linker-plugin-lto`) and lld optimises it, together with the C++ where cross-language LTO is on.
+**No crate is a final Rust artifact.** `bun_runtime` is a library like the rest and bun's link takes the rlibs, so what rustc decides only when _it_ links is decided here: the allocator marker `__rust_no_alloc_shim_is_unstable_v2` is defined in `src/global_allocator/lib.rs` (the allocator itself comes from `#[global_allocator]` there, the error handler from std), and `rust.ts` leaves the panic runtime the profile does not use (`panic_unwind` under `panic = "abort"`) out of the link. Release Rust is bitcode in the rlibs (`-C linker-plugin-lto`) and lld optimises it, together with the C++ where cross-language LTO is on.
 
 ### `mode: "codegen"` — the code generators alone
 

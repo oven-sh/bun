@@ -21,8 +21,7 @@ impl XxHash64 {
 /// Streaming XxHash64 — used by the bundler's `ContentHasher`
 /// (length-prefixed chunk hashing across many `update()` calls before a single
 /// `digest()`), plus the dev-server source-map hash and the resolver stat hash.
-/// Wraps `bun_simd_kernels::XxHash64State` so the workspace has exactly one xxhash
-/// implementation; output is bit-identical to the xxHash reference.
+/// Wraps `bun_simd_kernels::XxHash64State`; output is bit-identical to the xxHash reference.
 pub struct XxHash64Streaming(bun_simd_kernels::XxHash64State);
 
 impl XxHash64Streaming {

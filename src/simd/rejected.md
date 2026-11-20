@@ -145,6 +145,40 @@ Fewer features than the kernel has:
 bun_simd::if_supported!(["avx2"], fn(), simd::avx2::kernel);
 ```
 
+The same for a generic kernel:
+
+```rust,compile_fail,E0308
+#[target_feature(enable = "bmi1,bmi2")]
+fn kernel<T>() {}
+fn f<T>() {
+    bun_simd::if_supported!(<T> ["bmi1"], fn(), kernel::<T>);
+}
+```
+
+Its neighbour, which compiles:
+
+```rust,no_run
+#[target_feature(enable = "bmi1,bmi2")]
+fn kernel<T>() {}
+fn f<T>() {
+    bun_simd::if_supported!(<T> ["bmi1", "bmi2"], fn(), kernel::<T>);
+}
+```
+
+A `static mut` in the place of a type:
+
+```rust,compile_fail,E0747
+static mut K: usize = 0;
+fn kernel() {}
+bun_simd::if_supported!(<K> ["sse2"], fn(), kernel);
+```
+
+An intrinsic in a closure, which also runs without the feature:
+
+```rust,compile_fail,E0133
+bun_simd::with_bmi2(|| core::arch::x86_64::_bzhi_u64(1, 1));
+```
+
 Two features in one string:
 
 ```rust,compile_fail,E0080
@@ -1078,6 +1112,16 @@ In a type:
 #![expect(unsafe_code)]
 const EMPTY: [u8; 0] = [];
 bun_simd::if_supported!(["sse2"], [u8; unsafe { 0 }], EMPTY);
+```
+
+In a bound:
+
+```rust,no_run
+#![expect(unsafe_code)]
+fn kernel() {}
+fn f<T: From<[u8; 0]>>() {
+    bun_simd::if_supported!(<T: From<[u8; unsafe { 0 }]>> ["sse2"], fn(), kernel);
+}
 ```
 
 In an attribute that only the function that dispatches has:

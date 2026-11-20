@@ -318,15 +318,18 @@ mod simd {
     }
 
     #[export(baseline)]
-    pub fn update(state: &mut XxHash64State, input: &[u8]) {
+    pub fn update(state: &mut XxHash64State, mut input: &[u8]) {
         let room = &mut state.pending[state.len as usize % 32..];
         state.len += input.len() as u64;
-        let Some((first, input)) = input.split_at_checked(room.len()) else {
+        let Some((first, after)) = input.split_at_checked(room.len()) else {
             return room[..input.len()].copy_from_slice(input);
         };
-        room.copy_from_slice(first);
+        if room.len() < 32 {
+            room.copy_from_slice(first);
+            (state.acc, input) = (accumulate64(state.acc, &[state.pending]), after);
+        }
         let (stripes, rest) = input.as_chunks();
-        state.acc = accumulate64(accumulate64(state.acc, &[state.pending]), stripes);
+        state.acc = accumulate64(state.acc, stripes);
         state.pending[..rest.len()].copy_from_slice(rest);
     }
 

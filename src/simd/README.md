@@ -184,7 +184,7 @@ In Bun, lints keep `core::simd` and `core::arch` out of the kernels. Add the op 
 | `#[export(up_to = avx2, up_to = neon)]` | `avx2`, `sse4` and `neon`    |
 | `#[export(baseline)]`                   | The lowest of each family    |
 
-A module lists its copies, best first, if none of its exports needs the others, or if it needs more than a target has. The table then applies to those. `or` names what runs on a CPU that can run none of them, in place of the portable copy, which the list can then leave out. `MORE_FEATURES` has what the copy adds to its target.
+A module lists its copies, best first, if none of its exports needs the others, or if it needs more than a target has. The table then applies to those. `or` names what runs on a CPU that can run none of them, in place of the portable copy, which the list can then leave out. `portable` stands for the widths of the others too, `portable64` and `portable32` for one each. `MORE_FEATURES` has what the copy adds to its target.
 
 ```rust
 #[bun_simd::foreach_target(avx2 + "vpclmulqdq", sse4 + "pclmulqdq", neon + "aes")]
@@ -199,6 +199,20 @@ fn with_tables(a: &[u64], b: &[u64]) -> u64 {
     todo!()
 }
 # fn main() {}
+```
+
+Scalar code that is generic cannot be exported. `with_bmi2` takes it as a closure, and compiles what is inlined into that a second time, with BMI1, BMI2 and LZCNT. It checks at each call, in about a nanosecond:
+
+```rust
+#![forbid(unsafe_code)]
+
+fn shifted<const N: usize>(words: [u64; N], by: u32) -> [u64; N] {
+    bun_simd::with_bmi2(|| words.map(|it| it >> by))
+}
+
+fn main() {
+    assert_eq!(shifted([4, 8], 2), [1, 2]);
+}
 ```
 
 Before Ice Lake, a core can lower its clock for about 0.7 ms after any 512-bit instruction. On a busy Cascade Lake server, one short search every 0.5 ms takes the clock from 3.1 to 2.7 GHz for all the code around it. So a kernel has to ask for `avx512_skx`. Ask only if one call runs long enough to make up for that.
@@ -252,7 +266,7 @@ LLVM can still pick such an instruction for plain code in a kernel. Read the dis
 | And with `BUN_SIMD_BENCHMARK_AGAINST=/path/to/bun`       | Prints the times of the kernels in that build too, and the ratio                               |
 | `bun scripts/verify-baseline.ts --simd-cpus`             | The checks on emulated CPUs, and the instructions of each copy against its target              |
 
-`conformance/digests.txt` has a hash of the results of each kernel in each part of `check.rs`, after 3, 1200 and 10000 rounds. It was recorded on x86-64 from the C++ kernels that came before, through adapters that are not in the repository. Where the interfaces differ, the adapter decided. `modulate` is compared with its formula instead, `lone_match` with the place of the match, `byte_bits` and `zlib` with plain loops, and some kernels with a twin. `bun bd test --run-simd-tests check 1200` prints the lines to add and to remove for that number. Before you replace one, show with `rust:test` that the new results are right. A new part adds lines and changes none. With the name of a kernel at the end, the command prints the results that it hashes too, for a diff between two targets or builds. `check-only webp 1200` runs the parts whose names start with that, `check-only j..m 1200` those that sort from `j` to below `m`.
+`conformance/digests.txt` has a hash of the results of each kernel in each part of `check.rs`, after 3, 1200 and 10000 rounds. It was recorded on x86-64 from the C++ kernels that came before, through adapters that are not in the repository. Where the interfaces differ, the adapter decided. `modulate` is compared with its formula instead, `lone_match` with the place of the match, `byte_bits`, `zlib` and `zstd` with plain loops, and some kernels with a twin. `bun bd test --run-simd-tests check 1200` prints the lines to add and to remove for that number. Before you replace one, show with `rust:test` that the new results are right. A new part adds lines and changes none. With the name of a kernel at the end, the command prints the results that it hashes too, for a diff between two targets or builds. `check-only webp 1200` runs the parts whose names start with that, `check-only j..m 1200` those that sort from `j` to below `m`.
 
 `BUN_SIMD_BENCHMARK_FILTER=memmem` with `-t "kernels on"` times only the rows that have this in their name. The time of a short call depends on the address of the code: between two builds of the same kernels, some rows differ by more than 10%. How well a core learns the branches of an input that repeats depends on it too. On Sapphire Rapids, a change that left the loop of inflate as it was made the same 100 KB take 1.15 times as long in the build for glibc, and 0.86 times in the one for musl. Time such code on many inputs.
 

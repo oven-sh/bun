@@ -25,6 +25,8 @@ test("only trusted/ has the words for what rustc does not check", () => {
   const samples = ["\\nunsafe {", "global_asm!", '#[path = r"a"]', "use core::include as a;", "mod conformance {"];
   expect(samples.filter(it => !it.match(words))).toEqual([]);
   expect(find(words)).toEqual([
+    "dispatch.rs: rustc_align",
+    "dispatch.rs: rustc_align",
     "macros/lib.rs: allow_internal_unstable",
     "macros/lib.rs: allow_internal_unstable",
     "macros/lib.rs: rustc_attrs",
@@ -48,8 +50,9 @@ test("the unstable features outside of trusted/ are known", () => {
     "kernels/lib.rs: feature(hint_prefetch, loop_hints, trait_alias)",
     "kernels/lib.rs: feature(const_array, const_closures, const_trait_impl)",
     "lib.rs: feature(portable_simd, likely_unlikely, loop_hints, trait_alias, try_blocks)",
-    "lib.rs: feature(const_array, const_closures, const_trait_impl)",
+    "lib.rs: feature(const_array, const_closures, const_trait_impl, fn_align)",
     "macros/lib.rs: feature(allow_internal_unstable)",
+    "tests/dispatch.rs: feature(closure_track_caller)",
   ]);
 });
 

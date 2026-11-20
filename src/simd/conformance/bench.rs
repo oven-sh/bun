@@ -915,6 +915,20 @@ fn brotli() {
 }
 
 #[optimize(size)]
+fn zstd(js: &[u8]) {
+    let codes = &from_fn(|symbol| 3 + symbol as u16 % 7);
+    let (any, out) = (&Random(19).bytes(1 << 17, b""), &mut vec![0; 1 << 18]);
+    for (name, text) in [("text", js), ("any bytes", any)] {
+        for n in [1024, 4159, 32768, 131_072] {
+            time! {
+                "zstd::count_bytes {n}, {name}", zstd::count_bytes(opaque(&text[..n]));
+                "zstd::write_codes {n}, {name}", zstd::write_codes(opaque(&text[..n]), codes, out);
+            }
+        }
+    }
+}
+
+#[optimize(size)]
 fn jpeg() {
     const STRIDE: usize = 2048;
     let random = &mut Random(11);
@@ -1146,6 +1160,7 @@ pub(crate) fn of_kernels(js: &[u8], json: &[u8], map: &[u8]) {
     conversions(js);
     images();
     brotli();
+    zstd(js);
     jpeg();
     webp_decoder();
     webp_encoder();

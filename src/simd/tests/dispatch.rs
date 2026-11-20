@@ -1,7 +1,9 @@
 //! Which copy runs, and which items the macros accept.
 #![cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#![feature(closure_track_caller)]
 #![forbid(unsafe_code)]
-use bun_simd::{Isa, Target, limit_to, limit_to_named, limit_to_with};
+use bun_simd::{Isa, Target, limit_to, limit_to_named, limit_to_with, out_of_line, with_bmi2};
+use std::panic::Location;
 
 struct Kernel(u8);
 struct AtomicFn(u8);
@@ -258,6 +260,73 @@ mod capped_simd {
     #[export(up_to = neon, long_running)]
     pub fn long_running() -> &'static str {
         stringify!(this_target)
+    }
+}
+
+#[bun_simd::foreach_target(avx512_icl, portable64)]
+mod wide_simd {
+    #[export(or = neither)]
+    pub fn module() -> &'static str {
+        stringify!(this_target)
+    }
+}
+
+#[bun_simd::foreach_target(portable64, portable32)]
+mod only_portable_simd {
+    #[export(or = neither)]
+    pub fn module() -> &'static str {
+        stringify!(this_target)
+    }
+}
+
+#[test]
+fn portable_widths_by_name() {
+    for target in Target::ALL.into_iter().filter(|it| it.is_supported()) {
+        limit_to(target);
+        let want = match target {
+            Target::Avx512Icl | Target::Portable64 => target.name(),
+            _ => "neither",
+        };
+        assert_eq!(wide_simd::module(), want);
+        let want = match target {
+            Target::Portable64 | Target::Portable32 => target.name(),
+            _ => "neither",
+        };
+        assert_eq!(only_portable_simd::module(), want);
+    }
+}
+
+#[test]
+fn closures_with_bmi2() {
+    const FEATURES: [&str; 3] = ["bmi1", "bmi2", "lzcnt"];
+    let caller = || {
+        let owned = Vec::from(FEATURES);
+        let (caller, owned) = with_bmi2(
+            #[track_caller]
+            move || (Location::caller(), owned),
+        );
+        assert_eq!(owned, FEATURES);
+        caller
+    };
+    let plain = out_of_line(
+        #[track_caller]
+        || Location::caller(),
+    );
+    let runs_with_bmi2 = || caller() != plain;
+    let has_all = FEATURES.map(|name| bun_simd::detected().names().any(|it| it == name));
+    for target in Target::ALL.into_iter().filter(|it| it.is_supported()) {
+        let is_x86 = target.arch() == Some("x86_64");
+        limit_to(target);
+        assert_eq!(runs_with_bmi2(), is_x86 && target != Target::Sse4);
+        limit_to_with(target, FEATURES);
+        assert_eq!(runs_with_bmi2(), is_x86 && has_all == [true; 3]);
+    }
+    for missing in FEATURES {
+        limit_to_with(
+            Target::Sse4,
+            FEATURES.into_iter().filter(|&it| it != missing),
+        );
+        assert!(!runs_with_bmi2(), "{missing}");
     }
 }
 

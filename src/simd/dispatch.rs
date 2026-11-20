@@ -79,6 +79,37 @@ pub fn is_asked_for(target: Target, features: u64) -> bool {
     target as u8 == limit().0 && is_allowed(target, features)
 }
 
+/// Compiles `run`, and what is inlined into it, a second time for CPUs with BMI1, BMI2 and LZCNT.
+#[inline(always)]
+pub fn with_bmi2<R, F: FnOnce() -> R>(run: F) -> R {
+    #[cfg(target_arch = "x86_64")]
+    {
+        #[inline(never)]
+        #[rustc_align(64)]
+        #[target_feature(enable = "bmi1,bmi2,lzcnt")]
+        fn bmi2<R, F: FnOnce() -> R>(run: F) -> R {
+            run()
+        }
+        const FEATURES: &[&str] = &["bmi1", "bmi2", "lzcnt"];
+        const BITS: u64 = crate::Features::named(FEATURES).bits();
+        if (const { is_floor(FEATURES) } || is_allowed(Target::Sse4, BITS))
+            && let Some(bmi2) = crate::if_supported!(
+                <R, F: FnOnce() -> R> ["bmi1", "bmi2", "lzcnt"], fn(F) -> R, bmi2
+            )
+        {
+            return bmi2(run);
+        }
+    }
+    out_of_line(run)
+}
+
+/// In an aligned function, the speed of a loop does not depend on what is linked before it.
+#[inline(never)]
+#[rustc_align(64)]
+pub fn out_of_line<R>(run: impl FnOnce() -> R) -> R {
+    run()
+}
+
 /// The function that `#[export]` adds. A macro without `$crate` could be the caller's, and get these tokens.
 #[doc(hidden)]
 #[macro_export]

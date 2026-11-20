@@ -118,6 +118,8 @@ fn run(arguments: &[&[u8]]) -> Option<bool> {
     let read = |path| bun_sys::File::read_from(bun_core::Fd::cwd(), path).ok();
     let (command, rest) = arguments.split_first()?;
     if *command == b"probe" {
+        let counts = [4095, 4096].map(bun_simd_kernels::zstd::are_quicker_for);
+        write_line(format_args!("zstd: {counts:?}"));
         return Some(probe::run());
     }
     write_line(format_args!(

@@ -5,10 +5,7 @@
 #![deny(improper_ctypes, improper_ctypes_definitions)]
 #![feature(thread_local)]
 #![feature(adt_const_params)]
-#![feature(core_io_borrowed_buf)]
-// For `__rust_no_alloc_shim_is_unstable_v2` in bin_entry.
-#![feature(rustc_attrs)]
-#![allow(internal_features)]
+#![feature(core_io_borrowed_buf, borrowed_buf_init)]
 // The unit-test harness leaves out `bin_entry` (below), the root that keeps
 // this crate's `pub(crate)` items alive, so in a test build most of the crate
 // reads as dead code. `dead_code` is checked by the crate's own build.

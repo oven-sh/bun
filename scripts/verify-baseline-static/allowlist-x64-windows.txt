@@ -550,6 +550,15 @@ _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr3_raw6detect  [AVX, AVX
 
 
 # ----------------------------------------------------------------------------
+# Bun zstd (src/zstd).
+# Gate: if_supported! in with_bmi2() (src/simd/dispatch.rs), its only caller.
+# (1 generic function, in both forms)
+# ----------------------------------------------------------------------------
+_RINvNvNt<rust-hash>8bun_simd8dispatch9with_bmi24bmi2<generic-args>  [BMI1, BMI2, LZCNT]
+bun_simd::dispatch::with_bmi2::bmi2<generic-args>                    [BMI1, BMI2, LZCNT]
+
+
+# ----------------------------------------------------------------------------
 # Rust blake2b_simd AVX2 (via rust-argon2). Gate: is_x86_feature_detected!("avx2")
 # in blake2b_simd::Platform::detect() — falls back to SSE4.1 / portable.
 # (1 symbol)

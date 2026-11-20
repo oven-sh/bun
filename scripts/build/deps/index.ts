@@ -23,7 +23,6 @@ import { rustArgon2 } from "./rust-argon2.ts";
 import { sqlite } from "./sqlite.ts";
 import { tinycc } from "./tinycc.ts";
 import { webkit } from "./webkit.ts";
-import { zstd } from "./zstd.ts";
 
 /**
  * All deps in dependency-resolution + link order.
@@ -34,7 +33,6 @@ export const allDeps: readonly Dependency[] = [
   // Header-only first — no link order concerns.
   nodejsHeaders,
 
-  zstd,
   cares,
   libuv,
   lolhtml,
@@ -67,5 +65,4 @@ export {
   sqlite,
   tinycc,
   webkit,
-  zstd,
 };

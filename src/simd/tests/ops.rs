@@ -142,7 +142,14 @@ mod simd {
         holds("not", !p, |a, _| a <= 3);
     }
 
-    fn shifts<T: Number + Int<N>, const N: usize>(a: [T; N]) {
+    fn shifts<T: Number + Int<N>, const N: usize>(a: [T; N], b: [T; N]) {
+        let (x, y) = (Vector::from_array(a), Vector::from_array(b));
+        let bits = |i: usize| b[i].into().rem_euclid(T::BITS.into());
+        let left = from_fn(|i| T::wrapping_from(a[i].into() << bits(i)));
+        assert_eq!((x << y).to_array(), left);
+        let right = from_fn(|i| T::wrapping_from(a[i].into() >> bits(i)));
+        assert_eq!((x >> y).to_array(), right);
+
         for bits in 0..T::BITS {
             let (v, opaque) = (Vector::from_array(a), black_box(bits));
             let left = a.map(|a| T::wrapping_from(a.into().wrapping_shl(bits)));
@@ -208,7 +215,7 @@ mod simd {
         let (a, b) = (random.lanes::<T, N>(), random.lanes());
         lanewise(a, b);
         lanewise(a, a);
-        shifts(a);
+        shifts(a, b);
         moves(a, b);
     }
 
@@ -737,6 +744,76 @@ mod crc_simd {
         let words = black_box([b"The quic", b"k brown ", b"fox jump"]);
         assert_eq!(!words.into_iter().fold(!0, step), 0x8E59_80B4);
     }
+}
+
+fn nothing() {}
+
+#[bun_simd::foreach_target(avx512_icl, portable64)]
+mod icl_simd {
+    use isa::{U8, U64};
+
+    #[export(or = nothing)]
+    pub fn bytes() {
+        let random = &mut Random(1);
+        for _ in 0..1000 {
+            let [a, b, c]: [[u8; 64]; 3] = from_fn(|_| from_fn(|_| random.next() as u8));
+            let got = U8::from_array(a).lookup2_across(U8::from_array(b), U8::from_array(c));
+            let want = c.map(|index| [a, b].as_flattened()[usize::from(index % 128)]);
+            assert_eq!(got.to_array(), want);
+
+            let [bits] = random.lanes::<u64, 1>();
+            let want = Vec::from_iter((0..64).filter(|i| bits & 1 << i != 0).map(|i| a[i]));
+            assert!(
+                U8::from_array(a)
+                    .compress(bits)
+                    .to_array()
+                    .starts_with(&want)
+            );
+
+            let (lanes, mut want) = (random.lanes::<u64, 8>(), [0; 64]);
+            for bit in 0..512 {
+                want[bit % 64] += u8::from(lanes[bit / 64] & 1 << (bit % 64) != 0);
+            }
+            let got = U8::count_by_position(U64::from_array(lanes));
+            assert_eq!(got.to_array(), want);
+        }
+    }
+}
+
+#[bun_simd::foreach_target(avx512_icl, avx512_skx, portable64)]
+mod zmm_simd {
+    use isa::{U32, U64};
+
+    #[export(or = nothing)]
+    pub fn words() {
+        let random = &mut Random(1);
+        for _ in 0..1000 {
+            let [a, b]: [[u32; 16]; 2] = [random.lanes(), random.lanes()];
+            let (x, y) = (U32::from_array(a), U32::from_array(b));
+            assert_eq!(x.lookup_across(y).to_array(), b.map(|i| a[i as usize & 15]));
+            let twice = |i: usize| u64::from(a[i]) * 0x1_0000_0001;
+            let want = from_fn(|i| (twice(i) >> (32 - b[i] % 32)) as u32);
+            assert_eq!(x.rotate_left(y).to_array(), want);
+
+            let [a, b, c]: [[u64; 8]; 3] = from_fn(|_| random.lanes());
+            let (mut x, y) = (U64::from_array(a), U64::from_array(b));
+            let twice = |i: usize| u128::from(a[i]) << 64 | u128::from(a[i]);
+            let want = from_fn(|i| (twice(i) >> (64 - b[i] % 64)) as u64);
+            assert_eq!(x.rotate_left(y).to_array(), want);
+            let carries = x.add_bits(y, U64::from_array(c));
+            for at in 0..512 {
+                let bit = |of: [u64; 8]| of[at / 64] >> (at % 64) & 1;
+                let got = bit(x.to_array()) + 2 * bit(carries.to_array());
+                assert_eq!(got, bit(a) + bit(b) + bit(c));
+            }
+        }
+    }
+}
+
+#[test]
+fn ops_of_512_bits() {
+    on_each_target(icl_simd::bytes);
+    on_each_target(zmm_simd::words);
 }
 
 #[test]

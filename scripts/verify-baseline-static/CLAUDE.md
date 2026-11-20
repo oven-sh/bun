@@ -159,7 +159,6 @@ table, an HWCAP test. Known patterns:
 | simdutf                               | `set_best()` — CPUID first call, cached atomic ptr          | `vendor/` or WebKit's bundled copy    |
 | `bun_simd`                            | `if_supported!` → `bun_simd::detected()`                    | `src/simd/trusted/gate.rs`            |
 | BoringSSL                             | `OPENSSL_ia32cap_P` global, set at init                     | `vendor/boringssl/crypto/cpu_intel.c` |
-| zstd                                  | `ZSTD_cpuid()`                                              | `vendor/zstd/lib/common/cpu.h`        |
 | Rust `memchr`                         | `is_x86_feature_detected!()`                                | (via lolhtml dep)                     |
 | compiler-rt outline-atomics (aarch64) | `__aarch64_have_lse_atomics` (= `AT_HWCAP & HWCAP_ATOMICS`) | compiler-rt builtin                   |
 
@@ -237,6 +236,9 @@ use `<rust-hash>` in place of the hash:
 
 Either form works (the tool canonicalizes both before comparing), but
 `<rust-hash>` survives toolchain bumps.
+
+**Rust generics — `<generic-args>`.** An entry that ends in it covers every instance of a generic function, for a gate
+that takes a closure.
 
 **Patterns.** A `*` in an entry stands for any text. Use one only where the name
 of a symbol proves its gate, as the module of a `bun_simd` target does. An exact

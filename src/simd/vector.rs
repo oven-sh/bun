@@ -572,6 +572,25 @@ impl<T: Int<N>, const N: usize, I: Isa> Shr<u32> for Vector<T, N, I> {
     }
 }
 
+/// Each lane by its own bits, modulo those of a lane. AVX2 has it from 32 bits on, AVX-512 from 16.
+impl<T: Int<N>, const N: usize, I: Isa> Shl for Vector<T, N, I> {
+    type Output = Self;
+
+    #[inline(always)]
+    fn shl(self, bits: Self) -> Self {
+        Self::new(self.0 << bits.0)
+    }
+}
+
+impl<T: Int<N>, const N: usize, I: Isa> Shr for Vector<T, N, I> {
+    type Output = Self;
+
+    #[inline(always)]
+    fn shr(self, bits: Self) -> Self {
+        Self::new(self.0 >> bits.0)
+    }
+}
+
 /// The others are slow to multiply on most targets.
 pub trait Factor: Lane {}
 

@@ -1,7 +1,7 @@
 //! A kernel is written once and compiled once per target, and the best copy is picked at run time.
 #![no_std]
 #![feature(portable_simd, likely_unlikely, loop_hints, trait_alias, try_blocks)]
-#![feature(const_array, const_closures, const_trait_impl)]
+#![feature(const_array, const_closures, const_trait_impl, fn_align)]
 #![forbid(unsafe_code)]
 // For `#[inline(always)]` in the copies.
 #![recursion_limit = "1024"]
@@ -51,7 +51,7 @@ pub use bun_simd_trusted::{Features, detected, if_supported};
 pub use bun_simd_trusted::{SharedOutU8, SharedU8, copy_from_shared, copy_to_shared};
 pub use bun_simd_trusted::{Target, opaque};
 pub use bun_simd_trusted::{extend_cursor, extend_vec, spare_capacity};
-pub use dispatch::{limit_to, limit_to_named, limit_to_with};
+pub use dispatch::{limit_to, limit_to_named, limit_to_with, out_of_line, with_bmi2};
 pub use isa::Isa;
 pub use mask::Mask;
 pub use matches::Matches;

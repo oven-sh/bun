@@ -512,6 +512,50 @@ impl Round<'_> {
     }
 
     #[optimize(size)]
+    fn zstd(&mut self) {
+        let [a, b, c, ..] = &mut *self.rooms;
+        let (random, digests) = (&mut self.random, &mut *self.digests);
+        let exist = crate::simd::chosen_by_default() == "avx512_icl";
+        let (text, mut want) = (a.copy_of(self.text, self.offset), [0; 256]);
+        text.iter().for_each(|&byte| want[usize::from(byte)] += 1);
+        let is_ok = zstd::count_bytes(text) == exist.then_some(want);
+        digests.fails_unless(is_ok, "zstd::count_bytes");
+
+        let (shortest, more) = random.one_of(&[(1, 0), (1, 2), (1, 11), (8, 0), (11, 1), (12, 0)]);
+        let codes: [_; 256] = from_fn(|_| {
+            let len = shortest + random.below(more + 1) as u16;
+            (random.next() as u16) << (16 - len) | len
+        });
+        let (mut want, mut bits, mut bit_count, mut before_last) = (Vec::new(), 0, 0, 0);
+        for (at, &symbol) in text.iter().enumerate().rev() {
+            if at == 63 {
+                before_last = want.len();
+            }
+            let code = u64::from(codes[usize::from(symbol)]);
+            bits |= code >> (16 - code % 16) << bit_count;
+            bit_count += code % 16;
+            while bit_count >= 8 {
+                want.push(bits as u8);
+                (bits, bit_count) = (bits >> 8, bit_count - 8);
+            }
+        }
+        let missing = random.below(2);
+        let out = b.copy_of(&vec![0; before_last + 128 - missing], self.offset);
+        let codes = c.copy_of(&[codes], self.offset);
+        let got = zstd::write_codes(text, &codes[0], out);
+        let got = got.map(|it| (&out[..it.len], it.bits, it.bit_count));
+        let fits = exist && (missing == 0 || text.is_empty());
+        let is_ok = got == fits.then_some((&want[..], bits, bit_count));
+        digests.fails_unless(is_ok, "zstd::write_codes");
+
+        codes[0].fill_with(|| random.next() as u16);
+        let out = b.copy_of(&vec![0; random.below(2 * text.len() + 200)], self.offset);
+        let got = zstd::write_codes(text, &codes[0], out);
+        let is_ok = got.is_none_or(|it| it.len <= out.len() && it.bit_count < 8);
+        digests.fails_unless(is_ok, "zstd::write_codes, of any codes");
+    }
+
+    #[optimize(size)]
     fn byte_bits(&mut self) {
         let byte = self.random.one_of(&[0, b'\n', b' ', 0xFF]);
         let mut want = vec![0; self.text.len().div_ceil(64)];
@@ -1531,6 +1575,7 @@ pub(crate) fn run(rounds: u64, only: &[u8], traced: Vec<u8>) -> bool {
             ("brotli_matches", Round::brotli_matches),
             ("brotli_steps", Round::brotli_steps),
             ("zlib", Round::zlib),
+            ("zstd", Round::zstd),
         ];
         for (name, part) in parts.into_iter().filter(|it| is_chosen(it.0.as_bytes())) {
             round.random = Random(hash(&[number, hash(name.as_bytes())]) | 1);

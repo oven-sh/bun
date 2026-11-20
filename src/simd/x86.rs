@@ -418,6 +418,33 @@ impl<I: Zmm> Vector<u8, 64, I> {
     }
 }
 
+impl Vector<u8, 64, Avx512Icl> {
+    #[inline]
+    #[target_feature(enable = "avx512vbmi")]
+    pub fn lookup2_across(self, upper: Self, indices: Self) -> Self {
+        let [lower, indices, upper] = [self.0.into(), indices.0.into(), upper.0.into()];
+        Self::new(_mm512_permutex2var_epi8(lower, indices, upper))
+    }
+
+    /// The zeroing form has a false dependency on Zen 4 and 5: https://github.com/golang/go/issues/81609
+    #[inline]
+    #[target_feature(enable = "avx512vbmi2")]
+    pub fn compress(self, bits: u64) -> Self {
+        let all = self.0.into();
+        Self::new(_mm512_mask_compress_epi8(all, bits, all))
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx512vbmi,avx512bitalg,gfni")]
+    pub fn count_by_position(lanes: Vector<u64, 8, Avx512Icl>) -> Self {
+        let order = Self::from_array(const { from_fn(const |i| (i / 8 + i % 8 * 8) as u8) });
+        let same_bytes = _mm512_permutexvar_epi8(order.0.into(), lanes.0.into());
+        let one_bit_each = _mm512_set1_epi64(0x8040_2010_0804_0201_u64 as i64);
+        let same_bits = _mm512_gf2p8affine_epi64_epi8::<0>(one_bit_each, same_bytes);
+        Self::new(_mm512_popcnt_epi8(same_bits))
+    }
+}
+
 impl<I: Zmm> Vector<i8, 64, I> {
     #[inline]
     #[target_feature(enable = "avx512bw")]
@@ -479,7 +506,37 @@ impl<I: Zmm> Vector<i32, 16, I> {
     }
 }
 
+impl<I: Zmm> Vector<u32, 16, I> {
+    #[inline]
+    #[target_feature(enable = "avx512f")]
+    pub fn lookup_across(self, indices: Self) -> Self {
+        Self::new(_mm512_permutexvar_epi32(indices.0.into(), self.0.into()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx512f")]
+    pub fn rotate_left(self, bits: Self) -> Self {
+        Self::new(_mm512_rolv_epi32(self.0.into(), bits.0.into()))
+    }
+}
+
 impl<I: Zmm> Vector<u64, 8, I> {
+    #[inline]
+    #[target_feature(enable = "avx512f")]
+    pub fn rotate_left(self, bits: Self) -> Self {
+        Self::new(_mm512_rolv_epi64(self.0.into(), bits.0.into()))
+    }
+
+    /// The carries follow from the sums, so that no input has to be copied.
+    #[inline]
+    #[target_feature(enable = "avx512f")]
+    pub fn add_bits(&mut self, a: Self, b: Self) -> Self {
+        let [a, b] = [a.0.into(), b.0.into()];
+        let sums = _mm512_ternarylogic_epi64::<0x96>(self.0.into(), a, b);
+        *self = Self::new(sums);
+        Self::new(_mm512_ternarylogic_epi64::<0xD4>(a, b, sums))
+    }
+
     #[inline]
     #[target_feature(enable = "avx512bw")]
     pub fn sums_of_8(bytes: Vector<u8, 64, I>) -> Self {
@@ -668,9 +725,7 @@ pub mod avx512_icl {
     #[inline]
     #[target_feature(enable = "avx512vbmi2")]
     pub fn bit_indices(bits: u64) -> BitIndices {
-        // The zeroing form has a false dependency on Zen 4 and 5: https://github.com/golang/go/issues/81609
-        let all = U8::iota().0.into();
-        let compressed = Some(U8::new(_mm512_mask_compress_epi8(all, bits, all)).to_array());
+        let compressed = Some(U8::iota().compress(bits).to_array());
         BitIndices { bits, compressed }
     }
 

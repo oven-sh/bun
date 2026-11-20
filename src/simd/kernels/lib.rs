@@ -29,6 +29,7 @@ mod words;
 pub mod xml;
 mod xxhash;
 pub mod zlib;
+pub mod zstd;
 
 use bun_simd::{Out, Source, Writer, opaque};
 use core::hint::cold_path;

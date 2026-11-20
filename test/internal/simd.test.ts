@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isASAN, isCI, isDebug, isMacOS, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isASAN, isCI, isDebug, isLinux, isMacOS, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import { availableParallelism, cpus } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -51,6 +52,26 @@ describe.skipIf(!hasRunner)("bun_simd", () => {
     expect(probe!.values("feature").includes(feature)).toBe(stdout.toString().trim() === "1");
   });
 
+  // An emulator shows the file of its host.
+  test.skipIf(!isLinux || !isCI || isArm64)("agrees with /proc/cpuinfo", () => {
+    const flags = readFileSync("/proc/cpuinfo", "utf8").match(/^flags.*/m)![0];
+    const has = (names: string) => names.split(" ").every(it => flags.split(" ").includes(it));
+    expect([targets.includes("avx512_icl"), probe!.values("feature").includes("avx512bf16")]).toEqual([
+      has("avx512vbmi avx512_vbmi2 avx512_vnni avx512_bitalg avx512_vpopcntdq gfni vpclmulqdq"),
+      has("avx512_bf16"),
+    ]);
+  });
+
+  test.concurrent.each([
+    ["", true],
+    ["avx512_icl+avx512bf16", true],
+    ["avx512_icl", false],
+    ["avx2+avx512bf16", false],
+  ])("with the limit %j, zstd can use its kernels: %p", async (limit, isAllowed) => {
+    const { values } = await run(limit, ["probe"]);
+    expect(values("zstd")).toEqual([`[false, ${isAllowed && canRun("avx512_icl+avx512bf16")}]`]);
+  });
+
   // It takes 1200 to put each short length at both ends of a page.
   const rounds = isDebug || isASAN ? "1200" : "10000";
 
@@ -73,7 +94,7 @@ describe.skipIf(!hasRunner)("bun_simd", () => {
     });
   }
 
-  test.concurrent.each(["avx512_icl", "", "AVX2"])("%j is no limit", async target => {
+  test.concurrent.each(["avx512_icl", "", "AVX2"])("%j leaves the best target", async target => {
     const { lines, exitCode } = await run(target, ["check", "3"]);
     const byDefault = targets.find(target => target !== "avx512_skx");
     expect(lines).toEqual([`chosen: ${byDefault} ${targets[0]}`, "rounds: 3"]);

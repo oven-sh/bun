@@ -4,7 +4,7 @@ sidebarTitle: Prisma ORM with Bun
 mode: center
 ---
 
-[Prisma ORM](https://www.prisma.io/docs/orm) 8 generates a typed query API from a schema. In this guide you add it to a Bun project, create the tables in a PostgreSQL database, and run a typed query. To start from a template and deploy the result, see [Use Prisma Postgres with Bun](/guides/ecosystem/prisma-postgres).
+[Prisma ORM](https://www.prisma.io/docs/orm?utm_source=bun&utm_medium=docs&utm_campaign=bun_prisma_orm_guide&utm_content=intro_prisma_orm) 8 generates a typed query API from a schema. In this guide you add it to a Bun project, create the tables in a PostgreSQL database, and run a typed query. To start from a template and deploy the result, see [Use Prisma Postgres with Bun](/guides/ecosystem/prisma-postgres).
 
 <Steps>
 	<Step title="Create a new project">
@@ -56,7 +56,7 @@ mode: center
     </Step>
 
     <Step title="Configure database connection">
-    	Set `DATABASE_URL` in the `.env` file to the connection string of an empty PostgreSQL 15 or newer database, because the next step creates tables in it. If you do not have one, `bunx create-db` creates a [Prisma Postgres](https://www.prisma.io/postgres) database without an account and prints its connection string together with a claim URL, and because the database and its data are deleted after 24 hours unless you open that URL, claim it if you want to keep it. The string from `create-db` ends in `sslmode=require`, which makes the `pg` driver print a security warning on every connection, so change it to `sslmode=verify-full`, the mode Prisma Postgres supports. Leave the SSL settings of another provider as its documentation gives them.
+    	Set `DATABASE_URL` in the `.env` file to the connection string of an empty PostgreSQL 15 or newer database, because the next step creates tables in it. If you do not have one, `bunx create-db` creates a [Prisma Postgres](https://www.prisma.io/postgres?utm_source=bun&utm_medium=docs&utm_campaign=bun_prisma_orm_guide&utm_content=setup_prisma_postgres) database without an account and prints its connection string together with a claim URL, and because the database and its data are deleted after 24 hours unless you open that URL, claim it if you want to keep it. The string from `create-db` ends in `sslmode=require`, which makes the `pg` driver print a security warning on every connection, so change it to `sslmode=verify-full`, the mode Prisma Postgres supports. Leave the SSL settings of another provider as its documentation gives them.
 
     	```ini .env icon="settings"
     	DATABASE_URL="postgres://USER:PASSWORD@db.prisma.io:5432/postgres?sslmode=verify-full"
@@ -139,4 +139,4 @@ mode: center
 
 ---
 
-Prisma ORM is now set up with Bun. See the [Prisma ORM docs](https://www.prisma.io/docs/orm) for filtering, relations, and migrations as you build out your application.
+Prisma ORM is now set up with Bun. See the [Prisma ORM docs](https://www.prisma.io/docs/orm?utm_source=bun&utm_medium=docs&utm_campaign=bun_prisma_orm_guide&utm_content=next_steps_orm_docs) for filtering, relations, and migrations as you build out your application.

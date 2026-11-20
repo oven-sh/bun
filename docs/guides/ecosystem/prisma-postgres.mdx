@@ -4,7 +4,7 @@ sidebarTitle: Prisma Postgres with Bun
 mode: center
 ---
 
-[Prisma Postgres](https://www.prisma.io/postgres) is a managed PostgreSQL database. In this guide you scaffold a Bun project with [Prisma ORM](https://www.prisma.io/docs/orm) 8, create a Prisma Postgres database, run a typed query against it, serve the results with `Bun.serve`, and deploy the server to [Prisma Compute](https://www.prisma.io/docs/compute).
+[Prisma Postgres](https://www.prisma.io/postgres?utm_source=bun&utm_medium=docs&utm_campaign=bun_prisma_postgres_guide&utm_content=intro_prisma_postgres) is a managed PostgreSQL database. In this guide you scaffold a Bun project with [Prisma ORM](https://www.prisma.io/docs/orm?utm_source=bun&utm_medium=docs&utm_campaign=bun_prisma_postgres_guide&utm_content=intro_prisma_orm) 8, create a Prisma Postgres database, run a typed query against it, serve the results with `Bun.serve`, and deploy the server to [Prisma Compute](https://www.prisma.io/docs/compute?utm_source=bun&utm_medium=docs&utm_campaign=bun_prisma_postgres_guide&utm_content=intro_compute).
 
 <Steps>
 	<Step title="Create a new project">
@@ -159,7 +159,7 @@ mode: center
     </Step>
 
     <Step title="Deploy to Prisma Compute">
-    	[Prisma Compute](https://www.prisma.io/docs/compute) runs the server on Bun next to a Prisma Postgres database that it provisions for the app. The scaffold already declares both in `module.ts` and `service.ts`, and its `deploy` script bundles the entry in `tsdown.config.ts` with `tsdown` before deploying. Point that entry at the server:
+    	[Prisma Compute](https://www.prisma.io/docs/compute?utm_source=bun&utm_medium=docs&utm_campaign=bun_prisma_postgres_guide&utm_content=deploy_compute) runs the server on Bun next to a Prisma Postgres database that it provisions for the app. The scaffold already declares both in `module.ts` and `service.ts`, and its `deploy` script bundles the entry in `tsdown.config.ts` with `tsdown` before deploying. Point that entry at the server:
 
     	```ts tsdown.config.ts icon="/icons/typescript.svg"
     	export default defineConfig({
@@ -198,4 +198,4 @@ mode: center
 
 ---
 
-Prisma Postgres is now set up with Bun. Refer to the [Prisma Postgres docs](https://www.prisma.io/docs/postgres) as you continue to develop your application, and to [Deploy on push](https://www.prisma.io/docs/compute/deploy-on-push) to deploy from a GitHub repository instead of your terminal.
+Prisma Postgres is now set up with Bun. Refer to the [Prisma Postgres docs](https://www.prisma.io/docs/postgres?utm_source=bun&utm_medium=docs&utm_campaign=bun_prisma_postgres_guide&utm_content=next_steps_postgres_docs) as you continue to develop your application, and to [Deploy on push](https://www.prisma.io/docs/compute/deploy-on-push?utm_source=bun&utm_medium=docs&utm_campaign=bun_prisma_postgres_guide&utm_content=next_steps_deploy_on_push) to deploy from a GitHub repository instead of your terminal.

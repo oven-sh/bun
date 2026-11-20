@@ -5869,3 +5869,410 @@ describe.each(["hoisted", "isolated"] as const)(
     });
   },
 );
+
+// https://github.com/oven-sh/bun/issues/49340
+// A package with bundleDependencies carries those packages in its own tarball, under its
+// node_modules. bun.lock has an entry for each folder the tarball ships, at the path of the
+// folder, with the version of the package.json in it. The entry has no registry URL and no
+// hash, because nothing downloads it. A file with such an entry is at lockfileVersion 4.
+// Earlier versions of bun wrote the registry package that the declared range resolved to.
+// Those files load as before.
+describe("packages that the tarball of a bundling package ships", () => {
+  type Entries = Record<string, string>;
+  type Dependencies = Record<string, string>;
+
+  // Read from the fixture, so that a tarball that is generated again needs no change here.
+  const integrity = async (name: string, version: string): Promise<string> =>
+    (await file(join(registry.packagesPath, name, "package.json")).json()).versions[version].dist.integrity;
+
+  // The entry of a package that bun downloads.
+  const fetched = async (url: string, name: string, version: string, info = "{}") =>
+    `["${name}@${version}", "${url}${name}/-/${name}-${version}.tgz", ${info}, "${await integrity(name, version)}"]`;
+
+  // The entry of a package that a tarball ships.
+  const shipped = (name: string, version: string, info = '{ "bundled": true }') =>
+    `["${name}@${version}", "", ${info}, ""]`;
+
+  // bun.lock as bun writes it. `dependencies` and `packages` are in the order that bun prints them in.
+  const bunLock = (lockfileVersion: number, dependencies: Dependencies, packages: Entries, overrides = "") =>
+    `{
+  "lockfileVersion": ${lockfileVersion},
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "foo",
+      "dependencies": {
+${Object.entries(dependencies)
+  .map(([name, range]) => `        "${name}": "${range}",\n`)
+  .join("")}      },
+    },
+  },
+${overrides}  "packages": {
+${Object.entries(packages)
+  .map(([key, entry]) => `    "${key}": ${entry},\n`)
+  .join("\n")}  }
+}
+`;
+
+  const parsePackages = (lockfile: string) =>
+    (Bun.JSONC.parse(lockfile) as { packages: Record<string, [string, string, ...unknown[]]> }).packages;
+  const lockedVersions = (lockfile: string) =>
+    Object.fromEntries(
+      Object.entries(parsePackages(lockfile)).map(([key, [id]]) => [key, id.slice(id.lastIndexOf("@") + 1)]),
+    );
+  // `bun.lock key -> version` of every package folder in node_modules. The hoisted linker makes one folder per key.
+  const installedVersions = async (dir: string) => {
+    const versions: Record<string, string> = {};
+    for (const path of new Bun.Glob("**/package.json").scanSync({ cwd: join(dir, "node_modules") })) {
+      const key = dirname(path).replaceAll("\\", "/").replaceAll("/node_modules/", "/");
+      versions[key] = (await file(join(dir, "node_modules", path)).json()).version;
+    }
+    return versions;
+  };
+  // In these projects bun downloads the packages at the root. Every other folder comes out of one of their tarballs.
+  const tarballsAtRoot = (lockfile: string) =>
+    Object.entries(parsePackages(lockfile))
+      .filter(([key]) => !key.includes("/"))
+      .map(([, [, url]]) => url.slice(url.lastIndexOf("/") + 1))
+      .toSorted();
+
+  // Each project has a registry of its own, which counts the requests of that project alone.
+  async function createProject(dependencies: Dependencies, overrides?: object) {
+    const recorded = new TestRegistry({ recordRequests: true }).start();
+    const { packageDir, packageJson } = await recorded.createTestDir({
+      bunfigOpts: { saveTextLockfile: true, linker: "hoisted" },
+    });
+    await write(packageJson, JSON.stringify({ name: "foo", dependencies, overrides }));
+    const lockfilePath = join(packageDir, "bun.lock");
+    return {
+      url: recorded.url,
+      packageDir,
+      lockfilePath,
+      lockfile: () => file(lockfilePath).text(),
+      install: (...args: string[]) => installWithOwnCache(packageDir, ...args),
+      downloaded: () =>
+        recorded.requests
+          .map(request => request.path)
+          .filter(path => path.endsWith(".tgz"))
+          .map(path => path.slice(path.lastIndexOf("/") + 1))
+          .toSorted(),
+      [Symbol.dispose]: () => recorded.stop(),
+    };
+  }
+
+  // Installs `written` into an empty node_modules, saves it again, and installs once more.
+  async function loadAndSaveBack(project: Awaited<ReturnType<typeof createProject>>, written: string) {
+    await write(project.lockfilePath, written);
+
+    let { err } = await project.install("--frozen-lockfile");
+    expect(err).not.toContain("Saved lockfile");
+    expect(await project.lockfile()).toBe(written);
+    expect(project.downloaded()).toEqual(tarballsAtRoot(written));
+
+    await project.install("--lockfile-only");
+    expect(await project.lockfile()).toBe(written);
+
+    ({ err } = await project.install());
+    expect(err).not.toContain("Saved lockfile");
+    expect(await project.lockfile()).toBe(written);
+  }
+
+  const oneDep = async (url: string): Promise<Entries> => ({
+    "no-deps": await fetched(url, "no-deps", "1.0.1"),
+    "one-dep": await fetched(url, "one-dep", "1.0.0", '{ "dependencies": { "no-deps": "1.0.1" } }'),
+  });
+  const bundled1 = (url: string) => fetched(url, "bundled-1", "1.0.0", '{ "dependencies": { "no-deps": "1.0.0" } }');
+  const bundledTrue = (url: string) =>
+    fetched(url, "bundled-true", "1.0.0", '{ "dependencies": { "no-deps": "1.0.0", "one-dep": "1.0.0" } }');
+  const unshippedHost = (url: string) =>
+    fetched(
+      url,
+      "bundled-unshipped-host",
+      "1.0.0",
+      '{ "dependencies": { "a-dep": "^1.0.0", "no-deps": "1.0.0" }, "unresolved": ["a-dep"] }',
+    );
+  const rangeHost = (url: string) =>
+    fetched(
+      url,
+      "bundled-range-host",
+      "1.0.0",
+      '{ "dependencies": { "bundled-range-inner": "1.0.0", "one-dep": "1.0.0" } }',
+    );
+  const rangeInner = '{ "dependencies": { "a-dep": "^1.0.0", "no-deps": "^1.0.0" }, "bundled": true }';
+  const shippedHost = (url: string) =>
+    fetched(
+      url,
+      "bundled-shipped-host",
+      "1.0.0",
+      '{ "dependencies": { "bundled-shipped-inner": "1.0.0", "one-dep": "1.0.0" } }',
+    );
+  const shippedInner = '{ "dependencies": { "no-deps": "1.0.0" }, "bundled": true }';
+
+  // bundled-range-host bundles bundled-range-inner, which needs a-dep@^1.0.0 and no-deps@^1.0.0. The tarball
+  // has a-dep@1.0.1 and no-deps@1.0.0 next to it. The registry resolves the two ranges to a-dep@1.0.10 and
+  // no-deps@1.1.0.
+  const rangeHostShipped = async (url: string): Promise<Entries> => ({
+    "bundled-range-host": await rangeHost(url),
+    ...(await oneDep(url)),
+    "bundled-range-host/a-dep": shipped("a-dep", "1.0.1"),
+    "bundled-range-host/bundled-range-inner": shipped("bundled-range-inner", "1.0.0", rangeInner),
+    "bundled-range-host/no-deps": shipped("no-deps", "1.0.0"),
+  });
+
+  // `before` is what bun wrote for the project when it resolved bundled dependencies from the registry.
+  const bundlers: {
+    name: string;
+    before: (url: string) => Promise<Entries>;
+    shipped: (url: string) => Promise<Entries>;
+  }[] = [
+    {
+      name: "bundled-1",
+      before: async url => ({
+        "bundled-1": await bundled1(url),
+        "bundled-1/no-deps": await fetched(url, "no-deps", "1.0.0", '{ "bundled": true }'),
+      }),
+      shipped: async url => ({
+        "bundled-1": await bundled1(url),
+        "bundled-1/no-deps": shipped("no-deps", "1.0.0"),
+      }),
+    },
+    {
+      name: "bundled-range-host",
+      before: async url => ({
+        "bundled-range-host": await rangeHost(url),
+        ...(await oneDep(url)),
+        "bundled-range-host/a-dep": await fetched(url, "a-dep", "1.0.10"),
+        "bundled-range-host/bundled-range-inner": await fetched(url, "bundled-range-inner", "1.0.0", rangeInner),
+        "bundled-range-host/no-deps": await fetched(url, "no-deps", "1.1.0"),
+      }),
+      shipped: rangeHostShipped,
+    },
+    {
+      name: "bundled-shipped-host",
+      before: async url => ({
+        "bundled-shipped-host": await shippedHost(url),
+        ...(await oneDep(url)),
+        "bundled-shipped-host/bundled-shipped-inner": await fetched(
+          url,
+          "bundled-shipped-inner",
+          "1.0.0",
+          shippedInner,
+        ),
+        "bundled-shipped-host/no-deps": await fetched(url, "no-deps", "1.0.0"),
+      }),
+      shipped: async url => ({
+        "bundled-shipped-host": await shippedHost(url),
+        ...(await oneDep(url)),
+        "bundled-shipped-host/bundled-shipped-inner": shipped("bundled-shipped-inner", "1.0.0", shippedInner),
+        "bundled-shipped-host/no-deps": shipped("no-deps", "1.0.0"),
+      }),
+    },
+  ];
+
+  describe.each([1, 2])("a bun.lock with registry entries for them, at lockfileVersion %d", lockfileVersion => {
+    it.concurrent.each(bundlers)("with $name is installed and saved back as it is", async ({ name, before }) => {
+      const dependencies = { [name]: "1.0.0" };
+      using project = await createProject(dependencies);
+      const written = bunLock(lockfileVersion, dependencies, await before(project.url));
+
+      await loadAndSaveBack(project, written);
+      const installed = await installedVersions(project.packageDir);
+      expect(Object.keys(installed).toSorted()).toEqual(Object.keys(lockedVersions(written)).toSorted());
+
+      await rm(join(project.packageDir, "node_modules"), { recursive: true });
+      const { err } = await project.install();
+      expect(err).not.toContain("Saved lockfile");
+      expect(await project.lockfile()).toBe(written);
+      expect(await installedVersions(project.packageDir)).toEqual(installed);
+    });
+  });
+
+  it.concurrent.each(bundlers)(
+    "resolving $name again without that bun.lock records what its tarball ships",
+    async ({ name, before, shipped }) => {
+      const dependencies = { [name]: "1.0.0" };
+      using project = await createProject(dependencies);
+      await write(project.lockfilePath, bunLock(2, dependencies, await before(project.url)));
+      await project.install("--frozen-lockfile");
+
+      await rm(project.lockfilePath);
+      const { err } = await project.install();
+      expect(err).toContain("Saved lockfile");
+      const lockfile = await project.lockfile();
+      const expected = bunLock(4, dependencies, await shipped(project.url));
+      expect(lockedVersions(lockfile)).toEqual(await installedVersions(project.packageDir));
+      const inBundle = (text: string) => Object.entries(parsePackages(text)).filter(([key]) => key.includes("/"));
+      expect(inBundle(lockfile)).toEqual(inBundle(expected));
+      expect(lockfile).toBe(expected);
+
+      await project.install("--frozen-lockfile");
+      await project.install("--lockfile-only");
+      expect(await project.lockfile()).toBe(lockfile);
+    },
+  );
+
+  describe("bun.lock at lockfileVersion 4", () => {
+    it.concurrent.each<[string, string, (url: string) => Promise<Entries>]>([
+      // Neither a-dep nor no-deps is a dependency of bundled-range-host.
+      ["a folder shipped next to the bundled package that needs it", "bundled-range-host", rangeHostShipped],
+      // no-deps@1.0.0 is in the file twice: bundled-shipped-sibling gets it from the registry, and the tarball of
+      // bundled-nested-host has it below bundled-shipped-inner.
+      [
+        "a folder shipped below the bundled package, and the same version from the registry",
+        "bundled-nested-host",
+        async url => ({
+          "bundled-nested-host": await fetched(
+            url,
+            "bundled-nested-host",
+            "1.0.0",
+            '{ "dependencies": { "bundled-shipped-inner": "1.0.0", "bundled-shipped-sibling": "1.0.0" } }',
+          ),
+          "bundled-shipped-sibling": await fetched(
+            url,
+            "bundled-shipped-sibling",
+            "1.0.0",
+            '{ "dependencies": { "no-deps": "1.0.0" } }',
+          ),
+          "no-deps": await fetched(url, "no-deps", "1.0.0"),
+          "bundled-nested-host/bundled-shipped-inner": shipped("bundled-shipped-inner", "1.0.0", shippedInner),
+          "bundled-nested-host/bundled-shipped-inner/no-deps": shipped("no-deps", "1.0.0"),
+        }),
+      ],
+      [
+        "two versions of one package shipped at two depths",
+        "bundled-true",
+        async url => ({
+          "bundled-true": await bundledTrue(url),
+          "bundled-true/no-deps": shipped("no-deps", "1.0.0"),
+          "bundled-true/one-dep": shipped(
+            "one-dep",
+            "1.0.0",
+            '{ "dependencies": { "no-deps": "1.0.1" }, "bundled": true }',
+          ),
+          "bundled-true/one-dep/no-deps": shipped("no-deps", "1.0.1"),
+        }),
+      ],
+    ])("%s", async (_, name, packages) => {
+      const dependencies = { [name]: "1.0.0" };
+      using project = await createProject(dependencies);
+      const written = bunLock(4, dependencies, await packages(project.url));
+
+      await loadAndSaveBack(project, written);
+      expect(await installedVersions(project.packageDir)).toEqual(lockedVersions(written));
+    });
+
+    // bundled-unshipped-host bundles a-dep@^1.0.0, and its tarball has no a-dep. Nothing else gives it one: not the
+    // registry, and not the a-dep that the project depends on.
+    it.concurrent.each<[string, Dependencies, (url: string) => Promise<Entries>]>([
+      [
+        "and that no other package is named after",
+        { "bundled-unshipped-host": "1.0.0" },
+        async url => ({
+          "bundled-unshipped-host": await unshippedHost(url),
+          "bundled-unshipped-host/no-deps": shipped("no-deps", "1.0.0"),
+        }),
+      ],
+      [
+        "and that the project depends on",
+        { "a-dep": "1.0.1", "bundled-unshipped-host": "1.0.0" },
+        async url => ({
+          "a-dep": await fetched(url, "a-dep", "1.0.1"),
+          "bundled-unshipped-host": await unshippedHost(url),
+          "bundled-unshipped-host/no-deps": shipped("no-deps", "1.0.0"),
+        }),
+      ],
+    ])("a bundled dependency that the tarball does not ship %s", async (_, dependencies, packages) => {
+      using project = await createProject(dependencies);
+      const written = bunLock(4, dependencies, await packages(project.url));
+
+      await loadAndSaveBack(project, written);
+      expect(await installedVersions(project.packageDir)).toEqual(lockedVersions(written));
+    });
+
+    // An earlier version resolved bundled-1, and this one resolved bundled-range-host. Both have a no-deps@1.0.0.
+    const dependenciesOfBoth = { "bundled-1": "1.0.0", "bundled-range-host": "1.0.0" };
+    const both = async (url: string, noDepsOfBundled1: string): Promise<Entries> => ({
+      "bundled-1": await bundled1(url),
+      "bundled-range-host": await rangeHost(url),
+      ...(await oneDep(url)),
+      "bundled-1/no-deps": noDepsOfBundled1,
+      "bundled-range-host/a-dep": shipped("a-dep", "1.0.1"),
+      "bundled-range-host/bundled-range-inner": shipped("bundled-range-inner", "1.0.0", rangeInner),
+      "bundled-range-host/no-deps": shipped("no-deps", "1.0.0"),
+    });
+
+    it.concurrent("a bundled entry with a hash is the registry package that it was before", async () => {
+      using project = await createProject(dependenciesOfBoth);
+      const { url } = project;
+      const written = bunLock(
+        4,
+        dependenciesOfBoth,
+        await both(url, await fetched(url, "no-deps", "1.0.0", '{ "bundled": true }')),
+      );
+
+      await loadAndSaveBack(project, written);
+      expect(await installedVersions(project.packageDir)).toEqual(lockedVersions(written));
+    });
+
+    // This is the entry as earlier versions wrote it for the default registry.
+    it.concurrent("a bundled entry with a hash and no URL is that registry package too", async () => {
+      using project = await createProject(dependenciesOfBoth);
+      const { url } = project;
+      const withoutUrl = `["no-deps@1.0.0", "", { "bundled": true }, "${await integrity("no-deps", "1.0.0")}"]`;
+      const written = bunLock(4, dependenciesOfBoth, await both(url, withoutUrl));
+      await write(project.lockfilePath, written);
+
+      await project.install("--frozen-lockfile");
+      expect(await project.lockfile()).toBe(written);
+
+      // The registry of the project is not the default one, so its URL is written out.
+      await project.install("--lockfile-only");
+      expect(await project.lockfile()).toBe(
+        bunLock(4, dependenciesOfBoth, await both(url, await fetched(url, "no-deps", "1.0.0", '{ "bundled": true }'))),
+      );
+    });
+  });
+
+  // A file without an entry of a shipped package gets the version that it got before.
+  describe("bun.lock without a shipped package", () => {
+    const scopedOverride = { "one-dep": { "no-deps": "1.0.0" } };
+
+    it.concurrent.each<[number, object | undefined]>([
+      [2, undefined],
+      [3, scopedOverride],
+    ])("is written at lockfileVersion %d", async (lockfileVersion, overrides) => {
+      using project = await createProject({ "one-dep": "1.0.0" }, overrides);
+
+      await project.install();
+      const lockfile = await project.lockfile();
+      expect(lockfile).toStartWith(`{\n  "lockfileVersion": ${lockfileVersion},\n`);
+
+      await project.install("--lockfile-only");
+      expect(await project.lockfile()).toBe(lockfile);
+    });
+
+    it.concurrent("stays at lockfileVersion 3 with a registry entry for a bundled package", async () => {
+      const dependencies = { "bundled-1": "1.0.0", "one-dep": "1.0.0" };
+      using project = await createProject(dependencies, scopedOverride);
+      const { url } = project;
+      const written = bunLock(
+        3,
+        dependencies,
+        {
+          "bundled-1": await bundled1(url),
+          "no-deps": await fetched(url, "no-deps", "1.0.0"),
+          "one-dep": await fetched(url, "one-dep", "1.0.0", '{ "dependencies": { "no-deps": "1.0.1" } }'),
+          "bundled-1/no-deps": await fetched(url, "no-deps", "1.0.0", '{ "bundled": true }'),
+        },
+        `  "overrides": {
+    "one-dep": {
+      "no-deps": "1.0.0",
+    },
+  },
+`,
+      );
+
+      await loadAndSaveBack(project, written);
+    });
+  });
+});

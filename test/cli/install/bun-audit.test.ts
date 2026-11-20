@@ -1353,6 +1353,42 @@ describe("`bun audit` report", () => {
     expect(await pkgJsonText(dir)).toBe(pkgJsonBefore);
   });
 
+  // https://github.com/oven-sh/bun/issues/49340
+  // bundled-range-host bundles bundled-range-inner, which needs a-dep@^1.0.0 and no-deps@^1.0.0. Its tarball ships
+  // a-dep@1.0.1 and no-deps@1.0.0 for them. The registry resolves the two ranges to a-dep@1.0.10 and no-deps@1.1.0.
+  test.concurrent("audits the versions that a bundling package's tarball ships", async () => {
+    const bulkBodies: Record<string, string[]>[] = [];
+    await using server = startRegistry({ "a-dep": [adv("<1.0.2", 1)], "no-deps": [adv(">=1.1.0", 2)] }, { bulkBodies });
+    using dir = await setup(server, { name: "foo", dependencies: { "bundled-range-host": "1.0.0" } });
+    expect(await installedVersion(dir, "bundled-range-host", "node_modules", "a-dep")).toBe("1.0.1");
+    expect(await installedVersion(dir, "bundled-range-host", "node_modules", "no-deps")).toBe("1.0.0");
+    expect(await installedVersion(dir, "no-deps")).toBe("1.0.1");
+
+    const { stdout, stderr, exitCode } = await audit(dir);
+    const sent = bulkBodies.map(body =>
+      Object.fromEntries(Object.entries(body).map(([name, versions]) => [name, versions.toSorted()])),
+    );
+    expect(sent).toEqual([
+      {
+        "a-dep": ["1.0.1"],
+        "bundled-range-host": ["1.0.0"],
+        "bundled-range-inner": ["1.0.0"],
+        "no-deps": ["1.0.0", "1.0.1"],
+        "one-dep": ["1.0.0"],
+      },
+    ]);
+    expect(stdout).toContain("a-dep@1.0.1\n");
+    expect(stdout).toContain("high: test advisory (<1.0.2) - https://example.invalid/advisory/1");
+    expect(stdout).not.toContain("no-deps@");
+    expect(stdout).toContain("1 vulnerability (1 high)");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(1);
+
+    const json = await audit(dir, "--json");
+    expect(JSON.parse(json.stdout)).toStrictEqual({ "a-dep": [adv("<1.0.2", 1)] });
+    expect(json.exitCode).toBe(1);
+  });
+
   test.concurrent("`bun audit --fix` is not `bun audit fix`: the unknown flag is rejected", async () => {
     const bulkHits = { count: 0 };
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] }, { bulkHits });

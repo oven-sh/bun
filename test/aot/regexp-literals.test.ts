@@ -162,6 +162,12 @@ const literals = [
   String.raw`/a{99999999999999999999}/`,
   String.raw`/a{99999999999999999999,1}/`,
   String.raw`/\99999999999999999999/`,
+  // The engine is asked about a literal as it is written: a backslash escapes the character after it.
+  String.raw`/[\é-a]/u`,
+  String.raw`/[a-\é]/`,
+  String.raw`/[\—-\–]/`,
+  String.raw`/[\–-\—]/`,
+  "/\\\0/v",
 ];
 
 // Where a literal stands that nothing reads.

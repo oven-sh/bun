@@ -22,7 +22,7 @@ bun_core::declare_scope!(ModuleLoader, hidden);
 pub struct ModuleLoader {
     pub transpile_source_code_arena: crate::JsCell<Option<Box<ArenaAllocator>>>,
     /// Taken while a module is printed, and put back so that the next one reuses its buffer.
-    pub source_code_printer: core::cell::Cell<Option<Box<bun_js_printer::BufferPrinter>>>,
+    pub source_code_printer: core::cell::Cell<Option<Box<bun_js_printer::RuntimePrinter>>>,
     pub eval_source: core::cell::OnceCell<Box<bun_ast::Source<'static>>>,
     /// User's `-e` bytes under `--interactive` (see `Eval::interactive_script`).
     pub interactive_eval_script: core::cell::Cell<Option<&'static [u8]>>,

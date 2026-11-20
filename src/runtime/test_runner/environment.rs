@@ -18,31 +18,72 @@ struct Pragmas<'a> {
     options: Option<&'a [u8]>,
 }
 
-/// End of the file's leading comment, matched like jest-docblock's `/^\s*(\/\*\*?(.|\r?\n)*?\*\/)/`.
-fn end_of_leading_docblock(source: &[u8]) -> usize {
+/// The file's leading comment without its `*/`, matched like jest-docblock's `/^\s*(\/\*\*?(.|\r?\n)*?\*\/)/`.
+fn leading_docblock(source: &[u8]) -> core::ops::Range<usize> {
     let start = end_of_run(source, 0, |c| strings::is_js_whitespace(c as u32));
     if !source[start..].starts_with(b"/*") {
-        return 0;
+        return 0..0;
     }
-    strings::index_of(&source[start + 2..], b"*/").map_or(0, |offset| start + 2 + offset)
+    strings::index_of(&source[start + 2..], b"*/").map_or(0..0, |offset| start..start + 2 + offset)
+}
+
+/// The line behind `after`'s line break, without its ` * `, if jest-docblock's `multilineRe` joins it to a pragma's value.
+fn continuation_line(after: &[u8]) -> Option<&[u8]> {
+    let line = after
+        .strip_prefix(b"\r\n")
+        .or_else(|| after.strip_prefix(b"\n"))?;
+    let line = strings::trim_left(line, b" ");
+    let line = line
+        .strip_prefix(b"*")
+        .map_or(line, |line| strings::trim_left(line, b" "));
+    let (line, after) = line.split_at(strings::index_of_any(line, b"\r\n")?);
+    let is_joined = (after.starts_with(b"\n") || after.starts_with(b"\r\n"))
+        && bun_format::pragma::is_continuation_line(line);
+    is_joined.then_some(line)
+}
+
+/// A `@jest-environment`'s value as jest-docblock's `/(?:^|\r?\n) *@(\S+) *([^\n\r]*)/` reads it. Empty if it doesn't begin its line.
+#[inline(never)] // Inlined, its slice arithmetic is hoisted in front of `find`'s search loop, which every test file runs.
+fn value_of_jest_environment<'a>(comment_before: &[u8], comment_after: &'a [u8]) -> &'a [u8] {
+    // jest-docblock first strips the comment's `/**` and each line's ` * `: `/^\/\*\*?/` and `/(\r?\n|^) *\* ?/g`.
+    let line = strings::trim_right(comment_before, b" ");
+    let line = line
+        .strip_suffix(b"*")
+        .map_or(line, |rest| strings::trim_right(rest, b" "));
+    if !line.ends_with(b"\n") && !matches!(line, b"/" | b"/*" | b"/**") {
+        return &[];
+    }
+    let line_end = end_of_run(comment_after, 0, |c| {
+        !strings::is_js_line_terminator(c as u32)
+    });
+    let (value, after) = comment_after.split_at(line_end);
+    // A plain name has no `/`, so it skips the search for `// ..`.
+    let value = if strings::contains_char(value, b'/') {
+        bun_format::pragma::without_line_comment(value)
+    } else if strings::is_all_js_whitespace(value) {
+        continuation_line(after).unwrap_or(value)
+    } else {
+        value
+    };
+    strings::trim_js_whitespace(value)
 }
 
 impl<'a> Pragmas<'a> {
     /// Like Vitest, takes the text's first `/@vitest-environment\s+([\w-]+)\b/` and `/@vitest-environment-options\s+(.+)/`.
-    /// `@jest-` pragmas match the same way but, like Jest, only count inside the file's leading comment.
+    /// `@jest-` pragmas only count inside the file's leading comment, like Jest. The options match the same way, the name as in Jest.
     fn find(source: &'a [u8]) -> Self {
         const ENVIRONMENT: &[u8] = b"-environment";
         const OPTIONS: &[u8] = b"-options";
+        const JEST: &[u8] = b"@jest";
 
-        let end_of_docblock = end_of_leading_docblock(source);
+        let docblock = leading_docblock(source);
         let mut found = Self::default();
         let mut at = 0;
         while let Some(offset) = strings::index_of(&source[at..], ENVIRONMENT) {
             let prefix = &source[..at + offset];
             at += offset + ENVIRONMENT.len();
-            if !prefix.ends_with(b"@vitest")
-                && !(prefix.ends_with(b"@jest") && at < end_of_docblock)
-            {
+            let is_vitest = prefix.ends_with(b"@vitest");
+            if !is_vitest && !(prefix.ends_with(JEST) && at < docblock.end) {
                 continue;
             }
             let is_options = source[at..].starts_with(OPTIONS);
@@ -64,7 +105,7 @@ impl<'a> Pragmas<'a> {
                 if !line.is_empty() {
                     found.options = Some(line.strip_suffix(b"*/").unwrap_or(line));
                 }
-            } else {
+            } else if is_vitest {
                 let end = end_of_run(source, start, |c| {
                     u8::try_from(c)
                         .is_ok_and(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-'))
@@ -73,6 +114,10 @@ impl<'a> Pragmas<'a> {
                 if !name.is_empty() {
                     found.environment = Some(name);
                 }
+            } else {
+                let before = &prefix[docblock.start..prefix.len() - JEST.len()];
+                let value = value_of_jest_environment(before, &source[at..docblock.end]);
+                found.environment = Some(value).filter(|value| !value.is_empty());
             }
             if found.environment.is_some() && found.options.is_some() {
                 break;

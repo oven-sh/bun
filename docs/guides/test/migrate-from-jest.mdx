@@ -71,7 +71,7 @@ Replace `testEnvironment: "jsdom"` in your Jest config with `environment` in `bu
 environment = "jsdom"
 ```
 
-`@jest-environment jsdom` and `@jest-environment node` comments in test files work as-is. If a comment uses a name Bun doesn't support, such as `jest-environment-jsdom`, Bun prints a warning and runs the file without a DOM. Change it to `jsdom` or `node`. See [DOM testing](/test/dom#test-environments).
+`@jest-environment jsdom` and `@jest-environment node` comments in test files work as-is. If a comment uses a name Bun doesn't support, such as `jest-environment-jsdom`, `@happy-dom/jest-environment` or the path of a custom environment, Bun prints a warning and runs the file without a DOM. Change it to `jsdom`, `happy-dom` or `node`. See [DOM testing](/test/dom#test-environments).
 
 ---
 

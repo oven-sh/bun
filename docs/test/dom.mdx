@@ -35,12 +35,12 @@ test("dom test", () => {
 
 Bun looks for each comment in the same place Vitest or Jest does:
 
-- `@vitest-environment` can be anywhere in the file.
-- `@jest-environment` means the same thing, but it has to be in a `/** */` comment at the very top of the file. It's ignored in a `//` comment.
+- `@vitest-environment` can be anywhere in the file. As in Vitest, the name is the letters, digits, `_` and `-` after it, so `jsdom/setup.js` is read as `jsdom`. If another character comes first, as in `./my-environment.js`, the comment doesn't count, and the file runs in the project's environment.
+- `@jest-environment` means the same thing, but it has to begin a line of the `/** */` comment at the very top of the file. It's ignored in a `//` comment. The name is the rest of the line, or the next line if that one is empty.
 
 `// @vitest-environment node` runs a file without a DOM. Other environments, such as `edge-runtime` or a custom one, aren't supported.
 
-If a comment names a package that isn't installed or an environment that isn't supported, Bun prints a warning and runs the file without a DOM. If Bun can't set up the environment from `bunfig.toml` or `--environment`, the file fails.
+If a comment names a package that isn't installed or an environment that isn't supported, Bun prints a warning and runs the file without a DOM. A `@jest-environment` comment with the path or the package of a custom environment, such as `./my-environment.js` or `@happy-dom/jest-environment`, is one of these. If Bun can't set up the environment from `bunfig.toml` or `--environment`, the file fails.
 
 ### Options
 
@@ -52,6 +52,8 @@ If a comment names a package that isn't installed or an environment that isn't s
  * @vitest-environment-options { "url": "https://example.com/" }
  */
 ```
+
+Bun reads both options comments the way Vitest reads its own: the comment can be anywhere on its line, and the rest of the line is the JSON. `@jest-environment-options` counts only in the comment at the very top of the file.
 
 ### Windows and test files
 

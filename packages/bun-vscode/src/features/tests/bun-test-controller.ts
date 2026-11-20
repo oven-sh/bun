@@ -38,7 +38,6 @@ export class BunTestController implements vscode.Disposable {
   private signal: UnixSignal | TCPSocketSignal | null = null;
 
   private inspectorToVSCode = new Map<number, vscode.TestItem>();
-  private vscodeToInspector = new Map<string, number>();
 
   private testErrors = new Map<number, TestError>();
   private lastStartedTestId: number | null = null;
@@ -943,7 +942,6 @@ export class BunTestController implements vscode.Disposable {
 
     if (testItem) {
       this.inspectorToVSCode.set(inspectorTestId, testItem);
-      this.vscodeToInspector.set(testItem.id, inspectorTestId);
       this.discoveredTestIds.add(testItem.id);
     }
   }
@@ -1360,7 +1358,6 @@ export class BunTestController implements vscode.Disposable {
       this.debugAdapter = null;
     }
     this.inspectorToVSCode.clear();
-    this.vscodeToInspector.clear();
     this.requestedTestIds.clear();
   }
 

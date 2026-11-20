@@ -2871,9 +2871,13 @@ async function serveRegistry(manifests: Manifests) {
   };
 }
 
-async function installWithOwnCache(cwd: string, ...args: string[]) {
+function installWithOwnCache(cwd: string, ...args: string[]) {
+  return runWithOwnCache(cwd, "install", ...args);
+}
+
+async function runWithOwnCache(cwd: string, command: "install" | "update", ...args: string[]) {
   await using proc = spawn({
-    cmd: [bunExe(), "install", ...args],
+    cmd: [bunExe(), command, ...args],
     cwd,
     // Request assertions need a cache of their own per project: the environment's
     // cache dir takes precedence over bunfig, and a package extracted there by one
@@ -2885,7 +2889,7 @@ async function installWithOwnCache(cwd: string, ...args: string[]) {
     timeout: 30_000,
   });
   const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ args, err, code }).toMatchObject({ args, err: expect.not.stringContaining("error:"), code: 0 });
+  expect({ command, args, err, code }).toMatchObject({ err: expect.not.stringContaining("error:"), code: 0 });
   return { out, err };
 }
 
@@ -5966,6 +5970,7 @@ ${Object.entries(packages)
       lockfilePath,
       lockfile: () => file(lockfilePath).text(),
       install: (...args: string[]) => installWithOwnCache(packageDir, ...args),
+      update: (...args: string[]) => runWithOwnCache(packageDir, "update", ...args),
       downloaded: () =>
         recorded.requests
           .map(request => request.path)
@@ -6101,6 +6106,25 @@ ${Object.entries(packages)
       expect(await project.lockfile()).toBe(written);
       expect(await installedVersions(project.packageDir)).toEqual(installed);
     });
+
+    // The registry has no other version of the bundler, so the update resolves it to the package that the file has.
+    it.concurrent.each(bundlers)(
+      "`bun update $name` to the version it has leaves the file as it is",
+      async ({ name, before }) => {
+        const dependencies = { [name]: "1.0.0" };
+        using project = await createProject(dependencies);
+        const written = bunLock(lockfileVersion, dependencies, await before(project.url));
+        await write(project.lockfilePath, written);
+        await project.install("--frozen-lockfile");
+        const installed = await installedVersions(project.packageDir);
+
+        const { err } = await project.update(name);
+        expect(err).not.toContain("Saved lockfile");
+        expect(await project.lockfile()).toBe(written);
+        expect(await installedVersions(project.packageDir)).toEqual(installed);
+        expect(project.downloaded()).toEqual(tarballsAtRoot(written));
+      },
+    );
   });
 
   it.concurrent.each(bundlers)(
@@ -6126,6 +6150,74 @@ ${Object.entries(packages)
       expect(await project.lockfile()).toBe(lockfile);
     },
   );
+
+  // optional-peer-hoist-target@1.0.0 bundles nothing. 3.0.0 has optional-peer-hoist-target2@0.0.1 in its tarball,
+  // and its optional-peer-hoist-leaf@3.0.0 gets optional-peer-hoist-target2@1.0.0 from the registry.
+  it.concurrent("`bun update` to a version that bundles records what the tarball of that version ships", async () => {
+    const locked = { "bundled-1": "1.0.0", "optional-peer-hoist-target": "1.0.0" };
+    using project = await createProject(locked);
+    const { url } = project;
+    // bundled-1 is not updated, so its no-deps stays the registry package that the earlier version of bun wrote.
+    const noDepsOfBundled1 = await fetched(url, "no-deps", "1.0.0", '{ "bundled": true }');
+    const written = bunLock(2, locked, {
+      "bundled-1": await bundled1(url),
+      "optional-peer-hoist-leaf": await fetched(url, "optional-peer-hoist-leaf", "2.0.0"),
+      "optional-peer-hoist-target": await fetched(
+        url,
+        "optional-peer-hoist-target",
+        "1.0.0",
+        '{ "dependencies": { "optional-peer-hoist-leaf": "2.0.0" } }',
+      ),
+      "bundled-1/no-deps": noDepsOfBundled1,
+    });
+    await write(project.lockfilePath, written);
+    await project.install("--frozen-lockfile");
+
+    let { err } = await project.update("optional-peer-hoist-target", "--latest");
+    expect(err).toContain("Saved lockfile");
+    const lockfile = await project.lockfile();
+    expect(lockfile).toBe(
+      bunLock(
+        4,
+        { ...locked, "optional-peer-hoist-target": "3.0.0" },
+        {
+          "bundled-1": await bundled1(url),
+          "optional-peer-hoist-leaf": await fetched(
+            url,
+            "optional-peer-hoist-leaf",
+            "3.0.0",
+            '{ "dependencies": { "optional-peer-hoist-target2": "1.0.0" } }',
+          ),
+          "optional-peer-hoist-tail": await fetched(url, "optional-peer-hoist-tail", "2.0.0"),
+          "optional-peer-hoist-target": await fetched(
+            url,
+            "optional-peer-hoist-target",
+            "3.0.0",
+            '{ "dependencies": { "optional-peer-hoist-leaf": "3.0.0", "optional-peer-hoist-target2": "0.0.1" } }',
+          ),
+          "optional-peer-hoist-target2": await fetched(
+            url,
+            "optional-peer-hoist-target2",
+            "1.0.0",
+            '{ "dependencies": { "optional-peer-hoist-tail": "2.0.0" } }',
+          ),
+          "bundled-1/no-deps": noDepsOfBundled1,
+          "optional-peer-hoist-target/optional-peer-hoist-target2": shipped("optional-peer-hoist-target2", "0.0.1"),
+        },
+      ),
+    );
+    expect(lockedVersions(lockfile)).toEqual(await installedVersions(project.packageDir));
+    // Neither no-deps@1.0.0 nor optional-peer-hoist-target2@0.0.1 is downloaded: each folder is in a tarball.
+    expect(project.downloaded()).toEqual(
+      [...new Set([...tarballsAtRoot(written), ...tarballsAtRoot(lockfile)])].toSorted(),
+    );
+
+    for (const args of [[], ["--frozen-lockfile"], ["--lockfile-only"]]) {
+      ({ err } = await project.install(...args));
+      expect(err).not.toContain("Saved lockfile");
+      expect(await project.lockfile()).toBe(lockfile);
+    }
+  });
 
   describe("bun.lock at lockfileVersion 4", () => {
     it.concurrent.each<[string, string, (url: string) => Promise<Entries>]>([

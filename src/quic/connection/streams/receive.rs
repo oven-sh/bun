@@ -142,6 +142,7 @@ impl State {
         data: &'a [u8],
         fin: bool,
     ) -> Result<Option<&'a [u8]>> {
+        self.misses_data |= offset > stream.received;
         self.account(stream, offset + data.len() as u64, fin)?;
         if stream.flags.contains(Flags::READ_DONE) {
             self.credit(id, stream);

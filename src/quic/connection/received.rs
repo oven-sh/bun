@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 use crate::coding::{Write, varint_len};
 use crate::frame::{Ack, kind};
 use crate::range_set::RangeSet;
-use crate::time::Instant;
+use crate::time::{Duration, Instant};
 
 const MAX_RANGES: usize = 1000;
 /// After the first. They are counted in one byte.
@@ -38,6 +38,8 @@ pub(super) struct Received {
     floor: u64,
     /// The peer knows what has arrived below.
     reported: u64,
+    /// What `floor` is going to be, and when.
+    next_floor: (u64, Instant),
     /// Follows the largest packet number.
     pub(super) expected: u64,
     largest_at: Instant,
@@ -150,6 +152,16 @@ impl Received {
             largest_sent_at = (sent.packet == ack.largest).then_some(sent.at);
         }
         largest_sent_at
+    }
+
+    /// Stops waiting for packets that have been missing for `patience` or more.
+    #[inline]
+    pub(super) fn forget_old_gaps(&mut self, now: Instant, patience: Duration) {
+        if now >= self.next_floor.1 {
+            self.floor = (self.floor).max(self.next_floor.0.min(self.reported));
+            self.ranges.remove_below(self.floor);
+            self.next_floor = (self.reported, now + patience);
+        }
     }
 }
 

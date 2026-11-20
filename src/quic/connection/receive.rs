@@ -508,7 +508,8 @@ impl Connection {
     /// RFC 9000 §13.2.1.
     #[inline]
     fn plan_ack(&mut self, now: Instant, id: SpaceId, order: &Order) {
-        self.ack_policy.on_packet(now, self.rtt.min);
+        let follows_loss = core::mem::take(&mut self.streams.state.misses_data);
+        self.ack_policy.on_packet(now, self.rtt.min, follows_loss);
         let (policy, space) = (&self.ack_policy, self.spaces.open(id));
         if id != SpaceId::Data
             || space.received.unacked_eliciting >= policy.packet_tolerance

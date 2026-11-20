@@ -312,8 +312,8 @@ fn probe_timeout_backs_off() {
             let start = raw.now;
             raw.wait();
             let expected = match count {
-                1 => second,
-                _ => (first << count.min(20)).min(60_000_000),
+                0 => first,
+                _ => (second << (count - 1).min(20)).min(60_000_000),
             };
             assert_eq!(raw.now - start, Duration::from_micros(expected));
             assert_eq!(raw.frames(), "stream 3 0 a, ping");
@@ -424,9 +424,9 @@ fn what_a_probe_has_repeated_is_not_repeated_when_it_is_lost() {
 #[test]
 fn several_packets_are_probed_sooner() {
     for (rtt, max_ack_delay, timeouts) in [
-        (20, 25, [40_000, 80_000, 270_000]),
-        (4, 25, [10_000, 20_000, 134_000]),
-        (4, 1, [10_000, 20_000, 40_000]),
+        (20, 25, [40_000, 80_000, 160_000]),
+        (4, 25, [10_000, 20_000, 40_000]),
+        (100, 0, [200_000, 400_000, 800_000]),
     ] {
         let raw = Raw::client().with(&format!("max_ack_delay={max_ack_delay}"));
         let mut raw = raw.connected_over(rtt);

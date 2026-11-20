@@ -16,6 +16,8 @@ const MAX_TOLERANCE: u64 = 150;
 /// For a peer that has not asked for one (RFC 9000 §13.2.2).
 const MAX_OWN_TOLERANCE: u64 = 10;
 const OWN_ACKS_PER_ROUND_TRIP: u64 = 8;
+/// The more an ACK frame covers, the longer the burst that it releases. A queue that loses packets may be short.
+const ROUND_TRIPS_AFTER_LOSS: u64 = 128;
 const ROUND_TRIPS_PER_UPDATE: u64 = 3;
 const MIN_TIME_PER_UPDATE: Duration = Duration::from_millis(1);
 const PROPORTIONAL_GAIN: f32 = 0.8;
@@ -49,10 +51,17 @@ impl Default for Policy {
 
 impl Policy {
     #[inline]
-    pub(super) fn on_packet(&mut self, now: Instant, rtt: Duration) {
-        self.arrived += 1;
+    pub(super) fn on_packet(&mut self, now: Instant, rtt: Duration, follows_loss: bool) {
+        if self.next_sequence > 0 {
+            return;
+        }
+        if follows_loss {
+            self.packet_tolerance = MIN_TOLERANCE;
+            self.since = now + rtt * ROUND_TRIPS_AFTER_LOSS;
+        }
+        self.arrived = (self.arrived + 1) * u64::from(now >= self.since);
         let elapsed = now - self.since;
-        if elapsed > rtt && self.next_sequence == 0 {
+        if elapsed > rtt {
             let per_round_trip = (rtt * self.arrived).as_micros() / elapsed.as_micros();
             self.packet_tolerance =
                 (per_round_trip / OWN_ACKS_PER_ROUND_TRIP).clamp(MIN_TOLERANCE, MAX_OWN_TOLERANCE);

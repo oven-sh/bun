@@ -45,6 +45,27 @@ fn fewer_packets_are_acknowledged_at_once_the_more_there_are() {
 }
 
 #[test]
+fn every_second_packet_is_acknowledged_for_a_while_after_data_was_lost() {
+    for (offset, expected) in [(0, 0), (1, 128 * RTT / (RTT + 1) + 1)] {
+        let mut raw = Raw::client().connected();
+        let mut count_acks = |first: &str| {
+            raw.send(first);
+            raw.advance(RTT + 1);
+            raw.forget();
+            (0..40)
+                .map(|_| (raw.send("ping"), raw.take().len()).1)
+                .sum::<usize>()
+        };
+        count_acks("ping");
+        count_acks("ping");
+        let first = format!("stream 2 {offset} a");
+        let frames = std::iter::once(first.as_str()).chain(std::iter::repeat("ping, ack"));
+        let rounds = frames.take_while(|it| count_acks(it) >= 20).count();
+        assert_eq!(rounds as u64, expected);
+    }
+}
+
+#[test]
 fn delay_is_a_quarter_of_a_round_trip_within_bounds() {
     for (rtt, delay) in [
         (1, 1000),
@@ -160,6 +181,21 @@ fn what_is_known_to_be_acknowledged_is_left_out() {
         (12, "ping, ack 0", "1[ack 12 10 8]"),
     ] {
         raw.send_as(number, frames);
+        assert_eq!(raw.packets(), ack);
+    }
+}
+
+/// RFC 9000 §13.2.3.
+#[test]
+fn packets_that_are_missing_for_long_are_not_waited_for() {
+    for (pause, ack) in [(RTT, "1[ack 1-4 +2500]"), (20 * RTT, "")] {
+        let mut raw = Raw::client().connected();
+        for number in 2..5 {
+            raw.send_as(number, "ping, ack");
+            raw.advance(pause);
+            raw.forget();
+        }
+        raw.send_as(1, "ping");
         assert_eq!(raw.packets(), ack);
     }
 }

@@ -26,7 +26,6 @@ const DELIVERY_PERIOD: Duration = Duration::from_secs(30);
 /// One part in so many of what has been sent has to be acknowledged in a period.
 const DELIVERY_PARTS: u64 = 8;
 const PROBES: u8 = 2;
-const PROMPT_PROBE_TIMEOUTS: u32 = 2;
 const MAX_PTO_COUNT_IF_HEARD: u32 = 4;
 /// After how many timeouts in a row the size of the packets is suspected.
 const BLACK_HOLE_THRESHOLD: u32 = 2;
@@ -44,6 +43,7 @@ pub(super) struct Delivery {
 impl Connection {
     #[inline]
     pub(super) fn on_ack(&mut self, now: Instant, id: SpaceId, ack: &Ack) -> Result {
+        let patience = self.probe_timeout() * MAX_LATENESS;
         let Some(space) = self.spaces.get_mut(id) else {
             return Ok(());
         };
@@ -60,6 +60,7 @@ impl Connection {
         let previous_largest = space.sent.largest_acked;
         space.sent.largest_acked = previous_largest.max(Some(ack.largest));
         let mut largest_sent_at = space.received.on_ack(ack);
+        space.received.forget_old_gaps(now, patience);
         let oldest = now - self.rtt.smoothed * MAX_LATENESS;
         let late = space.sent.find_late(oldest, ack.ranges());
         if let Some(late) = &late {
@@ -357,9 +358,7 @@ impl Connection {
     /// Acknowledgments are not usually delayed for more than a packet.
     #[inline]
     fn expects_prompt_ack(&self) -> bool {
-        self.pto_count < PROMPT_PROBE_TIMEOUTS
-            && self.spaces.data.sent.packets.len() > 1
-            && self.rtt.has_sample()
+        self.spaces.data.sent.packets.len() > 1 && self.rtt.has_sample()
     }
 
     fn probe_time(&self, id: SpaceId, space: &Space) -> Instant {

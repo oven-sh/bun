@@ -84,6 +84,8 @@ pub(crate) struct State {
     pub(super) owed: Control,
     /// The application has read or written.
     pub(super) made_progress: bool,
+    /// Something has arrived without what precedes it.
+    pub(super) misses_data: bool,
     /// See [`Self::add_load`].
     pub(super) load: u32,
 

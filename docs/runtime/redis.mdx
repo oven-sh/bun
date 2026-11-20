@@ -100,7 +100,7 @@ await redis.set("user:1:name", "Alice");
 // Get a key
 const name = await redis.get("user:1:name");
 
-// Get a key as Uint8Array
+// Get a key as a Buffer
 const buffer = await redis.getBuffer("user:1:name");
 
 // Delete a key
@@ -345,7 +345,7 @@ The client automatically converts Redis responses to JavaScript values:
 - Big number responses (RESP3) are returned as `BigInt`. A payload that is not an integer literal is returned as a string. `getBuffer` returns the payload as a `Buffer`.
 - Error responses throw JavaScript errors with appropriate error codes
 - Boolean responses (RESP3) are returned as JavaScript booleans
-- Map responses (RESP3) are returned as JavaScript objects
+- Map responses (RESP3) are returned as JavaScript objects with a null prototype
 - Set responses (RESP3) are returned as JavaScript arrays
 
 Special handling for specific commands:

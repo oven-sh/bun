@@ -33,6 +33,10 @@ expectType(copy.unsubscribe("hello", () => {})).is<Promise<void>>();
 const redis = Bun.redis;
 const buf = Buffer.from("key");
 
+// Strings
+expectType(redis.get("k")).is<Promise<string | null>>();
+expectType(redis.getBuffer("k")).is<Promise<Buffer<ArrayBuffer> | null>>();
+
 // Bitmap
 expectType(redis.bitop("NOT", "dest", "k1")).is<Promise<number>>();
 expectType(redis.bitop("not", "dest", buf)).is<Promise<number>>();

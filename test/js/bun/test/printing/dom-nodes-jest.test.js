@@ -273,6 +273,16 @@ test("a jsdom node and a happy-dom node", () => {
   expect(jsdom).not.toStrictEqual(happyDOM);
 });
 
+test("nodes behind a Proxy are strictly equal only with one class", () => {
+  // A <select> of jsdom and a <form> of happy-dom are each a Proxy.
+  const create = (tag, { document }) => document.createElement(tag);
+  const jsdom = new JSDOM("").window;
+  expect(create("select", jsdom)).toStrictEqual(create("select", jsdom));
+  expect(create("select", jsdom)).not.toStrictEqual(create("select", new JSDOM("").window));
+  expect(create("form", jsdom)).not.toStrictEqual(create("form", new Window()));
+  expect(create("form", new Window())).not.toStrictEqual(create("form", jsdom));
+});
+
 test("jsdom: DOMStringMap", () => {
   const { document } = new JSDOM(`<div data-foo-bar="1" data-a="2" data-z=""></div><p></p>`).window;
   for (const { dataset } of [document.querySelector("div"), document.querySelector("p")]) {

@@ -9,7 +9,7 @@ describe.skipIf(!isEnabled)("Valkey: Buffer Operations", () => {
     ctx.redis = createClient(ConnectionType.TCP);
   });
 
-  test("getBuffer returns binary data as Uint8Array", async () => {
+  test("getBuffer returns binary data as a Buffer", async () => {
     const key = ctx.generateKey("buffer-test");
 
     const binaryData = new Uint8Array([0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x20, 0x77, 0x6f, 0x72, 0x6c, 0x64]);
@@ -24,7 +24,7 @@ describe.skipIf(!isEnabled)("Valkey: Buffer Operations", () => {
     expect(asBuffer.buffer).toBeInstanceOf(ArrayBuffer);
     expect(asBuffer).toBeInstanceOf(Uint8Array);
     expect(asBuffer.length).toBe(binaryData.length);
-    expect(asBuffer).toStrictEqual(binaryData);
+    expect(asBuffer).toStrictEqual(Buffer.from(binaryData));
 
     for (let i = 0; i < binaryData.length; i++) {
       expect(asBuffer[i]).toBe(binaryData[i]);
@@ -77,7 +77,7 @@ describe.skipIf(!isEnabled)("Valkey: Buffer Operations", () => {
     await ctx.redis.set(key, big);
     const readers = Array.from({ length: 20 }, () => ctx.redis.getBuffer(key));
     const results = await Promise.all(readers);
-    for (const r of results) expect(r).toStrictEqual(big);
+    for (const r of results) expect(r).toStrictEqual(Buffer.from(big));
   });
 
   test("set and getBuffer with ArrayBufferView key", async () => {
@@ -86,7 +86,7 @@ describe.skipIf(!isEnabled)("Valkey: Buffer Operations", () => {
     await ctx.redis.set(keyBytes, value);
     const out = await ctx.redis.getBuffer(keyBytes);
     expect(out).toBeInstanceOf(Uint8Array);
-    expect(out).toStrictEqual(value);
+    expect(out).toStrictEqual(Buffer.from(value));
   });
 
   test("set and getBuffer with ArrayBuffer key", async () => {
@@ -96,7 +96,7 @@ describe.skipIf(!isEnabled)("Valkey: Buffer Operations", () => {
     await ctx.redis.set(keyBuffer as any, value);
     const out = await ctx.redis.getBuffer(keyBuffer as any);
     expect(out).toBeInstanceOf(Uint8Array);
-    expect(out).toStrictEqual(value);
+    expect(out).toStrictEqual(Buffer.from(value));
   });
 
   test("set and getBuffer with Blob key", async () => {
@@ -106,7 +106,7 @@ describe.skipIf(!isEnabled)("Valkey: Buffer Operations", () => {
     await ctx.redis.set(keyBlob, value);
     const out = await ctx.redis.getBuffer(keyBlob);
     expect(out).toBeInstanceOf(Uint8Array);
-    expect(out).toStrictEqual(value);
+    expect(out).toStrictEqual(Buffer.from(value));
   });
 });
 

@@ -226,6 +226,32 @@ These fire **before** the corresponding `navigate()` promise settles, so by the 
 
 ---
 
+## Dialogs
+
+By default, a page's `alert()`, `confirm()`, `prompt()`, and `beforeunload` prompts do not block a view. Bun answers them automatically:
+
+- `alert()` returns.
+- `confirm()` returns `false`.
+- `prompt()` returns `null`.
+- A `beforeunload` prompt is accepted, so the navigation that raised it goes ahead.
+
+With the Chrome backend, you can answer dialogs yourself. Listen for the [`Page.javascriptDialogOpening`](https://chromedevtools.github.io/devtools-protocol/tot/Page/#event-javascriptDialogOpening) CDP event (see [Raw Chrome DevTools Protocol](#cdp)). While the view has a listener, Bun does not answer its dialogs. The listener must answer every dialog with `Page.handleJavaScriptDialog`. Otherwise the page, and any pending `evaluate()`, `click()`, or `navigate()`, stays blocked. Remove the listener to go back to automatic answers.
+
+```ts
+view.addEventListener<{ type: string; message: string }>("Page.javascriptDialogOpening", event => {
+  const { type } = event.data; // "alert" | "confirm" | "prompt" | "beforeunload"
+  view
+    .cdp("Page.handleJavaScriptDialog", { accept: type !== "confirm", promptText: "typed into prompt()" })
+    .catch(console.error);
+});
+
+await view.evaluate("prompt('Your name?')"); // "typed into prompt()"
+```
+
+A view runs one `cdp()` call at a time. If a dialog opens while another `cdp()` call is pending, the listener's `cdp()` call throws `ERR_INVALID_STATE` and the dialog stays open. Trigger dialogs with `evaluate()`, `click()`, or `navigate()` while a listener handles them.
+
+---
+
 ## Evaluating JavaScript
 
 Run an expression in the page's main frame and get its result back as a native JavaScript value:
@@ -490,7 +516,7 @@ view.addEventListener("Network.responseReceived", event => {
 await view.navigate("https://example.com");
 ```
 
-Bun drops events that have no registered listener before it even parses their JSON `params`, so enabling a chatty domain (like `Network`) is cheap if you only listen for one or two event types.
+Bun drops events that have no registered listener before it even parses their JSON `params`, so enabling a chatty domain (like `Network`) is cheap if you only listen for one or two event types. The exception is `Page.javascriptDialogOpening`: with no listener, Bun answers the dialog (see [Dialogs](#dialogs)).
 
 On the WebKit backend, `cdp()` throws `ERR_METHOD_NOT_IMPLEMENTED` — there is no DevTools Protocol bridge. The `EventTarget` interface still works for your own `dispatchEvent()` calls.
 

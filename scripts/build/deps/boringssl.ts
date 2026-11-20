@@ -36,6 +36,10 @@ export const boringssl: Dependency = {
     commit: BORINGSSL_COMMIT,
   }),
 
+  // Carried here until the same change lands in oven-sh/boringssl. Then bump
+  // BORINGSSL_COMMIT and delete the patch.
+  patches: ["patches/boringssl/fork-detect-bump-generation.patch"],
+
   build: cfg => {
     // win-x64 uses NASM-syntax .asm; everything else (including win-aarch64)
     // uses gas .S that clang assembles.

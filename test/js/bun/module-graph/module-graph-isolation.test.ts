@@ -4001,6 +4001,7 @@ test("ModuleGraph isolation: every property of Bun is classified", () => {
     gc: "host",
     generateHeapSnapshot: "host",
     shrink: "host",
+    reseedRandom: "host",
     env: "host",
     argv: "host",
     main: "host",

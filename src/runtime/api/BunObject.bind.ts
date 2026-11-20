@@ -165,6 +165,8 @@ export const shellEscape = b.fn({
   throws: true,
 });
 
+export const reseedRandom = b.fn({ capability: "js" });
+
 export const shrink = b.fn({ capability: "js" });
 
 export const sleepSync = b.fn({

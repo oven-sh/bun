@@ -1501,6 +1501,7 @@ pub(crate) fn is_type_of_jest_fn_call<'a>(
         }
 }
 
+#[inline(never)] // one copy of the move out of `ParsedJestFnCall`
 pub(crate) fn parse_general_jest_fn_call<'a>(
     file: &'a File<'a>,
     possible_jest_node: PossibleJestNode<'a>,
@@ -1528,6 +1529,7 @@ pub(crate) fn parse_general_jest_fn_call<'a>(
     }
 }
 
+#[inline(never)] // one copy of the move out of `ParsedJestFnCall`
 pub(crate) fn parse_expect_jest_fn_call<'a>(
     file: &'a File<'a>,
     possible_jest_node: PossibleJestNode<'a>,
@@ -1541,6 +1543,7 @@ pub(crate) fn parse_expect_jest_fn_call<'a>(
     }
 }
 
+#[inline(never)] // one copy of the move out of `ParsedJestFnCall`
 pub(crate) fn parse_expect_and_typeof_vitest_fn_call<'a>(
     file: &'a File<'a>,
     possible_jest_node: PossibleJestNode<'a>,

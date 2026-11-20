@@ -5,8 +5,8 @@ import { describe, expect, test } from "bun:test";
 // needed.
 
 // The static methods accept a path or an S3 blob; everything else is rejected
-// up front with a per-method message. Numbers parse as file descriptor paths,
-// which S3 also rejects.
+// up front with a per-method message. An int32 parses as a file descriptor
+// path, which S3 also rejects. Any other number is not a path at all.
 describe("S3Client static method argument validation", () => {
   const staticCases = [
     ["presign", "Expected a S3 or path to presign", []],
@@ -27,6 +27,18 @@ describe("S3Client static method argument validation", () => {
     expect(() => fn(Bun.file(import.meta.path), ...extra)).toThrow(expected);
     // a number is parsed as a file descriptor path
     expect(() => fn(0, ...extra)).toThrow(expected);
+    // unless it is not an int32: then it is not a path, a file descriptor or a Blob
+    for (const notInt32 of [5.5, NaN, 2 ** 31, 1e308]) {
+      expect(() => fn(notInt32, ...extra)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: expect.stringContaining(
+            'The "destination" argument must be of type path, file descriptor, or Blob.',
+          ),
+        }),
+      );
+    }
   });
 
   test("S3Client.write requires data", () => {

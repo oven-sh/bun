@@ -172,6 +172,35 @@ test("a Uint8Array path can still be transferred after Bun.file()", async () => 
   expect({ byteLength: path.byteLength, text: await file.text() }).toEqual({ byteLength: 0, text: "a" });
 });
 
+// As in `node:fs`, only an int32 is a file descriptor.
+test("Bun.file() takes only an int32 as a file descriptor", async () => {
+  const failure = (value: number) => {
+    try {
+      Bun.file(value);
+    } catch (e: any) {
+      return `${e.name} ${e.code}`;
+    }
+    return "no error";
+  };
+  const failures = (values: number[]) => values.map(value => [value, failure(value)]);
+
+  const notInt32 = [5.5, -0.5, NaN, Infinity, -Infinity, 2 ** 31, 2 ** 32, -(2 ** 31) - 1, 1e100];
+  expect(failures(notInt32)).toEqual(notInt32.map(value => [value, "TypeError ERR_INVALID_ARG_TYPE"]));
+  const negativeInt32 = [-1, -(2 ** 31), new Float64Array([-1])[0]];
+  expect(failures(negativeInt32)).toEqual(negativeInt32.map(value => [value, "RangeError ERR_OUT_OF_RANGE"]));
+  // Bun.file() opens nothing, so these need no open file.
+  const int32 = [0, -0, 2 ** 31 - 1];
+  expect(failures(int32)).toEqual(int32.map(value => [value, "no error"]));
+
+  using dir = tempDir("bun-file-fd-as-double", { "a.txt": "contents" });
+  const handle = await fsPromises.open(join(String(dir), "a.txt"), "r");
+  try {
+    expect(await Bun.file(new Float64Array([handle.fd])[0]).text()).toBe("contents");
+  } finally {
+    await handle.close();
+  }
+});
+
 test.concurrent.each([
   "Bun.file(path.slice())",
   "s3.file(path.slice())",

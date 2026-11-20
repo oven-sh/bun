@@ -185,33 +185,15 @@ function guardCallback(callback: (...args: any[]) => unknown) {
 }
 
 const nodeModulesRE = /[\\/]node_modules[\\/]/;
-const ErrorCaptureStackTrace = Error.captureStackTrace;
-function returnStackFrames(_err: unknown, frames: unknown[]) {
-  return frames;
-}
+// The call sites below `startFunction`, read with no property of Error, as node's native helpers. Made at the first call, so that loading this module makes no function.
+let captureCallSites: (frameLimit: number, startFunction: Function) => NodeJS.CallSite[];
 
 // Port of node's IsInsideNodeModules: first real user frame inside node_modules?
-// Guarded so a tampered Error.* never escapes to callers like url.parse.
+// Guarded so a tampered prototype never escapes to callers like url.parse.
 // https://github.com/nodejs/node/blob/main/src/node_util.cc
-function isInsideNodeModules(frameLimit: number): boolean {
-  let prevLimit: unknown, prevPrepare: unknown;
-  let frames: { getFileName(): string | null }[] | undefined;
-  try {
-    prevLimit = Error.stackTraceLimit;
-    prevPrepare = Error.prepareStackTrace;
-    Error.stackTraceLimit = frameLimit;
-    Error.prepareStackTrace = returnStackFrames;
-    const target: { stack?: unknown } = {};
-    ErrorCaptureStackTrace(target, isInsideNodeModules);
-    frames = target.stack as typeof frames;
-  } catch {
-  } finally {
-    try {
-      Error.stackTraceLimit = prevLimit as typeof Error.stackTraceLimit;
-      Error.prepareStackTrace = prevPrepare as typeof Error.prepareStackTrace;
-    } catch {}
-  }
-  if (!$isJSArray(frames)) return false;
+function isInsideNodeModules(frameLimit: number = 10): boolean {
+  captureCallSites ??= $newCppFunction("FormatStackTraceForJS.cpp", "jsFunctionCaptureCallSites", 2);
+  const frames = captureCallSites(frameLimit, isInsideNodeModules);
   try {
     for (const frame of frames) {
       const filename = frame.getFileName();

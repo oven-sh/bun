@@ -74,6 +74,8 @@ WTF::String formatStackTrace(
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace);
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDefaultErrorPrepareStackTrace);
+// (frameLimit, startFunction): call sites as Error.prepareStackTrace gets them, without using Error's properties.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionCaptureCallSites);
 
 // JSC Custom Accessors - error.stack getter/setter
 JSC_DECLARE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter);

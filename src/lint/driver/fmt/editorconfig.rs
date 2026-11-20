@@ -337,7 +337,10 @@ impl File {
                         // A section with an empty name has no pattern.
                         let glob = || {
                             Pattern::with_dots(
-                                &bun_lint::glob::from_minimatch(&full_glob(directory, name)),
+                                &bun_lint::glob::from_minimatch(
+                                    &full_glob(directory, name),
+                                    &bun_lint::glob::MINIMATCH_3,
+                                ),
                                 bun_glob::Dots::SkipTraversal,
                             )
                         };

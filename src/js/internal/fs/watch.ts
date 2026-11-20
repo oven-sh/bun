@@ -13,14 +13,16 @@ type Glob = import("bun").Glob;
 type Matcher = (filename: string) => boolean;
 type WatchListener = (eventType: string, filename: unknown) => void;
 
+const isWindows = process.platform === "win32";
+
 function makeGlobMatcher(glob: Glob): Matcher {
   return function matchGlob(filename) {
-    return glob.match(filename);
+    return glob.$globMatchNode(filename, isWindows);
   };
 }
 function makeGlobOrBasenameMatcher(glob: Glob): Matcher {
   return function matchGlobOrBasename(filename) {
-    return glob.match(filename) || glob.match(basename(filename));
+    return glob.$globMatchNode(filename, isWindows) || glob.$globMatchNode(basename(filename), isWindows);
   };
 }
 function makeRegexMatcher(matcher: RegExp): Matcher {

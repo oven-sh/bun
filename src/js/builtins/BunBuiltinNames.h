@@ -92,6 +92,7 @@ using namespace JSC;
     macro(filename) \
     macro(flush) \
     macro(format) \
+    macro(globMatchNode) \
     macro(globScan) \
     macro(globScanSync) \
     macro(handleEvent) \

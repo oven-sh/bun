@@ -19,14 +19,14 @@ test("BuildError is modifiable", async () => {
   expect(error!.message).not.toBe(message);
 });
 
-test("import with many build errors keeps AggregateError entries alive across GC", async () => {
+test.each([256, 300])("import with %d build errors keeps AggregateError entries alive across GC", async errors => {
   // process_fetch_log accumulated the BuildMessage wrappers in a heap Vec
   // while creating the next ones; the conservative GC stack scan never saw
   // them, so a collection triggered mid-loop swept the earlier cells and
   // freed their native BuildMessage (use-after-free found by fuzzing).
-  // 257 duplicate declarations produce 256 log messages, maximizing the
-  // number of allocations between the first wrapper and the AggregateError.
-  const dupes = Array.from({ length: 257 }, (_, i) => `const dup = ${i};`).join("\n");
+  // One duplicate declaration more than `errors` produces that many log
+  // messages, and each wrapper has to outlive the allocation of the later ones.
+  const dupes = Array.from({ length: errors + 1 }, (_, i) => `const dup = ${i};`).join("\n");
   using dir = tempDir("build-error-gc", {
     "bad.js": dupes,
     "main.js": `
@@ -64,8 +64,83 @@ test("import with many build errors keeps AggregateError entries alive across GC
   // stderr carries the crash report when the child dies; surface it in the
   // failure diff but don't assert on it (debug builds emit benign noise).
   if (exitCode !== 0) console.error(stderr);
-  expect(stdout.trim()).toBe(JSON.stringify(Array.from({ length: 16 }, () => 256)));
+  expect(stdout.trim()).toBe(JSON.stringify(Array.from({ length: 16 }, () => errors)));
   expect(exitCode).toBe(0);
+});
+
+// Each `-->` line logs one warning. Each `a b` line logs one error.
+const warningsThenErrors = (warnings: number, errors: number) =>
+  Buffer.alloc(warnings * 4, "-->\n").toString() + Buffer.alloc(errors * 4, "a b\n").toString();
+
+test.each([255, 256, 300])(
+  "import() and require() of a file with %d warnings before its error reject with each message",
+  async warnings => {
+    const code = warningsThenErrors(warnings, 1);
+    const files = ["import.js", "import.cjs", "require.js", "require.cjs"];
+    using dir = tempDir("build-error-many-warnings", Object.fromEntries(files.map(file => [file, code])));
+
+    const actual: Record<string, unknown> = {};
+    const expected: Record<string, unknown> = {};
+    for (const file of files) {
+      const path = join(String(dir), file);
+      try {
+        if (file.startsWith("import")) await import(path);
+        else require(path);
+        actual[file] = "loaded";
+      } catch (e: any) {
+        actual[file] = {
+          name: e.name,
+          // Keep the file name of the quoted path.
+          message: e.message.replace(/".*[\\/]/, '"'),
+          entries: e.errors?.map((entry: any) => `${entry.level} ${entry.position.line}: ${entry.message}`),
+        };
+      }
+      expected[file] = {
+        name: "AggregateError",
+        message: `${warnings + 1} errors building "${file}"`,
+        entries: [
+          ...Array.from(
+            { length: warnings },
+            (_, i) => `warn ${i + 1}: Treating "-->" as the start of a legacy HTML single-line comment`,
+          ),
+          `error ${warnings + 1}: Expected ";" but found "b"`,
+        ],
+      };
+    }
+    expect(actual).toEqual(expected);
+  },
+);
+
+// The kind and the line of each message in the output of the error printer.
+const printedMessages = (stderr: string) =>
+  Array.from(stderr.matchAll(/^(warn|error): .*\r?\n +at .*:(\d+):\d+\r?$/gm), match => `${match[1]} ${match[2]}`);
+
+test.concurrent.each<[warnings: number, errors: number]>([
+  [255, 1],
+  [256, 1],
+  [300, 1],
+  [0, 300],
+])("an entry point prints each message of its log (%d warnings, %d errors)", async (warnings, errors) => {
+  using dir = tempDir("build-error-entry-point", { "bad.js": warningsThenErrors(warnings, errors) });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "bad.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, printed: printedMessages(stderr), exitCode }).toEqual({
+    stdout: "",
+    printed: [
+      ...Array.from({ length: warnings }, (_, i) => `warn ${i + 1}`),
+      ...Array.from({ length: errors }, (_, i) => `error ${warnings + i + 1}`),
+    ],
+    exitCode: 1,
+  });
 });
 
 // "Cannot use import statement with CommonJS-only features" is logged after

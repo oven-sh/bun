@@ -39,10 +39,11 @@ pub(super) struct Sorted<'s> {
 #[derive(Default)]
 struct Plugins {
     built_in: Vec<Vec<u8>>,
-    /// Plugins that the project's own Prettier loads: those that add a language, and every other one listed for a file
-    /// that goes there.
+    /// Plugins that the project's own Prettier loads: those that add a language, and every other one that is only
+    /// listed for files that go there.
     for_languages: Vec<Vec<u8>>,
-    /// Plugins that `bun fmt` doesn't include, listed for a file that it formats itself.
+    /// Plugins that `bun fmt` doesn't include, listed for a file that it formats itself. Such a plugin is only in this
+    /// list, also if a file that lists it goes to Prettier: this is the one to act on.
     not_supported: Vec<Vec<u8>>,
 }
 
@@ -103,6 +104,8 @@ pub(super) fn report(
             .for_each(|it| plugins.add(it, goes_to_prettier));
         nested.extend(configs.config_file_path(scope).map(to_relative));
     }
+    let not_supported = &plugins.not_supported;
+    (plugins.for_languages).retain(|it| !not_supported.contains(it));
     let mut nested = sorted(nested);
     nested.retain(|it| Some(it) != file.as_ref());
     // Prettier loads every plugin listed for a file, so all of them have to stay installed.

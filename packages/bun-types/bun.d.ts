@@ -11022,8 +11022,12 @@ declare module "bun" {
     workspaces: {
       [workspace: string]: BunLockFileWorkspacePackage;
     };
-    /** @see https://bun.com/docs/install/overrides */
-    overrides?: Record<string, string>;
+    /**
+     * With scoped rules (`lockfileVersion` 3), a value can be an object: its keys are the `name` or `name@range` of a package below the key, and `.` is the rule for the key itself.
+     *
+     * @see https://bun.com/docs/install/overrides
+     */
+    overrides?: Record<string, string | Record<string, string>>;
     /** @see https://bun.com/docs/install/patch */
     patchedDependencies?: Record<string, string>;
     /** @see https://bun.com/docs/install/lifecycle#trusteddependencies */

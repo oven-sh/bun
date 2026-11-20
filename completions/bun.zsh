@@ -550,7 +550,9 @@ _bun_run_completion() {
 _bun_upgrade_completion() {
     _arguments -s -C \
         '1: :->cmd' \
-        '--canary[Upgrade to canary build]' &&
+        '--canary[Upgrade to canary build]' \
+        '--stable[Switch from canary back to the latest stable release]' \
+        '--no-save[Do not update the packageManager pin in package.json]' &&
         ret=0
 
 }

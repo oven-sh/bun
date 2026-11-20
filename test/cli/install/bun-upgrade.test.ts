@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { upgrade_test_helpers } from "bun:internal-for-testing";
-import { beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import {
   bunExe,
   bunEnv as env,
@@ -506,4 +506,177 @@ it.concurrent("verifies the downloaded release archive against the digest report
   expect(matched.stderr).toEndWith(unpackFailure);
   expect(matched.staged).toEqual(["9.9.8"]);
   expect(matched.exitCode).toBe(1);
+});
+
+describe.concurrent("packageManager pin in package.json", () => {
+  // The release the server advertises is the running version, so the flow
+  // ends at one of the two stable exits: a release build stops at "Congrats!",
+  // a canary build swaps the stand-in for the fake release. Both must bring the
+  // pin up to the version that is installed afterwards.
+  const version = Bun.version;
+  // The lines name the package.json by its absolute path. The tests match on
+  // the tail after the path.
+  const pinLine = (old: string) => `package.json to bun@${version} (was bun@${old})\n`;
+  const staleLine = (old: string, why: string) =>
+    `package.json is bun@${old}, the installed version is bun@${version} (not updated: ${why})\n`;
+
+  const zipDir = tempDir("bun-upgrade-pin-release", {});
+  const zipPath = join(String(zipDir), "release.zip");
+  beforeAll(() => writeFakeReleaseZip(zipPath, version));
+  afterAll(() => zipDir[Symbol.dispose]());
+
+  // Runs `bun upgrade --stable` with `files` laid out in a fresh project
+  // directory, from `cwd` inside it. Returns the files as they are afterwards.
+  async function runUpgrade(
+    files: Record<string, string>,
+    opts: { args?: string[]; env?: Record<string, string>; tagName?: string; zip?: string; cwd?: string } = {},
+  ) {
+    using installDir = tempDir("bun-upgrade-pin-install", {});
+    const execPath = await installStandIn(String(installDir));
+    using project = tempDir("bun-upgrade-pin", files);
+    using stagingRoot = tempDir("bun-upgrade-pin-staging", {});
+    using server = startReleaseServer({ tagName: opts.tagName ?? `bun-v${version}`, zipPath: opts.zip ?? zipPath });
+
+    await using proc = Bun.spawn({
+      cmd: [execPath, "upgrade", "--stable", ...(opts.args ?? [])],
+      cwd: join(String(project), opts.cwd ?? "."),
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: { ...server.env, BUN_TMPDIR: String(stagingRoot), ...opts.env },
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const after: Record<string, string> = {};
+    for (const name of Object.keys(files)) {
+      after[name] = await Bun.file(join(String(project), name)).text();
+    }
+    return { stderr, exitCode, after };
+  }
+
+  const pinned = (pin: string, indent = "  ") =>
+    [
+      "{",
+      `${indent}"name": "app",`,
+      `${indent}"packageManager": "${pin}",`,
+      `${indent}"dependencies": {}`,
+      "}",
+      "",
+    ].join("\n");
+
+  it("rewrites a stale pin and keeps the indentation and the other fields", async () => {
+    const before = pinned("bun@1.0.0", "    ");
+    const { stderr, exitCode, after } = await runUpgrade({ "package.json": before });
+    expect(stderr).toContain(pinLine("1.0.0"));
+    expect(after["package.json"]).toBe(pinned(`bun@${version}`, "    "));
+    expect(exitCode).toBe(0);
+  });
+
+  it("drops the integrity hash of the old pin", async () => {
+    const before = pinned("bun@1.0.0+sha256.0123456789abcdef");
+    const { stderr, exitCode, after } = await runUpgrade({ "package.json": before });
+    expect(stderr).toContain(pinLine("1.0.0+sha256.0123456789abcdef"));
+    expect(after["package.json"]).toBe(pinned(`bun@${version}`));
+    expect(exitCode).toBe(0);
+  });
+
+  it("updates the pin of the workspace root when run from a member package", async () => {
+    const files = {
+      "package.json": pinned("bun@1.0.0"),
+      "packages/app/package.json": `{ "name": "member", "scripts": { "packageManager": "echo" } }\n`,
+    };
+    const { stderr, exitCode, after } = await runUpgrade(files, { cwd: "packages/app" });
+    expect(stderr).toContain(pinLine("1.0.0"));
+    expect(after["package.json"]).toBe(pinned(`bun@${version}`));
+    expect(after["packages/app/package.json"]).toBe(files["packages/app/package.json"]);
+    expect(exitCode).toBe(0);
+  });
+
+  it("--no-save reports the stale pin and leaves the file alone", async () => {
+    const before = pinned("bun@1.0.0");
+    const { stderr, exitCode, after } = await runUpgrade({ "package.json": before }, { args: ["--no-save"] });
+    expect(stderr).toContain(staleLine("1.0.0", "--no-save"));
+    expect(after["package.json"]).toBe(before);
+    expect(exitCode).toBe(0);
+  });
+
+  it("BUN_DRY_RUN reports the stale pin and leaves the file alone", async () => {
+    const before = pinned("bun@1.0.0");
+    const { stderr, exitCode, after } = await runUpgrade({ "package.json": before }, { env: { BUN_DRY_RUN: "1" } });
+    expect(stderr).toContain(staleLine("1.0.0", "dry run"));
+    expect(after["package.json"]).toBe(before);
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([
+    ["bun@99.0.0", pinned("bun@99.0.0")],
+    [`bun@${version}`, pinned(`bun@${version}`)],
+    ["pnpm@9.0.0", pinned("pnpm@9.0.0")],
+    ["bun@canary", pinned("bun@canary")],
+    ["engines.bun only", `{ "engines": { "bun": ">=1.0.0" }, "name": "packageManager" }\n`],
+    ["no field", `{ "name": "app" }\n`],
+  ])("leaves the file alone: %s", async (_name, before) => {
+    const { stderr, exitCode, after } = await runUpgrade({ "package.json": before });
+    expect(stderr).not.toContain("packageManager");
+    expect(after["package.json"]).toBe(before);
+    expect(exitCode).toBe(0);
+  });
+
+  it("warns about a packageManager that is not a string and does not look further up", async () => {
+    const files = {
+      "package.json": pinned("bun@1.0.0"),
+      "packages/app/package.json": `{ "packageManager": { "name": "bun" } }\n`,
+    };
+    const { stderr, exitCode, after } = await runUpgrade(files, { cwd: "packages/app" });
+    expect(stderr).toContain("packageManager in ");
+    expect(stderr).toContain(" is not a string, it was not updated\n");
+    expect(after["package.json"]).toBe(files["package.json"]);
+    expect(after["packages/app/package.json"]).toBe(files["packages/app/package.json"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // On POSIX the fake release is a shell script that prints any version, so the
+  // upgrade installs it and the pin is refreshed after the swap on every build
+  // type. On Windows the archive has to carry a real bun.exe, which reports its
+  // own version.
+  it.skipIf(isWindows)("updates the pin after installing a newer release", async () => {
+    using newerDir = tempDir("bun-upgrade-pin-release", {});
+    const newer = join(String(newerDir), "release.zip");
+    await writeFakeReleaseZip(newer, "9.9.9");
+    const before = pinned("bun@1.0.0");
+    const { stderr, exitCode, after } = await runUpgrade(
+      { "package.json": before },
+      { tagName: "bun-v9.9.9", zip: newer },
+    );
+    expect(stderr).toContain("Updated packageManager in ");
+    expect(stderr).toContain("package.json to bun@9.9.9 (was bun@1.0.0)\n");
+    expect(stderr).toEndWith(
+      ` Upgraded.\n\nWelcome to Bun v9.9.9!\n\nWhat's new in Bun v9.9.9:\n\n    https://bun.com/blog/release-notes/bun-v9.9.9\n\nReport any bugs:\n\n    https://github.com/oven-sh/bun/issues\n\nCommit log:\n\n    https://github.com/oven-sh/bun/compare/bun-v${Bun.version}...bun-v9.9.9\n`,
+    );
+    expect(after["package.json"]).toBe(pinned("bun@9.9.9"));
+    expect(exitCode).toBe(0);
+  });
+
+  it("warns and keeps going when package.json does not parse", async () => {
+    const before = `{ "packageManager": "bun@1.0.0"\n`;
+    const { stderr, exitCode, after } = await runUpgrade({ "package.json": before });
+    expect(stderr).toContain(", its packageManager field was not updated\n");
+    expect(after["package.json"]).toBe(before);
+    expect(exitCode).toBe(0);
+  });
+
+  it("does not touch the pin when the upgrade fails", async () => {
+    // The archive unpacks to a bun that reports a version other than the one
+    // the release is tagged with, so the upgrade aborts before the swap.
+    using mismatchedDir = tempDir("bun-upgrade-pin-release", {});
+    const mismatched = join(String(mismatchedDir), "release.zip");
+    await writeFakeReleaseZip(mismatched, "9.9.8");
+    const before = pinned("bun@1.0.0");
+    const { stderr, exitCode, after } = await runUpgrade(
+      { "package.json": before },
+      { tagName: "bun-v9.9.9", zip: mismatched },
+    );
+    expect(stderr).not.toContain("packageManager");
+    expect(after["package.json"]).toBe(before);
+    expect(exitCode).toBe(1);
+  });
 });

@@ -186,6 +186,22 @@ const EVIDENCE: &[&str] = &[
 ];
 
 #[rustfmt::skip]
+const FUNCTIONS_AS_BODY: &[&str] = &["again: function f() {}", "if (unknown) function f() {}", "if (unknown) {} else function f() {}"];
+
+// What the text makes strict below the file, what the parser of `bun run` takes for a directive, and the `import` keyword where nothing is imported.
+#[rustfmt::skip]
+const STRICT_PLACES: &[(&str, &str)] = &[
+    ("function unused() { \"use strict\"; ", " }"), ("(() => { \"use strict\"; ", " });"), ("function unused() { \"use strict\"; function inner() { ", " } }"),
+    ("{ \"use strict\"; ", " }"), ("try { \"use strict\"; ", " } catch {}"), ("try {} finally { \"use strict\"; ", " }"), ("for (;;) { \"use strict\"; break; ", " }"),
+    ("label: { \"use strict\"; ", " }"), ("namespace N { \"use strict\"; ", " }"), ("function unused() { (\"use strict\"); ", " }"),
+    ("function unused() { \"use\\x20strict\"; ", " }"), ("function unused() { \"use strict\" as any; ", " }"), ("function unused() { type T = 1; \"use strict\"; ", " }"),
+    ("class C { a = () => { ", " }; }"), ("class C extends (function () { ", " }) {}"), ("@(function () { ", " }) class C {}"),
+    ("class C { @(function () { ", " }) m() {} }"), ("class C { [(function () { ", " })]() {} }"), ("namespace N { ", " }"),
+    ("import type Y = require(\"./y\"); ", ""), ("import type { T } from \"./y\"; ", ""), ("import y = require(\"./y\"); ", ""), ("export type T = 1; ", ""),
+    ("declare module \"m\" { import y from \"./y\"; } ", ""), ("declare module \"m\" { export const y: number; } ", ""),
+];
+
+#[rustfmt::skip]
 const PLACES: &[(&str, &str)] = &[
     ("", ""), ("if (false) { ", " }"), ("if (true) {} else { ", " }"), ("if (0 + 0) { ", " }"), ("if (unknown) { ", " }"), ("false && (() => { ", " })();"),
     ("function unused() { ", " }"), ("(() => { ", " });"), ("unknown(() => { ", " });"), ("while (false) { ", " }"), ("for (;;) { break; ", " }"),
@@ -299,6 +315,9 @@ const STATEMENTS: &[&str] = &[
     "var module; { var module; typeof module; }", "var module; { var module; module = 1; }", "{ var module; module = 1; }",
     "if (false) { var module; } { var module; module = 1; }", "function f(Object) { if (new Object()) {} else module.exports = 1; } f(unknown);",
     "const Set = unknown; new Set(), module;", "class Array {} new Array(1, 2), module;", "let Math = unknown; Math.PI, module;",
+    "outer: inner: function f() {}", "if (false) function f() {}", "if (unknown) function f() {} else function g() {}", "again: { function f() {} }",
+    "if (unknown) { function f() {} }", "again: function f();", "if (unknown) function f();", "again: function f() { import.meta.url; }",
+    "module.exports = 1; if (unknown) function module() {}", "module.exports = 1; again: function module() {}",
 ];
 
 fn write_cells() -> Vec<String> {
@@ -307,7 +326,13 @@ fn write_cells() -> Vec<String> {
         let unused = |arguments: &&str| format!("new {constructor}({arguments}), module;");
         cells.extend(ARGUMENTS.iter().map(unused));
     }
-    for (places, texts) in [(PLACES, EVIDENCE), (BODIES, CONDITIONS)] {
+    let crossed = [
+        (PLACES, EVIDENCE),
+        (PLACES, FUNCTIONS_AS_BODY),
+        (STRICT_PLACES, FUNCTIONS_AS_BODY),
+        (BODIES, CONDITIONS),
+    ];
+    for (places, texts) in crossed {
         for (before, behind) in places {
             cells.extend(texts.iter().map(|text| format!("{before}{text}{behind}")));
         }

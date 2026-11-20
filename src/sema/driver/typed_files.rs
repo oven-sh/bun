@@ -1404,7 +1404,12 @@ impl Insertions {
         }
     }
 
-    fn apply(mut self, javascript: &[u8]) -> Vec<u8> {
+    fn apply(self, javascript: &[u8]) -> Vec<u8> {
+        self.apply_without(javascript, 0..0)
+    }
+
+    /// `apply`, without the bytes of `cut`. What would go in front of the end of `cut` goes behind it.
+    fn apply_without(mut self, javascript: &[u8], cut: std::ops::Range<usize>) -> Vec<u8> {
         self.list.shared_sort_by_key(|a| (a.0, a.1, a.2));
         let mut text = Vec::with_capacity(javascript.len() * 2);
         let append = |text: &mut Vec<u8>, bytes: &[u8]| {
@@ -1417,11 +1422,13 @@ impl Insertions {
             }
             text.extend_from_slice(bytes);
         };
-        let mut at = 0;
+        append(&mut text, &javascript[..cut.start]);
+        let mut at = cut.end;
         for (offset, _, _, inserted) in &self.list {
-            append(&mut text, &javascript[at..*offset as usize]);
+            let offset = (*offset as usize).max(at);
+            append(&mut text, &javascript[at..offset]);
             append(&mut text, inserted);
-            at = *offset as usize;
+            at = offset;
         }
         append(&mut text, &javascript[at..]);
         text
@@ -1449,6 +1456,7 @@ struct TypedText {
     text: Vec<u8>,
     dropped_casts: usize,
     has_default_export: bool,
+    has_empty_export: bool,
     modules_of_untyped_values: Vec<Vec<u8>>,
     source: Option<Vec<u8>>,
 }
@@ -1457,6 +1465,7 @@ struct Bundle<'a> {
     modules: &'a [ModuleTypes],
     emitted_declarations: &'a [ModuleTypes],
     entry_point: Option<&'a [u8]>,
+    adds_empty_export: bool,
 }
 
 struct Written<'a, 's> {
@@ -3085,6 +3094,7 @@ fn add_types(
         modules: &written[..sources.len()],
         linked: &linked,
         type_references,
+        adds_empty_export: bundle.adds_empty_export,
         insertions: Insertions { list: Vec::new() },
         dropped_casts: 0,
         hoisted: Vec::new(),
@@ -3108,6 +3118,7 @@ struct Transfer<'t, 'a, 's> {
     modules: &'t [Option<Written<'a, 's>>],
     linked: &'t Linked,
     type_references: FxHashSet<(&'t [u8], &'t [u8])>,
+    adds_empty_export: bool,
     insertions: Insertions,
     dropped_casts: usize,
     hoisted: Vec<u8>,
@@ -4116,16 +4127,32 @@ impl<'a> Transfer<'_, 'a, '_> {
             self.insertions
                 .add(first.start, Order::Line, std::mem::take(&mut self.hoisted));
         }
-        let mut text = self.insertions.apply(javascript);
+        // With `// @bun` in front, Bun runs a file as it is written. A typed file is TypeScript: it goes without those bytes.
+        let mark = find_transpiled_mark_alone(javascript);
+        let mut text = self
+            .insertions
+            .apply_without(javascript, mark.clone().unwrap_or_default());
         if !self.hoisted.is_empty() && !text.is_empty() && !text.ends_with(b"\n") {
             return Err(TypedFilesError::NoFinalLineBreak);
         }
         text.extend_from_slice(&self.hoisted);
+        // `// @bun` also said that the bundle is an ES module. `export {}` says it where no export of the bundle does.
+        let mut statements = output_file.ids(output_file.body);
+        let has_empty_export = mark.is_some()
+            && self.adds_empty_export
+            && !statements.any(|statement| output_file.is_export_declaration(statement));
+        if has_empty_export {
+            if !text.ends_with(b"\n") {
+                text.push(b'\n');
+            }
+            text.extend_from_slice(b"export {};\n");
+        }
         let has_default_export = output.has_default_export();
         Ok(TypedText {
             text,
             dropped_casts: self.dropped_casts,
             has_default_export,
+            has_empty_export,
             modules_of_untyped_values: self.linked.modules_of_untyped_values.clone(),
             source: None,
         })
@@ -4648,6 +4675,8 @@ pub struct TypedFiles {
     pub typed: Vec<(Vec<u8>, Vec<u8>)>,
     pub declarations_while_checked: Vec<(Vec<u8>, Vec<u8>)>,
     pub dropped_casts: usize,
+    /// The typed files that end with an `export {}` that their bundle does not have.
+    pub empty_exports: usize,
 }
 
 fn inside<'a>(directory: &[u8], path: &'a [u8]) -> Option<&'a [u8]> {
@@ -4705,6 +4734,7 @@ fn typed_outputs(
     outputs: &[Output<'_>],
     modules: &[ModuleTypes],
     emitted_declarations: &[ModuleTypes],
+    adds_empty_export: bool,
 ) -> Result<Vec<(Vec<u8>, TypedText)>, TypedFilesError> {
     let outdir = outdir.strip_suffix(b"/").unwrap_or(outdir);
     let mut found = Vec::new();
@@ -4714,6 +4744,7 @@ fn typed_outputs(
             modules,
             emitted_declarations,
             entry_point: output.entry_point,
+            adds_empty_export,
         };
         let typed =
             add_types_by_source_map(output.path, output.javascript, output.source_map, &bundle)
@@ -4808,11 +4839,13 @@ pub fn annotate_implicit_any(
     is_changed
 }
 
+/// `adds_empty_export`: a typed file whose bundle starts with `// @bun` and has no export ends with `export {}`.
 pub fn build_typed_files(
     outdir: &[u8],
     outputs: &[Output<'_>],
     modules: &[ModuleTypes],
     emitted_declarations: &[ModuleTypes],
+    adds_empty_export: bool,
 ) -> Result<TypedFiles, TypedFilesError> {
     let outdir = outdir.strip_suffix(b"/").unwrap_or(outdir);
     let mut found = TypedFiles {
@@ -4820,18 +4853,21 @@ pub fn build_typed_files(
         typed: Vec::new(),
         declarations_while_checked: Vec::new(),
         dropped_casts: 0,
+        empty_exports: 0,
     };
     for (output, (typed_path, typed)) in outputs.iter().zip(typed_outputs(
         outdir,
         outputs,
         modules,
         emitted_declarations,
+        adds_empty_export,
     )?) {
         let name_of = |path: &[u8]| {
             path[bun_core::strings::last_index_of_char(path, b'/').map_or(0, |slash| slash + 1)..]
                 .to_vec()
         };
         found.dropped_casts += typed.dropped_casts;
+        found.empty_exports += usize::from(typed.has_empty_export);
         found
             .modules_of_untyped_values
             .extend(typed.modules_of_untyped_values);

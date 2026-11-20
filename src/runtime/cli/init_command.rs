@@ -133,13 +133,10 @@ impl InitCommand {
                 if i == selected.to_index() {
                     if colors {
                         bun_core::pretty!("<r><cyan>❯<r>   ");
-                    } else {
-                        bun_core::pretty!("<r><cyan>><r>   ");
-                    }
-                    if colors {
                         Output::print(format_args!("\x1B[4m{}\x1B[24m\x1B[0K\n", option));
                     } else {
-                        Output::print(format_args!("    {}\x1B[0K\n", option));
+                        bun_core::pretty!("<r><cyan>><r>   ");
+                        Output::print(format_args!("{}\x1B[0K\n", option));
                     }
                 } else {
                     Output::print(format_args!("    {}\x1B[0K\n", option));

@@ -1,4 +1,4 @@
-import { frameworkRouterInternals } from "bun:internal-for-testing";
+import { crash_handler, frameworkRouterInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import path from "path";
@@ -151,4 +151,71 @@ test("match() supports a param whose name is an array index", () => {
   const { params } = router.match("/posts/a/b");
   expect(params).toEqual({ 0: "a", 1: "b" });
   expect([params[0], params[1]]).toEqual(["a", "b"]);
+});
+
+// Covers the param-push paths in `FrameworkRouter::matches` that
+// https://github.com/oven-sh/bun/issues/30861 rewrote.
+describe("match() param collection", () => {
+  describe("catch-all pushes one entry per segment", () => {
+    test.each([
+      ["/a", "a"],
+      ["/one/two/three", ["one", "two", "three"]],
+      ["/a/b/c/d/e/f", ["a", "b", "c", "d", "e", "f"]],
+    ])("%s → slug=%j", (p, expected) => {
+      using dir = tempDir("fsr-match-catchall", {
+        "[...slug].tsx": "1",
+      });
+      const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
+      expect(router.match(p).params).toEqual({ slug: expected });
+    });
+  });
+
+  test("single-param route still matches", () => {
+    using dir = tempDir("fsr-match-param", {
+      "[name].tsx": "1",
+    });
+    const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
+
+    expect(router.match("/hello").params).toEqual({ name: "hello" });
+  });
+
+  test("unmatched path returns null", () => {
+    using dir = tempDir("fsr-match-miss", {
+      "known.tsx": "1",
+    });
+    const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
+
+    expect(router.match("/unknown/path")).toBeNull();
+  });
+
+  // A dynamic pattern that pushes a param and then fails must not leak that
+  // entry into the next pattern. Dynamic patterns are tried in scan order, so
+  // each of the two routes below is the "failed prior pattern" for the other.
+  test("stale params from a failed prior pattern don't leak", () => {
+    using dir = tempDir("fsr-match-stale", {
+      "[a]/one/[c].tsx": "1",
+      "[b]/two/[d].tsx": "1",
+    });
+    const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
+
+    expect(router.match("/x/one/y").params).toEqual({ a: "x", c: "y" });
+    expect(router.match("/x/two/y").params).toEqual({ b: "x", d: "y" });
+  });
+
+  test("stale params from a failed prior pattern don't leak into a catch-all", () => {
+    using dir = tempDir("fsr-match-stale-catchall", {
+      "[name].tsx": "1",
+      "nested/[...slug].tsx": "1",
+    });
+    const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
+
+    expect(router.match("/x").params).toEqual({ name: "x" });
+    expect(router.match("/nested/a/b").params).toEqual({ slug: ["a", "b"] });
+  });
+
+  // Probes the `BoundedArray::resize` contract itself (issue #30861),
+  // independently of the router, via the binding in `crash_handler_jsc.rs`.
+  test("BoundedArray::resize refuses to grow", () => {
+    expect(crash_handler.boundedArrayResizeGrowReturnsErr()).toBe(true);
+  });
 });

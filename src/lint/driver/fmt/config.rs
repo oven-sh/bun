@@ -189,37 +189,43 @@ struct Plugins {
 }
 
 /// The plugins that apply to one file. A Prettier config lists one side, the flags list the other. On each side the
-/// last list that applies replaces the others.
+/// last list that applies replaces the others. `--config-precedence` never drops a side.
 pub(crate) struct PluginView<'a> {
     config: Option<&'a Plugins>,
-    /// `None` if `--config-precedence=prefer-file` drops the flags.
-    flags: Option<&'a Plugins>,
-    /// [`PluginView::has_missing_from_flags`]
+    flags: &'a Plugins,
+    /// True if the flags list one of [`PluginView::missing`]. Never where the file is formatted like oxfmt, which has
+    /// no plugins to miss.
     has_missing_from_flags: bool,
-    /// [`PluginView::is_scoped_to_plugin`]
-    is_scoped_to_plugin: bool,
     /// True if the flags list a plugin that isn't built in, and the file is formatted like oxfmt.
     is_left_to_oxfmt: bool,
 }
 
 impl<'a> PluginView<'a> {
     fn sides(&self) -> impl Iterator<Item = &'a Plugins> + use<'a> {
-        self.config.into_iter().chain(self.flags)
+        self.config.into_iter().chain([self.flags])
     }
 
     /// The plugins that may change the output for files this formatter handles. The config's come first.
     pub(crate) fn missing(&self) -> impl Iterator<Item = &'a [u8]> + use<'a> {
-        let flags = self.flags.filter(|_| self.has_missing_from_flags);
-        let sides = self.config.into_iter().chain(flags);
-        (sides.flat_map(|it| &it.missing)).map(|it| &it[..])
+        self.missing_from_config().chain(self.missing_from_flags())
+    }
+
+    /// Those of [`PluginView::missing`] that the Prettier config lists.
+    pub(crate) fn missing_from_config(&self) -> impl Iterator<Item = &'a [u8]> + use<'a> {
+        (self.config.into_iter().flat_map(|it| &it.missing)).map(|it| &it[..])
+    }
+
+    /// Those of [`PluginView::missing`] that `--plugin`, `[fmt]` or `[[fmt.overrides]]` lists.
+    pub(crate) fn missing_from_flags(&self) -> impl Iterator<Item = &'a [u8]> + use<'a> {
+        let flags = self.has_missing_from_flags.then_some(self.flags);
+        (flags.into_iter().flat_map(|it| &it.missing)).map(|it| &it[..])
     }
 
     pub(crate) fn has_missing(&self) -> bool {
         self.has_missing_from_flags || self.config.is_some_and(|it| !it.missing.is_empty())
     }
 
-    /// True if the flags list one of [`PluginView::missing`]. Never where the file is formatted like oxfmt, which has
-    /// no plugins to miss.
+    /// True if [`PluginView::missing_from_flags`] isn't empty.
     pub(crate) fn has_missing_from_flags(&self) -> bool {
         self.has_missing_from_flags
     }
@@ -227,12 +233,9 @@ impl<'a> PluginView<'a> {
     /// To be called for a file that Bun formats itself. If the flags list plugins for it that then change nothing,
     /// [`Configs::warn_about_unused_flag_plugins`] names them.
     pub(crate) fn note_formatted_here(&self) {
-        let Some(flags) = self.flags else {
-            return;
-        };
         let unused = match (self.is_left_to_oxfmt, self.has_missing_from_flags) {
-            (true, _) => &flags.is_left_to_oxfmt,
-            (false, true) => &flags.is_left_out,
+            (true, _) => &self.flags.is_left_to_oxfmt,
+            (false, true) => &self.flags.is_left_out,
             (false, false) => return,
         };
         if !unused.load(Ordering::Relaxed) {
@@ -250,25 +253,19 @@ impl<'a> PluginView<'a> {
         (self.sides().flat_map(|it| &it.endings)).any(|ending| path.ends_with(ending))
     }
 
-    /// True if an override that matches the file has a list of its own, with a plugin that Bun knows nothing about.
-    /// Such an override says which files the plugin formats.
-    pub(crate) fn is_scoped_to_plugin(&self) -> bool {
-        self.is_scoped_to_plugin
-    }
-
     /// The packages that Prettier loads as plugins for the file.
     pub(crate) fn packages(&self) -> impl Iterator<Item = &'a [u8]> + use<'a> {
         (self.sides().flat_map(|it| &it.packages)).map(|it| &it[..])
     }
 
-    /// [`Plugins::names`] of the flags. Empty if they're dropped.
+    /// [`Plugins::names`] of the flags.
     pub(crate) fn flag_names(&self) -> &'a [Vec<u8>] {
-        self.flags.map_or(&[][..], |it| &it.names[..])
+        &self.flags.names
     }
 
-    /// [`Plugins::listed`] of the flags. Empty if they're dropped.
+    /// [`Plugins::listed`] of the flags.
     fn flag_listed(&self) -> &'a [Vec<u8>] {
-        self.flags.map_or(&[][..], |it| &it.listed[..])
+        &self.flags.listed
     }
 
     /// True if one is `prettier-plugin-tailwindcss`.
@@ -292,7 +289,7 @@ impl<'a> PluginView<'a> {
             _ if parser.is_some_and(|it| !it.starts_with(b"oxc")) => Oxc::Absent,
             // Code in MDX is always parsed with Babel.
             _ if path.is_some_and(|it| it.ends_with(b".mdx")) => Oxc::Absent,
-            Oxc::Absent => self.flags.map_or(Oxc::Absent, |it| it.oxc),
+            Oxc::Absent => self.flags.oxc,
             oxc => oxc,
         }
     }
@@ -1946,22 +1943,19 @@ impl<'c> Configs<'c> {
             false => None,
         };
         let flags = scoped_flags.unwrap_or(&self.plugins);
-        // Prettier then ignores every flag, and `--plugin` is one.
-        let drops_flags = !flags.names.is_empty()
-            && self.options.config_precedence == Precedence::PreferFile
-            && self.has_config_for(scope, path);
-        let flags = (!drops_flags).then_some(flags);
-        let is_unknown_to_bun = |it: &Plugins| !it.missing.is_empty();
-        let is_left_to_oxfmt =
-            flags.is_some_and(|it| it.has_unknown_plugins) && self.is_oxfmt_for(scope);
+        let is_left_to_oxfmt = flags.has_unknown_plugins && self.is_oxfmt_for(scope);
         PluginView {
             config: scoped_config.or_else(|| config.map(|it| &it.plugins)),
             flags,
-            has_missing_from_flags: flags.is_some_and(is_unknown_to_bun) && !is_left_to_oxfmt,
+            has_missing_from_flags: !flags.missing.is_empty() && !is_left_to_oxfmt,
             is_left_to_oxfmt,
-            is_scoped_to_plugin: scoped_config.is_some_and(is_unknown_to_bun)
-                || (flags.is_some() && scoped_flags.is_some_and(is_unknown_to_bun)),
         }
+    }
+
+    /// True if a `parser` that Bun doesn't have can be a plugin's, for a file in `scope` whose plugins are `plugins`:
+    /// one of them isn't built in. Never where the file is formatted like oxfmt, which loads no plugin.
+    pub(crate) fn plugin_may_have_parser(&self, scope: &Scope, plugins: &PluginView) -> bool {
+        plugins.lists_unknown() && !self.is_oxfmt_for(scope)
     }
 
     /// `select(override)` of each entry of `[[fmt.overrides]]` that matches the file at `path`, in order.

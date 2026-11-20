@@ -1236,23 +1236,39 @@ struct Run<'r> {
 #[derive(Default)]
 struct LeftForPlugins<'a> {
     count: usize,
-    /// Those plugins, each once.
+    /// The files that are skipped for a plugin of the Prettier config, and those plugins.
+    for_config: LeftForSide<'a>,
+    /// The files that are skipped for a plugin of `--plugin`, `[fmt]` or `[[fmt.overrides]]`, and those plugins. A file
+    /// can be in both.
+    for_flags: LeftForSide<'a>,
+}
+
+#[derive(Default)]
+struct LeftForSide<'a> {
+    count: usize,
+    /// Each plugin once.
     names: Vec<&'a [u8]>,
-    /// True if `--plugin`, `[fmt]` or `[[fmt.overrides]]` lists one of them for one of the files. A Prettier config
-    /// lists the others.
-    is_from_flags: bool,
+}
+
+impl<'a> LeftForSide<'a> {
+    /// Counts a file that is skipped for `names`, if there are any.
+    fn add(&mut self, names: impl Iterator<Item = &'a [u8]>) {
+        let mut names = names.peekable();
+        self.count += usize::from(names.peek().is_some());
+        for name in names {
+            if !self.names.contains(&name) {
+                self.names.push(name);
+            }
+        }
+    }
 }
 
 impl<'a> LeftForPlugins<'a> {
     /// Counts a file whose plugins are `view`.
     fn add(&mut self, view: &config::PluginView<'a>) {
         self.count += 1;
-        self.is_from_flags |= view.has_missing_from_flags();
-        for name in view.missing() {
-            if !self.names.contains(&name) {
-                self.names.push(name);
-            }
-        }
+        self.for_config.add(view.missing_from_config());
+        self.for_flags.add(view.missing_from_flags());
     }
 }
 
@@ -1275,9 +1291,8 @@ fn language_with(
         Some(parser) if &*parser == b"svelte" && !configs.formats_svelte(scope, Some(path)) => {
             Language::Other
         }
-        // oxfmt loads no plugin, so there the parser is nobody's.
         Some(parser) if Kind::from_parser(&parser).is_none() => {
-            match view.lists_unknown() && !configs.is_oxfmt_for(scope) {
+            match configs.plugin_may_have_parser(scope, view) {
                 true => Language::Plugin,
                 false => Language::Other,
             }
@@ -1299,9 +1314,6 @@ fn language_with(
             Language::Unknown if files::parser_by_interpreter(path).is_some() => {
                 Language::Supported
             }
-            // The `files` of an override that lists a plugin say which files that plugin formats, among those that
-            // Bun can't format itself.
-            Language::Unknown if view.is_scoped_to_plugin() => Language::Plugin,
             language => language,
         },
     }
@@ -1621,7 +1633,7 @@ impl Run<'_> {
         let is_formatted = |kind: &Kind| *kind != Kind::Svelte || options.options.svelte.is_on;
         let Some(kind) = Kind::from_parser(&parser).filter(is_formatted) else {
             // Without the plugin, Prettier has no `svelte` parser either.
-            if &*parser == b"svelte" || !view.lists_unknown() {
+            if &*parser == b"svelte" || !configs.plugin_may_have_parser(&scope, &view) {
                 self.error(&cannot_resolve_parser(&parser));
                 self.out.exit_code = match (self.is_native, exits_zero_on_error) {
                     (true, _) => 2,
@@ -2509,27 +2521,32 @@ impl Run<'_> {
         self.out
     }
 
-    /// Reports the files of `left`, and what to do about them.
+    /// Reports the files of `left`, and what to do about them. The plugins of each side get an error of their own.
     fn report_skipped_for_plugins(&mut self, left: &LeftForPlugins) {
-        let count = left.count;
-        let (noun, it) = match count {
-            1 => ("file was", "it"),
-            _ => ("files were", "them"),
-        };
-        // A plugin of the flags applies to every file unless an override lists it.
-        let (who, advice) = match left.is_from_flags {
-            true => (
+        // A plugin of the flags applies to every file unless an override lists it, and only a `parser` gives it files.
+        let sides = [
+            (&left.for_config, "the Prettier config uses", "Use"),
+            (
+                &left.for_flags,
                 "--plugin or [fmt] plugins lists",
-                "Put the plugin in a [[fmt.overrides]] entry with \"files\" to send only those files to your installed Prettier, or use",
+                "Put the plugin in a [[fmt.overrides]] entry with \"files\" and the plugin's \"parser\" to send those files to your installed Prettier, or use",
             ),
-            false => ("the Prettier config uses", "Use"),
-        };
-        let text = format!(
-            "{count} {noun} not formatted because {who} plugins that bun fmt does not include: "
-        );
-        let end = format!("\n  {advice} --allow-unsupported to format {it} without the plugins.");
-        let names = left.names.join(&b", "[..]);
-        self.error(&[text.as_bytes(), &names, end.as_bytes()].concat());
+        ];
+        for (side, who, advice) in sides {
+            let count = side.count;
+            let (noun, it) = match count {
+                0 => continue,
+                1 => ("file was", "it"),
+                _ => ("files were", "them"),
+            };
+            let text = format!(
+                "{count} {noun} not formatted because {who} plugins that bun fmt does not include: "
+            );
+            let end =
+                format!("\n  {advice} --allow-unsupported to format {it} without the plugins.");
+            let names = side.names.join(&b", "[..]);
+            self.error(&[text.as_bytes(), &names, end.as_bytes()].concat());
+        }
     }
 
     /// Warns about the packages that must be installed before more files can go to the project's own Prettier.

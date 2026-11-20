@@ -12,7 +12,7 @@ import { run as runCommand } from "./harness/run";
 
 export type Program = { source: string; name?: string; files?: Record<string, string>; stdin?: string; ipc?: "json" | "advanced"; greeting?: unknown; exitCode?: number; runsTextAsCode?: true; aheadOfTime?: string };
 
-const normalize = (text: string) => text.replace(/\(node:\d+\)/g, "(node:PID)").replace(/\(Use `[^` ]+ --trace-warnings/g, "(Use `EXE --trace-warnings");
+const normalize = (text: string) => text.replace(/\(node:\d+\)/g, "(node:PID)").replace(/\(Use `[^` ]+ --trace-(warnings|deprecation)/g, "(Use `EXE --trace-$1");
 
 async function run(cmd: string[], cwd: string, program: Program, env: Record<string, string | undefined>) {
   const received: unknown[] = [];

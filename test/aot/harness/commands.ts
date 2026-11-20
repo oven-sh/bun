@@ -147,7 +147,7 @@ export function told(run: { stdout: string; stderr: string; exitCode: number }) 
       run.exitCode === 0
         ? run.stderr
             .replace(/^\(node:[0-9]+\) /gm, "(node) ")
-            .replace(/^\(Use `[^`\n]* --trace-warnings /gm, "(Use `bun --trace-warnings ")
+            .replace(/^\(Use `[^`\n]* --trace-(warnings|deprecation) /gm, "(Use `bun --trace-$1 ")
         : (run.stderr.split("\n").find(line => /^(error|[A-Za-z]*Error)\b/.test(line)) ?? ""),
     exitCode: run.exitCode,
   };

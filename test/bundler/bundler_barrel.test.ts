@@ -2162,6 +2162,99 @@ describe("bundler", () => {
     },
   });
 
+  // --- A re-export into a package with side effects ---
+  // effect-pkg has no "sideEffects" field, so an import of it runs its top
+  // level. The barrel is pure, its package says "sideEffects": false, and
+  // nothing imports `poly`: the re-export is deferred and effect-pkg is not
+  // loaded. esbuild and Bun 1.3.9 load it.
+
+  const reExportOfPackageWithSideEffects = {
+    "/entry.js": /* js */ `
+      import { a } from 'barrel-pkg';
+      console.log(a, globalThis.effect);
+    `,
+    "/node_modules/barrel-pkg/package.json": JSON.stringify({
+      name: "barrel-pkg",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "/node_modules/barrel-pkg/index.js": /* js */ `
+      export { a } from './a.js';
+      export { poly } from 'effect-pkg';
+    `,
+    "/node_modules/barrel-pkg/a.js": /* js */ `
+      export const a = "a";
+    `,
+    "/node_modules/effect-pkg/package.json": JSON.stringify({ name: "effect-pkg", main: "./index.js" }),
+    "/node_modules/effect-pkg/index.js": /* js */ `
+      globalThis.effect = "effect-pkg ran";
+      export const poly = 1;
+    `,
+  };
+
+  // optimizeImports skips the re-export too, whatever "sideEffects" says.
+  for (const [name, barrelPackage, optimizeImports] of [
+    ["AutomaticMode", { sideEffects: false }, undefined],
+    ["OptimizeImports", {}, ["barrel-pkg"]],
+    ["OptimizeImportsWithBarrelFileListedInSideEffects", { sideEffects: ["./index.js"] }, ["barrel-pkg"]],
+  ] as const) {
+    itBundled(`barrel/UnusedReExportOfPackageWithSideEffectsIsSkipped/${name}`, {
+      files: {
+        ...reExportOfPackageWithSideEffects,
+        "/node_modules/barrel-pkg/package.json": JSON.stringify({
+          name: "barrel-pkg",
+          main: "./index.js",
+          ...barrelPackage,
+        }),
+      },
+      optimizeImports: optimizeImports && [...optimizeImports],
+      outdir: "/out",
+      run: { stdout: "a undefined" },
+    });
+  }
+
+  // The ways to load effect-pkg: the application imports it, the package
+  // lists the barrel file in "sideEffects", or the barrel is not pure. The
+  // last two hold in automatic mode only.
+  for (const [name, files] of [
+    [
+      "ApplicationImportsThePackage",
+      {
+        "/entry.js": /* js */ `
+          import 'effect-pkg';
+          import { a } from 'barrel-pkg';
+          console.log(a, globalThis.effect);
+        `,
+      },
+    ],
+    [
+      "BarrelFileListedInSideEffects",
+      {
+        "/node_modules/barrel-pkg/package.json": JSON.stringify({
+          name: "barrel-pkg",
+          main: "./index.js",
+          sideEffects: ["./index.js"],
+        }),
+      },
+    ],
+    [
+      "BarrelHasALocalExport",
+      {
+        "/node_modules/barrel-pkg/index.js": /* js */ `
+          export { a } from './a.js';
+          export { poly } from 'effect-pkg';
+          export const local = 0;
+        `,
+      },
+    ],
+  ] as const) {
+    itBundled(`barrel/ReExportOfPackageWithSideEffectsLoads/${name}`, {
+      files: { ...reExportOfPackageWithSideEffects, ...files },
+      outdir: "/out",
+      run: { stdout: "a effect-pkg ran" },
+    });
+  }
+
   // --- Entry points are never barrels ---
   // An entry point's exports are the public interface of the build. Nothing
   // imports an entry point, so a deferred record would never be un-deferred

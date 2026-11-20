@@ -1856,7 +1856,7 @@ describe.concurrent("bundledDependencies", () => {
         lockfile = await file(join(packageDir, "bun.lock")).text();
         expect(lockfile.replaceAll(/localhost:\d+/g, "localhost:1234")).toMatchInlineSnapshot(`
           "{
-            "lockfileVersion": 2,
+            "lockfileVersion": 4,
             "configVersion": 1,
             "workspaces": {
               "": {
@@ -1871,9 +1871,9 @@ describe.concurrent("bundledDependencies", () => {
 
               "bundled-with-optional": ["bundled-with-optional@1.0.0", "http://localhost:1234/bundled-with-optional/-/bundled-with-optional-1.0.0.tgz", { "dependencies": { "no-deps": "1.0.0" }, "optionalDependencies": { "a-dep": "1.0.1", "basic-1": "1.0.0" } }, "sha512-rq4Jtdsk53QE4T00/KaOP5lyv3d8Gnt4VABtara3PFos+8POKMkRIQPYCXVRRBey7K+ttzkiA5MkHhe+T19eYA=="],
 
-              "bundled-with-optional/a-dep": ["a-dep@1.0.1", "http://localhost:1234/a-dep/-/a-dep-1.0.1.tgz", { "bundled": true }, "sha512-6nmTaPgO2U/uOODqOhbjbnaB4xHuZ+UB7AjKUA3g2dT4WRWeNxgp0dC8Db4swXSnO5/uLLUdFmUJKINNBO/3wg=="],
+              "bundled-with-optional/a-dep": ["a-dep@1.0.1", "", { "bundled": true }, ""],
 
-              "bundled-with-optional/no-deps": ["no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", { "bundled": true }, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+              "bundled-with-optional/no-deps": ["no-deps@1.0.0", "", { "bundled": true }, ""],
             }
           }
           "
@@ -1923,7 +1923,7 @@ describe.concurrent("bundledDependencies", () => {
         lockfile = await file(join(packageDir, "bun.lock")).text();
         expect(lockfile.replaceAll(/localhost:\d+/g, "localhost:1234")).toMatchInlineSnapshot(`
           "{
-            "lockfileVersion": 2,
+            "lockfileVersion": 4,
             "configVersion": 1,
             "workspaces": {
               "": {
@@ -1936,7 +1936,7 @@ describe.concurrent("bundledDependencies", () => {
             "packages": {
               "bundled-peer": ["bundled-peer@1.0.0", "http://localhost:1234/bundled-peer/-/bundled-peer-1.0.0.tgz", { "peerDependencies": { "no-deps": "1.0.0" } }, "sha512-rmaahOTDrcPuhmBskBLcKEEfTotY+xH6bDPnQopcNlmdePtEvAbAehSpK8JQAegpBir4omjiFqBy1LFqXQBfgA=="],
 
-              "bundled-peer/no-deps": ["no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", { "bundled": true }, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+              "bundled-peer/no-deps": ["no-deps@1.0.0", "", { "bundled": true }, ""],
             }
           }
           "
@@ -2226,7 +2226,7 @@ describe.concurrent("bundledDependencies", () => {
 
     const lockfile = await file(join(packageDir, "bun.lock")).text();
     expect(lockfile).toContain(
-      `"bundled-file/bundled-file-dep": ["bundled-file-dep@file:vendor/bundled-file-dep", { "bundled": true }],`,
+      `"bundled-file/bundled-file-dep": ["bundled-file-dep@1.0.0", "", { "bundled": true }, ""],`,
     );
 
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
@@ -8858,7 +8858,9 @@ describe.concurrent("transitive file dependencies", () => {
 
       await install();
       await check();
-      expect(await file(join(packageDir, "bun.lock")).text()).toContain(`"local/no-deps": ["no-deps@1.0.0", `);
+      expect(await file(join(packageDir, "bun.lock")).text()).toContain(
+        `"local/no-deps": ["no-deps@1.0.0", "", { "bundled": true }, ""],`,
+      );
       expect(await install()).toContain("(no changes)");
       await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
       await install("--frozen-lockfile");

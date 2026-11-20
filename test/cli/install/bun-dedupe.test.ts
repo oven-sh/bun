@@ -1702,7 +1702,8 @@ test.concurrent("a version removed by the run does not vote for its own dependen
   await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
 });
 
-// A bundled edge is satisfied by the tarball's own copy, so it stays put and root's range collapses onto it instead.
+// A bundled edge is satisfied by the copy in the tarball, and only bundled-1 can load that copy. The edge stays on it
+// when root's no-deps@1.1.0 also satisfies its range, and root's range does not collapse onto it.
 test.concurrent("bundled edges are never re-pointed", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   const lockfile = await installTwice(
@@ -1711,8 +1712,9 @@ test.concurrent("bundled edges are never re-pointed", async () => {
     { name: "foo", dependencies: { "no-deps": "^1.0.0" } },
     { name: "foo", dependencies: { "no-deps": "^1.0.0", "bundled-1": "1.0.0" } },
   );
-  expect(lockfile).toContain('"bundled-1/no-deps": ["no-deps@1.0.0"');
-  expect(lockfile).toContain('"bundled": true');
+  const shipped = '"bundled-1/no-deps": ["no-deps@1.0.0", "", { "bundled": true }, ""],';
+  expect(lockfile).toContain('"no-deps": ["no-deps@1.1.0", ');
+  expect(lockfile).toContain(shipped);
   expect(lockfile).toContain('{ "dependencies": { "no-deps": "1.0.0" } }');
   const widened = lockfile.replace(
     '{ "dependencies": { "no-deps": "1.0.0" } }',
@@ -1721,19 +1723,12 @@ test.concurrent("bundled edges are never re-pointed", async () => {
   await write(join(packageDir, "bun.lock"), widened);
 
   const checked = lockPackageCount(widened);
-  const check = await dedupe(packageDir, "--check");
-  expectWouldRemove(check, "no-deps 1.1.0 -> 1.0.0", checked);
-  expect(check.exitCode).toBe(1);
+  expect(checked).toBe(4);
+  expectNoDuplicates(await dedupe(packageDir, "--check"), checked);
+  expectNoDuplicates(await dedupe(packageDir, "--lockfile-only"), checked);
   expect(await lock(packageDir)).toBe(widened);
-
-  const { stdout, stderr, exitCode } = await dedupe(packageDir, "--lockfile-only");
-  expectRemoved(stdout, "no-deps 1.1.0 -> 1.0.0", { checked });
-  expect(stderr).not.toContain("error:");
-  expect(exitCode).toBe(0);
-  const after = await lock(packageDir);
-  expect(after).toContain('"bundled-1/no-deps": ["no-deps@1.0.0"');
-  expect(after).toContain('"bundled": true');
-  expect(after).not.toContain('"no-deps@1.1.0"');
+  expect(await nodeModulesVersion(packageDir, "no-deps")).toBe("1.1.0");
+  expect(await nodeModulesVersion(packageDir, "bundled-1", "node_modules", "no-deps")).toBe("1.0.0");
 });
 
 // pnpm/pnpm#11238, #10329, #8446: dedupe never re-resolves, so it sends no registry request and ignores minimumReleaseAge.

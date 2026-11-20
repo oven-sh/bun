@@ -721,7 +721,9 @@ it("should pass frozen lockfile check when a bundled dependency has an optional 
 
   await runBunInstall(env, packageDir);
   const lockfile = await file(join(packageDir, "bun.lock")).text();
-  expect(lockfile).toContain('"bundled": true');
+  expect(lockfile).toContain(
+    '"bundled-optional-peer/optional-peer-deps": ["optional-peer-deps@1.0.0", "", { "bundled": true }, ""],',
+  );
 
   await runBunInstall(env, packageDir, { frozenLockfile: true });
 
@@ -4044,9 +4046,13 @@ describe("loading bun.lock binds the dependencies of a package that's printed at
 type OrderedManifests = Record<string, Record<string, Record<string, Record<string, string> | string[]>>>;
 // `manifest` is the name of a package, or the file name of a tarball such as "a-1.0.0.tgz".
 type Hold = { manifest: string; until: string };
+// The package.json files that a tarball has in its node_modules, by the file name of the tarball and the path below
+// `package/`.
+type Shipped = Record<string, Record<string, object>>;
 type OrderedShape = {
   shape: string;
   manifests: OrderedManifests;
+  shipped?: Shipped;
   files: Record<string, object>;
   orders: Record<string, Hold[]>;
   z: Record<string, string>;
@@ -4054,14 +4060,15 @@ type OrderedShape = {
 const zVersions = { "1.0.0": {}, "1.0.5": {}, "1.1.0": {}, "2.0.0": {} };
 
 // The manifests of the packages in `broken` are not JSON.
-async function registryWithHolds(manifests: OrderedManifests, broken: string[] = []) {
+async function registryWithHolds(manifests: OrderedManifests, broken: string[] = [], shipped: Shipped = {}) {
   const tarballs = new Map<string, Uint8Array>();
   for (const [name, versions] of Object.entries(manifests)) {
     for (const [version, extra] of Object.entries(versions)) {
-      const archive = new Bun.Archive(
-        { "package/package.json": JSON.stringify({ name, version, ...extra }) },
-        { compress: "gzip" },
-      );
+      const files: Record<string, string> = { "package/package.json": JSON.stringify({ name, version, ...extra }) };
+      for (const [path, json] of Object.entries(shipped[`${name}-${version}.tgz`] ?? {})) {
+        files[`package/${path}`] = JSON.stringify(json);
+      }
+      const archive = new Bun.Archive(files, { compress: "gzip" });
       tarballs.set(`/${name}-${version}.tgz`, await archive.bytes());
     }
   }
@@ -4132,8 +4139,8 @@ function instancesOf(lock: string, name: string): Record<string, string> {
   );
 }
 
-async function writesTheSameLockInEveryOrder({ manifests, files, orders, z }: OrderedShape) {
-  const ordered = await registryWithHolds(manifests);
+async function writesTheSameLockInEveryOrder({ manifests, shipped, files, orders, z }: OrderedShape) {
+  const ordered = await registryWithHolds(manifests, [], shipped);
   using server = ordered.server;
   let expected: string | undefined;
   for (const [order, holds] of Object.entries(orders)) {
@@ -4553,11 +4560,18 @@ it.each<OrderedShape>([
       y: { "1.0.0": { dependencies: { z: "1.0.5" } } },
       z: zVersions,
     },
+    shipped: {
+      "h-1.0.0.tgz": {
+        "node_modules/y/package.json": { name: "y", version: "1.0.0", dependencies: { z: "1.0.5" } },
+        "node_modules/y/node_modules/z/package.json": { name: "z", version: "1.0.5" },
+        "node_modules/z/package.json": { name: "z", version: "1.0.0" },
+      },
+    },
     files: { "package.json": { name: "foo", dependencies: { h: "1.0.0", p: "1.0.0", r: "1.0.0" } } },
     orders: {
       "h's manifest last": [{ manifest: "h", until: "/z" }],
-      // Only h leads to y.
-      "r's manifest last": [{ manifest: "r", until: "/y" }],
+      // bun reads what h ships from the tarball of h. It asks the registry for neither y nor h's z.
+      "r's manifest last": [{ manifest: "r", until: "/h-1.0.0.tgz" }],
     },
     z: { "z": "z@1.1.0", "h/z": "z@1.0.0", "h/y/z": "z@1.0.5" },
   },
@@ -5007,9 +5021,11 @@ it("a bundled dependency's dependency does not take a slot a dependency nested u
   expect(fresh).toContain(
     '"bundled-shadow-deep-host/bundled-shadow-consumer/bundled-shadow-mid": ["bundled-shadow-mid@1.0.0"',
   );
+  // The tarball of deep-host has inner below wrapper, and inner's shared below inner.
   expect(fresh).toContain(
-    '"bundled-shadow-deep-host/bundled-shadow-inner/bundled-shadow-shared": ["bundled-shadow-shared@2.0.0"',
+    '"bundled-shadow-deep-host/bundled-shadow-wrapper/bundled-shadow-inner/bundled-shadow-shared": ["bundled-shadow-shared@2.0.0"',
   );
+  expect(fresh).not.toContain('"bundled-shadow-deep-host/bundled-shadow-inner');
   expect(fresh).not.toContain('"bundled-shadow-deep-host/bundled-shadow-shared"');
 
   // mid@1.0.0 has to keep finding shared@1.0.0 at the root on a reinstall.
@@ -5039,12 +5055,12 @@ it("a bundled dependency's optional peer bound late does not take a slot the bun
   await run(["install"]);
   const fresh = await file(join(packageDir, "bun.lock")).text();
   expect(fresh).toContain('"bundled-shadow-shared": ["bundled-shadow-shared@1.0.0"');
+  // The tarball of peer-host has peer-leaf below peer-inner, and one shared@2.0.0, below peer-leaf.
   expect(fresh).toContain(
-    '"bundled-shadow-peer-host/bundled-shadow-peer-inner/bundled-shadow-shared": ["bundled-shadow-shared@2.0.0"',
+    '"bundled-shadow-peer-host/bundled-shadow-peer-inner/bundled-shadow-peer-leaf/bundled-shadow-shared": ["bundled-shadow-shared@2.0.0"',
   );
-  expect(fresh).toContain(
-    '"bundled-shadow-peer-host/bundled-shadow-peer-leaf/bundled-shadow-shared": ["bundled-shadow-shared@2.0.0"',
-  );
+  expect(fresh).not.toContain('"bundled-shadow-peer-host/bundled-shadow-peer-inner/bundled-shadow-shared"');
+  expect(fresh).not.toContain('"bundled-shadow-peer-host/bundled-shadow-peer-leaf');
   expect(fresh).not.toContain('"bundled-shadow-peer-host/bundled-shadow-shared"');
 
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });

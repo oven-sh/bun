@@ -14049,9 +14049,9 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     });
   }
 
-  // A bundled dependency ships inside the package that declares it, so adding it to the root wouldn't help, and the
-  // note is omitted.
-  it("rejects the one a registry package declares as bundled, without suggesting to add it to the root", async () => {
+  // A bundled dependency ships inside the package that declares it. Bun takes it from that package's tarball and never
+  // resolves the path, so there is nothing to refuse. The tarball of bar has no `inside`, so none is installed.
+  it("does not resolve the one a registry package declares as bundled", async () => {
     await withContext(defaultOpts, async ctx => {
       using dir = tempDir("bundled-local-tarball-of-registry-dep", {});
       const root = String(dir);
@@ -14061,13 +14061,14 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
       });
       await cp(planted, join(root, "project", "inside.tgz"));
 
-      const { err, exitCode } = await install(root);
-      expect(diagnostics(err)).toEqual([
-        refusal("inside", "file:./inside.tgz", "bar@0.0.2")[0],
-        "error: inside@file:./inside.tgz failed to resolve",
-      ]);
-      expect(await exists(join(root, "project", "bun.lock"))).toBe(false);
-      expect(exitCode).toBe(1);
+      const { err, out, exitCode } = await install(root);
+      expect(diagnostics(err)).toEqual([]);
+      expect(out).toContain("1 package installed");
+      expect(await readdirSorted(join(root, "project", "node_modules"))).toEqual(["bar"]);
+      const lockfile = await file(join(root, "project", "bun.lock")).text();
+      expect(lockfile).toContain('"bar": ["bar@0.0.2"');
+      expect(lockfile).not.toContain("baz@");
+      expect(exitCode).toBe(0);
     });
   });
 
@@ -17675,7 +17676,7 @@ describe.concurrent.each(["hoisted", "isolated"])(
         return file(join(cwd, "bun.lock")).text();
       };
       const lockfile = await check();
-      expect(lockfile).toContain(`"outer/inner": ["inner@file:../inner", { "bundled": true }],`);
+      expect(lockfile).toContain(`"outer/inner": ["inner@1.0.0", "", { "bundled": true }, ""],`);
       await rm(join(cwd, "node_modules"), { recursive: true, force: true });
       expect(await check("--frozen-lockfile")).toBe(lockfile);
     });

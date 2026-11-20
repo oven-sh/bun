@@ -294,13 +294,13 @@ exports[`should not deduplicate bundled packages with un-bundled packages 1`] = 
 exports[`should not deduplicate bundled packages with un-bundled packages 2`] = `
 [
   "",
-  "Done! Checked 5 packages (no changes)",
+  "Done! Checked 7 packages (no changes)",
 ]
 `;
 
 exports[`should not change formatting unexpectedly 2`] = `
 "{
-  "lockfileVersion": 2,
+  "lockfileVersion": 4,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -392,7 +392,7 @@ exports[`should not change formatting unexpectedly 2`] = `
 
     "what-bin": ["what-bin@1.0.0", "http://localhost:1234/what-bin/-/what-bin-1.0.0.tgz", { "bin": { "what-bin": "what-bin.js" } }, "sha512-sa99On1k5aDqCvpni/TQ6rLzYprUWBlb8fNwWOzbjDlM24fRr7FKDOuaBO/Y9WEIcZuzoPkCW5EkBCpflj8REQ=="],
 
-    "bundled-1/no-deps": ["no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", { "bundled": true }, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+    "bundled-1/no-deps": ["no-deps@1.0.0", "", { "bundled": true }, ""],
   }
 }
 "

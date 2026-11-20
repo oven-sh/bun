@@ -2040,9 +2040,13 @@ for (const linker of ["hoisted", "isolated"] as const) {
       expect(install.stderr).toContain("Saved lockfile");
       expect({ ...(await state()), locked: await lockedPackages(project) }).toEqual({
         ...bundled,
+        // One entry for each package folder that `b` commits, with the version in that folder.
         locked: {
           b: [`b@${url}#${sha}`, { dependencies: { y: "2.0.0" } }, sha],
-          "b/y": ["y@2.0.0", `${registry.url}y/-/y-2.0.0.tgz`, { bundled: true }, ""],
+          "b/@s/other": ["@s/other@1.0.0", "", { bundled: true }, ""],
+          "b/@s/w": ["@s/w@1.0.0", "", { bundled: true }, ""],
+          "b/unlisted": ["unlisted@1.0.0", "", { bundled: true }, ""],
+          "b/y": ["y@2.0.0", "", { dependencies: { "@s/w": "1.0.0" }, bundled: true }, ""],
         },
       });
 

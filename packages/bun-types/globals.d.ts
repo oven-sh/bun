@@ -156,6 +156,22 @@ declare var ReadableStream: Bun.__internal.UseLibDomIfAvailable<
       underlyingSource: import("node:stream/web").UnderlyingByteSource,
       strategy?: { highWaterMark?: number },
     ): ReadableStream<R>;
+    /**
+     * Create a stream from an iterable or an async iterable. If a sync iterable
+     * yields a promise, the stream waits for it and enqueues its value.
+     *
+     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/ReadableStream/from_static)
+     *
+     * @param iterable An array, a generator, another stream, or any other
+     * iterable or async iterable
+     *
+     * @example
+     * ```ts
+     * const stream = ReadableStream.from(["a", Promise.resolve("b")]);
+     * for await (const chunk of stream) console.log(chunk); // "a", then "b"
+     * ```
+     */
+    from<R = any>(iterable: AsyncIterable<R> | Iterable<R | PromiseLike<R>>): ReadableStream<R>;
   }
 >;
 
@@ -1011,10 +1027,74 @@ declare function confirm(message?: string): boolean;
 declare function prompt(message?: string, _default?: string): string | null;
 
 interface SubtleCrypto extends Bun.__internal.LibEmptyOrNodeCryptoWebcryptoSubtleCrypto {}
-declare var SubtleCrypto: {
-  prototype: SubtleCrypto;
-  new (): SubtleCrypto;
-};
+declare var SubtleCrypto: Bun.__internal.UseLibDomIfAvailable<
+  "SubtleCrypto",
+  {
+    prototype: SubtleCrypto;
+    new (): SubtleCrypto;
+    /**
+     * Check if `crypto.subtle` supports an operation with an algorithm, without
+     * running the operation. Returns `false`, and does not throw, for an
+     * operation or an algorithm that this runtime does not have.
+     *
+     * This is a static method: `crypto.subtle` has no `supports()`.
+     *
+     * @param operation The name of a `SubtleCrypto` method
+     * @param algorithm The algorithm that the method would take: a name, or a
+     * dictionary with the `name` and the parameters that the operation needs
+     * @param lengthOrAdditionalAlgorithm For `"deriveBits"`, the number of bits
+     * to derive, or `null`. For `"deriveKey"`, `"unwrapKey"`, `"encapsulateKey"`
+     * and `"decapsulateKey"`, the algorithm of the key that the operation
+     * creates. For `"wrapKey"`, the algorithm of the key to wrap. The other
+     * operations ignore it.
+     *
+     * @example
+     * ```ts
+     * const hash = SubtleCrypto.supports("digest", "SHA3-256") ? "SHA3-256" : "SHA-256";
+     *
+     * // Most operations need the parameters, not only the name
+     * SubtleCrypto.supports("generateKey", "HMAC"); // false
+     * SubtleCrypto.supports("generateKey", { name: "HMAC", hash: "SHA-256" }); // true
+     *
+     * SubtleCrypto.supports("deriveBits", { name: "HKDF", hash: "SHA-256", salt, info }, 256); // true
+     * SubtleCrypto.supports("wrapKey", "AES-KW", "AES-GCM"); // true
+     * ```
+     */
+    supports(
+      operation:
+        | "decapsulateBits"
+        | "decapsulateKey"
+        | "decrypt"
+        | "deriveBits"
+        | "deriveKey"
+        | "digest"
+        | "encapsulateBits"
+        | "encapsulateKey"
+        | "encrypt"
+        | "exportKey"
+        | "generateKey"
+        | "getPublicKey"
+        | "importKey"
+        | "sign"
+        | "unwrapKey"
+        | "verify"
+        | "wrapKey"
+        | (string & {}),
+      // `Algorithm` accepts a value typed as one of the `*Params` interfaces. The
+      // `Record` member accepts an object literal that has more than a `name`.
+      algorithm:
+        | string
+        | import("node:crypto").webcrypto.Algorithm
+        | (import("node:crypto").webcrypto.Algorithm & Record<string, unknown>),
+      lengthOrAdditionalAlgorithm?:
+        | number
+        | string
+        | import("node:crypto").webcrypto.Algorithm
+        | (import("node:crypto").webcrypto.Algorithm & Record<string, unknown>)
+        | null,
+    ): boolean;
+  }
+>;
 
 interface CryptoKey extends Bun.__internal.NodeCryptoWebcryptoCryptoKey {}
 declare var CryptoKey: {

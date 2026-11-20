@@ -843,6 +843,8 @@ function emitJsModules({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {
     resolve(cfg.codegenDir, "generated_resolved_source_tag.rs"),
     // Canonical builtin key -> BuiltinModuleKeys.h index: include!()'d by `builtin_module_key_index` in src/jsc/lib.rs.
     resolve(cfg.codegenDir, "generated_builtin_module_key_index.rs"),
+    // The modules whose load shows nowhere: include!()'d by src/aot/modules/loads_at_first_use.rs.
+    resolve(cfg.codegenDir, "generated_quiet_builtin_loads.rs"),
     o.internalModulesAsm,
     o.internalModulesBin,
   ];

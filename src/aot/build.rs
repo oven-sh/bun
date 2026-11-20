@@ -26,6 +26,7 @@ fn main() {
         "aot_schema.rs",
         "aot_schema_builtins.rs",
         "aot_schema_interface.rs",
+        "generated_quiet_builtin_loads.rs",
     ] {
         let table = codegen_dir.join(name);
         if !table.exists() {

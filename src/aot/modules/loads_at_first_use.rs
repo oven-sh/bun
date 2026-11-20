@@ -16,41 +16,17 @@ use super::module_set::ModuleSet;
 use super::requests::Scans;
 use super::{BindInput, ModuleRef};
 use crate::builtins::{RuntimeModule, table};
-use bun_core::strings;
 use bun_sema::util::FxHashSet;
-use std::sync::OnceLock;
 
-const ACTS_AT_LOAD: &[u8] = include_bytes!("../../codegen/builtins/data/acts-at-load.txt");
-
-/// A read of what the table of built-ins names. The host asks where the importer links whether a program can write it.
-const READ_THAT_THE_HOST_ASKS_OF: &[u8] = b"reads:";
-
-fn specifier_of_quiet_load(line: &'static [u8]) -> Option<&'static [u8]> {
-    if line.first() == Some(&b'#') {
-        return None;
-    }
-    // Behind it a line says where a kind shows.
-    let words = strings::split(line, b" # ").next()?;
-    let mut words = strings::tokenize(words, b" ");
-    let specifier = words.next()?;
-    words
-        .all(|word| word.starts_with(READ_THAT_THE_HOST_ASKS_OF))
-        .then_some(specifier)
-}
-
-fn quiet_specifiers() -> &'static [&'static [u8]] {
-    static QUIET: OnceLock<Vec<&'static [u8]>> = OnceLock::new();
-    QUIET.get_or_init(|| {
-        let lines = strings::split(ACTS_AT_LOAD, b"\n");
-        let mut quiet: Vec<&'static [u8]> = lines.filter_map(specifier_of_quiet_load).collect();
-        quiet.sort_unstable();
-        quiet
-    })
-}
+// src/codegen/bundle-modules.ts takes them out of the list.
+include!(concat!(
+    env!("BUN_CODEGEN_DIR"),
+    "/generated_quiet_builtin_loads.rs"
+));
 
 pub(crate) fn loads_quietly(module: RuntimeModule) -> bool {
     let specifier = table::specifier_of(module);
-    quiet_specifiers().binary_search(&specifier).is_ok()
+    SPECIFIERS_OF_QUIET_LOADS.binary_search(&specifier).is_ok()
 }
 
 pub(super) fn find_modules_loaded_at_first_use(

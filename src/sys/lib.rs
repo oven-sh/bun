@@ -7057,6 +7057,61 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
     }
 }
 
+/// The end of the name that Linux gives a descriptor whose file lost the path it was opened by. The name of a file can end like that too.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const UNLINKED_SUFFIX: &[u8] = b" (deleted)";
+
+/// The canonical path of `path`, which `fd` is open on: resolved by name when `fd` has the name of an unlinked file, as after a `rename` over `path`, or always for a bind mount of a replaced file (`st_nlink` is 0 there).
+#[inline]
+pub fn get_opened_path<'a>(
+    fd: Fd,
+    path: &ZStr,
+    out: &'a mut bun_paths::PathBuffer,
+) -> Maybe<&'a mut [u8]> {
+    let len = get_fd_path(fd, out)?.len();
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let len = if out.0[..len].ends_with(UNLINKED_SUFFIX) {
+        realpath(path, out)?.len()
+    } else {
+        len
+    };
+    let _ = path;
+    Ok(&mut out.0[..len])
+}
+
+/// [`get_opened_path`], NUL-terminated.
+#[inline]
+pub fn get_opened_path_z<'a>(
+    fd: Fd,
+    path: &ZStr,
+    out: &'a mut bun_paths::PathBuffer,
+) -> Maybe<&'a ZStr> {
+    let len = get_opened_path(fd, path, out)?.len();
+    Ok(ZStr::nul_terminate(out, len))
+}
+
+/// [`get_opened_path`] when `out` held the pathname: `write_path` writes it again for the lookup by name, or returns `None` if it does not fit. An error leaves no path in `out`.
+pub fn get_opened_path_with<'a>(
+    fd: Fd,
+    out: &'a mut bun_paths::PathBuffer,
+    write_path: impl FnOnce(&mut bun_paths::PathBuffer) -> Option<&ZStr>,
+) -> Maybe<&'a mut [u8]> {
+    let len = get_fd_path(fd, out)?.len();
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let len = if out.0[..len].ends_with(UNLINKED_SUFFIX) {
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let Some(path) = write_path(&mut path_buf) else {
+            return Err(Error::from_code(E::ENAMETOOLONG, Tag::realpath));
+        };
+        realpath(path, out)?.len()
+    } else {
+        len
+    };
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let _ = write_path;
+    Ok(&mut out.0[..len])
+}
+
 /// fd → absolute wide path (Windows `GetFinalPathNameByHandleW`).
 /// `\\?\` prefix and `\\?\UNC\` are stripped. Higher-tier callers
 /// (`bun.getFdPathW`) re-export this. A libc/kernel32-only sibling lives at

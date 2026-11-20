@@ -355,7 +355,7 @@ pub(crate) fn watch(
         }
     };
     // fall back to the caller's path; best effort
-    let resolved = sys::get_fd_path_z(probe.fd(), &mut resolve_buf).unwrap_or(path);
+    let resolved = sys::get_opened_path_z(probe.fd(), path, &mut resolve_buf).unwrap_or(path);
 
     let mut key_buf = path::path_buffer_pool::get();
     let key = PathWatcherManager::make_key(key_buf.as_mut_slice(), resolved.as_bytes(), recursive);

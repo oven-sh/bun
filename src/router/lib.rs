@@ -825,13 +825,12 @@ impl Route {
 
             // The closure runs under the per-entry mutex, like every other write to a cached `Entry`.
             let Ok(entry_abs_path) = entry.abs_path_or_try_fill(|| {
-                let mut abs_len = 0;
+                let parts = [entry.dir(), entry.base()];
                 let opened;
                 let fd = if let Some(cached) = entry.cache().fd.unwrap_valid() {
                     cached
                 } else {
-                    let parts = [entry.dir(), entry.base()];
-                    abs_len = FileSystem::get().abs_buf(&parts, route_file_buf).len();
+                    let abs_len = FileSystem::get().abs_buf(&parts, route_file_buf).len();
                     let buf = bun_core::ZStr::nul_terminate(route_file_buf, abs_len);
                     match bun_sys::open_file_absolute_z(buf, bun_sys::OpenFlags::READ_ONLY) {
                         Ok(file) => opened = file,
@@ -852,7 +851,11 @@ impl Route {
                     opened.handle()
                 };
 
-                let _abs = match bun_sys::get_fd_path(fd, route_file_buf) {
+                let resolved = bun_sys::get_opened_path_with(fd, route_file_buf, |buf| {
+                    let len = FileSystem::get().abs_buf(&parts, buf).len();
+                    Some(bun_core::ZStr::nul_terminate(buf, len))
+                });
+                let _abs = match resolved {
                     Ok(p) => &p[..],
                     Err(err) => {
                         log.add_error_fmt(
@@ -861,7 +864,8 @@ impl Route {
                             format_args!(
                                 "{} resolving route: {}",
                                 bstr::BStr::new(err.name()),
-                                bstr::BStr::new(&route_file_buf[..abs_len])
+                                // The lookup wrote over `route_file_buf`.
+                                bstr::BStr::new(FileSystem::get().abs_buf(&parts, route_file_buf))
                             ),
                         );
                         return Err(());

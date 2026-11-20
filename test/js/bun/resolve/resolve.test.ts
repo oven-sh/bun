@@ -1,6 +1,18 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
+import {
+  chmodSync,
+  chownSync,
+  closeSync,
+  linkSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
 import {
   autoInstallTempDir,
   bunEnv,
@@ -1166,6 +1178,44 @@ describe.if(isWindows)("#30839 - imports entry pointing at a scoped package", ()
     expect(stdout).toBe("esm (from exports)\n");
     expect(exitCode).toBe(0);
   });
+});
+
+// Linux names an open file that lost its path `<old path> (deleted)`. The resolver must not take
+// that name for the path of the file.
+it.skipIf(!isLinux)("a symlink resolves by its path when Linux calls the target deleted", () => {
+  using dir = tempDir("resolver-symlink-deleted-name", {
+    "old.js": `module.exports = "old";`,
+    "new.js": `module.exports = "new";`,
+    "kept.js (deleted)": `module.exports = "kept";`,
+  });
+  const root = realpathSync(String(dir));
+  const resolve = (name: string) => {
+    try {
+      return Bun.resolveSync("./" + name, root).slice(root.length);
+    } catch (e: any) {
+      return e.code;
+    }
+  };
+
+  // The descriptor keeps the old file open. The old file keeps a name, and "old.js" leads to the new file.
+  const fd = openSync(join(root, "old.js"), "r");
+  try {
+    linkSync(join(root, "old.js"), join(root, "old.bak.js"));
+    renameSync(join(root, "new.js"), join(root, "old.js"));
+    symlinkSync(`/proc/self/fd/${fd}`, join(root, "stale.js"));
+    symlinkSync("kept.js (deleted)", join(root, "kept.js"));
+    symlinkSync("old.js", join(root, "fresh.js"));
+
+    expect({ stale: resolve("stale.js"), kept: resolve("kept.js"), fresh: resolve("fresh.js") }).toEqual({
+      // No path leads to the file that the descriptor has.
+      stale: "ERR_MODULE_NOT_FOUND",
+      kept: "/kept.js (deleted)",
+      fresh: "/old.js",
+    });
+    expect([require(join(root, "kept.js")), require(join(root, "fresh.js"))]).toEqual(["kept", "new"]);
+  } finally {
+    closeSync(fd);
+  }
 });
 
 // A symlink in node_modules whose target no longer exists (for example an

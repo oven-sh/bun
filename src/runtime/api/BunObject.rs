@@ -600,7 +600,9 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
             #[cfg(not(windows))]
             {
                 let mut path = bun_paths::path_buffer_pool::get();
-                let Ok(fdpath) = bun_sys::get_fd_path(fd, &mut path) else {
+                let Ok(fdpath) = bun_sys::get_opened_path_with(fd, &mut path, |buf| {
+                    (main.len() < buf.len()).then(|| bun_paths::resolve_path::z(main, buf))
+                }) else {
                     break 'use_resolved_path;
                 };
 

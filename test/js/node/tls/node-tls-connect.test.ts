@@ -8,6 +8,7 @@ import {
   bunRun,
   tls as COMMON_CERT_,
   isASAN,
+  isLinux,
   isWindows,
   nodeExe,
   nodeExeAtLeast,
@@ -4235,6 +4236,221 @@ describe("a write issued before the handshake is failed, not delivered", () => {
       serverReceived: "",
     });
   });
+});
+
+// #43381: the peer closes the TCP connection during the handshake while a write waits
+// behind it. Node delivers the EOF first ('end'), and the handshake that hangs on it
+// destroys the socket with ECONNRESET. The write in flight has no callback: what that
+// callback gets (ECANCELED in node) is the business of the destroy, not of this teardown.
+// The fixture runs on both runtimes so the expected report is pinned to node.
+describe.each([
+  ["bun", bunExe()],
+  ["node", nodeExe()],
+])("peer closes during the handshake with a write in flight (%s)", (_runtime, exe) => {
+  const fixture = /* js */ `
+    const net = require("node:net");
+    const tls = require("node:tls");
+    const shape = err => (err ? [err.code, err.syscall].filter(Boolean).join(" ") : "ok");
+    const events = [];
+    const server = net.createServer(peer => {
+      peer.on("error", () => {});
+      peer.once("data", () => peer.destroy());
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const client = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false });
+      client.on("error", err => events.push("error " + shape(err)));
+      client.on("end", () => events.push("end"));
+      client.on("close", hadError => {
+        events.push("close " + hadError);
+        setImmediate(() => {
+          console.log(JSON.stringify(events));
+          server.close();
+        });
+      });
+      client.write("hello");
+    });
+  `;
+
+  it.skipIf(!exe)("emits 'end', then the handshake error", async () => {
+    await using proc = Bun.spawn({
+      cmd: [exe!, "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ events: stdout.trim() ? JSON.parse(stdout) : stdout, stderr, exitCode }).toEqual({
+      events: ["end", "error ECONNRESET", "close true"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// A TLS socket over a net.Socket with allowHalfOpen: true is destroyed locally. The
+// net.Socket must close with it (node's TLSWrap closes its parent), without an 'end'
+// on either socket: a destroyed socket emits 'close' only. The report ends at the
+// net.Socket's 'close'. Where the TLS socket's own 'close' falls is not pinned.
+describe.each([
+  ["bun", bunExe()],
+  ["node", nodeExe()],
+])("destroy() of a TLS socket over an allowHalfOpen net.Socket (%s)", (_runtime, exe) => {
+  const fixture = /* js */ `
+    const net = require("node:net");
+    const tls = require("node:tls");
+    const CERT = { key: process.env.TLS_KEY, cert: process.env.TLS_CERT };
+    const events = [];
+    const report = server => {
+      console.log(JSON.stringify(events));
+      server.close();
+    };
+    const watch = (raw, secure) => {
+      raw.on("end", () => events.push("raw end"));
+      secure.on("end", () => events.push("tls end"));
+    };
+    if (process.env.SIDE === "client") {
+      const server = tls.createServer(CERT, peer => peer.on("error", () => {}));
+      server.listen(0, "127.0.0.1", () => {
+        const raw = net.connect({ port: server.address().port, host: "127.0.0.1", allowHalfOpen: true });
+        raw.on("close", () => {
+          events.push("raw close");
+          report(server);
+        });
+        raw.on("connect", () => {
+          const secure = tls.connect({ socket: raw, rejectUnauthorized: false });
+          watch(raw, secure);
+          secure.on("secureConnect", () => setImmediate(() => secure.destroy()));
+        });
+      });
+    } else {
+      const server = net.createServer({ allowHalfOpen: true }, raw => {
+        raw.on("close", () => {
+          events.push("raw close", "connections " + server._connections);
+          report(server);
+        });
+        const secure = new tls.TLSSocket(raw, { isServer: true, ...CERT });
+        watch(raw, secure);
+        if (process.env.SIDE === "server-sync") secure.destroy();
+        else secure.on("secure", () => setImmediate(() => secure.destroy()));
+      });
+      server.listen(0, "127.0.0.1", () => {
+        tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false }).on("error", () => {});
+      });
+    }
+  `;
+
+  async function run(SIDE: string) {
+    await using proc = Bun.spawn({
+      cmd: [exe!, "-e", fixture],
+      env: { ...bunEnv, SIDE, TLS_KEY: COMMON_CERT_.key, TLS_CERT: COMMON_CERT_.cert },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { events: stdout.trim() ? JSON.parse(stdout) : stdout, stderr, exitCode };
+  }
+
+  it.skipIf(!exe)("closes the wrapped client socket", async () => {
+    expect(await run("client")).toEqual({ events: ["raw close"], stderr: "", exitCode: 0 });
+  });
+
+  it.skipIf(!exe)("closes the wrapped accepted socket", async () => {
+    expect(await run("server")).toEqual({ events: ["raw close", "connections 0"], stderr: "", exitCode: 0 });
+  });
+
+  // The fd is adopted a tick after the wrap. A destroy() in the wrap's tick comes first.
+  it.skipIf(!exe)("closes the wrapped accepted socket when destroyed in the same tick", async () => {
+    expect(await run("server-sync")).toEqual({ events: ["raw close", "connections 0"], stderr: "", exitCode: 0 });
+  });
+});
+
+// A net.Socket has a write in flight, and one queued behind it, when a TLS socket wraps
+// it. The peer resets. The TLS socket reports the reset, and the socket it wraps closes
+// with nothing to report, but each of its two write callbacks still runs once.
+// The fixture runs on both runtimes so the expected report is pinned to node.
+describe.each([
+  ["bun", bunExe()],
+  ["node", nodeExe()],
+])("a peer reset with a write in flight on the socket that a TLS socket wraps (%s)", (_runtime, exe) => {
+  const fixture = /* js */ `
+    const net = require("node:net");
+    const tls = require("node:tls");
+    const { SIDE, TLS_KEY, TLS_CERT } = process.env;
+    const shape = err => (err ? [err.code, err.syscall].filter(Boolean).join(" ") : "ok");
+    const events = [];
+    const calls = { write: 0, queued: 0 };
+    let client, accepted, ready = 0, closed = 0;
+    // A write made inside the 'connect' or 'connection' dispatch is flushed on another native path.
+    const onReady = () => ++ready === 2 && setImmediate(run);
+    // The report follows the 'close' of both sockets, at the check phase.
+    const onClose = () => {
+      if (++closed < 2) return;
+      setImmediate(() => {
+        events.push("calls " + JSON.stringify(calls));
+        console.log(JSON.stringify(events));
+        server.close();
+      });
+    };
+    const server = net.createServer(socket => {
+      accepted = socket;
+      onReady();
+    });
+    server.listen(0, "127.0.0.1", () => {
+      client = net.connect(server.address().port, "127.0.0.1", onReady);
+    });
+    function run() {
+      const [raw, peer] = SIDE === "client" ? [client, accepted] : [accepted, client];
+      peer.on("error", () => {});
+      peer.pause();
+      // Write until the kernel stops taking the bytes, so one write is in flight.
+      const chunk = Buffer.alloc(1024 * 1024, "a");
+      let writes = 0;
+      while (writes < 256 && raw.writableLength === 0) {
+        const nth = ++writes;
+        raw.write(chunk, () => {
+          if (nth === writes) calls.write++;
+        });
+      }
+      if (raw.writableLength === 0) {
+        console.error("no write stayed in flight");
+        process.exit(1);
+      }
+      raw.write("b", () => calls.queued++);
+      const secure =
+        SIDE === "client"
+          ? tls.connect({ socket: raw, rejectUnauthorized: false })
+          : new tls.TLSSocket(raw, { isServer: true, key: TLS_KEY, cert: TLS_CERT });
+      secure.on("error", err => events.push("tls error " + shape(err)));
+      secure.on("close", hadError => {
+        events.push("tls close " + hadError);
+        onClose();
+      });
+      raw.on("close", hadError => {
+        events.push("raw close " + hadError);
+        onClose();
+      });
+      peer.resetAndDestroy();
+    }
+  `;
+
+  // Linux only: there a loopback RST reaches the socket as a read error (see the teardown tests in node-net.test.ts).
+  it.concurrent.skipIf(!exe || !isLinux).each(["client", "server"])(
+    "calls both write callbacks of the wrapped %s socket once",
+    async SIDE => {
+      await using proc = Bun.spawn({
+        cmd: [exe!, "-e", fixture],
+        env: { ...bunEnv, SIDE, TLS_KEY: COMMON_CERT_.key, TLS_CERT: COMMON_CERT_.cert },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ events: stdout.trim() ? JSON.parse(stdout) : stdout, stderr, exitCode }).toEqual({
+        events: ["tls error ECONNRESET read", "raw close false", "tls close true", 'calls {"write":1,"queued":1}'],
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 // The peer accepts the TCP connection and never answers the ClientHello (a dead

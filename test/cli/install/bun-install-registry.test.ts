@@ -2035,8 +2035,9 @@ describe.concurrent("bundledDependencies", () => {
       const { packageDir, packageJson, env } = await setupTest();
       // `bundled-nested-host` bundles `bundled-shipped-inner` and nests the bundle's
       // `no-deps@1.0.0` under it in the tarball. `bundled-shipped-sibling@1.0.0` nests under the
-      // host and needs the same `no-deps@1.0.0`. The lockfile gives both edges one package, but
-      // the sibling gets a copy bun installs, not the one the tarball may have put next to it.
+      // host and needs `no-deps@1.0.0` too. Only the inner package can load the copy in the
+      // tarball, so the sibling gets one that bun installs. The host ships no `no-deps` next to
+      // the sibling that would shadow it, so that one is at the root.
       await write(
         packageJson,
         JSON.stringify({
@@ -2050,12 +2051,12 @@ describe.concurrent("bundledDependencies", () => {
         const host = join(packageDir, "node_modules", "bundled-nested-host", "node_modules");
         expect(
           await Promise.all([
-            exists(join(packageDir, "node_modules", "no-deps")),
+            manifestAt(packageDir, "node_modules", "no-deps"),
             exists(join(host, "no-deps")),
             manifestAt(host, "bundled-shipped-inner", "node_modules", "no-deps"),
-            manifestAt(host, "bundled-shipped-sibling", "node_modules", "no-deps"),
+            exists(join(host, "bundled-shipped-sibling", "node_modules")),
           ]),
-        ).toEqual([false, false, { name: "no-deps", version: "1.0.0" }, { name: "no-deps", version: "1.0.0" }]);
+        ).toEqual([{ name: "no-deps", version: "1.0.0" }, false, { name: "no-deps", version: "1.0.0" }, false]);
       }
       await check();
       await expectReinstallIsNoop(packageDir, env);
@@ -2927,14 +2928,15 @@ index 0000000..1111111 100644
       args: ["--omit=peer"],
       tarballs: ["leaf"],
     },
-    // The install phase downloads a package that was first resolved below a
-    // dependency the installers do not place, when another dependency needs it.
-    "first below a bundled dependency, then needed": {
+    // The tr that the tarball of outer ships is not the registry's. Nothing asks
+    // for that one's manifest until uses-tr needs it, and it is downloaded then.
+    "in the tarball of a bundled dependency, and needed": {
       manifest: { dependencies: { outer: "1.0.0", "uses-tr": "1.0.0" } },
       tarballs: ["outer", "tr", "uses-tr"],
       requires: { outer: "bundled bd, bundled tr", "uses-tr": "registry tr" },
-      usesTrResolvesLast: true,
     },
+    // The install phase downloads a package that was first resolved below a
+    // dependency the installers do not place, when another dependency needs it.
     "first below a package for another platform, then needed": {
       manifest: { dependencies: { "uses-native": "1.0.0", "uses-tr": "1.0.0" } },
       tarballs: ["tr", "uses-native", "uses-tr"],
@@ -2956,7 +2958,8 @@ index 0000000..1111111 100644
       tarballs: ["outer"],
       requires: { outer: "bundled bd, bundled tr" },
     },
-    "with a patch, first below a bundled dependency, then needed": {
+    // The patch is for the registry's tr. The one in the tarball of outer stays as it is.
+    "with a patch, in the tarball of a bundled dependency, and needed": {
       manifest: {
         dependencies: { outer: "1.0.0", "uses-tr": "1.0.0" },
         patchedDependencies: { "tr@1.0.0": "patches/tr.patch" },
@@ -2964,7 +2967,6 @@ index 0000000..1111111 100644
       files: { "patches/tr.patch": patchOf("tr") },
       tarballs: ["outer", "tr", "uses-tr"],
       requires: { outer: "bundled bd, bundled tr", "uses-tr": "patched tr" },
-      usesTrResolvesLast: true,
     },
   };
 

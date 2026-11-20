@@ -63,6 +63,25 @@ describe("assert.rejects", () => {
       operator: "rejects",
     });
   });
+
+  // A string in the `error` position is only the failure message. The empty
+  // string is a message like any other.
+  it.each(["", "failed"])("with the message %p, resolves when the promise rejects", async message => {
+    await expect(assert.rejects(Promise.reject(new Error("boom")), message)).resolves.toBeUndefined();
+    await expect(assert.strict.rejects(Promise.reject(new Error("boom")), message)).resolves.toBeUndefined();
+  });
+
+  it.each([
+    ["", "Missing expected rejection."],
+    ["failed", "Missing expected rejection: failed"],
+  ])("with the message %p, rejects with an AssertionError when the promise resolves", async (message, expected) => {
+    await expect(assert.rejects(Promise.resolve(), message)).rejects.toMatchObject({
+      name: "AssertionError",
+      code: "ERR_ASSERTION",
+      message: expected,
+      operator: "rejects",
+    });
+  });
 });
 
 describe("assert.doesNotReject", () => {

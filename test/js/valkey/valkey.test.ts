@@ -7436,6 +7436,11 @@ describe("RedisClient URL parsing", () => {
       client.close();
     }
   });
+
+  // `new URL()` gives a URL with a query or a fragment and no path the pathname "", with and without credentials.
+  test.each(["redis+unix://h?x", "redis+unix://u@h?x", "valkey+unix://u:p@h#f"])("%s has no unix socket path", url => {
+    expect(() => new RedisClient(url)).toThrow("Expected unix socket path after valkey+unix:// or valkey+tls+unix://");
+  });
 });
 
 describe("RedisClient argument validation", () => {

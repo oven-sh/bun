@@ -141,3 +141,51 @@ describe("WPT url-constructor", () => {
     });
   }
 });
+
+// The authority state of the URL Standard only records credentials, so a URL with credentials has the path, query and
+// fragment of the same URL without them. The fixture has no row where "?" or "#" follows the host of a non-special URL
+// with credentials. This gives credentials to every row that has an authority, and to the seeds.
+describe("credentials do not change the path, query or fragment", () => {
+  const authority = /^([\t\n\r ]*(?:[A-Za-z][A-Za-z0-9+.-]*:)?\/\/)([^@\\]*)$/;
+  const seeds = ["zz://h?q", "zz://h#f", "zz://h:8?q", "zz://[::1]#f", "http://h?q", "http://h#f", "http://h:8?q"];
+  const rows: Entry[] = [
+    ...sections.flatMap(section => section.entries).filter(entry => !entry.failure),
+    ...seeds.map(input => ({ input })),
+  ].filter(entry => authority.test(entry.input));
+  const tail = (url: URL) => [url.pathname, url.search, url.hash];
+
+  // "#\u4e2d" makes every input a UTF-16 string.
+  test.each(["", "#\u4e2d"])("with the suffix %j", suffix => {
+    const mismatches: unknown[] = [];
+    let compared = 0;
+    for (const { input, base } of rows) {
+      const [, prefix, rest] = authority.exec(input)!;
+      for (const credentials of ["u@", "u:p@", ":p@"]) {
+        let plain: URL, twin: URL;
+        try {
+          plain = construct({ input: input + suffix, base });
+          twin = construct({ input: prefix + credentials + rest + suffix, base });
+        } catch {
+          continue; // Not a URL: a file URL and a URL without a host take no credentials.
+        }
+        compared++;
+        const [username, password = ""] = credentials.slice(0, -1).split(":");
+        const viaSetters = new URL(plain.href);
+        viaSetters.password = password;
+        viaSetters.username = username;
+        const withCredentials = (href: string) => href.replace("://", "://" + credentials);
+        const twinOfPlain = [withCredentials(plain.href), ...tail(plain)];
+        const expected = { parsed: twinOfPlain, set: twinOfPlain, relative: withCredentials(new URL("x", plain).href) };
+        const actual = {
+          parsed: [twin.href, ...tail(twin)],
+          set: [viaSetters.href, ...tail(viaSetters)],
+          relative: new URL("x", twin).href,
+        };
+        if (!Bun.deepEquals(actual, expected))
+          mismatches.push({ input, base: base ?? null, credentials, expected, actual });
+      }
+    }
+    expect(mismatches).toEqual([]);
+    expect(compared).toBeGreaterThan(600);
+  });
+});

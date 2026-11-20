@@ -690,7 +690,12 @@ fn check_node_for_nullish<'a>(node: Expr<'a>, is_assignment_target: bool, cx: &m
     } else {
         return;
     };
-    cx.report(node, message).oxlint_help_with(|| tsgolint_checked_value_help(ty, node));
+    // tsgolint only skips the parentheses around the operand for `neverNullish`.
+    let report_span = match cx.language().is_oxlint && message.id != NEVER_NULLISH.id {
+        true => node.outer_span(),
+        false => node.span(),
+    };
+    cx.report(report_span, message).oxlint_help_with(|| tsgolint_checked_value_help(ty, node));
 }
 
 /// Reports a comparison of two literal types, and a comparison with `null` or `undefined` of something that can't be

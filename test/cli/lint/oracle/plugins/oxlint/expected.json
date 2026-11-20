@@ -9625,6 +9625,8 @@
   "cond.ts:19:5+82 typescript(no-unnecessary-condition)",
   "cond.ts:28:8+3 typescript(no-unnecessary-condition)",
   "cond.ts:33:3+1 typescript(no-unnecessary-condition)",
+  "cond.ts:44:1+75 typescript(no-unnecessary-condition)",
+  "cond.ts:49:3+1 typescript(no-unnecessary-condition)",
   "cond.ts:7:3+76 typescript(no-unnecessary-condition)",
   "jsx.tsx:10:14+90 typescript(no-unsafe-assignment)",
   "jsx.tsx:17:3+1 typescript(no-unsafe-assignment)",

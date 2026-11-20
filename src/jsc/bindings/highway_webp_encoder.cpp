@@ -4,8 +4,8 @@
 // A block of 4x4 is four vectors, one per column or per row. 128 bits have room for two blocks, whose lanes alternate:
 // a pair. Mostly these are two ways of predicting the same block. 256 bits are two pairs side by side.
 
-// There are 4 or 6 modes to try at a time, which do not fill 512 bits, and vectors are kept in structs. So this is the
-// list in scripts/build/deps/highway.ts and more: the rest of SVE, whatever is newer than AVX2, and what is no faster
+// There are 4 or 6 modes to try at a time, which do not fill 512 bits. So this is the
+// list in scripts/build/deps/highway.ts and more: whatever is newer than AVX2, and what is no faster
 // here than SSSE3 or the NEON without AES.
 #undef HWY_DISABLED_TARGETS
 #define HWY_DISABLED_TARGETS (HWY_ALL_SVE | HWY_NEON | HWY_NEON_BF16 | HWY_SSE4 | (HWY_AVX2 - 1))

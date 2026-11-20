@@ -6,11 +6,13 @@
 #include <unicode/utf16.h>
 
 // Runtime-dispatched (HWY_DYNAMIC_DISPATCH) escape scan, defined in
-// highway_strings.cpp. Picks AVX2/AVX-512/SVE at runtime, so the no-escape fast
+// highway_strings.cpp. Picks AVX2/AVX-512 at runtime, so the no-escape fast
 // path keeps wide vectors where the WTF SIMD helpers below (compiled for the
 // -march=nehalem target) would otherwise be pinned to SSE width.
+#if CPU(X86_64)
 extern "C" size_t highway_index_of_escape_char8(const uint8_t* input, size_t len);
 extern "C" size_t highway_index_of_escape_char16(const uint16_t* input, size_t len);
+#endif
 
 namespace Bun {
 namespace ANSI {
@@ -50,8 +52,11 @@ static auto exactEscapeMatch(std::conditional_t<sizeof(SIMDType) == 1, simde_uin
 // A long no-escape scan delegates to the runtime-dispatched Highway kernel so
 // it uses the widest SIMD the CPU supports at runtime rather than the build's
 // static -march=nehalem (the 16 KB no-ANSI stripANSI regression). The inlined
-// WTF SIMD scan below stays the path for everything else.
+// WTF SIMD scan below stays the path for everything else, and for all of arm64,
+// which has one width.
+#if CPU(X86_64)
 static constexpr size_t kEscapeDispatchThreshold = 1024;
+#endif
 
 // Find the first escape character in a string. An "escape character" is 0x1B,
 // 0x90, 0x98, 0x9B, 0x9C, 0x9D, 0x9E or 0x9F — matching isEscapeCharacter plus
@@ -72,6 +77,8 @@ static const Char* findEscapeCharacter(const Char* start, const Char* end)
     constexpr auto escVector = SIMD::splat<SIMDType>(0b00010000);
 
     auto it = start;
+
+#if CPU(X86_64)
     const size_t len = static_cast<size_t>(end - start);
 
     // Long scans delegate to the runtime-dispatched Highway kernel so the
@@ -91,6 +98,7 @@ static const Char* findEscapeCharacter(const Char* start, const Char* end)
             return idx < len ? start + idx : nullptr;
         }
     }
+#endif
 
     // 4x-unrolled prologue: process 4 chunks at a time, accumulating broad-mask
     // hits in a vector OR. Only do the NEON->GPR transfer + branch every 64 bytes

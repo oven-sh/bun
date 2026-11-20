@@ -1595,6 +1595,22 @@ describe("crc32", () => {
       }),
     );
   });
+
+  it("fits in the stack that the deepest frame of a Worker leaves", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), resolve(import.meta.dir, "crc32-deepest-frame-fixture.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const sums = [2920771703, 1167601884, 1605982112, 997318536, 2262181103];
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ crc32: sums, hash: sums, gzip: sums, libdeflate: sums, gunzip: sums }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 // Only ASAN can detect the out-of-bounds write.

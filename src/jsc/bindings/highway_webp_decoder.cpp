@@ -1,8 +1,8 @@
 // The kernels of the WebP decoder in src/webp, runtime-dispatched via Google Highway. src/highway/webp.rs says what
 // each takes.
 
-// A macroblock is 16 samples of luma wide and twice 8 of chroma, so 256 bits are the most that get filled, and the
-// transposes keep vectors in arrays. So this is the list in scripts/build/deps/highway.ts and more: the rest of SVE,
+// A macroblock is 16 samples of luma wide and twice 8 of chroma, so 256 bits are the most that get filled.
+// So this is the list in scripts/build/deps/highway.ts and more:
 // whatever is newer than AVX2, and what is no faster here than SSSE3 or the NEON without AES.
 #undef HWY_DISABLED_TARGETS
 #define HWY_DISABLED_TARGETS (HWY_ALL_SVE | HWY_NEON | HWY_NEON_BF16 | HWY_SSE4 | (HWY_AVX2 - 1))

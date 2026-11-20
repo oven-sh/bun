@@ -428,13 +428,10 @@ ShuffleDecodeI16(D8 d8, const uint8_t* HWY_RESTRICT sextets_p, uint64_t seg_cont
 // Kogge-Stone inclusive prefix sum on an i32 vector: lane i becomes
 // sum(v[0..i]). log2(K) steps of SlideUpLanes-by-2^s (shift toward
 // higher lanes, zero-filling lanes 0..2^s-1) + add. K is the i32 lane
-// count (4 on NEON/SSE, 8 on AVX2, 16 on AVX-512, runtime on SVE).
+// count (4 on NEON/SSE, 8 on AVX2, 16 on AVX-512).
 // ShiftLeftLanes operates on independent 128-bit blocks so would be
 // wrong for K > 4; SlideUpLanes is cross-block. With up to 16 deltas
-// each in [-511, 511] the running sum fits i32 without overflow. The
-// loop trip count is Lanes-dependent so it unrolls fully on fixed-
-// width targets and stays a runtime loop on scalable ones (where
-// SlideUpLanes by >= Lanes would be implementation-defined).
+// each in [-511, 511] the running sum fits i32 without overflow.
 template<class DI32>
 static HWY_INLINE hn::Vec<DI32> PrefixSumI32(DI32 d, hn::Vec<DI32> v)
 {
@@ -693,8 +690,8 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
             // `m` segments staged in lanes 0..m-1; lanes m..Lanes-1
             // must be zero so the prefix sum leaves them at the
             // (m-1)th value and the range check sees no spurious
-            // negatives past m. Lanes(di32) (runtime on SVE) bounds
-            // what hn::Load actually reads.
+            // negatives past m. Lanes(di32) bounds what hn::Load
+            // actually reads.
             const size_t kLanesI32 = hn::Lanes(di32);
             for (size_t z = m; z < kLanesI32; ++z) {
                 bcol_gc[z] = 0;
@@ -743,9 +740,8 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
             // (cross-block, unlike InterleaveLower which is per-128b)
             // produce [gl, gc0, gl, gc1, ..] for rows 0..L/2-1 and
             // L/2..L-1 respectively where L = Lanes(di32). The upper
-            // half lands at bgen + L (runtime Lanes on SVE, not
-            // MaxLanes) so the two halves are contiguous; bgen[] is
-            // sized at 2*MaxLanes so this is always in-bounds.
+            // half lands at bgen + L so the two halves are contiguous;
+            // bgen[] is sized at 2*MaxLanes so this is always in-bounds.
             {
                 const auto vgl = hn::Set(di32, gen_line);
                 const auto g_lo = hn::InterleaveWholeLower(di32, vgl, a_gc);

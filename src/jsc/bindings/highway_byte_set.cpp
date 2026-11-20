@@ -3,6 +3,9 @@
 // Few runs are long, and 512-bit vectors slow down the code around them. The list is that of highway_png.cpp.
 #undef HWY_DISABLED_TARGETS
 #define HWY_DISABLED_TARGETS (HWY_ALL_SVE | (HWY_AVX2 - 1))
+#ifndef __OPTIMIZE__
+#error "Unless hwy::ChosenTarget::GetIndex() is inlined, the linker may keep that of a file with other targets."
+#endif
 
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "highway_byte_set.cpp"

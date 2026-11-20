@@ -3,10 +3,11 @@
 // directly, sweeping haystack lengths across vector-width boundaries and
 // misaligned base pointers, and checks each against a scalar reference.
 
-import { highwayStringsForTesting as hw } from "bun:internal-for-testing";
+import { cpuDispatch, highwayStringsForTesting as hw } from "bun:internal-for-testing";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { isCI, isLinux } from "harness";
+import { isArm64, isCI, isLinux, isWindows } from "harness";
 import { readFileSync } from "node:fs";
+import { cpus, release } from "node:os";
 
 // Lengths that straddle 16/32/64-byte lanes and the scalar tails on either side.
 const LENGTHS = [0, 1, 2, 3, 8, 15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 127, 128, 129, 255, 256, 257, 1024, 1029];
@@ -124,6 +125,20 @@ describe("highway byte-search kernels", () => {
           compare("lastIndexOfChar", hw("lastIndexOfChar", h, 0x2c), pos, at);
           compare("countChar", hw("countChar", h, 0x2c), 1, at);
         }
+      }
+    }
+  });
+
+  // Less than a vector is two halves that overlap, or a load that pads with zeros. From six vectors on, four go at a time.
+  it.each([0, 0x2c])("indexOfChar: %i at every position", needle => {
+    const short = Array.from({ length: 70 }, (_, len) => len);
+    for (const len of [...short, 95, 96, 97, 111, 191, 192, 193, 250, 383, 384, 385, 500, 641]) {
+      const h = filler(len, 5);
+      compare("indexOfChar", hw("indexOfChar", h, needle), len, `len=${len}`);
+      for (let pos = len - 1; pos >= 0; pos--) {
+        h[pos] = needle;
+        compare("indexOfChar", hw("indexOfChar", h, needle), pos, () => `len=${len} pos=${pos}`);
+        if (pos % 2) h[pos] = 0x80;
       }
     }
   });
@@ -827,5 +842,32 @@ describe.skipIf(process.arch !== "x64")("highway_zstd.cpp", () => {
     const symbols = Uint8Array.from({ length: 150 }, () => below(256));
     codes.forEach((_, symbol) => (codes[symbol] = code()));
     for (let room = 0; room < 400; room++) writeCodes(symbols, room);
+  });
+});
+
+describe("targets", () => {
+  it.skipIf(isArm64)("x64 starts at SSE4", () => {
+    expect(cpuDispatch().highway.at(-1)).toBe("SSE4");
+  });
+
+  it.skipIf(isArm64)("x64 has no 512-bit vectors before Ice Lake by default", () => {
+    expect(cpuDispatch().highway).not.toContain("AVX3");
+  });
+
+  it.skipIf(!isArm64 || !isLinux)("arm64 uses what Linux reports, but for SVE", () => {
+    const features = readFileSync("/proc/cpuinfo", "utf8")
+      .match(/^Features\s*:(.*)$/m)![1]
+      .split(" ");
+    const has = (...wanted: string[]) => wanted.every(feature => features.includes(feature));
+    const highway = ["NEON_WITHOUT_AES"];
+    if (has("aes")) highway.unshift("NEON");
+    if (has("aes", "asimdhp", "asimddp", "bf16")) highway.unshift("NEON_BF16");
+    expect(cpuDispatch()).toEqual({ highway, checksums: highway[0] });
+  });
+
+  it.skipIf(!isArm64 || !isWindows)("the checksums use what Windows reports on arm64", () => {
+    // Windows reports BF16 from 11 24H2 on.
+    const reportsBf16 = cpus()[0].model.includes("Cobalt") && +release().split(".")[2] >= 26100;
+    expect(cpuDispatch().checksums).toBeOneOf(reportsBf16 ? ["NEON_BF16"] : ["NEON", "NEON_BF16"]);
   });
 });

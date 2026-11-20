@@ -1,8 +1,15 @@
 // The CRC-32 of gzip and the Adler-32 of zlib, derived from libdeflate (LICENSE.md).
 
-// The list in scripts/build/deps/highway.ts and more: the rest of SVE, and what has nothing for these over AVX3_DL.
+// Unlike the list in scripts/build/deps/highway.ts: with AVX3, and without what has nothing for these over AVX3_DL.
 #undef HWY_DISABLED_TARGETS
 #define HWY_DISABLED_TARGETS (HWY_ALL_SVE | (HWY_AVX3_DL - 1))
+// Without this, hn::CLMulLower and hn::CLMulUpper are emulated.
+#undef HWY_DISABLE_PCLMUL_AES
+// On these systems ByFeatures() picks the target. BUN_HWY_DISPATCH would stay at the baseline.
+#if defined(__aarch64__) && (defined(_WIN32) || defined(__FreeBSD__))
+#define CHOOSES_BY_ITSELF
+#define HWY_HAVE_RUNTIME_DISPATCH 1
+#endif
 #ifndef __OPTIMIZE__
 #error "Unless hwy::ChosenTarget::GetIndex() is inlined, the linker may keep that of a file with other targets."
 #endif
@@ -626,29 +633,64 @@ static uint32_t CopyAndAdler32(uint32_t adler, const uint8_t* bytes, uint8_t* co
     return Adler32Of(adler, Input<true> { bytes, copy }, len);
 }
 
+static int64_t Target() { return HWY_TARGET; }
+
 // NOLINTNEXTLINE(google-readability-namespace-comments)
 } // namespace HWY_NAMESPACE
 } // namespace bun
 HWY_AFTER_NAMESPACE();
 
 #if HWY_ONCE
+#if defined(CHOOSES_BY_ITSELF) && HWY_OS_WIN
+#include <windows.h>
+#elif defined(CHOOSES_BY_ITSELF)
+#include <sys/auxv.h>
+#endif
+
 namespace bun {
+#ifdef CHOOSES_BY_ITSELF
+template<typename Function>
+static Function ByFeatures(Function plain, Function aes, Function bf16)
+{
+#if HWY_OS_WIN
+    // PF_ARM_V82_FP16_INSTRUCTIONS_AVAILABLE and PF_ARM_V86_BF16_INSTRUCTIONS_AVAILABLE, which older SDKs lack
+    constexpr DWORD fp16Feature = 67, bf16Feature = 68;
+    const bool hasAes = IsProcessorFeaturePresent(PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE);
+    const bool hasBf16 = IsProcessorFeaturePresent(PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE)
+        && IsProcessorFeaturePresent(fp16Feature) && IsProcessorFeaturePresent(bf16Feature);
+#else
+    unsigned long hwcap = 0, hwcap2 = 0;
+    elf_aux_info(AT_HWCAP, &hwcap, sizeof(hwcap));
+    elf_aux_info(AT_HWCAP2, &hwcap2, sizeof(hwcap2));
+    const bool hasAes = (hwcap & HWCAP_AES) && (hwcap & HWCAP_PMULL);
+    const bool hasBf16 = (hwcap & HWCAP_ASIMDDP) && (hwcap & HWCAP_ASIMDHP) && (hwcap2 & HWCAP2_BF16);
+#endif
+    if (!hasAes) return plain;
+    return hasBf16 ? bf16 : aes;
+}
+#define DISPATCH(FUNC) BUN_HWY_DISPATCH_TO(ByFeatures(&N_NEON_WITHOUT_AES::FUNC, &N_NEON::FUNC, &N_NEON_BF16::FUNC))
+#else
 HWY_EXPORT(Crc32);
 HWY_EXPORT(CopyAndCrc32);
 HWY_EXPORT(Adler32);
 HWY_EXPORT(CopyAndAdler32);
+HWY_EXPORT(Target);
+#define DISPATCH BUN_HWY_DISPATCH
+#endif
 
-#if (HWY_TARGETS & HWY_AVX2) && (HWY_TARGETS & HWY_AVX3)
+#if HWY_ARCH_X86
 template<typename Function>
-static Function OrWider(Function chosen, Function avx2, Function avx3, Function wider)
+static Function ByMultiplier(Function chosen, Function without, Function avx2, Function avx3, Function wider)
 {
     unsigned eax, ebx, ecx, edx;
+    if (!__get_cpuid(1, &eax, &ebx, &ecx, &edx) || !(ecx & bit_PCLMUL)) return without;
     const bool hasVpclmulqdq = __get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx) && (ecx & bit_VPCLMULQDQ);
     return hasVpclmulqdq && (chosen == avx2 || chosen == avx3) ? wider : chosen;
 }
-#define DISPATCH_CRC32(FUNC) BUN_HWY_DISPATCH_TO(OrWider(HWY_DYNAMIC_POINTER(FUNC), &N_AVX2::FUNC, &N_AVX3::FUNC, &N_AVX2::FUNC##Vpclmulqdq))
+// Not HWY_STATIC_DISPATCH, which would still compile if the static target were one that multiplies.
+#define DISPATCH_CRC32(FUNC) BUN_HWY_DISPATCH_TO(ByMultiplier(HWY_DYNAMIC_POINTER(FUNC), &N_SSSE3::FUNC, &N_AVX2::FUNC, &N_AVX3::FUNC, &N_AVX2::FUNC##Vpclmulqdq))
 #else
-#define DISPATCH_CRC32 BUN_HWY_DISPATCH
+#define DISPATCH_CRC32 DISPATCH
 #endif
 
 // On x64 `len` is at least 4, and more than 32 bits are returned if the CPU has no instruction for it.
@@ -666,13 +708,19 @@ extern "C" uint64_t highway_copy_and_crc32(uint32_t state, const uint8_t* bytes,
 // `len` is 16 to ADLER32_PIECE.
 extern "C" uint32_t highway_adler32(uint32_t adler, const uint8_t* bytes, size_t len)
 {
-    return BUN_HWY_DISPATCH(Adler32)(adler, bytes, len);
+    return DISPATCH(Adler32)(adler, bytes, len);
 }
 
 // The same, and `copy` has room for `len` bytes.
 extern "C" uint32_t highway_copy_and_adler32(uint32_t adler, const uint8_t* bytes, uint8_t* copy, size_t len)
 {
-    return BUN_HWY_DISPATCH(CopyAndAdler32)(adler, bytes, copy, len);
+    return DISPATCH(CopyAndAdler32)(adler, bytes, copy, len);
+}
+
+// For bun:internal-for-testing
+extern "C" int64_t highway_checksums_target()
+{
+    return DISPATCH(Target)();
 }
 } // namespace bun
 #endif

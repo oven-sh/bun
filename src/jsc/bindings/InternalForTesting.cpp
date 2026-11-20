@@ -16,6 +16,7 @@
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/StringToIntegerConversion.h>
 #include <wtf/text/WTFString.h>
+#include <hwy/targets.h>
 #include <atomic>
 #include <memory>
 #if !OS(WINDOWS)
@@ -38,6 +39,7 @@
 
 extern "C" BunString BunString__threadIsolatedCopy(const BunString* str);
 extern "C" void BunString__makeThreadShareable(BunString* str);
+extern "C" int64_t highway_checksums_target();
 
 namespace Bun {
 
@@ -53,6 +55,25 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_lowercaseHeaderNameSIMD, (JSC::JSGlobalObjec
     auto string = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(JSC::jsString(vm, WebCore::lowercaseHeaderName(string)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_cpuDispatch, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const auto nameOf = [&](int64_t target) { return jsString(vm, String::fromLatin1(hwy::TargetName(target))); };
+
+    MarkedArgumentBuffer names;
+    for (int64_t target : hwy::SupportedAndGeneratedTargets())
+        names.append(nameOf(target));
+    ASSERT(!names.hasOverflowed());
+    auto* highway = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), names);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto* result = constructEmptyObject(globalObject);
+    result->putDirect(vm, Identifier::fromString(vm, "highway"_s), highway);
+    result->putDirect(vm, Identifier::fromString(vm, "checksums"_s), nameOf(highway_checksums_target()));
+    return JSValue::encode(result);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_arrayBufferViewHasBuffer, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

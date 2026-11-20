@@ -141,11 +141,11 @@ const noUnify: readonly string[] = [
   // Second highway TU. foreach_target.h has a TU-wide include guard, so when
   // bundled after highway_strings.cpp it doesn't re-expand and only the
   // baseline ISA namespace exists for image_resize → HWY_EXPORT can't find
-  // N_AVX2/N_AVX3/etc. variants.
+  // N_AVX2/N_AVX3_DL/etc. variants.
   "src/jsc/bindings/image_resize.cpp",
   // Third highway TU — same foreach_target.h include-guard reason as
   // image_resize.cpp: it must expand its own per-ISA namespaces so
-  // HWY_EXPORT(HashLong) resolves the N_AVX2/N_AVX3/etc. variants.
+  // HWY_EXPORT(HashLong) resolves the N_AVX2/N_AVX3_DL/etc. variants.
   "src/jsc/bindings/xxhash3.cpp",
   // Fourth highway TU — same foreach_target.h include-guard reason.
   "src/jsc/bindings/highway_sourcemap.cpp",

@@ -6,6 +6,8 @@
 // to catch both SIGILL and miscompilation from wrong instruction lowering.
 
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
+import { Worker } from "node:worker_threads";
 import {
   brotliCompressSync,
   brotliDecompressSync,
@@ -79,6 +81,34 @@ describe("Buffer hex encoding — @Vector(16, u8) gated by enableSIMD", () => {
     const hex = varied.toString("hex");
     expect(hex).toStartWith("000102030405");
     expect(hex).toEndWith("fdfeff");
+  });
+});
+
+describe("Buffer hex decoding — Highway runtime dispatch", () => {
+  const units = Array.from({ length: 256 }, (_, unit) => unit);
+  // In both halves of a whole block, in those of the narrower ones after it, and in what is left.
+  const places = [8, 9, 116, 117, 130, 151, 161, 170, 176, 177];
+  const zeros = Buffer.alloc(180, "0").toString();
+
+  test.each([0, 0x3000])("every lower byte, plus %i", upper => {
+    const decoded = (unit: number, at: number) => {
+      const bytes = Buffer.from(zeros.slice(0, at) + String.fromCharCode(upper + unit) + zeros.slice(at + 1), "hex");
+      return [bytes.length, bytes[at >> 1]];
+    };
+    const expected = (unit: number, at: number) => {
+      const digit = "0123456789abcdef".indexOf(String.fromCharCode(unit < 128 ? unit : 0).toLowerCase());
+      return digit < 0 ? [at >> 1, undefined] : [90, at % 2 ? digit : digit * 16];
+    };
+    expect(places.map(at => units.map(unit => decoded(unit, at)))).toEqual(
+      places.map(at => units.map(unit => expected(unit, at))),
+    );
+  });
+});
+
+describe("Header names — Highway lowercasing", () => {
+  test("of every length", () => {
+    const names = Array.from({ length: 140 }, (_, length) => Buffer.alloc(length + 1, "AzZa^_`M9|Nb~").toString());
+    expect(names.flatMap(name => [...new Headers([[name, "1"]]).keys()])).toEqual(names.map(it => it.toLowerCase()));
   });
 });
 
@@ -208,6 +238,23 @@ describe("Latin-1 to UTF-8 — @Vector(16, u8) ungated", () => {
 });
 
 describe("String search — Highway memMem/indexOfChar", () => {
+  test("a byte at every position", () => {
+    const lengths = Array.from({ length: 130 }, (_, length) => length + 1);
+    const everywhere = (length: number) => Array.from({ length }, (_, at) => at);
+    const found = lengths.map(length => everywhere(length).map(at => Buffer.alloc(length, 1).fill(0, at).indexOf(0)));
+    expect(found).toEqual(lengths.map(everywhere));
+  });
+
+  test("a byte up to the last readable one", () => {
+    // What a buffer can still grow into is not readable.
+    const bytes = Buffer.from(new ArrayBuffer(65_536, { maxByteLength: 131_072 }));
+    bytes[65_535] = 1;
+    const lengths = Array.from({ length: 700 }, (_, length) => length + 1);
+    const found = lengths.map(length => [bytes.indexOf(1, -length), bytes.indexOf(2, -length)]);
+    expect(found).toEqual(lengths.map(() => [65_535, -1]));
+    expect(Bun.indexOfLine(bytes, bytes.length)).toBe(-1);
+  });
+
   test("indexOf long string", () => {
     const haystack = Buffer.alloc(1000, "a").toString() + "needle" + Buffer.alloc(1000, "b").toString();
     expect(haystack.indexOf("needle")).toBe(1000);
@@ -470,9 +517,8 @@ describe("JPEG codec: Highway runtime dispatch", () => {
 });
 
 describe("PNG codec: Highway runtime dispatch", () => {
-  // src/jsc/bindings/highway_png.cpp is compiled several times over, on x64 for SSSE3, SSE4 and AVX2. A machine with
-  // AVX2 runs that one alone, and any file can reach the others on a machine without. An emulated Nehalem runs SSSE3:
-  // it lacks the AES that Highway wants for SSE4.
+  // src/jsc/bindings/highway_png.cpp is compiled several times over, on x64 for SSE4 and AVX2. A machine with AVX2 runs
+  // that one alone, and any file can reach the other on a machine without.
   // Rows 9 and 21 begin with 96 bytes that repeat a pixel, or are such bytes. Below them Paeth has a shorter way, which
   // it looks for 64 bytes in and leaves where they end.
   const someFilterTypes = [0, 1, 2, 3, 4, 4, 3, 2, 1, 0, 4, 4];
@@ -722,6 +768,15 @@ describe("DEFLATE: Highway runtime dispatch", () => {
     const inputs = parts(bytes);
     const trailers = inputs.map(input => Buffer.from(Bun.gzipSync(input, { library, level: 0 })).subarray(-8));
     expect(trailers.map(trailer => trailer.readUInt32LE())).toEqual(inputs.map(input => checksumsOf(input).crc));
+  });
+
+  // Not in a child process, which would run outside the emulator.
+  test("CRC-32 from the deepest frame of a Worker", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    await using worker = new Worker(join(import.meta.dir, "../../../node/zlib/crc32-deepest-frame-fixture.ts"));
+    worker.on("message", resolve).on("error", reject).on("exit", reject);
+    const sums = [2920771703, 1167601884, 1605982112, 997318536, 2262181103];
+    expect(await promise).toEqual({ crc32: sums, hash: sums, gzip: sums, libdeflate: sums, gunzip: sums });
   });
 
   test("Adler-32", () => {

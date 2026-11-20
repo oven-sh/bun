@@ -10,8 +10,6 @@
 #include "highway_dispatch.h"
 #include <hwy/aligned_allocator.h>
 
-#include <hwy/contrib/algo/find-inl.h>
-
 #include <bit>
 #include <cstring> // For memcmp
 #include <algorithm> // For std::min, std::max
@@ -253,15 +251,86 @@ namespace hn = hwy::HWY_NAMESPACE; // Alias for convenience
 // Type alias for SIMD vector tag
 using D8 = hn::ScalableTag<uint8_t>;
 
+// `len` is less than twice the lanes of `half`. The two halves overlap.
+template<class Half>
+static HWY_INLINE size_t IndexOfCharInHalves(Half half, const uint8_t* HWY_RESTRICT haystack, size_t len, uint8_t needle)
+{
+    constexpr size_t N = hn::MaxLanes(half);
+    if constexpr (N < 4) {
+        size_t i = 0;
+        while (i < len && haystack[i] != needle)
+            i++;
+        return i;
+    } else {
+        if (len < N) return IndexOfCharInHalves(hn::Half<Half>(), haystack, len, needle);
+        const auto first = hn::LoadU(half, haystack), last = hn::LoadU(half, haystack + len - N);
+        if constexpr (N < 16) {
+            const hn::Twice<Half> d;
+            const intptr_t found = hn::FindFirstTrue(d, hn::Eq(hn::Combine(d, last, first), hn::Set(d, needle)));
+            if (found < 0) return len;
+            const size_t lane = static_cast<size_t>(found);
+            return lane < N ? lane : len - (2 * N - lane);
+        } else {
+            // Combined, this is a VINSERTI128 from memory, for which QEMU before 10.0.4 reads 32 bytes instead of 16.
+            intptr_t found = hn::FindFirstTrue(half, hn::Eq(first, hn::Set(half, needle)));
+            if (found >= 0) return static_cast<size_t>(found);
+            found = hn::FindFirstTrue(half, hn::Eq(last, hn::Set(half, needle)));
+            return found < 0 ? len : len - N + static_cast<size_t>(found);
+        }
+    }
+}
+
+static HWY_INLINE bool IsInFourVectors(const uint8_t* HWY_RESTRICT at, hn::Vec<D8> needle)
+{
+    D8 d;
+    const size_t N = hn::Lanes(d);
+    return !hn::AllFalse(d,
+        hn::Or(hn::Or(hn::Eq(needle, hn::LoadU(d, at)), hn::Eq(needle, hn::LoadU(d, at + N))),
+            hn::Or(hn::Eq(needle, hn::LoadU(d, at + 2 * N)), hn::Eq(needle, hn::LoadU(d, at + 3 * N)))));
+}
+
+// Index of the first `needle` in `haystack`, or haystack_len if absent.
 size_t IndexOfCharImpl(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
     uint8_t needle)
 {
     D8 d;
-    // Use the Find function from find-inl.h which handles both vectorized and scalar cases
-    const size_t pos = hn::Find<D8>(d, needle, haystack, haystack_len);
+    const size_t N = hn::Lanes(d);
+    const auto broadcasted = hn::Set(d, needle);
 
-    // Convert to int64_t and return -1 if not found
-    return (pos < haystack_len) ? pos : haystack_len;
+    if (haystack_len < N) {
+#if HWY_MEM_OPS_MIGHT_FAULT
+        return IndexOfCharInHalves(hn::Half<D8>(), haystack, haystack_len, needle);
+#else
+        // A masked load from an address that is not mapped takes hundreds of cycles.
+        if (haystack_len == 0) return 0;
+        const auto matches = hn::Eq(broadcasted, hn::LoadN(d, haystack, haystack_len));
+        const intptr_t pos = hn::FindFirstTrue(d, hn::And(matches, hn::FirstN(d, haystack_len)));
+        return pos < 0 ? haystack_len : static_cast<size_t>(pos);
+#endif
+    }
+
+    size_t i = 0;
+    // Most searches end early.
+    const size_t one_by_one = 2 * N;
+    if (haystack_len >= one_by_one + 4 * N) {
+        for (; i < one_by_one; i += N) {
+            const intptr_t pos = hn::FindFirstTrue(d, hn::Eq(broadcasted, hn::LoadU(d, haystack + i)));
+            if (pos >= 0) return i + static_cast<size_t>(pos);
+        }
+        const size_t last_four = haystack_len - 4 * N;
+        while (!IsInFourVectors(haystack + i, broadcasted)) {
+            if (i == last_four) return haystack_len;
+            i = std::min(i + 4 * N, last_four);
+        }
+    }
+
+    const size_t last = haystack_len - N;
+    for (; i < last; i += N) {
+        const intptr_t pos = hn::FindFirstTrue(d, hn::Eq(broadcasted, hn::LoadU(d, haystack + i)));
+        if (pos >= 0) return i + static_cast<size_t>(pos);
+    }
+    const intptr_t pos = hn::FindFirstTrue(d, hn::Eq(broadcasted, hn::LoadU(d, haystack + last)));
+    return pos < 0 ? haystack_len : last + static_cast<size_t>(pos);
 }
 
 // Index of the last `needle` in `haystack`, or haystack_len if absent.
@@ -504,17 +573,15 @@ size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, con
         return text_len;
     } else {
         ASSERT(chars_len <= 16);
+        // Callers split larger sets; clamp so a bad length can never overrun char_vecs.
+        chars_len = std::min(chars_len, size_t { 16 });
 
         const size_t simd_text_len = text_len - (text_len % N);
         size_t i = 0;
 
-#if !HWY_HAVE_SCALABLE && !HWY_TARGET_IS_SVE
         // Preload search characters into native-width vectors.
-        // On non-SVE targets, Vec has a known size and can be stored in arrays.
-        static constexpr size_t kMaxPreloadedChars = 16;
-        hn::Vec<D8> char_vecs[kMaxPreloadedChars];
-        const size_t num_chars_to_preload = std::min(chars_len, kMaxPreloadedChars);
-        for (size_t c = 0; c < num_chars_to_preload; ++c) {
+        hn::Vec<D8> char_vecs[16];
+        for (size_t c = 0; c < chars_len; ++c) {
             char_vecs[c] = hn::Set(d, chars[c]);
         }
 
@@ -522,21 +589,9 @@ size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, con
             const auto text_vec = hn::LoadN(d, text + i, N);
             auto found_mask = hn::MaskFalse(d);
 
-            for (size_t c = 0; c < num_chars_to_preload; ++c) {
+            for (size_t c = 0; c < chars_len; ++c) {
                 found_mask = hn::Or(found_mask, hn::Eq(text_vec, char_vecs[c]));
             }
-#else
-        // SVE types are sizeless and cannot be stored in arrays.
-        // hn::Set is a single broadcast instruction; the compiler will
-        // hoist these loop-invariant broadcasts out of the outer loop.
-        for (; i < simd_text_len; i += N) {
-            const auto text_vec = hn::LoadN(d, text + i, N);
-            auto found_mask = hn::MaskFalse(d);
-
-            for (size_t c = 0; c < chars_len; ++c) {
-                found_mask = hn::Or(found_mask, hn::Eq(text_vec, hn::Set(d, chars[c])));
-            }
-#endif
 
             const intptr_t pos = hn::FindFirstTrue(d, found_mask);
             if (pos >= 0) {
@@ -568,7 +623,6 @@ size_t LastIndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len,
     chars_len = std::min(chars_len, size_t { 16 });
 
     size_t i = text_len;
-#if !HWY_HAVE_SCALABLE && !HWY_TARGET_IS_SVE
     // Preload the set into registers (same scheme as IndexOfAnyCharImpl).
     hn::Vec<D8> char_vecs[16];
     for (size_t c = 0; c < chars_len; ++c) {
@@ -581,16 +635,6 @@ size_t LastIndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len,
         for (size_t c = 2; c < chars_len; ++c) {
             found_mask = hn::Or(found_mask, hn::Eq(text_vec, char_vecs[c]));
         }
-#else
-    // SVE vectors are sizeless and cannot be stored in arrays; broadcast per use.
-    while (i >= N) {
-        i -= N;
-        const auto text_vec = hn::LoadU(d, text + i);
-        auto found_mask = hn::Or(hn::Eq(text_vec, hn::Set(d, chars[0])), hn::Eq(text_vec, hn::Set(d, chars[1])));
-        for (size_t c = 2; c < chars_len; ++c) {
-            found_mask = hn::Or(found_mask, hn::Eq(text_vec, hn::Set(d, chars[c])));
-        }
-#endif
         const intptr_t pos = hn::FindLastTrue(d, found_mask);
         if (pos >= 0) return i + static_cast<size_t>(pos);
     }
@@ -2187,6 +2231,8 @@ size_t FirstNonAscii8Impl(const uint8_t* HWY_RESTRICT input, size_t len)
     return len;
 }
 
+#if HWY_ARCH_X86
+
 // An "escape character" for ANSI tokenizing: ESC, the ST-terminated C1
 // introducers, plus C1 ST (0x9C) itself so a standalone terminator stops the
 // scan. Matches ANSIHelpers.h's scalar contract (isEscapeCharacter + 0x9C).
@@ -2210,7 +2256,7 @@ static HWY_INLINE size_t IndexOfEscapeCharScalar(const T* HWY_RESTRICT input, si
 
 // Index of the first ANSI escape introducer, or len if none. Shared by
 // Bun.stripANSI / stringWidth / wrapAnsi / sliceAnsi via ANSIHelpers.h's
-// findEscapeCharacter.
+// findEscapeCharacter, on x64.
 //
 // Two-stage like the original WTF-SIMD version: a broad range mask
 // (c & 0x70) == 0x10 catches 0x10-0x1F and 0x90-0x9F in one compare — the hot
@@ -2278,6 +2324,8 @@ size_t IndexOfEscapeChar16Impl(const uint16_t* HWY_RESTRICT input, size_t len)
 {
     return IndexOfEscapeCharImpl<uint16_t>(input, len);
 }
+
+#endif // HWY_ARCH_X86
 
 size_t CopyAsciiPrefixImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
 {
@@ -2379,6 +2427,22 @@ size_t IndexOfFirstAsciiUpperImpl(const uint8_t* HWY_RESTRICT input, size_t len)
     return len;
 }
 
+// `len` is less than twice the lanes of `half`. The two halves overlap.
+template<class Half>
+static HWY_INLINE void LowerAsciiInHalves(Half half, const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
+{
+    constexpr size_t N = hn::MaxLanes(half);
+    if constexpr (N < 4) {
+        for (size_t i = 0; i < len; ++i)
+            dst[i] = src[i] | (static_cast<uint8_t>(src[i] - 'A') < 26 ? 0x20 : 0);
+    } else {
+        if (len < N) return LowerAsciiInHalves(hn::Half<Half>(), src, len, dst);
+        const auto first = hn::LoadU(half, src), last = hn::LoadU(half, src + len - N);
+        hn::StoreU(hn::Or(first, AsciiLowerBit(half, first)), half, dst);
+        hn::StoreU(hn::Or(last, AsciiLowerBit(half, last)), half, dst + len - N);
+    }
+}
+
 // Copy `src` to `dst`, lowercasing ASCII uppercase letters ('A'..'Z') and
 // leaving every other byte (digits, punctuation, Latin-1 >= 0x80) untouched.
 // Per block: OR in the 0x20 case bit only on the uppercase lanes. Mirrors
@@ -2389,32 +2453,15 @@ void LowerAsciiImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RE
     D8 d;
     const size_t N = hn::Lanes(d);
 
-    size_t i = 0;
-    if (len >= N) {
-        const size_t simd_len = len - (len % N);
-        for (; i < simd_len; i += N) {
-            const auto chunk = hn::LoadU(d, src + i);
-            hn::StoreU(hn::Or(chunk, AsciiLowerBit(d, chunk)), d, dst + i);
-        }
+    if (len < N) return LowerAsciiInHalves(hn::Half<D8>(), src, len, dst);
 
-        if (i < len) {
-            const size_t start = len - N;
-            const auto chunk = hn::LoadU(d, src + start);
-            hn::StoreU(hn::Or(chunk, AsciiLowerBit(d, chunk)), d, dst + start);
-        }
-        return;
+    const size_t last = len - N;
+    for (size_t i = 0; i < last; i += N) {
+        const auto chunk = hn::LoadU(d, src + i);
+        hn::StoreU(hn::Or(chunk, AsciiLowerBit(d, chunk)), d, dst + i);
     }
-
-    // Branchless case fold for the sub-vector remainder (no data-dependent
-    // branch per byte). On wide-vector targets the compiler still
-    // auto-vectorizes this with AVX-512 masked ops; those live in the
-    // runtime-dispatched target namespaces and are covered by the
-    // verify-baseline-static allowlist.
-    for (; i < len; ++i) {
-        const uint8_t c = src[i];
-        const uint8_t isUpper = static_cast<uint8_t>(c - 'A') < 26 ? 1 : 0;
-        dst[i] = static_cast<uint8_t>(c | (isUpper << 5));
-    }
+    const auto chunk = hn::LoadU(d, src + last);
+    hn::StoreU(hn::Or(chunk, AsciiLowerBit(d, chunk)), d, dst + last);
 }
 
 // 16-bit (UTF-16) counterparts of the two kernels above. WTF strings holding
@@ -2517,39 +2564,33 @@ void EncodeHexLowerImpl(const uint8_t* HWY_RESTRICT input, size_t len, uint8_t* 
 
 // --- Hex decoding (Buffer.from(str, "hex"), buf.write(str, "hex")) ---
 //
-// Helpers shared by DecodeHex8Impl / DecodeHex16Impl. `D` is a u8 or u16 tag;
-// a UTF-16 code unit is classified by its low byte (what Node's hex decoder
-// does, so U+FF41 counts as 'A'), and anything outside [0-9A-Fa-f] after that
-// narrowing is invalid. Both helpers are inlined into the same loop body, so
-// the common subexpressions (case fold, alpha classification) are computed once.
+// Helpers shared by DecodeHex8Impl / DecodeHex16Impl. A UTF-16 code unit is
+// classified by its low byte (what Node's hex decoder does, so U+FF41 counts as
+// 'A'), and anything outside [0-9A-Fa-f] after that narrowing is invalid.
 
-template<class D>
-static HWY_INLINE hn::Mask<D> IsAsciiHexAlpha(D d, hn::Vec<D> chars)
+template<class D, typename Char>
+static HWY_INLINE hn::Vec<D> LoadLowBytes(D d, const Char* HWY_RESTRICT input)
 {
-    using T = hn::TFromD<D>;
-    // Fold to lowercase, then 'a'..'f' → 0..5 (unsigned wraparound pushes
-    // everything below 'a' far above 5).
-    const auto folded = hn::Or(chars, hn::Set(d, T { 0x20 }));
-    return hn::Lt(hn::Sub(folded, hn::Set(d, T { 'a' })), hn::Set(d, T { 6 }));
+    if constexpr (sizeof(Char) == 1) {
+        return hn::LoadU(d, input);
+    } else {
+        const hn::Repartition<Char, D> wide;
+        return hn::OrderedTruncate2To(d, hn::LoadU(wide, input), hn::LoadU(wide, input + hn::Lanes(wide)));
+    }
 }
 
+// Returns the value of each digit in the lower four bits. `valid` is zero for what is not a digit.
 template<class D>
-static HWY_INLINE hn::Mask<D> IsAsciiHexDigit(D d, hn::Vec<D> chars)
+static HWY_INLINE hn::Vec<D> HexNibbles(D d, hn::Vec<D> chars, hn::Vec<D>& valid)
 {
-    using T = hn::TFromD<D>;
-    const auto is_digit = hn::Lt(hn::Sub(chars, hn::Set(d, T { '0' })), hn::Set(d, T { 10 }));
-    return hn::Or(is_digit, IsAsciiHexAlpha(d, chars));
-}
-
-// Nibble value of each lane; only meaningful for lanes that pass IsAsciiHexDigit.
-template<class D>
-static HWY_INLINE hn::Vec<D> HexNibbleValue(D d, hn::Vec<D> chars)
-{
-    using T = hn::TFromD<D>;
-    // '0'-'9': low nibble is already the value. 'a'-'f'/'A'-'F': low nibble is
-    // 1..6, so add 9 to reach 10..15.
-    const auto low = hn::And(chars, hn::Set(d, T { 0x0F }));
-    return hn::Add(low, hn::IfThenElseZero(IsAsciiHexAlpha(d, chars), hn::Set(d, T { 9 })));
+    constexpr uint8_t digit = 0x80, letter = 0x40, both = digit | letter;
+    const hn::CappedTag<uint8_t, HWY_MAX(16, hn::MaxLanes(d))> table;
+    const auto by_upper_half = hn::Dup128VecFromValues(table, 0, 0, 0, digit, letter + 9, 0, letter + 9, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    const auto by_lower_half = hn::Dup128VecFromValues(table, digit, both, both, both, both, both, both, digit, digit, digit, 0, 0, 0, 0, 0, 0);
+    const auto lower_half = hn::And(chars, hn::Set(d, uint8_t { 0x0F }));
+    const auto row = hn::TableLookupBytes(by_upper_half, hn::ShiftRight<4>(chars));
+    valid = hn::And(row, hn::TableLookupBytes(by_lower_half, lower_half));
+    return hn::Add(lower_half, row);
 }
 
 static HWY_INLINE uint8_t ScalarHexNibble(uint32_t c)
@@ -2567,42 +2608,32 @@ static HWY_INLINE uint8_t ScalarHexNibble(uint32_t c)
 // stopping before the first block that contains a non-hex character (the
 // scalar loop in the callers pinpoints the exact pair). Each iteration loads
 // 2*Lanes(d) characters and stores Lanes(d) bytes. Returns the new `out`.
-template<class D>
-static HWY_INLINE size_t DecodeHexVectorLoop(D d, const hn::TFromD<D>* HWY_RESTRICT input, uint8_t* HWY_RESTRICT output, size_t out, size_t out_len)
+template<class D, typename Char>
+static HWY_INLINE size_t DecodeHexVectorLoop(D d, const Char* HWY_RESTRICT input, uint8_t* HWY_RESTRICT output, size_t out, size_t out_len)
 {
     const size_t N = hn::Lanes(d);
-    if (out_len - out < N) {
-        return out;
-    }
-
-    const size_t simd_out = out + ((out_len - out) - ((out_len - out) % N));
+    const auto nibble = hn::Set(d, uint8_t { 0x0F });
+    const size_t simd_out = out_len - (out_len - out) % N;
     for (; out < simd_out; out += N) {
-        auto chars0 = hn::LoadU(d, input + out * 2);
-        auto chars1 = hn::LoadU(d, input + out * 2 + N);
-        if constexpr (sizeof(hn::TFromD<D>) == 2) {
-            const auto low_byte = hn::Set(d, hn::TFromD<D> { 0xFF });
-            chars0 = hn::And(chars0, low_byte);
-            chars1 = hn::And(chars1, low_byte);
-        }
-
-        const auto valid = hn::And(IsAsciiHexDigit(d, chars0), IsAsciiHexDigit(d, chars1));
-        if (!hn::AllTrue(d, valid)) {
+        const auto chars0 = LoadLowBytes(d, input + out * 2);
+        const auto chars1 = LoadLowBytes(d, input + out * 2 + N);
+        hn::Vec<D> valid0, valid1;
+        // Even-indexed chars hold the high nibbles, odd-indexed the low nibbles.
+#if HWY_ARCH_X86
+        const hn::Repartition<int16_t, D> pairs;
+        const auto by_16_and_1 = hn::BitCast(hn::RebindToSigned<D>(), hn::Set(pairs, 0x0110));
+        const auto bytes = hn::OrderedDemote2To(d,
+            hn::SatWidenMulPairwiseAdd(pairs, hn::And(HexNibbles(d, chars0, valid0), nibble), by_16_and_1),
+            hn::SatWidenMulPairwiseAdd(pairs, hn::And(HexNibbles(d, chars1, valid1), nibble), by_16_and_1));
+#else
+        const auto high = HexNibbles(d, hn::ConcatEven(d, chars1, chars0), valid0);
+        const auto low = HexNibbles(d, hn::ConcatOdd(d, chars1, chars0), valid1);
+        const auto bytes = hn::Or(hn::ShiftLeft<4>(high), hn::And(low, nibble));
+#endif
+        if (!hn::AllFalse(d, hn::Eq(hn::Min(valid0, valid1), hn::Zero(d)))) {
             break;
         }
-
-        const auto nib0 = HexNibbleValue(d, chars0);
-        const auto nib1 = HexNibbleValue(d, chars1);
-        // Even-indexed chars hold the high nibbles, odd-indexed the low nibbles.
-        const auto hi = hn::ConcatEven(d, nib1, nib0);
-        const auto lo = hn::ConcatOdd(d, nib1, nib0);
-        const auto bytes = hn::Or(hn::ShiftLeft<4>(hi), lo);
-        if constexpr (sizeof(hn::TFromD<D>) == 2) {
-            // UTF-16 input: the decoded byte sits in the low half of each u16 lane.
-            const hn::Rebind<uint8_t, D> d8;
-            hn::StoreU(hn::TruncateTo(d8, bytes), d8, output + out);
-        } else {
-            hn::StoreU(bytes, d, output + out);
-        }
+        hn::StoreU(bytes, d, output + out);
     }
     return out;
 }
@@ -2612,41 +2643,15 @@ static HWY_INLINE size_t DecodeHexVectorLoop(D d, const hn::TFromD<D>* HWY_RESTR
 // Returns the number of output bytes written (== out_len when fully valid).
 // The caller guarantees `input` is readable for 2*out_len elements and
 // `output` is writable for out_len bytes.
-size_t DecodeHex8Impl(const uint8_t* HWY_RESTRICT input, uint8_t* HWY_RESTRICT output, size_t out_len)
+template<typename Char>
+static HWY_INLINE size_t DecodeHex(const Char* HWY_RESTRICT input, uint8_t* HWY_RESTRICT output, size_t out_len)
 {
-    D8 d;
-    size_t out = DecodeHexVectorLoop(d, input, output, 0, out_len);
+    size_t out = DecodeHexVectorLoop(D8(), input, output, 0, out_len);
+    // Narrower blocks, so that digest-sized inputs (16-64 pairs) still vectorize.
 #if HWY_MAX_BYTES > 16
-    // On wide-vector targets, mop up the 16..(Lanes-1)-pair remainder with
-    // 128-bit blocks so digest-sized inputs (16-64 pairs) still vectorize
-    // instead of falling through to the scalar loop.
-    const hn::CappedTag<uint8_t, 16> d128;
-    out = DecodeHexVectorLoop(d128, input, output, out, out_len);
+    out = DecodeHexVectorLoop(hn::CappedTag<uint8_t, 16>(), input, output, out, out_len);
 #endif
-
-    for (; out < out_len; out++) {
-        const uint8_t hi = ScalarHexNibble(input[out * 2]);
-        const uint8_t lo = ScalarHexNibble(input[out * 2 + 1]);
-        if (hi == 0xFF || lo == 0xFF) {
-            return out;
-        }
-        output[out] = static_cast<uint8_t>((hi << 4) | lo);
-    }
-    return out_len;
-}
-
-// UTF-16 variant of DecodeHex8Impl (for two-byte JS strings). Each code unit
-// is decoded by its low byte, like Node: U+FF41 decodes as 'A', while a unit
-// whose low byte is not a hex digit stops decoding like any other invalid
-// character.
-size_t DecodeHex16Impl(const uint16_t* HWY_RESTRICT input, uint8_t* HWY_RESTRICT output, size_t out_len)
-{
-    const hn::ScalableTag<uint16_t> d16;
-    size_t out = DecodeHexVectorLoop(d16, input, output, 0, out_len);
-#if HWY_MAX_BYTES > 16
-    const hn::CappedTag<uint16_t, 8> d128;
-    out = DecodeHexVectorLoop(d128, input, output, out, out_len);
-#endif
+    out = DecodeHexVectorLoop(hn::CappedTag<uint8_t, 8>(), input, output, out, out_len);
 
     for (; out < out_len; out++) {
         const uint8_t hi = ScalarHexNibble(static_cast<uint8_t>(input[out * 2]));
@@ -2657,6 +2662,20 @@ size_t DecodeHex16Impl(const uint16_t* HWY_RESTRICT input, uint8_t* HWY_RESTRICT
         output[out] = static_cast<uint8_t>((hi << 4) | lo);
     }
     return out_len;
+}
+
+size_t DecodeHex8Impl(const uint8_t* HWY_RESTRICT input, uint8_t* HWY_RESTRICT output, size_t out_len)
+{
+    return DecodeHex(input, output, out_len);
+}
+
+// UTF-16 variant of DecodeHex8Impl (for two-byte JS strings). Each code unit
+// is decoded by its low byte, like Node: U+FF41 decodes as 'A', while a unit
+// whose low byte is not a hex digit stops decoding like any other invalid
+// character.
+size_t DecodeHex16Impl(const uint16_t* HWY_RESTRICT input, uint8_t* HWY_RESTRICT output, size_t out_len)
+{
+    return DecodeHex(input, output, out_len);
 }
 
 template<class D8T, typename T>
@@ -2772,8 +2791,10 @@ HWY_EXPORT(HtmlEscapeExtraLen16Impl);
 HWY_EXPORT(HtmlEscapeExtraLen8Impl);
 HWY_EXPORT(IndexOfAnyCharImpl);
 HWY_EXPORT(IndexOfCharImpl);
+#if HWY_ARCH_X86
 HWY_EXPORT(IndexOfEscapeChar16Impl);
 HWY_EXPORT(IndexOfEscapeChar8Impl);
+#endif
 HWY_EXPORT(IndexOfFirstAsciiUpper16Impl);
 HWY_EXPORT(IndexOfFirstAsciiUpperImpl);
 HWY_EXPORT(IndexOfHTMLEscapeChar8Impl);
@@ -2967,6 +2988,7 @@ size_t highway_unpack_words(const uint8_t* HWY_RESTRICT controls, size_t groups,
     return BUN_HWY_DISPATCH(UnpackWordsImpl)(controls, groups, data, data_len, words, used);
 }
 
+#if HWY_ARCH_X86
 size_t highway_index_of_escape_char8(const uint8_t* HWY_RESTRICT input, size_t len)
 {
     return BUN_HWY_DISPATCH(IndexOfEscapeChar8Impl)(input, len);
@@ -2976,6 +2998,7 @@ size_t highway_index_of_escape_char16(const uint16_t* HWY_RESTRICT input, size_t
 {
     return BUN_HWY_DISPATCH(IndexOfEscapeChar16Impl)(input, len);
 }
+#endif
 
 size_t highway_index_of_html_escape_char8(const uint8_t* HWY_RESTRICT text, size_t text_len)
 {

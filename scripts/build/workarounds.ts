@@ -31,6 +31,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { pins } from "./ci-images/spec.ts";
 import type { Config } from "./config.ts";
 import { BuildError } from "./error.ts";
 import { satisfiesRange, toolchainOverride } from "./tools.ts";
@@ -115,6 +116,17 @@ export const workarounds: Workaround[] = [
       `In src/spawn_sys/posix_spawn.rs (Attr::set) and src/spawn_sys/spawn_process.rs ` +
       `(options.detached block), replace the local 0x80 with libc::POSIX_SPAWN_SETSID, ` +
       `drop the explanatory comments, and delete this entry.`,
+  },
+  {
+    id: "glibc-sysroot-hwcap2-bf16",
+    issue: "https://docs.kernel.org/arch/arm64/elf_hwcaps.html",
+    description: "The glibc sysroot has the headers of Linux 5.4, which predate HWCAP2_BF16 (5.6).",
+    applies: cfg => cfg.arm64 && cfg.abi === "gnu",
+    expectedToBeFixed: () => {
+      const headers = pins.glibcSysroot.debs.find(deb => deb.name === "linux-libc-dev")!;
+      return satisfiesRange(headers.version.split("-")[0]!, ">=5.6.0");
+    },
+    cleanup: "Drop -DHWCAP2_BF16 from scripts/build/deps/highway.ts and delete this entry.",
   },
 ];
 

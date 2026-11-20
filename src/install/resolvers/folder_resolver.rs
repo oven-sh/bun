@@ -5,9 +5,10 @@ use bun_core::{ZStr, strings};
 use bun_paths::{self, PathBuffer, SEP, SEP_STR, resolve_path};
 use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, String as SemverString};
-use bun_sys::{self, Fd, File, O};
+use bun_sys::{self, Dir, Fd, File, O};
 
 use crate::bun_json::Expr;
+use crate::bundle;
 use crate::dependency::{self};
 use crate::install::{Features, Lockfile, PackageID};
 use crate::lockfile::Package as LockfilePackage;
@@ -336,6 +337,60 @@ fn read_package_json_from_disk(
     Ok(manager.lockfile.append_package(&package)?)
 }
 
+/// Reads what the `file:` package whose package.json is at `package_json_path` ships for its
+/// bundled dependencies, and keeps it for the package's turn: `PackageManager::take_next_turn`.
+/// Only the folders that its bundled rows name are read. Whatever else the `node_modules` of a
+/// local folder has was installed there, and is not shipped.
+#[cold]
+#[inline(never)]
+fn read_bundle_of(
+    manager: &mut PackageManager,
+    package: &LockfilePackage,
+    package_json_path: &ZStr,
+) {
+    let package_id = package.meta.id;
+    // A path whose hash collides with another's is read for each dependency on it.
+    if (manager.waiting_bundlers.iter()).any(|bundler| bundler.package_id == package_id) {
+        return;
+    }
+    let path = package_json_path.as_bytes();
+    // Up to and with the separator, so that the folder of `/package.json` is `/`.
+    let folder = &path[..path.len() - b"package.json".len()];
+    let read = {
+        let lockfile: &Lockfile = &manager.lockfile;
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let names: Vec<&[u8]> = (package.dependencies)
+            .get(lockfile.buffers.dependencies.as_slice())
+            .iter()
+            .filter(|row| row.behavior.is_bundled())
+            .map(|row| row.name.slice(buf))
+            .collect();
+        // The reader needs this thread's AST store, which `Package::parse` has initialized.
+        Dir::open(folder).map(|dir| bundle::read_bundle(&dir, Some(names.as_slice())))
+    };
+    let error = match read {
+        Ok(mut contents) => match contents.error.take() {
+            None => {
+                // `on_first_resolution` has not seen the package yet.
+                manager.wait_for_bundle(package_id, None);
+                manager.keep_bundle(package_id, Box::new(contents));
+                return;
+            }
+            Some(error) => error,
+        },
+        Err(error) => error,
+    };
+    // The package's turn comes without the contents, which leaves its bundled rows unresolved.
+    bun_ast::add_error_pretty!(
+        manager.log_mut(),
+        None,
+        bun_ast::Loc::EMPTY,
+        "{} reading the bundled dependencies of <b>{}<r>",
+        crate::Error::from(error).name(),
+        bun_core::fmt::for_terminal(bstr::BStr::new(manager.lockfile.str(&package.name))),
+    );
+}
+
 #[derive(Copy, Clone)]
 pub enum GlobalOrRelative<'a> {
     Global(&'a [u8]),
@@ -460,10 +515,15 @@ pub(crate) fn get_or_put(
 
     let (stored, returned) =
         match read_package_json_from_disk(manager, abs, version, features, &mut resolver) {
-            Ok(package) => (
-                FolderResolution::PackageId(package.meta.id),
-                FolderResolution::NewPackageId(package.meta.id),
-            ),
+            Ok(package) => {
+                if manager.is_bundler(&package) {
+                    read_bundle_of(manager, &package, abs);
+                }
+                (
+                    FolderResolution::PackageId(package.meta.id),
+                    FolderResolution::NewPackageId(package.meta.id),
+                )
+            }
             Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)) => (
                 FolderResolution::Err(crate::Error::MissingPackageJSON),
                 FolderResolution::Err(crate::Error::MissingPackageJSON),

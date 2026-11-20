@@ -31,6 +31,7 @@ test/cli/test/bun-test.test.ts: a test file that can never finish loading > the 
 test/cli/test/coverage.test.ts: a file loaded more than once counts every load > (unnamed)
 test/cli/test/coverage.test.ts: a file with ? in its name is not left out of coverage: it cannot be loaded
 test/cli/test/coverage.test.ts: both braces of an object are listed and no brace of a block is: // @bun with a source map
+test/cli/test/coverage.test.ts: coverage of a // @bun file uses the map beside it unless the map has another debug id
 # The next one imports a macro. A macro stops the build of a compiled run with TS100053, as docs/compiler/compatibility.mdx says.
 test/cli/test/coverage.test.ts: objects that are not in the file do not move the lines that are listed
 # The next one cannot pass: it waits until `isolatedModuleCacheSourceType()` of bun:internal-for-testing finds a file in the cache of sources that --isolate keeps, and a compiled file never gets there. Its child run never ends.

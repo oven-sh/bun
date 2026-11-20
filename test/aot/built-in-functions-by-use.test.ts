@@ -8,6 +8,10 @@ const programs: Record<string, Program> = {
     source: `for await (const line of console) { console.log("read", line); if (line === "second") break; }`,
     stdin: "first\nsecond\nthird\n",
   },
+  "for await of console, in a second loop": {
+    source: `async function ask() { for await (const line of console) return line; } console.log("read", await ask(), await ask(), await ask());`,
+    stdin: "first\nsecond",
+  },
   "console[Symbol.asyncIterator]": {
     source: `const lines = console[Symbol.asyncIterator](); console.log((await lines.next()).value); await lines.return?.();`,
     stdin: "only\n",

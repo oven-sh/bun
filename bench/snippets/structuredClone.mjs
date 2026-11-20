@@ -59,4 +59,30 @@ var objectsMedium = Array.from({ length: 100 }, (_, i) => ({ id: i, name: `item-
 bench("structuredClone([10 objects])", () => structuredClone(objectsSmall));
 bench("structuredClone([100 objects])", () => structuredClone(objectsMedium));
 
+// Plain objects holding objects and arrays
+var claims = { sub: "user-1", roles: ["reader", "writer"], scope: "posts:read posts:write", session: 1 };
+var settings = {
+  title: { absolute: "Blog", template: null },
+  description: "A blog",
+  alternates: { canonical: null, languages: null, media: null, types: null },
+  verification: {},
+  pagination: { previous: null, next: null },
+  keywords: ["a", "b", "c"],
+  other: {},
+};
+var floats = Array.from({ length: 1000 }, (_, i) => i + 0.5);
+var shared = { a: claims, b: claims, list: [claims, claims] };
+
+bench("structuredClone({4 properties, one an array})", () => structuredClone(claims));
+bench("structuredClone({7 properties, 5 of them objects})", () => structuredClone(settings));
+bench("structuredClone([1000 doubles])", () => structuredClone(floats));
+bench("structuredClone({an object 4 times})", () => structuredClone(shared));
+
+// The same trees with one value that is not plain: these are serialized as before
+var settingsWithDate = { ...settings, updatedAt: new Date(0) };
+var objectsWithDate = [...objectsMedium, new Date(0)];
+
+bench("structuredClone({7 properties, 5 of them objects, and a Date})", () => structuredClone(settingsWithDate));
+bench("structuredClone([100 objects and a Date])", () => structuredClone(objectsWithDate));
+
 await run();

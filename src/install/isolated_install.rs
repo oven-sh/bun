@@ -486,6 +486,7 @@ fn build_store(
     let pkg_dependency_slices = pkgs.items_dependencies();
     let pkg_resolutions = pkgs.items_resolution();
     let pkg_names = pkgs.items_name();
+    let pkg_metas = pkgs.items_meta();
 
     let resolutions = &lockfile.buffers.resolutions[..];
     let dependencies = &lockfile.buffers.dependencies[..];
@@ -685,6 +686,9 @@ fn build_store(
     };
 
     let mut peer_dep_ids: Vec<DependencyID> = Vec::new();
+
+    // `(owner, peer dependency, shipped package)`. See `store::BundledPeer`.
+    let mut shipped_peers: Vec<(PackageID, DependencyID, PackageID)> = Vec::new();
 
     let mut first_named = FirstNamed::default();
 
@@ -1011,6 +1015,12 @@ fn build_store(
                 // like we have for dev dependencies in `hoistDependency`
 
                 if !dep.behavior.is_peer() {
+                    // A shipped package is a folder of its bundler, whose bundled rows are
+                    // filtered above. No other row gets a node for it.
+                    if pkg_metas[pkg_id as usize].is_shipped() {
+                        continue;
+                    }
+
                     // simple case:
                     // - add it as a dependency
                     // - queue it
@@ -1141,6 +1151,18 @@ fn build_store(
 
             if resolved_pkg_id == invalid_package_id {
                 // no parent provides the peer, and it is optional or omitted
+                continue;
+            }
+
+            // A shipped package is a folder inside the package that bundles it, so it gets no node.
+            // The lockfile binds a peer to it for a package below the bundler, and `Installer`
+            // links the peer to that folder.
+            if (pkg_metas.get(resolved_pkg_id as usize)).is_some_and(|meta| meta.is_shipped()) {
+                bun_core::hint::cold();
+                let shipped_peer = (entry.pkg_id, peer_dep_id, resolved_pkg_id);
+                if !shipped_peers.contains(&shipped_peer) {
+                    shipped_peers.push(shipped_peer);
+                }
                 continue;
             }
 
@@ -1430,10 +1452,40 @@ fn build_store(
         );
     }
 
+    let mut bundled_peers: Vec<store::BundledPeer> = Vec::new();
+    for &(pkg_id, dep_id, shipped_pkg_id) in &shipped_peers {
+        let peer_dep = &dependencies[dep_id as usize];
+        // The name is a path below the entry's `node_modules`, and no entry's dependency list
+        // holds it for the check that `install_isolated_packages` makes.
+        if !crate::package_installer::alias_is_safe_install_target(peer_dep.name.slice(string_buf))
+        {
+            continue;
+        }
+        // The folder is the same in every entry of the bundler. Without an entry, this install
+        // does not link the bundler, and the peer has nothing to share.
+        let bundler = (store_entries.items_node_id().iter()).position(|&node_id| {
+            let rows = pkg_dependency_slices[node_pkg_ids[node_id.get() as usize] as usize];
+            (rows.begin()..rows.end()).any(|row| {
+                let row_dep = &dependencies[row as usize];
+                row_dep.behavior.is_bundled()
+                    && row_dep.name_hash == peer_dep.name_hash
+                    && resolutions[row as usize] == shipped_pkg_id
+            })
+        });
+        if let Some(bundler) = bundler {
+            bundled_peers.push(store::BundledPeer {
+                pkg_id,
+                dep_id,
+                bundler: store::entry::Id::from(u32::try_from(bundler).expect("int cast")),
+            });
+        }
+    }
+
     Ok(Store {
         entries: store_entries,
         nodes,
         hidden_hoist_keys,
+        bundled_peers,
     })
 }
 
@@ -1801,6 +1853,10 @@ pub(crate) fn install_isolated_packages(
                         // A patch or a lifecycle script changes the package's own directory.
                         if is_trusted {
                             trusted_entries.push(entry_idx);
+                            break 'eligible false;
+                        }
+                        // The entry's hash does not cover a link to a folder inside another entry.
+                        if (store.bundled_peers.iter()).any(|peer| peer.pkg_id == pkg_id) {
                             break 'eligible false;
                         }
                         if lockfile.patched_dependencies.count() > 0 {

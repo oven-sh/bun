@@ -28,6 +28,18 @@ pub struct Store {
     pub(crate) nodes: node::List,
     /// `node_modules/.bun/node_modules` names other than that of the entry's `node_id`.
     pub(crate) hidden_hoist_keys: Vec<entry::DependenciesItem>,
+    /// Empty unless the lockfile binds a peer to a shipped package (`Meta::is_shipped`).
+    pub(crate) bundled_peers: Vec<BundledPeer>,
+}
+
+/// A peer dependency bound to a shipped package. That package has no node and no entry: it is the
+/// folder `node_modules/<name of dep_id>` inside the package of `bundler`, and every entry of
+/// `pkg_id` links there.
+#[derive(Copy, Clone)]
+pub struct BundledPeer {
+    pub(crate) pkg_id: PackageID,
+    pub(crate) dep_id: DependencyID,
+    pub(crate) bundler: entry::Id,
 }
 
 // ──────────────────────────────────────────────────────────────────────────

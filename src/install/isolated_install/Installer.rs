@@ -2161,6 +2161,54 @@ impl<'a> Installer<'a> {
             }
         }
 
+        // See `store::BundledPeer`. As for a dependency of a project-local entry, the link goes
+        // through the project's `node_modules/.bun`.
+        for peer in (self.store.bundled_peers.iter()).filter(|peer| peer.pkg_id == pkg_id) {
+            debug_assert!(!uses_global_store);
+            let peer_dep = &dependencies[peer.dep_id as usize];
+            // In the peer context of this entry, an ancestor provides the name.
+            let entry_deps = &self.store.entries.items_dependencies()[entry_id.get() as usize];
+            if (entry_deps.slice().iter())
+                .any(|dep| dependencies[dep.dep_id as usize].name_hash == peer_dep.name_hash)
+            {
+                continue;
+            }
+            let dep_name = peer_dep.name.slice(string_buf);
+            let bundler_res = self.resolution(peer.bundler);
+            let mut shipped = AutoAbsPath::init_top_level_dir();
+            if bundler_res.tag == ResolutionTag::Folder {
+                // See `Lockfile::bundled_by_folder`.
+                let folder = bundler_res.folder().slice(string_buf);
+                if shipped.len() + folder.len() + dep_name.len() + "/node_modules//".len()
+                    >= paths::MAX_PATH_BYTES
+                {
+                    continue;
+                }
+                shipped.append_join(folder).assume_ok();
+                shipped.append(b"node_modules").assume_ok();
+                shipped.append(dep_name).assume_ok();
+            } else {
+                self.append_store_path(&mut shipped, peer.bundler)
+                    .map_err(TaskError::SymlinkDependencies)?;
+                PathLike::append(&mut shipped, b"node_modules")
+                    .map_err(TaskError::SymlinkDependencies)?;
+                PathLike::append(&mut shipped, dep_name).map_err(TaskError::SymlinkDependencies)?;
+            }
+
+            dest.set_length(base_len);
+            append_dependency_link_name(&mut dest, dep_name, entry_node_modules_name)
+                .map_err(TaskError::SymlinkDependencies)?;
+            let (linked_dest, _, written) = link(dest, shipped, real_len.min(base_len));
+            dest = linked_dest;
+            if written? {
+                if !peer_dep.behavior.is_optional_peer() {
+                    changed = Relink::Changed;
+                } else if changed == Relink::Unchanged {
+                    changed = Relink::ChangedOptional;
+                }
+            }
+        }
+
         // See `Lockfile::bundled_by_folder`.
         if pkg_res.tag == ResolutionTag::Folder {
             let folder = pkg_res.folder().slice(string_buf);

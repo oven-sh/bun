@@ -2744,6 +2744,9 @@ impl<'a> PackageInstaller<'a> {
 
     pub(crate) fn install_package(&mut self, dep_id: DependencyID, log_level: Options::LogLevel) {
         let package_id = self.lockfile().buffers.resolutions.as_slice()[dep_id as usize];
+        // A shipped package comes with the folder of its bundler. `Builder::clean` leaves every row
+        // that a tarball ships out of the install tree.
+        debug_assert!(!self.metas[package_id as usize].is_shipped());
 
         let name = self.names[package_id as usize];
         let resolutions = self.resolutions;

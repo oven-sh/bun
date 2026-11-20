@@ -807,6 +807,7 @@ test("lazy import", async () => {
 - A factory that uses `importOriginal` is called after the original module is evaluated, not before, so after the factories that don't use it. A factory that declares the parameter counts as using it, so the original is evaluated even if the factory never calls it.
 - `export * from` a mocked module re-exports the original's export names if the factory uses `importOriginal`. Names the factory adds aren't re-exported, and names it leaves out are re-exported as `undefined`.
 - If two files import each other and both have hoisted calls, they wait on each other and the run fails with an error that names both files. Keep the hoisted calls in only one of them.
+- Without `--isolate`, a module that an earlier test file loaded isn't evaluated again for a file whose `import` statements are linked to it. If `vi.mock()` updates a package in place for that file, the module's functions get the mock. What the module made of the package while it loaded stays real: a client that it created, a subclass, a copy of an export. A later `import()` of the module loads it again, with the mock. To get the mock at the first load, mock the package with a hoisted call in the test file, or run with `--isolate`.
 
 ## Implementation Details
 

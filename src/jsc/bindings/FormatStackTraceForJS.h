@@ -71,6 +71,7 @@ WTF::String formatStackTrace(
     JSC::JSObject* errorInstance);
 
 // JSC Host Functions - Error constructor methods
+JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncIsError);
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace);
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDefaultErrorPrepareStackTrace);

@@ -241,6 +241,26 @@ Use the `--rerun-each` flag to run each test multiple times. This surfaces flaky
 bun test --rerun-each 100
 ```
 
+## Run only affected tests
+
+Use the `--changed` flag to run only the test files affected by your uncommitted changes — staged, unstaged, and untracked files compared against `HEAD`:
+
+```sh terminal icon="terminal"
+bun test --changed
+```
+
+Pass a ref to compare against a commit, branch, or tag instead:
+
+```sh terminal icon="terminal"
+bun test --changed=main
+```
+
+Bun builds the import graph of every discovered test file (without entering `node_modules`) and runs only the test files that transitively import a changed file. Imports resolved through `tsconfig.json` `paths` aliases are followed.
+
+- Combined with `--watch`, Bun keeps watching the whole module graph and re-runs only the affected tests on each change: `bun test --changed --watch`
+- Combined with `--shard`, the shard is taken from the affected test files: `bun test --changed --shard=1/4` runs the first shard of the affected tests
+- If nothing changed, or no test file is affected, the command prints a message and exits 0 instead of running the full suite
+
 ## Randomize test execution order
 
 Use the `--randomize` flag to run tests in a random order. This helps detect tests that depend on shared state or execution order.

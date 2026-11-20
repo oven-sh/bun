@@ -1,5 +1,7 @@
 #include "root.h"
 
+#include "JSDOMURL.h"
+#include "JSFetchHeaders.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/ArrayConstructor.h>
 #include <JavaScriptCore/JSFunctionInlines.h>
@@ -363,4 +365,29 @@ extern "C" bool SnapshotFormat__includes(EncodedJSValue encodedList, uint32_t le
             return true;
     }
     return false;
+}
+
+// deepEquals compares the entries or the href before the own properties. It does so for a URLSearchParams too, which prints as JSON.
+extern "C" bool SnapshotFormat__isHeadersOrURL(EncodedJSValue encodedValue)
+{
+    JSValue value = JSValue::decode(encodedValue);
+    return dynamicDowncast<WebCore::JSFetchHeaders>(value) || dynamicDowncast<WebCore::JSDOMURL>(value);
+}
+
+// The entries as an object or the href as a string, with no call of toJSON. Undefined for a Headers with no entries.
+extern "C" EncodedJSValue SnapshotFormat__nativeStateOf(JSGlobalObject* globalObject, EncodedJSValue encodedValue)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value = JSValue::decode(encodedValue);
+    if (auto* headers = dynamicDowncast<WebCore::JSFetchHeaders>(value)) {
+        if (!headers->wrapped().size())
+            return JSValue::encode(jsUndefined());
+        JSValue entries = WebCore::getInternalProperties(vm, globalObject, headers);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(entries);
+    }
+    if (auto* url = dynamicDowncast<WebCore::JSDOMURL>(value))
+        return JSValue::encode(jsString(vm, url->wrapped().href().string()));
+    return JSValue::encode(jsUndefined());
 }

@@ -387,9 +387,13 @@ test.for([
 });
 ```
 
+A `test.for` or `describe.for` title follows the [Vitest title format](#vitest-title-format), even when `test` and `describe` come from `"bun:test"`. Some specifiers print differently than in a `test.each` title.
+
+A `test.for` test behaves like a test from `"vitest"` in other ways too, in every module. For example, Bun clears mock functions before it, and `.not.not` still negates in it. See [what differs](#importing-from-vitest).
+
 ### Format Specifiers
 
-Use these specifiers to format the test title:
+Use these specifiers in a `test.each` or `describe.each` title:
 
 | Specifier  | Description                         |
 | ---------- | ----------------------------------- |
@@ -400,6 +404,7 @@ Use these specifiers to format the test title:
 | `%f`       | Floating point (`parseFloat`)       |
 | `%j`       | JSON                                |
 | `%o`, `%O` | Object                              |
+| `%c`       | Nothing. The value is skipped       |
 | `%#`       | Index of the test case              |
 | `%$`       | Number of the test case (index + 1) |
 | `%%`       | Single percent sign (%)             |
@@ -436,6 +441,29 @@ test.each(["apple", "banana"])("fruit #%# is %s", fruit => {
 });
 ```
 
+#### Vitest Title Format
+
+Bun formats a `test.for` or `describe.for` title the way Vitest does. The main differences from a `test.each` or `describe.each` title:
+
+| In the title                                       | `test.each`, `describe.each`  | `test.for`, `describe.for`                                                    |
+| -------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------- |
+| `%p`                                               | pretty-format                 | not a specifier: it stays `%p` and takes no value                             |
+| `%%`                                               | `%`                           | `%`, a space and the next value. With no value left, `% undefined`            |
+| A specifier with no value left                     | left as is                    | `undefined`, `NaN` for `%d`, `%i` and `%f`, nothing for `%c`                  |
+| An object or array for `%s`, `%o`, `%O` or `$name` | `{ n: "x" }`, `[ 1, 2 ]`      | `{ n: 'x' }`, cut short at about 40 characters. `%s` prints an array as `1,2` |
+| A string of more than 40 characters for `$name`    | printed in full               | cut to 40 characters, with `…` at the end                                     |
+| `$name`, and the object row has no `name` property | left as is                    | `undefined`                                                                   |
+| `$name.`, with a period right after the name       | the value, then the period    | `undefined`. The period counts as part of the name                            |
+| `$#` with an object row                            | the test case's index         | left as is. Use `%#`                                                          |
+| `$0`, `$1` with an array row                       | left as is                    | the row's first and second value                                              |
+| A row that is `null`                               | one value: `%s` prints `null` | no value: `%s` prints `undefined`                                             |
+
+An object or array that is cut short shows how many entries it leaves out. With `%o`, an array of the numbers 0 to 29 prints as `[ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, …(20) ]`.
+
+In a `test.for` title, write a single `%` to print a percent sign, as in `100% of %i`. A `%` that isn't part of a specifier is printed as is.
+
+Two more kinds of title print what the `test.for` column shows: `test.each` and `describe.each` from `"vitest"`, and `test.each` on an [extended](#fixtures) `test` from any module. The exception is the last row: for them, a `null` row is one value.
+
 ## Fixtures
 
 `test.extend()` returns a new `test` function with fixtures. A fixture is a value that's set up before a test and torn down after it. Tests get fixtures by destructuring the callback's first parameter.
@@ -465,6 +493,7 @@ test("responds", async ({ url }) => {
 - Fixtures are torn down in reverse order, after the `afterEach` hooks. A fixture that an `aroundEach` hook destructures is torn down after the hook finishes.
 - A fixture that isn't a function is passed as is.
 - You can call `test.extend()` on an extended `test`. A fixture that replaces one with the same name can destructure the one it replaces.
+- Tests and hooks of the extended `test` behave like tests and hooks from `"vitest"`, even when `test` comes from `"bun:test"`. For example, Bun clears mock functions before each of these tests, `.not.not` still negates in them, and the titles of its `test.each` follow the [Vitest title format](#vitest-title-format). See [what differs](#importing-from-vitest).
 
 | Option                             | Description                                                                                              |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------- |
@@ -496,7 +525,7 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 | --------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------- |
 | Test or hook callback's parameter                         | a `done` callback that Bun waits for | the [test context](#test-context)                                    |
 | `test.each` callback's extra parameter                    | a `done` callback                    | `undefined`                                                          |
-| Values in a `test.each` title                             | printed in full: `{ a: "x" }`        | printed as in Vitest: `{ a: 'x' }`, `[ 0, 1, …(118) ]`               |
+| `test.each` and `describe.each` titles                    | [Bun's, unless extended](#fixtures)  | [Vitest's format](#vitest-title-format)                              |
 | `beforeAll` and `afterAll` callback parameters            | `(done)`                             | `({}, suite)`                                                        |
 | `afterEach` and `afterAll` hooks in the same scope        | run in registration order            | run in reverse registration order                                    |
 | Function returned by `beforeEach` or `beforeAll`          | ignored                              | runs after the matching `afterEach` / `afterAll` hooks               |
@@ -515,6 +544,18 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 | `.not.not`                                                | cancels out                          | still negates                                                        |
 | `vi.useFakeTimers()`                                      | leaves `setImmediate` real           | fakes `setImmediate` ([list](/test/dates-times#choose-what-to-fake)) |
 | `performance` while fake timers are on                    | the same object, on the fake clock   | a new object; the one it replaces still reads the real clock         |
+
+`test`, `describe` and the hooks follow the column of the module they're imported from. These are in the `"vitest"` column in every module, `"bun:test"` included:
+
+- `test.for`, and a `test` that [`test.extend()`](#fixtures) returned, with its `each` and `for`. Bun clears mock functions before each of their tests.
+- The hooks of an extended `test`, such as `test.beforeEach()`.
+- `describe.for`, and `test.describe()` on an extended `test`.
+
+The hooks, `describe` and `vi` that you import from `"bun:test"` stay in its column, also around such a test.
+
+For the matcher rows, `expect` follows the test that runs, also in the `beforeEach`, `afterEach` and `aroundEach` hooks that run for that test. In a `beforeAll` or `afterAll` hook, it follows the hook.
+
+When a test runs [concurrently](/test#concurrent-test-execution) with other tests, the imported `expect` can't tell which test called it. Its matchers then follow the `"bun:test"` column, in a test from `"vitest"` too. The `expect` of the [test context](#test-context) follows the column of its test.
 
 `"vitest"` also exports `suite`, `vitest`, `onTestFailed`, `assertType` and `TestRunner.getCurrentTest()`, which returns the running test's [`task`](#test-context). It exports `inject` too, which always returns `undefined`, because `bun test` has no `provide` option or global setup file to provide a value.
 
@@ -685,6 +726,10 @@ describe("math", () => {
 | `assertionCalls`           | Number of assertions the test has made                                                    |
 | `expectedAssertionsNumber` | The count passed to `expect.assertions()`, or `null`                                      |
 | `isExpectingAssertions`    | `true` after `expect.hasAssertions()`, unless the test also calls `expect.assertions()`   |
+
+In every module, `>` also joins the names of a `test.for` test and of a test of an [extended](#fixtures) `test`.
+
+When a test runs [concurrently](/test#concurrent-test-execution) with other tests, `expect` can't tell which test called it. `currentTestName` is then `undefined`, in `expect.getState()` and on `this` in a custom matcher. The three assertion properties stay at `0`, `null` and `false`. The `expect` of the [test context](#test-context) knows its test. Tests from `"vitest"`, `test.for` tests and tests of an extended `test` receive that context, so use its `expect` in them. A `test.each` test doesn't receive it, and neither do the other tests from `"bun:test"`. Every `getState()` call returns the same object, so copy the values you need before the next `await`.
 
 `expect.setState(state)` merges your own properties into the object `expect.getState()` returns. It can also set the three assertion properties above. Custom matchers don't get your own properties on `this`.
 

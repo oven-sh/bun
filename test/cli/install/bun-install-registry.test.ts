@@ -486,16 +486,13 @@ describe.concurrent("certificate authority", () => {
   });
 
   // A relative `cafile` is joined onto the cwd into a path buffer of MAX_PATH_BYTES (4096 bytes on
-  // Linux, 1024 on macOS). A joined path that fits reaches the HTTP thread, which reports it in
-  // full. One that does not fit is reported under the name the user gave. Windows is left out: its
-  // buffer holds more than any path the OS accepts.
+  // Linux, 1024 on macOS). A joined path that fits is reported in full. One that does not fit is
+  // reported under the name the user gave. Windows is left out: its buffer holds more than any path
+  // the OS accepts.
   describe.skipIf(isWindows)("relative cafile near the path buffer length", () => {
     const maxPathBytes = isLinux ? 4096 : 1024;
 
     // `cafile` brings `<packageDir>/<cafile>` to `maxPathBytes + delta` bytes.
-    // `--silent` keeps the main thread's "Resolving dependencies" line off stderr. Each thread
-    // writes to stderr on its own, so that line can otherwise land inside the HTTP thread's
-    // error message when the path is longer than the write buffer.
     async function install(delta: number, from: "--cafile" | "bunfig") {
       const { packageDir, packageJson, env } = await setupTest();
       const cafile = Buffer.alloc(maxPathBytes + delta - Buffer.byteLength(packageDir + "/"), "a").toString();
@@ -507,7 +504,7 @@ describe.concurrent("certificate authority", () => {
         );
       }
       await using proc = spawn({
-        cmd: [bunExe(), "install", "--silent", ...(from === "bunfig" ? [] : ["--cafile", cafile])],
+        cmd: [bunExe(), "install", ...(from === "bunfig" ? [] : ["--cafile", cafile])],
         cwd: packageDir,
         stderr: "pipe",
         stdout: "pipe",
@@ -520,7 +517,7 @@ describe.concurrent("certificate authority", () => {
 
     test("non-existent --cafile that fits the buffer exactly", async () => {
       const { err, exitCode, joined } = await install(0, "--cafile");
-      expect(err).toContain(`HTTPThread: could not find CA file: '${joined}'`);
+      expect(err).toBe(`HTTPThread: could not find CA file: '${joined}'\n`);
       expect(exitCode).toBe(1);
     });
 
@@ -530,17 +527,15 @@ describe.concurrent("certificate authority", () => {
       ["cafile from bunfig that is one byte past the buffer", 1, "bunfig"],
     ] as const)("non-existent %s", async (_, delta, from) => {
       const { err, exitCode, cafile } = await install(delta, from);
-      expect(err).toContain(`HTTPThread: could not find CA file: '${cafile}'`);
+      expect(err).toBe(`HTTPThread: could not find CA file: '${cafile}'\n`);
       expect(exitCode).toBe(1);
     });
   });
 
   test("non-existent --cafile with workspaces exits 1 without crashing", async () => {
     const { packageDir, packageJson, env } = await setupTest();
-    // The workspace walk in `PackageManager::init()` populates the workspace
-    // package.json cache before the HTTP thread starts. When the HTTP thread
-    // then fails CA validation and drives process exit, the exit path must not
-    // tear down that main-thread-owned cache from the HTTP thread.
+    // `PackageManager::init()` has filled the workspace package.json cache by the time it finds
+    // that the CA does not load. Its exit then runs the callback that tears that cache down.
     await Promise.all([
       write(
         packageJson,
@@ -674,6 +669,173 @@ ljelkjwelkgjw;lekj;lkejflkj
     const err = await stderr.text();
     expect(err).toContain("HTTPThread: the CA is invalid");
     expect(await exited).toBe(1);
+  });
+
+  // None of these commands makes a request: the project's one dependency is a workspace package.
+  // A CA that does not load still stops each of them, in every run. In this project that is before
+  // the command prints or writes anything.
+  describe("in a command that needs no network", () => {
+    const project = {
+      "package.json": JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        dependencies: { "pkg-a": "workspace:*" },
+      }),
+      "packages/a/package.json": JSON.stringify({ name: "pkg-a", version: "1.0.0" }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: {
+          "": { name: "foo", dependencies: { "pkg-a": "workspace:*" } },
+          "packages/a": { name: "pkg-a", version: "1.0.0" },
+        },
+        packages: { "pkg-a": ["pkg-a@workspace:packages/a"] },
+      }),
+    };
+    const notACertificate = "-----BEGIN CERTIFICATE-----\njlwkjekfjwlejlgldjfljlkwjef\n-----END CERTIFICATE-----\n";
+    const commands = [
+      "install",
+      "pm bin",
+      "pm ls",
+      "pm hash",
+      "pm pkg set description=x",
+      "remove pkg-a",
+      "link",
+      "why pkg-a",
+    ];
+
+    async function setup(files: Record<string, string> = project) {
+      const { packageDir, env } = await setupTest();
+      await Promise.all(Object.entries(files).map(([name, content]) => write(join(packageDir, name), content)));
+      // `bun link` and `-g` write here.
+      const global = join(packageDir, ".bun-install");
+      return {
+        packageDir,
+        env: {
+          ...env,
+          BUN_INSTALL: global,
+          BUN_INSTALL_GLOBAL_DIR: join(global, "install", "global"),
+          BUN_INSTALL_BIN: join(global, "bin"),
+        },
+      };
+    }
+
+    const stopped = (packageDir: string) => ({
+      stdout: "",
+      stderr: `HTTPThread: could not find CA file: '${join(packageDir, "does-not-exist")}'\n`,
+      exitCode: 1,
+    });
+
+    async function run(cwd: string, env: NodeJS.Dict<string>, args: string[]) {
+      await using proc = spawn({ cmd: [bunExe(), ...args], cwd, stdout: "pipe", stderr: "pipe", env });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    test.each([
+      [
+        "--cafile that does not exist",
+        ["--cafile", "does-not-exist"],
+        {},
+        (dir: string) => `could not find CA file: '${join(dir, "does-not-exist")}'`,
+      ],
+      [
+        "--cafile that holds no certificate",
+        ["--cafile", "not-a-certificate"],
+        { "not-a-certificate": notACertificate },
+        (dir: string) => `invalid CA file: '${join(dir, "not-a-certificate")}'`,
+      ],
+      [
+        "--cafile that is a directory",
+        ["--cafile", "packages"],
+        {},
+        (dir: string) => `invalid CA file: '${join(dir, "packages")}'`,
+      ],
+      ["--ca that is not a certificate", ["--ca", "not-valid"], {}, () => "the CA is invalid"],
+      [
+        "cafile in bunfig.toml that does not exist",
+        [],
+        { "bunfig.toml": Bun.TOML.stringify({ install: { cafile: "does-not-exist" } }) },
+        (dir: string) => `could not find CA file: '${join(dir, "does-not-exist")}'`,
+      ],
+      [
+        "ca in bunfig.toml that is not a certificate",
+        [],
+        { "bunfig.toml": Bun.TOML.stringify({ install: { ca: "not-valid" } }) },
+        () => "the CA is invalid",
+      ],
+      [
+        "cafile in .npmrc that does not exist",
+        [],
+        { ".npmrc": "cafile=does-not-exist\n" },
+        (dir: string) => `could not find CA file: '${join(dir, "does-not-exist")}'`,
+      ],
+      ["ca in .npmrc that is not a certificate", [], { ".npmrc": "ca=not-valid\n" }, () => "the CA is invalid"],
+    ])("bun pm bin stops for a %s", async (_, flags, files, message) => {
+      const { packageDir, env } = await setup({ ...project, ...files });
+      expect(await run(packageDir, env, ["pm", "bin", ...flags])).toEqual({
+        stdout: "",
+        stderr: `HTTPThread: ${message(packageDir)}\n`,
+        exitCode: 1,
+      });
+    });
+
+    test.each(commands)("bun %s stops in every run and leaves the project as it was", async command => {
+      const { packageDir, env } = await setup();
+      const runs = await Promise.all(
+        Array.from({ length: 5 }, () => run(packageDir, env, [...command.split(" "), "--cafile", "does-not-exist"])),
+      );
+      expect(runs).toEqual(Array(5).fill(stopped(packageDir)));
+      expect({
+        "package.json": await file(join(packageDir, "package.json")).text(),
+        "bun.lock": await file(join(packageDir, "bun.lock")).text(),
+        node_modules: existsSync(join(packageDir, "node_modules")),
+        linked: existsSync(join(packageDir, ".bun-install")),
+      }).toEqual({
+        "package.json": project["package.json"],
+        "bun.lock": project["bun.lock"],
+        node_modules: false,
+        linked: false,
+      });
+    });
+
+    // The control: the same project and commands, with a CA that loads.
+    test.each(commands)("bun %s runs with a --cafile that loads", async command => {
+      const { packageDir, env } = await setup({ ...project, "ca.pem": tls.cert });
+      const { stderr, exitCode } = await run(packageDir, env, [...command.split(" "), "--cafile", "ca.pem"]);
+      expect(stderr).not.toContain("HTTPThread");
+      expect(exitCode).toBe(0);
+    });
+
+    // `PackageManager::init` reads the CA last. By then it has made the global directory for `-g`,
+    // and `bun add` has made the package.json that it did not find. Each run has a folder of its
+    // own, so each one does that.
+    test.each([
+      ["pm bin -g", project, ".bun-install/install/global"],
+      ["add no-deps", {}, "package.json"],
+    ])("bun %s stops in every run", async (command, files, made) => {
+      const runs = await Promise.all(
+        Array.from({ length: 5 }, async () => {
+          const { packageDir, env } = await setup(files);
+          const result = await run(packageDir, env, [...command.split(" "), "--cafile", "does-not-exist"]);
+          return {
+            result: { ...result, made: existsSync(join(packageDir, made)) },
+            expected: { ...stopped(packageDir), made: true },
+          };
+        }),
+      );
+      expect(runs.map(({ result }) => result)).toEqual(runs.map(({ expected }) => expected));
+    });
+
+    test("bun install from a lockfile and a warm cache places nothing", async () => {
+      const { packageDir, packageJson, env } = await setupTest();
+      await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }));
+      await runBunInstall(env, packageDir);
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+      expect(await run(packageDir, env, ["install", "--cafile", "does-not-exist"])).toEqual(stopped(packageDir));
+      expect(existsSync(join(packageDir, "node_modules"))).toBe(false);
+    });
   });
 });
 

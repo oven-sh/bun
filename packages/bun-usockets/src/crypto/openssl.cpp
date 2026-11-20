@@ -150,7 +150,7 @@ long us_ssl_ctx_live_count(void) {
  *   - us_ssl_wrapper_ex_idx (SSL): the owner of an SSL that no us_socket_t drives.
  *
  * SSL_CTX creation runs from both the JS thread (SecureContext, Bun.connect/
- * listen) and the HTTP-client thread (HTTPContext.initWithOpts). A racy `<0`
+ * listen) and the HTTP-client thread (build_ssl_ctx in HTTPContext.rs). A racy `<0`
  * check would let two threads each register the ctx_ex_idx free_func, double-
  * decrementing ssl_ctx_live forever after. (BoringSSL's CRYPTO_once is
  * internal-only, so use the platform primitive directly; root_certs.cpp does

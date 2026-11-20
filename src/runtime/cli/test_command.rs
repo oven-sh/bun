@@ -2704,7 +2704,7 @@ impl TestCommand {
             ..Default::default()
         });
         run_compiled::list_refused_changes();
-        bun_http::http_thread::init(&Default::default());
+        bun_http::http_thread::init(Default::default());
 
         let enable_random = ctx.test_options.randomize;
         // `describe.shuffle` needs a seed even without --randomize.

@@ -344,6 +344,27 @@ impl Drop for OwnedSslCtx {
     }
 }
 
+/// The only reference to an `SSL_CTX`, so the thread that builds it can hand it to the thread that uses it.
+#[repr(transparent)]
+pub struct UniqueSslCtx(OwnedSslCtx);
+
+// SAFETY: `from_raw`'s contract: no other thread can reach the context, and nothing attached to
+// it needs the thread that built it. BoringSSL does not tie an `SSL_CTX` to a thread.
+unsafe impl Send for UniqueSslCtx {}
+
+impl UniqueSslCtx {
+    /// SAFETY: `raw` is null, or carries the only reference to a context that nothing else can reach, and whose ex-data and callbacks need no particular thread.
+    pub unsafe fn from_raw(raw: *mut SSL_CTX) -> Option<Self> {
+        // SAFETY: the only reference is one the caller gives up.
+        unsafe { OwnedSslCtx::from_raw(raw) }.map(Self)
+    }
+
+    /// Keeps the context on the calling thread, where it can have more references.
+    pub fn into_shared(self) -> OwnedSslCtx {
+        self.0
+    }
+}
+
 /// An owner of one reference, released on drop. `Option<$name>` is a nullable `$handle *`.
 macro_rules! owned_handle {
     ($($name:ident($handle:ident) => $free:ident;)+) => {$(
